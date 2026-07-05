@@ -31,4 +31,21 @@ describe("dark-mode contrast guard", () => {
 
         expect(offenders).toEqual([]);
     });
+
+    it("pairs every light-mode gray text utility with an explicit dark ink", () => {
+        // A bare `text-gray-400..900` with no `dark:text-*` on the same line
+        // renders the light-mode gray onto the dark surfaces (invisible ink).
+        // Variant-prefixed forms (hover:, placeholder:, dark: itself) are the
+        // preceding rule's business, so only the bare utility is matched here.
+        const offenders = Object.entries(sources).flatMap(([file, code]) =>
+            code.split("\n")
+                .map((line, idx) => ({
+                    line,
+                    at: `${file}:${idx + 1}`
+                }))
+                .filter(({ line }) => /["'\s{[(]text-gray-[4-9]00/.test(line) && !/dark:text-/.test(line))
+                .map(({ at }) => at));
+
+        expect(offenders).toEqual([]);
+    });
 });

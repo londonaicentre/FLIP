@@ -36,7 +36,7 @@
                 <template #labelRight>
                     <div
                         data-test="add-user-optional-text"
-                        class="mb-1 text-sm text-right text-gray-400"
+                        class="mb-1 text-sm text-right text-gray-400 dark:text-gray-300"
                     >
                         Optional
                     </div>

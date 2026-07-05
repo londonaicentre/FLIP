@@ -16,7 +16,7 @@
         <label
             :for="uuid"
             class="flex w-full gap-1 text-sm font-bold"
-            :class="{ 'text-red-500': !!errorMessage, 'text-gray-700': !errorMessage }"
+            :class="{ 'text-red-500': !!errorMessage, 'text-gray-700 dark:text-gray-300': !errorMessage }"
         >
             {{ label }}
         </label>
@@ -38,13 +38,13 @@
                     autocomplete="none"
                     :height="height"
                     v-bind="inputProps"
-                    class="cursor-text text-gray-400 overflow-hidden rounded dark:!ring-primary-400 ring-primary-500 ring-2 ring-offset-2 dark:ring-offset-dark-canvas"
+                    class="cursor-text text-gray-400 dark:text-gray-300 overflow-hidden rounded dark:!ring-primary-400 ring-primary-500 ring-2 ring-offset-2 dark:ring-offset-dark-canvas"
                     @input="handleChange"
                     @blur="handleBlur"
                 />
             </div>
         </div>
-        <div v-if="hint && !errorMessage" class="m-1 text-sm text-gray-500">
+        <div v-if="hint && !errorMessage" class="m-1 text-sm text-gray-500 dark:text-gray-300">
             {{ hint }}
         </div>
         <div v-if="!!errorMessage" class="m-1 text-sm text-red-500 error_message">

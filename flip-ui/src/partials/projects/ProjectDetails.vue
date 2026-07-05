@@ -41,7 +41,7 @@
                     >
                         {{ projectStore.project.description }}
                         <template v-if="!projectStore.project.description">
-                            <span class="italic text-gray-400">No description provided...</span>
+                            <span class="italic text-gray-400 dark:text-gray-300">No description provided...</span>
                         </template>
                     </dd>
                 </div>

@@ -122,7 +122,7 @@
                                     v-for="col in columns"
                                     :key="col.key ?? col.label"
                                     :data-test="col.key ? `sort-header-${col.key}` : undefined"
-                                    class="px-4 py-3 text-xs font-mono uppercase tracking-widest text-gray-500 font-medium select-none"
+                                    class="px-4 py-3 text-xs font-mono uppercase tracking-widest text-gray-500 dark:text-gray-300 font-medium select-none"
                                     :class="[
                                         col.align === 'right' ? 'text-right' : 'text-left',
                                         col.width ?? '',

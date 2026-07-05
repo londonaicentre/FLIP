@@ -28,7 +28,7 @@ redirect: /admin/users # Can be set to any page within the "admin" section
                                 <label for="nav-tabs" class="sr-only">Select a tab</label>
                                 <select
                                     id="nav-tabs"
-                                    class="block w-full text-base font-medium text-gray-900 border-gray-300 rounded-md shadow-sm focus:border-primary-500 focus:ring-primary-500"
+                                    class="block w-full text-base font-medium text-gray-900 dark:text-gray-100 dark:bg-dark-raised border-gray-300 dark:border-dark-border rounded-md shadow-sm focus:border-primary-500 focus:ring-primary-500"
                                     @change="(event) => updateRoute(event)"
                                 >
                                     <option
@@ -63,7 +63,7 @@ redirect: /admin/users # Can be set to any page within the "admin" section
                                     >
                                         <component
                                             :is="item.icon"
-                                            :class="[item.current ? 'text-primary-500 dark:text-primary-100' : 'text-gray-400 group-hover:text-gray-500 dark:group-hover:text-gray-200', 'transition flex-shrink-0 -ml-1 mr-3 h-6 w-6']"
+                                            :class="[item.current ? 'text-primary-500 dark:text-primary-100' : 'text-gray-400 dark:text-gray-300 group-hover:text-gray-500 dark:group-hover:text-gray-200', 'transition flex-shrink-0 -ml-1 mr-3 h-6 w-6']"
                                             aria-hidden="true"
                                         />
                                         <div class="flex flex-row items-center w-full">
@@ -71,7 +71,7 @@ redirect: /admin/users # Can be set to any page within the "admin" section
                                                 {{ item.name }}
                                             </div>
                                             <icon-mdi-chevron-right
-                                                :class="[item.current ? 'text-primary-500 dark:text-primary-100' : 'text-gray-400 group-hover:text-gray-500 dark:group-hover:text-gray-200', 'transition']"
+                                                :class="[item.current ? 'text-primary-500 dark:text-primary-100' : 'text-gray-400 dark:text-gray-300 group-hover:text-gray-500 dark:group-hover:text-gray-200', 'transition']"
                                             />
                                         </div>
                                     </router-link>

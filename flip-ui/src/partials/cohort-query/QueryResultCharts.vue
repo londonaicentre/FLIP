@@ -34,7 +34,7 @@
             <div v-else-if="!results.trustsResults.length" data-test="no-results-message">
                 <div class="py-4">
                     <div>
-                        <p class="mt-2 text-lg text-gray-500">
+                        <p class="mt-2 text-lg text-gray-500 dark:text-gray-300">
                             No results can be shown as your query did not return enough records.
                             Please expand your search.
                         </p>

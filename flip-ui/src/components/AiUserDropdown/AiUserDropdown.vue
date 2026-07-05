@@ -34,7 +34,7 @@
                                 </span>
                             </span>
                             <icon-heroicons-outline-selector
-                                class="flex-shrink-0 w-4 h-4 text-gray-400 group-hover:text-gray-500"
+                                class="flex-shrink-0 w-4 h-4 text-gray-400 dark:text-gray-300 group-hover:text-gray-500 dark:group-hover:text-gray-200"
                                 aria-hidden="true"
                             />
                         </span>
@@ -55,7 +55,7 @@
                 class="absolute z-20 min-w-[16rem] mt-2 origin-top-right bg-white dark:bg-dark-canvas divide-y divide-gray-100 dark:ring-white/20 dark:divide-dark-border rounded-md shadow-lg right-2 ring-1 ring-black ring-opacity-5 focus:outline-none"
             >
                 <div class="px-4 py-3 md:hidden">
-                    <p class="text-sm text-gray-500">
+                    <p class="text-sm text-gray-500 dark:text-gray-300">
                         Signed in as:
                     </p>
                     <p
@@ -74,8 +74,8 @@
                             data-test="sign-out-btn"
                             @click="emit('toggleDarkMode')"
                         >
-                            <icon-ph-sun-duotone v-if="isDark" class="dark:group-hover:text-yellow-200 h-5 w-5 mr-3 text-gray-500 transition group-hover:text-gray-600" />
-                            <icon-ph-moon-stars-duotone v-else class="h-5 w-5 mr-3 text-gray-500 transition group-hover:text-gray-600 dark:group-hover:text-gray-200" />
+                            <icon-ph-sun-duotone v-if="isDark" class="dark:group-hover:text-yellow-200 h-5 w-5 mr-3 text-gray-500 dark:text-gray-300 transition group-hover:text-gray-600" />
+                            <icon-ph-moon-stars-duotone v-else class="h-5 w-5 mr-3 text-gray-500 dark:text-gray-300 transition group-hover:text-gray-600 dark:group-hover:text-gray-200" />
                             {{ isDark ? 'Light Mode' : "Dark Mode" }}
                         </button>
                     </MenuItem>
@@ -91,7 +91,7 @@
                             @click="changePassword"
                         >
                             <icon-ph-lock-duotone
-                                class="w-5 h-5 mr-3 text-gray-500 transition group-hover:text-gray-600 dark:group-hover:text-gray-200"
+                                class="w-5 h-5 mr-3 text-gray-500 dark:text-gray-300 transition group-hover:text-gray-600 dark:group-hover:text-gray-200"
                                 aria-hidden="true"
                             />
                             Change Password
@@ -109,14 +109,14 @@
                             @click="signOut"
                         >
                             <icon-mdi-logout
-                                class="w-5 h-5 mr-3 text-gray-500 transition group-hover:text-gray-600 dark:group-hover:text-gray-200"
+                                class="w-5 h-5 mr-3 text-gray-500 dark:text-gray-300 transition group-hover:text-gray-600 dark:group-hover:text-gray-200"
                                 aria-hidden="true"
                             />
                             Sign Out
                         </button>
                     </MenuItem>
                 </div>
-                <p v-if="appVersion" class="px-4 py-1 text-xs text-right text-gray-500 truncate">
+                <p v-if="appVersion" class="px-4 py-1 text-xs text-right text-gray-500 dark:text-gray-300 truncate">
                     {{ appVersion }}
                 </p>
             </MenuItems>

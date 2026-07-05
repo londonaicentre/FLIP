@@ -16,7 +16,7 @@ exports[`AI Chip Select > renders the component successfully 1`] = `
     type="button"
   >
     <span
-      class="block truncate text-gray-500"
+      class="block truncate text-gray-500 dark:text-gray-300"
       data-test="chip-select"
     >
       Please make a selection
@@ -25,7 +25,7 @@ exports[`AI Chip Select > renders the component successfully 1`] = `
       class="absolute inset-y-0 right-0 flex items-center pr-2 pointer-events-none"
     >
       <svg
-        class="w-5 h-5 text-gray-400"
+        class="w-5 h-5 text-gray-400 dark:text-gray-300"
         height="1.2em"
         viewBox="0 0 24 24"
         width="1.2em"

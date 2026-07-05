@@ -60,7 +60,7 @@
                                 </div>
 
                                 <div>
-                                    <div class="text-xs font-bold uppercase tracking-widest text-gray-500 mb-1">
+                                    <div class="text-xs font-bold uppercase tracking-widest text-gray-500 dark:text-gray-300 mb-1">
                                         Trust name
                                     </div>
                                     <div class="font-mono text-sm bg-gray-50 dark:bg-dark-canvas p-2 rounded">
@@ -70,7 +70,7 @@
 
                                 <div data-test="all-credentials-section">
                                     <div class="flex items-center justify-between mb-1">
-                                        <span class="text-xs font-bold uppercase tracking-widest text-gray-500">
+                                        <span class="text-xs font-bold uppercase tracking-widest text-gray-500 dark:text-gray-300">
                                             Kit credentials — paste into
                                             <code>trust/.env.&lt;CODE&gt;.&lt;env&gt;</code>
                                         </span>

@@ -31,7 +31,7 @@ meta:
             <div class="absolute right-0 mt-4 mr-4">
                 <icon-mdi-information-outline
                     v-tippy="{ content: passwordRequirements }"
-                    class="text-gray-500"
+                    class="text-gray-500 dark:text-gray-300"
                 />
             </div>
             <AiInput

@@ -18,7 +18,7 @@
 
 <template>
     <div v-if="!data?.length" class="flex items-center gap-2 text-sm text-gray-500 dark:text-gray-300">
-        <icon-carbon-chart-line-data class="w-5 h-5 text-gray-400 shrink-0" />
+        <icon-carbon-chart-line-data class="w-5 h-5 text-gray-400 dark:text-gray-300 shrink-0" />
         <div>Any metrics generated during training will show here.</div>
     </div>
     <div v-else class="flex flex-col">

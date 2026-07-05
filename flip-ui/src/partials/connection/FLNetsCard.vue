@@ -36,7 +36,7 @@
                                 </span>
                             </span>
                         </h3>
-                        <p class="max-w-8xl mt-6 mb-0 text-gray-500">
+                        <p class="max-w-8xl mt-6 mb-0 text-gray-500 dark:text-gray-300">
                             Each NET represents an environment where a model can train. No training requests can be
                             sent to a Trust if they are OFFLINE.<br>
                             We currently have <span class="font-bold">{{ flStatus?.length }} nets</span> connected.
