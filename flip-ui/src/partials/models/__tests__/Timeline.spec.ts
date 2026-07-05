@@ -101,7 +101,7 @@ describe("Timeline", () => {
             // (Lighthouse color-contrast); small text needs >= 4.5:1, and at
             // 10px mono the muted step must be visibly light on dark.
             expect(stamp.classes()).toContain("text-gray-500");
-            expect(stamp.classes()).toContain("dark:text-gray-200");
+            expect(stamp.classes()).toContain("dark:text-gray-300");
         }
     });
 });

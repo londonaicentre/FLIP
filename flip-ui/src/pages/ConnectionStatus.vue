@@ -492,7 +492,7 @@
                     </div>
                     <div
                         v-else
-                        class="px-5 py-3 text-[11px] text-gray-400 dark:text-gray-200 border-t border-gray-100 dark:border-dark-border"
+                        class="px-5 py-3 text-[11px] text-gray-400 dark:text-gray-300 border-t border-gray-100 dark:border-dark-border"
                     >
                         Hover a trust on the topology to see details.
                     </div>
