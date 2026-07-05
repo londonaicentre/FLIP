@@ -18,7 +18,7 @@
         class="flex flex-row items-center h-14 bg-white dark:bg-dark-canvas border-b border-gray-200 dark:border-dark-border px-4 xl:px-6 shrink-0"
     >
         <!-- Mobile menu button -->
-        <PopoverButton class="outline-none xl:hidden mr-3" data-test="mobile-menu-btn">
+        <PopoverButton aria-label="Open menu" class="outline-none xl:hidden mr-3" data-test="mobile-menu-btn">
             <icon-heroicons-outline-menu-alt-1 class="w-6 h-6" />
         </PopoverButton>
 
