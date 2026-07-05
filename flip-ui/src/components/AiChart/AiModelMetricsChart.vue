@@ -183,7 +183,8 @@ onMounted(() => {
                         const sortedData = [...element.data].sort((a, b) => a.xValue - b.xValue);
                         const totalPoints = sortedData.length;
                         const totalDuration = 3000; // total animation time (ms)
-                        const perPointDelay = totalDuration / totalPoints;
+                        // Guard the empty-series case — 3000/0 = Infinity is an invalid echarts duration.
+                        const perPointDelay = totalPoints ? totalDuration / totalPoints : 0;
                         const { color: seriesColor, lineType } = seriesStyle(seriesIdx, darkMode);
 
                         return {

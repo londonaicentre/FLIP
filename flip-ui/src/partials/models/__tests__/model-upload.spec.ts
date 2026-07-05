@@ -276,6 +276,40 @@ describe("ModelUpload", () => {
             expect(wrapper.find("button[aria-label='Delete model.py']").exists()).toBe(true);
         });
 
+        test("hides the delete button on errored files when the user cannot upload", async () => {
+            const wrapper = mountModelUpload({
+                files: [{
+                    id: "1",
+                    name: "model.py",
+                    size: 1024,
+                    status: FileUploadStatus.ERROR
+                }],
+                canUpload: false,
+                loading: false
+            });
+            await flushPromises();
+
+            // `canUpload && COMPLETED || ERROR` used to expose the destructive
+            // action to viewers / after training locked the model.
+            expect(wrapper.find("button[aria-label='Delete model.py']").exists()).toBe(false);
+        });
+
+        test("shows the delete button on errored files when the user can upload", async () => {
+            const wrapper = mountModelUpload({
+                files: [{
+                    id: "1",
+                    name: "model.py",
+                    size: 1024,
+                    status: FileUploadStatus.ERROR
+                }],
+                canUpload: true,
+                loading: false
+            });
+            await flushPromises();
+
+            expect(wrapper.find("button[aria-label='Delete model.py']").exists()).toBe(true);
+        });
+
         test("mirrors props.files into the visible list on mount", async () => {
             const files: FileInfo[] = [
                 {

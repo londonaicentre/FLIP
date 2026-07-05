@@ -215,6 +215,33 @@ describe("AiModelMetricsChart", () => {
         expect(opts.series[8].lineStyle.type).toBe("dashed");
     });
 
+    it("guards the animation maths against an empty series", async () => {
+        mount(AiModelMetricsChart, {
+            props: {
+                data: {
+                    yLabel: "y",
+                    xLabel: "x",
+                    metrics: [{
+                        seriesLabel: "empty",
+                        data: []
+                    }]
+                }
+            },
+            global: {
+                plugins: [createTestingPinia({
+                    createSpy: vi.fn,
+                    stubActions: false
+                })]
+            }
+        });
+        await nextTick();
+        await flushPromises();
+
+        // 3000 / 0 = Infinity would reach echarts as animationDuration.
+        const opts = setOption.mock.calls[0][0];
+        expect(Number.isFinite(opts.series[0].animationDuration)).toBe(true);
+    });
+
     it("keeps the user's bar-plot toggle across data refreshes", async () => {
         const wrapper = mountChart();
         await nextTick();

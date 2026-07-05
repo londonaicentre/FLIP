@@ -109,7 +109,7 @@
                                     </AiButton>
                                 </Transition>
                                 <Transition name="fade">
-                                    <AiButton v-if="canUpload && file.status === FileUploadStatus.COMPLETED || file.status === FileUploadStatus.ERROR" small :aria-label="`Delete ${file.name}`" @click="() => confirmDeleteFile(file.name)">
+                                    <AiButton v-if="canUpload && (file.status === FileUploadStatus.COMPLETED || file.status === FileUploadStatus.ERROR)" small :aria-label="`Delete ${file.name}`" @click="() => confirmDeleteFile(file.name)">
                                         <icon-ph-trash-duotone class="text-red-500 dark:text-red-400" />
                                     </AiButton>
                                 </Transition>

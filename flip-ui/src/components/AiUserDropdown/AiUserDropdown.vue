@@ -14,9 +14,13 @@
 <template>
     <Menu as="div" class="relative inline-block text-left outline-none">
         <div>
-            <MenuButton v-slot="{ open }" class="block w-full text-left" data-test="account-menu-btn">
+            <MenuButton
+                v-slot="{ open }"
+                class="block w-full text-left rounded-md focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-gray-100 dark:focus-visible:ring-offset-dark-canvas focus-visible:ring-purple-500"
+                data-test="account-menu-btn"
+            >
                 <div
-                    class="group w-full transition cursor-pointer rounded-md px-3.5 py-2 text-sm text-left hover:bg-gray-100 dark:hover:bg-dark-surface focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-100 dark:focus:ring-offset-dark-canvas focus:ring-purple-500"
+                    class="group w-full transition cursor-pointer rounded-md px-3.5 py-2 text-sm text-left hover:bg-gray-100 dark:hover:bg-dark-surface"
                     :class="{'ring-2 ring-primary-500 dark:ring-primary-400 rounded': open}"
                 >
                     <span class="flex items-center justify-between w-full">
