@@ -60,6 +60,11 @@ const trustLabel = (trustId: string, trustName: string): string => {
 
 const containerRef = ref<HTMLDivElement | HTMLCanvasElement>();
 
+// The toolbox magicType toggle only flips echarts' internal state; option
+// re-pushes (data updates, theme switch, resize) would revert it unless the
+// user's choice is replayed into the rebuilt series.
+const seriesType = ref<"bar" | "line">("bar");
+
 type ECOption = echarts.ComposeOption<
 BarSeriesOption
 | LineSeriesOption
@@ -94,6 +99,10 @@ onMounted(() => {
         const xAxisValues = [...new Set(xAxisData)].sort();
 
         const chart = echarts.init(containerRef.value);
+
+        chart.on("magictypechanged", (event) => {
+            seriesType.value = (event as { currentType: "bar" | "line" }).currentType;
+        });
 
         const chartTitle = capatilizeString(props.data.name);
 
@@ -210,7 +219,7 @@ onMounted(() => {
                     props.data.results.map(element => {
                         return {
                             name: trustLabel(element.trustId, element.trustName),
-                            type: "bar",
+                            type: seriesType.value,
                             // Plain code-unit sort — same ordering _.sortBy gave the string categories.
                             data: [...element.data].sort((a, b) => (a.value < b.value ? -1 : a.value > b.value ? 1 : 0))
                                 .map(data => {

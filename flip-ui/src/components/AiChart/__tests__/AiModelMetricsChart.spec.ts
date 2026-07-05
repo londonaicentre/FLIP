@@ -21,11 +21,13 @@ import { CHART_SERIES_COLORS, chartToolbox } from "@/components/AiChart/chartThe
 
 const setOption = vi.fn();
 const resize = vi.fn();
+const on = vi.fn();
 
 vi.mock("echarts/core", () => ({
     init: vi.fn(() => ({
         setOption,
-        resize
+        resize,
+        on
     })),
     use: vi.fn()
 }));
@@ -94,6 +96,7 @@ describe("AiModelMetricsChart", () => {
     beforeEach(() => {
         setOption.mockReset();
         resize.mockReset();
+        on.mockReset();
         vi.useFakeTimers();
     });
 
@@ -210,6 +213,30 @@ describe("AiModelMetricsChart", () => {
         expect(opts.series[0].lineStyle.type).toBe("solid");
         expect(opts.series[8].itemStyle.color).toBe(CHART_SERIES_COLORS.light[0]);
         expect(opts.series[8].lineStyle.type).toBe("dashed");
+    });
+
+    it("keeps the user's bar-plot toggle across data refreshes", async () => {
+        const wrapper = mountChart();
+        await nextTick();
+        await flushPromises();
+
+        // The user flips the toolbox magicType to "bar" — echarts announces it.
+        const magicTypeHandler = on.mock.calls.find(([event]) => event === "magictypechanged")?.[1];
+        expect(magicTypeHandler).toBeDefined();
+        magicTypeHandler({ currentType: "bar" });
+
+        // The 5s training poll delivers fresh data → the full options re-push
+        // must respect the user's choice instead of stomping it back to line.
+        await wrapper.setProps({
+            data: {
+                ...DATA,
+                metrics: [...DATA.metrics]
+            }
+        });
+        await flushPromises();
+
+        const opts = setOption.mock.calls.at(-1)![0];
+        expect(opts.series.every((s: { type: string }) => s.type === "bar")).toBe(true);
     });
 
     it("re-pushes the chart option on the 500ms post-mount tick", async () => {

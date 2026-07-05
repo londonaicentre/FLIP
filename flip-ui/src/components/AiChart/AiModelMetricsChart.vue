@@ -48,6 +48,11 @@ const siteSettings = useSiteSettings();
 
 const containerRef = ref<HTMLDivElement | HTMLCanvasElement>();
 
+// The toolbox magicType toggle only flips echarts' internal state; every full
+// option re-push (5s training poll, post-mount tick, resize, theme switch)
+// would stomp it back to "line" unless the user's choice is replayed here.
+const seriesType = ref<"line" | "bar">("line");
+
 type ECOption = echarts.ComposeOption<
 BarSeriesOption
 | LineSeriesOption
@@ -75,6 +80,10 @@ onMounted(() => {
             ]);
 
             const chart = echarts.init(containerRef.value);
+
+            chart.on("magictypechanged", (event) => {
+                seriesType.value = (event as { currentType: "line" | "bar" }).currentType;
+            });
 
             // Chart-level title intentionally omitted — the only consumer
             // (TrainingMetrics) renders the y-label as the tab name, so an
@@ -179,7 +188,7 @@ onMounted(() => {
 
                         return {
                             name: element.seriesLabel,
-                            type: "line",
+                            type: seriesType.value,
                             smooth: true,
                             showSymbol: true,
                             symbol: "circle",
