@@ -30,7 +30,7 @@
                         </p>
                         <h1 class="text-3xl font-semibold font-heading mt-1 text-gray-900 dark:text-gray-100">
                             <span class="text-primary-600 underline decoration-4 decoration-primary-500/60 underline-offset-8 dark:text-white">Projects</span>
-                            <span class="ml-3 text-gray-400 dark:text-gray-300 font-medium">{{ data.data.length }}</span>
+                            <span class="ml-3 text-gray-400 dark:text-gray-200 font-medium">{{ data.data.length }}</span>
                         </h1>
                         <p class="mt-2 text-sm text-gray-500 dark:text-gray-400">
                             Approved &amp; staged projects you can access.
@@ -197,7 +197,7 @@
                                     </span>
                                     <span
                                         v-if="!trustsForProject(project).length"
-                                        class="text-xs text-gray-400 dark:text-gray-300 italic"
+                                        class="text-xs text-gray-400 dark:text-gray-200 italic"
                                     >
                                         No trusts staged
                                     </span>
@@ -282,7 +282,7 @@
                             </span>
                             <span
                                 v-if="!trustsForProject(project).length"
-                                class="text-xs text-gray-400 dark:text-gray-300 italic"
+                                class="text-xs text-gray-400 dark:text-gray-200 italic"
                             >
                                 No trusts staged
                             </span>
@@ -299,7 +299,7 @@
                                 </span>
                                 <span class="text-gray-500 dark:text-gray-400">patients in cohort</span>
                             </template>
-                            <span v-else class="text-gray-400 dark:text-gray-300 italic">
+                            <span v-else class="text-gray-400 dark:text-gray-200 italic">
                                 No cohort yet
                             </span>
                         </div>

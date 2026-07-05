@@ -148,7 +148,7 @@
                                                 <span
                                                     class="font-heading font-semibold text-2xl leading-none"
                                                     :class="rowTotal(project) === 0
-                                                        ? 'text-gray-400 dark:text-gray-300'
+                                                        ? 'text-gray-400 dark:text-gray-200'
                                                         : 'text-gray-900 dark:text-gray-100'"
                                                     :data-test="`pct-retrieved-${project.trustId}`"
                                                 >

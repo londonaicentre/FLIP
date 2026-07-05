@@ -62,7 +62,7 @@
                                 <p class="leading-tight text-gray-500 dark:text-gray-400 truncate">
                                     {{ model.description }}
                                     <template v-if="!model.description">
-                                        <span class="italic text-gray-400 dark:text-gray-300">No description provided...</span>
+                                        <span class="italic text-gray-400 dark:text-gray-200">No description provided...</span>
                                     </template>
                                 </p>
                             </div>

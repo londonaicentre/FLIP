@@ -41,7 +41,7 @@
                             >
                                 {{ model.modelDescription }}
                                 <template v-if="!model.modelDescription">
-                                    <span class="italic text-gray-400 dark:text-gray-300">No description provided...</span>
+                                    <span class="italic text-gray-400 dark:text-gray-200">No description provided...</span>
                                 </template>
                             </dd>
                         </div>
