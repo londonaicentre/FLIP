@@ -132,7 +132,7 @@
                             <span v-else class="ml-4 text-sm font-semibold uppercase text-primary-600 dark:text-primary-200">
                                 {{ step.name }}
                             </span>
-                            <span v-if="step.description" class="ml-4 text-sm font-medium text-gray-700 dark:text-gray-400">{{
+                            <span v-if="step.description" class="ml-4 text-sm font-medium text-gray-700 dark:text-gray-300">{{
                                 step.description }}</span>
                         </div>
                     </div>

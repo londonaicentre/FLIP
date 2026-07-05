@@ -64,7 +64,7 @@
                                                         >
                                                             {{ log.trustName ?? "Hub" }}
                                                         </span>
-                                                        <span class="text-[10px] font-mono text-gray-500 dark:text-gray-400 shrink-0" data-test="log-timestamp">
+                                                        <span class="text-[10px] font-mono text-gray-500 dark:text-gray-300 shrink-0" data-test="log-timestamp">
                                                             {{ getShortDateFromString(log.logDate) }}
                                                         </span>
                                                     </div>

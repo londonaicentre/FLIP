@@ -101,12 +101,12 @@
                                                             >
                                                                 {{ client.name }}<span
                                                                     v-if="client.code"
-                                                                    class="font-normal text-gray-500 dark:text-gray-400"
+                                                                    class="font-normal text-gray-500 dark:text-gray-300"
                                                                 > ({{ client.code }})</span>
                                                             </p>
                                                             <p
                                                                 v-if="client.fl_kit_slot"
-                                                                class="text-xs font-normal text-gray-400 dark:text-gray-400 shrink line-clamp-1"
+                                                                class="text-xs font-normal text-gray-400 dark:text-gray-300 shrink line-clamp-1"
                                                                 data-test="client-fl-kit-slot"
                                                             >
                                                                 FL kit slot: {{ client.fl_kit_slot }}

@@ -19,7 +19,7 @@
     <div class="flex flex-col items-center flex-1 p-8 space-y-6">
         <icon-ph-signpost-duotone class="font-black w-36 h-36 text-primary-600 dark:text-primary-400" data-test="title" />
 
-        <div class="items-center mt-8 text-center text-gray-600 dark:text-gray-400">
+        <div class="items-center mt-8 text-center text-gray-600 dark:text-gray-300">
             <p class="text-2xl font-bold max-w-7xl">
                 We can't find the page you have requested.
             </p>

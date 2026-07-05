@@ -24,7 +24,7 @@
         <div
             class="flex items-center justify-center min-h-24 gap-3 px-4 py-6 mx-auto grow"
         >
-            <icon-mdi-cloud-upload-outline class="hidden w-8 h-8 text-gray-300 dark:text-gray-400 sm:block" />
+            <icon-mdi-cloud-upload-outline class="hidden w-8 h-8 text-gray-300 dark:text-gray-300 sm:block" />
             <input
                 ref="fileUpload"
                 type="file"

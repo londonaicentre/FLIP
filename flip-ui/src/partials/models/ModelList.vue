@@ -107,7 +107,7 @@
                                         <p class="text-gray-500 break-words line-clamp-2 dark:text-gray-400">
                                             {{ row.description }}
                                             <template v-if="!row.description">
-                                                <span class="italic text-gray-400 dark:text-gray-400">No description provided...</span>
+                                                <span class="italic text-gray-400 dark:text-gray-300">No description provided...</span>
                                             </template>
                                         </p>
                                     </div>

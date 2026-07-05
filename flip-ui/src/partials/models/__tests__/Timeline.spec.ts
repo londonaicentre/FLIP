@@ -98,9 +98,10 @@ describe("Timeline", () => {
         expect(stamps).toHaveLength(mockLogs.logs.length);
         for (const stamp of stamps) {
             // gray-400 on white / gray-500 on dark-canvas sit under 3:1
-            // (Lighthouse color-contrast); small text needs >= 4.5:1.
+            // (Lighthouse color-contrast); small text needs >= 4.5:1, and at
+            // 10px mono the muted step must be visibly light on dark.
             expect(stamp.classes()).toContain("text-gray-500");
-            expect(stamp.classes()).toContain("dark:text-gray-400");
+            expect(stamp.classes()).toContain("dark:text-gray-300");
         }
     });
 });
