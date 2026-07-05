@@ -13,7 +13,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { CHART_SERIES_COLORS, chartChrome, seriesStyle } from "@/components/AiChart/chartTheme";
+import { CHART_SERIES_COLORS, chartChrome, chartToolbox, seriesStyle } from "@/components/AiChart/chartTheme";
 
 describe("chartTheme", () => {
     it("provides eight brand-anchored series slots per mode", () => {
@@ -68,5 +68,26 @@ describe("chartTheme", () => {
                 expect(legacyHexes).not.toContain(value);
             }
         }
+    });
+
+    it("themes the toolbox Data View panel per mode instead of the white ECharts defaults", () => {
+        const light = chartToolbox(false);
+        const dark = chartToolbox(true);
+
+        // Behaviour is identical in both modes.
+        for (const toolbox of [light, dark]) {
+            expect(toolbox.showTitle).toBe(false);
+            expect(toolbox.feature.dataView.show).toBe(true);
+            expect(toolbox.feature.dataView.readOnly).toBe(true);
+            expect(toolbox.feature.magicType.type).toEqual(["line", "bar"]);
+        }
+
+        // ECharts' dataView defaults (white panel, black text) don't follow
+        // the chart theme — the colours must be set explicitly per mode.
+        expect(light.feature.dataView.backgroundColor).toBe("#FFFFFF");
+        expect(dark.feature.dataView.backgroundColor).toBe("#201A29"); // dark-raised
+        expect(dark.feature.dataView.textareaColor).toBe("#070509"); // dark-inset
+        expect(dark.feature.dataView.textColor).toBe("#D1D5DB"); // gray-300
+        expect(dark.iconStyle.borderColor).toBe("#9CA3AF"); // gray-400 icon ink
     });
 });

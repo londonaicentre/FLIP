@@ -34,7 +34,7 @@ import * as echarts from "echarts/core";
 import { CanvasRenderer } from "echarts/renderers";
 import { computed, ComputedRef, onMounted, ref, watch } from "vue";
 
-import { CHART_SERIES_COLORS, chartChrome, seriesStyle } from "@/components/AiChart/chartTheme";
+import { CHART_SERIES_COLORS, chartChrome, chartToolbox, seriesStyle } from "@/components/AiChart/chartTheme";
 import { IModelMetricData } from "@/services/model-service";
 import { useSiteSettings } from "@/store/siteSettingsStore";
 
@@ -104,21 +104,7 @@ onMounted(() => {
                         } // scroll/trackpad zoom
                     ],
                     calculable: true,
-                    toolbox: {
-                        showTitle: false,
-                        feature: {
-                            dataView: {
-                                show: true,
-                                title: "View Data",
-                                readOnly: true
-                            },
-                            magicType: {
-                                show: true,
-                                type: ["line", "bar"]
-                            },
-                            restore: { title: "Reset View" }
-                        }
-                    },
+                    toolbox: chartToolbox(darkMode),
                     grid: {
                         backgroundColor: chrome.background,
                         left: "5%",

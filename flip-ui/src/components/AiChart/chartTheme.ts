@@ -78,6 +78,44 @@ export interface IChartChrome {
  * Returns:
  *     IChartChrome: background, line and ink colours for the mode.
  */
+/**
+ * Shared toolbox config (Data View / line-bar toggle / reset) for every FLIP
+ * chart. ECharts' dataView overlay has standalone colour options that ignore
+ * the chart theme — left unset it renders a white panel with black text even
+ * in dark mode — so the panel, textarea, ink and button are themed here.
+ *
+ * Args:
+ *     darkMode (boolean): whether the dark tokens apply.
+ *
+ * Returns:
+ *     object: the complete ECharts `toolbox` option for the mode.
+ */
+export const chartToolbox = (darkMode: boolean) => ({
+    showTitle: false,
+    iconStyle: {
+        // Toolbox icons draw with borderColor; keep them on the muted ink.
+        borderColor: darkMode ? "#9CA3AF" : "#6B7280" // gray-400 / gray-500
+    },
+    feature: {
+        dataView: {
+            show: true,
+            title: "View Data",
+            readOnly: true,
+            backgroundColor: darkMode ? "#201A29" : "#FFFFFF", // dark-raised / white
+            textareaColor: darkMode ? "#070509" : "#FFFFFF", // dark-inset / white
+            textareaBorderColor: darkMode ? "#3A3147" : "#D1D5DB", // dark-border-strong / gray-300
+            textColor: darkMode ? "#D1D5DB" : "#374151", // gray-300 / gray-700
+            buttonColor: darkMode ? "#9452A8" : "#61366e", // primary-400 / primary-500
+            buttonTextColor: "#FFFFFF"
+        },
+        magicType: {
+            show: true,
+            type: ["line", "bar"]
+        },
+        restore: { title: "Reset View" }
+    }
+});
+
 export const chartChrome = (darkMode: boolean): IChartChrome => darkMode
     ? {
         background: "transparent",
