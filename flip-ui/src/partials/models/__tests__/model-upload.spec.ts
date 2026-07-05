@@ -180,8 +180,11 @@ function mountModelUpload(
                 AiSkeleton: { template: "<div data-test=\"ai-skeleton\" />" },
                 AiLoader: { template: "<div data-test=\"ai-loader\" />" },
                 AiButton: {
-                    template: "<button @click=\"$emit('click')\" :disabled=\"loading\"><slot /></button>",
-                    props: ["small", "loading"],
+                    // Mirrors the real AiButton shape (wrapper div + native
+                    // button, aria-label as a declared prop) so accessibility
+                    // assertions exercise the real wiring, not the stub's.
+                    template: "<div @click=\"$emit('click')\"><button :aria-label=\"ariaLabel\" :disabled=\"loading\"><slot /></button></div>",
+                    props: ["small", "loading", "ariaLabel"],
                     emits: ["click"]
                 },
                 AiConfirmModal: {

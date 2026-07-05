@@ -22,6 +22,7 @@
                 <button
                     class="relative flex flex-row justify-center btn-base"
                     :type="type"
+                    :aria-label="ariaLabel"
                     :data-test="dataTest"
                     :class="{
                         'btn-sm': small,
@@ -46,6 +47,7 @@
             <button
                 class="relative flex flex-row justify-center btn-base"
                 :type="type"
+                :aria-label="ariaLabel"
                 :data-test="dataTest"
                 :class="{
                     'btn-sm': small,
@@ -113,6 +115,9 @@ interface IAiButtonProps {
     tooltip?: string;
     link?: string;
     tabindex?: number;
+    // Declared as a prop so `aria-label` lands on the native <button> below
+    // instead of falling through to the wrapper <div>, where it is prohibited.
+    ariaLabel?: string;
 }
 
 withDefaults(
@@ -122,7 +127,8 @@ withDefaults(
         type: "button",
         tooltip: "",
         link: undefined,
-        tabindex: 0
+        tabindex: 0,
+        ariaLabel: undefined
     }
 );
 
