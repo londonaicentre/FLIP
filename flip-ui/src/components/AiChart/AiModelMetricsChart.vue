@@ -32,9 +32,9 @@ import { DataZoomComponent,
     TooltipComponent } from "echarts/components";
 import * as echarts from "echarts/core";
 import { CanvasRenderer } from "echarts/renderers";
-import _ from "underscore";
 import { computed, ComputedRef, onMounted, ref, watch } from "vue";
 
+import { CHART_SERIES_COLORS, chartChrome, seriesStyle } from "@/components/AiChart/chartTheme";
 import { IModelMetricData } from "@/services/model-service";
 import { useSiteSettings } from "@/store/siteSettingsStore";
 
@@ -75,139 +75,148 @@ onMounted(() => {
             ]);
 
             const chart = echarts.init(containerRef.value);
-            const colorPalette = ["#61366e", "#4b7bec", "#2bcbba", "#fd9644", "#fc5c65", "#4b6584", "#2d98da", "#cc7e63", "#724e58", "#4b565b"];
 
             // Chart-level title intentionally omitted — the only consumer
             // (TrainingMetrics) renders the y-label as the tab name, so an
             // in-chart title would be redundant noise.
-            const chartOptions: ComputedRef<ECOption> = computed(() => ({
-                color: colorPalette,
-                colorBy: "series",
-                darkMode: siteSettings.getSettings.darkMode,
-                backgroundColor: siteSettings.getSettings.darkMode ? "#111827" : "#FFFFFF",
-                textStyle: {
-                    fontFamily: "JetBrainsMono",
-                    fontWeight: 700
-                },
-                dataZoom: [
-                    {
-                        type: "slider",
-                        bottom: 30,
-                        minSpan: 10
-                    }, // visible bar
-                    {
-                        type: "inside",
-                        minSpan: 10
-                    } // scroll/trackpad zoom
-                ],
-                calculable: true,
-                toolbox: {
-                    showTitle: false,
-                    feature: {
-                        dataView: {
-                            show: true,
-                            title: "View Data",
-                            readOnly: true
-                        },
-                        magicType: {
-                            show: true,
-                            type: ["line", "bar"]
-                        },
-                        restore: { title: "Reset View" }
-                    }
-                },
-                grid: {
-                    backgroundColor: siteSettings.getSettings.darkMode ? "#282A36": "#4A5462",
-                    left: "5%",
-                    right: 160,
-                    bottom: "25%",
-                    containLabel: true
-                },
-                tooltip: {
-                    trigger: "axis",
-                    axisPointer: {
-                        type: "cross",
-                        snap: true,
-                        crossStyle: { color: "#888" }
-                    }
-                },
-                legend: {
-                    data: props.data.metrics
-                        .map(d => d.seriesLabel)
-                        .slice()
-                        .sort((a, b) => a.localeCompare(b)),
-                    orient: "vertical",
-                    right: 10,
-                    top: "middle",
-                    align: "left",
-                    itemGap: 10,
-                    textStyle: { color: siteSettings.getSettings.darkMode ? "#ccc": "#282A36" }
-                },
-                xAxis: {
-                    type: "value",
-                    minInterval: 1,
-                    splitNumber: 10, // <— try to show 10 ticks (only)
-                    name: "Global Rounds",
-                    nameLocation: "middle",
-                    nameGap: 40,
-                    nameTextStyle: {
-                        fontWeight: 700,
-                        fontSize: 16,
-                        fontFamily: "Inter"
+            const chartOptions: ComputedRef<ECOption> = computed(() => {
+                const darkMode = siteSettings.getSettings.darkMode;
+                const chrome = chartChrome(darkMode);
+
+                return {
+                    color: [...CHART_SERIES_COLORS[darkMode ? "dark" : "light"]],
+                    colorBy: "series",
+                    darkMode,
+                    backgroundColor: chrome.background,
+                    textStyle: {
+                        fontFamily: "JetBrainsMono",
+                        fontWeight: 700
                     },
-                    axisLabel: {
-                        fontWeight: 700,
-                        fontFamily: "Inter",
-                        hideOverlap: true // <— auto hides colliding labels
+                    dataZoom: [
+                        {
+                            type: "slider",
+                            bottom: 30,
+                            minSpan: 10
+                        }, // visible bar
+                        {
+                            type: "inside",
+                            minSpan: 10
+                        } // scroll/trackpad zoom
+                    ],
+                    calculable: true,
+                    toolbox: {
+                        showTitle: false,
+                        feature: {
+                            dataView: {
+                                show: true,
+                                title: "View Data",
+                                readOnly: true
+                            },
+                            magicType: {
+                                show: true,
+                                type: ["line", "bar"]
+                            },
+                            restore: { title: "Reset View" }
+                        }
                     },
-                    axisTick: { show: false },
-                    axisLine: { lineStyle: { color: siteSettings.getSettings.darkMode ? "#ccc": "#282A36" } },
-                    splitLine: { show: false } // Mission control: no vertical grid lines
-                },
-                yAxis: {
-                    type: "value",
-                    axisTick: { show: false },
-                    axisLabel: {
+                    grid: {
+                        backgroundColor: chrome.background,
+                        left: "5%",
+                        right: 160,
+                        bottom: "25%",
+                        containLabel: true
+                    },
+                    tooltip: {
+                        trigger: "axis",
+                        axisPointer: {
+                            type: "cross",
+                            snap: true,
+                            crossStyle: { color: "#888" }
+                        }
+                    },
+                    legend: {
+                        data: props.data.metrics
+                            .map(d => d.seriesLabel)
+                            .slice()
+                            .sort((a, b) => a.localeCompare(b)),
+                        orient: "vertical",
+                        right: 10,
+                        top: "middle",
+                        align: "left",
+                        itemGap: 10,
+                        textStyle: { color: chrome.ink }
+                    },
+                    xAxis: {
+                        type: "value",
+                        minInterval: 1,
+                        splitNumber: 10, // <— try to show 10 ticks (only)
+                        name: "Global Rounds",
+                        nameLocation: "middle",
+                        nameGap: 40,
+                        nameTextStyle: {
+                            fontWeight: 700,
+                            fontSize: 16,
+                            fontFamily: "Inter",
+                            color: chrome.ink
+                        },
+                        axisLabel: {
+                            fontWeight: 700,
+                            fontFamily: "Inter",
+                            hideOverlap: true, // <— auto hides colliding labels
+                            color: chrome.axisLabel
+                        },
+                        axisTick: { show: false },
+                        axisLine: { lineStyle: { color: chrome.axisLine } },
+                        splitLine: { show: false } // Mission control: no vertical grid lines
+                    },
+                    yAxis: {
+                        type: "value",
+                        axisTick: { show: false },
+                        axisLabel: {
+                            show: true,
+                            fontWeight: 900,
+                            fontFamily: "JetBrainsMono",
+                            color: chrome.axisLabel
+                        },
+                        axisLine: { show: false },
                         show: true,
-                        fontWeight: 900,
-                        fontFamily: "JetBrainsMono"
+                        // Mission control: horizontal grey hairlines only
+                        splitLine: { lineStyle: { color: chrome.gridLine } },
+                        minorSplitLine: { show: false }
                     },
-                    axisLine: { show: false },
-                    show: true,
-                    // Mission control: horizontal grey lines only (--line-2 #F1ECF0)
-                    splitLine: { lineStyle: { color: siteSettings.getSettings.darkMode ? "#2A2530" : "#F1ECF0" } },
-                    minorSplitLine: { show: false }
-                },
-                series: props.data.metrics.map((element, seriesIdx) => {
-                    const sortedData = _.sortBy(element.data, "xValue");
-                    const totalPoints = sortedData.length;
-                    const totalDuration = 3000; // total animation time (ms)
-                    const perPointDelay = totalDuration / totalPoints;
-                    const seriesColor = colorPalette[seriesIdx % colorPalette.length];
+                    series: props.data.metrics.map((element, seriesIdx) => {
+                        const sortedData = [...element.data].sort((a, b) => a.xValue - b.xValue);
+                        const totalPoints = sortedData.length;
+                        const totalDuration = 3000; // total animation time (ms)
+                        const perPointDelay = totalDuration / totalPoints;
+                        const { color: seriesColor, lineType } = seriesStyle(seriesIdx, darkMode);
 
-                    return {
-                        name: element.seriesLabel,
-                        type: "line",
-                        smooth: true,
-                        showSymbol: true,
-                        symbol: "circle",
-                        symbolSize: 4,
-                        itemStyle: { color: seriesColor },
-                        lineStyle: { width: 2 },
-                        // Mission control: filled AUC at 10% opacity
-                        areaStyle: {
-                            color: seriesColor,
-                            opacity: 0.10
-                        },
-                        // total animation duration for each point
-                        animationDuration: perPointDelay,
-                        // staggered start for each point
-                        animationDelay: (idx) => idx * perPointDelay,
-                        data: sortedData.map(d => [d.xValue, d.yValue])
-                    };
-                })
-
-            }));
+                        return {
+                            name: element.seriesLabel,
+                            type: "line",
+                            smooth: true,
+                            showSymbol: true,
+                            symbol: "circle",
+                            symbolSize: 4,
+                            itemStyle: { color: seriesColor },
+                            lineStyle: {
+                                width: 2,
+                                type: lineType
+                            },
+                            // Mission control: filled AUC at 10% opacity
+                            areaStyle: {
+                                color: seriesColor,
+                                opacity: 0.10
+                            },
+                            // total animation duration for each point
+                            animationDuration: perPointDelay,
+                            // staggered start for each point
+                            animationDelay: (idx) => idx * perPointDelay,
+                            data: sortedData.map(d => [d.xValue, d.yValue])
+                        };
+                    })
+                };
+            });
 
             chart.setOption(chartOptions.value);
 

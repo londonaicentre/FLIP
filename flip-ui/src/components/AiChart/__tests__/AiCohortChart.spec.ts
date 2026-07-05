@@ -17,6 +17,7 @@ import { describe, expect, it, vi } from "vitest";
 import { nextTick } from "vue";
 
 import AiCohortChart from "@/components/AiChart/AiCohortChart.vue";
+import { CHART_SERIES_COLORS } from "@/components/AiChart/chartTheme";
 
 // jsdom has no canvas — stub the echarts.init pipeline so the onMounted block
 // can run without exercising a real renderer. We capture the last setOption
@@ -153,5 +154,20 @@ describe("AiCohortChart", () => {
 
         const opts = setOption.mock.calls[0][0];
         expect(opts.xAxis.data).toEqual(["50-70", "<50"]);
+    });
+
+    it("themes series and chrome from the shared chart theme", async () => {
+        mountChart();
+        await nextTick();
+        await flushPromises();
+
+        const opts = setOption.mock.calls[0][0];
+        expect(opts.color).toEqual([...CHART_SERIES_COLORS.light]);
+
+        // The off-token fills/inks flagged in the dark-mode review must not resurface.
+        const flattened = JSON.stringify(opts);
+        for (const legacyHex of ["#111827", "#282A36", "#4A5462", "#61366e"]) {
+            expect(flattened).not.toContain(legacyHex);
+        }
     });
 });
