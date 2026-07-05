@@ -11,7 +11,12 @@
     limitations under the License.
 -->
 
-<p align="center"><img src="docs/source/assets/flip-logo.png" height="200" alt='flip-logo' /></p>
+<p align="center">
+    <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="docs/source/assets/flip-logo-text-dark.png">
+        <img src="docs/source/assets/flip-logo-text.png" height="200" alt="flip-logo">
+    </picture>
+</p>
 
 # Federated Learning and Interoperability Platform
 

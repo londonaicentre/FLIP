@@ -42,7 +42,14 @@
                     aria-label="FLIP documentation"
                 >
                     <img
-                        src="/images/flip-logo.webp"
+                        v-if="!isDark"
+                        src="/images/flip-logo-text.webp"
+                        alt="FLIP"
+                        class="h-12 w-auto"
+                    >
+                    <img
+                        v-else
+                        src="/images/flip-logo-text-dark.webp"
                         alt="FLIP"
                         class="h-12 w-auto"
                     >

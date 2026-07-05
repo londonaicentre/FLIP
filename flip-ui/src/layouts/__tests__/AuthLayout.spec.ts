@@ -35,8 +35,10 @@ vi.mock("@vueuse/core", async (importOriginal) => {
     };
 });
 
-const LIGHT_LOGO = "/images/aicentre-logo-transparent.webp";
-const DARK_LOGO = "/images/aicentre-logo-transparent-dark.webp";
+const AIC_LIGHT_LOGO = "/images/aicentre-logo-transparent.webp";
+const AIC_DARK_LOGO = "/images/aicentre-logo-transparent-dark.webp";
+const FLIP_LIGHT_LOGO = "/images/flip-logo-text.webp";
+const FLIP_DARK_LOGO = "/images/flip-logo-text-dark.webp";
 
 function mountLayout() {
     return mountComponent(AuthLayout, {
@@ -66,15 +68,31 @@ describe("Auth Layout", () => {
         darkState.ref!.value = false;
         const component = mountLayout();
 
-        expect(component.find(`img[src="${LIGHT_LOGO}"]`).exists()).toBe(true);
-        expect(component.find(`img[src="${DARK_LOGO}"]`).exists()).toBe(false);
+        expect(component.find(`img[src="${AIC_LIGHT_LOGO}"]`).exists()).toBe(true);
+        expect(component.find(`img[src="${AIC_DARK_LOGO}"]`).exists()).toBe(false);
     });
 
     it("shows the dark AI Centre logo in dark mode", () => {
         darkState.ref!.value = true;
         const component = mountLayout();
 
-        expect(component.find(`img[src="${DARK_LOGO}"]`).exists()).toBe(true);
-        expect(component.find(`img[src="${LIGHT_LOGO}"]`).exists()).toBe(false);
+        expect(component.find(`img[src="${AIC_DARK_LOGO}"]`).exists()).toBe(true);
+        expect(component.find(`img[src="${AIC_LIGHT_LOGO}"]`).exists()).toBe(false);
+    });
+
+    it("shows the light FLIP text logo in light mode", () => {
+        darkState.ref!.value = false;
+        const component = mountLayout();
+
+        expect(component.find(`img[src="${FLIP_LIGHT_LOGO}"]`).exists()).toBe(true);
+        expect(component.find(`img[src="${FLIP_DARK_LOGO}"]`).exists()).toBe(false);
+    });
+
+    it("shows the dark FLIP text logo in dark mode", () => {
+        darkState.ref!.value = true;
+        const component = mountLayout();
+
+        expect(component.find(`img[src="${FLIP_DARK_LOGO}"]`).exists()).toBe(true);
+        expect(component.find(`img[src="${FLIP_LIGHT_LOGO}"]`).exists()).toBe(false);
     });
 });
