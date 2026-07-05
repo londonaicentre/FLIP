@@ -98,15 +98,16 @@ This command executes the following steps in order:
 2. **`aws-login`**: Authenticate with AWS SSO
 3. **`init`**: Initialize Terraform with environment-specific S3 backend
 4. **`import-persistent`**: Import existing persistent AWS resources to prevent replacement
-5. **`plan`**: Generate and review the initial Terraform execution plan
-6. **`apply`**: Apply infrastructure changes
-7. **`update-env`**: Refresh the root environment file with Terraform outputs
-8. **`ssh-config`**: Update `~/.ssh/config` with EC2 instance IPs
-9. **`ansible-init`**: Configure EC2 instances with Docker, CloudWatch, and FL assets (Trust EC2 only — the Central Hub no longer runs application containers on its EC2 host)
-10. **`deploy-centralhub`**: Force-redeploy the Central Hub ECS Fargate services (`flip-api`, `fl-api-net-1`, `fl-server-net-1`) and sync the UI to S3 + invalidate CloudFront
-11. **`register-trusts`**: Register every locally-present trust kit file (`trust/.env.<CODE>.<env>`) on the running hub and fill each kit with hub-shared values
-12. **`deploy-trust`**: Deploy Trust services via Docker Compose to the Trust EC2
-13. **`status`**: Run comprehensive health checks
+5. **`generate-internal-service-key`**: Mint the fl-server → hub `INTERNAL_SERVICE_KEY` (idempotent — skipped if already set)
+6. **`plan`**: Generate and review the initial Terraform execution plan
+7. **`apply`**: Apply infrastructure changes
+8. **`update-env`**: Refresh the root environment file with Terraform outputs
+9. **`ssh-config`**: Update `~/.ssh/config` with EC2 instance IPs
+10. **`ansible-init`**: Configure EC2 instances with Docker, CloudWatch, and FL assets (Trust EC2 only — the Central Hub no longer runs application containers on its EC2 host)
+11. **`deploy-centralhub`**: Deploy the Central Hub containers to the `flip` SSH docker context (see the target definition in `deploy/providers/AWS/Makefile`). Use `make deploy-ui` separately for the UI + CloudFront invalidation
+12. **`register-trusts`**: Register every locally-present trust kit file (`trust/.env.<CODE>.<env>`) on the running hub and fill each kit with hub-shared values
+13. **`deploy-trust`**: Deploy Trust services via Docker Compose to the Trust EC2
+14. **`status`**: Run comprehensive health checks
 
 ### flip-ui on S3 + CloudFront
 
