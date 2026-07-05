@@ -61,6 +61,7 @@ from nvflare.app_opt.pt.file_model_persistor import PTFileModelPersistor
 from nvflare.job_config.defs import FilterType
 from nvflare.recipe.spec import Recipe
 
+from flip.constants import PTConstants
 from flip.nvflare.components import (
     CleanupImages,
     ClientEventHandler,
@@ -169,7 +170,11 @@ class FlipFedAvgRecipe(Recipe):
 
         # Server: persistence and aggregation primitives.
         persistor_id = job.to_server(
-            PTFileModelPersistor(model={"path": "models.get_model"}), id="persistor"
+            PTFileModelPersistor(
+                model={"path": "models.get_model"},
+                best_global_model_file_name=PTConstants.BestModelFilename,
+            ),
+            id="persistor",
         )
         shareable_generator_id = job.to_server(FullModelShareableGenerator(), id="shareable_generator")
         aggregator_id = job.to_server(

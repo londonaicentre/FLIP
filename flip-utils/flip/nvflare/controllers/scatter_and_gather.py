@@ -10,6 +10,10 @@
 # limitations under the License.
 #
 
+import os
+import shutil
+import torch
+
 from nvflare.apis.client import Client
 from nvflare.apis.controller_spec import ClientTask
 from nvflare.apis.dxo import DXO, DataKind, from_shareable
@@ -30,7 +34,7 @@ from nvflare.security.logging import secure_format_exception
 from nvflare.widgets.info_collector import GroupInfoCollector, InfoCollector
 
 from flip import FLIP
-from flip.constants import FlipEvents
+from flip.constants import FlipConstants, FlipEvents, PTConstants
 from flip.nvflare.metrics import handle_metrics_event
 from flip.nvflare.runtime import get_flip_model_id
 
@@ -142,6 +146,11 @@ class ScatterAndGather(Controller):
         self._phase = AppConstants.PHASE_INIT
         self._global_weights: Learnable | None = None
         self._current_round: int | None = None
+
+        # best model tracking: track validation metrics to save best model
+        self._best_metric: float | None = None
+        self._best_round: int | None = None
+        self._round_metrics: dict[int, float] = {}
 
     def _resolve_model_id(self, fl_ctx: FLContext) -> str:
         if self._model_id is None:
@@ -264,6 +273,8 @@ class ScatterAndGather(Controller):
                     self.log_info(fl_ctx, "End persist model on server.")
 
                 self.fire_event(AppEventType.ROUND_DONE, fl_ctx)
+                # Save best model after round completes (metrics collected during training)
+                self._update_best_model(fl_ctx)
                 self.log_info(fl_ctx, f"Round {self._current_round} finished.")
                 self._current_round += 1
 
@@ -299,6 +310,7 @@ class ScatterAndGather(Controller):
                 return
 
             handle_metrics_event(event_data, self._current_round, self._resolve_model_id(fl_ctx), flip=self.flip)
+            self._track_validation_metric(event_data, fl_ctx)
 
     def _prepare_train_task_data(self, client_task: ClientTask, fl_ctx: FLContext) -> None:
         fl_ctx.set_prop(AppConstants.TRAIN_SHAREABLE, client_task.task.data, private=True, sticky=False)
@@ -395,6 +407,74 @@ class ScatterAndGather(Controller):
 
         return accepted
 
+    def _track_validation_metric(self, event_data, fl_ctx: FLContext) -> None:
+        """Track validation metrics for best-model selection.
+
+        Extracts the validation metric (e.g., VAL_DICE, TEST_DICE) from event data
+        and stores it for the current round. Only tracks VAL_DICE for model selection.
+        """
+        try:
+            # event_data is a Shareable, convert to DXO to extract metrics
+            dxo = from_shareable(event_data)
+            metrics_data = dxo.data
+
+            # Only track validation metrics (VAL_DICE used for best model selection)
+            if "label" in metrics_data and "value" in metrics_data:
+                label = metrics_data.get("label")
+                value = metrics_data.get("value")
+
+                if label == "VAL_DICE" and isinstance(value, (int, float)):
+                    # Store metric for this round
+                    if self._current_round is not None:
+                        self._round_metrics[self._current_round] = float(value)
+                        self.log_info(fl_ctx, f"Tracked VAL_DICE={value} for round {self._current_round}")
+        except Exception as e:
+            self.log_error(fl_ctx, f"Error tracking validation metric: {e}")
+
+    def _update_best_model(self, fl_ctx: FLContext) -> None:
+        """Save the current model as best model if it has the highest VAL_DICE score.
+
+        This is called after each round completes. Compares the current round's
+        VAL_DICE metric against the best seen so far and saves the model if it's better.
+        """
+        try:
+            if self._current_round is None or self.persistor is None:
+                return
+
+            # Get current round's VAL_DICE metric
+            current_val_dice = self._round_metrics.get(self._current_round)
+            if current_val_dice is None:
+                self.log_info(fl_ctx, f"No VAL_DICE metric for round {self._current_round}, cannot determine best model")
+                return
+
+            # Check if this is the best round so far
+            if self._best_metric is None or current_val_dice > self._best_metric:
+                self._best_metric = current_val_dice
+                self._best_round = self._current_round
+
+                # Get model location from persistor's model inventory (production-safe)
+                model_inventory = self.persistor.get_model_inventory(fl_ctx)
+                if PTConstants.PTFileModelName not in model_inventory:
+                    self.log_error(fl_ctx, "No model in inventory, cannot save best model")
+                    return
+
+                final_model_location = model_inventory[PTConstants.PTFileModelName].location
+                model_dir = os.path.dirname(final_model_location)
+                best_model_path = os.path.join(model_dir, PTConstants.BestModelFilename)
+
+                torch.save(self._global_weights, best_model_path)
+                self.log_info(
+                    fl_ctx,
+                    f"New best model saved for round {self._current_round} with VAL_DICE={current_val_dice} at {best_model_path}",
+                )
+            else:
+                self.log_info(
+                    fl_ctx,
+                    f"Round {self._current_round} VAL_DICE={current_val_dice} <= best={self._best_metric} (round {self._best_round}), keeping previous best",
+                )
+        except Exception as e:
+            self.log_error(fl_ctx, f"Error updating best model: {e}")
+
     def _check_abort_signal(self, fl_ctx, abort_signal: Signal):
         if abort_signal.triggered:
             self._phase = AppConstants.PHASE_FINISHED
@@ -409,6 +489,9 @@ class ScatterAndGather(Controller):
             "start_round": self._start_round,
             "num_rounds": self._num_rounds,
             "global_weights": self._global_weights,
+            "best_metric": self._best_metric,
+            "best_round": self._best_round,
+            "round_metrics": self._round_metrics,
         }
 
     def restore(self, state_data: dict, fl_ctx: FLContext):
@@ -417,5 +500,8 @@ class ScatterAndGather(Controller):
             self._start_round = state_data.get("start_round")
             self._num_rounds = state_data.get("num_rounds")
             self._global_weights = state_data.get("global_weights")
+            self._best_metric = state_data.get("best_metric")
+            self._best_round = state_data.get("best_round")
+            self._round_metrics = state_data.get("round_metrics", {})
         finally:
             pass

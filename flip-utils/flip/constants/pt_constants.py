@@ -22,6 +22,7 @@ class PTConstants:
     PTServerName = "server"
     PTModelName = "model.pt"
     PTFileModelName = "FL_global_model.pt"
+    BestModelFilename = "best_FL_global_model.pt"
     PTLocalModelName = "local_model.pt"
 
     # Directory for models (empty in dev mode for local paths)

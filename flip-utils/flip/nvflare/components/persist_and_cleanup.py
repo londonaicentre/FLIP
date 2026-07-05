@@ -135,6 +135,20 @@ class PersistToS3AndCleanup(FLComponent):
                 self.log_info(fl_ctx, f"Found global model: {fl_global_model_filepath}")
                 shutil.move(fl_global_model_filepath, run_dir)
 
+            # Move best model if it was saved during training by ScatterAndGather
+            fl_best_model_filepath = fl_global_model_filepath.replace(
+                PTConstants.PTFileModelName, PTConstants.BestModelFilename
+            )
+            if os.path.isfile(fl_best_model_filepath):
+                # Best model was saved during training by ScatterAndGather
+                self.log_info(fl_ctx, f"Found best model from training: {fl_best_model_filepath}")
+                shutil.move(fl_best_model_filepath, run_dir)
+            elif os.path.isfile(fl_global_model_filepath):
+                # Fallback: create best model from final model if no best model was saved during training
+                self.log_info(fl_ctx, f"Creating best model copy from final model: {fl_best_model_filepath}")
+                shutil.copy(fl_global_model_filepath, fl_best_model_filepath)
+                shutil.move(fl_best_model_filepath, run_dir)
+
             # For certain workflows (e.g., diffusion_model), also move trainer.py and validator.py
             trainer_path = os.path.join(app_server_path, "custom", "trainer.py")
             validator_path = os.path.join(app_server_path, "custom", "validator.py")
