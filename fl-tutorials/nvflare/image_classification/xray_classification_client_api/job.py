@@ -43,6 +43,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 from pathlib import Path
@@ -102,6 +103,16 @@ def main() -> None:
     project_id = os.environ.get("FLIP_PROJECT_ID", "")
     query = os.environ.get("FLIP_QUERY", "SELECT * FROM Table;")
 
+    # Read best model metric config from config.json if available
+    config_path = _APP_FILES_DIR / "config.json"
+    best_model_metric = None
+    best_model_metric_minimize = False
+    if config_path.exists():
+        with open(config_path) as f:
+            config = json.load(f)
+            best_model_metric = config.get("BEST_MODEL_METRIC")
+            best_model_metric_minimize = config.get("BEST_MODEL_METRIC_MINIMIZE", False)
+
     recipe = FlipFedAvgRecipe(
         num_rounds=args.num_rounds,
         min_clients=args.n_clients,
@@ -109,6 +120,8 @@ def main() -> None:
         train_args="--project_id {project_id}",
         project_id=project_id,
         query=query,
+        best_model_metric=best_model_metric,
+        best_model_metric_minimize=best_model_metric_minimize,
     )
 
     # Stage the user app files into the job's custom/ dirs *before* execute() — this is what makes the

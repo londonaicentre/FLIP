@@ -17,6 +17,10 @@
     "w_perceptual_loss": 1,
     "w_gan_loss": 0.1,
     "w_kl_loss": 1e-9,
+    "BEST_MODEL_METRIC_VAE": "Validation loss (L1)",
+    "BEST_MODEL_METRIC_VAE_MINIMIZE": true,
+    "BEST_MODEL_METRIC_DM": "Validation loss DM",
+    "BEST_MODEL_METRIC_DM_MINIMIZE": true,
     "spatial_shape": [128, 128, 32],
     "net_config": {
         "spatial_dims": 3,

@@ -6,6 +6,8 @@
   "VAL_SPLIT": 0.2,
   "TEST_SPLIT": 0.2,
   "BATCH_SIZE": 8,
+  "BEST_MODEL_METRIC": "VAL-F1-SCORE",
+  "BEST_MODEL_METRIC_MINIMIZE": false,
   "LESIONS": {
     "0": "Effusion",
     "1": "Edema",

@@ -113,6 +113,10 @@ class FlipFedAvgRecipe(Recipe):
         local_rounds: Top-level local_rounds key on the client config.
         train_task_name, submit_model_task_name, evaluate_task_name: NVFlare task names.
         params_exchange_format, params_transfer_type: NVFlare param-exchange knobs.
+        best_model_metric: Validation metric label for best-model selection (e.g., "VAL_DICE", "VAL_LOSS").
+            If None, tracks any validation metric (VAL_* or TEST_*).
+        best_model_metric_minimize: If True, lower metric values are better (e.g., for VAL_LOSS).
+            If False, higher values are better (e.g., for VAL_DICE). Defaults to False.
     """
 
     def __init__(
@@ -135,6 +139,8 @@ class FlipFedAvgRecipe(Recipe):
         evaluate_task_name: str = "validate",
         params_exchange_format: str = "numpy",
         params_transfer_type: str = "FULL",
+        best_model_metric: str | None = None,
+        best_model_metric_minimize: bool = False,
     ):
         self.num_rounds = num_rounds
         self.min_clients = min_clients
@@ -153,6 +159,8 @@ class FlipFedAvgRecipe(Recipe):
         self.evaluate_task_name = evaluate_task_name
         self.params_exchange_format = params_exchange_format
         self.params_transfer_type = params_transfer_type
+        self.best_model_metric = best_model_metric
+        self.best_model_metric_minimize = best_model_metric_minimize
 
         super().__init__(self._build_fed_job())
 
@@ -201,6 +209,8 @@ class FlipFedAvgRecipe(Recipe):
                 train_task_name=self.train_task_name,
                 train_timeout=0,
                 ignore_result_error=False,
+                best_model_metric=self.best_model_metric,
+                best_model_metric_minimize=self.best_model_metric_minimize,
             )
         )
         job.to_server(

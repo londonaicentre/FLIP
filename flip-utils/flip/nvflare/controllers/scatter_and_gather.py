@@ -11,9 +11,8 @@
 #
 
 import os
-import shutil
-import torch
 
+import torch
 from nvflare.apis.client import Client
 from nvflare.apis.controller_spec import ClientTask
 from nvflare.apis.dxo import DXO, DataKind, from_shareable
@@ -34,7 +33,7 @@ from nvflare.security.logging import secure_format_exception
 from nvflare.widgets.info_collector import GroupInfoCollector, InfoCollector
 
 from flip import FLIP
-from flip.constants import FlipConstants, FlipEvents, PTConstants
+from flip.constants import FlipEvents, PTConstants
 from flip.nvflare.metrics import handle_metrics_event
 from flip.nvflare.runtime import get_flip_model_id
 
@@ -64,6 +63,8 @@ class ScatterAndGather(Controller):
         fatal_error_delay: int = 5,
         task_check_period: float = 0.5,
         persist_every_n_rounds: int = 1,
+        best_model_metric: str | None = None,
+        best_model_metric_minimize: bool = False,
     ):
         """The controller for FederatedAveraging Workflow.
 
@@ -92,6 +93,12 @@ class ScatterAndGather(Controller):
             task_check_period (float, optional): interval for checking status of tasks. Defaults to 0.5.
             persist_every_n_rounds (int, optional): persist the global model every n rounds. Defaults to 0.
                 If n is 0 then no persist.
+            best_model_metric (str, optional): validation metric label to use for best-model selection (e.g.,
+                "VAL_DICE", "VAL_LOSS"). If None, tracks the first validation metric received (not recommended
+                for multi-metric scenarios). Defaults to None.
+            best_model_metric_minimize (bool, optional): whether lower metric values are better. True for metrics
+                like loss where lower is better (e.g., VAL_LOSS). False for metrics like Dice where higher is better
+                (e.g., VAL_DICE). Defaults to False.
 
         Raises:
             TypeError: when any of input arguments does not have correct type
@@ -131,6 +138,11 @@ class ScatterAndGather(Controller):
         self.aggregator = None
         self.persistor = None
         self.shareable_gen = None
+        self.best_model_metric = best_model_metric
+        self.best_model_metric_minimize = best_model_metric_minimize
+
+        # Track if we've warned about metric auto-detection
+        self._metric_warning_logged = False
 
         # config data
         self._min_clients = min_clients
@@ -410,46 +422,76 @@ class ScatterAndGather(Controller):
     def _track_validation_metric(self, event_data, fl_ctx: FLContext) -> None:
         """Track validation metrics for best-model selection.
 
-        Extracts the validation metric (e.g., VAL_DICE, TEST_DICE) from event data
-        and stores it for the current round. Only tracks VAL_DICE for model selection.
+        Extracts the validation metric from event data and stores it for the current round.
+        If best_model_metric is set, only tracks that metric; otherwise tracks the first
+        validation metric received (VAL_* or TEST_*).
         """
         try:
             # event_data is a Shareable, convert to DXO to extract metrics
             dxo = from_shareable(event_data)
             metrics_data = dxo.data
 
-            # Only track validation metrics (VAL_DICE used for best model selection)
             if "label" in metrics_data and "value" in metrics_data:
                 label = metrics_data.get("label")
                 value = metrics_data.get("value")
 
-                if label == "VAL_DICE" and isinstance(value, (int, float)):
-                    # Store metric for this round
+                # Check if this is a metric we should track
+                should_track = False
+                if self.best_model_metric:
+                    # Track only the specified metric
+                    should_track = label == self.best_model_metric
+                else:
+                    # Track any validation metric (VAL_* or TEST_*)
+                    should_track = label.startswith(("VAL_", "TEST_"))
+
+                if should_track and isinstance(value, (int, float)):
                     if self._current_round is not None:
+                        # Warn once if best_model_metric not specified
+                        if self.best_model_metric is None and not self._metric_warning_logged:
+                            self.log_warning(
+                                fl_ctx,
+                                f"best_model_metric not specified. Auto-detected first validation metric: "
+                                f"{label}. Set best_model_metric explicitly in config to control which metric "
+                                f"drives best-model selection.",
+                            )
+                            self._metric_warning_logged = True
+
                         self._round_metrics[self._current_round] = float(value)
-                        self.log_info(fl_ctx, f"Tracked VAL_DICE={value} for round {self._current_round}")
+                        self.log_info(fl_ctx, f"Tracked {label}={value} for round {self._current_round}")
         except Exception as e:
             self.log_error(fl_ctx, f"Error tracking validation metric: {e}")
 
     def _update_best_model(self, fl_ctx: FLContext) -> None:
-        """Save the current model as best model if it has the highest VAL_DICE score.
+        """Save the current model as best model if it has the best validation metric.
 
         This is called after each round completes. Compares the current round's
-        VAL_DICE metric against the best seen so far and saves the model if it's better.
+        validation metric against the best seen so far and saves the model if it's better.
+        Uses best_model_metric_minimize to determine optimization direction.
         """
         try:
             if self._current_round is None or self.persistor is None:
                 return
 
-            # Get current round's VAL_DICE metric
-            current_val_dice = self._round_metrics.get(self._current_round)
-            if current_val_dice is None:
-                self.log_info(fl_ctx, f"No VAL_DICE metric for round {self._current_round}, cannot determine best model")
+            # Get current round's validation metric
+            current_metric = self._round_metrics.get(self._current_round)
+            if current_metric is None:
+                metric_name = self.best_model_metric or "validation"
+                self.log_info(
+                    fl_ctx, f"No {metric_name} metric for round {self._current_round}, cannot determine best model"
+                )
                 return
 
             # Check if this is the best round so far
-            if self._best_metric is None or current_val_dice > self._best_metric:
-                self._best_metric = current_val_dice
+            is_better = False
+            if self._best_metric is None:
+                is_better = True
+            elif self.best_model_metric_minimize:
+                is_better = current_metric < self._best_metric
+            else:
+                is_better = current_metric > self._best_metric
+
+            if is_better:
+                self._best_metric = current_metric
                 self._best_round = self._current_round
 
                 # Get model location from persistor's model inventory (production-safe)
@@ -463,14 +505,18 @@ class ScatterAndGather(Controller):
                 best_model_path = os.path.join(model_dir, PTConstants.BestModelFilename)
 
                 torch.save(self._global_weights, best_model_path)
+                metric_label = self.best_model_metric or "validation"
                 self.log_info(
                     fl_ctx,
-                    f"New best model saved for round {self._current_round} with VAL_DICE={current_val_dice} at {best_model_path}",
+                    f"New best model saved for round {self._current_round} with "
+                    f"{metric_label}={current_metric} at {best_model_path}",
                 )
             else:
+                metric_label = self.best_model_metric or "validation"
                 self.log_info(
                     fl_ctx,
-                    f"Round {self._current_round} VAL_DICE={current_val_dice} <= best={self._best_metric} (round {self._best_round}), keeping previous best",
+                    f"Round {self._current_round} {metric_label}={current_metric} not better than "
+                    f"best={self._best_metric} (round {self._best_round}), keeping previous best",
                 )
         except Exception as e:
             self.log_error(fl_ctx, f"Error updating best model: {e}")
