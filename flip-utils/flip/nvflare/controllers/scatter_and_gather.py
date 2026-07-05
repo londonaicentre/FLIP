@@ -457,7 +457,6 @@ class ScatterAndGather(Controller):
                             self._metric_warning_logged = True
 
                         self._round_metrics[self._current_round] = float(value)
-                        self.log_info(fl_ctx, f"Tracked {label}={value} for round {self._current_round}")
         except Exception as e:
             self.log_error(fl_ctx, f"Error tracking validation metric: {e}")
 
@@ -475,10 +474,6 @@ class ScatterAndGather(Controller):
             # Get current round's validation metric
             current_metric = self._round_metrics.get(self._current_round)
             if current_metric is None:
-                metric_name = self.best_model_metric or "validation"
-                self.log_info(
-                    fl_ctx, f"No {metric_name} metric for round {self._current_round}, cannot determine best model"
-                )
                 return
 
             # Check if this is the best round so far
@@ -505,19 +500,6 @@ class ScatterAndGather(Controller):
                 best_model_path = os.path.join(model_dir, PTConstants.BestModelFilename)
 
                 torch.save(self._global_weights, best_model_path)
-                metric_label = self.best_model_metric or "validation"
-                self.log_info(
-                    fl_ctx,
-                    f"New best model saved for round {self._current_round} with "
-                    f"{metric_label}={current_metric} at {best_model_path}",
-                )
-            else:
-                metric_label = self.best_model_metric or "validation"
-                self.log_info(
-                    fl_ctx,
-                    f"Round {self._current_round} {metric_label}={current_metric} not better than "
-                    f"best={self._best_metric} (round {self._best_round}), keeping previous best",
-                )
         except Exception as e:
             self.log_error(fl_ctx, f"Error updating best model: {e}")
 
