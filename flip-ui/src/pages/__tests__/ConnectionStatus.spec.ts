@@ -264,6 +264,30 @@ describe("ConnectionStatus", () => {
         expect(row.classes()).toContain("dark:bg-dark-surface");
     });
 
+    it("renders the radial topology on the plain card surface with dark-visible labels", async () => {
+        mockSwrvData.value = fixture;
+        const wrapper = mountPage();
+        await wrapper.vm.$nextTick();
+        await wrapper.find("[data-test='view-toggle-radial']").trigger("click");
+
+        // The bespoke gradient panel (off-token blue-grey in dark mode) is gone —
+        // the topology sits directly on the card surface like every other card.
+        expect(wrapper.find(".connection-topology-card").exists()).toBe(false);
+
+        // SVG labels swap fills per mode instead of hard-coded light-mode hexes.
+        const svg = wrapper.find("[data-test='connection-radial-svg']");
+        const names = svg.findAll("text.fill-gray-700");
+        expect(names.length).toBeGreaterThan(0);
+        for (const name of names) {
+            expect(name.classes()).toContain("dark:fill-gray-100");
+        }
+        const counts = svg.findAll("text.fill-gray-500");
+        expect(counts.length).toBeGreaterThan(0);
+        for (const count of counts) {
+            expect(count.classes()).toContain("dark:fill-gray-300");
+        }
+    });
+
     it("toggles to the radial topology view when its tab is clicked", async () => {
         mockSwrvData.value = fixture;
         const wrapper = mountPage();

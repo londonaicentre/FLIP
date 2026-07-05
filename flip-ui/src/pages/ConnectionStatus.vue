@@ -230,7 +230,7 @@
             <!-- Radial view (ConnectionD) — design ref: design_handoff_full/05_connection/connection-2.jsx -->
             <div v-else class="grid grid-cols-1 lg:grid-cols-[1fr_360px] gap-4 items-stretch">
                 <AiCard
-                    class="relative overflow-hidden h-[560px] connection-topology-card"
+                    class="relative overflow-hidden h-[560px]"
                 >
                     <div class="absolute top-4 left-5 z-10">
                         <div class="text-[11px] font-mono uppercase tracking-widest text-gray-500 dark:text-gray-300">
@@ -293,7 +293,7 @@
                             :cy="radial.cy"
                             :r="radial.R * m"
                             fill="none"
-                            stroke="#e5e7eb"
+                            class="stroke-gray-200 dark:stroke-dark-border"
                             :stroke-width="i === 2 ? 1 : 0.6"
                             :stroke-dasharray="i === 2 ? 'none' : '2 4'"
                         />
@@ -410,7 +410,7 @@
                                     font-family="ui-monospace, monospace"
                                     font-size="11"
                                     font-weight="600"
-                                    fill="#374151"
+                                    class="fill-gray-700 dark:fill-gray-100"
                                     letter-spacing="0.04em"
                                 >
                                     {{ node.shortLabel }}
@@ -420,7 +420,7 @@
                                     :y="node.labelY + 14"
                                     :text-anchor="node.anchor"
                                     font-size="10"
-                                    fill="#6b7280"
+                                    class="fill-gray-500 dark:fill-gray-300"
                                 >
                                     {{ node.project_count }} {{ node.project_count === 1 ? "project" : "projects" }}
                                 </text>
@@ -887,12 +887,3 @@ const onKitModalClose = () => {
 };
 </script>
 
-<style scoped>
-.connection-topology-card {
-    background: radial-gradient(ellipse at center, #fff 0%, #f5f0f2 70%, #efe8ec 100%);
-}
-
-.dark .connection-topology-card {
-    background: radial-gradient(ellipse at center, #1f2937 0%, #111827 68%, #0f172a 100%);
-}
-</style>
