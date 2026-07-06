@@ -110,16 +110,16 @@
         post_reboot_delay: 30
       when: reboot_required_file.stat.exists
 
-- name: install docker, adding ubuntu to docker group
-  hosts: ec2
+- name: install Docker on Trust EC2, adding ubuntu to docker group
+  hosts: trust_ec2
   become: true
   roles:
     - geerlingguy.docker
   vars:
     docker_users: [ubuntu]
 
-- name: install AWS CLI v2 on EC2 instances (if missing)
-  hosts: ec2
+- name: install AWS CLI v2 on Trust EC2 (if missing)
+  hosts: trust_ec2
   become: true
   tasks:
     - name: install prerequisites for AWS CLI
@@ -152,6 +152,17 @@
     - name: install AWS CLI v2
       command: /tmp/aws/install
       when: awscli_check.rc != 0
+
+- name: install PostgreSQL client on Central Hub SSM bastion
+  hosts: central_hub
+  become: true
+  tags: [bastion]
+  tasks:
+    - name: install PostgreSQL client
+      apt:
+        name: postgresql-client
+        state: present
+        update_cache: yes
 
 - name: create Trust EC2 application directories
   hosts: trust_ec2
@@ -356,40 +367,6 @@
         owner: ubuntu
         group: ubuntu
         mode: "0644"
-
-- name: install and configure CloudWatch agent on Central Hub
-  hosts: central_hub
-  become: true
-  vars:
-    cloudwatch_agent_deb: "https://s3.amazonaws.com/amazoncloudwatch-agent/ubuntu/amd64/latest/amazon-cloudwatch-agent.deb"
-    log_group_name: "/aws/ec2/flip"
-  tasks:
-    - name: install prerequisites
-      apt:
-        name:
-          - unzip
-        state: present
-        update_cache: yes
-    - name: download CloudWatch agent package
-      get_url:
-        url: "{{ cloudwatch_agent_deb }}"
-        dest: "/tmp/amazon-cloudwatch-agent.deb"
-        mode: "0644"
-    - name: install CloudWatch agent
-      apt:
-        deb: "/tmp/amazon-cloudwatch-agent.deb"
-    - name: configure CloudWatch agent
-      template:
-        src: cloudwatch-agent.json.j2
-        dest: /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json
-        owner: root
-        group: root
-        mode: "0644"
-    - name: start CloudWatch agent
-      command: >
-        /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl
-        -a fetch-config -m ec2
-        -c file:/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json -s
 
 - name: install and configure CloudWatch agent on Trust EC2
   hosts: trust_ec2

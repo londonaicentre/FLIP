@@ -102,6 +102,19 @@ def check_makefile_dependency(target: str, dependency: str, description: str) ->
             return False
 
 
+def check_makefile_dependency_absent(target: str, dependency: str, description: str) -> bool:
+    """Check that a Make target does not have an obsolete dependency."""
+    with open("Makefile", "r") as f:
+        content = f.read()
+        pattern = rf"^{re.escape(target)}:\s+[^#]*\b{re.escape(dependency)}\b"
+        if not re.search(pattern, content, re.MULTILINE):
+            print(f"   ✅ Make dependency absent: {description}")
+            return True
+
+        print(f"   ❌ Obsolete Make dependency present: {description}")
+        return False
+
+
 def check_command_available(command: str, min_version: str | None = None) -> bool:
     """Check if a command is available in PATH."""
     result = subprocess.run(["which", command], capture_output=True, text=True, timeout=5)
@@ -160,8 +173,8 @@ def main() -> int:
     all_passed &= check_file_exists("check_status.py", "Status checker")
     all_passed &= check_python_syntax("check_status.py", "Status checker")
 
-    all_passed &= check_file_exists("test_update_ssm_ssh_config.py", "Unit tests")
-    all_passed &= check_python_syntax("test_update_ssm_ssh_config.py", "Unit tests")
+    all_passed &= check_file_exists("tests/test_update_ssm_ssh_config.py", "Unit tests")
+    all_passed &= check_python_syntax("tests/test_update_ssm_ssh_config.py", "Unit tests")
     print()
 
     # Check Terraform files
@@ -197,10 +210,10 @@ def main() -> int:
         "check-ssm-ready",
         "ssh-config depends on check-ssm-ready",
     )
-    all_passed &= check_makefile_dependency(
+    all_passed &= check_makefile_dependency_absent(
         "deploy-centralhub",
         "ssh-config",
-        "deploy-centralhub depends on ssh-config",
+        "deploy-centralhub does not depend on the SSM bastion",
     )
     all_passed &= check_makefile_dependency(
         "deploy-trust",
@@ -225,7 +238,7 @@ def main() -> int:
     if not uv_available:
         print("   ⚠️  Unit tests skipped (uv not installed)")
     else:
-        success, output = run_command(["uv", "run", "pytest", "test_update_ssm_ssh_config.py", "-q"])
+        success, output = run_command(["uv", "run", "pytest", "-c", "/dev/null", "tests", "-q"])
         if success:
             if "passed" in output:
                 print(f"   ✅ Unit tests passing: {output.strip()}")
