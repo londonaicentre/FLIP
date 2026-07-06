@@ -41,6 +41,7 @@
                         <div class="w-screen max-w-4xl">
                             <Form
                                 :validation-schema="schema"
+                                :initial-values="{ dicom_to_nifti: dicomToNifti ? 'true' : undefined }"
                                 class="flex flex-col h-full bg-white divide-y divide-gray-100 shadow-xl dark:bg-dark-surface dark:divide-dark-border dark:ring-1 dark:ring-white/20"
                                 @submit="updateProject"
                             >
@@ -99,6 +100,30 @@
                                                         disabled: !projectUnstaged,
                                                         readonly: !projectUnstaged
                                                     }"
+                                                />
+                                            </div>
+                                            <div>
+                                                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                                                    Convert DICOMs to NIfTI
+                                                </label>
+                                                <p class="text-xs text-gray-500 dark:text-gray-400 mb-1">
+                                                    Automatically convert DICOM scans to NIfTI format when images are imported from PACS into XNAT.
+                                                </p>
+                                                <p class="text-xs text-gray-500 dark:text-gray-400 mb-1">
+                                                    When enabled, NIfTI files can be requested using the ResourceType parameter.
+                                                </p>
+                                                <p class="text-xs text-gray-500 dark:text-gray-400 mb-1">
+                                                    Disable this if you will be working with DICOM files directly.
+                                                </p>
+                                                <p class="text-xs italic text-gray-400 dark:text-gray-500 mb-2">
+                                                    This option is set when the project is created and cannot be changed.
+                                                </p>
+                                                <AiSwitch
+                                                    name="dicom_to_nifti"
+                                                    value="true"
+                                                    :disabled="true"
+                                                    :label="{ enabled: 'Enabled', disabled: 'Disabled' }"
+                                                    data-test="dicom-to-nifti-toggle"
                                                 />
                                             </div>
                                         </div>
@@ -184,6 +209,7 @@ import AiAlert from "@/components/AiAlert/AiAlert.vue";
 import AiButton from "@/components/AiButton/AiButton.vue";
 import AiDialogOverlay from "@/components/AiDialogOverlay/AiDialogOverlay.vue";
 import AiConfirmModal from "@/components/AiModal/AiConfirmModal.vue";
+import AiSwitch from "@/components/AiSwitch/AiSwitch.vue";
 import router from "@/router";
 import { deleteProject, IProjectUser } from "@/services/project-service";
 import { useAuthStore } from "@/store/auth";
@@ -208,6 +234,9 @@ interface IEditProjectDrawerProps {
     updating: boolean;
     users: IProjectUser[];
     ownerId: string;
+    // Current DICOM-to-NIfTI setting, shown read-only. It's fixed at project
+    // creation and cannot be edited, so the toggle is always disabled.
+    dicomToNifti: boolean;
 }
 
 const schema = projectSchema;
@@ -231,8 +260,14 @@ const closeDrawer = () => {
 };
 
 const updateProject = (values: unknown) => {
+    // Only name/description are editable; users comes from the ProjectUsers
+    // child. dicom_to_nifti is intentionally excluded — it's read-only and
+    // immutable after creation (the edit endpoint ignores it regardless).
+    const { name, description } = values as IEditProject;
+
     emit("save", {
-        ...values as IEditProject,
+        name,
+        description,
         users: userList
     });
 };

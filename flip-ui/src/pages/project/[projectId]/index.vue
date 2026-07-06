@@ -128,6 +128,7 @@
             :users="project.users"
             :project-unstaged="isProjectUnstaged() && !isViewer"
             :description="project.description"
+            :dicom-to-nifti="project.dicom_to_nifti ?? true"
             :updating="projectUpdating"
             :owner-id="project.ownerId"
             @close="closeEditProjectDrawer"
