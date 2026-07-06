@@ -96,6 +96,7 @@ import { routeChange } from "@/router";
 import { useAuthStore } from "@/store/auth";
 import DeploymentIcon from "~icons/ph/download-duotone";
 import BannerIcon from "~icons/ph/flag-banner-duotone";
+import AccessRequestIcon from "~icons/ph/user-plus-duotone";
 import UsersIcon from "~icons/ph/users-three-duotone";
 
 const router = useRouter();
@@ -115,6 +116,12 @@ const subNavigation = computed(() => [
         icon: UsersIcon,
         current: router.currentRoute.value.fullPath === "/admin/users",
         href: "/admin/users"
+    },
+    {
+        name: "Access Requests",
+        icon: AccessRequestIcon,
+        current: router.currentRoute.value.fullPath === "/admin/access-requests",
+        href: "/admin/access-requests"
     },
     {
         name: "Banner",
