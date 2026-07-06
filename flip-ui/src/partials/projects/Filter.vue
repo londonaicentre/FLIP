@@ -17,7 +17,7 @@
         <div class="flex-1 min-w-0 text-sm">
             <label :for="uuid" class="font-bold cursor-pointer dark:text-gray-300">
                 {{ label }}
-                <p class="font-medium text-gray-500 dark:text-gray-300" :for="uuid">
+                <p class="font-medium text-gray-500 dark:text-gray-300">
                     {{ description }}
                 </p>
             </label>
