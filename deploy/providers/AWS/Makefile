@@ -104,8 +104,15 @@ export TF_VAR_MIN_CLIENTS=${MIN_CLIENTS}
 # Per-job GPU resource spec forwarded to fl-api on ECS (mirrors compose). Default
 # 0 in variables.tf; set JOB_RESOURCE_SPEC_NUM_GPUS/…_MEM_PER_GPU_IN_GIB in the
 # env file for GPU jobs (e.g. Ark+ eval: NUM_GPUS=1, MEM_PER_GPU_IN_GIB=7).
+# Export only when set: an unconditional export turns a missing env key into
+# TF_VAR_…="" and Terraform rejects the empty string for a number variable
+# instead of falling back to the variables.tf default.
+ifneq ($(JOB_RESOURCE_SPEC_NUM_GPUS),)
 export TF_VAR_JOB_RESOURCE_SPEC_NUM_GPUS=${JOB_RESOURCE_SPEC_NUM_GPUS}
+endif
+ifneq ($(JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB),)
 export TF_VAR_JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB=${JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB}
+endif
 # Pre-merge fl-apps repoint (empty = canonical base-application prefix). Set
 # FL_APP_BASE_BUCKET_OVERRIDE in the env file to a throwaway S3 root when
 # deploying a branch whose fl-apps templates are not yet merged to main.
