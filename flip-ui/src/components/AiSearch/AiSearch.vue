@@ -22,7 +22,7 @@
                 type="search"
                 :placeholder="placeholder"
                 :data-test="dataTest"
-                class="block w-full pl-10 text-sm transition duration-300 border-gray-300 dark:border-gray-700 dark:bg-gray-800 rounded-md shadow-sm focus:border-primary-500 dark:focus:ring-primary-400 dark:focus:border-primary-400 focus:ring-primary-500 focus:ring-1 dark:text-gray-300"
+                class="block w-full pl-10 text-sm transition duration-300 border-gray-300 dark:border-dark-border dark:bg-dark-surface rounded-md shadow-sm focus:border-primary-500 dark:focus:ring-primary-400 dark:focus:border-primary-400 focus:ring-primary-500 focus:ring-1 dark:text-gray-300"
                 @input="update"
             >
         </div>

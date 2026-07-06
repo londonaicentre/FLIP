@@ -13,7 +13,7 @@
 
 <!-- eslint-disable vue/multi-word-component-names -->
 <template>
-    <nav class="h-full border-collapse divide-y divide-gray-200 rounded-lg dark:divide-gray-700">
+    <nav class="h-full border-collapse divide-y divide-gray-200 rounded-lg dark:divide-dark-border">
         <transition
             enter-active-class="transition duration-700 ease-out"
             enter-from-class="transform opacity-0 -transform-x-100"
@@ -23,7 +23,7 @@
             leave-to-class="transform opacity-0 -transform-x-100"
         >
             <div v-if="true" class="flex flex-col w-64 h-full 2xl:w-96">
-                <div v-if="logs" class="w-64 overflow-y-auto text-sm bg-white dark:bg-gray-900 2xl:w-96">
+                <div v-if="logs" class="w-64 overflow-y-auto text-sm bg-white dark:bg-dark-canvas 2xl:w-96">
                     <div>
                         <nav class="">
                             <div class="flow-root">
@@ -37,7 +37,7 @@
                                         <div class="relative pb-3">
                                             <div
                                                 v-if="logIdx !== getOrderedLogs(logs).length - 1"
-                                                class="absolute top-4 left-2 -ml-px h-full w-0.5 bg-gray-200 dark:bg-gray-600"
+                                                class="absolute top-4 left-2 -ml-px h-full w-0.5 bg-gray-200 dark:bg-dark-raised"
                                                 aria-hidden="true"
                                             />
                                             <div class="relative flex items-start gap-2">

@@ -20,7 +20,7 @@
                         Cohort Query
                     </h2>
                     <div
-                        class="flex flex-col items-center justify-center w-full h-full gap-4 p-4 mt-4 border-2 border-gray-300 dark:border-gray-700 border-dashed rounded-lg"
+                        class="flex flex-col items-center justify-center w-full h-full gap-4 p-4 mt-4 border-2 border-gray-300 dark:border-dark-border border-dashed rounded-lg"
                     >
                         <div class="relative block w-full text-center">
                             <icon-ph-chart-bar-duotone class="w-12 h-12 mx-auto text-primary-500 dark:text-primary-400" />
@@ -45,7 +45,7 @@
                 </div>
                 <div class="flow-root">
                     <div>
-                        <dl class="border-t border-b border-gray-200 divide-y divide-gray-200 dark:divide-gray-700 dark:border-gray-700">
+                        <dl class="border-t border-b border-gray-200 divide-y divide-gray-200 dark:divide-dark-border dark:border-dark-border">
                             <div class="flex justify-between px-4 py-3 text-xs font-medium">
                                 <dt class="text-gray-500 dark:text-gray-300">
                                     Estimated Cohort Size

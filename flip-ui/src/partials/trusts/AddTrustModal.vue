@@ -37,7 +37,7 @@
                     leave-to="opacity-0 translate-y-4 sm:translate-y-0 sm:scale-95"
                 >
                     <div class="inline-flex flex-col w-full max-w-lg max-h-screen p-4 text-left align-middle rounded-lg">
-                        <div class="inline-flex flex-col w-full transition-all transform bg-white rounded-lg shadow-xl dark:bg-gray-800">
+                        <div class="inline-flex flex-col w-full transition-all transform bg-white rounded-lg shadow-xl dark:bg-dark-surface">
                             <DialogTitle
                                 as="h3"
                                 class="px-8 py-4 text-lg font-bold leading-6 text-left text-gray-700 dark:text-gray-300"
@@ -77,7 +77,7 @@
                                     placeholder="e.g. London"
                                 />
                             </div>
-                            <div class="px-4 py-3 bg-gray-100 rounded-b-lg dark:bg-gray-900 sm:px-6 sm:flex sm:flex-row-reverse sm:flex-shrink-0">
+                            <div class="px-4 py-3 bg-gray-100 rounded-b-lg dark:bg-dark-canvas sm:px-6 sm:flex sm:flex-row-reverse sm:flex-shrink-0">
                                 <AiButton
                                     data-test="confirm-create-trust-btn"
                                     primary
@@ -118,7 +118,7 @@ import { extractErrorDetail } from "@/utils/api-errors";
 import { Snackbar } from "@/utils/snackbar";
 
 interface IAddTrustModalProps {
-    dialog: boolean;
+    dialog?: boolean;
 }
 
 withDefaults(defineProps<IAddTrustModalProps>(), { dialog: false });
@@ -131,7 +131,9 @@ const emit = defineEmits<{
 const errorStore = useErrorStore();
 const isSubmitting = ref(false);
 
-const { resetForm, validate } = useForm<{ name: string; code: string; region: string }>({ validationSchema: addTrustSchema });
+const { resetForm, validate } = useForm<{ name: string; code: string; region: string }>(
+    { validationSchema: addTrustSchema }
+);
 const name = useField<string>("name");
 const code = useField<string>("code");
 const region = useField<string>("region");
