@@ -77,7 +77,7 @@ jobs:
           EOF
 
       - name: Record docs demo specs
-        uses: cypress-io/github-action@v6
+        uses: cypress-io/github-action@v7
         with:
           working-directory: flip-ui
           browser: chrome
@@ -91,7 +91,7 @@ jobs:
         run: bash scripts/videos-to-gifs.sh
 
       - name: Open PR with regenerated GIFs
-        uses: peter-evans/create-pull-request@v6
+        uses: peter-evans/create-pull-request@v8
         with:
           branch: bot/regenerate-docs-gifs
           base: develop
