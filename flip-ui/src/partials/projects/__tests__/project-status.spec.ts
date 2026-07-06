@@ -290,7 +290,10 @@ describe("ProjectStatus", () => {
 
             const wrapper = mountProjectStatus(true, 5, 1000);
 
-            expect(wrapper.find(ProjectStatusComponent.overviewRetrievalPercent).text()).toBe("99% of expected 1,000");
+            // The component formats the cohort size with toLocaleString() and no explicit
+            // locale, so derive the expected label the same way instead of hard-coding "1,000".
+            expect(wrapper.find(ProjectStatusComponent.overviewRetrievalPercent).text())
+                .toBe(`99% of expected ${(1000).toLocaleString()}`);
             expect(wrapper.find("[data-test=pct-retrieved-trust-floor]").text()).toBe("99%");
         });
     });
