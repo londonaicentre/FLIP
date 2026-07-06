@@ -452,10 +452,10 @@ def check_ecs_cluster() -> None:
 
 
 def check_vpc_endpoints() -> None:
-    """Verify essential VPC interface endpoints are AVAILABLE.
+    """Verify configured AWS VPC interface endpoints are AVAILABLE.
 
-    Detects: missing or broken endpoints that would block ECS Fargate tasks
-    from pulling images (ECR), reading secrets (Secrets Manager), or logging.
+    Detects broken endpoints that would block ECS Fargate tasks from reading
+    parameters or secrets, or from writing logs.
     """
     print_status("INFO", "Checking VPC endpoints...")
     success, output = run_aws_command([
@@ -478,19 +478,10 @@ def check_vpc_endpoints() -> None:
         print_status("WARN", "Could not parse VPC endpoint data")
         return
 
-    essential_prefixes = [
-        "com.amazonaws.",
-        ".ecr.dkr",
-        ".ecr.api",
-        ".ssm",
-        ".secretsmanager",
-        ".logs",
-    ]
     for ep in endpoints:
         name = ep.get("Name", "")
         state = ep.get("State", "?")
-        is_essential = any(p in name for p in essential_prefixes)
-        if is_essential:
+        if name.startswith("com.amazonaws."):
             if state == "available":
                 print_status("PASS", f"VPC endpoint {name.split('.')[-1]} is {state}")
             else:
