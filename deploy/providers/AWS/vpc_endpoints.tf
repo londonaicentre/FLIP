@@ -12,14 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# VPC endpoints let Fargate tasks pull images, read SSM parameters, fetch
-# secrets, and write logs without traversing the NAT gateway. Required because
-# Fargate tasks in private subnets need outbound access to AWS APIs at task
-# launch — without these, image pulls and secret reads silently hang.
+# VPC endpoints let Fargate tasks read SSM parameters, fetch secrets, and write
+# logs without traversing the NAT gateway. Container images are hosted on GHCR,
+# and the EFS-provisioning image is hosted on Docker Hub; both are fetched
+# through the NAT gateway, so private ECR endpoints are not used.
 #
-# Gated behind enable_ecs_endpoints: creating 5 interface endpoints costs
-# ~$73/month in idle ENI hourly charges. Until PR 2 deploys ECS services
-# that consume them, existing EC2 traffic uses the NAT gateway just fine.
+# Gated behind enable_ecs_endpoints because each interface endpoint incurs an
+# hourly charge for an ENI in every configured availability zone.
 # The S3 gateway endpoint is always created (no hourly charge).
 
 ############################
@@ -79,8 +78,6 @@ locals {
     "secretsmanager",
     "ssm",
     "logs",
-    "ecr.api",
-    "ecr.dkr",
   ])
 }
 

@@ -13,16 +13,26 @@
 
 <template>
     <div
-        class="flex flex-col flex-grow h-full pb-4 overflow-x-hidden overflow-y-auto bg-white dark:bg-gray-900 border-r border-gray-200 dark:border-gray-700"
+        class="flex flex-col flex-grow h-full pb-4 overflow-x-hidden overflow-y-auto bg-white dark:bg-dark-canvas border-r border-gray-200 dark:border-dark-border"
     >
         <div class="h-[80px] flex items-center justify-center">
             <router-link to="/">
-                <logo v-if="!isDark" class="h-[50px] w-auto mx-auto" />
-                <logoDark v-else class="h-[50px] w-auto mx-auto" />
+                <img
+                    v-if="!isDark"
+                    src="/images/aicentre-logo-transparent.webp"
+                    alt="AI Centre for Value Based Healthcare"
+                    class="h-[50px] w-auto mx-auto"
+                >
+                <img
+                    v-else
+                    src="/images/aicentre-logo-transparent-dark.webp"
+                    alt="AI Centre for Value Based Healthcare"
+                    class="h-[50px] w-auto mx-auto"
+                >
             </router-link>
         </div>
         <div class="flex flex-col flex-grow mt-4">
-            <nav class="flex-1 pr-3 space-y-1.5 bg-white dark:bg-gray-900" aria-label="Sidebar">
+            <nav class="flex-1 pr-3 space-y-1.5 bg-white dark:bg-dark-canvas" aria-label="Sidebar">
                 <router-link
                     v-for="item in navigation"
                     :key="item.name"
@@ -41,7 +51,7 @@
             </nav>
         </div>
         <div class="hidden px-8 py-2 xl:block">
-            <img :src="NhsLogo" position="center" class="rounded dark:ring-blue-600 dark:ring-4 dark:ring-offset-4 dark:ring-offset-gray-900">
+            <img :src="NhsLogo" position="center" class="rounded dark:ring-blue-600 dark:ring-4 dark:ring-offset-4 dark:ring-offset-dark-canvas">
         </div>
     </div>
 </template>
@@ -49,9 +59,7 @@
 <script setup lang="ts">
 import { directive as vTippy } from "vue-tippy";
 
-import NhsLogo from "/images/nhs-logo.png";
-import logo from "@/assets/logo.svg?component";
-import logoDark from "@/assets/logo_dark.svg?component";
+import NhsLogo from "/images/nhs-logo.webp";
 import useNavigation from "@/composables/navigation";
 
 export interface IMainNavigationProps {

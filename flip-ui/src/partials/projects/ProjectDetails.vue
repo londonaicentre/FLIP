@@ -12,13 +12,13 @@
 -->
 
 <template>
-    <AiCard v-if="projectStore.project" class="dark:bg-gray-900">
+    <AiCard v-if="projectStore.project" class="dark:bg-dark-canvas">
         <div class="p-4">
             <h2 class="text-lg font-semibold font-heading grow leading-loose">
                 Project Details
             </h2>
         </div>
-        <div class="px-4 py-3 border-t border-gray-200 dark:border-gray-700 sm:p-0">
+        <div class="px-4 py-3 border-t border-gray-200 dark:border-dark-border sm:p-0">
             <dl class="sm:divide-y sm:divide-gray-200 dark:sm:divide-gray-700">
                 <div class="py-3 sm:px-4 sm:grid sm:grid-cols-3 sm:gap-4">
                     <dt class="text-sm font-medium text-gray-500 dark:text-gray-300">

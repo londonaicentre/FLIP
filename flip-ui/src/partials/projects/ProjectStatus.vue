@@ -39,7 +39,7 @@
                 </div>
 
                 <div v-else class="space-y-4">
-                    <div class="grid grid-cols-5 overflow-hidden border-t border-b border-gray-200 divide-x divide-gray-200 dark:border-gray-700 dark:divide-gray-700">
+                    <div class="grid grid-cols-5 overflow-hidden border-t border-b border-gray-200 divide-x divide-gray-200 dark:border-dark-border dark:divide-dark-border">
                         <div class="min-w-0 p-2.5">
                             <p class="font-mono text-[10px] uppercase tracking-wide leading-tight text-gray-500 dark:text-gray-400 break-words">
                                 Trusts onboarded
@@ -102,13 +102,13 @@
                         </div>
                     </div>
 
-                    <div class="w-full border-t border-gray-200 dark:border-gray-700">
+                    <div class="w-full border-t border-gray-200 dark:border-dark-border">
                         <div class="w-full">
                             <ul role="list" class="grid grid-cols-1 gap-3 p-3 xl:grid-cols-2">
                                 <li
                                     v-for="project in sortedData"
                                     :key="project.trustId"
-                                    class="relative p-4 border border-gray-200 rounded-lg dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800"
+                                    class="relative p-4 border border-gray-200 rounded-lg dark:border-dark-border hover:bg-gray-50 dark:hover:bg-dark-surface"
                                 >
                                     <div class="flex flex-col gap-3">
                                         <!-- Top row: trust name + reimport count -->
@@ -162,7 +162,7 @@
                                                         : `${project.importStatus?.successful ?? 0} / ${rowTotal(project)}` }}
                                                 </span>
                                             </div>
-                                            <div class="flex h-2 rounded-full overflow-hidden bg-gray-100 dark:bg-gray-700">
+                                            <div class="flex h-2 rounded-full overflow-hidden bg-gray-100 dark:bg-dark-raised">
                                                 <template v-if="rowTotal(project) > 0">
                                                     <div
                                                         v-if="(project.importStatus?.successful ?? 0) > 0"
@@ -223,7 +223,7 @@
                                         </div>
                                         <!-- Footer: project creation state (design ref:
                                              06_imaging_status IPSCreationState) -->
-                                        <div class="flex items-center px-3 py-2 mt-1 -mx-4 -mb-4 border-t border-gray-100 bg-gray-50 dark:border-gray-700 dark:bg-gray-800/60">
+                                        <div class="flex items-center px-3 py-2 mt-1 -mx-4 -mb-4 border-t border-gray-100 bg-gray-50 dark:border-dark-border dark:bg-dark-surface/60">
                                             <span
                                                 v-if="project.projectCreationCompleted"
                                                 class="inline-flex items-center gap-2 text-xs text-gray-600 dark:text-gray-300"
@@ -283,7 +283,7 @@
                                 </div>
                             </div>
 
-                            <div class="w-2/5 space-y-4 bg-gray-200 dark:bg-gray-700" />
+                            <div class="w-2/5 space-y-4 bg-gray-200 dark:bg-dark-raised" />
                         </div>
                     </div>
                 </div>

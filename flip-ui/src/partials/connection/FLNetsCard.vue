@@ -51,9 +51,9 @@
                     >
                         <div v-if="offlineClients(net.clients)" class="absolute inset-0.5 dark:inset-2 bg-gradient-to-bl from-red-500 dark:from-red-500 dark:to-red-500 to-red-800 blur-md opacity-25 dark:opacity-80" />
                         <div
-                            class="relative w-full overflow-hidden border border-gray-300 rounded-lg shadow bg-gray-50 dark:bg-gray-800 dark:border-gray-700"
+                            class="relative w-full overflow-hidden border border-gray-300 rounded-lg shadow bg-gray-50 dark:bg-dark-surface dark:border-dark-border"
                         >
-                            <div class="px-4 py-2 bg-white border-b border-gray-200 dark:border-gray-700 dark:bg-gray-900">
+                            <div class="px-4 py-2 bg-white border-b border-gray-200 dark:border-dark-border dark:bg-dark-canvas">
                                 <div class="flex flex-wrap items-center justify-between -mt-2 -ml-4 sm:flex-nowrap">
                                     <div class="mt-2 ml-4">
                                         <h3 class="text-lg font-medium leading-6 text-gray-900 uppercase dark:text-gray-300">
@@ -69,7 +69,7 @@
                             </div>
                             <ul
                                 role="list"
-                                class="h-full border-t border-gray-200 divide-y divide-gray-200 dark:border-gray-700 dark:divide-gray-700"
+                                class="h-full border-t border-gray-200 divide-y divide-gray-200 dark:border-dark-border dark:divide-dark-border"
                             >
                                 <li
                                     v-for="(client, idx) in sortedClients(net.clients)"
@@ -77,7 +77,7 @@
                                     :data-test="`project-list-item-${idx}`"
                                 >
                                     <span
-                                        class="block px-4 py-3 hover:bg-gray-100 dark:hover:bg-gray-900 sm:px-6 group"
+                                        class="block px-4 py-3 hover:bg-gray-100 dark:hover:bg-dark-canvas sm:px-6 group"
                                         data-test="view-project-btn"
                                     >
                                         <span class="flex flex-row items-center gap-4 ">

@@ -26,7 +26,7 @@
             </div>
             <div v-if="projectStore.project?.status === 'APPROVED' && !!data && !data?.data?.length">
                 <div
-                    class="flex flex-col items-center justify-center w-full h-full gap-4 p-4 mt-4 border-2 border-gray-100 dark:border-gray-700 rounded-lg"
+                    class="flex flex-col items-center justify-center w-full h-full gap-4 p-4 mt-4 border-2 border-gray-100 dark:border-dark-border rounded-lg"
                 >
                     <div class="relative block w-full text-center">
                         <icon-carbon-machine-learning-model class="w-12 h-12 mx-auto text-gray-400 dark:text-gray-600" />
@@ -44,7 +44,7 @@
             <div v-if="!data" class="py-12">
                 <AiLoader />
             </div>
-            <ul v-if="data?.data?.length" role="list" class="border-t border-b border-gray-200 divide-y divide-gray-200 dark:border-gray-700 dark:divide-gray-700">
+            <ul v-if="data?.data?.length" role="list" class="border-t border-b border-gray-200 divide-y divide-gray-200 dark:border-dark-border dark:divide-dark-border">
                 <li v-for="model in data.data" :key="model.id">
                     <router-link
                         v-slot="{ navigate }"
@@ -52,7 +52,7 @@
                         :to="`/project/${route.params['projectId']}/model/${model.id}`"
                     >
                         <div
-                            class="flex transition items-center cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 px-4 py-2 gap-2 group"
+                            class="flex transition items-center cursor-pointer hover:bg-gray-50 dark:hover:bg-dark-surface px-4 py-2 gap-2 group"
                             @click="navigate"
                         >
                             <div class="flex flex-col gap-0.5 w-full text-xs min-w-0">

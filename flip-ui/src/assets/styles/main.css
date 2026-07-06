@@ -16,57 +16,68 @@
 @tailwind components;
 @tailwind utilities;
 
+/* font-display: swap — render fallback text immediately, swap in the web font
+   when it loads, so a slow font never blocks first paint (Lighthouse #586). */
 @font-face {
     font-family: 'JetBrainsMono';
     font-weight: 400 500;
+    font-display: swap;
     src: local('JetBrainsMono'), url(../fonts/JetBrainsMono/JetBrainsMono-Regular.woff2) format('woff2');
 }
 
 @font-face {
     font-family: 'JetBrainsMono';
     font-weight: 600 700;
+    font-display: swap;
     src: local('JetBrainsMono'), url(../fonts/JetBrainsMono/JetBrainsMono-SemiBold.woff2) format('woff2');
 }
 
 @font-face {
     font-family: 'JetBrainsMono';
     font-weight: 800 900;
+    font-display: swap;
     src: local('JetBrainsMono'), url(../fonts/JetBrainsMono/JetBrainsMono-ExtraBold.woff2) format('woff2');
 }
 
 @font-face {
     font-family: 'Inter';
     font-weight: 400 500;
+    font-display: swap;
     src: local('Inter'), url(../fonts/Inter/Inter-Medium.woff2) format('woff2');
 }
 
 @font-face {
     font-family: 'Inter';
     font-weight: 600 700;
+    font-display: swap;
     src: local('Inter'), url(../fonts/Inter/Inter-SemiBold.woff2) format('woff2');
 }
 
 @font-face {
     font-family: 'Inter';
     font-weight: 800 900;
+    font-display: swap;
     src: local('Inter'), url(../fonts/Inter/Inter-ExtraBold.woff2) format('woff2');
 }
 
 @font-face {
     font-family: 'Bai Jamjuree';
     font-weight: 400 500;
+    font-display: swap;
     src: local('Bai Jamjuree'), url(../fonts/BaiJamjuree/BaiJamjuree-Medium.ttf) format('truetype');
 }
 
 @font-face {
     font-family: 'Bai Jamjuree';
     font-weight: 600 700;
+    font-display: swap;
     src: local('Bai Jamjuree'), url(../fonts/BaiJamjuree/BaiJamjuree-SemiBold.ttf) format('truetype');
 }
 
 @font-face {
     font-family: 'Bai Jamjuree';
     font-weight: 800 900;
+    font-display: swap;
     src: local('Bai Jamjuree'), url(../fonts/BaiJamjuree/BaiJamjuree-Bold.ttf) format('truetype');
 }
 
