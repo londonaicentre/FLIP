@@ -163,6 +163,37 @@ class TestEvaluationModelLocator:
 
     @patch("flip.nvflare.components.pt_model_locator.FlipConstants")
     @patch("flip.nvflare.components.pt_model_locator.torch")
+    def test_staged_fallback_missing_everywhere_logs_error_and_skips(self, mock_torch, mock_constants):
+        """model_id resolves but the checkpoint is neither bundled nor staged → the error names both
+        candidate paths and the model is skipped (no crash)."""
+        from nvflare.apis.fl_constant import FLContextKey
+
+        model_id = "0a1b2c3d-1111-2222-3333-444455556666"
+        config = {"models": {"arkplus": {"checkpoint": "model.pt", "path": "swin"}}}
+        mock_torch.cuda.is_available.return_value = False
+        mock_constants.LOCAL_DEV = False
+
+        with tempfile.TemporaryDirectory() as tmpdir, tempfile.TemporaryDirectory() as shared_root:
+            mock_constants.SERVER_CHECKPOINT_ROOT = shared_root
+            _write_config(tmpdir, config)  # no model.pt in custom/ and nothing staged on the volume
+            fl_ctx = _fl_ctx_for(tmpdir)
+            fl_ctx.get_prop = MagicMock(
+                side_effect=lambda key, default=None: (
+                    {"custom_props": {"model_id": model_id}} if key == FLContextKey.JOB_META else default
+                )
+            )
+
+            locator = EvaluationModelLocator()
+            locator.log_error = MagicMock()
+            names = locator.get_model_names(fl_ctx)
+
+        assert names == []
+        mock_torch.load.assert_not_called()
+        locator.log_error.assert_called_once()
+        assert "Tried bundled path" in str(locator.log_error.call_args)
+
+    @patch("flip.nvflare.components.pt_model_locator.FlipConstants")
+    @patch("flip.nvflare.components.pt_model_locator.torch")
     def test_staged_fallback_without_model_id_logs_error(self, mock_torch, mock_constants):
         """No bundled checkpoint and no resolvable model_id → error logged, model skipped (no crash)."""
         config = {"models": {"arkplus": {"checkpoint": "model.pt", "path": "swin"}}}

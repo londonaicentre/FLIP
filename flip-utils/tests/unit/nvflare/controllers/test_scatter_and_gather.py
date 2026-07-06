@@ -134,6 +134,26 @@ class TestAcceptTrainResult:
         controller.log_error.assert_called_once()
         assert "not of type WEIGHT_DIFF" in controller.log_error.call_args[0][1]
 
+    def test_reconstruction_error_passes_original_result_through_and_logs(self):
+        # Corrupt global weights (no "weights" entry) → the reconstruction raises; the original
+        # WEIGHT_DIFF result must be passed through unchanged so the base class applies its own
+        # handling, with the failure logged rather than swallowed.
+        controller = self._controller()
+        controller._current_round = 5
+        controller._global_weights = {}
+
+        result = DXO(data_kind=DataKind.WEIGHT_DIFF, data={"w1": 0.1}).to_shareable()
+        result.add_cookie(AppConstants.CONTRIBUTION_ROUND, 5)
+
+        accepted = controller._accept_train_result(client_name="site-1", result=result, fl_ctx=_ctx())
+
+        assert accepted is True
+        controller.log_error.assert_called_once()
+        assert "Error while adding client WEIGHT_DIFF" in controller.log_error.call_args[0][1]
+        sent_dxo = from_shareable(controller.aggregator.accept.call_args[0][0])
+        assert sent_dxo.data_kind == DataKind.WEIGHT_DIFF  # not converted
+        assert sent_dxo.data == {"w1": 0.1}
+
     def test_keeps_weight_diff_for_fedopt_aggregator(self):
         class _FedOptAggregatorStub(PTFedOptModelShareableGenerator):
             def __init__(self):

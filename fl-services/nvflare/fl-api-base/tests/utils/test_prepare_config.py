@@ -226,6 +226,26 @@ class TestConfigureClient:
         assert filters[0]["args"]["include_vars"] == "omni_heads"
         assert filters[1]["id"] == "percentile_privacy"
 
+    def test_configure_client_keep_only_vars_creates_train_block_when_absent(
+        self, mock_isfile, mock_write_config, mock_read_config
+    ):
+        """A client config with no train task_result_filters block gets one created carrying
+        KeepOnlyVars (apps without a PercentilePrivacy filter still get the head-only shrink)."""
+        mock_read_config.return_value = {}
+
+        configure_client(
+            job_dir=MOCK_JOB_APP_DIR,
+            app_name=MOCK_APP_NAME,
+            project_id=MOCK_PROJECT_ID,
+            cohort_query=MOCK_COHORT_QUERY,
+            aggregate_only_regex="omni_heads",
+        )
+
+        modified_config = mock_write_config.call_args[0][0]
+        train_block = next(b for b in modified_config["task_result_filters"] if "train" in b["tasks"])
+        assert train_block["filters"][0]["path"] == "flip.nvflare.components.KeepOnlyVars"
+        assert train_block["filters"][0]["args"]["include_vars"] == "omni_heads"
+
     def test_configure_client_no_regex_leaves_filters_untouched(self, mock_isfile, mock_write_config, mock_read_config):
         """No aggregate_only_regex → no KeepOnlyVars injected (unchanged for every normal job)."""
         mock_read_config.return_value = {"task_result_filters": [{"tasks": ["train"], "filters": []}]}
@@ -260,6 +280,30 @@ class TestConfigureClient:
         modified_config = mock_write_config.call_args[0][0]
         train_block = next(b for b in modified_config["task_data_filters"] if "train" in b["tasks"])
         assert train_block["filters"][0]["path"] == "flip.nvflare.components.ReconstructFullModel"
+
+    def test_configure_client_reconstruct_filter_prepended_before_existing_data_filter(
+        self, mock_isfile, mock_write_config, mock_read_config
+    ):
+        """An existing train task_data_filters block keeps its filters; ReconstructFullModel is
+        prepended so the full model is rebuilt before any other incoming data filter runs."""
+        mock_read_config.return_value = {
+            "task_data_filters": [
+                {"tasks": ["train"], "filters": [{"id": "existing", "path": "some.Filter"}]}
+            ]
+        }
+
+        configure_client(
+            job_dir=MOCK_JOB_APP_DIR,
+            app_name=MOCK_APP_NAME,
+            project_id=MOCK_PROJECT_ID,
+            cohort_query=MOCK_COHORT_QUERY,
+            aggregate_only_regex="omni_heads",
+        )
+
+        modified_config = mock_write_config.call_args[0][0]
+        train_block = next(b for b in modified_config["task_data_filters"] if "train" in b["tasks"])
+        assert train_block["filters"][0]["path"] == "flip.nvflare.components.ReconstructFullModel"
+        assert train_block["filters"][1]["id"] == "existing"
 
     def test_configure_client_no_regex_leaves_data_filters_untouched(
         self, mock_isfile, mock_write_config, mock_read_config
@@ -369,6 +413,32 @@ class TestConfigureServer:
         trim_filter = train_block["filters"][-1]
         assert trim_filter["path"] == "flip.nvflare.components.TrimBroadcastVars"
         assert trim_filter["args"]["include_vars"] == "omni_heads"
+
+    def test_configure_server_trim_filter_appended_to_existing_train_block(
+        self, mock_isfile, mock_read_config, mock_write_config
+    ):
+        """An existing train task_data_filters block keeps its filters; TrimBroadcastVars is
+        appended so it runs after any other outgoing data filter."""
+        config = self._minimal_server_config()
+        config["task_data_filters"] = [{"tasks": ["train"], "filters": [{"id": "existing", "path": "some.Filter"}]}]
+        mock_read_config.return_value = config
+
+        configure_server(
+            job_dir=MOCK_JOB_APP_DIR,
+            app_name=MOCK_APP_NAME,
+            global_rounds=3,
+            trusts=MOCK_APP_CLIENTS,
+            ignore_result_error=True,
+            aggregator="agg",
+            aggregation_weights=MOCK_AGGREGATION_WEIGHTS,
+            aggregate_only_regex="omni_heads",
+        )
+
+        modified_config = mock_write_config.call_args[0][0]
+        train_block = next(b for b in modified_config["task_data_filters"] if "train" in b["tasks"])
+        assert train_block["filters"][0]["id"] == "existing"
+        assert train_block["filters"][-1]["path"] == "flip.nvflare.components.TrimBroadcastVars"
+        assert train_block["filters"][-1]["args"]["include_vars"] == "omni_heads"
 
     def test_configure_server_no_regex_leaves_data_filters_untouched(
         self, mock_isfile, mock_read_config, mock_write_config

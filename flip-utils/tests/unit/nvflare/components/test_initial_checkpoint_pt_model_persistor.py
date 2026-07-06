@@ -14,6 +14,8 @@ import os
 import tempfile
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from flip.nvflare.components.pt_model_persistor import InitialCheckpointPTModelPersistor
 
 
@@ -48,6 +50,62 @@ def _write_config(app_dir: str, config: dict):
 
 
 class TestInitialCheckpointPTModelPersistor:
+    def test_init_stores_model_id_and_passes_stock_kwargs_through(self):
+        """__init__ is a thin pass-through: model_id is kept for the shared-volume fallback and the
+        stock PTFileModelPersistor kwargs reach the base class untouched."""
+        p = InitialCheckpointPTModelPersistor(model_id="model-abc", global_model_file_name="g.pt")
+        assert p._model_id_arg == "model-abc"
+        assert p.model is None
+        assert p.global_model_file_name == "g.pt"
+
+    @pytest.mark.parametrize("bad_config", ["absent", "malformed"])
+    def test_unreadable_config_json_is_stock_behaviour(self, bad_config):
+        """custom/config.json missing or malformed → no backbone resolution; delegates straight to
+        the stock persistor (safe for jobs that carry no config at all)."""
+        with tempfile.TemporaryDirectory() as tmp:
+            if bad_config == "malformed":
+                custom = os.path.join(tmp, "custom")
+                os.makedirs(custom)
+                with open(os.path.join(custom, "config.json"), "w") as f:
+                    f.write("{not json")
+
+            p = _persistor_with_module()
+            fl_ctx = _fl_ctx(tmp)
+
+            with (
+                patch("flip.nvflare.components.pt_model_persistor.torch.load") as mock_load,
+                patch(
+                    "nvflare.app_opt.pt.file_model_persistor.PTFileModelPersistor.load_model", return_value="STOCK"
+                ) as mock_super,
+            ):
+                result = p.load_model(fl_ctx)
+
+            assert result == "STOCK"
+            mock_load.assert_not_called()
+            p.model.load_state_dict.assert_not_called()
+            mock_super.assert_called_once()
+
+    @patch("flip.nvflare.components.pt_model_persistor.FlipConstants")
+    def test_declared_but_missing_in_local_dev_logs_error_and_delegates(self, mock_constants):
+        """LOCAL_DEV: declared but not bundled → error mentions the skipped shared-volume fetch,
+        no load, still delegates to stock (which will use the bare model weights)."""
+        mock_constants.LOCAL_DEV = True
+        with tempfile.TemporaryDirectory() as tmp:
+            _write_config(tmp, {"SERVER_CHECKPOINT": "backbone.pt"})  # not bundled
+
+            p = _persistor_with_module()
+            fl_ctx = _fl_ctx(tmp)
+
+            with (
+                patch("flip.nvflare.components.pt_model_persistor.torch.load") as mock_load,
+                patch("nvflare.app_opt.pt.file_model_persistor.PTFileModelPersistor.load_model", return_value="L"),
+            ):
+                p.load_model(fl_ctx)
+
+            mock_load.assert_not_called()
+            p.log_error.assert_called_once()
+            assert "LOCAL_DEV" in str(p.log_error.call_args)
+
     def test_loads_bundled_backbone_into_model(self):
         """SERVER_CHECKPOINT present in custom/ → backbone loaded (strict=False) into the model,
         then the stock load path captures self.model.state_dict()."""

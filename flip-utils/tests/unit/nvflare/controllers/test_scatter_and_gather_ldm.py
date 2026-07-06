@@ -237,6 +237,38 @@ class TestScatterAndGatherLDM:
         controller.system_panic.assert_called_once()
         assert "ModelLocator" in str(controller.system_panic.call_args)
 
+    def test_control_flow_runs_round_and_cleans_memory(self):
+        """One AE round end-to-end (components mocked): broadcasts the train task, aggregates,
+        persists, and calls the inherited per-round _maybe_cleanup_memory so server RSS does not
+        climb across rounds on large-model jobs."""
+        controller = ScatterAndGatherLDM(
+            model_id=_VALID_MODEL_ID, num_rounds_ae=1, num_rounds_dm=0, train_task_name="train_ae"
+        )
+        controller.log_info = MagicMock()
+        controller.fire_event = MagicMock()
+        controller.system_panic = MagicMock()
+        controller.broadcast_and_wait = MagicMock()
+        controller._maybe_cleanup_memory = MagicMock()
+        controller.aggregator = MagicMock(spec=Aggregator)
+        controller.persistor = MagicMock(spec=LearnablePersistor)
+        controller.shareable_gen = MagicMock(spec=ShareableGenerator)
+        controller.shareable_gen.learnable_to_shareable.return_value = Shareable()
+        controller._global_weights = {"weights": {"w1": 1.0}}
+
+        fl_ctx = MagicMock()
+        fl_ctx.get_peer_context.return_value = None
+        abort_signal = MagicMock()
+        abort_signal.triggered = False
+
+        controller.control_flow(abort_signal, fl_ctx)
+
+        controller.system_panic.assert_not_called()
+        controller.broadcast_and_wait.assert_called_once()
+        assert controller.broadcast_and_wait.call_args.kwargs["task"].name == "train_ae"
+        controller.persistor.save.assert_called_once()
+        controller._maybe_cleanup_memory.assert_called_once()
+        assert controller._phase == AppConstants.PHASE_FINISHED
+
     def test_stop_controller(self):
         model_id = "123e4567-e89b-12d3-a456-426614174000"
         controller = ScatterAndGatherLDM(model_id=model_id)

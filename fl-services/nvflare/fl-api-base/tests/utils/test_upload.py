@@ -216,6 +216,50 @@ def test_upload_stages_server_checkpoint_off_job(mock_requests_get_success, tmp_
     assert not list((job_root / TEST_MODEL_ID).rglob("weights.pt"))
 
 
+@patch("fl_api.utils.upload.configure_environment", MagicMock())
+@patch("fl_api.utils.upload.configure_meta", MagicMock())
+@patch("fl_api.utils.upload.configure_server", MagicMock())
+@patch("fl_api.utils.upload.configure_client", MagicMock())
+@patch("fl_api.utils.upload.configure_config", MagicMock())
+@patch("fl_api.utils.upload.validate_config", MagicMock())
+@patch("fl_api.utils.upload.read_config", MagicMock())
+def test_upload_clears_stale_server_checkpoints(
+    mock_requests_get_success, mock_upload_correct_request, tmp_path, monkeypatch
+):
+    """A re-upload clears any previously-staged server checkpoints for the model, so a bundle that
+    no longer ships a checkpoint cannot leave a stale one behind for the fl-server to load."""
+    ckpt_root = tmp_path / "server-checkpoints"
+    stale = ckpt_root / TEST_MODEL_ID / "stale-weights.pt"
+    stale.parent.mkdir(parents=True)
+    stale.write_bytes(b"old")
+    monkeypatch.setenv("SERVER_CHECKPOINT_ROOT", str(ckpt_root))
+
+    response = upload_application(TEST_MODEL_ID, mock_upload_correct_request, str(tmp_path / "jobs"))
+
+    assert "Application uploaded successfully" in response["message"]
+    assert not stale.exists()
+
+
+def test_upload_rejects_redirect_on_server_checkpoint_fetch(mock_requests_get_success, tmp_path, monkeypatch):
+    """A 3xx on the staged-checkpoint stream is rejected like any other bundle fetch: the redirect
+    target was never seen by validate_bundle_url (SSRF), so nothing must be written."""
+    ckpt_root = tmp_path / "server-checkpoints"
+    monkeypatch.setenv("SERVER_CHECKPOINT_ROOT", str(ckpt_root))
+    mock_requests_get_success.return_value.is_redirect = True
+
+    body = UploadAppRequest(
+        bundle_urls=[f"https://test.local/bundles/{TEST_MODEL_ID}/server_checkpoints/weights.pt"],
+        project_id="123456789",
+        cohort_query="SELECT 1",
+        trusts=["Trust_1"],
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        upload_application(TEST_MODEL_ID, body, str(tmp_path / "jobs"))
+    assert exc.value.status_code == 400
+    assert not (ckpt_root / TEST_MODEL_ID / "weights.pt").exists()
+
+
 def test_validate_config_valid():
     valid_config = {
         "LOCAL_ROUNDS": 5,
@@ -269,8 +313,18 @@ def test_validate_config_rejects_invalid_aggregate_only_regex():
         validate_config({"AGGREGATE_ONLY_REGEX": "([unclosed"})
 
 
+def test_validate_config_rejects_non_string_aggregate_only_regex():
+    with pytest.raises(ValueError, match="must be a string regex"):
+        validate_config({"AGGREGATE_ONLY_REGEX": 123})
+
+
 def test_validate_config_aggregate_only_regex_defaults_none():
     assert validate_config({"LOCAL_ROUNDS": 3}).AGGREGATE_ONLY_REGEX is None
+
+
+def test_validate_config_rejects_non_dict_weights():
+    with pytest.raises(ValueError, match="AGGREGATION_WEIGHTS must be a dictionary"):
+        validate_config({"AGGREGATION_WEIGHTS": ["client1"]})
 
 
 def test_validate_config_invalid_weights():
