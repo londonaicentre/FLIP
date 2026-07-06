@@ -22,7 +22,7 @@
             <div class="sm:grid sm:grid-cols-3 sm:gap-4 sm:items-center sm:pt-5">
                 <label for="enriched" class="block text-sm font-medium text-gray-700 dark:text-gray-300 sm:mt-px sm:pt-2">
                     Dataset enriched
-                    <div class="mr-2 text-sm text-gray-400">
+                    <div class="mr-2 text-sm text-gray-400 dark:text-gray-300">
                         Confirm your dataset has been enriched as required before training
                     </div>
                 </label>
@@ -38,7 +38,7 @@
             <div class="sm:grid sm:grid-cols-3 sm:gap-4 sm:items-start sm:pt-5">
                 <label class="block space-y-2 text-sm font-medium text-gray-700 dark:text-gray-300 sm:mt-px sm:pt-2">
                     Participating trusts
-                    <div class="mr-2 text-sm text-gray-400">
+                    <div class="mr-2 text-sm text-gray-400 dark:text-gray-300">
                         A minimum of 1 trust must be selected for training
                     </div>
                 </label>

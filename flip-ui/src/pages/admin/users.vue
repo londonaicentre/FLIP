@@ -70,7 +70,7 @@
                                         Disabled
                                     </span>
                                 </div>
-                                <div class="text-xs text-gray-500 truncate dark:text-gray-400">
+                                <div class="text-xs text-gray-500 truncate dark:text-gray-300">
                                     {{ row.organisation || "—" }}
                                 </div>
                             </div>
@@ -82,14 +82,14 @@
                             />
                         </li>
                     </ul>
-                    <div v-else class="p-8 text-sm text-center text-gray-500 dark:text-gray-400">
+                    <div v-else class="p-8 text-sm text-center text-gray-500 dark:text-gray-300">
                         {{ search ? "No users match your search." : "There are no users to show" }}
                     </div>
                 </div>
                 <div class="border-t border-gray-200 dark:border-dark-border">
                     <p
                         v-if="userData?.data"
-                        class="px-4 pt-2 text-xs text-gray-500 dark:text-gray-400"
+                        class="px-4 pt-2 text-xs text-gray-500 dark:text-gray-300"
                         data-test="user-count"
                     >
                         {{ countSummary }}
@@ -117,7 +117,7 @@
                             <h2 class="text-xl font-semibold text-gray-900 truncate font-heading dark:text-gray-100">
                                 {{ selectedUser.name }}
                             </h2>
-                            <p class="text-sm text-gray-500 truncate dark:text-gray-400">
+                            <p class="text-sm text-gray-500 truncate dark:text-gray-300">
                                 {{ selectedUser.organisation }} · {{ selectedUser.email }}
                             </p>
                         </div>
@@ -148,7 +148,7 @@
                             <div>
                                 <label
                                     for="selected-user-name"
-                                    class="block text-xs font-bold tracking-wide text-gray-700 uppercase dark:text-gray-400"
+                                    class="block text-xs font-bold tracking-wide text-gray-700 uppercase dark:text-gray-300"
                                 >
                                     Name
                                 </label>
@@ -163,7 +163,7 @@
                             <div>
                                 <label
                                     for="selected-user-organisation"
-                                    class="block text-xs font-bold tracking-wide text-gray-700 uppercase dark:text-gray-400"
+                                    class="block text-xs font-bold tracking-wide text-gray-700 uppercase dark:text-gray-300"
                                 >
                                     Organisation
                                 </label>
@@ -176,7 +176,7 @@
                                 >
                             </div>
                             <div>
-                                <div class="text-xs font-bold tracking-wide text-gray-700 uppercase dark:text-gray-400">
+                                <div class="text-xs font-bold tracking-wide text-gray-700 uppercase dark:text-gray-300">
                                     Email
                                 </div>
                                 <div
@@ -192,7 +192,7 @@
                                 <h3 class="text-base font-bold text-gray-900 font-heading dark:text-gray-100">
                                     Role
                                 </h3>
-                                <p class="text-sm text-gray-500 dark:text-gray-400">
+                                <p class="text-sm text-gray-500 dark:text-gray-300">
                                     One role per user. Determines what they can see and do.
                                 </p>
                             </div>
@@ -217,12 +217,12 @@
                                             <RoleBadge :role-name="role.rolename" />
                                             <span
                                                 v-if="role.rolename === 'Admin'"
-                                                class="text-xs text-gray-500 dark:text-gray-400"
+                                                class="text-xs text-gray-500 dark:text-gray-300"
                                             >
                                                 Includes platform admin access
                                             </span>
                                         </span>
-                                        <span class="text-sm leading-relaxed text-gray-600 dark:text-gray-400">
+                                        <span class="text-sm leading-relaxed text-gray-600 dark:text-gray-300">
                                             {{ role.roledescription }}
                                         </span>
                                     </span>
@@ -230,7 +230,7 @@
                             </div>
                             <div
                                 v-if="!(allRoles?.roles?.length)"
-                                class="text-sm text-center text-gray-500 dark:text-gray-400"
+                                class="text-sm text-center text-gray-500 dark:text-gray-300"
                             >
                                 There are no roles available
                             </div>
@@ -243,7 +243,7 @@
                                         <h3 class="text-sm font-bold font-heading">
                                             Danger Zone
                                         </h3>
-                                        <p class="text-xs text-gray-600 dark:text-gray-400">
+                                        <p class="text-xs text-gray-600 dark:text-gray-300">
                                             Account-level operations. Each action is irreversible without user action.
                                         </p>
                                     </div>
@@ -289,7 +289,7 @@
                     </div>
                 </template>
                 <div v-else class="flex items-center justify-center h-full p-8">
-                    <p class="text-sm text-gray-500 dark:text-gray-400">
+                    <p class="text-sm text-gray-500 dark:text-gray-300">
                         Select a user or register a new user to begin.
                     </p>
                 </div>
@@ -502,6 +502,9 @@ const saveUser = async () => {
         selectedUser.value.dirty = false;
         selectedUser.value.profileDirty = false;
         selectedUser.value.rolesDirty = false;
+        // Revalidate the SWRV list so the left rail (and the re-selected
+        // user) reflect the edit without a manual page reload.
+        await refreshUsers();
         Snackbar.success({
             text: "The user has been updated.",
             title: "User updated"

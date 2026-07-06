@@ -11,7 +11,6 @@
  * limitations under the License.
  */
 
-@import "highlightjs.css";
 @tailwind base;
 @tailwind components;
 @tailwind utilities;

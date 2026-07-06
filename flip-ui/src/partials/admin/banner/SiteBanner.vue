@@ -37,7 +37,7 @@
                                     </span>
                                 </h3>
                             </div>
-                            <p class="max-w-2xl my-6 text-gray-400">
+                            <p class="max-w-2xl my-6 text-gray-400 dark:text-gray-300">
                                 Enabling the <strong class="font-bold">site banner</strong> will show a message on every
                                 page to all users across the platform.
                                 You can edit and preview the banner below.

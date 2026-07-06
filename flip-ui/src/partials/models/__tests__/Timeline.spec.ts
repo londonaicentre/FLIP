@@ -73,4 +73,35 @@ describe("Timeline", () => {
         expect(comp.text()).toContain("Hub");
         expect(comp.text()).toContain("Trust A");
     });
+
+    test("fills the parent card width instead of forcing a fixed-width horizontal scroll", () => {
+        const comp = mount(Timeline, {
+            props: { complete: true },
+            global: { stubs: { AiLoader: true } }
+        });
+
+        // Fixed inner widths (w-64 / 2xl:w-96) overflow the Live activity
+        // card's content box and produce a horizontal scrollbar — the panel
+        // must track the card width instead.
+        expect(comp.html()).not.toContain("w-64");
+        expect(comp.html()).not.toContain("2xl:w-96");
+        expect(comp.find("div.w-full").exists()).toBe(true);
+    });
+
+    test("renders timestamps with AA-contrast text tokens in both modes", () => {
+        const comp = mount(Timeline, {
+            props: { complete: true },
+            global: { stubs: { AiLoader: true } }
+        });
+
+        const stamps = comp.findAll("[data-test='log-timestamp']");
+        expect(stamps).toHaveLength(mockLogs.logs.length);
+        for (const stamp of stamps) {
+            // gray-400 on white / gray-500 on dark-canvas sit under 3:1
+            // (Lighthouse color-contrast); small text needs >= 4.5:1, and at
+            // 10px mono the muted step must be visibly light on dark.
+            expect(stamp.classes()).toContain("text-gray-500");
+            expect(stamp.classes()).toContain("dark:text-gray-300");
+        }
+    });
 });

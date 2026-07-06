@@ -18,7 +18,7 @@
         class="flex flex-row items-center h-14 bg-white dark:bg-dark-canvas border-b border-gray-200 dark:border-dark-border px-4 xl:px-6 shrink-0"
     >
         <!-- Mobile menu button -->
-        <PopoverButton class="outline-none xl:hidden mr-3" data-test="mobile-menu-btn">
+        <PopoverButton aria-label="Open menu" class="outline-none xl:hidden mr-3" data-test="mobile-menu-btn">
             <icon-heroicons-outline-menu-alt-1 class="w-6 h-6" />
         </PopoverButton>
 
@@ -26,7 +26,8 @@
         <router-link to="/" class="flex items-center gap-3 flex-shrink-0 mr-4 xl:mr-9">
             <img v-if="!isDark" src="/images/aicentre-logo-transparent.webp" alt="London AI Centre" class="h-12 w-auto">
             <img v-else src="/images/aicentre-logo-transparent-dark.webp" alt="London AI Centre" class="h-12 w-auto">
-            <img src="/images/flip-logo-icon.webp" alt="FLIP" class="h-12 w-auto">
+            <img v-if="!isDark" src="/images/flip-logo-text.webp" alt="FLIP" class="h-12 w-auto">
+            <img v-else src="/images/flip-logo-text-dark.webp" alt="FLIP" class="h-12 w-auto">
         </router-link>
 
         <!-- Vertical divider (desktop) -->
@@ -45,7 +46,7 @@
                 class="relative inline-flex items-center px-4 text-sm font-semibold transition-colors"
                 :class="item.current
                     ? 'text-gray-900 dark:text-gray-100'
-                    : 'text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200'"
+                    : 'text-gray-500 hover:text-gray-800 dark:text-gray-300 dark:hover:text-gray-200'"
             >
                 {{ item.name }}
                 <span
@@ -112,7 +113,8 @@
                                     <div class="flex items-center gap-3">
                                         <img v-if="!isDark" src="/images/aicentre-logo-transparent.webp" alt="London AI Centre" class="h-[50px] w-auto">
                                         <img v-else src="/images/aicentre-logo-transparent-dark.webp" alt="London AI Centre" class="h-[50px] w-auto">
-                                        <img src="/images/flip-logo-icon.webp" alt="FLIP" class="h-[50px] w-auto">
+                                        <img v-if="!isDark" src="/images/flip-logo-text.webp" alt="FLIP" class="h-[50px] w-auto">
+                                        <img v-else src="/images/flip-logo-text-dark.webp" alt="FLIP" class="h-[50px] w-auto">
                                     </div>
                                     <div class="-mr-2">
                                         <PopoverButton
@@ -130,8 +132,8 @@
                                         :to="item.href"
                                         :class="[
                                             item.current
-                                                ? 'bg-gray-100 font-semibold dark:bg-dark-surface dark:text-gray-300 dark:hover:text-gray-300'
-                                                : 'text-gray-700 hover:bg-gray-100 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300 dark:hover:bg-dark-surface font-medium'
+                                                ? 'bg-gray-100 font-semibold dark:bg-dark-surface dark:text-gray-300 dark:hover:text-gray-200'
+                                                : 'text-gray-700 hover:bg-gray-100 hover:text-gray-700 dark:text-gray-300 dark:hover:text-gray-200 dark:hover:bg-dark-surface font-medium'
                                         ]"
                                         class="block px-3 py-2 text-base rounded-md"
                                         @click="close"

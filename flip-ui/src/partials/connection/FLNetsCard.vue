@@ -36,7 +36,7 @@
                                 </span>
                             </span>
                         </h3>
-                        <p class="max-w-8xl mt-6 mb-0 text-gray-500">
+                        <p class="max-w-8xl mt-6 mb-0 text-gray-500 dark:text-gray-300">
                             Each NET represents an environment where a model can train. No training requests can be
                             sent to a Trust if they are OFFLINE.<br>
                             We currently have <span class="font-bold">{{ flStatus?.length }} nets</span> connected.
@@ -49,7 +49,6 @@
                         :key="net.name"
                         class="relative p-2"
                     >
-                        <div v-if="offlineClients(net.clients)" class="absolute inset-0.5 dark:inset-2 bg-gradient-to-bl from-red-500 dark:from-red-500 dark:to-red-500 to-red-800 blur-md opacity-25 dark:opacity-80" />
                         <div
                             class="relative w-full overflow-hidden border border-gray-300 rounded-lg shadow bg-gray-50 dark:bg-dark-surface dark:border-dark-border"
                         >
@@ -96,17 +95,17 @@
                                                             class="flex-wrap pr-4 line-clamp-3"
                                                         >
                                                             <p
-                                                                class="text-sm font-bold text-primary-600 dark:text-gray-400 shrink line-clamp-1"
+                                                                class="text-sm font-bold text-primary-600 dark:text-gray-300 shrink line-clamp-1"
                                                                 data-test="project-name"
                                                             >
                                                                 {{ client.name }}<span
                                                                     v-if="client.code"
-                                                                    class="font-normal text-gray-500 dark:text-gray-500"
+                                                                    class="font-normal text-gray-500 dark:text-gray-300"
                                                                 > ({{ client.code }})</span>
                                                             </p>
                                                             <p
                                                                 v-if="client.fl_kit_slot"
-                                                                class="text-xs font-normal text-gray-400 dark:text-gray-500 shrink line-clamp-1"
+                                                                class="text-xs font-normal text-gray-400 dark:text-gray-300 shrink line-clamp-1"
                                                                 data-test="client-fl-kit-slot"
                                                             >
                                                                 FL kit slot: {{ client.fl_kit_slot }}
@@ -155,6 +154,10 @@
 </template>
 
 <script setup lang="ts">
+// Theme for the lazily-highlighted JSON in the details modal — scoped to this
+// chunk now that highlight.js is no longer a global plugin (#716).
+import "@/assets/styles/highlightjs.css";
+
 import useSWRV from "swrv";
 import { computed, ref } from "vue";
 
@@ -164,6 +167,7 @@ import AiCard from "@/components/AiCard/AiCard.vue";
 import AiCommand from "@/components/AiCommand/AiCommand.vue";
 import AiLoader from "@/components/AiLoader/AiLoader.vue";
 import { getFLStatus, getNetDetailedStatus, IFLStatusClients } from "@/services/fl-service";
+import { vHighlightjs } from "@/utils/highlightJson";
 
 const showDetails = ref(false);
 const details = ref<string | undefined>(undefined);
@@ -187,10 +191,6 @@ const hideDetails = () => {
 
     }, 500);
 };
-const offlineClients = (clients: IFLStatusClients[]) => {
-    return clients.some(c => !c.online);
-};
-
 const sortedClients = (clients: IFLStatusClients[]): IFLStatusClients[] =>
     [...(clients ?? [])].sort((a, b) => a.name.localeCompare(b.name));
 

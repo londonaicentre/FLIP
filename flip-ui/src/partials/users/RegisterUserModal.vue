@@ -52,7 +52,7 @@
                             <div class="flex flex-grow overflow-y-auto bg-white dark:bg-dark-surface">
                                 <div class="flex flex-col items-start w-full">
                                     <div class="w-full text-left">
-                                        <div class="w-full px-8 py-4 space-y-4 overflow-y-auto text-sm font-normal leading-5 dark:text-gray-400">
+                                        <div class="w-full px-8 py-4 space-y-4 overflow-y-auto text-sm font-normal leading-5 dark:text-gray-300">
                                             <p>The new user will be sent a temporary password.</p>
                                             <AiInput
                                                 v-if="!lockIdentity"
@@ -111,13 +111,13 @@
                                                 >
                                                     <span
                                                         class="block truncate"
-                                                        :class="!selectedOption && 'text-gray-500'"
+                                                        :class="!selectedOption && 'text-gray-500 dark:text-gray-300'"
                                                         data-test="role-select"
                                                     >
                                                         {{ selectedOption?.description ?? "Please select a role" }}
                                                     </span>
                                                     <span class="absolute inset-y-0 right-0 flex items-center pr-2 pointer-events-none">
-                                                        <icon-mdi-chevron-down class="w-5 h-5 text-gray-400" />
+                                                        <icon-mdi-chevron-down class="w-5 h-5 text-gray-400 dark:text-gray-300" />
                                                     </span>
                                                 </ListboxButton>
                                                 <transition

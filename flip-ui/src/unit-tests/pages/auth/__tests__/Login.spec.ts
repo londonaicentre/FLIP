@@ -129,6 +129,18 @@ describe("Login page", () => {
         expect(wrapper.find("[data-test='login-btn']").exists()).toBe(true);
     });
 
+    test("labels the credential fields with valid autocomplete tokens", async () => {
+        const wrapper = mountLogin();
+        await flushPromises();
+
+        // "password" is not a valid autocomplete token and breaks the
+        // accessibility tree; login credentials are username/current-password.
+        // AiInput is stubbed here, so the attribute falls through to the stub
+        // root — AiInput's own spec covers forwarding onto the real <input>.
+        expect(wrapper.find("[data-test='username']").attributes("autocomplete")).toBe("username");
+        expect(wrapper.find("[data-test='password']").attributes("autocomplete")).toBe("current-password");
+    });
+
     describe("onBeforeMount short-circuit", () => {
         test("redirects to /projects when the user already has an access token", async () => {
             mockFetchAuthSession.mockResolvedValueOnce({

@@ -59,16 +59,16 @@
                                 <p class="font-semibold leading-tight text-primary-600 dark:text-primary-200 truncate">
                                     {{ model.name }}
                                 </p>
-                                <p class="leading-tight text-gray-500 dark:text-gray-400 truncate">
+                                <p class="leading-tight text-gray-500 dark:text-gray-300 truncate">
                                     {{ model.description }}
                                     <template v-if="!model.description">
-                                        <span class="italic text-gray-400 dark:text-gray-500">No description provided...</span>
+                                        <span class="italic text-gray-400 dark:text-gray-300">No description provided...</span>
                                     </template>
                                 </p>
                             </div>
                             <div>
                                 <icon-heroicons-outline-chevron-right
-                                    class="w-4 h-4 text-gray-400 transition group-hover:translate-x-0.5"
+                                    class="w-4 h-4 text-gray-400 dark:text-gray-300 transition group-hover:translate-x-0.5"
                                     aria-hidden="true"
                                 />
                             </div>

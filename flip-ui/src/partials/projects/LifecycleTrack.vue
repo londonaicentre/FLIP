@@ -75,7 +75,7 @@
                     </div>
                     <div
                         v-if="stageSubLabel(idx)"
-                        class="text-[10px] text-gray-500 dark:text-gray-400 mt-0.5 font-mono"
+                        class="text-[10px] text-gray-500 dark:text-gray-300 mt-0.5 font-mono"
                     >
                         {{ stageSubLabel(idx) }}
                     </div>
@@ -123,7 +123,7 @@ const stepTextClass = (idx: number): string => {
     if (step.stopped && !step.completed) return "text-yellow-700 dark:text-yellow-400";
     if (step.completed || isCurrent(idx)) return "text-gray-900 dark:text-gray-100";
 
-    return "text-gray-500 dark:text-gray-400";
+    return "text-gray-500 dark:text-gray-300";
 };
 
 const formatStageDate = (iso: string): string => new Date(iso).toLocaleDateString(undefined, {

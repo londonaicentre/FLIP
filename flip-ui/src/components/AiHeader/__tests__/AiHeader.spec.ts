@@ -96,6 +96,26 @@ describe("AiHeader", () => {
         expect(component.find("img[src=\"/images/aicentre-logo-transparent.webp\"]").exists()).toBe(false);
     });
 
+    it("names the icon-only mobile menu button for assistive tech", () => {
+        const component = mountHeader();
+
+        expect(component.find("[data-test='mobile-menu-btn']").attributes("aria-label")).toBe("Open menu");
+    });
+
+    it("uses the light FLIP text logo in light mode", () => {
+        const component = mountHeader({ isDark: false });
+
+        expect(component.find("img[src=\"/images/flip-logo-text.webp\"]").exists()).toBe(true);
+        expect(component.find("img[src=\"/images/flip-logo-text-dark.webp\"]").exists()).toBe(false);
+    });
+
+    it("uses the dark FLIP text logo in dark mode", () => {
+        const component = mountHeader({ isDark: true });
+
+        expect(component.find("img[src=\"/images/flip-logo-text-dark.webp\"]").exists()).toBe(true);
+        expect(component.find("img[src=\"/images/flip-logo-text.webp\"]").exists()).toBe(false);
+    });
+
     it("renders an entry per navigation item with the matching item marked current", () => {
         const component = mountHeader({
             currentPage: "/connectionstatus",

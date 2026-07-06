@@ -14,17 +14,17 @@
 <template>
     <AiCard class="flex flex-col h-full">
         <div class="flex items-center justify-between px-4 py-3 border-b border-gray-200 dark:border-dark-border">
-            <span class="text-xs font-semibold tracking-wider uppercase font-mono text-gray-500 dark:text-gray-400">
+            <span class="text-xs font-semibold tracking-wider uppercase font-mono text-gray-500 dark:text-gray-300">
                 Per-trust response
             </span>
-            <span v-if="anyRunning" class="text-xs text-gray-500 dark:text-gray-400">
+            <span v-if="anyRunning" class="text-xs text-gray-500 dark:text-gray-300">
                 {{ completedCount }} / {{ rows.length }} returned
             </span>
         </div>
         <div class="flex-1 overflow-y-auto divide-y divide-gray-200 dark:divide-dark-border">
             <div
                 v-if="!rows.length"
-                class="px-4 py-6 text-sm text-center text-gray-500 dark:text-gray-400"
+                class="px-4 py-6 text-sm text-center text-gray-500 dark:text-gray-300"
             >
                 {{ emptyMessage }}
             </div>
@@ -73,7 +73,7 @@
                     </span>
                     <span
                         v-else-if="row.cancelled"
-                        class="inline-flex items-center gap-1.5 px-2 py-0.5 text-[11px] font-semibold tracking-wide text-gray-500 dark:text-gray-400 rounded-full bg-gray-100 dark:bg-dark-surface"
+                        class="inline-flex items-center gap-1.5 px-2 py-0.5 text-[11px] font-semibold tracking-wide text-gray-500 dark:text-gray-300 rounded-full bg-gray-100 dark:bg-dark-surface"
                         title="Project was approved without this trust; query task cancelled"
                     >
                         <span class="inline-block w-1.5 h-1.5 bg-gray-400 rounded-full" />

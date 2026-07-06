@@ -68,7 +68,7 @@
                 <TrainingMetrics :in-progress="!finished" />
             </AiCard>
 
-            <AiCard class="2xl:w-96 w-80 shrink-0 self-stretch max-h-[70vh] flex flex-col py-4 pl-4 pr-1">
+            <AiCard class="2xl:w-[28rem] w-96 shrink-0 self-stretch max-h-[70vh] flex flex-col py-4 pl-4 pr-1">
                 <div class="flex items-center gap-2 shrink-0 mb-3">
                     <span class="relative flex items-center justify-center w-2 h-2">
                         <span
@@ -86,7 +86,7 @@
                         Live activity
                     </h2>
                 </div>
-                <div class="flex-1 min-h-0 overflow-y-auto">
+                <div class="flex-1 min-h-0 overflow-y-auto overflow-x-hidden">
                     <Timeline data-test="training-timeline" :complete="finished ?? false" />
                 </div>
             </AiCard>

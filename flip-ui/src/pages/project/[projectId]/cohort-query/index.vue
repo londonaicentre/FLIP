@@ -28,7 +28,7 @@
                                     <router-link
                                         v-if="project"
                                         :to="`/project/${project.id}`"
-                                        class="text-xs font-semibold tracking-wider uppercase font-mono text-gray-500 hover:text-primary-500 dark:text-gray-400 dark:hover:text-primary-300"
+                                        class="text-xs font-semibold tracking-wider uppercase font-mono text-gray-500 hover:text-primary-500 dark:text-gray-300 dark:hover:text-primary-300"
                                     >
                                         {{ project.name }}
                                     </router-link>
@@ -70,7 +70,7 @@
                                             Run on all trusts
                                         </button>
                                     </div>
-                                    <p class="max-w-3xl mt-2 text-sm text-gray-600 dark:text-gray-400">
+                                    <p class="max-w-3xl mt-2 text-sm text-gray-600 dark:text-gray-300">
                                         {{ description }}
                                     </p>
                                 </header>

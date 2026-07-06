@@ -50,7 +50,7 @@
                                 <dt class="text-gray-500 dark:text-gray-300">
                                     Estimated Cohort Size
                                 </dt>
-                                <dd class="pl-8 font-semibold truncate dark:text-gray-400" data-test="model-dashboard-cohort-size">
+                                <dd class="pl-8 font-semibold truncate dark:text-gray-300" data-test="model-dashboard-cohort-size">
                                     {{ totalCount }}
                                 </dd>
                             </div>
@@ -58,7 +58,7 @@
                                 <dt class="text-gray-500 dark:text-gray-300">
                                     Trusts Queried
                                 </dt>
-                                <dd class="pl-8 font-semibold truncate dark:text-gray-400" data-test="model-dashboard-cohort-trusts-queried">
+                                <dd class="pl-8 font-semibold truncate dark:text-gray-300" data-test="model-dashboard-cohort-trusts-queried">
                                     {{ queryDetails?.queriedTrustIds?.length ?? 0 }}
                                 </dd>
                             </div>

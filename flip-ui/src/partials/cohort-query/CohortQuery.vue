@@ -27,7 +27,7 @@
                         <div class="space-y-2 lg:col-span-2">
                             <div
                                 v-if="lastRunLine"
-                                class="text-xs font-semibold tracking-wider uppercase font-mono text-gray-500 dark:text-gray-400"
+                                class="text-xs font-semibold tracking-wider uppercase font-mono text-gray-500 dark:text-gray-300"
                             >
                                 {{ lastRunLine }}
                             </div>

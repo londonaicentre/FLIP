@@ -14,7 +14,7 @@
 <!-- eslint-disable vue/multi-word-component-names -->
 <template>
     <section class="flex flex-col h-full">
-        <p class="mb-2 text-xs font-heading text-gray-500 dark:text-gray-400">
+        <p class="mb-2 text-xs font-heading text-gray-500 dark:text-gray-300">
             FEDERATED LEARNING & INTEROPERABILITY PLATFORM
         </p>
         <h1 class="mb-5 text-xl font-heading md:text-3xl dark:text-gray-100">
@@ -31,6 +31,7 @@
                 type="email"
                 data-test="username"
                 label="Email"
+                autocomplete="username"
                 :pre-icon="AccountOutline"
             />
             <AiInput
@@ -38,6 +39,7 @@
                 type="password"
                 data-test="password"
                 label="Password"
+                autocomplete="current-password"
                 :pre-icon="LockOutline"
             >
                 <template #labelRight>

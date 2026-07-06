@@ -17,7 +17,7 @@
             v-if="label"
             :for="uuid"
             class="flex text-sm font-bold"
-            :class="{ '!text-red-500 dark:!text-red-400': !!errorMessage, 'text-gray-700 dark:text-gray-400': !errorMessage}"
+            :class="{ '!text-red-500 dark:!text-red-400': !!errorMessage, 'text-gray-700 dark:text-gray-300': !errorMessage}"
         >
             <span class="flex-grow">
                 {{ label }}
@@ -29,7 +29,7 @@
         </label>
         <div class="relative" :class="{'mt-1': label}">
             <div v-if="preIcon" class="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none">
-                <component :is="preIcon" class="w-5 h-5" :class="!!errorMessage ? 'text-red-500 dark:!text-red-400' : 'text-gray-500 dark:text-gray-400'" />
+                <component :is="preIcon" class="w-5 h-5" :class="!!errorMessage ? 'text-red-500 dark:!text-red-400' : 'text-gray-500 dark:text-gray-300'" />
             </div>
             <div class="flex flex-row items-center">
                 <input
@@ -37,7 +37,7 @@
                     :name="name"
                     :type="type"
                     :value="inputValue"
-                    :autocomplete="type"
+                    :autocomplete="autocomplete"
                     :placeholder="placeholder"
                     :required="required"
                     :data-test="dataTest"
@@ -57,10 +57,10 @@
                 <slot name="inputButton" />
             </div>
             <div v-if="postIcon" class="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none">
-                <component :is="postIcon" class="w-5 h-5" :class="!!errorMessage ? 'text-red-500 dark:text-red-400' : 'text-gray-500 dark:text-gray-400'" />
+                <component :is="postIcon" class="w-5 h-5" :class="!!errorMessage ? 'text-red-500 dark:text-red-400' : 'text-gray-500 dark:text-gray-300'" />
             </div>
         </div>
-        <div v-if="hint && !errorMessage" class="m-1 text-sm text-gray-500 dark:text-gray-400">
+        <div v-if="hint && !errorMessage" class="m-1 text-sm text-gray-500 dark:text-gray-300">
             {{ hint }}
         </div>
         <div v-if="!!errorMessage" class="m-1 text-sm text-right text-red-500 dark:text-red-400 error_message">
@@ -99,6 +99,14 @@ export default defineComponent({
         type: {
             type: String,
             default: "text"
+        },
+        // Valid autocomplete token (e.g. "username", "current-password").
+        // Omitted from the DOM when unset — deriving it from `type` fabricates
+        // invalid tokens that break the accessibility tree.
+        autocomplete: {
+            type: String,
+            required: false,
+            default: undefined
         },
         value: {
             type: String,

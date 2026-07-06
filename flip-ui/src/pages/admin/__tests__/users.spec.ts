@@ -285,6 +285,32 @@ describe("admin/users", () => {
         expect(mockSnackbarSuccess).toHaveBeenCalledWith(expect.objectContaining({ title: "User updated" }));
     });
 
+    it("saveUser revalidates the users list so the left rail reflects the edit", async () => {
+        mockUpdateUserProfile.mockResolvedValue({});
+        const wrapper = mountPage();
+        await nextTick();
+        await wrapper.findAll("[data-test='user']")[0].trigger("click");
+        await wrapper.find("[data-test='selected-user-name-field']").trigger("input");
+        await wrapper.find("[data-test='save-user-btn']").trigger("click");
+        await flushPromises();
+
+        // Without a revalidation the SWRV cache keeps serving the stale
+        // list until the operator manually reloads the page.
+        expect(mutateUsers).toHaveBeenCalled();
+    });
+
+    it("does not revalidate the users list when saveUser rejects", async () => {
+        mockUpdateUserProfile.mockRejectedValue(new Error("nope"));
+        const wrapper = mountPage();
+        await nextTick();
+        await wrapper.findAll("[data-test='user']")[0].trigger("click");
+        await wrapper.find("[data-test='selected-user-name-field']").trigger("input");
+        await wrapper.find("[data-test='save-user-btn']").trigger("click");
+        await flushPromises();
+
+        expect(mutateUsers).not.toHaveBeenCalled();
+    });
+
     it("editing the organisation marks the profile dirty and saveUser persists the new value", async () => {
         mockUpdateUserProfile.mockResolvedValue({});
         const wrapper = mountPage();

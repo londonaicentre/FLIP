@@ -16,7 +16,7 @@
         <label
             :for="uuid"
             class="flex w-full gap-1 text-sm font-bold"
-            :class="{ 'text-red-500': !!errorMessage, 'text-gray-700': !errorMessage }"
+            :class="{ 'text-red-500': !!errorMessage, 'text-gray-700 dark:text-gray-300': !errorMessage }"
         >
             {{ label }}
         </label>
@@ -35,16 +35,16 @@
                     :value="inputValue"
                     :border="true"
                     :data-test="dataTest"
-                    autocomplete="none"
+                    autocomplete="off"
                     :height="height"
                     v-bind="inputProps"
-                    class="cursor-text text-gray-400 overflow-hidden rounded dark:!ring-primary-400 ring-primary-500 ring-2 ring-offset-2 dark:ring-offset-dark-canvas"
+                    class="cursor-text text-gray-400 dark:text-gray-300 overflow-hidden rounded dark:!ring-primary-400 ring-primary-500 ring-2 ring-offset-2 dark:ring-offset-dark-canvas"
                     @input="handleChange"
                     @blur="handleBlur"
                 />
             </div>
         </div>
-        <div v-if="hint && !errorMessage" class="m-1 text-sm text-gray-500">
+        <div v-if="hint && !errorMessage" class="m-1 text-sm text-gray-500 dark:text-gray-300">
             {{ hint }}
         </div>
         <div v-if="!!errorMessage" class="m-1 text-sm text-red-500 error_message">
@@ -56,6 +56,9 @@
 <script lang="ts" setup>
 import "codemirror/mode/sql/sql.js";
 
+// Imported here rather than registered app-wide in main.ts so CodeMirror
+// ships with this component's chunk instead of the entry bundle (#716).
+import Codemirror from "codemirror-editor-vue3";
 import { useField } from "vee-validate";
 import { computed, TextareaHTMLAttributes } from "vue";
 

@@ -16,7 +16,7 @@
         <label
             :for="uuid"
             class="flex w-full gap-1 text-sm font-bold"
-            :class="{ 'text-red-500 dark:text-red-400': !!errorMessage, 'text-gray-700 dark:text-gray-400': !errorMessage }"
+            :class="{ 'text-red-500 dark:text-red-400': !!errorMessage, 'text-gray-700 dark:text-gray-300': !errorMessage }"
         >
             {{ label }}
             <span v-if="required" class="text-red-600">
@@ -41,7 +41,6 @@
                     :name="name"
                     :type="type"
                     :value="inputValue"
-                    :autocomplete="type"
                     :required="required"
                     :data-test="dataTest"
                     :placeholder="placeholder"
@@ -68,7 +67,7 @@
         <div v-if="postIcon" class="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none">
             <component :is="postIcon" class="w-5 h-5" :class="{ 'text-red-500': !!errorMessage }" />
         </div>
-        <div v-if="hint && !errorMessage" class="m-1 text-sm text-gray-500">
+        <div v-if="hint && !errorMessage" class="m-1 text-sm text-gray-500 dark:text-gray-300">
             {{ hint }}
         </div>
         <div v-if="!!errorMessage" class="m-1 text-sm text-right text-red-500 error_message">

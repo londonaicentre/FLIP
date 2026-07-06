@@ -6,7 +6,7 @@ exports[`Ai Pagination > Renders Component 1`] = `
   data-v-bf58aa44=""
 >
   <section
-    class="flex justify-between py-2 text-gray-700 border-t border-gray-200 dark:border-dark-border bg-body dark:bg-dark-canvas"
+    class="flex justify-between py-2 text-gray-700 dark:text-gray-300 border-t border-gray-200 dark:border-dark-border bg-body dark:bg-dark-canvas"
     data-v-bf58aa44=""
   >
     <div

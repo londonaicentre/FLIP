@@ -42,7 +42,7 @@
                         <div class="pt-5 pb-4 bg-white sm:pb-4">
                             <div class="sm:flex sm:items-start">
                                 <div class="w-full mt-3 text-center sm:mt-0 sm:ml-4 sm:text-left">
-                                    <DialogTitle as="h3" class="px-4 text-lg font-bold leading-6 text-gray-700">
+                                    <DialogTitle as="h3" class="px-4 text-lg font-bold leading-6 text-gray-700 dark:text-gray-200">
                                         {{ title }}
                                     </DialogTitle>
                                     <div class="mt-2">

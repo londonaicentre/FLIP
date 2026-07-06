@@ -42,7 +42,14 @@
                     aria-label="FLIP documentation"
                 >
                     <img
-                        src="/images/flip-logo.webp"
+                        v-if="!isDark"
+                        src="/images/flip-logo-text.webp"
+                        alt="FLIP"
+                        class="h-12 w-auto"
+                    >
+                    <img
+                        v-else
+                        src="/images/flip-logo-text-dark.webp"
                         alt="FLIP"
                         class="h-12 w-auto"
                     >
@@ -80,7 +87,7 @@
             </div>
             <footer
                 data-test="auth-footer-links"
-                class="absolute bottom-4 left-1/2 -translate-x-1/2 flex flex-row items-center justify-center gap-6 text-xs font-heading text-gray-500 dark:text-gray-400 z-10"
+                class="absolute bottom-4 left-1/2 -translate-x-1/2 flex flex-row items-center justify-center gap-6 text-xs font-heading text-gray-500 dark:text-gray-300 z-10"
             >
                 <a
                     v-for="link in footerLinks"

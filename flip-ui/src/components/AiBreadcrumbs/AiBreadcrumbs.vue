@@ -21,7 +21,7 @@
         <div class="flex items-center min-w-0 space-x-2 truncate">
             <div>
                 <div>
-                    <router-link to="/" class="text-gray-400 hover:text-gray-500">
+                    <router-link to="/" class="text-gray-400 dark:text-gray-300 hover:text-gray-500 dark:hover:text-gray-200">
                         <icon-ph-house-line-duotone class="flex-shrink-0 w-5 h-5" aria-hidden="true" />
                         <span class="sr-only">Home</span>
                     </router-link>
@@ -29,11 +29,11 @@
             </div>
             <div v-for="page in pages" :key="page.name" class="max-w-[250px]">
                 <div class="flex items-center">
-                    <icon-mdi-chevron-right class="flex-shrink-0 w-5 h-5 text-gray-400" aria-hidden="true" />
+                    <icon-mdi-chevron-right class="flex-shrink-0 w-5 h-5 text-gray-400 dark:text-gray-300" aria-hidden="true" />
                     <router-link
                         v-tippy="{ content: page.name, placement: 'bottom-start' }"
                         :to="page.path"
-                        class="ml-2 text-sm font-medium text-gray-500 truncate hover:text-gray-700 dark:hover:text-gray-400"
+                        class="ml-2 text-sm font-medium text-gray-500 dark:text-gray-300 truncate hover:text-gray-700 dark:hover:text-gray-200"
                         data-test="parent-page-text"
                     >
                         {{ page.name }}
@@ -41,16 +41,16 @@
                 </div>
             </div>
             <div class="flex items-center max-w-[250px]">
-                <icon-mdi-chevron-right class="flex-shrink-0 w-5 h-5 text-gray-400" aria-hidden="true" />
+                <icon-mdi-chevron-right class="flex-shrink-0 w-5 h-5 text-gray-400 dark:text-gray-300" aria-hidden="true" />
                 <div
                     v-if="current.name"
                     v-tippy="{ content: current.name, placement: 'bottom-start' }"
-                    class="ml-2 text-sm font-bold text-gray-700 dark:text-gray-400 truncate"
+                    class="ml-2 text-sm font-bold text-gray-700 dark:text-gray-300 truncate"
                     data-test="current-page-text"
                 >
                     {{ current.name }}
                 </div>
-                <span v-else class="ml-2 text-sm font-bold text-gray-700">
+                <span v-else class="ml-2 text-sm font-bold text-gray-700 dark:text-gray-200">
                     <AiSkeleton class="!w-20 h-4" />
                 </span>
             </div>

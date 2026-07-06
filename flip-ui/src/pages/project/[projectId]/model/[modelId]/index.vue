@@ -25,15 +25,15 @@
             <header class="px-6 pt-4">
                 <router-link
                     to="/projects"
-                    class="text-xs font-semibold tracking-wider uppercase font-mono text-gray-500 hover:text-primary-500 dark:text-gray-400 dark:hover:text-primary-300"
+                    class="text-xs font-semibold tracking-wider uppercase font-mono text-gray-500 hover:text-primary-500 dark:text-gray-300 dark:hover:text-primary-300"
                 >
                     Projects
                 </router-link>
                 <template v-if="project">
-                    <span class="mx-1 text-xs font-semibold tracking-wider uppercase font-mono text-gray-500 dark:text-gray-400">/</span>
+                    <span class="mx-1 text-xs font-semibold tracking-wider uppercase font-mono text-gray-500 dark:text-gray-300">/</span>
                     <router-link
                         :to="`/project/${project.id}`"
-                        class="text-xs font-semibold tracking-wider uppercase font-mono text-gray-500 hover:text-primary-500 dark:text-gray-400 dark:hover:text-primary-300"
+                        class="text-xs font-semibold tracking-wider uppercase font-mono text-gray-500 hover:text-primary-500 dark:text-gray-300 dark:hover:text-primary-300"
                     >
                         {{ project.name }}
                     </router-link>

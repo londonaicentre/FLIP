@@ -56,7 +56,7 @@
                             <DialogTitle
                                 v-if="description"
                                 as="h5"
-                                class="px-8 pb-2 text-sm font-medium leading-6 text-left text-gray-600"
+                                class="px-8 pb-2 text-sm font-medium leading-6 text-left text-gray-600 dark:text-gray-300"
                             >
                                 {{ description }}
                             </DialogTitle>
