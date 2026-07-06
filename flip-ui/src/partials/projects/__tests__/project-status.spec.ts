@@ -91,7 +91,9 @@ const mockTrustData: IImagingProjectStatus[] = [
 // Separate signature so "pass undefined explicitly" actually reaches the
 // store mutation — using a default-parameter value would swallow an
 // explicit `undefined` and reinstate the 5.
-function mountProjectStatus(canLoad = true, maxReimportCount: number | undefined = 5, cohortSize?: number) {
+function mountProjectStatus(canLoad = true, ...overrides: [(number | undefined)?, number?]) {
+    const maxReimportCount = overrides.length ? overrides[0] : 5;
+    const cohortSize = overrides[1];
     // Seed the siteDetailsStore with the cap the component reads from,
     // mirroring what /site/details populates at runtime. Tests default to
     // 5 so the existing "2 / 5" / "5 / 5" assertions keep holding.
@@ -103,7 +105,10 @@ function mountProjectStatus(canLoad = true, maxReimportCount: number | undefined
     store.maxReimportCount = maxReimportCount;
 
     return mount(ProjectStatus, {
-        props: { canLoad, cohortSize },
+        props: {
+            canLoad,
+            cohortSize
+        },
         global: {
             plugins: [pinia],
             stubs,
