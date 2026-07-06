@@ -52,22 +52,22 @@ name: Access Requests
                     <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
                         <thead class="bg-gray-50 dark:bg-gray-900">
                             <tr>
-                                <th scope="col" class="px-6 py-3 text-xs font-semibold tracking-wide text-left text-gray-500 uppercase dark:text-gray-400">
+                                <th scope="col" class="px-6 py-3 text-xs font-semibold tracking-wide text-left text-gray-500 uppercase dark:text-gray-300">
                                     Name
                                 </th>
-                                <th scope="col" class="px-6 py-3 text-xs font-semibold tracking-wide text-left text-gray-500 uppercase dark:text-gray-400">
+                                <th scope="col" class="px-6 py-3 text-xs font-semibold tracking-wide text-left text-gray-500 uppercase dark:text-gray-300">
                                     Email
                                 </th>
-                                <th scope="col" class="px-6 py-3 text-xs font-semibold tracking-wide text-left text-gray-500 uppercase dark:text-gray-400">
+                                <th scope="col" class="px-6 py-3 text-xs font-semibold tracking-wide text-left text-gray-500 uppercase dark:text-gray-300">
                                     Reason
                                 </th>
-                                <th scope="col" class="px-6 py-3 text-xs font-semibold tracking-wide text-left text-gray-500 uppercase dark:text-gray-400">
+                                <th scope="col" class="px-6 py-3 text-xs font-semibold tracking-wide text-left text-gray-500 uppercase dark:text-gray-300">
                                     Submitted
                                 </th>
-                                <th scope="col" class="px-6 py-3 text-xs font-semibold tracking-wide text-left text-gray-500 uppercase dark:text-gray-400">
+                                <th scope="col" class="px-6 py-3 text-xs font-semibold tracking-wide text-left text-gray-500 uppercase dark:text-gray-300">
                                     Status
                                 </th>
-                                <th scope="col" class="px-6 py-3 text-xs font-semibold tracking-wide text-right text-gray-500 uppercase dark:text-gray-400">
+                                <th scope="col" class="px-6 py-3 text-xs font-semibold tracking-wide text-right text-gray-500 uppercase dark:text-gray-300">
                                     Actions
                                 </th>
                             </tr>
@@ -77,13 +77,13 @@ name: Access Requests
                                 <td class="px-6 py-4 text-sm font-medium text-gray-900 whitespace-nowrap dark:text-gray-100">
                                     {{ row.fullName }}
                                 </td>
-                                <td class="px-6 py-4 text-sm text-gray-500 whitespace-nowrap dark:text-gray-400">
+                                <td class="px-6 py-4 text-sm text-gray-500 whitespace-nowrap dark:text-gray-300">
                                     {{ row.email }}
                                 </td>
-                                <td class="max-w-xs px-6 py-4 text-sm text-gray-500 truncate dark:text-gray-400" :title="row.reasonForAccess">
+                                <td class="max-w-xs px-6 py-4 text-sm text-gray-500 truncate dark:text-gray-300" :title="row.reasonForAccess">
                                     {{ row.reasonForAccess }}
                                 </td>
-                                <td class="px-6 py-4 text-sm text-gray-500 whitespace-nowrap dark:text-gray-400">
+                                <td class="px-6 py-4 text-sm text-gray-500 whitespace-nowrap dark:text-gray-300">
                                     {{ formatDate(row.createdAt) }}
                                 </td>
                                 <td class="px-6 py-4 whitespace-nowrap">
@@ -104,13 +104,13 @@ name: Access Requests
                                             Dismiss
                                         </AiButton>
                                     </div>
-                                    <span v-else class="text-xs text-gray-400 dark:text-gray-500">—</span>
+                                    <span v-else class="text-xs text-gray-400 dark:text-gray-300">—</span>
                                 </td>
                             </tr>
                         </tbody>
                     </table>
                 </div>
-                <div v-else class="p-8 text-sm text-center text-gray-500 dark:text-gray-400" data-test="access-requests-empty">
+                <div v-else class="p-8 text-sm text-center text-gray-500 dark:text-gray-300" data-test="access-requests-empty">
                     There are no access requests to show.
                 </div>
             </div>
