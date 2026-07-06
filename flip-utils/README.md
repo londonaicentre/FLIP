@@ -25,7 +25,7 @@ This directory is a sub-tree of the [FLIP](https://github.com/londonaicentre/FLI
 pip-installable `flip` Python package (published as `flip-utils` on PyPI) that ships inside every FL server / client
 image and is imported as `from flip import ...` by user-uploaded training code. Sibling FL trees in the same mono-repo:
 
-- **[`flip-utils/flip/`](./flip/)** — pip-installable Python package with platform logic, NVFLARE components, and utilities (this directory)
+- **[`flip-utils/flip/`](./flip/)** — pip-installable Python package with platform logic, NVFLARE components, Flower helpers and utilities (this directory)
 - **[`../fl-apps/`](../fl-apps/)** — FL job-type implementations / app templates (`standard`, `evaluation`, `diffusion_model`, `fed_opt`)
 - **[`../fl-tutorials/`](../fl-tutorials/)** — runnable end-to-end tutorial examples
 - **[`../fl-services/`](../fl-services/)** — Docker images for FL networks (server, clients, admin API)
