@@ -97,7 +97,7 @@ applied a schema *diff* to an existing database.
 - Migration scripts live in `src/flip_api/db/migrations/` (so they ride the dev `src/`
   bind mount and the prod `COPY src/`); config is in `alembic.ini`.
 - `alembic.ini` holds **no** database URL or credentials. `env.py` reuses
-  `flip_api.db.database.engine`, so migrations inherit the exact same connection
+  `flip_api.db.database.get_engine()`, so migrations inherit the exact same connection
   string and the prod RDS-Proxy IAM authentication (a per-connection token minted
   by a `do_connect` hook). Tests inject their Testcontainers connection via
   `config.attributes["connection"]` instead.

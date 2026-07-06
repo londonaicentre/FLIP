@@ -14,7 +14,7 @@
 from sqlmodel import Session, select
 
 from flip_api.config import get_settings
-from flip_api.db.database import engine
+from flip_api.db.database import get_engine
 from flip_api.db.models.main_models import FLNets
 from flip_api.db.seed.seed_logger import logger
 
@@ -83,5 +83,5 @@ def seed_fl_nets(session: Session) -> list[FLNets]:
 
 
 if __name__ == "__main__":
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         nets = seed_fl_nets(session)

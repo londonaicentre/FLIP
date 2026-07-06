@@ -143,7 +143,30 @@ def _build_engine() -> Engine:
     return create_engine(db_url, echo=False)
 
 
-engine = _build_engine()
+# Lazily-created, reused engine. Built on first use rather than at import time
+# so importing this module never reads settings or constructs the engine as a
+# side effect (FLIP#583) — tests, scripts, and tooling can import it without a
+# configured environment. The lock guards the first-build race (the same
+# double-checked locking pattern as ``_get_rds_client`` above): ``get_engine``
+# is called from FastAPI's request threadpool and APScheduler job threads.
+_engine: Engine | None = None
+_engine_lock = threading.Lock()
+
+
+def get_engine() -> Engine:
+    """Return the shared SQLAlchemy engine, building it on first use.
+
+    Returns:
+        Engine: The lazily-built, module-cached engine for the active environment.
+    """
+    global _engine  # noqa: PLW0603
+    if _engine is None:
+        with _engine_lock:
+            # Re-check inside the lock: another thread may have built it while
+            # this one waited (double-checked locking).
+            if _engine is None:
+                _engine = _build_engine()
+    return _engine
 
 
 def get_session() -> Generator[Session, None, None]:
@@ -153,6 +176,6 @@ def get_session() -> Generator[Session, None, None]:
     Yields:
         Session: A new SQLModel session.
     """
-    session = Session(engine)
+    session = Session(get_engine())
     yield session
     session.close()

@@ -66,7 +66,7 @@ from typing import Any
 from sqlmodel import Session, delete, select
 
 from flip_api.auth import trust_key_cache
-from flip_api.db.database import engine
+from flip_api.db.database import get_engine
 from flip_api.db.models.main_models import (
     FLJobTrust,
     FLKitSlot,
@@ -193,7 +193,7 @@ def main() -> None:
     parser.add_argument("--name", required=True, help="Trust name (exact match).")
     args = parser.parse_args()
 
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         result = delete_one_trust(args.name, session)
 
     # Single JSON line on stdout — the deploy script reads this to confirm
