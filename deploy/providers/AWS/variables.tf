@@ -196,6 +196,15 @@ variable "JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB" {
   default     = 0
 }
 
+# Gates the whole FL-on-ECS stack, not just the file system: both FL task
+# definitions (fl-api-net-1, fl-server-net-1 in ecs_tasks.tf) carry
+# `count = var.enable_efs ? 1 : 0`, so their EFS volumes (including the shared
+# checkpoint volume) AND their environment (SERVER_CHECKPOINT_ROOT) exist
+# together or not at all — there is no partial state where the env var is set
+# but the mount is missing. Toggle together with enable_service_discovery:
+# the FL services in ecs_services.tf are gated on that flag but hard-reference
+# these task definitions at index [0], so enable_efs=false alone fails
+# `terraform plan` with an invalid-index error (pre-existing coupling).
 variable "enable_efs" {
   description = "Enable EFS file system for FL task persistent storage"
   type        = bool

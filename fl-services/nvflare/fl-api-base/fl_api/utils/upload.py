@@ -53,6 +53,12 @@ def _stage_server_checkpoint(url: str, model_id: str, file_name: str) -> None:
     Written to ``<SERVER_CHECKPOINT_ROOT>/<model_id>/<file_name>`` — outside the NVFLARE job dir —
     so it is never part of the submitted job and never deployed to clients. The fl-server mounts
     the same volume and loads the checkpoint from disk. Mirrors the Flower backend's /app/src mount.
+
+    Assumes the shared volume is actually mounted at ``SERVER_CHECKPOINT_ROOT`` — there is no
+    mount-presence check, so without one the ``mkdir`` below lands on the container's own disk and
+    the fl-server never sees the checkpoint (its locators log "not found" and skip the model). On
+    AWS this combination cannot occur: ``enable_efs`` gates the whole fl-api task definition, env
+    var and volume together (see ``deploy/providers/AWS/variables.tf``).
     """
     dest_dir = safe_join(_server_checkpoint_root(), model_id)
     dest_dir.mkdir(parents=True, exist_ok=True)
