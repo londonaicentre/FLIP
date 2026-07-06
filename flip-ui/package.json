@@ -31,6 +31,7 @@
     },
     "dependencies": {
         "echarts": "^5.2.2",
+        "highlight.js": "^10.7.3",
         "husky": "^9.1.7",
         "jszip": "^3.10.1",
         "qrcode": "^1.5.4",
@@ -109,7 +110,6 @@
         "vue-router-mock": "1.0.0",
         "vue-tippy": "^6.3.1",
         "vue-tsc": "^3.0.3",
-        "vue3-highlightjs": "^1.0.5",
         "vuejs-smart-table": "^1.0.0-beta.5",
         "yup": "^0.32.9"
     },

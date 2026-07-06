@@ -41,15 +41,16 @@
                         <div class="w-screen max-w-4xl">
                             <Form
                                 :validation-schema="schema"
-                                class="flex flex-col h-full bg-white divide-y divide-gray-100 shadow-xl dark:bg-gray-800 dark:divide-gray-700 dark:ring-1 dark:ring-white/20"
+                                :initial-values="{ dicom_to_nifti: dicomToNifti ? 'true' : undefined }"
+                                class="flex flex-col h-full bg-white divide-y divide-gray-100 shadow-xl dark:bg-dark-surface dark:divide-dark-border dark:ring-1 dark:ring-white/20"
                                 @submit="updateProject"
                             >
-                                <div class="p-4 bg-primary-500 sm:px-6 dark:bg-gray-900">
+                                <div class="p-4 bg-primary-500 sm:px-6 dark:bg-dark-canvas">
                                     <div class="flex items-center justify-between">
                                         <DialogTitle class="text-xl font-bold font-heading text-primary-100 dark:text-gray-300">
                                             Edit project details
                                         </DialogTitle>
-                                        <div class="flex items-start ml-3 h-7 text-primary-300 dark:text-gray-400">
+                                        <div class="flex items-start ml-3 h-7 text-primary-300 dark:text-gray-300">
                                             <button
                                                 type="button"
                                                 class="transition rounded cursor-pointer hover:text-primary-100 focus:outline-none focus:ring-1 focus:ring-primary-400"
@@ -62,7 +63,7 @@
                                         </div>
                                     </div>
                                     <div class="mt-1">
-                                        <p class="text-sm text-primary-200 dark:text-gray-500">
+                                        <p class="text-sm text-primary-200 dark:text-gray-300">
                                             Edit your projects details below.
                                         </p>
                                     </div>
@@ -101,6 +102,30 @@
                                                     }"
                                                 />
                                             </div>
+                                            <div>
+                                                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                                                    Convert DICOMs to NIfTI
+                                                </label>
+                                                <p class="text-xs text-gray-500 dark:text-gray-400 mb-1">
+                                                    Automatically convert DICOM scans to NIfTI format when images are imported from PACS into XNAT.
+                                                </p>
+                                                <p class="text-xs text-gray-500 dark:text-gray-400 mb-1">
+                                                    When enabled, NIfTI files can be requested using the ResourceType parameter.
+                                                </p>
+                                                <p class="text-xs text-gray-500 dark:text-gray-400 mb-1">
+                                                    Disable this if you will be working with DICOM files directly.
+                                                </p>
+                                                <p class="text-xs italic text-gray-400 dark:text-gray-500 mb-2">
+                                                    This option is set when the project is created and cannot be changed.
+                                                </p>
+                                                <AiSwitch
+                                                    name="dicom_to_nifti"
+                                                    value="true"
+                                                    :disabled="true"
+                                                    :label="{ enabled: 'Enabled', disabled: 'Disabled' }"
+                                                    data-test="dicom-to-nifti-toggle"
+                                                />
+                                            </div>
                                         </div>
 
                                         <div class="mt-6">
@@ -112,7 +137,7 @@
                                         </div>
                                     </div>
                                 </div>
-                                <div v-if="canDeleteProject()" class="p-4 sm:px-6 bg-body dark:bg-gray-900">
+                                <div v-if="canDeleteProject()" class="p-4 sm:px-6 bg-body dark:bg-dark-canvas">
                                     <div class="flex items-center justify-between">
                                         <DialogTitle class="font-bold font-heading">
                                             Advanced Options
@@ -127,7 +152,7 @@
                                         </AiButton>
                                     </div>
                                 </div>
-                                <div class="flex justify-end flex-shrink-0 p-4 space-x-4 bg-gray-50 dark:bg-gray-900">
+                                <div class="flex justify-end flex-shrink-0 p-4 space-x-4 bg-gray-50 dark:bg-dark-canvas">
                                     <AiButton @click="closeDrawer">
                                         Close
                                     </AiButton>
@@ -158,11 +183,14 @@
             >
                 <template #confirmation>
                     <div class="my-4 space-y-2">
-                        <strong>Any active training jobs performed on the models within the project will be stopped. This can not be undone.</strong>
+                        <strong>
+                            Any active training jobs performed on the models within the project will be
+                            stopped. This can not be undone.
+                        </strong>
                         <p>Your username will be recorded against this action.</p>
                         <p>
                             To delete this project, enter
-                            <code class="p-1 font-bold leading-loose tracking-tight bg-gray-100 rounded dark:bg-gray-700 dark:text-primary-200">{{ name }}</code>
+                            <code class="p-1 font-bold leading-loose tracking-tight bg-gray-100 rounded dark:bg-dark-raised dark:text-primary-200">{{ name }}</code>
                             below.
                         </p>
                     </div>
@@ -181,6 +209,7 @@ import AiAlert from "@/components/AiAlert/AiAlert.vue";
 import AiButton from "@/components/AiButton/AiButton.vue";
 import AiDialogOverlay from "@/components/AiDialogOverlay/AiDialogOverlay.vue";
 import AiConfirmModal from "@/components/AiModal/AiConfirmModal.vue";
+import AiSwitch from "@/components/AiSwitch/AiSwitch.vue";
 import router from "@/router";
 import { deleteProject, IProjectUser } from "@/services/project-service";
 import { useAuthStore } from "@/store/auth";
@@ -205,6 +234,9 @@ interface IEditProjectDrawerProps {
     updating: boolean;
     users: IProjectUser[];
     ownerId: string;
+    // Current DICOM-to-NIfTI setting, shown read-only. It's fixed at project
+    // creation and cannot be edited, so the toggle is always disabled.
+    dicomToNifti: boolean;
 }
 
 const schema = projectSchema;
@@ -228,8 +260,14 @@ const closeDrawer = () => {
 };
 
 const updateProject = (values: unknown) => {
+    // Only name/description are editable; users comes from the ProjectUsers
+    // child. dicom_to_nifti is intentionally excluded — it's read-only and
+    // immutable after creation (the edit endpoint ignores it regardless).
+    const { name, description } = values as IEditProject;
+
     emit("save", {
-        ...values as IEditProject,
+        name,
+        description,
         users: userList
     });
 };

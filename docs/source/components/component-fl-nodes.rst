@@ -43,7 +43,7 @@ A federated learning job is an ensemble of files (among which we can find `pytho
 we call an app. Some of these files are required to run the app (for instance, the `pyproject.toml` file in a Flower app),
 and some are optional. 
 
-The job type is passed as key `job_type` in the `config.json` (for NVFLARE) or `pyproject.toml` (for Flower).
+The job type is passed as key `job_type` in the `config.json` file (for both NVFLARE and Flower apps).
 
 Once uploaded, the UI will indicate which files are required for the specific job. 
 

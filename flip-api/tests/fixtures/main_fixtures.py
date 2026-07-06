@@ -16,14 +16,14 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlmodel import Session
 
-from flip_api.db.database import engine
+from flip_api.db.database import get_engine
 from flip_api.main import app
 
 
 @pytest.fixture(scope="module")
 def session():
     """Fixture for creating a synchronous database session."""
-    with Session(engine) as s:
+    with Session(get_engine()) as s:
         yield s
 
 

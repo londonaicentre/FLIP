@@ -16,11 +16,9 @@ import "tippy.js/themes/material.css";
 import "./assets/styles/main.css";
 
 import { Amplify } from "aws-amplify";
-import { GlobalCmComponent } from "codemirror-editor-vue3";
 import { createPinia } from "pinia";
 import { createApp } from "vue";
 import VueTippy from "vue-tippy";
-import VueHighlightJS from "vue3-highlightjs";
 import SmartTable from "vuejs-smart-table";
 
 import { makeServer } from "../mocks/server";
@@ -56,7 +54,5 @@ app.use(router)
             theme: "material"
         }
     })
-    .use(VueHighlightJS)
-    .use(GlobalCmComponent)
     .use(SmartTable)
     .mount("#app");

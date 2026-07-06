@@ -300,7 +300,7 @@ Each tutorial's dataset is downloaded per-tutorial — see the tutorial's own RE
 
 ## Security
 
-Please report security vulnerabilities responsibly. For details on how to report a vulnerability, see [SECURITY.md](./SECURITY.md).
+Please report security vulnerabilities responsibly. For details on how to report a vulnerability, see [SECURITY.md](../SECURITY.md).
 
 **⚠️ Do not open a public GitHub issue for security bugs; instead, use the private GitHub Security Advisory feature.**
 
@@ -308,4 +308,4 @@ Please report security vulnerabilities responsibly. For details on how to report
 
 ## Contributing
 
-For information on how to contribute to this project, see [CONTRIBUTING.md](./CONTRIBUTING.md).
+For information on how to contribute to this project, see [CONTRIBUTING.md](../CONTRIBUTING.md).

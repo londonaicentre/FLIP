@@ -12,6 +12,7 @@
 -->
 
 <template>
+    <AiRouteProgress />
     <router-view />
     <AiSnackbar />
 </template>
@@ -21,6 +22,7 @@ import { useDark } from "@vueuse/core";
 import useSWRV from "swrv";
 import { watch } from "vue";
 
+import AiRouteProgress from "@/components/AiRouteProgress/AiRouteProgress.vue";
 import AiSnackbar from "@/components/AiSnackbar/AiSnackbar.vue";
 
 import { getHealth } from "./services/health-service";

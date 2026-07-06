@@ -28,7 +28,7 @@
                 <!-- Track (rail + progress) sits behind the circles; left/right
                      inset by half-stage so it stops at the edges of the row. -->
                 <div
-                    class="absolute h-[2px] bg-gray-200 dark:bg-gray-700 rounded"
+                    class="absolute h-[2px] bg-gray-200 dark:bg-dark-raised rounded"
                     :style="trackStyle"
                 />
                 <div
@@ -75,7 +75,7 @@
                     </div>
                     <div
                         v-if="stageSubLabel(idx)"
-                        class="text-[10px] text-gray-500 dark:text-gray-400 mt-0.5 font-mono"
+                        class="text-[10px] text-gray-500 dark:text-gray-300 mt-0.5 font-mono"
                     >
                         {{ stageSubLabel(idx) }}
                     </div>
@@ -111,10 +111,10 @@ const circleClass = (idx: number): string => {
     if (step.stopped && !step.completed) return "bg-yellow-500 border-2 border-yellow-500";
     if (step.completed) return "bg-primary-500 border-2 border-primary-500";
     if (isCurrent(idx)) {
-        return "bg-white dark:bg-gray-900 border-[2.5px] border-primary-500 shadow-[0_0_0_5px_rgba(97,54,110,0.15)]";
+        return "bg-white dark:bg-dark-canvas border-[2.5px] border-primary-500 shadow-[0_0_0_5px_rgba(97,54,110,0.15)]";
     }
 
-    return "bg-white dark:bg-gray-900 border-2 border-gray-300 dark:border-gray-600";
+    return "bg-white dark:bg-dark-canvas border-2 border-gray-300 dark:border-dark-border-strong";
 };
 
 const stepTextClass = (idx: number): string => {
@@ -123,7 +123,7 @@ const stepTextClass = (idx: number): string => {
     if (step.stopped && !step.completed) return "text-yellow-700 dark:text-yellow-400";
     if (step.completed || isCurrent(idx)) return "text-gray-900 dark:text-gray-100";
 
-    return "text-gray-500 dark:text-gray-400";
+    return "text-gray-500 dark:text-gray-300";
 };
 
 const formatStageDate = (iso: string): string => new Date(iso).toLocaleDateString(undefined, {

@@ -43,13 +43,13 @@
                         leave-to="translate-x-full"
                     >
                         <div class="w-screen max-w-4xl">
-                            <DialogPanel class="flex flex-col h-full bg-white dark:bg-gray-800 divide-y divide-gray-100 dark:divide-gray-700 shadow-xl dark:ring-1 dark:ring-white/20">
-                                <div class="p-4 bg-primary-500 dark:bg-gray-900 sm:px-6">
+                            <DialogPanel class="flex flex-col h-full bg-white dark:bg-dark-surface divide-y divide-gray-100 dark:divide-dark-border shadow-xl dark:ring-1 dark:ring-white/20">
+                                <div class="p-4 bg-primary-500 dark:bg-dark-canvas sm:px-6">
                                     <div class="flex items-center justify-between">
                                         <DialogTitle class="text-xl font-bold font-heading text-primary-100 dark:text-gray-300">
                                             Create Model
                                         </DialogTitle>
-                                        <div class="flex items-start ml-3 h-7 text-primary-300 dark:text-gray-400">
+                                        <div class="flex items-start ml-3 h-7 text-primary-300 dark:text-gray-300">
                                             <button
                                                 type="button"
                                                 class="cursor-pointer hover:text-primary-100 transition focus:outline-none focus:ring-1 rounded focus:ring-primary-400"
@@ -62,7 +62,7 @@
                                         </div>
                                     </div>
                                     <div class="mt-1">
-                                        <p class="text-sm text-primary-200 dark:text-gray-500">
+                                        <p class="text-sm text-primary-200 dark:text-gray-300">
                                             Please confirm the details of your model.
                                         </p>
                                     </div>
@@ -88,7 +88,7 @@
                                         </div>
                                     </div>
                                 </div>
-                                <div class="flex justify-end flex-shrink-0 p-4 space-x-4 bg-gray-50 dark:bg-gray-900">
+                                <div class="flex justify-end flex-shrink-0 p-4 space-x-4 bg-gray-50 dark:bg-dark-canvas">
                                     <AiButton :data-test="'close-create-project-btn'" @click="closeModal">
                                         Cancel
                                     </AiButton>

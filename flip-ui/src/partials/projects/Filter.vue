@@ -17,7 +17,7 @@
         <div class="flex-1 min-w-0 text-sm">
             <label :for="uuid" class="font-bold cursor-pointer dark:text-gray-300">
                 {{ label }}
-                <p class="font-medium text-gray-500 dark:text-gray-400" :for="uuid">
+                <p class="font-medium text-gray-500 dark:text-gray-300">
                     {{ description }}
                 </p>
             </label>
@@ -30,7 +30,7 @@
                 :name="uuid"
                 :checked="checked"
                 type="checkbox"
-                class="w-5 h-5 transition border-gray-400 rounded cursor-pointer dark:border-gray-500 dark:bg-gray-600 group-hover:ring-2 group-hover:ring-offset-2 group-hover:ring-primary-500 text-primary-600 dark:text-primary-400 focus:ring-primary-500 dark:ring-offset-gray-800 dark:group-hover:ring-primary-400 dark:focus:ring-primary-400"
+                class="w-5 h-5 transition border-gray-400 rounded cursor-pointer dark:border-dark-border-strong dark:bg-dark-raised group-hover:ring-2 group-hover:ring-offset-2 group-hover:ring-primary-500 text-primary-600 dark:text-primary-400 focus:ring-primary-500 dark:ring-offset-dark-surface dark:group-hover:ring-primary-400 dark:focus:ring-primary-400"
                 @change="filterChanged"
             >
         </div>

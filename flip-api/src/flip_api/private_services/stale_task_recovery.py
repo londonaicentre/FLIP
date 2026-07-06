@@ -22,7 +22,7 @@ from datetime import datetime, timedelta, timezone
 from sqlmodel import Session, col, select
 
 from flip_api.config import get_settings
-from flip_api.db.database import engine
+from flip_api.db.database import get_engine
 from flip_api.db.models.main_models import TrustTask
 from flip_api.domain.schemas.status import TaskStatus, TaskType
 from flip_api.utils.logger import logger
@@ -130,7 +130,7 @@ def recover_stale_tasks_scheduled_task() -> None:
     """Scheduled task entry point for stale task recovery and post-processing retry."""
     logger.info("Running scheduled stale task recovery...")
     try:
-        with Session(engine) as db:
+        with Session(get_engine()) as db:
             recover_stale_tasks(db)
             retry_failed_post_processing(db)
     except Exception as e:
