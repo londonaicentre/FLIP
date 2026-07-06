@@ -91,8 +91,7 @@ const mockTrustData: IImagingProjectStatus[] = [
 // Separate signature so "pass undefined explicitly" actually reaches the
 // store mutation — using a default-parameter value would swallow an
 // explicit `undefined` and reinstate the 5.
-function mountProjectStatus(canLoad = true, ...maxOverride: [] | [number | undefined]) {
-    const maxReimportCount = maxOverride.length ? maxOverride[0] : 5;
+function mountProjectStatus(canLoad = true, maxReimportCount: number | undefined = 5, cohortSize?: number) {
     // Seed the siteDetailsStore with the cap the component reads from,
     // mirroring what /site/details populates at runtime. Tests default to
     // 5 so the existing "2 / 5" / "5 / 5" assertions keep holding.
@@ -104,7 +103,7 @@ function mountProjectStatus(canLoad = true, ...maxOverride: [] | [number | undef
     store.maxReimportCount = maxReimportCount;
 
     return mount(ProjectStatus, {
-        props: { canLoad },
+        props: { canLoad, cohortSize },
         global: {
             plugins: [pinia],
             stubs,
@@ -265,6 +264,29 @@ describe("ProjectStatus", () => {
             const wrapper = mountProjectStatus(true);
 
             expect(wrapper.find(ProjectStatusComponent.overviewImageRetrieval).text()).toBe("10");
+        });
+
+        it("floors near-complete retrieval percentages instead of rounding them up", () => {
+            mockSwrvData.value = [
+                {
+                    trustId: "trust-floor",
+                    trustName: "Floor Trust",
+                    projectCreationCompleted: true,
+                    importStatus: {
+                        successful: 999,
+                        failed: 1,
+                        processing: 0,
+                        queued: 0,
+                        queueFailed: 0
+                    },
+                    reimportCount: 0
+                }
+            ];
+
+            const wrapper = mountProjectStatus(true, 5, 1000);
+
+            expect(wrapper.find(ProjectStatusComponent.overviewRetrievalPercent).text()).toBe("99% of expected 1,000");
+            expect(wrapper.find("[data-test=pct-retrieved-trust-floor]").text()).toBe("99%");
         });
     });
 
