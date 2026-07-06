@@ -36,6 +36,9 @@ permissions:
 
 jobs:
   regenerate:
+    # Skip on forks: their GitHub Actions token cannot create pull requests, so
+    # running this job there would only produce a spurious workflow failure.
+    if: github.repository == 'londonaicentre/FLIP'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
