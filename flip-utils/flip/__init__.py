@@ -13,8 +13,7 @@
 """
 FLIP - Federated Learning and Interoperability Platform
 
-This package provides the core functionality for federated learning in the FLIP platform,
-built on NVIDIA FLARE (NVFLARE).
+This package provides the core functionality for federated learning in the FLIP platform.
 
 Main exports:
     - `FLIP`: Factory function that returns the appropriate FLIP implementation based on job type
