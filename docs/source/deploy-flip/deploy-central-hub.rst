@@ -90,8 +90,10 @@ This runs, in order:
 5. ``plan`` and ``apply`` — apply infrastructure changes.
 6. ``update-env`` — refresh the root env file with Terraform outputs.
 7. ``ssh-config`` — write SSH config blocks with SSM ProxyCommand.
-8. ``ansible-init`` — configure EC2 instances with Docker, CloudWatch, and FL assets.
-9. ``deploy-centralhub`` — deploy hub services via Docker Compose / ECS.
+8. ``ansible-init`` — install ``psql`` on the minimal Central Hub SSM bastion
+   and provision Docker, CloudWatch, and FL assets on the Trust EC2.
+9. ``deploy-centralhub`` — force-redeploy the Central Hub ECS Fargate services
+   and publish the UI to S3/CloudFront.
 10. ``deploy-trust`` — deploy any AWS-hosted trust services (skip when only using on-prem trusts).
 11. ``status`` — comprehensive health checks.
 

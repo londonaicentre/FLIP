@@ -15,7 +15,7 @@
     <Popover
         v-slot="{ open, close }"
         as="header"
-        class="flex flex-row items-center h-14 bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-700 px-4 xl:px-6 shrink-0"
+        class="flex flex-row items-center h-14 bg-white dark:bg-dark-canvas border-b border-gray-200 dark:border-dark-border px-4 xl:px-6 shrink-0"
     >
         <!-- Mobile menu button -->
         <PopoverButton class="outline-none xl:hidden mr-3" data-test="mobile-menu-btn">
@@ -24,12 +24,13 @@
 
         <!-- Logo (left) — London AI Centre + FLIP marks -->
         <router-link to="/" class="flex items-center gap-3 flex-shrink-0 mr-4 xl:mr-9">
-            <img src="/images/aicentre-logo-transparent.png" alt="London AI Centre" class="h-12 w-auto">
-            <img src="/images/flip-logo-icon.png" alt="FLIP" class="h-8 w-auto">
+            <img v-if="!isDark" src="/images/aicentre-logo-transparent.webp" alt="London AI Centre" class="h-12 w-auto">
+            <img v-else src="/images/aicentre-logo-transparent-dark.webp" alt="London AI Centre" class="h-12 w-auto">
+            <img src="/images/flip-logo-icon.webp" alt="FLIP" class="h-12 w-auto">
         </router-link>
 
         <!-- Vertical divider (desktop) -->
-        <div class="hidden xl:block w-px h-6 bg-gray-200 dark:bg-gray-700 mr-2" />
+        <div class="hidden xl:block w-px h-6 bg-gray-200 dark:bg-dark-raised mr-2" />
 
         <!-- Desktop top-nav (hidden on mobile — uses popover instead) -->
         <nav
@@ -64,7 +65,7 @@
                 v-if="useSiteDetailsStore().deploymentMode"
                 v-tippy="{ placement: 'bottom-end', content: 'Platform updates are in progress' }"
                 data-test="deployment-mode-status"
-                class="relative w-16 mr-6 bg-gray-100 dark:bg-gray-700 px-3.5 py-2 rounded-md flex items-center justify-center"
+                class="relative w-16 mr-6 bg-gray-100 dark:bg-dark-raised px-3.5 py-2 rounded-md flex items-center justify-center"
             >
                 <span class="absolute top-0 right-0 flex items-center justify-center w-3 h-3 -mt-1 -mr-1">
                     <span class="absolute inline-flex w-full h-full bg-green-300 rounded-full animate-ping" />
@@ -104,17 +105,18 @@
                         class="absolute inset-x-0 top-0 z-30 w-full max-w-3xl p-2 mx-auto transition origin-top transform"
                     >
                         <div
-                            class="bg-white divide-y divide-gray-200 rounded-lg shadow-lg dark:bg-gray-900 dark:divide-gray-700 dark:ring-white/20 ring-1 ring-black ring-opacity-5"
+                            class="bg-white divide-y divide-gray-200 rounded-lg shadow-lg dark:bg-dark-canvas dark:divide-dark-border dark:ring-white/20 ring-1 ring-black ring-opacity-5"
                         >
-                            <div class="pt-3 pb-2 divide-y dark:divide-gray-700">
+                            <div class="pt-3 pb-2 divide-y dark:divide-dark-border">
                                 <div class="flex items-start justify-between px-4">
                                     <div class="flex items-center gap-3">
-                                        <img src="/images/aicentre-logo-transparent.png" alt="London AI Centre" class="h-[50px] w-auto">
-                                        <img src="/images/flip-logo-icon.png" alt="FLIP" class="h-[42px] w-auto">
+                                        <img v-if="!isDark" src="/images/aicentre-logo-transparent.webp" alt="London AI Centre" class="h-[50px] w-auto">
+                                        <img v-else src="/images/aicentre-logo-transparent-dark.webp" alt="London AI Centre" class="h-[50px] w-auto">
+                                        <img src="/images/flip-logo-icon.webp" alt="FLIP" class="h-[50px] w-auto">
                                     </div>
                                     <div class="-mr-2">
                                         <PopoverButton
-                                            class="inline-flex items-center justify-center p-2 rounded-md text-primary-500 dark:text-primary-400 hover:text-primary-800 hover:bg-gray-100 dark:hover:bg-gray-800 focus:outline-none"
+                                            class="inline-flex items-center justify-center p-2 rounded-md text-primary-500 dark:text-primary-400 hover:text-primary-800 hover:bg-gray-100 dark:hover:bg-dark-surface focus:outline-none"
                                         >
                                             <span class="sr-only">Close menu</span>
                                             <icon-heroicons-outline-x class="w-5 h-5" aria-hidden="true" />
@@ -128,8 +130,8 @@
                                         :to="item.href"
                                         :class="[
                                             item.current
-                                                ? 'bg-gray-100 font-semibold dark:bg-gray-800 dark:text-gray-300 dark:hover:text-gray-300'
-                                                : 'text-gray-700 hover:bg-gray-100 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300 dark:hover:bg-gray-800 font-medium'
+                                                ? 'bg-gray-100 font-semibold dark:bg-dark-surface dark:text-gray-300 dark:hover:text-gray-300'
+                                                : 'text-gray-700 hover:bg-gray-100 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300 dark:hover:bg-dark-surface font-medium'
                                         ]"
                                         class="block px-3 py-2 text-base rounded-md"
                                         @click="close"

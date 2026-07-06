@@ -14,7 +14,7 @@
 <template>
     <Listbox v-model="currentlySelected">
         <ListboxButton
-            class="relative w-full py-2 pl-3 pr-10 mt-2 text-left bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-700 rounded-md cursor-default focus:border-primary-500 focus:ring-primary-500 dark:focus:ring-primary-400 dark:focus:border-primary-400 focus:ring-1"
+            class="relative w-full py-2 pl-3 pr-10 mt-2 text-left bg-white dark:bg-dark-raised border border-gray-300 dark:border-dark-border rounded-md cursor-default focus:border-primary-500 focus:ring-primary-500 dark:focus:ring-primary-400 dark:focus:border-primary-400 focus:ring-1"
             :class="[
                 !!errorMessage &&
                     'ring-1 ring-red-500 focus:ring-red-500 text-red-500 dark:text-red-400 dark:focus:ring-red-400',
@@ -44,7 +44,7 @@
             leave-to-class="transform scale-95 opacity-0"
         >
             <ListboxOptions
-                class="fixed z-10 py-2 origin-top-left bg-white dark:bg-gray-900 dark:ring-white/20 rounded-md shadow-2xl w-60 ring-1 ring-black ring-opacity-5 focus:outline-none"
+                class="fixed z-10 py-2 origin-top-left bg-white dark:bg-dark-canvas dark:ring-white/20 rounded-md shadow-2xl w-60 ring-1 ring-black ring-opacity-5 focus:outline-none"
             >
                 <ListboxOption
                     v-for="option in options"
@@ -58,7 +58,7 @@
                         :class="[
                             (selectedOptionsInclude(option)
                                 || active)
-                                && 'text-primary-500 bg-primary-100 dark:bg-gray-800 dark:text-primary-200'
+                                && 'text-primary-500 bg-primary-100 dark:bg-dark-surface dark:text-primary-200'
                         ]"
                     >
                         <span>{{ option.description }}</span>
@@ -105,7 +105,7 @@ import AiButton from "../AiButton/AiButton.vue";
 
 interface IAiChipSelectProperties {
     errorMessage?: string,
-    defaultText: string,
+    defaultText?: string,
     options: IOption[],
     selectedOptions: readonly DeepReadonly<FieldEntry>[],
 }

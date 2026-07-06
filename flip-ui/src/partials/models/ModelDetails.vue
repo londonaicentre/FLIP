@@ -18,7 +18,7 @@
                 <h2 class="p-4 text-lg leading-loose font-semibold font-heading grow">
                     Model Details
                 </h2>
-                <div class="px-4 py-3 border-t border-gray-200 dark:border-gray-700 sm:p-0">
+                <div class="px-4 py-3 border-t border-gray-200 dark:border-dark-border sm:p-0">
                     <dl class="sm:divide-y sm:divide-gray-200 dark:sm:divide-gray-700">
                         <div class="py-3 sm:px-4 sm:grid sm:grid-cols-3 sm:gap-4">
                             <dt class="text-sm font-medium text-gray-500 dark:text-gray-300">

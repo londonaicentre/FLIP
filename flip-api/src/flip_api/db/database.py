@@ -150,7 +150,7 @@ def get_session() -> Generator[Session, None, None]:
     """
     Create a new SQLModel session.
 
-    Returns:
+    Yields:
         Session: A new SQLModel session.
     """
     session = Session(engine)

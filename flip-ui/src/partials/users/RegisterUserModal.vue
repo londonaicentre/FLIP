@@ -41,7 +41,7 @@
                         class="inline-flex flex-col w-full max-w-lg max-h-screen p-4 text-left align-middle rounded-lg"
                     >
                         <div
-                            class="inline-flex flex-col w-full transition-all transform bg-white rounded-lg shadow-xl dark:bg-gray-800"
+                            class="inline-flex flex-col w-full transition-all transform bg-white rounded-lg shadow-xl dark:bg-dark-surface"
                         >
                             <DialogTitle
                                 as="h3"
@@ -49,7 +49,7 @@
                             >
                                 {{ title }}
                             </DialogTitle>
-                            <div class="flex flex-grow overflow-y-auto bg-white dark:bg-gray-800">
+                            <div class="flex flex-grow overflow-y-auto bg-white dark:bg-dark-surface">
                                 <div class="flex flex-col items-start w-full">
                                     <div class="w-full text-left">
                                         <div class="w-full px-8 py-4 space-y-4 overflow-y-auto text-sm font-normal leading-5 dark:text-gray-400">
@@ -101,7 +101,7 @@
                                             </div>
                                             <Listbox v-model="selectedOption">
                                                 <ListboxButton
-                                                    class="relative w-full py-2 pl-3 pr-10 mt-2 text-left bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-700 rounded-md cursor-default focus:border-primary-500 focus:ring-primary-500 dark:focus:ring-primary-400 dark:focus:border-primary-400 focus:ring-1"
+                                                    class="relative w-full py-2 pl-3 pr-10 mt-2 text-left bg-white dark:bg-dark-raised border border-gray-300 dark:border-dark-border rounded-md cursor-default focus:border-primary-500 focus:ring-primary-500 dark:focus:ring-primary-400 dark:focus:border-primary-400 focus:ring-1"
                                                     :class="[
                                                         !!errors?.role &&
                                                             'ring-1 ring-red-500 focus:ring-red-500 text-red-500 dark:text-red-400 dark:focus:ring-red-400',
@@ -129,7 +129,7 @@
                                                     leave-to-class="transform scale-95 opacity-0"
                                                 >
                                                     <ListboxOptions
-                                                        class="fixed z-10 py-2 origin-top-left bg-white dark:bg-gray-900 dark:ring-white/20 rounded-md shadow-2xl w-60 ring-1 ring-black ring-opacity-5 focus:outline-none"
+                                                        class="fixed z-10 py-2 origin-top-left bg-white dark:bg-dark-canvas dark:ring-white/20 rounded-md shadow-2xl w-60 ring-1 ring-black ring-opacity-5 focus:outline-none"
                                                     >
                                                         <ListboxOption
                                                             v-for="option in roleOptions"
@@ -142,7 +142,7 @@
                                                                 class="relative px-4 py-2 pl-10 select-none transition"
                                                                 :class="[
                                                                     (selected || active)
-                                                                        && 'text-primary-500 bg-primary-100 dark:bg-gray-800 dark:text-primary-200'
+                                                                        && 'text-primary-500 bg-primary-100 dark:bg-dark-surface dark:text-primary-200'
                                                                 ]"
                                                             >
                                                                 <span>{{ option.description }}</span>
@@ -161,7 +161,7 @@
                                     </div>
                                 </div>
                             </div>
-                            <div class="px-4 py-3 bg-gray-100 rounded-b-lg dark:bg-gray-900 sm:px-6 sm:flex sm:flex-row-reverse sm:flex-shrink-0">
+                            <div class="px-4 py-3 bg-gray-100 rounded-b-lg dark:bg-dark-canvas sm:px-6 sm:flex sm:flex-row-reverse sm:flex-shrink-0">
                                 <AiButton
                                     data-test="register-user-confirm-btn"
                                     primary
@@ -210,8 +210,8 @@ import { extractErrorDetail } from "@/utils/api-errors";
 import { Snackbar } from "@/utils/snackbar";
 
 interface IRegisterUserModalProps {
-    dialog: boolean,
-    title: string,
+    dialog?: boolean,
+    title?: string,
     roles: IRole[],
     // Optional pre-fill (e.g. "Enroll" from an access request passes the
     // requester's name + email); organisation + role are still admin-chosen.
@@ -253,7 +253,8 @@ const errorStore = useErrorStore();
 const selectedOption = ref<IOption>();
 const isSubmitting = ref(false);
 
-const { errors, resetForm, setFieldValue, validate, validateField } = useForm<RegisterUserForm>({ validationSchema: schema });
+const { errors, resetForm, setFieldValue, validate, validateField } =
+    useForm<RegisterUserForm>({ validationSchema: schema });
 const name = useField("name");
 const organisation = useField("organisation");
 const email = useField("email");

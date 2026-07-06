@@ -26,9 +26,9 @@
             @submit="stageProject"
         >
             <div v-if="hasQuery" class="w-full gap-3 text-sm">
-                <ul role="list" class="border-gray-200 divide-y divide-gray-200 border-y dark:border-gray-700 dark:divide-gray-700">
+                <ul role="list" class="border-gray-200 divide-y divide-gray-200 border-y dark:border-dark-border dark:divide-dark-border">
                     <li v-for="trust in trustsToStage" :key="trust.id">
-                        <div class="flex items-center py-4 transition hover:bg-gray-50 dark:hover:bg-gray-800 group">
+                        <div class="flex items-center py-4 transition hover:bg-gray-50 dark:hover:bg-dark-surface group">
                             <div class="flex items-center flex-1 px-4 grow">
                                 <div class="flex-1 min-w-0">
                                     <div>

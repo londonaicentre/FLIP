@@ -13,7 +13,7 @@
 
 <template>
     <nav class="lg:sticky lg:top-0 lg:z-[1] bg-primary-100 dark:bg-primary-500 border-b border-gray-300 dark:border-primary-500" :class="[!isAtTop && 'transition lg:shadow-md']">
-        <ol role="list" class="divide-y divide-gray-300 dark:divide-gray-700 rounded-md lg:flex lg:divide-y-0">
+        <ol role="list" class="divide-y divide-gray-300 dark:divide-dark-border rounded-md lg:flex lg:divide-y-0">
             <li v-for="(step, stepIdx) in steps" :key="step.name" class="relative lg:flex-1 lg:flex">
                 <div v-if="step.completed" class="flex items-center w-full group">
                     <span class="flex items-center px-6 py-2 text-sm font-medium grow">

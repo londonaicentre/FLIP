@@ -23,11 +23,11 @@
                 :name="name"
                 :model="checked"
                 :data-test="dataTest"
-                class="relative inline-flex items-center h-6 transition-colors rounded-full w-11 focus:outline-none focus:ring-2 focus:ring-primary-500 dark:focus:ring-primary-400 focus:ring-offset-2 dark:ring-offset-gray-900"
+                class="relative inline-flex items-center h-6 transition-colors rounded-full w-11 focus:outline-none focus:ring-2 focus:ring-primary-500 dark:focus:ring-primary-400 focus:ring-offset-2 dark:ring-offset-dark-canvas"
                 :class="[
                     !!errorMessage && 'ring-2 ring-offset-2 ring-red-500 focus:ring-red-500 text-red-500 dark:ring-red-400 dark:text-red-400',
                     !!errorMessage && 'focus:border-red-500 border-red-500',
-                    checked ? 'bg-primary-600 dark:bg-primary-400' : 'bg-gray-300 dark:bg-gray-600'
+                    checked ? 'bg-primary-600 dark:bg-primary-400' : 'bg-gray-300 dark:bg-dark-raised'
                 ]"
                 @click.capture="() => {
                     if (disabled) { return; }

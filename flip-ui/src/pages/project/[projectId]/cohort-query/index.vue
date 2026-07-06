@@ -43,7 +43,7 @@
                                             form="cohort-query-form"
                                             :disabled="formSubmitting"
                                             data-test="view-cohort-query-results-btn"
-                                            class="inline-flex items-center gap-2 px-4 py-2 text-sm font-semibold text-white bg-[#e51170] hover:bg-[#c50f60] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#e51170] dark:focus:ring-offset-gray-900 disabled:opacity-60 disabled:cursor-not-allowed rounded-lg shadow-sm transition-colors shrink-0"
+                                            class="inline-flex items-center gap-2 px-4 py-2 text-sm font-semibold text-white bg-[#e51170] hover:bg-[#c50f60] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#e51170] dark:focus:ring-offset-dark-canvas disabled:opacity-60 disabled:cursor-not-allowed rounded-lg shadow-sm transition-colors shrink-0"
                                         >
                                             <svg
                                                 v-if="formSubmitting"

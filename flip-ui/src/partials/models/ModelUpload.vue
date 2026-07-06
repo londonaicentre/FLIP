@@ -30,7 +30,7 @@
                         Download all
                     </AiButton>
                 </div>
-                <div class="border-t border-gray-200 dark:border-gray-700">
+                <div class="border-t border-gray-200 dark:border-dark-border">
                     <AiAlert
                         v-if="canUpload"
                         variant="info"
@@ -63,11 +63,11 @@
                     <ul
                         v-else-if="internalFiles.concat(uploadingFiles).length"
                         role="list"
-                        class="border-t divide-y divide-gray-200 border-t-gray-200 dark:divide-gray-700 dark:border-t-gray-700"
+                        class="border-t divide-y divide-gray-200 border-t-gray-200 dark:divide-dark-border dark:border-t-gray-700"
                     >
                         <li v-for="file in internalFiles.concat(uploadingFiles)" :key="file.id" class="flex flex-row items-center gap-3 px-4 py-1.5 transition group">
                             <div
-                                class="relative flex items-center justify-end transition bg-white rounded-full w-5 h-5 dark:bg-gray-900 ring-2 ring-offset-1 dark:ring-offset-gray-900 shrink-0"
+                                class="relative flex items-center justify-end transition bg-white rounded-full w-5 h-5 dark:bg-dark-canvas ring-2 ring-offset-1 dark:ring-offset-dark-canvas shrink-0"
                                 :class="[
                                     file.status === FileUploadStatus.COMPLETED &&
                                         'ring-green-600/70 dark:ring-green-400',
@@ -76,7 +76,7 @@
                                     file.status === FileUploadStatus.ERROR && 'ring-red-600/70 dark:ring-red-400',
                                 ]"
                             >
-                                <div class="relative flex items-center justify-center w-full h-full text-gray-700 bg-gray-100 border border-gray-300 rounded-full shadow dark:bg-gray-800 dark:text-gray-300 dark:border-gray-500 text-[10px]">
+                                <div class="relative flex items-center justify-center w-full h-full text-gray-700 bg-gray-100 border border-gray-300 rounded-full shadow dark:bg-dark-surface dark:text-gray-300 dark:border-dark-border-strong text-[10px]">
                                     <Transition name="fade" mode="out-in">
                                         <AiLoader v-if="file.status === FileUploadStatus.UPLOADING" small data-test="file-upload-status-uploading" />
                                         <AiLoader v-else-if="file.status === FileUploadStatus.SCANNING" small data-test="file-upload-status-scanning" />

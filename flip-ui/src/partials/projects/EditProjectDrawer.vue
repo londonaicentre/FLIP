@@ -41,10 +41,10 @@
                         <div class="w-screen max-w-4xl">
                             <Form
                                 :validation-schema="schema"
-                                class="flex flex-col h-full bg-white divide-y divide-gray-100 shadow-xl dark:bg-gray-800 dark:divide-gray-700 dark:ring-1 dark:ring-white/20"
+                                class="flex flex-col h-full bg-white divide-y divide-gray-100 shadow-xl dark:bg-dark-surface dark:divide-dark-border dark:ring-1 dark:ring-white/20"
                                 @submit="updateProject"
                             >
-                                <div class="p-4 bg-primary-500 sm:px-6 dark:bg-gray-900">
+                                <div class="p-4 bg-primary-500 sm:px-6 dark:bg-dark-canvas">
                                     <div class="flex items-center justify-between">
                                         <DialogTitle class="text-xl font-bold font-heading text-primary-100 dark:text-gray-300">
                                             Edit project details
@@ -112,7 +112,7 @@
                                         </div>
                                     </div>
                                 </div>
-                                <div v-if="canDeleteProject()" class="p-4 sm:px-6 bg-body dark:bg-gray-900">
+                                <div v-if="canDeleteProject()" class="p-4 sm:px-6 bg-body dark:bg-dark-canvas">
                                     <div class="flex items-center justify-between">
                                         <DialogTitle class="font-bold font-heading">
                                             Advanced Options
@@ -127,7 +127,7 @@
                                         </AiButton>
                                     </div>
                                 </div>
-                                <div class="flex justify-end flex-shrink-0 p-4 space-x-4 bg-gray-50 dark:bg-gray-900">
+                                <div class="flex justify-end flex-shrink-0 p-4 space-x-4 bg-gray-50 dark:bg-dark-canvas">
                                     <AiButton @click="closeDrawer">
                                         Close
                                     </AiButton>
@@ -158,11 +158,14 @@
             >
                 <template #confirmation>
                     <div class="my-4 space-y-2">
-                        <strong>Any active training jobs performed on the models within the project will be stopped. This can not be undone.</strong>
+                        <strong>
+                            Any active training jobs performed on the models within the project will be
+                            stopped. This can not be undone.
+                        </strong>
                         <p>Your username will be recorded against this action.</p>
                         <p>
                             To delete this project, enter
-                            <code class="p-1 font-bold leading-loose tracking-tight bg-gray-100 rounded dark:bg-gray-700 dark:text-primary-200">{{ name }}</code>
+                            <code class="p-1 font-bold leading-loose tracking-tight bg-gray-100 rounded dark:bg-dark-raised dark:text-primary-200">{{ name }}</code>
                             below.
                         </p>
                     </div>

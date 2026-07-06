@@ -54,7 +54,7 @@
                 </div>
                 <div v-if="project?.query" class="relative p-4 pt-4 space-y-4">
                     <Transition name="slidedown">
-                        <div v-if="true" class="overflow-hidden border border-gray-300 rounded-lg shadow-lg dark:border-gray-700 bg-gray-50 dark:bg-gray-900">
+                        <div v-if="true" class="overflow-hidden border border-gray-300 rounded-lg shadow-lg dark:border-dark-border bg-gray-50 dark:bg-dark-canvas">
                             <QueryResultCharts :submitting="formSubmitting" />
                         </div>
                     </Transition>

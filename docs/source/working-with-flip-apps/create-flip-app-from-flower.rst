@@ -319,7 +319,7 @@ Abridged from ``fl-tutorials/flower/3d_spleen_segmentation/pyproject.toml``:
    name = "quickstart-monai"
    version = "1.0.0"
    dependencies = [
-       "flip-utils>=0.1.2",
+       "flip-utils>=0.1.8",
        "flwr[simulation]>=1.26.1",
        # ... your model-framework deps (monai, torch, nibabel, ...)
    ]

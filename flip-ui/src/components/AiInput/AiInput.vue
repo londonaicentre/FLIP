@@ -41,7 +41,7 @@
                     :placeholder="placeholder"
                     :required="required"
                     :data-test="dataTest"
-                    class="block w-full text-sm text-gray-700 dark:text-gray-300 dark:bg-gray-700 transition duration-300 border-gray-300 dark:border-gray-700 rounded-md shadow-sm focus:ring-1"
+                    class="block w-full text-sm text-gray-700 dark:text-gray-300 dark:bg-dark-raised transition duration-300 border-gray-300 dark:border-dark-border rounded-md shadow-sm focus:ring-1"
                     :class="[
                         !!errorMessage
                             ? 'ring-1 ring-red-500 focus:ring-red-500 text-red-500 focus:border-red-500 border-red-500 placeholder-red-500/50'

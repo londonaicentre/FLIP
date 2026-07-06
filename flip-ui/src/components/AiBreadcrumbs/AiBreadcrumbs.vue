@@ -14,7 +14,7 @@
 <template>
     <nav
         id="breadcrumbs"
-        class="relative hidden p-2 px-4 bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-700 md:flex"
+        class="relative hidden p-2 px-4 bg-white dark:bg-dark-canvas border-b border-gray-200 dark:border-dark-border md:flex"
         :class="[!isAtTop && 'transition shadow-sm']"
         aria-label="Breadcrumb"
     >

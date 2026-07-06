@@ -86,7 +86,6 @@ export default defineComponent({
     props: {
         dialog: {
             type: Boolean,
-            required: true,
             default: false
         },
         title: {

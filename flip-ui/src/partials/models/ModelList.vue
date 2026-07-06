@@ -90,7 +90,7 @@
                                 v-for="row, index in rows"
                                 :key="row.id"
                                 :data-test="`model-list-item-${index}`"
-                                class="cursor-pointer transition hover:bg-gray-50 dark:hover:bg-gray-900 h-16 [&>td]:py-4"
+                                class="cursor-pointer transition hover:bg-gray-50 dark:hover:bg-dark-canvas h-16 [&>td]:py-4"
                                 @click="viewModel(row.id)"
                             >
                                 <td class="font-bold min-w-[300px]">
