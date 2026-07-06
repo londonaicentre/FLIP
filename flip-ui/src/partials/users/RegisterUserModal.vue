@@ -63,14 +63,14 @@
                                                 placeholder="Name"
                                             />
                                             <div v-else class="mt-2">
-                                                <label class="block mb-1 text-xs font-semibold text-gray-500 dark:text-gray-400">Name</label>
+                                                <label class="block mb-1 text-xs font-semibold text-gray-500 dark:text-gray-300">Name</label>
                                                 <input
                                                     data-test="name-field"
                                                     type="text"
                                                     :value="initialName"
                                                     readonly
                                                     disabled
-                                                    class="block w-full text-sm text-gray-500 bg-gray-100 border-gray-300 rounded-md shadow-sm cursor-not-allowed dark:bg-gray-900 dark:text-gray-400 dark:border-gray-700"
+                                                    class="block w-full text-sm text-gray-500 bg-gray-100 border-gray-300 rounded-md shadow-sm cursor-not-allowed dark:bg-gray-900 dark:text-gray-300 dark:border-gray-700"
                                                 >
                                             </div>
                                             <AiInput
@@ -89,14 +89,14 @@
                                                 placeholder="Email Address"
                                             />
                                             <div v-else class="mt-2">
-                                                <label class="block mb-1 text-xs font-semibold text-gray-500 dark:text-gray-400">Email</label>
+                                                <label class="block mb-1 text-xs font-semibold text-gray-500 dark:text-gray-300">Email</label>
                                                 <input
                                                     data-test="email-field"
                                                     type="email"
                                                     :value="initialEmail"
                                                     readonly
                                                     disabled
-                                                    class="block w-full text-sm text-gray-500 bg-gray-100 border-gray-300 rounded-md shadow-sm cursor-not-allowed dark:bg-gray-900 dark:text-gray-400 dark:border-gray-700"
+                                                    class="block w-full text-sm text-gray-500 bg-gray-100 border-gray-300 rounded-md shadow-sm cursor-not-allowed dark:bg-gray-900 dark:text-gray-300 dark:border-gray-700"
                                                 >
                                             </div>
                                             <Listbox v-model="selectedOption">
