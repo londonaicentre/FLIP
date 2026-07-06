@@ -58,7 +58,7 @@
                             <p class="mt-1.5 text-xl font-semibold leading-none font-heading text-gray-900 dark:text-gray-100" data-test="overview-image-retrieval">
                                 {{ formatCount(overview.studyRetrievalTotal) }}
                             </p>
-                            <p class="mt-1.5 text-[11px] leading-tight text-gray-500 dark:text-gray-300">
+                            <p class="mt-1.5 text-[11px] leading-tight text-gray-500 dark:text-gray-300" data-test="overview-retrieval-percent">
                                 {{ overviewRetrievalPercent }}% of expected {{ expectedCohortLabel }}
                             </p>
                         </div>
@@ -154,7 +154,7 @@
                                                 >
                                                     {{ rowTotal(project) === 0
                                                         ? "—"
-                                                        : Math.round(rowRatio(project) * 100) + "%" }}
+                                                        : floorPercent(rowRatio(project)) + "%" }}
                                                 </span>
                                                 <span class="font-mono text-[11px] text-gray-500 dark:text-gray-300">
                                                     {{ rowTotal(project) === 0
@@ -388,11 +388,12 @@ const overview = computed<IImagingProjectOverview>(() => {
 const overviewRetrievalPercent = computed(() => {
     if (!props.cohortSize) return 0;
 
-    return Math.round((overview.value.studyRetrievalTotal / props.cohortSize) * 100);
+    return floorPercent(overview.value.studyRetrievalTotal / props.cohortSize);
 });
 
 const formatCount = (value: number): string => value.toLocaleString();
 const expectedCohortLabel = computed(() => props.cohortSize?.toLocaleString() ?? "unknown");
+const floorPercent = (ratio: number): number => Math.floor(ratio * 100);
 
 // Per-trust import totals/ratio for the stacked-bar UI (design ref:
 // 06_imaging_status ImagingStatusA / IPSImportBar). `failed` rolls
