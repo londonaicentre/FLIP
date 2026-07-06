@@ -18,7 +18,7 @@ from fastapi import Request
 from sqlmodel import Session, select
 
 from flip_api.config import get_settings
-from flip_api.db.database import engine
+from flip_api.db.database import get_engine
 from flip_api.db.models.main_models import FLJob, Trust
 from flip_api.domain.interfaces.fl import (
     DEFAULT_JOB_TYPE,
@@ -948,7 +948,7 @@ def keep_fl_api_session_alive() -> None:
     # NOTE In the old implementation, we had 3 'nets' in the database, each with its own FLAdminAPI. So each net had a
     # separate FLAdminAPI endpoint. Here, there should just be 1 net for now. If we add more nets in the future, they
     # might all have the same FLARE_API endpoint, if the FLARE_API controls all controllers/clients.
-    with Session(engine) as db:
+    with Session(get_engine()) as db:
         nets = fl_scheduler_service.get_nets(db)
 
         for net in nets:

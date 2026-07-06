@@ -56,8 +56,8 @@ redirect: /admin/users # Can be set to any page within the "admin" section
                                         :key="item.name"
                                         :to="item.href"
                                         :class="[item.current
-                                                     ? 'bg-white dark:bg-gray-900 text-primary-600 dark:text-primary-100 hover:bg-white border-gray-300 dark:hover:bg-gray-900 dark:border-gray-700'
-                                                     : 'border-transparent text-gray-700 hover:text-gray-900 hover:bg-white dark:hover:bg-gray-900 dark:text-gray-400 dark:hover:text-gray-300',
+                                                     ? 'bg-white dark:bg-dark-canvas text-primary-600 dark:text-primary-100 hover:bg-white border-gray-300 dark:hover:bg-dark-canvas dark:border-dark-border'
+                                                     : 'border-transparent text-gray-700 hover:text-gray-900 hover:bg-white dark:hover:bg-dark-canvas dark:text-gray-400 dark:hover:text-gray-300',
                                                  'transition group rounded-md px-3 py-2 flex items-center text-sm font-medium user-select-none border']"
                                         :aria-current="item.current ? 'page' : undefined"
                                     >
@@ -96,6 +96,7 @@ import { routeChange } from "@/router";
 import { useAuthStore } from "@/store/auth";
 import DeploymentIcon from "~icons/ph/download-duotone";
 import BannerIcon from "~icons/ph/flag-banner-duotone";
+import AccessRequestIcon from "~icons/ph/user-plus-duotone";
 import UsersIcon from "~icons/ph/users-three-duotone";
 
 const router = useRouter();
@@ -115,6 +116,12 @@ const subNavigation = computed(() => [
         icon: UsersIcon,
         current: router.currentRoute.value.fullPath === "/admin/users",
         href: "/admin/users"
+    },
+    {
+        name: "Access Requests",
+        icon: AccessRequestIcon,
+        current: router.currentRoute.value.fullPath === "/admin/access-requests",
+        href: "/admin/access-requests"
     },
     {
         name: "Banner",

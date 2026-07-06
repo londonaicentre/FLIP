@@ -20,9 +20,9 @@ Templates are loaded from templates/cognito/ and templates/ses/ directories for 
 source of truth between Python testing and Terraform/HCL configuration.
 
 Usage:
-    python3 test_email_templates.py                    # Test all templates
-    python3 test_email_templates.py --output-dir ./previews  # Save to custom directory
-    python3 test_email_templates.py --serve           # Start local HTTP server for preview
+    python3 tests/test_email_templates.py                         # Test all templates
+    python3 tests/test_email_templates.py --output-dir ./previews # Save to custom directory
+    python3 tests/test_email_templates.py --serve                 # Start local HTTP server for preview
 """
 
 import argparse
@@ -30,6 +30,8 @@ import os
 from dataclasses import dataclass
 from http.server import HTTPServer, SimpleHTTPRequestHandler
 from pathlib import Path
+
+__test__ = False
 
 
 @dataclass
@@ -70,14 +72,16 @@ class EmailTemplateTester:
         self.test_user = test_user or TestUser()
         self.test_ses = test_ses or TestSesData()
 
+        aws_dir = Path(__file__).resolve().parent.parent
+
         # Load Cognito templates
-        cognito_dir = Path(__file__).parent / "templates" / "cognito"
+        cognito_dir = aws_dir / "templates" / "cognito"
         self.INVITE_TEMPLATE_HTML = (cognito_dir / "invite.html").read_text()
         self.PASSWORD_RESET_CODE_TEMPLATE_HTML = (cognito_dir / "password_reset_code.html").read_text()
         self.PASSWORD_RESET_LINK_TEMPLATE_HTML = (cognito_dir / "password_reset_link.html").read_text()
 
         # Load SES templates
-        ses_dir = Path(__file__).parent / "templates" / "ses"
+        ses_dir = aws_dir / "templates" / "ses"
         self.ACCESS_REQUEST_TEMPLATE_HTML = (ses_dir / "flip-access-request.html").read_text()
         self.XNAT_CREDENTIALS_TEMPLATE_HTML = (ses_dir / "flip-xnat-credentials.html").read_text()
 
@@ -95,7 +99,11 @@ class EmailTemplateTester:
             "{flip_alb_subdomain}": self.test_user.subdomain,
             "{reset_link}": self.test_user.reset_link,
             # Cognito link-based placeholder: {## Link Text ##} becomes <a href="reset-url">Link Text</a>
-            "{## Reset Password ##}": f'<a href="{self.test_user.reset_link}" style="display: inline-block; padding: 12px 32px; color: #ffffff; text-decoration: none; font-weight: 600; font-size: 16px;">{self.test_user.reset_link_text}</a>',
+            "{## Reset Password ##}": (
+                f'<a href="{self.test_user.reset_link}" '
+                'style="display: inline-block; padding: 12px 32px; color: #ffffff; text-decoration: none; '
+                f'font-weight: 600; font-size: 16px;">{self.test_user.reset_link_text}</a>'
+            ),
             # SES placeholders
             "{{name}}": self.test_ses.name,
             "{{email}}": self.test_ses.email,
@@ -198,12 +206,18 @@ class EmailTemplateTester:
     <title>FLIP Email - {name.replace("_", " ").title()}</title>
     <style>
         body {{ font-family: system-ui, sans-serif; background: #f0f0f0; margin: 0; padding: 20px; }}
-        .metadata {{ background: #fff; padding: 20px; margin-bottom: 20px; border-radius: 4px; border-left: 4px solid #61366e; }}
+        .metadata {{
+            background: #fff; padding: 20px; margin-bottom: 20px;
+            border-radius: 4px; border-left: 4px solid #61366e;
+        }}
         .metadata h2 {{ margin: 0 0 10px 0; color: #301A37; }}
         .metadata p {{ margin: 5px 0; color: #666; font-size: 14px; }}
         .metadata code {{ background: #f5f5f5; padding: 2px 6px; border-radius: 3px; font-family: monospace; }}
         .email-preview {{ background: #fff; border-radius: 4px; overflow: hidden; }}
-        .test-info {{ background: #FEF3F2; padding: 10px 20px; border-top: 1px solid #E51170; color: #BF360C; font-size: 12px; }}
+        .test-info {{
+            background: #FEF3F2; padding: 10px 20px; border-top: 1px solid #E51170;
+            color: #BF360C; font-size: 12px;
+        }}
     </style>
 </head>
 <body>

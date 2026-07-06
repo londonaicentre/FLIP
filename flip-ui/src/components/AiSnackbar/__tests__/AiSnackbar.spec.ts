@@ -12,8 +12,10 @@
  */
 
 import { mount } from "@vue/test-utils";
+import { nextTick } from "vue";
 
 import AiSnackbar from "../AiSnackbar.vue";
+import { notify } from "../notify";
 
 describe("Ai Snackbar", () => {
 
@@ -29,6 +31,26 @@ describe("Ai Snackbar", () => {
         // Check basic structure exists
         expect(wrapper.find(".fixed.inset-0.z-10")).toBeTruthy();
         expect(wrapper.find(".w-full.max-w-md")).toBeTruthy();
+    });
+
+    test("renders an active notification with its action button", async () => {
+        const wrapper = mount(AiSnackbar);
+
+        // A long timeout keeps the toast on screen for the duration of the assertion.
+        notify({
+            title: "Heads up",
+            text: "Something happened",
+            actionText: "Undo",
+            action: () => {}
+        }, 100_000);
+        await nextTick();
+
+        const snackbar = wrapper.find("[data-test=\"snackbar\"]");
+        expect(snackbar.exists()).toBe(true);
+        expect(snackbar.text()).toContain("Something happened");
+        expect(snackbar.text()).toContain("Undo");
+
+        wrapper.unmount();
     });
 
 });

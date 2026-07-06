@@ -51,7 +51,7 @@
                 <div
                     role="tablist"
                     aria-label="Connection view"
-                    class="inline-flex bg-gray-100 dark:bg-gray-800 rounded-lg p-1 ring-1 ring-black/5 dark:ring-white/10"
+                    class="inline-flex bg-gray-100 dark:bg-dark-surface rounded-lg p-1 ring-1 ring-black/5 dark:ring-white/10"
                 >
                     <button
                         type="button"
@@ -60,7 +60,7 @@
                         data-test="view-toggle-list"
                         class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all"
                         :class="viewMode === 'list'
-                            ? 'bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 shadow-sm'
+                            ? 'bg-white dark:bg-dark-canvas text-gray-900 dark:text-gray-100 shadow-sm'
                             : 'text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200'"
                         @click="viewMode = 'list'"
                     >
@@ -74,7 +74,7 @@
                         data-test="view-toggle-radial"
                         class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all"
                         :class="viewMode === 'radial'
-                            ? 'bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 shadow-sm'
+                            ? 'bg-white dark:bg-dark-canvas text-gray-900 dark:text-gray-100 shadow-sm'
                             : 'text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200'"
                         @click="viewMode = 'radial'"
                     >
@@ -91,7 +91,7 @@
                         v-for="(s, idx) in summaryCells"
                         :key="s.key"
                         class="flex flex-col gap-1 px-6 py-4 min-w-[140px]"
-                        :class="{ 'border-l border-gray-200 dark:border-gray-700': idx > 0 }"
+                        :class="{ 'border-l border-gray-200 dark:border-dark-border': idx > 0 }"
                     >
                         <div class="flex items-center gap-2">
                             <span class="inline-block w-2 h-2 rounded-full" :class="s.dotClass" />
@@ -117,7 +117,7 @@
                 <div v-else class="overflow-x-auto">
                     <table class="w-full">
                         <thead>
-                            <tr class="bg-gray-50 dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700">
+                            <tr class="bg-gray-50 dark:bg-dark-surface border-b border-gray-200 dark:border-dark-border">
                                 <th
                                     v-for="col in columns"
                                     :key="col.key ?? col.label"
@@ -144,7 +144,7 @@
                                 :key="t.id"
                                 data-test="trust-row"
                                 :class="[
-                                    idx > 0 ? 'border-t border-gray-100 dark:border-gray-700' : '',
+                                    idx > 0 ? 'border-t border-gray-100 dark:border-dark-border' : '',
                                     t._state === 'offline' ? 'bg-red-50/40 dark:bg-red-900/10' : ''
                                 ]"
                             >
@@ -242,7 +242,7 @@
                         </div>
                     </div>
 
-                    <div class="absolute top-4 right-5 z-10 flex gap-3.5 items-center bg-white dark:bg-gray-900 px-3 py-2 border border-gray-200 dark:border-gray-700 rounded-lg">
+                    <div class="absolute top-4 right-5 z-10 flex gap-3.5 items-center bg-white dark:bg-dark-canvas px-3 py-2 border border-gray-200 dark:border-dark-border rounded-lg">
                         <span
                             v-for="legend in radialLegend"
                             :key="legend.state"
@@ -350,7 +350,7 @@
                                 stroke-width="3"
                             />
                             <image
-                                href="/images/flip-logo-icon.png"
+                                href="/images/flip-logo-icon.webp"
                                 :x="radial.cx - 28"
                                 :y="radial.cy - 28"
                                 width="56"
@@ -441,7 +441,7 @@
 
                 <!-- Side panel: incidents + hover detail -->
                 <AiCard class="p-0 flex flex-col overflow-hidden">
-                    <div class="px-5 py-4 border-b border-gray-200 dark:border-gray-700">
+                    <div class="px-5 py-4 border-b border-gray-200 dark:border-dark-border">
                         <div class="text-[11px] font-mono uppercase tracking-widest text-gray-500 dark:text-gray-400">
                             Incidents · open
                         </div>
@@ -450,7 +450,7 @@
                         <div
                             v-for="t in incidents"
                             :key="t.id"
-                            class="px-5 py-3.5 border-b border-gray-100 dark:border-gray-700 flex flex-col gap-1.5"
+                            class="px-5 py-3.5 border-b border-gray-100 dark:border-dark-border flex flex-col gap-1.5"
                         >
                             <div class="flex justify-between items-center">
                                 <span class="font-heading font-semibold text-[13px] text-gray-900 dark:text-gray-100">
@@ -473,14 +473,14 @@
                         No open incidents.
                     </div>
 
-                    <div class="px-5 py-4 border-t border-gray-200 dark:border-gray-700 mt-auto">
+                    <div class="px-5 py-4 border-t border-gray-200 dark:border-dark-border mt-auto">
                         <div class="text-[11px] font-mono uppercase tracking-widest text-gray-500 dark:text-gray-400">
                             Trust detail
                         </div>
                     </div>
                     <div
                         v-if="hoveredTrust"
-                        class="px-5 py-3 flex flex-col gap-1 border-t border-gray-100 dark:border-gray-700"
+                        class="px-5 py-3 flex flex-col gap-1 border-t border-gray-100 dark:border-dark-border"
                         data-test="radial-hover-detail"
                     >
                         <span class="font-heading font-semibold text-[13px] text-gray-900 dark:text-gray-100">
@@ -492,7 +492,7 @@
                     </div>
                     <div
                         v-else
-                        class="px-5 py-3 text-[11px] text-gray-400 dark:text-gray-500 border-t border-gray-100 dark:border-gray-700"
+                        class="px-5 py-3 text-[11px] text-gray-400 dark:text-gray-500 border-t border-gray-100 dark:border-dark-border"
                     >
                         Hover a trust on the topology to see details.
                     </div>

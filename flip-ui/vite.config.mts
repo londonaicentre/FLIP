@@ -64,7 +64,12 @@ export default defineConfig(({ mode, command }) => {
                 resolvers: IconsResolver({ prefix: "icon" })
             }),
             svgLoader(),
-            Pages({ importMode: "sync" }),
+            // Lazy-load route components: each page becomes its own `() => import()`
+            // chunk fetched on navigation, instead of being eagerly bundled into the
+            // entry. This stops the public /auth/login route from shipping the entire
+            // authenticated app. Pairs with the `charts` manualChunk split below — see
+            // the router's onError handler for stale-chunk recovery.
+            Pages({ importMode: "async" }),
             Layouts({ defaultLayout: "MainLayout" })
         ],
         server: {
@@ -72,8 +77,8 @@ export default defineConfig(({ mode, command }) => {
             host: true,
             allowedHosts: [
                 "app.flip.aicentre.co.uk",
-                "stag.flip.aicentre.co.uk",
-            ],
+                "stag.flip.aicentre.co.uk"
+            ]
         },
         resolve: {
             alias: [
@@ -100,7 +105,12 @@ export default defineConfig(({ mode, command }) => {
                     manualChunks: (id) => {
                         if (id.includes("/node_modules/vue/") || id.includes("/node_modules/vue-router/")) return "app";
                         if (id.includes("/node_modules/aws-amplify/")) return "aws";
-                        if (id.includes("/node_modules/axios/") || id.includes("/node_modules/echarts/") || id.includes("/node_modules/vee-validate/")) return "misc";
+                        // echarts (+ its zrender renderer) is only used by the
+                        // authenticated metrics/cohort charts. Keep it in its own
+                        // chunk so the login route — which needs vee-validate, also
+                        // in `misc` — doesn't drag the charting library along with it.
+                        if (id.includes("/node_modules/echarts/") || id.includes("/node_modules/zrender/")) return "charts";
+                        if (id.includes("/node_modules/axios/") || id.includes("/node_modules/vee-validate/")) return "misc";
                     }
                 }
             }

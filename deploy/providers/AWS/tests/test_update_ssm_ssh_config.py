@@ -14,7 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Unit tests for SSH-over-SSM config generation script.
+"""Tests for SSH-over-SSM config generation script.
 
 Tests cover:
 - SSH config block generation with correct ProxyCommand and StrictHostKeyChecking

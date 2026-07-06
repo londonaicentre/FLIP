@@ -25,7 +25,7 @@
         </label>
         <div class="relative mt-1">
             <div
-                class="overflow-hidden transition duration-300 border border-gray-300 dark:border-gray-700 rounded-md shadow-sm dark:focus-within:border-primary-400 focus-within:border-primary-500 dark:focus-within:ring-primary-400 focus-within:ring-primary-500 focus-within:ring-1"
+                class="overflow-hidden transition duration-300 border border-gray-300 dark:border-dark-border rounded-md shadow-sm dark:focus-within:border-primary-400 focus-within:border-primary-500 dark:focus-within:ring-primary-400 focus-within:ring-primary-500 focus-within:ring-1"
                 :class="{
                     'ring-1 ring-red-500 focus-within:ring-red-500 text-red-500': !!errorMessage,
                     'focus-within:border-red-500 border-red-500': !!errorMessage,
@@ -46,7 +46,7 @@
                     :data-test="dataTest"
                     :placeholder="placeholder"
                     rows="5"
-                    class="block w-full text-sm text-gray-700 dark:text-gray-300 dark:bg-gray-700 border-0 resize-y focus:ring-0"
+                    class="block w-full text-sm text-gray-700 dark:text-gray-300 dark:bg-dark-raised border-0 resize-y focus:ring-0"
                     :class="errorMessage ? 'placeholder-red-500/50' : 'placeholder:text-gray-400'"
                     v-bind="inputProps"
                     @input="handleChange"

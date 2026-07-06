@@ -28,7 +28,7 @@
                 <!-- Track (rail + progress) sits behind the circles; left/right
                      inset by half-stage so it stops at the edges of the row. -->
                 <div
-                    class="absolute h-[2px] bg-gray-200 dark:bg-gray-700 rounded"
+                    class="absolute h-[2px] bg-gray-200 dark:bg-dark-raised rounded"
                     :style="trackStyle"
                 />
                 <div
@@ -111,10 +111,10 @@ const circleClass = (idx: number): string => {
     if (step.stopped && !step.completed) return "bg-yellow-500 border-2 border-yellow-500";
     if (step.completed) return "bg-primary-500 border-2 border-primary-500";
     if (isCurrent(idx)) {
-        return "bg-white dark:bg-gray-900 border-[2.5px] border-primary-500 shadow-[0_0_0_5px_rgba(97,54,110,0.15)]";
+        return "bg-white dark:bg-dark-canvas border-[2.5px] border-primary-500 shadow-[0_0_0_5px_rgba(97,54,110,0.15)]";
     }
 
-    return "bg-white dark:bg-gray-900 border-2 border-gray-300 dark:border-gray-600";
+    return "bg-white dark:bg-dark-canvas border-2 border-gray-300 dark:border-dark-border-strong";
 };
 
 const stepTextClass = (idx: number): string => {

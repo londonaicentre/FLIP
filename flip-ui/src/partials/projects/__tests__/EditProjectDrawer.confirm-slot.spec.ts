@@ -11,7 +11,9 @@
  * limitations under the License.
  */
 
+import { createTestingPinia } from "@pinia/testing";
 import { mountComponent } from "@test/helper";
+import { mount } from "@vue/test-utils";
 import { describe, expect, it, vi } from "vitest";
 
 import EditProjectDrawer from "@/partials/projects/EditProjectDrawer.vue";
@@ -86,6 +88,45 @@ describe("EditProjectDrawer delete-confirmation slot", () => {
         expect(slot.exists()).toBe(true);
         expect(slot.find("img").exists()).toBe(false);
         expect(slot.html()).toContain("&lt;img");
+    });
+
+    it("renders the Advanced Options / delete section when the user owns the project", () => {
+        const wrapper = mount(EditProjectDrawer, {
+            global: {
+                renderStubDefaultSlot: true,
+                mocks: { getRandomId: () => "random-id" },
+                stubs: { AiConfirmModal: confirmModalStub },
+                plugins: [createTestingPinia({
+                    createSpy: vi.fn,
+                    stubActions: false,
+                    // sub matches baseProps.ownerId -> canDeleteProject() is true, so the
+                    // (dark-mode) delete section renders.
+                    initialState: {
+                        auth: {
+                            user: {
+                                attributes: { sub: "owner-1" },
+                                permissions: []
+                            }
+                        }
+                    }
+                })]
+            },
+            props: baseProps
+        });
+
+        expect(wrapper.text()).toContain("Advanced Options");
+    });
+
+    it("hides the delete section when the user cannot delete the project", () => {
+        const wrapper = mountComponent(EditProjectDrawer, {
+            global: {
+                renderStubDefaultSlot: true,
+                stubs: { AiConfirmModal: confirmModalStub }
+            },
+            props: baseProps
+        });
+
+        expect(wrapper.text()).not.toContain("Advanced Options");
     });
 });
 

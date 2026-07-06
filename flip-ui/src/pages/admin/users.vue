@@ -20,8 +20,8 @@
     <AiCard class="w-full h-full">
         <div class="flex w-full h-full">
             <!-- LEFT RAIL — searchable user list -->
-            <div class="flex flex-col flex-shrink-0 h-full bg-white border-r border-gray-200 w-96 dark:bg-gray-800 dark:border-gray-700">
-                <div class="flex items-center gap-3 px-4 py-3 border-b border-gray-200 dark:border-gray-700">
+            <div class="flex flex-col flex-shrink-0 h-full bg-white border-r border-gray-200 w-96 dark:bg-dark-surface dark:border-dark-border">
+                <div class="flex items-center gap-3 px-4 py-3 border-b border-gray-200 dark:border-dark-border">
                     <h1 class="flex-grow text-lg font-semibold text-gray-900 font-heading dark:text-gray-100">
                         Users
                     </h1>
@@ -30,7 +30,7 @@
                         Register User
                     </AiButton>
                 </div>
-                <div class="px-4 py-3 border-b border-gray-100 dark:border-gray-700">
+                <div class="px-4 py-3 border-b border-gray-100 dark:border-dark-border">
                     <AiSearch
                         v-model="search"
                         data-test="user-search"
@@ -49,7 +49,7 @@
                             class="flex items-center gap-3 px-4 py-2.5 cursor-pointer transition border-l-[3px]"
                             :class="row.id === selectedUser?.id
                                 ? 'border-primary-500 bg-primary-100 dark:bg-primary-900/40'
-                                : 'border-transparent hover:bg-gray-50 dark:hover:bg-gray-900'"
+                                : 'border-transparent hover:bg-gray-50 dark:hover:bg-dark-canvas'"
                             @click="setSelectedUser(row)"
                         >
                             <UserAvatar
@@ -86,7 +86,7 @@
                         {{ search ? "No users match your search." : "There are no users to show" }}
                     </div>
                 </div>
-                <div class="border-t border-gray-200 dark:border-gray-700">
+                <div class="border-t border-gray-200 dark:border-dark-border">
                     <p
                         v-if="userData?.data"
                         class="px-4 pt-2 text-xs text-gray-500 dark:text-gray-400"
@@ -106,7 +106,7 @@
             <!-- RIGHT PANE — selected user editor -->
             <div class="flex flex-col flex-grow min-w-0 overflow-hidden">
                 <template v-if="selectedUser">
-                    <div class="flex items-center gap-4 px-6 py-4 border-b border-gray-200 dark:border-gray-700">
+                    <div class="flex items-center gap-4 px-6 py-4 border-b border-gray-200 dark:border-dark-border">
                         <UserAvatar
                             :name="selectedUser.name"
                             :email="selectedUser.email"
@@ -144,7 +144,7 @@
                         </AiButton>
                     </div>
                     <div class="flex flex-col overflow-y-auto grow">
-                        <div class="grid gap-4 p-6 border-b border-gray-100 md:grid-cols-3 dark:border-gray-700">
+                        <div class="grid gap-4 p-6 border-b border-gray-100 md:grid-cols-3 dark:border-dark-border">
                             <div>
                                 <label
                                     for="selected-user-name"
@@ -156,7 +156,7 @@
                                     id="selected-user-name"
                                     v-model="selectedUser.name"
                                     data-test="selected-user-name-field"
-                                    class="block w-full mt-1 text-sm text-gray-700 transition duration-300 border-gray-300 rounded-md shadow-sm dark:text-gray-300 dark:bg-gray-700 dark:border-gray-700 focus:ring-1 focus:border-primary-500 focus:ring-primary-500 dark:focus:ring-primary-400 dark:focus:border-primary-400"
+                                    class="block w-full mt-1 text-sm text-gray-700 transition duration-300 border-gray-300 rounded-md shadow-sm dark:text-gray-300 dark:bg-dark-raised dark:border-dark-border focus:ring-1 focus:border-primary-500 focus:ring-primary-500 dark:focus:ring-primary-400 dark:focus:border-primary-400"
                                     @input="markProfileDirty"
                                 >
                             </div>
@@ -171,7 +171,7 @@
                                     id="selected-user-organisation"
                                     v-model="selectedUser.organisation"
                                     data-test="selected-user-organisation-field"
-                                    class="block w-full mt-1 text-sm text-gray-700 transition duration-300 border-gray-300 rounded-md shadow-sm dark:text-gray-300 dark:bg-gray-700 dark:border-gray-700 focus:ring-1 focus:border-primary-500 focus:ring-primary-500 dark:focus:ring-primary-400 dark:focus:border-primary-400"
+                                    class="block w-full mt-1 text-sm text-gray-700 transition duration-300 border-gray-300 rounded-md shadow-sm dark:text-gray-300 dark:bg-dark-raised dark:border-dark-border focus:ring-1 focus:border-primary-500 focus:ring-primary-500 dark:focus:ring-primary-400 dark:focus:border-primary-400"
                                     @input="markProfileDirty"
                                 >
                             </div>
@@ -187,7 +187,7 @@
                                 </div>
                             </div>
                         </div>
-                        <div class="p-6 space-y-3 border-b border-gray-100 dark:border-gray-700">
+                        <div class="p-6 space-y-3 border-b border-gray-100 dark:border-dark-border">
                             <div>
                                 <h3 class="text-base font-bold text-gray-900 font-heading dark:text-gray-100">
                                     Role
@@ -479,7 +479,7 @@ const selectRole = (role: IRole) => {
 const roleCardClasses = (roleId: string) =>
     selectedRoleId.value === roleId
         ? "border-primary-500 bg-primary-100 dark:border-primary-400 dark:bg-primary-900/30"
-        : "border-gray-200 hover:border-gray-300 hover:bg-gray-50 dark:border-gray-700 dark:hover:bg-gray-900";
+        : "border-gray-200 hover:border-gray-300 hover:bg-gray-50 dark:border-dark-border dark:hover:bg-dark-canvas";
 
 const saveUser = async () => {
     if (!selectedUser.value) return;
