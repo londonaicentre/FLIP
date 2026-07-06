@@ -293,15 +293,16 @@ This runs the following steps in order:
 | 2 | `make aws-login` | AWS SSO login |
 | 3 | `make init` | Terraform init with the S3 backend |
 | 4 | `make import-persistent` | Import pre-existing resources (Cognito, Secrets, S3 buckets) — idempotent, safe to re-run |
-| 5 | `make plan` | Review the Terraform execution plan |
-| 6 | `make apply` | Apply infrastructure changes |
-| 7 | `make update-env` | Refresh `.env.stag` with Terraform outputs |
-| 8 | `make ssh-config` | Write SSM-tunnelled `Host flip` / `Host flip-trust` into `~/.ssh/config` |
-| 9 | `make ansible-init` | Configure Trust EC2 with Docker, CloudWatch, and FL assets |
-| 10 | `make deploy-centralhub` | Force-redeploy ECS Fargate services + sync UI to S3 + invalidate CloudFront |
-| 11 | `make register-trusts` | Register trusts on the hub and write per-trust kit files |
-| 12 | `make deploy-trust` | Deploy trust stack to Trust EC2 via Docker Compose |
-| 13 | `make status` | Health checks |
+| 5 | `make generate-internal-service-key` | Mint the fl-server → hub `INTERNAL_SERVICE_KEY` (idempotent) |
+| 6 | `make plan` | Review the Terraform execution plan |
+| 7 | `make apply` | Apply infrastructure changes |
+| 8 | `make update-env` | Refresh `.env.stag` with Terraform outputs |
+| 9 | `make ssh-config` | Write SSM-tunnelled `Host flip` / `Host flip-trust` into `~/.ssh/config` |
+| 10 | `make ansible-init` | Configure Trust EC2 with Docker, CloudWatch, and FL assets |
+| 11 | `make deploy-centralhub` | Deploy the Central Hub containers to the `flip` SSH docker context (use `make deploy-ui` separately for the UI + CloudFront invalidation) |
+| 12 | `make register-trusts` | Register trusts on the hub and write per-trust kit files |
+| 13 | `make deploy-trust` | Deploy trust stack to Trust EC2 via Docker Compose |
+| 14 | `make status` | Health checks |
 
 > **Stag note:** staging has ~70 resources missing from Terraform state. `make import-persistent` (step 4) handles this — it probes state before each import and skips already-imported resources, so re-running after a failure is safe.
 
