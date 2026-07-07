@@ -333,9 +333,18 @@ export interface IModelSummary {
     trusts: IModelSummaryTrust[];
 }
 
+/**
+ * A page of the estate-wide Models list plus per-status totals for the filter tiles.
+ * ``statusCounts`` maps each ``ModelStatus`` value to its count across the caller's
+ * access-scoped set (honouring search, ignoring the active status filter).
+ */
+export interface IModelsPage extends IPaginatedResponse<IModelSummary> {
+    statusCounts: Record<string, number>;
+}
+
 /** Fetch the paginated, access-scoped list of models across every project the user can see. */
-export async function getAllModels(url: string): Promise<IPaginatedResponse<IModelSummary>> {
-    const response = await _http.get<IPaginatedResponse<IModelSummary>>(url);
+export async function getAllModels(url: string): Promise<IModelsPage> {
+    const response = await _http.get<IModelsPage>(url);
 
     return response.data;
 }

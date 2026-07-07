@@ -37,7 +37,36 @@
                     </div>
                 </header>
 
-                <!-- Toolbar: search + status filter -->
+                <!-- Filter tiles: one per lifecycle group, each a toggle. Click the active tile to reset. -->
+                <div class="flex flex-wrap gap-3 px-8 pb-4">
+                    <button
+                        v-for="tile in TILES"
+                        :key="tile.key"
+                        type="button"
+                        :data-test="`filter-tile-${tile.key}`"
+                        :aria-pressed="activeTile === tile.key"
+                        class="flex-1 min-w-[150px] rounded-xl border bg-white px-4 py-3 text-left transition dark:bg-dark-surface"
+                        :class="activeTile === tile.key
+                            ? [tile.ring, 'ring-[3px]']
+                            : 'border-gray-200 hover:border-gray-300 dark:border-dark-border dark:hover:border-dark-border-strong'"
+                        @click="toggleTile(tile.key)"
+                    >
+                        <div class="flex items-center gap-2">
+                            <span class="inline-block w-2 h-2 rounded-full" :class="tile.dot" />
+                            <span class="text-[11px] font-mono uppercase tracking-widest text-gray-500 dark:text-gray-300">
+                                {{ tile.label }}
+                            </span>
+                        </div>
+                        <div
+                            :data-test="`filter-tile-count-${tile.key}`"
+                            class="mt-1 text-2xl font-heading font-bold text-gray-900 dark:text-gray-100"
+                        >
+                            {{ tileCount(tile) }}
+                        </div>
+                    </button>
+                </div>
+
+                <!-- Toolbar: search -->
                 <div class="flex flex-wrap items-center gap-3 px-8 pb-4">
                     <div class="flex-1 min-w-[240px]">
                         <AiSearch
@@ -46,19 +75,6 @@
                             data-test="model-search"
                         />
                     </div>
-                    <select
-                        v-model="statusFilter"
-                        data-test="model-status-filter"
-                        aria-label="Filter by status"
-                        class="h-10 rounded-lg border border-gray-200 bg-white px-3 text-sm text-gray-700 dark:border-dark-raised dark:bg-dark-canvas dark:text-gray-200"
-                    >
-                        <option value="">
-                            All statuses
-                        </option>
-                        <option v-for="s in STATUS_OPTIONS" :key="s" :value="s">
-                            {{ modelStatusLabel(s) }}
-                        </option>
-                    </select>
                 </div>
 
                 <!-- Models table (div/grid layout: transparent rows + status rail, escapes the
@@ -206,20 +222,59 @@ const pageSize = 20;
 const search = ref("");
 const pageNumber = ref(1);
 const searchQueryParam = ref("");
-const statusFilter = ref<ModelStatus | "">("");
 const statusQueryParam = ref("");
 
-// Lifecycle order, matching the model status enum. Drives the status-filter dropdown.
-const STATUS_OPTIONS: ModelStatus[] = [
-    "PENDING",
-    "INITIATED",
-    "PREPARED",
-    "TRAINING_STARTED",
-    "RESULTS_UPLOADED",
-    "RESULTS_UPLOAD_FAILED",
-    "ERROR",
-    "STOPPED"
+type GroupKey = "training" | "preparing" | "queued" | "completed" | "attention";
+
+interface ITile {
+    key: GroupKey;
+    label: string;
+    statuses: ModelStatus[];
+    dot: string;
+    ring: string;
+}
+
+// Summary filter tiles — one per lifecycle group. `statuses` is the set a tile filters to;
+// `dot`/`ring` are whole literal Tailwind classes so the JIT compiler emits them.
+const TILES: ITile[] = [
+    {
+        key: "training",
+        label: "In training",
+        statuses: ["TRAINING_STARTED"],
+        dot: "bg-fuchsia-500",
+        ring: "border-fuchsia-500 ring-fuchsia-500/40"
+    },
+    {
+        key: "preparing",
+        label: "Preparing",
+        statuses: ["PREPARED"],
+        dot: "bg-amber-500",
+        ring: "border-amber-500 ring-amber-500/40"
+    },
+    {
+        key: "queued",
+        label: "Queued",
+        statuses: ["INITIATED", "PENDING"],
+        dot: "bg-gray-400",
+        ring: "border-gray-400 ring-gray-400/40"
+    },
+    {
+        key: "completed",
+        label: "Completed",
+        statuses: ["RESULTS_UPLOADED"],
+        dot: "bg-emerald-500",
+        ring: "border-emerald-500 ring-emerald-500/40"
+    },
+    {
+        key: "attention",
+        label: "Needs attention",
+        statuses: ["ERROR", "RESULTS_UPLOAD_FAILED", "STOPPED"],
+        dot: "bg-red-500",
+        ring: "border-red-500 ring-red-500/40"
+    }
 ];
+
+const activeTile = ref<GroupKey | null>(null);
 
 const { data, error } = useSWRV(
     () =>
@@ -235,6 +290,18 @@ const { data, error } = useSWRV(
 useErrorHandler(error);
 
 const models = computed<IModelSummary[]>(() => data.value?.data ?? []);
+
+// A tile's number sums the per-status counts the backend returns for its group.
+const tileCount = (tile: ITile): number =>
+    tile.statuses.reduce((sum, s) => sum + (data.value?.statusCounts?.[s] ?? 0), 0);
+
+// Toggle a tile: clicking the active tile clears the filter, otherwise filters to its statuses.
+const toggleTile = (key: GroupKey): void => {
+    activeTile.value = activeTile.value === key ? null : key;
+    const tile = TILES.find(t => t.key === activeTile.value);
+    statusQueryParam.value = tile ? `&status=${tile.statuses.join(",")}` : "";
+    pageNumber.value = 1;
+};
 
 type SortKey = "name" | "project" | "trusts" | "status";
 type SortDir = "asc" | "desc";
@@ -329,15 +396,6 @@ debouncedWatch(
     search,
     () => updateModelList(1),
     { debounce: 500 }
-);
-
-debouncedWatch(
-    statusFilter,
-    () => {
-        statusQueryParam.value = statusFilter.value ? `&status=${statusFilter.value}` : "";
-        pageNumber.value = 1;
-    },
-    { debounce: 300 }
 );
 
 const getSearchQuery = (): void => {

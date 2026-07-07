@@ -26,6 +26,7 @@ interface ModelsResponse {
     data: IModelSummary[];
     totalPages: number;
     page: number;
+    statusCounts: Record<string, number>;
 }
 
 const mockSwrvData = ref<ModelsResponse | undefined>(undefined);
@@ -71,11 +72,12 @@ const makeModel = (over: Partial<IModelSummary> = {}): IModelSummary => ({
     ...over
 });
 
-const setModels = (models: IModelSummary[]): void => {
+const setModels = (models: IModelSummary[], statusCounts: Record<string, number> = {}): void => {
     mockSwrvData.value = {
         data: models,
         totalPages: 1,
-        page: 1
+        page: 1,
+        statusCounts
     };
 };
 
@@ -176,17 +178,38 @@ describe("Models Page", () => {
         expect(wrapper.findAll("[data-test='models-list-item-0']")).toHaveLength(0);
     });
 
-    test("the status filter offers a value per model status and can be changed without error", async () => {
-        setModels([makeModel({ status: "TRAINING_STARTED" })]);
+    test("renders a filter tile per group with counts summed from statusCounts", async () => {
+        setModels([makeModel({ status: "TRAINING_STARTED" })], {
+            TRAINING_STARTED: 3,
+            PENDING: 1,
+            INITIATED: 2,
+            ERROR: 1,
+            RESULTS_UPLOAD_FAILED: 1
+        });
         const wrapper = mountPage();
         await wrapper.vm.$nextTick();
 
-        const filter = wrapper.find("[data-test='model-status-filter']");
-        expect(filter.exists()).toBe(true);
-        await filter.setValue("TRAINING_STARTED");
+        expect(wrapper.find("[data-test='filter-tile-training']").exists()).toBe(true);
+        expect(wrapper.find("[data-test='filter-tile-count-training']").text()).toBe("3");
+        // Queued groups PENDING + INITIATED = 3.
+        expect(wrapper.find("[data-test='filter-tile-count-queued']").text()).toBe("3");
+        // Needs attention groups ERROR + RESULTS_UPLOAD_FAILED + STOPPED = 2.
+        expect(wrapper.find("[data-test='filter-tile-count-attention']").text()).toBe("2");
+    });
+
+    test("clicking a filter tile activates it, and clicking it again clears the filter", async () => {
+        setModels([makeModel({ status: "RESULTS_UPLOADED" })], { RESULTS_UPLOADED: 1 });
+        const wrapper = mountPage();
         await wrapper.vm.$nextTick();
 
-        expect(wrapper.exists()).toBe(true);
+        const tile = wrapper.find("[data-test='filter-tile-completed']");
+        expect(tile.attributes("aria-pressed")).toBe("false");
+
+        await tile.trigger("click");
+        expect(tile.attributes("aria-pressed")).toBe("true");
+
+        await tile.trigger("click");
+        expect(tile.attributes("aria-pressed")).toBe("false");
     });
 
     test("typing in the search input triggers a paginated reload (debouncedWatch)", async () => {
