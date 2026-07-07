@@ -74,3 +74,19 @@ describe("admin page mobile tab-select band", () => {
         expect(band.classes()).toContain("dark:bg-transparent");
     });
 });
+
+describe("admin page gutters", () => {
+    // 64px of horizontal padding on top of the card's own is a third of a
+    // phone viewport; drop to 16px below md (design handoff fix #5).
+    it("uses compact gutters on mobile and full gutters from md up", () => {
+        const wrapper = mountAdmin();
+
+        const content = wrapper.find("[data-test='admin-content']");
+        expect(content.exists()).toBe(true);
+        expect(content.classes()).toContain("px-4");
+        expect(content.classes()).toContain("py-4");
+        expect(content.classes()).toContain("md:px-8");
+        expect(content.classes()).toContain("md:py-8");
+        expect(content.classes()).not.toContain("px-8");
+    });
+});
