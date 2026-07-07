@@ -33,10 +33,12 @@ Exports:
     - StagePercentilePrivacy: Stage-aware percentile-based privacy filter
     - CleanupImages: Image cleanup executor
     - FlipAnalyticsBridge: Bridges Client API analytics events to FlipEvents.SEND_RESULT
+    - ClientExceptionReporter: Reports client task failures to the FLIP hub
 """
 
 from flip.nvflare.components.broadcast_trim_filter import TrimBroadcastVars
 from flip.nvflare.components.cleanup import CleanupImages
+from flip.nvflare.components.client_exception_reporter import ClientExceptionReporter
 from flip.nvflare.components.custom_percentile_privacy import PercentilePrivacy
 from flip.nvflare.components.evaluation_json_generator import EvaluationJsonGenerator
 from flip.nvflare.components.flip_analytics_bridge import FlipAnalyticsBridge
@@ -73,4 +75,5 @@ __all__ = [
     "StagePercentilePrivacy",
     "CleanupImages",
     "FlipAnalyticsBridge",
+    "ClientExceptionReporter",
 ]

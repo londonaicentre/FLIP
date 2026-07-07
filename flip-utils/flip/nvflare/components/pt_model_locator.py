@@ -264,7 +264,7 @@ class EvaluationModelLocator(ModelLocator):
 
     Unlike :class:`EvaluationPTModelLocator` — which returns a single ``DataKind.COLLECTION`` DXO for the
     bespoke ``ModelEval`` controller — this exposes the stock ``get_model_names`` + ``locate_model(model_name,
-    fl_ctx)`` contract so it drives the shared :class:`~flip.nvflare.controllers.CrossSiteModelEval` validate
+    fl_ctx)`` contract so it drives NVFLARE's stock ``CrossSiteModelEval`` validate
     workflow directly. Each model named in ``config.json['models']`` becomes one ``DataKind.WEIGHTS`` DXO that
     the server broadcasts to clients as a single ``FLModel`` for the Client-API ``is_evaluate()`` path.
 

@@ -26,20 +26,19 @@ from nvflare.app_common.abstract.formatter import Formatter
 from nvflare.app_common.abstract.model_locator import ModelLocator
 from nvflare.app_common.app_constant import AppConstants
 from nvflare.app_common.app_event_type import AppEventType
+from nvflare.app_common.workflows.cross_site_model_eval import CrossSiteModelEval
 from nvflare.security.logging import secure_format_exception
 from nvflare.widgets.info_collector import GroupInfoCollector, InfoCollector
 
-from flip.constants import FlipTasks, PTConstants
-from flip.nvflare.controllers.cross_site_model_eval import CrossSiteModelEval
+from flip.constants import PTConstants
 
 
 class ModelEval(CrossSiteModelEval):
     """FLIP model-collection evaluation: evaluate a set of server-provided models on every client.
 
-    Subclasses FLIP's :class:`CrossSiteModelEval` to share one FLIP eval base — model-id
-    resolution (``_resolve_model_id``) and hub exception reporting (``_report_client_exception``) —
-    and to inherit the stock scaffolding (constructor validation, unknown-task routing, stop
-    logic). Unlike cross-site validation, where each client's submitted model is validated by every
+    Subclasses NVFLARE's :class:`CrossSiteModelEval` to inherit its constructor validation,
+    unknown-task routing, and stop logic. Unlike cross-site validation, where each client's
+    submitted model is validated by every
     other client, evaluation loads a *collection* of models server-side and bundles them into a
     single evaluation task broadcast to all clients.
 
@@ -59,8 +58,6 @@ class ModelEval(CrossSiteModelEval):
         cleanup_models=False,
         participating_clients=None,
         wait_for_clients_timeout=300,
-        cleanup_timeout=600,
-        model_id="",
     ):
         """Model-collection evaluation workflow.
 
@@ -83,8 +80,6 @@ class ModelEval(CrossSiteModelEval):
             cleanup_models=cleanup_models,
             participating_clients=participating_clients,
             wait_for_clients_timeout=wait_for_clients_timeout,
-            cleanup_timeout=cleanup_timeout,
-            model_id=model_id,
         )
 
         self._evaluation_task_name = evaluation_task_name
@@ -191,17 +186,6 @@ class ModelEval(CrossSiteModelEval):
                 self.log_debug(fl_ctx, "Checking standing tasks to see if model evaluation finished.")
                 time.sleep(self._task_check_period)
 
-            self.log_info(fl_ctx, "Beginning post evaluation cleanup task...")
-            cleanup_task = Task(name=FlipTasks.POST_TASK.value, data=Shareable(), timeout=self._cleanup_timeout)
-            self.broadcast_and_wait(
-                task=cleanup_task,
-                min_responses=len(self._participating_clients),
-                wait_time_after_min_received=0,
-                fl_ctx=fl_ctx,
-                abort_signal=abort_signal,
-            )
-            self.log_info(fl_ctx, "Post evaluation cleanup completed")
-
         except Exception as e:
             error_msg = f"Exception in model evaluation control_flow: {secure_format_exception(e)}"
             self.log_exception(fl_ctx, error_msg)
@@ -246,12 +230,10 @@ class ModelEval(CrossSiteModelEval):
         self.fire_event(AppEventType.SEND_MODEL_FOR_VALIDATION, fl_ctx)
 
     def _accept_val_result(self, client_name: str, result: Shareable, fl_ctx: FLContext):
-        """Record each client's evaluation result, keyed flatly by client, reporting exceptions."""
+        """Record each client's evaluation result, keyed flatly by client."""
         fl_ctx.set_prop(AppConstants.DATA_CLIENT, client_name, private=True, sticky=False)
         fl_ctx.set_prop(AppConstants.VALIDATION_RESULT, result, private=True, sticky=False)
         self.fire_event(AppEventType.VALIDATION_RESULT_RECEIVED, fl_ctx)
-
-        self._report_client_exception(client_name, result, fl_ctx)
 
         rc = result.get_return_code()
         if rc and rc != ReturnCode.OK:

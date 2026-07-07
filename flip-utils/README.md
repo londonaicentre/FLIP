@@ -81,7 +81,7 @@ flip/
 ├── utils/        # General utilities: Utils, model weight helpers
 ├── nvflare/      # NVFLARE-specific logic and components
 │   ├── executors/    # RUN_TRAINER, RUN_VALIDATOR, RUN_EVALUATOR wrappers
-│   ├── controllers/  # Workflow controllers (ScatterAndGather, CrossSiteModelEval, …)
+│   ├── controllers/  # FLIP workflows (ScatterAndGather, BroadcastTask, …)
 │   └── components/   # Event handlers, persistors, privacy filters, locators, …
 └── flower/       # Flower-specific server-side helpers
     └── metrics.py    # handle_client_metrics / handle_client_exception
