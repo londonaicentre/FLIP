@@ -120,6 +120,11 @@ class IOverridableConfig(BaseModel):
     IGNORE_RESULT_ERROR: bool | None = None
     AGGREGATOR: str | None = None
     AGGREGATION_WEIGHTS: dict[str, float] | None = None
+    # Regex of model-parameter names to KEEP in each per-round client update. When set, a
+    # KeepOnlyVars task_result_filter is injected client-side so only matching (trainable) params
+    # are sent — e.g. a frozen-backbone fine-tune sends just its head, avoiding the large-payload
+    # uplink timeout (FLIP#684). Unset (default) = full-model update, unchanged behaviour.
+    AGGREGATE_ONLY_REGEX: str | None = None
 
 
 class JobStatus(StrEnum):

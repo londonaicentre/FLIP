@@ -106,6 +106,46 @@ class TestFlipFedAvgRecipe:
             assert client_cfg["project_id"] == ""
             assert client_cfg["query"] == "SELECT * FROM Table;"
             assert client_cfg["local_rounds"] == 1
+
+            server_cfg = json.loads((job_dir / "app" / "config" / "config_fed_server.json").read_text())
+            evaluation_workflow = next(
+                workflow for workflow in server_cfg["workflows"] if workflow["path"].endswith("GlobalModelEval")
+            )
+            assert evaluation_workflow["path"].startswith("nvflare.app_common.workflows")
+            assert evaluation_workflow["path"].endswith("global_model_eval.GlobalModelEval")
+            assert server_cfg["workflows"][-1]["path"].endswith("broadcast_task.BroadcastTask")
+            assert set(server_cfg["task_result_filters"][0]["tasks"]) == {"validate", "post_validation"}
+            executor_tasks = client_cfg["executors"][-1]["tasks"]
+            assert executor_tasks == ["train", "validate"]
+            assert "submit_model" not in executor_tasks
+        finally:
+            sys.modules["models"].get_model = lambda: object()
+
+    def test_submit_model_opt_in_exports_cross_site_evaluation(self, tmp_path: Path):
+        """Callers can still explicitly request the full client-model evaluation matrix."""
+        import torch
+
+        sys.modules["models"].get_model = lambda: torch.nn.Linear(1, 1)
+        try:
+            recipe = FlipFedAvgRecipe(submit_model_task_name="custom_submit")
+            recipe.export(tmp_path)
+
+            config_dir = tmp_path / recipe.job.name / "app" / "config"
+            server_cfg = json.loads((config_dir / "config_fed_server.json").read_text())
+            client_cfg = json.loads((config_dir / "config_fed_client.json").read_text())
+
+            evaluation_workflow = next(
+                workflow for workflow in server_cfg["workflows"] if workflow["path"].endswith("CrossSiteModelEval")
+            )
+            assert evaluation_workflow["path"].startswith("nvflare.app_common.workflows")
+            assert evaluation_workflow["path"].endswith("cross_site_model_eval.CrossSiteModelEval")
+            assert evaluation_workflow["args"]["submit_model_task_name"] == "custom_submit"
+            assert client_cfg["executors"][-1]["tasks"] == ["train", "custom_submit", "validate"]
+            assert set(server_cfg["task_result_filters"][0]["tasks"]) == {
+                "custom_submit",
+                "validate",
+                "post_validation",
+            }
         finally:
             sys.modules["models"].get_model = lambda: object()
 

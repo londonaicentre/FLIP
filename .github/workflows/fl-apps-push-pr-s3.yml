@@ -62,10 +62,33 @@ jobs:
           # Write the full branch-head SHA into the file
           echo "$HEAD_SHA" > "commit_${SHORT_SHA}.txt"
 
-      - name: Sync fl-apps folder and commit SHA to PR S3 path
+      - name: Sync fl-apps folder and commit SHA to the DEV PR S3 path
         env:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           S3_FOLDER_URI: s3://${{ vars.AWS_DEV_S3_BUCKET_NAME }}/base-application-dev/pull-requests/${{ env.PR_NUMBER }}/${{ env.FL_BACKEND }}
+        run: |
+          aws s3 rm "${S3_FOLDER_URI}/" --recursive --exclude "*" --include "commit_*.txt" --only-show-errors
+          aws s3 sync fl-apps/nvflare/ "${S3_FOLDER_URI}/" --delete
+          aws s3 cp "commit_${SHORT_SHA}.txt" "${S3_FOLDER_URI}/commit_${SHORT_SHA}.txt"
+
+      # Also publish the PR's fl-apps to the STAGING account, under the same
+      # PR-scoped prefix, so a PR under test can be exercised end-to-end against
+      # FLIP-on-AWS-stag (the stag ECS flip-api cannot read the dev account's
+      # bucket cross-account). Point the hub's FL_APP_BASE_BUCKET at
+      # s3://<AWS_STAG_S3_BUCKET_NAME>/base-application-dev/pull-requests/<PR#>
+      # (the code appends /nvflare/<job_type>). Reuses the same repo/environment
+      # vars as fl-apps-push-s3-stag.yml — no new GitHub variables required.
+      - name: Configure AWS credentials for the STAGING account (OIDC)
+        uses: aws-actions/configure-aws-credentials@v6.2.1
+        with:
+          role-to-assume: ${{ vars.AWS_STAG_ROLE_TO_ASSUME }}
+          role-session-name: ${{ vars.AWS_ROLE_SESSION_NAME }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Sync fl-apps folder and commit SHA to the STAGING PR S3 path
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          S3_FOLDER_URI: s3://${{ vars.AWS_STAG_S3_BUCKET_NAME }}/base-application-dev/pull-requests/${{ env.PR_NUMBER }}/${{ env.FL_BACKEND }}
         run: |
           aws s3 rm "${S3_FOLDER_URI}/" --recursive --exclude "*" --include "commit_*.txt" --only-show-errors
           aws s3 sync fl-apps/nvflare/ "${S3_FOLDER_URI}/" --delete

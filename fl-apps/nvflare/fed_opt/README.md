@@ -27,13 +27,17 @@ The control flow is the same as the [`standard`](../standard/README.md) job — 
 
 1. `init_training` — `flip.nvflare.controllers.InitTraining`
 2. `scatter_and_gather` — `flip.nvflare.controllers.ScatterAndGather`
-3. `cross_site_validate` — `flip.nvflare.controllers.CrossSiteModelEval`
+3. `cross_site_validate` — stock `nvflare.app_common.workflows.global_model_eval.GlobalModelEval`
+4. `post_validation_cleanup` — `flip.nvflare.controllers.BroadcastTask`
 
 **Client — `config_fed_client.json` `executors` (by task):**
 
 - `init_training`, `post_validation` → `flip.nvflare.components.CleanupImages`
-- `train`, `submit_model` → `flip.nvflare.executors.RUN_TRAINER`
+- `train` → `flip.nvflare.executors.RUN_TRAINER`
 - `validate` → `flip.nvflare.executors.RUN_VALIDATOR`
+
+Post-training evaluation covers only the aggregated global model at each participating trust; client-local
+models are not collected for an all-to-all matrix.
 
 ## Technical differences
 

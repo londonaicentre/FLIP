@@ -10,12 +10,17 @@
     },
     {
       "id": "controller1",
-      "path": "flip.nvflare.controllers.cross_site_model_eval.CrossSiteModelEval",
+      "path": "nvflare.app_common.workflows.global_model_eval.GlobalModelEval",
       "args": {
         "validation_timeout": 12000,
-        "model_locator_id": "model_locator",
-        "submit_model_task_name": "",
-        "model_id": null
+        "model_locator_id": "model_locator"
+      }
+    },
+    {
+      "id": "controller2",
+      "path": "flip.nvflare.controllers.broadcast_task.BroadcastTask",
+      "args": {
+        "task_name": "post_validation"
       }
     }
   ],
@@ -55,5 +60,15 @@
     }
   ],
   "task_data_filters": [],
-  "task_result_filters": []
+  "task_result_filters": [
+    {
+      "filters": [
+        {
+          "args": {},
+          "path": "flip.nvflare.components.client_exception_reporter.ClientExceptionReporter"
+        }
+      ],
+      "tasks": ["validate", "post_validation"]
+    }
+  ]
 }

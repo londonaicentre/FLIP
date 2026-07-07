@@ -15,6 +15,7 @@ import os
 import tempfile
 from unittest.mock import MagicMock, Mock
 
+import numpy as np
 from nvflare.apis.dxo import DXO, DataKind
 from nvflare.apis.event_type import EventType
 from nvflare.app_common.app_constant import AppConstants
@@ -22,6 +23,7 @@ from nvflare.app_common.app_event_type import AppEventType
 
 from flip.constants import PTConstants
 from flip.nvflare.components.evaluation_json_generator import EvaluationJsonGenerator
+from flip.nvflare.components.validation_json_generator import ValidationJsonGenerator as FlipValidationJsonGenerator
 
 
 class TestEvaluationJsonGenerator:
@@ -201,3 +203,41 @@ class TestEvaluationJsonGenerator:
             assert client in self.generator._eval_results
             assert client in self.generator._eval_results
             assert client in self.generator._eval_results
+
+    # --- de-fork contract: deduped as a subclass of FLIP's ValidationJsonGenerator ---
+
+    def test_subclasses_flip_validation_json_generator(self):
+        """De-fork guard: shares FLIP's manual-dispatch base (no-op handle_event + numpy encoder)."""
+        assert issubclass(EvaluationJsonGenerator, FlipValidationJsonGenerator)
+        assert isinstance(EvaluationJsonGenerator(), FlipValidationJsonGenerator)
+
+    def test_handle_event_is_a_noop(self):
+        """Auto-dispatched handle_event must not process events; ServerEventHandler drives
+        handle_evaluation_events instead (else each result is recorded twice)."""
+        dxo = DXO(data_kind=DataKind.METRICS, data={"accuracy": 0.9})
+        self.fl_ctx.get_prop.side_effect = lambda key, default=None: {
+            AppConstants.DATA_CLIENT: "c",
+            AppConstants.VALIDATION_RESULT: dxo.to_shareable(),
+        }.get(key, default)
+
+        self.generator.handle_event(AppEventType.VALIDATION_RESULT_RECEIVED, self.fl_ctx)
+
+        assert self.generator._eval_results == {}
+
+    def test_handle_end_run_encodes_numpy_floats(self):
+        """Gained from the shared base: np.float32 metrics serialise (fork's json.dump raised)."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            run_dir = os.path.join(tmpdir, "run_1")
+            os.makedirs(run_dir)
+            mock_engine = Mock()
+            mock_engine.get_workspace.return_value.get_run_dir.return_value = run_dir
+            self.fl_ctx.get_engine.return_value = mock_engine
+            self.fl_ctx.get_job_id.return_value = "job_123"
+            self.generator._eval_results = {"client1": {"dice": np.float32(0.5)}}
+
+            self.generator.handle_evaluation_events(EventType.END_RUN, self.fl_ctx)
+
+            json_file = os.path.join(run_dir, self.generator._results_dir, self.generator._json_file_name)
+            with open(json_file) as f:
+                saved = json.load(f)
+            assert saved["client1"]["dice"] == 0.5

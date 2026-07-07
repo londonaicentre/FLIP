@@ -21,6 +21,7 @@ import numpy as np
 from flip import FLIP
 from flip.constants import ResourceType
 from flwr.common import log
+from tqdm import tqdm
 
 SEED = 42
 
@@ -34,15 +35,28 @@ class FLIP_BASE:
         # --- Core FLIP object ---
         self.flip = FLIP()
 
-    def get_image_and_label_list(self, _val_split, _test_split, is_test: bool = False):
-        """Returns train, val, and test lists of dicts.
+    def get_image_and_label_list(self, _val_split: float, _test_split: float, is_test: bool = False):
+        """
+        Returns train, val, and test lists of dicts.
 
         Each dict contains the path to an image and its corresponding label.
+
+        Args:
+            _val_split (float): Fraction of the dataset to use for validation.
+            _test_split (float): Fraction of the dataset to use for testing.
+            is_test (bool): If True, only return the test set. Otherwise, return train and val sets.
+
+        Returns:
+            If is_test is True:
+                test_datalist (list): List of dicts containing image and label paths for the test set.
+            If is_test is False:
+                train_datalist (list): List of dicts containing image and label paths for the training set.
+                val_datalist (list): List of dicts containing image and label paths for the validation set.
         """
 
         datalist = []
         # loop over each accession id in the train set
-        for accession_id in self.dataframe["accession_id"]:
+        for accession_id in tqdm(self.dataframe["accession_id"], desc="Preparing dataset", unit="accession"):
             try:
                 accession_folder_path = self.flip.get_by_accession_number(
                     self.project_id,
@@ -53,63 +67,48 @@ class FLIP_BASE:
                     ],
                 )
             except Exception as err:
-                log(INFO, f"Could not get image data folder path for {accession_id}: {err}")
+                log(INFO, "⚠️ Could not fetch images for accession_id=%s: %s", accession_id, err)
                 continue
 
             log(INFO, str(accession_folder_path))
 
+            # get all images in the accession folder that match the pattern "input_*.nii.gz"
             all_images = list(accession_folder_path.rglob("input_*.nii.gz"))
-            log(INFO, str(all_images))
 
-            this_accession_matches = 0
-            log(INFO, f"Total base count found for accession_id {accession_id}: {len(all_images)}")
             for img in all_images:
                 # for each image, find the corresponding segmentation mask
                 seg = str(img).replace("/input_", "/label_")
 
                 if not Path(seg).exists():
-                    log(INFO, f"No matching segmentation mask for {img}.")
+                    log(INFO, "⚠️ No matching segmentation for %s", img.name)
                     continue
 
                 try:
                     img_header = nib.load(str(img))
-                except nib.filebasedimages.ImageFileError as err:
-                    log(INFO, f"Problem loading header of base image {str(img)}.")
-                    log(INFO, f"{err=}")
-                    log(INFO, f"{type(err)=}")
-                    log(INFO, f"{err.args=}")
-                    continue
-
-                try:
                     seg_header = nib.load(seg)
                 except nib.filebasedimages.ImageFileError as err:
-                    log(INFO, f"Problem loading header of segmentation {str(seg)}.")
-                    log(INFO, f"{err=}")
-                    log(INFO, f"{type(err)=}")
-                    log(INFO, f"{err.args=}")
+                    log(INFO, "⚠️ Invalid image pair for %s: %s", img.name, err)
                     continue
 
                 # Some QC checks to ensure the image and segmentation are valid and match
-                # check is 3D and at least 128x128x128 in size and seg is the same
+                # check is 3D and at least 128x128x128 in size and seg is the same shape as the image
                 if len(img_header.shape) != 3:
-                    log(INFO, f"Image has other than 3 dimensions (it has {len(img_header.shape)}.)")
+                    log(INFO, "⚠️ Skipping non-3D image %s", img.name)
                     continue
-                elif any([img_dim != seg_dim for img_dim, seg_dim in zip(img_header.shape, seg_header.shape)]):
+
+                if img_header.shape != seg_header.shape:
                     log(
                         INFO,
-                        f"Image dimensions do not match segmentation dimensions"
-                        f"({img_header.shape}) vs ({seg_header.shape}).",
+                        "⚠️ Shape mismatch for %s: image=%s label=%s",
+                        img.name,
+                        img_header.shape,
+                        seg_header.shape,
                     )
                     continue
-                else:
-                    # defines keys for image and segmentation
-                    datalist.append({"image": str(img), "label": seg})
-                    log(INFO, "Matching base image and segmentation added.")
-                    this_accession_matches += 1
 
-            log(INFO, f"Added {this_accession_matches} matched image + segmentation pairs for {accession_id}.")
+                datalist.append({"image": str(img), "label": seg})
 
-        log(INFO, f"Found {len(datalist)} files in total.")
+        log(INFO, "Dataset ready: %d image/label pairs", len(datalist))
 
         # Calculate split indices
         n_total = len(datalist)

@@ -17,6 +17,10 @@ from pathlib import Path
 import nibabel as nib
 import numpy as np
 import torch
+from flip import FLIP
+from flip.constants import PTConstants, ResourceType
+from flip.nvflare.metrics import send_metrics_value
+from flip.utils import get_model_weights_diff
 from models import get_model
 from monai.data import DataLoader, Dataset, decollate_batch
 from monai.losses import DiceCELoss
@@ -31,12 +35,8 @@ from nvflare.apis.signal import Signal
 from nvflare.app_common.abstract.model import make_model_learnable, model_learnable_to_dxo
 from nvflare.app_common.app_constant import AppConstants
 from nvflare.app_opt.pt.model_persistence_format_manager import PTModelPersistenceFormatManager
+from tqdm import tqdm
 from transforms import get_sliding_window_inferer, get_train_transforms, get_val_transforms
-
-from flip import FLIP
-from flip.constants import PTConstants, ResourceType
-from flip.nvflare.metrics import send_metrics_value
-from flip.utils import get_model_weights_diff
 
 
 class FLIP_BASE(Executor):
@@ -89,8 +89,9 @@ class FLIP_BASE(Executor):
         """Returns a list of dicts, each dict containing the path to an image and its corresponding label."""
 
         datalist = []
+
         # loop over each accession id in the train set
-        for accession_id in self.dataframe["accession_id"]:
+        for accession_id in tqdm(self.dataframe["accession_id"], desc="Preparing dataset", unit="accession"):
             try:
                 accession_folder_path = self.flip.get_by_accession_number(
                     self.project_id,
@@ -101,63 +102,46 @@ class FLIP_BASE(Executor):
                     ],
                 )
             except Exception as err:
-                print(f"Could not get image data folder path for {accession_id}: {err}")
+                self.logger.info("⚠️ Could not fetch images for accession_id=%s: %s", accession_id, err)
                 continue
-            # accession_folder_path = Path(f"/app/data/images/net-1/{accession_id}")
 
-            print(accession_folder_path)
-
+            # get all images in the accession folder that match the pattern "input_*.nii.gz"
             all_images = list(accession_folder_path.rglob("input_*.nii.gz"))
-            print(all_images)
 
-            this_accession_matches = 0
-            print(f"Total base count found for accession_id {accession_id}: {len(all_images)}")
             for img in all_images:
                 # for each image, find the corresponding segmentation mask
                 seg = str(img).replace("/input_", "/label_")
 
                 if not Path(seg).exists():
-                    print(f"No matching segmentation mask for {img}.")
+                    self.logger.info("⚠️ No matching segmentation for %s", img.name)
                     continue
 
                 try:
                     img_header = nib.load(str(img))
-                except nib.filebasedimages.ImageFileError as err:
-                    print(f"Problem loading header of base image {str(img)}.")
-                    print(f"{err=}")
-                    print(f"{type(err)=}")
-                    print(f"{err.args=}")
-                    continue
-
-                try:
                     seg_header = nib.load(seg)
                 except nib.filebasedimages.ImageFileError as err:
-                    print(f"Problem loading header of segmentation {str(seg)}.")
-                    print(f"{err=}")
-                    print(f"{type(err)=}")
-                    print(f"{err.args=}")
+                    self.logger.info("⚠️ Invalid image pair for %s: %s", img.name, err)
                     continue
 
                 # Some QC checks to ensure the image and segmentation are valid and match
-                # check is 3D and at least 128x128x128 in size and seg is the same
+                # check is 3D and at least 128x128x128 in size and seg is the same shape as the image
                 if len(img_header.shape) != 3:
-                    print(f"Image has other than 3 dimensions (it has {len(img_header.shape)}.)")
+                    self.logger.info("⚠️ Skipping non-3D image %s", img.name)
                     continue
-                elif any([img_dim != seg_dim for img_dim, seg_dim in zip(img_header.shape, seg_header.shape)]):
-                    print(
-                        f"Image dimensions do not match segmentation dimensions"
-                        f"({img_header.shape}) vs ({seg_header.shape})."
+
+                if img_header.shape != seg_header.shape:
+                    self.logger.info(
+                        "⚠️ Shape mismatch for %s: image=%s label=%s",
+                        img.name,
+                        img_header.shape,
+                        seg_header.shape,
                     )
                     continue
-                else:
-                    # defines keys for image and segmentation
-                    datalist.append({"image": str(img), "label": seg})
-                    print("Matching base image and segmentation added.")
-                    this_accession_matches += 1
 
-            print(f"Added {this_accession_matches} matched image + segmentation pairs for {accession_id}.")
+                # defines keys for image and segmentation
+                datalist.append({"image": str(img), "label": seg})
 
-        print(f"Found {len(datalist)} files in total.")
+        self.logger.info("Dataset ready: %d image/label pairs", len(datalist))
 
         # split into the training and testing data
         train_datalist, val_datalist = np.split(datalist, [int((1 - self._val_split) * len(datalist))])
@@ -167,13 +151,13 @@ class FLIP_BASE(Executor):
     def get_train_datalist(self):
         """Returns a list of dicts, each dict containing the path to an image and its corresponding label."""
         train_datalist, _ = self.get_image_and_label_list()
-        print(f"Found {len(train_datalist)} files in train.")
+        self.logger.info("Found %d files in train.", len(train_datalist))
         return train_datalist
 
     def get_val_datalist(self):
         """Returns a list of dicts, each dict containing the path to an image and its corresponding label."""
         _, val_datalist = self.get_image_and_label_list()
-        print(f"Found {len(val_datalist)} files in validation.")
+        self.logger.info("Found %d files in validation.", len(val_datalist))
         return val_datalist
 
 
@@ -235,7 +219,7 @@ class FLIP_TRAINER(FLIP_BASE):
 
         # Basic training
         self.model.train()
-        print(f"Starting local train on device {self.device}")
+        self.log_info(fl_ctx, f"Starting local train on device {self.device}")
         for epoch in range(self._epochs):
             running_loss = 0.0
             num_images = 0

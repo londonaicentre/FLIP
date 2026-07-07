@@ -67,10 +67,13 @@ locals {
   # segment (.../base-application/{nvflare,flower}/...) in code from each net's seeded
   # (canonical) backend. A framework switch is applied via `make restart-fl`, which
   # recreates flip-api so seeding re-applies the backend onto every net.
+  # FL_APP_BASE_BUCKET_OVERRIDE (variables.tf) repoints it at a throwaway prefix
+  # for pre-merge branch deploys — the canonical prefix is owned by the
+  # merge-to-main fl-apps sync workflow and must not carry unmerged templates.
   uploaded_federated_data_uri = "${local.flip_fl_results_bucket_uri}/results"
   uploaded_model_files_uri    = "${local.flip_model_files_uploads_bucket_uri}/uploaded"
   scanned_model_files_uri     = "${local.flip_model_files_uploads_bucket_uri}/uploaded"
-  fl_app_base_uri             = "${local.flip_app_bundles_bucket_uri}/base-application"
+  fl_app_base_uri             = var.FL_APP_BASE_BUCKET_OVERRIDE != "" ? var.FL_APP_BASE_BUCKET_OVERRIDE : "${local.flip_app_bundles_bucket_uri}/base-application"
   fl_app_destination_uri      = "${local.flip_app_bundles_bucket_uri}/app_destinations"
 
   # NET_ENDPOINTS tells flip-api how to reach each FL network's fl-api. On
@@ -137,6 +140,12 @@ locals {
       UPLOADED_FEDERATED_DATA_BUCKET = local.uploaded_federated_data_uri
       FLIP_API_INTERNAL_URL          = "http://${local.service_discovery_names.flip_api}:${local.api_container_port}/api"
       INTERNAL_SERVICE_KEY_HEADER    = var.INTERNAL_SERVICE_KEY_HEADER
+      # Root of the shared checkpoint-staging volume (mounted from the
+      # fl_checkpoints EFS access point in ecs_tasks.tf). The fl-server's
+      # EvaluationModelLocator reads a staged checkpoint from
+      # <root>/<model_id>/ here (FLIP#695). Matches the default in
+      # flip-utils FlipConstants + compose.production.nvflare.yml.
+      SERVER_CHECKPOINT_ROOT = "/app/server-checkpoints"
       # INTERNAL_SERVICE_KEY is injected via the `secrets` block in
       # ecs_tasks.tf (sourced from the FLIP_API Secrets Manager secret),
       # never exposed as plain env in the task definition.
@@ -146,6 +155,16 @@ locals {
       # startup is a dead container (replaced by ECS), not a zombie (FLIP#593 pt.1).
       ENV                = "production"
       FL_ADMIN_DIRECTORY = var.FL_ADMIN_DIRECTORY
+      # Writer side of the shared checkpoint-staging volume: fl-api de-bundles a
+      # large eval checkpoint out of the client app and writes it to
+      # <root>/<model_id>/ for the fl-server to load (FLIP#695). Same path the
+      # fl-server reads. Mounted from the fl_checkpoints EFS access point.
+      SERVER_CHECKPOINT_ROOT = "/app/server-checkpoints"
+      # Per-job GPU resource spec the fl-api stamps onto an NVFLARE job's meta.
+      # Requests GPUs on the fl-CLIENTS (trust hosts) — the hub Fargate tasks are
+      # CPU-only. Default 0; set via TF_VAR_JOB_RESOURCE_SPEC_* for GPU jobs.
+      JOB_RESOURCE_SPEC_NUM_GPUS           = tostring(var.JOB_RESOURCE_SPEC_NUM_GPUS)
+      JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB = tostring(var.JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB)
     }
   }
 }

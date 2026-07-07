@@ -36,6 +36,9 @@ permissions:
 
 jobs:
   regenerate:
+    # Skip on forks: their GitHub Actions token cannot create pull requests, so
+    # running this job there would only produce a spurious workflow failure.
+    if: github.repository == 'londonaicentre/FLIP'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
@@ -74,7 +77,7 @@ jobs:
           EOF
 
       - name: Record docs demo specs
-        uses: cypress-io/github-action@v6
+        uses: cypress-io/github-action@v7
         with:
           working-directory: flip-ui
           browser: chrome
@@ -88,7 +91,7 @@ jobs:
         run: bash scripts/videos-to-gifs.sh
 
       - name: Open PR with regenerated GIFs
-        uses: peter-evans/create-pull-request@v6
+        uses: peter-evans/create-pull-request@v8
         with:
           branch: bot/regenerate-docs-gifs
           base: develop

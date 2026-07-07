@@ -49,7 +49,7 @@ class CleanupImages(Executor):
                         self.log_info(fl_ctx, f"Deleting job directory {job_dir}")
                         shutil.rmtree(job_dir)
                     else:
-                        self.log_info(fl_ctx, f"[DEV] Running in local dev mode, skipping deletion of {job_dir}")
+                        self.log_info(fl_ctx, f"[DEV] Cleanup → job directory {job_dir}")
 
             if task_name in (
                 FlipTasks.INIT_TRAINING,
@@ -93,7 +93,7 @@ class CleanupImages(Executor):
 
                     return make_reply(ReturnCode.OK)
                 else:
-                    self.log_info(fl_ctx, "[DEV] Running in local dev mode, skipping cleanup of images.")
+                    self.log_info(fl_ctx, "[DEV] Cleanup → images")
                     return make_reply(ReturnCode.OK)
 
             return make_reply(ReturnCode.TASK_UNKNOWN)

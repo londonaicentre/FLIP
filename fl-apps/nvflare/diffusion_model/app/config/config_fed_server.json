@@ -7,7 +7,12 @@
     "heart_beat_timeout": 600
   },
   "task_data_filters": [],
-  "task_result_filters": [],
+  "task_result_filters": [
+    {
+      "tasks": ["validate_ae", "validate_dm", "post_validation"],
+      "filters": [{"path": "flip.nvflare.components.ClientExceptionReporter", "args": {}}]
+    }
+  ],
   "components": [
     {
       "id": "persistor",
@@ -91,15 +96,21 @@
     },
     {
       "id": "cross_site_validate_ae",
-      "name": "CrossSiteModelEvalLDM",
-      "path": "flip.nvflare.controllers.CrossSiteModelEval",
+      "name": "GlobalModelEvalLDM",
+      "path": "nvflare.app_common.workflows.global_model_eval.GlobalModelEval",
       "args": {
-        "submit_model_task_name": "",
         "validation_task_name": "validate_ae",
         "model_locator_id": "model_locator",
         "participating_clients": "{participating_clients}",
-        "validation_timeout": 12000,
-        "model_id": "{model_id}"
+        "validation_timeout": 12000
+      }
+    },
+    {
+      "id": "post_validation_cleanup_ae",
+      "path": "flip.nvflare.controllers.BroadcastTask",
+      "args": {
+        "task_name": "post_validation",
+        "participating_clients": "{participating_clients}"
       }
     },
     {
@@ -121,15 +132,21 @@
     },
     {
       "id": "cross_site_validate_dm",
-      "name": "CrossSiteModelEvalLDM",
-      "path": "flip.nvflare.controllers.CrossSiteModelEval",
+      "name": "GlobalModelEvalLDM",
+      "path": "nvflare.app_common.workflows.global_model_eval.GlobalModelEval",
       "args": {
-        "submit_model_task_name": "",
         "model_locator_id": "model_locator",
         "validation_task_name": "validate_dm",
         "participating_clients": "{participating_clients}",
-        "validation_timeout": 12000,
-        "model_id": "{model_id}"
+        "validation_timeout": 12000
+      }
+    },
+    {
+      "id": "post_validation_cleanup_dm",
+      "path": "flip.nvflare.controllers.BroadcastTask",
+      "args": {
+        "task_name": "post_validation",
+        "participating_clients": "{participating_clients}"
       }
     }
   ]

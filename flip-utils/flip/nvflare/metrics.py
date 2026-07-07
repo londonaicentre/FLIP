@@ -47,8 +47,6 @@ def send_metrics_value(
         flip.logger.error("Error: no engine in fl_ctx, cannot fire metrics event")
         return
 
-    flip.logger.info("Attempting to fire metrics event...")
-
     # Create a DXO - if 'round' is provided include it in the data, otherwise just send the label and value
     if round is not None:
         dxo = DXO(data_kind=DataKind.METRICS, data={"label": label, "value": value, "round": round})
@@ -68,7 +66,12 @@ def send_metrics_value(
 
     engine.fire_event(FlipEvents.SEND_RESULT, fl_ctx)
 
-    flip.logger.info("Successfully fired metrics event")
+    flip.logger.debug(
+        "Fired metrics event: label=%s value=%s round=%s",
+        label,
+        value,
+        round,
+    )
 
 
 def handle_metrics_event(event_data: Shareable, global_round: int, model_id: str, flip: FLIP = FLIP()) -> None:

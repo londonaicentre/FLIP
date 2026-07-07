@@ -185,10 +185,12 @@ def authenticate() -> dict[str, str]:
 
 
 def create_project_with_query(
-    client: requests.Session, headers: dict[str, str], project_name: str, query: str
+    client: requests.Session, headers: dict[str, str], project_name: str, query: str, dicom_to_nifti: bool = True
 ) -> tuple[str, str]:
-    _log(f"🏗️  Creating project: {project_name}")
-    project_payload = ProjectDetails(name=project_name, description="E2E smoke run", users=[]).model_dump()
+    _log(f"🏗️  Creating project: {project_name} (dicom_to_nifti={dicom_to_nifti})")
+    project_payload = ProjectDetails(
+        name=project_name, description="E2E smoke run", users=[], dicom_to_nifti=dicom_to_nifti
+    ).model_dump()
     project_id = _ensure_ok(
         _post(client, "/projects/", project_payload, headers), "create project"
     ).json()["id"]
@@ -228,10 +230,44 @@ def create_project_with_query(
     return project_id, query_id
 
 
+def select_trusts(trusts: list[dict[str, Any]], selection: str | None) -> list[dict[str, Any]]:
+    """Filter the ``GET /trust/`` listing down to a ``--trusts`` selection.
+
+    Args:
+        trusts (list[dict[str, Any]]): Trusts as returned by ``GET /trust/``.
+        selection (str | None): Comma-separated trust codes or names, matched
+            case-insensitively. None/empty selects every registered trust.
+
+    Returns:
+        list[dict[str, Any]]: The matching trusts, in listing order.
+
+    Raises:
+        SmokeFailure: If any selection token matches no registered trust.
+    """
+    if not selection:
+        return trusts
+    wanted = {token.strip().casefold() for token in selection.split(",") if token.strip()}
+    selected = [
+        t for t in trusts if (t.get("code") or "").casefold() in wanted or (t.get("name") or "").casefold() in wanted
+    ]
+    matched = {(t.get("code") or "").casefold() for t in selected} | {
+        (t.get("name") or "").casefold() for t in selected
+    }
+    missing = sorted(wanted - matched)
+    if missing:
+        known = sorted(f"{t.get('code') or '?'} ({t.get('name')})" for t in trusts)
+        raise SmokeFailure(f"--trusts entries not registered on the hub: {missing}. Registered trusts: {known}")
+    return selected
+
+
 def wait_for_trusts_responded(
-    client: requests.Session, headers: dict[str, str], project_id: str, timeout_s: int = 120
+    client: requests.Session,
+    headers: dict[str, str],
+    project_id: str,
+    timeout_s: int = 120,
+    required_trust_ids: set[str] | None = None,
 ) -> int:
-    """Block until every queried trust has posted a cohort result.
+    """Block until the required trusts have posted a cohort result.
 
     `/cohort/submit/` dispatches the query asynchronously: the hub records the
     dispatched trusts in `query.queriedTrustIds` immediately, but each trust
@@ -239,6 +275,23 @@ def wait_for_trusts_responded(
     OMOP query, then POSTs `/cohort/results`). `/projects/{id}/stage` rejects a
     project whose staged trusts are not in `query.respondedTrustIds`, so the
     smoke must wait for the results to land — not merely for the dispatch.
+
+    The hub always dispatches to every registered trust (`/cohort/submit/` has
+    no subset parameter), so with ``required_trust_ids`` (the ``--trusts``
+    subset) only those trusts must respond — a registered-but-offline trust no
+    longer blocks the run.
+
+    Args:
+        client (requests.Session): HTTP session for hub calls.
+        headers (dict[str, str]): Auth headers.
+        project_id (str): Project whose cohort query to poll.
+        timeout_s (int): Seconds to wait before failing.
+        required_trust_ids (set[str] | None): Trust ids that must appear in
+            ``respondedTrustIds``. None keeps the legacy behaviour (every
+            queried trust must respond).
+
+    Returns:
+        int: Number of trusts that had responded when the wait was satisfied.
     """
     _log(f"⏳ Waiting for trusts to return cohort results (timeout {timeout_s}s)")
     deadline = time.monotonic() + timeout_s
@@ -250,27 +303,38 @@ def wait_for_trusts_responded(
             continue
         query = resp.json().get("query") or {}
         queried = len(query.get("queriedTrustIds") or [])
-        responded = len(query.get("respondedTrustIds") or [])
+        responded_ids = {str(t) for t in (query.get("respondedTrustIds") or [])}
+        responded = len(responded_ids)
         if (queried, responded) != last:
             _log(f"  📊 queriedTrustIds={queried}  respondedTrustIds={responded}")
             last = (queried, responded)
-        if queried > 0 and responded >= queried:
+        if required_trust_ids is not None:
+            if required_trust_ids <= responded_ids:
+                return responded
+        elif queried > 0 and responded >= queried:
             return responded
         time.sleep(5)
     raise SmokeFailure(
-        f"Not all queried trusts returned cohort results within {timeout_s}s. "
+        f"Not all required trusts returned cohort results within {timeout_s}s. "
         "Check trust-api / data-access-api logs for query failures."
     )
 
 
-def stage_and_approve(client: requests.Session, headers: dict[str, str], project_id: str) -> list[dict[str, Any]]:
+def stage_and_approve(
+    client: requests.Session, headers: dict[str, str], project_id: str, trusts_selection: str | None = None
+) -> list[dict[str, Any]]:
     _log("🏥 Fetching trusts")
     trusts = _ensure_ok(_get(client, "/trust/", headers), "list trusts").json()
     if not trusts:
         raise SmokeFailure("No trusts registered with the hub — start the trust services and seed first")
     _log(f"  ✅ found {len(trusts)} trust(s): {[t['name'] for t in trusts]}")
+    trusts = select_trusts(trusts, trusts_selection)
+    if trusts_selection:
+        _log(f"  🎯 --trusts selection: {[t.get('code') or t['name'] for t in trusts]}")
 
-    wait_for_trusts_responded(client, headers, project_id)
+    wait_for_trusts_responded(
+        client, headers, project_id, required_trust_ids={str(t["id"]) for t in trusts}
+    )
 
     trust_ids = [t["id"] for t in trusts]
     _log("📋 Staging project")
@@ -320,8 +384,18 @@ def wait_for_image_pull(
     project_id: str,
     threshold: float,
     timeout_s: int,
+    required_trust_names: set[str] | None = None,
 ) -> None:
-    _log(f"⏳ Waiting for image pull (≥{int(threshold * 100)}% per trust, timeout {timeout_s}s)")
+    """Block until every required trust's image pull reaches the threshold.
+
+    With ``required_trust_names`` (the ``--trusts`` selection, matched against the
+    status entries' ``trustName``), only those trusts must reach the bar — so a
+    job targeting a subset of an existing multi-trust project isn't blocked by a
+    non-selected (possibly offline) trust's pull entries. None keeps the legacy
+    behaviour (every trust in the project must reach the threshold).
+    """
+    scope = f" across {sorted(required_trust_names)}" if required_trust_names else " per trust"
+    _log(f"⏳ Waiting for image pull (≥{int(threshold * 100)}%{scope}, timeout {timeout_s}s)")
     deadline = time.monotonic() + timeout_s
     last_summary = ""
     poll_interval = 10
@@ -337,6 +411,8 @@ def wait_for_image_pull(
         if resp.status_code >= 300:
             raise SmokeFailure(f"image-status failed: HTTP {resp.status_code} {resp.text}")
         statuses = resp.json()
+        if required_trust_names is not None:
+            statuses = [s for s in statuses if s.get("trustName") in required_trust_names]
         if not statuses:
             time.sleep(poll_interval)
             continue
@@ -668,10 +744,26 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=None,
         help="Reuse an existing approved project: skip cohort submission and approval; jump straight "
         "to model creation + upload + training. Image-pull wait still runs (cheap when already at "
-        "100%, correct when a prior --abort-midway run left pulls in flight). Lets you iterate on "
+        "100%%, correct when a prior --abort-midway run left pulls in flight). Lets you iterate on "
         "training code without re-creating the project for every retry.",
     )
     parser.add_argument("--model-name", default=DEFAULT_MODEL_NAME)
+    parser.add_argument(
+        "--no-dicom-to-nifti",
+        action="store_true",
+        help="Create the project with dicom_to_nifti=false (apps that read DICOMs directly, e.g. the "
+        "Ark+ tutorials with ResourceType.ALL, skip the XNAT dcm2niix conversion). Set at project "
+        "creation and immutable afterwards; ignored with --project-id.",
+    )
+    parser.add_argument(
+        "--trusts",
+        default=None,
+        help="Comma-separated trust codes or names (case-insensitive) to run against, e.g. "
+        "--trusts GSTT or --trusts 'GSTT,Bangkok Dusit Medical Services'. The cohort query is "
+        "still dispatched to every registered trust (the API has no subset submit), but the smoke "
+        "only waits for, stages, approves and trains the selected trusts — so a registered-but-"
+        "offline trust no longer blocks the run. Default: every registered trust.",
+    )
     parser.add_argument(
         "--image-pull-threshold",
         type=float,
@@ -773,9 +865,14 @@ def main(argv: list[str] | None = None) -> int:
             if not trusts:
                 raise SmokeFailure("No trusts registered with the hub")
             _log(f"  ✅ found {len(trusts)} trust(s): {[t['name'] for t in trusts]}")
+            trusts = select_trusts(trusts, args.trusts)
+            if args.trusts:
+                _log(f"  🎯 --trusts selection: {[t.get('code') or t['name'] for t in trusts]}")
         else:
-            project_id, _query_id = create_project_with_query(client, headers, project_name, query)
-            trusts = stage_and_approve(client, headers, project_id)
+            project_id, _query_id = create_project_with_query(
+                client, headers, project_name, query, dicom_to_nifti=not args.no_dicom_to_nifti
+            )
+            trusts = stage_and_approve(client, headers, project_id, args.trusts)
         # Create the model and upload files before waiting for image pull. This
         # surfaces model-creation / upload errors immediately instead of after
         # 5–15 minutes of XNAT pulling, and the FL pipeline only consumes the
@@ -789,7 +886,12 @@ def main(argv: list[str] | None = None) -> int:
         # in which case skipping the wait here would have wait_for_training_started
         # sit blocked on the (still pulling) FL clients until it times out.
         wait_for_image_pull(
-            client, headers, project_id, args.image_pull_threshold, args.image_pull_timeout
+            client,
+            headers,
+            project_id,
+            args.image_pull_threshold,
+            args.image_pull_timeout,
+            required_trust_names={t["name"] for t in trusts} if args.trusts else None,
         )
         if args.data_enrichment_cmd:
             run_data_enrichment(args.data_enrichment_cwd, args.data_enrichment_cmd, project_id)
