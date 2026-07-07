@@ -264,9 +264,10 @@ class TestConfigureClient:
     def test_configure_client_injects_reconstruct_full_model_filter(
         self, mock_isfile, mock_write_config, mock_read_config
     ):
-        """With aggregate_only_regex set, a ReconstructFullModel filter is prepended to the train
-        task_data_filters — the client half of the head-only broadcast (it rebuilds the full model
-        from the trimmed broadcast the server sends after round 0)."""
+        """With aggregate_only_regex set, a ReconstructFullModelForEval filter is prepended as its own
+        chain over BOTH ``train`` and ``validate`` — the client half of the head-only broadcast for
+        training AND cross-site validation (one instance shares the round-0 backbone cache across both
+        tasks; #730)."""
         mock_read_config.return_value = {"task_result_filters": [{"tasks": ["train"], "filters": []}]}
 
         configure_client(
@@ -278,14 +279,16 @@ class TestConfigureClient:
         )
 
         modified_config = mock_write_config.call_args[0][0]
-        train_block = next(b for b in modified_config["task_data_filters"] if "train" in b["tasks"])
-        assert train_block["filters"][0]["path"] == "flip.nvflare.components.ReconstructFullModel"
+        reconstruct_block = modified_config["task_data_filters"][0]
+        assert reconstruct_block["tasks"] == ["train", "validate"]
+        assert reconstruct_block["filters"][0]["path"] == "flip.nvflare.components.ReconstructFullModelForEval"
 
     def test_configure_client_reconstruct_filter_prepended_before_existing_data_filter(
         self, mock_isfile, mock_write_config, mock_read_config
     ):
-        """An existing train task_data_filters block keeps its filters; ReconstructFullModel is
-        prepended so the full model is rebuilt before any other incoming data filter runs."""
+        """An existing train task_data_filters block keeps its filters untouched; the
+        ReconstructFullModelForEval chain is prepended as a separate block so it is built/applied
+        first (and, being a single ``["train", "validate"]`` chain, shares one instance across tasks)."""
         mock_read_config.return_value = {
             "task_data_filters": [
                 {"tasks": ["train"], "filters": [{"id": "existing", "path": "some.Filter"}]}
@@ -301,14 +304,18 @@ class TestConfigureClient:
         )
 
         modified_config = mock_write_config.call_args[0][0]
-        train_block = next(b for b in modified_config["task_data_filters"] if "train" in b["tasks"])
-        assert train_block["filters"][0]["path"] == "flip.nvflare.components.ReconstructFullModel"
-        assert train_block["filters"][1]["id"] == "existing"
+        reconstruct_block = modified_config["task_data_filters"][0]
+        assert reconstruct_block["tasks"] == ["train", "validate"]
+        assert reconstruct_block["filters"][0]["path"] == "flip.nvflare.components.ReconstructFullModelForEval"
+        # The pre-existing train block is preserved unchanged, after the injected chain.
+        existing_block = modified_config["task_data_filters"][1]
+        assert existing_block["filters"][0]["id"] == "existing"
 
     def test_configure_client_no_regex_leaves_data_filters_untouched(
         self, mock_isfile, mock_write_config, mock_read_config
     ):
-        """No aggregate_only_regex → no ReconstructFullModel injected (normal full-model broadcast)."""
+        """No aggregate_only_regex → no reconstruct filter injected (normal full-model broadcast) —
+        this is the ``evaluation``/multimodel path, which must never head-only-trim."""
         mock_read_config.return_value = {"task_result_filters": [{"tasks": ["train"], "filters": []}]}
 
         configure_client(
@@ -320,7 +327,7 @@ class TestConfigureClient:
 
         modified_config = mock_write_config.call_args[0][0]
         assert all(
-            f.get("path") != "flip.nvflare.components.ReconstructFullModel"
+            f.get("path") != "flip.nvflare.components.ReconstructFullModelForEval"
             for b in modified_config.get("task_data_filters", [])
             for f in b.get("filters", [])
         )
@@ -440,10 +447,40 @@ class TestConfigureServer:
         assert train_block["filters"][-1]["path"] == "flip.nvflare.components.TrimBroadcastVars"
         assert train_block["filters"][-1]["args"]["include_vars"] == "omni_heads"
 
+    def test_configure_server_injects_trim_eval_broadcast_filter(
+        self, mock_isfile, mock_read_config, mock_write_config
+    ):
+        """With aggregate_only_regex set, a TrimEvalBroadcastVars filter is added to a ``validate``
+        task_data_filters chain — the server half of head-only cross-site validation (#730). It is a
+        separate chain from the ``train`` TrimBroadcastVars one."""
+        mock_read_config.return_value = self._minimal_server_config()
+
+        configure_server(
+            job_dir=MOCK_JOB_APP_DIR,
+            app_name=MOCK_APP_NAME,
+            global_rounds=3,
+            trusts=MOCK_APP_CLIENTS,
+            ignore_result_error=True,
+            aggregator="agg",
+            aggregation_weights=MOCK_AGGREGATION_WEIGHTS,
+            aggregate_only_regex="omni_heads",
+        )
+
+        modified_config = mock_write_config.call_args[0][0]
+        validate_block = next(b for b in modified_config["task_data_filters"] if b["tasks"] == ["validate"])
+        eval_filter = validate_block["filters"][-1]
+        assert eval_filter["path"] == "flip.nvflare.components.TrimEvalBroadcastVars"
+        assert eval_filter["args"]["include_vars"] == "omni_heads"
+        # The train chain is still present and distinct.
+        train_block = next(b for b in modified_config["task_data_filters"] if "train" in b["tasks"])
+        assert train_block["filters"][-1]["path"] == "flip.nvflare.components.TrimBroadcastVars"
+
     def test_configure_server_no_regex_leaves_data_filters_untouched(
         self, mock_isfile, mock_read_config, mock_write_config
     ):
-        """No aggregate_only_regex → no TrimBroadcastVars injected (normal full-model broadcast)."""
+        """No aggregate_only_regex → neither TrimBroadcastVars nor TrimEvalBroadcastVars injected
+        (normal full-model broadcast) — this is the ``evaluation``/multimodel path, which must never
+        head-only-trim the validate broadcast (clients don't hold the arbitrary server checkpoints)."""
         mock_read_config.return_value = self._minimal_server_config()
 
         configure_server(
@@ -457,11 +494,13 @@ class TestConfigureServer:
         )
 
         modified_config = mock_write_config.call_args[0][0]
-        assert all(
-            f.get("path") != "flip.nvflare.components.TrimBroadcastVars"
+        injected_paths = {
+            f.get("path")
             for b in modified_config.get("task_data_filters", [])
             for f in b.get("filters", [])
-        )
+        }
+        assert "flip.nvflare.components.TrimBroadcastVars" not in injected_paths
+        assert "flip.nvflare.components.TrimEvalBroadcastVars" not in injected_paths
 
     def test_configure_server_file_not_found(self, mock_isfile):
         # Setup
