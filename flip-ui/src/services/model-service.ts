@@ -325,7 +325,9 @@ export interface IModelSummaryTrust {
 export interface IModelSummary {
     id: string;
     name: string;
-    status?: ModelStatus;
+    // Required: the /models endpoint returns a status for every row (unlike the
+    // per-project IModel list, whose cached payloads predate the status column).
+    status: ModelStatus;
     projectId: string;
     projectName: string;
     ownerId: string;
@@ -335,11 +337,12 @@ export interface IModelSummary {
 
 /**
  * A page of the estate-wide Models list plus per-status totals for the filter tiles.
- * ``statusCounts`` maps each ``ModelStatus`` value to its count across the caller's
- * access-scoped set (honouring search, ignoring the active status filter).
+ * ``statusCounts`` maps each ``ModelStatus`` to its count across the caller's
+ * access-scoped set (honouring search, ignoring the active status filter). Statuses
+ * with no models are omitted, so the map is partial.
  */
 export interface IModelsPage extends IPaginatedResponse<IModelSummary> {
-    statusCounts: Record<string, number>;
+    statusCounts: Partial<Record<ModelStatus, number>>;
 }
 
 /** Fetch the paginated, access-scoped list of models across every project the user can see. */

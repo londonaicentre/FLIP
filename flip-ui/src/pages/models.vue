@@ -399,7 +399,8 @@ debouncedWatch(
 );
 
 const getSearchQuery = (): void => {
-    searchQueryParam.value = search.value ? `&search=${search.value}` : "";
+    // Encode the term so characters like & ? # % don't corrupt the query string.
+    searchQueryParam.value = search.value ? `&search=${encodeURIComponent(search.value)}` : "";
 };
 
 const updateModelList = (pageNumberInt: number): void => {

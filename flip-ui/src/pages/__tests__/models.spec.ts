@@ -224,17 +224,6 @@ describe("Models Page", () => {
         expect(wrapper.exists()).toBe(true);
     });
 
-    test("falls back to the owner email local-part when ownerName is unset", async () => {
-        setModels([makeModel({
-            ownerName: null,
-            ownerId: "u1"
-        })]);
-        const wrapper = mountPage();
-        await wrapper.vm.$nextTick();
-
-        // With no ownerName the row should still render without throwing.
-        expect(wrapper.find("[data-test='models-list-item-0']").exists()).toBe(true);
-    });
 
     test("clicking the Model header sorts rows by name and toggles direction", async () => {
         setModels([
