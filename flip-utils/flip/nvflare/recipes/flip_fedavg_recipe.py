@@ -90,10 +90,18 @@ _DEV_MODEL_ID = "00000000-0000-0000-0000-000000000001"
 
 @dataclass
 class PercentilePrivacy:
-    """Percentile-based DP noise filter configuration."""
+    """Percentile-based DP noise filter configuration.
 
-    gamma: float = 2.0
-    percentile: int = 95
+    Stock NVFLARE semantics (Shokri & Shmatikov "largest percentile to share"): components of the
+    per-step weight diff with magnitude BELOW the ``percentile``-th percentile are zeroed (only the
+    top ``100 - percentile`` % are shared), and the survivors are truncated to ``±gamma`` (absolute).
+    Defaults match stock NVFLARE (share top 90%, clip at 0.01). Do NOT raise ``percentile`` towards
+    95+ — that discards ~all of the update and stalls FedAvg convergence; with a frozen-backbone
+    head-only update it silently resets the global head every round.
+    """
+
+    gamma: float = 0.01
+    percentile: int = 10
     off: bool = False
 
 

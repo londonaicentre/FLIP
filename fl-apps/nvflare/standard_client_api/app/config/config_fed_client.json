@@ -48,8 +48,6 @@
         {
           "path": "flip.nvflare.components.custom_percentile_privacy.PercentilePrivacy",
           "args": {
-            "percentile": 95,
-            "gamma": 2.0,
             "data_kinds": [
               "WEIGHT_DIFF",
               "WEIGHTS"
