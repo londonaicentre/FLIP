@@ -11,18 +11,22 @@
     limitations under the License.
 -->
 
-# Ark+ Fine-tuning — Chest X-ray Classification (FLIP tutorial)
+# Ark+ Fine-tuning — Chest X-ray Classification
 
-FLIP tutorial for **federated fine-tuning** of an Ark+ Swin foundation model on
-chest X-ray classification. Each FLIP client trains a local Ark+ model on its own
-hold-out data and NVFLARE aggregates the updates; an optional Ark+-style local
-teacher/student (EMA) loop runs inside each client.
+FLIP tutorial for **federated fine-tuning** of an Ark+ Swin foundation model on chest X-ray
+classification, using the NVFLARE **Client API** (`nvflare.client`). It replaces the earlier
+Executor-based implementation that used to live here: the finetuning semantics are unchanged (frozen
+backbone, fresh 5-class head, local teacher/student EMA), only the FL plumbing was ported from the
+legacy Executor API to the Client API. The job is defined entirely in Python via
+[`FlipFedAvgRecipe`](../../../../flip-utils/flip/nvflare/recipes/flip_fedavg_recipe.py) in
+[`job.py`](job.py) — no hand-written server/client JSON.
 
 ## Compatible job type
 
-This tutorial is a **standard** FL training job (`config.json["job_type"] = "standard"`). For the
-NVFLARE **Client API** variant (`standard_client_api`, same finetuning semantics), see the sibling
-tutorial [`arkplus_fine_tuning_client_api`](../arkplus_fine_tuning_client_api/README.md).
+`config.json["job_type"] = "standard_client_api"`. Each client runs [`app_files/trainer.py`](app_files/trainer.py)
+as an in-process Client-API script (`flare.init()` → `flare.receive()`/`flare.send()` round loop) via
+NVFLARE's `InProcessClientAPIExecutor`. There is **no `validator.py`** — the held-out validation folds
+into the trainer's `flare.is_evaluate()` branch (server-driven cross-site evaluation).
 
 ## Target labels
 
@@ -39,195 +43,101 @@ The five DECAF chest X-ray lesions are predicted by a single classifier head:
 }
 ```
 
-`Lungs in normal arrangement` is a negative override: when it is positive, all
-lesion labels for that row are treated as negative. Labels come from the per-site
-dataframe (see Dataset setup) — there is no per-image label file.
+`Lungs in normal arrangement` is a negative override: when it is positive, all lesion labels for that
+row are treated as negative. Labels come from the per-site dataframe (see Dataset setup).
 
 ## Model & Ark+ integration
 
-NVFLARE's `PTFileModelPersistor` loads `models.get_model` from
-`app_files/models.py`. `get_model()`:
-
-1. builds an `ArkSwinTransformer` (defined in `app_files/arkplus_flat_models.py`)
-   via `arkplus_flat_models.build_omni_model`, sized from the `ARKPLUS` block in
-   `config.json`;
-2. initialises it from a local backbone checkpoint
-   `app_files/pretrained_weights.pt` (see Checkpoint setup) — with
-   `LOAD_BACKBONE_ONLY=true` only the backbone is loaded, the heads start fresh;
-3. wraps it in `ArkPlusNVFlareWrapper`, which adapts Ark+'s
-   `model(images, head_id) -> (features, logits)` to the `model(images) -> logits`
-   interface the FLIP trainer/validator expect (and exposes `forward_with_features`
-   for the teacher/student loop).
-
-The `ARKPLUS` block configures the network:
-
-```json
-"ARKPLUS": {
-  "MODEL_NAME": "swin_large_384",
-  "INPUT_SIZE": 768,
-  "PROJECTOR_FEATURES": 1376,
-  "USE_MLP": false,
-  "NUM_CLASSES_LIST": [5],
-  "HEAD_ID": 0,
-  "LOAD_BACKBONE_ONLY": true,
-  "USE_TEACHER_STUDENT": true,
-  "EMA_MODE": "epoch",
-  "TEACHER_MOMENTUM": 0.9,
-  "CONSISTENCY_WEIGHT": 0.1,
-  "USE_AMP": true,
-  "AMP_DTYPE": "float16"
-}
-```
+NVFLARE's persistor loads `models.get_model` from [`app_files/models.py`](app_files/models.py).
+`get_model()` builds an `ArkSwinTransformer` (in [`app_files/arkplus_flat_models.py`](app_files/arkplus_flat_models.py))
+sized from the `ARKPLUS` block, loads the backbone from the checkpoint with `LOAD_BACKBONE_ONLY=true`
+(the heads start fresh), and wraps it in `ArkPlusNVFlareWrapper` (which adapts Ark+'s
+`model(images, head_id) -> (features, logits)` to the `model(images) -> logits` interface, and exposes
+`forward_with_features` for the teacher/student loop). The trainer freezes every parameter that is not
+under `ark_model.omni_heads`, so only the classifier head trains.
 
 ### Teacher/student training
 
-When `USE_TEACHER_STUDENT=true`, each client holds two local models:
+When `USE_TEACHER_STUDENT=true`, each client holds a trainable **student** (initialised from the
+global weights) and a frozen EMA **teacher**. The per-step loss combines a BCE label loss with an MSE
+feature-consistency loss between student and teacher embeddings, weighted by `CONSISTENCY_WEIGHT`.
+Only the student weights are returned to NVFLARE; the teacher is never aggregated.
 
-- **student** — trainable, initialised from the NVFLARE global weights;
-- **teacher** — a frozen EMA copy, updated from the student (`EMA_MODE`,
-  `TEACHER_MOMENTUM`), used as a consistency target.
+## Finetuning mechanisms
 
-The per-step loss combines a BCE label loss (`loss_and_metrics.get_bce_loss`) with
-an MSE feature-consistency loss between student and teacher embeddings
-(`forward_with_features`), weighted by `CONSISTENCY_WEIGHT`. Only the **student**
-weights are returned to NVFLARE; the teacher is never aggregated.
+Three optimisations keep the frozen-backbone round-trip cheap. They are driven by keys in
+`config.json` and are exercised **locally** (the recipe in `job.py` wires them) and **on deploy** (the
+fl-server injects the equivalent filters from the same keys at job-assembly):
+
+| Key | Effect | Component |
+| --- | --- | --- |
+| `SERVER_CHECKPOINT: "pretrained_weights.pt"` | The backbone-only checkpoint seeds the round-0 global model **server-side** and is broadcast to clients — it is never bundled into the client app. | `InitialCheckpointPTModelPersistor` |
+| `AGGREGATE_ONLY_REGEX: "omni_heads"` | Clients return only the trainable head each round (not the ~759 MiB backbone). | `KeepOnlyVars` (client result filter) |
+| _(same key)_ | After round 0 the server broadcasts only the head; clients rebuild the full model from it, so training code is unchanged and memory stays flat across rounds. | `TrimBroadcastVars` (server) + `ReconstructFullModel` (client) |
+
+In the local simulator the backbone checkpoint is staged into the **server** custom dir only (see
+`stage_app_files` in [`job.py`](job.py)); clients build a bare architecture and receive the backbone at
+round 0.
 
 ## Configuration
 
-Training settings live in `app_files/config.json`, e.g. `GLOBAL_ROUNDS`,
-`LOCAL_ROUNDS`, `LR_START`/`LR_END`, `VAL_SPLIT`/`SPLIT_SEED`,
-`BATCH_SIZE`, plus the `LESIONS` and `ARKPLUS` blocks above.
+Training settings live in [`app_files/config.json`](app_files/config.json): `GLOBAL_ROUNDS`,
+`LOCAL_ROUNDS`, `LR_START`/`LR_END`, `VAL_SPLIT`/`SPLIT_SEED`, `BATCH_SIZE`, plus the `LESIONS`,
+`ARKPLUS` and `SITE_DATA` blocks.
 
 ## Dataset setup
 
-This app expects a DECAF-formatted chest X-ray dataset:
+This app expects a DECAF-formatted chest X-ray dataset: a per-site CSV dataframe with `accession_id`
+and the lesion-label columns, plus DICOM images.
 
-- A per-site CSV dataframe with `accession_id` and the lesion-label columns above
-- DICOM images organised under `<images_dir>/<accession_id>/...`
-
-Data is selected per simulated client by NVFLARE client name (`site-1`, `site-2`)
-from the `SITE_DATA` block in `config.json`:
-
-```json
-"SITE_DATA": {
-  "site-1": { "images_dir": "/site-data/site-1/accession-resources",
-              "dataframe":  "/site-data/site-1/sample_get_dataframe_response.csv" },
-  "site-2": { "images_dir": "/site-data/site-2/accession-resources",
-              "dataframe":  "/site-data/site-2/sample_get_dataframe_response.csv" }
-}
-```
-
-If `SITE_DATA` is missing or the site name is unknown, the loader falls back to
-`DEV_IMAGES_DIR` / `DEV_DATAFRAME` (settable in `.env.app`). Host paths are mounted
-into the simulator container by the testing harness. Each DICOM is loaded, resized
-to `ARKPLUS.INPUT_SIZE`, intensity-scaled, then repeated 1→3 channels and
-ImageNet-normalised before inference (`app_files/data_utils.py`).
-
-### Simulator vs. real deployment
-
-`SITE_DATA` and the `/site-data/site-N/...` mounts are **simulator-only**. The NVFLARE
-simulator runs every client (`site-1`, `site-2`) inside one container, so per-site data must
-be given a distinct mount target selected by client name — this is local development only.
-
-On a real federated client the fl-client runs with `LOCAL_DEV=false`, and the data layer
-ignores `SITE_DATA` entirely: the cohort dataframe comes from
-`FLIP().get_dataframe(project_id, query)` and DICOMs from `FLIP().get_by_accession_number(...)`
-(the trust's data-access-api / imaging-api), reading downloaded images from the single shared
-`/app/data/images` mount — there are no per-site mounts. `project_id`/`query` are supplied by
-the FL job config (`config_fed_client.json` → `RUN_TRAINER`/`RUN_VALIDATOR`). The switch is
-keyed on `LOCAL_DEV` in `app_files/data_utils.py` (`_is_local_dev`), mirroring the flip
-package's own `FLIPStandardDev`/`FLIPStandardProd` selection.
-
-The cohort query for a real deployment is [`query.sql`](query.sql) — it selects the chest X-ray
-**training** set and returns the seven lesion-label columns the model expects. Pass it as the
-project's cohort query (e.g. `make e2e_smoke QUERY_FILE=.../arkplus_fine_tuning/query.sql`).
+- **Simulator (`LOCAL_DEV=true`):** the two clients (`site-1`, `site-2`) train on distinct local data.
+  The trainer selects a client's data by `flare.get_site_name()`; `app_files/data_utils.py` resolves
+  the paths with the precedence `SITE{N}_IMAGES_DIR`/`SITE{N}_DATAFRAME` env → the `config.json`
+  `SITE_DATA` entry → the single-site `DEV_*` env. The per-site env vars are set in [`.env.app`](.env.app)
+  (the `SITE_DATA` container paths are for the deployed harness, which does not run in the no-Docker
+  SimEnv).
+- **Real deployment (`LOCAL_DEV=false`):** `SITE_DATA` is ignored; the cohort dataframe comes from
+  `FLIP().get_dataframe(project_id, query)` and DICOMs from `FLIP().get_by_accession_number(...)`.
+  `project_id` is passed to the trainer as `--project_id`; the cohort `query` is read from
+  `config_fed_client.json` (see [`query.sql`](query.sql)).
 
 ## Checkpoint setup
 
-`get_model()` requires the backbone checkpoint at
-`app_files/pretrained_weights.pt`. It is produced from the raw Ark6 training
-output (`Ark6_swinLarge768_ep50.pth.tar`) by `make run`:
+`make run`/`make export` require the backbone checkpoint at `app_files/pretrained_weights.pt`, produced
+from the raw Ark6 output (`Ark6_swinLarge768_ep50.pth.tar`) by `make prepare-checkpoint` (a no-op if it
+already exists). Fetch the raw checkpoint with `make download-raw-checkpoint`, or request access via
+[this form](https://forms.gle/qkoDGXNiKRPTDdCe8); see [`process_tools/README.md`](process_tools/README.md).
+
+## How to run
 
 ```bash
+# Local NVFLARE simulator (GPU + DECAF data + checkpoint). Prepares the checkpoint, then runs job.py.
+make -C fl-tutorials run-tutorial TUTORIAL=arkplus_fine_tuning
+#   ...or, from this directory:
 make run RAW_CHECKPOINT=/path/to/Ark6_swinLarge768_ep50.pth.tar
+
+# Export the full NVFLARE job under ./fl_job/flip_fedavg/ (no GPU needed)
+make export
+
+# Submit the exported job to a running FL cluster
+make -C fl-services/nvflare submit APP=./fl_job/flip_fedavg
 ```
-
-The Makefile's `check-raw-checkpoint` target runs
-`process_tools/preprocess_checkpoints.py` to convert the raw checkpoint into the
-clean `pretrained_weights.pt` (a no-op if it already exists). Access to the raw
-checkpoint is via [this form](https://forms.gle/qkoDGXNiKRPTDdCe8); see
-[process_tools/README.md](process_tools/README.md) for the conversion details.
-
-## Run the tutorial
-
-```bash
-make run RAW_CHECKPOINT=/path/to/Ark6_swinLarge768_ep50.pth.tar
-```
-
-Useful targets:
-
-- `make shell`: interactive shell in the simulator container
-- `make down`: stop the simulator service
-- `make clean`: remove generated simulator artifacts
 
 ## Key files
 
-- `app_files/models.py`: `get_model()` factory + `ArkPlusNVFlareWrapper`
-- `app_files/arkplus_flat_models.py`: the `ArkSwinTransformer` definition and `build_omni_model`
-- `app_files/arkplus_flat_utils.py`: Swin pretrained-key remapping helpers
-- `app_files/trainer.py`: FL training loop, teacher/student EMA, losses
-- `app_files/validator.py`: validation/metrics
-- `app_files/loss_and_metrics.py`: BCE loss and precision/recall/F1
-- `app_files/data_utils.py`: data loading, DICOM parsing, label mapping, transforms
-- `app_files/config.json`: model, training, and per-site data settings
+- [`job.py`](job.py): builds `FlipFedAvgRecipe` (with `aggregate_only_regex`), stages `app_files/`
+  (checkpoint → server only), and runs SimEnv / exports the job.
+- [`app_files/trainer.py`](app_files/trainer.py): Client-API training loop — frozen backbone,
+  teacher/student EMA, AMP, per-lesion metrics via `SummaryWriter`; returns the weight DIFF.
+- [`app_files/models.py`](app_files/models.py): `get_model()` factory + `ArkPlusNVFlareWrapper`.
+- [`app_files/arkplus_flat_models.py`](app_files/arkplus_flat_models.py): `ArkSwinTransformer` + `build_omni_model`.
+- [`app_files/data_utils.py`](app_files/data_utils.py): data loading, per-site resolution, DICOM parsing, transforms.
+- [`app_files/config.json`](app_files/config.json): model, training, finetuning and per-site data settings.
+
+There is **no `validator.py`** — validation runs in the trainer's `flare.is_evaluate()` branch.
 
 ## Dependency note
 
-The Ark+ model imports `timm`. If the FLIP/NVFLARE runtime does not include
-`timm`, model construction fails — add it to the runtime dependencies, or set
-`ARKPLUS.REQUIRE_ARKPLUS_IMPORT=false` in `config.json` only for a non-Ark
-fallback smoke test.
-
-## Model code & `timm` compatibility
-
-`app_files/arkplus_flat_models.py` defines the `ArkSwinTransformer` (built by
-`build_omni_model`, used via `models.get_model()`). It is adapted from the original
-Ark+ repository ([jlianglab/Ark](https://github.com/jlianglab/Ark)), which pins
-**`timm==0.5.4`**, and keeps the upstream `forward`
-(`forward_features` → projector → `omni_heads`).
-
-Cross-version gotcha: in **timm 0.5.4**, `SwinTransformer.forward_features` pooled
-internally (`AdaptiveAvgPool1d(1)`) and returned a per-image `(B, C)` vector, so
-the Ark `forward` never needed to pool. In **modern timm (1.x)** that average pool
-was moved into `forward_head`, and `forward_features` now returns the *unpooled*
-spatial map `(B, H, W, C)` (a 24×24 grid for a 768px Swin). Because the upstream
-`forward` bypasses `forward_head` (it uses its own `omni_heads`), on modern timm
-the heads produced a **per-location** grid of logits instead of one
-`(B, num_classes)` prediction per image.
-
-This app did not crash on that, because `ArkPlusNVFlareWrapper._pool_logits`
-already averaged 4-D spatial logits back to `(B, num_classes)` — but that pooling
-happened **after** the heads, and the teacher/student path
-(`forward_with_features`) still received the unpooled spatial features.
-
-**Fix.** `forward` (and `generate_embeddings`) now apply an explicit
-global-average-pool over the spatial dims **right after `forward_features`** — the
-architecturally-correct place — matching the Swin head's default
-`global_pool='avg'`:
-
-```python
-x = self.forward_features(x)
-x = self._global_pool(x)   # mean over spatial dims; no-op if already (B, C)
-```
-
-This restores the timm 0.5.4 behaviour, makes the teacher/student consistency loss
-operate on pooled embeddings, and reduces `_pool_logits` to a harmless no-op (the
-logits are already `(B, C)`). With a linear projector (`USE_MLP=false`) it is
-numerically identical to the old wrapper-level logit pooling; unlike that
-workaround, it is also correct when `USE_MLP=true` (a non-linear projector).
-
-**Verified equivalent.** Holding the backbone fixed, the explicit pool is
-bit-for-bit identical (`max |Δ| = 0.0`) to timm 0.5.4's `AdaptiveAvgPool1d(1)`
-pooling — averaging over the flattened token sequence (`L`) equals averaging over
-the `H×W` grid (`L = H×W`). It is also a no-op if a future `timm` returns an
-already-pooled `(B, C)` tensor.
+The Ark+ model imports `timm`. If the FLIP/NVFLARE runtime does not include `timm`, model construction
+fails — add it to the runtime dependencies, or set `ARKPLUS.REQUIRE_ARKPLUS_IMPORT=false` in
+`config.json` only for a non-Ark fallback smoke test.

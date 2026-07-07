@@ -1,4 +1,5 @@
 # Tutorial-local artifacts (regenerated or downloaded; not committed).
 # Processed model weights (*.pt) are ignored globally at the repo root.
+fl_job/
 uv.lock
 models/
