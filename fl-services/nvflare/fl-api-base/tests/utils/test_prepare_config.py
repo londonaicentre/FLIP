@@ -486,7 +486,7 @@ class TestConfigureServer:
         self, mock_isfile, mock_read_config, mock_write_config
     ):
         """The recipe-generated ``evaluation_client_api`` server config has no aggregator component and
-        workflows without ``participating_clients``/``ignore_result_error`` (CrossSiteModelEval discovers
+        workflows without ``participating_clients``/``ignore_result_error`` (GlobalModelEval discovers
         clients at runtime). The generic assembly must still set model_id/global_rounds/min_clients and
         leave those args untouched — i.e. a new recipe job type needs no prepare_config changes."""
         mock_server_config = {
@@ -495,10 +495,13 @@ class TestConfigureServer:
                 {"id": "controller", "path": "...InitEvaluation", "args": {"model_id": None}},
                 {
                     "id": "controller1",
-                    "path": "...CrossSiteModelEval",
-                    "args": {"validation_timeout": 12000, "model_locator_id": "model_locator",
-                             "submit_model_task_name": "", "model_id": None},
+                    "path": "...GlobalModelEval",
+                    "args": {"validation_timeout": 12000, "model_locator_id": "model_locator"},
                 },
+                {"id": "controller2", "path": "...BroadcastTask", "args": {"task_name": "post_validation"}},
+            ],
+            "task_result_filters": [
+                {"tasks": ["validate", "post_validation"], "filters": [{"path": "...ClientExceptionReporter"}]}
             ],
             "components": [
                 {"id": "persistor", "path": "...PTFileModelPersistor", "args": {}},

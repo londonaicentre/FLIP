@@ -22,8 +22,9 @@ counterpart of the legacy [`evaluation`](../evaluation/README.md) template, whic
 `COLLECTION`) server flow.
 
 Here the server reuses the same cross-site validation path as the
-[`standard_client_api`](../standard_client_api/README.md) training template: `InitEvaluation` → `CrossSiteModelEval`
-(with `submit_model` disabled, so only the server-provided model is validated). The model is sourced
+[`standard_client_api`](../standard_client_api/README.md) training template:
+`InitEvaluation` → stock `GlobalModelEval` → `BroadcastTask` cleanup.
+Only the server-provided model is validated. The model is sourced
 by the single-model `EvaluationModelLocator` and broadcast to clients as one `FLModel`.
 
 The base configs (`app/config/config_fed_server.json`, `app/config/config_fed_client.json`) and
@@ -34,7 +35,7 @@ regenerate via `recipe.py` after any recipe change and commit the result.
 
 1. `InitEvaluation` reports evaluation start to the Central Hub, runs the client image-cleanup task,
    and validates that `config.json` declares the model(s) to evaluate.
-2. `CrossSiteModelEval` loads the uploaded checkpoint via `EvaluationModelLocator` and broadcasts it to
+2. `GlobalModelEval` loads the uploaded checkpoint via `EvaluationModelLocator` and broadcasts it to
    every site as a single `FLModel` (`validate` task).
 3. Each site runs the user's `evaluator.py` via `InProcessClientAPIExecutor`, using the NVFLARE Client
    API `is_evaluate()` path (`flare.receive()` / `flare.send()`) to receive the model and return
@@ -50,7 +51,8 @@ server-provided model.
 **Server — `config_fed_server.json` `workflows` (run in order):**
 
 1. `flip.nvflare.controllers.InitEvaluation`
-2. `flip.nvflare.controllers.CrossSiteModelEval` (`submit_model_task_name=""`)
+2. `nvflare.app_common.workflows.global_model_eval.GlobalModelEval`
+3. `flip.nvflare.controllers.BroadcastTask`
 
 **Client — `config_fed_client.json` `executors`:**
 
