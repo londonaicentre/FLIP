@@ -14,7 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Unit tests for deploy readiness verification script."""
+"""Tests for the deploy readiness verification script."""
 
 import tempfile
 from pathlib import Path
@@ -25,6 +25,7 @@ from verify_deploy_readiness import (
     check_bash_syntax,
     check_file_exists,
     check_makefile_dependency,
+    check_makefile_dependency_absent,
     check_makefile_target,
     check_python_syntax,
     run_command,
@@ -162,6 +163,14 @@ class TestMakefileDependencies:
         result = check_makefile_dependency("target1", "nonexistent", "Missing dependency")
         assert result is False
 
+    def test_makefile_dependency_absent(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Test accepting an intentionally absent Make dependency."""
+        makefile = tmp_path / "Makefile"
+        makefile.write_text(".PHONY: target1\ntarget1:\n\t@echo 'target1'\n")
+        monkeypatch.chdir(tmp_path)
+        result = check_makefile_dependency_absent("target1", "obsolete", "Obsolete dependency")
+        assert result is True
+
 
 class TestIntegration:
     """Integration tests for the verification script."""
@@ -171,7 +180,7 @@ class TestIntegration:
         # These tests run from deploy/providers/AWS
         assert check_file_exists("update_ssm_ssh_config.py", "SSH config script")
         assert check_file_exists("check_status.py", "Status checker")
-        assert check_file_exists("test_update_ssm_ssh_config.py", "Unit tests")
+        assert check_file_exists("tests/test_update_ssm_ssh_config.py", "Unit tests")
         assert check_file_exists("Makefile", "Makefile")
         assert check_file_exists("site.yml", "Ansible playbook")
 
@@ -183,5 +192,7 @@ class TestIntegration:
 
     def test_verify_actual_makefile_dependencies(self) -> None:
         """Test that actual Make dependencies are correct."""
-        assert check_makefile_dependency("deploy-centralhub", "ssh-config", "Deploy Central Hub depends on ssh-config")
+        assert check_makefile_dependency_absent(
+            "deploy-centralhub", "ssh-config", "Deploy Central Hub does not depend on SSH config"
+        )
         assert check_makefile_dependency("deploy-trust", "ssh-config", "Deploy Trust depends on ssh-config")

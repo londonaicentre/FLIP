@@ -101,6 +101,11 @@ $(if $(INTERNAL_SERVICE_KEY),,$(error 🔑 INTERNAL_SERVICE_KEY must be set in $
 $(if $(INTERNAL_SERVICE_KEY_HASH),,$(error 🔑 INTERNAL_SERVICE_KEY_HASH must be set in $(MAIN_ENV_FILE) — must be sha256 of INTERNAL_SERVICE_KEY))
 $(if $(INTERNAL_SERVICE_KEY_HEADER),,$(error 📨 INTERNAL_SERVICE_KEY_HEADER must be set in $(MAIN_ENV_FILE)))
 export TF_VAR_MIN_CLIENTS=${MIN_CLIENTS}
+# Per-job GPU resource spec forwarded to fl-api on ECS (mirrors compose). Default
+# 0 in variables.tf; set JOB_RESOURCE_SPEC_NUM_GPUS/…_MEM_PER_GPU_IN_GIB in the
+# env file for GPU jobs (e.g. Ark+ eval: NUM_GPUS=1, MEM_PER_GPU_IN_GIB=7).
+export TF_VAR_JOB_RESOURCE_SPEC_NUM_GPUS=${JOB_RESOURCE_SPEC_NUM_GPUS}
+export TF_VAR_JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB=${JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB}
 # Uncomment to enable ECS Exec on Fargate tasks for debugging:
 # export TF_VAR_ecs_exec_enabled=true
 
@@ -128,6 +133,12 @@ export TF_VAR_local_trust_public_ips=$(LOCAL_TRUST_PUBLIC_IPS)
 # `make add-k8s-trust` applies them via a normal plan/apply (no -target).
 K8S_TRUST_PUBLIC_IPS ?= []
 export TF_VAR_k8s_trust_public_ips=$(K8S_TRUST_PUBLIC_IPS)
+# Whether Terraform provisions the cloud Trust EC2. false = hub-only deployment
+# (every trust runs on-prem — e.g. the workloads need a GPU the t3 trust host
+# doesn't have). Settable in the env file or CLI; `make full-deploy-hub-only`
+# forces it for its whole chain.
+DEPLOY_TRUST_EC2 ?= true
+export TF_VAR_deploy_trust_ec2=$(DEPLOY_TRUST_EC2)
 export TF_VAR_AWS_REGION=${AWS_REGION}
 export TF_VAR_VPC_NAME=${VPC_NAME}
 export TF_VAR_ADMIN_USER_PASSWORD=${ADMIN_USER_PASSWORD}
@@ -145,8 +156,8 @@ export TF_VAR_ENFORCE_MFA=${ENFORCE_MFA}
 # JSON list of FL kit-slot names; seeds the fl_kit_slot pool register_trust
 # claims from. Empty ⇒ NoFreeKitSlotError on registration. Set in the env file.
 export TF_VAR_FL_KIT_SLOT_NAMES=${FL_KIT_SLOT_NAMES}
-CENTRALHUB_IMAGES = \
-	$(DOCKER_REGISTRY)flip-api:$(DOCKER_TAG)
+ECS_CLUSTER ?= flip-cluster
+CENTRALHUB_ECS_SERVICES = flip-api fl-api-net-1 fl-server-net-1
 
 TRUST_IMAGES = \
 	$(DOCKER_REGISTRY)trust-api:$(DOCKER_TAG) \
@@ -342,7 +353,7 @@ update-env: ## Update environment file with Terraform outputs
 
 .PHONY: ansible-init
 ansible-init: ## Initialize Ansible configuration on EC2 instances (if failed try again for 3 times)
-	@echo "☁️🔗 Initiate ansible and install docker on both EC2 instances"
+	@echo "☁️🔗 Configure the Central Hub bastion and provision the Trust EC2"
 	@[ -n "$(OMOP_DATA_VERSION)" ] || (echo "❌  trust/omop-db/.data_version not found"; exit 1)
 	@[ -n "$(ORTHANC_DATA_VERSION)" ] || (echo "❌  trust/orthanc/.data_version not found"; exit 1)
 	@uv sync
@@ -355,8 +366,29 @@ ansible-init: ## Initialize Ansible configuration on EC2 instances (if failed tr
 		-e omop_data_version=$(OMOP_DATA_VERSION) \
 		-e orthanc_data_version=$(ORTHANC_DATA_VERSION)
 
+.PHONY: provision-bastion
+provision-bastion: ssh-config ## Install the minimal operator tooling on the Central Hub SSM bastion only
+	@echo "🔧 Provisioning the Central Hub SSM bastion..."
+	@uv sync
+	@uv run ansible-galaxy install -r requirements.yml
+	@uv run ansible-playbook site.yml \
+		--tags bastion \
+		--limit localhost,flip \
+		-e flip_aicentre_bucket=$(AICENTRE_BUCKET_NAME) \
+		-e fl_backend=$(FL_BACKEND) \
+		-e fl_kit_date=$(FL_KIT_DATE) \
+		-e omop_data_version=$(OMOP_DATA_VERSION) \
+		-e orthanc_data_version=$(ORTHANC_DATA_VERSION)
+	@echo "✅ Central Hub SSM bastion provisioned."
+
+# Cloud-trust targets are meaningless on a hub-only deployment — fail fast with
+# a pointer to the on-prem flow instead of an obscure SSH/inventory error.
+.PHONY: check-trust-ec2-enabled
+check-trust-ec2-enabled:
+	@[ "$(DEPLOY_TRUST_EC2)" != "false" ] || (echo "❌  DEPLOY_TRUST_EC2=false (hub-only deployment) — there is no cloud Trust EC2. On-prem trusts join via register-trusts + allow-local-trust-nlb and run 'make -C trust up-trust' on their own host."; exit 1)
+
 .PHONY: seed-trust-data
-seed-trust-data: ssh-config ## Load trust-specific OMOP + Orthanc mock data onto the Trust EC2 (re-run after data version bump; requires KIT=)
+seed-trust-data: check-trust-ec2-enabled ssh-config ## Load trust-specific OMOP + Orthanc mock data onto the Trust EC2 (re-run after data version bump; requires KIT=)
 	@[ -n "$(KIT)" ] || (echo "❌  KIT is required. Usage: make seed-trust-data KIT=Trust_2 PROD=stag"; exit 1)
 	@[ -n "$(FL_KIT_SLOT_NUMBER)" ] || (echo "❌  FL_KIT_SLOT_NUMBER not found in trust/.env.$(KIT).$(KIT_ENV_SUFFIX) — run register-trusts first"; exit 1)
 	@[ -n "$(OMOP_DATA_VERSION)" ] || (echo "❌  trust/omop-db/.data_version not found"; exit 1)
@@ -372,32 +404,24 @@ seed-trust-data: ssh-config ## Load trust-specific OMOP + Orthanc mock data onto
 	@echo "✅ Trust data seeding complete."
 
 .PHONY: deploy-centralhub
-deploy-centralhub: ssh-config ## Deploy FLIP containers to flip context with environment from Terraform
-	@echo "🔍 Checking central hub images (tag: $(DOCKER_TAG))..."
-	@missing=false; \
-	for image in $(CENTRALHUB_IMAGES); do \
-	  if ! docker manifest inspect "$$image" >/dev/null 2>&1; then \
-	    echo "   ⚠️  Missing: $$image"; \
-	    missing=true; \
-	  fi; \
-	done; \
-	if [ "$$missing" = "true" ]; then \
-	  echo "🔨 Images missing — triggering builds and waiting 2 minutes..."; \
-	  $(MAKE) trigger-builds; \
-	  sleep 120; \
-	else \
-	  echo "   ✅ All central hub images found."; \
-	fi
-	@echo "📋 Loading environment variables from Terraform outputs..."
-	@echo "👷 Create docker context if not exists, pointing to flip to ssh://flip"
-	@docker context create flip --docker "host=ssh://flip" || echo "   Context 'flip' already exists"
-	@echo "🧹 Stopping old containers and removing unused images to free disk space..."
-	@docker --context flip stop $$(docker --context flip ps -aq) 2>/dev/null || true
-	@docker --context flip rm $$(docker --context flip ps -aq) 2>/dev/null || true
-	@docker --context flip image prune -af 2>/dev/null || true
-	@echo "🐳 Deploying containers..."
-	@DOCKER_CONTEXT=flip $(MAKE) -C ../../../ up-centralhub-ec2 PROD=${PROD}
-	@echo "✅ Deployment complete!"
+deploy-centralhub: ## Force-redeploy Central Hub ECS services and publish the UI
+	@echo "🚀 Force-redeploying Central Hub ECS services in $(ECS_CLUSTER)..."
+	@set -e; \
+	for service in $(CENTRALHUB_ECS_SERVICES); do \
+	  echo "   ↻ $$service"; \
+	  AWS_PROFILE=$(AWS_PROFILE) AWS_REGION=$(AWS_REGION) aws ecs update-service \
+	    --cluster $(ECS_CLUSTER) \
+	    --service $$service \
+	    --force-new-deployment \
+	    --query 'service.serviceName' \
+	    --output text >/dev/null; \
+	done
+	@echo "⏳ Waiting for Central Hub ECS services to stabilise..."
+	@AWS_PROFILE=$(AWS_PROFILE) AWS_REGION=$(AWS_REGION) aws ecs wait services-stable \
+	  --cluster $(ECS_CLUSTER) \
+	  --services $(CENTRALHUB_ECS_SERVICES)
+	@$(MAKE) deploy-ui PROD=$(PROD)
+	@echo "✅ Central Hub ECS services and UI deployed."
 
 .PHONY: deploy-ui
 deploy-ui: ## Build flip-ui from the working tree and deploy it to S3 + invalidate CloudFront
@@ -407,17 +431,20 @@ deploy-ui: ## Build flip-ui from the working tree and deploy it to S3 + invalida
 	@cd ../../../flip-ui && npm ci && npm run build:deploy
 	@echo "🔧 Generating window.js from $(MAIN_ENV_FILE)..."
 	@cd ../../../flip-ui && sh scripts/generate-window-js.sh > dist/js/window.js
-	@echo "📦 Syncing static assets to s3://$(FLIP_UI_BUCKET_NAME)/ ..."
+	@echo "📦 Syncing static assets to the deployed UI bucket..."
 	@# Hashed bundles are content-addressed and safe to cache forever.
-	@AWS_PROFILE=$(AWS_PROFILE) aws s3 sync ../../../flip-ui/dist/ s3://$(FLIP_UI_BUCKET_NAME)/ \
+	@# index.html and window.js must never be cached long — they reference the hashed bundles.
+	@UI_BUCKET=$$(AWS_PROFILE=$(AWS_PROFILE) terraform output -raw FlipUiBucketName); \
+	[ -n "$$UI_BUCKET" ] || { echo "❌ Terraform output FlipUiBucketName is empty"; exit 1; }; \
+	echo "   s3://$$UI_BUCKET/"; \
+	AWS_PROFILE=$(AWS_PROFILE) aws s3 sync ../../../flip-ui/dist/ s3://$$UI_BUCKET/ \
 		--delete \
 		--cache-control "public, max-age=31536000, immutable" \
-		--exclude "index.html" --exclude "js/window.js"
-	@# index.html and window.js must never be cached long — they reference the hashed bundles.
-	@AWS_PROFILE=$(AWS_PROFILE) aws s3 cp ../../../flip-ui/dist/index.html s3://$(FLIP_UI_BUCKET_NAME)/index.html \
+		--exclude "index.html" --exclude "js/window.js"; \
+	AWS_PROFILE=$(AWS_PROFILE) aws s3 cp ../../../flip-ui/dist/index.html s3://$$UI_BUCKET/index.html \
 		--cache-control "no-cache, no-store, must-revalidate" \
-		--content-type "text/html; charset=utf-8"
-	@AWS_PROFILE=$(AWS_PROFILE) aws s3 cp ../../../flip-ui/dist/js/window.js s3://$(FLIP_UI_BUCKET_NAME)/js/window.js \
+		--content-type "text/html; charset=utf-8"; \
+	AWS_PROFILE=$(AWS_PROFILE) aws s3 cp ../../../flip-ui/dist/js/window.js s3://$$UI_BUCKET/js/window.js \
 		--cache-control "no-cache, no-store, must-revalidate" \
 		--content-type "application/javascript; charset=utf-8"
 	@echo "🧹 Invalidating CloudFront..."
@@ -443,7 +470,7 @@ OMOP_DATA_VERSION := $(shell cat ../../../trust/omop-db/.data_version 2>/dev/nul
 ORTHANC_DATA_VERSION := $(shell cat ../../../trust/orthanc/.data_version 2>/dev/null | tr -d ' \n\r\t')
 
 .PHONY: deploy-trust
-deploy-trust: ssh-config update-env seed-trust-data ## Deploy trust relationships after central hub is deployed
+deploy-trust: check-trust-ec2-enabled ssh-config update-env seed-trust-data ## Deploy trust relationships after central hub is deployed
 	@echo "🔍 Checking trust images (tag: $(DOCKER_TAG))..."
 	@missing=false; \
 	for image in $(TRUST_IMAGES); do \
@@ -689,13 +716,33 @@ full-deploy: ## Full AWS deployment: provision infrastructure, deploy cloud Trus
 	## 2. generate-internal-service-key: mint the fl-server→hub key (idempotent)
 	## 3. plan+apply: provision all AWS infrastructure (EC2, RDS, VPC, secrets)
 	## 4. update-env: refresh .env with Terraform outputs (EC2 IPs, DB endpoint, Cognito IDs)
-	## 5. ssh-config + ansible-init: configure SSH aliases and provision EC2s with Docker
+	## 5. ssh-config + ansible-init: configure the SSM bastion and provision the Trust EC2
 	##    (ansible-init uses trust_num=1 by default; re-run with KIT=<CODE> after register-trusts for slot-specific data)
-	## 6. deploy-centralhub: bring up the Central Hub (seeds run, fl_kit_slot pool is populated)
+	## 6. deploy-centralhub: force-redeploy Central Hub ECS services and publish the UI
 	## 7. register-trusts: register every live trust/.env.*.<env> kit on the hub and write kit files
 	## 8. deploy-trust + status: bring up cloud Trust container stack and verify
 	## Prerequisite: create stub kit files first: make new-trust TRUST_CODE=<CODE> TRUST_NAME="..." TRUST_REGION=London PROD=$(PROD)
 full-deploy: github-login aws-login init import-persistent generate-internal-service-key plan apply update-env ssh-config ansible-init deploy-centralhub register-trusts deploy-trust status
+
+.PHONY: full-deploy-hub-only
+full-deploy-hub-only: ## Hub-only deployment: no cloud Trust EC2 — every trust runs on-prem (honours PROD)
+	## Same chain as full-deploy minus the cloud-trust steps (deploy-trust, seed-trust-data),
+	## with DEPLOY_TRUST_EC2=false so Terraform provisions no Trust EC2 at all. Use when the
+	## trusts must run on hosts the cloud instance can't match (e.g. they need a GPU — the
+	## trust EC2 is a t3.xlarge with none).
+	## ssh-config skips the flip-trust alias and every `hosts: trust_ec2` Ansible play is a no-op.
+	## NOTE: this only skips *creating* the Trust EC2. On an environment previously deployed
+	## with full-deploy, apply will DESTROY the existing Trust EC2 (its data volumes are not
+	## preserved) — re-run with DEPLOY_TRUST_EC2=true to bring one back.
+	## After it completes, join each on-prem trust:
+	##   1. add the trust host's public IP to LOCAL_TRUST_PUBLIC_IPS in the env file, then
+	##      make allow-local-trust-nlb PROD=$(PROD)
+	##   2. make new-trust TRUST_CODE=<CODE> ... PROD=<env> && make register-trusts KIT=<CODE> PROD=$(PROD)
+	##      (register-trusts in this chain already registers every kit present)
+	##   3. on the trust host: env PROD=<env> make -C trust up-trust KIT=<CODE>
+	## Remember `make deploy-ui PROD=$(PROD)` — the UI ships separately, same as full-deploy.
+full-deploy-hub-only: DEPLOY_TRUST_EC2 := false
+full-deploy-hub-only: github-login aws-login init import-persistent generate-internal-service-key plan apply update-env ssh-config ansible-init deploy-centralhub register-trusts status
 
 .PHONY: full-deploy-with-local-trust
 full-deploy-with-local-trust: ## Full AWS deployment (honours PROD) plus on-prem trust provisioning (requires LOCAL_TRUST_IP=<public-ip>)
@@ -705,9 +752,9 @@ full-deploy-with-local-trust: ## Full AWS deployment (honours PROD) plus on-prem
 	## 2. generate-internal-service-key: mint the fl-server→hub key (idempotent)
 	## 3. plan+apply: provision all AWS infrastructure (EC2, RDS, VPC, ALB, secrets, on-prem trust NLB rule)
 	## 4. update-env: refresh .env.{PROD} with Terraform outputs (EC2 IPs, DB endpoint, Cognito IDs)
-	## 5. ssh-config + ansible-init: configure SSH aliases and provision EC2s with Docker
+	## 5. ssh-config + ansible-init: configure the SSM bastion and provision the Trust EC2
 	##    (ansible-init uses trust_num=1 by default; re-run with KIT=<CODE> after register-trusts for slot-specific data)
-	## 6. deploy-centralhub: bring up the Central Hub
+	## 6. deploy-centralhub: force-redeploy Central Hub ECS services and publish the UI
 	## 7. register-trusts: register every live trust/.env.*.<env> kit on the hub and write kit files
 	## 8. deploy-trust + provision-local-trust + status: bring up cloud + on-prem trust hosts and verify
 	## NOTE: After this completes you must manually:

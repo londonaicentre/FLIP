@@ -197,6 +197,23 @@ def run_aws_command(args: list[str]) -> tuple[bool, str]:
         return False, str(e)
 
 
+def format_ssm_ping_status(success: bool, ping_status: str) -> str:
+    """Format an SSM ping-status query result for operator output.
+
+    Args:
+        success: Whether the AWS CLI command completed successfully.
+        ping_status: Stripped stdout from the command, or its error description.
+
+    Returns:
+        A clear status description for the deployment report.
+    """
+    if not success:
+        return f"query failed: {ping_status or 'unknown error'}"
+    if ping_status in {"", "None"}:
+        return "not registered"
+    return ping_status
+
+
 def run_ssh_command(ssh_key: str, host: str, command: str, timeout: int = 10) -> tuple[bool, str]:
     """Run a command via SSH.
 
@@ -986,17 +1003,15 @@ def main(
     print_section("Fetching Terraform Outputs")
 
     # Get Terraform outputs
-    central_hub_ip = get_terraform_output("Ec2PrivateIp")
     central_hub_id = get_terraform_output("Ec2InstanceId")
 
     trust_id = get_terraform_output("TrustEc2InstanceId")
 
-    if not central_hub_ip:
-        print_status("FAIL", "Could not retrieve Central Hub EC2 Private IP from Terraform outputs")
+    if not central_hub_id:
+        print_status("FAIL", "Could not retrieve Central Hub SSM bastion instance ID from Terraform outputs")
         sys.exit(1)
 
-    print_status("PASS", f"Central Hub EC2 Private IP: {central_hub_ip}")
-    print_status("PASS", f"Central Hub EC2 ID: {central_hub_id}")
+    print_status("PASS", f"Central Hub SSM bastion ID: {central_hub_id}")
 
     if trust_id:
         print_status("PASS", f"Trust EC2 ID: {trust_id}")
@@ -1019,9 +1034,24 @@ def main(
             "text",
         ])
         if success and output == "running":
-            print_status("PASS", "Central Hub EC2 instance is running")
+            print_status("PASS", "Central Hub SSM bastion is running")
         else:
-            print_status("FAIL", f"Central Hub EC2 instance state: {output}")
+            print_status("FAIL", f"Central Hub SSM bastion state: {output}")
+
+        success, ping_status = run_aws_command([
+            "ssm",
+            "describe-instance-information",
+            "--filters",
+            f"Key=InstanceIds,Values={central_hub_id}",
+            "--query",
+            "InstanceInformationList[0].PingStatus",
+            "--output",
+            "text",
+        ])
+        if success and ping_status == "Online":
+            print_status("PASS", "Central Hub bastion is online in SSM")
+        else:
+            print_status("FAIL", f"Central Hub bastion SSM status: {format_ssm_ping_status(success, ping_status)}")
 
     # Check Trust EC2 instance status if it exists
     if trust_id:
@@ -1054,6 +1084,20 @@ def main(
         ])
         if success and sg_id:
             print_status("PASS", f"Security Group: {sg_id}")
+            success, ingress_count = run_aws_command([
+                "ec2",
+                "describe-security-groups",
+                "--group-ids",
+                sg_id,
+                "--query",
+                "length(SecurityGroups[0].IpPermissions)",
+                "--output",
+                "text",
+            ])
+            if success and ingress_count == "0":
+                print_status("PASS", "Central Hub bastion security group has no inbound rules")
+            else:
+                print_status("FAIL", f"Central Hub bastion security group inbound rule count: {ingress_count}")
         else:
             print_status("WARN", "Could not retrieve Security Group ID")
 
@@ -1158,7 +1202,8 @@ def main(
                     if failure_reason == "CAA_ERROR":
                         print_status(
                             "INFO",
-                            "CAA_ERROR: Domain has CAA records that block AWS ACM. Contact domain admin to add 'amazon.com' to CAA records.",
+                            "CAA_ERROR: Domain has CAA records that block AWS ACM. "
+                            "Contact domain admin to add 'amazon.com' to CAA records.",
                         )
                 else:
                     print_status("WARN", f"Certificate status: {status}")
@@ -1181,9 +1226,10 @@ def main(
             with socket.create_connection((alb_subdomain, 443), timeout=10) as sock:
                 with context.wrap_socket(sock, server_hostname=alb_subdomain) as ssock:
                     cert = ssock.getpeercert()
+                    common_name = cert.get("subject", [[("commonName", "N/A")]])[0][0][1]
                     print_status(
                         "PASS",
-                        f"HTTPS connection successful - Certificate issued to: {cert.get('subject', [[('commonName', 'N/A')]])[0][0][1]}",
+                        f"HTTPS connection successful - Certificate issued to: {common_name}",
                     )
 
                     # Check certificate expiry
@@ -1345,7 +1391,7 @@ def main(
 
     # Central Hub EC2 is now an SSM bastion only — flip-api, fl-api, and
     # fl-server all run as ECS Fargate tasks. We still check the bastion for
-    # disk/memory headroom (SSM agent, CloudWatch agent, occasional ad-hoc
+    # disk/memory headroom (SSM agent, PostgreSQL client, occasional ad-hoc
     # diagnostics), but the application-container checks moved to the ECS
     # section (check_ecs_services_running, check_ecs_target_group_health).
     if not skip_docker:
@@ -1528,43 +1574,11 @@ def main(
             else:
                 print_status("WARN", "Cannot SSH to Trust EC2 (check security groups and key)")
 
-    # CloudWatch Logs check
-    print_section("CloudWatch Logs")
+    # The Central Hub bastion deliberately has no CloudWatch agent. Application
+    # logs are checked through the ECS log groups; only the Trust EC2 host-level
+    # log group remains here.
+    print_section("Trust EC2 CloudWatch Logs")
 
-    print_status("INFO", "Checking Central Hub CloudWatch log groups...")
-    log_group = "/aws/ec2/flip"
-    success, output = run_aws_command(["logs", "describe-log-groups", "--log-group-name-prefix", log_group])
-    if success and log_group in output:
-        print_status("PASS", f"CloudWatch log group '{log_group}' exists")
-
-        # Check for recent log streams
-        success, streams_output = run_aws_command([
-            "logs",
-            "describe-log-streams",
-            "--log-group-name",
-            log_group,
-            "--order-by",
-            "LastEventTime",
-            "--descending",
-            "--max-items",
-            "1",
-        ])
-        if success:
-            try:
-                streams_data = json.loads(streams_output)
-                if streams_data.get("logStreams"):
-                    print_status("PASS", "Recent Central Hub log streams found")
-                else:
-                    print_status(
-                        "WARN",
-                        "No recent Central Hub log streams (instance may not be sending logs yet)",
-                    )
-            except json.JSONDecodeError:
-                print_status("WARN", "Could not parse log streams data")
-    else:
-        print_status("WARN", "Central Hub CloudWatch log group not found")
-
-    # Check Trust EC2 CloudWatch logs if it exists
     if trust_id:
         print_status("INFO", "Checking Trust EC2 CloudWatch log groups...")
         trust_log_group = "/aws/ec2/flip-trust"

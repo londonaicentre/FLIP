@@ -37,7 +37,6 @@ class TestScatterAndGatherLDM:
             ({"persistor_id": 123}, "persistor_id"),
             ({"shareable_generator_id": 123}, "shareable_generator_id"),
             ({"train_task_name": 123}, "train_task_name"),
-            ({"ignore_result_error": "nope"}, "ignore_result_error"),
         ],
     )
     def test_init_rejects_wrong_arg_types(self, bad_kwargs, frag):
@@ -58,7 +57,7 @@ class TestScatterAndGatherLDM:
             else (None if key == FLContextKey.JOB_META else default)
         )
 
-        with patch("flip.nvflare.controllers.scatter_and_gather_ldm.handle_metrics_event") as mock_metrics:
+        with patch("flip.nvflare.controllers.scatter_and_gather.handle_metrics_event") as mock_metrics:
             controller.handle_event(FlipEvents.SEND_RESULT, fl_ctx)
 
         mock_metrics.assert_called_once()
@@ -75,7 +74,7 @@ class TestScatterAndGatherLDM:
         fl_ctx = MagicMock()
         fl_ctx.get_prop.return_value = None
 
-        with patch("flip.nvflare.controllers.scatter_and_gather_ldm.handle_metrics_event") as mock_metrics:
+        with patch("flip.nvflare.controllers.scatter_and_gather.handle_metrics_event") as mock_metrics:
             controller.handle_event(FlipEvents.SEND_RESULT, fl_ctx)
 
         mock_metrics.assert_not_called()
@@ -172,11 +171,6 @@ class TestScatterAndGatherLDM:
         model_id = "123e4567-e89b-12d3-a456-426614174000"
         with pytest.raises(Exception, match="aggregator_id must be a string"):
             ScatterAndGatherLDM(model_id=model_id, aggregator_id=123)
-
-    def test_init_non_bool_ignore_result_error_raises_error(self):
-        model_id = "123e4567-e89b-12d3-a456-426614174000"
-        with pytest.raises(Exception, match="ignore_result_error must be a bool"):
-            ScatterAndGatherLDM(model_id=model_id, ignore_result_error="yes")
 
     def test_start_controller_no_engine(self):
         model_id = "123e4567-e89b-12d3-a456-426614174000"
@@ -292,5 +286,5 @@ class TestScatterAndGatherLDM:
 
     def test_init_negative_persist_every_n_rounds_raises_error(self):
         model_id = "123e4567-e89b-12d3-a456-426614174000"
-        with pytest.raises(Exception, match="persist_every_n_rounds must be greater"):
+        with pytest.raises(Exception, match="persist_every_n_rounds must"):
             ScatterAndGatherLDM(model_id=model_id, persist_every_n_rounds=-1)

@@ -13,13 +13,9 @@
 import json
 import os
 
-from nvflare.apis.client import Client
-from nvflare.apis.controller_spec import ClientTask
-from nvflare.apis.dxo import DXO, DataKind, from_shareable
-from nvflare.apis.event_type import EventType
-from nvflare.apis.fl_constant import FLContextKey, ReturnCode
+from nvflare.apis.dxo import DXO
 from nvflare.apis.fl_context import FLContext
-from nvflare.apis.impl.controller import Controller, Task
+from nvflare.apis.impl.controller import Task
 from nvflare.apis.shareable import Shareable
 from nvflare.apis.signal import Signal
 from nvflare.app_common.abstract.aggregator import Aggregator
@@ -29,23 +25,33 @@ from nvflare.app_common.abstract.shareable_generator import ShareableGenerator
 from nvflare.app_common.app_constant import AppConstants
 from nvflare.app_common.app_event_type import AppEventType
 from nvflare.security.logging import secure_format_exception
-from nvflare.widgets.info_collector import GroupInfoCollector, InfoCollector
 
-from flip import FLIP
-from flip.constants import FlipEvents, PTConstants
-from flip.nvflare.metrics import handle_metrics_event
-from flip.nvflare.runtime import get_flip_model_id
+from flip.constants import PTConstants
+from flip.nvflare.controllers.scatter_and_gather import ScatterAndGather
 
 
-def _check_non_neg_int(data, name: str):
-    if not isinstance(data, int):
-        raise ValueError(f"{name} must be int but got {type(data)}")
+class ScatterAndGatherLDM(ScatterAndGather):
+    """Two-phase (autoencoder → diffusion model) FedAvg controller for latent diffusion.
 
-    if data < 0:
-        raise ValueError(f"{name} must be greater than or equal to 0.")
+    Subclasses FLIP's :class:`ScatterAndGather` (itself a thin subclass of stock NVFLARE
+    ScatterAndGather). It inherits all the shared FLIP hooks — the partial-safe ``WEIGHT_DIFF``
+    reconstruction and hub exception reporting (``_accept_train_result``), the metrics relay
+    (``handle_event``), ``FlipEvents.ABORTED`` (``_check_abort_signal``), the per-round allocator
+    cleanup (``_maybe_cleanup_memory`` / ``memory_gc_rounds``), and the train-task plumbing — and
+    overrides only what is genuinely LDM-specific:
 
+      * :meth:`__init__` — two per-phase round counts (``num_rounds_ae`` / ``num_rounds_dm``) and a
+        server-side ``model_locator`` for the phase-1 → phase-2 weight handoff. Delegates the shared
+        FedAvg wiring/validation to the base, passing ``num_rounds = ae + dm`` so the inherited
+        persist/state code has a valid ``self._num_rounds`` (previously never assigned — a latent
+        ``AttributeError`` masked only because ``persist_every_n_rounds=1`` short-circuits the ``or``).
+      * :meth:`start_controller` — resolves the ``model_locator`` and reads per-phase round counts
+        from the app ``config.json``.
+      * :meth:`control_flow` — runs the two phases; for ``train_dm`` it first loads the phase-1
+        autoencoder weights via the persistor/model-locator.
+      * :meth:`stop_controller` — cancels outstanding tasks (stock only flips the phase).
+    """
 
-class ScatterAndGatherLDM(Controller):
     def __init__(
         self,
         model_id: str = "",
@@ -53,7 +59,7 @@ class ScatterAndGatherLDM(Controller):
         num_rounds_ae: int = 5,
         num_rounds_dm: int = 5,
         start_round: int = 0,
-        model_locator_id="",
+        model_locator_id: str = "",
         wait_time_after_min_received: int = 10,
         aggregator_id=AppConstants.DEFAULT_AGGREGATOR_ID,
         persistor_id=AppConstants.DEFAULT_PERSISTOR_ID,
@@ -64,102 +70,41 @@ class ScatterAndGatherLDM(Controller):
         fatal_error_delay: int = 5,
         task_check_period: float = 0.5,
         persist_every_n_rounds: int = 1,
-    ):
-        """The controller for FederatedAveraging Workflow.
-
-        The ScatterAndGather workflow defines Federated training on all clients.
-        The model persistor (persistor_id) is used to load the initial global model which is sent to all clients.
-        Each clients sends it's updated weights after local training which is aggregated (aggregator_id). The
-        shareable generator is used to convert the aggregated weights to shareable and shareable back to weights.
-        The model_persistor also saves the model after training.
-
-        Args:
-            model_id (str, required): ID of the model that the training is being performed under.
-            min_clients (int, optional): Min number of clients in training. Defaults to 1.
-            num_rounds_ae (int, optional): The total number of training rounds for autoencoder. Defaults to 5.
-            num_rounds_dm (int, optional): The total number of training rounds for diffusion model. Defaults to 5.
-            start_round (int, optional): Start round for training. Defaults to 0.
-            model_locator_id (str, optional): ID of the model locator component. Defaults to "".
-            wait_time_after_min_received (int, optional): Time to wait before beginning aggregation after
-                contributions received. Defaults to 10.
-            aggregator_id (str, optional): ID of the aggregator component. Defaults to "aggregator".
-            persistor_id (str, optional): ID of the persistor component. Defaults to "persistor".
-            shareable_generator_id (str, optional): ID of the shareable generator. Defaults to "shareable_generator".
-            train_task_name (str, optional): Name of the train task. Defaults to "train".
-            train_timeout (int, optional): Time to wait for clients to do local training.
-            ignore_result_error (bool, optional): whether this controller can proceed if result has errors. Defaults to
-                False.
-            fatal_error_delay (int, optional): Time in seconds to delay before calling 'system_panic' if a task returns
-                an error result and ignore_result_error is set to false
-            task_check_period (float, optional): interval for checking status of tasks. Defaults to 0.5.
-            persist_every_n_rounds (int, optional): persist the global model every n rounds. Defaults to 0.
-                If n is 0 then no persist.
-
-        Raises:
-            TypeError: when any of input arguments does not have correct type
-            ValueError: when any of input arguments is out of range or are in an incorrect format
-        """
-
-        super().__init__(task_check_period=task_check_period)
-
-        # flip
-        self.flip = FLIP()
-
-        # Check arguments
-        _check_non_neg_int(min_clients, "min_clients")
-        _check_non_neg_int(num_rounds_ae, "num_rounds_ae")
-        _check_non_neg_int(num_rounds_dm, "num_rounds_dm")
-        _check_non_neg_int(start_round, "start_round")
-        _check_non_neg_int(wait_time_after_min_received, "wait_time_after_min_received")
-        _check_non_neg_int(train_timeout, "train_timeout")
-        _check_non_neg_int(persist_every_n_rounds, "persist_every_n_rounds")
-
-        if not isinstance(aggregator_id, str):
-            raise TypeError(f"aggregator_id must be a string but got {type(aggregator_id)}")
+        memory_gc_rounds: int = 1,
+    ) -> None:
         if not isinstance(model_locator_id, str):
             raise TypeError(f"model_locator_id must be a string but got {type(model_locator_id)}")
-        if not isinstance(persistor_id, str):
-            raise TypeError(f"persistor_id must be a string but got {type(persistor_id)}")
-        if not isinstance(shareable_generator_id, str):
-            raise TypeError(f"shareable_generator_id must be a string but got {type(shareable_generator_id)}")
-        if not isinstance(train_task_name, str):
-            raise TypeError(f"train_task_name must be a string but got {type(train_task_name)}")
-        if not isinstance(ignore_result_error, bool):
-            raise TypeError(f"ignore_result_error must be a bool but got {type(ignore_result_error)}")
-
-        self._model_id_fallback = model_id
-        self._model_id: str | None = None
-
-        self.aggregator_id = aggregator_id
-        self.persistor_id = persistor_id
-        self.model_locator_id = model_locator_id
-        self.shareable_generator_id = shareable_generator_id
-        self.train_task_name = train_task_name
-        self.aggregator = None
-        self.persistor = None
-        self.shareable_gen = None
-
-        # config data
-        self._min_clients = min_clients
+        # The base validates the shared args (incl. num_rounds = ae + dm); validate the per-phase
+        # counts here since the base does not know about them.
+        for _name, _value in (("num_rounds_ae", num_rounds_ae), ("num_rounds_dm", num_rounds_dm)):
+            if not isinstance(_value, int) or _value < 0:
+                raise ValueError(f"{_name} must be greater than or equal to 0 but got {_value!r}")
+        # Delegate the shared FedAvg wiring/validation (and memory_gc_rounds / snapshot handling) to
+        # FLIP's ScatterAndGather. num_rounds is the two-phase total so the inherited persist/state
+        # code sees a valid self._num_rounds.
+        super().__init__(
+            model_id=model_id,
+            min_clients=min_clients,
+            num_rounds=num_rounds_ae + num_rounds_dm,
+            start_round=start_round,
+            wait_time_after_min_received=wait_time_after_min_received,
+            aggregator_id=aggregator_id,
+            persistor_id=persistor_id,
+            shareable_generator_id=shareable_generator_id,
+            train_task_name=train_task_name,
+            train_timeout=train_timeout,
+            ignore_result_error=ignore_result_error,
+            task_check_period=task_check_period,
+            persist_every_n_rounds=persist_every_n_rounds,
+            memory_gc_rounds=memory_gc_rounds,
+        )
+        # LDM-specific state.
         self._num_rounds_ae = num_rounds_ae
         self._num_rounds_dm = num_rounds_dm
-        self._wait_time_after_min_received = wait_time_after_min_received  # 5 minutes
-        self._start_round = start_round
-        self._train_timeout = train_timeout
-        self._train_timeout = train_timeout
-        self.ignore_result_error = ignore_result_error
         self._fatal_error_delay = fatal_error_delay
-        self._persist_every_n_rounds = persist_every_n_rounds
-
-        # workflow phases: init, train, validate
-        self._phase = AppConstants.PHASE_INIT
-        self._global_weights = None
-        self._current_round = None
-
-    def _resolve_model_id(self, fl_ctx: FLContext) -> str:
-        if self._model_id is None:
-            self._model_id = get_flip_model_id(fl_ctx, fallback=self._model_id_fallback)
-        return self._model_id
+        self.model_locator_id = model_locator_id
+        self.model_locator = None
+        self.shareable_gen = None
 
     def start_controller(self, fl_ctx: FLContext) -> None:
         self.log_info(fl_ctx, "Initializing ScatterAndGather workflow.")
@@ -344,6 +289,11 @@ class ScatterAndGatherLDM(Controller):
                 self.log_info(fl_ctx, f"Round {self._current_round} for {self.train_task_name} finished.")
                 self._current_round += 1
 
+                # Return this round's transient allocations to the OS so server RSS does not climb
+                # across rounds and OOM a large-model job. Inherited from FLIP's ScatterAndGather
+                # (stock NVFLARE's memory_gc_rounds cleanup).
+                self._maybe_cleanup_memory()
+
             self._phase = AppConstants.PHASE_FINISHED
             self.log_info(fl_ctx, f"Finished ScatterAndGatherLDM Training {self.train_task_name}")
         except BaseException as e:
@@ -354,154 +304,3 @@ class ScatterAndGatherLDM(Controller):
     def stop_controller(self, fl_ctx: FLContext) -> None:
         self._phase = AppConstants.PHASE_FINISHED
         self.cancel_all_tasks()
-
-    def handle_event(self, event_type: str, fl_ctx: FLContext):
-        super().handle_event(event_type, fl_ctx)
-        if event_type == InfoCollector.EVENT_TYPE_GET_STATS:
-            collector = fl_ctx.get_prop(InfoCollector.CTX_KEY_STATS_COLLECTOR, None)
-            if collector:
-                if not isinstance(collector, GroupInfoCollector):
-                    self.fire_event(EventType.FATAL_SYSTEM_ERROR)
-                    raise TypeError("collector must be GroupInfoCollector but got {}".format(type(collector)))
-
-                collector.add_info(
-                    group_name=self._name,
-                    info={
-                        "phase": self._phase,
-                        "current_round": self._current_round,
-                        "num_rounds_ae": self._num_rounds_ae,
-                        "num_rounds_dm": self._num_rounds_dm,
-                    },
-                )
-
-        if event_type == FlipEvents.SEND_RESULT:
-            event_data = fl_ctx.get_prop(FLContextKey.EVENT_DATA, None)
-            if event_data is None:
-                self.log_error(fl_ctx, "Metrics Error: metrics result event was fired but no data found")
-                return
-
-            handle_metrics_event(
-                event_data,
-                self._current_round if self._current_round else 0,
-                self._resolve_model_id(fl_ctx),
-                flip=self.flip,
-            )
-
-    def _prepare_train_task_data(self, client_task: ClientTask, fl_ctx: FLContext) -> None:
-        fl_ctx.set_prop(AppConstants.TRAIN_SHAREABLE, client_task.task.data, private=True, sticky=False)
-        self.fire_event(AppEventType.BEFORE_TRAIN_TASK, fl_ctx)
-
-    def _process_train_result(self, client_task: ClientTask, fl_ctx: FLContext) -> None:
-        result = client_task.result
-        client_name = client_task.client.name
-
-        self._accept_train_result(client_name=client_name, result=result, fl_ctx=fl_ctx)
-
-        # Cleanup task result
-        client_task.result = None
-
-    def process_result_of_unknown_task(
-        self,
-        client: Client,
-        task_name,
-        client_task_id,
-        result: Shareable,
-        fl_ctx: FLContext,
-    ) -> None:
-        if self._phase == AppConstants.PHASE_TRAIN and task_name == self.train_task_name:
-            self._accept_train_result(client_name=client.name, result=result, fl_ctx=fl_ctx)
-            self.log_info(fl_ctx, f"Result of unknown task {task_name} sent to aggregator.")
-        else:
-            self.log_error(fl_ctx, "Ignoring result from unknown task.")
-
-    def _accept_train_result(self, client_name: str, result: Shareable, fl_ctx: FLContext) -> bool:
-        rc = result.get_return_code()
-        contribution_round = result.get_cookie(AppConstants.CONTRIBUTION_ROUND)
-        result.set_header(AppConstants.CONTRIBUTION_ROUND, contribution_round)
-
-        # Raise errors if bad peer context or execution exception.
-        if rc and rc != ReturnCode.OK:
-            if self.ignore_result_error:
-                self.log_error(fl_ctx, f"Ignore the client train result. Train result error code: {rc}")
-                return False
-            else:
-                if rc in [ReturnCode.MISSING_PEER_CONTEXT, ReturnCode.BAD_PEER_CONTEXT]:
-                    self.system_panic("Peer context is bad or missing. ScatterAndGatherLDM exiting.", fl_ctx=fl_ctx)
-                    return False
-                elif rc in [ReturnCode.EXECUTION_EXCEPTION, ReturnCode.TASK_UNKNOWN]:
-                    formatted_exception = result.get_header("exception")
-                    if formatted_exception is not None:
-                        self.log_error(fl_ctx, formatted_exception)
-                        self.flip.send_handled_exception(
-                            formatted_exception=formatted_exception,
-                            client_name=client_name,
-                            model_id=self._resolve_model_id(fl_ctx),
-                        )
-
-                    self.system_panic(
-                        "Execution Exception in client training. ScatterAndGather exiting.", fl_ctx=fl_ctx
-                    )
-                    return False
-                elif rc in [
-                    ReturnCode.EXECUTION_RESULT_ERROR,
-                    ReturnCode.TASK_DATA_FILTER_ERROR,
-                    ReturnCode.TASK_RESULT_FILTER_ERROR,
-                ]:
-                    self.system_panic(
-                        "Execution result is not a shareable. ScatterAndGatherLDM exiting.", fl_ctx=fl_ctx
-                    )
-                    return False
-
-        fl_ctx.set_prop(AppConstants.CURRENT_ROUND, self._current_round, private=False, sticky=True)
-        fl_ctx.set_prop(AppConstants.TRAINING_RESULT, result, private=True, sticky=False)
-        fl_ctx.set_prop(AppConstants.CONTRIBUTION_ROUND, contribution_round, private=True, sticky=False)
-        self.fire_event(AppEventType.BEFORE_CONTRIBUTION_ACCEPT, fl_ctx)
-
-        # Convert WEIGHT_DIFF to WEIGHTS if needed
-        try:
-            dxo = from_shareable(result)
-            if dxo.data_kind == DataKind.WEIGHT_DIFF:
-                # FedAVG receives WEIGHTS, so we need to update the WEIGHTS with the contents of WEIGHT_DIFF passed.
-                global_weights = self._global_weights["weights"]
-                diff = dxo.data
-                new_weights = {}
-                for k in global_weights:
-                    new_weights[k] = global_weights[k] + diff[k]
-                new_dxo = DXO(data_kind=DataKind.WEIGHTS, data=new_weights, meta=dxo.meta)
-                result = new_dxo.update_shareable(result)
-        except Exception as e:
-            self.log_error(fl_ctx, f"Error while adding client WEIGHT_DIFF to global weights at server: {e}")
-
-        accepted = self.aggregator.accept(result, fl_ctx)
-        accepted_msg = "ACCEPTED" if accepted else "REJECTED"
-        self.log_info(fl_ctx, f"Contribution from {client_name} {accepted_msg} by the aggregator.")
-
-        fl_ctx.set_prop(AppConstants.AGGREGATION_ACCEPTED, accepted, private=True, sticky=False)
-        self.fire_event(AppEventType.AFTER_CONTRIBUTION_ACCEPT, fl_ctx)
-
-        return accepted
-
-    def _check_abort_signal(self, fl_ctx, abort_signal: Signal):
-        if abort_signal.triggered:
-            self._phase = AppConstants.PHASE_FINISHED
-            self.log_info(fl_ctx, f"Abort signal received. Exiting at round {self._current_round}.")
-            self.fire_event(FlipEvents.ABORTED, fl_ctx)
-            return True
-        return False
-
-    def get_persist_state(self, fl_ctx: FLContext) -> dict:
-        return {
-            "current_round": self._current_round,
-            "start_round": self._start_round,
-            "num_rounds": self._num_rounds,
-            "global_weights": self._global_weights,
-        }
-
-    def restore(self, state_data: dict, fl_ctx: FLContext):
-        try:
-            self._current_round = state_data.get("current_round")
-            self._start_round = state_data.get("start_round")
-            self._num_rounds = state_data.get("num_rounds")
-            self._global_weights = state_data.get("global_weights")
-        finally:
-            pass

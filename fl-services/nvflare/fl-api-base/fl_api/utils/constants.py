@@ -18,3 +18,11 @@ CONFIG_FED_SERVER = "config_fed_server.json"
 META = "meta.json"
 ENVIRONMENT = "environment.json"
 MODELS = "models.py"
+
+# Server-only evaluation checkpoints: the hub bundler diverts them to this S3 prefix, and the
+# FL API stages them on the shared checkpoint volume (SERVER_CHECKPOINT_ROOT) for the fl-server
+# to load from disk. They are never placed in the NVFLARE job, so they are never deployed to
+# clients — mirroring the Flower backend, which keeps the checkpoint server-side.
+SERVER_CHECKPOINTS_PREFIX = "server_checkpoints"
+SERVER_CHECKPOINT_ROOT_ENV = "SERVER_CHECKPOINT_ROOT"
+SERVER_CHECKPOINT_ROOT_DEFAULT = "/app/server-checkpoints"

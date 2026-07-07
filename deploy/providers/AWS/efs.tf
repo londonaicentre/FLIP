@@ -99,6 +99,20 @@ locals {
       path  = "/fl-server-net-1/transfer"
       perms = "0755"
     }
+    # Shared checkpoint-staging volume. The fl-api de-bundles large evaluation
+    # checkpoints (e.g. the ~759 MiB Ark+ weights) out of the client app and
+    # writes them to SERVER_CHECKPOINT_ROOT/<model_id>/ (see FLIP#695); the
+    # fl-server's EvaluationModelLocator reads them back from the same path.
+    # This ONE access point is mounted at /app/server-checkpoints on BOTH the
+    # fl-api-net-1 (writer) and fl-server-net-1 (reader) tasks — mirroring the
+    # single `${FL_JOBS_DIR}/net-1:/app/server-checkpoints` bind shared between
+    # the two services in compose.production.nvflare.yml. Both containers run as
+    # uid/gid 1001, which the access point pins, so writer and reader agree on
+    # ownership. 0775 lets the group write the per-model subdirs fl-api mkdirs.
+    fl_checkpoints = {
+      path  = "/fl-server-net-1/server-checkpoints"
+      perms = "0775"
+    }
     fl_server_certs = {
       path  = "/fl-server-net-1/certificates"
       perms = "0750"

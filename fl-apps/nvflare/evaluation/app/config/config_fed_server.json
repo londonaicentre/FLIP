@@ -24,7 +24,9 @@
     {
       "id": "model_locator",
       "path": "flip.nvflare.components.EvaluationPTModelLocator",
-      "args": {}
+      "args": {
+        "model_id": "{model_id}"
+      }
     },
     {
       "id": "json_generator",
