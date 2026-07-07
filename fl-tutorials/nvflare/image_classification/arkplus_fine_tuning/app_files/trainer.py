@@ -629,14 +629,14 @@ class FLIP_TRAINER(Executor):
                         val_value = 0.0
 
                     send_metrics_value(
-                        label=f"{'train'.upper()}-{metric.upper()}",
+                        label=f"{'train'.upper()}-{metric.upper()}-{lesion_name}",
                         round=round,
                         value=train_value,
                         fl_ctx=fl_ctx,
                         flip=self.flip,
                     )
                     send_metrics_value(
-                        label=f"{'val'.upper()}-{metric.upper()}",
+                        label=f"{'val'.upper()}-{metric.upper()}-{lesion_name}",
                         round=round,
                         value=val_value,
                         fl_ctx=fl_ctx,
