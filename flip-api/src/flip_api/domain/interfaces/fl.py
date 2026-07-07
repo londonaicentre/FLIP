@@ -17,9 +17,10 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator
 
+from flip_api.config import get_settings
 from flip_api.domain.schemas.status import ClientStatus, FLJobStatus
 from flip_api.domain.schemas.types import FLBackend
-from flip_api.utils.constants import job_types_required_files_name
+from flip_api.utils.constants import REQUIRED_FILES_MANIFEST_NAME
 from flip_api.utils.logger import logger
 
 # Default job type used when config.json declares none. The job-type vocabulary itself is data
@@ -27,32 +28,29 @@ from flip_api.utils.logger import logger
 # fallback. Mirrors the UI's DEFAULT_JOB_TYPE.
 DEFAULT_JOB_TYPE = "standard"
 
-# Directory where the per-backend required-files manifests are downloaded at runtime.
-# The manifests themselves are never committed to source control (gitignored) — S3 is the
-# single source of truth, pulled per FL backend on model creation. See pull_required_files.py.
-ASSETS_DIR = Path(__file__).parent.parent.parent / "assets"
-# Ensure the directory exists so the manifest pull and load have a target on a clean checkout /
-# fresh Docker volume (the dir is not tracked in git — only its manifest contents are gitignored).
-ASSETS_DIR.mkdir(parents=True, exist_ok=True)
-
 
 def required_job_types_file(fl_backend: FLBackend) -> Path:
     """Local path of the per-backend job-types/required-files manifest.
+
+    The manifest is committed in the repo's ``fl-apps/<backend>/required_files.json`` and baked
+    into the flip-api image, read from the local ``FL_APP_BASE_DIR`` tree (FLIP#724).
 
     Args:
         fl_backend (FLBackend): The FL backend the manifest belongs to (``nvflare`` or ``flower``).
 
     Returns:
-        Path: Absolute path to the per-backend manifest under the assets directory.
+        Path: Absolute path to the per-backend manifest under the base-application directory.
     """
-    return ASSETS_DIR / job_types_required_files_name(fl_backend)
+    return Path(get_settings().FL_APP_BASE_DIR) / fl_backend / REQUIRED_FILES_MANIFEST_NAME
 
 
 def _load_job_types_config(fl_backend: FLBackend) -> dict[str, list[str]]:
     """Loads the job types configuration for a backend from its on-disk manifest.
 
-    The manifest is pulled from S3 at runtime; if it is missing (e.g. S3 was unreachable
-    when the model was created) an empty mapping is returned so the API does not crash.
+    The manifest ships with the flip-api image (baked-in ``fl-apps/`` tree), so it is normally
+    always present. If it is missing or malformed an empty mapping is returned so the API does
+    not crash — but that now signals a misconfigured ``FL_APP_BASE_DIR`` rather than a benign
+    first-boot state, so it is logged at warning level.
 
     Args:
         fl_backend (FLBackend): The FL backend whose manifest to load (``nvflare`` or ``flower``).
@@ -66,9 +64,9 @@ def _load_job_types_config(fl_backend: FLBackend) -> dict[str, list[str]]:
         with open(path, encoding="utf-8") as f:
             return json.load(f)
     except FileNotFoundError:
-        # Benign: the manifest is pulled from S3 on model creation, so it is legitimately
-        # absent on first boot / a fresh volume before any model exists.
-        logger.debug(f"Required-files manifest not present at {path}; returning empty job-type map.")
+        # The manifest is baked into the image, so absence points at a bad FL_APP_BASE_DIR
+        # (wrong mount / missing template tree) rather than a benign not-yet-pulled state.
+        logger.warning(f"Required-files manifest not present at {path}; returning empty job-type map.")
         return {}
     except (json.JSONDecodeError, OSError) as e:
         # A present-but-unreadable or corrupt manifest is a real error worth a traceback.
@@ -247,7 +245,7 @@ class JobRequiredFiles(BaseModel):
         """Whether ``job_type`` is defined in the backend's on-disk manifest.
 
         The set of valid job types is data (the manifest keys), not a hard-coded enum, so adding
-        a job type is purely an S3 manifest + base-application change.
+        a job type is purely a local manifest + base-application template change under FL_APP_BASE_DIR.
 
         Args:
             job_type (str): The job type to validate.

@@ -67,6 +67,11 @@ services:
         GID: ${GID}
         UNAME: ${UNAME}
       context: ../flip-api
+      # fl-apps/ lives at the repo root, outside the flip-api build context. Pass it as a named
+      # additional context so the Dockerfile can `COPY --from=fl_apps` the base FL templates into
+      # the image (FLIP#724). Requires BuildKit (compose default).
+      additional_contexts:
+        fl_apps: ../fl-apps
       dockerfile: Dockerfile
       target: development
     ports:
@@ -79,6 +84,9 @@ services:
       - ../flip-api/entrypoint.sh:/app/entrypoint.sh
       - ../flip-api/tests/:/app/tests/
       - ../flip-api/.vscode:/app/.vscode
+      # Bind-mount the base FL app templates over the baked-in copy so template edits take effect
+      # without a rebuild (the bundler reads them from FL_APP_BASE_DIR=/app/fl-apps). FLIP#724.
+      - ../fl-apps/:/app/fl-apps/
       - ~/.aws/config:/home/${UNAME}/.aws/config:ro
       - ~/.aws/sso/cache:/home/${UNAME}/.aws/sso/cache:rw
     networks:
@@ -140,7 +148,6 @@ services:
       - UPLOADED_MODEL_FILES_BUCKET=${UPLOADED_MODEL_FILES_BUCKET}
       - SCANNED_MODEL_FILES_BUCKET=${SCANNED_MODEL_FILES_BUCKET}
       - UPLOADED_FEDERATED_DATA_BUCKET=${UPLOADED_FEDERATED_DATA_BUCKET}
-      - FL_APP_BASE_BUCKET=${FL_APP_BASE_BUCKET}
       - FL_APP_DESTINATION_BUCKET=${FL_APP_DESTINATION_BUCKET}
       - NET_ENDPOINTS=${NET_ENDPOINTS}
       - FL_BACKEND=${FL_BACKEND}

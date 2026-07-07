@@ -11,6 +11,7 @@
 #
 
 import json
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 from uuid import UUID, uuid4
 
@@ -45,14 +46,35 @@ def fl_job_id() -> UUID:
 
 
 @pytest.fixture
-def mocked_settings():
+def mocked_settings(tmp_path):
+    # FL_APP_BASE_DIR points at a per-test temp tree; individual bundler tests populate it via
+    # write_base_tree(). The base application templates are read from local disk (FLIP#724), not S3.
     mock = Settings(
-        FL_APP_BASE_BUCKET="s3://mock-bucket-base-app/base_files",
+        FL_APP_BASE_DIR=str(tmp_path / "fl-apps"),
         SCANNED_MODEL_FILES_BUCKET="s3://mock-bucket-scanned/model_files",
         FL_APP_DESTINATION_BUCKET="s3://mock-bucket-dest/dest_files",
     )
     with patch("flip_api.fl_services.services.fl_service.get_settings", return_value=mock):
         yield mock
+
+
+def write_base_tree(base_dir: str, backend: str, job_type: str, rel_files: list[str]) -> None:
+    """Create a local base-application tree at <base_dir>/<backend>/<job_type>/ with stub files.
+
+    Mirrors how the repo's fl-apps/ templates are laid out on disk, so the bundler's local walk
+    has real files to enumerate and upload.
+
+    Args:
+        base_dir (str): The FL_APP_BASE_DIR root.
+        backend (str): Backend segment (``nvflare`` or ``flower``).
+        job_type (str): Job-type segment (``standard``, ``evaluation``, ...).
+        rel_files (list[str]): Relative file paths to create under the job-type root.
+    """
+    root = Path(base_dir) / backend / job_type
+    for rel in rel_files:
+        path = root / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"# stub for {rel}\n")
 
 
 @pytest.fixture
@@ -246,9 +268,12 @@ def test_start_training_with_config(
 def test_bundle_nvflare_application_success(
     mock_s3, mock_required, mock_verify, mock_is_valid, model_id, mocked_settings
 ):
-    base_bucket = mocked_settings.FL_APP_BASE_BUCKET
+    base_dir = mocked_settings.FL_APP_BASE_DIR
     model_bucket = mocked_settings.SCANNED_MODEL_FILES_BUCKET
     dest_bucket = mocked_settings.FL_APP_DESTINATION_BUCKET
+
+    # Base application template on the local FL_APP_BASE_DIR tree
+    write_base_tree(base_dir, "nvflare", "standard", ["app/file1.py"])
 
     mock_client = mock_s3.return_value
     # Ensure get_object returns a body whose read() yields the config.json bytes
@@ -263,8 +288,7 @@ def test_bundle_nvflare_application_success(
             f"{model_bucket}/{model_id}/models.py",
             f"{model_bucket}/{model_id}/config.json",
         ],
-        [f"{base_bucket}/nvflare/standard/app/file1.py"],
-        [],  # Destination bucket
+        [],  # Destination bucket (clear check)
     ]
     mock_client.copy_object.return_value = None
     mock_client.object_exists.return_value = False  # No files exist yet
@@ -274,11 +298,12 @@ def test_bundle_nvflare_application_success(
 
     assert dest_bucket_s3_path == f"{dest_bucket}/{model_id}"
 
-    # assert that the copy_object was called for each file including the bucket names
-    mock_client.copy_object.assert_any_call(
-        f"{base_bucket}/nvflare/standard/app/file1.py",
+    # Base files are uploaded from the local tree into the destination bundle
+    mock_client.upload_file.assert_any_call(
+        str(Path(base_dir) / "nvflare/standard/app/file1.py"),
         f"{dest_bucket}/{model_id}/app/file1.py",
     )
+    # User model files are copied (S3 -> S3) into each app*/custom/
     mock_client.copy_object.assert_any_call(
         f"{model_bucket}/{model_id}/validator.py",
         f"{dest_bucket}/{model_id}/app/custom/validator.py",
@@ -297,9 +322,12 @@ def test_bundle_nvflare_application_model_files_overwrite(
     Test that if a file in the model files has the same name as a file in the base application, the model file is not
     copied and a warning is logged.
     """
-    base_bucket = mocked_settings.FL_APP_BASE_BUCKET
+    base_dir = mocked_settings.FL_APP_BASE_DIR
     model_bucket = mocked_settings.SCANNED_MODEL_FILES_BUCKET
     dest_bucket = mocked_settings.FL_APP_DESTINATION_BUCKET
+
+    # Base template contains flip.py under app/custom — a name the researcher must not overwrite
+    write_base_tree(base_dir, "nvflare", "standard", ["app/custom/flip.py", "app/config/config_fed_client.json"])
 
     mock_client = mock_s3.return_value
     # config.json with job_type standard
@@ -307,7 +335,7 @@ def test_bundle_nvflare_application_model_files_overwrite(
         "Body": MagicMock(read=MagicMock(return_value=json.dumps({"job_type": "standard"}).encode("utf-8")))
     }
     mock_required.return_value = ["trainer.py", "validator.py", "config.json"]
-    # Model files and base files
+    # Model files
     model_files = [
         f"{model_bucket}/{model_id}/trainer.py",
         f"{model_bucket}/{model_id}/validator.py",
@@ -315,15 +343,10 @@ def test_bundle_nvflare_application_model_files_overwrite(
         f"{model_bucket}/{model_id}/meta.json",
         f"{model_bucket}/{model_id}/flip.py",  # user trying to overwrite the flip.py in base with one in model files
     ]
-    base_files = [
-        f"{base_bucket}/nvflare/standard/app/custom/flip.py",
-        f"{base_bucket}/nvflare/standard/app/config/config_fed_client.json",
-    ]
     # Destination bucket is empty at first
     mock_client.list_objects.side_effect = [
         model_files,  # model bucket
-        base_files,  # base bucket
-        [],  # dest bucket (empty)
+        [],  # dest bucket (empty, clear check)
     ]
     mock_client.copy_object.return_value = None
     mock_verify.return_value = None
@@ -388,8 +411,12 @@ def test_bundle_nvflare_application_file_wrong_job_type_in_config(
     failure in the invalid case is the wrong job type. Validity is driven by the manifest keys
     (mock_job_types_file), so "invalid" is rejected.
     """
-    base_bucket = mocked_settings.FL_APP_BASE_BUCKET
+    base_dir = mocked_settings.FL_APP_BASE_DIR
     model_bucket = mocked_settings.SCANNED_MODEL_FILES_BUCKET
+
+    # A base template exists for the parametrized job_type (unused for the "invalid" run, which is
+    # rejected before the base directory is ever walked).
+    write_base_tree(base_dir, "nvflare", job_type, ["app/file1.py"])
 
     mock_is_valid.side_effect = lambda jt, backend: jt in mock_job_types_file
     mock_client = mock_s3.return_value
@@ -405,8 +432,7 @@ def test_bundle_nvflare_application_file_wrong_job_type_in_config(
             f"{model_bucket}/{model_id}/models.py",
             f"{model_bucket}/{model_id}/config.json",
         ],
-        [f"{base_bucket}/nvflare/{job_type}/app/file1.py"],
-        [],  # Destination bucket
+        [],  # Destination bucket (clear check)
     ]
     mock_client.copy_object.return_value = None
     mock_client.object_exists.return_value = False  # No files exist yet
@@ -426,8 +452,10 @@ def test_bundle_nvflare_application_file_wrong_job_type_in_config(
 @patch("flip_api.fl_services.services.fl_service.JobRequiredFiles.get_required_files")
 @patch("flip_api.fl_services.services.fl_service.S3Client")
 def test_bundle_nvflare_application_wrong_files(mock_s3, mock_required, mock_verify, mocked_settings, model_id):
-    base_bucket = mocked_settings.FL_APP_BASE_BUCKET
+    base_dir = mocked_settings.FL_APP_BASE_DIR
     model_bucket = mocked_settings.SCANNED_MODEL_FILES_BUCKET
+
+    write_base_tree(base_dir, "nvflare", "standard", ["app/file1.py"])
 
     mock_client = mock_s3.return_value
     # Provide an empty JSON config for tests that include config.json in model files
@@ -441,8 +469,7 @@ def test_bundle_nvflare_application_wrong_files(mock_s3, mock_required, mock_ver
             f"{model_bucket}/{model_id}/models.py",
             f"{model_bucket}/{model_id}/config.json",
         ],  # Missing trainer.py
-        [f"{base_bucket}/nvflare/standard/app/file1.py"],
-        [],  # Destination bucket
+        [],  # Destination bucket (clear check)
     ]
     mock_client.copy_object.return_value = None
     mock_verify.return_value = None
@@ -455,9 +482,11 @@ def test_bundle_nvflare_application_wrong_files(mock_s3, mock_required, mock_ver
 @patch("flip_api.fl_services.services.fl_service.JobRequiredFiles.get_required_files")
 @patch("flip_api.fl_services.services.fl_service.S3Client")
 def test_bundle_flower_application_success(mock_s3, mock_required, mock_is_valid, model_id, mocked_settings):
-    base_bucket = mocked_settings.FL_APP_BASE_BUCKET
+    base_dir = mocked_settings.FL_APP_BASE_DIR
     model_bucket = mocked_settings.SCANNED_MODEL_FILES_BUCKET
     dest_bucket = mocked_settings.FL_APP_DESTINATION_BUCKET
+
+    write_base_tree(base_dir, "flower", "standard", ["app/server_app.py", "pyproject.toml"])
 
     mock_client = mock_s3.return_value
     mock_client.get_object.return_value = {
@@ -470,11 +499,7 @@ def test_bundle_flower_application_success(mock_s3, mock_required, mock_is_valid
             f"{model_bucket}/{model_id}/models.py",
             f"{model_bucket}/{model_id}/config.json",
         ],
-        [
-            f"{base_bucket}/flower/standard/app/server_app.py",
-            f"{base_bucket}/flower/standard/pyproject.toml",
-        ],
-        [],
+        [],  # Destination bucket (clear check)
     ]
     mock_client.copy_object.return_value = None
     mock_client.object_exists.return_value = False
@@ -482,10 +507,16 @@ def test_bundle_flower_application_success(mock_s3, mock_required, mock_is_valid
     dest_bucket_s3_path = fl_service.bundle_flower_application(model_id)
 
     assert dest_bucket_s3_path == f"{dest_bucket}/{model_id}"
-    mock_client.copy_object.assert_any_call(
-        f"{base_bucket}/flower/standard/app/server_app.py",
+    # Base files are uploaded from the local tree (nested app/ and root pyproject.toml both mirror 1:1)
+    mock_client.upload_file.assert_any_call(
+        str(Path(base_dir) / "flower/standard/app/server_app.py"),
         f"{dest_bucket}/{model_id}/app/server_app.py",
     )
+    mock_client.upload_file.assert_any_call(
+        str(Path(base_dir) / "flower/standard/pyproject.toml"),
+        f"{dest_bucket}/{model_id}/pyproject.toml",
+    )
+    # User model files are copied (S3 -> S3) into app/
     mock_client.copy_object.assert_any_call(
         f"{model_bucket}/{model_id}/client_app.py",
         f"{dest_bucket}/{model_id}/app/client_app.py",
@@ -499,9 +530,12 @@ def test_bundle_flower_application_success(mock_s3, mock_required, mock_is_valid
 def test_bundle_flower_application_model_files_overwrite(
     mock_logger, mock_s3, mock_required, mock_is_valid, model_id, mocked_settings
 ):
-    base_bucket = mocked_settings.FL_APP_BASE_BUCKET
+    base_dir = mocked_settings.FL_APP_BASE_DIR
     model_bucket = mocked_settings.SCANNED_MODEL_FILES_BUCKET
     dest_bucket = mocked_settings.FL_APP_DESTINATION_BUCKET
+
+    # Base template contains server_app.py — a name the researcher must not overwrite
+    write_base_tree(base_dir, "flower", "standard", ["app/server_app.py", "pyproject.toml"])
 
     mock_client = mock_s3.return_value
     mock_client.get_object.return_value = {
@@ -514,14 +548,9 @@ def test_bundle_flower_application_model_files_overwrite(
         f"{model_bucket}/{model_id}/config.json",
         f"{model_bucket}/{model_id}/server_app.py",
     ]
-    base_files = [
-        f"{base_bucket}/flower/standard/app/server_app.py",
-        f"{base_bucket}/flower/standard/pyproject.toml",
-    ]
     mock_client.list_objects.side_effect = [
         model_files,
-        base_files,
-        [],
+        [],  # Destination bucket (clear check)
     ]
     mock_client.copy_object.return_value = None
 
@@ -582,8 +611,12 @@ def test_bundle_flower_application_file_wrong_job_type_in_config(
     failure in the invalid case is the wrong job type. Validity is driven by the manifest keys
     (mock_job_types_file), so "invalid" is rejected.
     """
-    base_bucket = mocked_settings.FL_APP_BASE_BUCKET
+    base_dir = mocked_settings.FL_APP_BASE_DIR
     model_bucket = mocked_settings.SCANNED_MODEL_FILES_BUCKET
+
+    # A base template exists for the parametrized job_type (unused for the "invalid" run, which is
+    # rejected before the base directory is ever walked).
+    write_base_tree(base_dir, "flower", job_type, ["app/file1.py"])
 
     mock_is_valid.side_effect = lambda jt, backend: jt in mock_job_types_file
     mock_client = mock_s3.return_value
@@ -599,8 +632,7 @@ def test_bundle_flower_application_file_wrong_job_type_in_config(
             f"{model_bucket}/{model_id}/models.py",
             f"{model_bucket}/{model_id}/config.json",
         ],
-        [f"{base_bucket}/flower/{job_type}/app/file1.py"],
-        [],  # Destination bucket
+        [],  # Destination bucket (clear check)
     ]
     mock_client.copy_object.return_value = None
     mock_client.object_exists.return_value = False  # No files exist yet
@@ -619,8 +651,10 @@ def test_bundle_flower_application_file_wrong_job_type_in_config(
 @patch("flip_api.fl_services.services.fl_service.JobRequiredFiles.get_required_files")
 @patch("flip_api.fl_services.services.fl_service.S3Client")
 def test_bundle_flower_application_wrong_files(mock_s3, mock_required, mocked_settings, model_id):
-    base_bucket = mocked_settings.FL_APP_BASE_BUCKET
+    base_dir = mocked_settings.FL_APP_BASE_DIR
     model_bucket = mocked_settings.SCANNED_MODEL_FILES_BUCKET
+
+    write_base_tree(base_dir, "flower", "standard", ["app/server_app.py"])
 
     mock_client = mock_s3.return_value
     mock_client.get_object.return_value = {
@@ -632,8 +666,7 @@ def test_bundle_flower_application_wrong_files(mock_s3, mock_required, mocked_se
             f"{model_bucket}/{model_id}/client_app.py",
             f"{model_bucket}/{model_id}/config.json",
         ],  # Missing models.py
-        [f"{base_bucket}/flower/standard/app/server_app.py"],
-        [],
+        [],  # Destination bucket (clear check)
     ]
     mock_client.copy_object.return_value = None
 
@@ -642,20 +675,18 @@ def test_bundle_flower_application_wrong_files(mock_s3, mock_required, mocked_se
 
 
 def test_verify_bundle_paths_success(model_id, mocked_settings):
-    base_bucket = mocked_settings.FL_APP_BASE_BUCKET
     model_bucket = mocked_settings.SCANNED_MODEL_FILES_BUCKET
     dest_bucket = mocked_settings.FL_APP_DESTINATION_BUCKET
 
-    base_bucket_s3_path = f"{base_bucket}/standard"
     model_bucket_s3_path = f"{model_bucket}/{model_id}"
     dest_bucket_s3_path = f"{dest_bucket}/{model_id}"
 
-    # Base files we copied 1:1 into destination
-    base_files = [
-        f"{base_bucket_s3_path}/app_site1/config/config_fed_client.json",
-        f"{base_bucket_s3_path}/app_site1/custom/flip.py",
-        f"{base_bucket_s3_path}/app_site2/config/config_fed_server.json",
-        f"{base_bucket_s3_path}/app_site2/custom/flip.py",
+    # Relative paths of the base files we uploaded 1:1 into destination
+    base_rel_paths = [
+        "app_site1/config/config_fed_client.json",
+        "app_site1/custom/flip.py",
+        "app_site2/config/config_fed_server.json",
+        "app_site2/custom/flip.py",
     ]
 
     # Model files we copied into each app*/custom/, and meta.json once at root
@@ -672,8 +703,7 @@ def test_verify_bundle_paths_success(model_id, mocked_settings):
     expected_dest_keys = set()
 
     # base mirrored
-    for file in base_files:
-        rel = file.replace(f"{base_bucket_s3_path}/", "", 1)
+    for rel in base_rel_paths:
         expected_dest_keys.add(f"{dest_bucket_s3_path}/{rel}")
 
     # meta.json once
@@ -693,10 +723,9 @@ def test_verify_bundle_paths_success(model_id, mocked_settings):
     # Should not raise
     fl_service.verify_bundle_paths(
         s3=mock_s3,
-        base_files=base_files,
+        base_rel_paths=base_rel_paths,
         model_files=model_files,
         app_folders=app_folders,
-        base_bucket_s3_path=base_bucket_s3_path,
         model_bucket_s3_path=model_bucket_s3_path,
         dest_bucket_s3_path=dest_bucket_s3_path,
     )
@@ -705,16 +734,14 @@ def test_verify_bundle_paths_success(model_id, mocked_settings):
 
 
 def test_verify_bundle_paths_raises_on_missing_file(model_id, mocked_settings):
-    base_bucket = mocked_settings.FL_APP_BASE_BUCKET
     model_bucket = mocked_settings.SCANNED_MODEL_FILES_BUCKET
     dest_bucket = mocked_settings.FL_APP_DESTINATION_BUCKET
 
-    base_bucket_s3_path = f"{base_bucket}/standard"
     model_bucket_s3_path = f"{model_bucket}/{model_id}"
     dest_bucket_s3_path = f"{dest_bucket}/{model_id}"
 
-    base_files = [
-        f"{base_bucket_s3_path}/app_site1/custom/flip.py",
+    base_rel_paths = [
+        "app_site1/custom/flip.py",
     ]
     model_files = [
         f"{model_bucket_s3_path}/trainer.py",
@@ -725,8 +752,7 @@ def test_verify_bundle_paths_raises_on_missing_file(model_id, mocked_settings):
     # Build the full expected set (same logic as the helper)
     expected_dest_keys = set()
 
-    for file in base_files:
-        rel = file.replace(f"{base_bucket_s3_path}/", "", 1)
+    for rel in base_rel_paths:
         expected_dest_keys.add(f"{dest_bucket_s3_path}/{rel}")
 
     expected_dest_keys.add(f"{dest_bucket_s3_path}/meta.json")
@@ -749,10 +775,9 @@ def test_verify_bundle_paths_raises_on_missing_file(model_id, mocked_settings):
     with pytest.raises(RuntimeError, match=r"missing files"):
         fl_service.verify_bundle_paths(
             s3=mock_s3,
-            base_files=base_files,
+            base_rel_paths=base_rel_paths,
             model_files=model_files,
             app_folders=app_folders,
-            base_bucket_s3_path=base_bucket_s3_path,
             model_bucket_s3_path=model_bucket_s3_path,
             dest_bucket_s3_path=dest_bucket_s3_path,
         )
@@ -1078,12 +1103,12 @@ def test_bundle_nvflare_application_no_base_files(mock_s3, mocked_settings, mode
     model_bucket = mocked_settings.SCANNED_MODEL_FILES_BUCKET
 
     mock_client = mock_s3.return_value
+    # No base tree written -> the local FL_APP_BASE_DIR/nvflare/standard directory is absent
     mock_client.list_objects.side_effect = [
         [f"{model_bucket}/{model_id}/trainer.py"],  # model files (no config.json)
-        [],  # base bucket empty
     ]
 
-    with pytest.raises(FileNotFoundError, match="Base application files missing on the S3 bucket"):
+    with pytest.raises(FileNotFoundError, match="Base application files missing in the local base directory"):
         fl_service.bundle_nvflare_application(model_id)
 
 
@@ -1091,14 +1116,15 @@ def test_bundle_nvflare_application_no_base_files(mock_s3, mocked_settings, mode
 @patch("flip_api.fl_services.services.fl_service.S3Client")
 def test_bundle_nvflare_application_no_app_folders(mock_s3, mock_required, mocked_settings, model_id):
     """Base tree without any top-level ``app*`` folder is rejected."""
-    base_bucket = mocked_settings.FL_APP_BASE_BUCKET
+    base_dir = mocked_settings.FL_APP_BASE_DIR
     model_bucket = mocked_settings.SCANNED_MODEL_FILES_BUCKET
+
+    write_base_tree(base_dir, "nvflare", "standard", ["notapp/file1.py"])  # no app* folder
 
     mock_client = mock_s3.return_value
     mock_client.list_objects.side_effect = [
         [f"{model_bucket}/{model_id}/trainer.py"],  # model files (no config.json)
-        [f"{base_bucket}/nvflare/standard/notapp/file1.py"],  # base, no app* folder
-        [],  # destination bucket empty
+        [],  # destination bucket empty (clear check)
     ]
     mock_client.copy_object.return_value = None
 
@@ -1113,9 +1139,11 @@ def test_bundle_nvflare_application_no_config_clears_existing_dest(
     mock_s3, mock_required, mock_verify, mocked_settings, model_id
 ):
     """No config.json falls back to job_type=standard, and stale destination files are cleared first."""
-    base_bucket = mocked_settings.FL_APP_BASE_BUCKET
+    base_dir = mocked_settings.FL_APP_BASE_DIR
     model_bucket = mocked_settings.SCANNED_MODEL_FILES_BUCKET
     dest_bucket = mocked_settings.FL_APP_DESTINATION_BUCKET
+
+    write_base_tree(base_dir, "nvflare", "standard", ["app/file1.py"])
 
     mock_client = mock_s3.return_value
     mock_required.return_value = ["trainer.py", "validator.py"]
@@ -1123,9 +1151,8 @@ def test_bundle_nvflare_application_no_config_clears_existing_dest(
         f"{model_bucket}/{model_id}/trainer.py",
         f"{model_bucket}/{model_id}/validator.py",
     ]  # no config.json -> job_type stays "standard"
-    base_files = [f"{base_bucket}/nvflare/standard/app/file1.py"]
     stale_dest_files = [f"{dest_bucket}/{model_id}/stale.py"]
-    mock_client.list_objects.side_effect = [model_files, base_files, stale_dest_files]
+    mock_client.list_objects.side_effect = [model_files, stale_dest_files]
     mock_client.object_exists.return_value = False
     mock_verify.return_value = None
 
@@ -1151,12 +1178,12 @@ def test_bundle_flower_application_no_base_files(mock_s3, mocked_settings, model
     model_bucket = mocked_settings.SCANNED_MODEL_FILES_BUCKET
 
     mock_client = mock_s3.return_value
+    # No base tree written -> the local FL_APP_BASE_DIR/flower/standard directory is absent
     mock_client.list_objects.side_effect = [
         [f"{model_bucket}/{model_id}/client_app.py"],  # model files (no config.json)
-        [],  # base bucket empty
     ]
 
-    with pytest.raises(FileNotFoundError, match="Base application files missing on the S3 bucket"):
+    with pytest.raises(FileNotFoundError, match="Base application files missing in the local base directory"):
         fl_service.bundle_flower_application(model_id)
 
 
@@ -1166,9 +1193,11 @@ def test_bundle_flower_application_no_config_clears_existing_dest(
     mock_s3, mock_required, mocked_settings, model_id
 ):
     """No config.json falls back to job_type=standard, and stale destination files are cleared first."""
-    base_bucket = mocked_settings.FL_APP_BASE_BUCKET
+    base_dir = mocked_settings.FL_APP_BASE_DIR
     model_bucket = mocked_settings.SCANNED_MODEL_FILES_BUCKET
     dest_bucket = mocked_settings.FL_APP_DESTINATION_BUCKET
+
+    write_base_tree(base_dir, "flower", "standard", ["app/server_app.py", "pyproject.toml"])
 
     mock_client = mock_s3.return_value
     mock_required.return_value = ["client_app.py", "models.py"]
@@ -1176,12 +1205,8 @@ def test_bundle_flower_application_no_config_clears_existing_dest(
         f"{model_bucket}/{model_id}/client_app.py",
         f"{model_bucket}/{model_id}/models.py",
     ]  # no config.json -> job_type stays "standard"
-    base_files = [
-        f"{base_bucket}/flower/standard/app/server_app.py",
-        f"{base_bucket}/flower/standard/pyproject.toml",
-    ]
     stale_dest_files = [f"{dest_bucket}/{model_id}/stale.py"]
-    mock_client.list_objects.side_effect = [model_files, base_files, stale_dest_files]
+    mock_client.list_objects.side_effect = [model_files, stale_dest_files]
     mock_client.object_exists.return_value = False
 
     result = fl_service.bundle_flower_application(model_id)
@@ -1264,3 +1289,92 @@ def test_abort_model_training_raises_on_invalid_target(
         fl_service.abort_model_training(request, model_id, fake_session)
 
     mock_abort.assert_not_called()
+
+
+# --- local base-file helper + local-directory bundling edge cases (FLIP#724) ----------------------
+
+
+def test_list_local_base_files_missing_dir_returns_empty(tmp_path):
+    # A non-existent base directory yields no files (bundlers turn this into FileNotFoundError).
+    assert fl_service.list_local_base_files(tmp_path / "does-not-exist") == []
+
+
+def test_list_local_base_files_returns_sorted_nested_relpaths(tmp_path):
+    (tmp_path / "app" / "custom" / "sub").mkdir(parents=True)
+    (tmp_path / "app" / "custom" / "sub" / "deep.py").write_text("x")
+    (tmp_path / "app" / "config").mkdir(parents=True)
+    (tmp_path / "app" / "config" / "config_fed_server.json").write_text("{}")
+    (tmp_path / "pyproject.toml").write_text("x")
+
+    # Directories are not returned, only files; paths are relative POSIX and sorted.
+    assert fl_service.list_local_base_files(tmp_path) == [
+        "app/config/config_fed_server.json",
+        "app/custom/sub/deep.py",
+        "pyproject.toml",
+    ]
+
+
+@patch("flip_api.fl_services.services.fl_service.JobRequiredFiles.is_valid_job_type", return_value=True)
+@patch("flip_api.fl_services.services.fl_service.verify_bundle_paths")
+@patch("flip_api.fl_services.services.fl_service.JobRequiredFiles.get_required_files")
+@patch("flip_api.fl_services.services.fl_service.S3Client")
+def test_bundle_nvflare_application_uploads_nested_base_paths(
+    mock_s3, mock_required, mock_verify, mock_is_valid, model_id, mocked_settings
+):
+    """Deeply nested base files are uploaded to matching nested destination keys (paths not flattened)."""
+    base_dir = mocked_settings.FL_APP_BASE_DIR
+    model_bucket = mocked_settings.SCANNED_MODEL_FILES_BUCKET
+    dest_bucket = mocked_settings.FL_APP_DESTINATION_BUCKET
+
+    write_base_tree(base_dir, "nvflare", "standard", ["app/config/config_fed_server.json", "app/custom/sub/deep.py"])
+
+    mock_client = mock_s3.return_value
+    mock_client.get_object.return_value = {
+        "Body": MagicMock(read=MagicMock(return_value=json.dumps({"job_type": "standard"}).encode("utf-8")))
+    }
+    mock_required.return_value = ["config.json"]
+    mock_client.list_objects.side_effect = [
+        [f"{model_bucket}/{model_id}/config.json"],
+        [],  # dest clear
+    ]
+    mock_client.object_exists.return_value = False
+    mock_verify.return_value = None
+
+    fl_service.bundle_nvflare_application(model_id)
+
+    mock_client.upload_file.assert_any_call(
+        str(Path(base_dir) / "nvflare/standard/app/custom/sub/deep.py"),
+        f"{dest_bucket}/{model_id}/app/custom/sub/deep.py",
+    )
+    mock_client.upload_file.assert_any_call(
+        str(Path(base_dir) / "nvflare/standard/app/config/config_fed_server.json"),
+        f"{dest_bucket}/{model_id}/app/config/config_fed_server.json",
+    )
+
+
+@patch("flip_api.fl_services.services.fl_service.JobRequiredFiles.is_valid_job_type", return_value=True)
+@patch("flip_api.fl_services.services.fl_service.verify_bundle_paths")
+@patch("flip_api.fl_services.services.fl_service.JobRequiredFiles.get_required_files")
+@patch("flip_api.fl_services.services.fl_service.S3Client")
+def test_bundle_nvflare_application_propagates_upload_failure(
+    mock_s3, mock_required, mock_verify, mock_is_valid, model_id, mocked_settings
+):
+    """A failed base-file upload aborts the bundle (the error is not swallowed)."""
+    base_dir = mocked_settings.FL_APP_BASE_DIR
+    model_bucket = mocked_settings.SCANNED_MODEL_FILES_BUCKET
+
+    write_base_tree(base_dir, "nvflare", "standard", ["app/file1.py"])
+
+    mock_client = mock_s3.return_value
+    mock_client.get_object.return_value = {
+        "Body": MagicMock(read=MagicMock(return_value=json.dumps({"job_type": "standard"}).encode("utf-8")))
+    }
+    mock_required.return_value = ["config.json"]
+    mock_client.list_objects.side_effect = [
+        [f"{model_bucket}/{model_id}/config.json"],
+        [],  # dest clear
+    ]
+    mock_client.upload_file.side_effect = Exception("S3 upload boom")
+
+    with pytest.raises(Exception, match="S3 upload boom"):
+        fl_service.bundle_nvflare_application(model_id)

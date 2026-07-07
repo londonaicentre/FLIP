@@ -11,6 +11,7 @@
 #
 
 import json
+from pathlib import Path
 from typing import Any
 from uuid import UUID
 
@@ -40,6 +41,27 @@ class UnknownJobTypeError(Exception):
     """Custom exception for unknown job types in FL"""
 
     pass
+
+
+def list_local_base_files(base_dir: Path) -> list[str]:
+    """List every file under a local base-application directory, recursively.
+
+    The base FL application templates live in the repo's ``fl-apps/`` tree, baked into the
+    flip-api image and read from ``FL_APP_BASE_DIR`` (FLIP#724) — no longer from S3. This walks
+    ``base_dir`` and returns each file's path relative to it, so the bundler can mirror the tree
+    1:1 into the destination bucket.
+
+    Args:
+        base_dir (Path): Root directory of a backend/job-type base application
+            (``<FL_APP_BASE_DIR>/<backend>/<job_type>``).
+
+    Returns:
+        list[str]: Sorted relative POSIX paths of every file under ``base_dir`` (nested paths
+        included). Empty if ``base_dir`` does not exist or contains no files.
+    """
+    if not base_dir.is_dir():
+        return []
+    return sorted(p.relative_to(base_dir).as_posix() for p in base_dir.rglob("*") if p.is_file())
 
 
 def upload_app(model_id: UUID, training_details: IStartTrainingBody, endpoint: str) -> Any:
@@ -332,16 +354,16 @@ def bundle_nvflare_application(model_id: UUID, job_type: str = DEFAULT_JOB_TYPE)
     """
     Creates the app folder from the base application files and the uploaded files.
 
-    It copies the base application files and the model files to the destination bucket.
-    It checks if the destination bucket has any files, and if it does, it deletes them.
+    It uploads the local base application templates and copies the model files to the destination
+    bucket. It checks if the destination bucket has any files, and if it does, it deletes them.
 
     After copying, path-level verification ensures that all expected files are present in the destination bucket.
 
     Example:
 
-    Base application files in the base bucket:
+    Base application files on the local FL_APP_BASE_DIR tree (baked into the image, FLIP#724):
 
-        s3://base-bucket/standard/
+        <FL_APP_BASE_DIR>/nvflare/standard/
         ├── app_site1/
         │   ├── config/
         │   │   └── config_fed_client.json
@@ -441,42 +463,35 @@ def bundle_nvflare_application(model_id: UUID, job_type: str = DEFAULT_JOB_TYPE)
             job_type = jt
             logger.info(f"job_type in config.json: {job_type}. Using it to select base application.")
 
-    # List base files for that job_type. This bundler is the nvflare-specific path, so the
-    # backend segment is fixed: <base>/nvflare/<job_type>.
-    base_bucket_s3_path = f"{get_settings().FL_APP_BASE_BUCKET}/nvflare/{job_type}"
-    logger.debug(f"Base bucket: {base_bucket_s3_path}")
-    base_files = s3.list_objects(base_bucket_s3_path)
-    if not base_files:
-        raise FileNotFoundError("Base application files missing on the S3 bucket")
+    # Locate the base application for this job_type on the local FL_APP_BASE_DIR tree. This
+    # bundler is the nvflare-specific path, so the backend segment is fixed:
+    # <FL_APP_BASE_DIR>/nvflare/<job_type>. The templates are baked into the flip-api image
+    # (FLIP#724) — there is no S3 base bucket.
+    base_dir = Path(get_settings().FL_APP_BASE_DIR) / FLBackend.NVFLARE / job_type
+    logger.debug(f"Base application dir: {base_dir}")
+    base_rel_paths = list_local_base_files(base_dir)
+    if not base_rel_paths:
+        raise FileNotFoundError(f"Base application files missing in the local base directory: {base_dir}")
 
     # Clear destination if files already exist there (e.g. from a previous training run)
     dest_files = s3.list_objects(dest_bucket_s3_path)
     if dest_files:
         s3.delete_objects(dest_files)
 
-    # Copy entire base tree into destination (1:1 paths under base_bucket_s3_path)
-    for src_key in base_files:
-        rel = src_key.replace(f"{base_bucket_s3_path}/", "", 1)
-        dst_key = f"{dest_bucket_s3_path}/{rel}"
-        logger.debug(f"Copying base {src_key} -> {dst_key}")
-        s3.copy_object(src_key, dst_key)
-
-    # Find app folders (top-level directories that start with "app", e.g. app_site1, app_site2, etc)
-    # Retrieve the name of the app folders from the base_files
+    # Find app folders (top-level directories that start with "app", e.g. app, app_site1, etc)
     app_folders: set[str] = set()
-    for src_key in base_files:
-        rel = src_key.replace(f"{base_bucket_s3_path}/", "", 1)
-        logger.debug(f"Checking base file for app folder: {rel}")
-        top = rel.split("/", 1)[0]  # e.g. "app_site1"
+    for rel in base_rel_paths:
+        top = rel.split("/", 1)[0]  # e.g. "app" or "app_site1"
         if top.startswith("app"):
             app_folders.add(top)
 
     if not app_folders:
-        raise FileNotFoundError(f"No app folders found under base application: {base_bucket_s3_path}")
+        raise FileNotFoundError(f"No app folders found under base application: {base_dir}")
 
     logger.debug(f"App folders found: {sorted(app_folders)}")
 
-    # Validate required model files exist for the job type
+    # Validate required model files exist for the job type before uploading anything, so a bad
+    # submission fails fast without leaving a partial bundle in the destination bucket.
     required_files = JobRequiredFiles.get_required_files(job_type, FLBackend.NVFLARE)
     model_rel = {
         k.replace(f"{model_bucket_s3_path}/", "", 1) for k in model_files
@@ -485,14 +500,12 @@ def bundle_nvflare_application(model_id: UUID, job_type: str = DEFAULT_JOB_TYPE)
     if len(missing_files) > 0:
         raise FileNotFoundError(f"Missing required files for job type {job_type}: {', '.join(missing_files)}. ")
 
-    # Copy base application files to the destination bucket
-    for file in base_files:
-        # extract the rest of the file after the parent s3 path to copy the file tree structure
-        key = file.replace(f"{base_bucket_s3_path}/", "")
-        dest_file_path = f"{dest_bucket_s3_path}/{key}"
-
-        logger.debug(f"Copying {file} to {dest_file_path}")
-        s3.copy_object(file, dest_file_path)
+    # Upload the base application tree into the destination bucket (1:1 paths under base_dir)
+    for rel in base_rel_paths:
+        src_path = base_dir / rel
+        dest_file_path = f"{dest_bucket_s3_path}/{rel}"
+        logger.debug(f"Uploading base {src_path} -> {dest_file_path}")
+        s3.upload_file(str(src_path), dest_file_path)
 
     # Copy meta.json file from model files (if it exists) to the destination bucket
     if f"{model_bucket_s3_path}/meta.json" in model_files:
@@ -524,10 +537,9 @@ def bundle_nvflare_application(model_id: UUID, job_type: str = DEFAULT_JOB_TYPE)
     # Path-level verification to ensure all expected files are present in the destination bucket after copying
     verify_bundle_paths(
         s3=s3,
-        base_files=base_files,
+        base_rel_paths=base_rel_paths,
         model_files=model_files,
         app_folders=app_folders,
-        base_bucket_s3_path=base_bucket_s3_path,
         model_bucket_s3_path=model_bucket_s3_path,
         dest_bucket_s3_path=dest_bucket_s3_path,
     )
@@ -539,14 +551,14 @@ def bundle_flower_application(model_id: UUID, job_type: str = DEFAULT_JOB_TYPE) 
     """
     Creates the app folder from the base application files and the uploaded files.
 
-    It copies the base application files and the model files to the destination bucket.
-    It checks if the destination bucket has any files, and if it does, it deletes them.
+    It uploads the local base application templates and copies the model files to the destination
+    bucket. It checks if the destination bucket has any files, and if it does, it deletes them.
 
     Example:
 
-    Base application files in the base bucket:
+    Base application files on the local FL_APP_BASE_DIR tree (baked into the image, FLIP#724):
 
-        s3://base-bucket/standard/
+        <FL_APP_BASE_DIR>/flower/standard/
         ├── app/
         │   └── server_app.py
         └── pyproject.toml
@@ -623,27 +635,23 @@ def bundle_flower_application(model_id: UUID, job_type: str = DEFAULT_JOB_TYPE) 
             job_type = jt
             logger.info(f"job_type in config.json: {job_type}. Using it to select base application.")
 
-    # List base files for that job_type. This bundler is the flower-specific path, so the
-    # backend segment is fixed: <base>/flower/<job_type>.
-    base_bucket_s3_path = f"{get_settings().FL_APP_BASE_BUCKET}/flower/{job_type}"
-    logger.debug(f"Base bucket: {base_bucket_s3_path}")
-    base_files = s3.list_objects(base_bucket_s3_path)
-    if not base_files:
-        raise FileNotFoundError("Base application files missing on the S3 bucket")
+    # Locate the base application for this job_type on the local FL_APP_BASE_DIR tree. This
+    # bundler is the flower-specific path, so the backend segment is fixed:
+    # <FL_APP_BASE_DIR>/flower/<job_type>. The templates are baked into the flip-api image
+    # (FLIP#724) — there is no S3 base bucket.
+    base_dir = Path(get_settings().FL_APP_BASE_DIR) / FLBackend.FLOWER / job_type
+    logger.debug(f"Base application dir: {base_dir}")
+    base_rel_paths = list_local_base_files(base_dir)
+    if not base_rel_paths:
+        raise FileNotFoundError(f"Base application files missing in the local base directory: {base_dir}")
 
     # Clear destination if files already exist there (e.g. from a previous training run)
     dest_files = s3.list_objects(dest_bucket_s3_path)
     if dest_files:
         s3.delete_objects(dest_files)
 
-    # Copy entire base tree into destination (1:1 paths under base_bucket_s3_path)
-    for src_key in base_files:
-        rel = src_key.replace(f"{base_bucket_s3_path}/", "", 1)
-        dst_key = f"{dest_bucket_s3_path}/{rel}"
-        logger.debug(f"Copying base {src_key} -> {dst_key}")
-        s3.copy_object(src_key, dst_key)
-
-    # Validate required model files exist for the job type
+    # Validate required model files exist for the job type before uploading anything, so a bad
+    # submission fails fast without leaving a partial bundle in the destination bucket.
     required_files = JobRequiredFiles.get_required_files(job_type, FLBackend.FLOWER)
     model_rel = {
         k.replace(f"{model_bucket_s3_path}/", "", 1) for k in model_files
@@ -652,14 +660,12 @@ def bundle_flower_application(model_id: UUID, job_type: str = DEFAULT_JOB_TYPE) 
     if len(missing_files) > 0:
         raise FileNotFoundError(f"Missing required files for job type {job_type}: {', '.join(missing_files)}. ")
 
-    # Copy base application files to the destination bucket
-    for file in base_files:
-        # extract the rest of the file after the parent s3 path to copy the file tree structure
-        key = file.replace(f"{base_bucket_s3_path}/", "")
-        dest_file_path = f"{dest_bucket_s3_path}/{key}"
-
-        logger.debug(f"Copying {file} to {dest_file_path}")
-        s3.copy_object(file, dest_file_path)
+    # Upload the base application tree into the destination bucket (1:1 paths under base_dir)
+    for rel in base_rel_paths:
+        src_path = base_dir / rel
+        dest_file_path = f"{dest_bucket_s3_path}/{rel}"
+        logger.debug(f"Uploading base {src_path} -> {dest_file_path}")
+        s3.upload_file(str(src_path), dest_file_path)
 
     # Copy model files into app/
     for src_key in model_files:
@@ -682,10 +688,9 @@ def bundle_flower_application(model_id: UUID, job_type: str = DEFAULT_JOB_TYPE) 
 def verify_bundle_paths(
     *,
     s3: "S3Client",
-    base_files: list[str],
+    base_rel_paths: list[str],
     model_files: list[str],
     app_folders: set[str],
-    base_bucket_s3_path: str,
     model_bucket_s3_path: str,
     dest_bucket_s3_path: str,
 ) -> None:
@@ -694,10 +699,10 @@ def verify_bundle_paths(
 
     Args:
         s3 (S3Client): S3 client used to list destination objects.
-        base_files (list[str]): Keys of the base application files in the source bucket.
+        base_rel_paths (list[str]): Relative paths of the base application files (relative to the
+            local base directory), each mirrored 1:1 into the destination bundle.
         model_files (list[str]): Keys of the user-uploaded model files in the source bucket.
         app_folders (set[str]): Application subfolder names that model files get mirrored into.
-        base_bucket_s3_path (str): Root S3 path of the base application bucket.
         model_bucket_s3_path (str): Root S3 path of the user model bucket.
         dest_bucket_s3_path (str): Root S3 path of the destination bundle bucket.
 
@@ -712,8 +717,7 @@ def verify_bundle_paths(
     expected: set[str] = set()
 
     # Base files (mirrored exactly)
-    for src_key in base_files:
-        rel = src_key.replace(f"{base_bucket_s3_path}/", "", 1)
+    for rel in base_rel_paths:
         expected.add(f"{dest_bucket_s3_path}/{rel}")
 
     # meta.json copied once

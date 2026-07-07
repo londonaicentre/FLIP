@@ -239,3 +239,30 @@ def test_get_put_presigned_post_does_not_log_url_on_client_error(caplog, s3_clie
     # contains ``_FAKE_SIGNED_URL``) would land in the formatted traceback
     # and trip this assertion.
     _assert_logs_have_no_presigned_url(caplog.records)
+
+
+def test_upload_file_parses_path_and_uploads(s3_client_with_mock_boto):
+    """upload_file parses the s3:// path and delegates to boto3's managed upload."""
+    s3, boto_instance = s3_client_with_mock_boto
+
+    s3.upload_file("/local/base/app/file1.py", "s3://dest-bucket/models/abc/app/file1.py")
+
+    boto_instance.upload_file.assert_called_once_with(
+        "/local/base/app/file1.py", "dest-bucket", "models/abc/app/file1.py"
+    )
+
+
+def test_upload_file_wraps_s3_upload_failed_error(s3_client_with_mock_boto):
+    """A boto3 S3UploadFailedError (managed-transfer failure) is caught and re-raised wrapped.
+
+    boto3's ``client.upload_file`` raises ``boto3.exceptions.S3UploadFailedError`` (not a botocore
+    ClientError) on an S3-side failure such as AccessDenied on the destination bucket; the wrapper
+    must still surface it as the tailored "Unable to upload file" error.
+    """
+    from boto3.exceptions import S3UploadFailedError
+
+    s3, boto_instance = s3_client_with_mock_boto
+    boto_instance.upload_file.side_effect = S3UploadFailedError("Failed to upload: AccessDenied")
+
+    with pytest.raises(Exception, match="Unable to upload file /local/f.py to s3://dest-bucket/k"):
+        s3.upload_file("/local/f.py", "s3://dest-bucket/k")

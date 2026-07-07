@@ -242,30 +242,20 @@ make -C fl-tutorials run-all-tutorials
 
 GitHub Actions workflows use OIDC to authenticate to AWS (no long-lived keys).
 
-| Trigger | Target (where `fl-apps/<backend>/` is synced) | Workflow |
-| --------- | -------- | -------- |
-| PR opened/updated (head) | `s3://<dev-bucket>/base-application-dev/pull-requests/<PR_NUMBER>/<backend>` | `fl-apps-push-pr-s3.yml` |
-| Merge to `develop` | `s3://<dev-bucket>/base-application/<backend>` (+ stag account) | `fl-apps-push-s3-dev.yml`, `fl-apps-push-s3-stag.yml` |
-| Merge to `main` | `s3://<prod-bucket>/base-application/<backend>` | `fl-apps-push-s3-prod.yml` |
+The base FL application templates (this `fl-apps/` tree) are **no longer published to S3**. They are
+baked into the flip-api image at build time and read from a local directory (`FL_APP_BASE_DIR`,
+default `/app/fl-apps`); flip-api validates job types and bundles applications straight from that
+tree (FLIP#724). Two CI checks still guard the templates on every PR:
 
-Each workflow triggers only when its backend's templates change (`fl-apps/nvflare/**` for the
-files above; a `…-flower.yml` sibling covers `fl-apps/flower/**`). The PR-scoped copy is removed on
-merge by `fl-apps-cleanup-pr-s3.yml`, and after merge the develop/main sync makes the templates
-available on the canonical path automatically — so the per-PR copy is only for **pre-merge** testing.
+- `fl-apps-check-required-files.yml` — regenerates each backend's `required_files.json` from the
+  per-template arrays and fails if the committed manifest is stale.
+- `fl-apps-check-tutorial-sync.yml` — keeps the Flower tutorials in sync with the `fl-apps/flower/`
+  templates.
 
-> **Warning**: Never manually sync to the production bucket.
-
-To exercise a PR's templates on a running FLIP stack **before merge**, point `FL_APP_BASE_BUCKET` at
-the PR's *parent* path — `s3://<dev-bucket>/base-application-dev/pull-requests/<PR_NUMBER>` (flip-api
-appends `/<backend>/<job_type>`) — and restart flip-api. flip-api validates the job type against the
-synced `required_files.json` manifest, so a new job type needs no flip-api code change — only the
-synced template.
-
-> **Bucket gotcha:** the PR/merge sync workflows write to `AWS_DEV_S3_BUCKET_NAME` (the `flipdev`
-> bucket: `s3://flipdev/base-application-dev/pull-requests/<N>/<backend>`), which is **not** the same
-> bucket flip-api's default `FL_APP_BASE_BUCKET` reads (`FLIP_APP_BUNDLES_BUCKET_NAME`, the
-> `flipdev-app-bundles` bucket). So the repoint must use the `flipdev` PR path — pointing at
-> `flipdev-app-bundles/...pull-requests/...` 404s (empty manifest → `Unknown job_type` at run).
+To exercise a PR's templates on a running FLIP stack **before merge**, rebuild the flip-api image
+from the PR branch (the templates ride along in the image) — for local dev the `../fl-apps` bind-mount
+means edits take effect immediately without a rebuild. A new job type needs no S3 sync: adding it to
+`fl-apps/<backend>/` and its `required_files.json` is enough, because flip-api reads both locally.
 
 ### Makefile Reference
 

@@ -126,14 +126,20 @@ jobs:
       - name: Build Docker image
         env:
           DOCKER_TAGS: ${{ steps.tags.outputs.tags }}
+          # Enable BuildKit so `--build-context` (the fl_apps named context below) is honoured.
+          DOCKER_BUILDKIT: "1"
         run: |
           IFS=',' read -ra TAG_ARRAY <<< "$DOCKER_TAGS"
           TAG_FLAGS=()
           for tag in "${TAG_ARRAY[@]}"; do
             TAG_FLAGS+=("-t" "$tag")
           done
+          # fl-apps/ lives at the repo root, outside this build context (./flip-api); pass it as a
+          # named build context so the Dockerfile can COPY --from=fl_apps the base FL templates
+          # into the image (FLIP#724). The working directory is ./flip-api, so ../fl-apps resolves
+          # to the repo-root fl-apps/.
           # shellcheck disable=SC2086
-          docker build $BUILD_ARGS "${TAG_FLAGS[@]}" .
+          docker build --build-context fl_apps=../fl-apps $BUILD_ARGS "${TAG_FLAGS[@]}" .
 
       - name: Push Docker image
         env:

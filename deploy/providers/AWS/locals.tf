@@ -57,20 +57,19 @@ locals {
 
   # Sub-paths under the new three-bucket layout. The legacy single-bucket
   # prefixes (`model_files/uploaded`, `uploaded_federated_data`,
-  # `base-application`, `app_destination_bucket`) are re-pointed
-  # at the new purpose-built buckets per the migration mapping in
-  # `make migrate-flip-bucket` (see deploy/providers/AWS/Makefile). Keeping
-  # the same local names (`uploaded_federated_data_uri`, …) means the
-  # ecs_task_env map below can stay byte-identical with the prior single-bucket
-  # layout — only the value behind each local changes.
-  # fl_app_base_uri is the backend-agnostic root: flip-api appends the per-backend
-  # segment (.../base-application/{nvflare,flower}/...) in code from each net's seeded
-  # (canonical) backend. A framework switch is applied via `make restart-fl`, which
-  # recreates flip-api so seeding re-applies the backend onto every net.
+  # `app_destination_bucket`) are re-pointed at the new purpose-built buckets
+  # per the migration mapping in `make migrate-flip-bucket` (see
+  # deploy/providers/AWS/Makefile). Keeping the same local names
+  # (`uploaded_federated_data_uri`, …) means the ecs_task_env map below can stay
+  # byte-identical with the prior single-bucket layout — only the value behind
+  # each local changes.
+  # The base FL application templates are no longer published to S3: they are baked
+  # into the flip-api image from the repo's fl-apps/ tree and read locally via
+  # FL_APP_BASE_DIR (FLIP#724). Only the completed bundle still lands in S3
+  # (fl_app_destination_uri).
   uploaded_federated_data_uri = "${local.flip_fl_results_bucket_uri}/results"
   uploaded_model_files_uri    = "${local.flip_model_files_uploads_bucket_uri}/uploaded"
   scanned_model_files_uri     = "${local.flip_model_files_uploads_bucket_uri}/uploaded"
-  fl_app_base_uri             = "${local.flip_app_bundles_bucket_uri}/base-application"
   fl_app_destination_uri      = "${local.flip_app_bundles_bucket_uri}/app_destinations"
 
   # NET_ENDPOINTS tells flip-api how to reach each FL network's fl-api. On
@@ -112,7 +111,6 @@ locals {
       UPLOADED_MODEL_FILES_BUCKET    = local.uploaded_model_files_uri
       SCANNED_MODEL_FILES_BUCKET     = local.scanned_model_files_uri
       UPLOADED_FEDERATED_DATA_BUCKET = local.uploaded_federated_data_uri
-      FL_APP_BASE_BUCKET             = local.fl_app_base_uri
       FL_APP_DESTINATION_BUCKET      = local.fl_app_destination_uri
       NET_ENDPOINTS                  = local.net_endpoints_json
       FL_BACKEND                     = var.fl_backend
