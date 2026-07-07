@@ -436,6 +436,32 @@ class TestConfigureServer:
         assert modified_config["workflows"][0]["args"]["num_rounds"] == "{global_rounds}"
         assert modified_config["global_rounds"] == 20
 
+    def test_configure_server_overrides_literal_min_clients(self, mock_isfile, mock_read_config, mock_write_config):
+        """Recipe-generated templates also carry a LITERAL min_clients (default 1) — with 2 trusts
+        that lets ScatterAndGather close every round on the fastest trust's update alone, silently
+        dropping the slower trust's contributions (observed live: a 2-trust 20-round job aggregated
+        20/20 updates from one trust, 0 from the other). Must be overridden to the trust count;
+        the executor templates' "{min_clients}" string placeholder must survive untouched."""
+        config = self._minimal_server_config()
+        config["workflows"][0]["args"]["min_clients"] = 1  # literal, as FedJob serialises it
+        config["workflows"].append({"args": {"min_clients": "{min_clients}"}})  # executor-style
+        mock_read_config.return_value = config
+
+        configure_server(
+            job_dir=MOCK_JOB_APP_DIR,
+            app_name=MOCK_APP_NAME,
+            global_rounds=20,
+            trusts=MOCK_APP_CLIENTS,
+            ignore_result_error=True,
+            aggregator="agg",
+            aggregation_weights=MOCK_AGGREGATION_WEIGHTS,
+        )
+
+        (modified_config, _), _ = mock_write_config.call_args
+        assert modified_config["workflows"][0]["args"]["min_clients"] == len(MOCK_APP_CLIENTS)
+        assert modified_config["workflows"][1]["args"]["min_clients"] == "{min_clients}"
+        assert modified_config["min_clients"] == len(MOCK_APP_CLIENTS)
+
     def test_configure_server_injects_trim_broadcast_filter(self, mock_isfile, mock_read_config, mock_write_config):
         """With aggregate_only_regex set, a TrimBroadcastVars filter is appended to the train
         task_data_filters — the server half of the head-only broadcast (after round 0 it broadcasts
