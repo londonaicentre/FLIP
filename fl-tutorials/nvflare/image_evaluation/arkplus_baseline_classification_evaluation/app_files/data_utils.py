@@ -294,7 +294,10 @@ def _dicoms_for_accession(
     # Real FLIP client path (LOCAL_DEV=false): fetch DICOMs from the trust imaging-api.
     if project_id:
         flip = FLIP()
-        folder = flip.get_by_accession_number(project_id, accession_id, resource_type=[ResourceType.DICOM])
+        # ResourceType.ALL: XNAT labels Secondary Capture DICOM resources "secondary", not "DICOM" —
+        # the synthetic chest radiographs are SC, so a DICOM-labelled fetch 404s on every study.
+        # ALL downloads every resource on the scan; the rglob("*.dcm") below picks out the DICOMs.
+        folder = flip.get_by_accession_number(project_id, accession_id, resource_type=[ResourceType.ALL])
         return sorted(Path(folder).rglob("*.dcm"))
 
     return []
@@ -328,10 +331,22 @@ def build_eval_datalist(
 
     datalist = []
     seen_paths = set()
+    skipped_accessions = 0
     for _, row in df.iterrows():
         accession_id = str(row[accession_col])
         labels = get_labels_from_radiology_row(row, lesions, value_to_numerical, normal_label=normal_key)
-        for img in _dicoms_for_accession(accession_id, project_id=project_id, images_dir=site_cfg.images_dir):
+        try:
+            dicom_paths = _dicoms_for_accession(accession_id, project_id=project_id, images_dir=site_cfg.images_dir)
+        except Exception as exc:
+            # A single accession failing to fetch (e.g. a study whose DICOM resource never made it
+            # into the trust imaging backend during the image pull) must not abort the whole
+            # cross-site evaluation — mirror the trainer's skip-and-carry-on (FLIP#677). The run
+            # evaluates on the accessions that ARE retrievable.
+            skipped_accessions += 1
+            if logger is not None:
+                logger.warning("Skipping accession %s: failed to fetch DICOMs (%s)", accession_id, exc)
+            continue
+        for img in dicom_paths:
             if img in seen_paths:
                 continue
             try:
@@ -342,6 +357,13 @@ def build_eval_datalist(
             item.update(labels)
             datalist.append(item)
             seen_paths.add(img)
+
+    if skipped_accessions and logger is not None:
+        logger.warning(
+            "Skipped %d accession(s) whose DICOMs could not be fetched; evaluating the remaining %d sample(s).",
+            skipped_accessions,
+            len(datalist),
+        )
 
     if not datalist:
         raise RuntimeError(
