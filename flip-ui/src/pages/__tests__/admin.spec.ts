@@ -76,9 +76,10 @@ describe("admin chip-tab nav", () => {
 
         const nav = wrapper.find("nav[aria-label='Admin sections']");
         expect(nav.exists()).toBe(true);
-        // Horizontal scroll keeps all four chips reachable on phone widths;
-        // standalone chips (no segmented container) squash independently.
-        expect(nav.classes()).toContain("overflow-x-auto");
+        // Chips that don't fit wrap onto the next line (the models filter-tiles
+        // idiom) rather than scrolling horizontally out of view.
+        expect(nav.classes()).toContain("flex-wrap");
+        expect(nav.classes()).not.toContain("overflow-x-auto");
         expect(nav.classes()).toContain("gap-2");
         expect(nav.find("div.rounded-lg").exists()).toBe(false);
         // The chips float on the page background — no divider band under them.

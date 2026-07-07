@@ -20,12 +20,12 @@ redirect: /admin/users # Can be set to any page within the "admin" section
 <template>
     <div class="flex flex-col w-full h-full">
         <!-- Section nav: standalone chips floating on the page background at every
-             breakpoint (replaces the old xl-only sidebar + mobile <select>). Each chip
-             squashes independently and the row scrolls horizontally on phone widths. -->
+             breakpoint (replaces the old xl-only sidebar + mobile <select>). Chips
+             that don't fit wrap onto the next line on phone widths. -->
         <nav
             aria-label="Admin sections"
             data-test="admin-tabs"
-            class="flex items-center gap-2 shrink-0 px-4 md:px-8 pt-4 md:pt-8 overflow-x-auto"
+            class="flex flex-wrap items-center gap-2 shrink-0 px-4 md:px-8 pt-4 md:pt-8"
         >
             <router-link
                 v-for="item in subNavigation"
