@@ -391,6 +391,51 @@ class TestConfigureServer:
             "components": [{"id": "aggregator", "name": "agg", "args": {"aggregation_weights": {}}}],
         }
 
+    def test_configure_server_overrides_literal_num_rounds(self, mock_isfile, mock_read_config, mock_write_config):
+        """Recipe-generated templates carry a LITERAL num_rounds (FedJob serialisation), not the
+        executor templates' "{global_rounds}" placeholder — configure_server must override it or
+        every deployed client_api job runs the template default (3 rounds) regardless of the user's
+        GLOBAL_ROUNDS (observed live: a GLOBAL_ROUNDS=20 job ran 3 rounds)."""
+        config = self._minimal_server_config()
+        config["workflows"][0]["args"]["num_rounds"] = 3  # literal, as FedJob serialises it
+        mock_read_config.return_value = config
+
+        configure_server(
+            job_dir=MOCK_JOB_APP_DIR,
+            app_name=MOCK_APP_NAME,
+            global_rounds=20,
+            trusts=MOCK_APP_CLIENTS,
+            ignore_result_error=True,
+            aggregator="agg",
+            aggregation_weights=MOCK_AGGREGATION_WEIGHTS,
+        )
+
+        (modified_config, _), _ = mock_write_config.call_args
+        assert modified_config["workflows"][0]["args"]["num_rounds"] == 20
+
+    def test_configure_server_leaves_placeholder_num_rounds_untouched(
+        self, mock_isfile, mock_read_config, mock_write_config
+    ):
+        """Executor templates use "num_rounds": "{global_rounds}" resolved by NVFLARE from the
+        top-level global_rounds key — the string placeholder must NOT be clobbered."""
+        config = self._minimal_server_config()
+        config["workflows"][0]["args"]["num_rounds"] = "{global_rounds}"
+        mock_read_config.return_value = config
+
+        configure_server(
+            job_dir=MOCK_JOB_APP_DIR,
+            app_name=MOCK_APP_NAME,
+            global_rounds=20,
+            trusts=MOCK_APP_CLIENTS,
+            ignore_result_error=True,
+            aggregator="agg",
+            aggregation_weights=MOCK_AGGREGATION_WEIGHTS,
+        )
+
+        (modified_config, _), _ = mock_write_config.call_args
+        assert modified_config["workflows"][0]["args"]["num_rounds"] == "{global_rounds}"
+        assert modified_config["global_rounds"] == 20
+
     def test_configure_server_injects_trim_broadcast_filter(self, mock_isfile, mock_read_config, mock_write_config):
         """With aggregate_only_regex set, a TrimBroadcastVars filter is appended to the train
         task_data_filters — the server half of the head-only broadcast (after round 0 it broadcasts

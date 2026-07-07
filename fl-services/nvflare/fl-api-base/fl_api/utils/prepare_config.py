@@ -337,6 +337,15 @@ def configure_server(
             workflow["args"]["participating_clients"] = trusts
         if "args" in workflow and "ignore_result_error" in workflow["args"]:
             workflow["args"]["ignore_result_error"] = ignore_result_error
+        # Recipe-generated templates (standard_client_api) carry a LITERAL num_rounds baked in by
+        # FedJob serialisation instead of the executor templates' "{global_rounds}" placeholder, so
+        # the top-level global_rounds key set above never reaches the workflow. Override it directly
+        # or every deployed client_api job silently runs the template default (3 rounds) no matter
+        # what GLOBAL_ROUNDS the user's config.json asks for.
+        if "args" in workflow and "num_rounds" in workflow["args"] and not isinstance(
+            workflow["args"]["num_rounds"], str
+        ):
+            workflow["args"]["num_rounds"] = global_rounds
 
     for component in config["components"]:
         if ("name" in component and "aggregator" in component["name"]) or (
