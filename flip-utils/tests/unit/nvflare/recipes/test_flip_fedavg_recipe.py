@@ -219,3 +219,17 @@ class TestFlipFedAvgRecipeAggregateOnly:
         keep_i = next(i for i, p in enumerate(result_paths) if "KeepOnlyVars" in p)
         perc_i = next(i for i, p in enumerate(result_paths) if "PercentilePrivacy" in p)
         assert keep_i < perc_i, "KeepOnlyVars must run before PercentilePrivacy"
+
+        # include_vars must round-trip through FedJob export. Regression guard: KeepOnlyVars/TrimBroadcastVars
+        # store the regex only as self.pattern/self.skip, so FedJob's attribute-introspection export dropped
+        # include_vars and the filters silently became no-ops (they now also store self.include_vars).
+        def _filter_args(cfg, block_key, name):
+            for block in cfg.get(block_key, []):
+                if "train" in block.get("tasks", []):
+                    for f in block.get("filters", []):
+                        if name in f["path"]:
+                            return f.get("args", {})
+            return {}
+
+        assert _filter_args(client_cfg, "task_result_filters", "KeepOnlyVars").get("include_vars") == "omni_heads"
+        assert _filter_args(server_cfg, "task_data_filters", "TrimBroadcastVars").get("include_vars") == "omni_heads"

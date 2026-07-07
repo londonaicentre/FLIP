@@ -50,6 +50,12 @@ class TrimBroadcastVars(DXOFilter):
             supported_data_kinds=[DataKind.WEIGHTS, DataKind.WEIGHT_DIFF],
             data_kinds_to_filter=data_kinds,
         )
+        # Stored under the exact constructor-param name so NVFLARE's FedJob/Recipe export round-trips it:
+        # FedJob serialises a component's args by matching instance attributes to __init__ param names, so
+        # without this the recipe-exported config would drop include_vars and the filter would silently
+        # become a no-op. (The deploy-time fl-server injection writes args.include_vars explicitly, so only
+        # the recipe/export path depended on this.)
+        self.include_vars = include_vars
         # None when no (or empty) regex is given — the filter is then a no-op (full model every round).
         self.pattern = re.compile(include_vars) if isinstance(include_vars, str) and include_vars else None
 
