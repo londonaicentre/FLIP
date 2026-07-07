@@ -28,6 +28,10 @@ against the synthetic DeCaf MICCAI-2026 dataset).
 **Dependency:** the multimodel evaluation (3) evaluates the pretrained **and** the finetuned
 checkpoint, so run finetuning (2) first and feed its output checkpoint into (3).
 
+**Client API variant:** experiment 2 also has an NVFLARE Client-API sibling,
+`image_classification/arkplus_fine_tuning_client_api` (`job_type: standard_client_api`), with identical
+finetuning semantics — swap it in wherever `arkplus_fine_tuning` appears below.
+
 Each tutorial's `app_files/` carries the model code + `config.json`; the pretrained Ark+ weights
 (`arkplus_pretrained_weights.pt`, ~759 MiB) ship in the baseline/multimodel `app_files/`. The
 hub **de-bundles** these large checkpoints server-side (they are staged on the fl-server, never
