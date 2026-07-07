@@ -69,9 +69,12 @@ from flip.nvflare.components import (
     ClientExceptionReporter,
     FlipAnalyticsBridge,
     InitialCheckpointPTModelPersistor,
+    KeepOnlyVars,
     PersistToS3AndCleanup,
     PTModelLocator,
+    ReconstructFullModel,
     ServerEventHandler,
+    TrimBroadcastVars,
     ValidationJsonGenerator,
 )
 from flip.nvflare.components import (
@@ -118,6 +121,11 @@ class FlipFedAvgRecipe(Recipe):
             submission is disabled by default so post-training evaluation covers only the aggregated
             global model. Pass ``"submit_model"`` to opt into the full all-to-all matrix.
         params_exchange_format, params_transfer_type: NVFlare param-exchange knobs.
+        aggregate_only_regex: when set, wire the frozen-backbone head-only filters — KeepOnlyVars
+            (client result filter, ordered BEFORE PercentilePrivacy), ReconstructFullModel (client data
+            filter) and TrimBroadcastVars (server data filter) — so only params matching the regex are
+            aggregated per round and, after round 0, broadcast. Empty (default) wires none. Mirrors the
+            fl-server's deploy-time injection from config.json's ``AGGREGATE_ONLY_REGEX``.
     """
 
     def __init__(
@@ -140,6 +148,7 @@ class FlipFedAvgRecipe(Recipe):
         evaluate_task_name: str = "validate",
         params_exchange_format: str = "numpy",
         params_transfer_type: str = "FULL",
+        aggregate_only_regex: str = "",
     ):
         self.num_rounds = num_rounds
         self.min_clients = min_clients
@@ -158,6 +167,7 @@ class FlipFedAvgRecipe(Recipe):
         self.evaluate_task_name = evaluate_task_name
         self.params_exchange_format = params_exchange_format
         self.params_transfer_type = params_transfer_type
+        self.aggregate_only_regex = aggregate_only_regex
 
         super().__init__(self._build_fed_job())
 
@@ -231,6 +241,17 @@ class FlipFedAvgRecipe(Recipe):
         )
         job.to_server(BroadcastTask(task_name=FlipTasks.POST_VALIDATION.value))
 
+        # Server: head-only broadcast trim (frozen-backbone finetuning). After round 0 the server
+        # broadcasts only the vars matching the regex; clients rebuild the full model via
+        # ReconstructFullModel. No-op unless aggregate_only_regex is set.
+        if self.aggregate_only_regex:
+            job.to_server(
+                TrimBroadcastVars(include_vars=self.aggregate_only_regex),
+                tasks=[self.train_task_name],
+                filter_type=FilterType.TASK_DATA,
+                id="trim_broadcast_to_trainable",
+            )
+
         # Clients: cleanup executor for init/post tasks.
         job.to_clients(CleanupImages(), tasks=["init_training", "post_validation"])
 
@@ -250,6 +271,24 @@ class FlipFedAvgRecipe(Recipe):
             ),
             tasks=executor_tasks,
         )
+
+        # Clients: head-only round-trip (frozen-backbone finetuning). KeepOnlyVars MUST be wired before
+        # PercentilePrivacy so the percentile cutoff sees only the trainable head, not the frozen
+        # backbone's ~0 diffs; ReconstructFullModel rebuilds the full model from the trimmed broadcast.
+        # No-op unless aggregate_only_regex is set.
+        if self.aggregate_only_regex:
+            job.to_clients(
+                KeepOnlyVars(include_vars=self.aggregate_only_regex),
+                filter_type=FilterType.TASK_RESULT,
+                tasks=[self.train_task_name],
+                id="keep_only_trainable_vars",
+            )
+            job.to_clients(
+                ReconstructFullModel(),
+                filter_type=FilterType.TASK_DATA,
+                tasks=[self.train_task_name],
+                id="reconstruct_full_model",
+            )
 
         # Clients: percentile-privacy DP noise on training results.
         job.to_clients(
