@@ -310,6 +310,36 @@ export async function getModels(url: string): Promise<IPaginatedResponse<IModel>
     return response.data;
 }
 
+/** A trust participating in a model's federated run, for the Models-list chips. */
+export interface IModelSummaryTrust {
+    id: string;
+    name: string;
+    code?: string | null;
+}
+
+/**
+ * One row of the estate-wide Models list (issue #726): a model joined with its
+ * owning project, the owner's display name and the model's run trusts. `trusts`
+ * is empty until training is initiated (no trusts are assigned before dispatch).
+ */
+export interface IModelSummary {
+    id: string;
+    name: string;
+    status?: ModelStatus;
+    projectId: string;
+    projectName: string;
+    ownerId: string;
+    ownerName?: string | null;
+    trusts: IModelSummaryTrust[];
+}
+
+/** Fetch the paginated, access-scoped list of models across every project the user can see. */
+export async function getAllModels(url: string): Promise<IPaginatedResponse<IModelSummary>> {
+    const response = await _http.get<IPaginatedResponse<IModelSummary>>(url);
+
+    return response.data;
+}
+
 export async function getModel(url: string): Promise<IModelDashboard> {
     const response = await _http.post<IModelDashboard>(url);
 
