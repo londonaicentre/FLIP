@@ -125,6 +125,7 @@ describe("AiHeader", () => {
 
         expect(navLinks.map(l => l.text())).toEqual([
             "Projects",
+            "Models",
             "Connection Status",
             "Admin"
         ]);

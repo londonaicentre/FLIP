@@ -19,6 +19,7 @@ import { computed, ComputedRef } from "vue";
 import { IAIHeaderProps } from "@/components/AiHeader/AiHeader.vue";
 import { IMainNavigationProps } from "@/components/AiMainNavigation/AiMainNavigation.vue";
 import { useAuthStore } from "@/store/auth";
+import ModelsIcon from "~icons/carbon/machine-learning-model";
 import AdminIcon from "~icons/heroicons-outline/finger-print";
 import projectsIcon from "~icons/ic/twotone-library-books";
 import ConnectionIcon from "~icons/ph/plug-duotone";
@@ -33,6 +34,13 @@ export default function useNavigation(props: IMainNavigationProps | IAIHeaderPro
             href: "/projects",
             current: props.currentPage.startsWith("/project"),
             icon: projectsIcon,
+            canAccess: true
+        },
+        {
+            name: "Models",
+            href: "/models",
+            current: props.currentPage === "/models",
+            icon: ModelsIcon,
             canAccess: true
         },
         {

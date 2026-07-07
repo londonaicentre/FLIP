@@ -10,25 +10,39 @@
 # limitations under the License.
 #
 
+from collections import defaultdict
 from typing import Any
 from uuid import UUID
 
-from sqlmodel import Session, select
+from sqlmodel import Session, and_, col, desc, func, or_, select
 
-from flip_api.db.models.main_models import FLKitSlot, FLLogs, FLMetrics, Model, ModelTrustIntersect, Trust
+from flip_api.db.models.main_models import (
+    FLKitSlot,
+    FLLogs,
+    FLMetrics,
+    Model,
+    ModelTrustIntersect,
+    Projects,
+    ProjectUserAccess,
+    Trust,
+)
+from flip_api.db.models.user_models import UserProfile
 from flip_api.domain.interfaces.model import (
+    IAllModelsResponse,
     IDetailedModelStatus,
     IModelAuditAction,
     IModelDetails,
     IModelMetrics,
     IModelMetricsData,
     IModelMetricsValue,
+    ITrustSummary,
 )
 from flip_api.domain.schemas.actions import ModelAuditAction
 from flip_api.domain.schemas.status import ModelStatus
 from flip_api.fl_services.services import fl_scheduler_service
 from flip_api.model_services.utils.audit_helper import audit_model_action, audit_model_actions
 from flip_api.utils.logger import logger
+from flip_api.utils.paging_utils import IPagedResponse, PagingInfo, get_paging_details
 
 
 def edit_model(model_id: UUID, model_details: IModelDetails, user_id: UUID, session: Session) -> None:
@@ -378,3 +392,133 @@ def get_metrics(model_id: UUID, session: Session) -> list[IModelMetrics]:
         series.data.append(IModelMetricsValue(xValue=row.global_round, yValue=row.result))
 
     return list(metrics_map.values())
+
+
+def _run_trusts_by_model(model_ids: list[UUID], session: Session) -> dict[UUID, list[ITrustSummary]]:
+    """Group each model's participating (run) trusts, keyed by model id.
+
+    Reads ``ModelTrustIntersect`` -> ``Trust`` (the same source as
+    ``retrieve_trusts_in_model``). Only populated once training is initiated, so
+    models awaiting dispatch simply map to an empty list.
+
+    Args:
+        model_ids (list[UUID]): Model ids to fetch trusts for. Empty input short-circuits.
+        session (Session): The database session.
+
+    Returns:
+        dict[UUID, list[ITrustSummary]]: ``model_id -> [trust, ...]``. Missing keys mean no trusts.
+    """
+    trusts_by_model: dict[UUID, list[ITrustSummary]] = defaultdict(list)
+    if not model_ids:
+        return trusts_by_model
+
+    rows = session.exec(
+        select(ModelTrustIntersect.model_id, Trust.id, Trust.name, Trust.code)
+        .join(Trust, col(Trust.id) == ModelTrustIntersect.trust_id)
+        .where(col(ModelTrustIntersect.model_id).in_(model_ids))
+    ).all()
+    for model_id, trust_id, trust_name, trust_code in rows:
+        if model_id is None:
+            continue
+        trusts_by_model[model_id].append(ITrustSummary(id=trust_id, name=trust_name, code=trust_code))
+
+    return trusts_by_model
+
+
+def get_all_models_service(
+    session: Session,
+    user_id: UUID | None,
+    query_params: dict,
+    status_filter: list[ModelStatus] | None = None,
+) -> tuple[IPagedResponse[IAllModelsResponse], dict[str, int], PagingInfo]:
+    """Estate-wide, access-scoped model list joined with project name, owner and run trusts (#726).
+
+    Mirrors the projects-list access rule: when ``user_id`` is provided the query is restricted to
+    models whose project the user owns or has a ``ProjectUserAccess`` row for; when ``user_id`` is
+    ``None`` (a manager with ``CAN_MANAGE_PROJECTS``) no access filter is applied. Soft-deleted
+    models and projects are always excluded. Search matches the model name or the owning project
+    name; results are newest-first and paginated.
+
+    Alongside the page it returns per-status counts over the same access-scoped, search-filtered set
+    but **without** the status filter — so the filter tiles keep their numbers while one is selected.
+
+    Args:
+        session (Session): The database session.
+        user_id (UUID | None): The requesting user, or ``None`` to see every model (manager bypass).
+        query_params (dict): Raw query params (``pageNumber`` / ``pageSize`` / ``search``).
+        status_filter (list[ModelStatus] | None): Optional set of statuses to filter the list to.
+
+    Returns:
+        tuple[IPagedResponse[IAllModelsResponse], dict[str, int], PagingInfo]: the page of rows, the
+        ``status value -> count`` map for the tiles, and the paging details.
+    """
+    paging = get_paging_details(query_string_parameters=query_params)
+
+    # Base conditions exclude the status filter so the tile counts see every status.
+    base_conditions: list[Any] = [col(Model.deleted).is_(False), col(Projects.deleted).is_(False)]
+    if user_id is not None:
+        base_conditions.append(or_(Projects.owner_id == user_id, ProjectUserAccess.user_id == user_id))
+    if paging.search_str:
+        pattern = f"%{paging.search_str.lower()}%"
+        base_conditions.append(
+            or_(func.lower(Model.name).like(pattern), func.lower(Projects.name).like(pattern))
+        )
+
+    list_conditions = list(base_conditions)
+    if status_filter:
+        list_conditions.append(col(Model.status).in_(status_filter))
+
+    # LEFT JOIN ProjectUserAccess pinned to this user (mirrors get_projects_paginated_orm) so the
+    # access OR-clause can match a granted project without fanning the row out per access record.
+    access_join = and_(
+        col(ProjectUserAccess.project_id) == Projects.id, ProjectUserAccess.user_id == user_id
+    )
+
+    rows_query = (
+        select(Model, Projects.name, UserProfile.name)  # type: ignore[call-overload]
+        .join(Projects, col(Model.project_id) == Projects.id)
+        .outerjoin(ProjectUserAccess, access_join)
+        .outerjoin(UserProfile, col(UserProfile.user_id) == Model.owner_id)
+        .where(and_(*list_conditions))
+        .order_by(desc(col(Model.creation_timestamp)))
+        .limit(paging.page_size)
+        .offset(paging.offset)
+    )
+    count_query = (
+        select(func.count(func.distinct(col(Model.id))))
+        .join(Projects, col(Model.project_id) == Projects.id)
+        .outerjoin(ProjectUserAccess, access_join)
+        .where(and_(*list_conditions))
+    )
+    status_counts_query = (
+        select(Model.status, func.count(func.distinct(col(Model.id))))  # type: ignore[call-overload]
+        .join(Projects, col(Model.project_id) == Projects.id)
+        .outerjoin(ProjectUserAccess, access_join)
+        .where(and_(*base_conditions))
+        .group_by(Model.status)
+    )
+
+    total_rows = session.exec(count_query).one_or_none() or 0
+    rows = session.exec(rows_query).all()
+    status_counts = {
+        (status.value if isinstance(status, ModelStatus) else str(status)): count
+        for status, count in session.exec(status_counts_query).all()
+    }
+
+    trusts_by_model = _run_trusts_by_model([model.id for model, _, _ in rows], session)
+
+    data = [
+        IAllModelsResponse(
+            id=model.id,
+            name=model.name,
+            status=model.status,
+            project_id=model.project_id,
+            project_name=project_name,
+            owner_id=model.owner_id,
+            owner_name=owner_name,
+            trusts=trusts_by_model.get(model.id, []),
+        )  # type: ignore[call-arg]
+        for model, project_name, owner_name in rows
+    ]
+
+    return IPagedResponse[IAllModelsResponse](data=data, total_rows=total_rows), status_counts, paging

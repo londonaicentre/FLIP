@@ -14,7 +14,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { _http } from "@/services/api";
-import { buildModelSteps, clearJobTypesCache, createModel, DEFAULT_JOB_TYPE, deleteModel, editModel, fetchJobTypes, getDownloadUrlForResults, getLogsForModel, getModel, getModelFileStatus, getModelMetrics, getModels, getPreSignedUrl, getRequiredFilesForJobType, getStatusEnumValue, initialiseTraining, isValidJobType, type ModelStatus, ModelStatusEnum, stopTraining, uploadModelFile } from "@/services/model-service";
+import { buildModelSteps, clearJobTypesCache, createModel, DEFAULT_JOB_TYPE, deleteModel, editModel, fetchJobTypes, getAllModels, getDownloadUrlForResults, getLogsForModel, getModel, getModelFileStatus, getModelMetrics, getModels, getPreSignedUrl, getRequiredFilesForJobType, getStatusEnumValue, initialiseTraining, isValidJobType, type ModelStatus, ModelStatusEnum, stopTraining, uploadModelFile } from "@/services/model-service";
 
 vi.mock("@/services/api", () => ({
     _http: {
@@ -35,6 +35,32 @@ describe("model-service", () => {
         // a single failing test would poison every subsequent test in the
         // suite via the module-level `_jobTypesCache`.
         clearJobTypesCache();
+    });
+
+    describe("getAllModels", () => {
+        it("GETs the given URL and returns the paged models response with statusCounts", async () => {
+            const page = {
+                data: [{
+                    id: "m1",
+                    name: "stroke-v1",
+                    projectId: "p1",
+                    projectName: "Stroke triage",
+                    ownerId: "u1",
+                    trusts: []
+                }],
+                page: 1,
+                pageSize: 20,
+                totalPages: 1,
+                totalRecords: 1,
+                statusCounts: { PENDING: 1 }
+            };
+            vi.mocked(_http.get).mockResolvedValue({ data: page } as never);
+
+            const result = await getAllModels("/models?pageNumber=1&pageSize=20&status=INITIATED,PENDING");
+
+            expect(_http.get).toHaveBeenCalledWith("/models?pageNumber=1&pageSize=20&status=INITIATED,PENDING");
+            expect(result).toEqual(page);
+        });
     });
 
     describe("fetchJobTypes", () => {
