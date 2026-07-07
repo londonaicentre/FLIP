@@ -12,11 +12,11 @@
 
 """Job type definitions for FLIP."""
 
-from enum import Enum
+from enum import StrEnum
 from typing import Literal
 
 
-class JobType(str, Enum):
+class JobType(StrEnum):
     """Enumeration of supported FLIP job types."""
 
     STANDARD = "standard"

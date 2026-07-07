@@ -10,7 +10,7 @@
 # limitations under the License.
 #
 
-from unittest.mock import MagicMock, Mock
+from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 from nvflare.apis.event_type import EventType
@@ -32,18 +32,37 @@ class TestServerEventHandler:
         flip = MagicMock()
         handler = ServerEventHandler(model_id=model_id, flip=flip)
 
-        assert handler.model_id == model_id
+        assert handler._model_id_fallback == model_id
+        assert handler._model_id is None
         assert handler.validation_json_generator_id == "json_generator"
         assert handler.persist_and_cleanup_id == "persist_and_cleanup"
         assert handler.flip == flip
         assert handler.fatal_error is False
         assert handler.final_status is None
 
-    def test_init_with_invalid_model_id_raises_error(self):
-        """Test initialization with invalid model UUID raises ValueError"""
+    def test_resolves_model_id_from_fallback_arg(self):
+        """_update_status resolves the model ID from the constructor fallback when no job-metadata prop is set."""
+        model_id = "abcdef01-2345-6789-abcd-ef0123456789"
         flip = MagicMock()
-        with pytest.raises(ValueError, match="is not a valid UUID"):
-            ServerEventHandler(model_id="invalid-uuid", flip=flip)
+        handler = ServerEventHandler(model_id=model_id, flip=flip)
+        fl_ctx = MagicMock()
+        fl_ctx.get_prop.return_value = None
+        handler._update_status(fl_ctx, ModelStatus.INITIATED)
+        flip.update_status.assert_called_once_with(model_id, ModelStatus.INITIATED)
+
+    def test_resolve_model_id_caches_after_first_call(self):
+        """_resolve_model_id resolves once and caches: a second call does not re-invoke get_flip_model_id."""
+        model_id = "abcdef01-2345-6789-abcd-ef0123456789"
+        handler = ServerEventHandler(model_id=model_id)
+        fl_ctx = MagicMock()
+
+        with patch(
+            "flip.nvflare.components.flip_server_event_handler.get_flip_model_id", return_value=model_id
+        ) as mock_resolve:
+            assert handler._resolve_model_id(fl_ctx) == model_id
+            assert handler._resolve_model_id(fl_ctx) == model_id
+
+        assert mock_resolve.call_count == 1
 
     def test_init_with_custom_component_ids(self):
         """Test initialization with custom component IDs"""

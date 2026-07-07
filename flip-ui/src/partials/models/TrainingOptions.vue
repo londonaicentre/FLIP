@@ -12,17 +12,17 @@
 -->
 
 <template>
-    <div class="px-4 pb-4 space-y-8 divide-y divide-gray-200 dark:divide-gray-700 sm:space-y-5">
+    <div class="px-4 pb-4 space-y-8 divide-y divide-gray-200 dark:divide-dark-border sm:space-y-5">
         <div>
             <p class="max-w-2xl mt-1 text-sm text-gray-500 dark:text-gray-300">
                 Complete the following fields to initiate training.
             </p>
         </div>
-        <div class="mt-6 space-y-6 divide-y sm:mt-5 sm:space-y-5 divide dark:divide-gray-700">
+        <div class="mt-6 space-y-6 divide-y sm:mt-5 sm:space-y-5 divide dark:divide-dark-border">
             <div class="sm:grid sm:grid-cols-3 sm:gap-4 sm:items-center sm:pt-5">
                 <label for="enriched" class="block text-sm font-medium text-gray-700 dark:text-gray-300 sm:mt-px sm:pt-2">
                     Dataset enriched
-                    <div class="mr-2 text-sm text-gray-400">
+                    <div class="mr-2 text-sm text-gray-400 dark:text-gray-300">
                         Confirm your dataset has been enriched as required before training
                     </div>
                 </label>
@@ -38,14 +38,14 @@
             <div class="sm:grid sm:grid-cols-3 sm:gap-4 sm:items-start sm:pt-5">
                 <label class="block space-y-2 text-sm font-medium text-gray-700 dark:text-gray-300 sm:mt-px sm:pt-2">
                     Participating trusts
-                    <div class="mr-2 text-sm text-gray-400">
+                    <div class="mr-2 text-sm text-gray-400 dark:text-gray-300">
                         A minimum of 1 trust must be selected for training
                     </div>
                 </label>
                 <div class="sm:col-span-2">
                     <div class="flow-root">
                         <div>
-                            <dl class="divide-y divide-gray-200 dark:divide-gray-700">
+                            <dl class="divide-y divide-gray-200 dark:divide-dark-border">
                                 <div
                                     v-for="(trust, i) in trustsToSelect"
                                     :key="trust.trustId"

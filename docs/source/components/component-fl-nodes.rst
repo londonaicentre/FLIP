@@ -32,6 +32,9 @@ that the user can choose based on their needs.
 Currently, these job types include federated averaging (job type `standard`),
 evaluation task (job type `evaluation`), federated optimisation (job type `fed_opt`)
 and diffusion model training (job type `diffusion_model`), which covers multi-stage federated training.
+For NVFLARE, two further job types drive the client code through the modern **NVFLARE Client API**
+(a plain training/evaluation script using ``nvflare.client`` instead of a class-based ``Executor``):
+federated averaging (job type `standard_client_api`) and model evaluation (job type `evaluation_client_api`).
 More job types will be added in the future, adjusting to the community's needs.
 
 **How to choose a job type?**
@@ -40,7 +43,7 @@ A federated learning job is an ensemble of files (among which we can find `pytho
 we call an app. Some of these files are required to run the app (for instance, the `pyproject.toml` file in a Flower app),
 and some are optional. 
 
-The job type is passed as key `job_type` in the `config.json` (for NVFLARE) or `pyproject.toml` (for Flower).
+The job type is passed as key `job_type` in the `config.json` file (for both NVFLARE and Flower apps).
 
 Once uploaded, the UI will indicate which files are required for the specific job. 
 
@@ -49,15 +52,25 @@ Then, the Central Hub API will take care of bundling together:
 - The static (non-modifiable) files that are required for the specific job type.
 
 For more information about currently supported apps, see the per-job-type implementations under
-`fl-apps/ <https://github.com/londonaicentre/FLIP/tree/develop/fl-apps>`_ (``standard``, ``evaluation``,
-``diffusion_model``, ``fed_opt``).
+`fl-apps/ <https://github.com/londonaicentre/FLIP/tree/develop/fl-apps/nvflare>`_ (``standard``, ``evaluation``,
+``diffusion_model``, ``fed_opt``, ``standard_client_api``, ``evaluation_client_api``).
 
 Examples of how the same job type (standard -> federated averaging) can run different user-uploaded applications are:
 
-- `xray_classification <https://github.com/londonaicentre/FLIP/tree/develop/fl-apps/tutorials/image_classification/xray_classification>`_
-- `3d_spleen_segmentation <https://github.com/londonaicentre/FLIP/tree/develop/fl-apps/tutorials/image_segmentation/3d_spleen_segmentation>`_
+- `xray_classification <https://github.com/londonaicentre/FLIP/tree/develop/fl-tutorials/nvflare/image_classification/xray_classification>`_
+- `3d_spleen_segmentation <https://github.com/londonaicentre/FLIP/tree/develop/fl-tutorials/nvflare/image_segmentation/3d_spleen_segmentation>`_
 
 Both cases perform a supervised federated averaging training, but the data, architecture and training configuration are different.
+
+The NVFLARE Client API job types have their own tutorials:
+
+- `xray_classification_client_api <https://github.com/londonaicentre/FLIP/tree/develop/fl-tutorials/nvflare/image_classification/xray_classification_client_api>`_ (job type `standard_client_api`)
+- `3d_spleen_segmentation_evaluation_client_api <https://github.com/londonaicentre/FLIP/tree/develop/fl-tutorials/nvflare/image_evaluation/3d_spleen_segmentation_evaluation_client_api>`_ (job type `evaluation_client_api`)
+
+These tutorials run on the local NVFLARE simulator from the repo root — e.g.
+``make -C fl-tutorials run-tutorial TUTORIAL=xray_classification`` (requires a GPU and the
+``flare-fl-base`` image; see the
+`fl-tutorials/ <https://github.com/londonaicentre/FLIP/tree/develop/fl-tutorials/nvflare>`_ README).
 
 
 .. figure:: ../../images/job_types.jpg
@@ -96,6 +109,6 @@ the description above:
 - for the Flower framework, users have to upload the `server_app.py` in addition to the `client_app.py` and additional auxiliary code, but in the future, this will not be the case. 
 - the static files (non-modifiable files) from NVFLARE are being moved from S3 buckets to the flip package. Currently, anything that isn't the `config_fed_server.json` and `config_fed_client.json` files is hosted in S3 buckets,
   whereas the rest of the files are in the flip package. You can check what a fully bundled app looks like by consulting
-  the per-job-type implementations under `fl-apps/ <https://github.com/londonaicentre/FLIP/tree/develop/fl-apps>`_.
+  the per-job-type implementations under `fl-apps/ <https://github.com/londonaicentre/FLIP/tree/develop/fl-apps/nvflare>`_.
 - we will be soon moving to a fully Pythonic version of NVFLARE apps, more up-to-date and easy to use.
 

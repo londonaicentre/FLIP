@@ -9,8 +9,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Re-record the documentation GIFs whenever the UI changes on main, then open a
-# PR against develop with the regenerated assets. Functional CI
+# Re-record the documentation GIFs whenever the UI changes on develop, then open
+# a PR back to develop with the regenerated assets. Functional CI
 # (test_flip_ui.yml) is untouched — video stays off there so the 6-shard PR
 # pipeline isn't slowed down.
 #
@@ -21,7 +21,7 @@ name: Regenerate docs GIFs
 
 on:
   push:
-    branches: [main]
+    branches: [develop]
     paths:
       - "flip-ui/src/**"
       - "flip-ui/test/cypress/docs/**"
@@ -36,6 +36,9 @@ permissions:
 
 jobs:
   regenerate:
+    # Skip on forks: their GitHub Actions token cannot create pull requests, so
+    # running this job there would only produce a spurious workflow failure.
+    if: github.repository == 'londonaicentre/FLIP'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
@@ -74,7 +77,7 @@ jobs:
           EOF
 
       - name: Record docs demo specs
-        uses: cypress-io/github-action@v6
+        uses: cypress-io/github-action@v7
         with:
           working-directory: flip-ui
           browser: chrome
@@ -88,7 +91,7 @@ jobs:
         run: bash scripts/videos-to-gifs.sh
 
       - name: Open PR with regenerated GIFs
-        uses: peter-evans/create-pull-request@v6
+        uses: peter-evans/create-pull-request@v8
         with:
           branch: bot/regenerate-docs-gifs
           base: develop
@@ -98,14 +101,18 @@ jobs:
           commit-message: |
             docs: regenerate documentation GIFs
 
-            Auto-regenerated from main by .github/workflows/regenerate_docs_gifs.yml.
+            Auto-regenerated from develop by .github/workflows/regenerate_docs_gifs.yml.
 
             Signed-off-by: github-actions[bot] <github-actions[bot]@users.noreply.github.com>
           title: "docs: regenerate documentation GIFs"
           body: |
-            Auto-regenerated from `main` @ ${{ github.sha }} by `.github/workflows/regenerate_docs_gifs.yml`.
+            Auto-regenerated from `develop` @ ${{ github.sha }} by `.github/workflows/regenerate_docs_gifs.yml`.
 
-            Review the rendered GIFs under `docs/source/assets/admin/` and
-            `docs/source/assets/flip/` before merging.
+            **Heads-up:** re-recording is nondeterministic (Cypress frame timing
+            plus the animated demo cursor), so this PR shows *every* GIF as changed
+            even where the UI didn't. Review the rendered GIFs under
+            `docs/source/assets/admin/` and `docs/source/assets/flip/` and merge
+            only if the genuinely-changed clips look right — otherwise close it.
+            This branch is reused, so later develop merges refresh this same PR.
           signoff: true
           delete-branch: true

@@ -12,7 +12,7 @@
 -->
 
 <template>
-    <div class="overflow-hidden bg-white dark:bg-gray-900 rounded-lg shadow dark:shadow-white/20 dark:ring-white/10 ring-1 ring-black/5">
+    <div class="overflow-hidden bg-white dark:bg-dark-canvas rounded-lg shadow dark:shadow-white/20 dark:ring-white/10 ring-1 ring-black/5">
         <slot />
     </div>
 </template>

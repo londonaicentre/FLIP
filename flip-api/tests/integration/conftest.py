@@ -12,8 +12,9 @@
 
 """Integration-test scaffolding.
 
-Boots a throwaway Postgres via Testcontainers once per session and rewires
-flip-api's module-level engine references at it so:
+Boots a throwaway Postgres via Testcontainers once per session and points
+flip-api's lazy engine cache (``database._engine``, read by ``get_engine()``)
+at it so:
 
 * the existing ``session`` fixture from ``tests.fixtures.main_fixtures`` (and
   every test depending on it) reads/writes the throwaway DB;
@@ -29,13 +30,17 @@ assertions.
 
 import os
 from collections.abc import Generator
+from pathlib import Path
 from unittest.mock import patch
 from uuid import UUID, uuid4
 
 import boto3
 import pytest
+from alembic import command
+from alembic.config import Config
 from moto import mock_aws
 from sqlalchemy import text
+from sqlalchemy.engine import Connection
 from sqlmodel import Session, SQLModel, create_engine
 from sqlmodel.pool import StaticPool
 from testcontainers.postgres import PostgresContainer
@@ -46,7 +51,6 @@ import flip_api.db.database as db_module
 # full schema. The imports look unused but are load-bearing — don't drop them.
 import flip_api.db.models.main_models  # noqa: F401
 import flip_api.db.models.user_models  # noqa: F401
-import tests.fixtures.main_fixtures as main_fixtures
 from flip_api.auth.dependencies import verify_token
 from flip_api.config import get_settings
 from flip_api.db.database import get_session
@@ -55,6 +59,25 @@ from flip_api.db.seed.permissions import seed_permissions
 from flip_api.db.seed.role_permissions import seed_role_permissions
 from flip_api.db.seed.roles import seed_roles
 from flip_api.main import app
+
+# flip-api/alembic.ini, resolved relative to this file (tests/integration/conftest.py).
+_ALEMBIC_INI = Path(__file__).resolve().parents[2] / "alembic.ini"
+
+
+def make_alembic_config(connection: Connection) -> Config:
+    """Build an Alembic ``Config`` bound to an already-open connection.
+
+    Args:
+        connection (Connection): An open connection (the Testcontainers Postgres)
+            that ``env.py`` runs migrations against via ``config.attributes["connection"]``.
+
+    Returns:
+        Config: An Alembic config pointing at flip-api/alembic.ini with the
+            connection injected, ready for ``command.upgrade`` / ``command.downgrade``.
+    """
+    cfg = Config(str(_ALEMBIC_INI))
+    cfg.attributes["connection"] = connection
+    return cfg
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -148,20 +171,33 @@ def integration_engine(pg_container: PostgresContainer):
         echo=False,
         poolclass=StaticPool,
     )
-    SQLModel.metadata.create_all(engine)
+    # Build the schema from the Alembic migrations — the exact DDL dev/prod apply
+    # at boot — instead of SQLModel.metadata.create_all. This makes the integration
+    # suite exercise the migrations and catch any models/migrations drift.
+    #
+    # Use a plain connect() (not begin()) and let Alembic own the transaction, exactly
+    # like env.py's entrypoint/CLI path. A migration that uses
+    # op.get_context().autocommit_block() — the documented `ALTER TYPE ... ADD VALUE`
+    # pattern — must own its transaction; wrapping command.upgrade in engine.begin()
+    # makes that raise AssertionError and aborts schema setup for the whole suite.
+    # Alembic commits the DDL itself, so per-test sessions opened later see the tables.
+    with engine.connect() as connection:
+        command.upgrade(make_alembic_config(connection), "head")
 
     with Session(engine) as s:
         seed_permissions(s)
         seed_roles(s)
         seed_role_permissions(s)
 
-    # Redirect every reference to the prod-bound engine at the throwaway DB.
-    # Both modules captured ``engine`` at import time, so we rebind both names.
-    main_fixtures.engine = engine
-    db_module.engine = engine
+    # Redirect every reference to the prod-bound engine at the throwaway DB by
+    # pre-populating the lazy cache: get_engine() callers (main_fixtures'
+    # ``session`` fixture, get_session, seed helpers) all read this at use time,
+    # so no prod-bound engine is ever built during the suite.
+    db_module._engine = engine
 
     yield engine
 
+    db_module._engine = None
     engine.dispose()
 
 
@@ -243,7 +279,6 @@ _TEST_BUCKET_SETTINGS: dict[str, tuple[str, str]] = {
     "UPLOADED_MODEL_FILES_BUCKET": ("flip-test-assets", "model_files/uploaded"),
     "SCANNED_MODEL_FILES_BUCKET": ("flip-test-assets", "model_files/scanned"),
     "UPLOADED_FEDERATED_DATA_BUCKET": ("flip-test-assets", "uploaded_federated_data"),
-    "FL_APP_BASE_BUCKET": ("flip-test-assets", "base-application"),
     "FL_APP_DESTINATION_BUCKET": ("flip-test-assets", "app_destination_bucket"),
 }
 

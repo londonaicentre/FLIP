@@ -1,4 +1,4 @@
-# flip-fl-base
+# flip-utils
 
 The NVIDIA FLARE federated learning base library for the FLIP ecosystem. This project
 provides pip-installable Python packages (`flip-utils`), reusable NVFLARE components,

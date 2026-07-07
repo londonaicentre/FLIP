@@ -28,7 +28,7 @@ redirect: /admin/users # Can be set to any page within the "admin" section
                                 <label for="nav-tabs" class="sr-only">Select a tab</label>
                                 <select
                                     id="nav-tabs"
-                                    class="block w-full text-base font-medium text-gray-900 border-gray-300 rounded-md shadow-sm focus:border-primary-500 focus:ring-primary-500"
+                                    class="block w-full text-base font-medium text-gray-900 dark:text-gray-100 dark:bg-dark-raised border-gray-300 dark:border-dark-border rounded-md shadow-sm focus:border-primary-500 focus:ring-primary-500"
                                     @change="(event) => updateRoute(event)"
                                 >
                                     <option
@@ -56,14 +56,14 @@ redirect: /admin/users # Can be set to any page within the "admin" section
                                         :key="item.name"
                                         :to="item.href"
                                         :class="[item.current
-                                                     ? 'bg-white dark:bg-gray-900 text-primary-600 dark:text-primary-100 hover:bg-white border-gray-300 dark:hover:bg-gray-900 dark:border-gray-700'
-                                                     : 'border-transparent text-gray-700 hover:text-gray-900 hover:bg-white dark:hover:bg-gray-900 dark:text-gray-400 dark:hover:text-gray-300',
+                                                     ? 'bg-white dark:bg-dark-canvas text-primary-600 dark:text-primary-100 hover:bg-white border-gray-300 dark:hover:bg-dark-canvas dark:border-dark-border'
+                                                     : 'border-transparent text-gray-700 hover:text-gray-900 hover:bg-white dark:hover:bg-dark-canvas dark:text-gray-300 dark:hover:text-gray-200',
                                                  'transition group rounded-md px-3 py-2 flex items-center text-sm font-medium user-select-none border']"
                                         :aria-current="item.current ? 'page' : undefined"
                                     >
                                         <component
                                             :is="item.icon"
-                                            :class="[item.current ? 'text-primary-500 dark:text-primary-100' : 'text-gray-400 group-hover:text-gray-500 dark:group-hover:text-gray-300', 'transition flex-shrink-0 -ml-1 mr-3 h-6 w-6']"
+                                            :class="[item.current ? 'text-primary-500 dark:text-primary-100' : 'text-gray-400 dark:text-gray-300 group-hover:text-gray-500 dark:group-hover:text-gray-200', 'transition flex-shrink-0 -ml-1 mr-3 h-6 w-6']"
                                             aria-hidden="true"
                                         />
                                         <div class="flex flex-row items-center w-full">
@@ -71,7 +71,7 @@ redirect: /admin/users # Can be set to any page within the "admin" section
                                                 {{ item.name }}
                                             </div>
                                             <icon-mdi-chevron-right
-                                                :class="[item.current ? 'text-primary-500 dark:text-primary-100' : 'text-gray-400 group-hover:text-gray-500 dark:group-hover:text-gray-300', 'transition']"
+                                                :class="[item.current ? 'text-primary-500 dark:text-primary-100' : 'text-gray-400 dark:text-gray-300 group-hover:text-gray-500 dark:group-hover:text-gray-200', 'transition']"
                                             />
                                         </div>
                                     </router-link>
@@ -96,6 +96,7 @@ import { routeChange } from "@/router";
 import { useAuthStore } from "@/store/auth";
 import DeploymentIcon from "~icons/ph/download-duotone";
 import BannerIcon from "~icons/ph/flag-banner-duotone";
+import AccessRequestIcon from "~icons/ph/user-plus-duotone";
 import UsersIcon from "~icons/ph/users-three-duotone";
 
 const router = useRouter();
@@ -115,6 +116,12 @@ const subNavigation = computed(() => [
         icon: UsersIcon,
         current: router.currentRoute.value.fullPath === "/admin/users",
         href: "/admin/users"
+    },
+    {
+        name: "Access Requests",
+        icon: AccessRequestIcon,
+        current: router.currentRoute.value.fullPath === "/admin/access-requests",
+        href: "/admin/access-requests"
     },
     {
         name: "Banner",

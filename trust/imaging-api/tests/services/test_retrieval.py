@@ -16,7 +16,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi import HTTPException
 
-from imaging_api.db.models import ExecutedPacsRequest, QueuedPacsRequest
+from imaging_api.db.models import DirectArchiveSession, ExecutedPacsRequest, QueuedPacsRequest
 from imaging_api.routers.schemas import Experiment, ImportStatus, ImportStudyResponse, Patient, Study
 from imaging_api.services.retrieval import (
     get_import_status,
@@ -290,6 +290,187 @@ async def test_get_import_status_no_experiments(
     assert status.queue_failed == ["ACC1"]
 
 
+def _executed(accession_number: str, status: str) -> ExecutedPacsRequest:
+    return ExecutedPacsRequest(
+        id=1, created=datetime(2023, 1, 1), accession_number=accession_number, status=status, xnat_project="proj1",
+    )
+
+
+def _direct_archive(accession_number: str, status: str) -> DirectArchiveSession:
+    return DirectArchiveSession(
+        id=1, created=datetime(2023, 1, 1), folder_name=accession_number, status=status, project="proj1",
+        name=accession_number,
+    )
+
+
+@pytest.mark.asyncio
+@patch("imaging_api.services.retrieval.get_experiments")
+@patch("imaging_api.services.retrieval.get_accession_ids", new_callable=AsyncMock)
+@patch("imaging_api.services.retrieval.encrypt")
+async def test_get_import_status_executed_failed_is_failed(
+    mock_encrypt, mock_get_accession_ids, mock_get_experiments, headers,
+):
+    """A PACS retrieval that errored (executed status FAILED) is `failed`, not `processing`."""
+    mock_encrypt.return_value = "encrypted_id"
+    mock_get_accession_ids.return_value = ["ACC_FAIL"]
+    mock_get_experiments.return_value = []
+
+    p_session, p_direct, p_executed, p_queued = _mock_get_session(executed=[_executed("ACC_FAIL", "FAILED")])
+    with p_session, p_direct, p_executed, p_queued:
+        status = await get_import_status("proj1", "SELECT *", headers)
+
+    assert status.failed == ["ACC_FAIL"]
+    assert status.processing == []
+    assert status.queue_failed == []
+
+
+@pytest.mark.asyncio
+@patch("imaging_api.services.retrieval.get_experiments")
+@patch("imaging_api.services.retrieval.get_accession_ids", new_callable=AsyncMock)
+@patch("imaging_api.services.retrieval.encrypt")
+async def test_get_import_status_direct_archive_error_is_failed(
+    mock_encrypt, mock_get_accession_ids, mock_get_experiments, headers,
+):
+    """A directArchive build that errored (status ERROR) is `failed`, not `queue_failed`/`processing`."""
+    mock_encrypt.return_value = "encrypted_id"
+    mock_get_accession_ids.return_value = ["ACC_ARCH_FAIL"]
+    mock_get_experiments.return_value = []
+
+    p_session, p_direct, p_executed, p_queued = _mock_get_session(
+        direct_archive=[_direct_archive("ACC_ARCH_FAIL", "ERROR")],
+    )
+    with p_session, p_direct, p_executed, p_queued:
+        status = await get_import_status("proj1", "SELECT *", headers)
+
+    assert status.failed == ["ACC_ARCH_FAIL"]
+    assert status.processing == []
+    assert status.queue_failed == []
+
+
+@pytest.mark.asyncio
+@patch("imaging_api.services.retrieval.get_experiments")
+@patch("imaging_api.services.retrieval.get_accession_ids", new_callable=AsyncMock)
+@patch("imaging_api.services.retrieval.encrypt")
+async def test_get_import_status_direct_archive_error_overrides_received(
+    mock_encrypt, mock_get_accession_ids, mock_get_experiments, headers,
+):
+    """A study whose transfer RECEIVED but whose directArchive build then errored is `failed`.
+
+    This is the failure mode (study left the queue but never became a queryable experiment)
+    that was previously reported as `processing` forever.
+    """
+    mock_encrypt.return_value = "encrypted_id"
+    mock_get_accession_ids.return_value = ["ACC_X"]
+    mock_get_experiments.return_value = []
+
+    p_session, p_direct, p_executed, p_queued = _mock_get_session(
+        direct_archive=[_direct_archive("ACC_X", "ERROR")], executed=[_executed("ACC_X", "RECEIVED")],
+    )
+    with p_session, p_direct, p_executed, p_queued:
+        status = await get_import_status("proj1", "SELECT *", headers)
+
+    assert status.failed == ["ACC_X"]
+    assert status.processing == []
+
+
+@pytest.mark.asyncio
+@patch("imaging_api.services.retrieval.get_experiments")
+@patch("imaging_api.services.retrieval.get_accession_ids", new_callable=AsyncMock)
+@patch("imaging_api.services.retrieval.encrypt")
+async def test_get_import_status_direct_archive_receiving_is_processing(
+    mock_encrypt, mock_get_accession_ids, mock_get_experiments, headers,
+):
+    """A directArchive build still in progress (RECEIVING) is `processing`, not `failed`/`queue_failed`."""
+    mock_encrypt.return_value = "encrypted_id"
+    mock_get_accession_ids.return_value = ["ACC_RECV"]
+    mock_get_experiments.return_value = []
+
+    p_session, p_direct, p_executed, p_queued = _mock_get_session(
+        direct_archive=[_direct_archive("ACC_RECV", "RECEIVING")],
+    )
+    with p_session, p_direct, p_executed, p_queued:
+        status = await get_import_status("proj1", "SELECT *", headers)
+
+    assert status.processing == ["ACC_RECV"]
+    assert status.failed == []
+    assert status.queue_failed == []
+
+
+@pytest.mark.asyncio
+@patch("imaging_api.services.retrieval.get_experiments")
+@patch("imaging_api.services.retrieval.get_accession_ids", new_callable=AsyncMock)
+@patch("imaging_api.services.retrieval.encrypt")
+async def test_get_import_status_direct_archive_error_without_name_falls_back_to_folder_name(
+    mock_encrypt, mock_get_accession_ids, mock_get_experiments, headers,
+):
+    """A directArchive ERROR whose `name` is NULL is still attributed via its folder_name.
+
+    XNAT populates `name` for DQR imports, but it can be NULL for other archive rows; folder_name
+    carries the same accession label, so a NULL-named archive failure is recovered, not dropped.
+    """
+    mock_encrypt.return_value = "encrypted_id"
+    mock_get_accession_ids.return_value = ["ACC_X"]
+    mock_get_experiments.return_value = []
+
+    direct_archive = [
+        DirectArchiveSession(
+            id=1, created=datetime(2023, 1, 1), folder_name="ACC_X", status="ERROR", project="proj1", name=None,
+        )
+    ]
+    p_session, p_direct, p_executed, p_queued = _mock_get_session(direct_archive=direct_archive)
+    with p_session, p_direct, p_executed, p_queued:
+        status = await get_import_status("proj1", "SELECT *", headers)
+
+    assert status.failed == ["ACC_X"]
+    assert status.queue_failed == []
+
+
+@pytest.mark.asyncio
+@patch("imaging_api.services.retrieval.get_experiments")
+@patch("imaging_api.services.retrieval.get_accession_ids", new_callable=AsyncMock)
+@patch("imaging_api.services.retrieval.encrypt")
+async def test_get_import_status_failed_precedes_queued(
+    mock_encrypt, mock_get_accession_ids, mock_get_experiments, headers,
+):
+    """A terminal-failed accession that also has a (re-)queued row is reported `failed`, not `queued`."""
+    mock_encrypt.return_value = "encrypted_id"
+    mock_get_accession_ids.return_value = ["ACC"]
+    mock_get_experiments.return_value = []
+
+    queued = [QueuedPacsRequest(
+        id=2, created=datetime(2023, 1, 1), accession_number="ACC", status="QUEUED", xnat_project="proj1",
+    )]
+    p_session, p_direct, p_executed, p_queued = _mock_get_session(executed=[_executed("ACC", "FAILED")], queued=queued)
+    with p_session, p_direct, p_executed, p_queued:
+        status = await get_import_status("proj1", "SELECT *", headers)
+
+    assert status.failed == ["ACC"]
+    assert status.queued == []
+
+
+@pytest.mark.asyncio
+@patch("imaging_api.services.retrieval.get_experiments")
+@patch("imaging_api.services.retrieval.get_accession_ids", new_callable=AsyncMock)
+@patch("imaging_api.services.retrieval.encrypt")
+async def test_get_import_status_experiment_present_beats_stale_direct_archive_error(
+    mock_encrypt, mock_get_accession_ids, mock_get_experiments, headers,
+):
+    """`successful` (archived as an experiment) wins over a stale directArchive ERROR for the same accession."""
+    mock_encrypt.return_value = "encrypted_id"
+    mock_get_accession_ids.return_value = ["ACC"]
+    mock_get_experiments.return_value = [
+        Experiment(ID="e1", label="ACC", date="2023-01-01", project="proj1",
+                   insert_date="2023-01-01", xsiType="xnat:ctScanData", URI="/exp/e1"),
+    ]
+
+    p_session, p_direct, p_executed, p_queued = _mock_get_session(direct_archive=[_direct_archive("ACC", "ERROR")])
+    with p_session, p_direct, p_executed, p_queued:
+        status = await get_import_status("proj1", "SELECT *", headers)
+
+    assert status.successful == ["ACC"]
+    assert status.failed == []
+
+
 # ===========================================================================
 # retry_retrieve_images_for_project
 # ===========================================================================
@@ -425,3 +606,34 @@ async def test_retry_multiple_studies_uses_first(
     assert result is True
     call_args = mock_queue.call_args[0][0]
     assert call_args.studies[0].study_instance_uid == "1.2.3.1"
+
+
+@pytest.mark.asyncio
+@patch("imaging_api.services.retrieval.queue_image_import_request")
+@patch("imaging_api.services.retrieval.query_by_accession_number")
+@patch("imaging_api.services.retrieval.get_experiments")
+@patch("imaging_api.services.retrieval.get_accession_ids", new_callable=AsyncMock)
+@patch("imaging_api.services.retrieval.encrypt")
+@patch("imaging_api.services.retrieval.get_project")
+async def test_retry_requeues_terminal_failures_end_to_end(
+    mock_get_project, mock_encrypt, mock_get_accession_ids, mock_get_experiments, mock_query, mock_queue, headers,
+):
+    """Producer->consumer seam: a real terminal failure flows from get_import_status `failed` into the re-queue.
+
+    No get_import_status mock — an executed FAILED request must be classified `failed` by the producer
+    and then re-queried + re-queued by retry. Guards against the two halves drifting apart.
+    """
+    mock_get_project.return_value = MagicMock()
+    mock_encrypt.return_value = "encrypted_id"
+    mock_get_accession_ids.return_value = ["ACC_FAIL"]
+    mock_get_experiments.return_value = []
+    mock_query.return_value = [_make_study("ACC_FAIL")]
+    mock_queue.return_value = [_make_import_response("ACC_FAIL")]
+
+    p_session, p_direct, p_executed, p_queued = _mock_get_session(executed=[_executed("ACC_FAIL", "FAILED")])
+    with p_session, p_direct, p_executed, p_queued:
+        result = await retry_retrieve_images_for_project("proj1", "SELECT *", headers)
+
+    assert result is True
+    mock_query.assert_called_once_with("ACC_FAIL", headers)
+    assert mock_queue.call_args[0][0].studies[0].accession_number == "ACC_FAIL"

@@ -17,14 +17,13 @@ This module provides the FLIP() factory function that returns the appropriate
 FLIP implementation based on job type and environment.
 """
 
-from typing import Union
 
 from flip.constants.flip_constants import FlipConstants
 from flip.constants.job_types import JobType, JobTypeStr
 from flip.core.base import FLIPBase
 
 
-def FLIP(job_type: Union[JobType, JobTypeStr] = JobType.STANDARD, **kwargs) -> FLIPBase:
+def FLIP(job_type: JobType | JobTypeStr = JobType.STANDARD, **kwargs) -> FLIPBase:
     """
     Factory function to create appropriate FLIP instance based on job type.
 

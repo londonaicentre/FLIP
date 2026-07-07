@@ -1,0 +1,21 @@
+# Per-tutorial run-config overrides for the spleen-segmentation training app.
+#
+# The fl-api reads this file at job-submit time and merges it into the
+# Flower --run-config TOML it passes to `flwr run`. Each key here must
+# already be declared in src/standard/pyproject.toml's [tool.flwr.app.config]
+# (Flower rejects --run-config overrides for undeclared keys).
+#
+# Tuning rationale:
+#  - num-server-rounds = 30, local-epochs = 5:
+#    150 effective training passes per client. 10x2 (20 passes) got the model
+#    predicting spleen voxels but spatially wrong; the reference's
+#    100-pass NVFlare run hit ~0.6 federated dice on trust supernode data.
+#    Aiming for >=0.75 -- expecting 3-5x more compute than the reference.
+#  - learning-rate = 5e-5:
+#    Matches the reference. Half Flower's original 1e-4 -- gentler
+#    for batch_norm with batch_size=2, where high LR + small batch statistics
+#    cause noisy updates.
+
+num-server-rounds = 30
+local-epochs = 5
+learning-rate = 5e-5

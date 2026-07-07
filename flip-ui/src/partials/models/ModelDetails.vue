@@ -18,14 +18,14 @@
                 <h2 class="p-4 text-lg leading-loose font-semibold font-heading grow">
                     Model Details
                 </h2>
-                <div class="px-4 py-3 border-t border-gray-200 dark:border-gray-700 sm:p-0">
+                <div class="px-4 py-3 border-t border-gray-200 dark:border-dark-border sm:p-0">
                     <dl class="sm:divide-y sm:divide-gray-200 dark:sm:divide-gray-700">
                         <div class="py-3 sm:px-4 sm:grid sm:grid-cols-3 sm:gap-4">
                             <dt class="text-sm font-medium text-gray-500 dark:text-gray-300">
                                 Name
                             </dt>
                             <dd
-                                class="mt-1 text-sm text-gray-700 dark:text-gray-400 break-words sm:mt-0 sm:col-span-2 line-clamp-2"
+                                class="mt-1 text-sm text-gray-700 dark:text-gray-300 break-words sm:mt-0 sm:col-span-2 line-clamp-2"
                                 data-test="project-name-text"
                             >
                                 {{ model.modelName }}
@@ -36,12 +36,12 @@
                                 Description
                             </dt>
                             <dd
-                                class="mt-1 text-sm text-gray-700 dark:text-gray-400 break-words sm:mt-0 sm:col-span-2 line-clamp-4"
+                                class="mt-1 text-sm text-gray-700 dark:text-gray-300 break-words sm:mt-0 sm:col-span-2 line-clamp-4"
                                 data-test="project-description-text"
                             >
                                 {{ model.modelDescription }}
                                 <template v-if="!model.modelDescription">
-                                    <span class="italic text-gray-400 dark:text-gray-500">No description provided...</span>
+                                    <span class="italic text-gray-400 dark:text-gray-300">No description provided...</span>
                                 </template>
                             </dd>
                         </div>

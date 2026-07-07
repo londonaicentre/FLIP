@@ -12,7 +12,7 @@
 -->
 
 <template>
-    <div class="flex flex-col w-full h-screen font-sans antialiased text-gray-700 dark:text-gray-300 bg-body dark:bg-gray-800">
+    <div class="flex flex-col w-full h-screen font-sans antialiased text-gray-700 dark:text-gray-300 bg-body dark:bg-dark-surface">
         <transition name="slidedown">
             <AiBanner v-if="details?.banner?.enabled" :message="details.banner.message" :link="details.banner.link" />
         </transition>
@@ -31,7 +31,7 @@
         <!-- Main Content (full-width — sidebar removed in favour of top nav) -->
         <AiErrorAlert v-if="errorStore.hasError" />
 
-        <main class="flex w-full overflow-auto grow focus:outline-none bg-body dark:bg-gray-800">
+        <main class="flex w-full overflow-auto grow focus:outline-none bg-body dark:bg-dark-surface">
             <router-view v-slot="{ Component }">
                 <DeploymentMode v-if="details.deploymentMode && !route.path.includes('/admin/')" />
 

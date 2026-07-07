@@ -33,6 +33,16 @@ COPY pyproject.toml uv.lock ./
 RUN chown -R ${UNAME}:${UNAME} /app
 COPY entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
+# alembic.ini is read by `alembic upgrade head` at boot (entrypoint) and by the
+# `make migration*` targets. It is NOT bind-mounted in dev (unlike src/ and
+# entrypoint.sh), so changing it requires `make up BUILD=true`. The migrations
+# package itself lives under src/ and rides the existing mount / COPY.
+COPY alembic.ini /app/alembic.ini
+# Bake the base FL application templates (the repo-root fl-apps/ tree, supplied as the `fl_apps`
+# named build context — see deploy/compose*.yml and docker_build_flip_api.yml) into the image so
+# the bundler reads them from FL_APP_BASE_DIR (default /app/fl-apps) instead of S3 (FLIP#724). In
+# dev this path is overlaid by a bind-mount of ../fl-apps for live iteration.
+COPY --chown=${UNAME}:${UNAME} --from=fl_apps . /app/fl-apps/
 WORKDIR /app
 USER ${UNAME}
 

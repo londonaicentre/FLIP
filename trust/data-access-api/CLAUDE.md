@@ -13,6 +13,6 @@ FastAPI service for querying the OMOP Common Data Model database. Receives cohor
 ## Commands
 
 ```bash
-make test        # ruff + mypy + pytest (unit + integration)
+make test        # ruff + mypy + pytest (unit only; integration runs via make integration_test)
 make unit_test   # Unit tests only
 ```

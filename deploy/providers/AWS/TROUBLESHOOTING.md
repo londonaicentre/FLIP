@@ -177,6 +177,35 @@ If you regress this: confirm the ALB listener rule's `target_group_arn` is `aws_
 
 ---
 
+### 1.9 Verifying which FL image an ECS task pulled — GuardDuty sidecar digest trap
+
+**Symptom**: After a `force-new-deployment` of `fl-server-net-1` / `fl-api-net-1`, you check the running task's image digest against the GHCR tag to confirm the new build is live. One container's `imageDigest` does **not** match the GHCR `:stag`/`:prod` manifest, and worse, querying GHCR for that digest returns **HTTP 404** (it does not exist in GHCR at all). Looks like the task is running a stale/unknown image.
+
+**Root cause**: GuardDuty Runtime Monitoring injects a sidecar container (`aws-guardduty-agent-*`) into every Fargate task. `aws ecs describe-tasks` returns `containers` as an **array**, and the GuardDuty agent often sorts **first** — so a query like `containers[0].imageDigest` reads the *agent's* digest, not the FL app container's. The GuardDuty agent image lives in an **AWS-internal ECR**, never GHCR, which is exactly why its digest 404s when you look it up in `ghcr.io`. The FL app container is a *different* element of the same array and its digest matches GHCR fine.
+
+**Fix**: Select the container **by name**, never by index:
+
+```bash
+TASK_ARN=$(aws ecs list-tasks --cluster flip-cluster --service-name fl-server-net-1 \
+  --profile prod --region eu-west-2 --query 'taskArns[0]' --output text)
+aws ecs describe-tasks --cluster flip-cluster --tasks "$TASK_ARN" \
+  --profile prod --region eu-west-2 \
+  --query "tasks[0].containers[?name=='fl-server-net-1'].imageDigest" --output text
+# Compare against the GHCR tag (anonymous pull token):
+IMG=flare-fl-server
+TOKEN=$(curl -s "https://ghcr.io/token?scope=repository:londonaicentre/$IMG:pull" \
+  | python3 -c 'import sys,json;print(json.load(sys.stdin)["token"])')
+curl -s -H "Authorization: Bearer $TOKEN" \
+  -H "Accept: application/vnd.oci.image.manifest.v1+json" \
+  -H "Accept: application/vnd.docker.distribution.manifest.v2+json" \
+  -D - -o /dev/null "https://ghcr.io/v2/londonaicentre/$IMG/manifests/stag" \
+  | grep -i docker-content-digest
+```
+
+The two digests will match. To confirm the tag was rebuilt by a specific merge, fetch the config blob's `created` timestamp (follow the redirect with `curl -sL` on `/v2/.../blobs/<config-digest>`) — e.g. the #624 FL-deps rebuild produced `flare-fl-server:stag` / `flare-fl-api:stag` configs created `2026-06-24T15:54–15:55Z`, immediately after the develop merge's FL image build completed (~15:55Z). A digest that 404s in GHCR is the GuardDuty sidecar, not a stale FL image.
+
+---
+
 ## 2. Deployment (Ansible / Docker)
 
 ### 2.1 Docker volume mount parse failure (`empty section between colons`)
@@ -207,9 +236,9 @@ base `trust/.env.example`) and adjust the path for the trust host.
 
 ---
 
-### 2.2 Docker images missing for current branch tag
+### 2.2 Container images missing for current branch tag
 
-**Symptom**: `make deploy-trust` / `deploy-centralhub` fails with `docker manifest inspect` returning "no such manifest".
+**Symptom**: `make deploy-trust` fails with `docker manifest inspect` returning "no such manifest", or a Central Hub ECS deployment reports `CannotPullContainerError`.
 
 **Root cause**: The `DOCKER_TAG` in `.env.stag` refers to a branch whose images haven't been built. GitHub Actions only auto-publish to GHCR on merges to `develop` and `main`. Branch images require manual `workflow_dispatch`.
 
@@ -288,12 +317,12 @@ requests.exceptions.HTTPError: 401 Client Error: Unauthorized for url: http://da
 
 (or the same on `imaging-api`). Trust-api → data-access-api / imaging-api calls succeed; only fl-client calls fail.
 
-**Root cause**: The running fl-client / fl-server / fl-api images predate `flip-fl-base` PR #111, which added `headers=_trust_internal_headers()` to every outbound `flip.get_dataframe` / `flip.get_by_accession_number` / `flip.add_resource` call. Without that header, the data-access-api / imaging-api router-level auth check rejects the request with 401.
+**Root cause**: The running fl-client / fl-server / fl-api images predate the change that added `headers=_trust_internal_headers()` to every outbound `flip.get_dataframe` / `flip.get_by_accession_number` / `flip.add_resource` call. Without that header, the data-access-api / imaging-api router-level auth check rejects the request with 401.
 
-**Fix**: bump `DOCKER_FL_TAG` in `.env.stag` (and `.env.production` for prod) to a `flip-fl-base` SHA that includes PR #111, then redeploy. A single tag bump rolls all three images:
+**Fix**: bump `DOCKER_FL_TAG` in `.env.stag` (and `.env.production` for prod) to an FL image build that includes the trust-internal-header change, then redeploy. A single tag bump rolls all three images:
 
 ```bash
-# Pick a flip-fl-base SHA on develop after PR #111 merged
+# Pick an FL image tag (a develop SHA) that includes the trust-internal-header change
 sed -i 's/^DOCKER_FL_TAG=.*/DOCKER_FL_TAG=<sha>/' .env.stag
 
 # fl-api + fl-server (ECS task defs read TF_VAR_flip_fl_image_tag)
@@ -400,26 +429,15 @@ Then redeploy: `make deploy-centralhub PROD=stag`
 
 **Symptom**: `/api/fl/status` returns empty responses. The flip-api logs show `Name or service not known` for `fl-api-net-1.flip.local:8000`.
 
-**Root cause**: `NET_ENDPOINTS` is set to Service Discovery hostnames (e.g., `http://fl-api-net-1.flip.local:8000`) which only resolve in ECS Fargate with Cloud Map enabled. On EC2 with Docker Compose, use the Docker container name instead.
+**Root cause**: Central Hub services run on ECS Fargate, where the FL API is resolved through Cloud Map. A stale Docker Compose hostname such as `flip-fl-api-net-1` cannot resolve there.
 
-**Fix**: There are TWO places to fix:
+**Fix**: Set the Cloud Map endpoint in `.env.stag`:
 
-1. **Environment file** (`.env.stag`): `NET_ENDPOINTS={"net-1":"http://flip-fl-api-net-1:8000"}`
+```text
+NET_ENDPOINTS={"net-1":"http://fl-api-net-1.flip.local:8000"}
+```
 
-2. **Database** (the `fl_nets` table caches the endpoint from first seed — updating env var alone isn't enough):
-
-   ```bash
-   ssh flip "docker exec flip-api python3 -c \"
-   import asyncpg, os, json, boto3; import asyncio
-   async def main():
-       client = boto3.client('secretsmanager', region_name='eu-west-2')
-       secret = client.get_secret_value(SecretId=os.environ['POSTGRES_SECRET_ARN'])
-       pwd = json.loads(secret['SecretString']).get('password', '')
-       conn = await asyncpg.connect(host=os.environ['DB_HOST'], port=5432, user=os.environ['POSTGRES_USER'], database=os.environ['POSTGRES_DB'], password=pwd)
-       await conn.execute('UPDATE fl_nets SET endpoint = \$1 WHERE name = \$2', 'http://flip-fl-api-net-1:8000', 'net-1')
-       await conn.close()
-   asyncio.run(main())\"
-   ```
+Then run `make plan PROD=stag`, `make apply PROD=stag`, and `make deploy-centralhub PROD=stag`. The flip-api startup seed reconciles the `fl_nets` row to `NET_ENDPOINTS`; a manual database update is neither required nor durable.
 
 ---
 
@@ -444,17 +462,22 @@ Then redeploy: `make deploy-centralhub PROD=stag`
 
 **Temporary workaround** (force import for stuck projects):
 
-```bash
-# 1. Check if CREATE_IMAGING task failed
-ssh flip "docker exec flip-api python3 -c '...'"
+```sql
+-- Connect with psql using the bastion recipe in §5, then check the task.
+SELECT id, task_type, status, created_at
+FROM trust_task
+WHERE task_type = 'CREATE_IMAGING'
+ORDER BY created_at DESC
+LIMIT 10;
 
-# 2. Reset to PENDING if FAILED
 UPDATE trust_task SET status='PENDING' WHERE id='<task_id>';
 
-# 3. If still failing, force by setting last_reimport far in the past:
 UPDATE xnat_project_status SET last_reimport='2020-01-01' WHERE xnat_project_id='<id>';
+```
 
-# 4. Restart imaging-api if it's hung:
+If imaging-api is hung, restart it on the Trust EC2:
+
+```bash
 ssh flip-trust "docker restart trust1-imaging-api-1"
 ```
 
@@ -481,7 +504,7 @@ Related states with different causes:
 **Fix**: Usually self-healing. Verify the FL server is listening:
 
 ```bash
-ssh flip "docker logs fl-server-net-1 --since 2m | grep -E 'Connection|re-activate|Client'"
+AWS_PROFILE=stag aws logs tail /ecs/fl-server-net-1 --since 2m | grep -E 'Connection|re-activate|Client'
 ```
 
 ---
@@ -605,35 +628,44 @@ Or wait for the lease to renew naturally. This only matters if the instance need
 make status PROD=stag
 ```
 
-### Check specific pipeline task status
+### Connect to RDS through the Central Hub bastion
+
+The bastion has `psql` installed and its security group is allowed to reach RDS on port 5432. It deliberately has no Secrets Manager permission, so obtain the database password through the approved operator channel and enter it only at the interactive prompt.
 
 ```bash
-ssh flip "docker exec flip-api python3 -c \"
-import asyncpg, os, json, boto3, asyncio
-async def main():
-    client = boto3.client('secretsmanager', region_name='eu-west-2')
-    secret = client.get_secret_value(SecretId=os.environ['POSTGRES_SECRET_ARN'])
-    pwd = json.loads(secret['SecretString']).get('password','')
-    conn = await asyncpg.connect(host=os.environ['DB_HOST'], port=5432, user=os.environ['POSTGRES_USER'], database=os.environ['POSTGRES_DB'], password=pwd)
-    rows = await conn.fetch('SELECT task_type, status, created_at FROM trust_task WHERE trust_id = \$1 ORDER BY created_at DESC LIMIT 10', '<trust-id>')  # replace <trust-id> with the actual Trust UUID
-    for r in rows: print(f'{r[0]:30s} {r[1]:12s} {r[2]}')
-    await conn.close()
-asyncio.run(main())\"
+cd deploy/providers/AWS
+make ssh-config PROD=stag
+terraform output -raw DbEndpoint
+ssh flip
+
+# On the bastion; substitute the endpoint printed above and the non-secret
+# POSTGRES_USER / POSTGRES_DB values from .env.stag.
+psql --host=<db-endpoint> --username=<POSTGRES_USER> --dbname=<POSTGRES_DB> --password
+```
+
+No inbound SSH or PostgreSQL rule is needed on the bastion: SSH travels through SSM, and the existing RDS rule allows port 5432 from the bastion security group.
+
+### Check specific pipeline task status
+
+```sql
+SELECT task_type, status, created_at
+FROM trust_task
+WHERE trust_id = '<trust-id>'
+ORDER BY created_at DESC
+LIMIT 10;
 ```
 
 ### Check for stuck XNAT projects (last_reimport within last hour, zero reimports)
 
-```bash
-ssh flip "docker exec flip-api python3 -c \"
+```sql
 SELECT xnat_project_id, last_reimport, reimport_count FROM xnat_project_status WHERE last_reimport > NOW() - INTERVAL '1 hour' AND reimport_count = 0;
-\""
 ```
 
 ### Scan container logs for errors
 
 ```bash
-# Central Hub
-ssh flip "docker logs flip-api 2>&1 | grep -iE 'ERROR|Exception|Traceback' | tail -20"
+# Central Hub ECS service
+AWS_PROFILE=stag aws logs tail /ecs/flip-api --since 10m | grep -iE 'ERROR|Exception|Traceback' | tail -20
 
 # Trust
 ssh flip-trust "docker logs trust1-trust-api-1 2>&1 | grep -iE 'ERROR|ReadTimeout|502' | tail -20"
@@ -654,5 +686,5 @@ print(f'HTTP {r.status_code}')
 ### Verify FL server clients
 
 ```bash
-ssh flip "docker logs fl-server-net-1 2>&1 | grep -E 'Client|Re-activate' | tail -5"
+AWS_PROFILE=stag aws logs tail /ecs/fl-server-net-1 --since 10m | grep -E 'Client|Re-activate' | tail -5
 ```

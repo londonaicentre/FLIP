@@ -28,7 +28,7 @@
                                     <router-link
                                         v-if="project"
                                         :to="`/project/${project.id}`"
-                                        class="text-xs font-semibold tracking-wider uppercase font-mono text-gray-500 hover:text-primary-500 dark:text-gray-400 dark:hover:text-primary-300"
+                                        class="text-xs font-semibold tracking-wider uppercase font-mono text-gray-500 hover:text-primary-500 dark:text-gray-300 dark:hover:text-primary-300"
                                     >
                                         {{ project.name }}
                                     </router-link>
@@ -43,7 +43,7 @@
                                             form="cohort-query-form"
                                             :disabled="formSubmitting"
                                             data-test="view-cohort-query-results-btn"
-                                            class="inline-flex items-center gap-2 px-4 py-2 text-sm font-semibold text-white bg-[#e51170] hover:bg-[#c50f60] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#e51170] dark:focus:ring-offset-gray-900 disabled:opacity-60 disabled:cursor-not-allowed rounded-lg shadow-sm transition-colors shrink-0"
+                                            class="inline-flex items-center gap-2 px-4 py-2 text-sm font-semibold text-white bg-[#e51170] hover:bg-[#c50f60] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#e51170] dark:focus:ring-offset-dark-canvas disabled:opacity-60 disabled:cursor-not-allowed rounded-lg shadow-sm transition-colors shrink-0"
                                         >
                                             <svg
                                                 v-if="formSubmitting"
@@ -70,7 +70,7 @@
                                             Run on all trusts
                                         </button>
                                     </div>
-                                    <p class="max-w-3xl mt-2 text-sm text-gray-600 dark:text-gray-400">
+                                    <p class="max-w-3xl mt-2 text-sm text-gray-600 dark:text-gray-300">
                                         {{ description }}
                                     </p>
                                 </header>

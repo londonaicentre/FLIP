@@ -44,7 +44,9 @@ services:
       - ${OMOP_DATA_DIR:-./omop-db/volumes/Trust_${TRUST_NUMBER}/db_data}:/var/lib/postgresql/data
 
   orthanc:
+    # Pull from GHCR by default; `make up BUILD=true` rebuilds from build: below.
     image: ghcr.io/londonaicentre/orthanc:${DOCKER_TAG}
+    pull_policy: always
     build:
       context: ./orthanc
       dockerfile: Dockerfile

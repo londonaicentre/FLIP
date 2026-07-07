@@ -15,7 +15,7 @@ import os
 
 from sqlmodel import Session, col, delete, select
 
-from flip_api.db.database import engine
+from flip_api.db.database import get_engine
 from flip_api.db.models.main_models import (
     FLJob,
     FLLogs,
@@ -322,7 +322,7 @@ def cleanup_debug_projects() -> bool:
 
     # Perform database cleanup
     try:
-        with Session(engine) as session:
+        with Session(get_engine()) as session:
             success = delete_project_data_in_order(session, project_ids)
 
             if success:

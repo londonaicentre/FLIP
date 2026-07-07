@@ -1,0 +1,260 @@
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+name: Build and Push Flower FL Docker Images
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - "fl-services/flower/**"
+      # The fl-base image installs the in-repo flip-utils, so flip-utils changes
+      # must also trigger a rebuild.
+      - "flip-utils/**"
+      - ".github/workflows/fl-docker-build-flower.yml"
+  workflow_dispatch:
+
+jobs:
+  build-and-push:
+    # Skip on forks: they cannot push to ghcr.io/londonaicentre, so this whole
+    # build-and-publish job would otherwise show a spurious CI failure on fork
+    # pushes. Upstream main/develop publishing is unchanged.
+    if: github.repository == 'londonaicentre/FLIP'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    env:
+      REGISTRY: ghcr.io
+      ORG: londonaicentre
+      BASE_IMAGE: flower-fl-base
+      SERVER_IMAGE: flower-superlink
+      CLIENT_IMAGE: flower-supernode
+      API_IMAGE: flower-fl-api
+      BUILD_ARGS: |
+        --build-arg UID=1000
+        --build-arg GID=1000
+        --build-arg UNAME=flip
+        --build-arg LOCAL_DEV=false
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Determine image tags
+        id: tags
+        run: |
+          BASE_TAGS="${REGISTRY}/${ORG}/${BASE_IMAGE}:${{ github.sha }}"
+          SERVER_TAGS="${REGISTRY}/${ORG}/${SERVER_IMAGE}:${{ github.sha }}"
+          CLIENT_TAGS="${REGISTRY}/${ORG}/${CLIENT_IMAGE}:${{ github.sha }}"
+          API_TAGS="${REGISTRY}/${ORG}/${API_IMAGE}:${{ github.sha }}"
+
+          if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
+            BASE_TAGS="${BASE_TAGS},${REGISTRY}/${ORG}/${BASE_IMAGE}:prod"
+            SERVER_TAGS="${SERVER_TAGS},${REGISTRY}/${ORG}/${SERVER_IMAGE}:prod"
+            CLIENT_TAGS="${CLIENT_TAGS},${REGISTRY}/${ORG}/${CLIENT_IMAGE}:prod"
+            API_TAGS="${API_TAGS},${REGISTRY}/${ORG}/${API_IMAGE}:prod"
+          elif [[ "${{ github.ref }}" == "refs/heads/develop" ]]; then
+            BASE_TAGS="${BASE_TAGS},${REGISTRY}/${ORG}/${BASE_IMAGE}:stag"
+            SERVER_TAGS="${SERVER_TAGS},${REGISTRY}/${ORG}/${SERVER_IMAGE}:stag"
+            CLIENT_TAGS="${CLIENT_TAGS},${REGISTRY}/${ORG}/${CLIENT_IMAGE}:stag"
+            API_TAGS="${API_TAGS},${REGISTRY}/${ORG}/${API_IMAGE}:stag"
+          fi
+
+          echo "base_tags=${BASE_TAGS}"   >> $GITHUB_OUTPUT
+          echo "server_tags=${SERVER_TAGS}" >> $GITHUB_OUTPUT
+          echo "client_tags=${CLIENT_TAGS}" >> $GITHUB_OUTPUT
+          echo "api_tags=${API_TAGS}" >> $GITHUB_OUTPUT
+          echo "Generated tags:"
+          echo "Base:   ${BASE_TAGS}"
+          echo "Server: ${SERVER_TAGS}"
+          echo "Client: ${CLIENT_TAGS}"
+          echo "API:    ${API_TAGS}"
+
+      - name: Log in to GHCR
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login $REGISTRY -u ${{ github.actor }} --password-stdin
+
+      - name: Free up disk space
+        run: |
+          echo "Disk space before cleanup:"
+          df -h
+          # Remove unnecessary packages and clean
+          sudo apt-get clean
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"
+          sudo docker system prune -af --volumes
+          echo "Disk space after cleanup:"
+          df -h
+
+      ###########################################
+      # 1️⃣ Build Base Image
+      ###########################################
+      # NOTE: the fl-base build context is the REPO ROOT (.) because the
+      # Dockerfile COPYs in-repo flip-utils. The derived images (superlink,
+      # supernode, fl-api) use their own dir as context.
+      - name: Build Base Image
+        run: |
+          docker build ${BUILD_ARGS} \
+            -f fl-services/flower/fl-base/Dockerfile \
+            -t $REGISTRY/$ORG/$BASE_IMAGE:${{ github.sha }} .
+
+          # Tag environment-specific
+          if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
+            docker tag $REGISTRY/$ORG/$BASE_IMAGE:${{ github.sha }} $REGISTRY/$ORG/$BASE_IMAGE:prod
+          elif [[ "${{ github.ref }}" == "refs/heads/develop" ]]; then
+            docker tag $REGISTRY/$ORG/$BASE_IMAGE:${{ github.sha }} $REGISTRY/$ORG/$BASE_IMAGE:stag
+          fi
+
+          echo "✅ Built base image."
+
+      - name: Push Base Image
+        run: |
+          docker push $REGISTRY/$ORG/$BASE_IMAGE:${{ github.sha }}
+          if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
+            docker push $REGISTRY/$ORG/$BASE_IMAGE:prod
+          elif [[ "${{ github.ref }}" == "refs/heads/develop" ]]; then
+            docker push $REGISTRY/$ORG/$BASE_IMAGE:stag
+          fi
+          echo "✅ Pushed base image."
+
+      - name: Cleanup after base image
+        run: |
+          # Remove untagged local copies but keep the SHA-tagged image for dependent builds
+          if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
+            docker rmi $REGISTRY/$ORG/$BASE_IMAGE:prod || true
+          elif [[ "${{ github.ref }}" == "refs/heads/develop" ]]; then
+            docker rmi $REGISTRY/$ORG/$BASE_IMAGE:stag || true
+          fi
+          docker system prune -f
+          echo "Disk space after base image cleanup:"
+          df -h
+
+      ###########################################
+      # 2️⃣ Build and Push SuperLink (server)
+      ###########################################
+      - name: Build SuperLink Image
+        run: |
+          docker build ${BUILD_ARGS} \
+            -f fl-services/flower/superlink/Dockerfile \
+            --build-arg BASE_REF=$REGISTRY/$ORG/$BASE_IMAGE:${{ github.sha }} \
+            -t $REGISTRY/$ORG/$SERVER_IMAGE:${{ github.sha }} fl-services/flower/superlink
+
+          if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
+            docker tag $REGISTRY/$ORG/$SERVER_IMAGE:${{ github.sha }} $REGISTRY/$ORG/$SERVER_IMAGE:prod
+          elif [[ "${{ github.ref }}" == "refs/heads/develop" ]]; then
+            docker tag $REGISTRY/$ORG/$SERVER_IMAGE:${{ github.sha }} $REGISTRY/$ORG/$SERVER_IMAGE:stag
+          fi
+
+          echo "✅ Built SuperLink."
+
+      - name: Push SuperLink Image
+        run: |
+          docker push $REGISTRY/$ORG/$SERVER_IMAGE:${{ github.sha }}
+          if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
+            docker push $REGISTRY/$ORG/$SERVER_IMAGE:prod
+          elif [[ "${{ github.ref }}" == "refs/heads/develop" ]]; then
+            docker push $REGISTRY/$ORG/$SERVER_IMAGE:stag
+          fi
+          echo "✅ Pushed SuperLink."
+
+      - name: Cleanup after SuperLink
+        run: |
+          docker rmi $REGISTRY/$ORG/$SERVER_IMAGE:${{ github.sha }} || true
+          if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
+            docker rmi $REGISTRY/$ORG/$SERVER_IMAGE:prod || true
+          elif [[ "${{ github.ref }}" == "refs/heads/develop" ]]; then
+            docker rmi $REGISTRY/$ORG/$SERVER_IMAGE:stag || true
+          fi
+          docker system prune -f
+          echo "Disk space after SuperLink cleanup:"
+          df -h
+
+      ###########################################
+      # 3️⃣ Build and Push SuperNode (client)
+      ###########################################
+      - name: Build SuperNode Image
+        run: |
+          docker build ${BUILD_ARGS} \
+            -f fl-services/flower/supernode/Dockerfile \
+            --build-arg BASE_REF=$REGISTRY/$ORG/$BASE_IMAGE:${{ github.sha }} \
+            -t $REGISTRY/$ORG/$CLIENT_IMAGE:${{ github.sha }} fl-services/flower/supernode
+
+          if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
+            docker tag $REGISTRY/$ORG/$CLIENT_IMAGE:${{ github.sha }} $REGISTRY/$ORG/$CLIENT_IMAGE:prod
+          elif [[ "${{ github.ref }}" == "refs/heads/develop" ]]; then
+            docker tag $REGISTRY/$ORG/$CLIENT_IMAGE:${{ github.sha }} $REGISTRY/$ORG/$CLIENT_IMAGE:stag
+          fi
+
+          echo "✅ Built SuperNode."
+
+      - name: Push SuperNode Image
+        run: |
+          docker push $REGISTRY/$ORG/$CLIENT_IMAGE:${{ github.sha }}
+          if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
+            docker push $REGISTRY/$ORG/$CLIENT_IMAGE:prod
+          elif [[ "${{ github.ref }}" == "refs/heads/develop" ]]; then
+            docker push $REGISTRY/$ORG/$CLIENT_IMAGE:stag
+          fi
+          echo "✅ Pushed SuperNode."
+
+      - name: Cleanup after SuperNode
+        run: |
+          docker rmi $REGISTRY/$ORG/$CLIENT_IMAGE:${{ github.sha }} || true
+          if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
+            docker rmi $REGISTRY/$ORG/$CLIENT_IMAGE:prod || true
+          elif [[ "${{ github.ref }}" == "refs/heads/develop" ]]; then
+            docker rmi $REGISTRY/$ORG/$CLIENT_IMAGE:stag || true
+          fi
+          docker system prune -f
+          echo "Disk space after SuperNode cleanup:"
+          df -h
+
+      ###########################################
+      # 4️⃣ Build and Push FL API
+      ###########################################
+      - name: Build FL API Image
+        run: |
+          docker build ${BUILD_ARGS} \
+            -f fl-services/flower/fl-api-flower/Dockerfile \
+            -t $REGISTRY/$ORG/$API_IMAGE:${{ github.sha }} fl-services/flower/fl-api-flower
+
+          if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
+            docker tag $REGISTRY/$ORG/$API_IMAGE:${{ github.sha }} $REGISTRY/$ORG/$API_IMAGE:prod
+          elif [[ "${{ github.ref }}" == "refs/heads/develop" ]]; then
+            docker tag $REGISTRY/$ORG/$API_IMAGE:${{ github.sha }} $REGISTRY/$ORG/$API_IMAGE:stag
+          fi
+
+          echo "✅ Built FL API."
+
+      - name: Push FL API Image
+        run: |
+          docker push $REGISTRY/$ORG/$API_IMAGE:${{ github.sha }}
+          if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
+            docker push $REGISTRY/$ORG/$API_IMAGE:prod
+          elif [[ "${{ github.ref }}" == "refs/heads/develop" ]]; then
+            docker push $REGISTRY/$ORG/$API_IMAGE:stag
+          fi
+          echo "✅ Pushed FL API."
+
+      - name: Final cleanup
+        run: |
+          docker rmi $REGISTRY/$ORG/$API_IMAGE:${{ github.sha }} || true
+          if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
+            docker rmi $REGISTRY/$ORG/$API_IMAGE:prod || true
+          elif [[ "${{ github.ref }}" == "refs/heads/develop" ]]; then
+            docker rmi $REGISTRY/$ORG/$API_IMAGE:stag || true
+          fi
+          # Clean up the base image
+          docker rmi $REGISTRY/$ORG/$BASE_IMAGE:${{ github.sha }} || true
+          docker system prune -af
+          echo "Final disk space:"
+          df -h

@@ -62,6 +62,20 @@ export interface IAccessRequest {
     reasonForAccess: string;
 }
 
+export type AccessRequestStatus = "PENDING" | "ENROLLED" | "DISMISSED";
+
+export interface IAccessRequestRecord {
+    id: string;
+    email: string;
+    fullName: string;
+    reasonForAccess: string;
+    status: AccessRequestStatus;
+    emailNotified: boolean;
+    handledByUserId: string | null;
+    createdAt: string;
+    updatedAt: string;
+}
+
 export async function getUserPermissions(id: string): Promise<IUserPermissions> {
     try {
         const response = await _http.get<IUserPermissions>(`/users/${id}/permissions`);
@@ -141,4 +155,19 @@ export async function getMfaStatus(): Promise<{ enabled: boolean; required: bool
 
 export async function submitAccessRequest(requestBody: IAccessRequest): Promise<void> {
     await _http.post<string>("/users/access", requestBody, { headers: { Authorization: "" } });
+}
+
+export async function getAccessRequests(url: string): Promise<IPaginatedResponse<IAccessRequestRecord>> {
+    const response = await _http.get<IPaginatedResponse<IAccessRequestRecord>>(url);
+
+    return response.data;
+}
+
+export async function updateAccessRequestStatus(
+    id: string,
+    status: AccessRequestStatus
+): Promise<IAccessRequestRecord> {
+    const response = await _http.patch<IAccessRequestRecord>(`/users/access/${id}`, { status });
+
+    return response.data;
 }

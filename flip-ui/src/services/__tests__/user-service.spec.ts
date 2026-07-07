@@ -12,13 +12,15 @@
  */
 
 import { _http } from "@/services/api";
-import { getMfaStatus,
+import { getAccessRequests,
+    getMfaStatus,
     getUserPermissions,
     getUsers,
     registerUser,
     resetUserMfa,
     revokeToken,
     submitAccessRequest,
+    updateAccessRequestStatus,
     updateUserDisabledState,
     updateUserProfile,
     updateUserRoles,
@@ -32,6 +34,7 @@ vi.mock("@/services/api", () => ({
         get: vi.fn(),
         post: vi.fn(),
         put: vi.fn(),
+        patch: vi.fn(),
         delete: vi.fn()
     }
 }));
@@ -50,6 +53,7 @@ describe("user-service", () => {
         vi.mocked(_http.get).mockReset();
         vi.mocked(_http.post).mockReset();
         vi.mocked(_http.put).mockReset();
+        vi.mocked(_http.patch).mockReset();
         vi.mocked(_http.delete).mockReset();
         vi.mocked(Snackbar.error).mockReset();
     });
@@ -289,6 +293,64 @@ describe("user-service", () => {
                 body,
                 { headers: { Authorization: "" } }
             );
+        });
+    });
+
+    describe("getAccessRequests", () => {
+        it("GETs the URL and returns the paginated body", async () => {
+            const body = {
+                page: 1,
+                pageSize: 20,
+                totalPages: 1,
+                totalRecords: 1,
+                data: [
+                    {
+                        id: "ar-1",
+                        email: "x@example.test",
+                        fullName: "X Y",
+                        reasonForAccess: "research",
+                        status: "PENDING",
+                        emailNotified: false,
+                        handledByUserId: null,
+                        createdAt: "2026-07-03T10:00:00",
+                        updatedAt: "2026-07-03T10:00:00"
+                    }
+                ]
+            };
+            vi.mocked(_http.get).mockResolvedValue({ data: body } as never);
+
+            const result = await getAccessRequests("/users/access?pageNumber=1&pageSize=20&status=PENDING");
+
+            expect(_http.get).toHaveBeenCalledWith("/users/access?pageNumber=1&pageSize=20&status=PENDING");
+            expect(result).toEqual(body);
+        });
+    });
+
+    describe("updateAccessRequestStatus", () => {
+        it("PATCHes /users/access/{id} with the new status", async () => {
+            const record = {
+                id: "ar-1",
+                email: "x@example.test",
+                fullName: "X Y",
+                reasonForAccess: "research",
+                status: "ENROLLED",
+                emailNotified: true,
+                handledByUserId: "admin-1",
+                createdAt: "2026-07-03T10:00:00",
+                updatedAt: "2026-07-03T11:00:00"
+            };
+            vi.mocked(_http.patch).mockResolvedValue({ data: record } as never);
+
+            const result = await updateAccessRequestStatus("ar-1", "ENROLLED");
+
+            expect(_http.patch).toHaveBeenCalledWith("/users/access/ar-1", { status: "ENROLLED" });
+            expect(result).toEqual(record);
+        });
+
+        it("propagates the underlying error so the page can surface it", async () => {
+            vi.mocked(_http.patch).mockRejectedValue(new Error("500 Server Error"));
+
+            await expect(updateAccessRequestStatus("ar-1", "DISMISSED")).rejects.toThrow("500 Server Error");
         });
     });
 });

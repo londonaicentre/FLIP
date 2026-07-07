@@ -11,7 +11,12 @@
     limitations under the License.
 -->
 
-<p align="center"><img src="docs/source/assets/flip-logo.png" height="200" alt='flip-logo' /></p>
+<p align="center">
+    <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="docs/source/assets/flip-logo-text-dark.png">
+        <img src="docs/source/assets/flip-logo-text.png" height="200" alt="flip-logo">
+    </picture>
+</p>
 
 # Federated Learning and Interoperability Platform
 
@@ -41,10 +46,9 @@ FLIP is developed by the [London AI Centre](https://www.aicentre.co.uk/) in coll
 ## Repositories
 
 This repository is the FLIP mono-repo: Central Hub API, Trust APIs, UI, Docker deployment, **and** the federated
-learning code (base library, FL services, and tutorials) that was previously split across `flip-fl-base` and
-`flip-fl-base-flower`. The FL code now lives under [`flip-utils/`](flip-utils/) (the pip-installable `flip` package),
-[`fl_services/`](fl_services/) (Docker services for FL server/client/API), and [`fl-apps/`](fl-apps/) (job-type
-implementations and tutorials).
+learning code (base library, FL services, and tutorials) for both NVFLARE and Flower. The FL code lives under
+[`flip-utils/`](flip-utils/) (the pip-installable `flip` package), [`fl-services/`](fl-services/) (Docker services
+for FL server/client/API), and [`fl-apps/`](fl-apps/) (job-type implementations and tutorials).
 
 | Subdirectory | Description |
 | --- | --- |
@@ -54,12 +58,14 @@ implementations and tutorials).
 | [`deploy/`](deploy/) | Docker Compose and infrastructure-as-code (AWS / on-prem) |
 | [`docs/`](docs/) | Sphinx documentation source (ReadTheDocs) |
 | [`flip-utils/`](flip-utils/) | `flip` Python package — platform logic, NVFLARE components, Flower helpers |
-| [`fl_services/`](fl_services/) | Docker images for FL networks: `fl-server`, `fl-client`, `fl-api-base`, `fl-base` |
-| [`fl-apps/`](fl-apps/) | FL job-type implementations (`standard`, `evaluation`, `diffusion_model`, `fed_opt`) and tutorials |
+| [`fl-services/`](fl-services/) | Docker images for FL networks, nested per backend ([`fl-services/nvflare/`](fl-services/nvflare/): `fl-server`, `fl-client`, `fl-api-base`, `fl-base`; [`fl-services/flower/`](fl-services/flower/): `superlink`, `supernode`, `fl-api-flower`, `fl-base`) |
+| [`fl-apps/`](fl-apps/) | FL job-type implementations / app templates, nested per backend ([`fl-apps/nvflare/`](fl-apps/nvflare/): `standard`, `evaluation`, `diffusion_model`, `fed_opt`; [`fl-apps/flower/`](fl-apps/flower/): `standard`, `evaluation`) |
+| [`fl-tutorials/`](fl-tutorials/) | End-to-end tutorial examples, nested per backend ([`fl-tutorials/nvflare/`](fl-tutorials/nvflare/): xray classification, spleen seg/eval, diffusion; [`fl-tutorials/flower/`](fl-tutorials/flower/): xray classification, spleen seg/eval, numpy) |
 
-The NVFLARE workspace is now provisioned in-tree at [`deploy/workspace`](deploy/workspace) (`make nvflare-provision`).
-The legacy [`flip-fl-base-flower`](https://github.com/londonaicentre/flip-fl-base-flower) repository still holds the
-provisioned Flower certs used at dev time — see [Federated Learning Setup](#federated-learning-setup) below.
+Both backends are now provisioned in-tree (gitignored): the NVFLARE workspace at
+[`fl-services/nvflare/provision/workspace-dev`](fl-services/nvflare/provision/workspace-dev) (`make -C fl-services/nvflare provision`) and the Flower certs
+at [`fl-services/flower/provision/creds`](fl-services/flower/provision/creds) (`make -C fl-services/flower provision`) — see
+[Federated Learning Setup](#federated-learning-setup) below.
 
 ## Deployment
 
@@ -70,6 +76,7 @@ provisioned Flower certs used at dev time — see [Federated Learning Setup](#fe
 - [Make](https://formulae.brew.sh/formula/make)
 - [UV](https://docs.astral.sh/uv) - Python environment management tool
 - postgresql-client (install with `apt install postgresql-client postgresql-client-common` on Debian/Ubuntu)
+- [jq](https://jqlang.github.io/jq/) - JSON processor used by several `make` targets (install with `apt install jq` on Debian/Ubuntu, or `brew install jq`)
 
 > For developer tooling and IDE setup, see [CONTRIBUTING.md](CONTRIBUTING.md).
 
@@ -214,25 +221,54 @@ docker compose -f deploy/compose.development.yml run --rm < service name >
 
 ### Federated Learning Setup
 
-The project supports [NVIDIA FLARE](https://developer.nvidia.com/flare) and [Flower Framework](https://flower.ai/) for
-federated learning. FLARE requires provisioned certificates and configuration files that are generated in-tree via
-`make nvflare-provision` (or `make nvflare-provision-2-nets` for a two-network setup, see
-[`fl_services/README.md`](fl_services/README.md)) and stored in `deploy/workspace/`.
+FLIP supports [NVIDIA FLARE](https://developer.nvidia.com/flare) and [Flower](https://flower.ai/). Each backend
+provisions its own credentials in-tree (gitignored) under `fl-services/<backend>/provision/` — NVFLARE per-participant
+startup kits, Flower TLS certs + SuperNode keys — and its own Makefile owns the workflow. **Provision before `make up`**:
+the credentials are not generated by `make up`, and the FL containers crash-loop without them (NVFLARE's `fl-server`
+logs `start.sh: No such file or directory`).
 
-1. **Path Resolution**: `FL_PROVISIONED_DIR` is derived from the `FL_BACKEND` selection inside [`deploy/fl_backend.mk`](deploy/fl_backend.mk):
+```bash
+make -C fl-services/nvflare provision-2-nets        # NVFLARE dev: net-1 + net-2
+make -C fl-services/flower  provision NET_NUMBER=1  # Flower dev: per-net (repeat for net-2)
+```
 
-   - `FL_BACKEND=flower` → `../flip-fl-base-flower/certs` (sibling repo, not yet merged)
-   - `FL_BACKEND=nvflare` → `deploy/workspace` (in-tree)
+See each backend's README for the full workflow — dev vs over-provisioned stag/prod, S3 upload, onboarding:
+[`fl-services/nvflare/README.md`](fl-services/nvflare/README.md) and
+[`fl-services/flower/README.md`](fl-services/flower/README.md). `FL_PROVISIONED_DIR` (the host dir Docker mounts) is
+derived from `FL_BACKEND` in [`deploy/fl_backend.mk`](deploy/fl_backend.mk); override for a one-off with
+`make up FL_PROVISIONED_DIR=/tmp/ws`.
 
-   The Makefile then converts the relative value to an absolute path so Docker volume mounts work correctly. You can override the resolved path at the command line for a one-off, e.g. `make up FL_PROVISIONED_DIR=/tmp/my-workspace`.
+### Per-backend FL Makefiles
 
-2. **Why This Matters**: Docker Compose cannot resolve relative paths for volume mounts, so the absolute path conversion is essential for FL services to access their provisioned certificates and configuration files.
+Each backend owns its FL lifecycle in its own `fl-services/<backend>/Makefile`: `build`, `provision`, `up`, `down`, and
+`submit` (Flower additionally has `up-secure` for the TLS + SuperNode-auth stack). The root Makefile only forwards
+`build-fl` to the selected backend (`make build-fl FL_BACKEND=<backend>`, mirroring the `fl-tutorials/` forwarder); the
+standalone run / provision / submit targets are invoked directly on the backend Makefile.
 
-If you see errors like "fed_client.json does not exist" or "missing startup folder", verify that:
+To run the FL services standalone and submit a job **without** the full FLIP stack:
 
-- The workspace has been properly provisioned with NVFLARE certificates (`make nvflare-provision`)
-- The `FL_PROVISIONED_DIR` path is correctly resolved (check Makefile output)
-- For NVFLARE: the workspace is at `deploy/workspace/`
+```bash
+make -C fl-services/<backend> provision NET_NUMBER=1   # flower: per-net certs+keys; nvflare: startup kits (provision-2-nets for both nets)
+make -C fl-services/<backend> up                       # flower also: up-secure (needs provision first)
+make -C fl-services/<backend> submit APP=<job>
+make -C fl-services/<backend> down
+```
+
+### Running the FL tutorials
+
+The in-tree tutorials under [`fl-tutorials/`](fl-tutorials/) run on each backend's local simulator. The root
+`fl-tutorials/` Makefile forwards every target to the selected backend (`FL_BACKEND`, default `nvflare`; pass
+`FL_BACKEND=flower` for Flower):
+
+```bash
+make -C fl-tutorials download-xray-data                          # one-off: fetch the xray dataset (HF); spleen: download-spleen-data
+make -C fl-tutorials list-tutorials
+make -C fl-tutorials run-tutorial TUTORIAL=xray_classification   # add FL_BACKEND=flower for the Flower tutorial
+make -C fl-tutorials run-all-tutorials
+```
+
+NVFLARE tutorials need a GPU + the `flare-fl-base` image. Build the FL images locally first (tagged `:dev`) with
+`make build-fl`. See each tutorial's README for backend-specific details.
 
 ## AWS Deployment
 
@@ -262,15 +298,16 @@ This runs the following steps in order:
 | 2 | `make aws-login` | AWS SSO login |
 | 3 | `make init` | Terraform init with the S3 backend |
 | 4 | `make import-persistent` | Import pre-existing resources (Cognito, Secrets, S3 buckets) — idempotent, safe to re-run |
-| 5 | `make plan` | Review the Terraform execution plan |
-| 6 | `make apply` | Apply infrastructure changes |
-| 7 | `make update-env` | Refresh `.env.stag` with Terraform outputs |
-| 8 | `make ssh-config` | Write SSM-tunnelled `Host flip` / `Host flip-trust` into `~/.ssh/config` |
-| 9 | `make ansible-init` | Configure Trust EC2 with Docker, CloudWatch, and FL assets |
-| 10 | `make deploy-centralhub` | Force-redeploy ECS Fargate services + sync UI to S3 + invalidate CloudFront |
-| 11 | `make register-trusts` | Register trusts on the hub and write per-trust kit files |
-| 12 | `make deploy-trust` | Deploy trust stack to Trust EC2 via Docker Compose |
-| 13 | `make status` | Health checks |
+| 5 | `make generate-internal-service-key` | Mint the fl-server → hub `INTERNAL_SERVICE_KEY` (idempotent) |
+| 6 | `make plan` | Review the Terraform execution plan |
+| 7 | `make apply` | Apply infrastructure changes |
+| 8 | `make update-env` | Refresh `.env.stag` with Terraform outputs |
+| 9 | `make ssh-config` | Write SSM-tunnelled `Host flip` / `Host flip-trust` into `~/.ssh/config` |
+| 10 | `make ansible-init` | Configure Trust EC2 with Docker, CloudWatch, and FL assets |
+| 11 | `make deploy-centralhub` | Force-redeploy ECS Fargate services + sync UI to S3 + invalidate CloudFront |
+| 12 | `make register-trusts` | Register trusts on the hub and write per-trust kit files |
+| 13 | `make deploy-trust` | Deploy trust stack to Trust EC2 via Docker Compose |
+| 14 | `make status` | Health checks |
 
 > **Stag note:** staging has ~70 resources missing from Terraform state. `make import-persistent` (step 4) handles this — it probes state before each import and skips already-imported resources, so re-running after a failure is safe.
 
@@ -400,8 +437,9 @@ The repository is organised as follows:
 - `flip-api`: Contains the central hub API service
 - `flip-ui`: Contains the UI service
 - `flip-utils`: Contains the pip-installable flip-utils Python library
-- `fl_services`: Contains the FL Docker services (server, client, admin API)
-- `fl-apps`: Contains FL app templates, tutorials, and utility scripts
+- `fl-services`: Contains the FL Docker services (server, client, admin API)
+- `fl-apps`: Contains FL app templates and utility scripts
+- `fl-tutorials`: Contains end-to-end tutorial examples (xray classification, spleen seg/eval, diffusion)
 - `trust`: Contains the services that would be deployed in individual trust environments.
   - `data-access-api`: Contains the data access API service
   - `imaging-api`: Contains the imaging API service
@@ -410,9 +448,10 @@ The repository is organised as follows:
   - `orthanc`: Contains a mocked PACS service (uses [Orthanc](https://www.orthanc-server.com/))
   - `trust-api`: Contains the trust API service
   - `xnat`: Contains a mocked [XNAT](https://www.xnat.org/) service
-- `flip-utils`: The `flip` Python package — platform logic, NVFLARE components, Flower helpers (migrated from `flip-fl-base`)
-- `fl_services`: Docker images for FL networks — `fl-server`, `fl-client`, `fl-api-base`, `fl-base` (migrated from `flip-fl-base`)
-- `fl-apps`: FL job-type implementations (`standard`, `evaluation`, `diffusion_model`, `fed_opt`) and runnable tutorials
+- `flip-utils`: The `flip` Python package — platform logic, NVFLARE components, Flower helpers
+- `fl-services`: Docker images for FL networks — `fl-server`, `fl-client`, `fl-api-base`, `fl-base`
+- `fl-apps`: FL job-type implementations / app templates (`standard`, `evaluation`, `diffusion_model`, `fed_opt`)
+- `fl-tutorials`: Runnable end-to-end tutorial examples
 
 ### Trust Authentication
 

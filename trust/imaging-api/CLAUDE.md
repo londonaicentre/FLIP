@@ -13,6 +13,6 @@ FastAPI service for DICOM image retrieval from PACS (Orthanc/XNAT). Receives req
 ## Commands
 
 ```bash
-make test        # ruff + mypy + pytest (unit + integration)
+make test        # ruff + mypy + pytest (unit only — no integration target)
 make unit_test   # Unit tests only
 ```

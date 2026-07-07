@@ -12,7 +12,7 @@
 -->
 
 <template>
-    <div class="p-4 border-t border-gray-200 xl:p-8 bg-body dark:bg-gray-800">
+    <div class="p-4 border-t border-gray-200 xl:p-8 bg-body dark:bg-dark-surface">
         <slot />
     </div>
 </template>

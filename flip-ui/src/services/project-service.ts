@@ -79,6 +79,10 @@ export type IProject = {
     approvedTrusts?: IProjectTrust[];
     users: IProjectUser[]
     status: ProjectStatus
+    // Whether DICOMs are converted to NIfTI on import. Set at creation and
+    // immutable thereafter. Only the project-detail endpoint surfaces it, so
+    // it's optional (the list endpoint omits it).
+    dicom_to_nifti?: boolean;
 }
 
 export interface IProjectCreate {

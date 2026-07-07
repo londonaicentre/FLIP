@@ -150,6 +150,14 @@ class Http {
         return this.http.put<I, R>(url, data, config);
     }
 
+    patch<T = unknown, I = unknown, R = IResponse<T>>(
+        url: string,
+        data?: I,
+        config?: AxiosRequestConfig
+    ): Promise<R> {
+        return this.http.patch<I, R>(url, data, config);
+    }
+
     delete<T = unknown, R = IResponse<T>>(
         url: string,
         config?: AxiosRequestConfig

@@ -16,16 +16,16 @@ import { mount } from "@vue/test-utils";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ref } from "vue";
 
-import { ITrustStatus } from "@/services/trust-status-service";
+import { ITrustResponse } from "@/services/trust-service";
 
 import ConnectionStatus from "../ConnectionStatus.vue";
 
 // Capture the (key, fetcher, options) the page wires SWRV with, so a test can
-// assert it polls the authenticated /trust/status endpoint rather than the
-// admin-only /admin/trusts (regression for #557).
+// assert it polls the authenticated, consolidated /trust endpoint (under its own
+// SWRV cache key) rather than the admin-only /admin/trusts (regression for #557).
 const { swrvCalls } = vi.hoisted(() => ({ swrvCalls: [] as unknown[][] }));
 
-const mockSwrvData = ref<ITrustStatus[] | undefined>(undefined);
+const mockSwrvData = ref<ITrustResponse[] | undefined>(undefined);
 
 vi.mock("swrv", () => ({
     default: (...args: unknown[]) => {
@@ -69,7 +69,7 @@ const stubs = {
 const now = Date.now();
 const seconds = (n: number) => new Date(now - n * 1000).toISOString();
 
-const fixture: ITrustStatus[] = [
+const fixture: ITrustResponse[] = [
     {
         id: "t1",
         name: "Zebra NHS Trust",
@@ -194,12 +194,14 @@ describe("ConnectionStatus", () => {
         expect(wrapper.find("[data-test='add-trust-btn']").exists()).toBe(false);
     });
 
-    it("sources statuses from the authenticated /trust/status endpoint, not admin-only /admin/trusts", () => {
+    it("sources statuses from the authenticated /trust endpoint, not admin-only /admin/trusts", () => {
         // #557: a non-admin polling /admin/trusts gets a 403 → perpetual spinner.
-        // The page must use the non-admin connection-status endpoint instead.
+        // The page must use the non-admin endpoint instead — post-#609 the
+        // consolidated GET /trust, fetched here under a distinct SWRV cache key
+        // so its 15s poll stays independent of the app-wide /trust bootstrap.
         mockSwrvData.value = fixture;
         mountPage({ permissions: [] });
-        expect(swrvCalls[0][0]).toBe("/trust/status");
+        expect(swrvCalls[0][0]).toBe("trust-connection-status");
     });
 
     it("lets a non-admin (Researcher / Viewer) load trust statuses with no Add Trust control", async () => {
@@ -250,6 +252,40 @@ describe("ConnectionStatus", () => {
         // is implementation-defined; the contract is: it does NOT show a relative
         // time like "ago"). We assert the negative.
         expect(wrapper.find("[data-test='trust-heartbeat']").text()).not.toContain("ago");
+    });
+
+    it("gives non-offline trust rows the same dark surface as the table header", async () => {
+        // Zebra (first fixture entry) is online — no red tint applies.
+        mockSwrvData.value = [fixture[0]];
+        const wrapper = mountPage();
+        await wrapper.vm.$nextTick();
+        const row = wrapper.find("[data-test='trust-row']");
+        expect(row.classes().some(c => c.startsWith("bg-red"))).toBe(false);
+        expect(row.classes()).toContain("dark:bg-dark-surface");
+    });
+
+    it("renders the radial topology on the plain card surface with dark-visible labels", async () => {
+        mockSwrvData.value = fixture;
+        const wrapper = mountPage();
+        await wrapper.vm.$nextTick();
+        await wrapper.find("[data-test='view-toggle-radial']").trigger("click");
+
+        // The bespoke gradient panel (off-token blue-grey in dark mode) is gone —
+        // the topology sits directly on the card surface like every other card.
+        expect(wrapper.find(".connection-topology-card").exists()).toBe(false);
+
+        // SVG labels swap fills per mode instead of hard-coded light-mode hexes.
+        const svg = wrapper.find("[data-test='connection-radial-svg']");
+        const names = svg.findAll("text.fill-gray-700");
+        expect(names.length).toBeGreaterThan(0);
+        for (const name of names) {
+            expect(name.classes()).toContain("dark:fill-gray-100");
+        }
+        const counts = svg.findAll("text.fill-gray-500");
+        expect(counts.length).toBeGreaterThan(0);
+        for (const count of counts) {
+            expect(count.classes()).toContain("dark:fill-gray-300");
+        }
     });
 
     it("toggles to the radial topology view when its tab is clicked", async () => {

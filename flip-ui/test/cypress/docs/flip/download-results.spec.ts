@@ -57,10 +57,7 @@ describe("docs: download results", () => {
         cy.wait("@getModel");
         cy.demoPause();
 
-        cy.getBySel("user-btn").demoClick();
-        cy.demoPause();
-
-        cy.contains("Download Results").demoClick();
+        cy.getBySel("download-results-btn").demoClick();
         cy.wait("@getResults");
         cy.demoPause(1200);
     });

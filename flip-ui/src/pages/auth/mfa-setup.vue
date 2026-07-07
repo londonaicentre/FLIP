@@ -39,7 +39,7 @@ meta:
                 Can't scan? Enter this secret manually
             </summary>
             <code
-                class="block px-2 py-1 mt-2 font-mono break-all bg-gray-100 rounded dark:bg-gray-800"
+                class="block px-2 py-1 mt-2 font-mono break-all bg-gray-100 rounded dark:bg-dark-surface"
                 data-test="mfa-shared-secret"
             >{{ sharedSecret }}</code>
         </details>

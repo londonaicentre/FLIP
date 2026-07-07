@@ -79,6 +79,10 @@ class FLJob(SQLModel, table=True):
     created: Annotated[datetime, Field(default_factory=datetime.utcnow)]
     started: datetime | None = Field(default=None)
     completed: datetime | None = Field(default=None)
+    # FL-backend-assigned job identifier, treated as an opaque string the hub never parses (it only persists
+    # and equality-matches it). Format varies by backend: a UUID-like string for NVFLARE, a stringified
+    # integer run-id for Flower. NULL until the job is submitted to the backend (see fl_service.submit_job).
+    # Distinct from `id` above, which is the hub's own UUID primary key for the job record.
     fl_backend_job_id: str | None = None
 
     scheduler: Optional["FLScheduler"] = Relationship(back_populates="job")
@@ -296,8 +300,8 @@ class FLKitSlot(SQLModel, table=True):
     Operators get matching ``services/<slot_name>/`` dirs on every net's workspace —
     one global slot row covers all nets, so the assignment doesn't need a net_id column.
 
-    Lifecycle: rows are seeded from ``FL_KIT_SLOT_NAMES`` (one per pre-provisioned slot
-    in flip-fl-base). ``POST /admin/trusts`` claims the next ``assigned_to_trust_id IS
+    Lifecycle: rows are seeded from ``FL_KIT_SLOT_NAMES`` (one per pre-provisioned FL
+    kit slot). ``POST /admin/trusts`` claims the next ``assigned_to_trust_id IS
     NULL`` row in the same transaction as the trust insert.
     """
 

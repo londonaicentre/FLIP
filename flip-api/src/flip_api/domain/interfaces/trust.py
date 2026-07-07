@@ -20,19 +20,14 @@ from flip_api.domain.schemas.users import CognitoUser
 # Interfaces
 
 
-class IBasicTrust(BaseModel):
-    id: UUID
-    name: str
-    code: str | None = None
-
-
 class ITrustStatus(BaseModel):
-    """Connection-status view of a trust, readable by any authenticated user.
+    """Trust list item with connection status, readable by any authenticated user.
 
-    Powers the Connection Status page (trust table + topology). Every field is
-    benign trust metadata — no secrets — so the endpoint that returns this
-    (GET /trust/status) is intentionally not admin-gated. Creating a trust
-    (POST /admin/trusts) stays admin-only.
+    Backs ``GET /trust`` — the single list-of-trusts endpoint — powering both the
+    trust pickers (project staging, cohort query, charts) and the Connection
+    Status page (trust table + topology). Every field is benign trust metadata —
+    no secrets — so the endpoint is intentionally not admin-gated. Creating a
+    trust (``POST /admin/trusts``) stays admin-only.
     """
 
     id: UUID
@@ -63,7 +58,7 @@ class ICreatedTrust(BaseModel):
 
     `fl_kit_slot` is the pre-provisioned FL participant identity assigned to this
     trust from the shared pool. The operator's containers mount the matching
-    ``workspace/net-N/services/<fl_kit_slot>/`` dirs from flip-fl-base; this is the
+    ``workspace/net-N/services/<fl_kit_slot>/`` provisioned kit dirs; this is the
     name the FL server sees on registration (independent of `name`).
     """
 

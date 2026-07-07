@@ -16,6 +16,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 import boto3
+from boto3.exceptions import S3UploadFailedError
 from botocore.exceptions import ClientError, EndpointConnectionError
 
 from flip_api.config import get_settings
@@ -34,8 +35,12 @@ _MULTIPART_OVERHEAD_BUFFER_BYTES = 16 * 1024
 
 # Upper bound on PUT pre-signed URL lifetime. A leaked URL is a writable
 # capability against the upload bucket, so the leak window must stay tight.
-# 600s is the security ceiling — callers may pass less.
-MAX_PUT_PRESIGNED_URL_TTL_SECONDS = 600
+# 1800s (30 min) is the security ceiling — callers may pass less. It was
+# raised from 600s to accommodate larger model-file uploads (up to the
+# MAX_MODEL_FILE_BYTES cap): an upload can't reliably finish inside a
+# 10-minute window on a typical link, and an expired policy aborts the
+# transfer at the S3 edge. Moving this value requires a security review.
+MAX_PUT_PRESIGNED_URL_TTL_SECONDS = 1800
 
 
 def parse_s3_path(s3_path: str) -> tuple[str, str]:
@@ -312,6 +317,33 @@ class S3Client:
                 return False
             logger.error(f"Error checking if object {key} exists in bucket {bucket}: {e}")
             raise
+
+    def upload_file(self, local_path: str, s3_path: str) -> None:
+        """
+        Upload a local file to S3.
+
+        Used by the FL app bundler to copy repository-owned base application
+        templates (read from the local ``FL_APP_BASE_DIR`` tree) into the
+        destination bundle bucket, replacing the former S3-to-S3 copy from the
+        base bucket (FLIP#724).
+
+        Args:
+            local_path (str): Absolute path of the local file to upload.
+            s3_path (str): Full destination S3 path (e.g., ``s3://bucket-name/key``).
+
+        Raises:
+            Exception: If the upload fails.
+        """
+        try:
+            bucket, key = parse_s3_path(s3_path)
+            # boto3's managed upload wraps S3-side failures (AccessDenied, NoSuchBucket, …) in
+            # S3UploadFailedError — a boto3.exceptions type, not a botocore ClientError — so it must
+            # be caught explicitly alongside ClientError; OSError covers a local-file read failure.
+            self.client.upload_file(local_path, bucket, key)
+            logger.info(f"Successfully uploaded {local_path} to {s3_path}")
+        except (S3UploadFailedError, ClientError, OSError) as e:
+            logger.error(f"Error uploading {local_path} to {s3_path}: {e}")
+            raise Exception(f"Unable to upload file {local_path} to {s3_path}: {e}") from e
 
     def copy_object(self, source_s3_path: str, dest_s3_path: str) -> None:
         """

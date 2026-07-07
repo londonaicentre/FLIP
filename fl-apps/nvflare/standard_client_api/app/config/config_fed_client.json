@@ -1,0 +1,65 @@
+{
+  "components": [
+    {
+      "args": {},
+      "id": "flip_client_event_handler",
+      "path": "flip.nvflare.components.flip_client_event_handler.ClientEventHandler"
+    },
+    {
+      "args": {},
+      "id": "flip_analytics_bridge",
+      "path": "flip.nvflare.components.flip_analytics_bridge.FlipAnalyticsBridge"
+    }
+  ],
+  "executors": [
+    {
+      "executor": {
+        "args": {},
+        "path": "flip.nvflare.components.cleanup.CleanupImages"
+      },
+      "tasks": [
+        "init_training",
+        "post_validation"
+      ]
+    },
+    {
+      "executor": {
+        "args": {
+          "submit_model_task_name": "",
+          "task_script_args": "--project_id {project_id}",
+          "task_script_path": "custom/trainer.py"
+        },
+        "path": "nvflare.app_common.executors.in_process_client_api_executor.InProcessClientAPIExecutor"
+      },
+      "tasks": [
+        "train",
+        "validate"
+      ]
+    }
+  ],
+  "format_version": 2,
+  "local_rounds": 1,
+  "project_id": "",
+  "query": "SELECT * FROM Table;",
+  "task_data_filters": [],
+  "task_result_filters": [
+    {
+      "filters": [
+        {
+          "args": {
+            "data_kinds": [
+              "WEIGHT_DIFF",
+              "WEIGHTS"
+            ],
+            "gamma": 2.0,
+            "percentile": 95
+          },
+          "path": "flip.nvflare.components.custom_percentile_privacy.PercentilePrivacy"
+        }
+      ],
+      "tasks": [
+        "train"
+      ]
+    }
+  ]
+}

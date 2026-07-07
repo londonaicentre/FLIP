@@ -16,7 +16,7 @@ on:
   push:
     paths:
       - "flip-utils/**"
-      - "fl_services/fl-api-base/**"
+      - "fl-services/nvflare/fl-api-base/**"
       - ".github/workflows/unit-tests.yml"
 
 permissions:
@@ -33,7 +33,7 @@ jobs:
 
         steps:
             - name: Checkout repository
-              uses: actions/checkout@v4
+              uses: actions/checkout@v5
 
             - name: Set up Python 3.12
               uses: actions/setup-python@v5
@@ -59,7 +59,10 @@ jobs:
               with:
                   files: ./coverage.xml
                   flags: flip
-                  fail_ci_if_error: true
+                  # Non-blocking: forks have no CODECOV_TOKEN (upstream secrets are
+                  # not shared), so a failed upload must not fail otherwise-green CI.
+                  # Matches every other test workflow in this repo.
+                  fail_ci_if_error: false
               env:
                   CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
@@ -69,11 +72,11 @@ jobs:
         environment: flip
         defaults:
             run:
-                working-directory: ./fl_services/fl-api-base
+                working-directory: ./fl-services/nvflare/fl-api-base
 
         steps:
             - name: Checkout repository
-              uses: actions/checkout@v4
+              uses: actions/checkout@v5
 
             - name: Set up Python 3.12
               uses: actions/setup-python@v5
@@ -100,6 +103,9 @@ jobs:
               with:
                   files: ./coverage.xml
                   flags: api
-                  fail_ci_if_error: true
+                  # Non-blocking: forks have no CODECOV_TOKEN (upstream secrets are
+                  # not shared), so a failed upload must not fail otherwise-green CI.
+                  # Matches every other test workflow in this repo.
+                  fail_ci_if_error: false
               env:
                   CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}

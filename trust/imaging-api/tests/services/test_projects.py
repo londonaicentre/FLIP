@@ -35,7 +35,7 @@ from imaging_api.services.projects import (
     set_project_prearchive_settings,
     to_create_project,
 )
-from imaging_api.utils.exceptions import AlreadyExistsError, NotFoundError
+from imaging_api.utils.exceptions import AlreadyExistsError, NotFoundError, XnatFetchError
 
 
 @pytest.fixture
@@ -602,9 +602,36 @@ def test_get_experiments_success(mock_get_project, mock_get, headers):
 @patch("imaging_api.services.projects.get_project")
 def test_get_experiments_failure(mock_get_project, mock_get, headers):
     mock_get_project.return_value = Project(**_PROJECT_DICT)
-    mock_get.return_value = MagicMock(status_code=500, text="Error")
-    with pytest.raises(Exception, match="XNAT experiments fetch failed"):
+    # A real XNAT non-200 serves an HTML/plain-text body, so .json() raises. The status must be
+    # checked before the body is parsed, otherwise the JSON error masks the true HTTP status.
+    mock_get.return_value = MagicMock(
+        status_code=500, text="Error", json=MagicMock(side_effect=ValueError("no json")),
+    )
+    with pytest.raises(XnatFetchError, match="XNAT experiments fetch failed"):
         get_experiments("TEST", headers)
+
+
+@patch("imaging_api.services.projects.requests.get")
+@patch("imaging_api.services.projects.get_project")
+def test_get_experiments_uses_unfiltered_global_listing(mock_get_project, mock_get, headers):
+    # Regression guard: get_experiments must query the GLOBAL experiments endpoint filtered by
+    # project, NOT the project-scoped /data/projects/{id}/experiments. The project-scoped listing
+    # is filtered by per-data-type element security, so sessions whose modality is not registered
+    # there (e.g. xnat:dxSessionData for chest X-rays) are silently omitted and the import shows
+    # "0 imported". The global listing returns identical fields without that filter.
+    mock_get_project.return_value = Project(**_PROJECT_DICT)
+    mock_get.return_value = MagicMock(
+        status_code=200,
+        json=MagicMock(return_value={"ResultSet": {"Result": []}}),
+    )
+
+    get_experiments("TEST", headers)
+
+    called = mock_get.call_args
+    # Global endpoint, project passed as a (URL-encoded) query parameter — NOT the project-scoped path.
+    assert called.args[0].endswith("/data/experiments")
+    assert called.kwargs["params"] == {"project": "TEST"}
+    assert "/data/projects/TEST/experiments" not in called.args[0]
 
 
 # ===========================================================================

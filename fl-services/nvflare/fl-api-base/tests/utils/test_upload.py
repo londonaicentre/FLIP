@@ -1,0 +1,380 @@
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+from unittest.mock import MagicMock, patch
+
+import pytest
+import requests
+from fastapi import HTTPException
+
+from fl_api.utils.schemas import UploadAppRequest
+from fl_api.utils.upload import upload_application, validate_config
+
+TEST_MODEL_ID = "c7f72374-0752-473f-a28f-592e4d8b7a47"
+TMP_PATH_UPLOAD_DIR = "/tmp/tests/_upload_dir"
+
+
+# Tests in upload_app.
+@pytest.fixture
+def mock_upload_correct_request():
+    base = f"https://test.local/bundles/{TEST_MODEL_ID}"
+    return UploadAppRequest(
+        bundle_urls=[
+            f"{base}/app/config/config_fed_server.json",
+            f"{base}/app/config/config_fed_client.json",
+            f"{base}/app/custom/config.json",
+            f"{base}/app/custom/trainer.py",
+            f"{base}/app/custom/validator.py",
+            f"{base}/app/custom/models.py",
+        ],
+        project_id="123456789",
+        cohort_query="SELECT * FROM patients WHERE age > 60",
+        trusts=["Trust_1", "Trust_2"],
+    )
+
+
+@pytest.fixture
+def mock_upload_multiple_apps_request():
+    base = f"https://test.local/bundles/{TEST_MODEL_ID}"
+
+    return UploadAppRequest(
+        bundle_urls=[
+            # Default app
+            f"{base}/app/config/config_fed_server.json",
+            f"{base}/app/config/config_fed_client.json",
+            f"{base}/app/custom/trainer.py",
+            f"{base}/app/custom/models.py",
+            # Per-trust app: Trust 1
+            f"{base}/app-trust1/config/config_fed_server.json",
+            f"{base}/app-trust1/config/config_fed_client.json",
+            f"{base}/app-trust1/custom/trainer.py",
+            f"{base}/app-trust1/custom/models.py",
+            # Per-trust app: Trust 2
+            f"{base}/app-trust2/config/config_fed_server.json",
+            f"{base}/app-trust2/config/config_fed_client.json",
+            f"{base}/app-trust2/custom/trainer.py",
+            f"{base}/app-trust2/custom/models.py",
+            # Meta file for multiple app folders
+            f"{base}/meta.json",
+        ],
+        project_id="123456789",
+        cohort_query="SELECT * FROM patients WHERE age > 60",
+        trusts=["Trust_1", "Trust_2"],
+    )
+
+
+@pytest.fixture
+def mock_upload_multiple_apps_request_missing_meta_json():
+    base = f"https://test.local/bundles/{TEST_MODEL_ID}"
+
+    return UploadAppRequest(
+        bundle_urls=[
+            # Default app
+            f"{base}/app/config/config_fed_server.json",
+            f"{base}/app/config/config_fed_client.json",
+            f"{base}/app/custom/trainer.py",
+            f"{base}/app/custom/models.py",
+            # Per-trust app: Trust 1
+            f"{base}/app-trust1/config/config_fed_server.json",
+            f"{base}/app-trust1/config/config_fed_client.json",
+            f"{base}/app-trust1/custom/trainer.py",
+            f"{base}/app-trust1/custom/models.py",
+            # Per-trust app: Trust 2
+            f"{base}/app-trust2/config/config_fed_server.json",
+            f"{base}/app-trust2/config/config_fed_client.json",
+            f"{base}/app-trust2/custom/trainer.py",
+            f"{base}/app-trust2/custom/models.py",
+            # ❌ Intentionally missing:
+            # f"{base}/meta.json"
+        ],
+        project_id="123456789",
+        cohort_query="SELECT * FROM patients WHERE age > 60",
+        trusts=["Trust_1", "Trust_2"],
+    )
+
+
+@pytest.fixture
+def mock_requests_get_success():
+    """
+    Patches fl_api.utils.upload.requests.get so it always returns a response
+    with `.content` (and optional `.raise_for_status`).
+    """
+    with patch("fl_api.utils.upload.requests.get") as mock_get:
+        resp = MagicMock()
+        resp.content = b"mock file content"
+        resp.raise_for_status = MagicMock()
+        resp.is_redirect = False
+        resp.is_permanent_redirect = False
+        # _stage_server_checkpoint streams via `with requests.get(...) as resp:`, so the
+        # response is bound from __enter__(); point it back at the same configured mock so the
+        # streaming path sees is_redirect=False too (the plain path uses the return_value directly).
+        resp.__enter__.return_value = resp
+        resp.iter_content.return_value = [resp.content]
+        mock_get.return_value = resp
+        yield mock_get
+
+
+def test_error_requests_get(
+    mock_requests_get_success,
+    mock_upload_correct_request,
+):
+    # Test when requests.get fails with an error
+    mock_requests_get_success.side_effect = Exception("Network error")
+
+    with pytest.raises(Exception, match="Network error") as exc_info:
+        _ = upload_application(TEST_MODEL_ID, mock_upload_correct_request, TMP_PATH_UPLOAD_DIR)
+
+    assert "Network error" in str(exc_info.value)
+
+
+@patch("fl_api.utils.upload.configure_environment", MagicMock())
+@patch("fl_api.utils.upload.configure_meta", MagicMock())
+@patch("fl_api.utils.upload.configure_server", MagicMock())
+@patch("fl_api.utils.upload.configure_client", MagicMock())
+@patch("fl_api.utils.upload.configure_config", MagicMock())
+@patch("fl_api.utils.upload.validate_config", MagicMock())
+@patch("fl_api.utils.upload.read_config", MagicMock())
+def test_upload_app_success(
+    mock_requests_get_success,
+    mock_upload_correct_request,
+):
+    response = upload_application(TEST_MODEL_ID, mock_upload_correct_request, TMP_PATH_UPLOAD_DIR)
+
+    assert "Application uploaded successfully" in response["message"]
+
+
+@patch("fl_api.utils.upload.configure_environment", MagicMock())
+@patch("fl_api.utils.upload.configure_meta", MagicMock())
+@patch("fl_api.utils.upload.configure_server", MagicMock())
+@patch("fl_api.utils.upload.configure_client", MagicMock())
+@patch("fl_api.utils.upload.configure_config", MagicMock())
+@patch("fl_api.utils.upload.validate_config", MagicMock())
+@patch("fl_api.utils.upload.read_config", MagicMock())
+def test_upload_multiple_apps_success(
+    mock_requests_get_success,
+    mock_upload_multiple_apps_request,
+):
+    response = upload_application(TEST_MODEL_ID, mock_upload_multiple_apps_request, TMP_PATH_UPLOAD_DIR)
+
+    assert "Application uploaded successfully" in response["message"]
+
+
+def test_upload_multiple_apps_missing_meta_json(
+    mock_requests_get_success,
+    mock_upload_multiple_apps_request_missing_meta_json,
+):
+    with pytest.raises(FileNotFoundError) as exc_info:
+        _ = upload_application(TEST_MODEL_ID, mock_upload_multiple_apps_request_missing_meta_json, TMP_PATH_UPLOAD_DIR)
+
+    assert "Application must contain a meta.json file" in str(exc_info.value)
+
+
+@patch("fl_api.utils.upload.configure_environment", MagicMock())
+@patch("fl_api.utils.upload.configure_meta", MagicMock())
+@patch("fl_api.utils.upload.configure_server", MagicMock())
+@patch("fl_api.utils.upload.configure_client", MagicMock())
+@patch("fl_api.utils.upload.configure_config", MagicMock())
+@patch("fl_api.utils.upload.validate_config", MagicMock())
+@patch("fl_api.utils.upload.read_config", MagicMock())
+def test_upload_stages_server_checkpoint_off_job(mock_requests_get_success, tmp_path, monkeypatch):
+    """A bundle file under ``/server_checkpoints/`` is staged on the shared checkpoint volume
+    (``SERVER_CHECKPOINT_ROOT/<model_id>/<file>``), NOT placed in the NVFLARE job dir — so it is
+    never part of the submitted job and never deployed to clients."""
+    ckpt_root = tmp_path / "server-checkpoints"
+    job_root = tmp_path / "jobs"
+    monkeypatch.setenv("SERVER_CHECKPOINT_ROOT", str(ckpt_root))
+
+    base = f"https://test.local/bundles/{TEST_MODEL_ID}"
+    body = UploadAppRequest(
+        bundle_urls=[
+            f"{base}/app/config/config_fed_server.json",
+            f"{base}/app/config/config_fed_client.json",
+            f"{base}/app/custom/config.json",
+            f"{base}/app/custom/evaluator.py",
+            f"{base}/server_checkpoints/weights.pt",
+        ],
+        project_id="123456789",
+        cohort_query="SELECT 1",
+        trusts=["Trust_1", "Trust_2"],
+    )
+
+    response = upload_application(TEST_MODEL_ID, body, str(job_root))
+
+    assert "Application uploaded successfully" in response["message"]
+    # Checkpoint staged on the shared volume, keyed by model_id.
+    assert (ckpt_root / TEST_MODEL_ID / "weights.pt").is_file()
+    # And NOT anywhere under the NVFLARE job dir (so it is never shipped to clients).
+    assert not list((job_root / TEST_MODEL_ID).rglob("weights.pt"))
+
+
+@patch("fl_api.utils.upload.configure_environment", MagicMock())
+@patch("fl_api.utils.upload.configure_meta", MagicMock())
+@patch("fl_api.utils.upload.configure_server", MagicMock())
+@patch("fl_api.utils.upload.configure_client", MagicMock())
+@patch("fl_api.utils.upload.configure_config", MagicMock())
+@patch("fl_api.utils.upload.validate_config", MagicMock())
+@patch("fl_api.utils.upload.read_config", MagicMock())
+def test_upload_clears_stale_server_checkpoints(
+    mock_requests_get_success, mock_upload_correct_request, tmp_path, monkeypatch
+):
+    """A re-upload clears any previously-staged server checkpoints for the model, so a bundle that
+    no longer ships a checkpoint cannot leave a stale one behind for the fl-server to load."""
+    ckpt_root = tmp_path / "server-checkpoints"
+    stale = ckpt_root / TEST_MODEL_ID / "stale-weights.pt"
+    stale.parent.mkdir(parents=True)
+    stale.write_bytes(b"old")
+    monkeypatch.setenv("SERVER_CHECKPOINT_ROOT", str(ckpt_root))
+
+    response = upload_application(TEST_MODEL_ID, mock_upload_correct_request, str(tmp_path / "jobs"))
+
+    assert "Application uploaded successfully" in response["message"]
+    assert not stale.exists()
+
+
+def test_upload_rejects_redirect_on_server_checkpoint_fetch(mock_requests_get_success, tmp_path, monkeypatch):
+    """A 3xx on the staged-checkpoint stream is rejected like any other bundle fetch: the redirect
+    target was never seen by validate_bundle_url (SSRF), so nothing must be written."""
+    ckpt_root = tmp_path / "server-checkpoints"
+    monkeypatch.setenv("SERVER_CHECKPOINT_ROOT", str(ckpt_root))
+    mock_requests_get_success.return_value.is_redirect = True
+
+    body = UploadAppRequest(
+        bundle_urls=[f"https://test.local/bundles/{TEST_MODEL_ID}/server_checkpoints/weights.pt"],
+        project_id="123456789",
+        cohort_query="SELECT 1",
+        trusts=["Trust_1"],
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        upload_application(TEST_MODEL_ID, body, str(tmp_path / "jobs"))
+    assert exc.value.status_code == 400
+    assert not (ckpt_root / TEST_MODEL_ID / "weights.pt").exists()
+
+
+def test_validate_config_valid():
+    valid_config = {
+        "LOCAL_ROUNDS": 5,
+        "GLOBAL_ROUNDS": 10,
+        "IGNORE_RESULT_ERROR": True,
+        "AGGREGATOR": "InTimeAccumulateWeightedAggregator",
+        "AGGREGATION_WEIGHTS": {"client1": 1.0},
+    }
+    config = validate_config(valid_config)
+    assert config.LOCAL_ROUNDS == 5
+    assert config.GLOBAL_ROUNDS == 10
+    assert config.IGNORE_RESULT_ERROR is True
+    assert config.AGGREGATOR == "InTimeAccumulateWeightedAggregator"
+    assert config.AGGREGATION_WEIGHTS == {"client1": 1.0}
+
+
+def test_validate_config_invalid_type():
+    with pytest.raises(ValueError, match="Provided config is not a valid dictionary"):
+        validate_config("not-a-dict")
+
+
+def test_validate_config_skips_invalid_rounds():
+    config = {
+        "LOCAL_ROUNDS": -1,
+        "GLOBAL_ROUNDS": 0,
+        "IGNORE_RESULT_ERROR": True,
+        "AGGREGATOR": "InTimeAccumulateWeightedAggregator",
+    }
+    result = validate_config(config)
+    assert result.LOCAL_ROUNDS is None
+    assert result.GLOBAL_ROUNDS is None
+
+
+def test_validate_config_invalid_aggregator():
+    invalid_config = {
+        "LOCAL_ROUNDS": 5,
+        "GLOBAL_ROUNDS": 10,
+        "AGGREGATOR": "invalid_agg",
+    }
+    with pytest.raises(ValueError, match="Unknown aggregator: invalid_agg"):
+        validate_config(invalid_config)
+
+
+def test_validate_config_accepts_aggregate_only_regex():
+    config = validate_config({"AGGREGATE_ONLY_REGEX": "omni_heads"})
+    assert config.AGGREGATE_ONLY_REGEX == "omni_heads"
+
+
+def test_validate_config_rejects_invalid_aggregate_only_regex():
+    with pytest.raises(ValueError, match="not a valid regex"):
+        validate_config({"AGGREGATE_ONLY_REGEX": "([unclosed"})
+
+
+def test_validate_config_rejects_non_string_aggregate_only_regex():
+    with pytest.raises(ValueError, match="must be a string regex"):
+        validate_config({"AGGREGATE_ONLY_REGEX": 123})
+
+
+def test_validate_config_aggregate_only_regex_defaults_none():
+    assert validate_config({"LOCAL_ROUNDS": 3}).AGGREGATE_ONLY_REGEX is None
+
+
+def test_validate_config_rejects_non_dict_weights():
+    with pytest.raises(ValueError, match="AGGREGATION_WEIGHTS must be a dictionary"):
+        validate_config({"AGGREGATION_WEIGHTS": ["client1"]})
+
+
+def test_validate_config_invalid_weights():
+    bad_weights = {
+        "AGGREGATION_WEIGHTS": {"client1": "not-a-number"},
+        "AGGREGATOR": "InTimeAccumulateWeightedAggregator",
+    }
+    with pytest.raises(ValueError, match="Invalid weight"):
+        validate_config(bad_weights)
+
+
+def test_upload_app_rejects_non_https_bundle_url():
+    """Non-https bundle URLs (SSRF vector, e.g. the metadata endpoint) are rejected."""
+    body = UploadAppRequest(
+        bundle_urls=[f"http://169.254.169.254/bundles/{TEST_MODEL_ID}/app/custom/trainer.py"],
+        project_id="123456789",
+        cohort_query="SELECT 1",
+        trusts=["Trust_1"],
+    )
+    with pytest.raises(HTTPException) as exc:
+        upload_application(TEST_MODEL_ID, body, TMP_PATH_UPLOAD_DIR)
+    assert exc.value.status_code == 400
+
+
+def test_upload_app_rejects_disallowed_bundle_host(monkeypatch):
+    """When BUNDLE_URL_ALLOWED_HOSTS is set, off-origin bundle URLs are rejected."""
+    monkeypatch.setenv("BUNDLE_URL_ALLOWED_HOSTS", "objectstore.internal")
+    body = UploadAppRequest(
+        bundle_urls=[f"https://test.local/bundles/{TEST_MODEL_ID}/app/custom/trainer.py"],
+        project_id="123456789",
+        cohort_query="SELECT 1",
+        trusts=["Trust_1"],
+    )
+    with pytest.raises(HTTPException) as exc:
+        upload_application(TEST_MODEL_ID, body, TMP_PATH_UPLOAD_DIR)
+    assert exc.value.status_code == 400
+
+
+def test_upload_app_rejects_redirect_response(mock_requests_get_success, mock_upload_correct_request):
+    """A 3xx redirect on a bundle fetch is rejected: it would dodge validate_bundle_url (SSRF)."""
+    mock_requests_get_success.return_value.is_redirect = True
+
+    with pytest.raises(HTTPException) as exc:
+        upload_application(TEST_MODEL_ID, mock_upload_correct_request, TMP_PATH_UPLOAD_DIR)
+    assert exc.value.status_code == 400
+
+
+def test_upload_app_raises_on_http_error_response(mock_requests_get_success, mock_upload_correct_request):
+    """A non-2xx bundle response raises, so its error body is never written as the bundle file."""
+    mock_requests_get_success.return_value.raise_for_status.side_effect = requests.HTTPError("404 Not Found")
+
+    with pytest.raises(requests.HTTPError):
+        upload_application(TEST_MODEL_ID, mock_upload_correct_request, TMP_PATH_UPLOAD_DIR)

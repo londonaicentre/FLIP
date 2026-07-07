@@ -1,0 +1,190 @@
+# Copyright (c) 2026 Flower Labs GmbH
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# Secure (TLS + SuperNode auth) standalone Flower FL dev stack — the secure
+# counterpart of compose.dev.yml.
+# Run after provisioning certs: `make -C fl-services/flower up-secure` (which checks
+# fl-services/flower/provision/creds/net-1 exists first). Cert/key dirs default to net-1's
+# provisioned output; override FLOWER_TLS_CERTS_DIR / FLOWER_SUPERNODE_KEYS_DIR for
+# another net. The central-hub multi-net Flower topology is deploy/compose.development.flower.yml.
+services:
+  # build the flower-fl-base image for a Flower app
+  flwr-base:
+    image: flower-fl-base:dev
+    build:
+      context: ../../
+      dockerfile: fl-services/flower/fl-base/Dockerfile
+      args:
+        LOCAL_DEV: ${LOCAL_DEV:-false}
+    profiles: ["build-only"]
+
+  fl-api:
+    image: flower-fl-api:dev
+    build:
+      context: ../../fl-services/flower/fl-api-flower
+      dockerfile: Dockerfile
+    group_add: &host-gid ["${DOCKER_GID:-1000}"]
+    environment:
+      - ALLOWED_JOB_FOLDERS=${ALLOWED_JOB_FOLDERS:-numpy,3d_spleen_segmentation,3d_spleen_segmentation_evaluation}
+      - SUPERLINK_ADDRESS=${SUPERLINK_ADDRESS:-superlink:9093}
+      - SUPERLINK_ROOT_CERTIFICATES=${SUPERLINK_ROOT_CERTIFICATES:-/certs/ca.crt}
+      - SUPERLINK_HEALTH_ADDRESS=${SUPERLINK_HEALTH_ADDRESS:-superlink:9097}
+      - FLOWER_SRC_ROOT=/app/src
+    volumes:
+      - ../../fl-tutorials/flower:/app/src
+      - ../../fl-services/flower/fl-api-flower/fl_api:/app/fl_api
+      - ../../fl-services/flower/fl-api-flower/tests:/app/tests
+      - ${FLOWER_TLS_CERTS_DIR:-./provision/creds/net-1/certificates}:/certs:ro
+    networks:
+      - flwr-dev-net
+
+  # create a SuperLink service
+  superlink:
+    image: flower-superlink:dev
+    build:
+      context: ../../fl-services/flower/superlink
+      dockerfile: Dockerfile
+      args:
+        BASE_REF: ${BASE_REF:-flower-fl-base:dev}
+    group_add: *host-gid
+    environment:
+      - LOCAL_DEV=true
+      - WORKING_DIR=/app/runs
+    volumes:
+      - ${WORKING_DIR:-/tmp/flwr-dev-runs}:/app/runs
+      # Shared with fl-api: uploaded app bundles (sources + model checkpoints) live
+      # under /app/src/<model_id>; the evaluation ServerApp reads checkpoints from there.
+      - ../../fl-tutorials/flower:/app/src
+      # Mount the TLS certs for secure communication with SuperNodes and the FL API
+      - ${FLOWER_TLS_CERTS_DIR:-./provision/creds/net-1/certificates}:/certs:ro
+    command:
+      - --ssl-ca-certfile
+      - /certs/ca.crt
+      - --ssl-certfile
+      - /certs/server.pem
+      - --ssl-keyfile
+      - /certs/server.key
+      - --enable-supernode-auth
+      - --health-server-address
+      - ${SUPERLINK_HEALTH_SERVER_BIND_ADDRESS:-0.0.0.0:9097}
+    networks:
+      - flwr-dev-net
+
+  # One-shot service to register SuperNode public keys with the SuperLink
+  register-supernode-keys:
+    image: flwr/base:1.32.0-py3.12-ubuntu24.04
+    environment:
+      - FL_API_ADDRESS=${FL_API_ADDRESS:-http://fl-api:8000}
+      - TRUST_NAMES=${TRUST_NAMES:-Trust_1,Trust_2}
+    volumes:
+      - ${FLOWER_TLS_CERTS_DIR:-./provision/creds/net-1/certificates}:/certs:ro
+      - ${FLOWER_SUPERNODE_KEYS_DIR:-./provision/creds/net-1/keys}:/keys:ro
+      # In production the script is baked into the image; for development we mount it
+      # from the in-repo source so it can be edited without rebuilding.
+      - ../../fl-services/flower/register-supernode-keys.sh:/scripts/register-supernode-keys.sh:ro
+    entrypoint: ["/bin/bash", "/scripts/register-supernode-keys.sh"]
+    depends_on:
+      - superlink
+      - fl-api
+    networks:
+      - flwr-dev-net
+
+  # create two SuperNode services with different node configs
+  supernode-1:
+    image: flower-supernode:dev
+    build:
+      context: ../../fl-services/flower/supernode
+      dockerfile: Dockerfile
+      args:
+        BASE_REF: ${BASE_REF:-flower-fl-base:dev}
+    working_dir: /app
+    group_add: *host-gid
+    environment:
+      - SUPERNODE_NAME=Trust_1
+      - LOCAL_DEV=true
+      - DEV_IMAGES_DIR=/images
+      - DEV_DATAFRAME=/dataframe_file
+      - WORKING_DIR=/app/runs
+    volumes:
+      - ${DEV_IMAGES_DIR:-/tmp/flwr-dev-images}:/images
+      - ${DEV_DATAFRAME:-/tmp/flwr-dev-dataframe.csv}:/dataframe_file:ro
+      - ${WORKING_DIR:-/tmp/flwr-dev-runs}:/app/runs
+      # Mount the TLS certs and SuperNode keys for secure communication with SuperLink
+      - ${FLOWER_TLS_CERTS_DIR:-./provision/creds/net-1/certificates}:/certs:ro
+      - ${FLOWER_SUPERNODE_KEYS_DIR:-./provision/creds/net-1/keys}:/keys:ro
+    command:
+      - --root-certificates
+      - /certs/ca.crt
+      - --superlink
+      - superlink:9092
+      - --auth-supernode-private-key
+      - /keys/supernode_credentials_1
+      - --clientappio-api-address
+      - ${SUPERNODE_1_CLIENTAPPIO_API_ADDRESS:-127.0.0.1:9094}
+      - --health-server-address
+      - ${SUPERNODE_1_HEALTH_SERVER_BIND_ADDRESS:-0.0.0.0:9098}
+    deploy:
+      resources:
+        limits:
+          cpus: "4"
+    depends_on:
+      register-supernode-keys:
+        condition: service_completed_successfully
+    networks:
+      - flwr-dev-net
+
+  supernode-2:
+    image: flower-supernode:dev
+    build:
+      context: ../../fl-services/flower/supernode
+      dockerfile: Dockerfile
+      args:
+        BASE_REF: ${BASE_REF:-flower-fl-base:dev}
+    working_dir: /app
+    group_add: *host-gid
+    environment:
+      - SUPERNODE_NAME=Trust_2
+      - LOCAL_DEV=true
+      - DEV_IMAGES_DIR=/images
+      - DEV_DATAFRAME=/dataframe_file
+      - WORKING_DIR=/app/runs
+    volumes:
+      - ${DEV_IMAGES_DIR:-/tmp/flwr-dev-images}:/images
+      - ${DEV_DATAFRAME:-/tmp/flwr-dev-dataframe.csv}:/dataframe_file:ro
+      - ${WORKING_DIR:-/tmp/flwr-dev-runs}:/app/runs
+      # Mount the TLS certs and SuperNode keys for secure communication with SuperLink
+      - ${FLOWER_TLS_CERTS_DIR:-./provision/creds/net-1/certificates}:/certs:ro
+      - ${FLOWER_SUPERNODE_KEYS_DIR:-./provision/creds/net-1/keys}:/keys:ro
+    command:
+      - --root-certificates
+      - /certs/ca.crt
+      - --superlink
+      - superlink:9092
+      - --auth-supernode-private-key
+      - /keys/supernode_credentials_2
+      - --clientappio-api-address
+      - ${SUPERNODE_2_CLIENTAPPIO_API_ADDRESS:-127.0.0.1:9095}
+      - --health-server-address
+      - ${SUPERNODE_2_HEALTH_SERVER_BIND_ADDRESS:-0.0.0.0:9098}
+    deploy:
+      resources:
+        limits:
+          cpus: "4"
+    depends_on:
+      register-supernode-keys:
+        condition: service_completed_successfully
+    networks:
+      - flwr-dev-net
+
+networks:
+  flwr-dev-net:
+    name: flwr-dev-net

@@ -7,7 +7,7 @@ About flip-utils
 ``flip-utils`` is the pip-installable distribution published from this
 repository. Its Python import package is ``flip``, which contains the shared
 platform logic used by FLIP jobs and services including core training logic,
-NVFLARE components, and utility helpers.
+NVFLARE components, Flower helpers, and utility helpers.
 
 The FLIP platform uses this package to power federated learning applications
 across multiple job types: standard federated training, distributed evaluation,
@@ -141,7 +141,7 @@ To test FL applications locally before deploying to production:
       DEV_DATAFRAME=../data/sample_get_dataframe.csv
       JOB_TYPE=standard
 
-2. Place your application files in ``fl-apps/<JOB_TYPE>/app/custom/`` (e.g. fl-apps/standard/app/custom/).
+2. Place your application files in ``fl-apps/nvflare/<JOB_TYPE>/app/custom/`` (e.g. fl-apps/nvflare/standard/app/custom/).
 
 3. Run the simulator in Docker:
 
@@ -191,5 +191,4 @@ the built documentation for complete coverage of all public classes and function
 
 .. note::
 
-   The flip-fl-base repository has been merged into the FLIP monorepo.
    The ``flip-utils`` package lives under ``flip-utils/`` in the `FLIP repository <https://github.com/londonaicentre/FLIP>`_.

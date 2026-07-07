@@ -45,21 +45,21 @@
                 >
                     <div
                         data-test="confirm-modal"
-                        class="inline-block overflow-hidden text-left align-bottom transition-all transform bg-white rounded-lg shadow-xl dark:bg-gray-800 dark:ring-white/20 dark:ring-1 sm:my-8 sm:align-middle sm:max-w-lg sm:w-full"
+                        class="inline-block overflow-hidden text-left align-bottom transition-all transform bg-white rounded-lg shadow-xl dark:bg-dark-surface dark:ring-white/20 dark:ring-1 sm:my-8 sm:align-middle sm:max-w-lg sm:w-full"
                     >
                         <Form
                             v-slot="{meta}"
                             :validation-schema="schema"
                             @submit="continueAction"
                         >
-                            <div class="px-4 pt-5 pb-4 bg-white dark:bg-gray-800 sm:p-6 sm:pb-4">
+                            <div class="px-4 pt-5 pb-4 bg-white dark:bg-dark-surface sm:p-6 sm:pb-4">
                                 <div class="sm:flex sm:items-start">
                                     <div class="w-full text-left">
                                         <DialogTitle as="h3" class="mr-6 text-lg font-bold dark:text-gray-300">
                                             {{ title }}
                                         </DialogTitle>
                                         <div class="mt-2">
-                                            <span class="font-normal leading-5 text-gray-700 dark:text-gray-400">
+                                            <span class="font-normal leading-5 text-gray-700 dark:text-gray-300">
                                                 <slot name="confirmation">{{ confirmationText }}</slot>
                                             </span>
                                         </div>
@@ -74,7 +74,7 @@
                                     </div>
                                 </div>
                             </div>
-                            <div class="flex justify-end px-4 py-3 bg-gray-100 dark:bg-gray-900 sm:px-6">
+                            <div class="flex justify-end px-4 py-3 bg-gray-100 dark:bg-dark-canvas sm:px-6">
                                 <AiButton
                                     :tabindex="0"
                                     class="w-auto"
@@ -99,7 +99,7 @@
                             <div class="absolute top-0 right-0 block pt-4 pr-4">
                                 <button
                                     type="button"
-                                    class="p-1 text-gray-400 bg-white rounded-md dark:bg-gray-700 hover:text-gray-500 dark:hover:text-gray-300 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
+                                    class="p-1 text-gray-400 dark:text-gray-300 bg-white rounded-md dark:bg-dark-raised hover:text-gray-500 dark:hover:text-gray-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
                                     tabindex="0"
                                     :disabled="submitting"
                                     @click="close"

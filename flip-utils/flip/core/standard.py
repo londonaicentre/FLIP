@@ -17,10 +17,6 @@ This module contains the production and development implementations of FLIP
 for the standard, evaluation, and fed_opt job types.
 """
 
-try:
-    from typing import override
-except ImportError:
-    from typing_extensions import override
 import json
 import logging
 import os
@@ -28,7 +24,7 @@ import shutil
 import tempfile
 from datetime import datetime
 from pathlib import Path
-from typing import List, Union
+from typing import override
 from urllib.parse import urlparse
 
 import boto3
@@ -55,6 +51,27 @@ def _trust_internal_headers() -> dict[str, str]:
         the trust-internal service key.
     """
     return {FlipConstants.TRUST_INTERNAL_SERVICE_KEY_HEADER: FlipConstants.TRUST_INTERNAL_SERVICE_KEY}
+
+
+def _join_url(base: object, path: str) -> str:
+    """Join a base URL with a path, tolerating a trailing slash on the base.
+
+    Pydantic v2 serializes a host-only ``HttpUrl`` with a trailing slash
+    (e.g. ``http://data-access-api:8000/``), so naive f-string concatenation
+    with ``/cohort/dataframe`` yields a double slash (``//cohort/dataframe``)
+    that Starlette does not route — producing a spurious ``404 Not Found``.
+    Normalising the base before joining keeps every trust-internal and
+    hub-internal call working regardless of whether the configured URL carries
+    a trailing slash. See FLIP#652.
+
+    Args:
+        base: The base URL (``str`` or pydantic ``HttpUrl``).
+        path: The path to append (a leading slash is optional).
+
+    Returns:
+        str: ``<base-without-trailing-slash>/<path-without-leading-slash>``.
+    """
+    return f"{str(base).rstrip('/')}/{path.lstrip('/')}"
 
 
 def _hub_internal_headers() -> dict[str, str]:
@@ -120,7 +137,7 @@ class FLIPStandardProd(FLIPBase):
             "query": query,
         }
 
-        endpoint = f"{FlipConstants.DATA_ACCESS_API_URL}/cohort/dataframe"
+        endpoint = _join_url(FlipConstants.DATA_ACCESS_API_URL, "cohort/dataframe")
 
         response = requests.post(
             endpoint,
@@ -145,7 +162,7 @@ class FLIPStandardProd(FLIPBase):
         self,
         project_id: str,
         accession_id: str,
-        resource_type: Union[ResourceType, List[ResourceType]] = ResourceType.NIFTI,
+        resource_type: ResourceType | list[ResourceType] = ResourceType.NIFTI,
     ) -> Path:
         """
         Calls the imaging-service to return a filepath that contains images downloaded from XNAT
@@ -171,7 +188,7 @@ class FLIPStandardProd(FLIPBase):
             "accession_id": accession_id,
         }
 
-        endpoint = f"{FlipConstants.IMAGING_API_URL}/download/images/{FlipConstants.NET_ID}"
+        endpoint = _join_url(FlipConstants.IMAGING_API_URL, f"download/images/{FlipConstants.NET_ID}")
 
         for resource in resources:
             if resource != ResourceType.SEGMENTATION:
@@ -205,7 +222,7 @@ class FLIPStandardProd(FLIPBase):
         accession_id: str,
         scan_id: str,
         resource_id: str,
-        files: List[str],
+        files: list[str],
     ) -> None:
         """
         Calls the imaging-service to upload image(s) to XNAT based on the accession number,
@@ -230,7 +247,7 @@ class FLIPStandardProd(FLIPBase):
         if not isinstance(resource_id, str):
             raise TypeError(f"expect resource_id to be string, but got {type(resource_id)}")
 
-        if not isinstance(files, List):
+        if not isinstance(files, list):
             raise TypeError(f"expect files to be List, but got {type(files)}")
 
         self.logger.info(
@@ -245,7 +262,7 @@ class FLIPStandardProd(FLIPBase):
             "files": files,
         }
 
-        endpoint = f"{FlipConstants.IMAGING_API_URL}/upload/images/{FlipConstants.NET_ID}"
+        endpoint = _join_url(FlipConstants.IMAGING_API_URL, f"upload/images/{FlipConstants.NET_ID}")
 
         response = requests.put(
             endpoint,
@@ -271,7 +288,7 @@ class FLIPStandardProd(FLIPBase):
         if Utils.is_valid_uuid(model_id) is False:
             raise ValueError(f"Invalid model ID: {model_id}, cant update model status")
 
-        endpoint = f"{FlipConstants.FLIP_API_INTERNAL_URL}/model/{model_id}/status/{new_model_status.value}"
+        endpoint = _join_url(FlipConstants.FLIP_API_INTERNAL_URL, f"model/{model_id}/status/{new_model_status.value}")
 
         self.logger.info(f"Attempting to update model status to [{new_model_status}]")
         try:
@@ -315,7 +332,7 @@ class FLIPStandardProd(FLIPBase):
             result=value,
         ).model_dump()
 
-        endpoint = f"{FlipConstants.FLIP_API_INTERNAL_URL}/model/{model_id}/metrics"
+        endpoint = _join_url(FlipConstants.FLIP_API_INTERNAL_URL, f"model/{model_id}/metrics")
 
         self.logger.info(f"Attempting to send metrics raised by {client_name}...")
 
@@ -363,7 +380,7 @@ class FLIPStandardProd(FLIPBase):
             log=formatted_exception,
         ).model_dump()
 
-        endpoint = f"{FlipConstants.FLIP_API_INTERNAL_URL}/model/{model_id}/logs"
+        endpoint = _join_url(FlipConstants.FLIP_API_INTERNAL_URL, f"model/{model_id}/logs")
 
         self.logger.info(f"Attempting to send the exception raised by {client_name} to the Central Hub...")
 
@@ -496,7 +513,7 @@ class FLIPStandardDev(FLIPBase):
         self,
         project_id: str,
         accession_id: str,
-        resource_type: Union[ResourceType, List[ResourceType]] = ResourceType.NIFTI,
+        resource_type: ResourceType | list[ResourceType] = ResourceType.NIFTI,
     ) -> Path:
         """
         Returns the path to the image directory for a specific accession ID.
@@ -525,47 +542,47 @@ class FLIPStandardDev(FLIPBase):
         accession_id: str,
         scan_id: str,
         resource_id: str,
-        files: List[str],
+        files: list[str],
     ) -> None:
         """Log only in dev mode - no actual upload."""
-        self.logger.info("[DEV] add_resource is not supported in LOCAL_DEV mode.")
+        self.logger.info(
+            "[DEV] Resource → add %s file(s) to accession=%s scan=%s resource=%s",
+            len(files),
+            accession_id,
+            scan_id,
+            resource_id,
+        )
 
     @override
     def update_status(self, model_id: str, new_model_status: ModelStatus) -> None:
         """Log only in dev mode - no actual status update."""
-        self.logger.info(
-            "[DEV] update_status is not supported in LOCAL_DEV mode."
-            f"Details of the function call: updating model status to {new_model_status}."
-        )
+        self.logger.info("[DEV] Status → %s", new_model_status)
 
     @override
     def send_metrics(self, client_name: str, model_id: str, label: str, value: float, round: int) -> None:
         """Log only in dev mode - no actual metrics sending."""
         self.logger.info(
-            "[DEV] send_metrics is not supported in LOCAL_DEV mode."
-            f"Details of the function call: sending metrics with label {label} and value {value} for {client_name}."
+            "[DEV] Metric → %s=%0.4f (%s, round=%s)",
+            label,
+            value,
+            client_name,
+            round,
         )
 
     @override
     def send_handled_exception(self, formatted_exception: str, client_name: str, model_id: str) -> None:
         """Log only in dev mode - no actual exception sending."""
-        self.logger.info(
-            "[DEV] send_handled_exception is not supported in LOCAL_DEV mode."
-            f"Details of the function call: sending {formatted_exception} for {client_name}."
-        )
+        self.logger.info("[DEV] Exception → reported from %s", client_name)
 
     @override
     def upload_results_to_s3(self, results_folder: Path, model_id: str) -> None:
         """Log only in dev mode - no actual upload."""
         # NOTE FlipConstants.UPLOADED_FEDERATED_DATA_BUCKET is not available in dev mode, so we can't log it here.
-        self.logger.info(
-            "[DEV] upload_results_to_s3 is not supported in LOCAL_DEV mode."
-            f"Details of the function call: uploading results from {results_folder} for model {model_id}."
-        )
+        self.logger.info("[DEV] Upload → results from %s", results_folder)
 
     @override
     def cleanup(self, path: Path) -> None:
         """
         Log only in dev mode - no actual deletion of any files.
         """
-        self.logger.info(f"[DEV] cleanup is not supported in LOCAL_DEV mode. Would have cleaned up path: {path}")
+        self.logger.info("[DEV] Cleanup → %s", path)

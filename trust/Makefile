@@ -61,6 +61,9 @@ endif
 
 include ../deploy/fl_backend.mk
 
+# Host gid for group_add on FL containers reading host-provisioned 640 certs/keys (dev).
+export DOCKER_GID := $(shell id -g)
+
 COMMON_COMPOSE_FILE := deploy/compose_trust.$(__DCKR_SUFFIX).yml
 FL_BACKEND_COMPOSE_FILE := deploy/compose_trust.$(__DCKR_SUFFIX).$(FL_BACKEND).yml
 
@@ -161,6 +164,13 @@ TRUST_VARS = \
 	TRUST_NUMBER=$(TRUST_NUM) \
 	TRUST_NAME="$(or $(TRUST_NAME),$(FL_KIT_SLOT),$(KIT))"
 
+# Non-KIT targets such as `make build` do not load a trust kit, but Docker
+# Compose still validates bind mounts while building images.
+TRUST_BUILD_VARS = \
+	BASE_IMAGES_DOWNLOAD_DIR=$(or $(BASE_IMAGES_DOWNLOAD_DIR),./data/trust) \
+	ORTHANC_STORAGE_DIR=$(or $(ORTHANC_STORAGE_DIR),./orthanc/orthanc-storage-trust1) \
+	FL_KIT_SLOT=$(or $(FL_KIT_SLOT),Trust_1) \
+	FL_KIT_SLOT_NUMBER=$(or $(FL_KIT_SLOT_NUMBER),1)
 
 # Guard: refuse to bring a trust up if its OMOP DB data dir is empty or missing.
 # Docker would otherwise silently auto-create an empty bind mount on first start,
@@ -228,7 +238,7 @@ define require_kit_file
 endef
 
 build:
-	$(TRUST_VARS) ${DOCKER_COMPOSE_CMD} -p $(or $(TRUST_PROJECT),trust) build
+	$(TRUST_VARS) $(TRUST_BUILD_VARS) ${DOCKER_COMPOSE_CMD} -p $(or $(TRUST_PROJECT),trust) build
 
 # Bring up the trust stack selected by KIT (e.g. KIT=Trust_1). Reads
 # trust/.env.<KIT> for that trust's ports / dirs / credentials. The

@@ -24,4 +24,19 @@ describe("Ai Buttons", () => {
 
         expect(comp.element).toMatchSnapshot();
     });
+
+    test("puts aria-label on the native button, not the wrapper div", () => {
+        const comp = mount(AiButton, { attrs: { "aria-label": "Download model.py" } });
+
+        // Fallthrough onto the root <div> is a prohibited-ARIA violation and
+        // leaves the actual <button> unnamed for screen readers.
+        expect(comp.element.getAttribute("aria-label")).toBeNull();
+        expect(comp.find("button").attributes("aria-label")).toBe("Download model.py");
+    });
+
+    test("renders the button without an aria-label when none is given", () => {
+        const comp = mount(AiButton);
+
+        expect(comp.find("button").attributes("aria-label")).toBeUndefined();
+    });
 });

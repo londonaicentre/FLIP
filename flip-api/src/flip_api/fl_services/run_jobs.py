@@ -14,7 +14,7 @@ from fastapi import HTTPException, status
 from sqlalchemy import text
 from sqlmodel import Session
 
-from flip_api.db.database import engine
+from flip_api.db.database import get_engine
 from flip_api.domain.schemas.status import NetStatus
 from flip_api.fl_services.services.fl_scheduler_service import (
     check_for_available_net,
@@ -43,12 +43,19 @@ def _recover_stale_busy_schedulers(db: Session) -> int:
         UPDATE fl_scheduler
         SET status = :available, job_id = NULL
         WHERE status = :busy
-          AND (job_id IS NULL OR job_id NOT IN (SELECT id FROM fl_job))
+          AND (job_id IS NULL
+               OR job_id NOT IN (SELECT id FROM fl_job
+                                 WHERE status NOT IN (:completed, :deleted)))
         """
     )
     result = db.execute(
         stmt,
-        {"available": NetStatus.AVAILABLE.value, "busy": NetStatus.BUSY.value},
+        {
+            "available": NetStatus.AVAILABLE.value,
+            "busy": NetStatus.BUSY.value,
+            "completed": "COMPLETED",
+            "deleted": "DELETED",
+        },
     )
     recovered = result.rowcount  # type: ignore[attr-defined]
     if recovered:
@@ -117,7 +124,7 @@ def run_jobs_scheduled_task() -> None:
     """
     logger.info("Running scheduled run_jobs execution... ⏰")
     try:
-        with Session(engine) as db:
+        with Session(get_engine()) as db:
             run_jobs_core(db)
     except Exception as e:
         error_message = f"Error in scheduled run_jobs execution: {str(e)}"
