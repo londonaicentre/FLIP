@@ -95,7 +95,6 @@ vi.mock("@/router", () => ({
 vi.mock("@/utils/route-validator", () => ({ canAccessRoute: vi.fn().mockResolvedValue(true) }));
 
 const stubs = {
-    AiCard: { template: "<div><slot /></div>" },
     AiButton: {
         inheritAttrs: false,
         template: "<button v-bind=\"$attrs\" :disabled='disabled' @click=\"$emit('click', $event)\"><slot /></button>",
@@ -625,5 +624,24 @@ describe("mobile drill-in (below lg)", () => {
         const row = wrapper.findAll("[data-test='user']")[0];
         expect(row.classes()).toContain("min-h-[60px]");
         expect(row.find("svg.lg\\:hidden").exists()).toBe(true);
+    });
+});
+
+describe("de-carded shell", () => {
+    // The AiCard wrapper is gone: the master–detail runs edge-to-edge under the
+    // admin chip-tab bar, keeping the card's load-bearing overflow clipping and
+    // white canvas but none of the floating-card chrome.
+    it("renders an edge-to-edge shell instead of a card", async () => {
+        const wrapper = mountPage();
+        await nextTick();
+
+        const shell = wrapper.find("[data-test='users-shell']");
+        expect(shell.exists()).toBe(true);
+        for (const cls of ["flex", "w-full", "h-full", "overflow-hidden", "bg-white", "dark:bg-dark-canvas"]) {
+            expect(shell.classes()).toContain(cls);
+        }
+        for (const cls of ["rounded-lg", "shadow", "ring-1"]) {
+            expect(shell.classes()).not.toContain(cls);
+        }
     });
 });

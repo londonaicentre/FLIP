@@ -56,37 +56,83 @@ function mountAdmin() {
                     }
                 })
             ],
-            stubs: { "router-view": { template: "<div />" } }
+            stubs: {
+                "router-view": { template: "<div />" },
+                // Expose `to` as an attribute so tests can assert the link target.
+                "router-link": {
+                    template: "<a :data-to='to'><slot /></a>",
+                    props: ["to"]
+                }
+            }
         }
     });
 }
 
-describe("admin page mobile tab-select band", () => {
-    // On squashed viewports the sidebar collapses into a <select>; its wrapper
-    // band is white in light mode but must go transparent in dark mode — a
-    // hard-coded bg-white otherwise paints a white bar across the dark page.
-    it("makes the band behind the tab select transparent in dark mode", () => {
+describe("admin chip-tab nav", () => {
+    // The xl-only left sidebar and the mobile <select> band are replaced by one
+    // segmented pill nav under the top bar, rendered at every breakpoint.
+    it("renders the segmented chip-tab nav at all breakpoints", () => {
         const wrapper = mountAdmin();
 
-        const band = wrapper.find("nav[aria-label=Breadcrumb]");
-        expect(band.exists()).toBe(true);
-        expect(band.classes()).toContain("bg-white");
-        expect(band.classes()).toContain("dark:bg-transparent");
+        const nav = wrapper.find("nav[aria-label='Admin sections']");
+        expect(nav.exists()).toBe(true);
+        // Horizontal scroll keeps all four tabs reachable on phone widths.
+        expect(nav.classes()).toContain("overflow-x-auto");
+        expect(nav.classes()).not.toContain("hidden");
+        expect(nav.classes()).not.toContain("xl:hidden");
+        expect(nav.classes()).not.toContain("xl:flex");
+
+        // The replaced nav surfaces are gone entirely.
+        expect(wrapper.find("nav[aria-label=Breadcrumb]").exists()).toBe(false);
+        expect(wrapper.find("#nav-tabs").exists()).toBe(false);
+        expect(wrapper.find("nav[aria-label=Sections]").exists()).toBe(false);
+    });
+
+    it("renders one pill per admin section, each with its icon", () => {
+        const wrapper = mountAdmin();
+
+        const links = wrapper.findAll("nav[aria-label='Admin sections'] a");
+        expect(links.map(l => l.attributes("data-to"))).toEqual([
+            "/admin/users",
+            "/admin/access-requests",
+            "/admin/banner",
+            "/admin/deployments"
+        ]);
+        expect(links.map(l => l.text())).toEqual(["Users", "Access Requests", "Banner", "Deployments"]);
+        for (const link of links) {
+            expect(link.find("svg").exists()).toBe(true);
+        }
+    });
+
+    it("marks the active section pill", () => {
+        const wrapper = mountAdmin();
+
+        const links = wrapper.findAll("nav[aria-label='Admin sections'] a");
+        // Mocked route is /admin/users, so Users is the active pill.
+        expect(links[0].classes()).toContain("bg-gray-100");
+        expect(links[0].classes()).toContain("dark:bg-dark-surface");
+        expect(links[0].classes()).toContain("text-gray-900");
+        expect(links[0].attributes("aria-current")).toBe("page");
+
+        expect(links[1].classes()).toContain("text-gray-500");
+        expect(links[1].classes()).toContain("dark:text-gray-300");
+        expect(links[1].attributes("aria-current")).toBeUndefined();
     });
 });
 
-describe("admin page gutters", () => {
-    // 64px of horizontal padding on top of the card's own is a third of a
-    // phone viewport; drop to 16px below md (design handoff fix #5).
-    it("uses compact gutters on mobile and full gutters from md up", () => {
+describe("admin content wrapper", () => {
+    // Gutters moved into the subpages so Users can run edge-to-edge; the wrapper
+    // owns the vertical scroll at every breakpoint (the models-page scroll model).
+    it("owns the scroll and carries no gutters", () => {
         const wrapper = mountAdmin();
 
         const content = wrapper.find("[data-test='admin-content']");
         expect(content.exists()).toBe(true);
-        expect(content.classes()).toContain("px-4");
-        expect(content.classes()).toContain("py-4");
-        expect(content.classes()).toContain("md:px-8");
-        expect(content.classes()).toContain("md:py-8");
-        expect(content.classes()).not.toContain("px-8");
+        expect(content.classes()).toContain("overflow-y-auto");
+        expect(content.classes()).toContain("flex-1");
+        expect(content.classes()).toContain("min-w-0");
+        for (const cls of ["px-4", "py-4", "md:px-8", "md:py-8", "mx-auto", "xl:overflow-y-auto", "xl:overflow-hidden"]) {
+            expect(content.classes()).not.toContain(cls);
+        }
     });
 });

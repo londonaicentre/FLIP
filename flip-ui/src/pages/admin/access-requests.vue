@@ -16,115 +16,118 @@ name: Access Requests
 </route>
 
 <template>
-    <AiCard class="w-full h-full">
-        <div class="flex flex-col w-full h-full">
-            <div class="flex items-center gap-3 px-6 py-4 border-b border-gray-200 dark:border-gray-700">
-                <h1 class="flex-grow text-lg font-semibold text-gray-900 font-heading dark:text-gray-100">
-                    Access Requests
-                </h1>
-                <label for="status-filter" class="sr-only">Filter by status</label>
-                <select
-                    id="status-filter"
-                    v-model="statusFilter"
-                    data-test="status-filter"
-                    class="block py-2 pl-3 pr-8 text-sm text-gray-900 bg-white border border-gray-300 rounded-md shadow-sm dark:bg-gray-700 dark:text-gray-100 dark:border-gray-700 focus:border-primary-500 focus:ring-primary-500"
-                >
-                    <option value="PENDING">
-                        Pending
-                    </option>
-                    <option value="ENROLLED">
-                        Enrolled
-                    </option>
-                    <option value="DISMISSED">
-                        Dismissed
-                    </option>
-                    <option value="">
-                        All
-                    </option>
-                </select>
-            </div>
+    <!-- Owns its gutters: admin.vue's content wrapper no longer pads subpages. -->
+    <div data-test="admin-page-gutter" class="w-full h-full p-4 md:p-8">
+        <AiCard class="w-full h-full">
+            <div class="flex flex-col w-full h-full">
+                <div class="flex items-center gap-3 px-6 py-4 border-b border-gray-200 dark:border-gray-700">
+                    <h1 class="flex-grow text-lg font-semibold text-gray-900 font-heading dark:text-gray-100">
+                        Access Requests
+                    </h1>
+                    <label for="status-filter" class="sr-only">Filter by status</label>
+                    <select
+                        id="status-filter"
+                        v-model="statusFilter"
+                        data-test="status-filter"
+                        class="block py-2 pl-3 pr-8 text-sm text-gray-900 bg-white border border-gray-300 rounded-md shadow-sm dark:bg-gray-700 dark:text-gray-100 dark:border-gray-700 focus:border-primary-500 focus:ring-primary-500"
+                    >
+                        <option value="PENDING">
+                            Pending
+                        </option>
+                        <option value="ENROLLED">
+                            Enrolled
+                        </option>
+                        <option value="DISMISSED">
+                            Dismissed
+                        </option>
+                        <option value="">
+                            All
+                        </option>
+                    </select>
+                </div>
 
-            <div class="flex-grow min-h-0 overflow-y-auto">
-                <div v-if="!requestData?.data" class="p-6 space-y-3" data-test="access-requests-loading">
-                    <AiSkeleton v-for="n in 6" :key="n" class="w-full h-12" />
+                <div class="flex-grow min-h-0 overflow-y-auto">
+                    <div v-if="!requestData?.data" class="p-6 space-y-3" data-test="access-requests-loading">
+                        <AiSkeleton v-for="n in 6" :key="n" class="w-full h-12" />
+                    </div>
+                    <div v-else-if="requests.length" class="overflow-x-auto">
+                        <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+                            <thead class="bg-gray-50 dark:bg-gray-900">
+                                <tr>
+                                    <th scope="col" class="px-6 py-3 text-xs font-semibold tracking-wide text-left text-gray-500 uppercase dark:text-gray-300">
+                                        Name
+                                    </th>
+                                    <th scope="col" class="px-6 py-3 text-xs font-semibold tracking-wide text-left text-gray-500 uppercase dark:text-gray-300">
+                                        Email
+                                    </th>
+                                    <th scope="col" class="px-6 py-3 text-xs font-semibold tracking-wide text-left text-gray-500 uppercase dark:text-gray-300">
+                                        Reason
+                                    </th>
+                                    <th scope="col" class="px-6 py-3 text-xs font-semibold tracking-wide text-left text-gray-500 uppercase dark:text-gray-300">
+                                        Submitted
+                                    </th>
+                                    <th scope="col" class="px-6 py-3 text-xs font-semibold tracking-wide text-left text-gray-500 uppercase dark:text-gray-300">
+                                        Status
+                                    </th>
+                                    <th scope="col" class="px-6 py-3 text-xs font-semibold tracking-wide text-right text-gray-500 uppercase dark:text-gray-300">
+                                        Actions
+                                    </th>
+                                </tr>
+                            </thead>
+                            <tbody class="divide-y divide-gray-200 dark:divide-gray-700">
+                                <tr v-for="row in requests" :key="row.id" data-test="access-request-row">
+                                    <td class="px-6 py-4 text-sm font-medium text-gray-900 whitespace-nowrap dark:text-gray-100">
+                                        {{ row.fullName }}
+                                    </td>
+                                    <td class="px-6 py-4 text-sm text-gray-500 whitespace-nowrap dark:text-gray-300">
+                                        {{ row.email }}
+                                    </td>
+                                    <td class="max-w-xs px-6 py-4 text-sm text-gray-500 truncate dark:text-gray-300" :title="row.reasonForAccess">
+                                        {{ row.reasonForAccess }}
+                                    </td>
+                                    <td class="px-6 py-4 text-sm text-gray-500 whitespace-nowrap dark:text-gray-300">
+                                        {{ formatDate(row.createdAt) }}
+                                    </td>
+                                    <td class="px-6 py-4 whitespace-nowrap">
+                                        <span
+                                            class="inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold"
+                                            :class="statusStyle(row.status)"
+                                            data-test="access-request-status"
+                                        >
+                                            {{ statusLabel(row.status) }}
+                                        </span>
+                                    </td>
+                                    <td class="px-6 py-4 text-right whitespace-nowrap">
+                                        <div v-if="row.status === 'PENDING'" class="flex justify-end gap-2">
+                                            <AiButton primary data-test="enroll-btn" @click="openEnroll(row)">
+                                                Enroll
+                                            </AiButton>
+                                            <AiButton error data-test="dismiss-btn" @click="openDismiss(row)">
+                                                Dismiss
+                                            </AiButton>
+                                        </div>
+                                        <span v-else class="text-xs text-gray-400 dark:text-gray-300">—</span>
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    <div v-else class="p-8 text-sm text-center text-gray-500 dark:text-gray-300" data-test="access-requests-empty">
+                        There are no access requests to show.
+                    </div>
                 </div>
-                <div v-else-if="requests.length" class="overflow-x-auto">
-                    <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
-                        <thead class="bg-gray-50 dark:bg-gray-900">
-                            <tr>
-                                <th scope="col" class="px-6 py-3 text-xs font-semibold tracking-wide text-left text-gray-500 uppercase dark:text-gray-300">
-                                    Name
-                                </th>
-                                <th scope="col" class="px-6 py-3 text-xs font-semibold tracking-wide text-left text-gray-500 uppercase dark:text-gray-300">
-                                    Email
-                                </th>
-                                <th scope="col" class="px-6 py-3 text-xs font-semibold tracking-wide text-left text-gray-500 uppercase dark:text-gray-300">
-                                    Reason
-                                </th>
-                                <th scope="col" class="px-6 py-3 text-xs font-semibold tracking-wide text-left text-gray-500 uppercase dark:text-gray-300">
-                                    Submitted
-                                </th>
-                                <th scope="col" class="px-6 py-3 text-xs font-semibold tracking-wide text-left text-gray-500 uppercase dark:text-gray-300">
-                                    Status
-                                </th>
-                                <th scope="col" class="px-6 py-3 text-xs font-semibold tracking-wide text-right text-gray-500 uppercase dark:text-gray-300">
-                                    Actions
-                                </th>
-                            </tr>
-                        </thead>
-                        <tbody class="divide-y divide-gray-200 dark:divide-gray-700">
-                            <tr v-for="row in requests" :key="row.id" data-test="access-request-row">
-                                <td class="px-6 py-4 text-sm font-medium text-gray-900 whitespace-nowrap dark:text-gray-100">
-                                    {{ row.fullName }}
-                                </td>
-                                <td class="px-6 py-4 text-sm text-gray-500 whitespace-nowrap dark:text-gray-300">
-                                    {{ row.email }}
-                                </td>
-                                <td class="max-w-xs px-6 py-4 text-sm text-gray-500 truncate dark:text-gray-300" :title="row.reasonForAccess">
-                                    {{ row.reasonForAccess }}
-                                </td>
-                                <td class="px-6 py-4 text-sm text-gray-500 whitespace-nowrap dark:text-gray-300">
-                                    {{ formatDate(row.createdAt) }}
-                                </td>
-                                <td class="px-6 py-4 whitespace-nowrap">
-                                    <span
-                                        class="inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold"
-                                        :class="statusStyle(row.status)"
-                                        data-test="access-request-status"
-                                    >
-                                        {{ statusLabel(row.status) }}
-                                    </span>
-                                </td>
-                                <td class="px-6 py-4 text-right whitespace-nowrap">
-                                    <div v-if="row.status === 'PENDING'" class="flex justify-end gap-2">
-                                        <AiButton primary data-test="enroll-btn" @click="openEnroll(row)">
-                                            Enroll
-                                        </AiButton>
-                                        <AiButton error data-test="dismiss-btn" @click="openDismiss(row)">
-                                            Dismiss
-                                        </AiButton>
-                                    </div>
-                                    <span v-else class="text-xs text-gray-400 dark:text-gray-300">—</span>
-                                </td>
-                            </tr>
-                        </tbody>
-                    </table>
-                </div>
-                <div v-else class="p-8 text-sm text-center text-gray-500 dark:text-gray-300" data-test="access-requests-empty">
-                    There are no access requests to show.
-                </div>
-            </div>
 
-            <div class="border-t border-gray-200 dark:border-gray-700">
-                <AiPagination
-                    :total-pages="requestData?.totalPages ?? 1"
-                    :current-page="requestData?.page ?? 1"
-                    slim
-                    @page-update="updatePage"
-                />
+                <div class="border-t border-gray-200 dark:border-gray-700">
+                    <AiPagination
+                        :total-pages="requestData?.totalPages ?? 1"
+                        :current-page="requestData?.page ?? 1"
+                        slim
+                        @page-update="updatePage"
+                    />
+                </div>
             </div>
-        </div>
-    </AiCard>
+        </AiCard>
+    </div>
 
     <RegisterUserModal
         title="Enroll User"

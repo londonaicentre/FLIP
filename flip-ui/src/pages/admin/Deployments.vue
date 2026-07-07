@@ -17,9 +17,12 @@
 </route>
 
 <template>
-    <AiCard class="w-full space-y-2">
-        <DeploymentMode />
-    </AiCard>
+    <!-- Owns its gutters: admin.vue's content wrapper no longer pads subpages. -->
+    <div data-test="admin-page-gutter" class="w-full p-4 md:p-8">
+        <AiCard class="w-full space-y-2">
+            <DeploymentMode />
+        </AiCard>
+    </div>
 </template>
 
 <script setup lang="ts">
