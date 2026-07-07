@@ -20,7 +20,9 @@ teacher/student (EMA) loop runs inside each client.
 
 ## Compatible job type
 
-This tutorial is a **standard** FL training job (`config.json["job_type"] = "standard"`).
+This tutorial is a **standard** FL training job (`config.json["job_type"] = "standard"`). For the
+NVFLARE **Client API** variant (`standard_client_api`, same finetuning semantics), see the sibling
+tutorial [`arkplus_fine_tuning_client_api`](../arkplus_fine_tuning_client_api/README.md).
 
 ## Target labels
 

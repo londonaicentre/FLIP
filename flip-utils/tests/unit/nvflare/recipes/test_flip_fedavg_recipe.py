@@ -149,8 +149,87 @@ class TestFlipFedAvgRecipe:
         finally:
             sys.modules["models"].get_model = lambda: object()
 
+    def test_persistor_is_initial_checkpoint(self, tmp_path: Path):
+        """The FedAvg persistor is InitialCheckpointPTModelPersistor so a SERVER_CHECKPOINT-declaring
+        job (e.g. Ark+ finetuning) seeds the round-0 global model server-side. It is a safe drop-in:
+        with no SERVER_CHECKPOINT it behaves like the stock PTFileModelPersistor. model_id is resolved
+        lazily from meta.json custom_props (like the other FLIP components), not passed as a component arg."""
+        import torch
+
+        sys.modules["models"].get_model = lambda: torch.nn.Linear(1, 1)
+        try:
+            recipe = FlipFedAvgRecipe()
+            recipe.export(tmp_path)
+            server_cfg = json.loads(
+                (tmp_path / recipe.job.name / "app" / "config" / "config_fed_server.json").read_text()
+            )
+            persistor = next(c for c in server_cfg["components"] if c["id"] == "persistor")
+            assert persistor["path"].endswith("InitialCheckpointPTModelPersistor")
+        finally:
+            sys.modules["models"].get_model = lambda: object()
+
     def test_write_client_config_params_is_noop_when_config_absent(self, tmp_path: Path):
         """If export produced no client config (unexpected layout), the param-write is a safe no-op."""
         recipe = FlipFedAvgRecipe()
         # tmp_path has no <job_name>/app/config/config_fed_client.json — must not raise.
         recipe._write_client_config_params(tmp_path)
+
+
+def _train_filter_paths(cfg: dict, block_key: str) -> list[str]:
+    """Flatten the filter component paths for the 'train' task from a task_*_filters block."""
+    out: list[str] = []
+    for block in cfg.get(block_key, []):
+        if "train" in block.get("tasks", []):
+            out.extend(f["path"] for f in block.get("filters", []))
+    return out
+
+
+class TestFlipFedAvgRecipeAggregateOnly:
+    """Optional head-only (frozen-backbone finetuning) filter wiring."""
+
+    def _export(self, tmp_path: Path, **kwargs):
+        import torch
+
+        sys.modules["models"].get_model = lambda: torch.nn.Linear(1, 1)
+        try:
+            recipe = FlipFedAvgRecipe(**kwargs)
+            recipe.export(tmp_path)
+            base = tmp_path / recipe.job.name / "app" / "config"
+            return (
+                json.loads((base / "config_fed_server.json").read_text()),
+                json.loads((base / "config_fed_client.json").read_text()),
+            )
+        finally:
+            sys.modules["models"].get_model = lambda: object()
+
+    def test_no_regex_leaves_filters_empty(self, tmp_path: Path):
+        """Default recipe (no regex) wires none of the head-only filters."""
+        server_cfg, client_cfg = self._export(tmp_path)
+        assert not any("TrimBroadcastVars" in p for p in _train_filter_paths(server_cfg, "task_data_filters"))
+        assert not any("KeepOnlyVars" in p for p in _train_filter_paths(client_cfg, "task_result_filters"))
+        assert not any("ReconstructFullModel" in p for p in _train_filter_paths(client_cfg, "task_data_filters"))
+
+    def test_regex_wires_head_only_filters(self, tmp_path: Path):
+        """aggregate_only_regex wires TrimBroadcastVars (server), ReconstructFullModel (client data)
+        and KeepOnlyVars (client result, BEFORE PercentilePrivacy)."""
+        server_cfg, client_cfg = self._export(tmp_path, aggregate_only_regex="omni_heads")
+        assert any("TrimBroadcastVars" in p for p in _train_filter_paths(server_cfg, "task_data_filters"))
+        assert any("ReconstructFullModel" in p for p in _train_filter_paths(client_cfg, "task_data_filters"))
+        result_paths = _train_filter_paths(client_cfg, "task_result_filters")
+        keep_i = next(i for i, p in enumerate(result_paths) if "KeepOnlyVars" in p)
+        perc_i = next(i for i, p in enumerate(result_paths) if "PercentilePrivacy" in p)
+        assert keep_i < perc_i, "KeepOnlyVars must run before PercentilePrivacy"
+
+        # include_vars must round-trip through FedJob export. Regression guard: KeepOnlyVars/TrimBroadcastVars
+        # store the regex only as self.pattern/self.skip, so FedJob's attribute-introspection export dropped
+        # include_vars and the filters silently became no-ops (they now also store self.include_vars).
+        def _filter_args(cfg, block_key, name):
+            for block in cfg.get(block_key, []):
+                if "train" in block.get("tasks", []):
+                    for f in block.get("filters", []):
+                        if name in f["path"]:
+                            return f.get("args", {})
+            return {}
+
+        assert _filter_args(client_cfg, "task_result_filters", "KeepOnlyVars").get("include_vars") == "omni_heads"
+        assert _filter_args(server_cfg, "task_data_filters", "TrimBroadcastVars").get("include_vars") == "omni_heads"
