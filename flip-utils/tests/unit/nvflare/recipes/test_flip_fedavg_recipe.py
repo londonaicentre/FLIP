@@ -149,6 +149,25 @@ class TestFlipFedAvgRecipe:
         finally:
             sys.modules["models"].get_model = lambda: object()
 
+    def test_persistor_is_initial_checkpoint(self, tmp_path: Path):
+        """The FedAvg persistor is InitialCheckpointPTModelPersistor so a SERVER_CHECKPOINT-declaring
+        job (e.g. Ark+ finetuning) seeds the round-0 global model server-side. It is a safe drop-in:
+        with no SERVER_CHECKPOINT it behaves like the stock PTFileModelPersistor. model_id is resolved
+        lazily from meta.json custom_props (like the other FLIP components), not passed as a component arg."""
+        import torch
+
+        sys.modules["models"].get_model = lambda: torch.nn.Linear(1, 1)
+        try:
+            recipe = FlipFedAvgRecipe()
+            recipe.export(tmp_path)
+            server_cfg = json.loads(
+                (tmp_path / recipe.job.name / "app" / "config" / "config_fed_server.json").read_text()
+            )
+            persistor = next(c for c in server_cfg["components"] if c["id"] == "persistor")
+            assert persistor["path"].endswith("InitialCheckpointPTModelPersistor")
+        finally:
+            sys.modules["models"].get_model = lambda: object()
+
     def test_write_client_config_params_is_noop_when_config_absent(self, tmp_path: Path):
         """If export produced no client config (unexpected layout), the param-write is a safe no-op."""
         recipe = FlipFedAvgRecipe()

@@ -59,7 +59,6 @@ from nvflare.app_common.executors.in_process_client_api_executor import InProces
 from nvflare.app_common.shareablegenerators.full_model_shareable_generator import FullModelShareableGenerator
 from nvflare.app_common.workflows.cross_site_model_eval import CrossSiteModelEval
 from nvflare.app_common.workflows.global_model_eval import GlobalModelEval
-from nvflare.app_opt.pt.file_model_persistor import PTFileModelPersistor
 from nvflare.job_config.defs import FilterType
 from nvflare.recipe.spec import Recipe
 
@@ -69,6 +68,7 @@ from flip.nvflare.components import (
     ClientEventHandler,
     ClientExceptionReporter,
     FlipAnalyticsBridge,
+    InitialCheckpointPTModelPersistor,
     PersistToS3AndCleanup,
     PTModelLocator,
     ServerEventHandler,
@@ -173,9 +173,14 @@ class FlipFedAvgRecipe(Recipe):
             meta_props={FLIP_CUSTOM_PROPS_KEY: {FLIP_MODEL_ID_KEY: self.model_id}},
         )
 
-        # Server: persistence and aggregation primitives.
+        # Server: persistence and aggregation primitives. InitialCheckpointPTModelPersistor seeds the
+        # round-0 global model from a server-side SERVER_CHECKPOINT (frozen-backbone finetuning); with no
+        # SERVER_CHECKPOINT declared it is a drop-in for the stock PTFileModelPersistor. model_id is
+        # resolved lazily from meta.json custom_props at runtime (like the other FLIP components), so it
+        # is not passed as a component arg.
         persistor_id = job.to_server(
-            PTFileModelPersistor(model={"path": "models.get_model"}), id="persistor"
+            InitialCheckpointPTModelPersistor(model={"path": "models.get_model"}),
+            id="persistor",
         )
         shareable_generator_id = job.to_server(FullModelShareableGenerator(), id="shareable_generator")
         aggregator_id = job.to_server(
