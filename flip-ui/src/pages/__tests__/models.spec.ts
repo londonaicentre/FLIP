@@ -215,8 +215,14 @@ describe("Models Page", () => {
 
     test("clicking the Model header sorts rows by name and toggles direction", async () => {
         setModels([
-            makeModel({ id: "m1", name: "zebra" }),
-            makeModel({ id: "m2", name: "apple" })
+            makeModel({
+                id: "m1",
+                name: "zebra"
+            }),
+            makeModel({
+                id: "m2",
+                name: "apple"
+            })
         ]);
         const wrapper = mountPage();
         await wrapper.vm.$nextTick();
@@ -230,8 +236,16 @@ describe("Models Page", () => {
 
     test("clicking the Status header groups rows by lifecycle stage (ascending)", async () => {
         setModels([
-            makeModel({ id: "m1", name: "done", status: "RESULTS_UPLOADED" }),
-            makeModel({ id: "m2", name: "created", status: "PENDING" })
+            makeModel({
+                id: "m1",
+                name: "done",
+                status: "RESULTS_UPLOADED"
+            }),
+            makeModel({
+                id: "m2",
+                name: "created",
+                status: "PENDING"
+            })
         ]);
         const wrapper = mountPage();
         await wrapper.vm.$nextTick();
