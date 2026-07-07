@@ -343,7 +343,7 @@ class S3Client:
             logger.info(f"Successfully uploaded {local_path} to {s3_path}")
         except (S3UploadFailedError, ClientError, OSError) as e:
             logger.error(f"Error uploading {local_path} to {s3_path}: {e}")
-            raise Exception(f"Unable to upload file {local_path} to {s3_path}: {e}")
+            raise Exception(f"Unable to upload file {local_path} to {s3_path}: {e}") from e
 
     def copy_object(self, source_s3_path: str, dest_s3_path: str) -> None:
         """

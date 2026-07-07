@@ -11,6 +11,7 @@
 #
 
 import json
+import os
 from pathlib import Path
 from typing import Any
 from uuid import UUID
@@ -56,12 +57,25 @@ def list_local_base_files(base_dir: Path) -> list[str]:
             (``<FL_APP_BASE_DIR>/<backend>/<job_type>``).
 
     Returns:
-        list[str]: Sorted relative POSIX paths of every file under ``base_dir`` (nested paths
-        included). Empty if ``base_dir`` does not exist or contains no files.
+        list[str]: Sorted relative POSIX paths of every regular file under ``base_dir`` (nested
+        paths included). Empty if ``base_dir`` does not exist or contains no files.
+
+    Note:
+        Symlinks are ignored — both symlinked files and symlinked directories (``followlinks=False``).
+        The default baked-in ``fl-apps/`` tree contains none, but ``FL_APP_BASE_DIR`` may point at an
+        operator-provided tree; skipping symlinks keeps the walk inside the template tree so a stray
+        link can't pull files from elsewhere on the host into the uploaded bundle.
     """
     if not base_dir.is_dir():
         return []
-    return sorted(p.relative_to(base_dir).as_posix() for p in base_dir.rglob("*") if p.is_file())
+    rel_paths: list[str] = []
+    for dirpath, _dirnames, filenames in os.walk(base_dir, followlinks=False):
+        for name in filenames:
+            path = Path(dirpath) / name
+            if path.is_symlink():
+                continue
+            rel_paths.append(path.relative_to(base_dir).as_posix())
+    return sorted(rel_paths)
 
 
 def upload_app(model_id: UUID, training_details: IStartTrainingBody, endpoint: str) -> Any:

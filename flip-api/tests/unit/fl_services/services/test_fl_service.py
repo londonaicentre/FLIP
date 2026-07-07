@@ -1299,6 +1299,25 @@ def test_list_local_base_files_missing_dir_returns_empty(tmp_path):
     assert fl_service.list_local_base_files(tmp_path / "does-not-exist") == []
 
 
+def test_list_local_base_files_skips_symlinks(tmp_path):
+    # A symlinked file/dir inside FL_APP_BASE_DIR must not pull host files outside the template
+    # tree into the uploaded bundle.
+    base = tmp_path / "base"
+    (base / "app").mkdir(parents=True)
+    (base / "app" / "real.py").write_text("x")
+
+    external_file = tmp_path / "external_secret.txt"
+    external_file.write_text("secret")
+    external_dir = tmp_path / "external_dir"
+    external_dir.mkdir()
+    (external_dir / "leak.py").write_text("leak")
+
+    (base / "app" / "link.py").symlink_to(external_file)  # symlinked file
+    (base / "linked_dir").symlink_to(external_dir)  # symlinked directory
+
+    assert fl_service.list_local_base_files(base) == ["app/real.py"]
+
+
 def test_list_local_base_files_returns_sorted_nested_relpaths(tmp_path):
     (tmp_path / "app" / "custom" / "sub").mkdir(parents=True)
     (tmp_path / "app" / "custom" / "sub" / "deep.py").write_text("x")
