@@ -60,7 +60,10 @@ class Settings(BaseSettings):
 
     # Hard cap on model-file uploads. Bound on the presigned POST policy so
     # S3 rejects oversized payloads at the edge — the hub never sees them.
-    MAX_MODEL_FILE_BYTES: int = 100 * 1024 * 1024
+    # Raised to 5 GiB so large evaluation checkpoints (e.g. the ~759 MiB Ark+
+    # weights, ~1.5 GiB for the multimodel variant) can be uploaded; the FL API
+    # stages such checkpoints server-side rather than bundling them into the app.
+    MAX_MODEL_FILE_BYTES: int = 5 * 1024 * 1024 * 1024
     PRE_SIGNED_URL_EXPIRATION_SECONDS: int = 3600
 
     # Reimport imaging project studies

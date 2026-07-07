@@ -18,6 +18,10 @@ import numpy as np
 import pydicom
 import torch
 from data_utils import Lesion, LesionDict, get_labels_from_radiology_row, get_lesion_label, get_xray_transforms
+from flip import FLIP
+from flip.constants import PTConstants, ResourceType
+from flip.nvflare.metrics import send_metrics_value
+from flip.utils import get_model_weights_diff
 from loss_and_metrics import compute_precision_recall_f1, get_bce_loss
 from models import get_model
 from monai.data import DataLoader, Dataset
@@ -30,11 +34,7 @@ from nvflare.apis.signal import Signal
 from nvflare.app_common.abstract.model import make_model_learnable, model_learnable_to_dxo
 from nvflare.app_common.app_constant import AppConstants
 from nvflare.app_opt.pt.model_persistence_format_manager import PTModelPersistenceFormatManager
-
-from flip import FLIP
-from flip.constants import PTConstants, ResourceType
-from flip.nvflare.metrics import send_metrics_value
-from flip.utils import get_model_weights_diff
+from tqdm import tqdm
 
 
 class FLIP_TRAINER(Executor):
@@ -142,17 +142,20 @@ class FLIP_TRAINER(Executor):
         label value.
 
         Args:
-            dataframe (_type_): dataframe output by FLIP, which has to contain accession_id and
-                columns for each of the lesions.
+            None
 
         Returns:
-            _type_: list of dictionaries for data loading.
+            train_datalist (list): List of dicts containing image paths and corresponding lesion labels for the training
+            set.
+            val_datalist (list): List of dicts containing image paths and corresponding lesion labels for the validation
+            set.
         """
         datalist = []
 
         # loop over each accession id in the train set
-        for _, row in self.dataframe.iterrows():
+        for _, row in tqdm(self.dataframe.iterrows(), desc="Preparing dataset", unit="accession"):
             accession_id = row["accession_id"]
+
             # First, we load the radiology note; format should be: [project] - [lesion1,lesion2,lesion3_lesion3]
             pathology_dict = get_labels_from_radiology_row(
                 row, self._lesions, self._value_to_numerical, self._normal_key
@@ -167,32 +170,25 @@ class FLIP_TRAINER(Executor):
                     ],
                 )
             except Exception as err:
-                self.logger.error(f"Could not get image data folder path for {accession_id}: {err}")
+                self.logger.info("⚠️ Could not fetch images for accession_id=%s: %s", accession_id, err)
                 continue
 
+            # get all images in the accession folder that match the pattern "*.dcm"
             all_images = list(accession_folder_path.rglob("*.dcm"))
-            this_accession_matches = 0
-            self.logger.info(f"Total base count found for accession_id {accession_id}: {len(all_images)}")
 
             for img in all_images:
                 try:
-                    _ = pydicom.dcmread(str(img))
+                    _ = pydicom.dcmread(str(img), stop_before_pixels=True)
                 except Exception as e:
-                    self.logger.error(f"Problem loading header of base image {str(img)}.")
-                    self.logger.error(f"{e=}")
-                    self.logger.error(f"{type(e)=}")
-                    self.logger.error(f"{e.args=}")
+                    self.logger.warning("Skipping invalid DICOM %s: %s", img.name, e)
                     continue
 
                 # defines keys for image and segmentation
                 item_ = {"image": str(img)}
                 item_.update(pathology_dict)
                 datalist.append(item_)
-                this_accession_matches += 1
 
-            self.logger.info(f"Added {this_accession_matches} image / label pairs for {accession_id}.")
-
-        self.logger.info(f"Found {len(datalist)} files in total.")
+        self.logger.info("Dataset ready: %d images", len(datalist))
 
         # split into the training and testing data
         train_datalist, val_datalist, test_datalist = np.split(
@@ -204,8 +200,10 @@ class FLIP_TRAINER(Executor):
         )
 
         self.logger.info(
-            f"Found {len(train_datalist)} files for training, {len(val_datalist)} files for validation and "
-            f"{len(test_datalist)} files for testing."
+            "Found %d files for training, %d files for validation and %d files for testing.",
+            len(train_datalist),
+            len(val_datalist),
+            len(test_datalist),
         )
 
         return train_datalist, val_datalist

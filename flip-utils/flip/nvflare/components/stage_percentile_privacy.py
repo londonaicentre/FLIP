@@ -10,69 +10,39 @@
 # limitations under the License.
 #
 
-# Copyright (c) 2021, NVIDIA CORPORATION.  All rights reserved.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
-
 import numpy as np
-
-# from dxo_filter import DXOFilter
-from nvflare.apis.dxo import DXO, DataKind, MetaKey
-from nvflare.apis.dxo_filter import DXOFilter
+from nvflare.apis.dxo import DXO, MetaKey
 from nvflare.apis.fl_context import FLContext
 from nvflare.apis.shareable import Shareable
 
 from flip.constants import FlipMetaKey
+from flip.nvflare.components.custom_percentile_privacy import PercentilePrivacy
 
 
-class StagePercentilePrivacy(DXOFilter):
-    def __init__(self, percentile=10, gamma=0.01, data_kinds: list[str] | None = None, off: bool = False):
-        """Implementation of "largest percentile to share" privacy preserving policy.
+class StagePercentilePrivacy(PercentilePrivacy):
+    """Percentile-privacy filter that groups parameters by training stage before filtering.
 
-        Shokri and Shmatikov, Privacy-preserving deep learning, CCS '15
-
-        Args:
-            percentile (int, optional): Only abs diff greater than this percentile is updated.
-              Allowed range 0..100.  Defaults to 10.
-            gamma (float, optional): The upper limit to truncate abs values of weight diff. Defaults to 0.01.
-            Any weight diff with abs<gamma will become 0.
-            data_kinds: kinds of DXO to filter
-            off (bool, optional): If True, the filter is turned off. Defaults to False.
-        """
-        if not data_kinds:
-            data_kinds = [DataKind.WEIGHT_DIFF, DataKind.WEIGHTS]
-
-        super().__init__(supported_data_kinds=[DataKind.WEIGHTS, DataKind.WEIGHT_DIFF], data_kinds_to_filter=data_kinds)
-
-        # must be in 0..100, only update abs diff greater than percentile
-        self.percentile = percentile
-        # must be positive
-        self.gamma = gamma  # truncate absolute value of delta W
-        self.off = off
+    Subclasses FLIP's :class:`PercentilePrivacy` to inherit its constructor (``percentile`` /
+    ``gamma`` / ``data_kinds`` / ``off``) and — transitively — stock NVFLARE's differential-privacy
+    maths. It overrides ``process_dxo`` to compute the percentile cutoff *per stage* (from
+    ``FlipMetaKey.STAGE``) rather than across all parameters at once, so each stage of a staged
+    model (e.g. autoencoder then diffusion model) is filtered independently.
+    """
 
     def process_dxo(self, dxo: DXO, shareable: Shareable, fl_ctx: FLContext) -> None | DXO:
-        """Compute the percentile on the abs delta_W.
+        """Compute the percentile on the abs delta_W, per stage.
 
-        Only share the params where absolute delta_W greater than
-        the percentile value
+        Only shares the params whose absolute delta_W is greater than the percentile value,
+        grouping parameters by the stages listed in ``FlipMetaKey.STAGE``.
 
         Args:
-            dxo: information from client
-            shareable: that the dxo belongs to
-            fl_ctx: context provided by workflow
+            dxo (DXO): Information from the client.
+            shareable (Shareable): The shareable the DXO belongs to.
+            fl_ctx (FLContext): Context provided by the workflow.
 
-        Returns: filtered dxo
+        Returns:
+            None | DXO: The filtered DXO, the unchanged DXO (off / no stage info), or None (invalid
+            gamma/percentile).
         """
         self.log_info(fl_ctx, f"Percentile filter is {'off' if self.off else 'on'}")
         if self.off:

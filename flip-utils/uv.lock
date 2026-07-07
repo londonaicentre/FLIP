@@ -733,6 +733,7 @@ dependencies = [
     { name = "pydantic" },
     { name = "pydantic-settings" },
     { name = "requests" },
+    { name = "tqdm" },
 ]
 
 [package.optional-dependencies]
@@ -779,6 +780,7 @@ requires-dist = [
     { name = "timm", marker = "extra == 'full'", specifier = ">=1.0.0" },
     { name = "torch", marker = "extra == 'full'", specifier = ">=2.11.0,<2.12", index = "https://download.pytorch.org/whl/cu128" },
     { name = "torchvision", marker = "extra == 'full'", specifier = ">=0.26.0,<0.27", index = "https://download.pytorch.org/whl/cu128" },
+    { name = "tqdm", specifier = ">=4.67.1" },
 ]
 provides-extras = ["full"]
 

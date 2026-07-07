@@ -57,13 +57,17 @@ from nvflare.apis.dxo import DataKind
 from nvflare.app_common.aggregators import InTimeAccumulateWeightedAggregator
 from nvflare.app_common.executors.in_process_client_api_executor import InProcessClientAPIExecutor
 from nvflare.app_common.shareablegenerators.full_model_shareable_generator import FullModelShareableGenerator
+from nvflare.app_common.workflows.cross_site_model_eval import CrossSiteModelEval
+from nvflare.app_common.workflows.global_model_eval import GlobalModelEval
 from nvflare.app_opt.pt.file_model_persistor import PTFileModelPersistor
 from nvflare.job_config.defs import FilterType
 from nvflare.recipe.spec import Recipe
 
+from flip.constants import FlipTasks
 from flip.nvflare.components import (
     CleanupImages,
     ClientEventHandler,
+    ClientExceptionReporter,
     FlipAnalyticsBridge,
     PersistToS3AndCleanup,
     PTModelLocator,
@@ -73,7 +77,7 @@ from flip.nvflare.components import (
 from flip.nvflare.components import (
     PercentilePrivacy as PercentilePrivacyFilter,
 )
-from flip.nvflare.controllers import CrossSiteModelEval, InitTraining, ScatterAndGather
+from flip.nvflare.controllers import BroadcastTask, InitTraining, ScatterAndGather
 from flip.nvflare.runtime import FLIP_CUSTOM_PROPS_KEY, FLIP_MODEL_ID_KEY
 
 # Default UUID used by SimEnv/PocEnv runs when the caller doesn't pass one. Pinned so dev runs
@@ -110,7 +114,9 @@ class FlipFedAvgRecipe(Recipe):
         project_id, query: Top-level keys on the client config (consumed by the FLIP-API
             placeholder substitution and read by the trainer at runtime).
         local_rounds: Top-level local_rounds key on the client config.
-        train_task_name, submit_model_task_name, evaluate_task_name: NVFlare task names.
+        train_task_name, submit_model_task_name, evaluate_task_name: NVFlare task names. Client-model
+            submission is disabled by default so post-training evaluation covers only the aggregated
+            global model. Pass ``"submit_model"`` to opt into the full all-to-all matrix.
         params_exchange_format, params_transfer_type: NVFlare param-exchange knobs.
     """
 
@@ -130,7 +136,7 @@ class FlipFedAvgRecipe(Recipe):
         query: str = "SELECT * FROM Table;",
         local_rounds: int = 1,
         train_task_name: str = "train",
-        submit_model_task_name: str = "submit_model",
+        submit_model_task_name: str = "",
         evaluate_task_name: str = "validate",
         params_exchange_format: str = "numpy",
         params_transfer_type: str = "FULL",
@@ -182,7 +188,7 @@ class FlipFedAvgRecipe(Recipe):
         job.to_server(ServerEventHandler(), id="flip_server_event_handler")
         job.to_server(PersistToS3AndCleanup(persistor_id=persistor_id), id="persist_and_cleanup")
 
-        # Server: workflows in execution order — init → train → cross-site validate.
+        # Server workflows: init → train → model evaluation → post-validation cleanup.
         job.to_server(InitTraining(min_clients=self.min_clients))
         job.to_server(
             ScatterAndGather(
@@ -198,17 +204,35 @@ class FlipFedAvgRecipe(Recipe):
                 ignore_result_error=False,
             )
         )
-        job.to_server(
-            CrossSiteModelEval(
+        if self.submit_model_task_name:
+            evaluation_controller = CrossSiteModelEval(
+                model_locator_id="model_locator",
+                submit_model_task_name=self.submit_model_task_name,
+                validation_timeout=self.validation_timeout,
+            )
+        else:
+            evaluation_controller = GlobalModelEval(
                 model_locator_id="model_locator",
                 validation_timeout=self.validation_timeout,
             )
+        job.to_server(evaluation_controller)
+        evaluation_result_tasks = [self.evaluate_task_name, FlipTasks.POST_VALIDATION.value]
+        if self.submit_model_task_name:
+            evaluation_result_tasks.insert(0, self.submit_model_task_name)
+        job.to_server(
+            ClientExceptionReporter(),
+            filter_type=FilterType.TASK_RESULT,
+            tasks=evaluation_result_tasks,
         )
+        job.to_server(BroadcastTask(task_name=FlipTasks.POST_VALIDATION.value))
 
         # Clients: cleanup executor for init/post tasks.
         job.to_clients(CleanupImages(), tasks=["init_training", "post_validation"])
 
-        # Clients: Client API trainer for train / submit_model / validate.
+        # Clients: Client API trainer for train / optional submit_model / validate.
+        executor_tasks = [self.train_task_name, self.evaluate_task_name]
+        if self.submit_model_task_name:
+            executor_tasks.insert(1, self.submit_model_task_name)
         job.to_clients(
             InProcessClientAPIExecutor(
                 task_script_path=self.train_script,
@@ -219,7 +243,7 @@ class FlipFedAvgRecipe(Recipe):
                 params_exchange_format=self.params_exchange_format,
                 params_transfer_type=self.params_transfer_type,
             ),
-            tasks=[self.train_task_name, self.submit_model_task_name, self.evaluate_task_name],
+            tasks=executor_tasks,
         )
 
         # Clients: percentile-privacy DP noise on training results.

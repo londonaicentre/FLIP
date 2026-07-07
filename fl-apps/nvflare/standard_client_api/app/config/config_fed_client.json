@@ -25,6 +25,7 @@
     {
       "executor": {
         "args": {
+          "submit_model_task_name": "",
           "task_script_args": "--project_id {project_id}",
           "task_script_path": "custom/trainer.py"
         },
@@ -32,7 +33,6 @@
       },
       "tasks": [
         "train",
-        "submit_model",
         "validate"
       ]
     }
