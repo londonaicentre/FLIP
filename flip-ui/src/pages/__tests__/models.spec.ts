@@ -191,8 +191,10 @@ describe("Models Page", () => {
 
         expect(wrapper.find("[data-test='filter-tile-training']").exists()).toBe(true);
         expect(wrapper.find("[data-test='filter-tile-count-training']").text()).toBe("3");
-        // Queued groups PENDING + INITIATED = 3.
-        expect(wrapper.find("[data-test='filter-tile-count-queued']").text()).toBe("3");
+        // Preparing groups PENDING + PREPARED = 1 (a just-created model is being prepared, not queued).
+        expect(wrapper.find("[data-test='filter-tile-count-preparing']").text()).toBe("1");
+        // Queued is INITIATED only = 2.
+        expect(wrapper.find("[data-test='filter-tile-count-queued']").text()).toBe("2");
         // Needs attention groups ERROR + RESULTS_UPLOAD_FAILED + STOPPED = 2.
         expect(wrapper.find("[data-test='filter-tile-count-attention']").text()).toBe("2");
     });
@@ -276,6 +278,26 @@ describe("Models Page", () => {
         expect(rail.exists()).toBe(true);
         // Training runs get the live magenta rail.
         expect(rail.classes().some(c => c.includes("fuchsia"))).toBe(true);
+    });
+
+    test("TRAINING_STARTED status pill matches the In-training fuchsia, not amber", async () => {
+        setModels([makeModel({ status: "TRAINING_STARTED" })]);
+        const wrapper = mountPage();
+        await wrapper.vm.$nextTick();
+
+        const pill = wrapper.find("[data-test='model-status-indicator']");
+        expect(pill.classes()).toContain("bg-fuchsia-100");
+        // The inner dot must switch too — no amber anywhere in the pill.
+        expect(pill.html()).not.toContain("amber");
+    });
+
+    test("PREPARED status pill stays amber", async () => {
+        setModels([makeModel({ status: "PREPARED" })]);
+        const wrapper = mountPage();
+        await wrapper.vm.$nextTick();
+
+        const pill = wrapper.find("[data-test='model-status-indicator']");
+        expect(pill.classes()).toContain("bg-amber-100");
     });
 
     test("clicking the Project header sorts rows by project name", async () => {

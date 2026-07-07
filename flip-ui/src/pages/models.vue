@@ -247,14 +247,16 @@ const TILES: ITile[] = [
     {
         key: "preparing",
         label: "Preparing",
-        statuses: ["PREPARED"],
+        // PENDING ("Model Created") counts as preparing: the owner is still assembling the
+        // app/files, the model isn't waiting on the FL queue yet.
+        statuses: ["PENDING", "PREPARED"],
         dot: "bg-amber-500",
         ring: "border-amber-500 ring-amber-500/40"
     },
     {
         key: "queued",
         label: "Queued",
-        statuses: ["INITIATED", "PENDING"],
+        statuses: ["INITIATED"],
         dot: "bg-gray-400",
         ring: "border-gray-400 ring-gray-400/40"
     },
@@ -382,7 +384,8 @@ const sortedModels = computed<IModelSummary[]>(() => {
 });
 
 // Status-toned left rail: magenta = live training, amber = preparing, emerald =
-// completed, red = needs attention, neutral = created/queued.
+// completed, red = needs attention, neutral = created/queued. PENDING groups under
+// the Preparing tile but keeps the neutral tone — nothing is running yet.
 const railClass = (status: ModelStatus | undefined): string => {
     if (isModelStatusError(status)) return "bg-red-500";
     if (status === "RESULTS_UPLOADED") return "bg-emerald-500";
@@ -434,7 +437,10 @@ const statusPillClass = (status: ModelStatus | undefined): string => {
     if (status === "RESULTS_UPLOADED") {
         return "bg-emerald-100 text-emerald-900 dark:bg-emerald-900/40 dark:text-emerald-100";
     }
-    if (status === "TRAINING_STARTED" || status === "PREPARED") {
+    if (status === "TRAINING_STARTED") {
+        return "bg-fuchsia-100 text-fuchsia-800 dark:bg-fuchsia-900/40 dark:text-fuchsia-200";
+    }
+    if (status === "PREPARED") {
         return "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200";
     }
 
@@ -444,7 +450,8 @@ const statusPillClass = (status: ModelStatus | undefined): string => {
 const statusDotClass = (status: ModelStatus | undefined): string => {
     if (isModelStatusError(status)) return "bg-red-500";
     if (status === "RESULTS_UPLOADED") return "bg-emerald-500";
-    if (status === "TRAINING_STARTED" || status === "PREPARED") return "bg-amber-500";
+    if (status === "TRAINING_STARTED") return "bg-fuchsia-500";
+    if (status === "PREPARED") return "bg-amber-500";
 
     return "bg-gray-400";
 };
