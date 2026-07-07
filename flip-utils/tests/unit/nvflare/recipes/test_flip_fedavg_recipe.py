@@ -67,6 +67,17 @@ class TestFlipFedAvgRecipe:
         assert recipe.train_args == "--lr=0.001"
         assert recipe.percentile_privacy == PercentilePrivacy(gamma=1.0, percentile=80, off=True)
 
+    def test_percentile_privacy_defaults_are_stock(self):
+        """Guard: DP defaults must stay stock-like (share the top 90%, clip per-step at 0.01).
+
+        The old defaults (percentile=95, gamma=2.0) discarded 95% of every update under stock
+        "largest percentile to share" semantics — with KeepOnlyVars active this reset the global
+        head every round."""
+        cfg = PercentilePrivacy()
+        assert cfg.percentile == 10
+        assert cfg.gamma == 0.01
+        assert cfg.off is False
+
     def test_default_train_args_have_no_whitespace_values(self):
         """NVFlare's TaskScriptRunner whitespace-splits task_script_args, so any FLIP-API
         placeholder we pass via that channel must substitute into a single token. The default

@@ -31,10 +31,12 @@ class PercentilePrivacy(NVFlarePercentilePrivacy):
         """Initialise the filter.
 
         Args:
-            percentile (int): Only abs weight-diff greater than this percentile is shared.
-                Allowed range 0..100. Defaults to 10.
-            gamma (float): Upper limit to truncate abs values of the weight diff; any weight diff
-                with abs < gamma becomes 0. Defaults to 0.01.
+            percentile (int): Only abs weight-diff greater than this percentile is shared — i.e.
+                this fraction (%) of the update's smallest-magnitude components is ZEROED and only
+                the top ``100 - percentile`` % survive. Allowed range 0..100. Defaults to 10
+                (stock NVFLARE: share the top 90%).
+            gamma (float): Absolute truncation bound applied to the surviving per-step weight-diff
+                values (clipped to ``±gamma``). Defaults to 0.01 (stock NVFLARE).
             data_kinds (list[str] | None): Kinds of DXO to filter. Defaults (via stock) to
                 ``[WEIGHT_DIFF, WEIGHTS]`` when None.
             off (bool): If True the filter is a no-op — ``process_dxo`` returns the DXO unchanged.
