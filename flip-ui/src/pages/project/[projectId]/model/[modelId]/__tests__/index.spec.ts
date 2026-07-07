@@ -654,4 +654,56 @@ describe("pages/project/[projectId]/model/[modelId]", () => {
         const call = resolveModelConfigStateMock.mock.calls.at(-1);
         expect(call?.[1]).toBeNull();
     });
+
+    describe("header action buttons collapse to icons on narrow screens", () => {
+        // Below lg the button labels hide (icon + tooltip only) so they stop
+        // squashing the truncating model title; aria-labels keep the buttons
+        // named for screen readers at every width.
+        const labelSelector = "span.hidden.lg\\:inline";
+
+        it("hides the Edit Model label below lg and keeps an aria-label", async () => {
+            mockSwrvData.value = makeModel([
+                {
+                    name: "config.json",
+                    status: FileUploadStatus.COMPLETED
+                }
+            ]);
+            const wrapper = await mountPage();
+            await flushPromises();
+            await wrapper.vm.$nextTick();
+
+            const btn = wrapper.find("[data-test='edit-model-btn']");
+            expect(btn.exists()).toBe(true);
+            expect(btn.attributes("aria-label")).toBe("Edit Model");
+            const label = btn.find(labelSelector);
+            expect(label.exists()).toBe(true);
+            expect(label.text()).toBe("Edit Model");
+        });
+
+        it("hides the Initiate Training label below lg and keeps an aria-label", async () => {
+            mockSwrvData.value = makeModel(
+                [
+                    {
+                        name: "trainer.py",
+                        status: FileUploadStatus.COMPLETED
+                    },
+                    {
+                        name: "config.json",
+                        status: FileUploadStatus.COMPLETED
+                    }
+                ],
+                { status: "PENDING" }
+            );
+            const wrapper = await mountPage();
+            await flushPromises();
+            await wrapper.vm.$nextTick();
+
+            const btn = wrapper.find("[data-test='initiate-training-btn']");
+            expect(btn.exists()).toBe(true);
+            expect(btn.attributes("aria-label")).toBe("Initiate Training");
+            const label = btn.find(labelSelector);
+            expect(label.exists()).toBe(true);
+            expect(label.text()).toBe("Initiate Training");
+        });
+    });
 });

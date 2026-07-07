@@ -13,25 +13,31 @@
 
 <template>
     <div class="flex flex-row items-center justify-end gap-3 w-full">
+        <!-- Below lg the labels hide (icon + tooltip only) so the buttons stop
+             squashing the truncating model title in the page header. -->
         <button
             type="button"
             data-test="stop-training-btn"
             class="inline-flex items-center gap-2 px-4 py-2 rounded-md text-sm font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed bg-red-600 text-white hover:bg-red-700 disabled:hover:bg-red-600"
             :disabled="!canStopTraining"
+            title="Stop Training"
+            aria-label="Stop Training"
             @click="dialogStopTraining = true"
         >
             <icon-mdi-stop class="w-4 h-4" aria-hidden="true" />
-            Stop Training
+            <span class="hidden lg:inline">Stop Training</span>
         </button>
 
         <AiButton
             light
             data-test="download-results-btn"
+            aria-label="Download Results"
+            tooltip="Download Results"
             :disabled="!canDownloadResults"
             @click="downloadTrainingResults"
         >
-            <icon-heroicons-outline-download class="w-4 h-4 mr-2" aria-hidden="true" />
-            Download Results
+            <icon-heroicons-outline-download class="w-4 h-4 lg:mr-2" aria-hidden="true" />
+            <span class="hidden lg:inline">Download Results</span>
         </AiButton>
     </div>
 
