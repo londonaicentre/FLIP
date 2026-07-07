@@ -453,7 +453,9 @@ def bundle_nvflare_application(model_id: UUID, job_type: str = DEFAULT_JOB_TYPE)
     # backend segment is fixed: <base>/nvflare/<job_type>.
     base_bucket_s3_path = f"{get_settings().FL_APP_BASE_BUCKET}/nvflare/{job_type}"
     logger.debug(f"Base bucket: {base_bucket_s3_path}")
-    base_files = s3.list_objects(base_bucket_s3_path)
+    # Trailing "/" is required: S3 Prefix matching is a plain string prefix, so without it a
+    # job_type like "standard" would also match a sibling job type such as "standard_client_api".
+    base_files = s3.list_objects(f"{base_bucket_s3_path}/")
     if not base_files:
         raise FileNotFoundError("Base application files missing on the S3 bucket")
 
@@ -518,7 +520,7 @@ def bundle_nvflare_application(model_id: UUID, job_type: str = DEFAULT_JOB_TYPE)
     # app*/custom/ and shipped to every client by NVFLARE's deploy_map (a large bundled file
     # collapses app-deploy). Mirrors the Flower backend, which keeps the checkpoint server-side.
     server_checkpoints: set[str] = set()
-    if job_type == "evaluation":
+    if job_type in ("evaluation", "evaluation_client_api"):
         server_checkpoints = {
             m["checkpoint"]
             for m in input_config.get("models", {}).values()
@@ -669,7 +671,9 @@ def bundle_flower_application(model_id: UUID, job_type: str = DEFAULT_JOB_TYPE) 
     # backend segment is fixed: <base>/flower/<job_type>.
     base_bucket_s3_path = f"{get_settings().FL_APP_BASE_BUCKET}/flower/{job_type}"
     logger.debug(f"Base bucket: {base_bucket_s3_path}")
-    base_files = s3.list_objects(base_bucket_s3_path)
+    # Trailing "/" is required: S3 Prefix matching is a plain string prefix, so without it a
+    # job_type like "standard" would also match a sibling job type such as "standard_client_api".
+    base_files = s3.list_objects(f"{base_bucket_s3_path}/")
     if not base_files:
         raise FileNotFoundError("Base application files missing on the S3 bucket")
 

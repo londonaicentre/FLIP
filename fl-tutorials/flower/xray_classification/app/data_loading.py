@@ -152,12 +152,10 @@ class FLIP_BASE:
                 continue
 
             all_images = list(accession_folder_path.rglob("*.dcm"))
-            this_accession_matches = 0
-            log(INFO, f"Total base count found for accession_id {accession_id}: {len(all_images)}")
 
             for img in all_images:
                 try:
-                    _ = pydicom.dcmread(str(img))
+                    _ = pydicom.dcmread(str(img), stop_before_pixels=True)
                 except Exception as e:
                     log(INFO, f"Problem loading header of base image {str(img)}: {e}")
                     continue
@@ -165,11 +163,8 @@ class FLIP_BASE:
                 item_ = {"image": str(img)}
                 item_.update(pathology_dict)
                 datalist.append(item_)
-                this_accession_matches += 1
 
-            log(INFO, f"Added {this_accession_matches} image / label pairs for {accession_id}.")
-
-        log(INFO, f"Found {len(datalist)} files in total.")
+        log(INFO, "Dataset ready: %d image/label pairs", len(datalist))
 
         train_datalist, val_datalist, test_datalist = np.split(
             datalist,

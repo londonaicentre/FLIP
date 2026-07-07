@@ -54,6 +54,18 @@ class TestFormatDownloadUrl:
         url = format_download_url("PROJ1", "SUBJ1", "EXP1", assessor_type="SCAN")
         assert "/scans/ALL/" in url
 
+    def test_all_resource_type_drops_resources_segment(self):
+        """ALL means every resource: XNAT has no literal ALL resource label (404), so the
+        URL must target scans/ALL/files directly — this also serves DICOM series whose
+        resource label isn't "DICOM" (e.g. "secondary" for Secondary Capture)."""
+        url = format_download_url("PROJ1", "SUBJ1", "EXP1", assessor_type="scan", resource_type="ALL")
+        expected = f"{XNAT_URL}/data/projects/PROJ1/subjects/SUBJ1/experiments/EXP1/scans/ALL/files?format=zip"
+        assert url == expected
+
+    def test_all_resource_type_is_case_insensitive(self):
+        url = format_download_url("PROJ1", "SUBJ1", "EXP1", assessor_type="scan", resource_type="all")
+        assert "/resources/" not in url
+
 
 # ── download_file ──
 

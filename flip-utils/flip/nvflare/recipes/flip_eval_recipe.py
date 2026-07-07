@@ -17,8 +17,8 @@ the ``RUN_EVALUATOR`` executor with a bespoke ``ModelEval`` + ``EvaluationPTMode
 evaluates a **single** uploaded model and reuses the same cross-site validation path the
 :class:`~flip.nvflare.recipes.FlipFedAvgRecipe` already drives for its ``validate`` phase:
 
-* server: :class:`~flip.nvflare.controllers.CrossSiteModelEval` (with ``submit_model`` disabled, so it
-  only validates the server-provided model) loads the uploaded checkpoint via
+* server: NVFLARE's stock ``GlobalModelEval`` (which never requests client models)
+  loads the uploaded checkpoint via
   :class:`~flip.nvflare.components.EvaluationModelLocator` and broadcasts it to every client as a single
   ``FLModel``; :class:`~flip.nvflare.components.EvaluationJsonGenerator` collects the returned metrics
   into ``evaluation_results.json`` (unchanged output contract); ``PersistToS3AndCleanup`` zips + uploads
@@ -41,18 +41,22 @@ from typing import Any
 
 from nvflare import FedJob
 from nvflare.app_common.executors.in_process_client_api_executor import InProcessClientAPIExecutor
+from nvflare.app_common.workflows.global_model_eval import GlobalModelEval
 from nvflare.app_opt.pt.file_model_persistor import PTFileModelPersistor
+from nvflare.job_config.defs import FilterType
 from nvflare.recipe.spec import Recipe
 
+from flip.constants import FlipTasks
 from flip.nvflare.components import (
     CleanupImages,
     ClientEventHandler,
+    ClientExceptionReporter,
     EvaluationJsonGenerator,
     EvaluationModelLocator,
     PersistToS3AndCleanup,
     ServerEventHandler,
 )
-from flip.nvflare.controllers import CrossSiteModelEval, InitEvaluation
+from flip.nvflare.controllers import BroadcastTask, InitEvaluation
 from flip.nvflare.runtime import FLIP_CUSTOM_PROPS_KEY, FLIP_MODEL_ID_KEY
 
 # Default UUID used by SimEnv/PocEnv runs when the caller doesn't pass one. Pinned so dev runs are
@@ -77,7 +81,7 @@ class FlipEvalRecipe(Recipe):
         project_id, query: Top-level keys on the client config (consumed by the FLIP-API placeholder
             substitution and read by the evaluator at runtime).
         evaluate_task_name: NVFlare task name for the cross-site validation task (must match
-            ``CrossSiteModelEval``'s ``validation_task_name``, default ``"validate"``).
+            stock ``GlobalModelEval``'s ``validation_task_name``, default ``"validate"``).
         params_exchange_format, params_transfer_type: NVFlare param-exchange knobs for the Client API.
     """
 
@@ -130,17 +134,22 @@ class FlipEvalRecipe(Recipe):
         job.to_server(ServerEventHandler(), id="flip_server_event_handler")
         job.to_server(PersistToS3AndCleanup(persistor_id=persistor_id), id="persist_and_cleanup")
 
-        # Server: workflows in execution order — init (status + config check + cleanup) → cross-site validate.
-        # submit_model_task_name="" disables client model submission: we only validate the server-loaded model.
+        # Server workflows: init → global-model validate → post-validation cleanup.
+        # GlobalModelEval validates only the server-loaded model; client models are never requested.
         job.to_server(InitEvaluation(min_clients=self.min_clients))
         job.to_server(
-            CrossSiteModelEval(
+            GlobalModelEval(
                 model_locator_id="model_locator",
-                submit_model_task_name="",
                 validation_task_name=self.evaluate_task_name,
                 validation_timeout=self.validation_timeout,
             )
         )
+        job.to_server(
+            ClientExceptionReporter(),
+            filter_type=FilterType.TASK_RESULT,
+            tasks=[self.evaluate_task_name, FlipTasks.POST_VALIDATION.value],
+        )
+        job.to_server(BroadcastTask(task_name=FlipTasks.POST_VALIDATION.value))
 
         # Clients: cleanup executor for the init/post-validation tasks.
         job.to_clients(CleanupImages(), tasks=["init_task", "post_validation"])

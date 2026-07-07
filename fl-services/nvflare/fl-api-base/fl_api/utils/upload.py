@@ -53,19 +53,34 @@ def _stage_server_checkpoint(url: str, model_id: str, file_name: str) -> None:
     Written to ``<SERVER_CHECKPOINT_ROOT>/<model_id>/<file_name>`` — outside the NVFLARE job dir —
     so it is never part of the submitted job and never deployed to clients. The fl-server mounts
     the same volume and loads the checkpoint from disk. Mirrors the Flower backend's /app/src mount.
+
+    Assumes the shared volume is actually mounted at ``SERVER_CHECKPOINT_ROOT`` — there is no
+    mount-presence check, so without one the ``mkdir`` below lands on the container's own disk and
+    the fl-server never sees the checkpoint (its locators log "not found" and skip the model). On
+    AWS this combination cannot occur: ``enable_efs`` gates the whole fl-api task definition, env
+    var and volume together (see ``deploy/providers/AWS/variables.tf``).
     """
     dest_dir = safe_join(_server_checkpoint_root(), model_id)
     dest_dir.mkdir(parents=True, exist_ok=True)
     dest_path = safe_join(dest_dir, file_name)
 
-    resp = requests.get(url, timeout=_SERVER_CHECKPOINT_DOWNLOAD_TIMEOUT_SECONDS, allow_redirects=False)
-    # Mirror the SSRF/redirect guard used for the rest of the bundle: a 3xx would dodge
-    # validate_bundle_url (which only saw the original URL), and raise_for_status() stops an
-    # S3 error body from being written out as the checkpoint.
-    if resp.is_redirect or resp.is_permanent_redirect:
-        raise HTTPException(status_code=400, detail=f"Bundle URL returned a redirect: {url!r}.")
-    resp.raise_for_status()
-    dest_path.write_bytes(resp.content)
+    # Stream the download to disk in chunks. Evaluation checkpoints are large
+    # (the Ark+ weights are ~759 MiB), so buffering the whole body in memory
+    # (resp.content) OOM-killed the fl-api container on Fargate (FLIP#695); an
+    # 8 MiB chunk keeps peak memory flat regardless of checkpoint size.
+    with requests.get(
+        url, timeout=_SERVER_CHECKPOINT_DOWNLOAD_TIMEOUT_SECONDS, allow_redirects=False, stream=True
+    ) as resp:
+        # Mirror the SSRF/redirect guard used for the rest of the bundle: a 3xx would dodge
+        # validate_bundle_url (which only saw the original URL), and raise_for_status() stops an
+        # S3 error body from being written out as the checkpoint.
+        if resp.is_redirect or resp.is_permanent_redirect:
+            raise HTTPException(status_code=400, detail=f"Bundle URL returned a redirect: {url!r}.")
+        resp.raise_for_status()
+        with open(dest_path, "wb") as fh:
+            for chunk in resp.iter_content(chunk_size=8 * 1024 * 1024):
+                if chunk:
+                    fh.write(chunk)
     logger.info(f"Staged server-side checkpoint at {dest_path}")
 
 
@@ -307,6 +322,7 @@ def upload_application(model_id: str, body: UploadAppRequest, upload_dir: str) -
                 ignore_result_error,
                 aggregator,
                 aggregation_weights,
+                aggregate_only_regex=config.AGGREGATE_ONLY_REGEX,
             )
 
             # Configure the environment.json file if it exists.

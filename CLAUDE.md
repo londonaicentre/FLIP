@@ -130,6 +130,8 @@ make e2e_smoke MODEL_FILES_DIR=/path/app QUERY_FILE=/path/q.sql
 make e2e_smoke EXTRA_ARGS="--abort-midway"                     # exercise the FL stop-training path
 make e2e_smoke EXTRA_ARGS="--image-pull-threshold 0.5 --image-pull-timeout 1200"
 make e2e_smoke EXTRA_ARGS="--project-id <UUID>"               # reuse an approved project (see below)
+make e2e_smoke EXTRA_ARGS="--trusts GSTT"                     # subset of trusts (codes/names, comma-separated);
+                                                              # a registered-but-offline trust no longer blocks the run
 ```
 
 The `--project-id <UUID>` override (printed as `project_id=<UUID>` at the start of any run) reuses an
@@ -167,15 +169,7 @@ make -C fl-tutorials download-xray-data                  # xray dataset (HF); sp
 make -C fl-tutorials run-tutorial TUTORIAL=xray_classification
 make -C fl-tutorials run-all-tutorials                   # all four (heavy; stops on first failure)
 make -C fl-tutorials test-template TEMPLATE=fed_opt      # smoke-test a template that has no tutorial
-make -C fl-tutorials lint                                # ruff check over all tutorials (via uvx ruff)
-make -C fl-tutorials format                              # ruff format + check --fix over all tutorials
 ```
-
-Tutorials are not linted by CI or any per-service `make test`; `make -C fl-tutorials lint`/`format` are
-the manual entrypoint (they run `uvx ruff` over the whole tree — ruff auto-excludes `.venv/` and resolves
-config per-file). Caveat: `format` reformats the Flower `server_app.py`/`strategy.py`/eval-`pyproject.toml`
-files that `scripts/check_tutorial_sync.sh` requires to match their `fl-apps/flower/` templates — re-sync
-afterward if it touches them.
 
 The simulator GPU id defaults to `0`; override with `SIM_GPU` in `fl-tutorials/nvflare/testing/.env.testing`.
 To iterate on the FL images, `make build-fl` builds them locally as `:dev` (see `fl-services/nvflare/README.md`);

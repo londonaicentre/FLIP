@@ -16,6 +16,7 @@ from pathlib import Path
 
 import numpy as np
 import nvflare.client as flare
+import pandas as pd
 import pydicom
 import torch
 from data_utils import Lesion, LesionDict, get_labels_from_radiology_row, get_lesion_label, get_xray_transforms
@@ -25,6 +26,7 @@ from loss_and_metrics import compute_precision_recall_f1, get_bce_loss
 from models import get_model
 from monai.data import DataLoader, Dataset
 from nvflare.client.tracking import SummaryWriter
+from tqdm import tqdm
 
 logger = logging.getLogger(__name__)
 
@@ -75,16 +77,37 @@ def load_config() -> dict:
 
 def build_datalist(
     flip: FLIP,
-    dataframe,
+    dataframe: pd.DataFrame,
     project_id: str,
     lesions: LesionDict,
     value_to_numerical: dict,
     normal_key: str,
 ) -> list:
-    """Iterate the cohort dataframe and return MONAI-compatible image/label items."""
-    datalist = []
-    for _, row in dataframe.iterrows():
+    """
+    Iterate the cohort dataframe and return MONAI-compatible image items.
+
+    Args:
+        flip (FLIP): The FLIP client instance.
+        dataframe (pd.DataFrame): The cohort dataframe containing accession IDs and labels.
+        project_id (str): The FLIP project ID.
+        lesions (LesionDict): The dictionary of lesions to extract labels for.
+        value_to_numerical (dict): Mapping of label values to numerical representations.
+        normal_key (str): The key in the dataframe that represents normal cases.
+
+    Returns:
+        datalist (list[dict[str, str]]): List of dicts containing image paths and corresponding labels.
+    """
+    datalist: list[dict[str, str]] = []
+
+    for _, row in tqdm(
+        dataframe.iterrows(),
+        total=len(dataframe),
+        desc="Processing cohort",
+        unit="accession",
+    ):
         accession_id = row["accession_id"]
+
+        # Extract the pathology labels for this accession ID from the dataframe row
         pathology_dict = get_labels_from_radiology_row(row, lesions, value_to_numerical, normal_key)
 
         try:
@@ -92,26 +115,24 @@ def build_datalist(
                 project_id, accession_id, resource_type=[ResourceType.DICOM]
             )
         except Exception as err:
-            logger.error(f"Could not get image data folder path for {accession_id}: {err}")
+            logger.info("⚠️ Could not fetch images for accession_id=%s: %s", accession_id, err)
             continue
 
+        # get all images in the accession folder that match the pattern "*.dcm"
         all_images = list(accession_folder_path.rglob("*.dcm"))
-        logger.info(f"Total base count found for accession_id {accession_id}: {len(all_images)}")
 
-        matches = 0
         for img in all_images:
             try:
-                pydicom.dcmread(str(img))
+                _ = pydicom.dcmread(str(img), stop_before_pixels=True)
             except Exception as e:
-                logger.error(f"Problem loading header of base image {img}: {e}")
+                logger.warning("Skipping invalid DICOM %s: %s", img.name, e)
                 continue
+
             item = {"image": str(img)}
             item.update(pathology_dict)
             datalist.append(item)
-            matches += 1
-        logger.info(f"Added {matches} image / label pairs for {accession_id}.")
 
-    logger.info(f"Found {len(datalist)} files in total.")
+    logger.info("Dataset ready: %d images", len(datalist))
     return datalist
 
 

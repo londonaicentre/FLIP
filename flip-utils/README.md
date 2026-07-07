@@ -13,10 +13,6 @@
 
 # flip-utils — the `flip` Python package
 
-<p align="left">
-<img src="assets/flip-flare-logo.png" height="200" alt='flip-flare-logo' />
-</p>
-
 [![PyPI version](https://img.shields.io/pypi/v/flip-utils)](https://pypi.org/project/flip-utils/)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
 [![Documentation Status](https://readthedocs.org/projects/londonaicentreflip/badge/?version=latest)](https://londonaicentreflip.readthedocs.io/en/latest/)[![License](https://img.shields.io/badge/license-Apache--2.0-green.svg)](../LICENSE.md)
@@ -25,7 +21,7 @@ This directory is a sub-tree of the [FLIP](https://github.com/londonaicentre/FLI
 pip-installable `flip` Python package (published as `flip-utils` on PyPI) that ships inside every FL server / client
 image and is imported as `from flip import ...` by user-uploaded training code. Sibling FL trees in the same mono-repo:
 
-- **[`flip-utils/flip/`](./flip/)** — pip-installable Python package with platform logic, NVFLARE components, and utilities (this directory)
+- **[`flip-utils/flip/`](./flip/)** — pip-installable Python package with platform logic, NVFLARE components, Flower helpers and utilities (this directory)
 - **[`../fl-apps/`](../fl-apps/)** — FL job-type implementations / app templates (`standard`, `evaluation`, `diffusion_model`, `fed_opt`)
 - **[`../fl-tutorials/`](../fl-tutorials/)** — runnable end-to-end tutorial examples
 - **[`../fl-services/`](../fl-services/)** — Docker images for FL networks (server, clients, admin API)
@@ -85,7 +81,7 @@ flip/
 ├── utils/        # General utilities: Utils, model weight helpers
 ├── nvflare/      # NVFLARE-specific logic and components
 │   ├── executors/    # RUN_TRAINER, RUN_VALIDATOR, RUN_EVALUATOR wrappers
-│   ├── controllers/  # Workflow controllers (ScatterAndGather, CrossSiteModelEval, …)
+│   ├── controllers/  # FLIP workflows (ScatterAndGather, BroadcastTask, …)
 │   └── components/   # Event handlers, persistors, privacy filters, locators, …
 └── flower/       # Flower-specific server-side helpers
     └── metrics.py    # handle_client_metrics / handle_client_exception

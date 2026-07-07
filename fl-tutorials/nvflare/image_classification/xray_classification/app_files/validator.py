@@ -18,6 +18,9 @@ import numpy as np
 import pydicom
 import torch
 from data_utils import Lesion, LesionDict, get_labels_from_radiology_row, get_lesion_label, get_xray_transforms
+from flip import FLIP
+from flip.constants import ResourceType
+from flip.nvflare.metrics import send_metrics_value
 from loss_and_metrics import compute_precision_recall_f1, get_bce_loss
 from models import get_model
 from nvflare.apis.dxo import DXO, DataKind, from_shareable
@@ -27,10 +30,7 @@ from nvflare.apis.fl_context import FLContext
 from nvflare.apis.shareable import Shareable, make_reply
 from nvflare.apis.signal import Signal
 from nvflare.app_common.app_constant import AppConstants
-
-from flip import FLIP
-from flip.constants import ResourceType
-from flip.nvflare.metrics import send_metrics_value
+from tqdm import tqdm
 
 
 class FLIP_VALIDATOR(Executor):
@@ -96,18 +96,22 @@ class FLIP_VALIDATOR(Executor):
         label value.
 
         Args:
-            dataframe (_type_): dataframe output by FLIP, which has to contain accession_id and
-                columns for each of the lesions.
+            None
 
         Returns:
-            _type_: list of dictionaries for data loading.
+            list[dict[str, str]]: list of dictionaries containing image paths and labels for each lesion.
         """
-        datalist = []
+        datalist: list[dict[str, str]] = []
 
-        # loop over each accession id in the train set
-        for _, row in self.dataframe.iterrows():
+        for _, row in tqdm(
+            self.dataframe.iterrows(),
+            total=len(self.dataframe),
+            desc="Processing cohort",
+            unit="accession",
+        ):
             accession_id = row["accession_id"]
-            # First, we load the labels;
+
+            # Extract the pathology labels for this accession ID from the dataframe row
             pathology_dict = get_labels_from_radiology_row(
                 row, self._lesions, self._value_to_numerical, self._normal_key
             )
@@ -121,32 +125,25 @@ class FLIP_VALIDATOR(Executor):
                     ],
                 )
             except Exception as err:
-                print(f"Could not get image data folder path for {accession_id}: {err}")
+                self.logger.info("⚠️ Could not fetch images for accession_id=%s: %s", accession_id, err)
                 continue
 
+            # get all images in the accession folder that match the pattern "*.dcm"
             all_images = list(accession_folder_path.rglob("*.dcm"))
-            this_accession_matches = 0
-            print(f"Total base count found for accession_id {accession_id}: {len(all_images)}")
 
             for img in all_images:
                 try:
-                    _ = pydicom.dcmread(str(img))
+                    _ = pydicom.dcmread(str(img), stop_before_pixels=True)
                 except Exception as e:
-                    print(f"Problem loading header of base image {str(img)}.")
-                    print(f"{e=}")
-                    print(f"{type(e)=}")
-                    print(f"{e.args=}")
+                    self.logger.warning("Skipping invalid DICOM %s: %s", img.name, e)
                     continue
 
                 # defines keys for image and segmentation
                 item_ = {"image": str(img)}
                 item_.update(pathology_dict)
                 datalist.append(item_)
-                this_accession_matches += 1
 
-            print(f"Added {this_accession_matches} image / label pairs for {accession_id}.")
-
-        print(f"Found {len(datalist)} files in total.")
+        self.logger.info("Dataset ready: %d images", len(datalist))
 
         # split into the training and testing data
         _, _, test_datalist = np.split(
@@ -157,7 +154,7 @@ class FLIP_VALIDATOR(Executor):
             ],
         )
 
-        print(f"Found {len(test_datalist)} files for testing.")
+        self.logger.info("Found %d files for testing.", len(test_datalist))
 
         return test_datalist
 

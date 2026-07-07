@@ -7,7 +7,7 @@ About flip-utils
 ``flip-utils`` is the pip-installable distribution published from this
 repository. Its Python import package is ``flip``, which contains the shared
 platform logic used by FLIP jobs and services including core training logic,
-NVFLARE components, and utility helpers.
+NVFLARE components, Flower helpers, and utility helpers.
 
 The FLIP platform uses this package to power federated learning applications
 across multiple job types: standard federated training, distributed evaluation,

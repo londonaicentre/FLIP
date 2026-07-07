@@ -28,15 +28,17 @@ Two stages run back to back: the autoencoder (`_ae`) is trained and validated fi
 
 1. `init_training` — `flip.nvflare.controllers.InitTraining`
 2. `scatter_and_gather_ae` — `flip.nvflare.controllers.ScatterAndGatherLDM` (stage 1: autoencoder)
-3. `cross_site_validate_ae` — `flip.nvflare.controllers.CrossSiteModelEval`
-4. `scatter_and_gather_dm` — `flip.nvflare.controllers.ScatterAndGatherLDM` (stage 2: diffusion)
-5. `cross_site_validate_dm` — `flip.nvflare.controllers.CrossSiteModelEval`
+3. `cross_site_validate_ae` — stock `nvflare.app_common.workflows.global_model_eval.GlobalModelEval`
+4. `post_validation_cleanup_ae` — `flip.nvflare.controllers.BroadcastTask`
+5. `scatter_and_gather_dm` — `flip.nvflare.controllers.ScatterAndGatherLDM` (stage 2: diffusion)
+6. `cross_site_validate_dm` — stock `nvflare.app_common.workflows.global_model_eval.GlobalModelEval`
+7. `post_validation_cleanup_dm` — `flip.nvflare.controllers.BroadcastTask`
 
 **Client — `config_fed_client.json` `executors` (by task):**
 
 - `init_training`, `post_validation` → `flip.nvflare.components.CleanupImages`
 - `train_ae` → `flip.nvflare.executors.RUN_TRAINER`
-- `train_dm`, `submit_model` → `flip.nvflare.executors.RUN_TRAINER`
+- `train_dm` → `flip.nvflare.executors.RUN_TRAINER`
 - `validate_ae` → `flip.nvflare.executors.RUN_VALIDATOR`
 - `validate_dm` → `flip.nvflare.executors.RUN_VALIDATOR`
 

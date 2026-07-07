@@ -101,6 +101,22 @@ $(if $(INTERNAL_SERVICE_KEY),,$(error 🔑 INTERNAL_SERVICE_KEY must be set in $
 $(if $(INTERNAL_SERVICE_KEY_HASH),,$(error 🔑 INTERNAL_SERVICE_KEY_HASH must be set in $(MAIN_ENV_FILE) — must be sha256 of INTERNAL_SERVICE_KEY))
 $(if $(INTERNAL_SERVICE_KEY_HEADER),,$(error 📨 INTERNAL_SERVICE_KEY_HEADER must be set in $(MAIN_ENV_FILE)))
 export TF_VAR_MIN_CLIENTS=${MIN_CLIENTS}
+# Per-job GPU resource spec forwarded to fl-api on ECS (mirrors compose). Default
+# 0 in variables.tf; set JOB_RESOURCE_SPEC_NUM_GPUS/…_MEM_PER_GPU_IN_GIB in the
+# env file for GPU jobs (e.g. Ark+ eval: NUM_GPUS=1, MEM_PER_GPU_IN_GIB=7).
+# Export only when set: an unconditional export turns a missing env key into
+# TF_VAR_…="" and Terraform rejects the empty string for a number variable
+# instead of falling back to the variables.tf default.
+ifneq ($(JOB_RESOURCE_SPEC_NUM_GPUS),)
+export TF_VAR_JOB_RESOURCE_SPEC_NUM_GPUS=${JOB_RESOURCE_SPEC_NUM_GPUS}
+endif
+ifneq ($(JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB),)
+export TF_VAR_JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB=${JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB}
+endif
+# Pre-merge fl-apps repoint (empty = canonical base-application prefix). Set
+# FL_APP_BASE_BUCKET_OVERRIDE in the env file to a throwaway S3 root when
+# deploying a branch whose fl-apps templates are not yet merged to main.
+export TF_VAR_FL_APP_BASE_BUCKET_OVERRIDE=${FL_APP_BASE_BUCKET_OVERRIDE}
 # Uncomment to enable ECS Exec on Fargate tasks for debugging:
 # export TF_VAR_ecs_exec_enabled=true
 
@@ -128,6 +144,12 @@ export TF_VAR_local_trust_public_ips=$(LOCAL_TRUST_PUBLIC_IPS)
 # `make add-k8s-trust` applies them via a normal plan/apply (no -target).
 K8S_TRUST_PUBLIC_IPS ?= []
 export TF_VAR_k8s_trust_public_ips=$(K8S_TRUST_PUBLIC_IPS)
+# Whether Terraform provisions the cloud Trust EC2. false = hub-only deployment
+# (every trust runs on-prem — e.g. the workloads need a GPU the t3 trust host
+# doesn't have). Settable in the env file or CLI; `make full-deploy-hub-only`
+# forces it for its whole chain.
+DEPLOY_TRUST_EC2 ?= true
+export TF_VAR_deploy_trust_ec2=$(DEPLOY_TRUST_EC2)
 export TF_VAR_AWS_REGION=${AWS_REGION}
 export TF_VAR_VPC_NAME=${VPC_NAME}
 export TF_VAR_ADMIN_USER_PASSWORD=${ADMIN_USER_PASSWORD}
@@ -370,8 +392,14 @@ provision-bastion: ssh-config ## Install the minimal operator tooling on the Cen
 		-e orthanc_data_version=$(ORTHANC_DATA_VERSION)
 	@echo "✅ Central Hub SSM bastion provisioned."
 
+# Cloud-trust targets are meaningless on a hub-only deployment — fail fast with
+# a pointer to the on-prem flow instead of an obscure SSH/inventory error.
+.PHONY: check-trust-ec2-enabled
+check-trust-ec2-enabled:
+	@[ "$(DEPLOY_TRUST_EC2)" != "false" ] || (echo "❌  DEPLOY_TRUST_EC2=false (hub-only deployment) — there is no cloud Trust EC2. On-prem trusts join via register-trusts + allow-local-trust-nlb and run 'make -C trust up-trust' on their own host."; exit 1)
+
 .PHONY: seed-trust-data
-seed-trust-data: ssh-config ## Load trust-specific OMOP + Orthanc mock data onto the Trust EC2 (re-run after data version bump; requires KIT=)
+seed-trust-data: check-trust-ec2-enabled ssh-config ## Load trust-specific OMOP + Orthanc mock data onto the Trust EC2 (re-run after data version bump; requires KIT=)
 	@[ -n "$(KIT)" ] || (echo "❌  KIT is required. Usage: make seed-trust-data KIT=Trust_2 PROD=stag"; exit 1)
 	@[ -n "$(FL_KIT_SLOT_NUMBER)" ] || (echo "❌  FL_KIT_SLOT_NUMBER not found in trust/.env.$(KIT).$(KIT_ENV_SUFFIX) — run register-trusts first"; exit 1)
 	@[ -n "$(OMOP_DATA_VERSION)" ] || (echo "❌  trust/omop-db/.data_version not found"; exit 1)
@@ -453,7 +481,7 @@ OMOP_DATA_VERSION := $(shell cat ../../../trust/omop-db/.data_version 2>/dev/nul
 ORTHANC_DATA_VERSION := $(shell cat ../../../trust/orthanc/.data_version 2>/dev/null | tr -d ' \n\r\t')
 
 .PHONY: deploy-trust
-deploy-trust: ssh-config update-env seed-trust-data ## Deploy trust relationships after central hub is deployed
+deploy-trust: check-trust-ec2-enabled ssh-config update-env seed-trust-data ## Deploy trust relationships after central hub is deployed
 	@echo "🔍 Checking trust images (tag: $(DOCKER_TAG))..."
 	@missing=false; \
 	for image in $(TRUST_IMAGES); do \
@@ -706,6 +734,26 @@ full-deploy: ## Full AWS deployment: provision infrastructure, deploy cloud Trus
 	## 8. deploy-trust + status: bring up cloud Trust container stack and verify
 	## Prerequisite: create stub kit files first: make new-trust TRUST_CODE=<CODE> TRUST_NAME="..." TRUST_REGION=London PROD=$(PROD)
 full-deploy: github-login aws-login init import-persistent generate-internal-service-key plan apply update-env ssh-config ansible-init deploy-centralhub register-trusts deploy-trust status
+
+.PHONY: full-deploy-hub-only
+full-deploy-hub-only: ## Hub-only deployment: no cloud Trust EC2 — every trust runs on-prem (honours PROD)
+	## Same chain as full-deploy minus the cloud-trust steps (deploy-trust, seed-trust-data),
+	## with DEPLOY_TRUST_EC2=false so Terraform provisions no Trust EC2 at all. Use when the
+	## trusts must run on hosts the cloud instance can't match (e.g. they need a GPU — the
+	## trust EC2 is a t3.xlarge with none).
+	## ssh-config skips the flip-trust alias and every `hosts: trust_ec2` Ansible play is a no-op.
+	## NOTE: this only skips *creating* the Trust EC2. On an environment previously deployed
+	## with full-deploy, apply will DESTROY the existing Trust EC2 (its data volumes are not
+	## preserved) — re-run with DEPLOY_TRUST_EC2=true to bring one back.
+	## After it completes, join each on-prem trust:
+	##   1. add the trust host's public IP to LOCAL_TRUST_PUBLIC_IPS in the env file, then
+	##      make allow-local-trust-nlb PROD=$(PROD)
+	##   2. make new-trust TRUST_CODE=<CODE> ... PROD=<env> && make register-trusts KIT=<CODE> PROD=$(PROD)
+	##      (register-trusts in this chain already registers every kit present)
+	##   3. on the trust host: env PROD=<env> make -C trust up-trust KIT=<CODE>
+	## Remember `make deploy-ui PROD=$(PROD)` — the UI ships separately, same as full-deploy.
+full-deploy-hub-only: DEPLOY_TRUST_EC2 := false
+full-deploy-hub-only: github-login aws-login init import-persistent generate-internal-service-key plan apply update-env ssh-config ansible-init deploy-centralhub register-trusts status
 
 .PHONY: full-deploy-with-local-trust
 full-deploy-with-local-trust: ## Full AWS deployment (honours PROD) plus on-prem trust provisioning (requires LOCAL_TRUST_IP=<public-ip>)

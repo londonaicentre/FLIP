@@ -22,7 +22,7 @@
       }
     },
     {
-      "tasks": ["train_dm", "submit_model"],
+      "tasks": ["train_dm"],
       "executor": {
         "path": "flip.nvflare.executors.RUN_TRAINER",
         "args": {
