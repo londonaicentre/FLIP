@@ -61,99 +61,116 @@
                     </select>
                 </div>
 
-                <!-- Models table -->
+                <!-- Models table (div/grid layout: transparent rows + status rail, escapes the
+                     global `<table>` styling in main.css) -->
                 <div class="px-8 pb-8">
-                    <div class="overflow-hidden border border-gray-200 rounded-xl dark:border-dark-raised">
-                        <table class="w-full text-left">
-                            <thead class="bg-gray-50 dark:bg-dark-raised">
-                                <tr class="text-xs font-mono uppercase tracking-wider text-gray-500 dark:text-gray-300">
-                                    <th class="px-6 py-3 font-medium">
-                                        Model
-                                    </th>
-                                    <th class="px-6 py-3 font-medium">
-                                        Project
-                                    </th>
-                                    <th class="px-6 py-3 font-medium">
-                                        Trusts
-                                    </th>
-                                    <th class="px-6 py-3 font-medium text-right">
-                                        Status
-                                    </th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                <tr
-                                    v-for="(model, index) in models"
-                                    :key="model.id"
-                                    :data-test="`models-list-item-${index}`"
-                                    class="border-t border-gray-100 transition hover:bg-gray-50 dark:border-dark-raised dark:hover:bg-dark-canvas"
+                    <div class="overflow-hidden border border-gray-200 rounded-xl dark:border-dark-border">
+                        <!-- Header row: sortable columns -->
+                        <div class="flex items-stretch bg-gray-50 border-b border-gray-200 dark:bg-dark-surface dark:border-dark-border">
+                            <div class="w-[3px] shrink-0" />
+                            <div :class="GRID_CLASS" class="flex-1 gap-4 px-6 py-3">
+                                <button
+                                    v-for="col in columns"
+                                    :key="col.label"
+                                    type="button"
+                                    :data-test="col.key ? `sort-header-${col.key}` : undefined"
+                                    class="flex items-center gap-1 text-xs font-mono font-medium uppercase tracking-wider text-gray-500 dark:text-gray-300 select-none"
+                                    :class="[
+                                        col.align === 'right' ? 'justify-end' : 'justify-start',
+                                        col.key ? 'cursor-pointer hover:text-gray-700 dark:hover:text-gray-200' : 'cursor-default'
+                                    ]"
+                                    @click="col.key && toggleSort(col.key)"
                                 >
-                                    <!-- Model -->
-                                    <td class="px-6 py-4 align-top">
-                                        <router-link
-                                            :to="`/project/${model.projectId}/model/${model.id}`"
-                                            data-test="model-name"
-                                            class="font-mono text-sm font-semibold text-gray-900 hover:text-primary-600 dark:text-gray-100 dark:hover:text-primary-300"
-                                            @click.stop
-                                        >
-                                            {{ model.name }}
-                                        </router-link>
-                                        <p class="mt-1 text-xs text-gray-500 dark:text-gray-300">
-                                            {{ ownerLabel(model) }}
-                                        </p>
-                                    </td>
-                                    <!-- Project -->
-                                    <td class="px-6 py-4 align-top">
-                                        <router-link
-                                            :to="`/project/${model.projectId}`"
-                                            data-test="model-project"
-                                            class="text-sm font-semibold text-gray-900 hover:text-primary-600 dark:text-gray-100 dark:hover:text-primary-300"
-                                            @click.stop
-                                        >
-                                            {{ model.projectName }}
-                                        </router-link>
-                                    </td>
-                                    <!-- Trusts -->
-                                    <td class="px-6 py-4 align-top">
-                                        <div v-if="model.trusts.length" class="flex flex-wrap items-center gap-1.5">
-                                            <span
-                                                v-for="t in model.trusts"
-                                                :key="t.id"
-                                                data-test="model-trust-chip"
-                                                :title="t.name"
-                                                class="inline-flex items-center gap-1 rounded-full border border-gray-200 bg-white px-2.5 py-0.5 text-xs text-gray-700 dark:border-dark-raised dark:bg-dark-canvas dark:text-gray-200"
-                                            >
-                                                <span class="inline-block w-1.5 h-1.5 rounded-full bg-emerald-500" />
-                                                {{ trustChipLabel(t) }}
-                                            </span>
-                                        </div>
-                                        <p
-                                            v-else
-                                            data-test="model-trusts-empty"
-                                            class="text-xs italic text-gray-400 dark:text-gray-300"
-                                        >
-                                            Trusts assigned when training starts
-                                        </p>
-                                    </td>
-                                    <!-- Status -->
-                                    <td class="px-6 py-4 align-top text-right">
+                                    {{ col.label }}
+                                    <span
+                                        v-if="col.key && sortKey === col.key"
+                                        class="text-primary-600 dark:text-primary-300"
+                                    >{{ sortDir === "asc" ? "↑" : "↓" }}</span>
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Data rows -->
+                        <div
+                            v-for="(model, index) in sortedModels"
+                            :key="model.id"
+                            :data-test="`models-list-item-${index}`"
+                            class="flex items-stretch border-t border-gray-100 transition first:border-t-0 hover:bg-gray-50 dark:border-dark-border dark:hover:bg-dark-raised"
+                        >
+                            <!-- Status rail -->
+                            <div
+                                data-test="model-status-rail"
+                                class="w-[3px] shrink-0"
+                                :class="railClass(model.status)"
+                            />
+                            <div :class="GRID_CLASS" class="flex-1 items-center gap-4 px-6 py-4">
+                                <!-- Model -->
+                                <div class="min-w-0">
+                                    <router-link
+                                        :to="`/project/${model.projectId}/model/${model.id}`"
+                                        data-test="model-name"
+                                        class="font-mono text-sm font-semibold text-gray-900 hover:text-primary-600 dark:text-gray-100 dark:hover:text-primary-300"
+                                        @click.stop
+                                    >
+                                        {{ model.name }}
+                                    </router-link>
+                                    <p class="mt-1 text-xs text-gray-500 dark:text-gray-300">
+                                        {{ ownerLabel(model) }}
+                                    </p>
+                                </div>
+                                <!-- Project -->
+                                <div class="min-w-0">
+                                    <router-link
+                                        :to="`/project/${model.projectId}`"
+                                        data-test="model-project"
+                                        class="text-sm font-semibold text-gray-900 hover:text-primary-600 dark:text-gray-100 dark:hover:text-primary-300"
+                                        @click.stop
+                                    >
+                                        {{ model.projectName }}
+                                    </router-link>
+                                </div>
+                                <!-- Trusts -->
+                                <div class="min-w-0">
+                                    <div v-if="model.trusts.length" class="flex flex-wrap items-center gap-1.5">
                                         <span
-                                            data-test="model-status-indicator"
-                                            class="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium"
-                                            :class="statusPillClass(model.status)"
+                                            v-for="t in model.trusts"
+                                            :key="t.id"
+                                            data-test="model-trust-chip"
+                                            :title="t.name"
+                                            class="inline-flex items-center gap-1 rounded-full border border-gray-200 bg-white px-2.5 py-0.5 text-xs text-gray-700 dark:border-dark-border dark:bg-dark-surface dark:text-gray-200"
                                         >
-                                            <span class="inline-block w-1.5 h-1.5 rounded-full" :class="statusDotClass(model.status)" />
-                                            {{ modelStatusLabel(model.status) }}
+                                            <span class="inline-block w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                                            {{ trustChipLabel(t) }}
                                         </span>
-                                    </td>
-                                </tr>
-                                <tr v-if="!models.length">
-                                    <td colspan="4" class="px-6 py-12 text-center text-sm text-gray-500 dark:text-gray-300">
-                                        There are no models to show
-                                    </td>
-                                </tr>
-                            </tbody>
-                        </table>
+                                    </div>
+                                    <p
+                                        v-else
+                                        data-test="model-trusts-empty"
+                                        class="text-xs italic text-gray-400 dark:text-gray-300"
+                                    >
+                                        Trusts assigned when training starts
+                                    </p>
+                                </div>
+                                <!-- Status -->
+                                <div class="flex justify-end">
+                                    <span
+                                        data-test="model-status-indicator"
+                                        class="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium"
+                                        :class="statusPillClass(model.status)"
+                                    >
+                                        <span class="inline-block w-1.5 h-1.5 rounded-full" :class="statusDotClass(model.status)" />
+                                        {{ modelStatusLabel(model.status) }}
+                                    </span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div
+                            v-if="!sortedModels.length"
+                            class="px-6 py-12 text-center text-sm text-gray-500 dark:text-gray-300"
+                        >
+                            There are no models to show
+                        </div>
                     </div>
 
                     <AiPagination
@@ -218,6 +235,92 @@ const { data, error } = useSWRV(
 useErrorHandler(error);
 
 const models = computed<IModelSummary[]>(() => data.value?.data ?? []);
+
+type SortKey = "name" | "project" | "trusts" | "status";
+type SortDir = "asc" | "desc";
+
+interface IColumn {
+    key?: SortKey;
+    label: string;
+    align?: "left" | "right";
+}
+
+// Shared grid template so the header and data rows stay column-aligned.
+const GRID_CLASS = "grid grid-cols-[minmax(0,1.6fr)_minmax(0,1.4fr)_minmax(0,1.6fr)_auto]";
+
+const columns: IColumn[] = [
+    {
+        key: "name",
+        label: "Model"
+    },
+    {
+        key: "project",
+        label: "Project"
+    },
+    {
+        key: "trusts",
+        label: "Trusts"
+    },
+    {
+        key: "status",
+        label: "Status",
+        align: "right"
+    }
+];
+
+// Null sortKey keeps the backend order (newest-first) until a header is clicked.
+const sortKey = ref<SortKey | null>(null);
+const sortDir = ref<SortDir>("asc");
+
+// First click on a column sorts ascending; subsequent clicks toggle direction.
+const toggleSort = (key: SortKey): void => {
+    if (sortKey.value === key) {
+        sortDir.value = sortDir.value === "asc" ? "desc" : "asc";
+    }
+    else {
+        sortKey.value = key;
+        sortDir.value = "asc";
+    }
+};
+
+// Lifecycle rank so a Status sort groups models by stage in a sensible order.
+const STATUS_RANK: Record<ModelStatus, number> = {
+    PENDING: 0,
+    INITIATED: 1,
+    PREPARED: 2,
+    TRAINING_STARTED: 3,
+    RESULTS_UPLOADED: 4,
+    RESULTS_UPLOAD_FAILED: 5,
+    ERROR: 6,
+    STOPPED: 7
+};
+const statusRank = (s: ModelStatus | undefined): number => (s ? STATUS_RANK[s] ?? 99 : 99);
+
+const SORT_COMPARATORS: Record<SortKey, (a: IModelSummary, b: IModelSummary) => number> = {
+    name: (a, b) => a.name.localeCompare(b.name),
+    project: (a, b) => a.projectName.localeCompare(b.projectName) || a.name.localeCompare(b.name),
+    trusts: (a, b) => a.trusts.length - b.trusts.length || a.name.localeCompare(b.name),
+    status: (a, b) => statusRank(a.status) - statusRank(b.status) || a.name.localeCompare(b.name)
+};
+
+// Client-side sort of the current page (mirrors the Connection Status trusts table).
+const sortedModels = computed<IModelSummary[]>(() => {
+    if (!sortKey.value) return models.value;
+    const cmp = SORT_COMPARATORS[sortKey.value];
+
+    return [...models.value].sort(sortDir.value === "asc" ? cmp : (a, b) => cmp(b, a));
+});
+
+// Status-toned left rail: magenta = live training, amber = preparing, emerald =
+// completed, red = needs attention, neutral = created/queued.
+const railClass = (status: ModelStatus | undefined): string => {
+    if (isModelStatusError(status)) return "bg-red-500";
+    if (status === "RESULTS_UPLOADED") return "bg-emerald-500";
+    if (status === "TRAINING_STARTED") return "bg-fuchsia-500";
+    if (status === "PREPARED") return "bg-amber-500";
+
+    return "bg-gray-300 dark:bg-gray-600";
+};
 
 debouncedWatch(
     search,

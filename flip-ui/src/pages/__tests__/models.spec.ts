@@ -212,4 +212,43 @@ describe("Models Page", () => {
         // With no ownerName the row should still render without throwing.
         expect(wrapper.find("[data-test='models-list-item-0']").exists()).toBe(true);
     });
+
+    test("clicking the Model header sorts rows by name and toggles direction", async () => {
+        setModels([
+            makeModel({ id: "m1", name: "zebra" }),
+            makeModel({ id: "m2", name: "apple" })
+        ]);
+        const wrapper = mountPage();
+        await wrapper.vm.$nextTick();
+
+        await wrapper.find("[data-test='sort-header-name']").trigger("click");
+        expect(wrapper.findAll("[data-test='model-name']").map(n => n.text())).toEqual(["apple", "zebra"]);
+
+        await wrapper.find("[data-test='sort-header-name']").trigger("click");
+        expect(wrapper.findAll("[data-test='model-name']").map(n => n.text())).toEqual(["zebra", "apple"]);
+    });
+
+    test("clicking the Status header groups rows by lifecycle stage (ascending)", async () => {
+        setModels([
+            makeModel({ id: "m1", name: "done", status: "RESULTS_UPLOADED" }),
+            makeModel({ id: "m2", name: "created", status: "PENDING" })
+        ]);
+        const wrapper = mountPage();
+        await wrapper.vm.$nextTick();
+
+        await wrapper.find("[data-test='sort-header-status']").trigger("click");
+        // PENDING (earliest lifecycle) sorts before RESULTS_UPLOADED.
+        expect(wrapper.findAll("[data-test='model-name']").map(n => n.text())).toEqual(["created", "done"]);
+    });
+
+    test("each row carries a status-coloured left rail", async () => {
+        setModels([makeModel({ status: "TRAINING_STARTED" })]);
+        const wrapper = mountPage();
+        await wrapper.vm.$nextTick();
+
+        const rail = wrapper.find("[data-test='model-status-rail']");
+        expect(rail.exists()).toBe(true);
+        // Training runs get the live magenta rail.
+        expect(rail.classes().some(c => c.includes("fuchsia"))).toBe(true);
+    });
 });
