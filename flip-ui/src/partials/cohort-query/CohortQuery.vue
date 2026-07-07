@@ -27,7 +27,7 @@
                         <div class="space-y-2 lg:col-span-2">
                             <div
                                 v-if="lastRunLine"
-                                class="text-xs font-semibold tracking-wider uppercase font-mono text-gray-500 dark:text-gray-400"
+                                class="text-xs font-semibold tracking-wider uppercase font-mono text-gray-500 dark:text-gray-300"
                             >
                                 {{ lastRunLine }}
                             </div>
@@ -54,7 +54,7 @@
                 </div>
                 <div v-if="project?.query" class="relative p-4 pt-4 space-y-4">
                     <Transition name="slidedown">
-                        <div v-if="true" class="overflow-hidden border border-gray-300 rounded-lg shadow-lg dark:border-gray-700 bg-gray-50 dark:bg-gray-900">
+                        <div v-if="true" class="overflow-hidden border border-gray-300 rounded-lg shadow-lg dark:border-dark-border bg-gray-50 dark:bg-dark-canvas">
                             <QueryResultCharts :submitting="formSubmitting" />
                         </div>
                     </Transition>

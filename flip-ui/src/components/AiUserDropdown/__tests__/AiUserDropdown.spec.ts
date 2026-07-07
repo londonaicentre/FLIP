@@ -33,4 +33,37 @@ describe("Ai UserDropdown", () => {
 
         expect(comp.exists()).toBe(true);
     });
+
+    it("renders the account menu trigger as a native button for assistive tech", () => {
+        const comp = mount(AiUserDropdown, {
+            global: {
+                plugins: [createTestingPinia({
+                    createSpy: vi.fn,
+                    stubActions: false
+                })]
+            }
+        });
+
+        const trigger = comp.find("[data-test='account-menu-btn']");
+        expect(trigger.exists()).toBe(true);
+        // aria-haspopup/aria-expanded are only valid on an element with a
+        // button role — a plain div invalidates them (Lighthouse aria-allowed-attr).
+        expect(trigger.element.tagName).toBe("BUTTON");
+    });
+
+    it("keeps a visible keyboard focus ring on the trigger button", () => {
+        const comp = mount(AiUserDropdown, {
+            global: {
+                plugins: [createTestingPinia({
+                    createSpy: vi.fn,
+                    stubActions: false
+                })]
+            }
+        });
+
+        // Focus lands on the native button, so the ring utilities must live
+        // there — focus:* classes on the inner div never fire.
+        const trigger = comp.find("[data-test='account-menu-btn']");
+        expect(trigger.classes().some(c => c.startsWith("focus-visible:ring"))).toBe(true);
+    });
 });

@@ -42,7 +42,7 @@
                             class="w-full max-w-2xl max-h-screen p-4 mx-auto overflow-hidden align-middle transition-all transform shadow-xl rounded-xl dark:ring-1 dark:ring-white/20"
                             :class="light ? 'bg-gray-100' : 'bg-gray-800'"
                         >
-                            <button class="absolute p-1 border border-gray-600 rounded top-4 right-4 group" @click="close">
+                            <button aria-label="Close" class="absolute p-1 border border-gray-600 rounded top-4 right-4 group" @click="close">
                                 <icon-mdi-close class="text-gray-300 transition group-hover:text-gray-100" />
                             </button>
                             <slot />

@@ -12,8 +12,9 @@
 
 """Integration-test scaffolding.
 
-Boots a throwaway Postgres via Testcontainers once per session and rewires
-flip-api's module-level engine references at it so:
+Boots a throwaway Postgres via Testcontainers once per session and points
+flip-api's lazy engine cache (``database._engine``, read by ``get_engine()``)
+at it so:
 
 * the existing ``session`` fixture from ``tests.fixtures.main_fixtures`` (and
   every test depending on it) reads/writes the throwaway DB;
@@ -50,7 +51,6 @@ import flip_api.db.database as db_module
 # full schema. The imports look unused but are load-bearing — don't drop them.
 import flip_api.db.models.main_models  # noqa: F401
 import flip_api.db.models.user_models  # noqa: F401
-import tests.fixtures.main_fixtures as main_fixtures
 from flip_api.auth.dependencies import verify_token
 from flip_api.config import get_settings
 from flip_api.db.database import get_session
@@ -189,13 +189,15 @@ def integration_engine(pg_container: PostgresContainer):
         seed_roles(s)
         seed_role_permissions(s)
 
-    # Redirect every reference to the prod-bound engine at the throwaway DB.
-    # Both modules captured ``engine`` at import time, so we rebind both names.
-    main_fixtures.engine = engine
-    db_module.engine = engine
+    # Redirect every reference to the prod-bound engine at the throwaway DB by
+    # pre-populating the lazy cache: get_engine() callers (main_fixtures'
+    # ``session`` fixture, get_session, seed helpers) all read this at use time,
+    # so no prod-bound engine is ever built during the suite.
+    db_module._engine = engine
 
     yield engine
 
+    db_module._engine = None
     engine.dispose()
 
 

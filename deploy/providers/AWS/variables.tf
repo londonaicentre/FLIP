@@ -179,7 +179,7 @@ variable "enable_efs" {
 }
 
 variable "enable_ecs_endpoints" {
-  description = "Enable VPC interface endpoints (SSM, Secrets, Logs, ECR) for ECS Fargate"
+  description = "Enable VPC interface endpoints (SSM, Secrets Manager, CloudWatch Logs) for ECS Fargate"
   type        = bool
   default     = true
 }

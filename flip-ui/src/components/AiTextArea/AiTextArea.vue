@@ -16,7 +16,7 @@
         <label
             :for="uuid"
             class="flex w-full gap-1 text-sm font-bold"
-            :class="{ 'text-red-500 dark:text-red-400': !!errorMessage, 'text-gray-700 dark:text-gray-400': !errorMessage }"
+            :class="{ 'text-red-500 dark:text-red-400': !!errorMessage, 'text-gray-700 dark:text-gray-300': !errorMessage }"
         >
             {{ label }}
             <span v-if="required" class="text-red-600">
@@ -25,7 +25,7 @@
         </label>
         <div class="relative mt-1">
             <div
-                class="overflow-hidden transition duration-300 border border-gray-300 dark:border-gray-700 rounded-md shadow-sm dark:focus-within:border-primary-400 focus-within:border-primary-500 dark:focus-within:ring-primary-400 focus-within:ring-primary-500 focus-within:ring-1"
+                class="overflow-hidden transition duration-300 border border-gray-300 dark:border-dark-border rounded-md shadow-sm dark:focus-within:border-primary-400 focus-within:border-primary-500 dark:focus-within:ring-primary-400 focus-within:ring-primary-500 focus-within:ring-1"
                 :class="{
                     'ring-1 ring-red-500 focus-within:ring-red-500 text-red-500': !!errorMessage,
                     'focus-within:border-red-500 border-red-500': !!errorMessage,
@@ -41,12 +41,11 @@
                     :name="name"
                     :type="type"
                     :value="inputValue"
-                    :autocomplete="type"
                     :required="required"
                     :data-test="dataTest"
                     :placeholder="placeholder"
                     rows="5"
-                    class="block w-full text-sm text-gray-700 dark:text-gray-300 dark:bg-gray-700 border-0 resize-y focus:ring-0"
+                    class="block w-full text-sm text-gray-700 dark:text-gray-300 dark:bg-dark-raised border-0 resize-y focus:ring-0"
                     :class="errorMessage ? 'placeholder-red-500/50' : 'placeholder:text-gray-400'"
                     v-bind="inputProps"
                     @input="handleChange"
@@ -68,7 +67,7 @@
         <div v-if="postIcon" class="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none">
             <component :is="postIcon" class="w-5 h-5" :class="{ 'text-red-500': !!errorMessage }" />
         </div>
-        <div v-if="hint && !errorMessage" class="m-1 text-sm text-gray-500">
+        <div v-if="hint && !errorMessage" class="m-1 text-sm text-gray-500 dark:text-gray-300">
             {{ hint }}
         </div>
         <div v-if="!!errorMessage" class="m-1 text-sm text-right text-red-500 error_message">

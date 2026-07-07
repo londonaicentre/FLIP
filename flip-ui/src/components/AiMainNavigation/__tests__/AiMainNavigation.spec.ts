@@ -15,26 +15,47 @@
 
 import { createTestingPinia } from "@pinia/testing";
 import { mount } from "@vue/test-utils";
-import { vi } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 
 import AiMainNavigation from "../AiMainNavigation.vue";
 
+const LIGHT_LOGO = "/images/aicentre-logo-transparent.webp";
+const DARK_LOGO = "/images/aicentre-logo-transparent-dark.webp";
+
+function mountNav(isDark: boolean) {
+    return mount(AiMainNavigation, {
+        global: {
+            // Render router-link slots so the logo inside the home link is asserted on.
+            stubs: { "router-link": { template: "<a><slot /></a>" } },
+            directives: { tippy: () => {} },
+            plugins: [createTestingPinia({
+                createSpy: vi.fn,
+                stubActions: false
+            })]
+        },
+        props: {
+            currentPage: "/project",
+            isDark
+        }
+    });
+}
+
 describe("Ai MainNavigation", () => {
     test("Renders Component", () => {
-        const comp = mount(AiMainNavigation, {
-            global: {
-                stubs: ["router-link"],
-                plugins: [createTestingPinia({
-                    createSpy: vi.fn,
-                    stubActions: false
-                })]
-            },
-            props: {
-                currentPage: "/project",
-                isDark: false
-            }
-        });
+        expect(mountNav(false).exists()).toBe(true);
+    });
 
-        expect(comp.exists()).toBe(true);
+    test("shows the light AI Centre logo in light mode", () => {
+        const comp = mountNav(false);
+
+        expect(comp.find(`img[src="${LIGHT_LOGO}"]`).exists()).toBe(true);
+        expect(comp.find(`img[src="${DARK_LOGO}"]`).exists()).toBe(false);
+    });
+
+    test("shows the dark AI Centre logo in dark mode", () => {
+        const comp = mountNav(true);
+
+        expect(comp.find(`img[src="${DARK_LOGO}"]`).exists()).toBe(true);
+        expect(comp.find(`img[src="${LIGHT_LOGO}"]`).exists()).toBe(false);
     });
 });

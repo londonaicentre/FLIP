@@ -44,7 +44,7 @@
                     >
                         <div
                             data-test="confirm-modal"
-                            class="inline-flex flex-col w-full overflow-hidden transition-all transform bg-body dark:bg-gray-800 rounded-lg shadow-xl dark:ring-white/20"
+                            class="inline-flex flex-col w-full overflow-hidden transition-all transform bg-body dark:bg-dark-surface rounded-lg shadow-xl dark:ring-white/20"
                         >
                             <DialogTitle
                                 v-if="title"
@@ -56,12 +56,12 @@
                             <DialogTitle
                                 v-if="description"
                                 as="h5"
-                                class="px-8 pb-2 text-sm font-medium leading-6 text-left text-gray-600"
+                                class="px-8 pb-2 text-sm font-medium leading-6 text-left text-gray-600 dark:text-gray-300"
                             >
                                 {{ description }}
                             </DialogTitle>
 
-                            <div class="flex flex-grow overflow-y-auto bg-body dark:bg-gray-800">
+                            <div class="flex flex-grow overflow-y-auto bg-body dark:bg-dark-surface">
                                 <div class="flex flex-col items-start w-full">
                                     <div class="w-full text-left">
                                         <div
@@ -74,7 +74,7 @@
                             </div>
                             <div
                                 v-if="!basic"
-                                class="flex justify-end flex-shrink-0 w-full px-4 py-3 bg-white dark:bg-gray-900 sm:px-6"
+                                class="flex justify-end flex-shrink-0 w-full px-4 py-3 bg-white dark:bg-dark-canvas sm:px-6"
                             >
                                 <AiButton :tabindex="0" data-test="close-modal-btn" @click="close">
                                     Close
@@ -94,7 +94,7 @@
                             <div class="absolute block top-2 right-2">
                                 <button
                                     type="button"
-                                    class="text-gray-400 bg-white dark:bg-gray-700 dark:text-gray-200 p-1 border border-gray-300 rounded-lg dark:focus:ring-primary-400 hover:text-gray-500 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 dark:ring-offset-gray-900"
+                                    class="text-gray-400 bg-white dark:bg-dark-raised dark:text-gray-200 p-1 border border-gray-300 rounded-lg dark:focus:ring-primary-400 hover:text-gray-500 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 dark:ring-offset-dark-canvas"
                                     tabindex="0"
                                     @click="close"
                                 >

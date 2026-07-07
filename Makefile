@@ -182,17 +182,6 @@ up-trusts: create-networks
 	$(MAKE) DEBUG=$(DEBUG) -C trust up
 	@echo "✅ Trust services started successfully!"
 
-# Uses --pull always to ensure the latest FL images and 'stag'/'prod' version are used
-up-centralhub-ec2: create-networks-centralhub _ensure-fl-jobs-dir
-	@echo "Hey! PROD="$(PROD)
-	@echo "Hey! UI_PORT="$(UI_PORT)
-	@echo "🚢 Starting central hub API services..."
-	PROVIDER=AWS \
-	DOCKER_TAG=$(DOCKER_TAG) \
-	DOCKER_FL_TAG=$(DOCKER_FL_TAG) \
-	${DOCKER_COMMAND} up --remove-orphans -d --pull always
-	@echo "✅ Central hub API services started successfully!"
-
 up-trust-ec2: create-networks
 	@echo "Hey! PROD="$(PROD)
 	@echo "Hey! UI_PORT="$(UI_PORT)

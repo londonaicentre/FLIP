@@ -21,7 +21,7 @@
                     </h2>
                     <p
                         v-if="canLoad"
-                        class="mt-1 text-[13px] leading-snug text-gray-500 dark:text-gray-400"
+                        class="mt-1 text-[13px] leading-snug text-gray-500 dark:text-gray-300"
                     >
                         When this project was approved, an XNAT project was created at each trust.
                         Live import counts below.
@@ -39,53 +39,53 @@
                 </div>
 
                 <div v-else class="space-y-4">
-                    <div class="grid grid-cols-5 overflow-hidden border-t border-b border-gray-200 divide-x divide-gray-200 dark:border-gray-700 dark:divide-gray-700">
+                    <div class="grid grid-cols-5 overflow-hidden border-t border-b border-gray-200 divide-x divide-gray-200 dark:border-dark-border dark:divide-dark-border">
                         <div class="min-w-0 p-2.5">
-                            <p class="font-mono text-[10px] uppercase tracking-wide leading-tight text-gray-500 dark:text-gray-400 break-words">
+                            <p class="font-mono text-[10px] uppercase tracking-wide leading-tight text-gray-500 dark:text-gray-300 break-words">
                                 Trusts onboarded
                             </p>
                             <p class="mt-1.5 text-xl font-semibold leading-none font-heading text-gray-900 dark:text-gray-100" data-test="overview-project-creation">
                                 {{ overview.projectCreationCompleted }}/{{ overview.projectCreationTotal }}
                             </p>
-                            <p class="mt-1.5 text-[11px] leading-tight text-gray-500 dark:text-gray-400">
+                            <p class="mt-1.5 text-[11px] leading-tight text-gray-500 dark:text-gray-300">
                                 imaging projects created
                             </p>
                         </div>
                         <div class="min-w-0 p-2.5">
-                            <p class="font-mono text-[10px] uppercase tracking-wide leading-tight text-gray-500 dark:text-gray-400 break-words">
+                            <p class="font-mono text-[10px] uppercase tracking-wide leading-tight text-gray-500 dark:text-gray-300 break-words">
                                 Studies retrieved
                             </p>
                             <p class="mt-1.5 text-xl font-semibold leading-none font-heading text-gray-900 dark:text-gray-100" data-test="overview-image-retrieval">
                                 {{ formatCount(overview.studyRetrievalTotal) }}
                             </p>
-                            <p class="mt-1.5 text-[11px] leading-tight text-gray-500 dark:text-gray-400">
+                            <p class="mt-1.5 text-[11px] leading-tight text-gray-500 dark:text-gray-300" data-test="overview-retrieval-percent">
                                 {{ overviewRetrievalPercent }}% of expected {{ expectedCohortLabel }}
                             </p>
                         </div>
                         <div class="min-w-0 p-2.5">
-                            <p class="font-mono text-[10px] uppercase tracking-wide leading-tight text-gray-500 dark:text-gray-400 break-words">
+                            <p class="font-mono text-[10px] uppercase tracking-wide leading-tight text-gray-500 dark:text-gray-300 break-words">
                                 Processing
                             </p>
                             <p class="mt-1.5 text-xl font-semibold leading-none font-heading text-gray-900 dark:text-gray-100">
                                 {{ formatCount(overview.processingTotal) }}
                             </p>
-                            <p class="mt-1.5 text-[11px] leading-tight text-gray-500 dark:text-gray-400">
+                            <p class="mt-1.5 text-[11px] leading-tight text-gray-500 dark:text-gray-300">
                                 in flight at trusts
                             </p>
                         </div>
                         <div class="min-w-0 p-2.5">
-                            <p class="font-mono text-[10px] uppercase tracking-wide leading-tight text-gray-500 dark:text-gray-400 break-words">
+                            <p class="font-mono text-[10px] uppercase tracking-wide leading-tight text-gray-500 dark:text-gray-300 break-words">
                                 Queued
                             </p>
                             <p class="mt-1.5 text-xl font-semibold leading-none font-heading text-gray-900 dark:text-gray-100">
                                 {{ formatCount(overview.queuedTotal) }}
                             </p>
-                            <p class="mt-1.5 text-[11px] leading-tight text-gray-500 dark:text-gray-400">
+                            <p class="mt-1.5 text-[11px] leading-tight text-gray-500 dark:text-gray-300">
                                 waiting on import workers
                             </p>
                         </div>
                         <div class="min-w-0 p-2.5">
-                            <p class="font-mono text-[10px] uppercase tracking-wide leading-tight text-gray-500 dark:text-gray-400 break-words">
+                            <p class="font-mono text-[10px] uppercase tracking-wide leading-tight text-gray-500 dark:text-gray-300 break-words">
                                 Failed
                             </p>
                             <p
@@ -96,19 +96,19 @@
                             >
                                 {{ formatCount(overview.failedTotal) }}
                             </p>
-                            <p class="mt-1.5 text-[11px] leading-tight text-gray-500 dark:text-gray-400">
+                            <p class="mt-1.5 text-[11px] leading-tight text-gray-500 dark:text-gray-300">
                                 {{ overview.failedTotal > 0 ? "requires attention" : "no errors" }}
                             </p>
                         </div>
                     </div>
 
-                    <div class="w-full border-t border-gray-200 dark:border-gray-700">
+                    <div class="w-full border-t border-gray-200 dark:border-dark-border">
                         <div class="w-full">
                             <ul role="list" class="grid grid-cols-1 gap-3 p-3 xl:grid-cols-2">
                                 <li
                                     v-for="project in sortedData"
                                     :key="project.trustId"
-                                    class="relative p-4 border border-gray-200 rounded-lg dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800"
+                                    class="relative p-4 border border-gray-200 rounded-lg dark:border-dark-border hover:bg-gray-50 dark:hover:bg-dark-surface"
                                 >
                                     <div class="flex flex-col gap-3">
                                         <!-- Top row: trust name + reimport count -->
@@ -130,7 +130,7 @@
                                                     class="w-4 h-4 text-yellow-500"
                                                 />
                                                 <span
-                                                    class="font-mono text-xs text-gray-500 dark:text-gray-400"
+                                                    class="font-mono text-xs text-gray-500 dark:text-gray-300"
                                                     :data-test="`project-reimport-status-${project.trustId}`"
                                                 >
                                                     {{ project.reimportCount }} / {{ maxReimportCount }}
@@ -148,21 +148,21 @@
                                                 <span
                                                     class="font-heading font-semibold text-2xl leading-none"
                                                     :class="rowTotal(project) === 0
-                                                        ? 'text-gray-400 dark:text-gray-500'
+                                                        ? 'text-gray-400 dark:text-gray-300'
                                                         : 'text-gray-900 dark:text-gray-100'"
                                                     :data-test="`pct-retrieved-${project.trustId}`"
                                                 >
                                                     {{ rowTotal(project) === 0
                                                         ? "—"
-                                                        : Math.round(rowRatio(project) * 100) + "%" }}
+                                                        : floorPercent(rowRatio(project)) + "%" }}
                                                 </span>
-                                                <span class="font-mono text-[11px] text-gray-500 dark:text-gray-400">
+                                                <span class="font-mono text-[11px] text-gray-500 dark:text-gray-300">
                                                     {{ rowTotal(project) === 0
                                                         ? "no imports yet"
                                                         : `${project.importStatus?.successful ?? 0} / ${rowTotal(project)}` }}
                                                 </span>
                                             </div>
-                                            <div class="flex h-2 rounded-full overflow-hidden bg-gray-100 dark:bg-gray-700">
+                                            <div class="flex h-2 rounded-full overflow-hidden bg-gray-100 dark:bg-dark-raised">
                                                 <template v-if="rowTotal(project) > 0">
                                                     <div
                                                         v-if="(project.importStatus?.successful ?? 0) > 0"
@@ -186,7 +186,7 @@
                                                     />
                                                 </template>
                                             </div>
-                                            <div class="flex justify-between font-mono text-[9px] uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                                            <div class="flex justify-between font-mono text-[9px] uppercase tracking-wide text-gray-500 dark:text-gray-300">
                                                 <span class="inline-flex items-center gap-1">
                                                     <span class="inline-block w-1.5 h-1.5 rounded-sm bg-emerald-500" />
                                                     <span
@@ -223,7 +223,7 @@
                                         </div>
                                         <!-- Footer: project creation state (design ref:
                                              06_imaging_status IPSCreationState) -->
-                                        <div class="flex items-center px-3 py-2 mt-1 -mx-4 -mb-4 border-t border-gray-100 bg-gray-50 dark:border-gray-700 dark:bg-gray-800/60">
+                                        <div class="flex items-center px-3 py-2 mt-1 -mx-4 -mb-4 border-t border-gray-100 bg-gray-50 dark:border-dark-border dark:bg-dark-surface/60">
                                             <span
                                                 v-if="project.projectCreationCompleted"
                                                 class="inline-flex items-center gap-2 text-xs text-gray-600 dark:text-gray-300"
@@ -283,7 +283,7 @@
                                 </div>
                             </div>
 
-                            <div class="w-2/5 space-y-4 bg-gray-200 dark:bg-gray-700" />
+                            <div class="w-2/5 space-y-4 bg-gray-200 dark:bg-dark-raised" />
                         </div>
                     </div>
                 </div>
@@ -388,11 +388,12 @@ const overview = computed<IImagingProjectOverview>(() => {
 const overviewRetrievalPercent = computed(() => {
     if (!props.cohortSize) return 0;
 
-    return Math.round((overview.value.studyRetrievalTotal / props.cohortSize) * 100);
+    return floorPercent(overview.value.studyRetrievalTotal / props.cohortSize);
 });
 
 const formatCount = (value: number): string => value.toLocaleString();
 const expectedCohortLabel = computed(() => props.cohortSize?.toLocaleString() ?? "unknown");
+const floorPercent = (ratio: number): number => Math.floor(ratio * 100);
 
 // Per-trust import totals/ratio for the stacked-bar UI (design ref:
 // 06_imaging_status ImagingStatusA / IPSImportBar). `failed` rolls

@@ -26,7 +26,7 @@
                 <span
                     class="absolute inset-y-0 right-0 flex items-center pr-2 pointer-events-none"
                 >
-                    <icon-mdi-chevron-down class="w-5 h-5 text-gray-400" />
+                    <icon-mdi-chevron-down class="w-5 h-5 text-gray-400 dark:text-gray-300" />
                 </span>
             </ListboxButton>
             <Portal>
@@ -55,7 +55,7 @@
                                 >
                                     <span
                                         :class="[
-                                            selectedItem ? 'font-bold' : 'font-normal text-gray-700',
+                                            selectedItem ? 'font-bold' : 'font-normal text-gray-700 dark:text-gray-300',
                                             'block truncate',
                                         ]"
                                     >

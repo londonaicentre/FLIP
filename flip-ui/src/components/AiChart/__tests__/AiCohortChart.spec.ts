@@ -17,17 +17,20 @@ import { describe, expect, it, vi } from "vitest";
 import { nextTick } from "vue";
 
 import AiCohortChart from "@/components/AiChart/AiCohortChart.vue";
+import { CHART_SERIES_COLORS, chartToolbox } from "@/components/AiChart/chartTheme";
 
 // jsdom has no canvas — stub the echarts.init pipeline so the onMounted block
 // can run without exercising a real renderer. We capture the last setOption
 // payload to assert chart wiring (series names, legend, xAxis values).
 const setOption = vi.fn();
 const resize = vi.fn();
+const on = vi.fn();
 
 vi.mock("echarts/core", () => ({
     init: vi.fn(() => ({
         setOption,
-        resize
+        resize,
+        on
     })),
     use: vi.fn()
 }));
@@ -112,6 +115,7 @@ describe("AiCohortChart", () => {
     beforeEach(() => {
         setOption.mockReset();
         resize.mockReset();
+        on.mockReset();
     });
 
     it("mounts and feeds option to echarts.init", async () => {
@@ -153,5 +157,43 @@ describe("AiCohortChart", () => {
 
         const opts = setOption.mock.calls[0][0];
         expect(opts.xAxis.data).toEqual(["50-70", "<50"]);
+    });
+
+    it("keeps the user's line-plot toggle across option re-pushes", async () => {
+        const wrapper = mountChart();
+        await nextTick();
+        await flushPromises();
+
+        const magicTypeHandler = on.mock.calls.find(([event]) => event === "magictypechanged")?.[1];
+        expect(magicTypeHandler).toBeDefined();
+        magicTypeHandler({ currentType: "line" });
+
+        // A data update re-pushes the full options — the user's toggle must survive.
+        await wrapper.setProps({
+            data: {
+                ...DATA,
+                results: [...DATA.results]
+            }
+        });
+        await flushPromises();
+
+        const opts = setOption.mock.calls.at(-1)![0];
+        expect(opts.series.every((s: { type: string }) => s.type === "line")).toBe(true);
+    });
+
+    it("themes series and chrome from the shared chart theme", async () => {
+        mountChart();
+        await nextTick();
+        await flushPromises();
+
+        const opts = setOption.mock.calls[0][0];
+        expect(opts.color).toEqual([...CHART_SERIES_COLORS.light]);
+        expect(opts.toolbox).toEqual(chartToolbox(false));
+
+        // The off-token fills/inks flagged in the dark-mode review must not resurface.
+        const flattened = JSON.stringify(opts);
+        for (const legacyHex of ["#111827", "#282A36", "#4A5462"]) {
+            expect(flattened).not.toContain(legacyHex);
+        }
     });
 });

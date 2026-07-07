@@ -21,14 +21,14 @@
             <!-- Header — design ref: ConnectionA (CSHeader) in design_handoff_full/05_connection/connection.jsx -->
             <div class="flex flex-col gap-4 mb-4 sm:flex-row sm:items-end sm:justify-between">
                 <div>
-                    <p class="text-xs font-mono uppercase tracking-widest text-gray-500 dark:text-gray-400">
+                    <p class="text-xs font-mono uppercase tracking-widest text-gray-500 dark:text-gray-300">
                         Federation · {{ trusts?.length ?? 0 }} {{ (trusts?.length ?? 0) === 1 ? "trust" : "trusts" }}
                     </p>
                     <h1 class="text-3xl font-semibold font-heading mt-1 text-gray-900 dark:text-gray-100">
                         <span class="text-primary-600 underline decoration-4 decoration-primary-500/60 underline-offset-8 dark:text-white">Connection</span>
                         <span class="ml-2">status</span>
                     </h1>
-                    <p class="mt-2 text-sm text-gray-500 dark:text-gray-400" data-test="subtitle">
+                    <p class="mt-2 text-sm text-gray-500 dark:text-gray-300" data-test="subtitle">
                         {{ subtitle }}
                     </p>
                 </div>
@@ -47,11 +47,11 @@
 
             <!-- View toggle: list (ConnectionA) vs radial (ConnectionD) -->
             <div class="flex items-center justify-end mb-3 gap-2">
-                <span class="text-[11px] font-mono uppercase tracking-widest text-gray-500 dark:text-gray-400">View</span>
+                <span class="text-[11px] font-mono uppercase tracking-widest text-gray-500 dark:text-gray-300">View</span>
                 <div
                     role="tablist"
                     aria-label="Connection view"
-                    class="inline-flex bg-gray-100 dark:bg-gray-800 rounded-lg p-1 ring-1 ring-black/5 dark:ring-white/10"
+                    class="inline-flex bg-gray-100 dark:bg-dark-surface rounded-lg p-1 ring-1 ring-black/5 dark:ring-white/10"
                 >
                     <button
                         type="button"
@@ -60,8 +60,8 @@
                         data-test="view-toggle-list"
                         class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all"
                         :class="viewMode === 'list'
-                            ? 'bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 shadow-sm'
-                            : 'text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200'"
+                            ? 'bg-white dark:bg-dark-canvas text-gray-900 dark:text-gray-100 shadow-sm'
+                            : 'text-gray-500 hover:text-gray-800 dark:text-gray-300 dark:hover:text-gray-200'"
                         @click="viewMode = 'list'"
                     >
                         <icon-ph-list-bullets-duotone class="w-4 h-4" />
@@ -74,8 +74,8 @@
                         data-test="view-toggle-radial"
                         class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all"
                         :class="viewMode === 'radial'
-                            ? 'bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 shadow-sm'
-                            : 'text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200'"
+                            ? 'bg-white dark:bg-dark-canvas text-gray-900 dark:text-gray-100 shadow-sm'
+                            : 'text-gray-500 hover:text-gray-800 dark:text-gray-300 dark:hover:text-gray-200'"
                         @click="viewMode = 'radial'"
                     >
                         <icon-ph-share-network-duotone class="w-4 h-4" />
@@ -91,11 +91,11 @@
                         v-for="(s, idx) in summaryCells"
                         :key="s.key"
                         class="flex flex-col gap-1 px-6 py-4 min-w-[140px]"
-                        :class="{ 'border-l border-gray-200 dark:border-gray-700': idx > 0 }"
+                        :class="{ 'border-l border-gray-200 dark:border-dark-border': idx > 0 }"
                     >
                         <div class="flex items-center gap-2">
                             <span class="inline-block w-2 h-2 rounded-full" :class="s.dotClass" />
-                            <span class="text-[11px] font-mono uppercase tracking-widest text-gray-500 dark:text-gray-400">
+                            <span class="text-[11px] font-mono uppercase tracking-widest text-gray-500 dark:text-gray-300">
                                 {{ s.label }}
                             </span>
                         </div>
@@ -117,16 +117,16 @@
                 <div v-else class="overflow-x-auto">
                     <table class="w-full">
                         <thead>
-                            <tr class="bg-gray-50 dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700">
+                            <tr class="bg-gray-50 dark:bg-dark-surface border-b border-gray-200 dark:border-dark-border">
                                 <th
                                     v-for="col in columns"
                                     :key="col.key ?? col.label"
                                     :data-test="col.key ? `sort-header-${col.key}` : undefined"
-                                    class="px-4 py-3 text-xs font-mono uppercase tracking-widest text-gray-500 font-medium select-none"
+                                    class="px-4 py-3 text-xs font-mono uppercase tracking-widest text-gray-500 dark:text-gray-300 font-medium select-none"
                                     :class="[
                                         col.align === 'right' ? 'text-right' : 'text-left',
                                         col.width ?? '',
-                                        col.key ? 'cursor-pointer hover:text-gray-700 dark:hover:text-gray-300' : ''
+                                        col.key ? 'cursor-pointer hover:text-gray-700 dark:hover:text-gray-200' : ''
                                     ]"
                                     @click="col.key ? toggleSort(col.key) : undefined"
                                 >
@@ -144,8 +144,8 @@
                                 :key="t.id"
                                 data-test="trust-row"
                                 :class="[
-                                    idx > 0 ? 'border-t border-gray-100 dark:border-gray-700' : '',
-                                    t._state === 'offline' ? 'bg-red-50/40 dark:bg-red-900/10' : ''
+                                    idx > 0 ? 'border-t border-gray-100 dark:border-dark-border' : '',
+                                    t._state === 'offline' ? 'bg-red-50/40 dark:bg-red-900/10' : 'dark:bg-dark-surface'
                                 ]"
                             >
                                 <td class="px-4 py-4 align-middle">
@@ -169,19 +169,19 @@
                                         </span>
                                         <span
                                             v-if="t.code && t.code !== t.name"
-                                            class="font-mono text-xs text-gray-500 dark:text-gray-400 mt-0.5"
+                                            class="font-mono text-xs text-gray-500 dark:text-gray-300 mt-0.5"
                                             data-test="trust-code"
                                         >
                                             {{ t.code }}
                                         </span>
                                     </div>
                                 </td>
-                                <td class="px-4 py-4 align-middle text-base text-gray-600 dark:text-gray-400">
+                                <td class="px-4 py-4 align-middle text-base text-gray-600 dark:text-gray-300">
                                     {{ t.region ?? "—" }}
                                 </td>
                                 <td
                                     class="px-4 py-4 align-middle font-mono text-sm"
-                                    :class="t._state === 'offline' ? 'text-red-600 dark:text-red-400' : 'text-gray-600 dark:text-gray-400'"
+                                    :class="t._state === 'offline' ? 'text-red-600 dark:text-red-400' : 'text-gray-600 dark:text-gray-300'"
                                     data-test="trust-heartbeat"
                                 >
                                     {{ heartbeatText(t.last_heartbeat) }}
@@ -218,7 +218,7 @@
                                 <td class="px-4 py-4" />
                             </tr>
                             <tr v-if="!sortedTrusts.length">
-                                <td colspan="7" class="text-center py-6 text-gray-500 dark:text-gray-400">
+                                <td colspan="7" class="text-center py-6 text-gray-500 dark:text-gray-300">
                                     No trusts registered yet.
                                 </td>
                             </tr>
@@ -230,19 +230,19 @@
             <!-- Radial view (ConnectionD) — design ref: design_handoff_full/05_connection/connection-2.jsx -->
             <div v-else class="grid grid-cols-1 lg:grid-cols-[1fr_360px] gap-4 items-stretch">
                 <AiCard
-                    class="relative overflow-hidden h-[560px] connection-topology-card"
+                    class="relative overflow-hidden h-[560px]"
                 >
                     <div class="absolute top-4 left-5 z-10">
-                        <div class="text-[11px] font-mono uppercase tracking-widest text-gray-500 dark:text-gray-400">
+                        <div class="text-[11px] font-mono uppercase tracking-widest text-gray-500 dark:text-gray-300">
                             Federation topology · Live
                         </div>
-                        <div class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                        <div class="mt-1 text-xs text-gray-500 dark:text-gray-300">
                             {{ trusts?.length ?? 0 }}
                             {{ (trusts?.length ?? 0) === 1 ? "trust" : "trusts" }} connected to FLIP
                         </div>
                     </div>
 
-                    <div class="absolute top-4 right-5 z-10 flex gap-3.5 items-center bg-white dark:bg-gray-900 px-3 py-2 border border-gray-200 dark:border-gray-700 rounded-lg">
+                    <div class="absolute top-4 right-5 z-10 flex gap-3.5 items-center bg-white dark:bg-dark-canvas px-3 py-2 border border-gray-200 dark:border-dark-border rounded-lg">
                         <span
                             v-for="legend in radialLegend"
                             :key="legend.state"
@@ -293,7 +293,7 @@
                             :cy="radial.cy"
                             :r="radial.R * m"
                             fill="none"
-                            stroke="#e5e7eb"
+                            class="stroke-gray-200 dark:stroke-dark-border"
                             :stroke-width="i === 2 ? 1 : 0.6"
                             :stroke-dasharray="i === 2 ? 'none' : '2 4'"
                         />
@@ -350,7 +350,7 @@
                                 stroke-width="3"
                             />
                             <image
-                                href="/images/flip-logo-icon.png"
+                                href="/images/flip-logo-icon.webp"
                                 :x="radial.cx - 28"
                                 :y="radial.cy - 28"
                                 width="56"
@@ -410,7 +410,7 @@
                                     font-family="ui-monospace, monospace"
                                     font-size="11"
                                     font-weight="600"
-                                    fill="#374151"
+                                    class="fill-gray-700 dark:fill-gray-100"
                                     letter-spacing="0.04em"
                                 >
                                     {{ node.shortLabel }}
@@ -420,7 +420,7 @@
                                     :y="node.labelY + 14"
                                     :text-anchor="node.anchor"
                                     font-size="10"
-                                    fill="#6b7280"
+                                    class="fill-gray-500 dark:fill-gray-300"
                                 >
                                     {{ node.project_count }} {{ node.project_count === 1 ? "project" : "projects" }}
                                 </text>
@@ -441,8 +441,8 @@
 
                 <!-- Side panel: incidents + hover detail -->
                 <AiCard class="p-0 flex flex-col overflow-hidden">
-                    <div class="px-5 py-4 border-b border-gray-200 dark:border-gray-700">
-                        <div class="text-[11px] font-mono uppercase tracking-widest text-gray-500 dark:text-gray-400">
+                    <div class="px-5 py-4 border-b border-gray-200 dark:border-dark-border">
+                        <div class="text-[11px] font-mono uppercase tracking-widest text-gray-500 dark:text-gray-300">
                             Incidents · open
                         </div>
                     </div>
@@ -450,7 +450,7 @@
                         <div
                             v-for="t in incidents"
                             :key="t.id"
-                            class="px-5 py-3.5 border-b border-gray-100 dark:border-gray-700 flex flex-col gap-1.5"
+                            class="px-5 py-3.5 border-b border-gray-100 dark:border-dark-border flex flex-col gap-1.5"
                         >
                             <div class="flex justify-between items-center">
                                 <span class="font-heading font-semibold text-[13px] text-gray-900 dark:text-gray-100">
@@ -469,30 +469,30 @@
                             </span>
                         </div>
                     </div>
-                    <div v-else class="px-5 py-4 text-xs text-gray-500 dark:text-gray-400">
+                    <div v-else class="px-5 py-4 text-xs text-gray-500 dark:text-gray-300">
                         No open incidents.
                     </div>
 
-                    <div class="px-5 py-4 border-t border-gray-200 dark:border-gray-700 mt-auto">
-                        <div class="text-[11px] font-mono uppercase tracking-widest text-gray-500 dark:text-gray-400">
+                    <div class="px-5 py-4 border-t border-gray-200 dark:border-dark-border mt-auto">
+                        <div class="text-[11px] font-mono uppercase tracking-widest text-gray-500 dark:text-gray-300">
                             Trust detail
                         </div>
                     </div>
                     <div
                         v-if="hoveredTrust"
-                        class="px-5 py-3 flex flex-col gap-1 border-t border-gray-100 dark:border-gray-700"
+                        class="px-5 py-3 flex flex-col gap-1 border-t border-gray-100 dark:border-dark-border"
                         data-test="radial-hover-detail"
                     >
                         <span class="font-heading font-semibold text-[13px] text-gray-900 dark:text-gray-100">
                             {{ hoveredTrust.code || hoveredTrust.name }}
                         </span>
-                        <span class="font-mono text-[11px] text-gray-500 dark:text-gray-400">
+                        <span class="font-mono text-[11px] text-gray-500 dark:text-gray-300">
                             {{ hoveredTrust.region ?? "—" }} · {{ heartbeatText(hoveredTrust.last_heartbeat) }}
                         </span>
                     </div>
                     <div
                         v-else
-                        class="px-5 py-3 text-[11px] text-gray-400 dark:text-gray-500 border-t border-gray-100 dark:border-gray-700"
+                        class="px-5 py-3 text-[11px] text-gray-400 dark:text-gray-300 border-t border-gray-100 dark:border-dark-border"
                     >
                         Hover a trust on the topology to see details.
                     </div>
@@ -887,12 +887,3 @@ const onKitModalClose = () => {
 };
 </script>
 
-<style scoped>
-.connection-topology-card {
-    background: radial-gradient(ellipse at center, #fff 0%, #f5f0f2 70%, #efe8ec 100%);
-}
-
-.dark .connection-topology-card {
-    background: radial-gradient(ellipse at center, #1f2937 0%, #111827 68%, #0f172a 100%);
-}
-</style>

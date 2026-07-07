@@ -173,6 +173,7 @@ def get_project_details_endpoint(
         creation_timestamp=project_db.creation_timestamp.isoformat(timespec="milliseconds") + "Z",
         staged_at=staged_at_map.get(project_db.id),
         owner_id=project_db.owner_id,
+        dicom_to_nifti=project_db.dicom_to_nifti,
     )  # type: ignore[call-arg]
 
     logger.info(f"Successfully retrieved details for project {project_id}")

@@ -14,7 +14,7 @@ from fastapi import HTTPException, status
 from sqlalchemy import text
 from sqlmodel import Session
 
-from flip_api.db.database import engine
+from flip_api.db.database import get_engine
 from flip_api.domain.schemas.status import NetStatus
 from flip_api.fl_services.services.fl_scheduler_service import (
     check_for_available_net,
@@ -124,7 +124,7 @@ def run_jobs_scheduled_task() -> None:
     """
     logger.info("Running scheduled run_jobs execution... ⏰")
     try:
-        with Session(engine) as db:
+        with Session(get_engine()) as db:
             run_jobs_core(db)
     except Exception as e:
         error_message = f"Error in scheduled run_jobs execution: {str(e)}"

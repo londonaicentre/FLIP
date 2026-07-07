@@ -25,9 +25,9 @@
             @submit="approveProject"
         >
             <div class="w-full gap-3 text-xs">
-                <ul role="list" class="border-gray-200 divide-y divide-gray-200 dark:divide-gray-700 dark:border-gray-700 border-y">
+                <ul role="list" class="border-gray-200 divide-y divide-gray-200 dark:divide-dark-border dark:border-dark-border border-y">
                     <li v-for="(trust, idx) in sortedApprovedTrusts" :key="trust.id">
-                        <div class="flex items-center py-4 transition hover:bg-gray-50 dark:hover:bg-gray-800 group">
+                        <div class="flex items-center py-4 transition hover:bg-gray-50 dark:hover:bg-dark-surface group">
                             <div class="flex items-center flex-1 px-4 grow">
                                 <div class="flex-1 min-w-0">
                                     <div>

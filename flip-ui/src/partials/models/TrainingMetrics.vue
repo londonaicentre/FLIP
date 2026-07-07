@@ -18,7 +18,7 @@
 
 <template>
     <div v-if="!data?.length" class="flex items-center gap-2 text-sm text-gray-500 dark:text-gray-300">
-        <icon-carbon-chart-line-data class="w-5 h-5 text-gray-400 shrink-0" />
+        <icon-carbon-chart-line-data class="w-5 h-5 text-gray-400 dark:text-gray-300 shrink-0" />
         <div>Any metrics generated during training will show here.</div>
     </div>
     <div v-else class="flex flex-col">
@@ -37,7 +37,7 @@
                 class="inline-flex items-center px-3 py-1.5 rounded-full text-[13px] font-semibold whitespace-nowrap transition-all"
                 :class="activeChartLabel === chart.yLabel
                     ? 'bg-primary-500 text-white shadow-sm'
-                    : 'text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200'"
+                    : 'text-gray-500 hover:text-gray-800 dark:text-gray-300 dark:hover:text-gray-200'"
                 @click="activeChartLabel = chart.yLabel"
             >
                 {{ chart.yLabel }}

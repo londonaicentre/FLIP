@@ -32,4 +32,18 @@ describe("Ai Code TextArea", () => {
         expect(comp.exists()).toBe(true);
         expect(comp.find("label").text()).toBe("Test Code Label");
     });
+
+    test("mounts the CodeMirror editor from its own import", () => {
+        const comp = mountComponent(AiCodeTextArea, {
+            props: {
+                name: "test-code-textarea",
+                label: "Test Code Label"
+            },
+            global: { plugins: [createPinia()] }
+        });
+
+        // Global registration in main.ts never reaches unit tests (or lazy
+        // chunks) — the component must import the editor itself.
+        expect(comp.find(".CodeMirror").exists()).toBe(true);
+    });
 });

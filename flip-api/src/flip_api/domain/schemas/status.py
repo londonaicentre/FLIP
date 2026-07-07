@@ -126,6 +126,19 @@ class ProjectStatus(StrEnum):
     APPROVED = "APPROVED"
 
 
+class AccessRequestStatus(StrEnum):
+    """Lifecycle state of a platform access request.
+
+    ``PENDING`` — awaiting an administrator's decision.
+    ``ENROLLED`` — an administrator registered the requester as a platform user.
+    ``DISMISSED`` — an administrator declined the request.
+    """
+
+    PENDING = "PENDING"
+    ENROLLED = "ENROLLED"
+    DISMISSED = "DISMISSED"
+
+
 class ServerEngineStatus(StrEnum):
     """Status of the server engine."""
 

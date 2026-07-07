@@ -48,7 +48,7 @@
                             <DialogTitle v-if="title" as="h3" class="px-8 pt-8 pb-2 text-xl font-bold leading-6 text-left">
                                 {{ title }}
                             </DialogTitle>
-                            <DialogTitle v-if="description" as="h5" class="px-8 pb-2 text-sm font-medium leading-6 text-left text-gray-600">
+                            <DialogTitle v-if="description" as="h5" class="px-8 pb-2 text-sm font-medium leading-6 text-left text-gray-600 dark:text-gray-300">
                                 {{ description }}
                             </DialogTitle>
 
@@ -67,7 +67,7 @@
                             <div class="absolute top-0 right-0 block pt-4 pr-4">
                                 <button
                                     type="button"
-                                    class="text-gray-400 bg-white rounded-md hover:text-gray-500 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
+                                    class="text-gray-400 dark:text-gray-300 bg-white dark:bg-dark-raised rounded-md hover:text-gray-500 dark:hover:text-gray-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
                                     tabindex="0"
                                     @click="close"
                                 >

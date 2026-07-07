@@ -12,7 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import importlib
 import logging
+import sys
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -43,6 +45,64 @@ def _reset_rds_client_cache():
     database._rds_client = None
     yield
     database._rds_client = None
+
+
+@pytest.fixture(autouse=True)
+def _reset_engine_cache():
+    """Clear the module-level lazy engine cache around every test."""
+    database._engine = None
+    yield
+    database._engine = None
+
+
+def test_import_performs_no_settings_read_or_engine_build():
+    """Importing the module must not read settings or build an engine (FLIP#583).
+
+    A fresh import is performed with ``get_settings`` booby-trapped so any
+    import-time configuration read fails loudly — importers (tests, scripts,
+    tooling) must not need env vars just to ``import flip_api.db.database``.
+    """
+    import flip_api.config as config
+    import flip_api.db as db_pkg
+
+    original_module = sys.modules["flip_api.db.database"]
+    original_get_settings = config.get_settings
+
+    def _boom() -> None:
+        raise AssertionError("get_settings() was called at import time")
+
+    try:
+        config.get_settings = _boom
+        del sys.modules["flip_api.db.database"]
+        fresh = importlib.import_module("flip_api.db.database")
+        assert fresh._engine is None
+    finally:
+        config.get_settings = original_get_settings
+        sys.modules["flip_api.db.database"] = original_module
+        db_pkg.database = original_module
+
+
+def test_get_engine_builds_once_and_caches():
+    """get_engine() builds the engine on first call and reuses it afterwards."""
+    sentinel = object()
+    with patch.object(database, "_build_engine", return_value=sentinel) as mock_build:
+        first = database.get_engine()
+        second = database.get_engine()
+
+    assert first is sentinel
+    assert second is sentinel
+    mock_build.assert_called_once()
+
+
+def test_get_session_uses_lazy_engine():
+    """get_session() sessions are bound to the lazily-built cached engine."""
+    with patch.object(database, "get_settings", return_value=_fake_settings(ENV="development")):
+        generator = database.get_session()
+        session = next(generator)
+
+    assert database._engine is not None
+    assert session.bind is database._engine
+    generator.close()
 
 
 def test_build_engine_dev_uses_env_password():
