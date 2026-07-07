@@ -253,6 +253,22 @@ def test_invalid_status_param_is_rejected(client: TestClient, session, project_f
     assert response.status_code == 400
 
 
+def test_empty_result_returns_no_rows_and_zero_counts(
+    client: TestClient, session, project_factory, model_factory
+):
+    """A search that matches nothing yields an empty page (exercises the no-model-ids trust path)."""
+    user_id = uuid4()
+    project = _add_project(session, project_factory, owner_id=user_id, name="Sparse")
+    _add_model(session, model_factory, project_id=project.id, owner_id=user_id, name="only-model")
+
+    override_verify_token_as(user_id)
+    body = client.get(MODELS_URL, params={"search": "no-such-model-anywhere"}).json()
+
+    assert body["data"] == []
+    assert body["totalRecords"] == 0
+    assert body["statusCounts"] == {}
+
+
 def test_multiple_statuses_filter_the_list_at_once(
     client: TestClient, session, project_factory, model_factory
 ):

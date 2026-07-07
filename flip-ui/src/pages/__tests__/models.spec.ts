@@ -288,4 +288,81 @@ describe("Models Page", () => {
         // Training runs get the live magenta rail.
         expect(rail.classes().some(c => c.includes("fuchsia"))).toBe(true);
     });
+
+    test("clicking the Project header sorts rows by project name", async () => {
+        setModels([
+            makeModel({
+                id: "m1",
+                name: "a",
+                projectName: "Zebra project"
+            }),
+            makeModel({
+                id: "m2",
+                name: "b",
+                projectName: "Apple project"
+            })
+        ]);
+        const wrapper = mountPage();
+        await wrapper.vm.$nextTick();
+
+        await wrapper.find("[data-test='sort-header-project']").trigger("click");
+        expect(wrapper.findAll("[data-test='model-project']").map(p => p.text()))
+            .toEqual(["Apple project", "Zebra project"]);
+    });
+
+    test("clicking the Trusts header sorts rows by trust count (fewest first)", async () => {
+        setModels([
+            makeModel({
+                id: "m1",
+                name: "three",
+                trusts: [trust("A"), trust("B"), trust("C")]
+            }),
+            makeModel({
+                id: "m2",
+                name: "one",
+                trusts: [trust("A")]
+            })
+        ]);
+        const wrapper = mountPage();
+        await wrapper.vm.$nextTick();
+
+        await wrapper.find("[data-test='sort-header-trusts']").trigger("click");
+        expect(wrapper.findAll("[data-test='model-name']").map(n => n.text())).toEqual(["one", "three"]);
+    });
+
+    test("a trust chip with no code falls back to a cleaned, truncated name", async () => {
+        setModels([makeModel({
+            trusts: [{
+                id: "t-long",
+                name: "Very Long Hospital Name Here NHS Foundation Trust",
+                code: undefined as unknown as string
+            }]
+        })]);
+        const wrapper = mountPage();
+        await wrapper.vm.$nextTick();
+
+        const chip = wrapper.find("[data-test='model-trust-chip']");
+        // "NHS Foundation Trust" stripped, then truncated to 14 chars + ellipsis.
+        expect(chip.text().endsWith("…")).toBe(true);
+        expect(chip.text().slice(0, -1)).toHaveLength(14);
+    });
+
+    test("the owner sub-line shows an em-dash when ownerName is unset", async () => {
+        setModels([makeModel({ ownerName: null })]);
+        const wrapper = mountPage();
+        await wrapper.vm.$nextTick();
+
+        expect(wrapper.find("[data-test='models-list-item-0']").text()).toContain("—");
+    });
+
+    test("an error/terminal status renders a red pill and a red rail", async () => {
+        setModels([makeModel({ status: "STOPPED" })]);
+        const wrapper = mountPage();
+        await wrapper.vm.$nextTick();
+
+        const pill = wrapper.find("[data-test='model-status-indicator']");
+        expect(pill.text()).toBe("Stopped");
+        expect(pill.classes().some(c => c.includes("red"))).toBe(true);
+        expect(wrapper.find("[data-test='model-status-rail']").classes()).toContain("bg-red-500");
+    });
 });
