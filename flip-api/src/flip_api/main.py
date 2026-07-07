@@ -44,6 +44,7 @@ from flip_api.fl_services import (
 from flip_api.model_services import (
     delete_model,
     edit_model,
+    get_all_models,
     get_job_types,
     get_metrics,
     retrieve_logs_for_model,
@@ -194,6 +195,7 @@ ROUTERS: tuple[APIRouter, ...] = (
     # Model services
     delete_model.router,
     edit_model.router,
+    get_all_models.router,
     get_metrics.router,
     retrieve_logs_for_model.router,
     retrieve_model_status_from_logs.router,

@@ -34,6 +34,37 @@ class ISaveModel(IModelDetails):
     project_id: UUID = Field(..., alias="projectId")
 
 
+class ITrustSummary(BaseModel):
+    """A trust participating in a model's federated run, for the Models-list chips."""
+
+    id: UUID
+    name: str
+    code: str | None = Field(default=None)
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
+class IAllModelsResponse(BaseModel):
+    """One row of the estate-wide Models list (issue #726).
+
+    Joins a model to its owning project (name), the owner's display name and the
+    model's run trusts. ``owner_name`` is null when the owner has no UserProfile
+    row; ``trusts`` is empty until training is initiated (no ModelTrustIntersect
+    rows exist before dispatch).
+    """
+
+    id: UUID
+    name: str
+    status: ModelStatus
+    project_id: UUID = Field(..., alias="projectId")
+    project_name: str = Field(..., alias="projectName")
+    owner_id: UUID = Field(..., alias="ownerId")
+    owner_name: str | None = Field(default=None, alias="ownerName")
+    trusts: list[ITrustSummary] = Field(default_factory=list)
+
+    model_config = ConfigDict(populate_by_name=True, arbitrary_types_allowed=True)
+
+
 class IModelLog(BaseModel):
     timestamp: datetime = Field(alias="@timestamp")
     model: str
