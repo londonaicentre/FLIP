@@ -113,10 +113,6 @@ endif
 ifneq ($(JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB),)
 export TF_VAR_JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB=${JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB}
 endif
-# Pre-merge fl-apps repoint (empty = canonical base-application prefix). Set
-# FL_APP_BASE_BUCKET_OVERRIDE in the env file to a throwaway S3 root when
-# deploying a branch whose fl-apps templates are not yet merged to main.
-export TF_VAR_FL_APP_BASE_BUCKET_OVERRIDE=${FL_APP_BASE_BUCKET_OVERRIDE}
 # Uncomment to enable ECS Exec on Fargate tasks for debugging:
 # export TF_VAR_ecs_exec_enabled=true
 
@@ -264,10 +260,8 @@ migrate-flip-bucket: ## One-time: sync legacy flip_bucket prefixes into the thre
 	@aws s3 sync \
 		s3://$(FLIP_BUCKET_NAME)/uploaded_federated_data/ \
 		s3://$(FLIP_FL_RESULTS_BUCKET_NAME)/
-	@echo "  • FL base apps   → s3://$(FLIP_APP_BUNDLES_BUCKET_NAME)/base-application/"
-	@aws s3 sync \
-		s3://$(FLIP_BUCKET_NAME)/base-application/ \
-		s3://$(FLIP_APP_BUNDLES_BUCKET_NAME)/base-application/
+	# The legacy base-application/ prefix is intentionally NOT migrated: the base FL
+	# application templates now ship in the flip-api image, not S3 (FLIP#724).
 	@echo "  • FL app dests   → s3://$(FLIP_APP_BUNDLES_BUCKET_NAME)/app_destinations/"
 	@aws s3 sync \
 		s3://$(FLIP_BUCKET_NAME)/app_destination_bucket/ \
@@ -276,7 +270,7 @@ migrate-flip-bucket: ## One-time: sync legacy flip_bucket prefixes into the thre
 
 
 .PHONY: verify-flip-bucket-migration
-verify-flip-bucket-migration: ## Parity-check the four migrated prefixes (every src key must exist on dst; extras on dst are fine)
+verify-flip-bucket-migration: ## Parity-check the three migrated prefixes (every src key must exist on dst; extras on dst are fine)
 	## Why this exists: `aws s3 sync` returns exit code 0 even when individual object copies
 	## fail (per-object AccessDenied / throttling / RequestTimeout), so the migrate target's
 	## green banner is not enough to safely decommission the source bucket. The companion

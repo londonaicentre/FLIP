@@ -164,12 +164,12 @@ The Central Hub uses four S3 buckets, each with a distinct purpose, access patte
 |---|---|---|---|---|
 | `flip{env}-model-files-uploads` | `FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME` | researcher browser (presigned **PUT** on `origin/develop`; flips to presigned **POST** once [#438](https://github.com/londonaicentre/FLIP/pull/438) lands), flip-api reads | `PUT` today; narrows to `POST` from `https://<flip_alb_subdomain>` when #438 merges | researcher-uploaded model artefacts under `uploaded/` (today the AV-scanned copy reads from the same prefix — see the FIXME in `.env.production`) |
 | `flip{env}-fl-results` | `FLIP_FL_RESULTS_BUCKET_NAME` | fl-server writes, researcher browser (presigned **GET**) | `GET` from `https://<flip_alb_subdomain>` | FL training output / aggregated weights — the whole bucket is dedicated to this tenant so no prefix is needed |
-| `flip{env}-app-bundles` | `FLIP_APP_BUNDLES_BUCKET_NAME` | flip-api (boto3 only); FL app-bundle CI publishes here on merge to main | **none** (server-only — no `aws_s3_bucket_cors_configuration` resource is emitted at all) | `base-application/{nvflare,flower}/` (FL app bundles, built in-tree), `app_destinations/<model_id>/` (per-bundle FL apps), `base-application-dev/pull-requests/<n>/` (PR previews on the dev account) |
+| `flip{env}-app-bundles` | `FLIP_APP_BUNDLES_BUCKET_NAME` | flip-api (boto3 only) | **none** (server-only — no `aws_s3_bucket_cors_configuration` resource is emitted at all) | `app_destinations/<model_id>/` (per-bundle FL apps: base templates + user model files, assembled by flip-api). The base FL application templates themselves are baked into the flip-api image (FLIP#724), not stored here. |
 | `flip{env}-aicentre` | `AICENTRE_BUCKET_NAME` | Trust EC2 (`aws s3 cp` during Ansible), AI Centre operators | `PUT`, `GET` | FL participant kits |
 
 All four share standard configs: public access blocked, SSE-KMS server-side encryption with bucket keys enabled, versioning enabled. The three FLIP application buckets are rendered by the shared **`modules/flip_s3_bucket`** module, which is consumed by both `main.tf` (prod / stag) and `dev/main.tf` (dev account) — so a CORS or bucket-policy change plans identically across every environment, closing the dev-drift gap that masked the presigned-PUT → presigned-POST regression in #438.
 
-**Where the bucket-names come from outside FLIP itself.** The FL app-bundle CI (under `fl-apps/`) pushes to `flip{env}-app-bundles/base-application/{nvflare,flower}/` on merge to `main`. The bucket name is computed in the workflow YAML as `${{ vars.AWS_*_S3_BUCKET_NAME }}-app-bundles` — the `AWS_*_S3_BUCKET_NAME` GitHub Environment variable holds the base bucket name, and the `-app-bundles` suffix is appended in-place. The GitHub OIDC role those workflows assume (`GitHubAction-AssumeRoleWithAction-FLIP`, defined in the `aicentre-iac` repo) attaches the AWS-managed `AmazonS3FullAccess` policy, so no IAM change is needed when new app-bundles buckets come online in a new env.
+**Base FL application templates ship in the image, not S3.** As of FLIP#724 the base FL application templates (the repo's `fl-apps/` tree) are baked into the `flip-api` image and read from a local directory (`FL_APP_BASE_DIR`, default `/app/fl-apps`); flip-api bundles applications by uploading those local templates plus the user's model files into `flip{env}-app-bundles/app_destinations/<model_id>/`. There is no longer any CI that syncs templates to S3, so the `flip{env}-app-bundles` bucket is written **only** by flip-api at bundle time. Template hotfixes therefore ship by rebuilding and redeploying the `flip-api` image (see the migration note below).
 
 #### Migrating off the legacy single-bucket layout
 
@@ -209,8 +209,9 @@ make plan
 # 3. Apply — same diff as prod.
 make apply
 
-# 4. Sync the four legacy prefixes (model_files/uploaded, uploaded_federated_data,
-#    base-application, app_destination_bucket) into the three new buckets.
+# 4. Sync the legacy prefixes (model_files/uploaded, uploaded_federated_data,
+#    app_destination_bucket) into the new buckets. (The base-application prefix
+#    is no longer synced — those templates now ship in the flip-api image, FLIP#724.)
 make migrate-flip-bucket
 
 # 5. Parity-check — must print all-✅ before continuing.

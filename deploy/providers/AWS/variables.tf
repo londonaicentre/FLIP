@@ -211,20 +211,6 @@ variable "enable_efs" {
   default     = true
 }
 
-# Pre-merge testing lever for the FL base-application templates, mirroring the
-# dev PR-sync pattern (fl-apps-push-pr-s3.yml + FL_APP_BASE_BUCKET repoint): the
-# canonical s3://<bundles>/base-application/ prefix is owned by the merge-to-main
-# sync workflow, so a branch deploy must NOT overwrite it. Instead sync the
-# branch's fl-apps/<backend>/ to a throwaway prefix and point this override at
-# its backend-agnostic root (flip-api appends /<backend>/<job_type> in code).
-# Unset/empty (the default) keeps the canonical prefix. Remove the override from
-# the env file after the branch merges — the canonical prefix updates on merge.
-variable "FL_APP_BASE_BUCKET_OVERRIDE" {
-  description = "Backend-agnostic S3 root that overrides the canonical base-application prefix for flip-api (empty = canonical)"
-  type        = string
-  default     = ""
-}
-
 variable "enable_ecs_endpoints" {
   description = "Enable VPC interface endpoints (SSM, Secrets Manager, CloudWatch Logs) for ECS Fargate"
   type        = bool
