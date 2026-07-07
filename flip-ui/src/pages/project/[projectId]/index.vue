@@ -26,54 +26,71 @@
                 >
                     Projects
                 </router-link>
-                <div class="flex flex-wrap items-center justify-between gap-4 mt-2">
+                <div class="flex items-center justify-between gap-4 mt-2">
                     <h1 class="text-3xl font-semibold font-heading mt-1 text-gray-900 dark:text-gray-100 truncate">
                         <span class="max-w-2xl truncate">{{ project.name }}</span>
                     </h1>
-                    <div class="flex flex-row items-center md:gap-2 shrink-0 grow md:justify-end">
-                        <div class="flex flex-col gap-4 md:flex-row">
+                    <!-- Below lg the chip/button labels hide (icon + tooltip only) so the
+                         actions stop squashing the truncating project name. -->
+                    <div class="flex items-center gap-3 shrink-0">
+                        <div
+                            v-if="isProjectStaged()"
+                            data-test="awaiting-approval-badge"
+                            class="flex items-center shrink-0 gap-3 text-sm"
+                            title="Awaiting Approval"
+                        >
+                            <AiCircledIcon>
+                                <icon-heroicons-outline-clock class="w-4 h-4" />
+                            </AiCircledIcon>
+                            <span class="hidden lg:inline">Awaiting Approval</span>
+                        </div>
+                        <div
+                            data-test="user-count-pill"
+                            class="flex items-center shrink-0 gap-3 text-sm"
+                            :title="getUserCountMessage()"
+                        >
+                            <AiCircledIcon>
+                                <icon-ic-twotone-person-outline class="w-4 h-4" />
+                            </AiCircledIcon>
+                            <span>{{ totalUserCount }} <span class="hidden lg:inline">{{ totalUserCount === 1 ? "User" : "Users" }}</span></span>
+                        </div>
+                        <AiGuard :permissions="unstageProjectPermissions">
                             <template v-if="isProjectStaged()">
-                                <div class="flex items-center flex-shrink-0 gap-3 text-sm">
-                                    <AiCircledIcon>
-                                        <icon-heroicons-outline-clock class="w-4 h-4" />
-                                    </AiCircledIcon>
-                                    Awaiting Approval
-                                </div>
-                            </template>
-                            <div class="flex items-center flex-shrink-0 gap-3 mr-2 text-sm">
-                                <AiCircledIcon>
-                                    <icon-ic-twotone-person-outline class="w-4 h-4" />
-                                </AiCircledIcon>
-                                {{ getUserCountMessage() }}
-                            </div>
-                        </div>
-                        <div class="flex flex-col items-end justify-end gap-2 grow md:grow-0 md:flex-row">
-                            <AiGuard :permissions="unstageProjectPermissions">
-                                <template v-if="isProjectStaged()">
-                                    <AiButton primary data-test="unstage-project-btn" @click="openUnstagingModal">
-                                        <icon-heroicons-outline-clipboard class="mr-2" />
-                                        Unstage Project
-                                    </AiButton>
-                                    <AiConfirmModal
-                                        :dialog="unstageProjectOpen"
-                                        small
-                                        title="Unstage Project"
-                                        description="Are you sure you want to unstage the project?"
-                                        continue-button-text="Unstage Project"
-                                        :submitting="unstagingProject"
-                                        :continue-action="unstageCurrentProject"
-                                        @close-modal="closeUnstageModal"
-                                    />
-                                </template>
-                            </AiGuard>
-                            <AiGuard :permissions="editProjectPermissions" :bypass="isOwnerOrHasAccess() || isViewer">
-                                <AiButton light data-test="edit-project-btn" @click.capture="openEditProjectDrawer">
-                                    <icon-mdi-pencil-outline v-if="!isViewer" class="mr-2" />
-                                    <icon-mdi-eye-outline v-else class="mr-2" />
-                                    {{ isViewer ? "View Project" : "Edit Project" }}
+                                <AiButton
+                                    primary
+                                    data-test="unstage-project-btn"
+                                    aria-label="Unstage Project"
+                                    tooltip="Unstage Project"
+                                    @click="openUnstagingModal"
+                                >
+                                    <icon-heroicons-outline-clipboard class="lg:mr-2" />
+                                    <span class="hidden lg:inline">Unstage Project</span>
                                 </AiButton>
-                            </AiGuard>
-                        </div>
+                                <AiConfirmModal
+                                    :dialog="unstageProjectOpen"
+                                    small
+                                    title="Unstage Project"
+                                    description="Are you sure you want to unstage the project?"
+                                    continue-button-text="Unstage Project"
+                                    :submitting="unstagingProject"
+                                    :continue-action="unstageCurrentProject"
+                                    @close-modal="closeUnstageModal"
+                                />
+                            </template>
+                        </AiGuard>
+                        <AiGuard :permissions="editProjectPermissions" :bypass="isOwnerOrHasAccess() || isViewer">
+                            <AiButton
+                                light
+                                data-test="edit-project-btn"
+                                :aria-label="isViewer ? 'View Project' : 'Edit Project'"
+                                :tooltip="isViewer ? 'View Project' : 'Edit Project'"
+                                @click.capture="openEditProjectDrawer"
+                            >
+                                <icon-mdi-pencil-outline v-if="!isViewer" class="lg:mr-2" />
+                                <icon-mdi-eye-outline v-else class="lg:mr-2" />
+                                <span class="hidden lg:inline">{{ isViewer ? "View Project" : "Edit Project" }}</span>
+                            </AiButton>
+                        </AiGuard>
                     </div>
                 </div>
             </header>
@@ -258,10 +275,11 @@ const isOwnerOrHasAccess = () => {
     return projectOwner === currentUserId || project?.value?.users?.map(u => u.id).includes(currentUserId as string);
 };
 
-const getUserCountMessage = () => {
-    const userCount = project?.value?.users?.length ?? 0;
+// Owner counts as +1 on top of the shared users.
+const totalUserCount = computed(() => (project?.value?.users?.length ?? 0) + 1);
 
-    return `${userCount + 1} ${userCount + 1 === 1 ? "User" : "Users"}`;
+const getUserCountMessage = () => {
+    return `${totalUserCount.value} ${totalUserCount.value === 1 ? "User" : "Users"}`;
 };
 
 const openEditProjectDrawer = () => {

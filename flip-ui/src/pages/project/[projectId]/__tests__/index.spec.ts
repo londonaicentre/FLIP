@@ -289,6 +289,81 @@ describe("Project page (/project/[id]/index.vue)", () => {
         expect(wrapper2.text()).toContain("3 Users");
     });
 
+    describe("header actions align with the title and collapse to icons on narrow screens", () => {
+        // Mirrors the model page header: one vertically-centred row (title
+        // left, actions right) whose labels hide below lg so they stop
+        // squashing the truncating project name.
+        const labelSelector = "span.hidden.lg\\:inline";
+
+        test("title and actions sit in one items-center row with a shrink-0 actions cluster", () => {
+            const wrapper = mountProjectPage();
+
+            const h1 = wrapper.find("h1");
+            expect(h1.exists()).toBe(true);
+            const row = h1.element.parentElement;
+            expect(row?.className).toContain("items-center");
+            expect(row?.className).not.toContain("flex-wrap");
+
+            const actions = h1.element.nextElementSibling;
+            expect(actions?.className).toContain("items-center");
+            expect(actions?.className).toContain("shrink-0");
+            expect(actions?.className).not.toContain("flex-col");
+        });
+
+        test("hides the Edit Project label below lg and keeps an aria-label", () => {
+            const wrapper = mountProjectPage();
+
+            const btn = wrapper.find("[data-test=edit-project-btn]");
+            expect(btn.exists()).toBe(true);
+            expect(btn.attributes("aria-label")).toBe("Edit Project");
+            const label = btn.find(labelSelector);
+            expect(label.exists()).toBe(true);
+            expect(label.text()).toBe("Edit Project");
+        });
+
+        test("hides the Unstage Project label and the Awaiting Approval text below lg when STAGED", () => {
+            const staged = baseProject();
+            staged.status = "STAGED";
+            const wrapper = mountProjectPage({ project: staged });
+
+            const unstage = wrapper.find("[data-test=unstage-project-btn]");
+            expect(unstage.exists()).toBe(true);
+            expect(unstage.attributes("aria-label")).toBe("Unstage Project");
+            expect(unstage.find(labelSelector).text()).toBe("Unstage Project");
+
+            const badge = wrapper.find("[data-test=awaiting-approval-badge]");
+            expect(badge.exists()).toBe(true);
+            expect(badge.attributes("title")).toBe("Awaiting Approval");
+            expect(badge.find(labelSelector).text()).toBe("Awaiting Approval");
+        });
+
+        test("hides the word 'Users' below lg but keeps the count visible with a full-title tooltip", () => {
+            const project = baseProject();
+            project.users = [
+                {
+                    id: "u1",
+                    email: "a@x",
+                    isDisabled: false
+                },
+                {
+                    id: "u2",
+                    email: "b@x",
+                    isDisabled: false
+                }
+            ];
+            const wrapper = mountProjectPage({ project });
+
+            const pill = wrapper.find("[data-test=user-count-pill]");
+            expect(pill.exists()).toBe(true);
+            expect(pill.attributes("title")).toBe("3 Users");
+            const word = pill.find(labelSelector);
+            expect(word.exists()).toBe(true);
+            // Only the noun hides; the count stays visible at every width.
+            expect(word.text()).toBe("Users");
+            expect(pill.text()).toContain("3");
+        });
+    });
+
     test("the Unstage button only renders when the project is STAGED", () => {
         const wrapper = mountProjectPage();
         expect(wrapper.find("[data-test=unstage-project-btn]").exists()).toBe(false);
