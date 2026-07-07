@@ -183,19 +183,63 @@ describe("Training missing-files alert slot", () => {
     });
 });
 
-describe("Training Live activity card layout", () => {
-    it("is wide enough for the timeline and never scrolls horizontally", () => {
-        const wrapper = mountTraining({ status: "TRAINING_STARTED" });
-
+describe("Training metrics + live-activity responsive layout", () => {
+    // The metrics chart and the Live activity timeline sit side-by-side on wide
+    // screens but must stack — activity below the chart, full-width — on narrow
+    // ones, mirroring how the Model files card reflows. Otherwise the fixed
+    // 384px activity card overflows a phone viewport and squashes the chart.
+    function layoutParts(wrapper: ReturnType<typeof mountTraining>) {
         const timeline = wrapper.find("[data-test=training-timeline]");
         expect(timeline.exists()).toBe(true);
-        // Timeline sits in the card's scroll wrapper; the card is the wrapper's parent.
+        // Timeline -> scroll wrapper -> Live activity card -> flex container;
+        // the metrics card is that container's first child.
         const scrollWrap = timeline.element.parentElement;
-        const card = scrollWrap?.parentElement;
+        const liveCard = scrollWrap?.parentElement;
+        const container = liveCard?.parentElement;
+        const metricsCard = container?.children[0];
+
+        return {
+            scrollWrap,
+            liveCard,
+            container,
+            metricsCard
+        };
+    }
+
+    it("stacks the cards by default and only goes side-by-side on wide (xl) screens", () => {
+        const wrapper = mountTraining({ status: "TRAINING_STARTED" });
+
+        const { container } = layoutParts(wrapper);
+
+        expect(container?.className).toContain("flex-col");
+        expect(container?.className).toContain("xl:flex-row");
+    });
+
+    it("makes the live-activity card full-width when stacked and a fixed column only at xl+", () => {
+        const wrapper = mountTraining({ status: "TRAINING_STARTED" });
+
+        const { liveCard } = layoutParts(wrapper);
+
+        expect(liveCard?.className).toContain("w-full");        // full-width when stacked (mobile)
+        expect(liveCard?.className).toContain("xl:w-96");       // fixed sidebar width when side-by-side
+        expect(liveCard?.className).toContain("xl:shrink-0");   // only pins its width in row mode
+    });
+
+    it("lets the metrics card take the remaining width beside the activity card", () => {
+        const wrapper = mountTraining({ status: "TRAINING_STARTED" });
+
+        const { metricsCard } = layoutParts(wrapper);
+
+        expect(metricsCard?.className).toContain("flex-1");
+        expect(metricsCard?.className).toContain("min-w-0");
+    });
+
+    it("never lets the timeline scroll horizontally", () => {
+        const wrapper = mountTraining({ status: "TRAINING_STARTED" });
+
+        const { scrollWrap } = layoutParts(wrapper);
 
         expect(scrollWrap?.className).toContain("overflow-x-hidden");
-        expect(card?.className).toContain("w-96");
-        expect(card?.className).not.toContain("w-80");
     });
 });
 

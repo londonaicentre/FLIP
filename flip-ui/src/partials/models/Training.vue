@@ -63,12 +63,12 @@
             </div>
         </AiCard>
 
-        <div v-else class="flex flex-row flex-1 min-h-0 gap-4 items-start">
+        <div v-else class="flex flex-col xl:flex-row flex-1 min-h-0 gap-4 xl:items-start">
             <AiCard class="flex flex-col flex-1 min-w-0 p-4">
                 <TrainingMetrics :in-progress="!finished" />
             </AiCard>
 
-            <AiCard class="2xl:w-[28rem] w-96 shrink-0 self-stretch max-h-[70vh] flex flex-col py-4 pl-4 pr-1">
+            <AiCard class="w-full xl:w-96 2xl:w-[28rem] xl:shrink-0 self-stretch xl:max-h-[70vh] flex flex-col py-4 pl-4 pr-1">
                 <div class="flex items-center gap-2 shrink-0 mb-3">
                     <span class="relative flex items-center justify-center w-2 h-2">
                         <span
