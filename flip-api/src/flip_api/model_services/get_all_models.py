@@ -19,54 +19,63 @@ from flip_api.auth.auth_utils import has_permissions
 from flip_api.auth.dependencies import verify_token
 from flip_api.db.database import get_session
 from flip_api.db.models.user_models import PermissionRef
-from flip_api.domain.interfaces.model import IAllModelsResponse
+from flip_api.domain.interfaces.model import IModelsListResponse
 from flip_api.domain.schemas.status import ModelStatus
 from flip_api.model_services.services.model_service import get_all_models_service
 from flip_api.utils.logger import logger
-from flip_api.utils.paging_utils import IPagedData, get_total_pages
+from flip_api.utils.paging_utils import get_total_pages
 
 router = APIRouter(prefix="/models", tags=["model_services"])
 
 
-def _parse_status(raw_status: str | None) -> ModelStatus | None:
-    """Validate the optional ``status`` query param against ``ModelStatus``.
+def _parse_statuses(raw_status: str | None) -> list[ModelStatus] | None:
+    """Validate the optional ``status`` query param (comma-separated) against ``ModelStatus``.
+
+    A comma-separated list lets the group filter tiles narrow to several statuses at once
+    (e.g. ``INITIATED,PENDING`` for "Queued").
 
     Args:
         raw_status (str | None): The raw ``status`` query param, if supplied.
 
     Returns:
-        ModelStatus | None: The parsed status, or None when no filter was requested.
+        list[ModelStatus] | None: The parsed statuses, or None when no filter was requested.
 
     Raises:
-        HTTPException: 400 if a non-empty value does not match a known status.
+        HTTPException: 400 if any value does not match a known status.
     """
     if not raw_status:
         return None
-    try:
-        return ModelStatus(raw_status)
-    except ValueError:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid model status filter: {raw_status}",
-        )
+    parsed: list[ModelStatus] = []
+    for part in raw_status.split(","):
+        value = part.strip()
+        if not value:
+            continue
+        try:
+            parsed.append(ModelStatus(value))
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid model status filter: {value}",
+            )
+    return parsed or None
 
 
 @router.get(
     "",
     summary="Get a paginated, access-scoped list of models across every project.",
-    response_model=IPagedData[IAllModelsResponse],
+    response_model=IModelsListResponse,
     status_code=status.HTTP_200_OK,
 )
 def get_all_models_endpoint(
     request: Request,
     session: Session = Depends(get_session),
     user_id: UUID = Depends(verify_token),
-) -> IPagedData[IAllModelsResponse]:
+) -> IModelsListResponse:
     """Estate-wide model list, scoped to the projects the caller can access (issue #726).
 
     A caller sees models for projects they own or have been granted access to; a user with
-    ``CAN_MANAGE_PROJECTS`` sees every model. Supports search (model or project name), an
-    optional ``status`` filter and pagination.
+    ``CAN_MANAGE_PROJECTS`` sees every model. Supports search (model or project name), a
+    comma-separated ``status`` filter and pagination, and returns per-status tile counts.
 
     Args:
         request (Request): The HTTP request, used to read query params.
@@ -74,12 +83,12 @@ def get_all_models_endpoint(
         user_id (UUID): The authenticated caller's id.
 
     Returns:
-        IPagedData[IAllModelsResponse]: A paginated page of models joined with project, owner and trusts.
+        IModelsListResponse: A page of models (project, owner, trusts) plus per-status counts.
     """
     logger.info("Requesting estate-wide models list")
 
     query_params = dict(request.query_params)
-    status_filter = _parse_status(query_params.get("status"))
+    status_filter = _parse_statuses(query_params.get("status"))
 
     # Managers see every model — drop the per-user access filter (equivalent to user_id = None),
     # mirroring get_projects_endpoint.
@@ -88,13 +97,16 @@ def get_all_models_endpoint(
     else:
         requesting_user_id = user_id
 
-    response, paging = get_all_models_service(session, requesting_user_id, query_params, status_filter)
+    response, status_counts, paging = get_all_models_service(
+        session, requesting_user_id, query_params, status_filter
+    )
     total_pages = get_total_pages(response.total_rows, paging.page_size)
 
-    return IPagedData(
+    return IModelsListResponse(
         page=paging.page_number,
         page_size=paging.page_size,
         total_pages=total_pages,
         total_records=response.total_rows,
         data=response.data,
+        status_counts=status_counts,
     )  # type: ignore[call-arg]

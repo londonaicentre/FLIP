@@ -251,3 +251,79 @@ def test_invalid_status_param_is_rejected(client: TestClient, session, project_f
     response = client.get(MODELS_URL, params={"status": "NOT_A_STATUS"})
 
     assert response.status_code == 400
+
+
+def test_multiple_statuses_filter_the_list_at_once(
+    client: TestClient, session, project_factory, model_factory
+):
+    """A comma-separated ``status`` filters to any of the given statuses (drives the group tiles)."""
+    user_id = uuid4()
+    project = _add_project(session, project_factory, owner_id=user_id, name="Multi")
+    pending = _add_model(
+        session, model_factory, project_id=project.id, owner_id=user_id, name="p", status=ModelStatus.PENDING
+    )
+    initiated = _add_model(
+        session, model_factory, project_id=project.id, owner_id=user_id, name="i", status=ModelStatus.INITIATED
+    )
+    _add_model(
+        session, model_factory, project_id=project.id, owner_id=user_id, name="prep", status=ModelStatus.PREPARED
+    )
+
+    override_verify_token_as(user_id)
+    response = client.get(MODELS_URL, params={"status": "PENDING,INITIATED"})
+
+    assert response.status_code == 200
+    assert _ids(response.json()) == {str(pending.id), str(initiated.id)}
+
+
+def test_response_carries_per_status_counts(client: TestClient, session, project_factory, model_factory):
+    """The response includes per-status totals over the access-scoped set (the tile numbers)."""
+    user_id = uuid4()
+    project = _add_project(session, project_factory, owner_id=user_id, name="Counts")
+    for _ in range(2):
+        _add_model(session, model_factory, project_id=project.id, owner_id=user_id, status=ModelStatus.PENDING)
+    _add_model(session, model_factory, project_id=project.id, owner_id=user_id, status=ModelStatus.TRAINING_STARTED)
+
+    override_verify_token_as(user_id)
+    counts = client.get(MODELS_URL).json()["statusCounts"]
+
+    assert counts.get("PENDING") == 2
+    assert counts.get("TRAINING_STARTED") == 1
+
+
+def test_status_counts_ignore_the_active_status_filter(
+    client: TestClient, session, project_factory, model_factory
+):
+    """Tile counts show every status even while the list is filtered to one, so tiles stay usable."""
+    user_id = uuid4()
+    project = _add_project(session, project_factory, owner_id=user_id, name="Facets")
+    pending = _add_model(
+        session, model_factory, project_id=project.id, owner_id=user_id, status=ModelStatus.PENDING
+    )
+    _add_model(session, model_factory, project_id=project.id, owner_id=user_id, status=ModelStatus.TRAINING_STARTED)
+
+    override_verify_token_as(user_id)
+    body = client.get(MODELS_URL, params={"status": "PENDING"}).json()
+
+    # The list is narrowed to the filtered status...
+    assert _ids(body) == {str(pending.id)}
+    # ...but the tiles still see the full breakdown.
+    assert body["statusCounts"].get("PENDING") == 1
+    assert body["statusCounts"].get("TRAINING_STARTED") == 1
+
+
+def test_status_counts_exclude_inaccessible_projects(
+    client: TestClient, session, project_factory, model_factory
+):
+    """Counts obey the same access scoping as the list — foreign models never inflate a tile."""
+    user_id = uuid4()
+    other_id = uuid4()
+    mine = _add_project(session, project_factory, owner_id=user_id, name="Mine")
+    foreign = _add_project(session, project_factory, owner_id=other_id, name="Foreign")
+    _add_model(session, model_factory, project_id=mine.id, owner_id=user_id, status=ModelStatus.PENDING)
+    _add_model(session, model_factory, project_id=foreign.id, owner_id=other_id, status=ModelStatus.PENDING)
+
+    override_verify_token_as(user_id)
+    counts = client.get(MODELS_URL).json()["statusCounts"]
+
+    assert counts.get("PENDING") == 1

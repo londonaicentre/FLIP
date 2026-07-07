@@ -65,6 +65,24 @@ class IAllModelsResponse(BaseModel):
     model_config = ConfigDict(populate_by_name=True, arbitrary_types_allowed=True)
 
 
+class IModelsListResponse(BaseModel):
+    """Paginated Models-list page plus per-status totals for the filter tiles (issue #726).
+
+    ``status_counts`` maps each ``ModelStatus`` value to its count across the caller's
+    access-scoped set, honouring search but **ignoring** the active status filter — so the
+    tiles keep their numbers while one is selected.
+    """
+
+    page: int
+    page_size: int = Field(alias="pageSize")
+    total_pages: int = Field(alias="totalPages")
+    total_records: int = Field(alias="totalRecords")
+    data: list[IAllModelsResponse]
+    status_counts: dict[str, int] = Field(default_factory=dict, alias="statusCounts")
+
+    model_config = ConfigDict(populate_by_name=True, arbitrary_types_allowed=True)
+
+
 class IModelLog(BaseModel):
     timestamp: datetime = Field(alias="@timestamp")
     model: str

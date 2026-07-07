@@ -429,8 +429,8 @@ def get_all_models_service(
     session: Session,
     user_id: UUID | None,
     query_params: dict,
-    status_filter: ModelStatus | None = None,
-) -> tuple[IPagedResponse[IAllModelsResponse], PagingInfo]:
+    status_filter: list[ModelStatus] | None = None,
+) -> tuple[IPagedResponse[IAllModelsResponse], dict[str, int], PagingInfo]:
     """Estate-wide, access-scoped model list joined with project name, owner and run trusts (#726).
 
     Mirrors the projects-list access rule: when ``user_id`` is provided the query is restricted to
@@ -439,27 +439,34 @@ def get_all_models_service(
     models and projects are always excluded. Search matches the model name or the owning project
     name; results are newest-first and paginated.
 
+    Alongside the page it returns per-status counts over the same access-scoped, search-filtered set
+    but **without** the status filter — so the filter tiles keep their numbers while one is selected.
+
     Args:
         session (Session): The database session.
         user_id (UUID | None): The requesting user, or ``None`` to see every model (manager bypass).
         query_params (dict): Raw query params (``pageNumber`` / ``pageSize`` / ``search``).
-        status_filter (ModelStatus | None): Optional model-status filter.
+        status_filter (list[ModelStatus] | None): Optional set of statuses to filter the list to.
 
     Returns:
-        tuple[IPagedResponse[IAllModelsResponse], PagingInfo]: The page of rows plus paging details.
+        tuple[IPagedResponse[IAllModelsResponse], dict[str, int], PagingInfo]: the page of rows, the
+        ``status value -> count`` map for the tiles, and the paging details.
     """
     paging = get_paging_details(query_string_parameters=query_params)
 
-    conditions: list[Any] = [col(Model.deleted).is_(False), col(Projects.deleted).is_(False)]
+    # Base conditions exclude the status filter so the tile counts see every status.
+    base_conditions: list[Any] = [col(Model.deleted).is_(False), col(Projects.deleted).is_(False)]
     if user_id is not None:
-        conditions.append(or_(Projects.owner_id == user_id, ProjectUserAccess.user_id == user_id))
-    if status_filter is not None:
-        conditions.append(Model.status == status_filter)
+        base_conditions.append(or_(Projects.owner_id == user_id, ProjectUserAccess.user_id == user_id))
     if paging.search_str:
         pattern = f"%{paging.search_str.lower()}%"
-        conditions.append(
+        base_conditions.append(
             or_(func.lower(Model.name).like(pattern), func.lower(Projects.name).like(pattern))
         )
+
+    list_conditions = list(base_conditions)
+    if status_filter:
+        list_conditions.append(col(Model.status).in_(status_filter))
 
     # LEFT JOIN ProjectUserAccess pinned to this user (mirrors get_projects_paginated_orm) so the
     # access OR-clause can match a granted project without fanning the row out per access record.
@@ -472,7 +479,7 @@ def get_all_models_service(
         .join(Projects, col(Model.project_id) == Projects.id)
         .outerjoin(ProjectUserAccess, access_join)
         .outerjoin(UserProfile, col(UserProfile.user_id) == Model.owner_id)
-        .where(and_(*conditions))
+        .where(and_(*list_conditions))
         .order_by(desc(col(Model.creation_timestamp)))
         .limit(paging.page_size)
         .offset(paging.offset)
@@ -481,11 +488,22 @@ def get_all_models_service(
         select(func.count(func.distinct(col(Model.id))))
         .join(Projects, col(Model.project_id) == Projects.id)
         .outerjoin(ProjectUserAccess, access_join)
-        .where(and_(*conditions))
+        .where(and_(*list_conditions))
+    )
+    status_counts_query = (
+        select(Model.status, func.count(func.distinct(col(Model.id))))  # type: ignore[call-overload]
+        .join(Projects, col(Model.project_id) == Projects.id)
+        .outerjoin(ProjectUserAccess, access_join)
+        .where(and_(*base_conditions))
+        .group_by(Model.status)
     )
 
     total_rows = session.exec(count_query).one_or_none() or 0
     rows = session.exec(rows_query).all()
+    status_counts = {
+        (status.value if isinstance(status, ModelStatus) else str(status)): count
+        for status, count in session.exec(status_counts_query).all()
+    }
 
     trusts_by_model = _run_trusts_by_model([model.id for model, _, _ in rows], session)
 
@@ -503,4 +521,4 @@ def get_all_models_service(
         for model, project_name, owner_name in rows
     ]
 
-    return IPagedResponse[IAllModelsResponse](data=data, total_rows=total_rows), paging
+    return IPagedResponse[IAllModelsResponse](data=data, total_rows=total_rows), status_counts, paging
