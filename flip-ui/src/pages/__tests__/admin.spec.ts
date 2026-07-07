@@ -71,13 +71,16 @@ function mountAdmin() {
 describe("admin chip-tab nav", () => {
     // The xl-only left sidebar and the mobile <select> band are replaced by one
     // segmented pill nav under the top bar, rendered at every breakpoint.
-    it("renders the segmented chip-tab nav at all breakpoints", () => {
+    it("renders the chip-tab nav at all breakpoints", () => {
         const wrapper = mountAdmin();
 
         const nav = wrapper.find("nav[aria-label='Admin sections']");
         expect(nav.exists()).toBe(true);
-        // Horizontal scroll keeps all four tabs reachable on phone widths.
+        // Horizontal scroll keeps all four chips reachable on phone widths;
+        // standalone chips (no segmented container) squash independently.
         expect(nav.classes()).toContain("overflow-x-auto");
+        expect(nav.classes()).toContain("gap-2");
+        expect(nav.find("div.rounded-lg").exists()).toBe(false);
         expect(nav.classes()).not.toContain("hidden");
         expect(nav.classes()).not.toContain("xl:hidden");
         expect(nav.classes()).not.toContain("xl:flex");
@@ -104,16 +107,20 @@ describe("admin chip-tab nav", () => {
         }
     });
 
-    it("marks the active section pill", () => {
+    it("marks the active section chip", () => {
         const wrapper = mountAdmin();
 
         const links = wrapper.findAll("nav[aria-label='Admin sections'] a");
-        // Mocked route is /admin/users, so Users is the active pill.
-        expect(links[0].classes()).toContain("bg-gray-100");
-        expect(links[0].classes()).toContain("dark:bg-dark-surface");
-        expect(links[0].classes()).toContain("text-gray-900");
+        // Mocked route is /admin/users, so Users is the active chip: a filled
+        // primary-tint rounded-full pill; inactive chips are outlined and muted.
+        expect(links[0].classes()).toContain("rounded-full");
+        expect(links[0].classes()).toContain("bg-primary-100");
+        expect(links[0].classes()).toContain("dark:bg-primary-900/40");
+        expect(links[0].classes()).toContain("text-primary-800");
         expect(links[0].attributes("aria-current")).toBe("page");
 
+        expect(links[1].classes()).toContain("rounded-full");
+        expect(links[1].classes()).toContain("border-gray-200");
         expect(links[1].classes()).toContain("text-gray-500");
         expect(links[1].classes()).toContain("dark:text-gray-300");
         expect(links[1].attributes("aria-current")).toBeUndefined();

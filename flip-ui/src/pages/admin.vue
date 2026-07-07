@@ -19,28 +19,29 @@ redirect: /admin/users # Can be set to any page within the "admin" section
 
 <template>
     <div class="flex flex-col w-full h-full">
-        <!-- Section nav: one segmented pill group at every breakpoint (replaces the old
-             xl-only sidebar + mobile <select>). Scrolls horizontally on phone widths. -->
+        <!-- Section nav: standalone chips at every breakpoint (replaces the old
+             xl-only sidebar + mobile <select>). Each chip squashes independently
+             and the row scrolls horizontally on phone widths. -->
         <nav
             aria-label="Admin sections"
             data-test="admin-tabs"
-            class="flex items-center shrink-0 px-4 md:px-8 py-3 overflow-x-auto border-b border-gray-200 dark:border-dark-border"
+            class="flex items-center gap-2 shrink-0 px-4 md:px-8 py-3 overflow-x-auto border-b border-gray-200 dark:border-dark-border"
         >
-            <div class="inline-flex bg-white dark:bg-dark-canvas border border-gray-200 dark:border-dark-border rounded-lg p-1">
-                <router-link
-                    v-for="item in subNavigation"
-                    :key="item.name"
-                    :to="item.href"
-                    :aria-current="item.current ? 'page' : undefined"
-                    class="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-semibold whitespace-nowrap transition-colors"
-                    :class="item.current
-                        ? 'bg-gray-100 dark:bg-dark-surface text-gray-900 dark:text-gray-100'
-                        : 'bg-transparent text-gray-500 hover:text-gray-800 dark:text-gray-300 dark:hover:text-gray-200'"
-                >
-                    <component :is="item.icon" class="w-4 h-4 shrink-0" aria-hidden="true" />
-                    {{ item.name }}
-                </router-link>
-            </div>
+            <router-link
+                v-for="item in subNavigation"
+                :key="item.name"
+                :to="item.href"
+                :aria-current="item.current ? 'page' : undefined"
+                class="flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-sm font-semibold whitespace-nowrap transition-colors"
+                :class="item.current
+                    ? ['bg-primary-100 border-transparent text-primary-800',
+                       'dark:bg-primary-900/40 dark:text-primary-100']
+                    : ['text-gray-500 hover:text-gray-800 dark:text-gray-300 dark:hover:text-gray-200',
+                       'bg-white border-gray-200 hover:border-gray-300 dark:bg-dark-canvas dark:border-dark-border']"
+            >
+                <component :is="item.icon" class="w-4 h-4 shrink-0" aria-hidden="true" />
+                {{ item.name }}
+            </router-link>
         </nav>
         <!-- Subpages own their gutters (Users runs edge-to-edge); this wrapper owns the scroll. -->
         <div data-test="admin-content" class="flex flex-col flex-1 min-w-0 overflow-y-auto">
