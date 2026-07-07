@@ -22,7 +22,7 @@ redirect: /admin/users # Can be set to any page within the "admin" section
         <div class="flex flex-col flex-1 min-w-0 overflow-hidden">
             <main class="flex flex-1 overflow-hidden">
                 <div class="flex flex-col flex-1 overflow-y-auto xl:overflow-hidden">
-                    <nav aria-label="Breadcrumb" class="bg-white border-b border-blue-gray-200 xl:hidden">
+                    <nav aria-label="Breadcrumb" class="bg-white dark:bg-transparent border-b border-blue-gray-200 dark:border-dark-border xl:hidden">
                         <div class="flex items-start w-full px-4 py-3">
                             <div class="w-full xl:hidden">
                                 <label for="nav-tabs" class="sr-only">Select a tab</label>
