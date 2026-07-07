@@ -41,7 +41,7 @@
                         tooltip="Register User"
                         @click="showRegisterUserModal = true"
                     >
-                        <icon-mdi-plus-box-outline class="w-4 h-4 lg:mr-1.5" />
+                        <icon-mdi-account-plus-outline class="w-4 h-4 lg:mr-1.5" />
                         <span class="hidden lg:inline">Register User</span>
                     </AiButton>
                 </div>
