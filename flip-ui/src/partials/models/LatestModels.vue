@@ -26,7 +26,7 @@
                         tooltip="Create Model"
                         @click="addModel"
                     >
-                        <icon-mdi-plus-box-outline class="lg:mr-2" />
+                        <icon-mdi-plus class="lg:mr-2" />
                         <span class="hidden lg:inline">Create Model</span>
                     </AiButton>
                 </div>
