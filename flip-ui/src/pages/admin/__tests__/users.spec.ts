@@ -628,19 +628,26 @@ describe("mobile drill-in (below lg)", () => {
 });
 
 describe("de-carded shell", () => {
-    // The AiCard wrapper is gone: the master–detail runs edge-to-edge under the
-    // admin chip-tab bar, keeping the card's load-bearing overflow clipping and
-    // white canvas but none of the floating-card chrome.
-    it("renders an edge-to-edge shell instead of a card", async () => {
+    // The AiCard chrome (shadow/ring) is gone, but the master–detail keeps the
+    // same page margins as the Projects/Models views: a gutter wrapper frames a
+    // bordered rounded box that owns the overflow clipping and white canvas.
+    it("frames the master–detail in page gutters as a bordered box", async () => {
         const wrapper = mountPage();
         await nextTick();
 
+        const gutter = wrapper.find("[data-test='admin-page-gutter']");
+        expect(gutter.exists()).toBe(true);
+        for (const cls of ["w-full", "h-full", "p-4", "md:p-8"]) {
+            expect(gutter.classes()).toContain(cls);
+        }
+
         const shell = wrapper.find("[data-test='users-shell']");
         expect(shell.exists()).toBe(true);
-        for (const cls of ["flex", "w-full", "h-full", "overflow-hidden", "bg-white", "dark:bg-dark-canvas"]) {
+        for (const cls of ["flex", "w-full", "h-full", "overflow-hidden", "bg-white", "dark:bg-dark-canvas",
+            "border", "border-gray-200", "rounded-xl", "dark:border-dark-border"]) {
             expect(shell.classes()).toContain(cls);
         }
-        for (const cls of ["rounded-lg", "shadow", "ring-1"]) {
+        for (const cls of ["shadow", "ring-1"]) {
             expect(shell.classes()).not.toContain(cls);
         }
     });
