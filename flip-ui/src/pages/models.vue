@@ -245,8 +245,11 @@ interface IColumn {
     align?: "left" | "right";
 }
 
-// Shared grid template so the header and data rows stay column-aligned.
-const GRID_CLASS = "grid grid-cols-[minmax(0,1.6fr)_minmax(0,1.4fr)_minmax(0,1.6fr)_auto]";
+// Shared grid template so the header and data rows stay column-aligned. Every track is a
+// fractional unit (no `auto`): each row is its own grid, so a content-sized column — e.g. a
+// variable-width Status pill — would resolve to a different width per row and knock the columns
+// out of alignment. Fixed fractions keep every row's tracks identical.
+const GRID_CLASS = "grid grid-cols-[minmax(0,1.7fr)_minmax(0,1.4fr)_minmax(0,1.5fr)_minmax(0,0.9fr)]";
 
 const columns: IColumn[] = [
     {
