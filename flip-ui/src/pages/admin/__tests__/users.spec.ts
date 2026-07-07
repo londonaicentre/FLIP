@@ -483,3 +483,45 @@ describe("admin/users", () => {
         expect(mutateUsers).toHaveBeenCalled();
     });
 });
+
+describe("shared-squash layout and icon collapse", () => {
+    // The rail used to be a rigid 384px (w-96 flex-shrink-0): squashing the
+    // window forced the editor pane to absorb every lost pixel until the page
+    // simply clipped. It now shrinks alongside the editor down to a 240px floor.
+    it("lets the user-list rail shrink with the viewport down to a fixed floor", async () => {
+        const wrapper = mountPage();
+        await nextTick();
+
+        const rail = wrapper.find("[data-test='user-list-rail']");
+        expect(rail.exists()).toBe(true);
+        expect(rail.classes()).toContain("w-96");
+        expect(rail.classes()).toContain("shrink");
+        expect(rail.classes()).toContain("min-w-[15rem]");
+        expect(rail.classes()).not.toContain("flex-shrink-0");
+    });
+
+    it("collapses the Save User label below lg with an aria-label and a save icon", async () => {
+        const wrapper = mountPage();
+        await nextTick();
+        await wrapper.findAll("[data-test='user']")[0].trigger("click");
+
+        const btn = wrapper.find("[data-test='save-user-btn']");
+        expect(btn.attributes("aria-label")).toBe("Save User");
+        expect(btn.find("svg").exists()).toBe(true);
+        const label = btn.find("span.hidden.lg\\:inline");
+        expect(label.exists()).toBe(true);
+        expect(label.text()).toBe("Save User");
+    });
+
+    it("collapses the Register User label below lg with an aria-label", async () => {
+        const wrapper = mountPage();
+        await nextTick();
+
+        const btn = wrapper.find("[data-test='register-user-btn']");
+        expect(btn.attributes("aria-label")).toBe("Register User");
+        expect(btn.find("svg").exists()).toBe(true);
+        const label = btn.find("span.hidden.lg\\:inline");
+        expect(label.exists()).toBe(true);
+        expect(label.text()).toBe("Register User");
+    });
+});

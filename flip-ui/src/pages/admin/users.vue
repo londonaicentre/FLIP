@@ -19,15 +19,25 @@
 <template>
     <AiCard class="w-full h-full">
         <div class="flex w-full h-full">
-            <!-- LEFT RAIL — searchable user list -->
-            <div class="flex flex-col flex-shrink-0 h-full bg-white border-r border-gray-200 w-96 dark:bg-dark-surface dark:border-dark-border">
+            <!-- LEFT RAIL — searchable user list. Shrinks with the viewport (240px floor)
+                 so the editor pane doesn't absorb all the squash on narrow screens. -->
+            <div
+                data-test="user-list-rail"
+                class="flex flex-col shrink min-w-[15rem] h-full bg-white border-r border-gray-200 w-96 dark:bg-dark-surface dark:border-dark-border"
+            >
                 <div class="flex items-center gap-3 px-4 py-3 border-b border-gray-200 dark:border-dark-border">
                     <h1 class="flex-grow text-lg font-semibold text-gray-900 font-heading dark:text-gray-100">
                         Users
                     </h1>
-                    <AiButton light data-test="register-user-btn" @click="showRegisterUserModal = true">
-                        <icon-mdi-plus-box-outline class="w-4 h-4 mr-1.5" />
-                        Register User
+                    <AiButton
+                        light
+                        data-test="register-user-btn"
+                        aria-label="Register User"
+                        tooltip="Register User"
+                        @click="showRegisterUserModal = true"
+                    >
+                        <icon-mdi-plus-box-outline class="w-4 h-4 lg:mr-1.5" />
+                        <span class="hidden lg:inline">Register User</span>
                     </AiButton>
                 </div>
                 <div class="px-4 py-3 border-b border-gray-100 dark:border-dark-border">
@@ -137,10 +147,13 @@
                         <AiButton
                             data-test="save-user-btn"
                             primary
+                            aria-label="Save User"
+                            tooltip="Save User"
                             :disabled="!selectedUser.dirty"
                             @click="saveUser"
                         >
-                            Save User
+                            <icon-mdi-content-save-outline class="w-4 h-4 lg:mr-2" />
+                            <span class="hidden lg:inline">Save User</span>
                         </AiButton>
                     </div>
                     <div class="flex flex-col overflow-y-auto grow">
