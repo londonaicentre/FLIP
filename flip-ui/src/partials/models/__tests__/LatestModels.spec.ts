@@ -107,8 +107,9 @@ function mountLatestModels({
                 AiButton: {
                     // Forward DOM clicks as Vue `click` emits so the parent's
                     // `@click="addModel"` listener fires when the test
-                    // triggers `.trigger("click")` on this stub.
-                    template: "<button :data-test=$attrs['data-test'] @click=\"$emit('click', $event)\"><slot /></button>",
+                    // triggers `.trigger("click")` on this stub. All attrs
+                    // (data-test, aria-label) are forwarded onto the button.
+                    template: "<button v-bind=\"$attrs\" @click=\"$emit('click', $event)\"><slot /></button>",
                     inheritAttrs: false,
                     emits: ["click"]
                 },
@@ -249,6 +250,20 @@ describe("LatestModels — defensive data access", () => {
 
         await wrapper.find("[data-test=add-model-btn]").trigger("click");
         expect(wrapper.exists()).toBe(true);
+    });
+
+    test("Create-Model button collapses its label below lg with an aria-label and an icon", async () => {
+        setData({ data: [] });
+        const wrapper = mountLatestModels({ isViewer: false });
+        await flushPromises();
+
+        const btn = wrapper.find("[data-test=add-model-btn]");
+        expect(btn.exists()).toBe(true);
+        expect(btn.attributes("aria-label")).toBe("Create Model");
+        expect(btn.find("svg").exists()).toBe(true);
+        const label = btn.find("span.hidden.lg\\:inline");
+        expect(label.exists()).toBe(true);
+        expect(label.text()).toBe("Create Model");
     });
 
     test("does not throw when project status is non-APPROVED and data.data is undefined", async () => {

@@ -19,8 +19,15 @@
                     Models
                 </h2>
                 <div v-if="!isViewer && projectStore.project?.status === 'APPROVED'">
-                    <AiButton light data-test="add-model-btn" @click="addModel">
-                        Create Model
+                    <AiButton
+                        light
+                        data-test="add-model-btn"
+                        aria-label="Create Model"
+                        tooltip="Create Model"
+                        @click="addModel"
+                    >
+                        <icon-mdi-plus-box-outline class="lg:mr-2" />
+                        <span class="hidden lg:inline">Create Model</span>
                     </AiButton>
                 </div>
             </div>

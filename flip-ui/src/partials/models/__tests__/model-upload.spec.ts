@@ -746,6 +746,30 @@ describe("ModelUpload", () => {
             clickSpy.mockRestore();
         });
 
+        test("download-all collapses its label below lg and keeps an aria-label", async () => {
+            // Same collapse treatment as the page-header actions: below lg the
+            // label hides leaving the icon, with an aria-label on the native
+            // button keeping it named for screen readers.
+            const files: FileInfo[] = [
+                {
+                    id: "1",
+                    name: "a.py",
+                    size: 10,
+                    status: FileUploadStatus.COMPLETED
+                }
+            ];
+            const wrapper = mountModelUpload({ files }, { hasPermissions: true });
+            await flushPromises();
+
+            const holder = wrapper.find("[data-test=download-all-files-btn]");
+            expect(holder.exists()).toBe(true);
+            // aria-label is a declared AiButton prop wired to the inner native button.
+            expect(holder.find("button").attributes("aria-label")).toBe("Download all");
+            const label = holder.find("span.hidden.lg\\:inline");
+            expect(label.exists()).toBe(true);
+            expect(label.text()).toBe("Download all");
+        });
+
         test("download-all snackbars when a file fetch fails", async () => {
             mockDownloadModelFile.mockRejectedValue(new Error("network"));
             const createObjectURLSpy = vi

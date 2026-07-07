@@ -26,7 +26,7 @@
                         Users
                     </h1>
                     <AiButton light data-test="register-user-btn" @click="showRegisterUserModal = true">
-                        <icon-mdi-plus class="w-4 h-4 mr-1.5" />
+                        <icon-mdi-plus-box-outline class="w-4 h-4 mr-1.5" />
                         Register User
                     </AiButton>
                 </div>

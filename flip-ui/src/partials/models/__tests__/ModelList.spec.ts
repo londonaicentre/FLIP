@@ -269,3 +269,23 @@ describe("ModelList — Status column", () => {
         expect(cell.find("[data-test='model-status-icon-cross']").exists()).toBe(false);
     });
 });
+
+describe("ModelList — header Create-Model button", () => {
+    beforeEach(() => {
+        setData(undefined);
+    });
+
+    test("collapses its label below lg with an aria-label and an icon", async () => {
+        setData({ data: [] });
+        const wrapper = mountModelList();
+        await flushPromises();
+
+        const btn = wrapper.find("[data-test=add-model-btn]");
+        expect(btn.exists()).toBe(true);
+        expect(btn.attributes("aria-label")).toBe("Create Model");
+        expect(btn.find("svg").exists()).toBe(true);
+        const label = btn.find("span.hidden.lg\\:inline");
+        expect(label.exists()).toBe(true);
+        expect(label.text()).toBe("Create Model");
+    });
+});

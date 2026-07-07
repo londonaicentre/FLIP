@@ -39,8 +39,15 @@
                     <h2 class="text-lg font-semibold font-heading leading-loose">
                         Cohort Query
                     </h2>
-                    <AiButton light data-test="view-results-btn" @click="viewCohortQueryResults">
-                        View Query
+                    <AiButton
+                        light
+                        data-test="view-results-btn"
+                        aria-label="View Query"
+                        tooltip="View Query"
+                        @click="viewCohortQueryResults"
+                    >
+                        <icon-mdi-eye-outline class="lg:mr-2" />
+                        <span class="hidden lg:inline">View Query</span>
                     </AiButton>
                 </div>
                 <div class="flow-root">
