@@ -85,6 +85,12 @@ variable "k8s_trust_public_ips" {
   default     = []
 }
 
+variable "deploy_trust_ec2" {
+  description = "Whether to provision the cloud Trust EC2 host. Set false (make full-deploy-hub-only / DEPLOY_TRUST_EC2=false) for a hub-only deployment where every trust runs on-prem — e.g. when the workloads need a GPU that the t3 trust instance doesn't have. On-prem trusts join via register-trusts + allow-local-trust-nlb as usual."
+  type        = bool
+  default     = true
+}
+
 variable "INTERNAL_SERVICE_KEY_HASH" {
   description = "SHA-256 hash of the internal service key used for fl-server-to-hub auth"
   type        = string
@@ -172,6 +178,33 @@ variable "MIN_CLIENTS" {
   default     = 1
 }
 
+# Per-job GPU resource spec requested by the fl-api when it builds an NVFLARE
+# job's meta (mirrors JOB_RESOURCE_SPEC_* in compose.production.nvflare.yml).
+# This drives client-side GPU allocation — the hub's Fargate tasks are CPU-only;
+# the GPUs are provided by the fl-clients (trust hosts). Default 0 = no GPU
+# requirement (a CPU-only tutorial). Set to 1 in the env file (TF_VAR_...) for
+# GPU jobs such as the Ark+ evaluation.
+variable "JOB_RESOURCE_SPEC_NUM_GPUS" {
+  description = "Number of GPUs requested per FL client in a training/eval job's NVFLARE resource_spec"
+  type        = number
+  default     = 0
+}
+
+variable "JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB" {
+  description = "Memory (GiB) requested per GPU in a training/eval job's NVFLARE resource_spec"
+  type        = number
+  default     = 0
+}
+
+# Gates the whole FL-on-ECS stack, not just the file system: both FL task
+# definitions (fl-api-net-1, fl-server-net-1 in ecs_tasks.tf) carry
+# `count = var.enable_efs ? 1 : 0`, so their EFS volumes (including the shared
+# checkpoint volume) AND their environment (SERVER_CHECKPOINT_ROOT) exist
+# together or not at all — there is no partial state where the env var is set
+# but the mount is missing. Toggle together with enable_service_discovery:
+# the FL services in ecs_services.tf are gated on that flag but hard-reference
+# these task definitions at index [0], so enable_efs=false alone fails
+# `terraform plan` with an invalid-index error (pre-existing coupling).
 variable "enable_efs" {
   description = "Enable EFS file system for FL task persistent storage"
   type        = bool

@@ -52,7 +52,17 @@
   ],
   "format_version": 2,
   "task_data_filters": [],
-  "task_result_filters": [],
+  "task_result_filters": [
+    {
+      "filters": [
+        {
+          "args": {},
+          "path": "flip.nvflare.components.client_exception_reporter.ClientExceptionReporter"
+        }
+      ],
+      "tasks": ["validate", "post_validation"]
+    }
+  ],
   "workflows": [
     {
       "args": {
@@ -71,12 +81,18 @@
     },
     {
       "args": {
-        "model_id": null,
         "model_locator_id": "model_locator",
         "validation_timeout": 12000
       },
       "id": "controller2",
-      "path": "flip.nvflare.controllers.cross_site_model_eval.CrossSiteModelEval"
+      "path": "nvflare.app_common.workflows.global_model_eval.GlobalModelEval"
+    },
+    {
+      "args": {
+        "task_name": "post_validation"
+      },
+      "id": "controller3",
+      "path": "flip.nvflare.controllers.broadcast_task.BroadcastTask"
     }
   ]
 }

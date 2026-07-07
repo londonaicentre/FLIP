@@ -38,6 +38,7 @@ from monai.data import DataLoader, Dataset, decollate_batch
 from monai.metrics import DiceMetric, HausdorffDistanceMetric, MeanIoU, SurfaceDiceMetric
 from monai.networks.utils import one_hot
 from monai.transforms import AsDiscrete
+from tqdm import tqdm
 from transforms import get_eval_transforms, get_sliding_window_inferer
 
 logger = logging.getLogger(__name__)
@@ -82,44 +83,51 @@ def build_datalist(flip: FLIP, dataframe, project_id: str) -> list[dict]:
     Evaluation-only: every matched image/label pair in this client's cohort is scored (no held-out split).
     """
     datalist: list[dict] = []
-    for accession_id in dataframe["accession_id"]:
+
+    for accession_id in tqdm(dataframe["accession_id"], desc="Preparing dataset", unit="accession"):
         try:
             accession_folder_path = flip.get_by_accession_number(
                 project_id, accession_id, resource_type=[ResourceType.NIFTI]
             )
         except Exception as err:
-            logger.error(f"Could not get image data folder path for {accession_id}: {err}")
+            logger.info("⚠️ Could not fetch images for accession_id=%s: %s", accession_id, err)
             continue
 
+        # get all images in the accession folder that match the pattern "input_*.nii.gz"
         all_images = list(accession_folder_path.rglob("input_*.nii.gz"))
-        logger.info(f"Total base count found for accession_id {accession_id}: {len(all_images)}")
 
-        matches = 0
         for img in all_images:
             seg = str(img).replace("/input_", "/label_")
+
             if not Path(seg).exists():
-                logger.info(f"No matching segmentation mask for {img}.")
+                logger.info("⚠️ No matching segmentation for %s", img.name)
                 continue
 
             try:
                 img_header = nib.load(str(img))
                 seg_header = nib.load(seg)
             except nib.filebasedimages.ImageFileError as err:
-                logger.error(f"Problem loading header for {img} / {seg}: {err}")
+                logger.info("⚠️ Invalid image pair for %s: %s", img.name, err)
                 continue
 
+            # Some QC checks to ensure the image and segmentation are valid and match
+            # check is 3D and at least 128x128x128 in size and seg is the same shape as the image
             if len(img_header.shape) != 3:
-                logger.info(f"Image {img} has {len(img_header.shape)} dimensions, expected 3.")
+                logger.info("⚠️ Skipping non-3D image %s", img.name)
                 continue
-            if any(i != s for i, s in zip(img_header.shape, seg_header.shape)):
-                logger.info(f"Image dims {img_header.shape} != segmentation dims {seg_header.shape}.")
+
+            if img_header.shape != seg_header.shape:
+                logger.info(
+                    "⚠️ Shape mismatch for %s: image=%s label=%s",
+                    img.name,
+                    img_header.shape,
+                    seg_header.shape,
+                )
                 continue
 
             datalist.append({"image": str(img), "label": seg})
-            matches += 1
-        logger.info(f"Added {matches} matched image + segmentation pairs for {accession_id}.")
 
-    logger.info(f"Found {len(datalist)} files in total — evaluating all of them.")
+    logger.info("Dataset ready: %d image/label pairs - evaluating all of them.", len(datalist))
     return datalist
 
 
