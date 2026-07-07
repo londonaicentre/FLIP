@@ -3,7 +3,7 @@ revision = 3
 requires-python = ">=3.12"
 
 [options]
-exclude-newer = "2026-06-23T15:00:09.396685995Z"
+exclude-newer = "2026-07-03T22:44:38.936094624Z"
 exclude-newer-span = "P3D"
 
 [manifest]
@@ -736,6 +736,7 @@ dependencies = [
     { name = "pydantic" },
     { name = "pydantic-settings" },
     { name = "requests" },
+    { name = "tqdm" },
 ]
 
 [package.optional-dependencies]
@@ -782,6 +783,7 @@ requires-dist = [
     { name = "timm", marker = "extra == 'full'", specifier = ">=1.0.0" },
     { name = "torch", marker = "extra == 'full'", specifier = ">=2.11.0,<2.12", index = "https://download.pytorch.org/whl/cu128" },
     { name = "torchvision", marker = "extra == 'full'", specifier = ">=0.26.0,<0.27", index = "https://download.pytorch.org/whl/cu128" },
+    { name = "tqdm", specifier = ">=4.67.1" },
 ]
 provides-extras = ["full"]
 

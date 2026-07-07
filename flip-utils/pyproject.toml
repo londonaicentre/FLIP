@@ -54,6 +54,7 @@ dependencies = [
     "pydantic>=2.11.7",
     "pydantic-settings>=2.10.1",
     "requests>=2.33.0",
+    "tqdm>=4.67.1",
 ]
 
 [project.urls]

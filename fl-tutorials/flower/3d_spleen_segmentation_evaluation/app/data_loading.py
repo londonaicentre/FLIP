@@ -36,8 +36,15 @@ class FLIP_BASE:
 
         This is an evaluation-only tutorial, so every sample in the client's
         cohort is scored — no train/test holdout is applied.
+
+        Args:
+            None
+
+        Returns:
+            datalist: list[dict[str, str]]: List of dicts with keys "image" and "label" for every matched pair.
         """
-        datalist = []
+        datalist: list[dict[str, str]] = []
+
         # loop over each accession id in the train set
         for accession_id in self.dataframe["accession_id"]:
             try:
@@ -53,13 +60,9 @@ class FLIP_BASE:
                 log(INFO, f"Could not get image data folder path for {accession_id}: {err}")
                 continue
 
-            log(INFO, str(accession_folder_path))
-
+            # get all images in the accession folder that match the pattern "input_*.nii.gz"
             all_images = list(accession_folder_path.rglob("input_*.nii.gz"))
-            log(INFO, str(all_images))
 
-            this_accession_matches = 0
-            log(INFO, f"Total base count found for accession_id {accession_id}: {len(all_images)}")
             for img in all_images:
                 # for each image, find the corresponding segmentation mask
                 seg = str(img).replace("/input_", "/label_")
@@ -70,41 +73,25 @@ class FLIP_BASE:
 
                 try:
                     img_header = nib.load(str(img))
-                except nib.filebasedimages.ImageFileError as err:
-                    log(INFO, f"Problem loading header of base image {str(img)}.")
-                    log(INFO, f"{err=}")
-                    log(INFO, f"{type(err)=}")
-                    log(INFO, f"{err.args=}")
-                    continue
-
-                try:
                     seg_header = nib.load(seg)
                 except nib.filebasedimages.ImageFileError as err:
-                    log(INFO, f"Problem loading header of segmentation {str(seg)}.")
-                    log(INFO, f"{err=}")
-                    log(INFO, f"{type(err)=}")
-                    log(INFO, f"{err.args=}")
+                    log(INFO, f"⚠️ Invalid image pair for {img.name}: {err}")
                     continue
 
                 # Some QC checks to ensure the image and segmentation are valid and match
-                # check is 3D and at least 128x128x128 in size and seg is the same
+                # check is 3D and at least 128x128x128 in size and seg is the same shape as the image
                 if len(img_header.shape) != 3:
-                    log(INFO, f"Image has other than 3 dimensions (it has {len(img_header.shape)}.)")
+                    log(INFO, f"⚠️ Skipping non-3D image {img.name}")
                     continue
-                elif any([img_dim != seg_dim for img_dim, seg_dim in zip(img_header.shape, seg_header.shape)]):
+
+                if img_header.shape != seg_header.shape:
                     log(
                         INFO,
-                        f"Image dimensions do not match segmentation dimensions"
-                        f"({img_header.shape}) vs ({seg_header.shape}).",
+                        f"⚠️ Shape mismatch for {img.name}: image={img_header.shape} label={seg_header.shape}",
                     )
                     continue
-                else:
-                    # defines keys for image and segmentation
-                    datalist.append({"image": str(img), "label": seg})
-                    log(INFO, "Matching base image and segmentation added.")
-                    this_accession_matches += 1
 
-            log(INFO, f"Added {this_accession_matches} matched image + segmentation pairs for {accession_id}.")
+                datalist.append({"image": str(img), "label": seg})
 
         log(INFO, f"Found {len(datalist)} files in total — evaluating all of them.")
         return datalist
