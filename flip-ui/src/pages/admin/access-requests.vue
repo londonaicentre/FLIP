@@ -17,7 +17,7 @@ name: Access Requests
 
 <template>
     <!-- Owns its gutters: admin.vue's content wrapper no longer pads subpages. -->
-    <div data-test="admin-page-gutter" class="w-full h-full p-4 md:p-8">
+    <div data-test="admin-page-gutter" class="w-full h-full p-4 pt-3 md:p-8 md:pt-5">
         <AiCard class="w-full h-full">
             <div class="flex flex-col w-full h-full">
                 <div class="flex items-center gap-3 px-6 py-4 border-b border-gray-200 dark:border-gray-700">

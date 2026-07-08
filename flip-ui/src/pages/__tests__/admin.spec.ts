@@ -84,6 +84,10 @@ describe("admin chip-tab nav", () => {
         expect(nav.find("div.rounded-lg").exists()).toBe(false);
         // The chips float on the page background — no divider band under them.
         expect(nav.classes()).not.toContain("border-b");
+        // Tight vertical rhythm: 12/20px above the chips, not the full gutter.
+        expect(nav.classes()).toContain("pt-3");
+        expect(nav.classes()).toContain("md:pt-5");
+        expect(nav.classes()).not.toContain("pt-4");
         expect(nav.classes()).not.toContain("hidden");
         expect(nav.classes()).not.toContain("xl:hidden");
         expect(nav.classes()).not.toContain("xl:flex");

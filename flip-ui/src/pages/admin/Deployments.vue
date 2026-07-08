@@ -18,7 +18,7 @@
 
 <template>
     <!-- Owns its gutters: admin.vue's content wrapper no longer pads subpages. -->
-    <div data-test="admin-page-gutter" class="w-full p-4 md:p-8">
+    <div data-test="admin-page-gutter" class="w-full p-4 pt-3 md:p-8 md:pt-5">
         <AiCard class="w-full space-y-2">
             <DeploymentMode />
         </AiCard>

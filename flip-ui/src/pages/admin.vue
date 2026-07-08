@@ -25,7 +25,7 @@ redirect: /admin/users # Can be set to any page within the "admin" section
         <nav
             aria-label="Admin sections"
             data-test="admin-tabs"
-            class="flex flex-wrap items-center gap-2 shrink-0 px-4 md:px-8 pt-4 md:pt-8"
+            class="flex flex-wrap items-center gap-2 shrink-0 px-4 md:px-8 pt-3 md:pt-5"
         >
             <router-link
                 v-for="item in subNavigation"

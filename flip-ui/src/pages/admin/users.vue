@@ -20,7 +20,7 @@
     <!-- Framed like the Projects/Models views: page gutters around a bordered rounded
          box. The box keeps the old AiCard's load-bearing overflow clipping + white
          canvas without its shadow/ring chrome. -->
-    <div data-test="admin-page-gutter" class="w-full h-full p-4 md:p-8">
+    <div data-test="admin-page-gutter" class="w-full h-full p-4 pt-3 md:p-8 md:pt-5">
         <div data-test="users-shell" class="flex w-full h-full overflow-hidden bg-white border border-gray-200 rounded-xl dark:bg-dark-canvas dark:border-dark-border">
             <!-- LEFT RAIL — searchable user list. Below lg only one pane renders at a
                  time (drill-in): the full-width list, or the detail after a row tap.

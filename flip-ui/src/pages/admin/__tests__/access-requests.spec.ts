@@ -344,7 +344,7 @@ describe("admin subpage gutters", () => {
 
         const gutter = wrapper.find("[data-test='admin-page-gutter']");
         expect(gutter.exists()).toBe(true);
-        for (const cls of ["w-full", "h-full", "p-4", "md:p-8"]) {
+        for (const cls of ["w-full", "h-full", "p-4", "md:p-8", "pt-3", "md:pt-5"]) {
             expect(gutter.classes()).toContain(cls);
         }
     });
