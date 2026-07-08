@@ -450,6 +450,9 @@
                                     :stroke-width="node.state === 'online' ? 1.4 : 0.8"
                                     :stroke-opacity="node.state === 'offline' ? 0.4 : node.state === 'online' ? 0.5 : 0.2"
                                     :stroke-dasharray="node.state === 'offline' ? '3 4' : 'none'"
+                                    :class="node.state === 'offline'
+                                        ? 'dark:stroke-red-400 dark:[stroke-opacity:0.7]'
+                                        : ''"
                                 />
                                 <line
                                     v-if="node.state === 'online'"

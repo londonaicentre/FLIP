@@ -276,6 +276,23 @@ describe("ConnectionStatus", () => {
         expect(table.classes()).toContain("shadow-none");
     });
 
+    it("lightens the offline dashed spoke in dark mode so it reads on the dark card", async () => {
+        mockSwrvData.value = fixture;
+        const wrapper = mountPage();
+        await wrapper.vm.$nextTick();
+        await wrapper.find("[data-test='view-toggle-radial']").trigger("click");
+
+        // Offline spokes are the dashed ones (Acme has a null heartbeat).
+        const offlineSpokes = wrapper.findAll("line").filter(l => l.attributes("stroke-dasharray") === "3 4");
+        expect(offlineSpokes.length).toBeGreaterThan(0);
+        for (const spoke of offlineSpokes) {
+            // CSS wins over the SVG stroke attribute, so these utilities recolour
+            // and brighten the line in dark mode only.
+            expect(spoke.classes()).toContain("dark:stroke-red-400");
+            expect(spoke.classes()).toContain("dark:[stroke-opacity:0.7]");
+        }
+    });
+
     it("renders the radial topology on the plain card surface with dark-visible labels", async () => {
         mockSwrvData.value = fixture;
         const wrapper = mountPage();
