@@ -65,11 +65,12 @@
                     </div>
                 </div>
                 <div>
+                    <!-- Icon first in the DOM (only the first slot child gets its own
+                         source-mapped coverage line); order-last keeps it after the
+                         label visually inside the button's flex row. -->
                     <AiButton text data-test="page-btn-next" :disabled="!hasNext()" @click="() => goToPage(nextPage)">
-                        <template v-if="!slim">
-                            Next
-                        </template>
-                        <icon-ph-arrow-right class="ml-2" />
+                        <icon-ph-arrow-right class="ml-2 order-last" />
+                        <span v-if="!slim">Next</span>
                     </AiButton>
                 </div>
             </div>

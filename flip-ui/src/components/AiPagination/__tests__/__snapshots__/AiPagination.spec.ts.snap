@@ -91,6 +91,9 @@ exports[`Ai Pagination > Renders Component 1`] = `
       <div
         data-v-bf58aa44=""
       >
+        <!-- Icon first in the DOM (only the first slot child gets its own
+                         source-mapped coverage line); order-last keeps it after the
+                         label visually inside the button's flex row. -->
         <div
           data-v-90422ccc=""
           data-v-bf58aa44=""
@@ -105,11 +108,8 @@ exports[`Ai Pagination > Renders Component 1`] = `
           >
             <!--v-if-->
             
-            
-             Next 
-            
             <svg
-              class="ml-2"
+              class="ml-2 order-last"
               data-v-bf58aa44=""
               height="1.2em"
               viewBox="0 0 256 256"
@@ -120,6 +120,11 @@ exports[`Ai Pagination > Renders Component 1`] = `
                 fill="currentColor"
               />
             </svg>
+            <span
+              data-v-bf58aa44=""
+            >
+              Next
+            </span>
             
           </button>
         </div>
