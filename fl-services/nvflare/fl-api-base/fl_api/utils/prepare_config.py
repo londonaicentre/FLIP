@@ -180,14 +180,53 @@ def _inject_reconstruct_full_model_filter(config: dict) -> None:
     before any other incoming task_data_filter. Injected alongside the KeepOnlyVars result filter —
     together the matched client-side ends of the frozen-backbone round-trip. Mutates ``config`` in
     place.
+
+    NVFLARE rejects a job in which the same task appears in more than one task_data_filters chain
+    (``FedJsonConfigurator._build_filter_table`` raises "multiple data filter chains defined for
+    task ..."), so any pre-existing chain covering ``train`` or ``validate`` is FOLDED INTO the
+    injected chain rather than left alongside it: its filters keep their relative order after the
+    reconstruct filter (which must see the broadcast first), and any ``ReconstructFullModel*`` filter
+    already wired (e.g. by a ``FlipFedAvgRecipe(aggregate_only_regex=...)`` export) is dropped as
+    superseded — the deploy-time instance must be the ONE holding the round-0 cache across both
+    tasks. A pre-existing chain that also covers OTHER tasks cannot be folded without silently
+    changing which tasks its filters run on, so that raises instead.
+
+    Raises:
+        ValueError: if an existing task_data_filters chain covers ``train`` or ``validate`` together
+            with other tasks — unmergeable, and NVFLARE would reject the overlap at job parse time.
     """
     reconstruct_filter = {
         "id": "reconstruct_full_model",
         "path": "flip.nvflare.components.ReconstructFullModelForEval",
         "args": {},
     }
+    covered_tasks = {"train", "validate"}
     filters_blocks = config.setdefault("task_data_filters", [])
-    filters_blocks.insert(0, {"tasks": ["train", "validate"], "filters": [reconstruct_filter]})
+    to_merge = [block for block in filters_blocks if covered_tasks & set(block.get("tasks", []))]
+    unmergeable = [block for block in to_merge if set(block.get("tasks", [])) - covered_tasks]
+    if unmergeable:
+        raise ValueError(
+            "AGGREGATE_ONLY_REGEX requires a single client task_data_filters chain over ['train', 'validate'], "
+            f"but the app config has a chain over {unmergeable[0].get('tasks')} — folding it in would apply its "
+            "filters to train/validate only, and NVFLARE rejects a task covered by two chains. Restrict the "
+            "chain to train/validate tasks or unset AGGREGATE_ONLY_REGEX."
+        )
+    merged_filters = [reconstruct_filter]
+    for block in to_merge:
+        for existing in block.get("filters", []):
+            if str(existing.get("path", "")).startswith("flip.nvflare.components.ReconstructFullModel"):
+                # Already wired (e.g. recipe-baked); superseded by the instance injected above — keeping
+                # both would double-reconstruct and NVFLARE would build a second, cache-less instance.
+                logger.info(f"Dropping pre-existing {existing.get('path')} filter superseded by injected chain")
+                continue
+            merged_filters.append(existing)
+        if set(block["tasks"]) != covered_tasks and len(block.get("filters", [])) > 0:
+            logger.warning(
+                f"Folding task_data_filters chain over {block['tasks']} into the injected "
+                "['train', 'validate'] chain; its filters now run on both tasks"
+            )
+    remaining_blocks = [block for block in filters_blocks if not any(block is merged for merged in to_merge)]
+    config["task_data_filters"] = [{"tasks": ["train", "validate"], "filters": merged_filters}, *remaining_blocks]
 
 
 def _inject_trim_broadcast_filter(config: dict, include_regex: str) -> None:
@@ -221,6 +260,17 @@ def _inject_trim_eval_broadcast_filter(config: dict, include_regex: str) -> None
     from the backbone it cached at training round 0. Kept as its own ``["validate"]`` chain (distinct
     from the ``["train"]`` TrimBroadcastVars chain); both filters are stateless, so a separate
     server-side instance per task is fine. Mutates ``config`` in place.
+
+    Detection is by membership (any chain covering ``validate``), not exact match — NVFLARE rejects a
+    task covered by two chains, so appending a second validate-covering chain would fail the job at
+    parse time. But unlike the round-gated TrimBroadcastVars (which no-ops on tasks without a round
+    header), this filter trims UNCONDITIONALLY, so it must not be appended into a chain that also
+    covers other tasks (it would e.g. trim the round-0 ``train`` broadcast and destroy the client's
+    backbone cache) — that raises instead.
+
+    Raises:
+        ValueError: if an existing task_data_filters chain covers ``validate`` together with other
+            tasks — the unconditional trim cannot be scoped to ``validate`` within a shared chain.
     """
     trim_filter = {
         "id": "trim_eval_broadcast_to_trainable",
@@ -229,9 +279,18 @@ def _inject_trim_eval_broadcast_filter(config: dict, include_regex: str) -> None
     }
     filters_blocks = config.setdefault("task_data_filters", [])
     for block in filters_blocks:
-        if block.get("tasks", []) == ["validate"]:
-            block.setdefault("filters", []).append(trim_filter)
-            return
+        tasks = block.get("tasks", [])
+        if "validate" not in tasks:
+            continue
+        if tasks != ["validate"]:
+            raise ValueError(
+                "AGGREGATE_ONLY_REGEX requires a dedicated ['validate'] server task_data_filters chain, but the "
+                f"app config has a chain over {tasks} — TrimEvalBroadcastVars trims unconditionally, so it cannot "
+                "share a chain with other tasks, and NVFLARE rejects a task covered by two chains. Split validate "
+                "into its own chain or unset AGGREGATE_ONLY_REGEX."
+            )
+        block.setdefault("filters", []).append(trim_filter)
+        return
     filters_blocks.append({"tasks": ["validate"], "filters": [trim_filter]})
 
 
