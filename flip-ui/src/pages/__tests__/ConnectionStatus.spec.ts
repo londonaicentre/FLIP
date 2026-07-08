@@ -222,6 +222,21 @@ describe("ConnectionStatus", () => {
         expect(wrapper.find("[data-test='add-trust-btn']").exists()).toBe(true);
     });
 
+    it("puts Add Trust on the title row and collapses it to a plus below lg", async () => {
+        mockSwrvData.value = fixture;
+        const wrapper = mountPage();
+        await wrapper.vm.$nextTick();
+
+        const btn = wrapper.find("[data-test='add-trust-btn']");
+        // Same row as the h1 — not a separate bottom-aligned block.
+        expect(btn.element.parentElement?.querySelector("h1")).toBeTruthy();
+        // Icon-collapse idiom: plus icon always, label only at lg+.
+        expect(btn.find("svg").exists()).toBe(true);
+        const label = btn.find("span.hidden");
+        expect(label.text()).toBe("Add Trust");
+        expect(label.classes()).toContain("lg:inline");
+    });
+
     it("renders the trust name prominently with the code beneath it (code hidden when absent)", async () => {
         mockSwrvData.value = [
             {

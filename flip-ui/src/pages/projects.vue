@@ -22,30 +22,33 @@
             <AiLoader v-if="!data?.data" />
             <div v-else class="flex flex-col flex-1 min-w-0 overflow-y-auto">
                 <!-- Page header (design ref: ProjectsStatusSpine + ProjectsB header section) -->
-                <header class="flex flex-col gap-4 px-8 pt-8 pb-4 sm:flex-row sm:items-end sm:justify-between">
-                    <div>
-                        <p class="text-xs font-mono uppercase tracking-widest text-gray-500 dark:text-gray-300">
-                            Workspace · {{ approvedTrustCount }}
-                            {{ approvedTrustCount === 1 ? "trust" : "trusts" }} active
-                        </p>
+                <header class="px-8 pt-8 pb-4">
+                    <p class="text-xs font-mono uppercase tracking-widest text-gray-500 dark:text-gray-300">
+                        Workspace · {{ approvedTrustCount }}
+                        {{ approvedTrustCount === 1 ? "trust" : "trusts" }} active
+                    </p>
+                    <div class="flex items-center justify-between gap-4">
                         <h1 class="text-3xl font-semibold font-heading mt-1 text-gray-900 dark:text-gray-100">
                             <span class="text-primary-600 underline decoration-4 decoration-primary-500/60 underline-offset-8 dark:text-white">Projects</span>
                             <span class="ml-3 text-gray-400 dark:text-gray-300 font-medium">{{ data.data.length }}</span>
                         </h1>
-                        <p class="mt-2 text-sm text-gray-500 dark:text-gray-300">
-                            Approved &amp; staged projects you can access.
-                        </p>
-                    </div>
-                    <div v-if="canCreateProjects" class="flex-shrink-0 sm:pb-4">
                         <AiButton
+                            v-if="canCreateProjects"
                             primary
                             large
+                            class="shrink-0"
                             data-test="add-project-btn"
+                            aria-label="Create project"
+                            tooltip="Create project"
                             @click="addProject"
                         >
-                            Create project
+                            <icon-mdi-plus class="lg:mr-2" />
+                            <span class="hidden lg:inline">Create project</span>
                         </AiButton>
                     </div>
+                    <p class="mt-2 text-sm text-gray-500 dark:text-gray-300">
+                        Approved &amp; staged projects you can access.
+                    </p>
                 </header>
 
                 <!-- Toolbar: search + My/All toggle + sort + view toggle -->

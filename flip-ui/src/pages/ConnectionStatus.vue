@@ -19,30 +19,32 @@
     <div class="flex flex-col w-full h-full">
         <div class="w-full px-8 pt-8 pb-8 overflow-y-auto">
             <!-- Header — design ref: ConnectionA (CSHeader) in design_handoff_full/05_connection/connection.jsx -->
-            <div class="flex flex-col gap-4 mb-4 sm:flex-row sm:items-end sm:justify-between">
-                <div>
-                    <p class="text-xs font-mono uppercase tracking-widest text-gray-500 dark:text-gray-300">
-                        Federation · {{ trusts?.length ?? 0 }} {{ (trusts?.length ?? 0) === 1 ? "trust" : "trusts" }}
-                    </p>
+            <div class="mb-4">
+                <p class="text-xs font-mono uppercase tracking-widest text-gray-500 dark:text-gray-300">
+                    Federation · {{ trusts?.length ?? 0 }} {{ (trusts?.length ?? 0) === 1 ? "trust" : "trusts" }}
+                </p>
+                <div class="flex items-center justify-between gap-4">
                     <h1 class="text-3xl font-semibold font-heading mt-1 text-gray-900 dark:text-gray-100">
                         <span class="text-primary-600 underline decoration-4 decoration-primary-500/60 underline-offset-8 dark:text-white">Connection</span>
                         <span class="ml-2">status</span>
                     </h1>
-                    <p class="mt-2 text-sm text-gray-500 dark:text-gray-300" data-test="subtitle">
-                        {{ subtitle }}
-                    </p>
-                </div>
-                <div class="flex-shrink-0 sm:pb-4">
                     <AiButton
                         v-if="isAdmin"
                         primary
                         large
+                        class="shrink-0"
                         data-test="add-trust-btn"
+                        aria-label="Add Trust"
+                        tooltip="Add Trust"
                         @click="showAddTrustModal = true"
                     >
-                        Add Trust
+                        <icon-mdi-plus class="lg:mr-2" />
+                        <span class="hidden lg:inline">Add Trust</span>
                     </AiButton>
                 </div>
+                <p class="mt-2 text-sm text-gray-500 dark:text-gray-300" data-test="subtitle">
+                    {{ subtitle }}
+                </p>
             </div>
 
             <!-- View toggle: list (ConnectionA) vs radial (ConnectionD) -->
