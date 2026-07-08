@@ -46,12 +46,12 @@
                         </div>
                         <div
                             data-test="user-count-pill"
-                            class="flex items-center shrink-0 gap-3 text-sm"
+                            class="flex items-center shrink-0 gap-1.5 rounded-full px-2.5 py-1 text-sm font-semibold
+                                   text-primary-500 dark:text-primary-200 bg-primary-100 dark:bg-dark-raised
+                                   dark:ring dark:ring-primary-400 dark:ring-offset-2 dark:ring-offset-dark-canvas"
                             :title="getUserCountMessage()"
                         >
-                            <AiCircledIcon>
-                                <icon-ph-user class="w-4 h-4" />
-                            </AiCircledIcon>
+                            <icon-ph-user class="w-4 h-4 shrink-0" />
                             <span>{{ totalUserCount }} <span class="hidden lg:inline">{{ totalUserCount === 1 ? "User" : "Users" }}</span></span>
                         </div>
                         <AiGuard :permissions="unstageProjectPermissions">
@@ -86,7 +86,7 @@
                                 :tooltip="isViewer ? 'View Project' : 'Edit Project'"
                                 @click.capture="openEditProjectDrawer"
                             >
-                                <icon-mdi-pencil-outline v-if="!isViewer" class="lg:mr-2" />
+                                <icon-ph-pencil-simple v-if="!isViewer" class="lg:mr-2" />
                                 <icon-mdi-eye-outline v-else class="lg:mr-2" />
                                 <span class="hidden lg:inline">{{ isViewer ? "View Project" : "Edit Project" }}</span>
                             </AiButton>

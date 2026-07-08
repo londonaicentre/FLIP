@@ -361,6 +361,12 @@ describe("Project page (/project/[id]/index.vue)", () => {
             // Only the noun hides; the count stays visible at every width.
             expect(word.text()).toBe("Users");
             expect(pill.text()).toContain("3");
+            // The count lives inside the icon chip itself: one rounded pill
+            // carrying both the user icon and the number (no separate disc).
+            expect(pill.classes()).toContain("rounded-full");
+            expect(pill.classes()).toContain("bg-primary-100");
+            expect(pill.find("svg").exists()).toBe(true);
+            expect(pill.find("i").exists()).toBe(false);
         });
     });
 
