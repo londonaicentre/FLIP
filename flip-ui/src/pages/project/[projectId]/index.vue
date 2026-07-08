@@ -97,7 +97,9 @@
 
             <div class="relative grid items-start grid-cols-1 gap-4 p-4 lg:grid-cols-[minmax(17rem,0.75fr)_minmax(22rem,1.5fr)_minmax(17rem,0.75fr)] xl:p-4">
                 <div class="lg:col-span-3">
-                    <LifecycleTrack :steps="steps" />
+                    <!-- my-4 on top of the grid's gap/padding gives the lifecycle ~32px of
+                         breathing room above and below, matching the model page. -->
+                    <LifecycleTrack :steps="steps" class="my-4" />
                 </div>
 
                 <div class="grid grid-cols-1 gap-4 lg:sticky top-16">
