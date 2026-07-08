@@ -14,7 +14,7 @@
 <!-- Design ref: design_handoff_full/04_lifecycle/lifecycle.jsx — variant
      "B · Horizontal track" (LifecycleB, lines 139-171). Self-contained: the
      "current" stage is derived as the first non-completed step so callers can
-     keep passing the same IStep[] they pass to AiSteps elsewhere. -->
+     keep passing the shared IStep[] shape. -->
 
 <template>
     <div class="shrink-0">
@@ -100,7 +100,7 @@ const completedCount = computed(() => props.steps.filter(s => s.completed).lengt
 
 // Current stage = first non-completed step. Caller doesn't have to set
 // `inProgress` explicitly — matches the implicit "next thing to do" the
-// existing AiSteps consumers rely on.
+// existing IStep consumers rely on.
 const currentIndex = computed(() => props.steps.findIndex(s => !s.completed));
 
 const isCurrent = (idx: number) => idx === currentIndex.value;

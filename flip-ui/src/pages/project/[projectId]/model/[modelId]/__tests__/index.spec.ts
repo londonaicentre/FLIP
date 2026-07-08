@@ -120,7 +120,6 @@ const stubs = {
     },
     AiGuard: { template: "<div><slot /></div>" },
     AiLoader: { template: "<div data-test='loader' />" },
-    AiSteps: { template: "<div />" },
     LifecycleTrack: { template: "<div />" },
     ModelDetails: { template: "<div />" },
     ModelUpload: {
