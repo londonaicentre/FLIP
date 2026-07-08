@@ -38,12 +38,25 @@
                 >
                     <div class="inline-flex flex-col w-full max-w-lg max-h-screen p-4 text-left align-middle rounded-lg">
                         <div class="inline-flex flex-col w-full transition-all transform bg-white rounded-lg shadow-xl dark:bg-dark-surface">
-                            <DialogTitle
-                                as="h3"
-                                class="px-8 py-4 text-lg font-bold leading-6 text-left text-gray-700 dark:text-gray-300"
-                            >
-                                Add Trust
-                            </DialogTitle>
+                            <div class="flex items-center justify-between px-8 py-4">
+                                <DialogTitle
+                                    as="h3"
+                                    class="text-lg font-bold leading-6 text-left text-gray-700 dark:text-gray-300"
+                                >
+                                    Add Trust
+                                </DialogTitle>
+                                <button
+                                    type="button"
+                                    data-test="add-trust-close-x-btn"
+                                    class="text-gray-400 dark:text-gray-300 hover:text-gray-600 dark:hover:text-gray-100
+                                    transition cursor-pointer rounded focus:outline-none focus:ring-1
+                                    focus:ring-primary-400"
+                                    @click="close"
+                                >
+                                    <span class="sr-only">Close</span>
+                                    <icon-mdi-close class="w-5 h-5" />
+                                </button>
+                            </div>
                             <div class="px-8 py-4 space-y-4 text-sm font-normal leading-5 dark:text-gray-300">
                                 <p>
                                     Registers a trust with the Central Hub. An API key and an internal service key

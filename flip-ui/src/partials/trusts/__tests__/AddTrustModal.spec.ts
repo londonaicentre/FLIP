@@ -91,6 +91,14 @@ describe("AddTrustModal rendering", () => {
         expect(text).not.toContain("authenticate with the hub");
     });
 
+    it("closes from the header cross button like Cancel", async () => {
+        const wrapper = mountModal();
+
+        await wrapper.find("[data-test=add-trust-close-x-btn]").trigger("click");
+
+        expect(wrapper.emitted("closeModal")).toHaveLength(1);
+    });
+
     it("spaces the footer buttons responsively so they stack cleanly on mobile", () => {
         const wrapper = mountModal();
 
