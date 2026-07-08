@@ -54,8 +54,9 @@
                                     <div class="flex flex-wrap items-center justify-between">
                                         <div class="flex items-center flex-1">
                                             <span class="flex p-2 rounded-lg bg-primary-700">
+                                                <!-- Mirrored so the megaphone points right, into the message. -->
                                                 <icon-ph-megaphone-duotone
-                                                    class="w-6 h-6 text-white"
+                                                    class="w-6 h-6 text-white -scale-x-100"
                                                     aria-hidden="true"
                                                 />
                                             </span>

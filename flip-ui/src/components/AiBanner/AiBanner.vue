@@ -17,7 +17,8 @@
             <div class="p-2 transition bg-primary-500 sm:p-3">
                 <div class="flex flex-wrap items-center justify-between">
                     <span class="w-auto p-2 rounded-lg bg-primary-700">
-                        <icon-ph-megaphone-duotone class="w-6 h-6 text-white" aria-hidden="true" />
+                        <!-- Mirrored so the megaphone points right, into the message. -->
+                        <icon-ph-megaphone-duotone class="w-6 h-6 text-white -scale-x-100" aria-hidden="true" />
                     </span>
                     <div class="flex items-center flex-1">
                         <p class="ml-3 font-medium text-white" data-test="banner-message" v-text="message" />

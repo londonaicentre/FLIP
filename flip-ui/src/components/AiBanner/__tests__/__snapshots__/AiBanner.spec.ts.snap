@@ -17,9 +17,10 @@ exports[`AiBanner > Renders Component 1`] = `
         <span
           class="w-auto p-2 rounded-lg bg-primary-700"
         >
+          <!-- Mirrored so the megaphone points right, into the message. -->
           <svg
             aria-hidden="true"
-            class="w-6 h-6 text-white"
+            class="w-6 h-6 text-white -scale-x-100"
             height="1.2em"
             viewBox="0 0 256 256"
             width="1.2em"
