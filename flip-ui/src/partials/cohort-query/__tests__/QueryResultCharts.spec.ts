@@ -117,4 +117,17 @@ describe("QueryResultCharts", () => {
         expect(wrapper.find("[data-test='ai-loader']").exists()).toBe(false);
         expect(wrapper.find("[data-test='ai-chart']").exists()).toBe(true);
     });
+
+    test("sizes plot cards by aspect ratio instead of a fixed height", async () => {
+        const wrapper = mountCharts({ data: RESULTS_WITH_PLOTS });
+        await nextTick();
+        await flushPromises();
+
+        // A fixed h-[500px] made narrow single-column plots absurdly tall; the
+        // card now follows a 4:3 ratio, capped at the old desktop height.
+        const card = wrapper.find("[data-test='ai-card']");
+        expect(card.classes()).toContain("aspect-[4/3]");
+        expect(card.classes()).toContain("max-h-[500px]");
+        expect(card.classes()).not.toContain("h-[500px]");
+    });
 });

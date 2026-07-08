@@ -23,7 +23,7 @@
                     <AiCard
                         v-for="chartResults in results.trustsResults"
                         :key="chartResults.name"
-                        class="relative grow h-[500px]"
+                        class="relative grow aspect-[4/3] max-h-[500px]"
                     >
                         <div class="h-full p-4">
                             <AiChart :data="chartResults" class="" />
