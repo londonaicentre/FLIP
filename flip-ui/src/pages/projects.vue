@@ -127,7 +127,7 @@
                             title="Grid view"
                             @click="viewMode = 'grid'"
                         >
-                            <icon-ph-squares-four-duotone class="w-5 h-5" />
+                            <icon-ph-squares-four class="w-5 h-5" />
                         </button>
                     </div>
                 </div>
