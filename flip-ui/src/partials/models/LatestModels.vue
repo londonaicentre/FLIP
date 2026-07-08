@@ -36,7 +36,7 @@
                     class="flex flex-col items-center justify-center w-full h-full gap-4 p-4 mt-4 border-2 border-gray-100 dark:border-dark-border rounded-lg"
                 >
                     <div class="relative block w-full text-center">
-                        <icon-carbon-machine-learning-model class="w-12 h-12 mx-auto text-gray-400 dark:text-gray-600" />
+                        <icon-ph-graph class="w-12 h-12 mx-auto text-gray-400 dark:text-gray-600" />
                         <div class="mt-2 text-sm">
                             There are no models assigned to this project.
                         </div>
