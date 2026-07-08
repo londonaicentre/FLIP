@@ -13,7 +13,7 @@
 
 <template>
     <AiCard class="flex flex-col">
-        <div class="p-4 shrink-0">
+        <div class="px-6 py-4 shrink-0">
             <div class="flex items-center justify-between">
                 <h2 class="text-lg font-semibold font-heading grow leading-loose">
                     Models
@@ -43,7 +43,7 @@
             <div
                 v-else-if="!data?.data?.length"
                 data-test="models-empty-state"
-                class="flex flex-col flex-1 items-center justify-center px-4 py-8 text-center"
+                class="flex flex-col flex-1 items-center justify-center px-6 py-8 text-center"
             >
                 <icon-ph-graph class="w-12 h-12 text-gray-400 dark:text-gray-600" />
                 <div class="mt-2 text-sm">
@@ -58,7 +58,7 @@
                         :to="`/project/${route.params['projectId']}/model/${model.id}`"
                     >
                         <div
-                            class="flex transition items-center cursor-pointer hover:bg-gray-50 dark:hover:bg-dark-surface px-4 py-2 gap-2 group"
+                            class="flex transition items-center cursor-pointer hover:bg-gray-50 dark:hover:bg-dark-surface px-6 py-2 gap-2 group"
                             @click="navigate"
                         >
                             <div class="flex flex-col gap-0.5 w-full text-xs min-w-0">
@@ -95,7 +95,7 @@
             />
 
             <div class="relative flex flex-col items-center justify-center" data-test="models-unapproved-status">
-                <div class="flex w-full p-4 grow">
+                <div class="flex w-full px-6 py-4 grow">
                     <div class="w-full space-y-2">
                         <AiSkeleton v-for="i in 2" :key="i" class="h-8 animate-none" />
                     </div>
@@ -107,7 +107,7 @@
         </template>
         <div
             v-if="projectStore.project?.status === 'APPROVED' && data?.data?.length"
-            class="inline-flex justify-end w-full p-4 space-x-2 shrink-0 mt-auto"
+            class="inline-flex justify-end w-full px-6 py-4 space-x-2 shrink-0 mt-auto"
         >
             <AiButton light data-test="view-all-models-btn" :link="`/project/${route.params['projectId']}/models`">
                 View All Models
