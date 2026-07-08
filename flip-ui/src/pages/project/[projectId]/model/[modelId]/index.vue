@@ -67,7 +67,7 @@
                             :loading="trainingRef?.isSubmitting ?? false"
                             @click="trainingRef?.initiateTraining()"
                         >
-                            <icon-mdi-play class="lg:mr-2" />
+                            <icon-ph-play-fill class="lg:mr-2" />
                             <span class="hidden lg:inline">Initiate Training</span>
                         </AiButton>
                         <TrainingActionsMenu v-if="!isViewer && !isTrainingPending()" :status="getStatusEnumValue(modelData?.status)" />

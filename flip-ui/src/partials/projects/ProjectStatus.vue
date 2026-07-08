@@ -232,7 +232,7 @@
                                                     class="inline-flex items-center justify-center w-4 h-4 rounded-full bg-emerald-500 text-white"
                                                     :data-test="`project-creation-complete-${project.trustId}`"
                                                 >
-                                                    <icon-heroicons-solid-check class="w-3 h-3" />
+                                                    <icon-ph-check-bold class="w-3 h-3" />
                                                 </span>
                                                 Created
                                             </span>
