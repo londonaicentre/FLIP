@@ -276,6 +276,17 @@ describe("ConnectionStatus", () => {
         expect(table.classes()).toContain("shadow-none");
     });
 
+    it("stacks the topology legend vertically", async () => {
+        mockSwrvData.value = fixture;
+        const wrapper = mountPage();
+        await wrapper.vm.$nextTick();
+        await wrapper.find("[data-test='view-toggle-radial']").trigger("click");
+
+        const legend = wrapper.find("[data-test='radial-legend']");
+        expect(legend.classes()).toContain("flex-col");
+        expect(legend.findAll("span.rounded-full")).toHaveLength(3);
+    });
+
     it("lightens the offline dashed spoke in dark mode so it reads on the dark card", async () => {
         mockSwrvData.value = fixture;
         const wrapper = mountPage();

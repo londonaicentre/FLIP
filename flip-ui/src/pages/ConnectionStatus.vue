@@ -379,7 +379,11 @@
                         </div>
                     </div>
 
-                    <div class="absolute top-4 right-5 z-10 flex gap-3.5 items-center bg-white dark:bg-dark-canvas px-3 py-2 border border-gray-200 dark:border-dark-border rounded-lg">
+                    <div
+                        data-test="radial-legend"
+                        class="absolute top-4 right-5 z-10 flex flex-col items-start gap-1.5 bg-white
+                        dark:bg-dark-canvas px-3 py-2 border border-gray-200 dark:border-dark-border rounded-lg"
+                    >
                         <span
                             v-for="legend in radialLegend"
                             :key="legend.state"
