@@ -56,10 +56,10 @@ import { useRouter } from "vue-router";
 
 import { routeChange } from "@/router";
 import { useAuthStore } from "@/store/auth";
-import DeploymentIcon from "~icons/ph/download-duotone";
-import BannerIcon from "~icons/ph/flag-banner-duotone";
-import AccessRequestIcon from "~icons/ph/user-plus-duotone";
-import UsersIcon from "~icons/ph/users-three-duotone";
+import DeploymentIcon from "~icons/ph/download";
+import BannerIcon from "~icons/ph/flag-banner";
+import AccessRequestIcon from "~icons/ph/user-list";
+import UsersIcon from "~icons/ph/users-three";
 
 const router = useRouter();
 const authStore = useAuthStore();
