@@ -74,6 +74,24 @@ describe("Ai UserDropdown", () => {
         expect(trigger.classes().some(c => c.startsWith("focus-visible:ring"))).toBe(true);
     });
 
+    it("offers Light Mode with the sun icon while dark mode is active", async () => {
+        const comp = mount(AiUserDropdown, {
+            props: { isDark: true },
+            global: {
+                plugins: [createTestingPinia({
+                    createSpy: vi.fn,
+                    stubActions: false
+                })]
+            }
+        });
+
+        await comp.find("[data-test='account-menu-btn']").trigger("click");
+
+        const themeButton = comp.findAll("[data-test='sign-out-btn']")[0];
+        expect(themeButton.text()).toContain("Light Mode");
+        expect(themeButton.find("svg").exists()).toBe(true);
+    });
+
     it("drives the theme toggle, change-password and sign-out actions from the open menu", async () => {
         const comp = mount(AiUserDropdown, {
             props: {

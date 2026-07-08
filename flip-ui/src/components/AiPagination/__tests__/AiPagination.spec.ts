@@ -56,6 +56,18 @@ describe("Ai Pagination", () => {
         expect(comp.emitted("pageUpdate")).toEqual([[1], [10]]);
     });
 
+    test("renders the prev/next arrow icons", () => {
+        const comp = mount(AiPagination, {
+            props: {
+                totalPages: 3,
+                currentPage: 2
+            }
+        });
+
+        expect(comp.find("[data-test='page-btn-prev']").find("svg").exists()).toBe(true);
+        expect(comp.find("[data-test='page-btn-next']").find("svg").exists()).toBe(true);
+    });
+
     test("disables prev on the first page and next on the last", () => {
         const first = mount(AiPagination, {
             props: {

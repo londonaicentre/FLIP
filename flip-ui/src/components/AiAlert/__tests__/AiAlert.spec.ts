@@ -62,6 +62,21 @@ describe("Ai Alert", () => {
         expect(html).toContain("authored content");
     });
 
+    it.each(["success", "info", "warning", "error"] as const)(
+        "renders the %s severity icon",
+        (variant) => {
+            const comp = mount(AiAlert, {
+                global: { plugins: [createPinia()] },
+                props: {
+                    variant,
+                    text: "Testing"
+                }
+            });
+
+            expect(comp.find("svg").exists()).toBe(true);
+        }
+    );
+
     it("emits action when the action label is clicked", async () => {
         const comp = mount(AiAlert, {
             global: { plugins: [createPinia()] },

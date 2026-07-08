@@ -53,6 +53,23 @@ describe("Ai Snackbar", () => {
         wrapper.unmount();
     });
 
+    test.each(["success", "error", "warning", "info"] as const)(
+        "renders the %s severity icon",
+        async (type) => {
+            const wrapper = mount(AiSnackbar);
+
+            notify({
+                title: "Heads up",
+                text: "typed toast",
+                type
+            }, 100_000);
+            await nextTick();
+
+            expect(wrapper.find("[data-test='snackbar']").find("svg").exists()).toBe(true);
+            wrapper.unmount();
+        }
+    );
+
     test("runs the action and closes the toast from the action button", async () => {
         const wrapper = mount(AiSnackbar);
         const action = vi.fn();
