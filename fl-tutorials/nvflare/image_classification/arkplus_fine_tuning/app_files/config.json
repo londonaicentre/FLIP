@@ -30,7 +30,7 @@
     "MODEL_NAME": "swin_large_384",
     "PROJECTOR_FEATURES": 1376,
     "USE_MLP": false,
-    "USE_TEACHER_STUDENT": true,
+    "USE_TEACHER_STUDENT": false,
     "HEAD_ID": 0,
     "NUM_CLASSES_LIST": [
       5
