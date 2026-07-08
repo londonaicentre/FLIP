@@ -437,6 +437,21 @@ describe("ConnectionStatus", () => {
         expect(detail().exists()).toBe(false);
     });
 
+    it("lets the Trust column squash and truncate instead of locking at 18rem", async () => {
+        mockSwrvData.value = fixture;
+        const wrapper = mountPage();
+        await wrapper.vm.$nextTick();
+
+        // The column absorbs the leftover width instead of pinning a 288px floor…
+        const th = wrapper.find("[data-test='sort-header-name']");
+        expect(th.classes()).toContain("w-full");
+        expect(th.classes()).not.toContain("min-w-[18rem]");
+        // …and max-w-0 gives the cell zero min-content, so the truncate spans
+        // actually clip when the table is squashed rather than forcing overflow.
+        const nameCell = wrapper.find("[data-test='trust-name']").element.closest("td");
+        expect(nameCell?.className).toContain("max-w-0");
+    });
+
     it("renders exactly six columns — no empty trailing action column", async () => {
         mockSwrvData.value = fixture;
         const wrapper = mountPage();

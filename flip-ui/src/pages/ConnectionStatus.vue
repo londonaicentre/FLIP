@@ -296,17 +296,17 @@
                                             </span>
                                         </div>
                                     </td>
-                                    <td class="px-4 py-4 align-middle">
-                                        <div class="flex flex-col">
+                                    <td class="px-4 py-4 align-middle w-full max-w-0">
+                                        <div class="flex flex-col min-w-0">
                                             <span
-                                                class="font-semibold font-heading text-base text-gray-900 dark:text-gray-100"
+                                                class="font-semibold font-heading text-base text-gray-900 dark:text-gray-100 truncate"
                                                 data-test="trust-name"
                                             >
                                                 {{ t.name }}
                                             </span>
                                             <span
                                                 v-if="t.code && t.code !== t.name"
-                                                class="font-mono text-xs text-gray-500 dark:text-gray-300 mt-0.5"
+                                                class="font-mono text-xs text-gray-500 dark:text-gray-300 mt-0.5 truncate"
                                                 data-test="trust-code"
                                             >
                                                 {{ t.code }}
@@ -799,7 +799,9 @@ const columns: IColumn[] = [
     {
         key: "name",
         label: "Trust",
-        width: "min-w-[18rem]"
+        // Absorbs the leftover width; the cell's max-w-0 lets it squash and
+        // truncate instead of pinning the table wider than the viewport.
+        width: "w-full"
     },
     {
         key: "region",
