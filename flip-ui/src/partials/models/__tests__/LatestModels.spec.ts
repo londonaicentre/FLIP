@@ -160,6 +160,17 @@ describe("LatestModels — defensive data access", () => {
         expect(wrapper.text()).toContain("No models have been created for this project yet.");
     });
 
+    test("keeps the approval-required alert under the title instead of vertically centring it", async () => {
+        const wrapper = mountLatestModels({ projectStatus: "UNSTAGED" });
+        await flushPromises();
+
+        const alert = wrapper.find("[data-test=approval-required-alert]");
+        expect(alert.exists()).toBe(true);
+        // m-auto would centre the alert in the pinned-height flex-column card.
+        expect(alert.classes()).not.toContain("m-auto");
+        expect(alert.classes()).toContain("shrink-0");
+    });
+
     test("centres the borderless empty state vertically in the card", async () => {
         setData({ data: [] });
         const wrapper = mountLatestModels();

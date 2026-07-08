@@ -85,10 +85,11 @@
         </div>
         <template v-else>
             <AiAlert
+                data-test="approval-required-alert"
                 text="Project approval is required to view or create models"
                 variant="info"
                 close
-                class="m-auto text-base"
+                class="text-base shrink-0"
                 :bordered="false"
                 :rounded="false"
             />
