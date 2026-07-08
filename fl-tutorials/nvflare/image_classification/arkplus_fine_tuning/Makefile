@@ -20,9 +20,11 @@ FLIP_UTILS := $(abspath $(APP_DIR)/../../../../flip-utils)
 UV_RUN := uv run --project $(FLIP_UTILS) --extra full
 
 # --- Load app-specific env ---
+# Comment lines must be dropped before building the export list: a leading `#` token would start a
+# make comment inside the `export` directive and silently un-export every variable listed after it.
 ifneq ("$(wildcard .env.app)","")
 include ./.env.app
-export $(shell sed 's/=.*//' ./.env.app)
+export $(shell sed -e '/^[[:space:]]*#/d' -e 's/=.*//' ./.env.app)
 endif
 
 # --- Local-run knobs ---
