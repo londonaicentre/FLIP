@@ -361,6 +361,9 @@ export interface IModelSummaryTrust {
 export interface IModelSummary {
     id: string;
     name: string;
+    // Optional only until the deployed API ships the field (design 6a): the
+    // mobile rows render the description line when it is present.
+    description?: string;
     // Required: the /models endpoint returns a status for every row (unlike the
     // per-project IModel list, whose cached payloads predate the status column).
     status: ModelStatus;

@@ -180,7 +180,8 @@ describe("Models Page", () => {
     test("stacks mobile rows with the status pill and green-dot trust chips below sm", async () => {
         setModels([makeModel({
             trusts: [trust("GSTT"), trust("KCH")],
-            status: "TRAINING_STARTED"
+            status: "TRAINING_STARTED",
+            description: "Predicts stroke outcomes"
         })]);
         const wrapper = mountPage();
         await wrapper.vm.$nextTick();
@@ -205,6 +206,38 @@ describe("Models Page", () => {
         // The sortable column header strip is desktop-only.
         const headerStrip = wrapper.find("[data-test='sort-header-name']").element.closest(".hidden");
         expect(headerStrip).toBeTruthy();
+    });
+
+    test("mobile rows carry a capitals project eyebrow above the name and the description below (design 6a)", async () => {
+        setModels([
+            makeModel({ description: "Predicts stroke outcomes" }),
+            makeModel({
+                id: "m2",
+                name: "sepsis-v1",
+                description: ""
+            }),
+            // Field absent (older API) → no description line at all.
+            makeModel({
+                id: "m3",
+                name: "old-api-model"
+            })
+        ]);
+        const wrapper = mountPage();
+        await wrapper.vm.$nextTick();
+
+        const rows = wrapper.findAll("[data-test='models-list-item-0'], [data-test='models-list-item-1'], [data-test='models-list-item-2']");
+
+        const eyebrow = rows[0].find("[data-test='model-project-eyebrow']");
+        expect(eyebrow.classes()).toContain("uppercase");
+        expect(eyebrow.text()).toBe("Stroke triage");
+        // Eyebrow precedes the name link in the stacked column.
+        const mobile = rows[0].find(".sm\\:hidden");
+        expect(mobile.html().indexOf("model-project-eyebrow")).toBeLessThan(mobile.html().indexOf("model-name-mobile"));
+
+        expect(rows[0].find("[data-test='model-description-mobile']").text()).toBe("Predicts stroke outcomes");
+        expect(rows[0].find("[data-test='model-description-mobile']").classes()).toContain("line-clamp-2");
+        expect(rows[1].find("[data-test='model-description-mobile']").text()).toContain("No description provided...");
+        expect(rows[2].find("[data-test='model-description-mobile']").exists()).toBe(false);
     });
 
     test("renders the empty-state copy when the API returns zero models", async () => {

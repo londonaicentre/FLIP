@@ -186,6 +186,17 @@
                             <div class="flex-1 px-4 py-3 sm:hidden">
                                 <div class="flex items-start gap-2.5">
                                     <div class="flex-1 min-w-0">
+                                        <!-- Design 6a: the project reads as a capitals eyebrow over the name. -->
+                                        <router-link
+                                            :to="`/project/${model.projectId}`"
+                                            data-test="model-project-eyebrow"
+                                            class="block font-mono text-[9.5px] uppercase tracking-wider mb-[3px]
+                                            truncate text-gray-400 dark:text-gray-300
+                                            hover:text-primary-600 dark:hover:text-primary-300"
+                                            @click.stop
+                                        >
+                                            {{ model.projectName }}
+                                        </router-link>
                                         <router-link
                                             :to="`/project/${model.projectId}/model/${model.id}`"
                                             data-test="model-name-mobile"
@@ -196,15 +207,16 @@
                                         >
                                             {{ model.name }}
                                         </router-link>
-                                        <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-300">
-                                            <router-link
-                                                :to="`/project/${model.projectId}`"
-                                                class="font-semibold hover:text-primary-600 dark:hover:text-primary-300"
-                                                @click.stop
-                                            >
-                                                {{ model.projectName }}
-                                            </router-link>
-                                            · {{ ownerLabel(model) }}
+                                        <p
+                                            v-if="model.description !== undefined"
+                                            data-test="model-description-mobile"
+                                            class="mt-1 text-[12.5px] leading-snug break-words line-clamp-2
+                                            text-gray-500 dark:text-gray-300"
+                                        >
+                                            {{ model.description }}
+                                            <template v-if="!model.description">
+                                                <span class="italic text-gray-400 dark:text-gray-300">No description provided...</span>
+                                            </template>
                                         </p>
                                     </div>
                                     <span
