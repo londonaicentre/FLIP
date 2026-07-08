@@ -53,7 +53,7 @@
                                 tooltip="Edit Model"
                                 @click="openEditModelDrawer"
                             >
-                                <icon-mdi-pencil-outline class="lg:mr-2" />
+                                <icon-ph-pencil-simple class="lg:mr-2" />
                                 <span class="hidden lg:inline">Edit Model</span>
                             </AiButton>
                         </AiGuard>
