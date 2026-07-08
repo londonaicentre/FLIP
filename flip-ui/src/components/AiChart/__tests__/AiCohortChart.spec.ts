@@ -127,18 +127,22 @@ describe("AiCohortChart", () => {
         expect(setOption).toHaveBeenCalled();
     });
 
-    it("stacks title, legend and toolbox on separate levels so they can't collide when narrow", async () => {
+    it("overlays the legend and toolbox inside the plot like the metrics chart", async () => {
         mountChart();
         await nextTick();
         await flushPromises();
 
         const opts = setOption.mock.calls[0][0];
-        // Row 1: title (top 0). Row 2: legend. Row 3: toolbox. All three shared
-        // the top edge before, overlapping on squashed single-column cards.
-        expect(opts.legend.top).toBe(28);
-        expect(opts.toolbox.top).toBe(54);
-        expect(opts.toolbox.right).toBe(8);
-        expect(opts.grid.top).toBe(88);
+        // The grid takes the full width; only the title keeps a band above it.
+        expect(opts.grid.right).toBeLessThanOrEqual(24);
+        // Toolbox floats inside the plot below the title band; the legend floats
+        // vertically centred on the right edge with a translucent backing.
+        expect(opts.toolbox.right).toBe(12);
+        expect(opts.toolbox.top).toBe(36);
+        expect(opts.legend.right).toBe(12);
+        expect(opts.legend.top).toBe("middle");
+        expect(opts.legend.orient).toBe("vertical");
+        expect(opts.legend.backgroundColor).toBeTruthy();
     });
 
     it("titles the chart above the plot only, not again under the x axis", async () => {

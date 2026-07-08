@@ -133,10 +133,9 @@ onMounted(() => {
                 // magnifier below, matching the training metrics chart.
                 toolbox: {
                     ...chartToolbox(darkMode),
-                    // Third header row — the title (row 1), legend (row 2) and these
-                    // icons collided on one line when the card was narrow.
-                    top: 54,
-                    right: 8,
+                    // Floats inside the plot below the title band (metrics-chart idiom).
+                    top: 36,
+                    right: 12,
                     feature: {
                         ...chartToolbox(darkMode).feature,
                         dataZoom: {
@@ -153,9 +152,11 @@ onMounted(() => {
                 },
                 grid: {
                     left: "5%",
-                    right: "5%",
-                    // Clears the three stacked header rows (title / legend / toolbox).
-                    top: 88,
+                    // Full-width plot — the legend and toolbox overlay the grid
+                    // instead of reserving header rows or a side column.
+                    right: 24,
+                    // Clears only the title band.
+                    top: 32,
                     // The old "25%" reserved room for the removed slider bar and the
                     // removed duplicate x-axis title.
                     bottom: 24,
@@ -171,9 +172,18 @@ onMounted(() => {
                 },
                 legend: {
                     data: props.data.results.map(d => trustLabel(d.trustId, d.trustName)),
-                    left: "center",
-                    // Second header row, under the title.
-                    top: 28,
+                    orient: "vertical",
+                    // Floats inside the plot, vertically centred on the right edge; the
+                    // translucent card backing keeps it legible where bars pass beneath.
+                    right: 12,
+                    top: "middle",
+                    align: "left",
+                    itemGap: 10,
+                    padding: 8,
+                    backgroundColor: darkMode ? "rgba(14, 11, 19, 0.78)" : "rgba(255, 255, 255, 0.82)",
+                    borderColor: chrome.gridLine,
+                    borderWidth: 1,
+                    borderRadius: 6,
                     textStyle: { color: chrome.ink }
                 },
                 xAxis: {
