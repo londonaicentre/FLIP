@@ -19,7 +19,7 @@
 <template>
     <div class="flex flex-col w-full h-full">
         <div class="flex flex-col flex-1 min-w-0 overflow-y-auto">
-            <header class="px-6 pt-4">
+            <header class="px-8 pt-4">
                 <router-link
                     v-if="project"
                     :to="`/project/${project.id}`"
@@ -69,7 +69,7 @@
                     {{ description }}
                 </p>
             </header>
-            <div class="p-4">
+            <div class="px-8 pt-4 pb-8">
                 <CohortQuery
                     @update-project="updateProject"
                     @submitting-change="formSubmitting = $event"
