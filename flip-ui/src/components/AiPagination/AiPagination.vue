@@ -17,7 +17,7 @@
             <div class="flex items-center justify-center w-full">
                 <div class="pr-4">
                     <AiButton text :disabled="!hasPrev()" data-test="page-btn-prev" @click="() => goToPage(prevPage)">
-                        <icon-ic-arrow-back class="mr-2" />
+                        <icon-ph-arrow-left class="mr-2" />
                         <template v-if="!slim">
                             Previous
                         </template>
@@ -69,7 +69,7 @@
                         <template v-if="!slim">
                             Next
                         </template>
-                        <icon-ic-arrow-forward class="ml-2" />
+                        <icon-ph-arrow-right class="ml-2" />
                     </AiButton>
                 </div>
             </div>
