@@ -215,7 +215,9 @@ import { getAllModels,
     IModelSummaryTrust,
     isModelStatusError,
     ModelStatus,
-    modelStatusLabel } from "@/services/model-service";
+    modelStatusDotClass as statusDotClass,
+    modelStatusLabel,
+    modelStatusPillClass as statusPillClass } from "@/services/model-service";
 
 const pageSize = 20;
 
@@ -430,29 +432,6 @@ const trustChipLabel = (trust: IModelSummaryTrust): string => {
 // em-dash when the owner has no profile row — the endpoint carries no email.
 const ownerLabel = (model: IModelSummary): string => model.ownerName || "—";
 
-const statusPillClass = (status: ModelStatus | undefined): string => {
-    if (isModelStatusError(status)) {
-        return "bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-200";
-    }
-    if (status === "RESULTS_UPLOADED") {
-        return "bg-emerald-100 text-emerald-900 dark:bg-emerald-900/40 dark:text-emerald-100";
-    }
-    if (status === "TRAINING_STARTED") {
-        return "bg-fuchsia-100 text-fuchsia-800 dark:bg-fuchsia-900/40 dark:text-fuchsia-200";
-    }
-    if (status === "PREPARED") {
-        return "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200";
-    }
-
-    return "bg-gray-200 text-gray-700 dark:bg-dark-raised dark:text-gray-300";
-};
-
-const statusDotClass = (status: ModelStatus | undefined): string => {
-    if (isModelStatusError(status)) return "bg-red-500";
-    if (status === "RESULTS_UPLOADED") return "bg-emerald-500";
-    if (status === "TRAINING_STARTED") return "bg-fuchsia-500";
-    if (status === "PREPARED") return "bg-amber-500";
-
-    return "bg-gray-400";
-};
+// Status pill/dot classes come from model-service (shared with the mobile
+// project-models list), imported under their historical local names.
 </script>

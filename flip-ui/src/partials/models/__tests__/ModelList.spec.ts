@@ -270,6 +270,104 @@ describe("ModelList — Status column", () => {
     });
 });
 
+describe("ModelList — mobile stacked rows (design 5a)", () => {
+    beforeEach(() => {
+        setData(undefined);
+    });
+
+    const MODELS = [
+        {
+            id: "m1",
+            name: "Alpha",
+            description: "First model",
+            status: "TRAINING_STARTED",
+            trusts: [
+                {
+                    id: "t1",
+                    name: "King's College Hospital",
+                    code: "KCH"
+                },
+                {
+                    id: "t2",
+                    name: "Guy's and St Thomas'",
+                    code: "GSTT"
+                }
+            ]
+        },
+        {
+            id: "m2",
+            name: "Beta",
+            description: "",
+            status: "ERROR",
+            trusts: []
+        },
+        {
+            id: "m3",
+            name: "Gamma",
+            description: "Endpoint without trusts field",
+            status: "PENDING"
+        }
+    ];
+
+    test("stacks a mobile row per model and hides the table below sm", async () => {
+        setData({
+            data: MODELS,
+            page: 1,
+            totalPages: 1
+        });
+        const wrapper = mountModelList();
+        await flushPromises();
+
+        const list = wrapper.find("[data-test='model-stacked-list']");
+        expect(list.classes()).toContain("sm:hidden");
+        expect(wrapper.findAll("[data-test^='model-list-item-mobile-']")).toHaveLength(3);
+
+        // Desktop table renders at sm+ only; its data-tests stay unique for Cypress.
+        const tableWrap = wrapper.find("table").element.parentElement;
+        expect(tableWrap?.className).toContain("hidden");
+        expect(tableWrap?.className).toContain("sm:block");
+    });
+
+    test("pins the status chip with its dot on the first line", async () => {
+        setData({ data: [MODELS[0]] });
+        const wrapper = mountModelList();
+        await flushPromises();
+
+        const chip = wrapper.find("[data-test='model-status-chip-m1']");
+        expect(chip.classes()).toContain("rounded-full");
+        // The /models pill idiom: coloured chip + status dot inside it.
+        expect(chip.classes().join(" ")).toContain("bg-fuchsia-100");
+        expect(chip.find("span.rounded-full").classes().join(" ")).toContain("bg-fuchsia-500");
+        expect(chip.text()).toContain("Training Started");
+    });
+
+    test("clamps the description to two lines and falls back to the placeholder", async () => {
+        setData({ data: [MODELS[0], MODELS[1]] });
+        const wrapper = mountModelList();
+        await flushPromises();
+
+        const rows = wrapper.findAll("[data-test^='model-list-item-mobile-']");
+        expect(rows[0].find("p").classes()).toContain("line-clamp-2");
+        expect(rows[0].text()).toContain("First model");
+        expect(rows[1].text()).toContain("No description provided...");
+    });
+
+    test("renders trust chips per code, the empty copy for [], nothing when absent", async () => {
+        setData({ data: MODELS });
+        const wrapper = mountModelList();
+        await flushPromises();
+
+        const rows = wrapper.findAll("[data-test^='model-list-item-mobile-']");
+        const chips = rows[0].findAll("[data-test='model-trust-chip']");
+        expect(chips.map(c => c.text())).toEqual(["KCH", "GSTT"]);
+        // Empty trusts array → the reserved empty-state line.
+        expect(rows[1].text()).toContain("No Trusts assigned yet");
+        // Endpoint not sending the field yet → no trusts line at all.
+        expect(rows[2].findAll("[data-test='model-trust-chip']")).toHaveLength(0);
+        expect(rows[2].text()).not.toContain("No Trusts assigned yet");
+    });
+});
+
 describe("ModelList — header Create-Model button", () => {
     beforeEach(() => {
         setData(undefined);

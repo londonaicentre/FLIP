@@ -44,6 +44,10 @@ export interface IModel {
     // Optional only because cached payloads from before the backend exposed
     // it on the project-models list may still be in flight on first paint.
     status?: ModelStatus;
+    // Participating trusts for the mobile list's chips (design 5a). Optional:
+    // the project-models endpoint doesn't send it yet — the chips line renders
+    // only once the backend does.
+    trusts?: IModelSummaryTrust[];
 }
 
 export interface ILog {
@@ -153,6 +157,38 @@ export function modelStatusLabel(status: ModelStatus | undefined): string {
 /** True for terminal failure / cancellation states (drives the red-cross icon). */
 export function isModelStatusError(status: ModelStatus | undefined): boolean {
     return status === "ERROR" || status === "STOPPED" || status === "RESULTS_UPLOAD_FAILED";
+}
+
+/**
+ * Pill classes for the model status chip (the /models-page idiom: coloured
+ * pill with a status dot inside). Whole literal Tailwind classes so the JIT
+ * compiler emits them.
+ */
+export function modelStatusPillClass(status: ModelStatus | undefined): string {
+    if (isModelStatusError(status)) {
+        return "bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-200";
+    }
+    if (status === "RESULTS_UPLOADED") {
+        return "bg-emerald-100 text-emerald-900 dark:bg-emerald-900/40 dark:text-emerald-100";
+    }
+    if (status === "TRAINING_STARTED") {
+        return "bg-fuchsia-100 text-fuchsia-800 dark:bg-fuchsia-900/40 dark:text-fuchsia-200";
+    }
+    if (status === "PREPARED") {
+        return "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200";
+    }
+
+    return "bg-gray-200 text-gray-700 dark:bg-dark-raised dark:text-gray-300";
+}
+
+/** Dot classes for the model status chip — matches modelStatusPillClass tones. */
+export function modelStatusDotClass(status: ModelStatus | undefined): string {
+    if (isModelStatusError(status)) return "bg-red-500";
+    if (status === "RESULTS_UPLOADED") return "bg-emerald-500";
+    if (status === "TRAINING_STARTED") return "bg-fuchsia-500";
+    if (status === "PREPARED") return "bg-amber-500";
+
+    return "bg-gray-400";
 }
 
 /**
