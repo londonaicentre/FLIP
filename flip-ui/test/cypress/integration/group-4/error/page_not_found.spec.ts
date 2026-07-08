@@ -15,9 +15,11 @@
 
 
 const PageNotFound = {
-    Title: "[data-test=title]",
+    BadgeIcon: "[data-test=badge-icon]",
+    Eyebrow: "[data-test=eyebrow]",
     SubTitle: "[data-test=subtitle]",
-    ReturnHomeButton: "[data-test=home-button]"
+    ReturnHomeButton: "[data-test=home-button]",
+    ServiceDeskLink: "[data-test=service-desk-link]"
 };
 
 describe("404 Page", () => {
@@ -35,8 +37,11 @@ describe("404 Page", () => {
     });
 
     it("should display when an unknown url is naviagted to", () => {
-        cy.get(PageNotFound.Title).should("exist");
+        cy.get(PageNotFound.BadgeIcon).should("exist");
+        cy.get(PageNotFound.Eyebrow).should("contain.text", "Error 404");
         cy.get(PageNotFound.SubTitle).should("exist");
+        cy.get(PageNotFound.ServiceDeskLink)
+            .should("have.attr", "href", "mailto:aicentreflip@gmail.com");
     });
 
     it("should allow users to navigate home", () => {
