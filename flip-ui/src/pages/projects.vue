@@ -114,7 +114,7 @@
                             title="List view"
                             @click="viewMode = 'list'"
                         >
-                            <icon-ph-list-bullets-duotone class="w-5 h-5" />
+                            <icon-ph-list-bullets class="w-5 h-5" />
                         </button>
                         <button
                             type="button"

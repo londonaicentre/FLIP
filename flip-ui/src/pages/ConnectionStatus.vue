@@ -64,7 +64,7 @@
                             : 'text-gray-500 hover:text-gray-800 dark:text-gray-300 dark:hover:text-gray-200'"
                         @click="viewMode = 'list'"
                     >
-                        <icon-ph-list-bullets-duotone class="w-4 h-4" />
+                        <icon-ph-list-bullets class="w-4 h-4" />
                         List
                     </button>
                     <button
@@ -78,7 +78,7 @@
                             : 'text-gray-500 hover:text-gray-800 dark:text-gray-300 dark:hover:text-gray-200'"
                         @click="viewMode = 'radial'"
                     >
-                        <icon-ph-share-network-duotone class="w-4 h-4" />
+                        <icon-ph-share-network class="w-4 h-4" />
                         Topology
                     </button>
                 </div>
