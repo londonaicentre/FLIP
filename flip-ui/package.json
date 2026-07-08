@@ -44,7 +44,7 @@
         "@cypress/vite-dev-server": "^3.0.0",
         "@cypress/vue": "^3.0.5",
         "@headlessui/vue": "^1.7.0",
-        "@iconify/json": "^1.1.413",
+        "@iconify/json": "^2.2.496",
         "@pinia/testing": "^0.1.3",
         "@popperjs/core": "^2.10.2",
         "@stylistic/eslint-plugin": "^5.10.0",
