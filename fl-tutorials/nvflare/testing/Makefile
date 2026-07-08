@@ -25,7 +25,14 @@ docker_command = docker compose -f compose.yml
 prep: clean checks
 	bash ./app_organiser.sh ${JOB_TYPE} ${PATH_TO_APP} ${DEV_IMAGES_DIR} ${DEV_DATAFRAME}
 
-up:
+# compose.yml references the external central-hub-mlflow-network (optional MLflow
+# tutorial plotting, FLIP#745); create it idempotently so runs that never use
+# MLflow don't fail on a missing network. Same guard as the root Makefile's
+# create-networks-centralhub.
+ensure-mlflow-network:
+	@{ docker network inspect central-hub-mlflow-network >/dev/null 2>&1 || docker network create --driver bridge central-hub-mlflow-network || true; }
+
+up: ensure-mlflow-network
 	$(docker_command) run --rm --remove-orphans $(service_name)
 
 down:
@@ -38,7 +45,7 @@ clean:
 
 run: prep up down clean
 
-shell:
+shell: ensure-mlflow-network
 	$(docker_command) run --rm --entrypoint "/bin/bash" $(service_name)
 
 checks:

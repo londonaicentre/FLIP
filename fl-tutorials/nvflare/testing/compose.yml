@@ -17,6 +17,10 @@ services:
       - LOCAL_DEV=true
       - DEV_IMAGES_DIR=/images
       - DEV_DATAFRAME=/dataframe/sample_get_dataframe_response.csv
+      # MLflow tutorial plotting (FLIP#745): when set (see .env.testing), FLIPStandardDev
+      # mirrors metrics/status to the tracking server so simulator runs get loss/accuracy
+      # curves in the MLflow UI. Empty (the default) => disabled, simulator unaffected.
+      - MLFLOW_TRACKING_URI=${MLFLOW_TRACKING_URI:-}
     volumes:
       - ${RUNS_DIR}:/app/runs
       - ${DEV_IMAGES_DIR}:/images
@@ -28,3 +32,14 @@ services:
     # without it the simulator leaves the client workers on CPU. Defaults to GPU 0; override with
     # SIM_GPU (e.g. SIM_GPU=0,1 for multi-GPU) in .env.testing.
     command: nvflare simulator -t 2 -n ${NUM_CLIENTS} --gpu ${SIM_GPU:-0} -w runs/workspace job
+    networks:
+      - default
+      - mlflow-network
+
+networks:
+  # Hub-only bridge shared with the dev-stack MLflow container (`make mlflow` at the
+  # repo root starts it). The testing Makefile creates this network idempotently, so
+  # runs that never touch MLflow still work.
+  mlflow-network:
+    external: true
+    name: central-hub-mlflow-network
