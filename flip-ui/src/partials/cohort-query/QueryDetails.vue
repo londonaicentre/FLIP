@@ -46,7 +46,7 @@
                         tooltip="View Query"
                         @click="viewCohortQueryResults"
                     >
-                        <icon-mdi-eye-outline class="lg:mr-2" />
+                        <icon-ph-eye class="lg:mr-2" />
                         <span class="hidden lg:inline">View Query</span>
                     </AiButton>
                 </div>
