@@ -224,6 +224,26 @@ describe("CohortQuery", () => {
         });
     });
 
+    describe("page wrapper de-carded skeleton", () => {
+        it("flattens the page: no nested main, no outer card, one page scroller", () => {
+            const wrapper = mountCohortQueryPage({ project: unstagedProject });
+
+            // MainLayout owns the app's <main>; the page must not nest another.
+            expect(wrapper.find("main").exists()).toBe(false);
+
+            // Model-page idiom: header in px-6 pt-4, one overflow-y-auto scroller.
+            const header = wrapper.find("header");
+            expect(header.classes()).toContain("px-6");
+            expect(header.classes()).toContain("pt-4");
+            expect(header.element.parentElement?.className).toContain("overflow-y-auto");
+
+            // The partial sits in a plain p-4 gutter, not inside an AiCard.
+            const gutter = wrapper.find("[data-test='cohort-query-partial-stub']").element.parentElement;
+            expect(gutter?.className).toContain("p-4");
+            expect(gutter?.className).not.toContain("shadow");
+        });
+    });
+
     // The header copy + run button live on the page wrapper, not the partial.
     describe("page wrapper header copy + run button", () => {
         it("shows editable query message when project is UNSTAGED", () => {

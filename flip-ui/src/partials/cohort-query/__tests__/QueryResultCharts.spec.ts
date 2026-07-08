@@ -125,9 +125,20 @@ describe("QueryResultCharts", () => {
 
         // A fixed h-[500px] made narrow single-column plots absurdly tall; the
         // card now follows a 4:3 ratio, capped at the old desktop height.
-        const card = wrapper.find("[data-test='ai-card']");
+        const card = wrapper.find("[data-test='chart-card']");
         expect(card.classes()).toContain("aspect-[4/3]");
         expect(card.classes()).toContain("max-h-[500px]");
         expect(card.classes()).not.toContain("h-[500px]");
+    });
+
+    test("frames each plot as a flat border box, not a shadowed card", async () => {
+        const wrapper = mountCharts({ data: RESULTS_WITH_PLOTS });
+        await nextTick();
+        await flushPromises();
+
+        const card = wrapper.find("[data-test='chart-card']");
+        expect(card.classes()).toContain("border");
+        expect(card.classes()).toContain("rounded-xl");
+        expect(card.classes()).not.toContain("shadow");
     });
 });
