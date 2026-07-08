@@ -70,60 +70,6 @@
                     </div>
                 </div>
                 <div class="h-full overflow-y-auto">
-                    <!-- Mobile: stacked three-line rows (design handoff 5a) — name + status
-                         chip, clamped description, trust chips (once the endpoint sends
-                         trusts). The 3-column table squashes badly below sm. -->
-                    <div data-test="model-stacked-list" class="sm:hidden divide-y divide-gray-100 dark:divide-dark-border">
-                        <div
-                            v-for="row, index in data?.data ?? []"
-                            :key="row.id"
-                            :data-test="`model-list-item-mobile-${index}`"
-                            class="px-1 py-3 cursor-pointer transition hover:bg-gray-50 dark:hover:bg-dark-canvas"
-                            @click="viewModel(row.id)"
-                        >
-                            <div class="flex items-start gap-2.5">
-                                <router-link
-                                    class="flex-1 min-w-0 font-bold text-sm break-words text-primary-600 dark:text-primary-200"
-                                    :to="`/project/${route.params['projectId']}/model/${row.id}`"
-                                    @click.stop
-                                >
-                                    {{ row.name }}
-                                </router-link>
-                                <span
-                                    :data-test="`model-status-chip-${row.id}`"
-                                    class="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium shrink-0"
-                                    :class="modelStatusPillClass(row.status)"
-                                >
-                                    <span class="inline-block w-1.5 h-1.5 rounded-full" :class="modelStatusDotClass(row.status)" />
-                                    {{ modelStatusLabel(row.status) }}
-                                </span>
-                            </div>
-                            <p class="mt-1 text-[12.5px] leading-snug break-words line-clamp-2 text-gray-500 dark:text-gray-300">
-                                {{ row.description }}
-                                <template v-if="!row.description">
-                                    <span class="italic text-gray-400 dark:text-gray-300">No description provided...</span>
-                                </template>
-                            </p>
-                            <div v-if="row.trusts" class="flex flex-wrap gap-[5px] mt-[7px]">
-                                <span
-                                    v-for="trust in row.trusts"
-                                    :key="trust.id"
-                                    data-test="model-trust-chip"
-                                    class="font-mono text-[10px] text-primary-500 bg-primary-100 border border-[#E4D7EA]
-                                    rounded px-[7px] py-[2px] dark:bg-primary-500/15 dark:text-primary-200
-                                    dark:border-primary-500/30"
-                                >
-                                    {{ trust.code || trust.name }}
-                                </span>
-                                <span v-if="!row.trusts.length" class="italic text-[11px] text-gray-400 dark:text-gray-300">
-                                    No Trusts assigned yet
-                                </span>
-                            </div>
-                        </div>
-                        <div v-if="!(data?.data ?? []).length" class="py-6 text-center">
-                            There are no models to show
-                        </div>
-                    </div>
                     <div class="hidden sm:block">
                         <VTable
                             :data="data?.data"
@@ -197,6 +143,60 @@
                                 </tr>
                             </template>
                         </VTable>
+                    </div>
+                    <!-- Mobile: stacked three-line rows (design handoff 5a) — name + status
+                         chip, clamped description, trust chips (once the endpoint sends
+                         trusts). The 3-column table squashes badly below sm. -->
+                    <div data-test="model-stacked-list" class="sm:hidden divide-y divide-gray-100 dark:divide-dark-border">
+                        <div
+                            v-for="row, index in data?.data ?? []"
+                            :key="row.id"
+                            :data-test="`model-list-item-mobile-${index}`"
+                            class="px-1 py-3 cursor-pointer transition hover:bg-gray-50 dark:hover:bg-dark-canvas"
+                            @click="viewModel(row.id)"
+                        >
+                            <div class="flex items-start gap-2.5">
+                                <router-link
+                                    class="flex-1 min-w-0 font-bold text-sm break-words text-primary-600 dark:text-primary-200"
+                                    :to="`/project/${route.params['projectId']}/model/${row.id}`"
+                                    @click.stop
+                                >
+                                    {{ row.name }}
+                                </router-link>
+                                <span
+                                    :data-test="`model-status-chip-${row.id}`"
+                                    class="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium shrink-0"
+                                    :class="modelStatusPillClass(row.status)"
+                                >
+                                    <span class="inline-block w-1.5 h-1.5 rounded-full" :class="modelStatusDotClass(row.status)" />
+                                    {{ modelStatusLabel(row.status) }}
+                                </span>
+                            </div>
+                            <p class="mt-1 text-[12.5px] leading-snug break-words line-clamp-2 text-gray-500 dark:text-gray-300">
+                                {{ row.description }}
+                                <template v-if="!row.description">
+                                    <span class="italic text-gray-400 dark:text-gray-300">No description provided...</span>
+                                </template>
+                            </p>
+                            <div v-if="row.trusts" class="flex flex-wrap gap-[5px] mt-[7px]">
+                                <span
+                                    v-for="trust in row.trusts"
+                                    :key="trust.id"
+                                    data-test="model-trust-chip"
+                                    class="font-mono text-[10px] text-primary-500 bg-primary-100 border border-[#E4D7EA]
+                                    rounded px-[7px] py-[2px] dark:bg-primary-500/15 dark:text-primary-200
+                                    dark:border-primary-500/30"
+                                >
+                                    {{ trust.code || trust.name }}
+                                </span>
+                                <span v-if="!row.trusts.length" class="italic text-[11px] text-gray-400 dark:text-gray-300">
+                                    No Trusts assigned yet
+                                </span>
+                            </div>
+                        </div>
+                        <div v-if="!(data?.data ?? []).length" class="py-6 text-center">
+                            There are no models to show
+                        </div>
                     </div>
                 </div>
                 <AiPagination
