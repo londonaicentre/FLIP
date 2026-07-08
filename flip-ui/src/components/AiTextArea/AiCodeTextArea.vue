@@ -20,7 +20,7 @@
         >
             {{ label }}
         </label>
-        <div class="mt-1">
+        <div class="relative mt-1">
             <div
                 class="block"
                 :class="{
@@ -43,6 +43,20 @@
                     @blur="handleBlur"
                 />
             </div>
+            <button
+                v-if="copyable"
+                type="button"
+                data-test="copy-code-btn"
+                :aria-label="copied ? 'Copied' : 'Copy to clipboard'"
+                :title="copied ? 'Copied' : 'Copy to clipboard'"
+                class="absolute z-10 top-2 right-2 p-1.5 rounded-md transition-colors
+                text-gray-500 dark:text-gray-300 hover:text-gray-700 dark:hover:text-gray-100
+                bg-white/80 hover:bg-white dark:bg-white/10 dark:hover:bg-white/20"
+                @click="copyToClipboard"
+            >
+                <icon-ph-check v-if="copied" class="w-4 h-4 text-emerald-500" aria-hidden="true" />
+                <icon-ph-copy v-else class="w-4 h-4" aria-hidden="true" />
+            </button>
         </div>
         <div v-if="hint && !errorMessage" class="m-1 text-sm text-gray-500 dark:text-gray-300">
             {{ hint }}
@@ -64,7 +78,7 @@ import "@/assets/styles/codemirror-flip-dark.css";
 // ships with this component's chunk instead of the entry bundle (#716).
 import Codemirror from "codemirror-editor-vue3";
 import { useField } from "vee-validate";
-import { computed, TextareaHTMLAttributes } from "vue";
+import { computed, ref, TextareaHTMLAttributes } from "vue";
 
 import { useSiteSettings } from "@/store/siteSettingsStore";
 import { getRandomId } from "@/utils/helpers";
@@ -82,6 +96,8 @@ interface ICodeTextAreaProps {
     initialValue?: string;
     mode?: string;
     height?: number;
+    /** Overlay a copy-to-clipboard button in the editor's top-right corner. */
+    copyable?: boolean;
 }
 
 const siteSettings = useSiteSettings();
@@ -98,7 +114,8 @@ const props = withDefaults(
         initialValue: "",
         mode: "text/x-pgsql",
         height: 200,
-        inputProps: undefined
+        inputProps: undefined,
+        copyable: false
     }
 );
 
@@ -125,4 +142,13 @@ const cmOptions = computed(() => ({
 }));
 
 const uuid = getRandomId();
+
+// Copy feedback: the overlay icon flips to a check for a moment after copying.
+const copied = ref(false);
+
+const copyToClipboard = async () => {
+    await navigator.clipboard.writeText(String(inputValue.value ?? ""));
+    copied.value = true;
+    setTimeout(() => (copied.value = false), 2_000);
+};
 </script>

@@ -537,6 +537,20 @@ describe("CohortQuery", () => {
             expect(cell!.text()).toContain("by R. Patel");
         });
 
+        it("shows the SQL file icon next to the run stamp", () => {
+            const project: IProject = {
+                ...unstagedProjectWithQuery,
+                query: {
+                    ...unstagedProjectWithQuery.query!,
+                    created: new Date().toISOString()
+                }
+            };
+            const wrapper = mountCohortQuery({ project });
+            const cell = lastRunCell(wrapper);
+            expect(cell).not.toBeNull();
+            expect(cell!.find("[data-test=last-run-sql-icon]").exists()).toBe(true);
+        });
+
         it("renders 'yesterday' when the query was created on the previous calendar day", () => {
             const ts = new Date();
             ts.setDate(ts.getDate() - 1);

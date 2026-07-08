@@ -21,6 +21,30 @@ import { useSiteSettings } from "@/store/siteSettingsStore";
 
 import AiCodeTextArea from "../AiCodeTextArea.vue";
 
+// CodeMirror measures rendered text through Range#getBoundingClientRect /
+// getClientRects, which jsdom does not implement — any mount with non-empty
+// content throws without these zero-rect polyfills.
+beforeAll(() => {
+    const zeroRect = {
+        x: 0,
+        y: 0,
+        top: 0,
+        bottom: 0,
+        left: 0,
+        right: 0,
+        width: 0,
+        height: 0,
+        toJSON: () => ({})
+    } as DOMRect;
+    Range.prototype.getBoundingClientRect = () => zeroRect;
+    Range.prototype.getClientRects = () =>
+        ({
+            length: 0,
+            item: () => null,
+            [Symbol.iterator]: [].values
+        } as unknown as DOMRectList);
+});
+
 describe("Ai Code TextArea", () => {
     test("Renders Component", () => {
         const comp = mountComponent(AiCodeTextArea, {
@@ -49,7 +73,7 @@ describe("Ai Code TextArea", () => {
         expect(comp.find(".CodeMirror").exists()).toBe(true);
     });
 
-    test("applies the dracula theme in dark mode", () => {
+    test("applies the flip-dark theme in dark mode", () => {
         const pinia = createPinia();
         setActivePinia(pinia);
         useSiteSettings().darkMode = true;
@@ -63,6 +87,40 @@ describe("Ai Code TextArea", () => {
         });
 
         expect(comp.find(".CodeMirror").classes()).toContain("cm-s-flip-dark");
+    });
+
+    test("shows no copy button unless asked for one", () => {
+        const comp = mountComponent(AiCodeTextArea, {
+            props: {
+                name: "test-code-textarea",
+                label: "Test Code Label"
+            },
+            global: { plugins: [createPinia()] }
+        });
+
+        expect(comp.find("[data-test=copy-code-btn]").exists()).toBe(false);
+    });
+
+    test("copies the editor content to the clipboard from the overlay button", async () => {
+        const writeText = vi.fn().mockResolvedValue(undefined);
+        Object.defineProperty(navigator, "clipboard", {
+            value: { writeText },
+            configurable: true
+        });
+
+        const comp = mountComponent(AiCodeTextArea, {
+            props: {
+                name: "test-code-textarea",
+                label: "Test Code Label",
+                copyable: true,
+                initialValue: "SELECT person_id FROM person;"
+            },
+            global: { plugins: [createPinia()] }
+        });
+
+        await comp.find("[data-test=copy-code-btn]").trigger("click");
+
+        expect(writeText).toHaveBeenCalledWith("SELECT person_id FROM person;");
     });
 
     test("blocks focus entirely when readonly so mobile taps can't summon a caret", () => {

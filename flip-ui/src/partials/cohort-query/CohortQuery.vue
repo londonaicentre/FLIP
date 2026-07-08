@@ -27,14 +27,21 @@
                         <div class="space-y-2 lg:col-span-2">
                             <div
                                 v-if="lastRunLine"
-                                class="text-xs font-semibold tracking-wider uppercase font-mono text-gray-500 dark:text-gray-300"
+                                class="flex items-center gap-1.5 text-xs font-semibold tracking-wider uppercase
+                                font-mono text-gray-500 dark:text-gray-300"
                             >
+                                <icon-ph-file-sql
+                                    data-test="last-run-sql-icon"
+                                    class="w-4 h-4 shrink-0"
+                                    aria-hidden="true"
+                                />
                                 {{ lastRunLine }}
                             </div>
                             <AiCodeTextArea
                                 :initial-value="project?.query?.query"
                                 :input-props="{readonly: queryLocked || isViewer}"
                                 :height="440"
+                                copyable
                                 name="query"
                                 label=""
                                 data-test="cohort-query"
