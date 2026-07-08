@@ -119,7 +119,7 @@ describe("admin chip-tab nav", () => {
         // In dark mode the fill must be the solid brand plum — the primary
         // 800/900 shades are near-black and vanish against the dark surfaces.
         expect(links[0].classes()).toContain("rounded-full");
-        expect(links[0].classes()).toContain("bg-primary-100");
+        expect(links[0].classes()).toContain("bg-primary-200");
         expect(links[0].classes()).toContain("dark:bg-primary-500");
         expect(links[0].classes()).toContain("dark:text-white");
         expect(links[0].classes()).toContain("text-primary-800");

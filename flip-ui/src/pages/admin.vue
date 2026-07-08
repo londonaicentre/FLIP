@@ -34,7 +34,7 @@ redirect: /admin/users # Can be set to any page within the "admin" section
                 :aria-current="item.current ? 'page' : undefined"
                 class="flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-sm font-semibold whitespace-nowrap transition-colors"
                 :class="item.current
-                    ? ['bg-primary-100 border-transparent text-primary-800',
+                    ? ['bg-primary-200 border-transparent text-primary-800',
                        'dark:bg-primary-500 dark:text-white']
                     : ['text-gray-500 hover:text-gray-800 dark:text-gray-300 dark:hover:text-gray-200',
                        'bg-white border-gray-200 hover:border-gray-300 dark:bg-dark-canvas dark:border-dark-border']"
