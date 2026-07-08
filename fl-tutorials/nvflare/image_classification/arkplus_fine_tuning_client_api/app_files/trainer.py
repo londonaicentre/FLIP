@@ -385,6 +385,7 @@ def main() -> None:
     epochs = config["LOCAL_ROUNDS"]
     lr_start = config["LR_START"]
     lr_end = config["LR_END"]
+    lr_floor = config.get("LR_FLOOR", 0.0001)
     batch_size = config["BATCH_SIZE"]
     num_workers = int(config.get("DATALOADER_WORKERS", 4))
     validate_every = config["VALIDATE_EVERY"] if "VALIDATE_EVERY" in config else 1
@@ -423,12 +424,12 @@ def main() -> None:
         model, device, use_teacher_student, ema_mode, teacher_momentum, consistency_weight
     )
 
-    # Optimizer trains only the unfrozen head params; the scheduler decays LR_START -> LR_END over one
-    # global round's worth of local epochs (LOCAL_ROUNDS). Both are created once and persist across the
-    # whole flare.is_running() loop (never reset per round), matching the legacy scheduler lifecycle.
     optimizer = torch.optim.Adam([p for p in model.parameters() if p.requires_grad], lr=lr_start)
     gamma_lr = (lr_end / lr_start) ** (1 / epochs)
-    scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=gamma_lr)
+    scheduler = torch.optim.lr_scheduler.LambdaLR(
+        optimizer,
+        lr_lambda=lambda epoch: max(gamma_lr ** epoch, lr_floor / lr_start),
+    )
 
     if amp_enabled:
         logger.info(f"Mixed precision enabled for training with dtype={amp_dtype}.")

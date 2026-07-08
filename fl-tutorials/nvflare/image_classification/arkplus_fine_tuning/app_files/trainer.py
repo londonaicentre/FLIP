@@ -111,6 +111,7 @@ class FLIP_TRAINER(Executor):
             self._epochs = self.config["LOCAL_ROUNDS"]
             self._lr_start = self.config["LR_START"]
             self._lr_end = self.config["LR_END"]
+            self._lr_floor = self.config.get("LR_FLOOR", 0.0001)
             self._val_split = self.config["VAL_SPLIT"]                         # stale — build_datalist reads from config
             self._split_seed = int(self.config.get("SPLIT_SEED", 42))          # stale — build_datalist reads from config
             self._lesions = self.config["LESIONS"]
@@ -184,7 +185,10 @@ class FLIP_TRAINER(Executor):
             lr=self._lr_start,
         )
         gamma_lr = (self._lr_end / self._lr_start) ** (1 / self._epochs)
-        self.scheduler = torch.optim.lr_scheduler.ExponentialLR(self.optimizer, gamma=gamma_lr)
+        self.scheduler = torch.optim.lr_scheduler.LambdaLR(
+            self.optimizer,
+            lr_lambda=lambda epoch: max(gamma_lr ** epoch, self._lr_floor / self._lr_start),
+        )
 
         # Setup the persistence manager to save PT model.
         # The default training configuration is used by persistence manager
