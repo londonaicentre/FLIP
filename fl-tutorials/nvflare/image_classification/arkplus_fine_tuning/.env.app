@@ -1,6 +1,4 @@
 JOB_TYPE=standard_client_api
-DEV_IMAGES_DIR=/home/localat24/data/DeCaf_MICCAI_2026/balanced_synthetic_split/re_final_site1/accession-resources
-DEV_DATAFRAME=/home/localat24/data/DeCaf_MICCAI_2026/balanced_synthetic_split/re_final_site1/sample_get_dataframe_response.csv
 SITE1_IMAGES_DIR=/home/localat24/data/DeCaf_MICCAI_2026/balanced_synthetic_split/re_final_site1/accession-resources
 SITE1_DATAFRAME=/home/localat24/data/DeCaf_MICCAI_2026/balanced_synthetic_split/re_final_site1/sample_get_dataframe_response.csv
 SITE2_IMAGES_DIR=/home/localat24/data/DeCaf_MICCAI_2026/balanced_synthetic_split/re_final_site2/accession-resources
