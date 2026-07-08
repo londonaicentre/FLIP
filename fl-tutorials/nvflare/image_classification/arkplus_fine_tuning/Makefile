@@ -25,6 +25,14 @@ include ./.env.app
 export $(shell sed 's/=.*//' ./.env.app)
 endif
 
+# --- Local-run knobs ---
+# Local-sim/export values passed to job.py; override per invocation (`make run NUM_ROUNDS=10`),
+# via the harness (`make -C fl-tutorials run-tutorial TUTORIAL=arkplus_fine_tuning NUM_ROUNDS=10`),
+# or in .env.app. Local only: in production the FL API reads GLOBAL_ROUNDS from config.json at
+# submit time and overrides whatever the recipe baked in.
+NUM_ROUNDS ?= 3
+N_CLIENTS ?= 2
+
 # The backbone checkpoint the server loads (config.json SERVER_CHECKPOINT). Staged into app_files/ so
 # stage_app_files() bundles it into the server custom dir; clients receive the backbone at round 0.
 PROCESSED_CHECKPOINT := $(APP_DIR)/app_files/pretrained_weights.pt
@@ -95,8 +103,8 @@ export: prepare-checkpoint
 	$(UV_RUN) python job.py \
 		--export \
 		--export-dir ./fl_job \
-		--n_clients 2 \
-		--num_rounds 3
+		--n_clients $(N_CLIENTS) \
+		--num_rounds $(NUM_ROUNDS)
 
 # --- SimEnv local simulation (requires GPU + data + checkpoint) ---
 # Runs the job under the NVFLARE simulator. site-1/site-2 train on distinct data: the trainer reads
@@ -104,12 +112,13 @@ export: prepare-checkpoint
 # resolved to absolute paths above so the simulator's client workers (which run from the workspace dir,
 # not here) find the LOCAL_DEV dataset. FLIP-specific values come from FLIP_PROJECT_ID / FLIP_QUERY.
 sim:
+	@echo "Running tutorial with: n_clients=$(N_CLIENTS), num_rounds=$(NUM_ROUNDS)"
 	DEV_IMAGES_DIR="$(DEV_IMAGES_DIR)" DEV_DATAFRAME="$(DEV_DATAFRAME)" \
 	SITE1_IMAGES_DIR="$(SITE1_IMAGES_DIR)" SITE1_DATAFRAME="$(SITE1_DATAFRAME)" \
 	SITE2_IMAGES_DIR="$(SITE2_IMAGES_DIR)" SITE2_DATAFRAME="$(SITE2_DATAFRAME)" \
 	$(UV_RUN) python job.py \
-		--n_clients 2 \
-		--num_rounds 3 \
+		--n_clients $(N_CLIENTS) \
+		--num_rounds $(NUM_ROUNDS) \
 		--workspace ../../testing/runs/workspace
 
 # --- Tutorial-harness entrypoint ---

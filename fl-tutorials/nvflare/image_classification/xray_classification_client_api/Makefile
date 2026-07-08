@@ -23,6 +23,14 @@ include ./.env.app
 export $(shell sed 's/=.*//' ./.env.app)
 endif
 
+# --- Local-run knobs ---
+# Local-sim/export values passed to job.py; override per invocation (`make run NUM_ROUNDS=10`),
+# via the harness (`make -C fl-tutorials run-tutorial TUTORIAL=xray_classification_client_api
+# NUM_ROUNDS=10`), or in .env.app. Local only: in production the FL API reads GLOBAL_ROUNDS from
+# config.json at submit time and overrides whatever the recipe baked in.
+NUM_ROUNDS ?= 3
+N_CLIENTS ?= 2
+
 .PHONY: run export sim clean
 
 # --- Tutorial-harness entrypoint ---
@@ -39,8 +47,8 @@ export:
 	$(UV_RUN) python job.py \
 		--export \
 		--export-dir ./fl_job \
-		--n_clients 2 \
-		--num_rounds 3
+		--n_clients $(N_CLIENTS) \
+		--num_rounds $(NUM_ROUNDS)
 
 # --- SimEnv local simulation (requires GPU + data) ---
 # Runs the job under the NVFLARE simulator. Requires a GPU and the reference
@@ -49,11 +57,12 @@ export:
 # DEV_IMAGES_DIR/DEV_DATAFRAME are resolved to absolute paths so the simulator's client workers
 # (which run from the workspace dir, not here) find the LOCAL_DEV dataset.
 sim:
+	@echo "Running tutorial with: n_clients=$(N_CLIENTS), num_rounds=$(NUM_ROUNDS)"
 	DEV_IMAGES_DIR="$(abspath $(DEV_IMAGES_DIR))" \
 	DEV_DATAFRAME="$(abspath $(DEV_DATAFRAME))" \
 	$(UV_RUN) python job.py \
-		--n_clients 2 \
-		--num_rounds 3
+		--n_clients $(N_CLIENTS) \
+		--num_rounds $(NUM_ROUNDS)
 
 clean:
 	rm -rf ./fl_job
