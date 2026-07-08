@@ -21,7 +21,7 @@
                             v-tippy="{placement: 'bottom', content: 'Stage Completed'}"
                             class="flex items-center justify-center flex-shrink-0 w-8 h-8 border-2 border-gray-300 dark:border-primary-400 rounded-full"
                         >
-                            <icon-ant-design-check-circle-twotone class="w-8 h-8 text-green-600 dark:text-green-400" aria-hidden="true" />
+                            <icon-ph-check-circle-fill class="w-8 h-8 text-green-600 dark:text-green-400" aria-hidden="true" />
                         </span>
                         <div class="flex flex-col">
                             <router-link
