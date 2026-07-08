@@ -36,7 +36,7 @@ describe("404 Page", () => {
         cy.visit("/akjskaj");
     });
 
-    it("should display when an unknown url is naviagted to", () => {
+    it("should display when an unknown url is navigated to", () => {
         cy.get(PageNotFound.BadgeIcon).should("exist");
         cy.get(PageNotFound.Eyebrow).should("contain.text", "Error 404");
         cy.get(PageNotFound.SubTitle).should("exist");

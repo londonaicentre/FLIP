@@ -147,7 +147,13 @@ const uuid = getRandomId();
 const copied = ref(false);
 
 const copyToClipboard = async () => {
-    await navigator.clipboard.writeText(String(inputValue.value ?? ""));
+    // Clipboard access can be denied/unavailable (permissions, insecure context);
+    // swallow the failure rather than surfacing an unhandled rejection from a click.
+    try {
+        await navigator.clipboard.writeText(String(inputValue.value ?? ""));
+    } catch {
+        return;
+    }
     copied.value = true;
     setTimeout(() => (copied.value = false), 2_000);
 };
