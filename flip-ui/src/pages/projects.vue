@@ -47,7 +47,7 @@
                         </AiButton>
                     </div>
                     <p class="mt-2 text-sm text-gray-500 dark:text-gray-300">
-                        Approved &amp; staged projects you can access.
+                        Below are the projects you can access.
                     </p>
                 </header>
 
