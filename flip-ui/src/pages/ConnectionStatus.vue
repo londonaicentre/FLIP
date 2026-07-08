@@ -248,7 +248,11 @@
                         </div>
                     </div>
                     <div class="hidden sm:block overflow-x-auto">
-                        <table class="w-full">
+                        <!-- ring-0/shadow-none + transparent tbody override main.css's global
+                             table chrome (ring, shadow, dark:bg-gray-800 tbody, gray-700
+                             dividers) so dark mode shows the card canvas through the rows,
+                             matching the stacked mobile list. -->
+                        <table class="w-full ring-0 shadow-none">
                             <thead>
                                 <tr class="bg-gray-50 dark:bg-dark-surface border-b border-gray-200 dark:border-dark-border">
                                     <th
@@ -271,7 +275,7 @@
                                     </th>
                                 </tr>
                             </thead>
-                            <tbody>
+                            <tbody class="dark:bg-transparent divide-gray-100 dark:divide-dark-border">
                                 <tr
                                     v-for="(t, idx) in displayedTrusts"
                                     :key="t.id"

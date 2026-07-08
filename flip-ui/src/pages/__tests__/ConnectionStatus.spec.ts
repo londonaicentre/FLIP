@@ -264,6 +264,16 @@ describe("ConnectionStatus", () => {
         const row = wrapper.find("[data-test='trust-row']");
         expect(row.classes().some(c => c.startsWith("bg-red"))).toBe(false);
         expect(row.classes()).not.toContain("dark:bg-dark-surface");
+
+        // main.css paints every table's tbody dark:bg-gray-800 with its own
+        // ring/shadow and gray-700 dividers — this table must override those
+        // so dark mode shows the card canvas through, like the mobile list.
+        const tbody = wrapper.find("tbody");
+        expect(tbody.classes()).toContain("dark:bg-transparent");
+        expect(tbody.classes()).toContain("dark:divide-dark-border");
+        const table = wrapper.find("table");
+        expect(table.classes()).toContain("ring-0");
+        expect(table.classes()).toContain("shadow-none");
     });
 
     it("renders the radial topology on the plain card surface with dark-visible labels", async () => {
