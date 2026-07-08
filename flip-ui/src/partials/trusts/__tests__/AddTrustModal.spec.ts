@@ -91,6 +91,14 @@ describe("AddTrustModal rendering", () => {
         expect(text).not.toContain("authenticate with the hub");
     });
 
+    it("centres the dialog on mobile instead of pinning it to the bottom", () => {
+        const wrapper = mountModal();
+
+        const layout = wrapper.find(".h-screen");
+        expect(layout.classes()).toContain("items-center");
+        expect(layout.classes()).not.toContain("items-end");
+    });
+
     it("closes from the header cross button like Cancel", async () => {
         const wrapper = mountModal();
 
