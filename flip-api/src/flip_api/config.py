@@ -78,6 +78,12 @@ class Settings(BaseSettings):
     PROJECT_REIMPORT_RATE: int = 60  # How often to reimport studies for a given project (in minutes)
     MAX_REIMPORT_COUNT: int = 5
 
+    # MLflow dual-write (FLIP#745): tracking server URI used by
+    # fl_services/services/mlflow_run_service.py to pre-create the tracking run
+    # (tags + config.json params) at job submit. Best-effort only — flip-api
+    # stays the canonical store. Empty (the default) disables the integration.
+    MLFLOW_TRACKING_URI: str = ""
+
     # Scheduler settings
     SCHEDULE_RUN_JOBS_EXECUTION: bool = True
     SCHEDULER_RUN_JOBS_RATE: int = 1  # in minutes
