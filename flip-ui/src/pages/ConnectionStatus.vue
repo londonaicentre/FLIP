@@ -352,10 +352,9 @@
                                             />
                                         </svg>
                                     </td>
-                                    <td class="px-4 py-4" />
                                 </tr>
                                 <tr v-if="!displayedTrusts.length">
-                                    <td colspan="7" class="text-center py-6 text-gray-500 dark:text-gray-300">
+                                    <td colspan="6" class="text-center py-6 text-gray-500 dark:text-gray-300">
                                         {{ activeTile ? "No trusts match this filter." : "No trusts registered yet." }}
                                     </td>
                                 </tr>
@@ -790,7 +789,7 @@ interface IColumn {
 
 // Header config drives both the rendered <th>s and the per-column sort handler.
 // Keys correspond to entries in `sortComparators`; columns without a key
-// (sparkline, action) render as inert headers.
+// (sparkline) render as inert headers.
 const columns: IColumn[] = [
     {
         key: "severity",
@@ -816,8 +815,7 @@ const columns: IColumn[] = [
         align: "right",
         width: "w-20"
     },
-    { label: "7d uptime" },
-    { label: "" }
+    { label: "7d uptime" }
 ];
 
 // Alphabetical by name is the default — admins land on a predictable list and

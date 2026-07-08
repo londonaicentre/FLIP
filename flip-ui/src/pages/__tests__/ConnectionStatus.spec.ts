@@ -437,6 +437,15 @@ describe("ConnectionStatus", () => {
         expect(detail().exists()).toBe(false);
     });
 
+    it("renders exactly six columns — no empty trailing action column", async () => {
+        mockSwrvData.value = fixture;
+        const wrapper = mountPage();
+        await wrapper.vm.$nextTick();
+
+        expect(wrapper.findAll("th")).toHaveLength(6);
+        expect(wrapper.find("[data-test='trust-row']").findAll("td")).toHaveLength(6);
+    });
+
     describe("mobile stacked trust rows (design 3a)", () => {
         const mobileCodes = (wrapper: ReturnType<typeof mountPage>): string[] =>
             wrapper.findAll("[data-test='trust-row-mobile']").map(r => {
