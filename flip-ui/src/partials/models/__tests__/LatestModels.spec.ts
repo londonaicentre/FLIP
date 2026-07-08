@@ -157,7 +157,7 @@ describe("LatestModels — defensive data access", () => {
         const wrapper = mountLatestModels();
         await flushPromises();
 
-        expect(wrapper.text()).toContain("There are no models assigned to this project.");
+        expect(wrapper.text()).toContain("No models have been created for this project yet.");
     });
 
     test("lists models and shows the View All button when data.data is populated", async () => {

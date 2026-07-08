@@ -38,7 +38,7 @@
                     <div class="relative block w-full text-center">
                         <icon-ph-graph class="w-12 h-12 mx-auto text-gray-400 dark:text-gray-600" />
                         <div class="mt-2 text-sm">
-                            There are no models assigned to this project.
+                            No models have been created for this project yet.
                         </div>
                     </div>
                 </div>
