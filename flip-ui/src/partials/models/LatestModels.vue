@@ -62,9 +62,19 @@
                             @click="navigate"
                         >
                             <div class="flex flex-col gap-0.5 w-full text-xs min-w-0">
-                                <p class="font-semibold leading-tight text-primary-600 dark:text-primary-200 truncate">
-                                    {{ model.name }}
-                                </p>
+                                <div class="flex items-center justify-between gap-2 min-w-0">
+                                    <p class="font-semibold leading-tight text-primary-600 dark:text-primary-200 truncate">
+                                        {{ model.name }}
+                                    </p>
+                                    <span
+                                        data-test="latest-model-status-chip"
+                                        class="inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-medium shrink-0"
+                                        :class="modelStatusPillClass(model.status)"
+                                    >
+                                        <span class="inline-block w-1.5 h-1.5 rounded-full" :class="modelStatusDotClass(model.status)" />
+                                        {{ modelStatusLabel(model.status) }}
+                                    </span>
+                                </div>
                                 <p class="leading-tight text-gray-500 dark:text-gray-300 truncate">
                                     {{ model.description }}
                                     <template v-if="!model.description">
@@ -125,7 +135,10 @@ import AiButton from "@/components/AiButton/AiButton.vue";
 import AiLoader from "@/components/AiLoader/AiLoader.vue";
 import useErrorHandler from "@/composables/useErrorHandler";
 import { usePermissions } from "@/composables/usePermissions";
-import { getModels } from "@/services/model-service";
+import { getModels,
+    modelStatusDotClass,
+    modelStatusLabel,
+    modelStatusPillClass } from "@/services/model-service";
 import { useModalsStore } from "@/store/modals";
 import { useProjectStore } from "@/store/project";
 

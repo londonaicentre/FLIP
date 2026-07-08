@@ -50,7 +50,14 @@ vi.mock("swrv", () => ({
     })
 }));
 
-vi.mock("@/services/model-service", () => ({ getModels: vi.fn(async () => undefined) }));
+vi.mock("@/services/model-service", async (importOriginal) => {
+    const actual = await importOriginal<typeof import("@/services/model-service")>();
+
+    return {
+        ...actual,
+        getModels: vi.fn(async () => undefined)
+    };
+});
 
 vi.mock("@/composables/useErrorHandler", () => ({ default: vi.fn() }));
 
@@ -182,6 +189,27 @@ describe("LatestModels — defensive data access", () => {
         }
         // No framed box around the icon + copy any more.
         expect(empty.html()).not.toContain("border-2");
+    });
+
+    test("shows the status chip on the same row as the model name", async () => {
+        setData({
+            data: [{
+                id: "m1",
+                name: "Alpha",
+                description: "",
+                status: "TRAINING_STARTED"
+            }]
+        });
+        const wrapper = mountLatestModels();
+        await flushPromises();
+
+        const chip = wrapper.find("[data-test='latest-model-status-chip']");
+        expect(chip.classes()).toContain("rounded-full");
+        expect(chip.classes().join(" ")).toContain("bg-fuchsia-100");
+        expect(chip.text()).toBe("Training Started");
+        // Same row as the name: they share a flex parent.
+        const nameRow = chip.element.parentElement;
+        expect(nameRow?.textContent).toContain("Alpha");
     });
 
     test("lists models and shows the View All button when data.data is populated", async () => {
