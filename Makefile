@@ -314,6 +314,7 @@ debug-off-all:
 
 create-networks-centralhub:
 	@{ docker network inspect central-hub-network >/dev/null 2>&1 || docker network create --driver bridge central-hub-network || true; }
+	@{ docker network inspect central-hub-mlflow-network >/dev/null 2>&1 || docker network create --driver bridge central-hub-mlflow-network || true; }
 
 create-networks: create-networks-centralhub
 	$(MAKE) -C trust create-networks
@@ -321,6 +322,7 @@ create-networks: create-networks-centralhub
 remove-networks:
 	@echo "🗑️  Removing all networks..."
 	@docker network rm central-hub-network 2>/dev/null || true
+	@docker network rm central-hub-mlflow-network 2>/dev/null || true
 	$(MAKE) -C trust remove-networks
 	@echo "✅ All networks removed!"
 
