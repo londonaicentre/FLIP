@@ -17,9 +17,18 @@
      card height. -->
 
 <template>
-    <div v-if="!data?.length" class="flex items-center gap-2 text-sm text-gray-500 dark:text-gray-300">
-        <icon-ph-chart-line class="w-5 h-5 text-gray-400 dark:text-gray-300 shrink-0" />
-        <div>Any metrics generated during training will show here.</div>
+    <div
+        v-if="!data?.length"
+        data-test="metrics-empty-state"
+        class="flex flex-col items-center justify-center w-full min-h-[16rem] p-4
+        border-2 border-gray-100 dark:border-dark-border rounded-lg"
+    >
+        <div class="relative block w-full text-center">
+            <icon-ph-chart-line class="w-12 h-12 mx-auto text-gray-400 dark:text-gray-600" />
+            <div class="mt-2 text-sm text-gray-500 dark:text-gray-300">
+                Any metrics generated during training will show here.
+            </div>
+        </div>
     </div>
     <div v-else class="flex flex-col">
         <div
