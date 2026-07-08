@@ -425,6 +425,81 @@ describe("ConnectionStatus", () => {
         expect(detail().exists()).toBe(false);
     });
 
+    describe("mobile stacked trust rows (design 3a)", () => {
+        const mobileCodes = (wrapper: ReturnType<typeof mountPage>): string[] =>
+            wrapper.findAll("[data-test='trust-row-mobile']").map(r => {
+                const code = r.find("[data-test='trust-code-mobile']");
+
+                return code.exists() ? code.text() : "";
+            });
+
+        it("renders a stacked row per trust below sm and hides the table there", async () => {
+            mockSwrvData.value = fixture;
+            const wrapper = mountPage();
+            await wrapper.vm.$nextTick();
+
+            const list = wrapper.find("[data-test='trusts-stacked-list']");
+            expect(list.classes()).toContain("sm:hidden");
+            expect(wrapper.findAll("[data-test='trust-row-mobile']")).toHaveLength(fixture.length);
+
+            const tableWrap = wrapper.find("table").element.parentElement;
+            expect(tableWrap?.className).toContain("hidden");
+            expect(tableWrap?.className).toContain("sm:block");
+        });
+
+        it("stacks name, code, pill, meta line and sparkline into two lines", async () => {
+            mockSwrvData.value = [fixture[0]]; // Zebra: online, London, 1 project
+            const wrapper = mountPage();
+            await wrapper.vm.$nextTick();
+
+            const row = wrapper.find("[data-test='trust-row-mobile']");
+            expect(row.text()).toContain("Zebra NHS Trust");
+            expect(row.find("[data-test='trust-code-mobile']").text()).toBe("ZNT");
+            expect(row.text()).toContain("Online");
+            expect(row.text()).toContain("London");
+            expect(row.text()).toContain("ago");
+            expect(row.text()).toContain("1 project");
+            expect(row.find("svg polyline").exists()).toBe(true);
+        });
+
+        it("tints the offline stacked row and its heartbeat red", async () => {
+            mockSwrvData.value = [fixture[1]]; // Acme: null heartbeat → offline
+            const wrapper = mountPage();
+            await wrapper.vm.$nextTick();
+
+            const row = wrapper.find("[data-test='trust-row-mobile']");
+            expect(row.classes().some(c => c.startsWith("bg-red"))).toBe(true);
+            expect(row.find("[data-test='trust-heartbeat-mobile']").classes().join(" ")).toContain("text-red-600");
+        });
+
+        it("sorts from the mobile sort menu and toggles direction on repeat", async () => {
+            mockSwrvData.value = fixture;
+            const wrapper = mountPage();
+            await wrapper.vm.$nextTick();
+
+            expect(wrapper.find("[data-test='mobile-sort-btn']").text()).toContain("Sort: Name ↑");
+
+            // Fixture project counts: Zebra=1, Maple=3, Acme=7.
+            await wrapper.find("[data-test='mobile-sort-btn']").trigger("click");
+            await wrapper.find("[data-test='mobile-sort-projects']").trigger("click");
+            expect(mobileCodes(wrapper)).toEqual(["ZNT", "MNT", "ANT"]);
+            expect(wrapper.find("[data-test='mobile-sort-btn']").text()).toContain("Sort: Projects ↑");
+
+            await wrapper.find("[data-test='mobile-sort-btn']").trigger("click");
+            await wrapper.find("[data-test='mobile-sort-projects']").trigger("click");
+            expect(mobileCodes(wrapper)).toEqual(["ANT", "MNT", "ZNT"]);
+            expect(wrapper.find("[data-test='mobile-sort-btn']").text()).toContain("Sort: Projects ↓");
+        });
+
+        it("applies the active filter tile to the stacked rows too", async () => {
+            mockSwrvData.value = fixture;
+            const wrapper = mountPage();
+
+            await wrapper.find("[data-test='filter-tile-offline']").trigger("click");
+            expect(mobileCodes(wrapper)).toEqual(["ANT"]);
+        });
+    });
+
     describe("summary filter tiles", () => {
         // Fixture states: Zebra (ZNT) online, Maple (MNT) degraded, Acme (ANT) offline.
         it("renders one tile per connection state with its count", async () => {
