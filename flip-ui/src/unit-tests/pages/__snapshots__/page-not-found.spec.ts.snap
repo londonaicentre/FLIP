@@ -2,48 +2,66 @@
 
 exports[`Page Not Found > renders the component successfully 1`] = `
 <div
-  class="flex flex-col items-center flex-1 p-8 space-y-6"
+  class="flex flex-col items-center justify-center flex-1 px-10 text-center"
 >
-  <svg
-    class="font-black w-36 h-36 text-primary-600 dark:text-primary-400"
-    data-test="title"
-    height="1.2em"
-    viewBox="0 0 256 256"
-    width="1.2em"
-  >
-    <path
-      d="M240 112l-36 40H40a8 8 0 0 1-8-8V80a8 8 0 0 1 8-8h164z"
-      fill="currentColor"
-      opacity=".2"
-    />
-    <path
-      d="M245.9 106.6l-36-40A8.1 8.1 0 0 0 204 64h-68V32a8 8 0 0 0-16 0v32H40a16 16 0 0 0-16 16v64a16 16 0 0 0 16 16h80v64a8 8 0 0 0 16 0v-64h68a8.1 8.1 0 0 0 5.9-2.6l36-40a8 8 0 0 0 0-10.8zM200.4 144H40V80h160.4l28.8 32z"
-      fill="currentColor"
-    />
-  </svg>
   <div
-    class="items-center mt-8 text-center text-gray-600 dark:text-gray-300"
+    class="flex items-center justify-center w-16 h-16 rounded-full bg-primary-100 ring-1 ring-primary-200 dark:bg-dark-raised dark:ring-dark-border"
   >
-    <p
-      class="text-2xl font-bold max-w-7xl"
+    <svg
+      class="w-[30px] h-[30px] text-primary-500 dark:text-primary-200"
+      data-test="badge-icon"
+      height="1.2em"
+      viewBox="0 0 256 256"
+      width="1.2em"
     >
-       We can't find the page you have requested. 
-    </p>
-    <p
-      class="pt-4 text-lg"
-      data-test="subtitle"
-    >
-       Double check the address and try again. If the issue persists please contact the service desk. 
-    </p>
+      <path
+        d="M240 112l-36 40H40a8 8 0 0 1-8-8V80a8 8 0 0 1 8-8h164z"
+        fill="currentColor"
+        opacity=".2"
+      />
+      <path
+        d="M245.9 106.6l-36-40A8.1 8.1 0 0 0 204 64h-68V32a8 8 0 0 0-16 0v32H40a16 16 0 0 0-16 16v64a16 16 0 0 0 16 16h80v64a8 8 0 0 0 16 0v-64h68a8.1 8.1 0 0 0 5.9-2.6l36-40a8 8 0 0 0 0-10.8zM200.4 144H40V80h160.4l28.8 32z"
+        fill="currentColor"
+      />
+    </svg>
   </div>
-  <div
-    data-v-90422ccc=""
+  <p
+    class="mt-5 text-[11px] font-black uppercase tracking-[0.06em] text-primary-600/70 dark:text-primary-300"
+    data-test="eyebrow"
   >
-    <router-link-stub
-      custom=""
+     Error 404 
+  </p>
+  <h1
+    class="mt-2.5 text-[28px] font-semibold font-heading leading-[1.2] tracking-[-0.01em] text-gray-700 dark:text-gray-100"
+  >
+     We can't find the page you have requested. 
+  </h1>
+  <p
+    class="mt-3 text-sm font-medium leading-[1.55] text-gray-500 dark:text-gray-300 max-w-[520px]"
+    data-test="subtitle"
+  >
+     Check the address and try again. If the issue persists, please contact the service desk. 
+  </p>
+  <div
+    class="flex flex-wrap items-center justify-center gap-3 mt-7"
+  >
+    <div
       data-v-90422ccc=""
-      to="/projects"
-    />
+    >
+      <router-link-stub
+        custom=""
+        data-v-90422ccc=""
+        to="/projects"
+      />
+    </div>
+    <!--v-if-->
   </div>
+  <a
+    class="mt-5 text-[13px] font-semibold transition-colors text-primary-500 hover:text-primary-400 dark:text-primary-200 dark:hover:text-primary-100"
+    data-test="service-desk-link"
+    href="mailto:aicentreflip@gmail.com"
+  >
+     Contact the service desk 
+  </a>
 </div>
 `;
