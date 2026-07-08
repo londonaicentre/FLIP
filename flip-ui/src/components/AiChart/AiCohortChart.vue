@@ -128,16 +128,30 @@ onMounted(() => {
                     fontFamily: "JetBrainsMono",
                     fontWeight: 700
                 },
-                dataZoom: {
-                    minSpan: 10,
-                    bottom: 30
-                },
                 calculable: true,
-                toolbox: chartToolbox(darkMode),
+                // No standing dataZoom slider — zoom is on-demand via the toolbox
+                // magnifier below, matching the training metrics chart.
+                toolbox: {
+                    ...chartToolbox(darkMode),
+                    feature: {
+                        ...chartToolbox(darkMode).feature,
+                        dataZoom: {
+                            show: true,
+                            // "none" keeps the drawn box as the exact view instead of
+                            // filtering points outside it.
+                            filterMode: "none" as const,
+                            title: {
+                                zoom: "Zoom",
+                                back: "Undo Zoom"
+                            }
+                        }
+                    }
+                },
                 grid: {
                     left: "5%",
                     right: "5%",
-                    bottom: "25%",
+                    // The old "25%" reserved room for the removed slider bar.
+                    bottom: 48,
                     containLabel: true
                 },
                 tooltip: {
