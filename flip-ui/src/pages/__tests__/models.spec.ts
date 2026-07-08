@@ -31,12 +31,20 @@ interface ModelsResponse {
 
 const mockSwrvData = ref<ModelsResponse | undefined>(undefined);
 
+// Captures the SWRV key function so tests can inspect the query the page
+// would fetch (search / status filter params).
+const swrvKey: { fn?: () => string } = {};
+
 vi.mock("swrv", () => ({
-    default: () => ({
-        data: mockSwrvData,
-        mutate: vi.fn(),
-        error: ref(null)
-    })
+    default: (key: () => string) => {
+        swrvKey.fn = key;
+
+        return {
+            data: mockSwrvData,
+            mutate: vi.fn(),
+            error: ref(null)
+        };
+    }
 }));
 
 const stubs = {
@@ -169,6 +177,36 @@ describe("Models Page", () => {
         expect(wrapper.find("[data-test='model-status-indicator']").text()).toBe("Training Started");
     });
 
+    test("stacks mobile rows with the status pill and green-dot trust chips below sm", async () => {
+        setModels([makeModel({
+            trusts: [trust("GSTT"), trust("KCH")],
+            status: "TRAINING_STARTED"
+        })]);
+        const wrapper = mountPage();
+        await wrapper.vm.$nextTick();
+
+        const row = wrapper.find("[data-test='models-list-item-0']");
+        // Desktop grid renders at sm+ only; the stacked block replaces it below.
+        const desktopGrid = row.find(".hidden");
+        expect(desktopGrid.classes()).toContain("sm:grid");
+        const mobile = row.find(".sm\\:hidden");
+        expect(mobile.exists()).toBe(true);
+
+        // Same status chip idiom (pill + dot) pinned beside the name…
+        const pill = mobile.find("[data-test='model-status-indicator-mobile']");
+        expect(pill.classes()).toContain("rounded-full");
+        expect(pill.classes().join(" ")).toContain("bg-fuchsia-100");
+        expect(pill.text()).toBe("Training Started");
+        // …and the same green-dot trust chips.
+        const chips = mobile.findAll("[data-test='model-trust-chip-mobile']");
+        expect(chips).toHaveLength(2);
+        expect(chips[0].find("span.bg-emerald-500").exists()).toBe(true);
+
+        // The sortable column header strip is desktop-only.
+        const headerStrip = wrapper.find("[data-test='sort-header-name']").element.closest(".hidden");
+        expect(headerStrip).toBeTruthy();
+    });
+
     test("renders the empty-state copy when the API returns zero models", async () => {
         setModels([]);
         const wrapper = mountPage();
@@ -197,6 +235,27 @@ describe("Models Page", () => {
         expect(wrapper.find("[data-test='filter-tile-count-queued']").text()).toBe("2");
         // Needs attention groups ERROR + RESULTS_UPLOAD_FAILED + STOPPED = 2.
         expect(wrapper.find("[data-test='filter-tile-count-attention']").text()).toBe("2");
+    });
+
+    test("opens with In training + Queued selected and unions further tile clicks", async () => {
+        setModels([makeModel()]);
+        const wrapper = mountPage();
+        await wrapper.vm.$nextTick();
+
+        expect(wrapper.find("[data-test='filter-tile-training']").attributes("aria-pressed")).toBe("true");
+        expect(wrapper.find("[data-test='filter-tile-queued']").attributes("aria-pressed")).toBe("true");
+        expect(wrapper.find("[data-test='filter-tile-completed']").attributes("aria-pressed")).toBe("false");
+        expect(swrvKey.fn!()).toContain("status=TRAINING_STARTED,INITIATED");
+
+        // Adding a tile unions its statuses into the filter…
+        await wrapper.find("[data-test='filter-tile-completed']").trigger("click");
+        expect(swrvKey.fn!()).toContain("status=TRAINING_STARTED,INITIATED,RESULTS_UPLOADED");
+
+        // …and deselecting everything clears the status filter entirely.
+        await wrapper.find("[data-test='filter-tile-training']").trigger("click");
+        await wrapper.find("[data-test='filter-tile-queued']").trigger("click");
+        await wrapper.find("[data-test='filter-tile-completed']").trigger("click");
+        expect(swrvKey.fn!()).not.toContain("status=");
     });
 
     test("clicking a filter tile activates it, and clicking it again clears the filter", async () => {

@@ -44,9 +44,9 @@
                         :key="tile.key"
                         type="button"
                         :data-test="`filter-tile-${tile.key}`"
-                        :aria-pressed="activeTile === tile.key"
+                        :aria-pressed="activeTiles.has(tile.key)"
                         class="flex-1 min-w-[150px] rounded-xl border bg-white px-4 py-3 text-left transition dark:bg-dark-surface"
-                        :class="activeTile === tile.key
+                        :class="activeTiles.has(tile.key)
                             ? [tile.ring, 'ring-[3px]']
                             : 'border-gray-200 hover:border-gray-300 dark:border-dark-border dark:hover:border-dark-border-strong'"
                         @click="toggleTile(tile.key)"
@@ -81,10 +81,11 @@
                      global `<table>` styling in main.css) -->
                 <div class="px-8 pb-8">
                     <div class="overflow-hidden border border-gray-200 rounded-xl dark:border-dark-border">
-                        <!-- Header row: sortable columns -->
-                        <div class="flex items-stretch bg-gray-50 border-b border-gray-200 dark:bg-dark-surface dark:border-dark-border">
+                        <!-- Header row: sortable columns (desktop-only — the stacked
+                             mobile rows have no columns to head) -->
+                        <div class="hidden sm:flex items-stretch bg-gray-50 border-b border-gray-200 dark:bg-dark-surface dark:border-dark-border">
                             <div class="w-[3px] shrink-0" />
-                            <div :class="GRID_CLASS" class="flex-1 gap-4 px-6 py-3">
+                            <div :class="GRID_CLASS" class="grid flex-1 gap-4 px-6 py-3">
                                 <button
                                     v-for="col in columns"
                                     :key="col.label"
@@ -119,7 +120,7 @@
                                 class="w-[3px] shrink-0"
                                 :class="railClass(model.status)"
                             />
-                            <div :class="GRID_CLASS" class="flex-1 items-center gap-4 px-6 py-4">
+                            <div :class="GRID_CLASS" class="hidden sm:grid flex-1 items-center gap-4 px-6 py-4">
                                 <!-- Model -->
                                 <div class="min-w-0">
                                     <router-link
@@ -178,6 +179,64 @@
                                         {{ modelStatusLabel(model.status) }}
                                     </span>
                                 </div>
+                            </div>
+
+                            <!-- Mobile: stacked row (design 5a) — name + status chip, project ·
+                                 owner meta, then the green-dot trust chips. -->
+                            <div class="flex-1 px-4 py-3 sm:hidden">
+                                <div class="flex items-start gap-2.5">
+                                    <div class="flex-1 min-w-0">
+                                        <router-link
+                                            :to="`/project/${model.projectId}/model/${model.id}`"
+                                            data-test="model-name-mobile"
+                                            class="font-mono text-sm font-semibold break-words
+                                            text-gray-900 dark:text-gray-100
+                                            hover:text-primary-600 dark:hover:text-primary-300"
+                                            @click.stop
+                                        >
+                                            {{ model.name }}
+                                        </router-link>
+                                        <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-300">
+                                            <router-link
+                                                :to="`/project/${model.projectId}`"
+                                                class="font-semibold hover:text-primary-600 dark:hover:text-primary-300"
+                                                @click.stop
+                                            >
+                                                {{ model.projectName }}
+                                            </router-link>
+                                            · {{ ownerLabel(model) }}
+                                        </p>
+                                    </div>
+                                    <span
+                                        data-test="model-status-indicator-mobile"
+                                        class="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium shrink-0"
+                                        :class="statusPillClass(model.status)"
+                                    >
+                                        <span class="inline-block w-1.5 h-1.5 rounded-full" :class="statusDotClass(model.status)" />
+                                        {{ modelStatusLabel(model.status) }}
+                                    </span>
+                                </div>
+                                <div v-if="model.trusts.length" class="flex flex-wrap items-center gap-1.5 mt-2">
+                                    <span
+                                        v-for="t in model.trusts"
+                                        :key="t.id"
+                                        data-test="model-trust-chip-mobile"
+                                        :title="t.name"
+                                        class="inline-flex items-center gap-1 rounded-full border border-gray-200
+                                        bg-white px-2.5 py-0.5 text-xs text-gray-700 dark:text-gray-200
+                                        dark:border-dark-border dark:bg-dark-surface"
+                                    >
+                                        <span class="inline-block w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                                        {{ trustChipLabel(t) }}
+                                    </span>
+                                </div>
+                                <p
+                                    v-else
+                                    data-test="model-trusts-empty-mobile"
+                                    class="mt-2 text-xs italic text-gray-400 dark:text-gray-300"
+                                >
+                                    Trusts assigned when training starts
+                                </p>
                             </div>
                         </div>
 
@@ -278,7 +337,20 @@ const TILES: ITile[] = [
     }
 ];
 
-const activeTile = ref<GroupKey | null>(null);
+// Tiles are accumulative: each click toggles a group in or out of the selection
+// and the list shows the union. An empty selection means no status filter (all
+// models). The page opens on the active work: In training + Queued.
+const activeTiles = ref<Set<GroupKey>>(new Set(["training", "queued"]));
+
+const syncStatusFilter = (): void => {
+    const statuses = TILES.filter(t => activeTiles.value.has(t.key)).flatMap(t => t.statuses);
+    statusQueryParam.value = statuses.length ? `&status=${statuses.join(",")}` : "";
+    pageNumber.value = 1;
+};
+
+// Seed the query param before SWRV builds its first key, so the default
+// selection doesn't cost an extra unfiltered fetch.
+syncStatusFilter();
 
 const { data, error } = useSWRV(
     () =>
@@ -299,12 +371,17 @@ const models = computed<IModelSummary[]>(() => data.value?.data ?? []);
 const tileCount = (tile: ITile): number =>
     tile.statuses.reduce((sum, s) => sum + (data.value?.statusCounts?.[s] ?? 0), 0);
 
-// Toggle a tile: clicking the active tile clears the filter, otherwise filters to its statuses.
+// Toggle a tile's membership in the accumulative selection.
 const toggleTile = (key: GroupKey): void => {
-    activeTile.value = activeTile.value === key ? null : key;
-    const tile = TILES.find(t => t.key === activeTile.value);
-    statusQueryParam.value = tile ? `&status=${tile.statuses.join(",")}` : "";
-    pageNumber.value = 1;
+    const next = new Set(activeTiles.value);
+    if (next.has(key)) {
+        next.delete(key);
+    }
+    else {
+        next.add(key);
+    }
+    activeTiles.value = next;
+    syncStatusFilter();
 };
 
 type SortKey = "name" | "project" | "trusts" | "status";
@@ -320,7 +397,9 @@ interface IColumn {
 // fractional unit (no `auto`): each row is its own grid, so a content-sized column — e.g. a
 // variable-width Status pill — would resolve to a different width per row and knock the columns
 // out of alignment. Fixed fractions keep every row's tracks identical.
-const GRID_CLASS = "grid grid-cols-[minmax(0,1.7fr)_minmax(0,1.4fr)_minmax(0,1.5fr)_minmax(0,0.9fr)]";
+// Column tracks only — each usage site sets its own display class so the
+// data rows can swap the grid for the stacked mobile block below sm.
+const GRID_CLASS = "grid-cols-[minmax(0,1.7fr)_minmax(0,1.4fr)_minmax(0,1.5fr)_minmax(0,0.9fr)]";
 
 const columns: IColumn[] = [
     {
