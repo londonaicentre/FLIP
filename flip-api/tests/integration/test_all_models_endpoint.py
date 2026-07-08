@@ -54,10 +54,12 @@ def _add_model(
     owner_id: UUID,
     name: str = "Model",
     status: ModelStatus = ModelStatus.PREPARED,
+    description: str | None = None,
 ) -> Model:
-    model = model_factory.build(
-        project_id=project_id, owner_id=owner_id, name=name, deleted=False, status=status
-    )
+    kwargs = {"project_id": project_id, "owner_id": owner_id, "name": name, "deleted": False, "status": status}
+    if description is not None:
+        kwargs["description"] = description
+    model = model_factory.build(**kwargs)
     session.add(model)
     session.commit()
     return model
@@ -132,7 +134,14 @@ def test_row_carries_project_name_owner_name_and_run_trusts(
     session.commit()
 
     project = _add_project(session, project_factory, owner_id=user_id, name="Stroke triage")
-    model = _add_model(session, model_factory, project_id=project.id, owner_id=user_id, name="stroke-v1")
+    model = _add_model(
+        session,
+        model_factory,
+        project_id=project.id,
+        owner_id=user_id,
+        name="stroke-v1",
+        description="Predicts stroke outcomes from CT",
+    )
     _add_run_trust(session, trust_factory, model_id=model.id, name="Guy's & St Thomas'", code="GSTT")
     _add_run_trust(session, trust_factory, model_id=model.id, name="King's College Hospital", code="KCH")
 
@@ -141,6 +150,7 @@ def test_row_carries_project_name_owner_name_and_run_trusts(
 
     assert row["projectId"] == str(project.id)
     assert row["projectName"] == "Stroke triage"
+    assert row["description"] == "Predicts stroke outcomes from CT"
     assert row["ownerName"] == "Dr Ada"
     assert {t["code"] for t in row["trusts"]} == {"GSTT", "KCH"}
 

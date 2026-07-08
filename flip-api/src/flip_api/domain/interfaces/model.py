@@ -55,6 +55,7 @@ class IAllModelsResponse(BaseModel):
 
     id: UUID
     name: str
+    description: str = ""
     status: ModelStatus
     project_id: UUID = Field(..., alias="projectId")
     project_name: str = Field(..., alias="projectName")
