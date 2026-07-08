@@ -84,30 +84,35 @@
                 </div>
             </div>
 
-            <!-- Summary card (CSSummary) -->
-            <AiCard v-if="viewMode === 'list'" class="mb-4">
-                <div class="flex flex-wrap">
-                    <div
-                        v-for="(s, idx) in summaryCells"
-                        :key="s.key"
-                        class="flex flex-col gap-1 px-6 py-4 min-w-[140px]"
-                        :class="{ 'border-l border-gray-200 dark:border-dark-border': idx > 0 }"
-                    >
-                        <div class="flex items-center gap-2">
-                            <span class="inline-block w-2 h-2 rounded-full" :class="s.dotClass" />
-                            <span class="text-[11px] font-mono uppercase tracking-widest text-gray-500 dark:text-gray-300">
-                                {{ s.label }}
-                            </span>
-                        </div>
-                        <div
-                            class="font-heading font-semibold text-3xl leading-none"
-                            :class="s.count > 0 && s.key !== 'online' ? s.warnTextClass : 'text-gray-900 dark:text-gray-100'"
-                        >
-                            {{ s.count }}
-                        </div>
+            <!-- Filter tiles: one per connection state, each a toggle (models-page idiom).
+                 Click the active tile to reset. -->
+            <div v-if="viewMode === 'list'" class="flex flex-wrap gap-3 mb-4">
+                <button
+                    v-for="tile in TILES"
+                    :key="tile.key"
+                    type="button"
+                    :data-test="`filter-tile-${tile.key}`"
+                    :aria-pressed="activeTile === tile.key"
+                    class="flex-1 min-w-[150px] rounded-xl border bg-white px-4 py-3 text-left transition dark:bg-dark-surface"
+                    :class="activeTile === tile.key
+                        ? [tile.ring, 'ring-[3px]']
+                        : 'border-gray-200 hover:border-gray-300 dark:border-dark-border dark:hover:border-dark-border-strong'"
+                    @click="toggleTile(tile.key)"
+                >
+                    <div class="flex items-center gap-2">
+                        <span class="inline-block w-2 h-2 rounded-full" :class="tile.dot" />
+                        <span class="text-[11px] font-mono uppercase tracking-widest text-gray-500 dark:text-gray-300">
+                            {{ tile.label }}
+                        </span>
                     </div>
-                </div>
-            </AiCard>
+                    <div
+                        :data-test="`filter-tile-count-${tile.key}`"
+                        class="mt-1 text-2xl font-heading font-bold text-gray-900 dark:text-gray-100"
+                    >
+                        {{ stateCounts[tile.key] }}
+                    </div>
+                </button>
+            </div>
 
             <!-- Status table (ConnectionA table) -->
             <AiCard v-if="viewMode === 'list'">
@@ -140,7 +145,7 @@
                         </thead>
                         <tbody>
                             <tr
-                                v-for="(t, idx) in sortedTrusts"
+                                v-for="(t, idx) in displayedTrusts"
                                 :key="t.id"
                                 data-test="trust-row"
                                 :class="[
@@ -217,9 +222,9 @@
                                 </td>
                                 <td class="px-4 py-4" />
                             </tr>
-                            <tr v-if="!sortedTrusts.length">
+                            <tr v-if="!displayedTrusts.length">
                                 <td colspan="7" class="text-center py-6 text-gray-500 dark:text-gray-300">
-                                    No trusts registered yet.
+                                    {{ activeTile ? "No trusts match this filter." : "No trusts registered yet." }}
                                 </td>
                             </tr>
                         </tbody>
@@ -736,7 +741,44 @@ const sortedTrusts = computed<IRenderedTrust[]>(() => {
     return arr;
 });
 
-const summaryCells = computed(() => {
+// Summary filter tiles — one per connection state (models-page idiom). `dot`/`ring`
+// are whole literal Tailwind classes so the JIT compiler emits them.
+interface ITile {
+    key: TrustState;
+    label: string;
+    dot: string;
+    ring: string;
+}
+
+const TILES: ITile[] = [
+    {
+        key: "online",
+        label: "Online",
+        dot: "bg-emerald-600",
+        ring: "border-emerald-600 ring-emerald-600/40"
+    },
+    {
+        key: "degraded",
+        label: "Degraded",
+        dot: "bg-amber-500",
+        ring: "border-amber-500 ring-amber-500/40"
+    },
+    {
+        key: "offline",
+        label: "Offline",
+        dot: "bg-red-500",
+        ring: "border-red-500 ring-red-500/40"
+    }
+];
+
+const activeTile = ref<TrustState | null>(null);
+
+// Toggle a tile: clicking the active tile clears the filter, otherwise filters to its state.
+const toggleTile = (key: TrustState): void => {
+    activeTile.value = activeTile.value === key ? null : key;
+};
+
+const stateCounts = computed<Record<TrustState, number>>(() => {
     const counts: Record<TrustState, number> = {
         online: 0,
         degraded: 0,
@@ -744,30 +786,13 @@ const summaryCells = computed(() => {
     };
     for (const t of trusts.value ?? []) counts[trustState(t)]++;
 
-    return [
-        {
-            key: "online",
-            label: "Online",
-            count: counts.online,
-            dotClass: "bg-emerald-600",
-            warnTextClass: "text-emerald-700"
-        },
-        {
-            key: "degraded",
-            label: "Degraded",
-            count: counts.degraded,
-            dotClass: "bg-amber-500",
-            warnTextClass: "text-amber-600 dark:text-amber-400"
-        },
-        {
-            key: "offline",
-            label: "Offline",
-            count: counts.offline,
-            dotClass: "bg-red-500",
-            warnTextClass: "text-red-600 dark:text-red-400"
-        }
-    ];
+    return counts;
 });
+
+// The table renders the sorted list narrowed to the active tile's state (all when no filter).
+const displayedTrusts = computed<IRenderedTrust[]>(() =>
+    activeTile.value ? sortedTrusts.value.filter(t => t._state === activeTile.value) : sortedTrusts.value
+);
 
 const subtitle = computed(() => {
     if (!trusts.value) return "Loading…";

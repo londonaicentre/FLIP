@@ -424,4 +424,51 @@ describe("ConnectionStatus", () => {
         await nodes[0].trigger("mouseleave");
         expect(detail().exists()).toBe(false);
     });
+
+    describe("summary filter tiles", () => {
+        // Fixture states: Zebra (ZNT) online, Maple (MNT) degraded, Acme (ANT) offline.
+        it("renders one tile per connection state with its count", async () => {
+            mockSwrvData.value = fixture;
+            const wrapper = mountPage();
+            await wrapper.vm.$nextTick();
+
+            expect(wrapper.find("[data-test='filter-tile-count-online']").text()).toBe("1");
+            expect(wrapper.find("[data-test='filter-tile-count-degraded']").text()).toBe("1");
+            expect(wrapper.find("[data-test='filter-tile-count-offline']").text()).toBe("1");
+        });
+
+        it("filters the table to a state on click and resets on a second click", async () => {
+            mockSwrvData.value = fixture;
+            const wrapper = mountPage();
+            const tile = wrapper.find("[data-test='filter-tile-offline']");
+
+            await tile.trigger("click");
+            expect(tile.attributes("aria-pressed")).toBe("true");
+            expect(codesInOrder(wrapper)).toEqual(["ANT"]);
+
+            await tile.trigger("click");
+            expect(tile.attributes("aria-pressed")).toBe("false");
+            expect(codesInOrder(wrapper)).toEqual(["ANT", "MNT", "ZNT"]);
+        });
+
+        it("switches the filter when a different tile is clicked", async () => {
+            mockSwrvData.value = fixture;
+            const wrapper = mountPage();
+
+            await wrapper.find("[data-test='filter-tile-offline']").trigger("click");
+            await wrapper.find("[data-test='filter-tile-degraded']").trigger("click");
+            expect(codesInOrder(wrapper)).toEqual(["MNT"]);
+        });
+
+        it("explains an empty filtered table instead of claiming no trusts exist", async () => {
+            // All fixture trusts online → the offline filter empties the table.
+            mockSwrvData.value = [fixture[0]];
+            const wrapper = mountPage();
+
+            await wrapper.find("[data-test='filter-tile-offline']").trigger("click");
+            expect(wrapper.findAll("[data-test='trust-row']")).toHaveLength(0);
+            expect(wrapper.text()).toContain("No trusts match this filter.");
+            expect(wrapper.text()).not.toContain("No trusts registered yet.");
+        });
+    });
 });
