@@ -69,7 +69,7 @@
                             v-tippy="{placement: 'bottom', content: 'Stage Stopped'}"
                             class="flex items-center justify-center flex-shrink-0 w-8 h-8 border-2 border-gray-300 dark:border-primary-400 rounded-full"
                         >
-                            <icon-ant-design-stop-twotone class="w-8 h-8 text-yellow-600 dark:text-yellow-400" aria-hidden="true" />
+                            <icon-ph-prohibit class="w-8 h-8 text-yellow-600 dark:text-yellow-400" aria-hidden="true" />
                         </span>
                         <div class="flex flex-col">
                             <router-link
