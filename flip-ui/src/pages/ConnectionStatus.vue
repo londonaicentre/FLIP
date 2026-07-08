@@ -278,7 +278,7 @@
                                     data-test="trust-row"
                                     :class="[
                                         idx > 0 ? 'border-t border-gray-100 dark:border-dark-border' : '',
-                                        t._state === 'offline' ? 'bg-red-50/40 dark:bg-red-900/10' : 'dark:bg-dark-surface'
+                                        t._state === 'offline' ? 'bg-red-50/40 dark:bg-red-900/10' : ''
                                     ]"
                                 >
                                     <td class="px-4 py-4 align-middle">
