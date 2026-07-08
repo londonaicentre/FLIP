@@ -40,7 +40,7 @@
                             title="Awaiting Approval"
                         >
                             <AiCircledIcon>
-                                <icon-heroicons-outline-clock class="w-4 h-4" />
+                                <icon-ph-clock class="w-4 h-4" />
                             </AiCircledIcon>
                             <span class="hidden lg:inline">Awaiting Approval</span>
                         </div>
@@ -63,7 +63,7 @@
                                     tooltip="Unstage Project"
                                     @click="openUnstagingModal"
                                 >
-                                    <icon-heroicons-outline-clipboard class="lg:mr-2" />
+                                    <icon-ph-clipboard class="lg:mr-2" />
                                     <span class="hidden lg:inline">Unstage Project</span>
                                 </AiButton>
                                 <AiConfirmModal

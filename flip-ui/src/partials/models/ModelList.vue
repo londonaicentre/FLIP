@@ -117,13 +117,13 @@
                                 </td>
                                 <td :data-test="`model-status-${row.id}`">
                                     <div class="flex items-center gap-2 whitespace-nowrap">
-                                        <icon-heroicons-outline-check
+                                        <icon-ph-check
                                             v-if="row.status && !isModelStatusError(row.status)"
                                             class="w-4 h-4 text-green-600 dark:text-green-400 shrink-0"
                                             data-test="model-status-icon-tick"
                                             aria-hidden="true"
                                         />
-                                        <icon-heroicons-outline-x
+                                        <icon-ph-x
                                             v-else-if="isModelStatusError(row.status)"
                                             class="w-4 h-4 text-red-600 dark:text-red-400 shrink-0"
                                             data-test="model-status-icon-cross"

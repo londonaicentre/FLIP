@@ -71,7 +71,7 @@ const stubs = {
     },
     QueryResultCharts: { template: "<div data-test='query-result-charts' />" },
     Form: { template: "<form @submit.prevent=\"$emit('submit', { query: 'SELECT * FROM patients' })\"><slot /></form>" },
-    "icon-heroicons-outline-clock": { template: "<span />" },
+    "icon-ph-clock": { template: "<span />" },
     Transition: { template: "<div><slot /></div>" }
 };
 

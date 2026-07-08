@@ -95,7 +95,7 @@
                                 dense
                                 class="flex-shrink-0"
                             />
-                            <icon-heroicons-outline-chevron-right
+                            <icon-ph-caret-right
                                 class="w-4 h-4 text-gray-400 dark:text-gray-300 shrink-0 lg:hidden"
                                 aria-hidden="true"
                             />

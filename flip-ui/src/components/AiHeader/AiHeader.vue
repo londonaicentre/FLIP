@@ -121,7 +121,7 @@
                                             class="inline-flex items-center justify-center p-2 rounded-md text-primary-500 dark:text-primary-400 hover:text-primary-800 hover:bg-gray-100 dark:hover:bg-dark-surface focus:outline-none"
                                         >
                                             <span class="sr-only">Close menu</span>
-                                            <icon-heroicons-outline-x class="w-5 h-5" aria-hidden="true" />
+                                            <icon-ph-x class="w-5 h-5" aria-hidden="true" />
                                         </PopoverButton>
                                     </div>
                                 </div>

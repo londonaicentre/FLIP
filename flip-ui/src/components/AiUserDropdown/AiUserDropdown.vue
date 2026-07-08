@@ -33,7 +33,7 @@
                                     {{ displayName }}{{ role ? ` (${role})` : '' }}
                                 </span>
                             </span>
-                            <icon-heroicons-outline-selector
+                            <icon-ph-caret-down
                                 class="flex-shrink-0 w-4 h-4 text-gray-400 dark:text-gray-300 group-hover:text-gray-500 dark:group-hover:text-gray-200"
                                 aria-hidden="true"
                             />

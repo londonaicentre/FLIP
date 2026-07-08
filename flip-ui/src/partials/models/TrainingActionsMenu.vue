@@ -36,7 +36,7 @@
             :disabled="!canDownloadResults"
             @click="downloadTrainingResults"
         >
-            <icon-heroicons-outline-download class="w-4 h-4 lg:mr-2" aria-hidden="true" />
+            <icon-ph-download class="w-4 h-4 lg:mr-2" aria-hidden="true" />
             <span class="hidden lg:inline">Download Results</span>
         </AiButton>
     </div>

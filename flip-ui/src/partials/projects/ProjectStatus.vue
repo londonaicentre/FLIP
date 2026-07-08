@@ -121,11 +121,11 @@
                                                 v-tippy="{ content: project.reimportCount >= maxReimportCount ? ReimportCountLimitMessage : 'Reimport attempts', placement: 'top' }"
                                                 class="flex items-center gap-1.5 shrink-0"
                                             >
-                                                <RefreshIcon
+                                                <icon-ph-arrows-clockwise
                                                     v-if="project.reimportCount < maxReimportCount"
                                                     class="w-4 h-4 text-green-500"
                                                 />
-                                                <ExclamationCircleIcon
+                                                <icon-ph-warning-circle-fill
                                                     v-else
                                                     class="w-4 h-4 text-yellow-500"
                                                 />
@@ -251,7 +251,7 @@
                             <template v-if="canLoad">
                                 <div v-if="sortedData?.length === 0" class="flex flex-row items-center h-full">
                                     <p class="flex items-center justify-center gap-2 flex-1 text-center" data-test="no-project-status-message">
-                                        <icon-heroicons-outline-clock class="w-5 h-5" />
+                                        <icon-ph-clock class="w-5 h-5" />
                                         Awaiting imaging project creation from trusts…
                                     </p>
                                 </div>
@@ -296,7 +296,6 @@
 </template>
 
 <script setup lang="ts">
-import { ExclamationCircleIcon, RefreshIcon } from "@heroicons/vue/solid";
 import useSWRV from "swrv";
 import { sortBy } from "underscore";
 import { computed, watch } from "vue";

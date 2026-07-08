@@ -46,19 +46,19 @@
                         class="grid w-5 h-5 place-items-center rounded-full transition-all mb-1"
                         :class="circleClass(idx)"
                     >
-                        <icon-heroicons-outline-x
+                        <icon-ph-x-bold
                             v-if="step.error && !step.completed"
-                            class="w-3 h-3 text-white stroke-[2.5]"
+                            class="w-3 h-3 text-white"
                             aria-hidden="true"
                         />
-                        <icon-heroicons-outline-minus
+                        <icon-ph-stop-circle-fill
                             v-else-if="step.stopped && !step.completed"
-                            class="w-3 h-3 text-white stroke-[2.5]"
+                            class="w-3 h-3 text-white"
                             aria-hidden="true"
                         />
-                        <icon-heroicons-outline-check
+                        <icon-ph-check-bold
                             v-else-if="step.completed"
-                            class="w-3 h-3 text-white stroke-[2.5]"
+                            class="w-3 h-3 text-white"
                             aria-hidden="true"
                         />
                         <span

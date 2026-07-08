@@ -49,7 +49,7 @@
                     </div>
                 </div>
                 <div v-if="queryId && !project?.query" class="flex items-center gap-2 px-4 py-3 text-sm text-blue-700 dark:text-blue-300">
-                    <icon-heroicons-outline-clock class="w-5 h-5" />
+                    <icon-ph-clock class="w-5 h-5" />
                     Awaiting trust results…
                 </div>
                 <div v-if="project?.query" class="relative p-4 pt-4 space-y-4">

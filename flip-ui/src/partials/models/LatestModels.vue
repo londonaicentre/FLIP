@@ -74,7 +74,7 @@
                                 </p>
                             </div>
                             <div>
-                                <icon-heroicons-outline-chevron-right
+                                <icon-ph-caret-right
                                     class="w-4 h-4 text-gray-400 dark:text-gray-300 transition group-hover:translate-x-0.5"
                                     aria-hidden="true"
                                 />
