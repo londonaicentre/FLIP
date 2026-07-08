@@ -19,7 +19,7 @@
     >
         <!-- Mobile menu button -->
         <PopoverButton aria-label="Open menu" class="outline-none xl:hidden mr-3" data-test="mobile-menu-btn">
-            <icon-heroicons-outline-menu-alt-1 class="w-6 h-6" />
+            <icon-ph-list class="w-6 h-6" />
         </PopoverButton>
 
         <!-- Logo (left) — London AI Centre + FLIP marks -->
