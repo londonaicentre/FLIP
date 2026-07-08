@@ -101,24 +101,32 @@ onMounted(() => {
                         fontFamily: "JetBrainsMono",
                         fontWeight: 700
                     },
-                    dataZoom: [
-                        {
-                            type: "slider",
-                            bottom: 30,
-                            minSpan: 10
-                        }, // visible bar
-                        {
-                            type: "inside",
-                            minSpan: 10
-                        } // scroll/trackpad zoom
-                    ],
                     calculable: true,
-                    toolbox: chartToolbox(darkMode),
+                    // No standing dataZoom components (slider bar / scroll hijack) — zoom is
+                    // on-demand via the toolbox magnifier below, reset via "Reset View".
+                    toolbox: {
+                        ...chartToolbox(darkMode),
+                        feature: {
+                            ...chartToolbox(darkMode).feature,
+                            dataZoom: {
+                                show: true,
+                                // "none" keeps the drawn box as the exact view instead of
+                                // filtering points outside it (which re-clips the lines).
+                                filterMode: "none" as const,
+                                title: {
+                                    zoom: "Zoom",
+                                    back: "Undo Zoom"
+                                }
+                            }
+                        }
+                    },
                     grid: {
                         backgroundColor: chrome.background,
                         left: "5%",
                         right: 160,
-                        bottom: "25%",
+                        // The x-axis name (nameGap 40) needs ~64px; the old "25%" also
+                        // reserved room for the now-removed slider bar.
+                        bottom: 64,
                         containLabel: true
                     },
                     tooltip: {
