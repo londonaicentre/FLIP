@@ -161,18 +161,17 @@
                                     </div>
                                 </div>
                             </div>
-                            <div class="px-4 py-3 bg-gray-100 rounded-b-lg dark:bg-dark-canvas sm:px-6 sm:flex sm:flex-row-reverse sm:flex-shrink-0">
+                            <div class="flex flex-row-reverse px-4 py-3 bg-gray-100 rounded-b-lg dark:bg-dark-canvas sm:px-6 shrink-0">
                                 <AiButton
                                     data-test="register-user-confirm-btn"
                                     primary
-                                    class="w-full sm:ml-2 sm:w-auto"
+                                    class="ml-2"
                                     :loading="isSubmitting"
                                     @click="submitAction"
                                 >
                                     Register User
                                 </AiButton>
                                 <AiButton
-                                    class="w-full mt-2 sm:mt-0 sm:w-auto"
                                     data-test="close-modal-btn"
                                     @click="close"
                                 >
