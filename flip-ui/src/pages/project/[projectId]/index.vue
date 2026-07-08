@@ -135,8 +135,11 @@
                     />
                 </div>
 
-                <div class="lg:sticky top-16">
-                    <LatestModels />
+                <!-- Stretched cell + absolutely positioned card: the model list can't
+                     inflate the row, so the card matches the height the imaging
+                     project status card defines and scrolls internally instead. -->
+                <div class="relative lg:self-stretch">
+                    <LatestModels class="lg:absolute lg:inset-0" />
                 </div>
             </div>
         </div>

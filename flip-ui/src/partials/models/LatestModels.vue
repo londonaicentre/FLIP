@@ -12,8 +12,8 @@
 -->
 
 <template>
-    <AiCard>
-        <div class="p-4">
+    <AiCard class="flex flex-col">
+        <div class="p-4 shrink-0">
             <div class="flex items-center justify-between">
                 <h2 class="text-lg font-semibold font-heading grow leading-loose">
                     Models
@@ -47,6 +47,7 @@
         <div
             v-if="projectStore.project?.status === 'APPROVED'"
             data-test="models-approved-status"
+            class="flex-1 min-h-0 overflow-y-auto"
         >
             <div v-if="!data" class="py-12">
                 <AiLoader />
@@ -107,7 +108,7 @@
         </template>
         <div
             v-if="projectStore.project?.status === 'APPROVED' && data?.data?.length"
-            class="inline-flex justify-end w-full p-4 space-x-2"
+            class="inline-flex justify-end w-full p-4 space-x-2 shrink-0 mt-auto"
         >
             <AiButton light data-test="view-all-models-btn" :link="`/project/${route.params['projectId']}/models`">
                 View All Models

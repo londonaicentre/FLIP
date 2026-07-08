@@ -152,6 +152,20 @@ describe("Project page (/project/[id]/index.vue)", () => {
         expect(wrapper.text()).toContain("Projects");
     });
 
+    test("pins the Latest Models card to the row height the imaging-status card defines", () => {
+        const wrapper = mountProjectPage();
+
+        // The card is absolutely positioned inside a stretched grid cell at lg, so
+        // its model list can't inflate the row past the imaging project status card.
+        const card = wrapper.find("[data-test=stub-latest-models]");
+        expect(card.classes()).toContain("lg:absolute");
+        expect(card.classes()).toContain("lg:inset-0");
+        const cell = card.element.parentElement;
+        expect(cell?.className).toContain("relative");
+        expect(cell?.className).toContain("lg:self-stretch");
+        expect(cell?.className).not.toContain("sticky");
+    });
+
     test("renders 4 lifecycle steps and marks only step 01 complete on a fresh UNSTAGED project", () => {
         const wrapper = mountProjectPage();
         const steps = wrapper.findAll("[data-test^=step-]");

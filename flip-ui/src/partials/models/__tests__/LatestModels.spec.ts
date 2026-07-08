@@ -184,6 +184,27 @@ describe("LatestModels — defensive data access", () => {
         expect(wrapper.text()).toContain("View All Models");
     });
 
+    test("lays out as a flex column whose list region scrolls when the card height is pinned", async () => {
+        setData({
+            data: [{
+                id: "m1",
+                name: "Alpha",
+                description: ""
+            }]
+        });
+        const wrapper = mountLatestModels();
+        await flushPromises();
+
+        // The project page pins this card to the imaging-status row height; the
+        // root must be a flex column so the list flexes and scrolls internally.
+        expect(wrapper.classes()).toContain("flex");
+        expect(wrapper.classes()).toContain("flex-col");
+        const list = wrapper.find("[data-test=models-approved-status]");
+        for (const cls of ["flex-1", "min-h-0", "overflow-y-auto"]) {
+            expect(list.classes()).toContain(cls);
+        }
+    });
+
     test("shows the header Create-Model button when not a viewer", async () => {
         setData({
             data: [{
