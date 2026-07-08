@@ -118,10 +118,30 @@ make run RAW_CHECKPOINT=/path/to/Ark6_swinLarge768_ep50.pth.tar
 
 # Export the full NVFLARE job under ./fl_job/flip_fedavg/ (no GPU needed)
 make export
-
-# Submit the exported job to a running FL cluster
-make -C fl-services/nvflare submit APP=./fl_job/flip_fedavg
 ```
+
+`NUM_ROUNDS` (default `3`) and `N_CLIENTS` (default `2`) parameterise both targets and propagate
+through the tutorial harness:
+
+```bash
+make run NUM_ROUNDS=10                                                 # 10-round local simulation
+make export NUM_ROUNDS=10 N_CLIENTS=3
+make -C fl-tutorials run-tutorial TUTORIAL=arkplus_fine_tuning NUM_ROUNDS=10
+```
+
+or pass the flags directly using the recipe syntax (the Makefile's `uv` environment — flip-utils with
+the `full` extra — matches the deployed FL image; a bare `uv run` resolves to an env without
+torch/nvflare):
+
+```bash
+uv run --project ../../../../flip-utils --extra full python job.py --n_clients 3 --num_rounds 10
+```
+
+> **Local knob only.** `--num_rounds` governs local simulation and export. In production the FL API
+> reads `GLOBAL_ROUNDS` from `config.json` at submit time and overrides whatever `job.py` baked into
+> the exported config — deployed round counts come from `config.json`, never from these flags.
+> (The standalone NVFLARE submit path, `make -C fl-services/nvflare submit`, is not wired — run
+> locally via the simulator, or exercise the platform path through the FLIP UI / `make e2e_smoke`.)
 
 ## Key files
 
