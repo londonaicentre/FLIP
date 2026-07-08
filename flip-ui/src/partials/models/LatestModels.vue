@@ -31,26 +31,24 @@
                     </AiButton>
                 </div>
             </div>
-            <div v-if="projectStore.project?.status === 'APPROVED' && !!data && !data?.data?.length">
-                <div
-                    class="flex flex-col items-center justify-center w-full h-full gap-4 p-4 mt-4 border-2 border-gray-100 dark:border-dark-border rounded-lg"
-                >
-                    <div class="relative block w-full text-center">
-                        <icon-ph-graph class="w-12 h-12 mx-auto text-gray-400 dark:text-gray-600" />
-                        <div class="mt-2 text-sm">
-                            No models have been created for this project yet.
-                        </div>
-                    </div>
-                </div>
-            </div>
         </div>
         <div
             v-if="projectStore.project?.status === 'APPROVED'"
             data-test="models-approved-status"
-            class="flex-1 min-h-0 overflow-y-auto"
+            class="flex flex-col flex-1 min-h-0 overflow-y-auto"
         >
             <div v-if="!data" class="py-12">
                 <AiLoader />
+            </div>
+            <div
+                v-else-if="!data?.data?.length"
+                data-test="models-empty-state"
+                class="flex flex-col flex-1 items-center justify-center px-4 py-8 text-center"
+            >
+                <icon-ph-graph class="w-12 h-12 text-gray-400 dark:text-gray-600" />
+                <div class="mt-2 text-sm">
+                    No models have been created for this project yet.
+                </div>
             </div>
             <ul v-if="data?.data?.length" role="list" class="border-t border-b border-gray-200 divide-y divide-gray-200 dark:border-dark-border dark:divide-dark-border">
                 <li v-for="model in data.data" :key="model.id">

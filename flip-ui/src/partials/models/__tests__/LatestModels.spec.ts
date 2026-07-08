@@ -160,6 +160,19 @@ describe("LatestModels — defensive data access", () => {
         expect(wrapper.text()).toContain("No models have been created for this project yet.");
     });
 
+    test("centres the borderless empty state vertically in the card", async () => {
+        setData({ data: [] });
+        const wrapper = mountLatestModels();
+        await flushPromises();
+
+        const empty = wrapper.find("[data-test=models-empty-state]");
+        for (const cls of ["flex-1", "items-center", "justify-center"]) {
+            expect(empty.classes()).toContain(cls);
+        }
+        // No framed box around the icon + copy any more.
+        expect(empty.html()).not.toContain("border-2");
+    });
+
     test("lists models and shows the View All button when data.data is populated", async () => {
         setData({
             data: [
