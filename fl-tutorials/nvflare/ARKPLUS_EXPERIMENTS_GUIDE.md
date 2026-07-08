@@ -22,15 +22,11 @@ against the synthetic DeCaf MICCAI-2026 dataset).
 | # | Experiment | Tutorial dir (`fl-tutorials/nvflare/`) | Job type | Dataset | Cohort SQL discriminator |
 |---|---|---|---|---|---|
 | 1 | **Baseline evaluation** | `image_evaluation/arkplus_baseline_classification_evaluation` | `evaluation_client_api` | **holdout** | `procedure_source_value = 'Chest X-ray (holdout)'` |
-| 2 | **Finetuning** | `image_classification/arkplus_fine_tuning` | `standard` (training) | **finetuning** (train split) | `procedure_source_value = 'Chest X-ray'` |
+| 2 | **Finetuning** | `image_classification/arkplus_fine_tuning` | `standard_client_api` (training) | **finetuning** (train split) | `procedure_source_value = 'Chest X-ray'` |
 | 3 | **Multimodel evaluation** | `image_evaluation/arkplus_multimodel_classification_evaluation` | `evaluation` | **holdout** | `procedure_source_value = 'Chest X-ray (holdout)'` |
 
 **Dependency:** the multimodel evaluation (3) evaluates the pretrained **and** the finetuned
 checkpoint, so run finetuning (2) first and feed its output checkpoint into (3).
-
-**Client API variant:** experiment 2 also has an NVFLARE Client-API sibling,
-`image_classification/arkplus_fine_tuning_client_api` (`job_type: standard_client_api`), with identical
-finetuning semantics — swap it in wherever `arkplus_fine_tuning` appears below.
 
 Each tutorial's `app_files/` carries the model code + `config.json`; the pretrained Ark+ weights
 (`arkplus_pretrained_weights.pt`, ~759 MiB) ship in the baseline/multimodel `app_files/`. The
@@ -292,7 +288,7 @@ Results (cross-site metrics) are on the model's page in the UI, or via
 | Model → `ERROR`, `Server disconnected without sending a response` | fl-api/fl-server OOM loading the 759 MiB checkpoint | Size `fl-api-net-1` ≥ 4 GiB, `fl-server-net-1` ≥ 8 GiB (`ecs_tasks.tf`) |
 | **Finetuning** model → `ERROR` right after `init_training` (never reaches a `train` task); fl-server log shows `RuntimeError: Error(s) in loading state_dict for ArkPlusNVFlareWrapper: size mismatch for ark_model.omni_heads.0.weight: copying a param with shape torch.Size([14, 1376]) … current model is torch.Size([5, 1376])` | The `SERVER_CHECKPOINT` staged for finetuning is **not backbone-only** — it still carries the foundation model's 14-class `omni_heads.*`. The server persistor loads it `strict=False`, which tolerates *missing/unexpected* keys but **not a shape mismatch on a shared key**, so the 14-class head can't seat in the fresh 5-class model. Typically caused by pointing `pretrained_weights.pt` at the **eval** checkpoint (which keeps the heads) instead of the finetuning one. | Use a **backbone-only** `pretrained_weights.pt` — produce it via the finetuning tutorial's `make prepare-checkpoint` (`process_tools/preprocess_checkpoints.py`, which strips `omni_heads.*`). Quick fix if you only have a head-carrying copy: `torch.load` it and re-save `{k:v for k,v in sd.items() if not k.startswith("omni_heads.")}`. See the finetuning-checkpoint note under **The three experiments**. |
 | Eval reports `RESULTS_UPLOADED` but **metrics are empty**; fl-client log shows `RuntimeError: No DICOM image/label pairs found`, and imaging-api logs `Trust-side storage error … [Errno 13] Permission denied: '/app/data/images/net-1/…-scans-ALL.zip'` | The eval-time per-accession DICOM download writes into the shared bind mount `trust/data/<KIT>` → `/app/data/images` (host uid 1001), but its `net-1/` subdir was created by the **root** fl-client, so imaging-api (uid 1000) can't write DICOMs into it. `get_dataframe`/`project_id` are fine — only the image write fails, so every accession is skipped and the datalist is empty. | Make the per-net dir writable by imaging-api's uid on each trust (container-root = host-root on the bind mount, so no host `sudo`): `docker exec -u 0 <trust>-imaging-api-1 chown -R 1000:1000 /app/data/images/net-1`. Durable — `CleanupImages` only clears the dir's *contents*, never re-creates it. |
-| **Finetuning** (`standard`) model OOMs during **post-training cross-site validation** — all `train`/aggregation rounds finished (metrics reach the last local epoch), then fl-server `MemoryUtilized` spikes to the 8 GiB task ceiling and the job child process exits; the model **orphans at `TRAINING_STARTED`** (crash lands before `END_RUN`, so `PersistToS3AndCleanup` never runs → empty S3 results, net stays `BUSY`). Prod-only — staging (both trusts on one fast-local desktop) doesn't hit it. | The stock `CrossSiteModelEval` runs a `submit_model` all-to-all (each client's full model collected server-side **plus** the global model broadcast), and over a **slow-link trust** (e.g. BDMS/Thailand) the full ~759 MiB copies stay resident for minutes → OOM (~97 % of 8 GiB). | Finetune eval now defaults to **`GlobalModelEval`** (broadcasts only the aggregated global model; no `submit_model` matrix) — peak memory drops to ~75 % and the run completes to `RESULTS_UPLOADED`. To clear an already-orphaned model + free the net: `POST /fl/stop/{model_id}`. Head-only eval broadcast (only the trained head crosses the wire) is a further optimisation. |
+| **Finetuning** (`standard_client_api`) model OOMs during **post-training cross-site validation** — all `train`/aggregation rounds finished (metrics reach the last local epoch), then fl-server `MemoryUtilized` spikes to the 8 GiB task ceiling and the job child process exits; the model **orphans at `TRAINING_STARTED`** (crash lands before `END_RUN`, so `PersistToS3AndCleanup` never runs → empty S3 results, net stays `BUSY`). Prod-only — staging (both trusts on one fast-local desktop) doesn't hit it. | The stock `CrossSiteModelEval` runs a `submit_model` all-to-all (each client's full model collected server-side **plus** the global model broadcast), and over a **slow-link trust** (e.g. BDMS/Thailand) the full ~759 MiB copies stay resident for minutes → OOM (~97 % of 8 GiB). | Finetune eval now defaults to **`GlobalModelEval`** (broadcasts only the aggregated global model; no `submit_model` matrix) — peak memory drops to ~75 % and the run completes to `RESULTS_UPLOADED`. To clear an already-orphaned model + free the net: `POST /fl/stop/{model_id}`. Head-only eval broadcast (only the trained head crosses the wire) is a further optimisation. |
 
 ## Results — baseline evaluation (validated on staging, 2026-07-03)
 
@@ -342,7 +338,7 @@ possible, exercised together for the first time here:
   backbone went out once, not five times; clients reconstructed the full model locally from it and
   trained normally.
 
-There's no cross-site metric from training itself (no held-out split is scored during `standard`
+There's no cross-site metric from training itself (no held-out split is scored during `standard_client_api`
 training) — the finetuned checkpoint is scored downstream in the multimodel evaluation below,
 which is what actually demonstrates the finetune improved the model.
 
