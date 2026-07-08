@@ -150,8 +150,9 @@ onMounted(() => {
                 grid: {
                     left: "5%",
                     right: "5%",
-                    // The old "25%" reserved room for the removed slider bar.
-                    bottom: 48,
+                    // The old "25%" reserved room for the removed slider bar and the
+                    // removed duplicate x-axis title.
+                    bottom: 24,
                     containLabel: true
                 },
                 tooltip: {
@@ -173,16 +174,8 @@ onMounted(() => {
                         show: true,
                         lineStyle: { color: chrome.axisLine }
                     },
-                    name: chartTitle,
-                    nameLocation: "middle",
-                    nameGap: 40,
+                    // No axis name — it repeated the chart title under the plot.
                     data: xAxisValues,
-                    nameTextStyle: {
-                        fontWeight: 700,
-                        fontSize: 16,
-                        fontFamily: "Inter",
-                        color: chrome.ink
-                    },
                     axisLabel: {
                         fontWeight: 700,
                         fontFamily: "Inter",

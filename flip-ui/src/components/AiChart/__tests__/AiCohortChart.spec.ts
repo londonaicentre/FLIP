@@ -127,6 +127,17 @@ describe("AiCohortChart", () => {
         expect(setOption).toHaveBeenCalled();
     });
 
+    it("titles the chart above the plot only, not again under the x axis", async () => {
+        mountChart();
+        await nextTick();
+        await flushPromises();
+
+        const opts = setOption.mock.calls[0][0];
+        expect(opts.title.text).toBeTruthy();
+        // The same string used to repeat as the x-axis name below the plot.
+        expect(opts.xAxis.name).toBeUndefined();
+    });
+
     it("ships no persistent zoom UI, only the on-demand toolbox box-zoom", async () => {
         mountChart();
         await nextTick();
