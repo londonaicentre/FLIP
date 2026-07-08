@@ -76,7 +76,9 @@
             </header>
 
             <div class="flex flex-col gap-4 p-4">
-                <LifecycleTrack :steps="steps" />
+                <!-- my-4 on top of the column's gap/padding gives the lifecycle ~32px of
+                     breathing room above and below. -->
+                <LifecycleTrack :steps="steps" class="my-4" />
 
                 <div class="flex flex-col gap-4 lg:flex-row lg:gap-4">
                     <aside class="lg:w-80 2xl:min-w-[30rem] shrink-0">

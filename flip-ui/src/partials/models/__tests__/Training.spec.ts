@@ -191,15 +191,17 @@ describe("Training metrics + live-activity responsive layout", () => {
     function layoutParts(wrapper: ReturnType<typeof mountTraining>) {
         const timeline = wrapper.find("[data-test=training-timeline]");
         expect(timeline.exists()).toBe(true);
-        // Timeline -> scroll wrapper -> Live activity card -> flex container;
-        // the metrics card is that container's first child.
+        // Timeline -> scroll wrapper -> inner column -> Live activity card ->
+        // flex container; the metrics card is that container's first child.
         const scrollWrap = timeline.element.parentElement;
-        const liveCard = scrollWrap?.parentElement;
+        const innerColumn = scrollWrap?.parentElement;
+        const liveCard = innerColumn?.parentElement;
         const container = liveCard?.parentElement;
         const metricsCard = container?.children[0];
 
         return {
             scrollWrap,
+            innerColumn,
             liveCard,
             container,
             metricsCard
@@ -232,6 +234,20 @@ describe("Training metrics + live-activity responsive layout", () => {
 
         expect(metricsCard?.className).toContain("flex-1");
         expect(metricsCard?.className).toContain("min-w-0");
+    });
+
+    it("matches the sibling card heights at xl instead of letting the timeline set them", () => {
+        const wrapper = mountTraining({ status: "TRAINING_STARTED" });
+
+        const { liveCard, innerColumn } = layoutParts(wrapper);
+
+        // The card stretches to the row height its siblings define — no 70vh cap.
+        expect(liveCard?.className).toContain("self-stretch");
+        expect(liveCard?.className).not.toContain("max-h-[70vh]");
+        // At xl the content column is absolutely positioned, so the timeline's
+        // length cannot drive the card's intrinsic height past its siblings.
+        expect(innerColumn?.className).toContain("xl:absolute");
+        expect(innerColumn?.className).toContain("xl:inset-0");
     });
 
     it("never lets the timeline scroll horizontally", () => {
