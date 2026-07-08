@@ -50,7 +50,7 @@
                             :title="getUserCountMessage()"
                         >
                             <AiCircledIcon>
-                                <icon-ic-twotone-person-outline class="w-4 h-4" />
+                                <icon-ph-user class="w-4 h-4" />
                             </AiCircledIcon>
                             <span>{{ totalUserCount }} <span class="hidden lg:inline">{{ totalUserCount === 1 ? "User" : "Users" }}</span></span>
                         </div>
