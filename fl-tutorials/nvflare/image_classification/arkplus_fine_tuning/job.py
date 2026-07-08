@@ -99,6 +99,17 @@ def _load_aggregate_only_regex() -> str:
     return cfg.get("AGGREGATE_ONLY_REGEX", "") or ""
 
 
+def _load_global_rounds(cli_value: int | None) -> int | None:
+    """Read ``GLOBAL_ROUNDS`` from the app config, falling back to the CLI value if absent."""
+    cfg = json.loads((_APP_FILES_DIR / "config.json").read_text())
+    config_value = cfg.get("GLOBAL_ROUNDS")
+    if config_value is not None:
+        print(f"GLOBAL_ROUNDS={config_value} (from config.json)")
+        return config_value
+    print(f"GLOBAL_ROUNDS not in config.json, using CLI --num_rounds={cli_value}")
+    return cli_value
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="FLIP Ark+ Fine-tuning Client API FedAvg Job")
     parser.add_argument("--n_clients", type=int, default=2, help="Number of clients")
@@ -119,9 +130,10 @@ def main() -> None:
     # project_id is passed as --project_id {project_id} which the FLIP-API substitutes before submission.
     project_id = os.environ.get("FLIP_PROJECT_ID", "")
     query = os.environ.get("FLIP_QUERY", "SELECT * FROM Table;")
-
+    
+    num_global_rounds=_load_global_rounds(args.num_rounds)
     recipe = FlipFedAvgRecipe(
-        num_rounds=args.num_rounds,
+        num_rounds=num_global_rounds,
         min_clients=args.n_clients,
         train_script="trainer.py",
         train_args="--project_id {project_id}",
