@@ -25,13 +25,9 @@
                 >
                     <span class="flex items-center justify-between w-full">
                         <span class="flex items-center justify-between min-w-0 space-x-3">
-                            <div
-                                class="flex items-center justify-center overflow-hidden bg-gray-100 dark:bg-dark-surface rounded-full w-7 h-7"
-                            >
-                                <icon-ph-user-circle
-                                    class="flex-shrink-0 w-6 h-6 text-gray-500 dark:text-gray-300 rounded-full"
-                                />
-                            </div>
+                            <icon-ph-user-circle
+                                class="flex-shrink-0 w-7 h-7 text-gray-500 dark:text-gray-300"
+                            />
                             <span class="flex-col flex-1 hidden min-w-0 md:flex">
                                 <span class="font-semibold truncate select-none">
                                     {{ displayName }}{{ role ? ` (${role})` : '' }}
