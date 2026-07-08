@@ -51,7 +51,7 @@
                             class="w-3 h-3 text-white"
                             aria-hidden="true"
                         />
-                        <icon-ph-stop-circle-fill
+                        <icon-ph-stop-fill
                             v-else-if="step.stopped && !step.completed"
                             class="w-3 h-3 text-white"
                             aria-hidden="true"
