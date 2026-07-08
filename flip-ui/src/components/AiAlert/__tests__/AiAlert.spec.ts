@@ -61,4 +61,36 @@ describe("Ai Alert", () => {
         expect(html).toContain("<strong");
         expect(html).toContain("authored content");
     });
+
+    it("emits action when the action label is clicked", async () => {
+        const comp = mount(AiAlert, {
+            global: { plugins: [createPinia()] },
+            props: {
+                variant: "info",
+                text: "Testing",
+                actionText: "Retry"
+            }
+        });
+
+        await comp.find("span.font-black").trigger("click");
+
+        expect(comp.emitted("action")).toHaveLength(1);
+    });
+
+    it("hides itself when the close button is clicked", async () => {
+        const comp = mount(AiAlert, {
+            global: { plugins: [createPinia()] },
+            props: {
+                variant: "info",
+                text: "Testing",
+                close: true
+            }
+        });
+
+        expect(comp.text()).toContain("Testing");
+        await comp.find("button").trigger("click");
+
+        expect(comp.find("button").exists()).toBe(false);
+        expect(comp.text()).not.toContain("Testing");
+    });
 });

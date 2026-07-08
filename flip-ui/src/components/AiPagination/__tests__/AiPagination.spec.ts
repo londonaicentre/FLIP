@@ -24,4 +24,53 @@ describe("Ai Pagination", () => {
 
         expect(comp.element).toMatchSnapshot();
     });
+
+    test("emits pageUpdate from the prev, next and numbered buttons", async () => {
+        const comp = mount(AiPagination, {
+            props: {
+                totalPages: 5,
+                currentPage: 3
+            }
+        });
+
+        await comp.find("[data-test='page-btn-prev']").trigger("click");
+        await comp.find("[data-test='page-btn-next']").trigger("click");
+        await comp.find("[data-test='page-btn-5']").trigger("click");
+
+        expect(comp.emitted("pageUpdate")).toEqual([[2], [4], [5]]);
+    });
+
+    test("jumps to the first and last pages from the ellipsis-edge buttons", async () => {
+        // A mid-range page on a long list renders the dedicated 1 / totalPages
+        // jump buttons outside the sliding window.
+        const comp = mount(AiPagination, {
+            props: {
+                totalPages: 10,
+                currentPage: 5
+            }
+        });
+
+        await comp.find("[data-test='page-btn-1']").trigger("click");
+        await comp.find("[data-test='page-btn-10']").trigger("click");
+
+        expect(comp.emitted("pageUpdate")).toEqual([[1], [10]]);
+    });
+
+    test("disables prev on the first page and next on the last", () => {
+        const first = mount(AiPagination, {
+            props: {
+                totalPages: 5,
+                currentPage: 1
+            }
+        });
+        expect(first.find("[data-test='page-btn-prev']").attributes("disabled")).toBeDefined();
+
+        const last = mount(AiPagination, {
+            props: {
+                totalPages: 5,
+                currentPage: 5
+            }
+        });
+        expect(last.find("[data-test='page-btn-next']").attributes("disabled")).toBeDefined();
+    });
 });

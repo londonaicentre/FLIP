@@ -34,11 +34,26 @@ const mockData = vi.hoisted(() => {
 
     return { ref: vue.ref<unknown>(undefined) };
 });
+
+// Captures the SWRV key function so tests can inspect the query the partial
+// would fetch (page / search params).
+const swrvKey: { fn?: () => string } = {};
+
 vi.mock("swrv", () => ({
-    default: () => ({
-        data: mockData.ref,
-        error: ref(null)
-    })
+    default: (key: () => string) => {
+        swrvKey.fn = key;
+
+        return {
+            data: mockData.ref,
+            error: ref(null)
+        };
+    }
+}));
+
+const mockViewModel = vi.hoisted(() => vi.fn());
+vi.mock("@/router", () => ({
+    routeChange: { viewModel: mockViewModel },
+    default: { push: vi.fn() }
 }));
 
 vi.mock("@/services/model-service", async (importOriginal) => {
@@ -84,7 +99,12 @@ function mountModelList() {
             stubs: {
                 AiButton: { template: "<button><slot /></button>" },
                 AiPagination: { template: "<div />" },
-                AiSearch: { template: "<input />" },
+                AiSearch: {
+                    props: ["modelValue"],
+                    emits: ["update:modelValue"],
+                    template: "<input data-test='model-search-input' :value='modelValue'"
+                        + " @input='$emit(\"update:modelValue\", $event.target.value)' />"
+                },
                 AiSkeleton: { template: "<div />" },
                 // VTable is a global component (registered via Vite) that the
                 // unit-test runner doesn't auto-resolve. Stub it with a thin
@@ -365,6 +385,66 @@ describe("ModelList — mobile stacked rows (design 5a)", () => {
         // Endpoint not sending the field yet → no trusts line at all.
         expect(rows[2].findAll("[data-test='model-trust-chip']")).toHaveLength(0);
         expect(rows[2].text()).not.toContain("No Trusts assigned yet");
+    });
+});
+
+describe("ModelList — interactions", () => {
+    beforeEach(() => {
+        setData(undefined);
+        mockViewModel.mockClear();
+    });
+
+    test("row click navigates to the model in both presentations", async () => {
+        setData({
+            data: [{
+                id: "m1",
+                name: "Alpha",
+                description: "First model",
+                status: "PENDING"
+            }]
+        });
+        const wrapper = mountModelList();
+        await flushPromises();
+
+        await wrapper.find("[data-test='model-list-item-0']").trigger("click");
+        await wrapper.find("[data-test='model-list-item-mobile-0']").trigger("click");
+
+        expect(mockViewModel).toHaveBeenCalledTimes(2);
+        expect(mockViewModel).toHaveBeenCalledWith("project-1", "m1");
+    });
+
+    test("the Create Model button toggles the create-model modal store", async () => {
+        setData({ data: [] });
+        const wrapper = mountModelList();
+        await flushPromises();
+
+        await wrapper.find("[data-test='add-model-btn']").trigger("click");
+
+        const modals = (await import("@/store/modals")).useModalsStore();
+        expect(modals.toggleCreateModel).toHaveBeenCalled();
+    });
+
+    test("typing a search debounces into the fetch key and resets to page 1", async () => {
+        vi.useFakeTimers();
+        try {
+            setData({ data: [] });
+            const wrapper = mountModelList();
+
+            await wrapper.find("[data-test='model-search']").setValue("alpha");
+            expect(swrvKey.fn!()).not.toContain("&search=");
+
+            vi.advanceTimersByTime(600);
+            expect(swrvKey.fn!()).toContain("&search=alpha");
+            expect(swrvKey.fn!()).toContain("pageNumber=1");
+
+            // Clearing the box drops the search param again.
+            await wrapper.find("[data-test='model-search']").setValue("");
+            vi.advanceTimersByTime(600);
+            expect(swrvKey.fn!()).not.toContain("&search=");
+        }
+        finally {
+            vi.useRealTimers();
+        }
     });
 });
 

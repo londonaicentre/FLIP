@@ -50,11 +50,25 @@ exports[`Page Not Found > renders the component successfully 1`] = `
     <div
       data-v-90422ccc=""
     >
-      <router-link-stub
+      <a
         custom=""
+        data-to="/projects"
         data-v-90422ccc=""
-        to="/projects"
-      />
+      >
+        
+        <button
+          class="relative flex flex-row justify-center btn-base btn-primary"
+          data-test="home-button"
+          data-v-90422ccc=""
+          tabindex="0"
+          type="button"
+        >
+          
+           View Projects 
+          
+        </button>
+        
+      </a>
     </div>
     <!--v-if-->
   </div>

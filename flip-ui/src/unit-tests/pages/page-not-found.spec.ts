@@ -26,7 +26,18 @@ vi.mock("@/router", () => ({
     default: { push: vi.fn() }
 }));
 
-const mountPage = (): VueWrapper => mountComponent(PageNotFound, { global: { stubs: ["router-link"] } });
+// The stub renders the custom scoped slot (with a no-op navigate) so the
+// primary button's content — hidden behind router-link's v-slot — is exercised.
+const mountPage = (): VueWrapper => mountComponent(PageNotFound, {
+    global: {
+        stubs: {
+            "router-link": {
+                props: ["to"],
+                template: "<a :data-to=\"to\"><slot :navigate=\"() => {}\" /></a>"
+            }
+        }
+    }
+});
 
 // vue-router records the previous in-app route at history.state.back; a direct deep link has none
 const setHistoryBack = (back: string | null) => {
@@ -52,7 +63,9 @@ describe("Page Not Found", () => {
     it("links the primary action to the projects page", () => {
         const component = mountPage();
 
-        expect(component.find("router-link-stub").attributes("to")).toBe("/projects");
+        const link = component.find("a[data-to='/projects']");
+        expect(link.exists()).toBe(true);
+        expect(link.text()).toContain("View Projects");
     });
 
     it("hides the Go back button when there is no history entry to return to", () => {
