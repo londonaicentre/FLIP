@@ -205,10 +205,15 @@ services:
     # (the official image ships no postgres driver). Upgrade path before any
     # multi-writer/prod use: a `mlflow` database on flip-db (needs psycopg2, so a
     # small custom image) — see docs/source/sys-admin.rst.
+    # --allowed-hosts: MLflow >=3.x rejects Host headers outside its allowlist
+    # (DNS-rebinding protection, default = localhost + private IPs) with a 403.
+    # Container-to-container calls carry Host "mlflow:5000", so the Docker DNS
+    # name must be allowed explicitly alongside the host-browser loopback forms.
     command: >
       mlflow server --host 0.0.0.0 --port 5000
       --backend-store-uri sqlite:////mlflow/data/mlflow.db
       --artifacts-destination /mlflow/artifacts
+      --allowed-hosts mlflow:5000,localhost:5000,127.0.0.1:5000
     ports:
       # Loopback-only binding IS the dev access-control story: MLflow OSS ships no
       # real auth, so only hub admins on this host may reach the UI. The explicit
