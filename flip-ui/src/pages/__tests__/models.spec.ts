@@ -237,6 +237,21 @@ describe("Models Page", () => {
         expect(wrapper.find("[data-test='filter-tile-count-attention']").text()).toBe("2");
     });
 
+    test("orders the tiles with Preparing before In training", async () => {
+        setModels([makeModel()]);
+        const wrapper = mountPage();
+        await wrapper.vm.$nextTick();
+
+        const keys = wrapper.findAll("button[data-test^='filter-tile-']").map(b => b.attributes("data-test"));
+        expect(keys).toEqual([
+            "filter-tile-preparing",
+            "filter-tile-training",
+            "filter-tile-queued",
+            "filter-tile-completed",
+            "filter-tile-attention"
+        ]);
+    });
+
     test("opens with In training + Queued selected and unions further tile clicks", async () => {
         setModels([makeModel()]);
         const wrapper = mountPage();

@@ -299,13 +299,6 @@ interface ITile {
 // `dot`/`ring` are whole literal Tailwind classes so the JIT compiler emits them.
 const TILES: ITile[] = [
     {
-        key: "training",
-        label: "In training",
-        statuses: ["TRAINING_STARTED"],
-        dot: "bg-fuchsia-500",
-        ring: "border-fuchsia-500 ring-fuchsia-500/40"
-    },
-    {
         key: "preparing",
         label: "Preparing",
         // PENDING ("Model Created") counts as preparing: the owner is still assembling the
@@ -313,6 +306,13 @@ const TILES: ITile[] = [
         statuses: ["PENDING", "PREPARED"],
         dot: "bg-amber-500",
         ring: "border-amber-500 ring-amber-500/40"
+    },
+    {
+        key: "training",
+        label: "In training",
+        statuses: ["TRAINING_STARTED"],
+        dot: "bg-fuchsia-500",
+        ring: "border-fuchsia-500 ring-fuchsia-500/40"
     },
     {
         key: "queued",
