@@ -14,8 +14,10 @@
 
 
 import { mountComponent } from "@test/helper";
-import { createPinia } from "pinia";
+import { createPinia, setActivePinia } from "pinia";
 import { expect } from "vitest";
+
+import { useSiteSettings } from "@/store/siteSettingsStore";
 
 import AiCodeTextArea from "../AiCodeTextArea.vue";
 
@@ -45,5 +47,40 @@ describe("Ai Code TextArea", () => {
         // Global registration in main.ts never reaches unit tests (or lazy
         // chunks) — the component must import the editor itself.
         expect(comp.find(".CodeMirror").exists()).toBe(true);
+    });
+
+    test("applies the dracula theme in dark mode", () => {
+        const pinia = createPinia();
+        setActivePinia(pinia);
+        useSiteSettings().darkMode = true;
+
+        const comp = mountComponent(AiCodeTextArea, {
+            props: {
+                name: "test-code-textarea",
+                label: "Test Code Label"
+            },
+            global: { plugins: [pinia] }
+        });
+
+        expect(comp.find(".CodeMirror").classes()).toContain("cm-s-flip-dark");
+    });
+
+    test("blocks focus entirely when readonly so mobile taps can't summon a caret", () => {
+        const comp = mountComponent(AiCodeTextArea, {
+            props: {
+                name: "test-code-textarea",
+                label: "Test Code Label",
+                inputProps: { readonly: true }
+            },
+            global: { plugins: [createPinia()] }
+        });
+
+        // CodeMirror 5 exposes its instance on the wrapper element. readOnly
+        // "nocursor" (unlike plain true) refuses focus, so tapping the locked
+        // query on mobile shows no flickering caret and opens no keyboard.
+        const cm = (comp.find(".CodeMirror").element as HTMLElement & {
+            CodeMirror: { getOption: (o: string) => unknown };
+        }).CodeMirror;
+        expect(cm.getOption("readOnly")).toBe("nocursor");
     });
 });

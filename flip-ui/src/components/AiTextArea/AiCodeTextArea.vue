@@ -55,6 +55,10 @@
 
 <script lang="ts" setup>
 import "codemirror/mode/sql/sql.js";
+// The dark theme ships with this chunk too — the old app-wide @import in
+// main.css was dropped by #716, which left dark mode on an unstyled white
+// editor. The palette follows the cohort-query design handoff's CQEditor.
+import "@/assets/styles/codemirror-flip-dark.css";
 
 // Imported here rather than registered app-wide in main.ts so CodeMirror
 // ships with this component's chunk instead of the entry bundle (#716).
@@ -107,14 +111,16 @@ const {
 
 const cmOptions = computed(() => ({
     mode: props.mode,
-    theme: siteSettings.darkMode ? "dracula": "default",
+    theme: siteSettings.darkMode ? "flip-dark" : "default",
     lineNumbers: true,
     smartIndent: true,
     indentUnit: 4,
     foldGutter: true,
     lineWrapping: true,
     styleActiveLine: true,
-    readOnly: props.inputProps?.readonly ?? false,
+    // "nocursor" (rather than true) also refuses focus, so tapping the locked
+    // query on mobile can't summon a flickering caret or the soft keyboard.
+    readOnly: props.inputProps?.readonly ? ("nocursor" as const) : false,
     cursorBlinkRate: props.inputProps?.readonly ? -1 : 530 //blink rate of 530ms is the default, -1 will make it hidden
 }));
 
