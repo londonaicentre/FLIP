@@ -113,6 +113,23 @@ describe("AiModelMetricsChart", () => {
         expect(setOption).toHaveBeenCalled();
     });
 
+    it("overlays the legend and toolbox inside the plot instead of reserving a side column", async () => {
+        mountChart();
+        await nextTick();
+        await flushPromises();
+
+        const opts = setOption.mock.calls[0][0];
+        // The grid takes the full card width — no 160px legend column on the right.
+        expect(opts.grid.right).toBeLessThanOrEqual(24);
+        // Toolbox pinned to the plot's top-right corner, legend floating just below it,
+        // with a translucent backing so it stays legible over the series lines.
+        expect(opts.toolbox.right).toBe(12);
+        expect(opts.toolbox.top).toBe(8);
+        expect(opts.legend.right).toBe(12);
+        expect(opts.legend.top).toBe(40);
+        expect(opts.legend.backgroundColor).toBeTruthy();
+    });
+
     it("ships no persistent zoom UI, only the on-demand toolbox box-zoom", async () => {
         mountChart();
         await nextTick();

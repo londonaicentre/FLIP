@@ -106,6 +106,9 @@ onMounted(() => {
                     // on-demand via the toolbox magnifier below, reset via "Reset View".
                     toolbox: {
                         ...chartToolbox(darkMode),
+                        // Pinned inside the plot's top-right corner (the legend floats below).
+                        right: 12,
+                        top: 8,
                         feature: {
                             ...chartToolbox(darkMode).feature,
                             dataZoom: {
@@ -123,7 +126,10 @@ onMounted(() => {
                     grid: {
                         backgroundColor: chrome.background,
                         left: "5%",
-                        right: 160,
+                        // Full-width plot — the legend overlays the grid instead of
+                        // reserving a 160px column on the right.
+                        right: 24,
+                        top: 24,
                         // The x-axis name (nameGap 40) needs ~64px; the old "25%" also
                         // reserved room for the now-removed slider bar.
                         bottom: 64,
@@ -143,10 +149,17 @@ onMounted(() => {
                             .slice()
                             .sort((a, b) => a.localeCompare(b)),
                         orient: "vertical",
-                        right: 10,
-                        top: "middle",
+                        // Floats inside the plot under the toolbox strip; the translucent
+                        // card backing keeps it legible where series lines pass beneath.
+                        right: 12,
+                        top: 40,
                         align: "left",
                         itemGap: 10,
+                        padding: 8,
+                        backgroundColor: darkMode ? "rgba(14, 11, 19, 0.78)" : "rgba(255, 255, 255, 0.82)",
+                        borderColor: chrome.gridLine,
+                        borderWidth: 1,
+                        borderRadius: 6,
                         textStyle: { color: chrome.ink }
                     },
                     xAxis: {
