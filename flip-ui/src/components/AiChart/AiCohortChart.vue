@@ -133,6 +133,10 @@ onMounted(() => {
                 // magnifier below, matching the training metrics chart.
                 toolbox: {
                     ...chartToolbox(darkMode),
+                    // Third header row — the title (row 1), legend (row 2) and these
+                    // icons collided on one line when the card was narrow.
+                    top: 54,
+                    right: 8,
                     feature: {
                         ...chartToolbox(darkMode).feature,
                         dataZoom: {
@@ -150,6 +154,8 @@ onMounted(() => {
                 grid: {
                     left: "5%",
                     right: "5%",
+                    // Clears the three stacked header rows (title / legend / toolbox).
+                    top: 88,
                     // The old "25%" reserved room for the removed slider bar and the
                     // removed duplicate x-axis title.
                     bottom: 24,
@@ -166,6 +172,8 @@ onMounted(() => {
                 legend: {
                     data: props.data.results.map(d => trustLabel(d.trustId, d.trustName)),
                     left: "center",
+                    // Second header row, under the title.
+                    top: 28,
                     textStyle: { color: chrome.ink }
                 },
                 xAxis: {

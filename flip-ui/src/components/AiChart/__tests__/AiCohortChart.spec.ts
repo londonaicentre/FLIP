@@ -127,6 +127,20 @@ describe("AiCohortChart", () => {
         expect(setOption).toHaveBeenCalled();
     });
 
+    it("stacks title, legend and toolbox on separate levels so they can't collide when narrow", async () => {
+        mountChart();
+        await nextTick();
+        await flushPromises();
+
+        const opts = setOption.mock.calls[0][0];
+        // Row 1: title (top 0). Row 2: legend. Row 3: toolbox. All three shared
+        // the top edge before, overlapping on squashed single-column cards.
+        expect(opts.legend.top).toBe(28);
+        expect(opts.toolbox.top).toBe(54);
+        expect(opts.toolbox.right).toBe(8);
+        expect(opts.grid.top).toBe(88);
+    });
+
     it("titles the chart above the plot only, not again under the x axis", async () => {
         mountChart();
         await nextTick();
