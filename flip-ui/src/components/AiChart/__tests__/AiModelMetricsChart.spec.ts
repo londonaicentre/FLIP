@@ -121,12 +121,13 @@ describe("AiModelMetricsChart", () => {
         const opts = setOption.mock.calls[0][0];
         // The grid takes the full card width — no 160px legend column on the right.
         expect(opts.grid.right).toBeLessThanOrEqual(24);
-        // Toolbox pinned to the plot's top-right corner, legend floating just below it,
-        // with a translucent backing so it stays legible over the series lines.
+        // Toolbox pinned to the plot's top-right corner, legend floating vertically
+        // centred on the right edge, with a translucent backing so it stays legible
+        // over the series lines.
         expect(opts.toolbox.right).toBe(12);
         expect(opts.toolbox.top).toBe(8);
         expect(opts.legend.right).toBe(12);
-        expect(opts.legend.top).toBe(40);
+        expect(opts.legend.top).toBe("middle");
         expect(opts.legend.backgroundColor).toBeTruthy();
     });
 

@@ -149,10 +149,10 @@ onMounted(() => {
                             .slice()
                             .sort((a, b) => a.localeCompare(b)),
                         orient: "vertical",
-                        // Floats inside the plot under the toolbox strip; the translucent
-                        // card backing keeps it legible where series lines pass beneath.
+                        // Floats inside the plot, vertically centred on the right edge; the
+                        // translucent card backing keeps it legible where lines pass beneath.
                         right: 12,
-                        top: 40,
+                        top: "middle",
                         align: "left",
                         itemGap: 10,
                         padding: 8,
