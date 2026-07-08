@@ -133,7 +133,13 @@ class FlipFedAvgRecipe(Recipe):
             (client result filter, ordered BEFORE PercentilePrivacy), ReconstructFullModel (client data
             filter) and TrimBroadcastVars (server data filter) — so only params matching the regex are
             aggregated per round and, after round 0, broadcast. Empty (default) wires none. Mirrors the
-            fl-server's deploy-time injection from config.json's ``AGGREGATE_ONLY_REGEX``.
+            fl-server's deploy-time injection from config.json's ``AGGREGATE_ONLY_REGEX``, which is the
+            canonical path for production jobs (the shipped ``standard_client_api`` template bakes no
+            head-only filters): the fl-server folds any recipe-baked chains into its own — a single
+            ``["train", "validate"]`` ``ReconstructFullModelForEval`` chain that also extends the
+            head-only broadcast to cross-site validation, superseding the recipe's train-only
+            ``ReconstructFullModel`` (FLIP#730/#733). This arg stands alone only where that deploy step
+            doesn't run (SimEnv/PocEnv), so the ``validate`` broadcast stays full-model there.
     """
 
     def __init__(
