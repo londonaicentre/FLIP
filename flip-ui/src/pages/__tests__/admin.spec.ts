@@ -116,9 +116,12 @@ describe("admin chip-tab nav", () => {
         const links = wrapper.findAll("nav[aria-label='Admin sections'] a");
         // Mocked route is /admin/users, so Users is the active chip: a filled
         // primary-tint rounded-full pill; inactive chips are outlined and muted.
+        // In dark mode the fill must be the solid brand plum — the primary
+        // 800/900 shades are near-black and vanish against the dark surfaces.
         expect(links[0].classes()).toContain("rounded-full");
         expect(links[0].classes()).toContain("bg-primary-100");
-        expect(links[0].classes()).toContain("dark:bg-primary-900/40");
+        expect(links[0].classes()).toContain("dark:bg-primary-500");
+        expect(links[0].classes()).toContain("dark:text-white");
         expect(links[0].classes()).toContain("text-primary-800");
         expect(links[0].attributes("aria-current")).toBe("page");
 
