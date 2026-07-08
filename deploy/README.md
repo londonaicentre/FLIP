@@ -274,7 +274,9 @@ service strictly requires. The per-service grants in the compose files are:
 
 | Service(s) | Granted capabilities | Reason |
 |------------|----------------------|--------|
-| flip-api, fl-api, fl-server, trust-api, imaging-api, data-access-api, pgadmin, xnat-web, loki, alloy, grafana | `CHOWN` | In-container init/entrypoint fixes ownership on volume paths it owns. |
+| flip-api, fl-api (Flower), trust-api, imaging-api, data-access-api, pgadmin, xnat-web, loki, alloy, grafana | `CHOWN` | In-container init/entrypoint fixes ownership on volume paths it owns. |
+| fl-api, fl-server (NVFLARE) | `CHOWN`, `DAC_OVERRIDE`, `FOWNER` | The containers run as root, but the provisioned NVFLARE kits are bind-mounted owned by the provisioning uid with 0600 keys. `cap_drop: ALL` strips root's implicit DAC bypass, so without `DAC_OVERRIDE` the fl-server crash-loops on `/app/startup/server.key`; the entrypoint also `chmod`s kit scripts it does not own (`FOWNER`). In dev, the same grant lets the root fl-server read the operator's 0600 AWS SSO token cache for the S3 results upload. |
+| fl-server (Flower, development only) | `CHOWN`, `DAC_OVERRIDE` | The dev compose runs the SuperLink as root (see the `user: "0:0"` comment in `compose.development.flower.yml`) to read the host-provisioned 0640 TLS keys and the operator's 0600 SSO token cache; `cap_drop: ALL` strips root's implicit DAC bypass, so `DAC_OVERRIDE` is granted back. Production runs the image's non-root user with instance-role AWS credentials and keeps the `CHOWN` baseline. |
 | flip-db, omop-db, xnat-db | `CHOWN`, `DAC_OVERRIDE`, `FOWNER`, `SETUID`, `SETGID` | The official postgres entrypoint runs as root and `gosu`-drops to the `postgres` user (`SETUID`/`SETGID`). On every start it re-runs `chmod 00700 $PGDATA` and a `chown` sweep over the persisted data dir, which on subsequent boots is already owned by `postgres` with mode `0700` — `chmod` on a dir owned by another uid needs `FOWNER` and traversing it needs `DAC_OVERRIDE`. Without them the container exits 1 on a persisted volume (see commit history, FLIP#485). |
 | orthanc | `CHOWN` | Runs non-root (UID 999) from PID 1, so no capabilities survive into the process anyway; the storage bind mount is made 999-writable at the provisioning layer rather than fixed up with in-container caps. `CHOWN` is kept only as the shared baseline. |
 | xnat-nginx | `CHOWN`, `NET_BIND_SERVICE` | `NET_BIND_SERVICE` lets the non-root `nginx` user bind port 80. |
@@ -284,6 +286,19 @@ Notably **not** granted anywhere: `SYS_ADMIN`, `SYS_PTRACE`, `SYS_MODULE`, `MAC_
 `DAC_READ_SEARCH`. Combined with `no-new-privileges` (below), this defeats the standard
 `setuid`-binary and `LD_PRELOAD` escalation paths even if an attacker achieves RCE inside a
 container.
+
+> **Hardened images and hardened compose must ship together.** The minimal-caps compose files
+> assume the rebuilt **non-root** `orthanc` and `xnat-web` images. Until CI publishes those (on
+> merge to `develop`/`main`), the previously published root-running GHCR images break under the
+> new caps: orthanc crash-loops writing its `orthanc`-owned `/etc/hostid` (root without
+> `DAC_OVERRIDE`), and xnat-web — still root — cannot write its UID-1001 bind mounts
+> (config/archive/build/cache/plugins), so `make up`'s XNAT configure step fails on both trusts
+> (swarm enforces `cap_drop` even though it ignores `security_opt`). When running this hardening
+> from a branch whose images are not yet published, build the hardened images locally:
+> `make up BUILD=true` covers the compose-built services (including orthanc), and the XNAT stack
+> needs `make -C trust/xnat build DOCKER_REGISTRY= DOCKER_TAG=dev` followed by redeploying the
+> stack with the same `DOCKER_REGISTRY=`/`XNAT_TAG=dev` overrides so `docker stack deploy`
+> resolves the locally built image instead of the GHCR one.
 
 ### No New Privileges
 
