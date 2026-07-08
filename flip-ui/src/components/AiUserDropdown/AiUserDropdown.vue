@@ -28,7 +28,7 @@
                             <div
                                 class="flex items-center justify-center overflow-hidden bg-gray-100 dark:bg-dark-surface rounded-full w-7 h-7"
                             >
-                                <icon-ph-user-square-duotone
+                                <icon-ph-user-circle
                                     class="flex-shrink-0 w-6 h-6 text-gray-500 dark:text-gray-300 rounded-full"
                                 />
                             </div>
