@@ -165,14 +165,14 @@
                                 <AiButton
                                     data-test="register-user-confirm-btn"
                                     primary
-                                    class="w-full ml-2 sm:w-auto"
+                                    class="w-full sm:ml-2 sm:w-auto"
                                     :loading="isSubmitting"
                                     @click="submitAction"
                                 >
                                     Register User
                                 </AiButton>
                                 <AiButton
-                                    class="w-full sm:w-auto"
+                                    class="w-full mt-2 sm:mt-0 sm:w-auto"
                                     data-test="close-modal-btn"
                                     @click="close"
                                 >

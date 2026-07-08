@@ -81,14 +81,14 @@
                                 <AiButton
                                     data-test="confirm-create-trust-btn"
                                     primary
-                                    class="w-full ml-2 sm:w-auto"
+                                    class="w-full sm:ml-2 sm:w-auto"
                                     :loading="isSubmitting"
                                     @click="submitAction"
                                 >
                                     Create Trust
                                 </AiButton>
                                 <AiButton
-                                    class="w-full sm:w-auto"
+                                    class="w-full mt-2 sm:mt-0 sm:w-auto"
                                     data-test="close-add-trust-modal-btn"
                                     @click="close"
                                 >

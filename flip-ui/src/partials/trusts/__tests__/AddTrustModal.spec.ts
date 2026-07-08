@@ -90,4 +90,21 @@ describe("AddTrustModal rendering", () => {
         // The name field no longer mis-describes itself as the auth identifier.
         expect(text).not.toContain("authenticate with the hub");
     });
+
+    it("spaces the footer buttons responsively so they stack cleanly on mobile", () => {
+        const wrapper = mountModal();
+
+        // AiButton puts its class attribute on a wrapper div around the native button.
+        const confirm = wrapper.find("[data-test=confirm-create-trust-btn]").element.parentElement;
+        const cancel = wrapper.find("[data-test=close-add-trust-modal-btn]").element.parentElement;
+
+        // The left margin between the row buttons must only apply once the footer
+        // becomes a row (sm+); on mobile a bare ml-2 pushes the full-width primary
+        // button past the footer's right edge.
+        expect(confirm?.className).toContain("sm:ml-2");
+        expect(confirm?.className).not.toMatch(/(?:^|\s)ml-2(?:\s|$)/);
+        // Stacked buttons need a vertical gap, collapsed again in the sm+ row.
+        expect(cancel?.className).toContain("mt-2");
+        expect(cancel?.className).toContain("sm:mt-0");
+    });
 });
