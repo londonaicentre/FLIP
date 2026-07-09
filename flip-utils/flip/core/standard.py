@@ -24,7 +24,7 @@ import shutil
 import tempfile
 from datetime import datetime
 from pathlib import Path
-from typing import override
+from typing import Any, override
 from urllib.parse import urlparse
 
 import boto3
@@ -35,7 +35,7 @@ from requests import HTTPError
 from flip.constants.flip_constants import FlipConstants, ModelStatus, ResourceType
 from flip.core.base import FLIPBase
 from flip.exceptions import ResultsUploadError
-from flip.schemas import TrainingLog, TrainingMetrics
+from flip.schemas import FLLogEvent, TrainingLog, TrainingMetrics
 from flip.utils.utils import Utils
 
 
@@ -375,9 +375,12 @@ class FLIPStandardProd(FLIPBase):
         if Utils.is_valid_uuid(model_id) is False:
             raise ValueError(f"Invalid model ID: {model_id}, unable to send exception")
 
+        # success=False so the hub persists (and the UI shows) a failure row —
+        # the ingest default is success=True.
         payload = TrainingLog(
             fl_client_name=client_name,
             log=formatted_exception,
+            success=False,
         ).model_dump()
 
         endpoint = _join_url(FlipConstants.FLIP_API_INTERNAL_URL, f"model/{model_id}/logs")
@@ -402,6 +405,66 @@ class FLIPStandardProd(FLIPBase):
             self.logger.exception(http_err)
         except Exception as e:
             self.logger.error("Something went wrong when sending the exception to the Central Hub, see exception below")
+            self.logger.exception(e)
+
+    @override
+    def send_event(
+        self,
+        model_id: str,
+        event_type: FLLogEvent,
+        global_round: int,
+        client_name: str | None = None,
+        details: dict[str, Any] | None = None,
+        success: bool = True,
+    ) -> None:
+        """
+        Sends a typed round-progress event to the Central Hub.
+
+        Facts only — the hub composes display text at serve time. Best-effort:
+        a failed post is logged and never breaks training.
+
+        Args:
+            model_id (str): The ID of the model the event belongs to.
+            event_type (FLLogEvent): Which round event this is.
+            global_round (int): The 1-based federated round.
+            client_name (str | None): FL client identity for trust-attributed
+                events; None for hub-attributed ones.
+            details (dict[str, Any] | None): Event-specific facts.
+            success (bool): Whether the event marks a healthy step.
+        """
+        if Utils.is_valid_uuid(model_id) is False:
+            raise ValueError(f"Invalid model ID: {model_id}, unable to send event")
+
+        payload = TrainingLog(
+            fl_client_name=client_name,
+            event_type=event_type,
+            global_round=global_round,
+            details=details,
+            success=success,
+        ).model_dump(mode="json")
+
+        endpoint = _join_url(FlipConstants.FLIP_API_INTERNAL_URL, f"model/{model_id}/logs")
+
+        self.logger.info(f"Attempting to send {event_type} (round {global_round}) to the Central Hub...")
+
+        try:
+            response = requests.post(
+                endpoint,
+                json=payload,
+                headers=_hub_internal_headers(),
+            )
+            self.logger.info(f"Received response status code: {response.status_code}, response text: {response.text}")
+            response.raise_for_status()
+
+            self.logger.info(f"Successfully sent {event_type} for round {global_round}")
+        except HTTPError as http_err:
+            self.logger.error(
+                f"An http error occurred when sending a round event to the Central Hub, "
+                f"see exception below | status code {http_err.response.status_code}"
+            )
+            self.logger.exception(http_err)
+        except Exception as e:
+            self.logger.error("Something went wrong when sending a round event to the Central Hub, see exception below")
             self.logger.exception(e)
 
     @override
@@ -573,6 +636,19 @@ class FLIPStandardDev(FLIPBase):
     def send_handled_exception(self, formatted_exception: str, client_name: str, model_id: str) -> None:
         """Log only in dev mode - no actual exception sending."""
         self.logger.info("[DEV] Exception → reported from %s", client_name)
+
+    @override
+    def send_event(
+        self,
+        model_id: str,
+        event_type: FLLogEvent,
+        global_round: int,
+        client_name: str | None = None,
+        details: dict[str, Any] | None = None,
+        success: bool = True,
+    ) -> None:
+        """Log only in dev mode - no actual event sending."""
+        self.logger.info("[DEV] Event → %s (round %d) from %s", event_type, global_round, client_name or "hub")
 
     @override
     def upload_results_to_s3(self, results_folder: Path, model_id: str) -> None:

@@ -19,7 +19,27 @@ on-the-wire contract for the ``/model/{id}/metrics`` and ``/model/{id}/logs``
 internal endpoints.
 """
 
-from pydantic import BaseModel, Field
+from enum import StrEnum
+from typing import Any
+
+from pydantic import BaseModel, Field, model_validator
+
+
+class FLLogEvent(StrEnum):
+    """Typed FL progress events for ``POST /model/{id}/logs``.
+
+    The FL layer reports **facts** (event type + structured details); display
+    text is composed hub-side at serve time, so wording changes are a flip-api
+    redeploy and never an FL-image rebuild. Mirrors flip-api's
+    ``domain/schemas/types.py::FLLogEvent``.
+
+    Rounds are 1-based on every event, on both backends (NVFLARE's internal
+    ``_current_round`` is 0-based and must be normalised before sending).
+    """
+
+    ROUND_STARTED = "ROUND_STARTED"
+    CLIENT_RESULT_RECEIVED = "CLIENT_RESULT_RECEIVED"
+    ROUND_AGGREGATED = "ROUND_AGGREGATED"
 
 
 class TrainingMetrics(BaseModel):
@@ -37,7 +57,27 @@ class TrainingMetrics(BaseModel):
 
 
 class TrainingLog(BaseModel):
-    """A log line (e.g. a handled exception) reported for one FL client."""
+    """One row for ``POST /model/{id}/logs``: free text XOR a typed round event.
 
-    fl_client_name: str
-    log: str
+    Mirrors flip-api's ``domain/schemas/private.py::TrainingLog`` — keep in sync.
+    Free-text rows (``log`` set) carry exception reports verbatim; typed event
+    rows (``event_type`` set) carry round-progress facts. ``fl_client_name`` is
+    ``None`` for hub-attributed rows (e.g. ``ROUND_STARTED`` from the fl-server's
+    own control flow).
+    """
+
+    fl_client_name: str | None = None
+    log: str | None = None
+    event_type: FLLogEvent | None = None
+    # 1-based on both backends; every event in the vocabulary is round-scoped.
+    global_round: int | None = Field(default=None, ge=1)
+    details: dict[str, Any] | None = None
+    success: bool = True
+
+    @model_validator(mode="after")
+    def _log_xor_event(self) -> "TrainingLog":
+        if (self.log is None) == (self.event_type is None):
+            raise ValueError("Exactly one of 'log' and 'event_type' must be set")
+        if self.event_type is not None and self.global_round is None:
+            raise ValueError("'global_round' is required when 'event_type' is set")
+        return self

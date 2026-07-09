@@ -13,13 +13,15 @@
 from nvflare.apis.event_type import EventType
 from nvflare.apis.fl_component import FLComponent
 from nvflare.apis.fl_context import FLContext
+from nvflare.app_common.app_constant import AppConstants
 from nvflare.app_common.app_event_type import AppEventType
 
 from flip import FLIP
-from flip.constants import FlipEvents, ModelStatus
+from flip.constants import FlipEvents, FlipProps, ModelStatus
 from flip.exceptions import ResultsUploadError
 from flip.nvflare.components.persist_and_cleanup import PersistToS3AndCleanup
 from flip.nvflare.runtime import get_flip_model_id
+from flip.schemas import FLLogEvent
 
 
 class ServerEventHandler(FLComponent):
@@ -78,6 +80,44 @@ class ServerEventHandler(FLComponent):
         """
         self.flip.update_status(self._resolve_model_id(fl_ctx), status)
 
+    def _relay_round_event(self, fl_ctx: FLContext, event: FLLogEvent) -> None:
+        """Relay a stock round boundary to the hub as a typed fact.
+
+        Facts only — display text is composed hub-side. NVFLARE's
+        ``CURRENT_ROUND`` prop is 0-based; the wire contract is 1-based.
+        ``ROUND_AGGREGATED`` counts come from the sticky props the FLIP
+        ScatterAndGather controller sets as it accepts client results.
+
+        Args:
+            fl_ctx (FLContext): The FL context carrying the round props.
+            event (FLLogEvent): ROUND_STARTED or ROUND_AGGREGATED.
+        """
+        current_round = fl_ctx.get_prop(AppConstants.CURRENT_ROUND)
+        if current_round is None:
+            return
+
+        details = None
+        if event == FLLogEvent.ROUND_STARTED:
+            num_rounds = fl_ctx.get_prop(AppConstants.NUM_ROUNDS)
+            if num_rounds is not None:
+                details = {"total_rounds": num_rounds}
+            # A round with zero accepted results must not report the previous
+            # round's counts on its ROUND_DONE: clear them at round start.
+            fl_ctx.set_prop(FlipProps.ROUND_RETURNED, None, private=True, sticky=True)
+            fl_ctx.set_prop(FlipProps.ROUND_EXPECTED, None, private=True, sticky=True)
+        else:
+            returned = fl_ctx.get_prop(FlipProps.ROUND_RETURNED)
+            expected = fl_ctx.get_prop(FlipProps.ROUND_EXPECTED)
+            if returned is not None and expected is not None:
+                details = {"returned": returned, "expected": expected}
+
+        self.flip.send_event(
+            model_id=self._resolve_model_id(fl_ctx),
+            event_type=event,
+            global_round=current_round + 1,
+            details=details,
+        )
+
     def handle_event(self, event_type: str, fl_ctx: FLContext) -> None:
         self.__set_dependencies(fl_ctx)
 
@@ -98,6 +138,12 @@ class ServerEventHandler(FLComponent):
         elif event_type == AppEventType.TRAINING_STARTED:
             self.log_info(fl_ctx, "Training started event received")
             self._update_status(fl_ctx, ModelStatus.TRAINING_STARTED)
+
+        elif event_type == AppEventType.ROUND_STARTED:
+            self._relay_round_event(fl_ctx, FLLogEvent.ROUND_STARTED)
+
+        elif event_type == AppEventType.ROUND_DONE:
+            self._relay_round_event(fl_ctx, FLLogEvent.ROUND_AGGREGATED)
 
         elif event_type == AppEventType.TRAINING_FINISHED:
             self.log_info(fl_ctx, "Training finished event received")

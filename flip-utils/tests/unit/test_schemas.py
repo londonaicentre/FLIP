@@ -15,7 +15,7 @@
 import pytest
 from pydantic import ValidationError
 
-from flip.schemas import TrainingLog, TrainingMetrics
+from flip.schemas import FLLogEvent, TrainingLog, TrainingMetrics
 
 
 class TestTrainingMetrics:
@@ -60,7 +60,7 @@ class TestTrainingMetrics:
 
 
 class TestTrainingLog:
-    """Test the TrainingLog request schema."""
+    """Test the TrainingLog request schema (mirrors flip-api's domain/schemas/private.py)."""
 
     def test_model_dump_uses_snake_case_contract(self):
         """model_dump should emit the snake_case field names expected by the hub."""
@@ -69,7 +69,38 @@ class TestTrainingLog:
         assert payload == {
             "fl_client_name": "site-1",
             "log": "handled exception",
+            "event_type": None,
+            "global_round": None,
+            "details": None,
+            "success": True,
         }
+
+    def test_event_shape_validates_without_log_text(self):
+        """Typed events carry facts, never display text — wording lives hub-side."""
+        payload = TrainingLog(
+            event_type=FLLogEvent.ROUND_STARTED,
+            global_round=1,
+            details={"total_rounds": 15},
+        )
+        assert payload.log is None
+        assert payload.fl_client_name is None
+
+    def test_rejects_neither_log_nor_event(self):
+        with pytest.raises(ValidationError):
+            TrainingLog.model_validate({"fl_client_name": "site-1"})
+
+    def test_rejects_both_log_and_event(self):
+        with pytest.raises(ValidationError):
+            TrainingLog(fl_client_name="site-1", log="text", event_type=FLLogEvent.ROUND_STARTED, global_round=1)
+
+    def test_event_requires_global_round(self):
+        with pytest.raises(ValidationError):
+            TrainingLog(event_type=FLLogEvent.ROUND_AGGREGATED)
+
+    def test_global_round_is_one_based(self):
+        """Events are normalised to 1-based rounds on both backends before sending."""
+        with pytest.raises(ValidationError):
+            TrainingLog(event_type=FLLogEvent.ROUND_STARTED, global_round=0)
 
     def test_missing_field_raises(self):
         """Omitting a required field should raise a ValidationError."""
