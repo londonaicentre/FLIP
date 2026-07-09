@@ -59,6 +59,10 @@ dependencies = [
     "pydantic>=2.11.7",
     "pydantic-settings>=2.10.1",
     "requests>=2.33.0",
+    # SigV4 auth plugin for SageMaker managed MLflow (FLIP#745 WP6): registers
+    # tracking/registry stores for arn: URIs so MLFLOW_TRACKING_URI can carry the
+    # prod MLflow App ARN. Dormant when the URI is HTTP (dev) or unset.
+    "sagemaker-mlflow>=0.5.0",
     "tqdm>=4.67.1",
 ]
 

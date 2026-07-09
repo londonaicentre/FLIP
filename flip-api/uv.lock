@@ -9,7 +9,7 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "2026-07-05T23:05:00.139954085Z"
+exclude-newer = "2026-07-06T08:51:31.827513428Z"
 exclude-newer-span = "P3D"
 
 [[package]]
@@ -849,6 +849,7 @@ dependencies = [
     { name = "pyjwt", extra = ["crypto"] },
     { name = "python-dotenv" },
     { name = "python-multipart" },
+    { name = "sagemaker-mlflow" },
     { name = "slowapi" },
     { name = "sqlalchemy" },
     { name = "sqlmodel" },
@@ -898,6 +899,7 @@ requires-dist = [
     { name = "pyjwt", extras = ["crypto"], specifier = ">=2.12.1" },
     { name = "python-dotenv", specifier = ">=1.2.2" },
     { name = "python-multipart", specifier = ">=0.0.26" },
+    { name = "sagemaker-mlflow", specifier = ">=0.5.0" },
     { name = "slowapi", specifier = ">=0.1.9" },
     { name = "sqlalchemy", specifier = ">=2.0.27" },
     { name = "sqlmodel", specifier = ">=0.0.24" },
@@ -2488,6 +2490,19 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/9b/ec/7c692cde9125b77e84b307354d4fb705f98b8ccad59a036d5957ca75bfc3/s3transfer-0.17.0.tar.gz", hash = "sha256:9edeb6d1c3c2f89d6050348548834ad8289610d886e5bf7b7207728bd43ce33a", size = 155337, upload-time = "2026-04-29T22:07:36.33Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/87/72/c6c32d2b657fa3dad1de340254e14390b1e334ce38268b7ad51abda3c8c2/s3transfer-0.17.0-py3-none-any.whl", hash = "sha256:ce3801712acf4ad3e89fb9990df97b4972e93f4b3b0004d214be5bce12814c20", size = 86811, upload-time = "2026-04-29T22:07:34.966Z" },
+]
+
+[[package]]
+name = "sagemaker-mlflow"
+version = "0.5.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "boto3" },
+    { name = "mlflow-skinny" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/d5/e6/c147424bb1b1d16963037940949533dc893b511cf5919ecbc82388dfcf0d/sagemaker_mlflow-0.5.0.tar.gz", hash = "sha256:6786b9aa738bf0ec551dc99bd44069ac39ad202fa234f99b2fc914556f1af2f2", size = 22371, upload-time = "2026-06-27T00:06:19.285Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/69/50/4d0a43a18e0596f2fd1a506a4467577c45d2697b245cb5f61e8704209c29/sagemaker_mlflow-0.5.0-py3-none-any.whl", hash = "sha256:f55dc39c6ed345d4359c7d5cddd99fb59c852609c463a397d18e8bbaba672dac", size = 31159, upload-time = "2026-06-27T00:06:18.253Z" },
 ]
 
 [[package]]
