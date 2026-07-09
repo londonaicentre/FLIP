@@ -137,11 +137,6 @@ const stubs = {
             "<button data-test='tab-run' @click=\"$emit('update:modelValue', 'run')\" />" +
             "<button data-test='tab-prepare' @click=\"$emit('update:modelValue', 'prepare')\" /></nav>"
     },
-    RoundProgress: {
-        name: "RoundProgress",
-        props: ["status"],
-        template: "<div data-test='round-progress' :data-status='status' />"
-    },
     Training: {
         name: "Training",
         props: ["flBackendLabel", "view"],
@@ -263,15 +258,6 @@ describe("pages/project/[projectId]/model/[modelId]", () => {
     it("renders the loader until model data resolves", async () => {
         const wrapper = await mountPage();
         expect(wrapper.find("[data-test='loader']").exists()).toBe(true);
-    });
-
-    it("renders the round-progress card below the lifecycle with the model status", async () => {
-        mockSwrvData.value = makeModel([], { status: "TRAINING_STARTED" });
-        const wrapper = await mountPage();
-
-        const card = wrapper.find("[data-test='round-progress']");
-        expect(card.exists()).toBe(true);
-        expect(card.attributes("data-status")).toBe("TRAINING_STARTED");
     });
 
     it("invokes resolveModelConfigState with the current config.json status on each poll", async () => {
@@ -738,7 +724,6 @@ describe("pages/project/[projectId]/model/[modelId] — Prepare/Run tabs", () =>
         expect(wrapper.find("[data-test='model-tabs']").attributes("data-active")).toBe("prepare");
         expect(wrapper.find("[data-test='model-upload']").exists()).toBe(true);
         expect(wrapper.find("[data-test='training']").attributes("data-view")).toBe("prepare");
-        expect(wrapper.find("[data-test='round-progress']").exists()).toBe(false);
     });
 
     it("a dispatched model opens on Run, and the model files are out of the way", async () => {
@@ -748,7 +733,6 @@ describe("pages/project/[projectId]/model/[modelId] — Prepare/Run tabs", () =>
         expect(wrapper.find("[data-test='model-tabs']").attributes("data-active")).toBe("run");
         expect(wrapper.find("[data-test='model-upload']").exists()).toBe(false);
         expect(wrapper.find("[data-test='training']").attributes("data-view")).toBe("run");
-        expect(wrapper.find("[data-test='round-progress']").exists()).toBe(true);
     });
 
     it("Prepare stays reachable during a run, read-only but still downloadable", async () => {
@@ -762,7 +746,6 @@ describe("pages/project/[projectId]/model/[modelId] — Prepare/Run tabs", () =>
         expect(upload.attributes("data-can-upload")).toBe("false");
         // The run options stay on screen as a record of how the run was launched.
         expect(wrapper.find("[data-test='training']").attributes("data-view")).toBe("prepare");
-        expect(wrapper.find("[data-test='round-progress']").exists()).toBe(false);
     });
 
     it("dispatching the model moves you to the Run tab", async () => {

@@ -18,7 +18,7 @@ import { v4 } from "uuid";
 
 import { FileUploadStatus } from "@/interfaces/model/types";
 import { IPaginatedResponse } from "@/services/api";
-import { ILog, IModel, IModelDashboard, IModelMetricData, IModelProgress } from "@/services/model-service";
+import { ILog, IModel, IModelDashboard, IModelMetricData } from "@/services/model-service";
 
 const modelId = v4();
 
@@ -226,35 +226,6 @@ export const exampleLogs: ILog[] = [
         "log": "Round 2 aggregated · 2 of 2 trusts returned"
     }
 ];
-
-// GET /model/{id}/progress — the server-derived round view backing RoundProgress.vue.
-export const exampleProgress: IModelProgress = {
-    currentRound: 2,
-    totalRounds: 5,
-    startedAt: "2021-11-10T16:42:00.000Z",
-    avgRoundSeconds: 360,
-    estRemainingSeconds: 1290,
-    trusts: [
-        {
-            id: "0a1b2c3d-4e5f-6071-8293-a4b5c6d7e8f9",
-            name: "trust1",
-            code: "GSTT",
-            lastRound: 2,
-            state: "returned",
-            avgRoundSeconds: 320,
-            lastEventAt: "2021-11-10T16:52:08.000Z"
-        },
-        {
-            id: "1b2c3d4e-5f60-7182-93a4-b5c6d7e8f90a",
-            name: "trust2",
-            code: "KCH",
-            lastRound: 1,
-            state: "training",
-            avgRoundSeconds: 395,
-            lastEventAt: "2021-11-10T16:53:41.000Z"
-        }
-    ]
-};
 
 export const mockModelDashboard: IModelDashboard = {
     modelName: "Testing Model",

@@ -125,21 +125,18 @@
                     </div>
                 </div>
 
-                <!-- Run: round progress, metrics and the activity feed. -->
-                <template v-else>
-                    <RoundProgress :status="modelData?.status" />
-
-                    <Training
-                        view="run"
-                        :can-train="readyToTrain"
-                        :status="modelData?.status"
-                        :all-files-uploaded="allFilesUploaded"
-                        :required-files="requiredFiles"
-                        :uploaded-file-names="modelData?.files?.map(f => f.name) ?? []"
-                        :job-type="currentJobType"
-                        :fl-backend-label="flBackendLabel"
-                    />
-                </template>
+                <!-- Run: metrics and the activity feed. -->
+                <Training
+                    v-else
+                    view="run"
+                    :can-train="readyToTrain"
+                    :status="modelData?.status"
+                    :all-files-uploaded="allFilesUploaded"
+                    :required-files="requiredFiles"
+                    :uploaded-file-names="modelData?.files?.map(f => f.name) ?? []"
+                    :job-type="currentJobType"
+                    :fl-backend-label="flBackendLabel"
+                />
             </div>
 
             <EditModelDrawer
@@ -172,7 +169,6 @@ import { IStep } from "@/interfaces/steps";
 import EditModelDrawer, { IEditModel } from "@/partials/models/EditModelDrawer.vue";
 import ModelTabs, { type ModelTab } from "@/partials/models/ModelTabs.vue";
 import ModelUpload from "@/partials/models/ModelUpload.vue";
-import RoundProgress from "@/partials/models/RoundProgress.vue";
 import Training from "@/partials/models/Training.vue";
 import TrainingActionsMenu from "@/partials/models/TrainingActionsMenu.vue";
 import LifecycleTrack from "@/partials/projects/LifecycleTrack.vue";

@@ -30,7 +30,6 @@ import OMOPResults from "./cohort-query/omop-results.json";
 import healthcheckResponse from "./data/healthcheck.json";
 import { connectedNets, detailedNetResponse } from "./fl/status";
 import { exampleLogs,
-    exampleProgress,
     latestModelData1,
     mockModelDashboard,
     ModelMetrics,
@@ -225,10 +224,6 @@ export const makeServer = ({ environment = "development" } = {}): Server<AppRegi
 
             this.get(`${baseUrl}/model/:modelId/metrics`, () => {
                 return new Response(200, undefined, ModelMetrics);
-            });
-
-            this.get(`${baseUrl}/model/:modelId/progress`, () => {
-                return new Response(200, undefined, exampleProgress);
             });
 
             this.post(`${baseUrl}/model-files`, () => {

@@ -63,29 +63,6 @@ export interface ILog {
     log: string;
 }
 
-export type ProgressTrustState = "returned" | "training" | "dropped";
-
-export interface IModelProgressTrust {
-    id: string;
-    name: string;
-    code: string | null;
-    lastRound: number | null;
-    state: ProgressTrustState;
-    avgRoundSeconds: number | null;
-    lastEventAt: string | null;
-}
-
-// Server-derived federated-round state (GET /model/{id}/progress): the UI is a
-// pure renderer — round math lives in flip-api so every consumer agrees.
-export interface IModelProgress {
-    currentRound: number | null;
-    totalRounds: number | null;
-    startedAt: string | null;
-    avgRoundSeconds: number | null;
-    estRemainingSeconds: number | null;
-    trusts: IModelProgressTrust[];
-}
-
 export interface IModelDashboardQuery {
     name: string;
     query: string;
@@ -508,8 +485,3 @@ export async function getModelMetrics(url: string): Promise<IModelMetricData[]> 
     return response.data ?? [];
 }
 
-export async function getModelProgress(url: string): Promise<IModelProgress | null> {
-    const response = await _http.get<IModelProgress>(url);
-
-    return response.data ?? null;
-}

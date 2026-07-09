@@ -212,53 +212,6 @@ class ILog(BaseModel):
     )
 
 
-class ProgressTrustState(StrEnum):
-    """Where a trust sits relative to the current federated round.
-
-    ``RETURNED`` — its result for the current round has been received; it is
-    waiting on aggregation. ``TRAINING`` — still computing (the design calls the
-    slowest such trust the round's "gating" trust). ``DROPPED`` — it reported an
-    error and has shown no round activity since.
-    """
-
-    RETURNED = "returned"
-    TRAINING = "training"
-    DROPPED = "dropped"
-
-
-class IModelProgressTrust(BaseModel):
-    """One ladder row of ``GET /model/{id}/progress``."""
-
-    id: UUID
-    name: str
-    code: str | None = None
-    last_round: int | None = Field(default=None, alias="lastRound")
-    state: ProgressTrustState
-    avg_round_seconds: float | None = Field(default=None, alias="avgRoundSeconds")
-    last_event_at: datetime | None = Field(default=None, alias="lastEventAt")
-
-    model_config = ConfigDict(populate_by_name=True)
-
-
-class IModelProgress(BaseModel):
-    """Server-derived federated-round state for the RoundProgress card.
-
-    Computed from the typed ``fl_logs`` events in one place (``services/progress.py``)
-    so no client re-implements round math. All fields are null-tolerant: a model
-    trained before event emission existed simply yields an empty shell (roster
-    only), which the UI treats as "nothing to show".
-    """
-
-    current_round: int | None = Field(default=None, alias="currentRound")
-    total_rounds: int | None = Field(default=None, alias="totalRounds")
-    started_at: datetime | None = Field(default=None, alias="startedAt")
-    avg_round_seconds: float | None = Field(default=None, alias="avgRoundSeconds")
-    est_remaining_seconds: float | None = Field(default=None, alias="estRemainingSeconds")
-    trusts: list[IModelProgressTrust] = Field(default_factory=list)
-
-    model_config = ConfigDict(populate_by_name=True)
-
-
 class IModelAuditAction(BaseModel):
     model_id: UUID
     action: ModelAuditAction
