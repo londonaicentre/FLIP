@@ -143,6 +143,8 @@ class MlflowSink:
         """
         try:
             run_id = self._resolve_run_id(model_id)
+            if run_id is None:
+                return
             key = _INVALID_KEY_CHARS.sub("_", f"{label}/{client_name}")
             self._client.log_metric(run_id, key, value, timestamp=int(time.time() * 1000), step=round)
         except Exception as e:
@@ -182,6 +184,8 @@ class MlflowSink:
         """
         try:
             run_id = self._resolve_run_id(model_id)
+            if run_id is None:
+                return
             self._client.set_tag(run_id, TAG_LAST_ERROR, f"{client_name}: {formatted_exception}"[:500])
         except Exception as e:
             logger.warning(f"MLflow dual-write dropped exception note for model {model_id}: {e}")
@@ -200,6 +204,8 @@ class MlflowSink:
         """
         try:
             run_id = self._resolve_run_id(model_id)
+            if run_id is None:
+                return
             self._client.set_tag(run_id, TAG_RESULTS_URI, results_uri)
             name = registered_model_name(model_id)
             try:
