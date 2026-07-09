@@ -31,32 +31,87 @@
         </div>
     </div>
     <div v-else class="flex flex-col flex-1 min-h-0">
-        <div
-            role="tablist"
-            aria-label="Training plots"
-            class="flex items-center gap-1 shrink-0 overflow-x-auto pb-3"
-        >
-            <button
-                v-for="chart in data"
-                :key="chart.yLabel"
-                type="button"
-                role="tab"
-                :aria-selected="activeChartLabel === chart.yLabel"
-                :data-test="`training-plot-tab-${chart.yLabel}`"
-                class="inline-flex items-center px-3 py-1.5 rounded-full text-[13px] font-semibold whitespace-nowrap transition-all"
-                :class="activeChartLabel === chart.yLabel
-                    ? 'bg-primary-500 text-white shadow-sm'
-                    : 'text-gray-500 hover:text-gray-800 dark:text-gray-300 dark:hover:text-gray-200'"
-                @click="activeChartLabel = chart.yLabel"
+        <div class="flex items-center gap-3 shrink-0 pb-3">
+            <!-- Picking one plot only means something while one plot is showing. -->
+            <div
+                v-if="view === 'single'"
+                role="tablist"
+                aria-label="Training plots"
+                class="flex items-center flex-1 min-w-0 gap-1 overflow-x-auto"
             >
-                {{ chart.yLabel }}
-            </button>
+                <button
+                    v-for="chart in charts"
+                    :key="chart.yLabel"
+                    type="button"
+                    role="tab"
+                    :aria-selected="activeChartLabel === chart.yLabel"
+                    :data-test="`training-plot-tab-${chart.yLabel}`"
+                    class="inline-flex items-center px-3 py-1.5 rounded-full text-[13px] font-semibold whitespace-nowrap transition-all"
+                    :class="activeChartLabel === chart.yLabel
+                        ? 'bg-primary-500 text-white shadow-sm'
+                        : 'text-gray-500 hover:text-gray-800 dark:text-gray-300 dark:hover:text-gray-200'"
+                    @click="activeChartLabel = chart.yLabel"
+                >
+                    {{ chart.yLabel }}
+                </button>
+            </div>
+            <p v-else class="flex-1 min-w-0 text-[13px] text-gray-500 dark:text-gray-300">
+                {{ charts.length }} {{ charts.length === 1 ? "plot" : "plots" }}
+            </p>
+
+            <div class="flex items-center gap-1 shrink-0" role="group" aria-label="Plot layout">
+                <button
+                    type="button"
+                    data-test="metrics-view-single"
+                    aria-label="Show one plot at a time"
+                    title="Show one plot at a time"
+                    :aria-pressed="view === 'single'"
+                    :class="viewButtonClass('single')"
+                    @click="view = 'single'"
+                >
+                    <icon-ph-square class="w-4 h-4" />
+                </button>
+                <button
+                    type="button"
+                    data-test="metrics-view-grid"
+                    aria-label="Show all plots in a grid"
+                    title="Show all plots in a grid"
+                    :aria-pressed="view === 'grid'"
+                    :class="viewButtonClass('grid')"
+                    @click="view = 'grid'"
+                >
+                    <icon-ph-squares-four class="w-4 h-4" />
+                </button>
+            </div>
         </div>
+
         <!-- The chart fills whatever height the card gives it rather than locking to
              a 16:9 box. min-h-0 lets it shrink below its content on a short window;
              the card carries the readability floor. -->
-        <div class="w-full flex-1 min-h-0 pt-4" role="tabpanel">
+        <div v-if="view === 'single'" class="w-full flex-1 min-h-0 pt-4" role="tabpanel">
             <AiMetricsChart v-if="activeChart" :data="activeChart" />
+        </div>
+
+        <!-- Every plot at once. The cells keep a readable height and the grid scrolls,
+             rather than squeezing a run's worth of metrics into one screen. -->
+        <div
+            v-else
+            data-test="metrics-grid"
+            class="grid flex-1 min-h-0 grid-cols-1 gap-4 pt-4 pr-1 overflow-y-auto md:grid-cols-2 2xl:grid-cols-3"
+        >
+            <figure
+                v-for="chart in charts"
+                :key="chart.yLabel"
+                :data-test="`metrics-grid-cell-${chart.yLabel}`"
+                class="flex flex-col h-56 p-2 rounded-lg ring-1 ring-gray-100 dark:ring-dark-border"
+            >
+                <figcaption class="px-1 pb-1 text-xs font-semibold truncate shrink-0 text-gray-600 dark:text-gray-300">
+                    {{ chart.yLabel }}
+                </figcaption>
+                <div class="flex-1 min-h-0">
+                    <AiMetricsChart :data="chart" />
+                </div>
+            </figure>
         </div>
     </div>
 </template>
@@ -122,17 +177,32 @@ const nameToCode = computed(() => {
     return map;
 });
 
-const activeChart = computed(() => {
-    const chart = data.value?.find(c => c.yLabel === activeChartLabel.value);
-    if (!chart) return null;
+// Every chart, with trust names shortened to their codes. Both views draw from
+// this, so a legend reads the same whichever layout you are in.
+const charts = computed(() => {
     const codes = nameToCode.value;
 
-    return {
+    return (data.value ?? []).map(chart => ({
         ...chart,
         metrics: chart.metrics.map(s => ({
             ...s,
             seriesLabel: codes.get(s.seriesLabel) ?? s.seriesLabel
         }))
-    };
+    }));
 });
+
+const activeChart = computed(() => charts.value.find(c => c.yLabel === activeChartLabel.value) ?? null);
+
+// A run reports dozens of metrics, so "one at a time" and "all at once" are both
+// reasonable defaults; single opens because it is the readable one.
+type PlotView = "single" | "grid";
+const view = ref<PlotView>("single");
+
+function viewButtonClass(option: PlotView): string {
+    const base = "inline-flex items-center justify-center w-8 h-8 rounded-lg transition-colors";
+
+    return view.value === option
+        ? `${base} bg-primary-500 text-white`
+        : `${base} text-gray-500 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-dark-raised`;
+}
 </script>

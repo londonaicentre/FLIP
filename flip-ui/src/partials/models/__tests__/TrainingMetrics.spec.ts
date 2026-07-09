@@ -245,6 +245,93 @@ describe("TrainingMetrics", () => {
     });
 });
 
+describe("TrainingMetrics plot layout", () => {
+    beforeEach(() => {
+        setData(undefined);
+    });
+
+    test("opens on the single-plot view, with the plot tabs to switch between them", async () => {
+        setData([TRAIN_LOSS, VAL_F1]);
+        const wrapper = mountTrainingMetrics();
+        await flushPromises();
+
+        expect(wrapper.find("[role=tablist]").exists()).toBe(true);
+        expect(wrapper.findAll("[data-test=chart-stub]")).toHaveLength(1);
+        expect(wrapper.find("[data-test=metrics-view-single]").attributes("aria-pressed")).toBe("true");
+    });
+
+    test("the grid view draws every plot at once, each under its own label", async () => {
+        setData([TRAIN_LOSS, VAL_F1]);
+        const wrapper = mountTrainingMetrics();
+        await flushPromises();
+
+        await wrapper.find("[data-test=metrics-view-grid]").trigger("click");
+
+        expect(wrapper.findAll("[data-test=chart-stub]")).toHaveLength(2);
+        expect(wrapper.find("[data-test='metrics-grid-cell-TRAIN_LOSS']").text()).toContain("TRAIN_LOSS");
+        expect(wrapper.find("[data-test='metrics-grid-cell-VAL-F1-SCORE']").text()).toContain("VAL-F1-SCORE");
+        expect(wrapper.find("[data-test=metrics-view-grid]").attributes("aria-pressed")).toBe("true");
+    });
+
+    test("the grid scrolls rather than shrinking the plots, three across on a wide screen", async () => {
+        setData([TRAIN_LOSS, VAL_F1]);
+        const wrapper = mountTrainingMetrics();
+        await flushPromises();
+
+        await wrapper.find("[data-test=metrics-view-grid]").trigger("click");
+
+        const grid = wrapper.get("[data-test=metrics-grid]");
+        expect(grid.classes()).toContain("overflow-y-auto");
+        expect(grid.classes()).toContain("grid-cols-1");
+        expect(grid.classes()).toContain("2xl:grid-cols-3");
+    });
+
+    test("the plot tabs give way to the grid — with every plot drawn, picking one is meaningless", async () => {
+        setData([TRAIN_LOSS, VAL_F1]);
+        const wrapper = mountTrainingMetrics();
+        await flushPromises();
+
+        await wrapper.find("[data-test=metrics-view-grid]").trigger("click");
+
+        expect(wrapper.find("[role=tablist]").exists()).toBe(false);
+    });
+
+    test("switching back to the single view returns you to the plot you had open", async () => {
+        setData([TRAIN_LOSS, VAL_F1]);
+        const wrapper = mountTrainingMetrics();
+        await flushPromises();
+
+        await wrapper.get("[data-test='training-plot-tab-VAL-F1-SCORE']").trigger("click");
+        await wrapper.find("[data-test=metrics-view-grid]").trigger("click");
+        await wrapper.find("[data-test=metrics-view-single]").trigger("click");
+
+        expect(wrapper.get("[data-test=chart-stub]").attributes("data-y-label")).toBe("VAL-F1-SCORE");
+    });
+
+    test("the grid shortens trust names to their codes, exactly as the single view does", async () => {
+        setData([TRAIN_LOSS]);
+        const wrapper = mountTrainingMetrics({
+            approvedTrusts: [{
+                name: "Kings College Hospital",
+                code: "KCH"
+            }]
+        });
+        await flushPromises();
+
+        await wrapper.find("[data-test=metrics-view-grid]").trigger("click");
+
+        expect(wrapper.get("[data-test=chart-stub]").attributes("data-series-labels")).toBe("KCH,UCLH");
+    });
+
+    test("there is no layout switch when there is nothing to lay out", async () => {
+        setData([]);
+        const wrapper = mountTrainingMetrics();
+        await flushPromises();
+
+        expect(wrapper.find("[data-test=metrics-view-grid]").exists()).toBe(false);
+    });
+});
+
 describe("TrainingMetrics chart sizing", () => {
     it("lets the chart grow into the card instead of locking it to a 16:9 box", () => {
         setData([TRAIN_LOSS]);
