@@ -224,6 +224,27 @@ describe("Training metrics + live-activity responsive layout", () => {
         expect(container?.className).toContain("xl:flex-row");
     });
 
+    it("gives both cards real height by default now that they own the Run tab", () => {
+        const wrapper = mountTraining({ status: "TRAINING_STARTED" });
+
+        const { metricsCard, liveCard } = layoutParts(wrapper);
+
+        expect(metricsCard?.className).toContain("min-h-[28rem]");
+        expect(liveCard?.className).toContain("min-h-[28rem]");
+    });
+
+    it("caps the stacked live-activity card so it scrolls instead of running off a phone", () => {
+        const wrapper = mountTraining({ status: "TRAINING_STARTED" });
+
+        const { liveCard, scrollWrap } = layoutParts(wrapper);
+
+        // Stacked, the card is a fixed viewport onto the feed; at xl the metrics
+        // card sets the row height and the card stretches to it instead.
+        expect(liveCard?.className).toContain("h-[28rem]");
+        expect(liveCard?.className).toContain("xl:h-auto");
+        expect(scrollWrap?.className).toContain("overflow-y-auto");
+    });
+
     it("makes the live-activity card full-width when stacked and a fixed column only at xl+", () => {
         const wrapper = mountTraining({ status: "TRAINING_STARTED" });
 

@@ -20,7 +20,7 @@
     <div
         v-if="!data?.length"
         data-test="metrics-empty-state"
-        class="flex flex-col items-center justify-center w-full min-h-[16rem] p-4
+        class="flex flex-col flex-1 items-center justify-center w-full min-h-[16rem] p-4
         border-2 border-gray-100 dark:border-dark-border rounded-lg"
     >
         <div class="relative block w-full text-center">
@@ -30,7 +30,7 @@
             </div>
         </div>
     </div>
-    <div v-else class="flex flex-col">
+    <div v-else class="flex flex-col flex-1 min-h-0">
         <div
             role="tablist"
             aria-label="Training plots"
@@ -52,7 +52,9 @@
                 {{ chart.yLabel }}
             </button>
         </div>
-        <div class="w-full aspect-video max-h-[480px] pt-4" role="tabpanel">
+        <!-- The chart fills whatever height the card gives it rather than locking to
+             a 16:9 box, with a floor so it stays readable on a phone. -->
+        <div class="w-full flex-1 min-h-[18rem] pt-4" role="tabpanel">
             <AiMetricsChart v-if="activeChart" :data="activeChart" />
         </div>
     </div>

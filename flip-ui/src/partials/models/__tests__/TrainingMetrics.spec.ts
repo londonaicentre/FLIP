@@ -244,3 +244,14 @@ describe("TrainingMetrics", () => {
         expect(wrapper.text()).toContain("Any metrics generated during training will show here.");
     });
 });
+
+describe("TrainingMetrics chart sizing", () => {
+    it("lets the chart grow into the card instead of locking it to a 16:9 box", () => {
+        setData([TRAIN_LOSS]);
+        const wrapper = mountTrainingMetrics();
+
+        const panel = wrapper.get("[role=tabpanel]");
+        expect(panel.classes()).toContain("flex-1");
+        expect(panel.classes()).not.toContain("aspect-video");
+    });
+});

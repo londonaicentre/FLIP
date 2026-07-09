@@ -66,11 +66,18 @@
     </Form>
 
     <div v-else-if="view === 'run'" class="flex flex-col xl:flex-row flex-1 min-h-0 gap-4 xl:items-start">
-        <AiCard class="flex flex-col flex-1 min-w-0 p-4">
+        <AiCard class="flex flex-col flex-1 min-w-0 min-h-[28rem] xl:min-h-[34rem] p-4">
             <TrainingMetrics :in-progress="!finished" />
         </AiCard>
 
-        <AiCard class="relative w-full xl:w-96 2xl:w-[28rem] xl:shrink-0 self-stretch flex flex-col py-4 pl-4 pr-1 xl:p-0">
+        <!-- Stacked, the activity card is a fixed-height viewport onto the feed, so a
+             long run scrolls inside it rather than running off the bottom of a phone.
+             At xl it releases that height: the metrics card defines the row and
+             self-stretch matches it. -->
+        <AiCard
+            class="relative w-full xl:w-96 2xl:w-[28rem] xl:shrink-0 self-stretch flex flex-col
+                       h-[28rem] min-h-[28rem] xl:h-auto py-4 pl-4 pr-1 xl:p-0"
+        >
             <!-- At xl the content column is absolutely positioned so the timeline's
                      length can't inflate the card past its siblings: the metrics card
                      defines the row height and self-stretch matches it exactly. -->
@@ -126,9 +133,8 @@ interface ITrainingProps {
     uploadedFileNames: string[];
     jobType: JobType;
     flBackendLabel?: string;
-    // Which stage tab is showing: "prepare" owns the run-options form (and renders
-    // nothing once the model is dispatched — a dispatched run has no options left to
-    // set); "run" owns the metrics and the activity feed.
+    // Which stage tab is showing: "prepare" owns the run options (locked once the
+    // model is dispatched); "run" owns the metrics and the activity feed.
     view: "prepare" | "run";
 }
 
