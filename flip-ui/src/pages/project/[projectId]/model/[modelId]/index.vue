@@ -84,7 +84,9 @@
                 </div>
             </header>
 
-            <div class="flex flex-col flex-1 min-h-0 gap-4 px-8 py-4">
+            <!-- pb-8 matches the px-8 side margins, so the window-filling cards keep
+                 the same breathing room below as beside them. -->
+            <div class="flex flex-col flex-1 min-h-0 gap-4 px-8 pt-4 pb-8">
                 <ModelTabs v-model="activeTab" :status="modelData?.status" class="mt-2" />
 
                 <!-- Prepare: the model files and the run options, exactly as at model
