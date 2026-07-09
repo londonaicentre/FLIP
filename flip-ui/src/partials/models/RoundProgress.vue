@@ -12,10 +12,9 @@
 -->
 
 <!-- Federated round card (design handoff 03c). A pure renderer of the
-     server-derived GET /model/{id}/progress view: round position, segment
-     strip and the collapsible per-trust ladder. All round math lives in
-     flip-api; metric values live in the metrics card below, which knows each
-     series' label and axis. -->
+     server-derived GET /model/{id}/progress view: round position, timing and the
+     collapsible per-trust ladder. All round math lives in flip-api; metric values
+     live in the metrics card below, which knows each series' label and axis. -->
 <template>
     <AiCard v-if="visible" data-test="round-progress-card">
         <div class="px-5 py-4 sm:px-6 grid grid-cols-1 lg:grid-cols-[auto_1fr] gap-5 lg:gap-7 items-center">
@@ -48,9 +47,9 @@
                 </div>
             </div>
 
-            <!-- Segment strip + timing meta -->
+            <!-- Timing meta -->
             <div class="min-w-0">
-                <div class="flex flex-wrap justify-between gap-x-4 mb-2">
+                <div class="flex flex-wrap justify-between gap-x-4">
                     <span
                         data-test="round-meta-left"
                         class="font-mono text-[11px] text-gray-500 dark:text-gray-300"
@@ -59,16 +58,6 @@
                         data-test="round-meta-right"
                         class="font-mono text-[11px] text-gray-500 dark:text-gray-300"
                     >{{ returnSummary }}</span>
-                </div>
-                <div v-if="segments.length" class="flex items-center gap-1 h-4">
-                    <div
-                        v-for="segment in segments"
-                        :key="segment.round"
-                        data-test="round-segment"
-                        :data-state="segment.state"
-                        class="flex-1 rounded-[3px]"
-                        :class="segmentClass(segment.state)"
-                    />
                 </div>
             </div>
         </div>
@@ -110,8 +99,7 @@
                     v-for="trust in progress?.trusts ?? []"
                     :key="trust.id"
                     data-test="ladder-row"
-                    class="grid grid-cols-[minmax(7rem,auto)_1fr] sm:grid-cols-[9.5rem_1fr_auto] gap-x-4 gap-y-1
-                           items-center"
+                    class="flex items-center justify-between gap-4"
                 >
                     <div class="flex items-center gap-2 min-w-0">
                         <span
@@ -128,15 +116,7 @@
                             class="font-mono text-[10px] text-gray-400 dark:text-gray-300"
                         >~{{ formatDurationShort(trust.avgRoundSeconds) }}</span>
                     </div>
-                    <div v-if="segments.length" class="flex gap-[3px] col-span-2 sm:col-span-1 sm:order-none order-3">
-                        <div
-                            v-for="segment in segments"
-                            :key="segment.round"
-                            class="flex-1 h-2.5 rounded-[3px]"
-                            :class="trustSegmentClass(trust, segment.round)"
-                        />
-                    </div>
-                    <div class="flex justify-end">
+                    <div class="flex justify-end shrink-0">
                         <span
                             data-test="ladder-pill"
                             class="inline-flex items-center rounded-full px-2.5 py-0.5 font-mono text-[11px]
@@ -183,11 +163,9 @@ const finished = computed(() =>
 );
 const live = computed(() => !finished.value);
 
-// Same 5s cadence as TrainingMetrics/Timeline. The card deliberately shows no
-// metric values: metric labels are chosen freely by the training code, so any
-// "headline Loss/Accuracy" would have to guess semantics from label substrings
-// (and mis-format e.g. a VAL_DICE_LOSS as a percentage). The metrics card below
-// renders every series with its own tab and axis.
+// Same 5s cadence as TrainingMetrics/Timeline. The card renders no metric values:
+// labels are free-form, so their units are unknowable (a VAL_DICE_LOSS is not a
+// percentage). The metrics card owns that, with a tab and axis per series.
 const { data: progress } = useSWRV(`/model/${params.modelId}/progress`, getModelProgress, {
     refreshInterval: finished.value ? 0 : 5_000,
     dedupingInterval: 5_000,
@@ -207,43 +185,6 @@ const visible = computed(
 
 const currentRound = computed(() => progress.value?.currentRound ?? 0);
 const totalRoundsLabel = computed(() => progress.value?.totalRounds ?? "—");
-
-interface Segment {
-    round: number;
-    state: "done" | "current" | "upcoming";
-}
-
-const segments = computed<Segment[]>(() => {
-    const total = progress.value?.totalRounds;
-    if (!total) return [];
-
-    return Array.from({ length: total }, (_, i) => {
-        const round = i + 1;
-        // A finished run keeps no "live" segment — every reached round reads done.
-        if (round < currentRound.value || (round === currentRound.value && finished.value)) {
-            return {
-                round,
-                state: "done" as const
-            };
-        }
-        if (round === currentRound.value) return {
-            round,
-            state: "current" as const
-        };
-
-        return {
-            round,
-            state: "upcoming" as const
-        };
-    });
-});
-
-function segmentClass(state: Segment["state"]): string {
-    if (state === "done") return "h-2.5 bg-primary-500";
-    if (state === "current") return "h-3.5 bg-fuchsia-500 ring-[3px] ring-fuchsia-500/20";
-
-    return "h-1.5 bg-gray-200 dark:bg-dark-raised";
-}
 
 // 30s tick drives the elapsed label; everything else re-renders on poll data.
 const now = ref(Date.now());
@@ -321,17 +262,4 @@ function trustPillText(trust: IModelProgressTrust): string {
         : "no result";
 }
 
-function trustSegmentClass(trust: IModelProgressTrust, round: number): string {
-    if (trust.state === "dropped") {
-        return trust.lastRound != null && round <= trust.lastRound
-            ? "bg-gray-400 dark:bg-gray-600"
-            : "bg-gray-200 dark:bg-dark-raised";
-    }
-    if (trust.lastRound != null && round <= trust.lastRound) return "bg-primary-500";
-    if (trust.state === "training" && round === progress.value?.currentRound && live.value) {
-        return "bg-amber-500 ring-[3px] ring-amber-500/25";
-    }
-
-    return "bg-gray-200 dark:bg-dark-raised";
-}
 </script>

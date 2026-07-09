@@ -138,16 +138,6 @@ describe("RoundProgress", () => {
         expect(comp.find("[data-test=round-total]").text()).toContain("15");
     });
 
-    test("renders one segment per round with done, current and upcoming states", () => {
-        const comp = mountCard();
-
-        const segments = comp.findAll("[data-test=round-segment]");
-        expect(segments).toHaveLength(15);
-        expect(segments.filter((s) => s.attributes("data-state") === "done")).toHaveLength(6);
-        expect(segments[6].attributes("data-state")).toBe("current");
-        expect(segments.filter((s) => s.attributes("data-state") === "upcoming")).toHaveLength(8);
-    });
-
     test("summarises returned trusts and who the round is waiting on", () => {
         const comp = mountCard();
 
@@ -202,10 +192,8 @@ describe("RoundProgress", () => {
     });
 
     test("shows no metric values and never fetches metrics", () => {
-        // Metric labels are chosen freely by the training code (TRAIN_LOSS, TEST_DICE,
-        // "GAN loss (G)", …), so the card cannot know which are headline-worthy nor
-        // what units they carry — a VAL_DICE_LOSS would render as a percentage. The
-        // metrics card below owns that, with a tab and axis per series.
+        // Metric labels are free-form, so the card cannot know a metric's units:
+        // a VAL_DICE_LOSS is not a percentage. Only the metrics card renders values.
         mountCard();
 
         expect(mockData.keys).toEqual(["/model/m1/progress"]);
