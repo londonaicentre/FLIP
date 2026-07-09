@@ -34,13 +34,15 @@
         <div class="flex items-center gap-3 shrink-0 pb-3">
             <!-- Picking one plot only means something while one plot is showing. On a
                  narrow window a run's worth of chips scrolls off the screen, so the same
-                 choice becomes a select. -->
+                 choice becomes a select. It runs the full width up to the layout buttons:
+                 a capped select leaves the row's slack trailing behind the buttons, which
+                 then sit adrift of the card's right edge. -->
             <select
                 v-if="view === 'single'"
                 v-model="activeChartLabel"
                 data-test="metrics-plot-select"
                 aria-label="Training plot"
-                class="flex-1 min-w-0 max-w-[16rem] px-2 py-1.5 sm:hidden rounded-lg border text-[13px] font-semibold
+                class="flex-1 min-w-0 px-2 py-1.5 sm:hidden rounded-lg border text-[13px] font-semibold
                        bg-white dark:bg-dark-canvas border-gray-200 dark:border-dark-border
                        text-gray-700 dark:text-gray-300"
             >
@@ -75,7 +77,9 @@
                 {{ charts.length }} {{ charts.length === 1 ? "plot" : "plots" }}
             </p>
 
-            <div class="flex items-center gap-1 shrink-0" role="group" aria-label="Plot layout">
+            <!-- ml-auto keeps these pinned to the card's right edge whatever leads the
+                 row, rather than relying on that element growing to fill it. -->
+            <div class="flex items-center gap-1 shrink-0 ml-auto" role="group" aria-label="Plot layout">
                 <button
                     type="button"
                     data-test="metrics-view-single"

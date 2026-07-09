@@ -276,6 +276,20 @@ describe("TrainingMetrics plot layout", () => {
         expect(tabs.classes()).toContain("sm:flex");
     });
 
+    test("the dropdown runs up to the layout buttons, which stay pinned right", async () => {
+        setData([TRAIN_LOSS, VAL_F1]);
+        const wrapper = mountTrainingMetrics();
+        await flushPromises();
+
+        // A width cap on the select leaves the row's slack trailing behind the buttons,
+        // stranding them mid-row instead of flush against the card's right edge.
+        const select = wrapper.get("[data-test=metrics-plot-select]");
+        expect(select.classes()).toContain("flex-1");
+        expect(select.classes().some(c => c.startsWith("max-w-"))).toBe(false);
+
+        expect(wrapper.get("[aria-label='Plot layout']").classes()).toContain("ml-auto");
+    });
+
     test("choosing from the dropdown switches the plot", async () => {
         setData([TRAIN_LOSS, VAL_F1]);
         const wrapper = mountTrainingMetrics();
