@@ -46,6 +46,12 @@ Per-trust metric             Metric ``<LABEL>/<fl_client_name>``, step = global 
 Status transition            Tag ``flip.status``; terminal statuses end the run
                              (``RESULTS_UPLOADED`` → FINISHED, ``ERROR`` → FAILED,
                              ``STOPPED`` → KILLED)
+Stop training (abort)        The hub terminates the RUNNING run as KILLED on abort
+                             (deterministic on both backends, even when a killed
+                             Flower ServerApp reports no terminal status itself)
+Model soft-delete            The experiment is soft-deleted too (MLflow's delete is
+                             likewise restorable); the registered model is kept but
+                             tagged ``flip.deleted``
 Results zip                  Registered model version of ``flip-model-<model_id>``
 ===========================  ====================================================================
 
