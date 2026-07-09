@@ -122,10 +122,12 @@ describe("AiModelMetricsChart", () => {
         // The grid takes the full card width — no 160px legend column on the right.
         expect(opts.grid.right).toBeLessThanOrEqual(24);
         // The toolbox sits above the plot, not on the lines. Its icons are echarts'
-        // default 15px tall, so the grid has to start below them.
+        // default 15px tall, and its box carries a default 5px padding that silently
+        // pushes them down into the plot — so the grid must clear icons *and* padding.
         expect(opts.toolbox.right).toBe(8);
         expect(opts.toolbox.top).toBe(0);
-        expect(opts.toolbox.top + 15).toBeLessThanOrEqual(opts.grid.top);
+        expect(opts.toolbox.padding).toBe(0);
+        expect(opts.toolbox.top + opts.toolbox.padding + 15).toBeLessThanOrEqual(opts.grid.top);
         // The legend still floats vertically centred on the right edge, with a
         // translucent backing so it stays legible over the series lines.
         expect(opts.legend.right).toBe(12);

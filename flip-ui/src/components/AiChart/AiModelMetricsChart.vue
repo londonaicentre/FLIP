@@ -107,9 +107,12 @@ onMounted(() => {
                     toolbox: {
                         ...chartToolbox(darkMode),
                         // Above the plot rather than inside it, so the icons never sit over
-                        // the lines. Flush with the canvas top; grid.top clears them below.
+                        // the lines. echarts pads the toolbox box by 5 on every side by
+                        // default, which pushed the icons 8px down into the plot rect even
+                        // at top: 0 — measured, not guessed. grid.top clears them below.
                         right: 8,
                         top: 0,
+                        padding: 0,
                         feature: {
                             ...chartToolbox(darkMode).feature,
                             dataZoom: {
@@ -131,7 +134,7 @@ onMounted(() => {
                         // reserving a 160px column on the right.
                         right: 24,
                         // Clears the toolbox's 15px icons sitting above the plot, and no more.
-                        top: 24,
+                        top: 28,
                         // Just enough for the x-axis name at nameGap 20. Every pixel here
                         // is taken off the plotted area, which is fixed overhead the box's
                         // aspect ratio never sees: at a phone's 208px-tall box, the old
