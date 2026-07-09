@@ -124,9 +124,11 @@
             data-test="metrics-grid-scroller"
             class="flex-1 min-h-0 overflow-y-auto"
         >
+            <!-- pt-1, not pt-4: the header already carries pb-3, and the cells' rings sit
+                 outside their boxes, so this only has to keep the top row's ring unsheared. -->
             <div
                 data-test="metrics-grid"
-                class="grid items-start grid-cols-1 gap-4 pt-4 px-1 md:grid-cols-2 2xl:grid-cols-3"
+                class="grid items-start grid-cols-1 gap-4 pt-1 px-1 md:grid-cols-2 2xl:grid-cols-3"
             >
                 <!-- overflow-hidden keeps a mid-resize canvas — the chart resizes on a
                      debounce — from painting over the cell below. -->
@@ -136,7 +138,7 @@
                     :data-test="`metrics-grid-cell-${chart.yLabel}`"
                     class="flex flex-col p-2 overflow-hidden rounded-lg ring-1 ring-gray-100 dark:ring-white/25"
                 >
-                    <figcaption class="px-1 pb-1 text-xs font-semibold truncate shrink-0 text-gray-600 dark:text-gray-300">
+                    <figcaption class="px-1 pb-0.5 text-xs font-semibold truncate shrink-0 text-gray-600 dark:text-gray-300">
                         {{ chart.yLabel }}
                     </figcaption>
                     <!-- The ratio goes on the plot, not the cell: the caption and padding
