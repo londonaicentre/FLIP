@@ -166,6 +166,14 @@ endif
 export TF_VAR_docker_image_tag=${DOCKER_TAG}
 export TF_VAR_flip_fl_image_tag=${DOCKER_FL_TAG}
 export TF_VAR_docker_registry=${DOCKER_REGISTRY}
+# One-shot EFS-provision utility image (default amazon/aws-cli from Docker Hub
+# in variables.tf). The LZA account has no internet egress, so .env.lza-prod
+# points this at the in-account ECR Public pull-through cache mirror
+# (…/ecr-public/aws-cli/aws-cli:<tag>, FLIP#749). Export only when set so
+# legacy envs keep the variables.tf default rather than an empty string.
+ifneq ($(EFS_PROVISION_IMAGE),)
+export TF_VAR_efs_provision_image=${EFS_PROVISION_IMAGE}
+endif
 export TF_VAR_fl_api_name=${DOCKER_FL_API_NAME}
 export TF_VAR_fl_server_name=${DOCKER_FL_SERVER_NAME}
 export TF_VAR_fl_client_name=${DOCKER_FL_CLIENT_NAME}

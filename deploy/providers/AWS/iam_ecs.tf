@@ -88,6 +88,39 @@ resource "aws_iam_role_policy" "ecs_task_execution_secrets" {
   policy = data.aws_iam_policy_document.ecs_task_execution_secrets.json
 }
 
+# ECR pull-through cache import (FLIP#749, LZA only). On the LZA account the
+# task images come from in-account pull-through caches instead of the public
+# registries — the account has no internet egress. Two cache rules exist
+# (created out-of-band, not managed here): `ghcr/` mirroring
+# ghcr.io/londonaicentre via a read-only PAT in the
+# `ecr-pullthroughcache/ghcr` secret, and a credential-less `ecr-public/` rule
+# for the EFS-provision utility image. The first pull of a new tag triggers a
+# service-side upstream import, which the pulling principal must be allowed to
+# perform (plus repository creation on a cache miss); already-cached pulls need
+# only the managed execution-role policy above.
+data "aws_iam_policy_document" "ecs_task_execution_ecr_pull_through" {
+  count = var.lza_managed_network ? 1 : 0
+
+  statement {
+    sid = "EcrPullThroughCacheImport"
+    actions = [
+      "ecr:BatchImportUpstreamImage",
+      "ecr:CreateRepository",
+    ]
+    resources = [
+      "arn:aws:ecr:${var.AWS_REGION}:${data.aws_caller_identity.current.account_id}:repository/ghcr/*",
+      "arn:aws:ecr:${var.AWS_REGION}:${data.aws_caller_identity.current.account_id}:repository/ecr-public/*",
+    ]
+  }
+}
+
+resource "aws_iam_role_policy" "ecs_task_execution_ecr_pull_through" {
+  count  = var.lza_managed_network ? 1 : 0
+  name   = "flip-ecs-task-execution-ecr-pull-through"
+  role   = aws_iam_role.ecs_task_execution.id
+  policy = data.aws_iam_policy_document.ecs_task_execution_ecr_pull_through[0].json
+}
+
 ############################
 # flip-api task role
 ############################

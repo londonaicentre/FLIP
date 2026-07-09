@@ -517,7 +517,13 @@ module "alb" {
 
 # Network Load Balancer for FL server TCP/TLS pass-through
 module "fl_server_nlb" {
-  source                     = "terraform-aws-modules/alb/aws"
+  source = "terraform-aws-modules/alb/aws"
+  # Not created on the LZA account (FLIP#749): no IGW + VPC Block Public Access
+  # make an internet-facing NLB impossible in-account, and the FL inbound
+  # architecture there (NLB in the central Ingress VPC vs FL-over-443 via the
+  # VPN) is an open WP2 decision — gate off rather than half-provision. Using
+  # the module's create flag keeps its state address stable for legacy envs.
+  create                     = !var.lza_managed_network
   name                       = "flip-fl-server-nlb"
   load_balancer_type         = "network"
   vpc_id                     = local.vpc_id
@@ -534,7 +540,9 @@ module "fl_server_nlb" {
       ip_protocol = "tcp"
       from_port   = tostring(var.FL_SERVER_PORT)
       to_port     = tostring(var.FL_SERVER_PORT)
-      cidr_ipv4   = "${module.flip_vpc.nat_public_ips[0]}/32"
+      # Guarded because module arguments are evaluated even with create =
+      # false: on LZA the VPC module is empty, so there is no NAT EIP to index.
+      cidr_ipv4 = var.lza_managed_network ? null : "${module.flip_vpc.nat_public_ips[0]}/32"
     }
   }
 
@@ -546,7 +554,7 @@ module "fl_server_nlb" {
       # the listener/ingress side which stays on FL_SERVER_PORT.
       from_port = tostring(local.fl_server_container_port)
       to_port   = tostring(local.fl_server_container_port)
-      cidr_ipv4 = var.vpc_cidr
+      cidr_ipv4 = local.vpc_cidr_block
     }
   }
 
@@ -559,7 +567,8 @@ module "fl_server_nlb" {
       port     = var.FL_SERVER_PORT
       protocol = "TCP"
       forward = {
-        target_group_arn = aws_lb_target_group.ecs_fl_server_tcp.arn
+        # Guarded like the ingress rule above: the TG is count-gated on LZA.
+        target_group_arn = var.lza_managed_network ? null : aws_lb_target_group.ecs_fl_server_tcp[0].arn
       }
     }
   }
@@ -595,7 +604,9 @@ resource "aws_route53_record" "alb" {
 # attach instance/IP targets here. target_type=ip is required for awsvpc
 # Fargate tasks. NLB protocol must be TCP - HTTP/2 gRPC framing is opaque
 # to the NLB and forwarded as-is.
+# Gated off with the NLB on LZA (FLIP#749): a TG with no LB is dead config.
 resource "aws_lb_target_group" "ecs_fl_server_tcp" {
+  count = var.lza_managed_network ? 0 : 1
   # Container port per backend (NVFLARE: FL_SERVER_PORT; Flower: SuperLink
   # Fleet 9092 — see local.fl_server_container_port in ecs_tasks.tf). The
   # NLB LISTENER stays on var.FL_SERVER_PORT for both. Port is ForceNew, so
@@ -626,7 +637,9 @@ resource "aws_lb_target_group" "ecs_fl_server_tcp" {
   deregistration_delay = 30
 }
 
+# Gated off with the NLB on LZA (FLIP#749).
 resource "aws_route53_record" "fl_server_nlb" {
+  count   = var.lza_managed_network ? 0 : 1
   zone_id = data.aws_route53_zone.subdomain.zone_id
   name    = var.flip_nlb_subdomain
   type    = "A"
@@ -636,6 +649,19 @@ resource "aws_route53_record" "fl_server_nlb" {
     zone_id                = module.fl_server_nlb.zone_id
     evaluate_target_health = true
   }
+}
+
+# State migration for the counts added to the NLB stack (FLIP#749): keeps
+# existing legacy states aligned without a manual `terraform state mv`. Safe to
+# remove once every live state file has been migrated.
+moved {
+  from = aws_lb_target_group.ecs_fl_server_tcp
+  to   = aws_lb_target_group.ecs_fl_server_tcp[0]
+}
+
+moved {
+  from = aws_route53_record.fl_server_nlb
+  to   = aws_route53_record.fl_server_nlb[0]
 }
 
 # Target group for the flip-api ECS Fargate service. Registered by the ECS
@@ -694,8 +720,9 @@ resource "aws_lb_listener_rule" "api_routing" {
 
 # Allow on-prem trust FL clients to reach the FL server via the NLB.
 # Without this rule the NLB security group drops the connection before it reaches the EC2.
+# Emptied on LZA (FLIP#749): there is no NLB (or NLB security group) to attach to.
 resource "aws_security_group_rule" "local_trust_fl_server_nlb" {
-  for_each          = toset(var.local_trust_public_ips)
+  for_each          = toset(var.lza_managed_network ? [] : var.local_trust_public_ips)
   type              = "ingress"
   from_port         = var.FL_SERVER_PORT
   to_port           = var.FL_SERVER_PORT
@@ -719,7 +746,8 @@ resource "aws_security_group_rule" "local_trust_fl_server_nlb" {
 resource "aws_security_group_rule" "k8s_trust_fl_server_nlb" {
   # The deprecated scalar is marked sensitive for backwards compatibility,
   # but an address used as a resource key is necessarily disclosed in state.
-  for_each = toset(concat(
+  # Emptied on LZA (FLIP#749) like the on-prem rule above: no NLB there.
+  for_each = toset(var.lza_managed_network ? [] : concat(
     var.k8s_trust_public_ips,
     nonsensitive(var.K8S_TRUST_IP) != "" ? [nonsensitive(var.K8S_TRUST_IP)] : []
   ))
@@ -783,12 +811,12 @@ output "CognitoAppClientId" {
 }
 
 output "FlServerEndpoint" {
-  description = "FL server DNS endpoint (NLB pass-through)"
+  description = "FL server DNS endpoint (NLB pass-through; on LZA there is no NLB yet — FL inbound is a FLIP#749 WP2 decision)"
   value       = var.flip_nlb_subdomain
 }
 
 output "FlServerRawNlbDns" {
-  description = "Raw AWS NLB DNS name for FL server debugging"
+  description = "Raw AWS NLB DNS name for FL server debugging (null on LZA — FLIP#749)"
   value       = module.fl_server_nlb.dns_name
 }
 

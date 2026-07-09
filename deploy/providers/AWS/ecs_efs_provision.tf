@@ -103,8 +103,11 @@ resource "aws_ecs_task_definition" "efs_provision" {
 
   container_definitions = jsonencode([
     {
-      name  = "provision-efs-certs"
-      image = "amazon/aws-cli:2.22.35"
+      name = "provision-efs-certs"
+      # Default amazon/aws-cli:2.22.35 from Docker Hub; the egress-less LZA
+      # account overrides this to its ECR Public pull-through cache mirror via
+      # EFS_PROVISION_IMAGE in the env file (FLIP#749).
+      image = var.efs_provision_image
       # The amazon/aws-cli image's ENTRYPOINT is `aws`, so a command like
       # ["/bin/sh", "-c", ...] would get appended as args to aws and fail
       # with "Found invalid choice '/bin/sh'". Override entryPoint so the

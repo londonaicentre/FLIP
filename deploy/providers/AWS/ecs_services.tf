@@ -175,15 +175,22 @@ resource "aws_ecs_service" "fl_server_net_1" {
   # Register the running task's ENI IP with the NLB target group so FL
   # clients reaching fl.<env>.flip.aicentre.co.uk:8002 hit the Fargate task
   # over gRPC. NLB on TCP forwards the gRPC stream untouched.
-  load_balancer {
-    target_group_arn = aws_lb_target_group.ecs_fl_server_tcp.arn
-    container_name   = "fl-server-net-1"
-    # Backend-dependent container port (Flower: SuperLink Fleet 9092); the
-    # NLB listener port trusts connect to stays var.FL_SERVER_PORT.
-    container_port = local.fl_server_container_port
+  # Skipped on LZA (FLIP#749): there is no NLB there yet — the service still
+  # deploys, it just has no inbound FL path until the WP2 ingress decision.
+  dynamic "load_balancer" {
+    for_each = var.lza_managed_network ? [] : [1]
+    content {
+      target_group_arn = aws_lb_target_group.ecs_fl_server_tcp[0].arn
+      container_name   = "fl-server-net-1"
+      # Backend-dependent container port (Flower: SuperLink Fleet 9092); the
+      # NLB listener port trusts connect to stays var.FL_SERVER_PORT.
+      container_port = local.fl_server_container_port
+    }
   }
 
-  health_check_grace_period_seconds  = 120
+  # The grace period is only valid on services with a load balancer — ECS
+  # rejects it outright when the block above is skipped on LZA.
+  health_check_grace_period_seconds  = var.lza_managed_network ? null : 120
   deployment_minimum_healthy_percent = 100
   deployment_maximum_percent         = 200
 

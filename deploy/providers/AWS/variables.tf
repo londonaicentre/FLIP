@@ -143,9 +143,15 @@ variable "flip_fl_image_tag" {
 }
 
 variable "docker_registry" {
-  description = "Docker image registry prefix (e.g. ghcr.io/londonaicentre/)"
+  description = "Docker image registry prefix (e.g. ghcr.io/londonaicentre/). On the LZA account point it at the ECR pull-through cache mirror (<account>.dkr.ecr.<region>.amazonaws.com/ghcr/londonaicentre/) — there is no internet egress to reach GHCR directly (FLIP#749)."
   type        = string
   default     = "ghcr.io/londonaicentre/"
+}
+
+variable "efs_provision_image" {
+  description = "Image for the one-shot EFS provisioning task (ecs_efs_provision.tf). Default is the Docker-Hub-hosted amazon/aws-cli, unchanged for legacy envs; on the egress-less LZA account point it at the credential-less ECR Public pull-through cache mirror (<account>.dkr.ecr.<region>.amazonaws.com/ecr-public/aws-cli/aws-cli:<tag>) via EFS_PROVISION_IMAGE in the env file (FLIP#749)."
+  type        = string
+  default     = "amazon/aws-cli:2.22.35"
 }
 
 variable "fl_api_name" {
