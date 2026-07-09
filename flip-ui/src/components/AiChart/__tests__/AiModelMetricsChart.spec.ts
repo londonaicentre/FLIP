@@ -113,7 +113,7 @@ describe("AiModelMetricsChart", () => {
         expect(setOption).toHaveBeenCalled();
     });
 
-    it("overlays the legend and toolbox inside the plot instead of reserving a side column", async () => {
+    it("floats the legend over the plot and lifts the toolbox above it, reserving no side column", async () => {
         mountChart();
         await nextTick();
         await flushPromises();
@@ -121,11 +121,13 @@ describe("AiModelMetricsChart", () => {
         const opts = setOption.mock.calls[0][0];
         // The grid takes the full card width — no 160px legend column on the right.
         expect(opts.grid.right).toBeLessThanOrEqual(24);
-        // Toolbox pinned to the plot's top-right corner, legend floating vertically
-        // centred on the right edge, with a translucent backing so it stays legible
-        // over the series lines.
-        expect(opts.toolbox.right).toBe(12);
-        expect(opts.toolbox.top).toBe(8);
+        // The toolbox sits above the plot, not on the lines. Its icons are echarts'
+        // default 15px tall, so the grid has to start below them.
+        expect(opts.toolbox.right).toBe(8);
+        expect(opts.toolbox.top).toBe(0);
+        expect(opts.toolbox.top + 15).toBeLessThanOrEqual(opts.grid.top);
+        // The legend still floats vertically centred on the right edge, with a
+        // translucent backing so it stays legible over the series lines.
         expect(opts.legend.right).toBe(12);
         expect(opts.legend.top).toBe("middle");
         expect(opts.legend.backgroundColor).toBeTruthy();

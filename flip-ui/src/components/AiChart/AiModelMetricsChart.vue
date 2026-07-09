@@ -106,9 +106,10 @@ onMounted(() => {
                     // on-demand via the toolbox magnifier below, reset via "Reset View".
                     toolbox: {
                         ...chartToolbox(darkMode),
-                        // Pinned inside the plot's top-right corner (the legend floats below).
-                        right: 12,
-                        top: 8,
+                        // Above the plot rather than inside it, so the icons never sit over
+                        // the lines. Flush with the canvas top; grid.top clears them below.
+                        right: 8,
+                        top: 0,
                         feature: {
                             ...chartToolbox(darkMode).feature,
                             dataZoom: {
@@ -129,7 +130,8 @@ onMounted(() => {
                         // Full-width plot — the legend overlays the grid instead of
                         // reserving a 160px column on the right.
                         right: 24,
-                        top: 16,
+                        // Clears the toolbox's 15px icons sitting above the plot, and no more.
+                        top: 24,
                         // Just enough for the x-axis name at nameGap 20. Every pixel here
                         // is taken off the plotted area, which is fixed overhead the box's
                         // aspect ratio never sees: at a phone's 208px-tall box, the old
