@@ -297,11 +297,17 @@ resource "aws_iam_role_policy" "ecs_fl_server_task" {
 # ── MLflow dual-write via SageMaker managed MLflow (FLIP#745) ────────────────
 # Attached only when MLFLOW_TRACKING_URI is a SageMaker MLflow ARN — a
 # self-hosted HTTP URI needs no IAM, and an empty URI means the integration is
-# disabled. Every MLflow REST API is an IAM action under the sagemaker-mlflow
-# service prefix; the wildcard is acceptable here because the resource is
-# scoped to the single tracking server/app ARN and every data-plane call is
-# CloudTrail-logged. Callers authenticate with their task role via the
-# sagemaker-mlflow client plugin (SigV4) — no static credentials involved.
+# disabled. Callers authenticate with their task role via the sagemaker-mlflow
+# client plugin (SigV4) — no static credentials involved.
+#
+# Resource = "*" is deliberate, not laziness. AWS documents resource-level
+# scoping for the sagemaker-mlflow data plane only against a *tracking server*
+# ARN; the newer serverless MLflow **App** ARN is not (yet) an authorizable
+# resource for these actions. Scoping this statement to the App ARN yields
+# 403 "Request is not authorized" on every data-plane call — verified on stag,
+# 2026-07-09. This mirrors AWS's own documented client policy. The blast radius
+# stays bounded: only the MLflow data plane, only within this account, and every
+# call is CloudTrail-logged. Revisit if AWS adds mlflow-app resource support.
 resource "aws_iam_role_policy" "ecs_flip_api_task_sagemaker_mlflow" {
   count = startswith(var.MLFLOW_TRACKING_URI, "arn:") ? 1 : 0
 
@@ -314,7 +320,7 @@ resource "aws_iam_role_policy" "ecs_flip_api_task_sagemaker_mlflow" {
         Sid      = "MlflowDataPlane"
         Effect   = "Allow"
         Action   = ["sagemaker-mlflow:*"]
-        Resource = var.MLFLOW_TRACKING_URI
+        Resource = "*"
       },
     ]
   })
@@ -332,7 +338,7 @@ resource "aws_iam_role_policy" "ecs_fl_server_task_sagemaker_mlflow" {
         Sid      = "MlflowDataPlane"
         Effect   = "Allow"
         Action   = ["sagemaker-mlflow:*"]
-        Resource = var.MLFLOW_TRACKING_URI
+        Resource = "*"
       },
     ]
   })
