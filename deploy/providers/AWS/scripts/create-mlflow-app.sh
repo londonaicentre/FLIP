@@ -28,8 +28,8 @@
 #      sagemaker-mlflow layer) and the hub task definitions pick up the env var
 #   3. redeploy the hub services
 #
-# Costs: MLflow Apps carry no compute charge; expect ~$0/month. The budget and
-# anomaly monitor in cost_monitoring.tf are the tripwires if that ever changes.
+# Costs: MLflow Apps carry no compute charge; expect ~$0/month. Verify with a
+# Cost Explorer query on the SageMaker service after go-live (see README).
 #
 # Usage:
 #   AWS_PROFILE=stag ./scripts/create-mlflow-app.sh [--name flip-mlflow] [--region eu-west-2]

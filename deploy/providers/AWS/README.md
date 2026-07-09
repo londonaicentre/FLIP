@@ -1001,47 +1001,36 @@ remains the canonical store for model status and the metrics the UI charts.
 
 Expected steady-state spend is **~$0/month**: MLflow Apps carry no compute charge,
 result zips are registered by S3 *reference* rather than copied, and metadata is
-scalar metrics and tags (tens of MB/year). Data-plane calls are logged to
-CloudTrail automatically, at no extra charge.
+scalar metrics and tags (tens of MB/year). Data-plane calls are logged to CloudTrail
+automatically, at no extra charge.
 
-The alarms therefore exist to catch the two ways this could cost real money, not
-to track an expected bill:
+Guards therefore exist to catch the two ways this could cost real money, not to track
+an expected bill:
 
 | Guard | What it catches |
 |---|---|
-| `aws_budgets_budget.sagemaker_mlflow` — $5/month on the SageMaker service, alerting at 80%, 100%, and 100%-forecast | Someone creates a *classic* sized tracking server (~$470/month). Visible within a day, not at invoice time. |
-| `aws_ce_anomaly_monitor.sagemaker` + subscription (≥ $1 impact) | AWS begins metering something that is free today. Apps have no published rate card, so a *new charge shape* is the risk — a threshold alone would not describe it. |
+| A $5/month budget on the SageMaker service, alerting at 80%, 100% and 100%-forecast | Someone creates a *classic* sized MLflow tracking server (~$470/month). Visible within a day, not at invoice time. |
+| A Cost Explorer anomaly monitor on the SageMaker service (≥ $1 impact) | AWS begins metering something free today. Apps have no published rate card, so the risk is a *new charge shape* — which a threshold alone would not describe. |
 
-Both are in `cost_monitoring.tf`, behind `enable_mlflow_cost_alerts`, and independent
-of whether MLflow is switched on — the tracking-server mistake is possible either way.
-AWS Budgets is free for the first two budgets per account.
+**These live in the Organization's management account** ([`aicentre-iac`](https://github.com/londonaicentre/aicentre-iac)),
+not in this stack. Budgets and anomaly monitors are billing controls: an application
+deploy role must not be able to create, edit or delete the alarms that watch its own
+spend. Keeping them in the payer account also means one monitor covers every linked
+FLIP account rather than one per environment.
 
-The flag **defaults to false**: creating a budget or an anomaly monitor needs billing
-and Cost Explorer *write* permissions (`budgets:ModifyBudget`, `ce:*Anomaly*`) which
-`FlipDeveloperAccess` does not grant — with it on, a routine `make apply` fails. These
-resources only need creating once per account, so:
-
-```bash
-# once per account, as a principal holding the billing/CE write permissions
-make apply PROD=stag TF_VAR_enable_mlflow_cost_alerts=true
-```
-
-The expensive mistake is also blocked structurally for developers: the
+The expensive mistake is additionally blocked structurally for developers: the
 `FlipDeveloperAccess` permission set grants `sagemaker:*MlflowApp*`, which does not
 match `CreateMlflowTrackingServer`. Verified with the IAM policy simulator —
 `CreateMlflowTrackingServer` and `StartMlflowTrackingServer` evaluate to
-`implicitDeny`, while `CreateMlflowApp` and `CallMlflowAppApi` are `allowed`. An
-account admin can still do it, which is what the budget is for. (An explicit `Deny`
-was considered and rejected: the inline policy sits at ~10,093 of its 10,240-byte
-limit, and the Deny would be redundant with the absent Allow.)
+`implicitDeny`, while `CreateMlflowApp` and `CallMlflowAppApi` are `allowed`.
 
 **Cost allocation tags (do this before creating the App).** Spend appears under the
 SageMaker service; to break it out by `flip:component=mlflow` the tag must be
-activated as a *cost allocation tag* in the Organization's **management account**
-(Billing → Cost allocation tags). Activation takes ~24h to show up in Cost Explorer
-and is **not retroactive**, so the order matters: activate, then create.
+activated as a *cost allocation tag* in the management account (Billing → Cost
+allocation tags). Activation takes ~24h to show up in Cost Explorer and is **not
+retroactive**, so the order matters: activate, then create.
 
-**First 30 days after go-live.** Check Cost Explorer at daily granularity, filtered
-to the SageMaker service, against a pre-go-live baseline. Record the real figure on
+**First 30 days after go-live.** Check Cost Explorer at daily granularity, filtered to
+the SageMaker service, against a pre-go-live baseline. Record the real figure on
 FLIP#745 — that turns "AWS says it's free" into a measured number. After that the
 budget and anomaly monitor are sufficient; no dashboard required.
