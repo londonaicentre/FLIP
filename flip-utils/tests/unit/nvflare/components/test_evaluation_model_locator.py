@@ -16,6 +16,7 @@ from unittest.mock import MagicMock, patch
 
 from nvflare.apis.dxo import DataKind
 
+from flip.constants import FlipMetaKey
 from flip.nvflare.components.pt_model_locator import EvaluationModelLocator
 
 
@@ -81,6 +82,9 @@ class TestEvaluationModelLocator:
         # A single WEIGHTS DXO (not a COLLECTION) is what CrossSiteModelEval broadcasts as one FLModel.
         assert result is weights_dxo
         assert result.data_kind == DataKind.WEIGHTS
+        # The model name must ride in the DXO meta — the MODEL_OWNER header does not survive the
+        # Client-API FLModel conversion, and Client-API evaluators attribute the weights by this key.
+        weights_dxo.set_meta_prop.assert_called_once_with(FlipMetaKey.EVAL_MODEL_NAME, "monai_spleen_unet")
 
     @patch("flip.nvflare.components.pt_model_locator.torch")
     def test_locate_unknown_model_returns_none(self, mock_torch):

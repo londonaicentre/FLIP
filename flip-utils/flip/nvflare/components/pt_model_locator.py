@@ -21,7 +21,7 @@ from nvflare.app_common.abstract.model import model_learnable_to_dxo
 from nvflare.app_common.abstract.model_locator import ModelLocator
 from nvflare.app_opt.pt import PTModelPersistenceFormatManager
 
-from flip.constants import FlipConstants, PTConstants
+from flip.constants import FlipConstants, FlipMetaKey, PTConstants
 from flip.nvflare.runtime import get_flip_model_id
 
 
@@ -363,4 +363,10 @@ class EvaluationModelLocator(ModelLocator):
 
         persistence_manager = PTModelPersistenceFormatManager(weights, default_train_conf=None)
         ml = persistence_manager.to_model_learnable(exclude_vars=None)
-        return model_learnable_to_dxo(ml)
+        dxo = model_learnable_to_dxo(ml)
+        # Name the broadcast in the DXO meta itself: CrossSiteModelEval's MODEL_OWNER header does not
+        # survive the Client-API FLModel conversion, but DXO meta rides inside the payload to
+        # flare.receive() on every client. This is what lets a Client-API evaluator attribute each
+        # validate task's weights (e.g. the multimodel DeLong comparison).
+        dxo.set_meta_prop(FlipMetaKey.EVAL_MODEL_NAME, model_name)
+        return dxo
