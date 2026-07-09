@@ -19,6 +19,7 @@
         v-slot="{ errors }"
         class="flex flex-col w-full h-full"
         :validation-schema="schema"
+        :initial-values="initialValues"
         @submit="initTraining"
     >
         <AiCard class="flex flex-col flex-1 min-h-0 overflow-hidden">
@@ -130,12 +131,17 @@ interface ITrainingProps {
     uploadedFileNames: string[];
     jobType: JobType;
     flBackendLabel?: string;
+    // Ids of the trusts a dispatched run went to; empty before dispatch.
+    runTrusts?: string[];
     // Which stage tab is showing: "prepare" owns the run options (locked once the
     // model is dispatched); "run" owns the metrics and the activity feed.
     view: "prepare" | "run";
 }
 
-const props = defineProps<ITrainingProps>();
+const props = withDefaults(defineProps<ITrainingProps>(), {
+    flBackendLabel: undefined,
+    runTrusts: () => []
+});
 
 const emits = defineEmits(["started"]);
 
@@ -207,6 +213,16 @@ const liveActivityDotClass = computed(() => {
 
     return "bg-primary-600";
 });
+
+// Once dispatched the form is a record of the run, so it has to show the run's own
+// values rather than an empty form. Enrichment is not stored: it is a gate on
+// dispatch, so a model that started was necessarily confirmed enriched.
+const initialValues = computed(() => (pending.value
+    ? undefined
+    : {
+        enriched: "true",
+        trust_ids: props.runTrusts
+    }));
 
 const initTraining = async (formData: unknown): Promise<void> => {
     if (formSubmitting.value) {

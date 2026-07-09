@@ -22,8 +22,8 @@ from sqlmodel import Session, col, select
 from flip_api.auth.access_manager import can_access_model
 from flip_api.auth.dependencies import verify_token
 from flip_api.db.database import get_session
-from flip_api.db.models.main_models import Model, ModelsAudit, UploadedFiles
-from flip_api.domain.interfaces.model import IModelResponse, IQuery
+from flip_api.db.models.main_models import Model, ModelsAudit, ModelTrustIntersect, Trust, UploadedFiles
+from flip_api.domain.interfaces.model import IModelResponse, IQuery, ITrustSummary
 from flip_api.domain.schemas.actions import ModelAuditAction
 from flip_api.domain.schemas.status import FileUploadStatus, ModelStatus
 from flip_api.utils.logger import logger
@@ -186,6 +186,15 @@ def retrieve_model(
                 continue
             latest_per_action[action_enum] = audit_date.isoformat(timespec="milliseconds")
 
+        # The trusts the run was dispatched to. Populated at initiate-training, so a
+        # pending model reports none.
+        trust_rows = db.exec(
+            select(Trust.id, Trust.name, Trust.code)
+            .join(ModelTrustIntersect, col(ModelTrustIntersect.trust_id) == Trust.id)  # type: ignore[arg-type]
+            .where(col(ModelTrustIntersect.model_id) == model_id)
+        ).all()
+        trusts = [ITrustSummary(id=trust_id, name=name, code=code) for trust_id, name, code in trust_rows]
+
         return IModelResponse(
             model_id=result["model_id"],
             model_name=result["model_name"],
@@ -198,6 +207,7 @@ def retrieve_model(
             prepared_at=latest_per_action.get(ModelAuditAction.PREPARED),
             training_started_at=latest_per_action.get(ModelAuditAction.TRAINING_STARTED),
             results_uploaded_at=latest_per_action.get(ModelAuditAction.RESULTS_UPLOADED),
+            trusts=trusts,
         )  # type: ignore[call-arg]
 
     except SQLAlchemyError:

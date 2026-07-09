@@ -14,7 +14,9 @@
 <template>
     <div class="flex items-center justify-end">
         <SwitchGroup>
-            <SwitchLabel v-if="label" class="mr-4 text-sm">
+            <!-- On a narrow window the label is the first thing to squash the row, and
+                 it is redundant: the knob's position already carries the state. -->
+            <SwitchLabel v-if="label" class="hidden mr-4 text-sm sm:inline">
                 {{ checked ? label.enabled : label.disabled }}
             </SwitchLabel>
             <!-- A disabled switch stays on screen, greyed out: its position is the
@@ -38,11 +40,10 @@
                 }"
             >
                 <span
+                    data-test="switch-knob"
                     :class="[checked ? 'translate-x-6' : 'translate-x-1']"
                     class="inline-flex items-center justify-center w-4 h-4 transition-transform transform bg-white dark:bg-gray-200 rounded-full"
-                >
-                    <icon-ph-check-bold v-if="checked" class="w-3 h-3 text-green-600 dark:text-green-600" />
-                </span>
+                />
             </Switch>
         </SwitchGroup>
     </div>

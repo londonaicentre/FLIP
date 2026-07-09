@@ -81,6 +81,8 @@ export interface IModelDashboard {
     preparedAt?: string | null;
     trainingStartedAt?: string | null;
     resultsUploadedAt?: string | null;
+    // The trusts the run was dispatched to. Empty before dispatch.
+    trusts?: IModelSummaryTrust[];
 }
 
 export interface IModelCreate {

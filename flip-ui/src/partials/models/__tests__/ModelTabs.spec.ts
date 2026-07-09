@@ -119,6 +119,16 @@ describe("ModelTabs", () => {
         expect(pending.find("nav").classes()).not.toContain("gap-2");
     });
 
+    test("Prepare is always outlined in purple; Run only once the model is dispatched", () => {
+        const pending = mountTabs("PENDING");
+        expect(pending.find("[data-test=tab-prepare]").classes()).toContain("border-primary-500");
+        expect(pending.find("[data-test=tab-run]").classes()).toContain("border-gray-200");
+
+        const started = mountTabs("TRAINING_STARTED", "run");
+        expect(started.find("[data-test=tab-prepare]").classes()).toContain("border-primary-500");
+        expect(started.find("[data-test=tab-run]").classes()).toContain("border-primary-500");
+    });
+
     test("the Run chip pulses only while the run is in progress", () => {
         const live = mountTabs("TRAINING_STARTED", "run");
         expect(live.find("[data-test=tab-run-live]").exists()).toBe(true);

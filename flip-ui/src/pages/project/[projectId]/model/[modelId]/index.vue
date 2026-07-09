@@ -117,6 +117,7 @@
                             <Training
                                 ref="trainingRef"
                                 view="prepare"
+                                :run-trusts="runTrusts"
                                 :can-train="readyToTrain"
                                 :status="modelData?.status"
                                 :all-files-uploaded="allFilesUploaded"
@@ -295,6 +296,9 @@ const steps = computed((): IStep[] => {
         date: dates[i] ?? null
     }));
 });
+
+// The trusts the run was dispatched to, so Prepare can show which took part.
+const runTrusts = computed(() => modelData.value?.trusts?.map(t => t.id) ?? []);
 
 const readyToTrain = computed(() => {
     return !trainingStartedOrStopped.value

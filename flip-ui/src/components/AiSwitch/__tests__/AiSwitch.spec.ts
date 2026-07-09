@@ -43,7 +43,7 @@ describe("AiSwitch", () => {
         expect(comp.find("button[role=\"switch\"]").exists()).toBe(true);
     });
 
-    it("toggles on click, showing the check mark once on", async () => {
+    it("toggles on click, sliding the knob across — no tick, the position says it", async () => {
         const comp = mount(AiSwitch, {
             props: {
                 name: "flag",
@@ -57,12 +57,37 @@ describe("AiSwitch", () => {
             }
         });
 
-        // Off: knob carries no check icon.
+        expect(comp.get("[data-test=switch-knob]").classes()).toContain("translate-x-1");
         expect(comp.find("svg").exists()).toBe(false);
 
         await comp.find("button[role=\"switch\"]").trigger("click");
 
-        expect(comp.find("svg").exists()).toBe(true);
+        expect(comp.get("[data-test=switch-knob]").classes()).toContain("translate-x-6");
+        // On, and still no tick: the knob has moved, which is the whole signal.
+        expect(comp.find("svg").exists()).toBe(false);
+    });
+
+    it("drops its label on a narrow window — the knob's position already says it", () => {
+        const comp = mount(AiSwitch, {
+            props: {
+                name: "flag",
+                value: "true",
+                label: {
+                    enabled: "Trust Included",
+                    disabled: "Trust Excluded"
+                }
+            },
+            global: {
+                plugins: [createTestingPinia({
+                    createSpy: vi.fn,
+                    stubActions: false
+                })]
+            }
+        });
+
+        const switchLabel = comp.get("label");
+        expect(switchLabel.classes()).toContain("hidden");
+        expect(switchLabel.classes()).toContain("sm:inline");
     });
 
     it("stays on screen when disabled, greyed out, so its position still reads", async () => {
@@ -102,10 +127,10 @@ describe("AiSwitch", () => {
             }
         });
 
-        // Off, and it must stay off: no check mark appears.
+        // Off, and it must stay off: the knob does not move.
         await comp.find("button[role=\"switch\"]").trigger("click");
 
-        expect(comp.find("svg").exists()).toBe(false);
+        expect(comp.get("[data-test=switch-knob]").classes()).toContain("translate-x-1");
     });
 
 });

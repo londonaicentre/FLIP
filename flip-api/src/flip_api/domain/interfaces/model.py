@@ -164,6 +164,9 @@ class IModelResponse(BaseModel):
     prepared_at: str | None = Field(default=None, alias="preparedAt")
     training_started_at: str | None = Field(default=None, alias="trainingStartedAt")
     results_uploaded_at: str | None = Field(default=None, alias="resultsUploadedAt")
+    # The trusts the run was dispatched to. Empty before dispatch — no
+    # ModelTrustIntersect rows exist until training is initiated.
+    trusts: list[ITrustSummary] = Field(default_factory=list)
 
     model_config = ConfigDict(
         populate_by_name=True,

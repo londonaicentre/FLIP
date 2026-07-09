@@ -125,15 +125,22 @@ const tabs = computed<Tab[]>(() => [
     }
 ]);
 
+// A stage the model has reached is outlined in the chip purple, so the pair reads
+// as a path already walked. Prepare is always reached; Run only once dispatched.
+function borderClass(tab: Tab): string {
+    const reached = tab.id === "prepare" || !pending.value;
+
+    return reached ? "border-primary-500" : "border-gray-200 dark:border-dark-border";
+}
+
 function chipClass(tab: Tab): string {
-    if (tab.id === props.modelValue) return "bg-primary-500 border-primary-500 text-white";
+    const border = borderClass(tab);
+    if (tab.id === props.modelValue) return `bg-primary-500 text-white ${border}`;
     if (tab.locked) {
-        return "bg-white dark:bg-dark-canvas border-gray-200 dark:border-dark-border " +
-            "text-gray-400 dark:text-gray-300 cursor-default";
+        return `bg-white dark:bg-dark-canvas text-gray-400 dark:text-gray-300 cursor-default ${border}`;
     }
 
-    return "bg-white dark:bg-dark-canvas border-gray-200 dark:border-dark-border " +
-        "text-gray-700 dark:text-gray-300 hover:border-gray-400 dark:hover:border-dark-border-strong";
+    return `bg-white dark:bg-dark-canvas text-gray-700 dark:text-gray-300 ${border}`;
 }
 
 function select(tab: Tab): void {

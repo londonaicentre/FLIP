@@ -53,6 +53,7 @@ interface MountOpts {
     uploadedFileNames?: string[];
     jobType?: string;
     flBackendLabel?: string;
+    runTrusts?: string[];
 }
 
 function mountTraining(options: MountOpts = {}) {
@@ -65,7 +66,8 @@ function mountTraining(options: MountOpts = {}) {
         jobType = "standard",
         flBackendLabel,
         // Mirrors the page default: nothing to watch until the model is dispatched.
-        view = status === "PENDING" ? "prepare" : "run"
+        view = status === "PENDING" ? "prepare" : "run",
+        runTrusts = []
     } = options;
 
     return mount(Training, {
@@ -102,7 +104,11 @@ function mountTraining(options: MountOpts = {}) {
                 },
                 TrainingMetrics: { template: "<div />" },
                 Timeline: { template: "<div />" },
-                Form: { template: "<form><slot :errors=\"{}\" /></form>" }
+                Form: {
+                    props: ["initialValues"],
+                    template: "<form :data-initial-values=\"JSON.stringify(initialValues ?? null)\">" +
+                        "<slot :errors=\"{}\" /></form>"
+                }
             }
         },
         props: {
@@ -113,7 +119,8 @@ function mountTraining(options: MountOpts = {}) {
             uploadedFileNames,
             jobType,
             flBackendLabel,
-            view
+            view,
+            runTrusts
         }
     });
 }
@@ -388,5 +395,34 @@ describe("Training view", () => {
         expect(wrapper.find("[data-test=training-timeline]").exists()).toBe(true);
         expect(wrapper.find("[data-test=training-options]").exists()).toBe(false);
         expect(wrapper.find("form").exists()).toBe(false);
+    });
+});
+
+
+describe("Training options reflect a dispatched run", () => {
+    const initialValues = (wrapper: ReturnType<typeof mountTraining>) =>
+        JSON.parse(wrapper.get("form").attributes("data-initial-values") ?? "null");
+
+    it("leaves a pending model's form empty — nothing has been decided yet", () => {
+        const wrapper = mountTraining({
+            status: "PENDING",
+            view: "prepare"
+        });
+
+        expect(initialValues(wrapper)).toBeNull();
+    });
+
+    it("pre-fills the trusts a dispatched run went to, so the switches read as on", () => {
+        const wrapper = mountTraining({
+            status: "TRAINING_STARTED",
+            view: "prepare",
+            runTrusts: ["trust-a", "trust-b"]
+        });
+
+        // Enrichment is a gate on dispatch: a run that started was confirmed enriched.
+        expect(initialValues(wrapper)).toEqual({
+            enriched: "true",
+            trust_ids: ["trust-a", "trust-b"]
+        });
     });
 });
