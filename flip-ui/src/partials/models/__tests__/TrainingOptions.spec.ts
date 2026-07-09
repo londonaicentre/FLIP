@@ -26,7 +26,7 @@ const aiSwitchStub = {
 };
 
 function mountTrainingOptions(
-    approvedTrusts: { name: string; id: string; approved: boolean }[],
+    approvedTrusts: { name: string; id: string; approved: boolean; code?: string | null }[],
     disabled = false
 ) {
     return mount(TrainingOptions, {
@@ -52,16 +52,19 @@ describe("TrainingOptions trust selection", () => {
         {
             name: "Beta Trust",
             id: "id-beta",
+            code: "BETA",
             approved: true
         },
         {
             name: "Alpha Trust",
             id: "id-alpha",
+            code: "ALPHA",
             approved: true
         },
         {
             name: "Gamma Trust",
             id: "id-gamma",
+            code: "GAMMA",
             approved: false
         }
     ];
@@ -87,14 +90,57 @@ describe("TrainingOptions trust selection", () => {
         }
     });
 
-    it("shows the trust display name as the label and excludes un-approved trusts", () => {
+    it("labels each trust with its code, and excludes un-approved trusts", () => {
         const wrapper = mountTrainingOptions(trusts);
+        const text = wrapper.text();
+
+        // Names are admin-chosen and non-unique, so the code disambiguates them.
+        expect(text).toContain("Alpha Trust (ALPHA)");
+        expect(text).toContain("Beta Trust (BETA)");
+        // Gamma is not approved, so it must not be offered for training.
+        expect(text).not.toContain("Gamma Trust");
+    });
+
+    it("falls back to the bare name when a trust carries no code", () => {
+        const wrapper = mountTrainingOptions([
+            {
+                name: "Alpha Trust",
+                id: "id-alpha",
+                code: null,
+                approved: true
+            },
+            {
+                name: "Beta Trust",
+                id: "id-beta",
+                approved: true
+            }
+        ]);
         const text = wrapper.text();
 
         expect(text).toContain("Alpha Trust");
         expect(text).toContain("Beta Trust");
-        // Gamma is not approved, so it must not be offered for training.
-        expect(text).not.toContain("Gamma Trust");
+        // An absent code must never render as empty parentheses.
+        expect(text).not.toContain("(");
+    });
+
+    it("orders the trusts by name, not by the code appended to it", () => {
+        const wrapper = mountTrainingOptions([
+            {
+                name: "Beta Trust",
+                id: "id-beta",
+                code: "AAA",
+                approved: true
+            },
+            {
+                name: "Alpha Trust",
+                id: "id-alpha",
+                code: "ZZZ",
+                approved: true
+            }
+        ]);
+        const labels = wrapper.findAll("dt").map(dt => dt.text());
+
+        expect(labels).toEqual(["Alpha Trust (ZZZ)", "Beta Trust (AAA)"]);
     });
 
     it("surfaces the trust_ids validation error when present", () => {

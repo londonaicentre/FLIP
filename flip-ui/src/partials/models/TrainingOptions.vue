@@ -55,7 +55,7 @@
                                     <dt class="flex items-center font-semibold text-gray-500 dark:text-primary-200">
                                         <div class="flex items-center">
                                             <span class="px-2 py-1">
-                                                {{ trust.trustName }}
+                                                {{ trust.trustLabel }}
                                             </span>
                                         </div>
                                     </dt>
@@ -99,8 +99,12 @@ interface ITrainingOptionsProps {
 }
 
 interface ITrustsToTrain {
-    // Display label only — names are admin-chosen and non-unique.
+    // Sort key. Names are admin-chosen and non-unique, so they order the list
+    // but never identify a trust on their own.
     trustName: string;
+    // What the user reads: the name with its code appended to disambiguate two
+    // trusts sharing a name. Falls back to the bare name when there is no code.
+    trustLabel: string;
     // Stable identity sent to the training-init endpoint.
     trustId: string;
 }
@@ -116,6 +120,7 @@ const trustsToSelect: ComputedRef<ITrustsToTrain[] | undefined> = computed(() =>
         .map(t =>
             ({
                 trustName: t.name,
+                trustLabel: t.code ? `${t.name} (${t.code})` : t.name,
                 trustId: t.id
             })
         )
