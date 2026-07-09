@@ -108,37 +108,46 @@
             <AiMetricsChart v-if="activeChart" :data="activeChart" />
         </div>
 
-        <!-- Every plot at once. The cells keep a readable height and the grid scrolls,
-             rather than squeezing a run's worth of metrics into one screen. -->
+        <!-- Every plot at once. The cells keep a readable height and the view scrolls,
+             rather than squeezing a run's worth of metrics into one screen. Scrolling
+             lives on this wrapper, NOT on the grid: when the grid itself is the
+             fixed-height scroll container, Chrome sizes its auto rows to split the
+             visible height equally, blind to the aspect-ratio heights of the cells —
+             which then overflow their rows and paint over the cards below. An
+             auto-height grid inside a scrolling wrapper sizes rows to their content. -->
         <div
             v-else
-            data-test="metrics-grid"
-            class="grid items-start flex-1 min-h-0 grid-cols-1 gap-4 pt-4 px-1 overflow-y-auto
-                   md:grid-cols-2 2xl:grid-cols-3"
+            data-test="metrics-grid-scroller"
+            class="flex-1 min-h-0 overflow-y-auto"
         >
-            <!-- overflow-hidden keeps a mid-resize canvas — the chart resizes on a
-                 debounce — from painting over the cell below. -->
-            <figure
-                v-for="chart in charts"
-                :key="chart.yLabel"
-                :data-test="`metrics-grid-cell-${chart.yLabel}`"
-                class="flex flex-col p-2 overflow-hidden rounded-lg ring-1 ring-gray-100 dark:ring-white/25"
+            <div
+                data-test="metrics-grid"
+                class="grid items-start grid-cols-1 gap-4 pt-4 px-1 md:grid-cols-2 2xl:grid-cols-3"
             >
-                <figcaption class="px-1 pb-1 text-xs font-semibold truncate shrink-0 text-gray-600 dark:text-gray-300">
-                    {{ chart.yLabel }}
-                </figcaption>
-                <!-- The ratio goes on the plot, not the cell: the caption and padding
-                     would eat into a cell-wide ratio and leave the plot itself flatter
-                     than 16:9 (measured 2.01 at two columns). Height follows width, with
-                     a floor for a phone and a ceiling so one column does not fill the
-                     screen. -->
-                <div
-                    :data-test="`metrics-grid-plot-${chart.yLabel}`"
-                    class="w-full aspect-video min-h-[13rem] max-h-[24rem]"
+                <!-- overflow-hidden keeps a mid-resize canvas — the chart resizes on a
+                     debounce — from painting over the cell below. -->
+                <figure
+                    v-for="chart in charts"
+                    :key="chart.yLabel"
+                    :data-test="`metrics-grid-cell-${chart.yLabel}`"
+                    class="flex flex-col p-2 overflow-hidden rounded-lg ring-1 ring-gray-100 dark:ring-white/25"
                 >
-                    <AiMetricsChart :data="chart" />
-                </div>
-            </figure>
+                    <figcaption class="px-1 pb-1 text-xs font-semibold truncate shrink-0 text-gray-600 dark:text-gray-300">
+                        {{ chart.yLabel }}
+                    </figcaption>
+                    <!-- The ratio goes on the plot, not the cell: the caption and padding
+                         would eat into a cell-wide ratio and leave the plot itself flatter
+                         than 16:9 (measured 2.01 at two columns). Height follows width, with
+                         a floor for a phone and a ceiling so one column does not fill the
+                         screen. -->
+                    <div
+                        :data-test="`metrics-grid-plot-${chart.yLabel}`"
+                        class="w-full aspect-video min-h-[13rem] max-h-[24rem]"
+                    >
+                        <AiMetricsChart :data="chart" />
+                    </div>
+                </figure>
+            </div>
         </div>
     </div>
 </template>

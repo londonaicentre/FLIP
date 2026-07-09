@@ -343,8 +343,18 @@ describe("TrainingMetrics plot layout", () => {
 
         await wrapper.find("[data-test=metrics-view-grid]").trigger("click");
 
+        // Scrolling lives on the wrapper, never on the grid itself: a grid that is
+        // its own fixed-height scroll container gets its auto rows sized by Chrome
+        // to split the visible height, blind to the cells' aspect-ratio heights —
+        // the cells then overflow their rows and paint over the cards below.
+        const scroller = wrapper.get("[data-test=metrics-grid-scroller]");
+        expect(scroller.classes()).toContain("overflow-y-auto");
+        expect(scroller.classes()).toContain("min-h-0");
+
         const grid = wrapper.get("[data-test=metrics-grid]");
-        expect(grid.classes()).toContain("overflow-y-auto");
+        for (const cls of ["overflow-y-auto", "flex-1", "min-h-0"]) {
+            expect(grid.classes()).not.toContain(cls);
+        }
         // The cells' rings sit outside their boxes; without side padding the scroll
         // container shears the leftmost column's ring off.
         expect(grid.classes()).toContain("px-1");
