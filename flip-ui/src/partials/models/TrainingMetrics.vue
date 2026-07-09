@@ -99,11 +99,15 @@
             data-test="metrics-grid"
             class="grid flex-1 min-h-0 grid-cols-1 gap-4 pt-4 pr-1 overflow-y-auto md:grid-cols-2 2xl:grid-cols-3"
         >
+            <!-- A cell's height follows its width, so squashing the window down to one
+                 column gives a plot rather than a flat sliver. The floor keeps it
+                 readable on a phone; the ceiling stops one column filling the screen. -->
             <figure
                 v-for="chart in charts"
                 :key="chart.yLabel"
                 :data-test="`metrics-grid-cell-${chart.yLabel}`"
-                class="flex flex-col h-56 p-2 rounded-lg ring-1 ring-gray-100 dark:ring-dark-border"
+                class="flex flex-col p-2 rounded-lg aspect-video min-h-[13rem] max-h-[24rem]
+                       ring-1 ring-gray-100 dark:ring-dark-border"
             >
                 <figcaption class="px-1 pb-1 text-xs font-semibold truncate shrink-0 text-gray-600 dark:text-gray-300">
                     {{ chart.yLabel }}

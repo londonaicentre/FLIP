@@ -273,6 +273,22 @@ describe("TrainingMetrics plot layout", () => {
         expect(wrapper.find("[data-test=metrics-view-grid]").attributes("aria-pressed")).toBe("true");
     });
 
+    test("the grid cells hold their aspect ratio, so a lone wide column is not a flat sliver", async () => {
+        setData([TRAIN_LOSS]);
+        const wrapper = mountTrainingMetrics();
+        await flushPromises();
+
+        await wrapper.find("[data-test=metrics-view-grid]").trigger("click");
+
+        const cell = wrapper.get("[data-test='metrics-grid-cell-TRAIN_LOSS']");
+        // Height follows width rather than being pinned, with a floor for a phone
+        // and a ceiling so one column does not become a full-screen plot.
+        expect(cell.classes()).toContain("aspect-video");
+        expect(cell.classes()).toContain("min-h-[13rem]");
+        expect(cell.classes()).toContain("max-h-[24rem]");
+        expect(cell.classes()).not.toContain("h-56");
+    });
+
     test("the grid scrolls rather than shrinking the plots, three across on a wide screen", async () => {
         setData([TRAIN_LOSS, VAL_F1]);
         const wrapper = mountTrainingMetrics();
