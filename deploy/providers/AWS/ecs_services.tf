@@ -19,15 +19,50 @@
 #   - Assigns a public IP only if explicitly enabled (never by default)
 
 ############################
+# Task-definition revision tracking (FLIP#751)
+############################
+# `make deploy-centralhub` rolls services forward by registering new task-definition
+# revisions via the AWS CLI, outside Terraform. Each data source below looks up the
+# latest ACTIVE revision of its family, and every service tracks
+#   max(<Terraform-owned revision>, <latest ACTIVE revision>)
+# (the provider-documented pattern for externally-updated task definitions), so an
+# unrelated `terraform apply` no longer repoints services at the older Terraform
+# revision — i.e. it does not roll back a CLI-deployed image. When Terraform itself
+# changes a task-definition config (new revision registered at apply), its revision
+# wins the max() and goes live with the env-file bootstrap image tag — re-run
+# `make deploy-centralhub` afterwards to roll the sha-pinned image forward again.
+# On first creation the reads are deferred to apply (they reference managed resources
+# with pending changes), so a fresh environment bootstraps cleanly.
+
+data "aws_ecs_task_definition" "flip_api" {
+  task_definition = aws_ecs_task_definition.flip_api.family
+}
+
+data "aws_ecs_task_definition" "fl_api_net_1" {
+  count           = var.enable_efs ? 1 : 0
+  task_definition = aws_ecs_task_definition.fl_api_net_1[0].family
+}
+
+data "aws_ecs_task_definition" "fl_server_net_1" {
+  count           = var.enable_efs ? 1 : 0
+  task_definition = aws_ecs_task_definition.fl_server_net_1[0].family
+}
+
+############################
 # flip-api
 ############################
 
 resource "aws_ecs_service" "flip_api" {
   count = var.enable_service_discovery ? 1 : 0
 
-  name                   = "flip-api"
-  cluster                = aws_ecs_cluster.flip.id
-  task_definition        = aws_ecs_task_definition.flip_api.arn
+  name    = "flip-api"
+  cluster = aws_ecs_cluster.flip.id
+  # Track whichever revision is newer: Terraform's or the live one deployed by
+  # `make deploy-centralhub` (see the revision-tracking block above, FLIP#751).
+  task_definition = "${aws_ecs_task_definition.flip_api.family}:${max(
+    aws_ecs_task_definition.flip_api.revision,
+    data.aws_ecs_task_definition.flip_api.revision,
+  )}"
   desired_count          = 1
   launch_type            = "FARGATE"
   enable_execute_command = var.ecs_exec_enabled
@@ -69,9 +104,14 @@ resource "aws_ecs_service" "flip_api" {
 resource "aws_ecs_service" "fl_api_net_1" {
   count = var.enable_service_discovery ? 1 : 0
 
-  name                   = "fl-api-net-1"
-  cluster                = aws_ecs_cluster.flip.id
-  task_definition        = aws_ecs_task_definition.fl_api_net_1[0].arn
+  name    = "fl-api-net-1"
+  cluster = aws_ecs_cluster.flip.id
+  # Track whichever revision is newer: Terraform's or the live one deployed by
+  # `make deploy-centralhub` (see the revision-tracking block above, FLIP#751).
+  task_definition = "${aws_ecs_task_definition.fl_api_net_1[0].family}:${max(
+    aws_ecs_task_definition.fl_api_net_1[0].revision,
+    data.aws_ecs_task_definition.fl_api_net_1[0].revision,
+  )}"
   desired_count          = 1
   launch_type            = "FARGATE"
   enable_execute_command = var.ecs_exec_enabled
@@ -102,9 +142,14 @@ resource "aws_ecs_service" "fl_api_net_1" {
 resource "aws_ecs_service" "fl_server_net_1" {
   count = var.enable_service_discovery ? 1 : 0
 
-  name                   = "fl-server-net-1"
-  cluster                = aws_ecs_cluster.flip.id
-  task_definition        = aws_ecs_task_definition.fl_server_net_1[0].arn
+  name    = "fl-server-net-1"
+  cluster = aws_ecs_cluster.flip.id
+  # Track whichever revision is newer: Terraform's or the live one deployed by
+  # `make deploy-centralhub` (see the revision-tracking block above, FLIP#751).
+  task_definition = "${aws_ecs_task_definition.fl_server_net_1[0].family}:${max(
+    aws_ecs_task_definition.fl_server_net_1[0].revision,
+    data.aws_ecs_task_definition.fl_server_net_1[0].revision,
+  )}"
   desired_count          = 1
   launch_type            = "FARGATE"
   enable_execute_command = var.ecs_exec_enabled
