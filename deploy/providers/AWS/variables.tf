@@ -109,9 +109,9 @@ variable "FL_KIT_SLOT_NAMES" {
 }
 
 variable "enable_mlflow_cost_alerts" {
-  description = "Create the SageMaker budget + cost-anomaly monitor that guard the MLflow integration (FLIP#745). Cheap (AWS Budgets is free for the first two per account) and independent of whether MLFLOW_TRACKING_URI is set — the alarms exist to catch an accidentally-created classic MLflow tracking server (~$470/mo) even before MLflow is switched on."
+  description = "Create the SageMaker budget + cost-anomaly monitor that guard the MLflow integration (FLIP#745). The alarms catch an accidentally-created classic MLflow tracking server (~$470/mo) and are independent of whether MLFLOW_TRACKING_URI is set. Default false because creating them needs billing/Cost-Explorer WRITE permissions (budgets:ModifyBudget, ce:*Anomaly*) that the FlipDeveloperAccess permission set does not grant — a routine apply would fail. They only need creating once per account: set true for that apply, by a principal that holds those permissions."
   type        = bool
-  default     = true
+  default     = false
 }
 
 variable "mlflow_monthly_budget_usd" {

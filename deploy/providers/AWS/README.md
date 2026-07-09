@@ -1012,9 +1012,19 @@ to track an expected bill:
 | `aws_budgets_budget.sagemaker_mlflow` — $5/month on the SageMaker service, alerting at 80%, 100%, and 100%-forecast | Someone creates a *classic* sized tracking server (~$470/month). Visible within a day, not at invoice time. |
 | `aws_ce_anomaly_monitor.sagemaker` + subscription (≥ $1 impact) | AWS begins metering something that is free today. Apps have no published rate card, so a *new charge shape* is the risk — a threshold alone would not describe it. |
 
-Both are in `cost_monitoring.tf`, on by default (`enable_mlflow_cost_alerts`), and
-independent of whether MLflow is switched on — the tracking-server mistake is
-possible either way. AWS Budgets is free for the first two budgets per account.
+Both are in `cost_monitoring.tf`, behind `enable_mlflow_cost_alerts`, and independent
+of whether MLflow is switched on — the tracking-server mistake is possible either way.
+AWS Budgets is free for the first two budgets per account.
+
+The flag **defaults to false**: creating a budget or an anomaly monitor needs billing
+and Cost Explorer *write* permissions (`budgets:ModifyBudget`, `ce:*Anomaly*`) which
+`FlipDeveloperAccess` does not grant — with it on, a routine `make apply` fails. These
+resources only need creating once per account, so:
+
+```bash
+# once per account, as a principal holding the billing/CE write permissions
+make apply PROD=stag TF_VAR_enable_mlflow_cost_alerts=true
+```
 
 The expensive mistake is also blocked structurally for developers: the
 `FlipDeveloperAccess` permission set grants `sagemaker:*MlflowApp*`, which does not
