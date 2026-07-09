@@ -39,6 +39,7 @@ from flip_api.domain.interfaces.model import (
 )
 from flip_api.domain.schemas.actions import ModelAuditAction
 from flip_api.domain.schemas.status import ModelStatus
+from flip_api.domain.schemas.types import FLLogEvent
 from flip_api.fl_services.services import fl_scheduler_service
 from flip_api.model_services.utils.audit_helper import audit_model_action, audit_model_actions
 from flip_api.utils.logger import logger
@@ -140,19 +141,23 @@ def update_model_status(
 
 def add_log(
     model_id: UUID,
-    log: str,
+    log: str | None,
     session: Session,
     transaction: Any | None = None,
     success: bool = True,
     trust: Trust | None = None,
     fl_client_name: str | None = None,
+    event_type: FLLogEvent | None = None,
+    global_round: int | None = None,
+    details: dict[str, Any] | None = None,
 ) -> None:
     """
     Add a log entry to the database
 
     Args:
         model_id (UUID): The ID of the model.
-        log (str): The log message to be added.
+        log (str | None): The log message to be added. None for typed event rows,
+            whose display text is composed at serve time.
         session (Session): The database session.
         transaction (Any | None): Optional transaction to control commit behavior.
         success (bool): Indicates if the log entry is a success or failure.
@@ -160,6 +165,11 @@ def add_log(
             reported by an FL client. None for model-level (hub) logs.
         fl_client_name (str | None): The FL client name as reported by the FL server.
             None for model-level logs.
+        event_type (FLLogEvent | None): The typed round event this row records, when
+            the FL server reported a structured fact rather than free text.
+        global_round (int | None): 1-based federated round the event belongs to.
+        details (dict[str, Any] | None): Event-specific facts (e.g. total_rounds,
+            size_bytes, returned/expected counts).
 
     Returns:
         None
@@ -177,6 +187,9 @@ def add_log(
         success=success,
         trust=trust.id if trust is not None else None,
         fl_client_name=fl_client_name,
+        event_type=event_type.value if event_type is not None else None,
+        global_round=global_round,
+        details=details,
     )
 
     try:

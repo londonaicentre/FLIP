@@ -18,6 +18,7 @@ import pytest
 from flip_api.db.models.main_models import FLMetrics, Model
 from flip_api.domain.interfaces.model import IModelDetails
 from flip_api.domain.schemas.status import ModelStatus
+from flip_api.domain.schemas.types import FLLogEvent
 from flip_api.model_services.services.model_service import (
     add_log,
     delete_model,
@@ -100,6 +101,35 @@ def test_add_log_failure():
     with pytest.raises(Exception, match="DB error"):
         add_log(uuid4(), "Log message", session)
     session.rollback.assert_called()
+
+
+def test_add_log_persists_event_fields():
+    """Typed event rows land with event_type/global_round/details and no display text."""
+    session = MagicMock()
+    add_log(
+        uuid4(),
+        None,
+        session,
+        event_type=FLLogEvent.ROUND_STARTED,
+        global_round=7,
+        details={"total_rounds": 15},
+    )
+    row = session.add.call_args.args[0]
+    assert row.log is None
+    assert row.event_type == FLLogEvent.ROUND_STARTED
+    assert row.global_round == 7
+    assert row.details == {"total_rounds": 15}
+
+
+def test_add_log_event_fields_default_null():
+    """Legacy free-text writes stay exactly as they were: all event columns null."""
+    session = MagicMock()
+    add_log(uuid4(), "Log message", session)
+    row = session.add.call_args.args[0]
+    assert row.log == "Log message"
+    assert row.event_type is None
+    assert row.global_round is None
+    assert row.details is None
 
 
 def test_delete_model_success():

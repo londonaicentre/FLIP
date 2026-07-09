@@ -119,6 +119,57 @@ def test_retrieve_logs_for_model_success(override_dependencies, mock_can_access_
     assert len(response.json()) == 2
 
 
+def test_retrieve_logs_event_rows_serve_rendered_text_and_round_fields(
+    override_dependencies, mock_can_access_true, mock_model_status_ok
+):
+    """Typed event rows are rendered hub-side and expose trustCode + globalRound."""
+    trust_id = uuid4()
+    event_logs = [
+        FLLogs(
+            id=uuid4(),
+            model_id=test_model_id,
+            log_date=datetime.now(),
+            success=True,
+            event_type="ROUND_STARTED",
+            global_round=7,
+            details={"total_rounds": 15},
+        ),
+        FLLogs(
+            id=uuid4(),
+            model_id=test_model_id,
+            log_date=datetime.now(),
+            success=True,
+            trust=trust_id,
+            fl_client_name="Trust_2",
+            event_type="CLIENT_RESULT_RECEIVED",
+            global_round=7,
+            details={"size_bytes": 2411725},
+        ),
+    ]
+
+    mock_model = MagicMock()
+    mock_exec_result = MagicMock()
+    mock_exec_result.all.return_value = event_logs
+    mock_trust_result = MagicMock()
+    mock_trust_result.all.return_value = [(trust_id, "King's College Hospital", "KCH")]
+
+    override_dependencies.exec.side_effect = [mock_model, mock_exec_result, mock_trust_result]
+
+    response = client.get(f"/api/model/{test_model_id}/logs")
+    assert response.status_code == status.HTTP_200_OK
+    hub_row, trust_row = response.json()
+
+    assert hub_row["log"] == "Round 7 initiated · global model dispatched"
+    assert hub_row["trustName"] is None
+    assert hub_row["trustCode"] is None
+    assert hub_row["globalRound"] == 7
+
+    assert trust_row["log"] == "Round 7 weights uploaded · 2.3 MB"
+    assert trust_row["trustName"] == "King's College Hospital"
+    assert trust_row["trustCode"] == "KCH"
+    assert trust_row["globalRound"] == 7
+
+
 def test_retrieve_logs_for_model_forbidden(mock_can_access_false):
     response = client.get(f"/api/model/{test_model_id}/logs")
     assert response.status_code == status.HTTP_403_FORBIDDEN

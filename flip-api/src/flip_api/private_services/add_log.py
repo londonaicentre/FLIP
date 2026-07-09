@@ -56,21 +56,35 @@ def add_log_endpoint(
     fl_client_name = training_log.fl_client_name
 
     try:
-        # The FL client name the FL server reports differs per FL_BACKEND (NVFLARE: the FL kit slot;
-        # Flower: SUPERNODE_NAME). resolve_trust_from_fl_client_name hides that discrepancy and
-        # returns the trust to validate against the model's approved trusts — see issue #538.
-        trust = resolve_trust_from_fl_client_name(fl_client_name, db)
-        if trust is None:
-            error_msg = f"FL client '{fl_client_name}' could not be resolved to a trust (model: {model_id})"
-            logger.error(error_msg)
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error_msg)
+        # A null fl_client_name means the row is hub-attributed (e.g. a ROUND_STARTED
+        # event from the fl-server's own control flow) — there is no slot to resolve.
+        trust = None
+        if fl_client_name is not None:
+            # The FL client name the FL server reports differs per FL_BACKEND (NVFLARE: the FL kit slot;
+            # Flower: SUPERNODE_NAME). resolve_trust_from_fl_client_name hides that discrepancy and
+            # returns the trust to validate against the model's approved trusts — see issue #538.
+            trust = resolve_trust_from_fl_client_name(fl_client_name, db)
+            if trust is None:
+                error_msg = f"FL client '{fl_client_name}' could not be resolved to a trust (model: {model_id})"
+                logger.error(error_msg)
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error_msg)
 
-        if not validate_trust_ids(model_id=model_id, trust_ids=[trust.id], session=db):
-            error_msg = f"The trust: {trust.name} is not associated with model: {model_id}"
-            logger.error(error_msg)
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error_msg)
+            if not validate_trust_ids(model_id=model_id, trust_ids=[trust.id], session=db):
+                error_msg = f"The trust: {trust.name} is not associated with model: {model_id}"
+                logger.error(error_msg)
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error_msg)
 
-        add_log(model_id=model_id, log=training_log.log, session=db, trust=trust, fl_client_name=fl_client_name)
+        add_log(
+            model_id=model_id,
+            log=training_log.log,
+            session=db,
+            success=training_log.success,
+            trust=trust,
+            fl_client_name=fl_client_name,
+            event_type=training_log.event_type,
+            global_round=training_log.global_round,
+            details=training_log.details,
+        )
 
         return {"detail": "Created"}
     except HTTPException:

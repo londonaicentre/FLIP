@@ -198,11 +198,65 @@ class ILog(BaseModel):
     log_date: datetime = Field(..., alias="logDate")
     success: bool
     trust_name: str | None = Field(default=None, alias="trustName")
+    # Trust short code (GSTT/KCH) for compact display; null for hub rows and
+    # trusts without a code. The round the row belongs to (1-based) is exposed
+    # for round-aware grouping in the UI; null on legacy/free-text rows.
+    trust_code: str | None = Field(default=None, alias="trustCode")
+    global_round: int | None = Field(default=None, alias="globalRound")
+    # Always populated on serve: free text verbatim, or event rows rendered by
+    # log_rendering.render_log.
     log: str
 
     model_config = ConfigDict(
         populate_by_name=True,
     )
+
+
+class ProgressTrustState(StrEnum):
+    """Where a trust sits relative to the current federated round.
+
+    ``RETURNED`` — its result for the current round has been received; it is
+    waiting on aggregation. ``TRAINING`` — still computing (the design calls the
+    slowest such trust the round's "gating" trust). ``DROPPED`` — it reported an
+    error and has shown no round activity since.
+    """
+
+    RETURNED = "returned"
+    TRAINING = "training"
+    DROPPED = "dropped"
+
+
+class IModelProgressTrust(BaseModel):
+    """One ladder row of ``GET /model/{id}/progress``."""
+
+    id: UUID
+    name: str
+    code: str | None = None
+    last_round: int | None = Field(default=None, alias="lastRound")
+    state: ProgressTrustState
+    avg_round_seconds: float | None = Field(default=None, alias="avgRoundSeconds")
+    last_event_at: datetime | None = Field(default=None, alias="lastEventAt")
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
+class IModelProgress(BaseModel):
+    """Server-derived federated-round state for the RoundProgress card.
+
+    Computed from the typed ``fl_logs`` events in one place (``services/progress.py``)
+    so no client re-implements round math. All fields are null-tolerant: a model
+    trained before event emission existed simply yields an empty shell (roster
+    only), which the UI treats as "nothing to show".
+    """
+
+    current_round: int | None = Field(default=None, alias="currentRound")
+    total_rounds: int | None = Field(default=None, alias="totalRounds")
+    started_at: datetime | None = Field(default=None, alias="startedAt")
+    avg_round_seconds: float | None = Field(default=None, alias="avgRoundSeconds")
+    est_remaining_seconds: float | None = Field(default=None, alias="estRemainingSeconds")
+    trusts: list[IModelProgressTrust] = Field(default_factory=list)
+
+    model_config = ConfigDict(populate_by_name=True)
 
 
 class IModelAuditAction(BaseModel):
