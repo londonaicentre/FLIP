@@ -166,6 +166,14 @@ export TF_VAR_FL_KIT_SLOT_NAMES=${FL_KIT_SLOT_NAMES}
 ECS_CLUSTER ?= flip-cluster
 CENTRALHUB_ECS_SERVICES = flip-api fl-api-net-1 fl-server-net-1
 
+# Immutable Central Hub deploys (FLIP#751): CI publishes a `sha-<short7>` tag for every
+# image; deploy-centralhub resolves that tag from the tip of the env's branch and
+# registers new task-definition revisions pointing at it, so what is live is always a
+# recorded commit and rollback-centralhub can repoint at the previous revision. The
+# env-file tags (DOCKER_TAG / DOCKER_FL_TAG) remain the bootstrap-only defaults Terraform
+# bakes into a (re)created task-definition family — day-to-day deploys never touch them.
+DEPLOY_GIT_REF := $(if $(filter true,$(PROD)),origin/main,origin/develop)
+
 TRUST_IMAGES = \
 	$(DOCKER_REGISTRY)trust-api:$(DOCKER_TAG) \
 	$(DOCKER_REGISTRY)imaging-api:$(DOCKER_TAG) \
@@ -409,17 +417,67 @@ seed-trust-data: check-trust-ec2-enabled ssh-config ## Load trust-specific OMOP 
 	@echo "✅ Trust data seeding complete."
 
 .PHONY: deploy-centralhub
-deploy-centralhub: ## Force-redeploy Central Hub ECS services and publish the UI
-	@echo "🚀 Force-redeploying Central Hub ECS services in $(ECS_CLUSTER)..."
+deploy-centralhub: ## Deploy Central Hub ECS services at the env branch tip (new task-def revisions) and publish the UI
+	## Immutable deploy (FLIP#751). The tag is resolved INSIDE the recipe (not a Make-level
+	## shell function) so the git fetch only runs when this target does; `cut -c1-7` pins the
+	## abbreviation to exactly 7 chars to match CI's sha-tag truncation — `git rev-parse --short=7`
+	## can grow beyond 7 when abbreviations become ambiguous, and the GHCR guard below
+	## catches any residual mismatch loudly. Per service: the app container is selected BY
+	## NAME (prod task defs carry a GuardDuty sidecar as containers[0]) and only its image
+	## tag is swapped before registering the new revision. Pass TAG=sha-<short7> to deploy
+	## a hotfix / feature-branch image (build it first via workflow_dispatch — see
+	## CLAUDE.md); revert with `make rollback-centralhub`.
 	@set -e; \
+	export AWS_PROFILE=$(AWS_PROFILE) AWS_REGION=$(AWS_REGION); \
+	TAG="$(TAG)"; \
+	if [ -z "$$TAG" ]; then \
+	  echo "🔎 Resolving deploy tag from the tip of $(DEPLOY_GIT_REF)..."; \
+	  git fetch -q origin; \
+	  TAG="sha-$$(git rev-parse $(DEPLOY_GIT_REF) | cut -c1-7)"; \
+	fi; \
+	echo "🚀 Deploying Central Hub ECS services in $(ECS_CLUSTER) at $$TAG..."; \
 	for service in $(CENTRALHUB_ECS_SERVICES); do \
-	  echo "   ↻ $$service"; \
-	  AWS_PROFILE=$(AWS_PROFILE) AWS_REGION=$(AWS_REGION) aws ecs update-service \
-	    --cluster $(ECS_CLUSTER) \
-	    --service $$service \
-	    --force-new-deployment \
-	    --query 'service.serviceName' \
-	    --output text >/dev/null; \
+	  current_td=$$(aws ecs describe-services --cluster $(ECS_CLUSTER) --services $$service \
+	    --query 'services[0].taskDefinition' --output text); \
+	  td_json=$$(aws ecs describe-task-definition --task-definition "$$current_td" --include TAGS); \
+	  image=$$(printf '%s' "$$td_json" | jq -r --arg name "$$service" \
+	    '.taskDefinition.containerDefinitions[] | select(.name == $$name).image'); \
+	  [ -n "$$image" ] || { echo "❌ $$service: no container named '$$service' in $$current_td"; exit 1; }; \
+	  new_image="$${image%:*}:$$TAG"; \
+	  case "$$new_image" in \
+	  ghcr.io/*) \
+	    repo=$${new_image#ghcr.io/}; repo=$${repo%:*}; \
+	    token=$$(curl -fsSL "https://ghcr.io/token?scope=repository:$$repo:pull" | jq -r '.token'); \
+	    accept='application/vnd.oci.image.index.v1+json, application/vnd.oci.image.manifest.v1+json'; \
+	    accept="$$accept, application/vnd.docker.distribution.manifest.list.v2+json"; \
+	    accept="$$accept, application/vnd.docker.distribution.manifest.v2+json"; \
+	    if ! curl -fsI -o /dev/null -H "Authorization: Bearer $$token" -H "Accept: $$accept" \
+	        "https://ghcr.io/v2/$$repo/manifests/$$TAG"; then \
+	      case "$$service" in \
+	        flip-api) wf=docker_build_flip_api.yml;; \
+	        *) wf=fl-docker-build-$(FL_BACKEND).yml;; \
+	      esac; \
+	      echo "❌ $$new_image not found in GHCR."; \
+	      echo "   Builds are test-gated and may still be running (or red) — check:"; \
+	      echo "     gh run list --workflow=$$wf"; \
+	      echo "   For a branch/hotfix image, build it first: gh workflow run $$wf --ref <branch>"; \
+	      exit 1; \
+	    fi;; \
+	  *) echo "   ⚠️  $$new_image is not on ghcr.io — skipping the registry existence check";; \
+	  esac; \
+	  jq_prog='.taskDefinition.containerDefinitions |= map(if .name == $$name then .image = $$image else . end)'; \
+	  jq_prog="$$jq_prog | (.taskDefinition | del(.taskDefinitionArn, .revision, .status, .requiresAttributes,"; \
+	  jq_prog="$$jq_prog .compatibilities, .registeredAt, .registeredBy, .deregisteredAt))"; \
+	  jq_prog="$$jq_prog + (if ((.tags // []) | length) > 0 then {tags: .tags} else {} end)"; \
+	  tmp_td=$$(mktemp); \
+	  printf '%s' "$$td_json" | jq --arg name "$$service" --arg image "$$new_image" "$$jq_prog" > $$tmp_td; \
+	  new_td_arn=$$(aws ecs register-task-definition --cli-input-json file://$$tmp_td \
+	    --query 'taskDefinition.taskDefinitionArn' --output text); \
+	  rm -f $$tmp_td; \
+	  echo "   ↻ $$service: $${current_td##*/} → $${new_td_arn##*/} ($$new_image)"; \
+	  aws ecs update-service --cluster $(ECS_CLUSTER) --service $$service \
+	    --task-definition "$$new_td_arn" \
+	    --query 'service.serviceName' --output text >/dev/null; \
 	done
 	@echo "⏳ Waiting for Central Hub ECS services to stabilise..."
 	@AWS_PROFILE=$(AWS_PROFILE) AWS_REGION=$(AWS_REGION) aws ecs wait services-stable \
@@ -427,6 +485,38 @@ deploy-centralhub: ## Force-redeploy Central Hub ECS services and publish the UI
 	  --services $(CENTRALHUB_ECS_SERVICES)
 	@$(MAKE) deploy-ui PROD=$(PROD)
 	@echo "✅ Central Hub ECS services and UI deployed."
+
+.PHONY: rollback-centralhub
+rollback-centralhub: ## Repoint each Central Hub ECS service at its previous ACTIVE task-definition revision
+	## Reverts the last deploy-centralhub in seconds — no rebuild, no env-file edit. Each
+	## service moves to the highest ACTIVE revision below its current one (CLI- and
+	## Terraform-registered revisions both count). The UI is NOT rolled back — re-run
+	## `make deploy-ui` from the matching commit if the UI must move too.
+	@set -e; \
+	export AWS_PROFILE=$(AWS_PROFILE) AWS_REGION=$(AWS_REGION); \
+	echo "⏪ Rolling back Central Hub ECS services in $(ECS_CLUSTER)..."; \
+	for service in $(CENTRALHUB_ECS_SERVICES); do \
+	  current_td=$$(aws ecs describe-services --cluster $(ECS_CLUSTER) --services $$service \
+	    --query 'services[0].taskDefinition' --output text); \
+	  family=$${current_td##*/}; family=$${family%%:*}; rev=$${current_td##*:}; \
+	  jq_prev='map(select(contains("/" + $$family + ":")))'; \
+	  jq_prev="$$jq_prev"' | map(select((split(":") | last | tonumber) < $$rev)) | first // empty'; \
+	  previous=$$(aws ecs list-task-definitions --family-prefix $$family --status ACTIVE --sort DESC \
+	    --query 'taskDefinitionArns' --output json | \
+	    jq -r --arg family "$$family" --argjson rev "$$rev" "$$jq_prev"); \
+	  if [ -z "$$previous" ]; then \
+	    echo "❌ $$service: no ACTIVE revision below $${current_td##*/} to roll back to"; exit 1; \
+	  fi; \
+	  echo "   ⏪ $$service: $${current_td##*/} → $${previous##*/}"; \
+	  aws ecs update-service --cluster $(ECS_CLUSTER) --service $$service \
+	    --task-definition "$$previous" \
+	    --query 'service.serviceName' --output text >/dev/null; \
+	done
+	@echo "⏳ Waiting for Central Hub ECS services to stabilise..."
+	@AWS_PROFILE=$(AWS_PROFILE) AWS_REGION=$(AWS_REGION) aws ecs wait services-stable \
+	  --cluster $(ECS_CLUSTER) \
+	  --services $(CENTRALHUB_ECS_SERVICES)
+	@echo "✅ Central Hub ECS services rolled back."
 
 .PHONY: deploy-ui
 deploy-ui: ## Build flip-ui from the working tree and deploy it to S3 + invalidate CloudFront
@@ -723,7 +813,7 @@ full-deploy: ## Full AWS deployment: provision infrastructure, deploy cloud Trus
 	## 4. update-env: refresh .env with Terraform outputs (EC2 IPs, DB endpoint, Cognito IDs)
 	## 5. ssh-config + ansible-init: configure the SSM bastion and provision the Trust EC2
 	##    (ansible-init uses trust_num=1 by default; re-run with KIT=<CODE> after register-trusts for slot-specific data)
-	## 6. deploy-centralhub: force-redeploy Central Hub ECS services and publish the UI
+	## 6. deploy-centralhub: deploy Central Hub ECS services at the env branch tip (new task-def revisions) + publish the UI
 	## 7. register-trusts: register every live trust/.env.*.<env> kit on the hub and write kit files
 	## 8. deploy-trust + status: bring up cloud Trust container stack and verify
 	## Prerequisite: create stub kit files first: make new-trust TRUST_CODE=<CODE> TRUST_NAME="..." TRUST_REGION=London PROD=$(PROD)
@@ -759,7 +849,7 @@ full-deploy-with-local-trust: ## Full AWS deployment (honours PROD) plus on-prem
 	## 4. update-env: refresh .env.{PROD} with Terraform outputs (EC2 IPs, DB endpoint, Cognito IDs)
 	## 5. ssh-config + ansible-init: configure the SSM bastion and provision the Trust EC2
 	##    (ansible-init uses trust_num=1 by default; re-run with KIT=<CODE> after register-trusts for slot-specific data)
-	## 6. deploy-centralhub: force-redeploy Central Hub ECS services and publish the UI
+	## 6. deploy-centralhub: deploy Central Hub ECS services at the env branch tip (new task-def revisions) + publish the UI
 	## 7. register-trusts: register every live trust/.env.*.<env> kit on the hub and write kit files
 	## 8. deploy-trust + provision-local-trust + status: bring up cloud + on-prem trust hosts and verify
 	## NOTE: After this completes you must manually:
