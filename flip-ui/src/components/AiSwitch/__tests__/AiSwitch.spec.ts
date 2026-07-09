@@ -65,4 +65,47 @@ describe("AiSwitch", () => {
         expect(comp.find("svg").exists()).toBe(true);
     });
 
+    it("stays on screen when disabled, greyed out, so its position still reads", async () => {
+        const comp = mount(AiSwitch, {
+            props: {
+                name: "flag",
+                value: true,
+                disabled: true
+            },
+            global: {
+                plugins: [createTestingPinia({
+                    createSpy: vi.fn,
+                    stubActions: false
+                })]
+            }
+        });
+
+        const control = comp.find("button[role=\"switch\"]");
+        expect(control.exists()).toBe(true);
+        expect(control.attributes("aria-disabled")).toBe("true");
+        expect(control.classes()).toContain("opacity-60");
+        expect(control.classes()).toContain("cursor-not-allowed");
+    });
+
+    it("a disabled switch cannot be toggled", async () => {
+        const comp = mount(AiSwitch, {
+            props: {
+                name: "flag",
+                value: true,
+                disabled: true
+            },
+            global: {
+                plugins: [createTestingPinia({
+                    createSpy: vi.fn,
+                    stubActions: false
+                })]
+            }
+        });
+
+        // Off, and it must stay off: no check mark appears.
+        await comp.find("button[role=\"switch\"]").trigger("click");
+
+        expect(comp.find("svg").exists()).toBe(false);
+    });
+
 });

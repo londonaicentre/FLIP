@@ -120,7 +120,7 @@ const stubs = {
     },
     AiGuard: { template: "<div><slot /></div>" },
     AiLoader: { template: "<div data-test='loader' />" },
-    LifecycleTrack: { template: "<div />" },
+    LifecycleTrack: { template: "<div data-test='lifecycle-track' />" },
     ModelDetails: { template: "<div />" },
     ModelUpload: {
         name: "ModelUpload",
@@ -746,6 +746,32 @@ describe("pages/project/[projectId]/model/[modelId] — Prepare/Run tabs", () =>
         expect(upload.attributes("data-can-upload")).toBe("false");
         // The run options stay on screen as a record of how the run was launched.
         expect(wrapper.find("[data-test='training']").attributes("data-view")).toBe("prepare");
+    });
+
+    it("the lifecycle belongs to Prepare — Run is for watching, not for staging", async () => {
+        mockSwrvData.value = makeModel([], { status: "TRAINING_STARTED" });
+        const wrapper = await mountPage();
+
+        expect(wrapper.find("[data-test='lifecycle-track']").exists()).toBe(false);
+
+        await wrapper.find("[data-test='tab-prepare']").trigger("click");
+
+        expect(wrapper.find("[data-test='lifecycle-track']").exists()).toBe(true);
+    });
+
+    it("the Prepare cards fill the window too, and stack on a narrow screen", async () => {
+        mockSwrvData.value = makeModel([], { status: "PENDING" });
+        const wrapper = await mountPage();
+
+        const aside = wrapper.find("aside");
+        const row = aside.element.parentElement;
+
+        expect(row?.className).toContain("flex-1");
+        expect(row?.className).toContain("min-h-0");
+        expect(row?.className).toContain("lg:flex-row");
+        // Stacked it grows; beside the options it becomes a fixed-width column.
+        expect(aside.classes()).toContain("flex-1");
+        expect(aside.classes()).toContain("lg:flex-none");
     });
 
     it("dispatching the model moves you to the Run tab", async () => {

@@ -21,8 +21,8 @@
         <AiLoader />
     </template>
     <div v-else class="relative flex flex-col h-full overflow-hidden">
-        <div class="flex-grow h-full overflow-y-auto">
-            <header class="px-6 pt-4">
+        <div class="flex flex-col flex-grow h-full overflow-y-auto">
+            <header class="shrink-0 px-8 pt-4">
                 <router-link
                     to="/projects"
                     class="text-xs font-semibold tracking-wider uppercase font-mono text-gray-500 hover:text-primary-500 dark:text-gray-300 dark:hover:text-primary-300"
@@ -84,46 +84,51 @@
                 </div>
             </header>
 
-            <div class="flex flex-col gap-4 p-4">
+            <div class="flex flex-col flex-1 min-h-0 gap-4 px-8 py-4">
                 <ModelTabs v-model="activeTab" :status="modelData?.status" class="mt-2" />
-
-                <!-- my-4 on top of the column's gap/padding gives the lifecycle ~32px of
-                     breathing room above and below. -->
-                <LifecycleTrack :steps="steps" class="my-4" />
 
                 <!-- Prepare: the model files and the run options, exactly as at model
                      creation. Once dispatched nothing here is editable — the options
                      stay on screen as a record of how the run was launched, and the
-                     files stay downloadable. -->
-                <div v-if="activeTab === 'prepare'" class="flex flex-col gap-4 lg:flex-row lg:gap-4">
-                    <aside class="lg:w-80 2xl:min-w-[30rem] shrink-0">
-                        <ModelUpload
-                            :files="modelData.files ?? []"
-                            :loading="!modelData"
-                            :can-upload="!trainingStartedOrStopped && !isViewer"
-                            :model-id="modelData.modelId"
-                            :required-files="requiredFiles"
-                            :job-type="currentJobType"
-                            @uploaded="update"
-                            @deleted-file="onFileDeleted"
-                        />
-                    </aside>
+                     files stay downloadable. The lifecycle belongs here too: it tracks
+                     the model's path to dispatch, which Run has no use for.
+                     my-4 on top of the column's gap gives it ~32px of breathing room. -->
+                <template v-if="activeTab === 'prepare'">
+                    <LifecycleTrack :steps="steps" class="my-4" />
 
-                    <div class="flex-1 min-w-0">
-                        <Training
-                            ref="trainingRef"
-                            view="prepare"
-                            :can-train="readyToTrain"
-                            :status="modelData?.status"
-                            :all-files-uploaded="allFilesUploaded"
-                            :required-files="requiredFiles"
-                            :uploaded-file-names="modelData?.files?.map(f => f.name) ?? []"
-                            :job-type="currentJobType"
-                            :fl-backend-label="flBackendLabel"
-                            @started="trainingInitialised"
-                        />
+                    <div class="flex flex-col flex-1 min-h-0 gap-4 lg:flex-row lg:gap-4">
+                        <aside
+                            class="flex flex-col flex-1 lg:flex-none lg:w-80 2xl:min-w-[30rem] shrink-0
+                                   min-h-[20rem] lg:min-h-0"
+                        >
+                            <ModelUpload
+                                :files="modelData.files ?? []"
+                                :loading="!modelData"
+                                :can-upload="!trainingStartedOrStopped && !isViewer"
+                                :model-id="modelData.modelId"
+                                :required-files="requiredFiles"
+                                :job-type="currentJobType"
+                                @uploaded="update"
+                                @deleted-file="onFileDeleted"
+                            />
+                        </aside>
+
+                        <div class="flex flex-col flex-1 min-w-0 min-h-[24rem] lg:min-h-0">
+                            <Training
+                                ref="trainingRef"
+                                view="prepare"
+                                :can-train="readyToTrain"
+                                :status="modelData?.status"
+                                :all-files-uploaded="allFilesUploaded"
+                                :required-files="requiredFiles"
+                                :uploaded-file-names="modelData?.files?.map(f => f.name) ?? []"
+                                :job-type="currentJobType"
+                                :fl-backend-label="flBackendLabel"
+                                @started="trainingInitialised"
+                            />
+                        </div>
                     </div>
-                </div>
+                </template>
 
                 <!-- Run: metrics and the activity feed. -->
                 <Training
@@ -290,7 +295,6 @@ const steps = computed((): IStep[] => {
         date: dates[i] ?? null
     }));
 });
-
 
 const readyToTrain = computed(() => {
     return !trainingStartedOrStopped.value

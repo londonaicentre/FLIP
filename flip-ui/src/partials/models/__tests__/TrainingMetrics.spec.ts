@@ -127,7 +127,7 @@ describe("TrainingMetrics", () => {
         const wrapper = mountTrainingMetrics();
         await flushPromises();
 
-        expect(wrapper.text()).toContain("Any metrics generated during training will show here.");
+        expect(wrapper.text()).toContain("Any metrics sent during the run will show here.");
         expect(wrapper.find("[role=tablist]").exists()).toBe(false);
     });
 
@@ -241,7 +241,7 @@ describe("TrainingMetrics", () => {
         await flushPromises();
 
         expect(wrapper.find("[data-test=chart-stub]").exists()).toBe(false);
-        expect(wrapper.text()).toContain("Any metrics generated during training will show here.");
+        expect(wrapper.text()).toContain("Any metrics sent during the run will show here.");
     });
 });
 
@@ -252,6 +252,7 @@ describe("TrainingMetrics chart sizing", () => {
 
         const panel = wrapper.get("[role=tabpanel]");
         expect(panel.classes()).toContain("flex-1");
+        expect(panel.classes()).toContain("min-h-0");
         expect(panel.classes()).not.toContain("aspect-video");
     });
 });

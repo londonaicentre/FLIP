@@ -26,7 +26,7 @@
         <div class="relative block w-full text-center">
             <icon-ph-chart-line class="w-12 h-12 mx-auto text-gray-400 dark:text-gray-600" />
             <div class="mt-2 text-sm text-gray-500 dark:text-gray-300">
-                Any metrics generated during training will show here.
+                Any metrics sent during the run will show here.
             </div>
         </div>
     </div>
@@ -53,8 +53,9 @@
             </button>
         </div>
         <!-- The chart fills whatever height the card gives it rather than locking to
-             a 16:9 box, with a floor so it stays readable on a phone. -->
-        <div class="w-full flex-1 min-h-[18rem] pt-4" role="tabpanel">
+             a 16:9 box. min-h-0 lets it shrink below its content on a short window;
+             the card carries the readability floor. -->
+        <div class="w-full flex-1 min-h-0 pt-4" role="tabpanel">
             <AiMetricsChart v-if="activeChart" :data="activeChart" />
         </div>
     </div>

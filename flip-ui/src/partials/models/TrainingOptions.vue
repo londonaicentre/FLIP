@@ -12,7 +12,7 @@
 -->
 
 <template>
-    <div class="px-4 pb-4 space-y-8 divide-y divide-gray-200 dark:divide-dark-border sm:space-y-5">
+    <div class="px-6 pb-4 space-y-8 divide-y divide-gray-200 dark:divide-dark-border sm:space-y-5">
         <div>
             <p class="max-w-2xl mt-1 text-sm text-gray-500 dark:text-gray-300">
                 Complete the following fields to initiate training.
