@@ -78,10 +78,16 @@ def _get_client() -> "MlflowClient | None":
     if not tracking_uri:
         return None
     try:
+        import mlflow
         from mlflow.tracking import MlflowClient
 
         for key, value in _HTTP_ENV_DEFAULTS.items():
             os.environ.setdefault(key, value)
+        if tracking_uri.startswith("arn:"):
+            # SageMaker managed MLflow: the sagemaker-mlflow plugin authenticates
+            # from the GLOBAL tracking URI, not the per-client one — see the same
+            # guard in flip-utils' MlflowSink (FLIP#745 WP6 spike finding).
+            mlflow.set_tracking_uri(tracking_uri)
         return MlflowClient(tracking_uri=tracking_uri, registry_uri=tracking_uri)
     except Exception as e:
         logger.warning(f"MLflow run bootstrap disabled (client init failed): {e}")

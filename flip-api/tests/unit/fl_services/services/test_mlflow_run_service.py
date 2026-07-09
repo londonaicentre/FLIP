@@ -70,6 +70,29 @@ def session():
     return session
 
 
+class TestGetClient:
+    def test_arn_uri_pins_the_global_tracking_uri(self):
+        """The sagemaker-mlflow plugin authenticates from the GLOBAL tracking URI (FLIP#745 spike)."""
+        arn = "arn:aws:sagemaker:eu-west-2:123456789012:mlflow-app/app-x"
+        settings = Mock()
+        settings.MLFLOW_TRACKING_URI = arn
+        with (
+            patch.object(mlflow_run_service, "get_settings", return_value=settings),
+            patch("mlflow.tracking.MlflowClient"),
+            patch("mlflow.set_tracking_uri") as set_uri,
+        ):
+            assert mlflow_run_service._get_client() is not None
+        set_uri.assert_called_once_with(arn)
+
+    def test_http_uri_does_not_touch_the_global_tracking_uri(self, settings_enabled):
+        with (
+            patch("mlflow.tracking.MlflowClient"),
+            patch("mlflow.set_tracking_uri") as set_uri,
+        ):
+            assert mlflow_run_service._get_client() is not None
+        set_uri.assert_not_called()
+
+
 class TestStartRunForJob:
     def test_noop_when_uri_unset(self):
         settings = Mock()

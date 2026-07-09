@@ -111,10 +111,21 @@ class MlflowSink:
     """
 
     def __init__(self, tracking_uri: str):
+        import mlflow
         from mlflow.tracking import MlflowClient
 
         for key, value in _HTTP_ENV_DEFAULTS.items():
             os.environ.setdefault(key, value)
+
+        if tracking_uri.startswith("arn:"):
+            # SageMaker managed MLflow: the sagemaker-mlflow plugin's request-auth
+            # provider resolves the App ARN from the GLOBAL tracking URI (the
+            # MLFLOW_TRACKING_URI env var / mlflow.set_tracking_uri), not from the
+            # per-client URI passed to MlflowClient below. Deployments deliver the
+            # ARN via that env var, so this is normally a no-op — but it keeps the
+            # sink correct if the URI ever arrives another way. Verified against a
+            # live MLflow App (FLIP#745 WP6 spike).
+            mlflow.set_tracking_uri(tracking_uri)
 
         self._client = MlflowClient(tracking_uri=tracking_uri, registry_uri=tracking_uri)
         self._run_ids: dict[str, str] = {}

@@ -278,3 +278,21 @@ class TestGetMlflowSink:
             MlflowSink("http://mlflow:5000")
         assert mlflow_sink.os.environ["MLFLOW_HTTP_REQUEST_TIMEOUT"] == "10"
         assert mlflow_sink.os.environ["MLFLOW_HTTP_REQUEST_MAX_RETRIES"] == "1"
+
+    def test_arn_uri_pins_the_global_tracking_uri(self):
+        """The sagemaker-mlflow plugin authenticates from the GLOBAL tracking URI (FLIP#745 spike)."""
+        arn = "arn:aws:sagemaker:eu-west-2:123456789012:mlflow-app/app-x"
+        with (
+            patch("mlflow.tracking.MlflowClient"),
+            patch("mlflow.set_tracking_uri") as set_uri,
+        ):
+            MlflowSink(arn)
+        set_uri.assert_called_once_with(arn)
+
+    def test_http_uri_does_not_touch_the_global_tracking_uri(self):
+        with (
+            patch("mlflow.tracking.MlflowClient"),
+            patch("mlflow.set_tracking_uri") as set_uri,
+        ):
+            MlflowSink("http://mlflow:5000")
+        set_uri.assert_not_called()
