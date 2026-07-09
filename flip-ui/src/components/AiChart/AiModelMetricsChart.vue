@@ -129,10 +129,13 @@ onMounted(() => {
                         // Full-width plot — the legend overlays the grid instead of
                         // reserving a 160px column on the right.
                         right: 24,
-                        top: 24,
-                        // The x-axis name (nameGap 40) needs ~64px; the old "25%" also
-                        // reserved room for the now-removed slider bar.
-                        bottom: 64,
+                        top: 16,
+                        // Just enough for the x-axis name at nameGap 20. Every pixel here
+                        // is taken off the plotted area, which is fixed overhead the box's
+                        // aspect ratio never sees: at a phone's 208px-tall box, the old
+                        // 24/64 pair left barely half of it for the lines themselves.
+                        // Below this pair the name rides up over the tick labels.
+                        bottom: 36,
                         containLabel: true
                     },
                     tooltip: {
@@ -168,7 +171,10 @@ onMounted(() => {
                         splitNumber: 10, // <— try to show 10 ticks (only)
                         name: "Global Rounds",
                         nameLocation: "middle",
-                        nameGap: 40,
+                        // Sits just under the tick labels rather than floating halfway
+                        // down a reserved strip, which read as a wide empty card margin.
+                        // At 16 it overlaps them.
+                        nameGap: 20,
                         nameTextStyle: {
                             fontWeight: 700,
                             fontSize: 14,
