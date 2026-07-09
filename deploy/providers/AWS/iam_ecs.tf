@@ -300,34 +300,24 @@ resource "aws_iam_role_policy" "ecs_fl_server_task" {
 # disabled. Callers authenticate with their task role via the sagemaker-mlflow
 # client plugin (SigV4) — no static credentials involved.
 #
-# Scoping this grant is constrained by the service, not by preference. Verified
-# against a real MLflow App on stag (2026-07-09), every attempt to narrow the
-# Allow statement produced 403 "Request is not authorized" on every call:
-#   - Resource = <App ARN>      → denied (AWS documents resource scoping only
-#                                 for the older *tracking server* ARN)
-#   - Condition aws:ResourceAccount / aws:RequestedRegion → denied (neither key
-#                                 is populated for these calls)
-#   - Action  = explicit list   → denied (the service's internal action mapping
-#                                 does not match the documented action names;
-#                                 even sagemaker-mlflow:GetExperimentByName is
-#                                 rejected for /experiments/get-by-name)
-# Only AWS's documented client policy — sagemaker-mlflow:* on * — functions.
+# MLflow Apps gate the data plane on the sagemaker:CallMlflowAppApi action —
+# NOT on the sagemaker-mlflow:* actions that AWS's tracking-server docs (and its
+# example client policy) prescribe. Without it every REST call returns 403
+# "Request is not authorized", whatever the sagemaker-mlflow grant says.
+# See "Data Plane IAM actions supported for MLflow Apps" in the SageMaker docs;
+# diagnosed on stag 2026-07-09.
 #
-# What IS enforceable is an explicit Deny, which is evaluated regardless of
-# request context and always wins over the Allow. The destructive MLflow verbs
-# neither role ever calls are therefore denied outright, so a compromised task
-# cannot delete runs, registered models, model versions or tags, transition
-# model stages, or open the MLflow UI. flip-api additionally keeps
-# DeleteExperiment (its model soft-delete mirror needs it); the fl-server does
-# not and is denied it.
+# CallMlflowAppApi *is* resource-scopable, so it is pinned to this deployment's
+# App ARN. The sagemaker-mlflow:* actions remain the granular per-API control
+# layer (they cannot be resource-scoped for Apps — only "*" is accepted), and an
+# explicit Deny — which is context-independent and beats any Allow — removes the
+# destructive verbs neither role calls. flip-api keeps DeleteExperiment for its
+# model soft-delete mirror; the fl-server does not.
 #
-# Further compensating controls: short-lived task-role credentials (no static
-# keys), the MLflow data plane only, and CloudTrail on every data-plane call.
-# Narrow the Allow to the App ARN once AWS registers mlflow-app as an
-# authorizable resource for these actions.
+# Callers authenticate with their task role via the sagemaker-mlflow client
+# plugin (SigV4) — no static credentials. Every data-plane call is CloudTrail-logged.
 locals {
-  # Destructive verbs neither task role calls. Explicit Deny beats the wildcard
-  # Allow below, and unlike Resource/Condition scoping it is actually honoured.
+  # Destructive verbs neither task role calls.
   mlflow_denied_actions = [
     "sagemaker-mlflow:DeleteRun",
     "sagemaker-mlflow:DeleteRegisteredModel",
@@ -353,6 +343,14 @@ resource "aws_iam_role_policy" "ecs_flip_api_task_sagemaker_mlflow" {
     Version = "2012-10-17"
     Statement = [
       {
+        # The actual gate for MLflow Apps — scoped to this deployment's App.
+        Sid      = "MlflowCallApp"
+        Effect   = "Allow"
+        Action   = ["sagemaker:CallMlflowAppApi"]
+        Resource = var.MLFLOW_TRACKING_URI
+      },
+      {
+        # Granular per-API layer; Apps accept only "*" as the resource here.
         Sid      = "MlflowDataPlane"
         Effect   = "Allow"
         Action   = ["sagemaker-mlflow:*"]
@@ -378,6 +376,14 @@ resource "aws_iam_role_policy" "ecs_fl_server_task_sagemaker_mlflow" {
     Version = "2012-10-17"
     Statement = [
       {
+        # The actual gate for MLflow Apps — scoped to this deployment's App.
+        Sid      = "MlflowCallApp"
+        Effect   = "Allow"
+        Action   = ["sagemaker:CallMlflowAppApi"]
+        Resource = var.MLFLOW_TRACKING_URI
+      },
+      {
+        # Granular per-API layer; Apps accept only "*" as the resource here.
         Sid      = "MlflowDataPlane"
         Effect   = "Allow"
         Action   = ["sagemaker-mlflow:*"]
