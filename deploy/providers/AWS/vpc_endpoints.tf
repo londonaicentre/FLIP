@@ -20,16 +20,21 @@
 # Gated behind enable_ecs_endpoints because each interface endpoint incurs an
 # hourly charge for an ENI in every configured availability zone.
 # The S3 gateway endpoint is always created (no hourly charge).
+#
+# On the LZA platform-managed network (FLIP#749) this whole file is gated off:
+# CreateVpcEndpoint is SCP-denied there, interface endpoints are centralised in
+# the Network account (resolved via PHZs over the TGW), and the LZA pipeline
+# already provides in-account S3 + DynamoDB gateway endpoints.
 
 ############################
 # Security group for interface endpoints
 ############################
 
 resource "aws_security_group" "vpc_endpoints" {
-  count       = var.enable_ecs_endpoints ? 1 : 0
+  count       = var.enable_ecs_endpoints && !var.lza_managed_network ? 1 : 0
   name        = "vpc-endpoints"
   description = "TLS 443 to AWS interface endpoints from VPC tasks"
-  vpc_id      = module.flip_vpc.vpc_id
+  vpc_id      = local.vpc_id
 
   tags = {
     FlipSG = "true"
@@ -37,18 +42,18 @@ resource "aws_security_group" "vpc_endpoints" {
 }
 
 resource "aws_security_group_rule" "vpc_endpoints_ingress_from_vpc" {
-  count             = var.enable_ecs_endpoints ? 1 : 0
+  count             = var.enable_ecs_endpoints && !var.lza_managed_network ? 1 : 0
   type              = "ingress"
   description       = "HTTPS from anywhere in the VPC (ECS tasks)"
   from_port         = 443
   to_port           = 443
   protocol          = "tcp"
   security_group_id = aws_security_group.vpc_endpoints[0].id
-  cidr_blocks       = [var.vpc_cidr]
+  cidr_blocks       = [local.vpc_cidr_block]
 }
 
 resource "aws_security_group_rule" "vpc_endpoints_egress_all" {
-  count             = var.enable_ecs_endpoints ? 1 : 0
+  count             = var.enable_ecs_endpoints && !var.lza_managed_network ? 1 : 0
   type              = "egress"
   description       = "Default egress for endpoint ENIs"
   from_port         = 0
@@ -71,10 +76,19 @@ data "aws_ec2_managed_prefix_list" "s3" {
 }
 
 resource "aws_vpc_endpoint" "s3" {
-  vpc_id            = module.flip_vpc.vpc_id
+  count             = var.lza_managed_network ? 0 : 1
+  vpc_id            = local.vpc_id
   service_name      = "com.amazonaws.${var.AWS_REGION}.s3"
   vpc_endpoint_type = "Gateway"
   route_table_ids   = module.flip_vpc.private_route_table_ids
+}
+
+# State migration for the count added above (FLIP#749): keeps existing legacy
+# states aligned without a manual `terraform state mv`. Safe to remove once
+# every live state file has been migrated.
+moved {
+  from = aws_vpc_endpoint.s3
+  to   = aws_vpc_endpoint.s3[0]
 }
 
 ############################
@@ -90,11 +104,11 @@ locals {
 }
 
 resource "aws_vpc_endpoint" "interface" {
-  for_each            = var.enable_ecs_endpoints ? local.interface_endpoint_services : toset([])
-  vpc_id              = module.flip_vpc.vpc_id
+  for_each            = var.enable_ecs_endpoints && !var.lza_managed_network ? local.interface_endpoint_services : toset([])
+  vpc_id              = local.vpc_id
   service_name        = "com.amazonaws.${var.AWS_REGION}.${each.value}"
   vpc_endpoint_type   = "Interface"
-  subnet_ids          = module.flip_vpc.private_subnets
+  subnet_ids          = local.app_subnet_ids
   security_group_ids  = [aws_security_group.vpc_endpoints[0].id]
   private_dns_enabled = true
 }

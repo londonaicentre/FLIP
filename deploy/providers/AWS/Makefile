@@ -88,6 +88,18 @@ endif
 # is the platform-managed network, toggled by the orthogonal flag below (FLIP#749).
 export TF_VAR_environment=$(if $(filter true lza,$(PROD)),prod,stag)
 
+# Platform-managed network toggle (FLIP#749): on the LZA FLIPProduction account
+# the VPC layer is provisioned by the AWS Accelerator pipeline and SCP-denied to
+# this stack, so Terraform switches from creating the network to data lookups
+# (see network_lza.tf). Off for every legacy environment.
+export TF_VAR_lza_managed_network=$(if $(filter lza,$(PROD)),true,false)
+# Name tag of the platform-managed VPC; only consulted when PROD=lza. Set
+# LZA_VPC_NAME in the env file to override the variables.tf default
+# (AWSAccelerator-eu-west-2-prod) if the platform template is ever renamed.
+ifneq ($(LZA_VPC_NAME),)
+export TF_VAR_lza_vpc_name=$(LZA_VPC_NAME)
+endif
+
 # Kit-file env suffix: PROD=true → .production kits, PROD=lza → .lza-prod kits (a
 # separate namespace so the parallel-running legacy prod kits are never touched
 # during the FLIP#749 migration), otherwise → .stag. Selects the trust kit file

@@ -76,7 +76,7 @@ resource "aws_ecs_service" "flip_api" {
   enable_execute_command = var.ecs_exec_enabled
 
   network_configuration {
-    subnets          = module.flip_vpc.private_subnets
+    subnets          = local.app_subnet_ids
     security_groups  = [aws_security_group.ecs_flip_api.id]
     assign_public_ip = false
   }
@@ -125,7 +125,7 @@ resource "aws_ecs_service" "fl_api_net_1" {
   enable_execute_command = var.ecs_exec_enabled
 
   network_configuration {
-    subnets          = module.flip_vpc.private_subnets
+    subnets          = local.app_subnet_ids
     security_groups  = [aws_security_group.ecs_fl_api.id]
     assign_public_ip = false
   }
@@ -163,7 +163,7 @@ resource "aws_ecs_service" "fl_server_net_1" {
   enable_execute_command = var.ecs_exec_enabled
 
   network_configuration {
-    subnets          = module.flip_vpc.private_subnets
+    subnets          = local.app_subnet_ids
     security_groups  = [aws_security_group.ecs_fl_server.id]
     assign_public_ip = false
   }

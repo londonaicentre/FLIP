@@ -55,8 +55,13 @@ resource "aws_ssm_parameter" "flip_app_bundles_bucket" {
 # network_account_flip module reads these from the FLIP-Prod account to
 # back the cross-account TGW VPC attachment (single authoritative value
 # avoids tag-collision ambiguity during VPC migrations).
+#
+# Gated off on the LZA account (FLIP#749): its TGW attachment is provisioned by
+# the accelerator pipeline, not by aicentre-iac, so nothing consumes these
+# there — they are the legacy TGW coupling only.
 
 resource "aws_ssm_parameter" "vpc_id" {
+  count       = var.lza_managed_network ? 0 : 1
   name        = "${local.ssm_prefix}/networking/vpc_id"
   description = "FLIP-Prod VPC ID — consumed cross-account by aicentre-iac's TGW VPC attachment"
   type        = "String"
@@ -64,12 +69,25 @@ resource "aws_ssm_parameter" "vpc_id" {
 }
 
 resource "aws_ssm_parameter" "private_subnet_ids" {
+  count       = var.lza_managed_network ? 0 : 1
   name        = "${local.ssm_prefix}/networking/private_subnet_ids"
   description = "FLIP-Prod private subnet IDs (comma-separated) — consumed cross-account by aicentre-iac's TGW VPC attachment"
   type        = "StringList"
   value       = join(",", module.flip_vpc.private_subnets)
 }
 
+# State migration for the counts added above (FLIP#749): keeps existing legacy
+# states aligned without a manual `terraform state mv`. Safe to remove once
+# every live state file has been migrated.
+moved {
+  from = aws_ssm_parameter.vpc_id
+  to   = aws_ssm_parameter.vpc_id[0]
+}
+
+moved {
+  from = aws_ssm_parameter.private_subnet_ids
+  to   = aws_ssm_parameter.private_subnet_ids[0]
+}
 
 # FL kit-slot pool names — flip-api's runtime source in production, read at boot
 # seeding and re-read when a trust registration finds the pool exhausted

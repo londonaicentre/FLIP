@@ -30,6 +30,18 @@ variable "VPC_NAME" {
   type = string
 }
 
+variable "lza_managed_network" {
+  description = "Run against the LZA-provisioned (platform-managed) network instead of creating one (FLIP#749). true skips the VPC module (and with it NAT/IGW/EIPs), the VPC endpoints, the DHCP options, and the /flip/networking/* SSM params, and discovers the AWSAccelerator VPC + subnets by Name tag instead (see network_lza.tf). Orthogonal to var.environment: the LZA account is prod-grade, so it deploys with environment=prod AND this flag. Set via PROD=lza in the Makefile."
+  type        = bool
+  default     = false
+}
+
+variable "lza_vpc_name" {
+  description = "Name tag of the platform-managed VPC to discover when lza_managed_network is set. The subnet lookups derive their Name-tag patterns from it (<name>-app-*, <name>-data-*)."
+  type        = string
+  default     = "AWSAccelerator-eu-west-2-prod"
+}
+
 variable "max_azs" {
   type = number
 }

@@ -124,7 +124,7 @@ resource "aws_cloudfront_vpc_origin" "flip_api" {
 # list), not the ENI source IP.
 data "aws_security_group" "cloudfront_vpcorigins_service" {
   name   = "CloudFront-VPCOrigins-Service-SG"
-  vpc_id = module.flip_vpc.vpc_id
+  vpc_id = local.vpc_id
 
   depends_on = [aws_cloudfront_vpc_origin.flip_api]
 }
