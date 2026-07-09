@@ -171,7 +171,7 @@ onMounted(() => {
                         nameGap: 40,
                         nameTextStyle: {
                             fontWeight: 700,
-                            fontSize: 16,
+                            fontSize: 14,
                             fontFamily: "Inter",
                             color: chrome.ink
                         },
