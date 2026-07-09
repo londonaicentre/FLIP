@@ -80,6 +80,8 @@
                      breathing room above and below. -->
                 <LifecycleTrack :steps="steps" class="my-4" />
 
+                <RoundProgress :status="modelData?.status" />
+
                 <div class="flex flex-col gap-4 lg:flex-row lg:gap-4">
                     <aside class="lg:w-80 2xl:min-w-[30rem] shrink-0">
                         <ModelUpload
@@ -139,6 +141,7 @@ import { FileUploadStatus } from "@/interfaces/model/types";
 import { IStep } from "@/interfaces/steps";
 import EditModelDrawer, { IEditModel } from "@/partials/models/EditModelDrawer.vue";
 import ModelUpload from "@/partials/models/ModelUpload.vue";
+import RoundProgress from "@/partials/models/RoundProgress.vue";
 import Training from "@/partials/models/Training.vue";
 import TrainingActionsMenu from "@/partials/models/TrainingActionsMenu.vue";
 import LifecycleTrack from "@/partials/projects/LifecycleTrack.vue";

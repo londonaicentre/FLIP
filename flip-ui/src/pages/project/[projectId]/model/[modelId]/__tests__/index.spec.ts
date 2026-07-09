@@ -128,6 +128,11 @@ const stubs = {
         emits: ["uploaded", "deleted-file"]
     },
     QueryDetails: { template: "<div />" },
+    RoundProgress: {
+        name: "RoundProgress",
+        props: ["status"],
+        template: "<div data-test='round-progress' :data-status='status' />"
+    },
     Training: {
         name: "Training",
         props: ["flBackendLabel"],
@@ -249,6 +254,15 @@ describe("pages/project/[projectId]/model/[modelId]", () => {
     it("renders the loader until model data resolves", async () => {
         const wrapper = await mountPage();
         expect(wrapper.find("[data-test='loader']").exists()).toBe(true);
+    });
+
+    it("renders the round-progress card below the lifecycle with the model status", async () => {
+        mockSwrvData.value = makeModel([], { status: "TRAINING_STARTED" });
+        const wrapper = await mountPage();
+
+        const card = wrapper.find("[data-test='round-progress']");
+        expect(card.exists()).toBe(true);
+        expect(card.attributes("data-status")).toBe("TRAINING_STARTED");
     });
 
     it("invokes resolveModelConfigState with the current config.json status on each poll", async () => {

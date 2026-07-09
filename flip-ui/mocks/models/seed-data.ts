@@ -18,7 +18,7 @@ import { v4 } from "uuid";
 
 import { FileUploadStatus } from "@/interfaces/model/types";
 import { IPaginatedResponse } from "@/services/api";
-import { ILog, IModel, IModelDashboard, IModelMetricData } from "@/services/model-service";
+import { ILog, IModel, IModelDashboard, IModelMetricData, IModelProgress } from "@/services/model-service";
 
 const modelId = v4();
 
@@ -182,8 +182,79 @@ export const exampleLogs: ILog[] = [
         "success": true,
         "trustName": "trust2",
         "log": "sending the stop message..."
+    },
+    // Typed round events as flip-api serves them: rendered hub-side into
+    // display text, with trustCode + globalRound for round-aware consumers.
+    {
+        "id": "b58f3c02-91f4-4a6f-9a76-6f3f5f4a1201",
+        "modelId": "6e35c21b-a6f6-4fba-8228-8d260becb212",
+        "logDate": "2021-11-10T16:48:00.000Z",
+        "success": true,
+        "trustName": null,
+        "trustCode": null,
+        "globalRound": 2,
+        "log": "Round 2 initiated · global model dispatched"
+    },
+    {
+        "id": "0a4be7a3-56cf-49e5-8f0e-2f0b6f2f1301",
+        "modelId": "6e35c21b-a6f6-4fba-8228-8d260becb212",
+        "logDate": "2021-11-10T16:52:08.000Z",
+        "success": true,
+        "trustName": "trust1",
+        "trustCode": "GSTT",
+        "globalRound": 2,
+        "log": "Round 2 weights uploaded · 2.3 MB"
+    },
+    {
+        "id": "5f4a2b7e-0d3c-4f5a-9b7e-8c2d1e0f1402",
+        "modelId": "6e35c21b-a6f6-4fba-8228-8d260becb212",
+        "logDate": "2021-11-10T16:53:41.000Z",
+        "success": true,
+        "trustName": "trust2",
+        "trustCode": "KCH",
+        "globalRound": 2,
+        "log": "Round 2 weights uploaded · 2.4 MB"
+    },
+    {
+        "id": "77d0c9a1-3e5b-4c8d-8f1a-9b0c2d3e1503",
+        "modelId": "6e35c21b-a6f6-4fba-8228-8d260becb212",
+        "logDate": "2021-11-10T16:53:52.000Z",
+        "success": true,
+        "trustName": null,
+        "trustCode": null,
+        "globalRound": 2,
+        "log": "Round 2 aggregated · 2 of 2 trusts returned"
     }
 ];
+
+// GET /model/{id}/progress — the server-derived round view backing RoundProgress.vue.
+export const exampleProgress: IModelProgress = {
+    currentRound: 2,
+    totalRounds: 5,
+    startedAt: "2021-11-10T16:42:00.000Z",
+    avgRoundSeconds: 360,
+    estRemainingSeconds: 1290,
+    trusts: [
+        {
+            id: "0a1b2c3d-4e5f-6071-8293-a4b5c6d7e8f9",
+            name: "trust1",
+            code: "GSTT",
+            lastRound: 2,
+            state: "returned",
+            avgRoundSeconds: 320,
+            lastEventAt: "2021-11-10T16:52:08.000Z"
+        },
+        {
+            id: "1b2c3d4e-5f60-7182-93a4-b5c6d7e8f90a",
+            name: "trust2",
+            code: "KCH",
+            lastRound: 1,
+            state: "training",
+            avgRoundSeconds: 395,
+            lastEventAt: "2021-11-10T16:53:41.000Z"
+        }
+    ]
+};
 
 export const mockModelDashboard: IModelDashboard = {
     modelName: "Testing Model",
