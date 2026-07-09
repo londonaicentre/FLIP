@@ -300,21 +300,57 @@ resource "aws_iam_role_policy" "ecs_fl_server_task" {
 # disabled. Callers authenticate with their task role via the sagemaker-mlflow
 # client plugin (SigV4) — no static credentials involved.
 #
-# Resource = "*" is forced, not lazy. AWS documents resource-level scoping for
-# the sagemaker-mlflow data plane only against a *tracking server* ARN; the
-# newer serverless MLflow **App** ARN is not (yet) an authorizable resource for
-# these actions, so an App-ARN-scoped statement never matches and every
-# data-plane call fails 403 "Request is not authorized" (verified on stag,
-# 2026-07-09). This mirrors AWS's own documented client policy.
+# Resource = "*" with no Condition is forced, not lazy. The sagemaker-mlflow
+# data plane supplies NO authorization context for MLflow Apps: scoping to the
+# App ARN 403s every call (AWS documents resource scoping only for the older
+# *tracking server* ARN), and aws:ResourceAccount / aws:RequestedRegion are
+# never populated, so any Condition also denies. All three forms were verified
+# against a real App on stag, 2026-07-09.
 #
-# The grant is instead bounded by aws:RequestedRegion, which is derived from the
-# endpoint and is always populated. aws:ResourceAccount was tried too and also
-# denies every call (stag, 2026-07-09) — same root cause: with no authorizable
-# resource, the key is absent and StringEquals cannot match. Cross-account reach
-# is therefore not blocked by IAM here, but it is not free either: another
-# account's MLflow App would have to explicitly share access with this task role.
-# Scope: MLflow data plane, this region, every call CloudTrail-logged. Revisit
-# when AWS adds mlflow-app resource support, then narrow Resource to the App ARN.
+# Least privilege is therefore applied on the ACTION dimension instead: each
+# role is granted exactly the MLflow REST APIs its code calls, rather than the
+# blanket `sagemaker-mlflow:*` from AWS's documented example. Compensating
+# controls: short-lived task-role credentials (no static keys), the MLflow data
+# plane only, and CloudTrail on every call.
+#
+# ⚠️  Keep these lists in step with the callers — a missing action is a silent
+# drop, because the mirror is best-effort and swallows its own failures:
+#   fl-server → flip-utils/flip/core/mlflow_sink.py
+#   flip-api  → flip_api/fl_services/services/mlflow_run_service.py
+# Narrow Resource to the App ARN once AWS registers mlflow-app as an
+# authorizable resource for these actions.
+
+# Actions used by mlflow_run_service (flip-api): run bootstrap, stale-run sweep,
+# abort/fail termination, config.json params, and model soft-delete mirroring.
+locals {
+  mlflow_flip_api_actions = [
+    "sagemaker-mlflow:CreateExperiment",
+    "sagemaker-mlflow:GetExperimentByName",
+    "sagemaker-mlflow:SetExperimentTag",
+    "sagemaker-mlflow:DeleteExperiment",
+    "sagemaker-mlflow:SearchRuns",
+    "sagemaker-mlflow:CreateRun",
+    "sagemaker-mlflow:UpdateRun",
+    "sagemaker-mlflow:LogParam",
+    "sagemaker-mlflow:SetTag",
+    "sagemaker-mlflow:SetRegisteredModelTag",
+  ]
+
+  # Actions used by the flip package's MlflowSink (fl-server): run adoption,
+  # per-trust metrics, status tags, and registering the results zip by reference.
+  mlflow_fl_server_actions = [
+    "sagemaker-mlflow:CreateExperiment",
+    "sagemaker-mlflow:GetExperimentByName",
+    "sagemaker-mlflow:SearchRuns",
+    "sagemaker-mlflow:CreateRun",
+    "sagemaker-mlflow:UpdateRun",
+    "sagemaker-mlflow:LogMetric",
+    "sagemaker-mlflow:SetTag",
+    "sagemaker-mlflow:CreateRegisteredModel",
+    "sagemaker-mlflow:CreateModelVersion",
+  ]
+}
+
 resource "aws_iam_role_policy" "ecs_flip_api_task_sagemaker_mlflow" {
   count = startswith(var.MLFLOW_TRACKING_URI, "arn:") ? 1 : 0
 
@@ -326,13 +362,8 @@ resource "aws_iam_role_policy" "ecs_flip_api_task_sagemaker_mlflow" {
       {
         Sid      = "MlflowDataPlane"
         Effect   = "Allow"
-        Action   = ["sagemaker-mlflow:*"]
+        Action   = local.mlflow_flip_api_actions
         Resource = "*"
-        Condition = {
-          StringEquals = {
-            "aws:RequestedRegion" = var.AWS_REGION
-          }
-        }
       },
     ]
   })
@@ -349,13 +380,8 @@ resource "aws_iam_role_policy" "ecs_fl_server_task_sagemaker_mlflow" {
       {
         Sid      = "MlflowDataPlane"
         Effect   = "Allow"
-        Action   = ["sagemaker-mlflow:*"]
+        Action   = local.mlflow_fl_server_actions
         Resource = "*"
-        Condition = {
-          StringEquals = {
-            "aws:RequestedRegion" = var.AWS_REGION
-          }
-        }
       },
     ]
   })
