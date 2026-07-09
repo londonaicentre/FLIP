@@ -32,12 +32,28 @@
     </div>
     <div v-else class="flex flex-col flex-1 min-h-0">
         <div class="flex items-center gap-3 shrink-0 pb-3">
-            <!-- Picking one plot only means something while one plot is showing. -->
+            <!-- Picking one plot only means something while one plot is showing. On a
+                 narrow window a run's worth of chips scrolls off the screen, so the same
+                 choice becomes a select. -->
+            <select
+                v-if="view === 'single'"
+                v-model="activeChartLabel"
+                data-test="metrics-plot-select"
+                aria-label="Training plot"
+                class="flex-1 min-w-0 max-w-[16rem] px-2 py-1.5 sm:hidden rounded-lg border text-[13px] font-semibold
+                       bg-white dark:bg-dark-canvas border-gray-200 dark:border-dark-border
+                       text-gray-700 dark:text-gray-300"
+            >
+                <option v-for="chart in charts" :key="chart.yLabel" :value="chart.yLabel">
+                    {{ chart.yLabel }}
+                </option>
+            </select>
+
             <div
                 v-if="view === 'single'"
                 role="tablist"
                 aria-label="Training plots"
-                class="flex items-center flex-1 min-w-0 gap-1 overflow-x-auto"
+                class="hidden sm:flex items-center flex-1 min-w-0 gap-1 overflow-x-auto"
             >
                 <button
                     v-for="chart in charts"
@@ -97,22 +113,25 @@
         <div
             v-else
             data-test="metrics-grid"
-            class="grid flex-1 min-h-0 grid-cols-1 gap-4 pt-4 pr-1 overflow-y-auto md:grid-cols-2 2xl:grid-cols-3"
+            class="grid items-start flex-1 min-h-0 grid-cols-1 gap-4 pt-4 px-1 overflow-y-auto
+                   md:grid-cols-2 2xl:grid-cols-3"
         >
+            <!-- overflow-hidden keeps a mid-resize canvas — the chart resizes on a
+                 debounce — from painting over the cell below. -->
             <figure
                 v-for="chart in charts"
                 :key="chart.yLabel"
                 :data-test="`metrics-grid-cell-${chart.yLabel}`"
-                class="flex flex-col p-2 overflow-hidden rounded-lg ring-1 ring-gray-100 dark:ring-white"
+                class="flex flex-col p-2 overflow-hidden rounded-lg ring-1 ring-gray-100 dark:ring-white/25"
             >
                 <figcaption class="px-1 pb-1 text-xs font-semibold truncate shrink-0 text-gray-600 dark:text-gray-300">
                     {{ chart.yLabel }}
                 </figcaption>
-                <!-- The ratio belongs here rather than on the cell: a grid item is
-                     stretched to its row, which overrides aspect-ratio, leaving the plot
-                     as flat as its row and its canvas spilling over the cell below. The
-                     floor keeps it readable on a phone; the ceiling stops a single
-                     column filling the screen. -->
+                <!-- The ratio goes on the plot, not the cell: the caption and padding
+                     would eat into a cell-wide ratio and leave the plot itself flatter
+                     than 16:9 (measured 2.01 at two columns). Height follows width, with
+                     a floor for a phone and a ceiling so one column does not fill the
+                     screen. -->
                 <div
                     :data-test="`metrics-grid-plot-${chart.yLabel}`"
                     class="w-full aspect-video min-h-[13rem] max-h-[24rem]"

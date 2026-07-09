@@ -261,6 +261,41 @@ describe("TrainingMetrics plot layout", () => {
         expect(wrapper.find("[data-test=metrics-view-single]").attributes("aria-pressed")).toBe("true");
     });
 
+    test("on a narrow window the plot is chosen from a dropdown, not from chips", async () => {
+        setData([TRAIN_LOSS, VAL_F1]);
+        const wrapper = mountTrainingMetrics();
+        await flushPromises();
+
+        // Dozens of chips scroll off a phone; a select holds them all.
+        const select = wrapper.get("[data-test=metrics-plot-select]");
+        expect(select.classes()).toContain("sm:hidden");
+        expect(select.findAll("option").map(o => o.text())).toEqual(["TRAIN_LOSS", "VAL-F1-SCORE"]);
+
+        const tabs = wrapper.get("[role=tablist]");
+        expect(tabs.classes()).toContain("hidden");
+        expect(tabs.classes()).toContain("sm:flex");
+    });
+
+    test("choosing from the dropdown switches the plot", async () => {
+        setData([TRAIN_LOSS, VAL_F1]);
+        const wrapper = mountTrainingMetrics();
+        await flushPromises();
+
+        await wrapper.get("[data-test=metrics-plot-select]").setValue("VAL-F1-SCORE");
+
+        expect(wrapper.get("[data-test=chart-stub]").attributes("data-y-label")).toBe("VAL-F1-SCORE");
+    });
+
+    test("the dropdown is gone in the grid, where every plot is already drawn", async () => {
+        setData([TRAIN_LOSS, VAL_F1]);
+        const wrapper = mountTrainingMetrics();
+        await flushPromises();
+
+        await wrapper.find("[data-test=metrics-view-grid]").trigger("click");
+
+        expect(wrapper.find("[data-test=metrics-plot-select]").exists()).toBe(false);
+    });
+
     test("the grid view draws every plot at once, each under its own label", async () => {
         setData([TRAIN_LOSS, VAL_F1]);
         const wrapper = mountTrainingMetrics();
@@ -283,20 +318,22 @@ describe("TrainingMetrics plot layout", () => {
 
         const cell = wrapper.get("[data-test='metrics-grid-cell-TRAIN_LOSS']");
         expect(cell.classes()).not.toContain("h-56");
-        // The ratio lives on the plot box, not the cell: a grid item is stretched to
-        // its row, which overrides aspect-ratio outright.
-        expect(cell.classes()).not.toContain("aspect-video");
         // A stale canvas can never paint over the neighbouring cell.
         expect(cell.classes()).toContain("overflow-hidden");
         // The cells read as separate plots against the dark canvas.
-        expect(cell.classes()).toContain("dark:ring-white");
+        expect(cell.classes()).toContain("dark:ring-white/25");
+        // The ratio is not on the cell: the caption and padding would eat into it,
+        // leaving the plot itself flatter than 16:9.
+        expect(cell.classes()).not.toContain("aspect-video");
 
         const plot = wrapper.get("[data-test='metrics-grid-plot-TRAIN_LOSS']");
-        // Height follows width, with a floor for a phone and a ceiling so one column
-        // does not become a full-screen plot.
         expect(plot.classes()).toContain("aspect-video");
         expect(plot.classes()).toContain("min-h-[13rem]");
         expect(plot.classes()).toContain("max-h-[24rem]");
+
+        // Load-bearing: without it the cells stretch to the grid's full height and the
+        // plot is marooned in dead space.
+        expect(wrapper.get("[data-test=metrics-grid]").classes()).toContain("items-start");
     });
 
     test("the grid scrolls rather than shrinking the plots, three across on a wide screen", async () => {
@@ -308,6 +345,9 @@ describe("TrainingMetrics plot layout", () => {
 
         const grid = wrapper.get("[data-test=metrics-grid]");
         expect(grid.classes()).toContain("overflow-y-auto");
+        // The cells' rings sit outside their boxes; without side padding the scroll
+        // container shears the leftmost column's ring off.
+        expect(grid.classes()).toContain("px-1");
         expect(grid.classes()).toContain("grid-cols-1");
         expect(grid.classes()).toContain("2xl:grid-cols-3");
     });
