@@ -143,10 +143,12 @@
                          would eat into a cell-wide ratio and leave the plot itself flatter
                          than 16:9 (measured 2.01 at two columns). Height follows width, with
                          a floor for a phone and a ceiling so one column does not fill the
-                         screen. -->
+                         screen. Below md the grid is a single column, so 16:9 stretches each
+                         plot the full width of the card and it reads long and flat — 3:2
+                         gives those the height back. -->
                     <div
                         :data-test="`metrics-grid-plot-${chart.yLabel}`"
-                        class="w-full aspect-video min-h-[13rem] max-h-[24rem]"
+                        class="w-full aspect-[3/2] md:aspect-video min-h-[13rem] max-h-[24rem]"
                     >
                         <AiMetricsChart :data="chart" />
                     </div>

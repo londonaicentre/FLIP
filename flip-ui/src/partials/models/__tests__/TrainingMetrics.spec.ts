@@ -341,7 +341,10 @@ describe("TrainingMetrics plot layout", () => {
         expect(cell.classes()).not.toContain("aspect-video");
 
         const plot = wrapper.get("[data-test='metrics-grid-plot-TRAIN_LOSS']");
-        expect(plot.classes()).toContain("aspect-video");
+        // One column below md, where a 16:9 plot spans the whole card and reads flat;
+        // 16:9 returns once the columns do.
+        expect(plot.classes()).toContain("aspect-[3/2]");
+        expect(plot.classes()).toContain("md:aspect-video");
         expect(plot.classes()).toContain("min-h-[13rem]");
         expect(plot.classes()).toContain("max-h-[24rem]");
 
