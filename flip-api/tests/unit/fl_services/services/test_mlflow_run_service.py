@@ -193,3 +193,50 @@ class TestFailRun:
         client.search_runs.side_effect = Exception("mlflow down")
 
         mlflow_run_service.fail_run(MODEL_ID)
+
+
+class TestStopRun:
+    def test_terminates_running_runs_as_killed(self, client):
+        run = Mock()
+        run.info.run_id = "run-live"
+        client.search_runs.return_value = [run]
+
+        mlflow_run_service.stop_run(MODEL_ID)
+
+        client.set_terminated.assert_called_once_with("run-live", status="KILLED")
+
+    def test_swallows_mlflow_errors(self, client):
+        client.search_runs.side_effect = Exception("mlflow down")
+
+        mlflow_run_service.stop_run(MODEL_ID)
+
+
+class TestSoftDeleteModel:
+    def test_soft_deletes_active_experiment_and_tags_registered_model(self, client):
+        experiment = Mock()
+        experiment.experiment_id = "exp-1"
+        experiment.lifecycle_stage = "active"
+        client.get_experiment_by_name.return_value = experiment
+
+        mlflow_run_service.soft_delete_model(MODEL_ID)
+
+        client.delete_experiment.assert_called_once_with("exp-1")
+        client.set_registered_model_tag.assert_called_once_with(f"flip-model-{MODEL_ID}", "flip.deleted", "true")
+
+    def test_missing_experiment_and_registered_model_are_fine(self, client):
+        client.get_experiment_by_name.return_value = None
+        client.set_registered_model_tag.side_effect = Exception("RESOURCE_DOES_NOT_EXIST")
+
+        mlflow_run_service.soft_delete_model(MODEL_ID)
+
+        client.delete_experiment.assert_not_called()
+
+    def test_already_deleted_experiment_is_not_deleted_again(self, client):
+        experiment = Mock()
+        experiment.experiment_id = "exp-1"
+        experiment.lifecycle_stage = "deleted"
+        client.get_experiment_by_name.return_value = experiment
+
+        mlflow_run_service.soft_delete_model(MODEL_ID)
+
+        client.delete_experiment.assert_not_called()

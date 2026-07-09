@@ -247,6 +247,25 @@ def record_backend_job_id(model_id: UUID, fl_job_id: UUID, session: Session) -> 
         logger.warning(f"MLflow run bootstrap could not record backend job id for model {model_id}: {e}")
 
 
+def _terminate_running_runs(model_id: UUID, status: str, reason: str) -> None:
+    """Terminate the model's RUNNING run(s) with the given MLflow status (best-effort).
+
+    Args:
+        model_id (UUID): The model whose runs should be closed.
+        status (str): MLflow RunStatus to terminate with (``FAILED``/``KILLED``).
+        reason (str): Short label for the warning log on failure.
+    """
+    client = _get_client()
+    if client is None:
+        return
+    try:
+        experiment_id = _get_or_create_experiment(client, model_id)
+        for run_id in _running_run_ids(client, experiment_id, model_id):
+            client.set_terminated(run_id, status=status)
+    except Exception as e:
+        logger.warning(f"MLflow run bootstrap could not {reason} for model {model_id}: {e}")
+
+
 def fail_run(model_id: UUID) -> None:
     """Terminate the model's RUNNING run(s) as FAILED after a submit-path failure.
 
@@ -257,12 +276,47 @@ def fail_run(model_id: UUID) -> None:
     Args:
         model_id (UUID): The model whose submit failed.
     """
+    _terminate_running_runs(model_id, "FAILED", "fail run")
+
+
+def stop_run(model_id: UUID) -> None:
+    """Terminate the model's RUNNING run(s) as KILLED after a hub-side abort.
+
+    Makes stop-training deterministic on both backends: NVFLARE also reports
+    STOPPED through the sink (which then finds the run already closed and drops
+    the terminal event), while a hard-killed Flower ServerApp reports nothing —
+    without this its run would linger RUNNING until the next submit's sweep.
+
+    Args:
+        model_id (UUID): The model whose training was aborted.
+    """
+    _terminate_running_runs(model_id, "KILLED", "stop run")
+
+
+def soft_delete_model(model_id: UUID) -> None:
+    """Mirror FLIP's model soft-delete into MLflow (best-effort).
+
+    Soft-deletes the experiment — MLflow's own delete is a lifecycle-stage
+    change (hidden from the default UI view, restorable, runs retained), a
+    faithful mapping of ``Model.deleted``. The registered model is kept
+    (registry deletion is hard and its versions are pure metadata pointing at
+    result zips that survive soft-deletion anyway) but tagged ``flip.deleted``
+    so it is filterable.
+
+    Args:
+        model_id (UUID): The model that was soft-deleted on the hub.
+    """
     client = _get_client()
     if client is None:
         return
     try:
-        experiment_id = _get_or_create_experiment(client, model_id)
-        for run_id in _running_run_ids(client, experiment_id, model_id):
-            client.set_terminated(run_id, status="FAILED")
+        experiment = client.get_experiment_by_name(f"{EXPERIMENT_PREFIX}/{model_id}")
+        if experiment is not None and experiment.lifecycle_stage == "active":
+            client.delete_experiment(experiment.experiment_id)
     except Exception as e:
-        logger.warning(f"MLflow run bootstrap could not fail run for model {model_id}: {e}")
+        logger.warning(f"MLflow run bootstrap could not soft-delete experiment for model {model_id}: {e}")
+    try:
+        client.set_registered_model_tag(f"flip-model-{model_id}", "flip.deleted", "true")
+    except Exception:
+        # No registered model (never trained to completion) — nothing to tag.
+        pass

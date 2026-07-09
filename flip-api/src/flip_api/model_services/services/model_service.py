@@ -39,7 +39,7 @@ from flip_api.domain.interfaces.model import (
 )
 from flip_api.domain.schemas.actions import ModelAuditAction
 from flip_api.domain.schemas.status import ModelStatus
-from flip_api.fl_services.services import fl_scheduler_service
+from flip_api.fl_services.services import fl_scheduler_service, mlflow_run_service
 from flip_api.model_services.utils.audit_helper import audit_model_action, audit_model_actions
 from flip_api.utils.logger import logger
 from flip_api.utils.paging_utils import IPagedResponse, PagingInfo, get_paging_details
@@ -222,6 +222,11 @@ def delete_model(model_id: UUID, user_id: UUID, session: Session) -> None:
 
     logger.info(f"Model {model_id} soft-deleted and audit log recorded.")
 
+    # Best-effort MLflow mirror (FLIP#745): soft-delete the experiment too (MLflow's
+    # delete is likewise a restorable lifecycle change) so hidden models don't
+    # clutter the tracking UI. Never affects the canonical deletion above.
+    mlflow_run_service.soft_delete_model(model_id)
+
 
 def delete_models(project_id: UUID, user_id: str, session: Session, ensure_deletion: bool = True) -> int:
     """
@@ -265,6 +270,11 @@ def delete_models(project_id: UUID, user_id: str, session: Session, ensure_delet
     session.commit()
 
     logger.info(f"Models for project {project_id} soft-deleted and audit logs recorded.")
+
+    # Best-effort MLflow mirror (FLIP#745) — see delete_model above.
+    for model_id in model_ids:
+        if model_id is not None:
+            mlflow_run_service.soft_delete_model(model_id)
 
     return len(model_ids)
 

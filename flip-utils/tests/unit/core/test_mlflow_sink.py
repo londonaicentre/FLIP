@@ -296,3 +296,28 @@ class TestGetMlflowSink:
         ):
             MlflowSink("http://mlflow:5000")
         set_uri.assert_not_called()
+
+
+class TestTerminalStatusWithoutLiveRun:
+    def test_terminal_status_with_no_running_run_is_dropped(self, mock_client):
+        """A terminal event must never create a run just to close it (hub abort races)."""
+        client, sink = mock_client
+        client.get_experiment_by_name.return_value = _experiment()
+        client.search_runs.return_value = []
+
+        sink.on_status(MODEL_ID, ModelStatus.STOPPED)
+
+        client.create_run.assert_not_called()
+        client.set_tag.assert_not_called()
+        client.set_terminated.assert_not_called()
+
+    def test_non_terminal_status_still_creates_a_run(self, mock_client):
+        client, sink = mock_client
+        client.get_experiment_by_name.return_value = _experiment()
+        client.search_runs.return_value = []
+        client.create_run.return_value = _run("fresh")
+
+        sink.on_status(MODEL_ID, ModelStatus.INITIATED)
+
+        client.create_run.assert_called_once()
+        client.set_tag.assert_called_once_with("fresh", TAG_STATUS, "INITIATED")

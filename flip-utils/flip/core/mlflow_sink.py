@@ -151,14 +151,21 @@ class MlflowSink:
     def on_status(self, model_id: str, status: ModelStatus) -> None:
         """Mirror a model status transition; terminal statuses also end the run.
 
+        A terminal status never creates a run just to close it: if no live run
+        exists (e.g. the hub already terminated it on abort), the event is
+        dropped rather than leaving a status-only noise run behind.
+
         Args:
             model_id (str): The FLIP model identifier.
             status (ModelStatus): The status the model just transitioned to.
         """
         try:
-            run_id = self._resolve_run_id(model_id)
+            terminal = status in _TERMINAL_STATUS_MAP
+            run_id = self._resolve_run_id(model_id, create=not terminal)
+            if run_id is None:
+                return
             self._client.set_tag(run_id, TAG_STATUS, status.value)
-            if status in _TERMINAL_STATUS_MAP:
+            if terminal:
                 self._client.set_terminated(run_id, status=_TERMINAL_STATUS_MAP[status])
                 with self._lock:
                     self._run_ids.pop(model_id, None)
@@ -204,14 +211,16 @@ class MlflowSink:
         except Exception as e:
             logger.warning(f"MLflow dual-write could not register results for model {model_id}: {e}")
 
-    def _resolve_run_id(self, model_id: str) -> str:
+    def _resolve_run_id(self, model_id: str, create: bool = True) -> str | None:
         """Resolve the MLflow run for a model: cache -> newest RUNNING run -> create.
 
         Args:
             model_id (str): The FLIP model identifier.
+            create (bool): Whether to create a fresh run when none is RUNNING.
 
         Returns:
-            str: The MLflow run id.
+            str | None: The MLflow run id, or ``None`` when nothing is RUNNING
+            and ``create`` is False.
         """
         with self._lock:
             cached = self._run_ids.get(model_id)
@@ -227,7 +236,7 @@ class MlflowSink:
         )
         if runs:
             run_id = str(runs[0].info.run_id)
-        else:
+        elif create:
             run = self._client.create_run(
                 experiment_id,
                 tags={
@@ -238,6 +247,8 @@ class MlflowSink:
                 run_name=f"run-{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}",
             )
             run_id = str(run.info.run_id)
+        else:
+            return None
 
         with self._lock:
             self._run_ids[model_id] = run_id
