@@ -480,6 +480,15 @@ module "alb" {
   security_groups            = [module.alb_security_group.security_group.id]
   enable_deletion_protection = false
 
+  # The main listener's protocol depends on DNS availability (FLIP#749): with a
+  # hosted zone it terminates HTTPS with the DNS-validated ACM cert — the
+  # canonical shape, unchanged for legacy prod/stag. Without one
+  # (var.manage_dns = false, the zone-less first LZA bring-up) an ISSUED cert
+  # is impossible, so the same listener (key kept for state stability) serves
+  # plain HTTP on the same port; that leg only ever carries
+  # CloudFront-VPC-origin traffic over an AWS-managed ENI inside the VPC
+  # (viewers still get HTTPS on the default CloudFront domain), and it reverts
+  # to HTTPS as soon as the zone lands and MANAGE_DNS flips to true.
   listeners = {
     # HTTPS default action: return 404. CloudFront is the canonical front door
     # for user traffic; anything reaching the ALB default action (e.g. direct
@@ -488,15 +497,19 @@ module "alb" {
     # /api/* behaviour and any direct trust access.
     "https-listener" = {
       port            = var.ALB_HTTPS_PORT
-      protocol        = "HTTPS"
-      certificate_arn = aws_acm_certificate.flip.arn
-      ssl_policy      = "ELBSecurityPolicy-TLS13-1-3-2021-06"
+      protocol        = var.manage_dns ? "HTTPS" : "HTTP"
+      certificate_arn = var.manage_dns ? aws_acm_certificate.flip[0].arn : null
+      ssl_policy      = var.manage_dns ? "ELBSecurityPolicy-TLS13-1-3-2021-06" : null
       fixed_response = {
         content_type = "text/plain"
         message_body = "Not Found"
         status_code  = "404"
       }
     },
+    # On the zone-less bring-up this redirect points at what is temporarily a
+    # plain-HTTP listener — dead config there, but nothing dials port 80 (the
+    # VPC origin dials ALB_HTTPS_PORT and the ALB is internal), and keeping the
+    # key avoids a state churn on the flip back to HTTPS.
     "http-redirect" = {
       port     = var.ALB_HTTP_PORT
       protocol = "HTTP"
@@ -580,12 +593,16 @@ module "fl_server_nlb" {
   target_groups = {}
 }
 
+# Skipped when the account has no hosted zone (var.manage_dns = false — the
+# zone-less first LZA bring-up, FLIP#749): the lookup would hard-fail there.
 data "aws_route53_zone" "subdomain" {
-  name = var.flip_alb_subdomain
+  count = var.manage_dns ? 1 : 0
+  name  = var.flip_alb_subdomain
 }
 
 resource "aws_route53_record" "alb" {
-  zone_id = data.aws_route53_zone.subdomain.zone_id
+  count   = var.manage_dns ? 1 : 0
+  zone_id = data.aws_route53_zone.subdomain[0].zone_id
   name    = var.flip_alb_subdomain
   type    = "A"
 
@@ -597,6 +614,14 @@ resource "aws_route53_record" "alb" {
     zone_id                = aws_cloudfront_distribution.flip_ui.hosted_zone_id
     evaluate_target_health = false
   }
+}
+
+# State migration for the count added above (FLIP#749): keeps existing legacy
+# states aligned without a manual `terraform state mv`. Safe to remove once
+# every live state file has been migrated.
+moved {
+  from = aws_route53_record.alb
+  to   = aws_route53_record.alb[0]
 }
 
 # Target group for the fl-server-net-1 ECS Fargate service. Registered by
@@ -637,10 +662,10 @@ resource "aws_lb_target_group" "ecs_fl_server_tcp" {
   deregistration_delay = 30
 }
 
-# Gated off with the NLB on LZA (FLIP#749).
+# Gated off with the NLB on LZA, and with the zone when DNS is unmanaged (FLIP#749).
 resource "aws_route53_record" "fl_server_nlb" {
-  count   = var.lza_managed_network ? 0 : 1
-  zone_id = data.aws_route53_zone.subdomain.zone_id
+  count   = var.manage_dns && !var.lza_managed_network ? 1 : 0
+  zone_id = data.aws_route53_zone.subdomain[0].zone_id
   name    = var.flip_nlb_subdomain
   type    = "A"
 

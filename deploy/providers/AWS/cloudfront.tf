@@ -45,8 +45,14 @@ provider "aws" {
 ############################
 # CloudFront viewer cert (us-east-1)
 ############################
+#
+# Skipped when var.manage_dns is false (the zone-less first LZA bring-up,
+# FLIP#749): the viewer cert can't be DNS-validated without the zone, and a
+# custom viewer cert is pointless anyway while the distribution has no aliases
+# — it serves the default *.cloudfront.net domain with the default cert.
 
 resource "aws_acm_certificate" "flip_cloudfront" {
+  count             = var.manage_dns ? 1 : 0
   provider          = aws.us_east_1
   domain_name       = var.flip_alb_subdomain
   validation_method = "DNS"
@@ -62,7 +68,7 @@ resource "aws_acm_certificate" "flip_cloudfront" {
 
 resource "aws_route53_record" "cloudfront_cert_validation" {
   for_each = {
-    for dvo in tolist(aws_acm_certificate.flip_cloudfront.domain_validation_options) : dvo.domain_name => {
+    for dvo in var.manage_dns ? tolist(aws_acm_certificate.flip_cloudfront[0].domain_validation_options) : [] : dvo.domain_name => {
       name   = dvo.resource_record_name
       record = dvo.resource_record_value
       type   = dvo.resource_record_type
@@ -74,13 +80,27 @@ resource "aws_route53_record" "cloudfront_cert_validation" {
   records         = [each.value.record]
   ttl             = 60
   type            = each.value.type
-  zone_id         = data.aws_route53_zone.subdomain.zone_id
+  zone_id         = data.aws_route53_zone.subdomain[0].zone_id
 }
 
 resource "aws_acm_certificate_validation" "flip_cloudfront" {
+  count                   = var.manage_dns ? 1 : 0
   provider                = aws.us_east_1
-  certificate_arn         = aws_acm_certificate.flip_cloudfront.arn
+  certificate_arn         = aws_acm_certificate.flip_cloudfront[0].arn
   validation_record_fqdns = [for record in aws_route53_record.cloudfront_cert_validation : record.fqdn]
+}
+
+# State migration for the counts added above (FLIP#749): keeps existing legacy
+# states aligned without a manual `terraform state mv`. Safe to remove once
+# every live state file has been migrated.
+moved {
+  from = aws_acm_certificate.flip_cloudfront
+  to   = aws_acm_certificate.flip_cloudfront[0]
+}
+
+moved {
+  from = aws_acm_certificate_validation.flip_cloudfront
+  to   = aws_acm_certificate_validation.flip_cloudfront[0]
 }
 
 ############################
@@ -97,11 +117,16 @@ resource "aws_cloudfront_vpc_origin" "flip_api" {
   vpc_origin_endpoint_config {
     # CloudFront VPC origin names accept only alphanumerics, dashes, and
     # underscores — the subdomain contains dots, so replace them with dashes.
-    name                   = "flip-api-vpc-origin-${replace(var.flip_alb_subdomain, ".", "-")}"
-    arn                    = module.alb.arn
-    http_port              = 80
+    name = "flip-api-vpc-origin-${replace(var.flip_alb_subdomain, ".", "-")}"
+    arn  = module.alb.arn
+    # Without a hosted zone the ALB cannot carry an ISSUED cert, so the private
+    # VPC-origin leg falls back to plain HTTP until DNS lands (FLIP#749; see the
+    # ALB listeners comment in main.tf). The ALB's main listener then serves
+    # plain HTTP on ALB_HTTPS_PORT, so the HTTP port follows it there. Viewer
+    # traffic stays HTTPS either way.
+    http_port              = var.manage_dns ? 80 : var.ALB_HTTPS_PORT
     https_port             = 443
-    origin_protocol_policy = "https-only"
+    origin_protocol_policy = var.manage_dns ? "https-only" : "http-only"
 
     origin_ssl_protocols {
       items    = ["TLSv1.2"]
@@ -434,6 +459,14 @@ resource "aws_cloudfront_function" "spa_rewrite" {
 locals {
   cloudfront_policy_caching_optimized = "658327ea-f89d-4fab-a63d-7e88639e58f6"
   cloudfront_policy_caching_disabled  = "4135ea2d-6df8-44a3-9df3-4b5a84be39ad"
+
+  # Browser-facing origin of the UI, consumed by the S3 bucket CORS rules and
+  # the Cognito URLs in services.tf. With DNS managed it is the canonical
+  # subdomain (legacy shape, unchanged); on the zone-less first bring-up
+  # (FLIP#749) it is the CloudFront default domain, so uploads/downloads and
+  # sign-in keep working before any DNS exists. No dependency cycle: the
+  # distribution references neither the app buckets' CORS nor Cognito.
+  ui_origin = var.manage_dns ? "https://${var.flip_alb_subdomain}" : "https://${aws_cloudfront_distribution.flip_ui.domain_name}"
 }
 
 # Custom origin-request policy for /api/*. The managed AllViewer policy
@@ -877,9 +910,13 @@ resource "aws_cloudfront_distribution" "flip_ui" {
   http_version        = "http2"
   default_root_object = "index.html"
   price_class         = "PriceClass_100"
-  aliases             = [var.flip_alb_subdomain]
-  comment             = "flip-ui at ${var.flip_alb_subdomain}"
-  web_acl_id          = aws_wafv2_web_acl.flip_ui_cloudfront.arn
+  # No aliases without DNS (FLIP#749): CloudFront only allows the default
+  # viewer cert when no aliases are set, and an alias without a record pointing
+  # at it is unreachable anyway. The distribution serves *.cloudfront.net until
+  # MANAGE_DNS flips to true.
+  aliases    = var.manage_dns ? [var.flip_alb_subdomain] : []
+  comment    = "flip-ui at ${var.flip_alb_subdomain}"
+  web_acl_id = aws_wafv2_web_acl.flip_ui_cloudfront.arn
 
   origin {
     domain_name              = aws_s3_bucket.flip_ui.bucket_regional_domain_name
@@ -1002,9 +1039,12 @@ resource "aws_cloudfront_distribution" "flip_ui" {
   }
 
   viewer_certificate {
-    acm_certificate_arn      = aws_acm_certificate_validation.flip_cloudfront.certificate_arn
-    ssl_support_method       = "sni-only"
-    minimum_protocol_version = "TLSv1.2_2021"
+    acm_certificate_arn            = var.manage_dns ? aws_acm_certificate_validation.flip_cloudfront[0].certificate_arn : null
+    cloudfront_default_certificate = var.manage_dns ? null : true
+    ssl_support_method             = var.manage_dns ? "sni-only" : null
+    # AWS forces TLSv1 while the default *.cloudfront.net certificate is in
+    # use; pinning TLSv1.2_2021 there would just plan perpetual drift.
+    minimum_protocol_version = var.manage_dns ? "TLSv1.2_2021" : "TLSv1"
   }
 
   tags = {

@@ -347,6 +347,12 @@ variable "FL_SERVER_PORT" {
 }
 
 
+variable "manage_dns" {
+  description = "Whether this account hosts the Route53 zone for flip_alb_subdomain. false (first LZA bring-up, before the zone moves in the platform DNS migration — FLIP#749) skips the zone lookup, every Route53 record, and both DNS-validated ACM certs: CloudFront then serves on its default *.cloudfront.net domain with the default viewer certificate (allowed only when no aliases are set), and the CloudFront→ALB origin leg falls back to plain HTTP over the private VPC-origin ENI, because an ALB HTTPS listener needs an ISSUED certificate and issuance needs DNS validation. Legacy prod/stag keep the default true."
+  type        = bool
+  default     = true
+}
+
 variable "flip_alb_subdomain" {
   description = "Public canonical subdomain for FLIP. Aliased via Route53 to the CloudFront distribution; CloudFront fronts both the SPA (from S3) and the API (/api/* -> ALB). Name is retained for Terraform-state backwards compatibility - see main.tf:492-494."
   type        = string

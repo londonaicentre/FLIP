@@ -203,6 +203,13 @@ DEPLOY_TRUST_EC2 ?= true
 export TF_VAR_deploy_trust_ec2=$(DEPLOY_TRUST_EC2)
 export TF_VAR_AWS_REGION=${AWS_REGION}
 export TF_VAR_VPC_NAME=${VPC_NAME}
+# DNS availability (FLIP#749): the LZA account has no Route53 hosted zone until
+# the platform-side DNS migration lands, so .env.lza-prod sets MANAGE_DNS=false
+# for the first bring-up (default CloudFront domain, no custom certs/records) and
+# flips it to true once the zone exists there. Unset (legacy prod/stag) ⇒ true —
+# behaviour unchanged.
+MANAGE_DNS ?= true
+export TF_VAR_manage_dns=$(MANAGE_DNS)
 export TF_VAR_ADMIN_USER_PASSWORD=${ADMIN_USER_PASSWORD}
 export TF_VAR_SES_VERIFIED_EMAIL=${SES_VERIFIED_EMAIL}
 export TF_VAR_flip_alb_subdomain=${ALB_SUBDOMAIN}
