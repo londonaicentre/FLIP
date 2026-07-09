@@ -47,6 +47,7 @@ const actionsMenuStub = { template: "<div data-test=\"training-actions-menu\" />
 interface MountOpts {
     permissions?: string[];
     status?: ModelStatus;
+    view?: "prepare" | "run";
     allFilesUploaded?: boolean;
     requiredFiles?: string[];
     uploadedFileNames?: string[];
@@ -62,7 +63,9 @@ function mountTraining(options: MountOpts = {}) {
         requiredFiles = ["trainer.py", "config.json"],
         uploadedFileNames = [],
         jobType = "standard",
-        flBackendLabel
+        flBackendLabel,
+        // Mirrors the page default: nothing to watch until the model is dispatched.
+        view = status === "PENDING" ? "prepare" : "run"
     } = options;
 
     return mount(Training, {
@@ -106,7 +109,8 @@ function mountTraining(options: MountOpts = {}) {
             requiredFiles,
             uploadedFileNames,
             jobType,
-            flBackendLabel
+            flBackendLabel,
+            view
         }
     });
 }
@@ -304,5 +308,38 @@ describe("Training Live activity status dot", () => {
         const wrapper = mountTraining({ status: "ERROR" });
 
         expect(wrapper.find("[data-test=live-activity-ping]").exists()).toBe(false);
+    });
+});
+
+describe("Training view", () => {
+    it("the prepare view shows the run options and no monitoring", () => {
+        const wrapper = mountTraining({
+            view: "prepare",
+            status: "PENDING"
+        });
+
+        expect(wrapper.find("[data-test=training-options]").exists()).toBe(true);
+        expect(wrapper.find("[data-test=training-timeline]").exists()).toBe(false);
+    });
+
+    it("the prepare view renders nothing once the model has been dispatched", () => {
+        const wrapper = mountTraining({
+            view: "prepare",
+            status: "TRAINING_STARTED"
+        });
+
+        expect(wrapper.find("[data-test=training-options]").exists()).toBe(false);
+        expect(wrapper.find("form").exists()).toBe(false);
+    });
+
+    it("the run view shows monitoring and never the options form", () => {
+        const wrapper = mountTraining({
+            view: "run",
+            status: "TRAINING_STARTED"
+        });
+
+        expect(wrapper.find("[data-test=training-timeline]").exists()).toBe(true);
+        expect(wrapper.find("[data-test=training-options]").exists()).toBe(false);
+        expect(wrapper.find("form").exists()).toBe(false);
     });
 });

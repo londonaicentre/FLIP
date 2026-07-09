@@ -14,13 +14,14 @@
 <!-- eslint-disable vue/multi-word-component-names -->
 <template>
     <Form
+        v-if="view === 'prepare' && getStatus === ModelStatusEnum.PENDING"
         ref="formRef"
         v-slot="{ errors }"
         class="flex flex-col w-full h-full"
         :validation-schema="schema"
         @submit="initTraining"
     >
-        <AiCard v-if="getStatus === ModelStatusEnum.PENDING" class="flex flex-col flex-1 min-h-0 overflow-hidden">
+        <AiCard class="flex flex-col flex-1 min-h-0 overflow-hidden">
             <template v-if="!allFilesUploaded">
                 <AiAlert
                     variant="info"
@@ -62,41 +63,41 @@
                 <TrainingOptions :errors="errors" />
             </div>
         </AiCard>
+    </Form>
 
-        <div v-else class="flex flex-col xl:flex-row flex-1 min-h-0 gap-4 xl:items-start">
-            <AiCard class="flex flex-col flex-1 min-w-0 p-4">
-                <TrainingMetrics :in-progress="!finished" />
-            </AiCard>
+    <div v-else-if="view === 'run'" class="flex flex-col xl:flex-row flex-1 min-h-0 gap-4 xl:items-start">
+        <AiCard class="flex flex-col flex-1 min-w-0 p-4">
+            <TrainingMetrics :in-progress="!finished" />
+        </AiCard>
 
-            <AiCard class="relative w-full xl:w-96 2xl:w-[28rem] xl:shrink-0 self-stretch flex flex-col py-4 pl-4 pr-1 xl:p-0">
-                <!-- At xl the content column is absolutely positioned so the timeline's
+        <AiCard class="relative w-full xl:w-96 2xl:w-[28rem] xl:shrink-0 self-stretch flex flex-col py-4 pl-4 pr-1 xl:p-0">
+            <!-- At xl the content column is absolutely positioned so the timeline's
                      length can't inflate the card past its siblings: the metrics card
                      defines the row height and self-stretch matches it exactly. -->
-                <div class="flex flex-col flex-1 min-h-0 xl:absolute xl:inset-0 xl:py-4 xl:pl-4 xl:pr-1">
-                    <div class="flex items-center gap-2 shrink-0 mb-3">
-                        <span class="relative flex items-center justify-center w-2 h-2">
-                            <span
-                                v-if="!finished"
-                                data-test="live-activity-ping"
-                                class="absolute inline-flex w-full h-full rounded-full opacity-60 bg-primary-500 animate-ping"
-                            />
-                            <span
-                                data-test="live-activity-dot"
-                                class="relative inline-flex w-2 h-2 rounded-full"
-                                :class="liveActivityDotClass"
-                            />
-                        </span>
-                        <h2 class="text-base font-heading font-semibold text-gray-900 dark:text-gray-100">
-                            Live activity
-                        </h2>
-                    </div>
-                    <div class="flex-1 min-h-0 overflow-y-auto overflow-x-hidden">
-                        <Timeline data-test="training-timeline" :complete="finished ?? false" />
-                    </div>
+            <div class="flex flex-col flex-1 min-h-0 xl:absolute xl:inset-0 xl:py-4 xl:pl-4 xl:pr-1">
+                <div class="flex items-center gap-2 shrink-0 mb-3">
+                    <span class="relative flex items-center justify-center w-2 h-2">
+                        <span
+                            v-if="!finished"
+                            data-test="live-activity-ping"
+                            class="absolute inline-flex w-full h-full rounded-full opacity-60 bg-primary-500 animate-ping"
+                        />
+                        <span
+                            data-test="live-activity-dot"
+                            class="relative inline-flex w-2 h-2 rounded-full"
+                            :class="liveActivityDotClass"
+                        />
+                    </span>
+                    <h2 class="text-base font-heading font-semibold text-gray-900 dark:text-gray-100">
+                        Live activity
+                    </h2>
                 </div>
-            </AiCard>
-        </div>
-    </Form>
+                <div class="flex-1 min-h-0 overflow-y-auto overflow-x-hidden">
+                    <Timeline data-test="training-timeline" :complete="finished ?? false" />
+                </div>
+            </div>
+        </AiCard>
+    </div>
 </template>
 
 <script lang="ts" setup>
@@ -125,6 +126,10 @@ interface ITrainingProps {
     uploadedFileNames: string[];
     jobType: JobType;
     flBackendLabel?: string;
+    // Which stage tab is showing: "prepare" owns the run-options form (and renders
+    // nothing once the model is dispatched — a dispatched run has no options left to
+    // set); "run" owns the metrics and the activity feed.
+    view: "prepare" | "run";
 }
 
 const props = defineProps<ITrainingProps>();

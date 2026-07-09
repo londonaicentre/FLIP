@@ -80,10 +80,13 @@
                      breathing room above and below. -->
                 <LifecycleTrack :steps="steps" class="my-4" />
 
-                <RoundProgress :status="modelData?.status" />
+                <ModelTabs v-model="activeTab" :status="modelData?.status" />
 
-                <div class="flex flex-col gap-4 lg:flex-row lg:gap-4">
-                    <aside class="lg:w-80 2xl:min-w-[30rem] shrink-0">
+                <!-- Prepare: the model files and the run options, exactly as at model
+                     creation. Once dispatched, the files stay here to download and the
+                     options are gone — nothing about the run is editable any more. -->
+                <div v-if="activeTab === 'prepare'" class="flex flex-col gap-4 lg:flex-row lg:gap-4">
+                    <aside :class="trainingStartedOrStopped ? 'w-full' : 'lg:w-80 2xl:min-w-[30rem] shrink-0'">
                         <ModelUpload
                             :files="modelData.files ?? []"
                             :loading="!modelData"
@@ -96,9 +99,10 @@
                         />
                     </aside>
 
-                    <div class="flex-1 min-w-0">
+                    <div v-if="!trainingStartedOrStopped" class="flex-1 min-w-0">
                         <Training
                             ref="trainingRef"
+                            view="prepare"
                             :can-train="readyToTrain"
                             :status="modelData?.status"
                             :all-files-uploaded="allFilesUploaded"
@@ -110,6 +114,22 @@
                         />
                     </div>
                 </div>
+
+                <!-- Run: round progress, metrics and the activity feed. -->
+                <template v-else>
+                    <RoundProgress :status="modelData?.status" />
+
+                    <Training
+                        view="run"
+                        :can-train="readyToTrain"
+                        :status="modelData?.status"
+                        :all-files-uploaded="allFilesUploaded"
+                        :required-files="requiredFiles"
+                        :uploaded-file-names="modelData?.files?.map(f => f.name) ?? []"
+                        :job-type="currentJobType"
+                        :fl-backend-label="flBackendLabel"
+                    />
+                </template>
             </div>
 
             <EditModelDrawer
@@ -140,6 +160,7 @@ import { usePermissions } from "@/composables/usePermissions";
 import { FileUploadStatus } from "@/interfaces/model/types";
 import { IStep } from "@/interfaces/steps";
 import EditModelDrawer, { IEditModel } from "@/partials/models/EditModelDrawer.vue";
+import ModelTabs, { type ModelTab } from "@/partials/models/ModelTabs.vue";
 import ModelUpload from "@/partials/models/ModelUpload.vue";
 import RoundProgress from "@/partials/models/RoundProgress.vue";
 import Training from "@/partials/models/Training.vue";
@@ -317,10 +338,23 @@ const onFileDeleted = () => {
     update();
 };
 
+// Nothing is worth watching until the model is dispatched, so a pending model opens
+// on Prepare and anything else on Run. Seeded from the first payload only — after
+// that the tab is the user's to choose, and a 5s poll must not yank them back.
+const activeTab = ref<ModelTab>("prepare");
+const tabSeeded = ref(false);
+
+watch(modelData, (model) => {
+    if (!model || tabSeeded.value) return;
+    activeTab.value = model.status === "PENDING" ? "prepare" : "run";
+    tabSeeded.value = true;
+}, { immediate: true });
+
 const trainingInitialised = () => {
     if (modelData.value?.status) {
         modelData.value.status = "INITIATED";
     }
+    activeTab.value = "run";
 };
 
 const isTrainingPending = () => {

@@ -124,10 +124,19 @@ const stubs = {
     ModelDetails: { template: "<div />" },
     ModelUpload: {
         name: "ModelUpload",
-        template: "<div data-test='model-upload' />",
+        props: ["canUpload"],
+        template: "<div data-test='model-upload' :data-can-upload='canUpload' />",
         emits: ["uploaded", "deleted-file"]
     },
     QueryDetails: { template: "<div />" },
+    ModelTabs: {
+        name: "ModelTabs",
+        props: ["status", "modelValue"],
+        emits: ["update:modelValue"],
+        template: "<nav data-test='model-tabs' :data-active='modelValue'>" +
+            "<button data-test='tab-run' @click=\"$emit('update:modelValue', 'run')\" />" +
+            "<button data-test='tab-prepare' @click=\"$emit('update:modelValue', 'prepare')\" /></nav>"
+    },
     RoundProgress: {
         name: "RoundProgress",
         props: ["status"],
@@ -135,8 +144,8 @@ const stubs = {
     },
     Training: {
         name: "Training",
-        props: ["flBackendLabel"],
-        template: "<div data-test='training' :data-fl-backend-label='flBackendLabel' />",
+        props: ["flBackendLabel", "view"],
+        template: "<div data-test='training' :data-fl-backend-label='flBackendLabel' :data-view='view' />",
         setup: () => ({
             initiateTraining: initiateTrainingSpy,
             isSubmitting: false
@@ -718,5 +727,51 @@ describe("pages/project/[projectId]/model/[modelId]", () => {
             expect(label.exists()).toBe(true);
             expect(label.text()).toBe("Initiate Training");
         });
+    });
+});
+
+describe("pages/project/[projectId]/model/[modelId] — Prepare/Run tabs", () => {
+    it("a pending model opens on Prepare, showing the model files and the run options", async () => {
+        mockSwrvData.value = makeModel([], { status: "PENDING" });
+        const wrapper = await mountPage();
+
+        expect(wrapper.find("[data-test='model-tabs']").attributes("data-active")).toBe("prepare");
+        expect(wrapper.find("[data-test='model-upload']").exists()).toBe(true);
+        expect(wrapper.find("[data-test='training']").attributes("data-view")).toBe("prepare");
+        expect(wrapper.find("[data-test='round-progress']").exists()).toBe(false);
+    });
+
+    it("a dispatched model opens on Run, and the model files are out of the way", async () => {
+        mockSwrvData.value = makeModel([], { status: "TRAINING_STARTED" });
+        const wrapper = await mountPage();
+
+        expect(wrapper.find("[data-test='model-tabs']").attributes("data-active")).toBe("run");
+        expect(wrapper.find("[data-test='model-upload']").exists()).toBe(false);
+        expect(wrapper.find("[data-test='training']").attributes("data-view")).toBe("run");
+        expect(wrapper.find("[data-test='round-progress']").exists()).toBe(true);
+    });
+
+    it("Prepare stays reachable during a run, read-only but still downloadable", async () => {
+        mockSwrvData.value = makeModel([], { status: "TRAINING_STARTED" });
+        const wrapper = await mountPage();
+
+        await wrapper.find("[data-test='tab-prepare']").trigger("click");
+
+        const upload = wrapper.find("[data-test='model-upload']");
+        expect(upload.exists()).toBe(true);
+        expect(upload.attributes("data-can-upload")).toBe("false");
+        // No options form to submit once dispatched; Training renders nothing in this view.
+        expect(wrapper.find("[data-test='round-progress']").exists()).toBe(false);
+    });
+
+    it("dispatching the model moves you to the Run tab", async () => {
+        mockSwrvData.value = makeModel([], { status: "PENDING" });
+        const wrapper = await mountPage();
+        expect(wrapper.find("[data-test='model-tabs']").attributes("data-active")).toBe("prepare");
+
+        await wrapper.findComponent({ name: "Training" }).vm.$emit("started");
+        await flushPromises();
+
+        expect(wrapper.find("[data-test='model-tabs']").attributes("data-active")).toBe("run");
     });
 });
