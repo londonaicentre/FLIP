@@ -36,7 +36,7 @@ make full-deploy-hybrid PROD=<stag|true> [LOCAL_TRUST_IP=<ip>]  # Hybrid with on
 make full-deploy-hub-only PROD=<stag|true>    # Hub only, NO cloud Trust EC2 (all trusts on-prem, e.g. GPU hosts) — see README "Hub-only Deployment"
 make init/plan/apply                          # Terraform workflow
 make deploy-centralhub                        # ECS deploy at env branch tip via sha-<short7> task-def revisions + CloudFront UI (FLIP#751; TAG= to pin)
-make rollback-centralhub                      # Repoint ECS services at the previous ACTIVE task-def revision
+make rollback-centralhub                      # Repoint ECS services at the previous ACTIVE task-def revision + deregister the rolled-away one
 make deploy-trust                             # Deploy trust stack to EC2
 make deploy-ui                                # Build + sync UI to S3 + invalidate CloudFront
 make status                                   # Health checks
@@ -65,7 +65,7 @@ make aws-login                                # AWS SSO login
 
 ## Verifying a Central-Hub FL redeploy
 
-An FL redeploy is `make deploy-centralhub` (branch-tip resolution, or `TAG=sha-<short7>` for a pinned build) — it registers new task-definition revisions for `fl-server-net-1` / `fl-api-net-1` pinning the immutable sha tag and repoints the services at them (FLIP#751; the old flow re-pulled the mutable `:stag`/`:prod` tag via `update-service --force-new-deployment`). To confirm the new image is actually running, compare the task's image digest to the GHCR tag — **but select the container by name, not by array index**:
+An FL redeploy is `make deploy-centralhub` (branch-tip resolution, or `TAG=sha-<short7>` for a pinned build) — it registers new task-definition revisions for `fl-server-net-1` / `fl-api-net-1` pinning the immutable sha tag and repoints the services at them (FLIP#751; the old flow re-pulled the mutable `:stag`/`:prod` tag via `update-service --force-new-deployment`). Note it also rolls `flip-api` to the same tag and finishes with `make deploy-ui`, which builds `flip-ui` **from your local working tree** — run it from a clean checkout of the deployed branch. To confirm the new image is actually running, compare the task's image digest to the GHCR tag — **but select the container by name, not by array index**:
 
 - `aws ecs describe-tasks` returns `containers` as an array, and the **GuardDuty Runtime Monitoring sidecar** (`aws-guardduty-agent-*`) usually sorts first. Querying `containers[0].imageDigest` reads the *agent's* digest, not the FL container's.
 - The GuardDuty agent image lives in an AWS-internal ECR, **never GHCR**, so its digest returns **HTTP 404** when looked up in `ghcr.io`. A 404 digest is the sidecar — not a stale FL image. (This burned a full investigation on 2026-06-24: `66446df3…` was the GuardDuty agent; the real `fl-server-net-1` digest `29b10362…` matched `:stag` exactly. Both `flare-fl-server:stag` and `flare-fl-api:stag` were rebuilt by the #624 FL-deps merge, configs created `15:54–15:55Z`.)
