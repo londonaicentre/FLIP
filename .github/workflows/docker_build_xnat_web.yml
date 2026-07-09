@@ -79,8 +79,12 @@ jobs:
         run: |
           TAGS="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}"
 
-          # Immutable short-SHA tag consumed by `make deploy-centralhub` (FLIP#751).
-          # Length 7 must match the tag resolution in deploy/providers/AWS/Makefile.
+          # An empty sha would silently publish a mutable literal `sha-` tag — refuse.
+          [[ -n "$GH_SHA" ]] || { echo "::error::empty commit SHA — cannot compute the sha-<short7> tag"; exit 1; }
+
+          # Immutable short-SHA tag (FLIP#751), pushed uniformly on every publish; today
+          # only the hub ECS images are consumed (by `make deploy-centralhub`). Length 7
+          # must match the tag resolution in deploy/providers/AWS/Makefile.
           TAGS="${TAGS},${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${GH_SHA:0:7}"
 
           # Branch name sanitization

@@ -52,10 +52,12 @@ jobs:
       - name: Determine image tags
         id: tags
         run: |
-          # Immutable short-SHA tag consumed by `make deploy-centralhub` (FLIP#751).
-          # Length 7 must match the tag resolution in deploy/providers/AWS/Makefile.
+          # Immutable short-SHA tag (FLIP#751): the server/api images are consumed by
+          # `make deploy-centralhub`; the base/client tags are pushed uniformly. Length 7
+          # must match the tag resolution in deploy/providers/AWS/Makefile.
           # Persisted to GITHUB_ENV so the per-image build/push/cleanup steps see it.
           SHORT_SHA="$(echo "${{ github.sha }}" | cut -c1-7)"
+          [[ -n "$SHORT_SHA" ]] || { echo "::error::empty commit SHA — cannot compute the sha-<short7> tag"; exit 1; }
           echo "SHORT_SHA=${SHORT_SHA}" >> $GITHUB_ENV
 
           BASE_TAGS="${REGISTRY}/${ORG}/${BASE_IMAGE}:${{ github.sha }},${REGISTRY}/${ORG}/${BASE_IMAGE}:sha-${SHORT_SHA}"
