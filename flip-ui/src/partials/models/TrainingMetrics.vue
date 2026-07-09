@@ -99,20 +99,24 @@
             data-test="metrics-grid"
             class="grid flex-1 min-h-0 grid-cols-1 gap-4 pt-4 pr-1 overflow-y-auto md:grid-cols-2 2xl:grid-cols-3"
         >
-            <!-- A cell's height follows its width, so squashing the window down to one
-                 column gives a plot rather than a flat sliver. The floor keeps it
-                 readable on a phone; the ceiling stops one column filling the screen. -->
             <figure
                 v-for="chart in charts"
                 :key="chart.yLabel"
                 :data-test="`metrics-grid-cell-${chart.yLabel}`"
-                class="flex flex-col p-2 rounded-lg aspect-video min-h-[13rem] max-h-[24rem]
-                       ring-1 ring-gray-100 dark:ring-dark-border"
+                class="flex flex-col p-2 overflow-hidden rounded-lg ring-1 ring-gray-100 dark:ring-white"
             >
                 <figcaption class="px-1 pb-1 text-xs font-semibold truncate shrink-0 text-gray-600 dark:text-gray-300">
                     {{ chart.yLabel }}
                 </figcaption>
-                <div class="flex-1 min-h-0">
+                <!-- The ratio belongs here rather than on the cell: a grid item is
+                     stretched to its row, which overrides aspect-ratio, leaving the plot
+                     as flat as its row and its canvas spilling over the cell below. The
+                     floor keeps it readable on a phone; the ceiling stops a single
+                     column filling the screen. -->
+                <div
+                    :data-test="`metrics-grid-plot-${chart.yLabel}`"
+                    class="w-full aspect-video min-h-[13rem] max-h-[24rem]"
+                >
                     <AiMetricsChart :data="chart" />
                 </div>
             </figure>
@@ -121,6 +125,7 @@
 </template>
 
 <script setup lang="ts">
+import { useStorage } from "@vueuse/core";
 import useSWRV from "swrv";
 import { computed, ref, watch } from "vue";
 import { useRoute } from "vue-router";
@@ -198,9 +203,11 @@ const charts = computed(() => {
 const activeChart = computed(() => charts.value.find(c => c.yLabel === activeChartLabel.value) ?? null);
 
 // A run reports dozens of metrics, so "one at a time" and "all at once" are both
-// reasonable defaults; single opens because it is the readable one.
+// reasonable defaults; single is the initial one because it is the readable one.
+// The choice is remembered because this component is torn down and rebuilt every
+// time you step over to Prepare and back, and re-picking the grid each time grates.
 type PlotView = "single" | "grid";
-const view = ref<PlotView>("single");
+const view = useStorage<PlotView>("flip.metrics-plot-view", "single");
 
 function viewButtonClass(option: PlotView): string {
     const base = "inline-flex items-center justify-center w-8 h-8 rounded-lg transition-colors";

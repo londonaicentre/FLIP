@@ -247,6 +247,7 @@ describe("TrainingMetrics", () => {
 
 describe("TrainingMetrics plot layout", () => {
     beforeEach(() => {
+        localStorage.clear();
         setData(undefined);
     });
 
@@ -281,12 +282,21 @@ describe("TrainingMetrics plot layout", () => {
         await wrapper.find("[data-test=metrics-view-grid]").trigger("click");
 
         const cell = wrapper.get("[data-test='metrics-grid-cell-TRAIN_LOSS']");
-        // Height follows width rather than being pinned, with a floor for a phone
-        // and a ceiling so one column does not become a full-screen plot.
-        expect(cell.classes()).toContain("aspect-video");
-        expect(cell.classes()).toContain("min-h-[13rem]");
-        expect(cell.classes()).toContain("max-h-[24rem]");
         expect(cell.classes()).not.toContain("h-56");
+        // The ratio lives on the plot box, not the cell: a grid item is stretched to
+        // its row, which overrides aspect-ratio outright.
+        expect(cell.classes()).not.toContain("aspect-video");
+        // A stale canvas can never paint over the neighbouring cell.
+        expect(cell.classes()).toContain("overflow-hidden");
+        // The cells read as separate plots against the dark canvas.
+        expect(cell.classes()).toContain("dark:ring-white");
+
+        const plot = wrapper.get("[data-test='metrics-grid-plot-TRAIN_LOSS']");
+        // Height follows width, with a floor for a phone and a ceiling so one column
+        // does not become a full-screen plot.
+        expect(plot.classes()).toContain("aspect-video");
+        expect(plot.classes()).toContain("min-h-[13rem]");
+        expect(plot.classes()).toContain("max-h-[24rem]");
     });
 
     test("the grid scrolls rather than shrinking the plots, three across on a wide screen", async () => {
@@ -337,6 +347,22 @@ describe("TrainingMetrics plot layout", () => {
         await wrapper.find("[data-test=metrics-view-grid]").trigger("click");
 
         expect(wrapper.get("[data-test=chart-stub]").attributes("data-series-labels")).toBe("KCH,UCLH");
+    });
+
+    test("remembers the layout you chose, so leaving Run and coming back keeps it", async () => {
+        setData([TRAIN_LOSS, VAL_F1]);
+        const first = mountTrainingMetrics();
+        await flushPromises();
+
+        await first.find("[data-test=metrics-view-grid]").trigger("click");
+        first.unmount();
+
+        // A fresh mount — the component is torn down whenever you switch to Prepare.
+        const second = mountTrainingMetrics();
+        await flushPromises();
+
+        expect(second.find("[data-test=metrics-grid]").exists()).toBe(true);
+        expect(second.find("[data-test=metrics-view-grid]").attributes("aria-pressed")).toBe("true");
     });
 
     test("there is no layout switch when there is nothing to lay out", async () => {
