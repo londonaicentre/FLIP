@@ -64,9 +64,9 @@ download-raw-checkpoint:
 
 # --- Checkpoint preprocessing ---
 # The evaluation app needs two clean `.pt` checkpoints in app_files/: the foundation model
-# (arkplus_pretrained_weights.pt) and the fine-tuned model (arkplus_finetuned_weights.pt). Both are
-# bundled into the app so each client's evaluator can load them locally for the DeLong comparison. Each
-# step is a no-op if its checkpoint already exists.
+# (arkplus_pretrained_weights.pt) and the fine-tuned model (arkplus_finetuned_weights.pt). Only the
+# server-side locator reads them — it broadcasts each as a named validate task; clients score the
+# broadcast weights and never open the files. Each step is a no-op if its checkpoint already exists.
 prepare-checkpoint:
 	@# --- Foundation model (identical flow to the baseline tutorial) ---
 	@if [ -f "$(PROCESSED_CHECKPOINT)" ]; then \
@@ -111,8 +111,8 @@ prepare-checkpoint:
 
 # --- Export job config (no GPU needed) ---
 # Builds a complete NVFLARE job under ./fl_job/flip_evaluation/ including meta.json, app/config/, and
-# app/custom/ (bundled flip/ package + staged app_files/ incl. both the arkplus_pretrained_weights.pt and
-# arkplus_finetuned_weights.pt checkpoints).
+# app/custom/ (bundled flip/ package + staged app_files/ incl. the checkpoints the server-side
+# locator loads and broadcasts).
 export: prepare-checkpoint
 	$(UV_RUN) python job.py \
 		--export \
