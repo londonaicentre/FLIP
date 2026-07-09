@@ -231,7 +231,7 @@ aws s3 rb s3://flipstag
 Two stag-specific watch-outs:
 
 - **`make import-persistent` failing partway through** is fine on a re-run — every import in `scripts/import-resources.sh` is idempotent (probes `terraform state list` before importing). The script will skip already-imported resources and only attempt the missing ones.
-- **The task definitions applied before `deploy-centralhub` need image tags from `.env.stag`** (`DOCKER_TAG`, `DOCKER_FL_TAG`) that exist in GHCR. Branch tags do **not** auto-build on push — trigger the relevant `docker_build_*` workflows via `workflow_dispatch` before applying a branch image tag (see [the build trigger note in CLAUDE.md](../../../CLAUDE.md#docker-image-builds-manual-trigger-required-for-branches)). These env-file tags are only Terraform's bootstrap defaults — day-to-day image deploys pin immutable `sha-<short7>` tags instead (see [Central Hub deploys and rollback](#central-hub-deploys-and-rollback-immutable-sha-tags)).
+- **The task definitions applied before `deploy-centralhub` need image tags from `.env.stag`** (`DOCKER_TAG`, `DOCKER_FL_TAG`) that exist in GHCR. Branch tags do **not** auto-build on push — trigger the relevant `docker_build_*` workflows via `workflow_dispatch` before applying a branch image tag (see [the build trigger note in CLAUDE.md](../../../CLAUDE.md#docker-image-builds-gated-on-tests-manual-trigger-for-branches)). These env-file tags are only Terraform's bootstrap defaults — day-to-day image deploys pin immutable `sha-<short7>` tags instead (see [Central Hub deploys and rollback](#central-hub-deploys-and-rollback-immutable-sha-tags)).
 
 For a **future fresh prod or dev** account that needs the same migration, the flow is the stag runbook above minus step 1 (`make import-persistent` is only needed on environments with the stag-style state gap) and with `PROD=true` on every `make` call for prod (dev uses the separate `deploy/providers/AWS/dev/` Terraform root, no `PROD=` flag).
 
@@ -293,16 +293,25 @@ make status
 the UI (same as `make deploy-ui`):
 
 1. Resolves `TAG=sha-<short7>` from the tip of the env's branch — `PROD=true` → `origin/main`,
-   `PROD=stag` → `origin/develop` (`git fetch` runs inside the target).
-2. Verifies each service's image exists in GHCR at that tag. Builds are test-gated (`workflow_run`
-   on the service's test suite), so right after a merge the tag may not exist yet — the guard fails
-   fast and names the workflow to check. The build workflows are also path-filtered, so a merge that
-   didn't touch a service leaves that service without an image at the new tip; trigger the missing
-   build manually (`gh workflow run <workflow>.yml --ref <branch>` builds the branch tip and
-   publishes its sha tag), then re-run the deploy.
+   `PROD=stag` → `origin/develop` (`git fetch` runs inside the target). The tag must match
+   `sha-<7 hex chars>` — a mutable tag (e.g. a stray `TAG=stag`) is rejected before any AWS call.
+2. Verifies **every** service's image exists in GHCR at that tag **before mutating anything** — a
+   missing tag aborts with nothing deployed. The build workflows are path-filtered, so a merge that
+   didn't touch a service (most commonly a flip-api-only merge, which does not rebuild the FL
+   images) leaves that service without an image at the new tip; flip-api's build is additionally
+   test-gated (`workflow_run` on its test suite), so right after a merge its tag may still be
+   building. The guard names the workflow to check; trigger the missing build manually
+   (`gh workflow run <workflow>.yml --ref <branch>` builds the branch tip and publishes its sha
+   tag), then re-run the deploy. A non-404 registry error (outage, auth) is reported as such —
+   don't dispatch rebuilds for it. Non-`ghcr.io` registries skip the manifest check entirely
+   (LZA ECR pull-through cache, FLIP#749).
 3. Per service: registers a new task-definition revision with only the app container's image tag
-   swapped (containers are selected **by name** — prod task defs carry a GuardDuty sidecar) and
-   repoints the service at the new revision.
+   swapped (containers are selected **by name**, never by index — the same convention as the
+   `describe-tasks` digest check in [`TROUBLESHOOTING.md` §1.9](TROUBLESHOOTING.md), robust to
+   sidecar/ordering changes) and repoints the service at the new revision. If the repoint fails,
+   the just-registered revision is deregistered again so the `max()` tracking in
+   `ecs_services.tf` cannot adopt a never-deployed revision, and any services already repointed
+   in the same run are listed so a partial deploy is visible.
 
 ```bash
 make deploy-centralhub PROD=stag                    # deploy the tip of develop to staging
@@ -316,15 +325,25 @@ runbook for feature-branch images: trigger the relevant `docker_build_*` / `fl-d
 workflow on your branch via `workflow_dispatch`, wait for green, then deploy its sha tag.
 
 `make rollback-centralhub` repoints each service at its previous ACTIVE task-definition revision —
-seconds, no rebuild. It does not touch the UI bundle; re-run `make deploy-ui` from the matching
-commit if the UI must move too.
+seconds, no rebuild — then **deregisters the revision it rolled away from** (it stays describable
+for forensics). The deregistration is what makes the rollback durable: `ecs_services.tf` tracks the
+*latest ACTIVE* revision, so leaving the bad revision ACTIVE would have the next `terraform apply`
+silently re-adopt it. It does not touch the UI bundle; re-run `make deploy-ui` from the matching
+commit if the UI must move too. After a *partial* deploy (some services repointed before a
+failure), don't roll back blindly — rollback moves **every** service down one revision, including
+the ones the failed deploy never touched; fix the missing build and re-run the deploy instead.
+
+The deploy ends by publishing the UI (same as `make deploy-ui`), which builds `flip-ui` **from your
+local working tree** — deploy from a clean checkout of the branch you are deploying.
 
 Terraform stays the owner of the task-definition *skeleton* (roles, env wiring, volumes). The
-services track `max(Terraform revision, live revision)` (see `ecs_services.tf`), so an unrelated
-`terraform apply` does not roll a CLI-deployed image back. When an apply *does* re-register a task
-definition, the new Terraform revision goes live with the bootstrap image tags from the env file
-(`DOCKER_TAG`, `DOCKER_FL_TAG`) — re-run `make deploy-centralhub` afterwards to roll the sha-pinned
-image forward again.
+services track `max(Terraform revision, latest ACTIVE revision)` (see `ecs_services.tf`), so an
+unrelated `terraform apply` does not roll a CLI-deployed image back. When an apply *does*
+re-register a task definition, the new Terraform revision goes live with the bootstrap image tags
+from the env file (`DOCKER_TAG`, `DOCKER_FL_TAG`) — re-run `make deploy-centralhub` afterwards to
+roll the sha-pinned image forward again. And because `make apply` applies the saved `plan.tfplan`,
+a plan generated **before** a CLI deploy snapshots the older revision and applying it would roll
+the image back — re-run `make plan` after any `make deploy-centralhub`.
 
 > **Prod rollout note:** switch *production* deploys to this flow only after the 24 Jul 2026 DECAF
 > deadline (BDMS is live on legacy prod until then). Staging can adopt it immediately.

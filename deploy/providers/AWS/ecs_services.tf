@@ -33,6 +33,14 @@
 # `make deploy-centralhub` afterwards to roll the sha-pinned image forward again.
 # On first creation the reads are deferred to apply (they reference managed resources
 # with pending changes), so a fresh environment bootstraps cleanly.
+#
+# Latest ACTIVE is not necessarily what a service RUNS — the two invariants that keep
+# them converged: `make rollback-centralhub` DEREGISTERS the revision it rolls away
+# from, and a failed deploy deregisters the revision it just registered. Without
+# that, the next apply would re-adopt the abandoned (bad/unvalidated) revision.
+# Also note `make apply` applies the saved plan.tfplan: a plan generated BEFORE a
+# `make deploy-centralhub` snapshots the older revision, and applying it rolls the
+# image back — re-run `make plan` after any CLI deploy.
 
 data "aws_ecs_task_definition" "flip_api" {
   task_definition = aws_ecs_task_definition.flip_api.family
