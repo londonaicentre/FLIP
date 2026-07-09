@@ -300,14 +300,21 @@ resource "aws_iam_role_policy" "ecs_fl_server_task" {
 # disabled. Callers authenticate with their task role via the sagemaker-mlflow
 # client plugin (SigV4) — no static credentials involved.
 #
-# Resource = "*" is deliberate, not laziness. AWS documents resource-level
-# scoping for the sagemaker-mlflow data plane only against a *tracking server*
-# ARN; the newer serverless MLflow **App** ARN is not (yet) an authorizable
-# resource for these actions. Scoping this statement to the App ARN yields
-# 403 "Request is not authorized" on every data-plane call — verified on stag,
-# 2026-07-09. This mirrors AWS's own documented client policy. The blast radius
-# stays bounded: only the MLflow data plane, only within this account, and every
-# call is CloudTrail-logged. Revisit if AWS adds mlflow-app resource support.
+# Resource = "*" is forced, not lazy. AWS documents resource-level scoping for
+# the sagemaker-mlflow data plane only against a *tracking server* ARN; the
+# newer serverless MLflow **App** ARN is not (yet) an authorizable resource for
+# these actions, so an App-ARN-scoped statement never matches and every
+# data-plane call fails 403 "Request is not authorized" (verified on stag,
+# 2026-07-09). This mirrors AWS's own documented client policy.
+#
+# The grant is instead bounded by condition keys, which do not depend on the
+# resource type being authorizable:
+#   - aws:RequestedRegion pins calls to this deployment's region.
+#   - aws:ResourceAccount blocks use against MLflow Apps in *other* accounts
+#     (Apps support cross-account sharing, so this is a real vector).
+# Scope therefore stays: MLflow data plane, this account, this region — and
+# every call is CloudTrail-logged. Revisit if AWS adds mlflow-app resource
+# support, at which point Resource can be narrowed to the App ARN itself.
 resource "aws_iam_role_policy" "ecs_flip_api_task_sagemaker_mlflow" {
   count = startswith(var.MLFLOW_TRACKING_URI, "arn:") ? 1 : 0
 
@@ -321,6 +328,12 @@ resource "aws_iam_role_policy" "ecs_flip_api_task_sagemaker_mlflow" {
         Effect   = "Allow"
         Action   = ["sagemaker-mlflow:*"]
         Resource = "*"
+        Condition = {
+          StringEquals = {
+            "aws:RequestedRegion" = var.AWS_REGION
+            "aws:ResourceAccount" = data.aws_caller_identity.current.account_id
+          }
+        }
       },
     ]
   })
@@ -339,6 +352,12 @@ resource "aws_iam_role_policy" "ecs_fl_server_task_sagemaker_mlflow" {
         Effect   = "Allow"
         Action   = ["sagemaker-mlflow:*"]
         Resource = "*"
+        Condition = {
+          StringEquals = {
+            "aws:RequestedRegion" = var.AWS_REGION
+            "aws:ResourceAccount" = data.aws_caller_identity.current.account_id
+          }
+        }
       },
     ]
   })
