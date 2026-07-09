@@ -64,6 +64,12 @@ services:
     environment:
       - LOCAL_DEV=true
       - WORKING_DIR=/app/runs
+      # Run ServerApps against the image-baked environment: Flower's SuperLink
+      # defaults to installing the app bundle's declared dependencies from PyPI
+      # into a per-run venv, which silently SHADOWS the in-tree flip package
+      # (PyPI flip-utils carries the same version number) and bypasses the
+      # platform's supply-chain controls. See FLIP#745.
+      - FLWR_DISABLE_RUNTIME_DEPENDENCY_INSTALLATION=1
     volumes:
       - ${WORKING_DIR:-/tmp/flwr-dev-runs}:/app/runs
       # Shared with fl-api: uploaded app bundles (sources + model checkpoints) live
