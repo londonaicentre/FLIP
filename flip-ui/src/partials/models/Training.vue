@@ -14,7 +14,7 @@
 <!-- eslint-disable vue/multi-word-component-names -->
 <template>
     <Form
-        v-if="view === 'prepare' && getStatus === ModelStatusEnum.PENDING"
+        v-if="view === 'prepare'"
         ref="formRef"
         v-slot="{ errors }"
         class="flex flex-col w-full h-full"
@@ -22,7 +22,7 @@
         @submit="initTraining"
     >
         <AiCard class="flex flex-col flex-1 min-h-0 overflow-hidden">
-            <template v-if="!allFilesUploaded">
+            <template v-if="pending && !allFilesUploaded">
                 <AiAlert
                     variant="info"
                     :close="false"
@@ -60,7 +60,7 @@
             </template>
 
             <div class="flex flex-col flex-1 pt-4 overflow-y-auto">
-                <TrainingOptions :errors="errors" />
+                <TrainingOptions :errors="errors" :disabled="!pending" />
             </div>
         </AiCard>
     </Form>
@@ -179,6 +179,10 @@ defineExpose({
 const getStatus = computed(() => {
     return getStatusEnumValue(props.status);
 });
+
+// Only a pending model can still be configured. Past that the options are a record
+// of how the run was launched, so they stay on screen but stop being a form.
+const pending = computed(() => getStatus.value === ModelStatusEnum.PENDING);
 
 const finished = computed(() => {
     return [

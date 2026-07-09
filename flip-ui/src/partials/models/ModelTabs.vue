@@ -47,7 +47,8 @@
                 <icon-ph-check-bold
                     v-if="tab.done"
                     data-test="tab-prepare-done"
-                    class="w-3 h-3 text-green-600 dark:text-green-400"
+                    class="w-3 h-3"
+                    :class="tab.id === modelValue ? 'text-green-300' : 'text-green-600 dark:text-green-400'"
                     aria-hidden="true"
                 />
 
@@ -103,7 +104,8 @@ const tabs = computed<Tab[]>(() => [
         id: "prepare",
         label: "Prepare",
         locked: false,
-        done: !pending.value && props.modelValue !== "prepare"
+        // A dispatched model is prepared, whichever tab you happen to be looking at.
+        done: !pending.value
     },
     {
         id: "run",

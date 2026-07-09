@@ -96,7 +96,10 @@ function mountTraining(options: MountOpts = {}) {
                 AiAlert: alertStub,
                 AiButton: buttonStub,
                 TrainingActionsMenu: actionsMenuStub,
-                TrainingOptions: { template: "<div data-test=\"training-options\" />" },
+                TrainingOptions: {
+                    props: ["disabled"],
+                    template: "<div data-test=\"training-options\" :data-disabled=\"disabled\" />"
+                },
                 TrainingMetrics: { template: "<div />" },
                 Timeline: { template: "<div />" },
                 Form: { template: "<form><slot :errors=\"{}\" /></form>" }
@@ -322,14 +325,27 @@ describe("Training view", () => {
         expect(wrapper.find("[data-test=training-timeline]").exists()).toBe(false);
     });
 
-    it("the prepare view renders nothing once the model has been dispatched", () => {
+    it("the prepare view keeps the run options on screen once dispatched, but locked", () => {
+        // The configuration a run was launched with is worth reading back; it just
+        // must not be editable.
         const wrapper = mountTraining({
             view: "prepare",
             status: "TRAINING_STARTED"
         });
 
-        expect(wrapper.find("[data-test=training-options]").exists()).toBe(false);
-        expect(wrapper.find("form").exists()).toBe(false);
+        const options = wrapper.find("[data-test=training-options]");
+        expect(options.exists()).toBe(true);
+        expect(options.attributes("data-disabled")).toBe("true");
+        expect(wrapper.find("[data-test=training-timeline]").exists()).toBe(false);
+    });
+
+    it("the prepare view leaves the run options editable while pending", () => {
+        const wrapper = mountTraining({
+            view: "prepare",
+            status: "PENDING"
+        });
+
+        expect(wrapper.find("[data-test=training-options]").attributes("data-disabled")).toBe("false");
     });
 
     it("the run view shows monitoring and never the options form", () => {

@@ -760,7 +760,8 @@ describe("pages/project/[projectId]/model/[modelId] — Prepare/Run tabs", () =>
         const upload = wrapper.find("[data-test='model-upload']");
         expect(upload.exists()).toBe(true);
         expect(upload.attributes("data-can-upload")).toBe("false");
-        // No options form to submit once dispatched; Training renders nothing in this view.
+        // The run options stay on screen as a record of how the run was launched.
+        expect(wrapper.find("[data-test='training']").attributes("data-view")).toBe("prepare");
         expect(wrapper.find("[data-test='round-progress']").exists()).toBe(false);
     });
 
@@ -773,5 +774,29 @@ describe("pages/project/[projectId]/model/[modelId] — Prepare/Run tabs", () =>
         await flushPromises();
 
         expect(wrapper.find("[data-test='model-tabs']").attributes("data-active")).toBe("run");
+    });
+});
+
+describe("pages/project/[projectId]/model/[modelId] — header actions follow the stage", () => {
+    it("Edit Model belongs to Prepare, the run actions to Run", async () => {
+        mockSwrvData.value = makeModel([], { status: "TRAINING_STARTED" });
+        const wrapper = await mountPage();
+
+        // Opens on Run: stop / download live here, editing does not.
+        expect(wrapper.find("[data-test='training-actions-menu']").exists()).toBe(true);
+        expect(wrapper.find("[data-test='edit-model-btn']").exists()).toBe(false);
+
+        await wrapper.find("[data-test='tab-prepare']").trigger("click");
+
+        expect(wrapper.find("[data-test='training-actions-menu']").exists()).toBe(false);
+        expect(wrapper.find("[data-test='edit-model-btn']").exists()).toBe(true);
+    });
+
+    it("Initiate Training stays with the Prepare stage", async () => {
+        mockSwrvData.value = makeModel([], { status: "PENDING" });
+        const wrapper = await mountPage();
+
+        expect(wrapper.find("[data-test='initiate-training-btn']").exists()).toBe(true);
+        expect(wrapper.find("[data-test='training-actions-menu']").exists()).toBe(false);
     });
 });

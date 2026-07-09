@@ -20,11 +20,15 @@ import TrainingOptions from "@/partials/models/TrainingOptions.vue";
 // AiSwitch is the vee-validate field; we stub it to expose the `name` and `value`
 // it is bound to, so we can assert the trust is selected by its UUID id (not name).
 const aiSwitchStub = {
-    props: ["name", "value", "dataTest", "label", "hideError"],
-    template: "<button :data-test=\"dataTest\" :data-name=\"name\" :data-value=\"value\" />"
+    props: ["name", "value", "dataTest", "label", "hideError", "disabled"],
+    template: "<button :data-test=\"dataTest\" :data-name=\"name\" :data-value=\"value\" " +
+        ":disabled=\"disabled\" />"
 };
 
-function mountTrainingOptions(approvedTrusts: { name: string; id: string; approved: boolean }[]) {
+function mountTrainingOptions(
+    approvedTrusts: { name: string; id: string; approved: boolean }[],
+    disabled = false
+) {
     return mount(TrainingOptions, {
         global: {
             plugins: [
@@ -36,7 +40,10 @@ function mountTrainingOptions(approvedTrusts: { name: string; id: string; approv
             ],
             stubs: { AiSwitch: aiSwitchStub }
         },
-        props: { errors: {} }
+        props: {
+            errors: {},
+            disabled
+        }
     });
 }
 
@@ -106,5 +113,27 @@ describe("TrainingOptions trust selection", () => {
         });
 
         expect(wrapper.text()).toContain("You must select a minimum of one trust for training.");
+    });
+});
+
+describe("TrainingOptions disabled", () => {
+    const trust = [{
+        name: "Alpha Trust",
+        id: "id-alpha",
+        approved: true
+    }];
+
+    it("locks every control once the run is under way, so the choices stay readable", () => {
+        const comp = mountTrainingOptions(trust, true);
+
+        const switches = comp.findAll("button");
+        expect(switches.length).toBeGreaterThan(0);
+        expect(switches.every((s) => s.attributes("disabled") !== undefined)).toBe(true);
+    });
+
+    it("leaves the controls live while the model is still being prepared", () => {
+        const comp = mountTrainingOptions(trust);
+
+        expect(comp.findAll("button").every((s) => s.attributes("disabled") === undefined)).toBe(true);
     });
 });

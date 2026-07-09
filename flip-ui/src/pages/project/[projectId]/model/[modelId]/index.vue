@@ -44,8 +44,14 @@
                     </h1>
                     <!-- Below lg the button labels hide (icon + tooltip only) so the
                          actions stop squashing the truncating model title. -->
+                    <!-- Each action belongs to a stage: you edit and dispatch a model in
+                         Prepare; you stop it and collect its results in Run. -->
                     <div class="flex items-center gap-3 shrink-0">
-                        <AiGuard v-if="!isViewer" :permissions="editProjectPermissions" :bypass="isOwnerOrHasAccess()">
+                        <AiGuard
+                            v-if="!isViewer && activeTab === 'prepare'"
+                            :permissions="editProjectPermissions"
+                            :bypass="isOwnerOrHasAccess()"
+                        >
                             <AiButton
                                 light
                                 data-test="edit-model-btn"
@@ -58,7 +64,7 @@
                             </AiButton>
                         </AiGuard>
                         <AiButton
-                            v-if="!isViewer && isTrainingPending()"
+                            v-if="!isViewer && isTrainingPending() && activeTab === 'prepare'"
                             primary
                             data-test="initiate-training-btn"
                             aria-label="Initiate Training"
@@ -70,23 +76,27 @@
                             <icon-ph-play-fill class="lg:mr-2" />
                             <span class="hidden lg:inline">Initiate Training</span>
                         </AiButton>
-                        <TrainingActionsMenu v-if="!isViewer && !isTrainingPending()" :status="getStatusEnumValue(modelData?.status)" />
+                        <TrainingActionsMenu
+                            v-if="!isViewer && !isTrainingPending() && activeTab === 'run'"
+                            :status="getStatusEnumValue(modelData?.status)"
+                        />
                     </div>
                 </div>
             </header>
 
             <div class="flex flex-col gap-4 p-4">
+                <ModelTabs v-model="activeTab" :status="modelData?.status" class="mt-2" />
+
                 <!-- my-4 on top of the column's gap/padding gives the lifecycle ~32px of
                      breathing room above and below. -->
                 <LifecycleTrack :steps="steps" class="my-4" />
 
-                <ModelTabs v-model="activeTab" :status="modelData?.status" />
-
                 <!-- Prepare: the model files and the run options, exactly as at model
-                     creation. Once dispatched, the files stay here to download and the
-                     options are gone — nothing about the run is editable any more. -->
+                     creation. Once dispatched nothing here is editable — the options
+                     stay on screen as a record of how the run was launched, and the
+                     files stay downloadable. -->
                 <div v-if="activeTab === 'prepare'" class="flex flex-col gap-4 lg:flex-row lg:gap-4">
-                    <aside :class="trainingStartedOrStopped ? 'w-full' : 'lg:w-80 2xl:min-w-[30rem] shrink-0'">
+                    <aside class="lg:w-80 2xl:min-w-[30rem] shrink-0">
                         <ModelUpload
                             :files="modelData.files ?? []"
                             :loading="!modelData"
@@ -99,7 +109,7 @@
                         />
                     </aside>
 
-                    <div v-if="!trainingStartedOrStopped" class="flex-1 min-w-0">
+                    <div class="flex-1 min-w-0">
                         <Training
                             ref="trainingRef"
                             view="prepare"

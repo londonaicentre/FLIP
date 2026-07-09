@@ -78,6 +78,12 @@ describe("ModelTabs", () => {
         expect(started.find("[data-test=tab-prepare-done]").exists()).toBe(true);
     });
 
+    test("Prepare stays ticked when you open it — the stage is still done", () => {
+        const comp = mountTabs("TRAINING_STARTED", "prepare");
+
+        expect(comp.find("[data-test=tab-prepare-done]").exists()).toBe(true);
+    });
+
     test("the Run chip pulses only while the run is in progress", () => {
         const live = mountTabs("TRAINING_STARTED", "run");
         expect(live.find("[data-test=tab-run-live]").exists()).toBe(true);

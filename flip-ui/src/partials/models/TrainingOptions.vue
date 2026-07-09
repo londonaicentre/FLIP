@@ -31,6 +31,7 @@
                         name="enriched"
                         value="true"
                         data-test="data-enrichment-btn"
+                        :disabled="disabled"
                         :label="{ enabled: 'Dataset Enriched', disabled: 'Dataset Not Enriched' }"
                     />
                 </div>
@@ -63,6 +64,7 @@
                                             name="trust_ids"
                                             :data-test="`trust-selection-${i}`"
                                             :value="trust.trustId"
+                                            :disabled="disabled"
                                             hide-error
                                             :label="{ enabled: 'Trust Included', disabled: 'Trust Excluded' }"
                                         />
@@ -91,6 +93,9 @@ import { useProjectStore } from "@/store/project";
 
 interface ITrainingOptionsProps {
     errors: Record<string, string | undefined>
+    // A dispatched run's configuration is a record, not a form: the controls stay
+    // on screen so you can see which trusts took part, but nothing is editable.
+    disabled?: boolean
 }
 
 interface ITrustsToTrain {
@@ -100,7 +105,7 @@ interface ITrustsToTrain {
     trustId: string;
 }
 
-defineProps<ITrainingOptionsProps>();
+withDefaults(defineProps<ITrainingOptionsProps>(), { disabled: false });
 
 const projectStore = useProjectStore();
 
