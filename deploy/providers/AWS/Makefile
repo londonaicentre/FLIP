@@ -12,6 +12,12 @@
 
 ifeq ($(PROD),true)
 MAIN_ENV_FILE=../../../.env.production
+else ifeq ($(PROD),lza)
+# LZA FLIPProduction account (FLIP#749): a prod-grade environment on the
+# platform-managed (AWS Accelerator) network, running in parallel with legacy
+# prod until cutover. Gitignored like the other env files — see the
+# "Deploying to the LZA account" section in README.md for the required values.
+MAIN_ENV_FILE=../../../.env.lza-prod
 else
 # Sometimes PROD may not be set, default to staging environment in that case
 PROD=stag
@@ -54,12 +60,20 @@ $(if $(FL_KIT_DATE),,$(error 🧠 $(if $(filter nvflare,$(FL_BACKEND)),FLARE_KIT
 # the env file or on the command line if your local profile names differ.
 PROD_AWS_PROFILE ?= prod
 STAG_AWS_PROFILE ?= stag
+# The LZA FLIPProduction account (893493035022) is reached via the Identity
+# Center `FLIPAdminAccess` permission set; the default matches the profile name
+# `aws configure sso` generates for it (FLIP#749).
+LZA_AWS_PROFILE ?= FLIPAdminAccess-893493035022
 
 # Refuse to operate against an unintended AWS account. Profile name is the safety
 # guard because Make has no easy way to read the account ID without an `aws` call.
 ifeq ($(PROD),true)
 ifneq ($(AWS_PROFILE),$(PROD_AWS_PROFILE))
 $(error "For production deployments, AWS_PROFILE must be set to '$(PROD_AWS_PROFILE)' (override via PROD_AWS_PROFILE)")
+endif
+else ifeq ($(PROD),lza)
+ifneq ($(AWS_PROFILE),$(LZA_AWS_PROFILE))
+$(error "For LZA deployments, AWS_PROFILE must be set to '$(LZA_AWS_PROFILE)' (override via LZA_AWS_PROFILE)")
 endif
 else
 ifneq ($(AWS_PROFILE),$(STAG_AWS_PROFILE))
@@ -68,13 +82,17 @@ endif
 endif
 
 ## SETTING VARIABLES FOR TERRAFORM
-# Map the Make-level PROD flag (true|stag) onto a Terraform-friendly environment name.
+# Map the Make-level PROD flag (true|lza|stag) onto a Terraform-friendly environment name.
 # Used in main.tf to gate prod-only RDS hardening (deletion protection, final snapshot).
-export TF_VAR_environment=$(if $(filter true,$(PROD)),prod,stag)
+# PROD=lza is a production estate, so it keeps the prod hardening — what differs there
+# is the platform-managed network, toggled by the orthogonal flag below (FLIP#749).
+export TF_VAR_environment=$(if $(filter true lza,$(PROD)),prod,stag)
 
-# Kit-file env suffix: PROD=true → .production kits, otherwise → .stag. Selects
-# the trust kit file trust/.env.<KIT>.<suffix> for the trust-deploy targets.
-KIT_ENV_SUFFIX := $(if $(filter true,$(PROD)),production,stag)
+# Kit-file env suffix: PROD=true → .production kits, PROD=lza → .lza-prod kits (a
+# separate namespace so the parallel-running legacy prod kits are never touched
+# during the FLIP#749 migration), otherwise → .stag. Selects the trust kit file
+# trust/.env.<KIT>.<suffix> for the trust-deploy targets.
+KIT_ENV_SUFFIX := $(if $(filter true,$(PROD)),production,$(if $(filter lza,$(PROD)),lza-prod,stag))
 export TF_VAR_max_azs=2
 export TF_VAR_vpc_cidr=10.0.0.0/16
 export TF_VAR_public_subnets=["10.0.1.0/24", "10.0.2.0/24"]
@@ -193,7 +211,8 @@ CENTRALHUB_ECS_SERVICES = flip-api fl-api-net-1 fl-server-net-1
 # recorded commit and rollback-centralhub can repoint at the previous revision. The
 # env-file tags (DOCKER_TAG / DOCKER_FL_TAG) remain the bootstrap-only defaults Terraform
 # bakes into a (re)created task-definition family — day-to-day deploys never touch them.
-DEPLOY_GIT_REF := $(if $(filter true,$(PROD)),origin/main,origin/develop)
+# PROD=lza tracks origin/main like legacy prod (both are production estates, FLIP#749).
+DEPLOY_GIT_REF := $(if $(filter true lza,$(PROD)),origin/main,origin/develop)
 
 TRUST_IMAGES = \
 	$(DOCKER_REGISTRY)trust-api:$(DOCKER_TAG) \
