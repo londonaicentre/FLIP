@@ -357,20 +357,23 @@ class FLIPStandardProd(FLIPBase):
             self.logger.exception(e)
 
     @override
-    def send_handled_exception(self, formatted_exception: str, client_name: str, model_id: str) -> None:
+    def send_handled_exception(self, formatted_exception: str, client_name: str | None, model_id: str) -> None:
         """
         Sends a handled exception to the Central Hub.
 
         Args:
             formatted_exception (str): The formatted exception message.
-            client_name (str): The name of the client that raised the exception.
+            client_name (str | None): The name of the client that raised the exception.
+                None when the client cannot be identified (e.g. a Flower reply that
+                crashed before its first healthy response), in which case the hub
+                records the exception model-level rather than rejecting it.
             model_id (str): The ID of the model associated with the exception.
         """
         if not isinstance(formatted_exception, str):
             raise TypeError(f"formatted_exception must be type str but got {type(formatted_exception)}")
 
-        if not isinstance(client_name, str):
-            raise TypeError(f"client_name must be type str but got {type(client_name)}")
+        if client_name is not None and not isinstance(client_name, str):
+            raise TypeError(f"client_name must be type str or None but got {type(client_name)}")
 
         if Utils.is_valid_uuid(model_id) is False:
             raise ValueError(f"Invalid model ID: {model_id}, unable to send exception")
@@ -633,7 +636,7 @@ class FLIPStandardDev(FLIPBase):
         )
 
     @override
-    def send_handled_exception(self, formatted_exception: str, client_name: str, model_id: str) -> None:
+    def send_handled_exception(self, formatted_exception: str, client_name: str | None, model_id: str) -> None:
         """Log only in dev mode - no actual exception sending."""
         self.logger.info("[DEV] Exception → reported from %s", client_name)
 

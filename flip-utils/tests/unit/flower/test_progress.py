@@ -18,7 +18,12 @@ Like ``flip.flower.metrics``, the module only references Flower types behind a
 
 from unittest.mock import Mock
 
-from flip.flower.progress import report_client_result, report_round_aggregated, report_round_started
+from flip.flower.progress import (
+    report_client_result,
+    report_round_aggregated,
+    report_round_started,
+    resolve_absent_site,
+)
 from flip.schemas import FLLogEvent
 
 VALID_MODEL_ID = "123e4567-e89b-12d3-a456-426614174000"
@@ -150,3 +155,30 @@ class TestReportRoundAggregated:
         flip.send_event.side_effect = RuntimeError("boom")
 
         report_round_aggregated(flip, VALID_MODEL_ID, server_round=1, returned=0, expected=0)
+
+
+class TestResolveAbsentSite:
+    """Identify a silent client by elimination, not by its reply's node id.
+
+    Flower stamps a placeholder ``src_node_id`` (1) on the error reply it
+    synthesises for an unreachable node, so the dead client cannot be recognised
+    from the reply itself. The strategy does know which nodes it dispatched to
+    and which answered, and it has learned each node's site from earlier healthy
+    replies — that is enough to name the one that went missing.
+    """
+
+    SITES = {111: "Trust_1", 222: "Trust_2"}
+
+    def test_single_absent_node_is_named(self):
+        assert resolve_absent_site({111, 222}, {111}, self.SITES) == "Trust_2"
+
+    def test_no_absent_node_yields_none(self):
+        assert resolve_absent_site({111, 222}, {111, 222}, self.SITES) is None
+
+    def test_ambiguous_absence_yields_none(self):
+        """Two clients gone at once: guessing which is which would be a lie."""
+        assert resolve_absent_site({111, 222}, set(), self.SITES) is None
+
+    def test_absent_node_never_seen_before_yields_none(self):
+        """A client that crashed before its first healthy reply has no known site."""
+        assert resolve_absent_site({111, 333}, {111}, self.SITES) is None

@@ -38,8 +38,13 @@ from flwr.serverapp.strategy import FedAvg
 
 from flip import FLIP
 from flip.constants.flip_constants import ModelStatus
-from flip.flower.metrics import handle_client_exception, handle_client_metrics
-from flip.flower.progress import report_client_result, report_round_aggregated, report_round_started
+from flip.flower.metrics import _resolve_site_name, handle_client_exception, handle_client_metrics
+from flip.flower.progress import (
+    report_client_result,
+    report_round_aggregated,
+    report_round_started,
+    resolve_absent_site,
+)
 
 __all__ = ["FlipFedAvg"]
 
@@ -62,6 +67,44 @@ class FlipFedAvg(FedAvg):
         # How many clients the current round's train phase was dispatched to;
         # None means this round has no train phase (evaluation-only strategy).
         self._expected_train_replies: int | None = None
+        # node_id -> site name, learned from healthy replies, and the node ids the
+        # current round was dispatched to. A crashed reply carries neither content
+        # nor its sender's real node id, so together these are the only way to name
+        # the trust that fell out — without it the hub rejects the exception log and
+        # the per-trust "dropped" state is unreachable.
+        self._site_by_node: dict[int, str] = {}
+        self._dispatched_nodes: set[int] = set()
+
+    def _forward_replies(self, replies: list[Message], server_round: int) -> int:
+        """Forward every reply's metrics, exception and round event to the hub.
+
+        Learns each healthy reply's site, then names the one client that was
+        dispatched a task and never answered (see ``resolve_absent_site``) so its
+        error is attributed to the right trust. fl-clients never reach the Central
+        Hub directly — every forward happens here, server-side.
+
+        Args:
+            replies: The round's reply Messages.
+            server_round: Flower's 1-based round number.
+
+        Returns:
+            int: How many replies were healthy.
+        """
+        for msg in replies:
+            site = _resolve_site_name(msg)
+            if site is not None:
+                self._site_by_node[msg.metadata.src_node_id] = site
+
+        responded = {msg.metadata.src_node_id for msg in replies if not msg.has_error()}
+        absent_site = resolve_absent_site(self._dispatched_nodes, responded, self._site_by_node)
+
+        returned = 0
+        for msg in replies:
+            handle_client_metrics(msg, server_round, self.model_id, self.flip)
+            handle_client_exception(msg, self.model_id, self.flip, site_name=absent_site)
+            if report_client_result(msg, server_round, self.model_id, self.flip):
+                returned += 1
+        return returned
 
     def start(self, grid: Grid, initial_arrays: ArrayRecord, num_rounds: int = 3, **kwargs):
         """Capture the round total and mark the run as training on the hub."""
@@ -75,6 +118,7 @@ class FlipFedAvg(FedAvg):
         """Dispatch the round's train tasks, reporting the round start."""
         messages = list(super().configure_train(server_round, arrays, config, grid))
         self._expected_train_replies = len(messages) if messages else None
+        self._dispatched_nodes = {msg.metadata.dst_node_id for msg in messages}
         if messages:
             report_round_started(self.flip, self.model_id, server_round, self.num_rounds)
         return messages
@@ -82,13 +126,7 @@ class FlipFedAvg(FedAvg):
     def aggregate_train(self, server_round: int, replies: Iterable[Message]) -> ArrayRecord | None:
         """Forward per-client telemetry, aggregate, then report the round aggregated."""
         replies = list(replies)
-        returned = 0
-        for msg in replies:
-            # fl-clients never reach the Central Hub directly — forward server-side.
-            handle_client_metrics(msg, server_round, self.model_id, self.flip)
-            handle_client_exception(msg, self.model_id, self.flip)
-            if report_client_result(msg, server_round, self.model_id, self.flip):
-                returned += 1
+        returned = self._forward_replies(replies, server_round)
 
         result = super().aggregate_train(server_round, replies)
         if self._expected_train_replies is not None:
@@ -101,18 +139,14 @@ class FlipFedAvg(FedAvg):
         """Dispatch the round's evaluate tasks; owns the round events when nothing trains."""
         messages = list(super().configure_evaluate(server_round, arrays, config, grid))
         if messages and self._expected_train_replies is None:
+            self._dispatched_nodes = {msg.metadata.dst_node_id for msg in messages}
             report_round_started(self.flip, self.model_id, server_round, self.num_rounds)
         return messages
 
     def aggregate_evaluate(self, server_round: int, replies: Iterable[Message]) -> MetricRecord | None:
         """Forward per-client telemetry, aggregate, and close evaluation-only rounds."""
         replies = list(replies)
-        returned = 0
-        for msg in replies:
-            handle_client_metrics(msg, server_round, self.model_id, self.flip)
-            handle_client_exception(msg, self.model_id, self.flip)
-            if report_client_result(msg, server_round, self.model_id, self.flip):
-                returned += 1
+        returned = self._forward_replies(replies, server_round)
 
         result = super().aggregate_evaluate(server_round, replies)
         if replies and self._expected_train_replies is None:

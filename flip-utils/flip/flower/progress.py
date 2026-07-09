@@ -38,7 +38,36 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["report_round_started", "report_client_result", "report_round_aggregated"]
+__all__ = ["report_round_started", "report_client_result", "report_round_aggregated", "resolve_absent_site"]
+
+
+def resolve_absent_site(
+    dispatched_nodes: set[int], responded_nodes: set[int], site_by_node: dict[int, str]
+) -> str | None:
+    """Name the single client that was dispatched a task but never answered.
+
+    Flower stamps a placeholder ``src_node_id`` on the error reply it synthesises
+    for an unreachable node, so a dead client cannot be recognised from its own
+    reply. It can be recognised by elimination: the strategy knows which nodes it
+    dispatched to, which answered, and (from earlier healthy replies) each node's
+    site name.
+
+    Returns None when the absence is ambiguous (several nodes silent at once) or
+    the absent node never identified itself — guessing would put a real trust's
+    name on another trust's failure.
+
+    Args:
+        dispatched_nodes: Node ids the round's tasks were sent to.
+        responded_nodes: Node ids that returned a healthy reply this round.
+        site_by_node: Node id to site name, learned from healthy replies.
+
+    Returns:
+        str | None: The absent client's site name, or None when unidentifiable.
+    """
+    absent = dispatched_nodes - responded_nodes
+    if len(absent) != 1:
+        return None
+    return site_by_node.get(next(iter(absent)))
 
 
 def _serialized_size_bytes(msg: Message) -> int | None:
@@ -97,12 +126,19 @@ def report_client_result(msg: Message, server_round: int, model_id: str, flip: F
         return False
 
     try:
+        client_name = _resolve_site_name(msg)
+        if client_name is None:
+            # Without a site the hub cannot attribute the upload to a trust; a
+            # hub-level "someone uploaded" row would be worse than silence.
+            logger.warning("Skipping an unattributable client result in round %d", server_round)
+            return True
+
         size_bytes = _serialized_size_bytes(msg)
         flip.send_event(
             model_id=model_id,
             event_type=FLLogEvent.CLIENT_RESULT_RECEIVED,
             global_round=server_round,
-            client_name=_resolve_site_name(msg),
+            client_name=client_name,
             details={"size_bytes": size_bytes} if size_bytes is not None else None,
         )
     except Exception:

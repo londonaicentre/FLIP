@@ -127,13 +127,14 @@ class FLIPBase(ABC):
         """
 
     @abstractmethod
-    def send_handled_exception(self, formatted_exception: str, client_name: str, model_id: str) -> None:
+    def send_handled_exception(self, formatted_exception: str, client_name: str | None, model_id: str) -> None:
         """
         Sends a training-related exception to Central Hub.
 
         Args:
             formatted_exception (str): The formatted exception message
-            client_name (str): The client name that raised the exception
+            client_name (str | None): The client name that raised the exception; None when
+                the client cannot be identified, so the hub records it model-level
             model_id (str): The model UUID
         """
 
