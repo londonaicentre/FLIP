@@ -16,6 +16,29 @@ import type { Plugin } from "vite";
 const ICONS_PREFIX = "~icons/";
 const RESOLVED_PREFIX = `\0${ICONS_PREFIX}`;
 
+// CodeQL js/bad-code-sanitization: JSON.stringify alone does not escape every character that can
+// misbehave when its output is embedded in generated code (`<`, `>`, `/`, U+2028, U+2029, ...).
+// Icon names come from the repo's own ~icons/... import ids rather than attacker input, but
+// escaping them anyway keeps the generated module literal inert whatever the id contains.
+const UNSAFE_CHARS = /[<>/\b\f\n\r\t\0\u2028\u2029]/g;
+const UNSAFE_CHAR_MAP: Record<string, string> = {
+    "<": "\\u003C",
+    ">": "\\u003E",
+    "/": "\\u002F",
+    "\b": "\\b",
+    "\f": "\\f",
+    "\n": "\\n",
+    "\r": "\\r",
+    "\t": "\\t",
+    "\0": "\\u0000",
+    "\u2028": "\\u2028",
+    "\u2029": "\\u2029"
+};
+
+function escapeUnsafeChars(code: string): string {
+    return code.replace(UNSAFE_CHARS, (char) => UNSAFE_CHAR_MAP[char]);
+}
+
 /**
  * Vitest-only replacement for unplugin-icons (FLIP#748).
  *
@@ -41,11 +64,12 @@ export default function iconStubPlugin(): Plugin {
         load(id) {
             if (!id.startsWith(RESOLVED_PREFIX)) return;
             const iconName = id.slice(RESOLVED_PREFIX.length).split("?")[0].replace(/\//g, ":");
+            const iconNameLiteral = escapeUnsafeChars(JSON.stringify(iconName));
             return [
                 "import { h } from \"vue\";",
                 "export default {",
-                `    name: ${JSON.stringify(iconName)},`,
-                `    render: () => h("svg", { "data-icon": ${JSON.stringify(iconName)} })`,
+                `    name: ${iconNameLiteral},`,
+                `    render: () => h("svg", { "data-icon": ${iconNameLiteral} })`,
                 "};"
             ].join("\n");
         }
