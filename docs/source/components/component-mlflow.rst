@@ -96,7 +96,23 @@ Variable                     Meaning
 ===========================  ==========================================================
 
 The dev server stores runs in SQLite on a named volume (``mlflow_data``) — a
-deliberate single-writer spike setup. Before any production or multi-writer
-use, move the backend store to a proper database and put real authentication
-in front (production hosting is a separate decision — see FLIP#745, WP6).
-Production compose files do not deploy MLflow.
+deliberate single-writer spike setup.
+
+Production
+==========
+
+Production does not run an MLflow container. The hub's task definitions (and
+prod compose files) carry the same ``MLFLOW_TRACKING_URI`` passthrough,
+default-empty, so the integration stays off until an operator sets the value
+(``TF_VAR_MLFLOW_TRACKING_URI`` via the env file). The variable accepts either
+prod hosting option evaluated in FLIP#745 (WP6):
+
+- a **self-hosted HTTP URI** (an ECS-hosted MLflow server — needs the full
+  longhand service build-out plus a backend database and an auth front), or
+- a **SageMaker managed-MLflow ARN** — when set, gated IAM policies in
+  ``iam_ecs.tf`` grant the flip-api and fl-server task roles the
+  ``sagemaker-mlflow`` data-plane actions scoped to that ARN. Clients then
+  additionally need the small ``sagemaker-mlflow`` pip package (SigV4 plugin);
+  the sink itself is unchanged. Every data-plane call is CloudTrail-logged.
+
+See the WP6 decision record on FLIP#745 for the cost/ops comparison.
