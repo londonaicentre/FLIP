@@ -85,6 +85,10 @@ jobs:
 
           TAGS="${REGISTRY}/${IMAGE_NAME}:${SHA}"
 
+          # Immutable short-SHA tag consumed by `make deploy-centralhub` (FLIP#751).
+          # Length 7 must match the tag resolution in deploy/providers/AWS/Makefile.
+          TAGS="${TAGS},${REGISTRY}/${IMAGE_NAME}:sha-${SHA:0:7}"
+
           # Branch name sanitization
           SAFE_REF_NAME=$(echo "$REF_NAME" | sed 's/[^a-zA-Z0-9]/-/g')
           TAGS="${TAGS},${REGISTRY}/${IMAGE_NAME}:${SAFE_REF_NAME}"

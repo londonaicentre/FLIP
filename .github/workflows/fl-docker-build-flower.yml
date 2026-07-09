@@ -54,10 +54,16 @@ jobs:
       - name: Determine image tags
         id: tags
         run: |
-          BASE_TAGS="${REGISTRY}/${ORG}/${BASE_IMAGE}:${{ github.sha }}"
-          SERVER_TAGS="${REGISTRY}/${ORG}/${SERVER_IMAGE}:${{ github.sha }}"
-          CLIENT_TAGS="${REGISTRY}/${ORG}/${CLIENT_IMAGE}:${{ github.sha }}"
-          API_TAGS="${REGISTRY}/${ORG}/${API_IMAGE}:${{ github.sha }}"
+          # Immutable short-SHA tag consumed by `make deploy-centralhub` (FLIP#751).
+          # Length 7 must match the tag resolution in deploy/providers/AWS/Makefile.
+          # Persisted to GITHUB_ENV so the per-image build/push/cleanup steps see it.
+          SHORT_SHA="$(echo "${{ github.sha }}" | cut -c1-7)"
+          echo "SHORT_SHA=${SHORT_SHA}" >> $GITHUB_ENV
+
+          BASE_TAGS="${REGISTRY}/${ORG}/${BASE_IMAGE}:${{ github.sha }},${REGISTRY}/${ORG}/${BASE_IMAGE}:sha-${SHORT_SHA}"
+          SERVER_TAGS="${REGISTRY}/${ORG}/${SERVER_IMAGE}:${{ github.sha }},${REGISTRY}/${ORG}/${SERVER_IMAGE}:sha-${SHORT_SHA}"
+          CLIENT_TAGS="${REGISTRY}/${ORG}/${CLIENT_IMAGE}:${{ github.sha }},${REGISTRY}/${ORG}/${CLIENT_IMAGE}:sha-${SHORT_SHA}"
+          API_TAGS="${REGISTRY}/${ORG}/${API_IMAGE}:${{ github.sha }},${REGISTRY}/${ORG}/${API_IMAGE}:sha-${SHORT_SHA}"
 
           if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
             BASE_TAGS="${BASE_TAGS},${REGISTRY}/${ORG}/${BASE_IMAGE}:prod"
@@ -105,7 +111,8 @@ jobs:
         run: |
           docker build ${BUILD_ARGS} \
             -f fl-services/flower/fl-base/Dockerfile \
-            -t $REGISTRY/$ORG/$BASE_IMAGE:${{ github.sha }} .
+            -t $REGISTRY/$ORG/$BASE_IMAGE:${{ github.sha }} \
+            -t $REGISTRY/$ORG/$BASE_IMAGE:sha-$SHORT_SHA .
 
           # Tag environment-specific
           if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
@@ -119,6 +126,7 @@ jobs:
       - name: Push Base Image
         run: |
           docker push $REGISTRY/$ORG/$BASE_IMAGE:${{ github.sha }}
+          docker push $REGISTRY/$ORG/$BASE_IMAGE:sha-$SHORT_SHA
           if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
             docker push $REGISTRY/$ORG/$BASE_IMAGE:prod
           elif [[ "${{ github.ref }}" == "refs/heads/develop" ]]; then
@@ -129,6 +137,7 @@ jobs:
       - name: Cleanup after base image
         run: |
           # Remove untagged local copies but keep the SHA-tagged image for dependent builds
+          docker rmi $REGISTRY/$ORG/$BASE_IMAGE:sha-$SHORT_SHA || true
           if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
             docker rmi $REGISTRY/$ORG/$BASE_IMAGE:prod || true
           elif [[ "${{ github.ref }}" == "refs/heads/develop" ]]; then
@@ -146,7 +155,8 @@ jobs:
           docker build ${BUILD_ARGS} \
             -f fl-services/flower/superlink/Dockerfile \
             --build-arg BASE_REF=$REGISTRY/$ORG/$BASE_IMAGE:${{ github.sha }} \
-            -t $REGISTRY/$ORG/$SERVER_IMAGE:${{ github.sha }} fl-services/flower/superlink
+            -t $REGISTRY/$ORG/$SERVER_IMAGE:${{ github.sha }} \
+            -t $REGISTRY/$ORG/$SERVER_IMAGE:sha-$SHORT_SHA fl-services/flower/superlink
 
           if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
             docker tag $REGISTRY/$ORG/$SERVER_IMAGE:${{ github.sha }} $REGISTRY/$ORG/$SERVER_IMAGE:prod
@@ -159,6 +169,7 @@ jobs:
       - name: Push SuperLink Image
         run: |
           docker push $REGISTRY/$ORG/$SERVER_IMAGE:${{ github.sha }}
+          docker push $REGISTRY/$ORG/$SERVER_IMAGE:sha-$SHORT_SHA
           if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
             docker push $REGISTRY/$ORG/$SERVER_IMAGE:prod
           elif [[ "${{ github.ref }}" == "refs/heads/develop" ]]; then
@@ -169,6 +180,7 @@ jobs:
       - name: Cleanup after SuperLink
         run: |
           docker rmi $REGISTRY/$ORG/$SERVER_IMAGE:${{ github.sha }} || true
+          docker rmi $REGISTRY/$ORG/$SERVER_IMAGE:sha-$SHORT_SHA || true
           if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
             docker rmi $REGISTRY/$ORG/$SERVER_IMAGE:prod || true
           elif [[ "${{ github.ref }}" == "refs/heads/develop" ]]; then
@@ -186,7 +198,8 @@ jobs:
           docker build ${BUILD_ARGS} \
             -f fl-services/flower/supernode/Dockerfile \
             --build-arg BASE_REF=$REGISTRY/$ORG/$BASE_IMAGE:${{ github.sha }} \
-            -t $REGISTRY/$ORG/$CLIENT_IMAGE:${{ github.sha }} fl-services/flower/supernode
+            -t $REGISTRY/$ORG/$CLIENT_IMAGE:${{ github.sha }} \
+            -t $REGISTRY/$ORG/$CLIENT_IMAGE:sha-$SHORT_SHA fl-services/flower/supernode
 
           if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
             docker tag $REGISTRY/$ORG/$CLIENT_IMAGE:${{ github.sha }} $REGISTRY/$ORG/$CLIENT_IMAGE:prod
@@ -199,6 +212,7 @@ jobs:
       - name: Push SuperNode Image
         run: |
           docker push $REGISTRY/$ORG/$CLIENT_IMAGE:${{ github.sha }}
+          docker push $REGISTRY/$ORG/$CLIENT_IMAGE:sha-$SHORT_SHA
           if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
             docker push $REGISTRY/$ORG/$CLIENT_IMAGE:prod
           elif [[ "${{ github.ref }}" == "refs/heads/develop" ]]; then
@@ -209,6 +223,7 @@ jobs:
       - name: Cleanup after SuperNode
         run: |
           docker rmi $REGISTRY/$ORG/$CLIENT_IMAGE:${{ github.sha }} || true
+          docker rmi $REGISTRY/$ORG/$CLIENT_IMAGE:sha-$SHORT_SHA || true
           if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
             docker rmi $REGISTRY/$ORG/$CLIENT_IMAGE:prod || true
           elif [[ "${{ github.ref }}" == "refs/heads/develop" ]]; then
@@ -225,7 +240,8 @@ jobs:
         run: |
           docker build ${BUILD_ARGS} \
             -f fl-services/flower/fl-api-flower/Dockerfile \
-            -t $REGISTRY/$ORG/$API_IMAGE:${{ github.sha }} fl-services/flower/fl-api-flower
+            -t $REGISTRY/$ORG/$API_IMAGE:${{ github.sha }} \
+            -t $REGISTRY/$ORG/$API_IMAGE:sha-$SHORT_SHA fl-services/flower/fl-api-flower
 
           if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
             docker tag $REGISTRY/$ORG/$API_IMAGE:${{ github.sha }} $REGISTRY/$ORG/$API_IMAGE:prod
@@ -238,6 +254,7 @@ jobs:
       - name: Push FL API Image
         run: |
           docker push $REGISTRY/$ORG/$API_IMAGE:${{ github.sha }}
+          docker push $REGISTRY/$ORG/$API_IMAGE:sha-$SHORT_SHA
           if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
             docker push $REGISTRY/$ORG/$API_IMAGE:prod
           elif [[ "${{ github.ref }}" == "refs/heads/develop" ]]; then
@@ -248,6 +265,7 @@ jobs:
       - name: Final cleanup
         run: |
           docker rmi $REGISTRY/$ORG/$API_IMAGE:${{ github.sha }} || true
+          docker rmi $REGISTRY/$ORG/$API_IMAGE:sha-$SHORT_SHA || true
           if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
             docker rmi $REGISTRY/$ORG/$API_IMAGE:prod || true
           elif [[ "${{ github.ref }}" == "refs/heads/develop" ]]; then
