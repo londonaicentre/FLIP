@@ -300,54 +300,47 @@ resource "aws_iam_role_policy" "ecs_fl_server_task" {
 # disabled. Callers authenticate with their task role via the sagemaker-mlflow
 # client plugin (SigV4) — no static credentials involved.
 #
-# Resource = "*" with no Condition is forced, not lazy. The sagemaker-mlflow
-# data plane supplies NO authorization context for MLflow Apps: scoping to the
-# App ARN 403s every call (AWS documents resource scoping only for the older
-# *tracking server* ARN), and aws:ResourceAccount / aws:RequestedRegion are
-# never populated, so any Condition also denies. All three forms were verified
-# against a real App on stag, 2026-07-09.
+# Scoping this grant is constrained by the service, not by preference. Verified
+# against a real MLflow App on stag (2026-07-09), every attempt to narrow the
+# Allow statement produced 403 "Request is not authorized" on every call:
+#   - Resource = <App ARN>      → denied (AWS documents resource scoping only
+#                                 for the older *tracking server* ARN)
+#   - Condition aws:ResourceAccount / aws:RequestedRegion → denied (neither key
+#                                 is populated for these calls)
+#   - Action  = explicit list   → denied (the service's internal action mapping
+#                                 does not match the documented action names;
+#                                 even sagemaker-mlflow:GetExperimentByName is
+#                                 rejected for /experiments/get-by-name)
+# Only AWS's documented client policy — sagemaker-mlflow:* on * — functions.
 #
-# Least privilege is therefore applied on the ACTION dimension instead: each
-# role is granted exactly the MLflow REST APIs its code calls, rather than the
-# blanket `sagemaker-mlflow:*` from AWS's documented example. Compensating
-# controls: short-lived task-role credentials (no static keys), the MLflow data
-# plane only, and CloudTrail on every call.
+# What IS enforceable is an explicit Deny, which is evaluated regardless of
+# request context and always wins over the Allow. The destructive MLflow verbs
+# neither role ever calls are therefore denied outright, so a compromised task
+# cannot delete runs, registered models, model versions or tags, transition
+# model stages, or open the MLflow UI. flip-api additionally keeps
+# DeleteExperiment (its model soft-delete mirror needs it); the fl-server does
+# not and is denied it.
 #
-# ⚠️  Keep these lists in step with the callers — a missing action is a silent
-# drop, because the mirror is best-effort and swallows its own failures:
-#   fl-server → flip-utils/flip/core/mlflow_sink.py
-#   flip-api  → flip_api/fl_services/services/mlflow_run_service.py
-# Narrow Resource to the App ARN once AWS registers mlflow-app as an
+# Further compensating controls: short-lived task-role credentials (no static
+# keys), the MLflow data plane only, and CloudTrail on every data-plane call.
+# Narrow the Allow to the App ARN once AWS registers mlflow-app as an
 # authorizable resource for these actions.
-
-# Actions used by mlflow_run_service (flip-api): run bootstrap, stale-run sweep,
-# abort/fail termination, config.json params, and model soft-delete mirroring.
 locals {
-  mlflow_flip_api_actions = [
-    "sagemaker-mlflow:CreateExperiment",
-    "sagemaker-mlflow:GetExperimentByName",
-    "sagemaker-mlflow:SetExperimentTag",
-    "sagemaker-mlflow:DeleteExperiment",
-    "sagemaker-mlflow:SearchRuns",
-    "sagemaker-mlflow:CreateRun",
-    "sagemaker-mlflow:UpdateRun",
-    "sagemaker-mlflow:LogParam",
-    "sagemaker-mlflow:SetTag",
-    "sagemaker-mlflow:SetRegisteredModelTag",
-  ]
-
-  # Actions used by the flip package's MlflowSink (fl-server): run adoption,
-  # per-trust metrics, status tags, and registering the results zip by reference.
-  mlflow_fl_server_actions = [
-    "sagemaker-mlflow:CreateExperiment",
-    "sagemaker-mlflow:GetExperimentByName",
-    "sagemaker-mlflow:SearchRuns",
-    "sagemaker-mlflow:CreateRun",
-    "sagemaker-mlflow:UpdateRun",
-    "sagemaker-mlflow:LogMetric",
-    "sagemaker-mlflow:SetTag",
-    "sagemaker-mlflow:CreateRegisteredModel",
-    "sagemaker-mlflow:CreateModelVersion",
+  # Destructive verbs neither task role calls. Explicit Deny beats the wildcard
+  # Allow below, and unlike Resource/Condition scoping it is actually honoured.
+  mlflow_denied_actions = [
+    "sagemaker-mlflow:DeleteRun",
+    "sagemaker-mlflow:DeleteRegisteredModel",
+    "sagemaker-mlflow:DeleteModelVersion",
+    "sagemaker-mlflow:DeleteRegisteredModelTag",
+    "sagemaker-mlflow:DeleteModelVersionTag",
+    "sagemaker-mlflow:DeleteRegisteredModelAlias",
+    "sagemaker-mlflow:DeleteTag",
+    "sagemaker-mlflow:DeleteLoggedModel",
+    "sagemaker-mlflow:DeleteLoggedModelTag",
+    "sagemaker-mlflow:TransitionModelVersionStage",
+    "sagemaker-mlflow:RenameRegisteredModel",
+    "sagemaker-mlflow:AccessUI",
   ]
 }
 
@@ -362,7 +355,14 @@ resource "aws_iam_role_policy" "ecs_flip_api_task_sagemaker_mlflow" {
       {
         Sid      = "MlflowDataPlane"
         Effect   = "Allow"
-        Action   = local.mlflow_flip_api_actions
+        Action   = ["sagemaker-mlflow:*"]
+        Resource = "*"
+      },
+      {
+        # flip-api keeps DeleteExperiment (model soft-delete mirror).
+        Sid      = "MlflowDenyDestructive"
+        Effect   = "Deny"
+        Action   = local.mlflow_denied_actions
         Resource = "*"
       },
     ]
@@ -380,7 +380,14 @@ resource "aws_iam_role_policy" "ecs_fl_server_task_sagemaker_mlflow" {
       {
         Sid      = "MlflowDataPlane"
         Effect   = "Allow"
-        Action   = local.mlflow_fl_server_actions
+        Action   = ["sagemaker-mlflow:*"]
+        Resource = "*"
+      },
+      {
+        # The fl-server never deletes experiments — only flip-api mirrors soft-deletes.
+        Sid      = "MlflowDenyDestructive"
+        Effect   = "Deny"
+        Action   = concat(local.mlflow_denied_actions, ["sagemaker-mlflow:DeleteExperiment"])
         Resource = "*"
       },
     ]
