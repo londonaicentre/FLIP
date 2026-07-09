@@ -84,6 +84,41 @@ describe("ModelTabs", () => {
         expect(comp.find("[data-test=tab-prepare-done]").exists()).toBe(true);
     });
 
+    test("the tick on the open chip is white, so it reads against the filled chip", () => {
+        const open = mountTabs("TRAINING_STARTED", "prepare");
+        expect(open.find("[data-test=tab-prepare-done]").classes()).toContain("text-white");
+
+        const closed = mountTabs("TRAINING_STARTED", "run");
+        expect(closed.find("[data-test=tab-prepare-done]").classes()).toContain("text-green-600");
+    });
+
+    test("Run reads as done only once the results have been uploaded", () => {
+        const uploaded = mountTabs("RESULTS_UPLOADED", "run");
+        expect(uploaded.find("[data-test=tab-run-done]").exists()).toBe(true);
+
+        const live = mountTabs("TRAINING_STARTED", "run");
+        expect(live.find("[data-test=tab-run-done]").exists()).toBe(false);
+    });
+
+    test("a run that stopped or failed carries no tick — a tick means success", () => {
+        for (const status of ["STOPPED", "ERROR", "RESULTS_UPLOAD_FAILED"] as ModelStatus[]) {
+            const comp = mountTabs(status, "run");
+            expect(comp.find("[data-test=tab-run-done]").exists()).toBe(false);
+        }
+    });
+
+    test("the connector joins the chips, and fills once the model is dispatched", () => {
+        const pending = mountTabs("PENDING");
+        const connector = pending.find("[data-test=tab-connector]");
+        expect(connector.classes()).toContain("bg-gray-200");
+
+        const started = mountTabs("TRAINING_STARTED", "run");
+        expect(started.find("[data-test=tab-connector]").classes()).toContain("bg-primary-500");
+
+        // No gap on the row: the connector itself is the spacing, so it meets both chips.
+        expect(pending.find("nav").classes()).not.toContain("gap-2");
+    });
+
     test("the Run chip pulses only while the run is in progress", () => {
         const live = mountTabs("TRAINING_STARTED", "run");
         expect(live.find("[data-test=tab-run-live]").exists()).toBe(true);

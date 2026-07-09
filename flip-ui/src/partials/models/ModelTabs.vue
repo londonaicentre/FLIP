@@ -14,9 +14,17 @@
 <!-- Staged chip tabs for the model page (design handoff 03c): Prepare -> Run.
      Run is locked until the model is dispatched, since there is nothing to watch. -->
 <template>
-    <nav class="flex items-center gap-2" aria-label="Model stages">
+    <nav class="flex items-center" aria-label="Model stages">
         <template v-for="(tab, index) in tabs" :key="tab.id">
-            <span v-if="index > 0" class="w-[18px] h-px bg-gray-200 dark:bg-dark-border" aria-hidden="true" />
+            <!-- The connector fills once the model is dispatched: the stage it leads
+                 to is now real, and the line carries the eye across to it. -->
+            <span
+                v-if="index > 0"
+                data-test="tab-connector"
+                class="w-6 h-px"
+                :class="pending ? 'bg-gray-200 dark:bg-dark-border' : 'bg-primary-500'"
+                aria-hidden="true"
+            />
 
             <button
                 type="button"
@@ -46,9 +54,9 @@
 
                 <icon-ph-check-bold
                     v-if="tab.done"
-                    data-test="tab-prepare-done"
+                    :data-test="`tab-${tab.id}-done`"
                     class="w-3 h-3"
-                    :class="tab.id === modelValue ? 'text-green-300' : 'text-green-600 dark:text-green-400'"
+                    :class="tab.id === modelValue ? 'text-white' : 'text-green-600 dark:text-green-400'"
                     aria-hidden="true"
                 />
 
@@ -111,7 +119,9 @@ const tabs = computed<Tab[]>(() => [
         id: "run",
         label: "Run",
         locked: pending.value,
-        done: false
+        // Only a delivered run is done. A stopped, errored or upload-failed run
+        // has also finished, but a tick would read as success.
+        done: statusEnum.value === ModelStatusEnum.RESULTS_UPLOADED
     }
 ]);
 

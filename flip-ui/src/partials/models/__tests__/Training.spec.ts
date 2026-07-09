@@ -198,17 +198,15 @@ describe("Training metrics + live-activity responsive layout", () => {
     function layoutParts(wrapper: ReturnType<typeof mountTraining>) {
         const timeline = wrapper.find("[data-test=training-timeline]");
         expect(timeline.exists()).toBe(true);
-        // Timeline -> scroll wrapper -> inner column -> Live activity card ->
-        // flex container; the metrics card is that container's first child.
+        // Timeline -> scroll wrapper -> Live activity card -> flex container;
+        // the metrics card is that container's first child.
         const scrollWrap = timeline.element.parentElement;
-        const innerColumn = scrollWrap?.parentElement;
-        const liveCard = innerColumn?.parentElement;
+        const liveCard = scrollWrap?.parentElement;
         const container = liveCard?.parentElement;
         const metricsCard = container?.children[0];
 
         return {
             scrollWrap,
-            innerColumn,
             liveCard,
             container,
             metricsCard
@@ -224,25 +222,39 @@ describe("Training metrics + live-activity responsive layout", () => {
         expect(container?.className).toContain("xl:flex-row");
     });
 
-    it("gives both cards real height by default now that they own the Run tab", () => {
+    it("lets both cards stretch to the window instead of pinning them to a fixed height", () => {
+        const wrapper = mountTraining({ status: "TRAINING_STARTED" });
+
+        const { container, metricsCard, liveCard } = layoutParts(wrapper);
+
+        // The row is bounded by the page, so releasing the cards' heights at xl
+        // makes them fill it rather than run past it.
+        expect(container?.className).toContain("flex-1");
+        expect(container?.className).toContain("min-h-0");
+        expect(metricsCard?.className).toContain("xl:min-h-0");
+        expect(liveCard?.className).toContain("xl:min-h-0");
+    });
+
+    it("splits the height between the stacked cards, with floors for a short phone", () => {
         const wrapper = mountTraining({ status: "TRAINING_STARTED" });
 
         const { metricsCard, liveCard } = layoutParts(wrapper);
 
-        expect(metricsCard?.className).toContain("min-h-[28rem]");
-        expect(liveCard?.className).toContain("min-h-[28rem]");
+        // Stacked, both grow; at xl the activity card stops growing and pins its width.
+        expect(metricsCard?.className).toContain("flex-1");
+        expect(liveCard?.className).toContain("flex-1");
+        expect(liveCard?.className).toContain("xl:flex-none");
+        expect(metricsCard?.className).toContain("min-h-[24rem]");
+        expect(liveCard?.className).toContain("min-h-[20rem]");
     });
 
-    it("caps the stacked live-activity card so it scrolls instead of running off a phone", () => {
+    it("scrolls the activity feed inside its card rather than running off the page", () => {
         const wrapper = mountTraining({ status: "TRAINING_STARTED" });
 
-        const { liveCard, scrollWrap } = layoutParts(wrapper);
+        const { scrollWrap } = layoutParts(wrapper);
 
-        // Stacked, the card is a fixed viewport onto the feed; at xl the metrics
-        // card sets the row height and the card stretches to it instead.
-        expect(liveCard?.className).toContain("h-[28rem]");
-        expect(liveCard?.className).toContain("xl:h-auto");
         expect(scrollWrap?.className).toContain("overflow-y-auto");
+        expect(scrollWrap?.className).toContain("min-h-0");
     });
 
     it("makes the live-activity card full-width when stacked and a fixed column only at xl+", () => {
@@ -264,18 +276,14 @@ describe("Training metrics + live-activity responsive layout", () => {
         expect(metricsCard?.className).toContain("min-w-0");
     });
 
-    it("matches the sibling card heights at xl instead of letting the timeline set them", () => {
+    it("keeps a long timeline from driving the card's height", () => {
         const wrapper = mountTraining({ status: "TRAINING_STARTED" });
 
-        const { liveCard, innerColumn } = layoutParts(wrapper);
+        const { liveCard } = layoutParts(wrapper);
 
-        // The card stretches to the row height its siblings define — no 70vh cap.
-        expect(liveCard?.className).toContain("self-stretch");
+        // The card's height comes from the row, and the feed scrolls inside it.
         expect(liveCard?.className).not.toContain("max-h-[70vh]");
-        // At xl the content column is absolutely positioned, so the timeline's
-        // length cannot drive the card's intrinsic height past its siblings.
-        expect(innerColumn?.className).toContain("xl:absolute");
-        expect(innerColumn?.className).toContain("xl:inset-0");
+        expect(liveCard?.className).toContain("min-h-0");
     });
 
     it("never lets the timeline scroll horizontally", () => {
@@ -310,17 +318,19 @@ describe("Training Live activity status dot", () => {
         expect(dot.classes()).not.toContain("bg-gray-400");
     });
 
-    it("is gray when the model is STOPPED", () => {
-        const wrapper = mountTraining({ status: "STOPPED" });
+    it("is green when the results have been uploaded", () => {
+        // A run that finished and delivered its results is a success, not a
+        // greyed-out non-event.
+        const wrapper = mountTraining({ status: "RESULTS_UPLOADED" });
 
         const dot = wrapper.find(dotSelector);
 
         expect(dot.exists()).toBe(true);
-        expect(dot.classes()).toContain("bg-gray-400");
+        expect(dot.classes()).toContain("bg-emerald-500");
     });
 
-    it("is gray when results have been uploaded", () => {
-        const wrapper = mountTraining({ status: "RESULTS_UPLOADED" });
+    it("is gray when the model is STOPPED", () => {
+        const wrapper = mountTraining({ status: "STOPPED" });
 
         const dot = wrapper.find(dotSelector);
 

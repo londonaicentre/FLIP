@@ -65,43 +65,40 @@
         </AiCard>
     </Form>
 
-    <div v-else-if="view === 'run'" class="flex flex-col xl:flex-row flex-1 min-h-0 gap-4 xl:items-start">
-        <AiCard class="flex flex-col flex-1 min-w-0 min-h-[28rem] xl:min-h-[34rem] p-4">
+    <!-- The row is bounded by the page, so both cards stretch to fill the window
+         rather than being pinned to a fixed height. Stacked, they split it between
+         them; the min-heights are floors for a short phone, past which the page
+         scrolls. -->
+    <div v-else-if="view === 'run'" class="flex flex-col xl:flex-row flex-1 min-h-0 gap-4">
+        <AiCard class="flex flex-col flex-1 min-w-0 min-h-[24rem] xl:min-h-0 p-4">
             <TrainingMetrics :in-progress="!finished" />
         </AiCard>
 
-        <!-- Stacked, the activity card is a fixed-height viewport onto the feed, so a
-             long run scrolls inside it rather than running off the bottom of a phone.
-             At xl it releases that height: the metrics card defines the row and
-             self-stretch matches it. -->
+        <!-- flex-1 while stacked so it takes an equal share of the height; at xl it
+             stops growing and becomes a fixed-width column beside the metrics. -->
         <AiCard
-            class="relative w-full xl:w-96 2xl:w-[28rem] xl:shrink-0 self-stretch flex flex-col
-                       h-[28rem] min-h-[28rem] xl:h-auto py-4 pl-4 pr-1 xl:p-0"
+            class="flex flex-col flex-1 xl:flex-none w-full xl:w-96 2xl:w-[28rem] xl:shrink-0
+                   min-h-[20rem] xl:min-h-0 py-4 pl-4 pr-1"
         >
-            <!-- At xl the content column is absolutely positioned so the timeline's
-                     length can't inflate the card past its siblings: the metrics card
-                     defines the row height and self-stretch matches it exactly. -->
-            <div class="flex flex-col flex-1 min-h-0 xl:absolute xl:inset-0 xl:py-4 xl:pl-4 xl:pr-1">
-                <div class="flex items-center gap-2 shrink-0 mb-3">
-                    <span class="relative flex items-center justify-center w-2 h-2">
-                        <span
-                            v-if="!finished"
-                            data-test="live-activity-ping"
-                            class="absolute inline-flex w-full h-full rounded-full opacity-60 bg-primary-500 animate-ping"
-                        />
-                        <span
-                            data-test="live-activity-dot"
-                            class="relative inline-flex w-2 h-2 rounded-full"
-                            :class="liveActivityDotClass"
-                        />
-                    </span>
-                    <h2 class="text-base font-heading font-semibold text-gray-900 dark:text-gray-100">
-                        Live activity
-                    </h2>
-                </div>
-                <div class="flex-1 min-h-0 overflow-y-auto overflow-x-hidden">
-                    <Timeline data-test="training-timeline" :complete="finished ?? false" />
-                </div>
+            <div class="flex items-center gap-2 shrink-0 mb-3">
+                <span class="relative flex items-center justify-center w-2 h-2">
+                    <span
+                        v-if="!finished"
+                        data-test="live-activity-ping"
+                        class="absolute inline-flex w-full h-full rounded-full opacity-60 bg-primary-500 animate-ping"
+                    />
+                    <span
+                        data-test="live-activity-dot"
+                        class="relative inline-flex w-2 h-2 rounded-full"
+                        :class="liveActivityDotClass"
+                    />
+                </span>
+                <h2 class="text-base font-heading font-semibold text-gray-900 dark:text-gray-100">
+                    Live activity
+                </h2>
+            </div>
+            <div class="flex-1 min-h-0 overflow-y-auto overflow-x-hidden pr-3">
+                <Timeline data-test="training-timeline" :complete="finished ?? false" />
             </div>
         </AiCard>
     </div>
@@ -201,8 +198,11 @@ const finished = computed(() => {
 
 const isError = computed(() => getStatus.value === ModelStatusEnum.ERROR);
 
+// Emerald matches the RESULTS_UPLOADED status pill: a delivered run reads as a
+// success, not as a greyed-out non-event. Grey is for a run that simply stopped.
 const liveActivityDotClass = computed(() => {
     if (isError.value) return "bg-red-600";
+    if (getStatus.value === ModelStatusEnum.RESULTS_UPLOADED) return "bg-emerald-500";
     if (finished.value) return "bg-gray-400";
 
     return "bg-primary-600";
