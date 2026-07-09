@@ -59,6 +59,9 @@ services:
       - FLIP_API_INTERNAL_URL=${FLIP_API_INTERNAL_URL}
       - INTERNAL_SERVICE_KEY_HEADER=${INTERNAL_SERVICE_KEY_HEADER}
       - INTERNAL_SERVICE_KEY=${INTERNAL_SERVICE_KEY}
+      # MLflow dual-write (FLIP#745): HTTP URI or SageMaker MLflow ARN; empty (the
+      # default) disables the integration. Mirrors the ECS task env (locals.tf).
+      - MLFLOW_TRACKING_URI=${MLFLOW_TRACKING_URI:-}
       # - AWS_PROFILE=${AWS_PROFILE} # in production, AWS credentials are retrieved from the instance role
       # Run ServerApps against the image-baked environment: Flower's SuperLink
       # defaults to installing the app bundle's declared dependencies from PyPI

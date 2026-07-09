@@ -54,6 +54,9 @@ services:
       - POSTGRES_DB=${POSTGRES_DB}
       - TRUST_API_KEY_HEADER=${TRUST_API_KEY_HEADER}
       - INTERNAL_SERVICE_KEY_HEADER=${INTERNAL_SERVICE_KEY_HEADER}
+      # MLflow dual-write (FLIP#745): HTTP URI or SageMaker MLflow ARN; empty (the
+      # default) disables the integration. Mirrors the ECS task env (locals.tf).
+      - MLFLOW_TRACKING_URI=${MLFLOW_TRACKING_URI:-}
       # in production, INTERNAL_SERVICE_KEY_HASH and AES_KEY_BASE64 are retrieved from AWS Secrets Manager at runtime
       - AWS_SECRET_NAME=${AWS_SECRET_NAME}
       - AWS_SES_ADMIN_EMAIL_ADDRESS=${AWS_SES_ADMIN_EMAIL_ADDRESS}

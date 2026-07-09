@@ -126,6 +126,9 @@ locals {
       # complete within 30 minutes or they time out at the edge.
       MAX_MODEL_FILE_BYTES = "5000000000"
       FL_KIT_SLOT_NAMES    = var.FL_KIT_SLOT_NAMES
+      # MLflow dual-write (FLIP#745): flip-api pre-creates the tracking run at
+      # job submit. Empty (the default) => integration disabled.
+      MLFLOW_TRACKING_URI = var.MLFLOW_TRACKING_URI
     })
     fl_server = {
       LOCAL_DEV                      = "false"
@@ -141,6 +144,10 @@ locals {
       # <root>/<model_id>/ here (FLIP#695). Matches the default in
       # flip-utils FlipConstants + compose.production.nvflare.yml.
       SERVER_CHECKPOINT_ROOT = "/app/server-checkpoints"
+      # MLflow dual-write (FLIP#745): the flip package's MlflowSink mirrors
+      # metrics/status and registers result-zip model versions by S3 reference.
+      # Empty (the default) => sink disabled.
+      MLFLOW_TRACKING_URI = var.MLFLOW_TRACKING_URI
       # INTERNAL_SERVICE_KEY is injected via the `secrets` block in
       # ecs_tasks.tf (sourced from the FLIP_API Secrets Manager secret),
       # never exposed as plain env in the task definition.

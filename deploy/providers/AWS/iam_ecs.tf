@@ -293,3 +293,47 @@ resource "aws_iam_role_policy" "ecs_fl_server_task" {
   role   = aws_iam_role.ecs_fl_server_task.id
   policy = data.aws_iam_policy_document.ecs_fl_server_task.json
 }
+
+# ── MLflow dual-write via SageMaker managed MLflow (FLIP#745) ────────────────
+# Attached only when MLFLOW_TRACKING_URI is a SageMaker MLflow ARN — a
+# self-hosted HTTP URI needs no IAM, and an empty URI means the integration is
+# disabled. Every MLflow REST API is an IAM action under the sagemaker-mlflow
+# service prefix; the wildcard is acceptable here because the resource is
+# scoped to the single tracking server/app ARN and every data-plane call is
+# CloudTrail-logged. Callers authenticate with their task role via the
+# sagemaker-mlflow client plugin (SigV4) — no static credentials involved.
+resource "aws_iam_role_policy" "ecs_flip_api_task_sagemaker_mlflow" {
+  count = startswith(var.MLFLOW_TRACKING_URI, "arn:") ? 1 : 0
+
+  name = "sagemaker-mlflow-access"
+  role = aws_iam_role.ecs_flip_api_task.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid      = "MlflowDataPlane"
+        Effect   = "Allow"
+        Action   = ["sagemaker-mlflow:*"]
+        Resource = var.MLFLOW_TRACKING_URI
+      },
+    ]
+  })
+}
+
+resource "aws_iam_role_policy" "ecs_fl_server_task_sagemaker_mlflow" {
+  count = startswith(var.MLFLOW_TRACKING_URI, "arn:") ? 1 : 0
+
+  name = "sagemaker-mlflow-access"
+  role = aws_iam_role.ecs_fl_server_task.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid      = "MlflowDataPlane"
+        Effect   = "Allow"
+        Action   = ["sagemaker-mlflow:*"]
+        Resource = var.MLFLOW_TRACKING_URI
+      },
+    ]
+  })
+}

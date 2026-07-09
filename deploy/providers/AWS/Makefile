@@ -163,6 +163,9 @@ export TF_VAR_ENFORCE_MFA=${ENFORCE_MFA}
 # JSON list of FL kit-slot names; seeds the fl_kit_slot pool register_trust
 # claims from. Empty ⇒ NoFreeKitSlotError on registration. Set in the env file.
 export TF_VAR_FL_KIT_SLOT_NAMES=${FL_KIT_SLOT_NAMES}
+# MLflow dual-write (FLIP#745): HTTP URI or SageMaker MLflow ARN passed into the
+# flip-api/fl-server task env. Unset/empty ⇒ integration disabled (the default).
+export TF_VAR_MLFLOW_TRACKING_URI=${MLFLOW_TRACKING_URI}
 ECS_CLUSTER ?= flip-cluster
 CENTRALHUB_ECS_SERVICES = flip-api fl-api-net-1 fl-server-net-1
 
