@@ -368,5 +368,7 @@ class EvaluationModelLocator(ModelLocator):
         # survive the Client-API FLModel conversion, but DXO meta rides inside the payload to
         # flare.receive() on every client. This is what lets a Client-API evaluator attribute each
         # validate task's weights (e.g. the multimodel DeLong comparison).
-        dxo.set_meta_prop(FlipMetaKey.EVAL_MODEL_NAME, model_name)
+        # `.value`, not the StrEnum member: FOBS serialises meta keys by type and rejects any type not
+        # on its whitelist, so an enum key fails every task with "Type 'FlipMetaKey' is not allowed".
+        dxo.set_meta_prop(FlipMetaKey.EVAL_MODEL_NAME.value, model_name)
         return dxo
