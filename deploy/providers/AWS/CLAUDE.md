@@ -18,6 +18,7 @@
 | `parameter_store.tf` | SSM Parameter Store entries |
 | `backend.tf` | S3 backend + DynamoDB lock |
 | `variables.tf` | All Terraform variables with defaults |
+| `cost_monitoring.tf` | SageMaker budget + Cost Explorer anomaly monitor guarding the MLflow integration (FLIP#745) |
 
 ## AWS Profiles
 

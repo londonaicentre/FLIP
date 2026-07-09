@@ -108,6 +108,18 @@ variable "FL_KIT_SLOT_NAMES" {
   default     = "[]"
 }
 
+variable "enable_mlflow_cost_alerts" {
+  description = "Create the SageMaker budget + cost-anomaly monitor that guard the MLflow integration (FLIP#745). Cheap (AWS Budgets is free for the first two per account) and independent of whether MLFLOW_TRACKING_URI is set — the alarms exist to catch an accidentally-created classic MLflow tracking server (~$470/mo) even before MLflow is switched on."
+  type        = bool
+  default     = true
+}
+
+variable "mlflow_monthly_budget_usd" {
+  description = "Monthly USD budget for the Amazon SageMaker service, used only as an alerting tripwire for the MLflow integration. Expected steady-state spend is ~$0 (serverless MLflow Apps have no compute charge), so a low limit is intentional: it fires on the first day of an unexpected charge rather than at invoice time."
+  type        = string
+  default     = "5"
+}
+
 variable "MLFLOW_TRACKING_URI" {
   description = "MLflow tracking URI for the best-effort dual-write (FLIP#745), passed into the flip-api and fl-server task env. Empty (the default) disables the integration entirely — flip-api stays the canonical store either way. Accepts a self-hosted HTTP URI or a SageMaker managed-MLflow ARN (arn:aws:sagemaker:...): when an ARN is set, the gated sagemaker-mlflow IAM policies in iam_ecs.tf attach automatically so the task roles may call the MLflow data-plane APIs (SigV4 via the sagemaker-mlflow client plugin). Set via the env file (TF_VAR_MLFLOW_TRACKING_URI)."
   type        = string

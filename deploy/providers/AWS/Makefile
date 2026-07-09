@@ -706,6 +706,14 @@ package-onprem-trust-kit: ## Tarball trust/.env.<KIT> + FL kit slice for an on-p
 	@[ -n "$(KIT)" ] || (echo "❌ KIT=<slot> is required (e.g. KIT=Trust_2)"; exit 1)
 	@KIT=$(KIT) bash scripts/package-onprem-trust-kit.sh
 
+.PHONY: create-mlflow-app
+create-mlflow-app: ## Create the SageMaker MLflow App + artifact bucket/role for this account (FLIP#745)
+	## Operator step — the AWS provider has no MLflow App resource yet. Tags every
+	## resource with flip:component=mlflow so the (near-zero) spend is attributable
+	## in Cost Explorer; tags are NOT retroactive, so this must run before use.
+	## Prints the App ARN to put in MLFLOW_TRACKING_URI, then `make plan && make apply`.
+	@AWS_REGION=$(AWS_REGION) ./scripts/create-mlflow-app.sh
+
 .PHONY: delete-trust
 delete-trust: ## Hard-delete a trust on the hub (frees the name + FL kit slot; cascades through dependent tables)
 	## Runs flip_api.scripts.delete_trust as a one-off ECS task. Removes the trust row
