@@ -404,6 +404,13 @@ def get_metrics(model_id: UUID, session: Session) -> list[IModelMetrics]:
         # Add the data point
         series.data.append(IModelMetricsValue(xValue=row.global_round, yValue=row.result))
 
+    # The query has no inherent ordering, so points arrive interleaved and a chart
+    # drawn in array order zig-zags. Sort each series by round; ties (a label
+    # reported both per-epoch and per-round) keep their insertion order.
+    for metric in metrics_map.values():
+        for series in metric.metrics:
+            series.data.sort(key=lambda point: point.xValue)
+
     return list(metrics_map.values())
 
 

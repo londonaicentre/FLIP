@@ -442,3 +442,31 @@ def test_validate_trust_ids_returns_true_for_empty_input():
     session.exec.return_value.all.return_value = [uuid4()]
 
     assert validate_trust_ids(uuid4(), [], session) is True
+
+
+def test_get_metrics_orders_points_by_round():
+    """Chart points must ascend by round regardless of the row order Postgres returns.
+
+    The query has no inherent ordering, and real runs come back interleaved (an
+    observed series: [1, 1, 2, 3, 2, 4, 5, 6, 3, 7, ...]). Plotting that array
+    order draws a zig-zag, and "the latest value" reads whichever row happened to
+    land last.
+    """
+    session = MagicMock()
+    model_id = uuid4()
+    trust_a = uuid4()
+
+    rows = [
+        FLMetrics(model_id=model_id, trust=trust_a, fl_client_name="T1", label="LOSS", global_round=r, result=y)
+        for r, y in [(3, 0.3), (1, 0.9), (2, 0.5)]
+    ]
+    session.exec.side_effect = [
+        MagicMock(all=MagicMock(return_value=rows)),
+        MagicMock(all=MagicMock(return_value=[(trust_a, "GSTT", "Guy's")])),
+    ]
+
+    result = get_metrics(model_id, session)
+
+    points = result[0].metrics[0].data
+    assert [p.xValue for p in points] == [1, 2, 3]
+    assert [p.yValue for p in points] == [0.9, 0.5, 0.3]

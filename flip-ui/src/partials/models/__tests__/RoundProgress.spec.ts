@@ -19,17 +19,21 @@ import type { IModelProgress } from "@/services/model-service";
 // Reactive holders the keyed swrv mock serves; tests overwrite per scenario.
 const mockData = vi.hoisted(() => ({
     progress: null as unknown,
-    metrics: [] as unknown[]
+    keys: [] as string[]
 }));
 
 vi.mock("swrv", async () => {
     const { computed } = await import("vue");
 
     return {
-        default: (key: string) => ({
-            data: computed(() => (key.includes("/progress") ? mockData.progress : mockData.metrics)),
-            isValidating: { value: false }
-        })
+        default: (key: string) => {
+            mockData.keys.push(key);
+
+            return {
+                data: computed(() => (key.includes("/progress") ? mockData.progress : null)),
+                isValidating: { value: false }
+            };
+        }
     };
 });
 
@@ -95,6 +99,7 @@ const emptyProgress: IModelProgress = {
 
 function mountCard(status = "TRAINING_STARTED", progress: unknown = runningProgress) {
     mockData.progress = progress;
+    mockData.keys = [];
 
     return mount(RoundProgress, {
         props: { status },
@@ -194,5 +199,15 @@ describe("RoundProgress", () => {
 
         expect(comp.find("[data-test=round-current]").text()).toBe("7");
         expect(comp.find("[data-test=round-meta-left]").text()).not.toContain("est. remaining");
+    });
+
+    test("shows no metric values and never fetches metrics", () => {
+        // Metric labels are chosen freely by the training code (TRAIN_LOSS, TEST_DICE,
+        // "GAN loss (G)", …), so the card cannot know which are headline-worthy nor
+        // what units they carry — a VAL_DICE_LOSS would render as a percentage. The
+        // metrics card below owns that, with a tab and axis per series.
+        mountCard();
+
+        expect(mockData.keys).toEqual(["/model/m1/progress"]);
     });
 });

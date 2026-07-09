@@ -13,11 +13,12 @@
 
 <!-- Federated round card (design handoff 03c). A pure renderer of the
      server-derived GET /model/{id}/progress view: round position, segment
-     strip, headline metrics and the collapsible per-trust ladder. All round
-     math lives in flip-api. -->
+     strip and the collapsible per-trust ladder. All round math lives in
+     flip-api; metric values live in the metrics card below, which knows each
+     series' label and axis. -->
 <template>
     <AiCard v-if="visible" data-test="round-progress-card">
-        <div class="px-5 py-4 sm:px-6 grid grid-cols-1 lg:grid-cols-[auto_1fr_auto] gap-5 lg:gap-7 items-center">
+        <div class="px-5 py-4 sm:px-6 grid grid-cols-1 lg:grid-cols-[auto_1fr] gap-5 lg:gap-7 items-center">
             <!-- Round count -->
             <div>
                 <div class="flex items-center gap-2">
@@ -69,26 +70,6 @@
                         :class="segmentClass(segment.state)"
                     />
                 </div>
-            </div>
-
-            <!-- Headline metrics -->
-            <div v-if="headlineMetrics.length" class="flex gap-4 items-center justify-end">
-                <template v-for="(metric, index) in headlineMetrics" :key="metric.label">
-                    <div v-if="index > 0" class="w-px h-9 bg-gray-200 dark:bg-dark-border" />
-                    <div class="text-right">
-                        <div
-                            class="font-mono text-[11px] uppercase tracking-[0.12em] text-gray-500 dark:text-gray-300"
-                        >
-                            {{ metric.label }}
-                        </div>
-                        <div
-                            data-test="headline-metric"
-                            class="font-heading text-xl font-bold text-gray-900 dark:text-gray-100"
-                        >
-                            {{ metric.value }}
-                        </div>
-                    </div>
-                </template>
             </div>
         </div>
 
@@ -178,8 +159,7 @@ import { computed, onBeforeUnmount, ref } from "vue";
 import { useRoute } from "vue-router";
 
 import AiCard from "@/components/AiCard/AiCard.vue";
-import { getModelMetrics,
-    getModelProgress,
+import { getModelProgress,
     getStatusEnumValue,
     type IModelProgressTrust,
     type ModelStatus,
@@ -203,16 +183,12 @@ const finished = computed(() =>
 );
 const live = computed(() => !finished.value);
 
-// Same keys TrainingMetrics/Timeline poll: swrv's dedupingInterval shares one
-// request across the cards instead of doubling the 5s cadence.
+// Same 5s cadence as TrainingMetrics/Timeline. The card deliberately shows no
+// metric values: metric labels are chosen freely by the training code, so any
+// "headline Loss/Accuracy" would have to guess semantics from label substrings
+// (and mis-format e.g. a VAL_DICE_LOSS as a percentage). The metrics card below
+// renders every series with its own tab and axis.
 const { data: progress } = useSWRV(`/model/${params.modelId}/progress`, getModelProgress, {
-    refreshInterval: finished.value ? 0 : 5_000,
-    dedupingInterval: 5_000,
-    shouldRetryOnError: true,
-    revalidateOnFocus: false,
-    errorRetryCount: 3
-});
-const { data: metricData } = useSWRV(`/model/${params.modelId}/metrics`, getModelMetrics, {
     refreshInterval: finished.value ? 0 : 5_000,
     dedupingInterval: 5_000,
     shouldRetryOnError: true,
@@ -358,34 +334,4 @@ function trustSegmentClass(trust: IModelProgressTrust, round: number): string {
 
     return "bg-gray-200 dark:bg-dark-raised";
 }
-
-// Up to two headline figures from the aggregate metrics (mean of each series'
-// latest point), preferring a loss chart then an accuracy-like one.
-const headlineMetrics = computed(() => {
-    const charts = metricData.value ?? [];
-    if (!charts.length) return [];
-
-    const byPreference = [...charts].sort((a, b) => {
-        const rank = (label: string) => (/loss/i.test(label) ? 0 : /acc|auc|f1|dice/i.test(label) ? 1 : 2);
-
-        return rank(a.yLabel) - rank(b.yLabel);
-    });
-
-    return byPreference.slice(0, 2).flatMap((chart) => {
-        const latest = chart.metrics
-            .map((series) => series.data[series.data.length - 1]?.yValue)
-            .filter((v): v is number => v != null);
-        if (!latest.length) return [];
-
-        const mean = latest.reduce((a, b) => a + b, 0) / latest.length;
-        const percent = /acc|auc|f1|dice/i.test(chart.yLabel) && mean <= 1;
-
-        return [
-            {
-                label: chart.yLabel.replace(/_/g, " ").toLowerCase(),
-                value: percent ? `${(mean * 100).toFixed(1)}%` : mean.toFixed(3)
-            }
-        ];
-    });
-});
 </script>
