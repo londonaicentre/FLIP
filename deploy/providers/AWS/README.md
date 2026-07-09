@@ -104,7 +104,7 @@ This command executes the following steps in order:
 8. **`update-env`**: Refresh the root environment file with Terraform outputs
 9. **`ssh-config`**: Update `~/.ssh/config` with SSM-managed EC2 instance IDs
 10. **`ansible-init`**: Patch both hosts, install `psql` on the Central Hub bastion, and provision Docker, AWS CLI, CloudWatch, and FL assets on the Trust EC2
-11. **`deploy-centralhub`**: Force-redeploy the Central Hub ECS Fargate services (`flip-api`, `fl-api-net-1`, `fl-server-net-1`) and sync the UI to S3 + invalidate CloudFront
+11. **`deploy-centralhub`**: Deploy the Central Hub ECS Fargate services (`flip-api`, `fl-api-net-1`, `fl-server-net-1`) at the tip of the env's branch via new task-definition revisions (see [Central Hub deploys and rollback](#central-hub-deploys-and-rollback-immutable-sha-tags)) and sync the UI to S3 + invalidate CloudFront
 12. **`register-trusts`**: Register every locally-present trust kit file (`trust/.env.<CODE>.<env>`) on the running hub and fill each kit with hub-shared values
 13. **`deploy-trust`**: Deploy Trust services via Docker Compose to the Trust EC2
 14. **`status`**: Run comprehensive health checks
@@ -231,7 +231,7 @@ aws s3 rb s3://flipstag
 Two stag-specific watch-outs:
 
 - **`make import-persistent` failing partway through** is fine on a re-run — every import in `scripts/import-resources.sh` is idempotent (probes `terraform state list` before importing). The script will skip already-imported resources and only attempt the missing ones.
-- **The task definitions applied before `deploy-centralhub` need image tags from `.env.stag`** (`DOCKER_TAG`, `DOCKER_FL_TAG`) that exist in GHCR. Branch tags do **not** auto-build on push — trigger the relevant `docker_build_*` workflows via `workflow_dispatch` before applying a branch image tag (see [the build trigger note in CLAUDE.md](../../../CLAUDE.md#docker-image-builds-manual-trigger-required-for-branches)).
+- **The task definitions applied before `deploy-centralhub` need image tags from `.env.stag`** (`DOCKER_TAG`, `DOCKER_FL_TAG`) that exist in GHCR. Branch tags do **not** auto-build on push — trigger the relevant `docker_build_*` workflows via `workflow_dispatch` before applying a branch image tag (see [the build trigger note in CLAUDE.md](../../../CLAUDE.md#docker-image-builds-manual-trigger-required-for-branches)). These env-file tags are only Terraform's bootstrap defaults — day-to-day image deploys pin immutable `sha-<short7>` tags instead (see [Central Hub deploys and rollback](#central-hub-deploys-and-rollback-immutable-sha-tags)).
 
 For a **future fresh prod or dev** account that needs the same migration, the flow is the stag runbook above minus step 1 (`make import-persistent` is only needed on environments with the stag-style state gap) and with `PROD=true` on every `make` call for prod (dev uses the separate `deploy/providers/AWS/dev/` Terraform root, no `PROD=` flag).
 
@@ -285,6 +285,49 @@ make deploy-trust
 # 12. Check status
 make status
 ```
+
+### Central Hub deploys and rollback (immutable SHA tags)
+
+`make deploy-centralhub` deploys the Central Hub ECS services (`flip-api`, `fl-api-net-1`,
+`fl-server-net-1`) by **immutable image tag + task-definition revision** (FLIP#751), then publishes
+the UI (same as `make deploy-ui`):
+
+1. Resolves `TAG=sha-<short7>` from the tip of the env's branch — `PROD=true` → `origin/main`,
+   `PROD=stag` → `origin/develop` (`git fetch` runs inside the target).
+2. Verifies each service's image exists in GHCR at that tag. Builds are test-gated (`workflow_run`
+   on the service's test suite), so right after a merge the tag may not exist yet — the guard fails
+   fast and names the workflow to check. The build workflows are also path-filtered, so a merge that
+   didn't touch a service leaves that service without an image at the new tip; trigger the missing
+   build manually (`gh workflow run <workflow>.yml --ref <branch>` builds the branch tip and
+   publishes its sha tag), then re-run the deploy.
+3. Per service: registers a new task-definition revision with only the app container's image tag
+   swapped (containers are selected **by name** — prod task defs carry a GuardDuty sidecar) and
+   repoints the service at the new revision.
+
+```bash
+make deploy-centralhub PROD=stag                    # deploy the tip of develop to staging
+make deploy-centralhub PROD=true                    # deploy the tip of main to production
+make deploy-centralhub PROD=stag TAG=sha-1a2b3c4    # pin a specific / hotfix build
+make rollback-centralhub PROD=stag                  # repoint services at the previous revision
+```
+
+`TAG=sha-<short7>` overrides the branch-tip resolution — this automates the previously manual
+runbook for feature-branch images: trigger the relevant `docker_build_*` / `fl-docker-build-*`
+workflow on your branch via `workflow_dispatch`, wait for green, then deploy its sha tag.
+
+`make rollback-centralhub` repoints each service at its previous ACTIVE task-definition revision —
+seconds, no rebuild. It does not touch the UI bundle; re-run `make deploy-ui` from the matching
+commit if the UI must move too.
+
+Terraform stays the owner of the task-definition *skeleton* (roles, env wiring, volumes). The
+services track `max(Terraform revision, live revision)` (see `ecs_services.tf`), so an unrelated
+`terraform apply` does not roll a CLI-deployed image back. When an apply *does* re-register a task
+definition, the new Terraform revision goes live with the bootstrap image tags from the env file
+(`DOCKER_TAG`, `DOCKER_FL_TAG`) — re-run `make deploy-centralhub` afterwards to roll the sha-pinned
+image forward again.
+
+> **Prod rollout note:** switch *production* deploys to this flow only after the 24 Jul 2026 DECAF
+> deadline (BDMS is live on legacy prod until then). Staging can adopt it immediately.
 
 ### Deployment to Different Environments
 

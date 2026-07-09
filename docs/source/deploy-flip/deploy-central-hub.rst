@@ -92,8 +92,12 @@ This runs, in order:
 7. ``ssh-config`` — write SSH config blocks with SSM ProxyCommand.
 8. ``ansible-init`` — install ``psql`` on the minimal Central Hub SSM bastion
    and provision Docker, CloudWatch, and FL assets on the Trust EC2.
-9. ``deploy-centralhub`` — force-redeploy the Central Hub ECS Fargate services
-   and publish the UI to S3/CloudFront.
+9. ``deploy-centralhub`` — deploy the Central Hub ECS Fargate services at the
+   tip of the env's branch via immutable ``sha-<short7>`` task-definition
+   revisions, and publish the UI to S3/CloudFront. ``make rollback-centralhub``
+   repoints the services at the previous revision; see the "Central Hub deploys
+   and rollback" section of ``deploy/providers/AWS/README.md`` for the tag
+   resolution, the ``TAG=`` override, and the production rollout timing.
 10. ``deploy-trust`` — deploy any AWS-hosted trust services (skip when only using on-prem trusts).
 11. ``status`` — comprehensive health checks.
 
