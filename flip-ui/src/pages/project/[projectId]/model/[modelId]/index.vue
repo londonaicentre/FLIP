@@ -69,7 +69,7 @@
                             data-test="initiate-training-btn"
                             aria-label="Initiate Training"
                             tooltip="Initiate Training"
-                            :disabled="!readyToTrain"
+                            :disabled="!readyToTrain || !trainingRef?.optionsComplete"
                             :loading="trainingRef?.isSubmitting ?? false"
                             @click="trainingRef?.initiateTraining()"
                         >

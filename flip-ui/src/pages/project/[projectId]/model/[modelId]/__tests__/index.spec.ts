@@ -106,6 +106,9 @@ vi.mock("@/services/model-service", async (importOriginal) => {
 });
 
 const initiateTrainingSpy = vi.fn();
+// Whether the Prepare form has a trust selected and enrichment confirmed. The real
+// Training derives this from the vee-validate form; here the tests drive it.
+const trainingOptionsComplete = ref(true);
 
 const stubs = {
     AiAlert: {
@@ -143,7 +146,8 @@ const stubs = {
         template: "<div data-test='training' :data-fl-backend-label='flBackendLabel' :data-view='view' />",
         setup: () => ({
             initiateTraining: initiateTrainingSpy,
-            isSubmitting: false
+            isSubmitting: false,
+            optionsComplete: trainingOptionsComplete
         })
     },
     TrainingActionsMenu: {
@@ -235,6 +239,7 @@ async function mountPage(options: {
 }
 
 beforeEach(() => {
+    trainingOptionsComplete.value = true;
     mockSwrvData.value = undefined;
     mockSwrvError.value = null;
     flStatusData.value = undefined;
@@ -807,5 +812,52 @@ describe("pages/project/[projectId]/model/[modelId] — header actions follow th
 
         expect(wrapper.find("[data-test='initiate-training-btn']").exists()).toBe(true);
         expect(wrapper.find("[data-test='training-actions-menu']").exists()).toBe(false);
+    });
+});
+
+
+describe("pages/project/[projectId]/model/[modelId] — Initiate Training needs complete run options", () => {
+    // A model that is otherwise ready: PENDING, every required file COMPLETED, a
+    // query present. Only the run options decide the button from here.
+    async function mountReadyModel() {
+        resolveModelConfigStateMock.mockResolvedValue({
+            changed: true,
+            configStatus: FileUploadStatus.COMPLETED,
+            jobType: "standard",
+            requiredFiles: jobTypes.standard
+        });
+        mockSwrvData.value = makeModel(
+            [
+                {
+                    name: "trainer.py",
+                    status: FileUploadStatus.COMPLETED
+                },
+                {
+                    name: "config.json",
+                    status: FileUploadStatus.COMPLETED
+                }
+            ],
+            { status: "PENDING" }
+        );
+        const wrapper = await mountPage();
+        await flushPromises();
+        await wrapper.vm.$nextTick();
+        await flushPromises();
+
+        return wrapper;
+    }
+
+    it("stays disabled until a trust is selected and enrichment is confirmed", async () => {
+        trainingOptionsComplete.value = false;
+
+        const wrapper = await mountReadyModel();
+
+        expect(wrapper.find("[data-test='initiate-training-btn']").attributes("disabled")).toBeDefined();
+    });
+
+    it("enables once a trust is selected and enrichment is confirmed", async () => {
+        const wrapper = await mountReadyModel();
+
+        expect(wrapper.find("[data-test='initiate-training-btn']").attributes("disabled")).toBeUndefined();
     });
 });

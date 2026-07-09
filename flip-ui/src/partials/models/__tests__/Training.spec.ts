@@ -13,7 +13,7 @@
 
 
 import { createTestingPinia } from "@pinia/testing";
-import { mount } from "@vue/test-utils";
+import { flushPromises, mount } from "@vue/test-utils";
 import { describe, expect, it, vi } from "vitest";
 
 import Training from "@/partials/models/Training.vue";
@@ -54,7 +54,12 @@ interface MountOpts {
     jobType?: string;
     flBackendLabel?: string;
     runTrusts?: string[];
+    formValues?: Record<string, unknown>;
 }
+
+// Stands in for the vee-validate form's reactive `values`, which Training reads
+// off the Form ref to know whether the run options are complete.
+let currentFormValues: Record<string, unknown> = {};
 
 function mountTraining(options: MountOpts = {}) {
     const {
@@ -67,8 +72,11 @@ function mountTraining(options: MountOpts = {}) {
         flBackendLabel,
         // Mirrors the page default: nothing to watch until the model is dispatched.
         view = status === "PENDING" ? "prepare" : "run",
-        runTrusts = []
+        runTrusts = [],
+        formValues = {}
     } = options;
+
+    currentFormValues = formValues;
 
     return mount(Training, {
         global: {
@@ -106,6 +114,7 @@ function mountTraining(options: MountOpts = {}) {
                 Timeline: { template: "<div />" },
                 Form: {
                     props: ["initialValues"],
+                    setup: () => ({ values: currentFormValues }),
                     template: "<form :data-initial-values=\"JSON.stringify(initialValues ?? null)\">" +
                         "<slot :errors=\"{}\" /></form>"
                 }
@@ -424,5 +433,118 @@ describe("Training options reflect a dispatched run", () => {
             enriched: "true",
             trust_ids: ["trust-a", "trust-b"]
         });
+    });
+});
+
+
+describe("Training reports whether the run options are complete", () => {
+    const optionsComplete = (formValues: Record<string, unknown>) => {
+        const wrapper = mountTraining({
+            status: "PENDING",
+            view: "prepare",
+            formValues
+        });
+
+        return (wrapper.vm as unknown as { optionsComplete: boolean }).optionsComplete;
+    };
+
+    it("is false on an untouched form — a run needs a trust and a confirmed dataset", () => {
+        expect(optionsComplete({})).toBe(false);
+    });
+
+    it("is false with trusts but no enrichment confirmation", () => {
+        expect(optionsComplete({ trust_ids: ["trust-a"] })).toBe(false);
+    });
+
+    it("is false with enrichment confirmed but no trust to train on", () => {
+        expect(optionsComplete({
+            enriched: "true",
+            trust_ids: []
+        })).toBe(false);
+    });
+
+    it("is true once a trust is chosen and enrichment is confirmed", () => {
+        expect(optionsComplete({
+            enriched: "true",
+            trust_ids: ["trust-a"]
+        })).toBe(true);
+    });
+
+    it("accepts the single-trust case, where the field holds a bare id", () => {
+        expect(optionsComplete({
+            enriched: "true",
+            trust_ids: "trust-a"
+        })).toBe(true);
+    });
+});
+
+// The tests above stub the vee-validate Form. This one drives the real one, because
+// `optionsComplete` rests on Form exposing a reactive `values` off its ref — an
+// assumption a stub cannot check.
+describe("Training reads the real vee-validate form", () => {
+    function mountWithRealForm() {
+        return mount(Training, {
+            global: {
+                plugins: [
+                    createTestingPinia({
+                        createSpy: vi.fn,
+                        stubActions: false,
+                        initialState: {
+                            project: {
+                                project: {
+                                    id: "p-1",
+                                    approvedTrusts: [{
+                                        id: "trust-a",
+                                        name: "KCH",
+                                        approved: true
+                                    }]
+                                }
+                            }
+                        }
+                    })
+                ],
+                stubs: {
+                    AiCard: { template: "<div><slot /></div>" },
+                    AiAlert: alertStub
+                }
+            },
+            props: {
+                canTrain: true,
+                status: "PENDING" as const,
+                allFilesUploaded: true,
+                requiredFiles: [],
+                uploadedFileNames: [],
+                jobType: "standard",
+                view: "prepare" as const
+            }
+        });
+    }
+
+    const complete = (wrapper: ReturnType<typeof mountWithRealForm>) =>
+        (wrapper.vm as unknown as { optionsComplete: boolean }).optionsComplete;
+
+    it("tracks the live form values as the switches are flipped", async () => {
+        const wrapper = mountWithRealForm();
+        await flushPromises();
+
+        expect(complete(wrapper)).toBe(false);
+
+        const switches = wrapper.findAll("button[role=\"switch\"]");
+        expect(switches.length).toBe(2);
+
+        // Enrichment alone is not enough.
+        await switches[0].trigger("click");
+        await flushPromises();
+        expect(complete(wrapper)).toBe(false);
+
+        // ...and now a trust.
+        await switches[1].trigger("click");
+        await flushPromises();
+        expect(complete(wrapper)).toBe(true);
+
+        // Unselecting the trust closes it again.
+        await switches[1].trigger("click");
+        await flushPromises();
+        expect(complete(wrapper)).toBe(false);
     });
 });

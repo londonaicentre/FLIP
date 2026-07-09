@@ -173,7 +173,19 @@ const formSubmitting = ref(false);
 // fields, but the submit trigger lives in the page header. Page calls
 // initiateTraining() via a ref to fire the native form submit, which lets
 // vee-validate validate and route into the existing @submit handler.
-const formRef = ref<{ $el?: HTMLFormElement } | null>(null);
+const formRef = ref<{ $el?: HTMLFormElement; values?: Record<string, unknown> } | null>(null);
+
+// Dispatching a run without a trust, or without confirming the dataset, is a
+// submit that can only fail validation. The page disables its Initiate Training
+// button on this rather than letting the click bounce off the schema.
+// `trust_ids` holds an array of ids, or a bare id when a single trust is picked.
+const optionsComplete = computed(() => {
+    const values = formRef.value?.values ?? {};
+    const trustIds = values["trust_ids"];
+    const trustCount = Array.isArray(trustIds) ? trustIds.filter(Boolean).length : Number(Boolean(trustIds));
+
+    return Boolean(values["enriched"]) && trustCount > 0;
+});
 
 defineExpose({
     initiateTraining() {
@@ -182,7 +194,8 @@ defineExpose({
             el.requestSubmit();
         }
     },
-    isSubmitting: formSubmitting
+    isSubmitting: formSubmitting,
+    optionsComplete
 });
 
 const getStatus = computed(() => {
