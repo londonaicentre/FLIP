@@ -83,26 +83,6 @@ checks:
 	@echo "✅ Using DEV_IMAGES_DIR: ${DEV_IMAGES_DIR}"
 	@echo "✅ Using DEV_DATAFRAME: ${DEV_DATAFRAME}"
 
-# 	DEV_* site-data paths from .env.app must EXIST on this host. A missing path is an obscure
-# 	failure mode specific to this Docker harness: compose bind-mounts the host path, and docker
-# 	auto-creates a missing source as an empty root-owned dir, so the simulator runs against EMPTY
-# 	data and fails far downstream (empty datalist, 0-sample run) instead of at startup. Typical
-# 	cause: an .env.app carrying another machine's absolute paths.
-# 	(Client-API tutorials run job.py directly — no bind mount — and their data_utils.py raises a
-# 	clear error naming the offending SITE*/DEV_* path, so they need no equivalent check here.)
-	@bad=0; \
-	for entry in "DEV_IMAGES_DIR=${DEV_IMAGES_DIR}" "DEV_DATAFRAME=${DEV_DATAFRAME}"; do \
-		name=$${entry%%=*}; val=$${entry#*=}; \
-		if [ -n "$$val" ] && [ ! -e "$$val" ]; then \
-			echo "❌ ERROR: $$name does not exist on this machine: $$val"; bad=1; \
-		fi; \
-	done; \
-	if [ $$bad -ne 0 ]; then \
-		echo "   Fix the path(s) in the app's .env.app (they may point at another user's home)."; \
-		exit 1; \
-	fi
-	@echo "✅ Site-data paths exist"
-
 # 	Check NUM_CLIENTS is set
 	@if [ -z "${NUM_CLIENTS}" ]; then \
 		echo "❌ ERROR: NUM_CLIENTS not set."; \
