@@ -14,9 +14,10 @@
 Draws one representative chest radiograph per target lesion, left to right in the classifier-head
 index order given by ``app_files/config.json``.
 
-Each panel is validated against its split's cohort dataframe before anything is drawn: the
-accession must carry exactly the lesion the panel claims, and no other. A mislabelled figure
-therefore fails loudly rather than shipping.
+Everything is validated before anything is drawn: the panels must cover each classifier head
+exactly once, and each accession must carry exactly the lesion its panel claims and no other
+finding in the split's cohort dataframe. A mislabelled figure therefore fails loudly rather than
+shipping.
 
     uv run --extra docs python docs/make_dataset_figure.py --data-root /path/to/dataset
     make dataset-figure DATA_ROOT=/path/to/dataset
@@ -46,6 +47,7 @@ DEFAULT_OUTPUT = Path(__file__).resolve().parent / "dataset_examples.png"
 
 ACCESSION_DIRNAME = "accession-resources"
 DATAFRAME_NAME = "sample_get_dataframe_response.csv"
+ACCESSION_COLUMN = "accession_id"
 POSITIVE = "Yes"
 
 TRAIN_SPLIT = "re_final_site2"
@@ -132,9 +134,22 @@ def read_label_row(dataframe_path: Path, accession_id: str) -> dict[str, str]:
         raise FigureError(f"Cohort dataframe not found: {dataframe_path}")
     with dataframe_path.open(newline="") as handle:
         for row in csv.DictReader(handle):
-            if row.get("accession_id") == accession_id:
+            if row.get(ACCESSION_COLUMN) == accession_id:
                 return row
     raise FigureError(f"Accession {accession_id!r} has no row in {dataframe_path}")
+
+
+def validate_panel_set(examples: Sequence[Example], targets: dict[int, str]) -> None:
+    """Fail unless the panels cover every classifier head exactly once.
+
+    ``validate_example`` only vets each panel in isolation, so without this a dropped or duplicated
+    entry would quietly render a figure with the wrong number of lesions.
+    """
+    indices = sorted(example.index for example in examples)
+    if indices != sorted(targets):
+        raise FigureError(
+            f"EXAMPLES must cover each classifier-head index exactly once; got {indices} for heads {sorted(targets)}."
+        )
 
 
 def validate_example(example: Example, data_root: Path, targets: dict[int, str], normal: str) -> None:
@@ -150,8 +165,18 @@ def validate_example(example: Example, data_root: Path, targets: dict[int, str],
             f"{example.index} is {expected!r}."
         )
 
-    row = read_label_row(data_root / example.split / DATAFRAME_NAME, example.accession_id)
-    positives = {lesion for lesion in (*targets.values(), normal) if row.get(lesion) == POSITIVE}
+    dataframe_path = data_root / example.split / DATAFRAME_NAME
+    row = read_label_row(dataframe_path, example.accession_id)
+
+    # An absent column reads as negative, which would quietly weaken the single-positive check below.
+    absent = [name for name in (*targets.values(), normal) if name not in row]
+    if absent:
+        raise FigureError(f"{dataframe_path} is missing label column(s): {absent}")
+
+    # Scan every label column, not just the configured lesions: the dataframe also carries findings
+    # outside config.json's LESIONS (e.g. Edema), and a co-positive one would make this a poor
+    # single-lesion example even though the head-facing labels look clean.
+    positives = {name for name, value in row.items() if name != ACCESSION_COLUMN and value == POSITIVE}
     if positives != {example.lesion}:
         raise FigureError(
             f"{example.accession_id} should be positive for {example.lesion!r} alone, "
@@ -168,6 +193,8 @@ def find_dicom(data_root: Path, example: Example) -> Path:
     dicoms = sorted(accession_dir.rglob("*.dcm"))
     if not dicoms:
         raise FigureError(f"No DICOM under {accession_dir}")
+    if len(dicoms) > 1:
+        raise FigureError(f"Expected one DICOM under {accession_dir}, found {len(dicoms)}: {[p.name for p in dicoms]}")
     return dicoms[0]
 
 
@@ -178,13 +205,20 @@ def load_grayscale(dicom_path: Path) -> np.ndarray:
     (compression noise), so the channel axis is averaged away rather than rendered as colour.
     """
     dataset = pydicom.dcmread(str(dicom_path))
+    photometric = str(getattr(dataset, "PhotometricInterpretation", ""))
     pixels = dataset.pixel_array.astype(np.float32)
+
     if pixels.ndim == 3:
+        # Averaging the third axis is only a valid grey collapse when it holds R, G and B. A
+        # YBR-encoded export (what a JPEG re-compression yields) would average luma with chroma and
+        # silently produce a washed-out image, and a multi-frame file would average across width.
+        if photometric != "RGB":
+            raise FigureError(f"Cannot average a {photometric!r} channel axis into grey: {dicom_path}")
         pixels = pixels.mean(axis=-1)
     if pixels.ndim != 2:
         raise FigureError(f"Expected a single-frame radiograph, got shape {pixels.shape}: {dicom_path}")
 
-    if getattr(dataset, "PhotometricInterpretation", "") == "MONOCHROME1":
+    if photometric == "MONOCHROME1":
         pixels = pixels.max() - pixels
 
     low, high = float(pixels.min()), float(pixels.max())
@@ -241,6 +275,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             raise FigureError(f"Dataset root does not exist: {data_root}")
 
         targets, normal = load_lesions()
+        validate_panel_set(EXAMPLES, targets)
         for example in EXAMPLES:
             validate_example(example, data_root, targets, normal)
 
