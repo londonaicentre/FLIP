@@ -341,6 +341,12 @@ def main() -> None:
     args = parse_args()
     config = load_config()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    logger.info("Evaluating on device: %s", device)
+    if device.type == "cpu":
+        logger.warning(
+            "CUDA is unavailable — falling back to CPU inference (much slower). "
+            "Check the host GPU/driver state if this is unexpected."
+        )
 
     model_specs, lesion_items, lesion_dict = resolve_models_config(config)
     model_names = [spec["name"] for spec in model_specs]
