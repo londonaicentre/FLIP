@@ -479,13 +479,18 @@ deploy-centralhub: ## Deploy Central Hub ECS services at the env branch tip (new
 	    200) echo "   ✓ $$service: $$new_image verified in GHCR";; \
 	    404) \
 	      case "$$service" in \
-	        flip-api) wf=docker_build_flip_api.yml;; \
-	        *) wf=fl-docker-build-$(FL_BACKEND).yml;; \
+	        flip-api) wf=docker_build_flip_api.yml; is_fl=false;; \
+	        *) wf=fl-docker-build-$(FL_BACKEND).yml; is_fl=true;; \
 	      esac; \
 	      echo "❌ $$new_image not found in GHCR."; \
 	      echo "   Builds are path-filtered (a merge that didn't touch this service publishes no new"; \
 	      echo "   tag for it), and flip-api's is additionally test-gated so it may still be running:"; \
 	      echo "     gh run list --workflow=$$wf"; \
+	      if [ "$$is_fl" = true ]; then \
+	        echo "   $$wf builds fl-server, fl-api, fl-client and fl-base together, so their sha-<short7>"; \
+	        echo "   tags publish as one set — a 404 here means that whole backend build did not run for"; \
+	        echo "   this commit, not that a single image within the multi-image build is missing."; \
+	      fi; \
 	      echo "   To build a missing / branch / hotfix image: gh workflow run $$wf --ref <branch>"; \
 	      echo "   Nothing has been deployed."; \
 	      exit 1;; \
@@ -500,6 +505,19 @@ deploy-centralhub: ## Deploy Central Hub ECS services at the env branch tip (new
 	done; \
 	deployed=""; tmp_td=""; \
 	trap 'rm -f $$tmp_td' EXIT; \
+	warn_mixed() { \
+	  [ -n "$$deployed" ] || return 0; \
+	  echo ""; \
+	  echo "   ============================== MIXED STATE =============================="; \
+	  echo "   ⚠️  PARTIAL DEPLOY — some services were already repointed this run before"; \
+	  echo "       this failure; the Central Hub now runs a mix of old and new revisions."; \
+	  echo "       Already repointed:$$deployed"; \
+	  echo "       → Fix the error above and re-run 'make deploy-centralhub' to converge."; \
+	  echo "       → Do NOT 'make rollback-centralhub' blindly: it would also downgrade the"; \
+	  echo "         services that deployed cleanly this run."; \
+	  echo "   ========================================================================="; \
+	  echo ""; \
+	}; \
 	for service in $(CENTRALHUB_ECS_SERVICES); do \
 	  current_td=$$(aws ecs describe-services --cluster $(ECS_CLUSTER) --services $$service \
 	    --query 'services[0].taskDefinition' --output text); \
@@ -517,8 +535,7 @@ deploy-centralhub: ## Deploy Central Hub ECS services at the env branch tip (new
 	  if ! new_td_arn=$$(aws ecs register-task-definition --cli-input-json file://$$tmp_td \
 	      --query 'taskDefinition.taskDefinitionArn' --output text); then \
 	    echo "❌ $$service: register-task-definition failed."; \
-	    [ -z "$$deployed" ] || echo "   ⚠️  Already repointed this run:$$deployed — the hub is mixed. Fix and re-run"; \
-	    [ -z "$$deployed" ] || echo "   to converge; do NOT rollback-centralhub blindly (it would also downgrade the untouched services)."; \
+	    warn_mixed; \
 	    exit 1; \
 	  fi; \
 	  rm -f $$tmp_td; tmp_td=""; \
@@ -530,8 +547,7 @@ deploy-centralhub: ## Deploy Central Hub ECS services at the env branch tip (new
 	    echo "   so the latest-ACTIVE lookups in ecs_services.tf keep tracking the running revision."; \
 	    aws ecs deregister-task-definition --task-definition "$$new_td_arn" >/dev/null \
 	      || echo "   ⚠️  deregister failed too — deregister $${new_td_arn##*/} manually, or the next terraform apply will adopt it."; \
-	    [ -z "$$deployed" ] || echo "   ⚠️  Already repointed this run:$$deployed — the hub is mixed. Fix and re-run"; \
-	    [ -z "$$deployed" ] || echo "   to converge; do NOT rollback-centralhub blindly (it would also downgrade the untouched services)."; \
+	    warn_mixed; \
 	    exit 1; \
 	  fi; \
 	  deployed="$$deployed $$service"; \
@@ -601,6 +617,9 @@ rollback-centralhub: ## Repoint each Central Hub ECS service at its previous ACT
 	  echo "     aws ecs describe-services --cluster $(ECS_CLUSTER) --services $(CENTRALHUB_ECS_SERVICES) --query 'services[].events[:5]'"; \
 	  exit 1; }
 	@echo "✅ Central Hub ECS services rolled back."
+	@echo "⚠️  The flip-ui bundle was NOT rolled back — if the reverted release also changed the"
+	@echo "   UI, re-run 'make deploy-ui PROD=$(PROD)' from the matching commit to avoid a"
+	@echo "   frontend/backend mismatch."
 
 .PHONY: deploy-ui
 deploy-ui: ## Build flip-ui from the working tree and deploy it to S3 + invalidate CloudFront
