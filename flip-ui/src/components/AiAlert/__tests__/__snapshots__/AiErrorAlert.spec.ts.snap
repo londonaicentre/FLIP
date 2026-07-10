@@ -12,7 +12,7 @@ exports[`AiErrorAlert > Renders Component 1`] = `
     >
       <svg
         class="w-5 h-5 text-red-500 dark:text-red-200"
-        data-icon="ic:twotone-cancel"
+        data-icon="ph:x-circle-fill"
       />
     </div>
     <div

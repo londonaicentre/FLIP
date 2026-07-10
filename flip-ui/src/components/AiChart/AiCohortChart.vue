@@ -128,16 +128,38 @@ onMounted(() => {
                     fontFamily: "JetBrainsMono",
                     fontWeight: 700
                 },
-                dataZoom: {
-                    minSpan: 10,
-                    bottom: 30
-                },
                 calculable: true,
-                toolbox: chartToolbox(darkMode),
+                // No standing dataZoom slider — zoom is on-demand via the toolbox
+                // magnifier below, matching the training metrics chart.
+                toolbox: {
+                    ...chartToolbox(darkMode),
+                    // Floats inside the plot below the title band (metrics-chart idiom).
+                    top: 36,
+                    right: 12,
+                    feature: {
+                        ...chartToolbox(darkMode).feature,
+                        dataZoom: {
+                            show: true,
+                            // "none" keeps the drawn box as the exact view instead of
+                            // filtering points outside it.
+                            filterMode: "none" as const,
+                            title: {
+                                zoom: "Zoom",
+                                back: "Undo Zoom"
+                            }
+                        }
+                    }
+                },
                 grid: {
                     left: "5%",
-                    right: "5%",
-                    bottom: "25%",
+                    // Full-width plot — the legend and toolbox overlay the grid
+                    // instead of reserving header rows or a side column.
+                    right: 24,
+                    // Clears only the title band.
+                    top: 32,
+                    // The old "25%" reserved room for the removed slider bar and the
+                    // removed duplicate x-axis title.
+                    bottom: 24,
                     containLabel: true
                 },
                 tooltip: {
@@ -150,7 +172,18 @@ onMounted(() => {
                 },
                 legend: {
                     data: props.data.results.map(d => trustLabel(d.trustId, d.trustName)),
-                    left: "center",
+                    orient: "vertical",
+                    // Floats inside the plot, vertically centred on the right edge; the
+                    // translucent card backing keeps it legible where bars pass beneath.
+                    right: 12,
+                    top: "middle",
+                    align: "left",
+                    itemGap: 10,
+                    padding: 8,
+                    backgroundColor: darkMode ? "rgba(14, 11, 19, 0.78)" : "rgba(255, 255, 255, 0.82)",
+                    borderColor: chrome.gridLine,
+                    borderWidth: 1,
+                    borderRadius: 6,
                     textStyle: { color: chrome.ink }
                 },
                 xAxis: {
@@ -159,16 +192,8 @@ onMounted(() => {
                         show: true,
                         lineStyle: { color: chrome.axisLine }
                     },
-                    name: chartTitle,
-                    nameLocation: "middle",
-                    nameGap: 40,
+                    // No axis name — it repeated the chart title under the plot.
                     data: xAxisValues,
-                    nameTextStyle: {
-                        fontWeight: 700,
-                        fontSize: 16,
-                        fontFamily: "Inter",
-                        color: chrome.ink
-                    },
                     axisLabel: {
                         fontWeight: 700,
                         fontFamily: "Inter",

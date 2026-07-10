@@ -79,6 +79,14 @@ describe("CohortAggregateCard", () => {
         swrvMock.value = null;
     });
 
+    it("frames itself as a flat border box, not a shadowed card", () => {
+        const wrapper = mountCard();
+
+        expect(wrapper.classes()).toContain("border");
+        expect(wrapper.classes()).toContain("rounded-xl");
+        expect(wrapper.find("[data-test='ai-card']").exists()).toBe(false);
+    });
+
     it("shows total 0 and all trusts running before any results arrive", () => {
         const wrapper = mountCard();
         expect(wrapper.text()).toContain("0");

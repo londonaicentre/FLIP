@@ -53,4 +53,83 @@ describe("Ai Snackbar", () => {
         wrapper.unmount();
     });
 
+    test.each(["success", "error", "warning", "info"] as const)(
+        "renders the %s severity icon",
+        async (type) => {
+            const wrapper = mount(AiSnackbar);
+
+            notify({
+                title: "Heads up",
+                text: "typed toast",
+                type
+            }, 100_000);
+            await nextTick();
+
+            expect(wrapper.find("[data-test='snackbar']").find("svg").exists()).toBe(true);
+            wrapper.unmount();
+        }
+    );
+
+    test("runs the action and closes the toast from the action button", async () => {
+        const wrapper = mount(AiSnackbar);
+        const action = vi.fn();
+
+        notify({
+            title: "Heads up",
+            text: "Something happened",
+            actionText: "Undo",
+            action
+        }, 100_000);
+        await nextTick();
+
+        await wrapper.find("[data-test='snackbar-action-button']").trigger("click");
+
+        // The toast lingers in the DOM through its leave transition, so assert
+        // the behaviour (action ran, close emitted) rather than removal.
+        expect(action).toHaveBeenCalledTimes(1);
+        expect(wrapper.emitted("close")).toHaveLength(1);
+
+        wrapper.unmount();
+    });
+
+    test("auto-dismisses after its timeout without emitting close", async () => {
+        vi.useFakeTimers();
+        try {
+            const wrapper = mount(AiSnackbar);
+
+            notify({
+                title: "Heads up",
+                text: "brief"
+            }, 1_000);
+            await nextTick();
+            expect(wrapper.text()).toContain("brief");
+
+            vi.advanceTimersByTime(1_100);
+            await nextTick();
+
+            expect(wrapper.emitted("close")).toBeUndefined();
+            wrapper.unmount();
+        }
+        finally {
+            vi.useRealTimers();
+        }
+    });
+
+    test("dismiss removes the toast without emitting close", async () => {
+        const wrapper = mount(AiSnackbar);
+
+        notify({
+            title: "Heads up",
+            text: "soon gone"
+        }, 100_000);
+        await nextTick();
+
+        await wrapper.find("[data-test='snackbar-dismiss-button']").trigger("click");
+
+        // Dismiss removes without the close event (unlike the action path).
+        expect(wrapper.emitted("close")).toBeUndefined();
+
+        wrapper.unmount();
+    });
+
 });

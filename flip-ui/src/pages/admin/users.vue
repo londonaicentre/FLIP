@@ -17,17 +17,32 @@
 </route>
 
 <template>
-    <AiCard class="w-full h-full">
-        <div class="flex w-full h-full">
-            <!-- LEFT RAIL — searchable user list -->
-            <div class="flex flex-col flex-shrink-0 h-full bg-white border-r border-gray-200 w-96 dark:bg-dark-surface dark:border-dark-border">
+    <!-- Framed like the Projects/Models views: page gutters around a bordered rounded
+         box. The box keeps the old AiCard's load-bearing overflow clipping + white
+         canvas without its shadow/ring chrome. -->
+    <div data-test="admin-page-gutter" class="w-full h-full p-4 pt-3 md:p-8 md:pt-5">
+        <div data-test="users-shell" class="flex w-full h-full overflow-hidden bg-white border border-gray-200 rounded-xl dark:bg-dark-canvas dark:border-dark-border">
+            <!-- LEFT RAIL — searchable user list. Below lg only one pane renders at a
+                 time (drill-in): the full-width list, or the detail after a row tap.
+                 On lg+ it sits beside the editor at 384px, shrinking down to a 240px floor. -->
+            <div
+                data-test="user-list-rail"
+                class="flex-col shrink min-w-[15rem] h-full bg-white lg:border-r border-gray-200 w-full lg:w-96 dark:bg-dark-surface dark:border-dark-border"
+                :class="mobileDetailOpen ? 'hidden lg:flex' : 'flex'"
+            >
                 <div class="flex items-center gap-3 px-4 py-3 border-b border-gray-200 dark:border-dark-border">
                     <h1 class="flex-grow text-lg font-semibold text-gray-900 font-heading dark:text-gray-100">
                         Users
                     </h1>
-                    <AiButton light data-test="register-user-btn" @click="showRegisterUserModal = true">
-                        <icon-mdi-plus class="w-4 h-4 mr-1.5" />
-                        Register User
+                    <AiButton
+                        light
+                        data-test="register-user-btn"
+                        aria-label="Register User"
+                        tooltip="Register User"
+                        @click="showRegisterUserModal = true"
+                    >
+                        <icon-ph-user-plus class="w-4 h-4 lg:mr-1.5" />
+                        <span class="hidden lg:inline">Register User</span>
                     </AiButton>
                 </div>
                 <div class="px-4 py-3 border-b border-gray-100 dark:border-dark-border">
@@ -46,11 +61,11 @@
                             v-for="row in filteredUsers"
                             :key="row.id"
                             data-test="user"
-                            class="flex items-center gap-3 px-4 py-2.5 cursor-pointer transition border-l-[3px]"
+                            class="flex items-center gap-3 px-4 py-2.5 min-h-[60px] cursor-pointer transition border-l-[3px]"
                             :class="row.id === selectedUser?.id
                                 ? 'border-primary-500 bg-primary-100 dark:bg-primary-900/40'
                                 : 'border-transparent hover:bg-gray-50 dark:hover:bg-dark-canvas'"
-                            @click="setSelectedUser(row)"
+                            @click="openUser(row)"
                         >
                             <UserAvatar
                                 :name="row.name"
@@ -80,6 +95,10 @@
                                 dense
                                 class="flex-shrink-0"
                             />
+                            <icon-ph-caret-right
+                                class="w-4 h-4 text-gray-400 dark:text-gray-300 shrink-0 lg:hidden"
+                                aria-hidden="true"
+                            />
                         </li>
                     </ul>
                     <div v-else class="p-8 text-sm text-center text-gray-500 dark:text-gray-300">
@@ -104,9 +123,28 @@
             </div>
 
             <!-- RIGHT PANE — selected user editor -->
-            <div class="flex flex-col flex-grow min-w-0 overflow-hidden">
+            <div
+                data-test="user-detail-pane"
+                class="flex-col flex-grow min-w-0 overflow-hidden"
+                :class="mobileDetailOpen ? 'flex' : 'hidden lg:flex'"
+            >
                 <template v-if="selectedUser">
-                    <div class="flex items-center gap-4 px-6 py-4 border-b border-gray-200 dark:border-dark-border">
+                    <div
+                        data-test="detail-back-header"
+                        class="flex items-center px-2 border-b border-gray-200 dark:border-dark-border lg:hidden"
+                    >
+                        <button
+                            type="button"
+                            data-test="back-to-users-btn"
+                            aria-label="Back to user list"
+                            class="flex items-center min-h-[44px] px-2 text-base font-semibold text-primary-500 dark:text-primary-200 transition hover:text-primary-800 dark:hover:text-primary-100"
+                            @click="mobileDetailOpen = false"
+                        >
+                            <icon-mdi-chevron-left class="w-6 h-6" />
+                            Users
+                        </button>
+                    </div>
+                    <div class="flex items-center gap-4 px-4 py-4 border-b border-gray-200 md:px-6 dark:border-dark-border">
                         <UserAvatar
                             :name="selectedUser.name"
                             :email="selectedUser.email"
@@ -120,12 +158,23 @@
                             <p class="text-sm text-gray-500 truncate dark:text-gray-300">
                                 {{ selectedUser.organisation }} · {{ selectedUser.email }}
                             </p>
+                            <!-- Mobile: the pill drops under the name so nothing shares a
+                                 non-wrapping row with the truncating title. -->
+                            <span
+                                class="mt-1 inline-flex lg:hidden items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold"
+                                :class="statusPillClasses"
+                                data-test="user-status-mobile"
+                            >
+                                <span
+                                    class="w-1.5 h-1.5 rounded-full"
+                                    :class="selectedUser.isDisabled ? 'bg-red-600' : 'bg-green-600'"
+                                />
+                                {{ selectedUser.isDisabled ? "Disabled" : "Active" }}
+                            </span>
                         </div>
                         <span
-                            class="inline-flex flex-shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold"
-                            :class="selectedUser.isDisabled
-                                ? 'bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-200'
-                                : 'bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-200'"
+                            class="hidden lg:inline-flex flex-shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold"
+                            :class="statusPillClasses"
                             data-test="user-status"
                         >
                             <span
@@ -136,14 +185,21 @@
                         </span>
                         <AiButton
                             data-test="save-user-btn"
+                            class="hidden lg:block"
                             primary
+                            aria-label="Save User"
+                            tooltip="Save User"
                             :disabled="!selectedUser.dirty"
                             @click="saveUser"
                         >
+                            <icon-mdi-content-save-outline class="w-4 h-4 mr-2" />
                             Save User
                         </AiButton>
                     </div>
-                    <div class="flex flex-col overflow-y-auto grow">
+                    <div
+                        class="flex flex-col overflow-y-auto grow"
+                        :class="selectedUser.dirty ? 'pb-28 lg:pb-0' : ''"
+                    >
                         <div class="grid gap-4 p-6 border-b border-gray-100 md:grid-cols-3 dark:border-dark-border">
                             <div>
                                 <label
@@ -287,6 +343,25 @@
                             </div>
                         </div>
                     </div>
+                    <!-- Sticky mobile Save bar — slides in whenever the record is dirty,
+                         keeping Save thumb-reachable while the detail page-scrolls. -->
+                    <div
+                        data-test="mobile-save-bar"
+                        class="fixed inset-x-0 bottom-0 z-10 px-4 py-3 bg-white/95 dark:bg-dark-surface/95 border-t border-gray-200 dark:border-dark-border shadow-[0_-4px_12px_rgba(0,0,0,0.04)] transition-transform duration-[250ms] ease-out lg:hidden"
+                        :class="selectedUser.dirty ? 'translate-y-0' : 'translate-y-[130%]'"
+                    >
+                        <AiButton
+                            primary
+                            large
+                            block
+                            data-test="mobile-save-user-btn"
+                            aria-label="Save User"
+                            @click="saveUser"
+                        >
+                            <icon-mdi-content-save-outline class="w-5 h-5 mr-2" />
+                            Save User
+                        </AiButton>
+                    </div>
                 </template>
                 <div v-else class="flex items-center justify-center h-full p-8">
                     <p class="text-sm text-gray-500 dark:text-gray-300">
@@ -295,7 +370,7 @@
                 </div>
             </div>
         </div>
-    </AiCard>
+    </div>
     <RegisterUserModal
         title="Register User"
         :dialog="showRegisterUserModal"
@@ -342,7 +417,6 @@ import useSWRV from "swrv";
 import { computed, onBeforeMount, ref } from "vue";
 
 import AiButton from "@/components/AiButton/AiButton.vue";
-import AiCard from "@/components/AiCard/AiCard.vue";
 import AiConfirmModal from "@/components/AiModal/AiConfirmModal.vue";
 import AiPagination from "@/components/AiPagination/AiPagination.vue";
 import AiSearch from "@/components/AiSearch/AiSearch.vue";
@@ -376,6 +450,9 @@ const pageSize = 20;
 const pageNumber = ref(1);
 const search = ref("");
 const selectedUser = ref<IManagedUser>();
+// Which pane shows below lg (drill-in). Back keeps selectedUser so a resize
+// to desktop still shows the editor; at lg+ both panes render regardless.
+const mobileDetailOpen = ref(false);
 const showRegisterUserModal = ref(false);
 const dialogDisable = ref(false);
 const dialogEnable = ref(false);
@@ -458,6 +535,11 @@ const setSelectedUser = (user: IUser) => {
     };
 };
 
+const openUser = (user: IUser) => {
+    setSelectedUser(user);
+    mobileDetailOpen.value = true;
+};
+
 const markProfileDirty = () => {
     if (selectedUser.value) {
         selectedUser.value.dirty = true;
@@ -474,6 +556,12 @@ const selectRole = (role: IRole) => {
     selectedUser.value.dirty = true;
     selectedUser.value.rolesDirty = true;
 };
+
+// Tailwind classes shared by the mobile and desktop status pills.
+const statusPillClasses = computed(() =>
+    selectedUser.value?.isDisabled
+        ? "bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-200"
+        : "bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-200");
 
 // Tailwind classes for a role card; the selected card gets the primary accent.
 const roleCardClasses = (roleId: string) =>

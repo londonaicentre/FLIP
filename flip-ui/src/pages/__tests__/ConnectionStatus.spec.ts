@@ -222,6 +222,21 @@ describe("ConnectionStatus", () => {
         expect(wrapper.find("[data-test='add-trust-btn']").exists()).toBe(true);
     });
 
+    it("puts Add Trust on the title row and collapses it to a plus below lg", async () => {
+        mockSwrvData.value = fixture;
+        const wrapper = mountPage();
+        await wrapper.vm.$nextTick();
+
+        const btn = wrapper.find("[data-test='add-trust-btn']");
+        // Same row as the h1 — not a separate bottom-aligned block.
+        expect(btn.element.parentElement?.querySelector("h1")).toBeTruthy();
+        // Icon-collapse idiom: plus icon always, label only at lg+.
+        expect(btn.find("svg").exists()).toBe(true);
+        const label = btn.find("span.hidden");
+        expect(label.text()).toBe("Add Trust");
+        expect(label.classes()).toContain("lg:inline");
+    });
+
     it("renders the trust name prominently with the code beneath it (code hidden when absent)", async () => {
         mockSwrvData.value = [
             {
@@ -254,14 +269,54 @@ describe("ConnectionStatus", () => {
         expect(wrapper.find("[data-test='trust-heartbeat']").text()).not.toContain("ago");
     });
 
-    it("gives non-offline trust rows the same dark surface as the table header", async () => {
-        // Zebra (first fixture entry) is online — no red tint applies.
+    it("leaves non-offline trust rows on the card surface, matching the mobile rows", async () => {
+        // Zebra (first fixture entry) is online — no red tint applies, and no
+        // dark-surface either: rows sit transparent on the card's dark canvas
+        // exactly like the stacked mobile rows.
         mockSwrvData.value = [fixture[0]];
         const wrapper = mountPage();
         await wrapper.vm.$nextTick();
         const row = wrapper.find("[data-test='trust-row']");
         expect(row.classes().some(c => c.startsWith("bg-red"))).toBe(false);
-        expect(row.classes()).toContain("dark:bg-dark-surface");
+        expect(row.classes()).not.toContain("dark:bg-dark-surface");
+
+        // main.css paints every table's tbody dark:bg-gray-800 with its own
+        // ring/shadow and gray-700 dividers — this table must override those
+        // so dark mode shows the card canvas through, like the mobile list.
+        const tbody = wrapper.find("tbody");
+        expect(tbody.classes()).toContain("dark:bg-transparent");
+        expect(tbody.classes()).toContain("dark:divide-dark-border");
+        const table = wrapper.find("table");
+        expect(table.classes()).toContain("ring-0");
+        expect(table.classes()).toContain("shadow-none");
+    });
+
+    it("stacks the topology legend vertically", async () => {
+        mockSwrvData.value = fixture;
+        const wrapper = mountPage();
+        await wrapper.vm.$nextTick();
+        await wrapper.find("[data-test='view-toggle-radial']").trigger("click");
+
+        const legend = wrapper.find("[data-test='radial-legend']");
+        expect(legend.classes()).toContain("flex-col");
+        expect(legend.findAll("span.rounded-full")).toHaveLength(3);
+    });
+
+    it("lightens the offline dashed spoke in dark mode so it reads on the dark card", async () => {
+        mockSwrvData.value = fixture;
+        const wrapper = mountPage();
+        await wrapper.vm.$nextTick();
+        await wrapper.find("[data-test='view-toggle-radial']").trigger("click");
+
+        // Offline spokes are the dashed ones (Acme has a null heartbeat).
+        const offlineSpokes = wrapper.findAll("line").filter(l => l.attributes("stroke-dasharray") === "3 4");
+        expect(offlineSpokes.length).toBeGreaterThan(0);
+        for (const spoke of offlineSpokes) {
+            // CSS wins over the SVG stroke attribute, so these utilities recolour
+            // and brighten the line in dark mode only.
+            expect(spoke.classes()).toContain("dark:stroke-red-400");
+            expect(spoke.classes()).toContain("dark:[stroke-opacity:0.7]");
+        }
     });
 
     it("renders the radial topology on the plain card surface with dark-visible labels", async () => {
@@ -423,5 +478,151 @@ describe("ConnectionStatus", () => {
 
         await nodes[0].trigger("mouseleave");
         expect(detail().exists()).toBe(false);
+    });
+
+    it("lets the Trust column squash and truncate instead of locking at 18rem", async () => {
+        mockSwrvData.value = fixture;
+        const wrapper = mountPage();
+        await wrapper.vm.$nextTick();
+
+        // The column absorbs the leftover width instead of pinning a 288px floor…
+        const th = wrapper.find("[data-test='sort-header-name']");
+        expect(th.classes()).toContain("w-full");
+        expect(th.classes()).not.toContain("min-w-[18rem]");
+        // …and max-w-0 gives the cell zero min-content, so the truncate spans
+        // actually clip when the table is squashed rather than forcing overflow.
+        const nameCell = wrapper.find("[data-test='trust-name']").element.closest("td");
+        expect(nameCell?.className).toContain("max-w-0");
+    });
+
+    it("renders exactly six columns — no empty trailing action column", async () => {
+        mockSwrvData.value = fixture;
+        const wrapper = mountPage();
+        await wrapper.vm.$nextTick();
+
+        expect(wrapper.findAll("th")).toHaveLength(6);
+        expect(wrapper.find("[data-test='trust-row']").findAll("td")).toHaveLength(6);
+    });
+
+    describe("mobile stacked trust rows (design 3a)", () => {
+        const mobileCodes = (wrapper: ReturnType<typeof mountPage>): string[] =>
+            wrapper.findAll("[data-test='trust-row-mobile']").map(r => {
+                const code = r.find("[data-test='trust-code-mobile']");
+
+                return code.exists() ? code.text() : "";
+            });
+
+        it("renders a stacked row per trust below sm and hides the table there", async () => {
+            mockSwrvData.value = fixture;
+            const wrapper = mountPage();
+            await wrapper.vm.$nextTick();
+
+            const list = wrapper.find("[data-test='trusts-stacked-list']");
+            expect(list.classes()).toContain("sm:hidden");
+            expect(wrapper.findAll("[data-test='trust-row-mobile']")).toHaveLength(fixture.length);
+
+            const tableWrap = wrapper.find("table").element.parentElement;
+            expect(tableWrap?.className).toContain("hidden");
+            expect(tableWrap?.className).toContain("sm:block");
+        });
+
+        it("stacks name, code, pill, meta line and sparkline into two lines", async () => {
+            mockSwrvData.value = [fixture[0]]; // Zebra: online, London, 1 project
+            const wrapper = mountPage();
+            await wrapper.vm.$nextTick();
+
+            const row = wrapper.find("[data-test='trust-row-mobile']");
+            expect(row.text()).toContain("Zebra NHS Trust");
+            expect(row.find("[data-test='trust-code-mobile']").text()).toBe("ZNT");
+            expect(row.text()).toContain("Online");
+            expect(row.text()).toContain("London");
+            expect(row.text()).toContain("ago");
+            expect(row.text()).toContain("1 project");
+            expect(row.find("svg polyline").exists()).toBe(true);
+        });
+
+        it("tints the offline stacked row and its heartbeat red", async () => {
+            mockSwrvData.value = [fixture[1]]; // Acme: null heartbeat → offline
+            const wrapper = mountPage();
+            await wrapper.vm.$nextTick();
+
+            const row = wrapper.find("[data-test='trust-row-mobile']");
+            expect(row.classes().some(c => c.startsWith("bg-red"))).toBe(true);
+            expect(row.find("[data-test='trust-heartbeat-mobile']").classes().join(" ")).toContain("text-red-600");
+        });
+
+        it("sorts from the mobile sort menu and toggles direction on repeat", async () => {
+            mockSwrvData.value = fixture;
+            const wrapper = mountPage();
+            await wrapper.vm.$nextTick();
+
+            expect(wrapper.find("[data-test='mobile-sort-btn']").text()).toContain("Sort: Name ↑");
+
+            // Fixture project counts: Zebra=1, Maple=3, Acme=7.
+            await wrapper.find("[data-test='mobile-sort-btn']").trigger("click");
+            await wrapper.find("[data-test='mobile-sort-projects']").trigger("click");
+            expect(mobileCodes(wrapper)).toEqual(["ZNT", "MNT", "ANT"]);
+            expect(wrapper.find("[data-test='mobile-sort-btn']").text()).toContain("Sort: Projects ↑");
+
+            await wrapper.find("[data-test='mobile-sort-btn']").trigger("click");
+            await wrapper.find("[data-test='mobile-sort-projects']").trigger("click");
+            expect(mobileCodes(wrapper)).toEqual(["ANT", "MNT", "ZNT"]);
+            expect(wrapper.find("[data-test='mobile-sort-btn']").text()).toContain("Sort: Projects ↓");
+        });
+
+        it("applies the active filter tile to the stacked rows too", async () => {
+            mockSwrvData.value = fixture;
+            const wrapper = mountPage();
+
+            await wrapper.find("[data-test='filter-tile-offline']").trigger("click");
+            expect(mobileCodes(wrapper)).toEqual(["ANT"]);
+        });
+    });
+
+    describe("summary filter tiles", () => {
+        // Fixture states: Zebra (ZNT) online, Maple (MNT) degraded, Acme (ANT) offline.
+        it("renders one tile per connection state with its count", async () => {
+            mockSwrvData.value = fixture;
+            const wrapper = mountPage();
+            await wrapper.vm.$nextTick();
+
+            expect(wrapper.find("[data-test='filter-tile-count-online']").text()).toBe("1");
+            expect(wrapper.find("[data-test='filter-tile-count-degraded']").text()).toBe("1");
+            expect(wrapper.find("[data-test='filter-tile-count-offline']").text()).toBe("1");
+        });
+
+        it("filters the table to a state on click and resets on a second click", async () => {
+            mockSwrvData.value = fixture;
+            const wrapper = mountPage();
+            const tile = wrapper.find("[data-test='filter-tile-offline']");
+
+            await tile.trigger("click");
+            expect(tile.attributes("aria-pressed")).toBe("true");
+            expect(codesInOrder(wrapper)).toEqual(["ANT"]);
+
+            await tile.trigger("click");
+            expect(tile.attributes("aria-pressed")).toBe("false");
+            expect(codesInOrder(wrapper)).toEqual(["ANT", "MNT", "ZNT"]);
+        });
+
+        it("switches the filter when a different tile is clicked", async () => {
+            mockSwrvData.value = fixture;
+            const wrapper = mountPage();
+
+            await wrapper.find("[data-test='filter-tile-offline']").trigger("click");
+            await wrapper.find("[data-test='filter-tile-degraded']").trigger("click");
+            expect(codesInOrder(wrapper)).toEqual(["MNT"]);
+        });
+
+        it("explains an empty filtered table instead of claiming no trusts exist", async () => {
+            // All fixture trusts online → the offline filter empties the table.
+            mockSwrvData.value = [fixture[0]];
+            const wrapper = mountPage();
+
+            await wrapper.find("[data-test='filter-tile-offline']").trigger("click");
+            expect(wrapper.findAll("[data-test='trust-row']")).toHaveLength(0);
+            expect(wrapper.text()).toContain("No trusts match this filter.");
+            expect(wrapper.text()).not.toContain("No trusts registered yet.");
+        });
     });
 });

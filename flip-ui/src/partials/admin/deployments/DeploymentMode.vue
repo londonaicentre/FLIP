@@ -36,7 +36,7 @@
                             </span>
                         </h3>
                     </div>
-                    <p class="max-w-2xl my-6 text-gray-400 dark:text-gray-300">
+                    <p class="my-6 text-gray-400 dark:text-gray-300">
                         Enabling <strong class="font-bold">deployment mode</strong> will disable core functionality
                         across the platform whilst a deployment is in progress. You probably want to enable a site
                         banner whilst this is enabled.

@@ -35,10 +35,10 @@
                         <div class="flex-1 w-0 p-4">
                             <div class="flex items-start">
                                 <div class="flex-shrink-0">
-                                    <icon-ic-twotone-info v-if="notification.type === 'info'" class="w-5 h-5 text-blue-500 dark:text-blue-400" />
-                                    <icon-ic-twotone-warning v-if="notification.type === 'warning'" class="w-5 h-5 text-yellow-600 dark:text-yellow-400" />
-                                    <icon-ic-twotone-check-circle v-if="notification.type === 'success'" class="w-5 h-5 text-lightgreen-900 dark:text-green-400" />
-                                    <icon-ic-twotone-cancel v-if="notification.type === 'error'" class="w-5 h-5 text-red-500 dark:text-red-400" />
+                                    <icon-ph-info-fill v-if="notification.type === 'info'" class="w-5 h-5 text-blue-500 dark:text-blue-400" />
+                                    <icon-ph-warning-fill v-if="notification.type === 'warning'" class="w-5 h-5 text-yellow-600 dark:text-yellow-400" />
+                                    <icon-ph-check-circle-fill v-if="notification.type === 'success'" class="w-5 h-5 text-lightgreen-900 dark:text-green-400" />
+                                    <icon-ph-x-circle-fill v-if="notification.type === 'error'" class="w-5 h-5 text-red-500 dark:text-red-400" />
                                 </div>
                                 <div class="flex-1 w-0 ml-3">
                                     <p class="text-sm font-bold text-gray-700 dark:text-gray-300">

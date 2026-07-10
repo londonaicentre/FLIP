@@ -23,11 +23,13 @@
                         v-if="canDownloadAll"
                         light
                         data-test="download-all-files-btn"
+                        aria-label="Download all"
+                        tooltip="Download all"
                         :loading="downloadingAll"
                         @click="downloadAllAsZip"
                     >
-                        <icon-ph-download-duotone class="w-4 h-4 mr-2" />
-                        Download all
+                        <icon-ph-download-duotone class="w-4 h-4 lg:mr-2" />
+                        <span class="hidden lg:inline">Download all</span>
                     </AiButton>
                 </div>
                 <div class="border-t border-gray-200 dark:border-dark-border">

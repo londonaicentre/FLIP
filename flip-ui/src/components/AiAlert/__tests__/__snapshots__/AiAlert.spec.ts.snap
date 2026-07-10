@@ -14,7 +14,7 @@ exports[`Ai Alert > Renders Component 1`] = `
       <!--v-if-->
       <svg
         class="w-5 h-5 text-lightgreen-900 dark:text-green-200"
-        data-icon="ic:twotone-check-circle"
+        data-icon="ph:check-circle-fill"
       />
       <!--v-if-->
     </div>

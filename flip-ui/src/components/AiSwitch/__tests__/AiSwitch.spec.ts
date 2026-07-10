@@ -42,4 +42,27 @@ describe("AiSwitch", () => {
         expect(comp.exists()).toBe(true);
         expect(comp.find("button[role=\"switch\"]").exists()).toBe(true);
     });
+
+    it("toggles on click, showing the check mark once on", async () => {
+        const comp = mount(AiSwitch, {
+            props: {
+                name: "flag",
+                value: true
+            },
+            global: {
+                plugins: [createTestingPinia({
+                    createSpy: vi.fn,
+                    stubActions: false
+                })]
+            }
+        });
+
+        // Off: knob carries no check icon.
+        expect(comp.find("svg").exists()).toBe(false);
+
+        await comp.find("button[role=\"switch\"]").trigger("click");
+
+        expect(comp.find("svg").exists()).toBe(true);
+    });
+
 });

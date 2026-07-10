@@ -12,7 +12,10 @@
 -->
 
 <template>
-    <AiCard class="flex flex-col h-full">
+    <div
+        class="flex flex-col h-full overflow-hidden bg-white border border-gray-200 rounded-xl
+        dark:bg-dark-canvas dark:border-dark-border"
+    >
         <div class="flex items-center justify-between px-4 py-3 border-b border-gray-200 dark:border-dark-border">
             <span class="text-xs font-semibold tracking-wider uppercase font-mono text-gray-500 dark:text-gray-300">
                 Per-trust response
@@ -112,14 +115,13 @@
                 </div>
             </div>
         </div>
-    </AiCard>
+    </div>
 </template>
 
 <script lang="ts" setup>
 import useSWRV from "swrv";
 import { computed, ref, watch } from "vue";
 
-import AiCard from "@/components/AiCard/AiCard.vue";
 import { getOMOPResults, IResults } from "@/services/cohort-query-service";
 import { useProjectStore } from "@/store/project";
 import { useTrustStore } from "@/store/trusts";
