@@ -53,8 +53,9 @@ override SITE1_IMAGES_DIR := $(call abspath_app,$(SITE1_IMAGES_DIR))
 override SITE1_DATAFRAME  := $(call abspath_app,$(SITE1_DATAFRAME))
 override SITE2_IMAGES_DIR := $(call abspath_app,$(SITE2_IMAGES_DIR))
 override SITE2_DATAFRAME  := $(call abspath_app,$(SITE2_DATAFRAME))
+override DATA_ROOT        := $(call abspath_app,$(DATA_ROOT))
 
-.PHONY: run export sim download-raw-checkpoint prepare-checkpoint clean
+.PHONY: run export sim download-raw-checkpoint prepare-checkpoint dataset-figure clean
 
 # --- Raw checkpoint download ---
 download-raw-checkpoint:
@@ -97,6 +98,19 @@ prepare-checkpoint:
 		uv run python "$(APP_DIR)/process_tools/preprocess_checkpoints.py" \
 			--entry "$(RAW_CHECKPOINT)" "$(PROCESSED_CHECKPOINT)" arkplus_pretrained; \
 	fi
+
+# --- Documentation figure ---
+# Regenerates docs/dataset_examples.png (embedded in README.md) from the local dataset. Runs in the
+# tutorial-local env with the `docs` extra (matplotlib + pydicom). DATA_ROOT is the directory holding
+# the dataset split folders.
+dataset-figure:
+	@if [ -z "$(DATA_ROOT)" ]; then \
+		echo "❌ DATA_ROOT is not set."; \
+		echo "   Point it at the directory holding the dataset split folders, e.g."; \
+		echo "   make dataset-figure DATA_ROOT=/path/to/balanced_synthetic_split"; \
+		exit 1; \
+	fi
+	@uv run --extra docs python "$(APP_DIR)/docs/make_dataset_figure.py" --data-root "$(DATA_ROOT)"
 
 # --- Export job config (no GPU needed) ---
 # Builds a complete NVFLARE job under ./fl_job/flip_fedavg/ including meta.json, app/config/, and
