@@ -94,7 +94,7 @@ export AWS_PROFILE=stag                 # must match; the Makefile enforces it
 make aws-login                          # SSO
 make plan  PROD=stag DEPLOY_TRUST_EC2=false   # hub-only (trusts run on the desktop)
 make apply PROD=stag DEPLOY_TRUST_EC2=false   # run plan + apply as SEPARATE commands
-make deploy-centralhub                  # force a fresh ECS rollout of the hub services
+make deploy-centralhub                  # roll the hub services to the develop tip (sha-<short7> task-def revisions)
 make deploy-ui                          # ship the UI (S3 + CloudFront)
 ```
 
