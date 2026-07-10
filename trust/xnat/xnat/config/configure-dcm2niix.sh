@@ -28,30 +28,31 @@ set -euo pipefail
 XNAT_URL="http://xnat-web:8080" # internal to Docker network
 DCM2NIIX_NAME="dcm2niix"
 
-# Wait for XNAT to be available (bounded so a dead XNAT fails the deploy
-# loudly instead of printing dots forever).
+# Wait for XNAT to be available (wall-clock bounded, and each probe carries
+# its own timeout, so a dead or wedged XNAT fails the deploy loudly instead
+# of printing dots forever).
 echo "Waiting for XNAT to be available..."
-elapsed=0
-until curl --output /dev/null --silent --head --fail "$XNAT_URL/app/template/Login.vm"; do
-  if [[ "$elapsed" -ge 900 ]]; then
-    echo "ERROR: XNAT did not become available within ${elapsed}s" >&2
+deadline=$((SECONDS + 900))
+until curl --output /dev/null --silent --head --fail \
+  --connect-timeout 5 --max-time 10 "$XNAT_URL/app/template/Login.vm"; do
+  if [[ "$SECONDS" -ge "$deadline" ]]; then
+    echo "ERROR: XNAT did not become available within ${SECONDS}s" >&2
     exit 1
   fi
   printf '.'
   sleep 1
-  elapsed=$((elapsed + 1))
 done
 echo "XNAT is up!"
 
 # Helper: curl wrapper for XNAT's REST API. On 2xx, emits the response body
 # on stdout for the caller to capture. On any other status — or a curl
-# transport failure — reports the request and body on stderr and returns
-# non-zero, which the script's `set -e` turns into an abort at the call
-# site (so don't call this inside `if`/`||` without handling the failure).
-# Use it for every request to XNAT's REST API, reads included: a silently
-# failed GET is exactly how the original empty-CMD_ID deploy failure arose
-# (bare `curl -s` discarded 4xx/5xx bodies and the script carried on with
-# empty state).
+# transport failure — reports the request (and, for HTTP failures, the
+# response body) on stderr and returns non-zero, which the script's
+# `set -e` turns into an abort at the call site (so don't call this inside
+# `if`/`||` without handling the failure). Use it for every request to
+# XNAT's REST API, reads included: an unnoticed bad GET response is how the
+# original empty-CMD_ID deploy failure slipped through — bare `curl -s`
+# surfaced neither HTTP errors nor unexpected bodies.
 xnat_curl() {
   local response
   local status
@@ -66,6 +67,11 @@ xnat_curl() {
   fi
   status=$(printf '%s' "$response" | tail -n1)
   body=$(printf '%s' "$response" | sed '$d')
+  # Strip CRs so a middlebox emitting \r\n line endings can't make the
+  # callers' numeric/boolean guards fail on an invisible character (a raw
+  # CR is not valid inside JSON strings, so this is lossless).
+  status=${status//$'\r'/}
+  body=${body//$'\r'/}
   # Fail closed: anything other than a literal 2xx status line (including
   # an empty or non-numeric one) is an error.
   if ! [[ "$status" =~ ^2[0-9]{2}$ ]]; then
@@ -107,13 +113,14 @@ fi
 
 # Add dcm2niix command from json. POST /xapi/commands returns the new
 # command's numeric id as the response body — a bare JSON number, not the
-# command object (container-service 3.7.3: CommandRestApi.createCommand
-# returns ResponseEntity<Long>). Read the id straight from the POST
-# response rather than re-GETting /xapi/commands?name=...: that GET has
-# been observed on prod to return an empty array even after a successful
-# POST (root cause undiagnosed), which left CMD_ID empty and broke the
-# enable/validation URLs downstream. The wrapper name is not in the POST
-# response at all, so take it from the command definition we just posted.
+# command object (container-service 3.7.3, pinned in trust/xnat/README.md's
+# plugin table: CommandRestApi.createCommand returns ResponseEntity<Long>).
+# Read the id straight from the POST response rather than re-GETting
+# /xapi/commands?name=...: on prod that GET came back with no usable
+# command even though the POST appeared to succeed (root cause
+# undiagnosed), which left CMD_ID unusable and broke the enable/validation
+# URLs downstream. The wrapper name is not in the POST response at all, so
+# take it from the command definition we just posted.
 echo "Adding dcm2niix command..."
 CMD_ID=$(xnat_curl -X POST "$XNAT_URL/xapi/commands" \
   -H "Content-Type: application/json" \
