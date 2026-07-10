@@ -523,18 +523,36 @@ def check_trust_pipeline() -> None:
 
 
 def check_xnat_health() -> None:
-    """Verify XNAT is serving its API (not a setup page)."""
+    """Verify XNAT is serving its API (not a setup page).
+
+    XNAT does not support Basic Auth on REST endpoints. The correct flow is:
+    1. POST /data/JSESSION with Basic Auth to obtain a JSESSIONID session cookie
+    2. Use that cookie on subsequent API calls
+    """
     print_status("INFO", "Checking XNAT API health (not setup page)...")
 
     py = """\
 import os, requests
-r = requests.get(
-    "http://xnat-web:8080/data/projects",
-    auth=(os.environ.get("XNAT_SERVICE_USER", "flipServiceAccount"),
-          os.environ.get("XNAT_SERVICE_PASSWORD", "")),
-    timeout=10,
-)
-print(r.status_code, r.headers.get("content-type", "").split(";")[0])
+
+XNAT_URL = "http://xnat-web:8080"
+USER = os.environ.get("XNAT_SERVICE_USER", "flipServiceAccount")
+PASS = os.environ.get("XNAT_SERVICE_PASSWORD", "")
+
+# Step 1: Obtain JSESSIONID via XNAT session endpoint
+session_url = f"{XNAT_URL}/data/JSESSION"
+creds = (USER, PASS)
+session_resp = requests.post(session_url, auth=creds, timeout=10)
+
+if session_resp.status_code != 200:
+    print(session_resp.status_code, "text/html")
+else:
+    token = session_resp.text.strip()
+    # Step 2: Use session cookie to call API
+    headers = {"Cookie": f"JSESSIONID={token}"}
+    r = requests.get(
+        f"{XNAT_URL}/data/projects", headers=headers, timeout=10
+    )
+    print(r.status_code, r.headers.get("content-type", "").split(";")[0])
 """
     success, output = run_remote_python("flip-trust", "trust1-imaging-api-1", py, timeout=25)
 

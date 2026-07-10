@@ -48,24 +48,35 @@ module "flip_model_files_uploads_bucket" {
   # policy bakes in `["content-length-range", 0, MAX_MODEL_FILE_BYTES]`
   # (and locks Content-Type when the caller supplies one), so S3 rejects
   # oversized or wrong-type uploads at the edge — the hub never sees them.
-  cors_methods         = ["POST"]
-  cors_allowed_origins = ["https://${var.flip_alb_subdomain}"]
-  kms_key_arn          = aws_kms_key.flip_app_key.arn
+  cors_methods          = ["POST"]
+  cors_allowed_origins  = ["https://${var.flip_alb_subdomain}"]
+  kms_key_arn           = aws_kms_key.flip_app_key.arn
+  logging_target_bucket = aws_s3_bucket.flip_access_logs.id
+  mfa_delete_protection = true
+  # The module enables server access logging to flip_access_logs; force it
+  # to wait for the LogDelivery ACL grant on that destination bucket so the
+  # first-apply order is `ACL → bucket_logging`.
+  depends_on = [aws_s3_bucket_acl.flip_access_logs]
 }
 
 module "flip_fl_results_bucket" {
-  source               = "./modules/flip_s3_bucket"
-  bucket_name          = var.FLIP_FL_RESULTS_BUCKET_NAME
-  cors_methods         = ["GET"]
-  cors_allowed_origins = ["https://${var.flip_alb_subdomain}"]
-  kms_key_arn          = aws_kms_key.flip_app_key.arn
+  source                = "./modules/flip_s3_bucket"
+  bucket_name           = var.FLIP_FL_RESULTS_BUCKET_NAME
+  cors_methods          = ["GET"]
+  cors_allowed_origins  = ["https://${var.flip_alb_subdomain}"]
+  kms_key_arn           = aws_kms_key.flip_app_key.arn
+  logging_target_bucket = aws_s3_bucket.flip_access_logs.id
+  mfa_delete_protection = true
+  depends_on            = [aws_s3_bucket_acl.flip_access_logs]
 }
 
 module "flip_app_bundles_bucket" {
   source      = "./modules/flip_s3_bucket"
   bucket_name = var.FLIP_APP_BUNDLES_BUCKET_NAME
   # No CORS: flip-api is the only consumer and reaches the bucket via boto3.
-  kms_key_arn = aws_kms_key.flip_app_key.arn
+  logging_target_bucket = aws_s3_bucket.flip_access_logs.id
+  kms_key_arn           = aws_kms_key.flip_app_key.arn
+  depends_on            = [aws_s3_bucket_acl.flip_access_logs]
 }
 
 ############################
@@ -116,6 +127,45 @@ resource "aws_s3_bucket_cors_configuration" "aicentre_bucket_cors" {
     allowed_origins = ["https://${var.flip_alb_subdomain}"]
     expose_headers  = []
   }
+}
+
+# Enforce HTTPS-only access to the AI Centre bucket. Denies any S3
+# action over plain HTTP — covers reads, writes, deletes, and bucket-
+# level operations like ListBucket. Matches the defense-in-depth
+# pattern used by the module-managed buckets in modules/flip_s3_bucket.
+resource "aws_s3_bucket_policy" "aicentre_bucket_https_only" {
+  bucket = aws_s3_bucket.aicentre_bucket.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Sid       = "DenyHTTP"
+      Effect    = "Deny"
+      Principal = "*"
+      Action    = "s3:*"
+      Resource = [
+        aws_s3_bucket.aicentre_bucket.arn,
+        "${aws_s3_bucket.aicentre_bucket.arn}/*",
+      ]
+      Condition = {
+        Bool = {
+          "aws:SecureTransport" = "false"
+        }
+      }
+    }]
+  })
+}
+
+# Server access logging for the AI Centre bucket. Depends on the
+# LogDelivery ACL grant so AWS doesn't reject the logging-enable call
+# on first apply.
+resource "aws_s3_bucket_logging" "aicentre_bucket" {
+  bucket = aws_s3_bucket.aicentre_bucket.id
+
+  target_bucket = aws_s3_bucket.flip_access_logs.id
+  target_prefix = "${aws_s3_bucket.aicentre_bucket.bucket}/"
+
+  depends_on = [aws_s3_bucket_acl.flip_access_logs]
 }
 
 ############################

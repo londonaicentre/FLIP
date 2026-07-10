@@ -36,6 +36,14 @@ PRESERVE_VPC ?= true
 # Export PROD so child processes (e.g. check_status.py) can determine the environment
 export PROD
 
+# Terraform and AWS CLI prefixes: unset static credential env vars that
+# can leak from the parent shell (.env.stag may carry empty/literal-quoted
+# AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY for the omop-db init job).
+# These env vars take priority over the AWS_PROFILE / SSO credential chain
+# in the AWS Go SDK (Terraform) and cause InvalidClientTokenId errors.
+_TF := unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_SECURITY_TOKEN; terraform
+_TF_AWS := unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_SECURITY_TOKEN; AWS_PROFILE=$(AWS_PROFILE)
+
 # Resolve FL_KIT_DATE from the backend-specific kit date: FLARE_KIT_DATE or FLOWER_KIT_DATE
 FL_KIT_DATE := $(if $(filter nvflare,$(FL_BACKEND)),$(FLARE_KIT_DATE),$(FLOWER_KIT_DATE))
 $(if $(FL_KIT_DATE),,$(error 🧠 $(if $(filter nvflare,$(FL_BACKEND)),FLARE_KIT_DATE,FLOWER_KIT_DATE) must be set in the environment file for FL_BACKEND=$(FL_BACKEND)))
@@ -220,7 +228,7 @@ init: ## Initialize Terraform configuration
 	@echo "Using AWS profile: $(AWS_PROFILE)"
 	@echo "Using backend bucket: $(FLIP_TFSTATE_BUCKET_NAME)"
 	@echo "Using AWS region: $(AWS_REGION)"
-	@terraform init \
+	@$(_TF) init \
 		-backend-config="bucket=$(FLIP_TFSTATE_BUCKET_NAME)" \
 		-backend-config="region=$(AWS_REGION)" \
 		-reconfigure
@@ -228,7 +236,7 @@ init: ## Initialize Terraform configuration
 
 .PHONY: import-persistent
 import-persistent: ## Import persistent resources (S3, Secrets, Cognito) to prevent replacement
-	@bash scripts/import-resources.sh
+	@unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_SECURITY_TOKEN; bash scripts/import-resources.sh
 
 
 .PHONY: migrate-flip-bucket
@@ -286,54 +294,54 @@ force-unlock: ## Force unlock Terraform state - provide LOCK_ID=<id> as argument
 		echo "❌ LOCK_ID not provided. Usage: make force-unlock LOCK_ID=<lock-id>"; \
 		exit 1; \
 	fi
-	@bash scripts/force-unlock.sh $(LOCK_ID)
+	@unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_SECURITY_TOKEN; bash scripts/force-unlock.sh $(LOCK_ID)
 
 .PHONY: plan
 plan: ## Plan Terraform changes (with environment file loaded)
 	@echo "📋 Planning Terraform changes..."
-	@terraform plan -out=plan.tfplan -lock=${LOCK}
+	@$(_TF) plan -out=plan.tfplan -lock=${LOCK}
 
 .PHONY: plan-cert
 plan-cert: ## Plan only the ACM certificate (step 1 of 2 for HTTPS)
 	@echo "📋 Planning ACM certificate..."
-	@terraform plan -target=aws_acm_certificate.flip -out=plan-cert.tfplan
+	@$(_TF) plan -target=aws_acm_certificate.flip -out=plan-cert.tfplan
 
 .PHONY: apply-cert
 apply-cert: ## Apply only the ACM certificate (step 1 of 2 for HTTPS)
 	@echo "🔒 Applying ACM certificate (Step 1/2)..."
-	@terraform apply -target=aws_acm_certificate.flip -auto-approve
+	@$(_TF) apply -target=aws_acm_certificate.flip -auto-approve
 	@echo "✅ Certificate created! Now run 'make plan' and 'make apply' to deploy DNS validation."
 
 .PHONY: destroy-cert
 destroy-cert: ## Destroy only the ACM certificate (use with caution - will break HTTPS)
 	@echo "💥 Destroying ACM certificate (Step 1/2)..."
-	@terraform destroy -target=aws_acm_certificate.flip -target=aws_acm_certificate_validation.flip -target=aws_route53_record.cert_validation
+	@$(_TF) destroy -target=aws_acm_certificate.flip -target=aws_acm_certificate_validation.flip -target=aws_route53_record.cert_validation
 	@echo "✅ Certificate destroyed! Now run 'make plan' and 'make apply' to remove DNS validation."
 
 .PHONY: plan-cloudfront-certs
 plan-cloudfront-certs: ## Plan the CloudFront viewer cert (us-east-1)
 	@echo "📋 Planning CloudFront viewer certificate..."
-	@terraform plan \
+	@$(_TF) plan \
 		-target=aws_acm_certificate.flip_cloudfront \
 		-out=plan-cloudfront-certs.tfplan
 
 .PHONY: apply-cloudfront-certs
 apply-cloudfront-certs: ## Apply the CloudFront viewer cert (us-east-1)
 	@echo "🔒 Applying CloudFront viewer certificate (Step 1/2 for CloudFront)..."
-	@terraform apply -target=aws_acm_certificate.flip_cloudfront -auto-approve
+	@$(_TF) apply -target=aws_acm_certificate.flip_cloudfront -auto-approve
 	@echo "✅ Certificate created. Run 'make plan' and 'make apply' to deploy DNS validation + CloudFront."
 
 .PHONY: refresh
 refresh: ## Refresh Terraform state to sync with actual AWS resources
 	@echo "🔄 Refreshing Terraform state..."
-	@terraform refresh
+	@$(_TF) refresh
 	@echo "✅ State refreshed!"
 
 
 .PHONY: apply
 apply: ## Apply Terraform configuration to update AWS infrastructure (with environment file loaded)
 	@echo "🛠️ Applying Terraform configuration..."
-	@terraform apply plan.tfplan
+	@$(_TF) apply plan.tfplan
 
 .PHONY: import-cloudfront
 import-cloudfront: ## Import existing CloudFront distribution into terraform state
@@ -347,14 +355,14 @@ forward-trust: ## SSM port-forward all Trust web UIs and API swagger docs (Ctrl+
 .PHONY: ssh-config
 ssh-config: check-ssm-ready ## Update local .ssh/config for flip contexts (requires SSM plugin)
 	@echo "⚙️  Configure .ssh/config for flip context..."
-	@AWS_PROFILE=${AWS_PROFILE} terraform output
-	@AWS_PROFILE=${AWS_PROFILE} uv run ./update_ssm_ssh_config.py --aws-profile ${AWS_PROFILE}
+	@unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_SECURITY_TOKEN; AWS_PROFILE=${AWS_PROFILE} terraform output
+	@unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_SECURITY_TOKEN; AWS_PROFILE=${AWS_PROFILE} uv run ./update_ssm_ssh_config.py --aws-profile ${AWS_PROFILE}
 	@echo "✅ .ssh/config updated!"
 
 .PHONY: update-env
 update-env: ## Update environment file with Terraform outputs
 	@echo "🔄 Updating environment file with infrastructure values..."
-	@uv run ./update_env.py $(MAIN_ENV_FILE)
+	@unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_SECURITY_TOKEN; uv run ./update_env.py $(MAIN_ENV_FILE)
 
 .PHONY: ansible-init
 ansible-init: ## Initialize Ansible configuration on EC2 instances (if failed try again for 3 times)
@@ -363,7 +371,7 @@ ansible-init: ## Initialize Ansible configuration on EC2 instances (if failed tr
 	@[ -n "$(ORTHANC_DATA_VERSION)" ] || (echo "❌  trust/orthanc/.data_version not found"; exit 1)
 	@uv sync
 	@uv run ansible-galaxy install -r requirements.yml
-	@uv run ansible-playbook site.yml \
+	@unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_SECURITY_TOKEN; uv run ansible-playbook site.yml \
 		-e flip_aicentre_bucket=$(AICENTRE_BUCKET_NAME) \
 		-e fl_backend=$(FL_BACKEND) \
 		-e fl_kit_date=$(FL_KIT_DATE) \
@@ -439,22 +447,22 @@ deploy-ui: ## Build flip-ui from the working tree and deploy it to S3 + invalida
 	@echo "📦 Syncing static assets to the deployed UI bucket..."
 	@# Hashed bundles are content-addressed and safe to cache forever.
 	@# index.html and window.js must never be cached long — they reference the hashed bundles.
-	@UI_BUCKET=$$(AWS_PROFILE=$(AWS_PROFILE) terraform output -raw FlipUiBucketName); \
+	@UI_BUCKET=$$($(_TF_AWS) terraform output -raw FlipUiBucketName); \
 	[ -n "$$UI_BUCKET" ] || { echo "❌ Terraform output FlipUiBucketName is empty"; exit 1; }; \
 	echo "   s3://$$UI_BUCKET/"; \
-	AWS_PROFILE=$(AWS_PROFILE) aws s3 sync ../../../flip-ui/dist/ s3://$$UI_BUCKET/ \
+	$(_TF_AWS) aws s3 sync ../../../flip-ui/dist/ s3://$$UI_BUCKET/ \
 		--delete \
 		--cache-control "public, max-age=31536000, immutable" \
 		--exclude "index.html" --exclude "js/window.js"; \
-	AWS_PROFILE=$(AWS_PROFILE) aws s3 cp ../../../flip-ui/dist/index.html s3://$$UI_BUCKET/index.html \
+	$(_TF_AWS) aws s3 cp ../../../flip-ui/dist/index.html s3://$$UI_BUCKET/index.html \
 		--cache-control "no-cache, no-store, must-revalidate" \
 		--content-type "text/html; charset=utf-8"; \
-	AWS_PROFILE=$(AWS_PROFILE) aws s3 cp ../../../flip-ui/dist/js/window.js s3://$$UI_BUCKET/js/window.js \
+	$(_TF_AWS) aws s3 cp ../../../flip-ui/dist/js/window.js s3://$$UI_BUCKET/js/window.js \
 		--cache-control "no-cache, no-store, must-revalidate" \
 		--content-type "application/javascript; charset=utf-8"
 	@echo "🧹 Invalidating CloudFront..."
-	@AWS_PROFILE=$(AWS_PROFILE) aws cloudfront create-invalidation \
-		--distribution-id $$(AWS_PROFILE=$(AWS_PROFILE) terraform output -raw CloudfrontDistributionId) \
+	@$(_TF_AWS) aws cloudfront create-invalidation \
+		--distribution-id $$($(_TF_AWS) terraform output -raw CloudfrontDistributionId) \
 		--paths "/*" >/dev/null
 	@echo "✅ deploy-ui complete."
 
@@ -628,13 +636,13 @@ down:
 
 .PHONY: status
 status: ## Check deployment status
-	@uv run ./check_status.py
+	@unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_SECURITY_TOKEN; uv run ./check_status.py
 
 check:
 	@echo "🔍 Checking Terraform state..."
-	@terraform state list
+	@$(_TF) state list
 	@echo ""
-	@terraform output
+	@$(_TF) output
 	@uv run ./check_status.py || true
 
 
@@ -663,7 +671,7 @@ endif
 	@echo ""
 	@bash -c 'read -p "Type '\''yes'\'' to confirm destruction: " confirm && [ "$$confirm" = "yes" ] || { echo "Aborted."; exit 1; }'
 	@echo ""
-	@PRESERVE_VPC=$(PRESERVE_VPC) bash scripts/destroy-selective.sh
+	@unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_SECURITY_TOKEN; PRESERVE_VPC=$(PRESERVE_VPC) bash scripts/destroy-selective.sh
 
 
 .PHONY: help
