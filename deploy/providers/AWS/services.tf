@@ -51,7 +51,7 @@ module "flip_model_files_uploads_bucket" {
   cors_methods          = ["POST"]
   cors_allowed_origins  = ["https://${var.flip_alb_subdomain}"]
   kms_key_arn           = aws_kms_key.flip_app_key.arn
-  logging_target_bucket = aws_s3_bucket.flip_access_logs.id
+  logging_target_bucket = local.access_logs_bucket_name
   mfa_delete_protection = true
   # The module enables server access logging to flip_access_logs; force it
   # to wait for the LogDelivery ACL grant on that destination bucket so the
@@ -65,7 +65,7 @@ module "flip_fl_results_bucket" {
   cors_methods          = ["GET"]
   cors_allowed_origins  = ["https://${var.flip_alb_subdomain}"]
   kms_key_arn           = aws_kms_key.flip_app_key.arn
-  logging_target_bucket = aws_s3_bucket.flip_access_logs.id
+  logging_target_bucket = local.access_logs_bucket_name
   mfa_delete_protection = true
   depends_on            = [aws_s3_bucket_acl.flip_access_logs]
 }
@@ -74,7 +74,7 @@ module "flip_app_bundles_bucket" {
   source      = "./modules/flip_s3_bucket"
   bucket_name = var.FLIP_APP_BUNDLES_BUCKET_NAME
   # No CORS: flip-api is the only consumer and reaches the bucket via boto3.
-  logging_target_bucket = aws_s3_bucket.flip_access_logs.id
+  logging_target_bucket = local.access_logs_bucket_name
   kms_key_arn           = aws_kms_key.flip_app_key.arn
   depends_on            = [aws_s3_bucket_acl.flip_access_logs]
 }

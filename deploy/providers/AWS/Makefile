@@ -548,9 +548,9 @@ deploy-centralhub: ## Deploy Central Hub ECS services at the env branch tip (new
 	  fi; \
 	  rm -f $$tmp_td; tmp_td=""; \
 	  echo "   ↻ $$service: $${current_td##*/} → $${new_td_arn##*/} ($$new_image)"; \
-	  if ! $(_AWS_ENV) aws ecs update-service --cluster $(ECS_CLUSTER) --service $$service \
+	  if ! ( $(_AWS_ENV) aws ecs update-service --cluster $(ECS_CLUSTER) --service $$service \
 	      --task-definition "$$new_td_arn" \
-	      --query 'service.serviceName' --output text >/dev/null; then \
+	      --query 'service.serviceName' --output text >/dev/null ); then \
 	    echo "❌ $$service: update-service failed — deregistering the just-registered $${new_td_arn##*/}"; \
 	    echo "   so the latest-ACTIVE lookups in ecs_services.tf keep tracking the running revision."; \
 	    $(_AWS_ENV) aws ecs deregister-task-definition --task-definition "$$new_td_arn" >/dev/null \
@@ -607,8 +607,8 @@ rollback-centralhub: ## Repoint each Central Hub ECS service at its previous ACT
 	  $(_AWS_ENV) aws ecs update-service --cluster $(ECS_CLUSTER) --service $$service \
 	    --task-definition "$$previous" \
 	    --query 'service.serviceName' --output text >/dev/null; \
-	  if ! $(_AWS_ENV) aws ecs deregister-task-definition --task-definition "$$current_td" \
-	      --query 'taskDefinition.status' --output text >/dev/null; then \
+	  if ! ( $(_AWS_ENV) aws ecs deregister-task-definition --task-definition "$$current_td" \
+	      --query 'taskDefinition.status' --output text >/dev/null ); then \
 	    echo "❌ $$service rolled back to $${previous##*/}, but deregistering $${current_td##*/} failed —"; \
 	    echo "   it is still the latest ACTIVE revision, so the next terraform apply would re-adopt"; \
 	    echo "   it. Deregister manually:"; \
@@ -838,7 +838,7 @@ check:
 	@$(_TF) state list
 	@echo ""
 	@$(_TF) output
-	@uv run ./check_status.py || true
+	@unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_SECURITY_TOKEN; uv run ./check_status.py || true
 
 
 .PHONY: destroy

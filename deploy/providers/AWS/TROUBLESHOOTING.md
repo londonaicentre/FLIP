@@ -355,16 +355,16 @@ make: *** [Makefile:388: deploy-ui] Error 1
 
 `aws sso login` reported success seconds earlier, and other Make targets (`make plan`, `make apply`, `make status`) work in the same shell.
 
-**Root cause**: Same class of bug as 1.6 / handoff §2 (Terraform SSO poisoning). The parent shell exports `AWS_ACCESS_KEY_ID=` (empty) or a stale value from a prior `.env*` source, and the AWS SDK's credential chain prefers env vars over the SSO profile. The other recipes were patched with an `unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_SECURITY_TOKEN;` prefix (the `_TF_AWS` macro at the top of the Makefile), but each Make recipe line runs in its own shell — so every `aws` / `terraform` invocation needs the unset on its own line. `deploy-ui` was missed.
+**Root cause**: Same class of bug as 1.6 / handoff §2 (Terraform SSO poisoning). The parent shell exports `AWS_ACCESS_KEY_ID=` (empty) or a stale value from a prior `.env*` source, and the AWS SDK's credential chain prefers env vars over the SSO profile. The other recipes were patched with an `unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_SECURITY_TOKEN;` prefix (the `_AWS_ENV` macro at the top of the Makefile, or `_TF` for `terraform` calls), but each Make recipe line runs in its own shell — so every `aws` / `terraform` invocation needs the unset on its own line. `deploy-ui` was missed.
 
-**Fix**: Prefix every `aws` call in the `deploy-ui` recipe with `$(_TF_AWS)` (which expands to `unset AWS_* … ; AWS_PROFILE=$(AWS_PROFILE)`). Already applied — if you see this on a fresh checkout, confirm the recipe matches:
+**Fix**: Prefix every `aws` call in the `deploy-ui` recipe with `$(_AWS_ENV)` (which expands to `unset AWS_* … ; AWS_PROFILE=$(AWS_PROFILE)`). Already applied — if you see this on a fresh checkout, confirm the recipe matches:
 
 ```bash
-grep -A1 'deploy-ui:' deploy/providers/AWS/Makefile | grep -c '_TF_AWS'
-# Expect ≥ 4 (s3 sync + 2× s3 cp + cloudfront create-invalidation)
+sed -n '/^deploy-ui:/,/^$/p' deploy/providers/AWS/Makefile | grep -c '_AWS_ENV'
+# Expect 6 (2× terraform output + s3 sync + 2× s3 cp + cloudfront create-invalidation)
 ```
 
-**Prevention**: When adding a new Make recipe that calls `aws`, `terraform`, `ansible`, or any script that uses boto3 / the AWS SDK, always prefix with `$(_TF_AWS)` (or `unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_SECURITY_TOKEN;` for bare lines). Never trust the parent shell's AWS env vars.
+**Prevention**: When adding a new Make recipe that calls `aws`, `terraform`, `ansible`, or any script that uses boto3 / the AWS SDK, always prefix with `$(_AWS_ENV)` (or `$(_TF)` for `terraform`, or a bare `unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_SECURITY_TOKEN;` on lines that run neither macro). Never trust the parent shell's AWS env vars.
 
 ### 2.8 Trust EC2 Orthanc is empty — all image pulls go straight to QueueFailed
 
