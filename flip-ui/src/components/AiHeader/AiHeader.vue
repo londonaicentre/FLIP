@@ -19,7 +19,7 @@
     >
         <!-- Mobile menu button -->
         <PopoverButton aria-label="Open menu" class="outline-none xl:hidden mr-3" data-test="mobile-menu-btn">
-            <icon-heroicons-outline-menu-alt-1 class="w-6 h-6" />
+            <icon-ph-list class="w-6 h-6" />
         </PopoverButton>
 
         <!-- Logo (left) — London AI Centre + FLIP marks -->
@@ -121,7 +121,7 @@
                                             class="inline-flex items-center justify-center p-2 rounded-md text-primary-500 dark:text-primary-400 hover:text-primary-800 hover:bg-gray-100 dark:hover:bg-dark-surface focus:outline-none"
                                         >
                                             <span class="sr-only">Close menu</span>
-                                            <icon-heroicons-outline-x class="w-5 h-5" aria-hidden="true" />
+                                            <icon-ph-x class="w-5 h-5" aria-hidden="true" />
                                         </PopoverButton>
                                     </div>
                                 </div>

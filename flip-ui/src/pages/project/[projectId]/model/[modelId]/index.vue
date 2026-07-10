@@ -42,22 +42,33 @@
                     <h1 class="text-3xl font-semibold font-heading mt-1 text-gray-900 dark:text-gray-100 truncate">
                         <span class="max-w-2xl truncate">{{ modelData.modelName }}</span>
                     </h1>
+                    <!-- Below lg the button labels hide (icon + tooltip only) so the
+                         actions stop squashing the truncating model title. -->
                     <div class="flex items-center gap-3 shrink-0">
                         <AiGuard v-if="!isViewer" :permissions="editProjectPermissions" :bypass="isOwnerOrHasAccess()">
-                            <AiButton light data-test="edit-model-btn" @click="openEditModelDrawer">
-                                <icon-mdi-pencil-outline class="mr-2" />
-                                Edit Model
+                            <AiButton
+                                light
+                                data-test="edit-model-btn"
+                                aria-label="Edit Model"
+                                tooltip="Edit Model"
+                                @click="openEditModelDrawer"
+                            >
+                                <icon-ph-pencil-simple class="lg:mr-2" />
+                                <span class="hidden lg:inline">Edit Model</span>
                             </AiButton>
                         </AiGuard>
                         <AiButton
                             v-if="!isViewer && isTrainingPending()"
                             primary
                             data-test="initiate-training-btn"
+                            aria-label="Initiate Training"
+                            tooltip="Initiate Training"
                             :disabled="!readyToTrain"
                             :loading="trainingRef?.isSubmitting ?? false"
                             @click="trainingRef?.initiateTraining()"
                         >
-                            Initiate Training
+                            <icon-ph-play-fill class="lg:mr-2" />
+                            <span class="hidden lg:inline">Initiate Training</span>
                         </AiButton>
                         <TrainingActionsMenu v-if="!isViewer && !isTrainingPending()" :status="getStatusEnumValue(modelData?.status)" />
                     </div>
@@ -65,7 +76,9 @@
             </header>
 
             <div class="flex flex-col gap-4 p-4">
-                <LifecycleTrack :steps="steps" />
+                <!-- my-4 on top of the column's gap/padding gives the lifecycle ~32px of
+                     breathing room above and below. -->
+                <LifecycleTrack :steps="steps" class="my-4" />
 
                 <div class="flex flex-col gap-4 lg:flex-row lg:gap-4">
                     <aside class="lg:w-80 2xl:min-w-[30rem] shrink-0">

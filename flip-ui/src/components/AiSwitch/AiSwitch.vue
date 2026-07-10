@@ -39,7 +39,7 @@
                     :class="[checked ? 'translate-x-6' : 'translate-x-1']"
                     class="inline-flex items-center justify-center w-4 h-4 transition-transform transform bg-white dark:bg-gray-200 rounded-full"
                 >
-                    <icon-heroicons-outline-check v-if="checked" class="w-3 h-3 text-green-600 dark:text-green-600" />
+                    <icon-ph-check-bold v-if="checked" class="w-3 h-3 text-green-600 dark:text-green-600" />
                 </span>
             </Switch>
         </SwitchGroup>

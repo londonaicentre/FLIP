@@ -55,8 +55,16 @@ class Settings(BaseSettings):
     UPLOADED_MODEL_FILES_BUCKET: str
     SCANNED_MODEL_FILES_BUCKET: str
     UPLOADED_FEDERATED_DATA_BUCKET: str
-    FL_APP_BASE_BUCKET: str
     FL_APP_DESTINATION_BUCKET: str
+
+    # Local directory holding the base FL application templates (the repo's fl-apps/ tree),
+    # baked into the flip-api image and bind-mounted in dev. The bundler walks
+    # <FL_APP_BASE_DIR>/<backend>/<job_type>/ and uploads those files into
+    # FL_APP_DESTINATION_BUCKET/<model_id>; the per-backend required_files.json manifest is
+    # read from <FL_APP_BASE_DIR>/<backend>/required_files.json. Defaults to the baked-in
+    # image path; override to mount operator-provided templates. Replaces the former
+    # FL_APP_BASE_BUCKET S3 dependency (FLIP#724).
+    FL_APP_BASE_DIR: str = "/app/fl-apps"
 
     # Hard cap on model-file uploads. Bound on the presigned POST policy so
     # S3 rejects oversized payloads at the edge — the hub never sees them.

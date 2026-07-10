@@ -104,7 +104,7 @@ This command executes the following steps in order:
 8. **`update-env`**: Refresh the root environment file with Terraform outputs
 9. **`ssh-config`**: Update `~/.ssh/config` with SSM-managed EC2 instance IDs
 10. **`ansible-init`**: Patch both hosts, install `psql` on the Central Hub bastion, and provision Docker, AWS CLI, CloudWatch, and FL assets on the Trust EC2
-11. **`deploy-centralhub`**: Force-redeploy the Central Hub ECS Fargate services (`flip-api`, `fl-api-net-1`, `fl-server-net-1`) and sync the UI to S3 + invalidate CloudFront
+11. **`deploy-centralhub`**: Deploy the Central Hub ECS Fargate services (`flip-api`, `fl-api-net-1`, `fl-server-net-1`) at the tip of the env's branch via new task-definition revisions (see [Central Hub deploys and rollback](#central-hub-deploys-and-rollback-immutable-sha-tags)) and sync the UI to S3 + invalidate CloudFront
 12. **`register-trusts`**: Register every locally-present trust kit file (`trust/.env.<CODE>.<env>`) on the running hub and fill each kit with hub-shared values
 13. **`deploy-trust`**: Deploy Trust services via Docker Compose to the Trust EC2
 14. **`status`**: Run comprehensive health checks
@@ -164,12 +164,12 @@ The Central Hub uses four S3 buckets, each with a distinct purpose, access patte
 |---|---|---|---|---|
 | `flip{env}-model-files-uploads` | `FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME` | researcher browser (presigned **PUT** on `origin/develop`; flips to presigned **POST** once [#438](https://github.com/londonaicentre/FLIP/pull/438) lands), flip-api reads | `PUT` today; narrows to `POST` from `https://<flip_alb_subdomain>` when #438 merges | researcher-uploaded model artefacts under `uploaded/` (today the AV-scanned copy reads from the same prefix — see the FIXME in `.env.production`) |
 | `flip{env}-fl-results` | `FLIP_FL_RESULTS_BUCKET_NAME` | fl-server writes, researcher browser (presigned **GET**) | `GET` from `https://<flip_alb_subdomain>` | FL training output / aggregated weights — the whole bucket is dedicated to this tenant so no prefix is needed |
-| `flip{env}-app-bundles` | `FLIP_APP_BUNDLES_BUCKET_NAME` | flip-api (boto3 only); FL app-bundle CI publishes here on merge to main | **none** (server-only — no `aws_s3_bucket_cors_configuration` resource is emitted at all) | `base-application/{nvflare,flower}/` (FL app bundles, built in-tree), `app_destinations/<model_id>/` (per-bundle FL apps), `base-application-dev/pull-requests/<n>/` (PR previews on the dev account) |
+| `flip{env}-app-bundles` | `FLIP_APP_BUNDLES_BUCKET_NAME` | flip-api (boto3 only) | **none** (server-only — no `aws_s3_bucket_cors_configuration` resource is emitted at all) | `app_destinations/<model_id>/` (per-bundle FL apps: base templates + user model files, assembled by flip-api). The base FL application templates themselves are baked into the flip-api image (FLIP#724), not stored here. |
 | `flip{env}-aicentre` | `AICENTRE_BUCKET_NAME` | Trust EC2 (`aws s3 cp` during Ansible), AI Centre operators | `PUT`, `GET` | FL participant kits |
 
 All four share standard configs: public access blocked, SSE-KMS server-side encryption with bucket keys enabled, versioning enabled. The three FLIP application buckets are rendered by the shared **`modules/flip_s3_bucket`** module, which is consumed by both `main.tf` (prod / stag) and `dev/main.tf` (dev account) — so a CORS or bucket-policy change plans identically across every environment, closing the dev-drift gap that masked the presigned-PUT → presigned-POST regression in #438.
 
-**Where the bucket-names come from outside FLIP itself.** The FL app-bundle CI (under `fl-apps/`) pushes to `flip{env}-app-bundles/base-application/{nvflare,flower}/` on merge to `main`. The bucket name is computed in the workflow YAML as `${{ vars.AWS_*_S3_BUCKET_NAME }}-app-bundles` — the `AWS_*_S3_BUCKET_NAME` GitHub Environment variable holds the base bucket name, and the `-app-bundles` suffix is appended in-place. The GitHub OIDC role those workflows assume (`GitHubAction-AssumeRoleWithAction-FLIP`, defined in the `aicentre-iac` repo) attaches the AWS-managed `AmazonS3FullAccess` policy, so no IAM change is needed when new app-bundles buckets come online in a new env.
+**Base FL application templates ship in the image, not S3.** As of FLIP#724 the base FL application templates (the repo's `fl-apps/` tree) are baked into the `flip-api` image and read from a local directory (`FL_APP_BASE_DIR`, default `/app/fl-apps`); flip-api bundles applications by uploading those local templates plus the user's model files into `flip{env}-app-bundles/app_destinations/<model_id>/`. There is no longer any CI that syncs templates to S3, so the `flip{env}-app-bundles` bucket is written **only** by flip-api at bundle time. Template hotfixes therefore ship by rebuilding and redeploying the `flip-api` image (see the migration note below).
 
 #### Migrating off the legacy single-bucket layout
 
@@ -209,8 +209,9 @@ make plan
 # 3. Apply — same diff as prod.
 make apply
 
-# 4. Sync the four legacy prefixes (model_files/uploaded, uploaded_federated_data,
-#    base-application, app_destination_bucket) into the three new buckets.
+# 4. Sync the legacy prefixes (model_files/uploaded, uploaded_federated_data,
+#    app_destination_bucket) into the new buckets. (The base-application prefix
+#    is no longer synced — those templates now ship in the flip-api image, FLIP#724.)
 make migrate-flip-bucket
 
 # 5. Parity-check — must print all-✅ before continuing.
@@ -230,7 +231,7 @@ aws s3 rb s3://flipstag
 Two stag-specific watch-outs:
 
 - **`make import-persistent` failing partway through** is fine on a re-run — every import in `scripts/import-resources.sh` is idempotent (probes `terraform state list` before importing). The script will skip already-imported resources and only attempt the missing ones.
-- **The task definitions applied before `deploy-centralhub` need image tags from `.env.stag`** (`DOCKER_TAG`, `DOCKER_FL_TAG`) that exist in GHCR. Branch tags do **not** auto-build on push — trigger the relevant `docker_build_*` workflows via `workflow_dispatch` before applying a branch image tag (see [the build trigger note in CLAUDE.md](../../../CLAUDE.md#docker-image-builds-manual-trigger-required-for-branches)).
+- **The task definitions applied before `deploy-centralhub` need image tags from `.env.stag`** (`DOCKER_TAG`, `DOCKER_FL_TAG`) that exist in GHCR. Branch tags do **not** auto-build on push — trigger the relevant `docker_build_*` workflows via `workflow_dispatch` before applying a branch image tag (see [the build trigger note in CLAUDE.md](../../../CLAUDE.md#docker-image-builds-gated-on-tests-manual-trigger-for-branches)). These env-file tags are only Terraform's bootstrap defaults — day-to-day image deploys pin immutable `sha-<short7>` tags instead (see [Central Hub deploys and rollback](#central-hub-deploys-and-rollback-immutable-sha-tags)).
 
 For a **future fresh prod or dev** account that needs the same migration, the flow is the stag runbook above minus step 1 (`make import-persistent` is only needed on environments with the stag-style state gap) and with `PROD=true` on every `make` call for prod (dev uses the separate `deploy/providers/AWS/dev/` Terraform root, no `PROD=` flag).
 
@@ -284,6 +285,68 @@ make deploy-trust
 # 12. Check status
 make status
 ```
+
+### Central Hub deploys and rollback (immutable SHA tags)
+
+`make deploy-centralhub` deploys the Central Hub ECS services (`flip-api`, `fl-api-net-1`,
+`fl-server-net-1`) by **immutable image tag + task-definition revision** (FLIP#751), then publishes
+the UI (same as `make deploy-ui`):
+
+1. Resolves `TAG=sha-<short7>` from the tip of the env's branch — `PROD=true` → `origin/main`,
+   `PROD=stag` → `origin/develop` (`git fetch` runs inside the target). The tag must match
+   `sha-<7 hex chars>` — a mutable tag (e.g. a stray `TAG=stag`) is rejected before any AWS call.
+2. Verifies **every** service's image exists in GHCR at that tag **before mutating anything** — a
+   missing tag aborts with nothing deployed. The build workflows are path-filtered, so a merge that
+   didn't touch a service (most commonly a flip-api-only merge, which does not rebuild the FL
+   images) leaves that service without an image at the new tip; flip-api's build is additionally
+   test-gated (`workflow_run` on its test suite), so right after a merge its tag may still be
+   building. The guard names the workflow to check; trigger the missing build manually
+   (`gh workflow run <workflow>.yml --ref <branch>` builds the branch tip and publishes its sha
+   tag), then re-run the deploy. A non-404 registry error (outage, auth) is reported as such —
+   don't dispatch rebuilds for it. Non-`ghcr.io` registries skip the manifest check entirely
+   (LZA ECR pull-through cache, FLIP#749).
+3. Per service: registers a new task-definition revision with only the app container's image tag
+   swapped (containers are selected **by name**, never by index — the same convention as the
+   `describe-tasks` digest check in [`TROUBLESHOOTING.md` §1.9](TROUBLESHOOTING.md), robust to
+   sidecar/ordering changes) and repoints the service at the new revision. If the repoint fails,
+   the just-registered revision is deregistered again so the `max()` tracking in
+   `ecs_services.tf` cannot adopt a never-deployed revision, and any services already repointed
+   in the same run are listed so a partial deploy is visible.
+
+```bash
+make deploy-centralhub PROD=stag                    # deploy the tip of develop to staging
+make deploy-centralhub PROD=true                    # deploy the tip of main to production
+make deploy-centralhub PROD=stag TAG=sha-1a2b3c4    # pin a specific / hotfix build
+make rollback-centralhub PROD=stag                  # repoint services at the previous revision
+```
+
+`TAG=sha-<short7>` overrides the branch-tip resolution — this automates the previously manual
+runbook for feature-branch images: trigger the relevant `docker_build_*` / `fl-docker-build-*`
+workflow on your branch via `workflow_dispatch`, wait for green, then deploy its sha tag.
+
+`make rollback-centralhub` repoints each service at its previous ACTIVE task-definition revision —
+seconds, no rebuild — then **deregisters the revision it rolled away from** (it stays describable
+for forensics). The deregistration is what makes the rollback durable: `ecs_services.tf` tracks the
+*latest ACTIVE* revision, so leaving the bad revision ACTIVE would have the next `terraform apply`
+silently re-adopt it. It does not touch the UI bundle; re-run `make deploy-ui` from the matching
+commit if the UI must move too. After a *partial* deploy (some services repointed before a
+failure), don't roll back blindly — rollback moves **every** service down one revision, including
+the ones the failed deploy never touched; fix the missing build and re-run the deploy instead.
+
+The deploy ends by publishing the UI (same as `make deploy-ui`), which builds `flip-ui` **from your
+local working tree** — deploy from a clean checkout of the branch you are deploying.
+
+Terraform stays the owner of the task-definition *skeleton* (roles, env wiring, volumes). The
+services track `max(Terraform revision, latest ACTIVE revision)` (see `ecs_services.tf`), so an
+unrelated `terraform apply` does not roll a CLI-deployed image back. When an apply *does*
+re-register a task definition, the new Terraform revision goes live with the bootstrap image tags
+from the env file (`DOCKER_TAG`, `DOCKER_FL_TAG`) — re-run `make deploy-centralhub` afterwards to
+roll the sha-pinned image forward again. And because `make apply` applies the saved `plan.tfplan`,
+a plan generated **before** a CLI deploy snapshots the older revision and applying it would roll
+the image back — re-run `make plan` after any `make deploy-centralhub`.
+
+> **Prod rollout note:** switch *production* deploys to this flow only after the 24 Jul 2026 DECAF
+> deadline (BDMS is live on legacy prod until then). Staging can adopt it immediately.
 
 ### Deployment to Different Environments
 

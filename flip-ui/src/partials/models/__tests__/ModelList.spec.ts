@@ -34,11 +34,26 @@ const mockData = vi.hoisted(() => {
 
     return { ref: vue.ref<unknown>(undefined) };
 });
+
+// Captures the SWRV key function so tests can inspect the query the partial
+// would fetch (page / search params).
+const swrvKey: { fn?: () => string } = {};
+
 vi.mock("swrv", () => ({
-    default: () => ({
-        data: mockData.ref,
-        error: ref(null)
-    })
+    default: (key: () => string) => {
+        swrvKey.fn = key;
+
+        return {
+            data: mockData.ref,
+            error: ref(null)
+        };
+    }
+}));
+
+const mockViewModel = vi.hoisted(() => vi.fn());
+vi.mock("@/router", () => ({
+    routeChange: { viewModel: mockViewModel },
+    default: { push: vi.fn() }
 }));
 
 vi.mock("@/services/model-service", async (importOriginal) => {
@@ -84,7 +99,12 @@ function mountModelList() {
             stubs: {
                 AiButton: { template: "<button><slot /></button>" },
                 AiPagination: { template: "<div />" },
-                AiSearch: { template: "<input />" },
+                AiSearch: {
+                    props: ["modelValue"],
+                    emits: ["update:modelValue"],
+                    template: "<input data-test='model-search-input' :value='modelValue'"
+                        + " @input='$emit(\"update:modelValue\", $event.target.value)' />"
+                },
                 AiSkeleton: { template: "<div />" },
                 // VTable is a global component (registered via Vite) that the
                 // unit-test runner doesn't auto-resolve. Stub it with a thin
@@ -267,5 +287,183 @@ describe("ModelList — Status column", () => {
         expect(cell.exists()).toBe(true);
         expect(cell.find("[data-test='model-status-icon-tick']").exists()).toBe(false);
         expect(cell.find("[data-test='model-status-icon-cross']").exists()).toBe(false);
+    });
+});
+
+describe("ModelList — mobile stacked rows (design 5a)", () => {
+    beforeEach(() => {
+        setData(undefined);
+    });
+
+    const MODELS = [
+        {
+            id: "m1",
+            name: "Alpha",
+            description: "First model",
+            status: "TRAINING_STARTED",
+            trusts: [
+                {
+                    id: "t1",
+                    name: "King's College Hospital",
+                    code: "KCH"
+                },
+                {
+                    id: "t2",
+                    name: "Guy's and St Thomas'",
+                    code: "GSTT"
+                }
+            ]
+        },
+        {
+            id: "m2",
+            name: "Beta",
+            description: "",
+            status: "ERROR",
+            trusts: []
+        },
+        {
+            id: "m3",
+            name: "Gamma",
+            description: "Endpoint without trusts field",
+            status: "PENDING"
+        }
+    ];
+
+    test("stacks a mobile row per model and hides the table below sm", async () => {
+        setData({
+            data: MODELS,
+            page: 1,
+            totalPages: 1
+        });
+        const wrapper = mountModelList();
+        await flushPromises();
+
+        const list = wrapper.find("[data-test='model-stacked-list']");
+        expect(list.classes()).toContain("sm:hidden");
+        expect(wrapper.findAll("[data-test^='model-list-item-mobile-']")).toHaveLength(3);
+
+        // Desktop table renders at sm+ only; its data-tests stay unique for Cypress.
+        const tableWrap = wrapper.find("table").element.parentElement;
+        expect(tableWrap?.className).toContain("hidden");
+        expect(tableWrap?.className).toContain("sm:block");
+    });
+
+    test("pins the status chip with its dot on the first line", async () => {
+        setData({ data: [MODELS[0]] });
+        const wrapper = mountModelList();
+        await flushPromises();
+
+        const chip = wrapper.find("[data-test='model-status-chip-m1']");
+        expect(chip.classes()).toContain("rounded-full");
+        // The /models pill idiom: coloured chip + status dot inside it.
+        expect(chip.classes().join(" ")).toContain("bg-fuchsia-100");
+        expect(chip.find("span.rounded-full").classes().join(" ")).toContain("bg-fuchsia-500");
+        expect(chip.text()).toContain("Training Started");
+    });
+
+    test("clamps the description to two lines and falls back to the placeholder", async () => {
+        setData({ data: [MODELS[0], MODELS[1]] });
+        const wrapper = mountModelList();
+        await flushPromises();
+
+        const rows = wrapper.findAll("[data-test^='model-list-item-mobile-']");
+        expect(rows[0].find("p").classes()).toContain("line-clamp-2");
+        expect(rows[0].text()).toContain("First model");
+        expect(rows[1].text()).toContain("No description provided...");
+    });
+
+    test("renders trust chips per code, the empty copy for [], nothing when absent", async () => {
+        setData({ data: MODELS });
+        const wrapper = mountModelList();
+        await flushPromises();
+
+        const rows = wrapper.findAll("[data-test^='model-list-item-mobile-']");
+        const chips = rows[0].findAll("[data-test='model-trust-chip']");
+        expect(chips.map(c => c.text())).toEqual(["KCH", "GSTT"]);
+        // Empty trusts array → the reserved empty-state line.
+        expect(rows[1].text()).toContain("No Trusts assigned yet");
+        // Endpoint not sending the field yet → no trusts line at all.
+        expect(rows[2].findAll("[data-test='model-trust-chip']")).toHaveLength(0);
+        expect(rows[2].text()).not.toContain("No Trusts assigned yet");
+    });
+});
+
+describe("ModelList — interactions", () => {
+    beforeEach(() => {
+        setData(undefined);
+        mockViewModel.mockClear();
+    });
+
+    test("row click navigates to the model in both presentations", async () => {
+        setData({
+            data: [{
+                id: "m1",
+                name: "Alpha",
+                description: "First model",
+                status: "PENDING"
+            }]
+        });
+        const wrapper = mountModelList();
+        await flushPromises();
+
+        await wrapper.find("[data-test='model-list-item-0']").trigger("click");
+        await wrapper.find("[data-test='model-list-item-mobile-0']").trigger("click");
+
+        expect(mockViewModel).toHaveBeenCalledTimes(2);
+        expect(mockViewModel).toHaveBeenCalledWith("project-1", "m1");
+    });
+
+    test("the Create Model button toggles the create-model modal store", async () => {
+        setData({ data: [] });
+        const wrapper = mountModelList();
+        await flushPromises();
+
+        await wrapper.find("[data-test='add-model-btn']").trigger("click");
+
+        const modals = (await import("@/store/modals")).useModalsStore();
+        expect(modals.toggleCreateModel).toHaveBeenCalled();
+    });
+
+    test("typing a search debounces into the fetch key and resets to page 1", async () => {
+        vi.useFakeTimers();
+        try {
+            setData({ data: [] });
+            const wrapper = mountModelList();
+
+            await wrapper.find("[data-test='model-search']").setValue("alpha");
+            expect(swrvKey.fn!()).not.toContain("&search=");
+
+            vi.advanceTimersByTime(600);
+            expect(swrvKey.fn!()).toContain("&search=alpha");
+            expect(swrvKey.fn!()).toContain("pageNumber=1");
+
+            // Clearing the box drops the search param again.
+            await wrapper.find("[data-test='model-search']").setValue("");
+            vi.advanceTimersByTime(600);
+            expect(swrvKey.fn!()).not.toContain("&search=");
+        }
+        finally {
+            vi.useRealTimers();
+        }
+    });
+});
+
+describe("ModelList — header Create-Model button", () => {
+    beforeEach(() => {
+        setData(undefined);
+    });
+
+    test("collapses its label below lg with an aria-label and an icon", async () => {
+        setData({ data: [] });
+        const wrapper = mountModelList();
+        await flushPromises();
+
+        const btn = wrapper.find("[data-test=add-model-btn]");
+        expect(btn.exists()).toBe(true);
+        expect(btn.attributes("aria-label")).toBe("Create Model");
+        expect(btn.find("svg").exists()).toBe(true);
+        const label = btn.find("span.hidden.lg\\:inline");
+        expect(label.exists()).toBe(true);
+        expect(label.text()).toBe("Create Model");
     });
 });

@@ -6,13 +6,12 @@ SRC_DIR="."
 FAIL=0
 
 # Templates live under per-backend subdirs (fl-apps/<backend>/<template>/). For every backend
-# present (nvflare today; flower lands via #622, picked up automatically) we regenerate that
-# backend's aggregate manifest fl-apps/<backend>/required_files.json from its per-template arrays,
-# keyed by template name. That committed manifest is the exact object synced to
-# s3://<bucket>/base-application/<backend>/required_files.json and consumed by flip-api — so the
-# per-template required_files.json arrays are the single source of truth. CI regenerates and runs
-# `git diff --exit-code` to fail on drift; there is deliberately no combined cross-backend file
-# (each backend owns its own keyspace, so template names never collide between backends).
+# present we regenerate that backend's aggregate manifest fl-apps/<backend>/required_files.json
+# from its per-template arrays, keyed by template name. That committed manifest is baked into the
+# flip-api image and read directly by flip-api from FL_APP_BASE_DIR/<backend>/required_files.json
+# (FLIP#724) — so the per-template required_files.json arrays are the single source of truth. CI
+# regenerates and runs `git diff --exit-code` to fail on drift; there is deliberately no combined
+# cross-backend file (each backend owns its own keyspace, so template names never collide).
 for backend_dir in "$SRC_DIR"/*/; do
   bname=$(basename "$backend_dir")
   # Skip non-backend dirs (none today; future-proofing against helper/output dirs).

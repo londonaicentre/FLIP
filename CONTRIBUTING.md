@@ -289,7 +289,6 @@ pushes. These are:
 
 - **Image publishing** — `Build and Push NVFLARE/Flower FL Docker Images`, and the `orthanc`, `xnat-*`, `flip-api`,
   and `trust-*` GHCR build-and-push workflows.
-- **S3 sync** — the `fl-apps-push-s3-*` workflows (AWS OIDC into the upstream account).
 - **Releases** — `release.yml` and `release-pypi.yml` (git tags, GitHub releases, PyPI publishing).
 
 Everything that **validates** your change still runs on your fork, and a red result there is a real failure to fix:

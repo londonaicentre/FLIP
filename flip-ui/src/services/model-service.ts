@@ -44,6 +44,10 @@ export interface IModel {
     // Optional only because cached payloads from before the backend exposed
     // it on the project-models list may still be in flight on first paint.
     status?: ModelStatus;
+    // Participating trusts for the mobile list's chips (design 5a). Optional:
+    // the project-models endpoint doesn't send it yet — the chips line renders
+    // only once the backend does.
+    trusts?: IModelSummaryTrust[];
 }
 
 export interface ILog {
@@ -153,6 +157,38 @@ export function modelStatusLabel(status: ModelStatus | undefined): string {
 /** True for terminal failure / cancellation states (drives the red-cross icon). */
 export function isModelStatusError(status: ModelStatus | undefined): boolean {
     return status === "ERROR" || status === "STOPPED" || status === "RESULTS_UPLOAD_FAILED";
+}
+
+/**
+ * Pill classes for the model status chip (the /models-page idiom: coloured
+ * pill with a status dot inside). Whole literal Tailwind classes so the JIT
+ * compiler emits them.
+ */
+export function modelStatusPillClass(status: ModelStatus | undefined): string {
+    if (isModelStatusError(status)) {
+        return "bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-200";
+    }
+    if (status === "RESULTS_UPLOADED") {
+        return "bg-emerald-100 text-emerald-900 dark:bg-emerald-900/40 dark:text-emerald-100";
+    }
+    if (status === "TRAINING_STARTED") {
+        return "bg-fuchsia-100 text-fuchsia-800 dark:bg-fuchsia-900/40 dark:text-fuchsia-200";
+    }
+    if (status === "PREPARED") {
+        return "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200";
+    }
+
+    return "bg-gray-200 text-gray-700 dark:bg-dark-raised dark:text-gray-300";
+}
+
+/** Dot classes for the model status chip — matches modelStatusPillClass tones. */
+export function modelStatusDotClass(status: ModelStatus | undefined): string {
+    if (isModelStatusError(status)) return "bg-red-500";
+    if (status === "RESULTS_UPLOADED") return "bg-emerald-500";
+    if (status === "TRAINING_STARTED") return "bg-fuchsia-500";
+    if (status === "PREPARED") return "bg-amber-500";
+
+    return "bg-gray-400";
 }
 
 /**
@@ -306,6 +342,51 @@ export function isValidJobType(jobTypes: JobTypesResponse, jobType: string): boo
 
 export async function getModels(url: string): Promise<IPaginatedResponse<IModel>> {
     const response = await _http.get<IPaginatedResponse<IModel>>(url);
+
+    return response.data;
+}
+
+/** A trust participating in a model's federated run, for the Models-list chips. */
+export interface IModelSummaryTrust {
+    id: string;
+    name: string;
+    code?: string | null;
+}
+
+/**
+ * One row of the estate-wide Models list (issue #726): a model joined with its
+ * owning project, the owner's display name and the model's run trusts. `trusts`
+ * is empty until training is initiated (no trusts are assigned before dispatch).
+ */
+export interface IModelSummary {
+    id: string;
+    name: string;
+    // Optional only until the deployed API ships the field (design 6a): the
+    // mobile rows render the description line when it is present.
+    description?: string;
+    // Required: the /models endpoint returns a status for every row (unlike the
+    // per-project IModel list, whose cached payloads predate the status column).
+    status: ModelStatus;
+    projectId: string;
+    projectName: string;
+    ownerId: string;
+    ownerName?: string | null;
+    trusts: IModelSummaryTrust[];
+}
+
+/**
+ * A page of the estate-wide Models list plus per-status totals for the filter tiles.
+ * ``statusCounts`` maps each ``ModelStatus`` to its count across the caller's
+ * access-scoped set (honouring search, ignoring the active status filter). Statuses
+ * with no models are omitted, so the map is partial.
+ */
+export interface IModelsPage extends IPaginatedResponse<IModelSummary> {
+    statusCounts: Partial<Record<ModelStatus, number>>;
+}
+
+/** Fetch the paginated, access-scoped list of models across every project the user can see. */
+export async function getAllModels(url: string): Promise<IModelsPage> {
+    const response = await _http.get<IModelsPage>(url);
 
     return response.data;
 }

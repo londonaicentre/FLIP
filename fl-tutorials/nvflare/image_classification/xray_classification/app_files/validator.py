@@ -206,7 +206,7 @@ class FLIP_VALIDATOR(Executor):
         for metric in ["f1-score", "precision", "recall"]:
             for lesion_name in self._lesions.get_lesion_list():
                 send_metrics_value(
-                    label=f"{'test'.upper()}-{metric.upper()}",
+                    label=f"{'test'.upper()}-{metric.upper()}-{lesion_name}",
                     value=metrics[metric][lesion_name][-1],
                     fl_ctx=fl_ctx,
                     round=0,

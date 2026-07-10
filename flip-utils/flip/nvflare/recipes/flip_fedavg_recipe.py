@@ -108,6 +108,12 @@ class PercentilePrivacy:
 class FlipFedAvgRecipe(Recipe):
     """FLIP FedAvg recipe wired for the NVFLARE Client API.
 
+    Head-only (frozen-backbone) aggregation is canonically driven in production by the fl-server's
+    deploy-time injection from ``config.json``'s ``AGGREGATE_ONLY_REGEX`` (FLIP#730/#733), so the
+    shipped ``standard_client_api`` template bakes no head-only filters. The ``aggregate_only_regex``
+    constructor arg below wires an equivalent recipe-baked chain only for SimEnv/PocEnv runs, where no
+    deploy step exists to inject one.
+
     Args:
         num_rounds: Number of federated rounds.
         min_clients: Minimum number of clients required per round.
@@ -133,7 +139,13 @@ class FlipFedAvgRecipe(Recipe):
             (client result filter, ordered BEFORE PercentilePrivacy), ReconstructFullModel (client data
             filter) and TrimBroadcastVars (server data filter) — so only params matching the regex are
             aggregated per round and, after round 0, broadcast. Empty (default) wires none. Mirrors the
-            fl-server's deploy-time injection from config.json's ``AGGREGATE_ONLY_REGEX``.
+            fl-server's deploy-time injection from config.json's ``AGGREGATE_ONLY_REGEX``, which is the
+            canonical path for production jobs (the shipped ``standard_client_api`` template bakes no
+            head-only filters): the fl-server folds any recipe-baked chains into its own — a single
+            ``["train", "validate"]`` ``ReconstructFullModelForEval`` chain that also extends the
+            head-only broadcast to cross-site validation, superseding the recipe's train-only
+            ``ReconstructFullModel`` (FLIP#730/#733). This arg stands alone only where that deploy step
+            doesn't run (SimEnv/PocEnv), so the ``validate`` broadcast stays full-model there.
     """
 
     def __init__(
@@ -348,4 +360,6 @@ class FlipFedAvgRecipe(Recipe):
         config.setdefault("project_id", self.project_id)
         config.setdefault("query", self.query)
         config.setdefault("local_rounds", self.local_rounds)
-        client_cfg.write_text(json.dumps(config, indent=2))
+        # Trailing newline: keeps the committed standard_client_api template stable across
+        # regenerations and satisfies the end-of-file-fixer pre-commit hook.
+        client_cfg.write_text(json.dumps(config, indent=2) + "\n")

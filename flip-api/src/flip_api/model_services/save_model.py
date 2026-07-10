@@ -23,8 +23,6 @@ from flip_api.db.models.main_models import Model, ModelTrustIntersect, ProjectTr
 from flip_api.domain.interfaces.model import ISaveModel
 from flip_api.domain.interfaces.shared import IId
 from flip_api.domain.schemas.status import ModelStatus, ProjectStatus, TrustIntersectStatus
-from flip_api.fl_services.services.fl_scheduler_service import resolve_backend
-from flip_api.fl_services.services.pull_required_files import pull_required_files_json_to_assets
 from flip_api.utils.logger import logger
 from flip_api.utils.project_manager import get_project_by_id
 
@@ -113,13 +111,9 @@ def save_model(
             db.add(intersect)
         db.commit()
 
-        # Pull the latest required_files.json from S3 after model creation, for whichever
-        # backend the nets currently report. Best-effort: a failure here (e.g. S3 down, or no
-        # net has reported a backend yet) is logged and model creation still succeeds.
-        try:
-            pull_required_files_json_to_assets(resolve_backend(db))
-        except Exception as e:
-            logger.error(f"Failed to pull required_files.json from S3: {e}")
+        # The per-backend required_files.json manifests are baked into the flip-api image
+        # (FLIP#724), so there is nothing to pull from S3 on model creation — the bundler and
+        # job-type validation read them directly from FL_APP_BASE_DIR.
 
         logger.info(f"Model created with ID: {model.id}")
         return IId(id=model.id)

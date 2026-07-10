@@ -110,7 +110,7 @@ export const chartToolbox = (darkMode: boolean) => ({
         },
         magicType: {
             show: true,
-            type: ["line", "bar"]
+            type: ["line", "bar"] as ("line" | "bar")[]
         },
         restore: { title: "Reset View" }
     }
