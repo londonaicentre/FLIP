@@ -289,7 +289,20 @@ class FLIP_TRAINER(Executor):
                 self.optimizer.zero_grad()
                 output = self.model(images)
                 loss = get_bce_loss(output, labels)
+
+                # Skip a non-finite batch instead of letting it poison the model: a single NaN/Inf
+                # loss backpropagates into every weight via optimizer.step(), after which every
+                # subsequent batch is NaN and the whole pass reports loss=nan (see FLIP#764).
+                if not torch.isfinite(loss):
+                    self.logger.info(
+                        "Skipping batch %d/%d: non-finite loss (%s)", i + 1, len(self.training_dataloader), loss.item()
+                    )
+                    continue
+
                 loss.backward()
+                # Gradient clipping bounds the update so an exploding gradient on one batch can't
+                # diverge the model to NaN within a single optimizer step.
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
                 self.optimizer.step()
                 training_metrics_["loss"]["train"].append(loss.item())
                 output = torch.sigmoid(output)

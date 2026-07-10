@@ -61,7 +61,20 @@ def train_func(
         optimizer.zero_grad()
         logits = model(images)
         loss = get_bce_loss(logits, labels)
+
+        # Skip a non-finite batch instead of letting it poison the model: a single
+        # NaN/Inf loss backpropagates into every weight via optimizer.step(), after
+        # which every subsequent batch is NaN and the whole pass reports loss=nan,
+        # flipping the model to ERROR (FLIP#764). Dropping the batch keeps training
+        # alive so a transient bad batch can't kill the run.
+        if not torch.isfinite(loss):
+            log(INFO, f"Skipping batch {i + 1}/{len(train_loader)}: non-finite loss ({loss.item()})")
+            continue
+
         loss.backward()
+        # Gradient clipping bounds the update so an exploding gradient on one batch
+        # can't diverge the model to NaN within a single optimizer step.
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
         optimizer.step()
 
         metrics["loss"].append(loss.item())
