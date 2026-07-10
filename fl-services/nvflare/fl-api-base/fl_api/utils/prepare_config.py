@@ -165,26 +165,68 @@ def _inject_keep_only_vars_filter(config: dict, include_regex: str) -> None:
 
 
 def _inject_reconstruct_full_model_filter(config: dict) -> None:
-    """Prepend a ReconstructFullModel filter to the ``train`` task_data_filters (client-side).
+    """Prepend a ReconstructFullModelForEval filter covering BOTH ``train`` and ``validate`` (client).
 
     The client-side half of the head-only broadcast: it rebuilds the full global model from the
-    trimmed (head-only) broadcast the server sends after round 0 (see ``_inject_trim_broadcast_filter``
-    / TrimBroadcastVars), so the client trainer keeps receiving a full state dict and needs no change.
-    Prepended so it runs before any other incoming task_data_filter. Injected alongside the
-    KeepOnlyVars result filter — the two are the matched client-side ends of the frozen-backbone
-    round-trip. Mutates ``config`` in place.
+    trimmed (head-only) broadcast the server sends after round 0 (training, see
+    ``_inject_trim_broadcast_filter`` / TrimBroadcastVars) and for cross-site validation (see
+    ``_inject_trim_eval_broadcast_filter`` / TrimEvalBroadcastVars), so the client trainer and
+    validator keep receiving a full state dict and need no change.
+
+    Wired as a SINGLE filter chain over ``["train", "validate"]`` so ONE component instance handles
+    both tasks: the frozen backbone the client reconstructs against is the round-0 broadcast cached
+    during training, and NVFLARE builds a fresh filter instance per chain occurrence — so that cache
+    is only visible during validation when the same instance serves both tasks. Prepended so it runs
+    before any other incoming task_data_filter. Injected alongside the KeepOnlyVars result filter —
+    together the matched client-side ends of the frozen-backbone round-trip. Mutates ``config`` in
+    place.
+
+    NVFLARE rejects a job in which the same task appears in more than one task_data_filters chain
+    (``FedJsonConfigurator._build_filter_table`` raises "multiple data filter chains defined for
+    task ..."), so any pre-existing chain covering ``train`` or ``validate`` is FOLDED INTO the
+    injected chain rather than left alongside it: its filters keep their relative order after the
+    reconstruct filter (which must see the broadcast first), and any ``ReconstructFullModel*`` filter
+    already wired (e.g. by a ``FlipFedAvgRecipe(aggregate_only_regex=...)`` export) is dropped as
+    superseded — the deploy-time instance must be the ONE holding the round-0 cache across both
+    tasks. A pre-existing chain that also covers OTHER tasks cannot be folded without silently
+    changing which tasks its filters run on, so that raises instead.
+
+    Raises:
+        ValueError: if an existing task_data_filters chain covers ``train`` or ``validate`` together
+            with other tasks — unmergeable, and NVFLARE would reject the overlap at job parse time.
     """
     reconstruct_filter = {
         "id": "reconstruct_full_model",
-        "path": "flip.nvflare.components.ReconstructFullModel",
+        "path": "flip.nvflare.components.ReconstructFullModelForEval",
         "args": {},
     }
+    covered_tasks = {"train", "validate"}
     filters_blocks = config.setdefault("task_data_filters", [])
-    for block in filters_blocks:
-        if "train" in block.get("tasks", []):
-            block.setdefault("filters", []).insert(0, reconstruct_filter)
-            return
-    filters_blocks.append({"tasks": ["train"], "filters": [reconstruct_filter]})
+    to_merge = [block for block in filters_blocks if covered_tasks & set(block.get("tasks", []))]
+    unmergeable = [block for block in to_merge if set(block.get("tasks", [])) - covered_tasks]
+    if unmergeable:
+        raise ValueError(
+            "AGGREGATE_ONLY_REGEX requires a single client task_data_filters chain over ['train', 'validate'], "
+            f"but the app config has a chain over {unmergeable[0].get('tasks')} — folding it in would apply its "
+            "filters to train/validate only, and NVFLARE rejects a task covered by two chains. Restrict the "
+            "chain to train/validate tasks or unset AGGREGATE_ONLY_REGEX."
+        )
+    merged_filters = [reconstruct_filter]
+    for block in to_merge:
+        for existing in block.get("filters", []):
+            if str(existing.get("path", "")).startswith("flip.nvflare.components.ReconstructFullModel"):
+                # Already wired (e.g. recipe-baked); superseded by the instance injected above — keeping
+                # both would double-reconstruct and NVFLARE would build a second, cache-less instance.
+                logger.info(f"Dropping pre-existing {existing.get('path')} filter superseded by injected chain")
+                continue
+            merged_filters.append(existing)
+        if set(block["tasks"]) != covered_tasks and len(block.get("filters", [])) > 0:
+            logger.warning(
+                f"Folding task_data_filters chain over {block['tasks']} into the injected "
+                "['train', 'validate'] chain; its filters now run on both tasks"
+            )
+    remaining_blocks = [block for block in filters_blocks if not any(block is merged for merged in to_merge)]
+    config["task_data_filters"] = [{"tasks": ["train", "validate"], "filters": merged_filters}, *remaining_blocks]
 
 
 def _inject_trim_broadcast_filter(config: dict, include_regex: str) -> None:
@@ -208,6 +250,50 @@ def _inject_trim_broadcast_filter(config: dict, include_regex: str) -> None:
     filters_blocks.append({"tasks": ["train"], "filters": [trim_filter]})
 
 
+def _inject_trim_eval_broadcast_filter(config: dict, include_regex: str) -> None:
+    """Append a TrimEvalBroadcastVars filter to the ``validate`` task_data_filters (server-side).
+
+    The server-side half of head-only cross-site validation: it trims the ``validate`` broadcast
+    (the full aggregated global model that ``GlobalModelEval`` sends to each client for scoring) down
+    to only the trainable params matching ``include_regex``, so the frozen ~759 MiB backbone is not
+    re-shipped for evaluation — the client rebuilds the full model via ReconstructFullModelForEval
+    from the backbone it cached at training round 0. Kept as its own ``["validate"]`` chain (distinct
+    from the ``["train"]`` TrimBroadcastVars chain); both filters are stateless, so a separate
+    server-side instance per task is fine. Mutates ``config`` in place.
+
+    Detection is by membership (any chain covering ``validate``), not exact match — NVFLARE rejects a
+    task covered by two chains, so appending a second validate-covering chain would fail the job at
+    parse time. But unlike the round-gated TrimBroadcastVars (which no-ops on tasks without a round
+    header), this filter trims UNCONDITIONALLY, so it must not be appended into a chain that also
+    covers other tasks (it would e.g. trim the round-0 ``train`` broadcast and destroy the client's
+    backbone cache) — that raises instead.
+
+    Raises:
+        ValueError: if an existing task_data_filters chain covers ``validate`` together with other
+            tasks — the unconditional trim cannot be scoped to ``validate`` within a shared chain.
+    """
+    trim_filter = {
+        "id": "trim_eval_broadcast_to_trainable",
+        "path": "flip.nvflare.components.TrimEvalBroadcastVars",
+        "args": {"include_vars": include_regex},
+    }
+    filters_blocks = config.setdefault("task_data_filters", [])
+    for block in filters_blocks:
+        tasks = block.get("tasks", [])
+        if "validate" not in tasks:
+            continue
+        if tasks != ["validate"]:
+            raise ValueError(
+                "AGGREGATE_ONLY_REGEX requires a dedicated ['validate'] server task_data_filters chain, but the "
+                f"app config has a chain over {tasks} — TrimEvalBroadcastVars trims unconditionally, so it cannot "
+                "share a chain with other tasks, and NVFLARE rejects a task covered by two chains. Split validate "
+                "into its own chain or unset AGGREGATE_ONLY_REGEX."
+            )
+        block.setdefault("filters", []).append(trim_filter)
+        return
+    filters_blocks.append({"tasks": ["validate"], "filters": [trim_filter]})
+
+
 def configure_client(
     job_dir: Path,
     app_name: str,
@@ -225,7 +311,9 @@ def configure_client(
         project_id (str): unique project_id identifier
         cohort_query (str): cohort query identifying the project (SQL query used to obtain the data)
         aggregate_only_regex (str | None): when set, inject a KeepOnlyVars ``train`` result filter so
-            only matching (trainable) params are sent per round (frozen-backbone head-only, FLIP#684).
+            only matching (trainable) params are sent per round, plus a ReconstructFullModelForEval
+            data filter over ``train``+``validate`` that rebuilds the full model client-side for both
+            training and cross-site validation (frozen-backbone head-only, FLIP#684 / #730).
 
     Returns:
         Path: path to the client config file that was updated.
@@ -283,8 +371,10 @@ def configure_server(
         aggregator (str): name of the aggregator to be used
         aggregation_weights (dict): aggregation weights to be used in the job (per trust)
         aggregate_only_regex (str | None): when set, inject a TrimBroadcastVars ``train`` data filter so
-            only the trainable params (matching the regex) are broadcast per round after round 0
-            (frozen-backbone head-only downstream — the server-side mirror of the client KeepOnlyVars).
+            only the trainable params (matching the regex) are broadcast per round after round 0, plus a
+            TrimEvalBroadcastVars ``validate`` data filter so post-training cross-site validation also
+            broadcasts only the head (frozen-backbone head-only downstream — the server-side mirror of
+            the client KeepOnlyVars / ReconstructFullModelForEval; FLIP#684 / #730).
 
     Returns:
         Path: path to the server config file that was updated.
@@ -363,8 +453,10 @@ def configure_server(
 
     if aggregate_only_regex:
         _inject_trim_broadcast_filter(config, aggregate_only_regex)
+        _inject_trim_eval_broadcast_filter(config, aggregate_only_regex)
         logger.info(
-            f"Injected TrimBroadcastVars data filter (include_vars={aggregate_only_regex!r}) for app '{app_name}'"
+            f"Injected TrimBroadcastVars (train) + TrimEvalBroadcastVars (validate) data filters "
+            f"(include_vars={aggregate_only_regex!r}) for app '{app_name}'"
         )
 
     write_config(config, config_file)

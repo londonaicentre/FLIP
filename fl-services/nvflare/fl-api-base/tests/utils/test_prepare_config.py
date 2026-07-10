@@ -39,6 +39,14 @@ MOCK_APP_CLIENTS = ["app-trust1", "app-trust2"]
 MOCK_AGGREGATION_WEIGHTS = {"trust1": 0.5, "trust2": 0.5}
 
 
+def _assert_no_duplicate_task_chains(config: dict) -> None:
+    """Each task may appear in at most ONE task_data_filters chain — NVFLARE's FedJsonConfigurator
+    raises ConfigError ("multiple data filter chains defined for task ...") at job parse time
+    otherwise, failing the job on every client/server before any filter runs."""
+    tasks = [task for block in config.get("task_data_filters", []) for task in block.get("tasks", [])]
+    assert len(tasks) == len(set(tasks)), f"task covered by more than one task_data_filters chain: {tasks}"
+
+
 @pytest.fixture
 def mock_get_settings():
     with patch("fl_api.utils.prepare_config.get_settings") as mock_settings:
@@ -264,9 +272,10 @@ class TestConfigureClient:
     def test_configure_client_injects_reconstruct_full_model_filter(
         self, mock_isfile, mock_write_config, mock_read_config
     ):
-        """With aggregate_only_regex set, a ReconstructFullModel filter is prepended to the train
-        task_data_filters — the client half of the head-only broadcast (it rebuilds the full model
-        from the trimmed broadcast the server sends after round 0)."""
+        """With aggregate_only_regex set, a ReconstructFullModelForEval filter is prepended as its own
+        chain over BOTH ``train`` and ``validate`` — the client half of the head-only broadcast for
+        training AND cross-site validation (one instance shares the round-0 backbone cache across both
+        tasks; #730)."""
         mock_read_config.return_value = {"task_result_filters": [{"tasks": ["train"], "filters": []}]}
 
         configure_client(
@@ -278,17 +287,22 @@ class TestConfigureClient:
         )
 
         modified_config = mock_write_config.call_args[0][0]
-        train_block = next(b for b in modified_config["task_data_filters"] if "train" in b["tasks"])
-        assert train_block["filters"][0]["path"] == "flip.nvflare.components.ReconstructFullModel"
+        reconstruct_block = modified_config["task_data_filters"][0]
+        assert reconstruct_block["tasks"] == ["train", "validate"]
+        assert reconstruct_block["filters"][0]["path"] == "flip.nvflare.components.ReconstructFullModelForEval"
+        _assert_no_duplicate_task_chains(modified_config)
 
-    def test_configure_client_reconstruct_filter_prepended_before_existing_data_filter(
+    def test_configure_client_reconstruct_filter_folds_existing_train_chain(
         self, mock_isfile, mock_write_config, mock_read_config
     ):
-        """An existing train task_data_filters block keeps its filters; ReconstructFullModel is
-        prepended so the full model is rebuilt before any other incoming data filter runs."""
+        """An existing train task_data_filters chain is FOLDED into the injected ``["train",
+        "validate"]`` chain — NVFLARE rejects a task covered by two chains, so it cannot be left
+        alongside. ReconstructFullModelForEval stays first so the full model is rebuilt before any
+        other incoming data filter runs; unrelated chains are preserved untouched."""
         mock_read_config.return_value = {
             "task_data_filters": [
-                {"tasks": ["train"], "filters": [{"id": "existing", "path": "some.Filter"}]}
+                {"tasks": ["train"], "filters": [{"id": "existing", "path": "some.Filter"}]},
+                {"tasks": ["other_task"], "filters": [{"id": "unrelated", "path": "some.OtherFilter"}]},
             ]
         }
 
@@ -301,14 +315,80 @@ class TestConfigureClient:
         )
 
         modified_config = mock_write_config.call_args[0][0]
-        train_block = next(b for b in modified_config["task_data_filters"] if "train" in b["tasks"])
-        assert train_block["filters"][0]["path"] == "flip.nvflare.components.ReconstructFullModel"
-        assert train_block["filters"][1]["id"] == "existing"
+        merged_block = modified_config["task_data_filters"][0]
+        assert merged_block["tasks"] == ["train", "validate"]
+        assert merged_block["filters"][0]["path"] == "flip.nvflare.components.ReconstructFullModelForEval"
+        assert merged_block["filters"][1]["id"] == "existing"
+        # The unrelated chain is preserved unchanged, after the injected chain.
+        assert modified_config["task_data_filters"][1]["filters"][0]["id"] == "unrelated"
+        _assert_no_duplicate_task_chains(modified_config)
+
+    def test_configure_client_reconstruct_filter_supersedes_recipe_baked_one(
+        self, mock_isfile, mock_write_config, mock_read_config
+    ):
+        """A ReconstructFullModel data filter already baked into the app config (e.g. by a
+        ``FlipFedAvgRecipe(aggregate_only_regex=...)`` export) is dropped as superseded: the
+        deploy-time chain must hold the ONE instance whose round-0 cache is shared across train and
+        validate — keeping both would reconstruct twice via a second, cache-less instance."""
+        mock_read_config.return_value = {
+            "task_data_filters": [
+                {
+                    "tasks": ["train"],
+                    "filters": [
+                        {"id": "reconstruct_full_model", "path": "flip.nvflare.components.ReconstructFullModel"}
+                    ],
+                }
+            ]
+        }
+
+        configure_client(
+            job_dir=MOCK_JOB_APP_DIR,
+            app_name=MOCK_APP_NAME,
+            project_id=MOCK_PROJECT_ID,
+            cohort_query=MOCK_COHORT_QUERY,
+            aggregate_only_regex="omni_heads",
+        )
+
+        modified_config = mock_write_config.call_args[0][0]
+        assert modified_config["task_data_filters"] == [
+            {
+                "tasks": ["train", "validate"],
+                "filters": [
+                    {
+                        "id": "reconstruct_full_model",
+                        "path": "flip.nvflare.components.ReconstructFullModelForEval",
+                        "args": {},
+                    }
+                ],
+            }
+        ]
+
+    def test_configure_client_reconstruct_filter_rejects_unmergeable_chain(
+        self, mock_isfile, mock_write_config, mock_read_config
+    ):
+        """A chain covering train/validate together with OTHER tasks cannot be folded without changing
+        which tasks its filters run on → clear configure-time error, instead of NVFLARE's parse-time
+        duplicate-chain ConfigError on every client."""
+        mock_read_config.return_value = {
+            "task_data_filters": [
+                {"tasks": ["train", "custom_task"], "filters": [{"id": "existing", "path": "some.Filter"}]}
+            ]
+        }
+
+        with pytest.raises(ValueError, match=r"chain over \['train', 'custom_task'\]"):
+            configure_client(
+                job_dir=MOCK_JOB_APP_DIR,
+                app_name=MOCK_APP_NAME,
+                project_id=MOCK_PROJECT_ID,
+                cohort_query=MOCK_COHORT_QUERY,
+                aggregate_only_regex="omni_heads",
+            )
 
     def test_configure_client_no_regex_leaves_data_filters_untouched(
         self, mock_isfile, mock_write_config, mock_read_config
     ):
-        """No aggregate_only_regex → no ReconstructFullModel injected (normal full-model broadcast)."""
+        """No aggregate_only_regex → no reconstruct filter injected (normal full-model broadcast) —
+        this is the ``evaluation``/multimodel path, which must never head-only-trim."""
         mock_read_config.return_value = {"task_result_filters": [{"tasks": ["train"], "filters": []}]}
 
         configure_client(
@@ -320,7 +400,7 @@ class TestConfigureClient:
 
         modified_config = mock_write_config.call_args[0][0]
         assert all(
-            f.get("path") != "flip.nvflare.components.ReconstructFullModel"
+            f.get("path") != "flip.nvflare.components.ReconstructFullModelForEval"
             for b in modified_config.get("task_data_filters", [])
             for f in b.get("filters", [])
         )
@@ -511,10 +591,90 @@ class TestConfigureServer:
         assert train_block["filters"][-1]["path"] == "flip.nvflare.components.TrimBroadcastVars"
         assert train_block["filters"][-1]["args"]["include_vars"] == "omni_heads"
 
+    def test_configure_server_injects_trim_eval_broadcast_filter(
+        self, mock_isfile, mock_read_config, mock_write_config
+    ):
+        """With aggregate_only_regex set, a TrimEvalBroadcastVars filter is added to a ``validate``
+        task_data_filters chain — the server half of head-only cross-site validation (#730). It is a
+        separate chain from the ``train`` TrimBroadcastVars one."""
+        mock_read_config.return_value = self._minimal_server_config()
+
+        configure_server(
+            job_dir=MOCK_JOB_APP_DIR,
+            app_name=MOCK_APP_NAME,
+            global_rounds=3,
+            trusts=MOCK_APP_CLIENTS,
+            ignore_result_error=True,
+            aggregator="agg",
+            aggregation_weights=MOCK_AGGREGATION_WEIGHTS,
+            aggregate_only_regex="omni_heads",
+        )
+
+        modified_config = mock_write_config.call_args[0][0]
+        validate_block = next(b for b in modified_config["task_data_filters"] if b["tasks"] == ["validate"])
+        eval_filter = validate_block["filters"][-1]
+        assert eval_filter["path"] == "flip.nvflare.components.TrimEvalBroadcastVars"
+        assert eval_filter["args"]["include_vars"] == "omni_heads"
+        # The train chain is still present and distinct.
+        train_block = next(b for b in modified_config["task_data_filters"] if "train" in b["tasks"])
+        assert train_block["filters"][-1]["path"] == "flip.nvflare.components.TrimBroadcastVars"
+        _assert_no_duplicate_task_chains(modified_config)
+
+    def test_configure_server_trim_eval_appended_to_existing_validate_block(
+        self, mock_isfile, mock_read_config, mock_write_config
+    ):
+        """An existing dedicated ``["validate"]`` chain gains TrimEvalBroadcastVars (appended, so it
+        runs after any other outgoing data filter) instead of a second validate-covering chain, which
+        NVFLARE would reject at parse time."""
+        config = self._minimal_server_config()
+        config["task_data_filters"] = [{"tasks": ["validate"], "filters": [{"id": "existing", "path": "some.Filter"}]}]
+        mock_read_config.return_value = config
+
+        configure_server(
+            job_dir=MOCK_JOB_APP_DIR,
+            app_name=MOCK_APP_NAME,
+            global_rounds=3,
+            trusts=MOCK_APP_CLIENTS,
+            ignore_result_error=True,
+            aggregator="agg",
+            aggregation_weights=MOCK_AGGREGATION_WEIGHTS,
+            aggregate_only_regex="omni_heads",
+        )
+
+        modified_config = mock_write_config.call_args[0][0]
+        validate_block = next(b for b in modified_config["task_data_filters"] if b["tasks"] == ["validate"])
+        assert validate_block["filters"][0]["id"] == "existing"
+        assert validate_block["filters"][-1]["path"] == "flip.nvflare.components.TrimEvalBroadcastVars"
+        _assert_no_duplicate_task_chains(modified_config)
+
+    def test_configure_server_trim_eval_rejects_multi_task_validate_chain(
+        self, mock_isfile, mock_read_config, mock_write_config
+    ):
+        """TrimEvalBroadcastVars trims unconditionally (no round gate), so it must not be appended
+        into a chain that also covers other tasks — it would e.g. trim the round-0 train broadcast
+        and destroy the client's backbone cache → clear configure-time error."""
+        config = self._minimal_server_config()
+        config["task_data_filters"] = [{"tasks": ["validate", "other_task"], "filters": []}]
+        mock_read_config.return_value = config
+
+        with pytest.raises(ValueError, match=r"chain over \['validate', 'other_task'\]"):
+            configure_server(
+                job_dir=MOCK_JOB_APP_DIR,
+                app_name=MOCK_APP_NAME,
+                global_rounds=3,
+                trusts=MOCK_APP_CLIENTS,
+                ignore_result_error=True,
+                aggregator="agg",
+                aggregation_weights=MOCK_AGGREGATION_WEIGHTS,
+                aggregate_only_regex="omni_heads",
+            )
+
     def test_configure_server_no_regex_leaves_data_filters_untouched(
         self, mock_isfile, mock_read_config, mock_write_config
     ):
-        """No aggregate_only_regex → no TrimBroadcastVars injected (normal full-model broadcast)."""
+        """No aggregate_only_regex → neither TrimBroadcastVars nor TrimEvalBroadcastVars injected
+        (normal full-model broadcast) — this is the ``evaluation``/multimodel path, which must never
+        head-only-trim the validate broadcast (clients don't hold the arbitrary server checkpoints)."""
         mock_read_config.return_value = self._minimal_server_config()
 
         configure_server(
@@ -528,11 +688,13 @@ class TestConfigureServer:
         )
 
         modified_config = mock_write_config.call_args[0][0]
-        assert all(
-            f.get("path") != "flip.nvflare.components.TrimBroadcastVars"
+        injected_paths = {
+            f.get("path")
             for b in modified_config.get("task_data_filters", [])
             for f in b.get("filters", [])
-        )
+        }
+        assert "flip.nvflare.components.TrimBroadcastVars" not in injected_paths
+        assert "flip.nvflare.components.TrimEvalBroadcastVars" not in injected_paths
 
     def test_configure_server_file_not_found(self, mock_isfile):
         # Setup
