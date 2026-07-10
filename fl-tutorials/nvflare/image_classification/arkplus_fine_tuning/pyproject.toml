@@ -15,5 +15,12 @@ dependencies = [
     "torch>=2.6.0",
 ]
 
+[project.optional-dependencies]
+# Only needed to regenerate docs/dataset_examples.png (`make dataset-figure`).
+docs = [
+    "matplotlib>=3.10.7",
+    "pydicom>=3.0.2",
+]
+
 [tool.uv]
 package = false
