@@ -17,16 +17,27 @@ the single-model baseline evaluator scores one server-broadcast checkpoint, this
 which needs every model's per-sample scores on the *same* cohort at once. The stock Client-API validate
 path broadcasts one model per ``validate`` task, so it can't supply both models together.
 
-Design: each client builds every model in ``config.json['models']`` and loads its checkpoint from the
-app's own ``custom/`` directory (``job.py`` bundles the ``.pt`` files into every site), then scores them
-all on the local hold-out cohort in one pass. The server's per-model ``validate`` broadcasts are used
-only as triggers — the weights in ``input_model.params`` are ignored. Results are computed once and
-cached, so the second broadcast returns the same dict without re-running inference.
+Design: the server's ``EvaluationModelLocator`` loads every checkpoint in ``config.json['models']``
+(from the app's ``custom/`` in the simulator, from the FL API's staging volume in production) and
+``GlobalModelEval`` broadcasts each one as its own ``validate`` task. This evaluator scores the
+**broadcast** weights (``input_model.params``) — clients never read the ``.pt`` files, so the same code
+path runs on the local simulator (``make run``) and the production FL platform, where the FL API
+de-bundles the checkpoints and they never reach the clients.
 
-Because both checkpoints are bundled into the app, this tutorial targets the **local NVFLARE simulator /
-uv workflow** (``make run``). It is not wired for the production FL platform, where the FL API stages
-checkpoints server-side only and clients never receive the ``.pt`` files (the single-model baseline
-evaluation is the platform-deployable path).
+Two multimodel-specific mechanics on top of the single-model baseline evaluator:
+
+* **Model identity from the broadcast meta.** The stock ``MODEL_OWNER`` header does not survive the
+  Client-API ``FLModel`` conversion, so FLIP's ``EvaluationModelLocator`` stamps each broadcast's DXO
+  meta with its ``config.json['models']`` entry name (``FlipMetaKey.EVAL_MODEL_NAME``). This evaluator
+  reads that key to attribute the received weights; a missing key means the FL server's ``flip`` package
+  predates named evaluation broadcasts, and the task fails with that remedy rather than guessing.
+* **Cumulative replies.** Pairwise DeLong needs every model's per-sample scores on the same cohort, but
+  each ``validate`` task delivers one model. Scores are cached across tasks (the Client-API executor
+  keeps this script alive for the whole job), and every reply returns the metrics for **all** models
+  scored so far. The server's ``EvaluationJsonGenerator`` keeps one dict per client (last reply wins),
+  and a client executes its tasks sequentially — so the final reply, which carries every model's AUROC
+  plus the DeLong map, is what lands in ``evaluation_results.json`` (the same shape the legacy executor
+  produced).
 
 Only aggregate (cohort-level) metrics are returned — per-lesion AUROC per model and DeLong p-values.
 Per-sample (row-level) predictions are deliberately never produced or exported: a per-patient list would
@@ -56,7 +67,6 @@ from data_utils import (
 from metrics_utils import apply_label_mapping, benjamini_hochberg, compute_auroc, delong_roc_test
 from models import _build_arkplus_raw
 from monai.data import DataLoader, Dataset
-from nvflare.app_opt.pt import PTModelPersistenceFormatManager
 
 logger = logging.getLogger(__name__)
 
@@ -158,27 +168,39 @@ def resolve_models_config(config: dict) -> tuple[list[dict], list[tuple[int, str
     return model_specs, lesion_items, lesion_dict
 
 
-def build_model(spec: dict, device: torch.device) -> torch.nn.Module:
-    """Build a model from its spec and load its bundled checkpoint onto *device*.
+# Meta key the server-side EvaluationModelLocator stamps on every evaluation broadcast
+# (flip.constants.FlipMetaKey.EVAL_MODEL_NAME). Kept as a literal so this app never imports flip
+# symbols that may not exist on older client images — the value is produced on the fl-server.
+EVAL_MODEL_NAME_META_KEY = "flip_eval_model_name"
 
-    The ``.pt`` is loaded and normalised exactly as the server-side ``EvaluationModelLocator`` would
-    (``PTModelPersistenceFormatManager`` handles both a bare ``state_dict`` and an NVFLARE
-    persistence-format checkpoint), then applied with ``strict=True`` so any architecture/weight mismatch
-    fails loudly.
+
+def received_model_name(input_model: flare.FLModel, model_names: list[str]) -> str:
+    """Resolve which configured model a ``validate`` broadcast carries, from its DXO meta.
+
+    The server-side ``EvaluationModelLocator`` names every broadcast in the DXO meta. A missing key
+    means the FL server's ``flip`` package predates named evaluation broadcasts — fail with that
+    remedy rather than guessing which weights arrived.
+    """
+    name = (input_model.meta or {}).get(EVAL_MODEL_NAME_META_KEY)
+    if not name:
+        raise ValueError(
+            f"Broadcast weights carry no {EVAL_MODEL_NAME_META_KEY!r} meta. The FL server's flip package "
+            "predates named evaluation broadcasts (EvaluationModelLocator) — update/redeploy the "
+            "fl-server before running the multimodel evaluation."
+        )
+    if name not in model_names:
+        raise ValueError(f"Server broadcast model {name!r} is not configured; expected one of {model_names}.")
+    return name
+
+
+def build_model_from_params(spec: dict, params: dict, device: torch.device) -> torch.nn.Module:
+    """Build *spec*'s architecture and load the server-broadcast weights onto *device*.
+
+    The locator normalises every checkpoint to a bare state dict before broadcasting, so ``params`` is
+    applied directly with ``strict=True`` — any architecture/weight mismatch fails loudly.
     """
     model = _build_arkplus_raw(spec["arkplus_config"])
-
-    checkpoint_path = Path(__file__).parent.resolve() / spec["checkpoint"]
-    if not checkpoint_path.is_file():
-        raise FileNotFoundError(
-            f"Checkpoint for model {spec['name']!r} not found at {checkpoint_path}. This multimodel "
-            "tutorial bundles both checkpoints into the app for the local simulator — run "
-            "`make prepare-checkpoint` (or `make run`) to fetch and stage them."
-        )
-    weights = torch.load(str(checkpoint_path), weights_only=True, map_location=device)
-    var_dict = PTModelPersistenceFormatManager(weights, default_train_conf=None).var_dict
-    model.load_state_dict(var_dict, strict=True)
-
+    model.load_state_dict({k: torch.as_tensor(v) for k, v in params.items()}, strict=True)
     model.to(device)
     model.eval()
     return model
@@ -322,10 +344,6 @@ def main() -> None:
 
     model_specs, lesion_items, lesion_dict = resolve_models_config(config)
     model_names = [spec["name"] for spec in model_specs]
-
-    # Build every model and load its bundled checkpoint once, before the FL loop. Both models are held
-    # on the device together so they can be scored on the same cohort for the DeLong comparison.
-    models = {spec["name"]: build_model(spec, device) for spec in model_specs}
     specs_by_name = {spec["name"]: spec for spec in model_specs}
 
     # flare.init() must precede any other flare.* call (e.g. get_site_name()), which is why data loading
@@ -354,7 +372,10 @@ def main() -> None:
         for spec in model_specs
     }
 
-    cached_metrics: dict | None = None
+    # Per-sample scores cached across validate tasks: each task carries one model's weights, but the
+    # DeLong comparison needs every model's scores on the same cohort.
+    all_predictions: dict[str, np.ndarray] = {}
+    all_targets: dict[str, np.ndarray] = {}
 
     while flare.is_running():
         input_model = flare.receive()
@@ -365,21 +386,29 @@ def main() -> None:
             logger.warning("Received a non-evaluation task; ignoring.")
             continue
 
-        # The server broadcasts one validate task per configured model, but this evaluator scores every
-        # model locally in one pass — so compute once and return the same aggregate dict for each task.
-        if cached_metrics is None:
-            all_predictions: dict[str, np.ndarray] = {}
-            all_targets: dict[str, np.ndarray] = {}
-            for name in model_names:
-                preds, targets = evaluate_model(
-                    models[name], loaders[name], device, specs_by_name[name], lesion_items, lesion_dict
-                )
-                all_predictions[name] = preds
-                all_targets[name] = targets
-            cached_metrics = compute_metrics(model_names, all_predictions, all_targets, lesion_items)
-            logger.info("Evaluation finished for models: %s", ", ".join(model_names))
+        name = received_model_name(input_model, model_names)
+        if name in all_predictions:
+            logger.info("Model %s already scored; replying with cached metrics.", name)
+        else:
+            model = build_model_from_params(specs_by_name[name], input_model.params, device)
+            preds, targets = evaluate_model(
+                model, loaders[name], device, specs_by_name[name], lesion_items, lesion_dict
+            )
+            # Only the scores are kept — the model is released before the next broadcast so a single
+            # model's footprint bounds GPU memory, whatever len(config['models']) is.
+            del model
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            all_predictions[name] = preds
+            all_targets[name] = targets
+            logger.info("Scored model %s (%d/%d models done).", name, len(all_predictions), len(model_names))
 
-        flare.send(flare.FLModel(metrics=cached_metrics))
+        # Reply with every model scored so far. The server keeps one metrics dict per client (last
+        # reply wins) and a client executes its tasks sequentially, so the reply to the final validate
+        # task — every model's AUROC plus the pairwise DeLong map — is what lands in
+        # evaluation_results.json.
+        scored_names = [n for n in model_names if n in all_predictions]
+        flare.send(flare.FLModel(metrics=compute_metrics(scored_names, all_predictions, all_targets, lesion_items)))
 
 
 if __name__ == "__main__":

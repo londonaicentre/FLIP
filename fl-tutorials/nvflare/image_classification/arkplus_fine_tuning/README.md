@@ -101,6 +101,26 @@ and the lesion-label columns, plus DICOM images.
   `project_id` is passed to the trainer as `--project_id`; the cohort `query` is read from
   `config_fed_client.json` (see [`query.sql`](query.sql)).
 
+### Example images
+
+One representative radiograph per target lesion, left to right in classifier-head index order
+(`Effusion` = 0 … `Pneumothorax` = 4):
+
+![Representative chest radiograph for each of the five target lesions](docs/dataset_examples.png)
+
+The first four panels are drawn from the site-2 training split; the pneumothorax panel is drawn from
+the site-2 holdout split. Regenerate the figure with
+[`docs/make_dataset_figure.py`](docs/make_dataset_figure.py), pointing `DATA_ROOT` at the directory
+holding the dataset split folders:
+
+```bash
+make dataset-figure DATA_ROOT=/path/to/balanced_synthetic_split
+```
+
+It runs in the tutorial-local env with the `docs` extra (`matplotlib` + `pydicom`). Before drawing,
+it checks each panel's lesion against `config.json` and each accession's labels against its split's
+cohort dataframe, so a mislabelled figure fails rather than ships.
+
 ## Checkpoint setup
 
 `make run`/`make export` require the backbone checkpoint at `app_files/pretrained_weights.pt`, produced

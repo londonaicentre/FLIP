@@ -17,9 +17,9 @@ execution modes:
 *Export* (``--export --export-dir <path>``):
     Writes the complete NVFLARE job to ``<path>/flip_evaluation/``, including ``meta.json`` (carrying
     ``custom_props.model_id`` for lazy resolution), ``app/config/`` (server + client configs), and
-    ``app/custom/`` (the bundled ``flip/`` package plus the staged user app files, including **both** the
-    ``arkplus_pretrained_weights.pt`` and ``arkplus_finetuned_weights.pt`` checkpoints). This is the
-    primary, fully-local-verifiable path — no GPU or data required.
+    ``app/custom/`` (the bundled ``flip/`` package plus the staged user app files, including the
+    ``arkplus_pretrained_weights.pt`` / ``arkplus_finetuned_weights.pt`` checkpoints the server-side
+    locator loads). This is the primary, fully-local-verifiable path — no GPU or data required.
 
 *SimEnv* (default, no flags):
     Runs a local simulation under the NVFLARE simulator. Requires a GPU, the DECAF chest X-ray dataset,
@@ -27,9 +27,11 @@ execution modes:
     environment variables (``FLIP_PROJECT_ID``, ``FLIP_QUERY``). Per-site data is selected inside the
     evaluator via ``flare.get_site_name()`` (see ``app_files/data_utils.py``).
 
-Unlike the single-model baseline job, the DeLong comparison needs both models' scores on the same cohort
-at once, so the evaluator loads **both** checkpoints from the bundled ``app/custom/`` directory rather
-than relying on the server broadcast (see ``app_files/evaluator.py``). Both modes go through NVFLARE's
+The checkpoints stay server-side in both modes — ``EvaluationModelLocator`` loads them on the server and
+``GlobalModelEval`` broadcasts each one as its own named ``validate`` task; the evaluator scores the
+broadcast weights and caches scores across tasks for the DeLong comparison (see
+``app_files/evaluator.py``). This matches the production platform, where the FL API de-bundles the
+``.pt`` files onto the hub staging volume and clients never receive them. Both modes go through NVFLARE's
 :meth:`Recipe.execute`, which consumes ``--export``/``--export-dir`` from ``sys.argv`` itself (it strips
 them before this script's own ``argparse`` runs) and exports-or-runs accordingly — so there is no
 separate ``--export`` branch here.
@@ -61,22 +63,27 @@ from nvflare.recipe import SimEnv  # noqa: E402
 
 
 def stage_app_files(job: FedJob) -> None:
-    """Bundle every file in ``app_files/`` into the job's server + client ``custom/`` directories.
+    """Bundle ``app_files/`` into the job — code + config to every site, ``.pt`` checkpoints for the server.
 
     The recipe wires only the NVFLARE components; the user-supplied app files (``evaluator.py``,
-    ``models.py``, ``config.json``, the Ark+ model code, and **both** checkpoints
-    ``arkplus_pretrained_weights.pt`` / ``arkplus_finetuned_weights.pt``) must be added to the job
-    explicitly so they land in every site's ``app/custom/``. ``FedJob.add_file_to_{server,clients}``
-    registers them with the job's file sources, so they are bundled for **both** the SimEnv/simulator run
-    (``recipe.execute``) and ``--export``. Bundling the checkpoints to the clients is what lets the
-    evaluator load both models locally for the DeLong comparison.
+    ``models.py``, ``config.json``, the Ark+ model code) must be added to the job explicitly so they land
+    in every site's ``app/custom/``. ``FedJob.add_file_to_{server,clients}`` registers them with the
+    job's file sources, so they are bundled for **both** the SimEnv/simulator run (``recipe.execute``)
+    and ``--export``. The checkpoints are registered for the **server only** — only the server-side
+    ``EvaluationModelLocator`` reads them, broadcasting each as a named ``validate`` task that the
+    evaluator scores. (NVFLARE's combined single-app layout still materialises one shared ``custom/``
+    dir, so the files are physically present at every simulator site — harmless, nothing client-side
+    opens them. On the production platform the FL API keeps them out of the job entirely and stages
+    them on the hub volume.)
 
     Args:
         job: The recipe's underlying :class:`~nvflare.job_config.api.FedJob` (``recipe.job``).
     """
     for src in sorted(_APP_FILES_DIR.iterdir()):
-        if src.is_file():
-            job.add_file_to_server(str(src))
+        if not src.is_file():
+            continue
+        job.add_file_to_server(str(src))
+        if src.suffix != ".pt":
             job.add_file_to_clients(str(src))
 
 

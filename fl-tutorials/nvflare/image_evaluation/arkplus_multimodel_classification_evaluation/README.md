@@ -24,18 +24,21 @@ unwrapped from a single `DataKind.COLLECTION` DXO), which is now deprecated. Her
 plain `nvflare.client` script (`flare.init/receive/send`) and the job is a Python `FlipEvalRecipe` driven
 by `job.py` rather than a job-type template + Docker harness.
 
-Because the DeLong comparison needs every model's per-sample scores on the *same* cohort at once — which
-the stock per-model `validate` broadcast can't provide — each client loads **both** checkpoints from the
-app's bundled `custom/` directory (`job.py` stages the `.pt` files into every site) and scores them in
-one pass. The server's per-model broadcasts are used only as triggers; the results are computed once and
-returned for each. The `evaluation_results.json` output contract (per-site, per-model metrics + DeLong)
-is unchanged from the legacy tutorial.
+The checkpoints stay **server-side**: `EvaluationModelLocator` loads every entry of
+`config.json['models']` on the server and `GlobalModelEval` broadcasts each one as its own `validate`
+task, named in the broadcast's DXO meta (`flip_eval_model_name`). The evaluator scores each broadcast on
+the shared local cohort, caches the per-sample scores across tasks, and replies with the metrics of every
+model scored so far — so the reply to the final task carries all per-model AUROCs plus the pairwise
+DeLong map, which is what the server's last-reply-wins `EvaluationJsonGenerator` writes out. The
+`evaluation_results.json` output contract (per-site, per-model metrics + DeLong) is unchanged from the
+legacy tutorial.
 
-> **Scope.** Because both checkpoints are bundled into the app, this tutorial targets the **local NVFLARE
-> simulator / `uv` workflow** (`make run`). It is not wired for the production FL platform, where the FL
-> API stages checkpoints server-side only and clients never receive the `.pt` files — for a
-> platform-deployable single-model evaluation, see the
-> [baseline tutorial](../arkplus_baseline_classification_evaluation/README.md).
+> **Scope.** The same code path runs on the **local NVFLARE simulator / `uv` workflow** (`make run`,
+> where `job.py` bundles the `.pt` files for the server-side locator) and on the **production FL
+> platform** (where the FL API de-bundles uploaded checkpoints onto the hub staging volume — nothing
+> client-side ever opens a `.pt` file in either mode). The FL server must run a `flip` package recent
+> enough to name its evaluation broadcasts (`EvaluationModelLocator` stamping `flip_eval_model_name`);
+> the evaluator fails with that remedy if the meta is absent.
 
 ## Compatible job type
 
@@ -160,13 +163,13 @@ Useful targets: `make prepare-checkpoint` (prepare both checkpoints only), `make
 
 ## Key files
 
-- `app_files/evaluator.py`: the Client-API evaluation loop (load both models → score → per-lesion AUROC + DeLong).
+- `app_files/evaluator.py`: the Client-API evaluation loop (score each named broadcast → per-lesion AUROC + DeLong).
 - `app_files/arkplus_flat_models.py`: the `ArkSwinTransformer` model definition.
 - `app_files/models.py`: model factory (`_build_arkplus_raw`, plus `get_model()` for the recipe's persistor).
 - `app_files/metrics_utils.py`: AUROC and the DeLong pairwise test implementation.
 - `app_files/data_utils.py`: data loading, DICOM parsing, label mappings, transforms, per-site resolution.
 - `app_files/config.json`: per-model checkpoint/architecture mapping and evaluation settings.
-- `job.py`: builds `FlipEvalRecipe`, bundles both checkpoints, and runs export / SimEnv.
+- `job.py`: builds `FlipEvalRecipe`, stages the checkpoints into the server app, and runs export / SimEnv.
 
 ## Output metrics
 

@@ -23,7 +23,7 @@ against the synthetic DeCaf MICCAI-2026 dataset).
 |---|---|---|---|---|---|
 | 1 | **Baseline evaluation** | `image_evaluation/arkplus_baseline_classification_evaluation` | `evaluation_client_api` | **holdout** | `procedure_source_value = 'Chest X-ray (holdout)'` |
 | 2 | **Finetuning** | `image_classification/arkplus_fine_tuning` | `standard_client_api` (training) | **finetuning** (train split) | `procedure_source_value = 'Chest X-ray'` |
-| 3 | **Multimodel evaluation** | `image_evaluation/arkplus_multimodel_classification_evaluation` | `evaluation` | **holdout** | `procedure_source_value = 'Chest X-ray (holdout)'` |
+| 3 | **Multimodel evaluation** | `image_evaluation/arkplus_multimodel_classification_evaluation` | `evaluation_client_api` | **holdout** | `procedure_source_value = 'Chest X-ray (holdout)'` |
 
 **Dependency:** the multimodel evaluation (3) evaluates the pretrained **and** the finetuned
 checkpoint, so run finetuning (2) first and feed its output checkpoint into (3).
@@ -32,7 +32,11 @@ Each tutorial's `app_files/` carries the model code + `config.json`; the pretrai
 (`arkplus_pretrained_weights.pt`, ~759 MiB) ship in the baseline/multimodel `app_files/`. The
 hub **de-bundles** these large checkpoints server-side (they are staged on the fl-server, never
 shipped to clients — see FLIP#695), so the model-file upload cap must allow ~759 MiB
-(`MAX_MODEL_FILE_BYTES`, default 5 GiB on the hub).
+(`MAX_MODEL_FILE_BYTES`, default 5 GiB on the hub). The multimodel evaluation (3) additionally
+requires the fl-server's `flip` package to **name its evaluation broadcasts**
+(`EvaluationModelLocator` stamping `flip_eval_model_name` on each validate task's DXO meta) — the
+evaluator attributes each broadcast's weights by that key and fails with a clear error on older
+fl-server images.
 
 > **⚠️ The finetuning checkpoint is different from the eval checkpoints — it must be _backbone-only_.**
 > The **eval** experiments (1, 3) score the *full* foundation model, so their `pretrained_weights.pt`
@@ -256,8 +260,8 @@ For (3), stage the finetuned checkpoint produced by (2) into the multimodel `app
 `arkplus_finetuned_weights.pt` (referenced by `models.arkplus_finetuned.checkpoint` in the
 multimodel `config.json`, alongside the pretrained `arkplus_pretrained_weights.pt`). **Unwrap it
 first:** the finetuning run's downloadable result is `FL_global_model.pt`, a *wrapped*
-`OrderedDict({'model': <state_dict>, 'train_conf': …})`, but the evaluator loads a **bare** state
-dict — extract the inner `state_dict` and re-save:
+`OrderedDict({'model': <state_dict>, 'train_conf': …})`, but the evaluation job loads a **bare**
+state dict — extract the inner `state_dict` and re-save:
 
 ```python
 import torch
