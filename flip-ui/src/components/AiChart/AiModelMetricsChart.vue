@@ -164,9 +164,10 @@ onMounted(() => {
                     },
                     xAxis: {
                         type: "value",
-                        minInterval: 1,
+                        // No minInterval: x-values are arbitrary floats (FLIP#148); forcing integer
+                        // ticks would collapse sub-unit ranges (e.g. 0–1) onto a single tick.
                         splitNumber: 10, // <— try to show 10 ticks (only)
-                        name: "Global Rounds",
+                        name: props.data.xLabel,
                         nameLocation: "middle",
                         nameGap: 40,
                         nameTextStyle: {

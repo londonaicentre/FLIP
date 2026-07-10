@@ -18,6 +18,7 @@ from nvflare.apis.fl_context import FLContext
 from nvflare.apis.shareable import Shareable
 
 from flip.constants import FlipEvents
+from flip.schemas import split_x_label
 
 
 class FlipAnalyticsBridge(FLComponent):
@@ -51,9 +52,16 @@ class FlipAnalyticsBridge(FLComponent):
         if analytic is None or analytic.value is None:
             return
 
-        metric_data: dict = {"label": analytic.tag, "value": analytic.value}
+        # The NVFLARE Client API (SummaryWriter.add_scalar) exposes a tag, value, and step but no x-axis
+        # label slot, so the x-label rides inside the tag as "<label>[@<x_label>]" (e.g.
+        # "TRAIN_LOSS@epoch") — the same grammar Flower metric keys use. `step` becomes the x-coordinate
+        # ('x_value'); the metric's provenance global round is stamped server-side (FLIP#148).
+        label, x_label = split_x_label(analytic.tag)
+        metric_data: dict = {"label": label, "value": analytic.value}
         if analytic.step is not None:
-            metric_data["round"] = analytic.step
+            metric_data["x_value"] = analytic.step
+        if x_label is not None:
+            metric_data["x_label"] = x_label
 
         new_dxo = DXO(data_kind=DataKind.METRICS, data=metric_data)
 

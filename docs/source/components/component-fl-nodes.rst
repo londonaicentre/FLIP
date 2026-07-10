@@ -95,7 +95,7 @@ These calls - among others - communicate with the Imaging API and retrieve the d
 
 For communication with the Central Hub:
 - `flip.update_status(model_id, new_model_status)`: these calls will update the Central Hub about status on the specific model that is running (example: when it started training, or if there's an error).
-- `flip.send_metrics(client_name, model_id, label, value, round)`: sends a metric to the central hub so that it can plot the training results
+- `flip.send_metrics(client_name, model_id, label, value, global_round, x_value=None, x_label=None)`: sends a metric to the central hub so that it can plot the training results. ``global_round`` is provenance — always the FL global round the metric is reported in. Where the point is *plotted* is the optional coordinate pair: ``x_value`` is the x-coordinate (any float, e.g. an epoch counter) and ``x_label`` names the x-axis (e.g. ``"epoch"``); both default to the global round on the "Global Round" axis. A plot is identified by the ``(label, x_label)`` pair, so the same metric logged against different x-labels is shown as separate plots.
 
 The server will also use the package to update the status, as well as to upload the final results, which will be first saved in the server, to the final S3 buckets users can download from.
 

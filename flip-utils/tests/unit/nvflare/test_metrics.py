@@ -43,7 +43,7 @@ class TestSendMetricsValue:
         fl_ctx.get_engine.return_value = None
 
         # Should not raise, just logs error
-        send_metrics_value("loss", 0.5, fl_ctx, round=1)
+        send_metrics_value("loss", 0.5, fl_ctx, x_value=1)
 
     def test_send_metrics_value_fires_event(self):
         """send_metrics_value should fire event when engine is available."""
@@ -51,7 +51,7 @@ class TestSendMetricsValue:
         mock_engine = Mock()
         fl_ctx.get_engine.return_value = mock_engine
 
-        send_metrics_value("loss", 0.5, fl_ctx, round=1)
+        send_metrics_value("loss", 0.5, fl_ctx, x_value=1)
 
         mock_engine.fire_event.assert_called_once()
 
@@ -61,7 +61,7 @@ class TestSendMetricsValue:
         mock_engine = Mock()
         fl_ctx.get_engine.return_value = mock_engine
 
-        send_metrics_value("loss", 0.5, fl_ctx, round=1)
+        send_metrics_value("loss", 0.5, fl_ctx, x_value=1)
 
         # fire_event called with (event_name, fl_ctx)
         mock_engine.fire_event.assert_called_once_with(FlipEvents.SEND_RESULT, fl_ctx)
@@ -75,10 +75,10 @@ class TestSendMetricsValue:
 
         dxo = from_shareable(event_data_shareable)
         assert dxo.data_kind == DataKind.METRICS
-        assert dxo.data == {"label": "loss", "value": 0.5, "round": 1}
+        assert dxo.data == {"label": "loss", "value": 0.5, "x_value": 1}
 
-    def test_send_metrics_value_fires_event_without_round(self):
-        """send_metrics_value should fire event without round if not provided."""
+    def test_send_metrics_value_fires_event_without_x_value(self):
+        """send_metrics_value should fire event without x_value if not provided."""
         fl_ctx = Mock(spec=FLContext)
         mock_engine = Mock()
         fl_ctx.get_engine.return_value = mock_engine
@@ -95,6 +95,20 @@ class TestSendMetricsValue:
         dxo = from_shareable(event_data_shareable)
         assert dxo.data_kind == DataKind.METRICS
         assert dxo.data == {"label": "accuracy", "value": 0.9}
+
+    def test_send_metrics_value_includes_x_label_when_provided(self):
+        """send_metrics_value should include x_label in the DXO data when given (FLIP#148)."""
+        fl_ctx = Mock(spec=FLContext)
+        mock_engine = Mock()
+        fl_ctx.get_engine.return_value = mock_engine
+
+        send_metrics_value("loss", 0.5, fl_ctx, x_value=2.5, x_label="epoch")
+
+        event_data_shareable = next(
+            c.args[1] for c in fl_ctx.set_prop.call_args_list if c.args[0] == FLContextKey.EVENT_DATA
+        )
+        dxo = from_shareable(event_data_shareable)
+        assert dxo.data == {"label": "loss", "value": 0.5, "x_value": 2.5, "x_label": "epoch"}
 
 
 class TestHandleMetricsEvent:
@@ -117,10 +131,10 @@ class TestHandleMetricsEvent:
         with pytest.raises(TypeError, match="event_data must be type Shareable"):
             handle_metrics_event("not_a_shareable", 1, "123e4567-e89b-12d3-a456-426614174000")
 
-    def test_handle_metrics_event_extracts_data(self):
-        """handle_metrics_event should extract and process metrics data."""
+    def test_handle_metrics_event_never_overrides_global_round(self):
+        """A client x_value places the point on the plot; global_round stays the server's true round."""
         # Create mock event_data
-        dxo = DXO(data_kind=DataKind.METRICS, data={"label": "loss", "value": 0.5, "round": 7})
+        dxo = DXO(data_kind=DataKind.METRICS, data={"label": "loss", "value": 0.5, "x_value": 7})
         event_data = dxo.to_shareable()
         event_data.set_header(FedEventHeader.ORIGIN, "site-1")
 
@@ -138,11 +152,13 @@ class TestHandleMetricsEvent:
             model_id="123e4567-e89b-12d3-a456-426614174000",
             label="loss",
             value=0.5,
-            round=7,  # client override
+            global_round=1,  # provenance: always the server's round
+            x_value=7,  # the client's plot coordinate
+            x_label=None,
         )
 
-    def test_handle_metrics_event_with_no_round(self):
-        """handle_metrics_event should handle event data without round."""
+    def test_handle_metrics_event_with_no_x_value(self):
+        """handle_metrics_event should forward x_value=None (the hub plots at the global round)."""
         # Create mock event_data
         dxo = DXO(data_kind=DataKind.METRICS, data={"label": "accuracy", "value": 0.9})
         event_data = dxo.to_shareable()
@@ -162,5 +178,57 @@ class TestHandleMetricsEvent:
             model_id="123e4567-e89b-12d3-a456-426614174000",
             label="accuracy",
             value=0.9,
-            round=3,  # fallback to global
+            global_round=3,
+            x_value=None,
+            x_label=None,
+        )
+
+    def test_handle_metrics_event_reads_legacy_round_key_as_x_value(self):
+        """A pre-x_value client image sends 'round' in the DXO; it must land as the plot coordinate."""
+        dxo = DXO(data_kind=DataKind.METRICS, data={"label": "loss", "value": 0.5, "round": 7})
+        event_data = dxo.to_shareable()
+        event_data.set_header(FedEventHeader.ORIGIN, "site-1")
+
+        flip = Mock()
+
+        handle_metrics_event(
+            event_data=event_data,
+            global_round=1,
+            model_id="123e4567-e89b-12d3-a456-426614174000",
+            flip=flip,
+        )
+
+        flip.send_metrics.assert_called_once_with(
+            client_name="site-1",
+            model_id="123e4567-e89b-12d3-a456-426614174000",
+            label="loss",
+            value=0.5,
+            global_round=1,
+            x_value=7,
+            x_label=None,
+        )
+
+    def test_handle_metrics_event_forwards_x_label(self):
+        """handle_metrics_event should forward a client-supplied x_label to the hub (FLIP#148)."""
+        dxo = DXO(data_kind=DataKind.METRICS, data={"label": "loss", "value": 0.5, "x_value": 5, "x_label": "epoch"})
+        event_data = dxo.to_shareable()
+        event_data.set_header(FedEventHeader.ORIGIN, "site-3")
+
+        flip = Mock()
+
+        handle_metrics_event(
+            event_data=event_data,
+            global_round=1,
+            model_id="123e4567-e89b-12d3-a456-426614174000",
+            flip=flip,
+        )
+
+        flip.send_metrics.assert_called_once_with(
+            client_name="site-3",
+            model_id="123e4567-e89b-12d3-a456-426614174000",
+            label="loss",
+            value=0.5,
+            global_round=1,
+            x_value=5,
+            x_label="epoch",
         )

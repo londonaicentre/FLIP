@@ -14,6 +14,12 @@ import os
 
 SERVICE_UNAVAILABLE_MESSAGE = "The server is unable to process any requests at the moment, please try again later."
 
+# Default label naming the x-axis of an FL training-metric plot. Used when a metric is logged without
+# an explicit x-axis label — the historical behaviour, where the x-axis is the FL global round. Single
+# source of truth for the FLMetrics column default, the ingest-schema default, and the plot's x-axis
+# title (FLIP#148).
+DEFAULT_X_AXIS_LABEL = "Global Round"
+
 # AWS SES email templates
 ACCESS_REQUEST_TEMPLATE_NAME = "flip-access-request"
 IMAGING_CREDENTIALS_TEMPLATE_NAME = "flip-xnat-credentials"

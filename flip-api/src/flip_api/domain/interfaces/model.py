@@ -211,15 +211,8 @@ class IModelAuditAction(BaseModel):
     userid: str
 
 
-class ITrainingMetricsResponse(BaseModel):
-    trust: str
-    globalround: int
-    label: str
-    result: float
-
-
 class IModelMetricsValue(BaseModel):
-    xValue: int
+    xValue: float
     yValue: float
 
 

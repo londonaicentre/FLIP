@@ -446,7 +446,7 @@ class TestFLIPStandardProdSendMetrics:
                 model_id=model_id,
                 label="LOSS_FUNCTION",
                 value=0.42,
-                round=3,
+                global_round=3,
             )
 
             mock_post.assert_called_once()
@@ -457,10 +457,69 @@ class TestFLIPStandardProdSendMetrics:
                 "global_round": 3,
                 "label": "LOSS_FUNCTION",
                 "result": 0.42,
+                "x_value": 3.0,
+                "x_label": "Global Round",
             }
             assert mock_post.call_args.kwargs["headers"] == {
                 "x-internal-service-key": "test-internal-key",
             }
+
+    def test_send_metrics_includes_custom_x_label_in_payload(self, flip_prod):
+        """A custom x_label is sent in the payload; omitting it defaults to "Global Round" (FLIP#148)."""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.text = "OK"
+
+        model_id = "550e8400-e29b-41d4-a716-446655440000"
+
+        with (
+            patch("flip.core.standard.FlipConstants") as mock_constants,
+            patch("flip.core.standard.requests.post", return_value=mock_response) as mock_post,
+        ):
+            mock_constants.FLIP_API_INTERNAL_URL = "https://hub.example.com"
+            mock_constants.INTERNAL_SERVICE_KEY_HEADER = "x-internal-service-key"
+            mock_constants.INTERNAL_SERVICE_KEY = "test-internal-key"
+
+            flip_prod.send_metrics(
+                client_name="client-1",
+                model_id=model_id,
+                label="LOSS_FUNCTION",
+                value=0.42,
+                global_round=3,
+                x_label="epoch",
+            )
+
+            assert mock_post.call_args.kwargs["json"]["x_label"] == "epoch"
+
+    def test_send_metrics_carries_custom_x_value_and_true_global_round(self, flip_prod):
+        """A custom x_value is the plot coordinate; global_round stays as provenance (FLIP#148)."""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.text = "OK"
+
+        model_id = "550e8400-e29b-41d4-a716-446655440000"
+
+        with (
+            patch("flip.core.standard.FlipConstants") as mock_constants,
+            patch("flip.core.standard.requests.post", return_value=mock_response) as mock_post,
+        ):
+            mock_constants.FLIP_API_INTERNAL_URL = "https://hub.example.com"
+            mock_constants.INTERNAL_SERVICE_KEY_HEADER = "x-internal-service-key"
+            mock_constants.INTERNAL_SERVICE_KEY = "test-internal-key"
+
+            flip_prod.send_metrics(
+                client_name="client-1",
+                model_id=model_id,
+                label="VAL_LOSS",
+                value=0.42,
+                global_round=2,
+                x_value=7.5,
+                x_label="epoch",
+            )
+
+            payload = mock_post.call_args.kwargs["json"]
+            assert payload["x_value"] == 7.5
+            assert payload["global_round"] == 2
 
 
 class TestFLIPStandardProdUploadResultsToS3:

@@ -32,6 +32,7 @@ from flip_api.domain.schemas.status import (
     XNATImageStatus,
 )
 from flip_api.domain.schemas.types import FLBackend
+from flip_api.utils.constants import DEFAULT_X_AXIS_LABEL
 
 
 # Tables
@@ -98,7 +99,16 @@ class FLMetrics(SQLModel, table=True):
     trust: UUID = Field(foreign_key="trust.id")
     fl_client_name: str = Field()
     model_id: UUID = Field(foreign_key="model.id")
+    # Provenance: the FL global round the metric was reported in — always the true round, never
+    # overridden. The plot coordinate is the (x_label, x_value) pair below — see FLIP#148.
     global_round: int = Field()
+    # The x-coordinate this metric is plotted at; defaults to the global round (backfilled by the
+    # ingest schema when the sender omits it).
+    x_value: float = Field()
+    # Label naming the x-axis this metric is plotted against (e.g. "epoch"). Defaults to the FL global
+    # round axis. A plot's identity is the pair (label, x_label), so the same metric logged against
+    # different x-labels renders as separate plots — see FLIP#148.
+    x_label: str = Field(default=DEFAULT_X_AXIS_LABEL)
     timestamp: datetime | None = Field(default_factory=datetime.utcnow)
     label: str = Field()
     result: float = Field()

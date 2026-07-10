@@ -253,8 +253,17 @@ class FLIP_TRAINER(FLIP_BASE):
 
             self.log_info(fl_ctx, f"Epoch: {epoch + 1}, Finished, Average loss: {average_loss}")
 
-            round = global_round * (self._epochs) + epoch + 1
-            send_metrics_value(label="TRAIN_LOSS", value=average_loss, fl_ctx=fl_ctx, round=round, flip=self.flip)
+            # Per-epoch point: plot on an "epoch" axis at the cumulative epoch count; the FL global
+            # round is recorded alongside as provenance.
+            cumulative_epoch = global_round * (self._epochs) + epoch + 1
+            send_metrics_value(
+                label="TRAIN_LOSS",
+                value=average_loss,
+                fl_ctx=fl_ctx,
+                x_value=cumulative_epoch,
+                x_label="epoch",
+                flip=self.flip,
+            )
 
             # Validation loop
             if epoch % self.validation_step == 0:
@@ -293,16 +302,24 @@ class FLIP_TRAINER(FLIP_BASE):
                     msg=f"Validation - Epoch: {epoch + 1}, Loss: {last_val_loss}\nMean Dice: {last_val_dice}",
                 )
 
-                # Compute round
-                round = global_round * (self._epochs) + epoch + 1
-                send_metrics_value(label="VAL_LOSS", value=last_val_loss, fl_ctx=fl_ctx, round=round, flip=self.flip)
-                send_metrics_value(label="VAL_DICE", value=last_val_dice, fl_ctx=fl_ctx, round=round, flip=self.flip)
-
-            else:
-                # Compute round
-                round = global_round * (self._epochs) + epoch + 1
-                send_metrics_value(label="VAL_LOSS", value=last_val_loss, fl_ctx=fl_ctx, round=round, flip=self.flip)
-                send_metrics_value(label="VAL_DICE", value=last_val_dice, fl_ctx=fl_ctx, round=round, flip=self.flip)
+            # Report the latest validation metrics every epoch (non-validation epochs re-send the
+            # previous values) at this epoch's coordinate.
+            send_metrics_value(
+                label="VAL_LOSS",
+                value=last_val_loss,
+                fl_ctx=fl_ctx,
+                x_value=cumulative_epoch,
+                x_label="epoch",
+                flip=self.flip,
+            )
+            send_metrics_value(
+                label="VAL_DICE",
+                value=last_val_dice,
+                fl_ctx=fl_ctx,
+                x_value=cumulative_epoch,
+                x_label="epoch",
+                flip=self.flip,
+            )
 
             self.model.train()
 

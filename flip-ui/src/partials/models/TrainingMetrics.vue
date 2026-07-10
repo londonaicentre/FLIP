@@ -38,18 +38,18 @@
         >
             <button
                 v-for="chart in data"
-                :key="chart.yLabel"
+                :key="chartId(chart)"
                 type="button"
                 role="tab"
-                :aria-selected="activeChartLabel === chart.yLabel"
-                :data-test="`training-plot-tab-${chart.yLabel}`"
+                :aria-selected="activeChartId === chartId(chart)"
+                :data-test="`training-plot-tab-${chart.yLabel}-${chart.xLabel}`"
                 class="inline-flex items-center px-3 py-1.5 rounded-full text-[13px] font-semibold whitespace-nowrap transition-all"
-                :class="activeChartLabel === chart.yLabel
+                :class="activeChartId === chartId(chart)
                     ? 'bg-primary-500 text-white shadow-sm'
                     : 'text-gray-500 hover:text-gray-800 dark:text-gray-300 dark:hover:text-gray-200'"
-                @click="activeChartLabel = chart.yLabel"
+                @click="activeChartId = chartId(chart)"
             >
-                {{ chart.yLabel }}
+                {{ tabLabel(chart) }}
             </button>
         </div>
         <div class="w-full aspect-video max-h-[480px] pt-4" role="tabpanel">
@@ -64,7 +64,7 @@ import { computed, ref, watch } from "vue";
 import { useRoute } from "vue-router";
 
 import AiMetricsChart from "@/components/AiChart/AiModelMetricsChart.vue";
-import { getModelMetrics } from "@/services/model-service";
+import { getModelMetrics, type IModelMetricData } from "@/services/model-service";
 import { useProjectStore } from "@/store/project";
 
 interface ITrainingMetricsProps {
@@ -88,7 +88,12 @@ const { data } = useSWRV(
     }
 );
 
-const activeChartLabel = ref<string | null>(null);
+// A plot is identified by the (yLabel, xLabel) pair, not the metric name alone: the same metric
+// logged against different x-axis labels is a separate plot (FLIP#148). JSON-encoding the pair keeps
+// the composite key unambiguous for any label text.
+const chartId = (chart: IModelMetricData) => JSON.stringify([chart.yLabel, chart.xLabel]);
+
+const activeChartId = ref<string | null>(null);
 
 // Default to the first chart whenever the data first loads or the active tab
 // disappears from the response (e.g. backend dropped a metric).
@@ -96,16 +101,35 @@ watch(
     data,
     next => {
         if (!next?.length) {
-            activeChartLabel.value = null;
+            activeChartId.value = null;
 
             return;
         }
-        if (!activeChartLabel.value || !next.some(c => c.yLabel === activeChartLabel.value)) {
-            activeChartLabel.value = next[0].yLabel;
+        if (!activeChartId.value || !next.some(c => chartId(c) === activeChartId.value)) {
+            activeChartId.value = chartId(next[0]);
         }
     },
     { immediate: true }
 );
+
+// Distinct x-axis labels per metric name. A metric plotted against a single x-axis shows just its
+// name; only when the same metric appears under more than one x-label do we disambiguate the tabs.
+const xLabelsByMetric = computed(() => {
+    const map = new Map<string, Set<string>>();
+    for (const chart of data.value ?? []) {
+        const labels = map.get(chart.yLabel) ?? new Set<string>();
+        labels.add(chart.xLabel);
+        map.set(chart.yLabel, labels);
+    }
+
+    return map;
+});
+
+const tabLabel = (chart: IModelMetricData): string => {
+    const distinct = xLabelsByMetric.value.get(chart.yLabel)?.size ?? 1;
+
+    return distinct > 1 ? `${chart.yLabel} · ${chart.xLabel}` : chart.yLabel;
+};
 
 // Trust display name → short code, for legend brevity. Defends against the
 // backend metrics endpoint falling back to the long trust name when its
@@ -120,7 +144,7 @@ const nameToCode = computed(() => {
 });
 
 const activeChart = computed(() => {
-    const chart = data.value?.find(c => c.yLabel === activeChartLabel.value);
+    const chart = data.value?.find(c => chartId(c) === activeChartId.value);
     if (!chart) return null;
     const codes = nameToCode.value;
 

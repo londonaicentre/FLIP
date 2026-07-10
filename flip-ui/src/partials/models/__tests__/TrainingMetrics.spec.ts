@@ -50,7 +50,7 @@ vi.mock("@/components/AiChart/AiModelMetricsChart.vue", () => ({
     default: {
         name: "AiMetricsChart",
         props: ["data"],
-        template: "<div data-test=\"chart-stub\" :data-y-label=\"data.yLabel\" :data-series-labels=\"data.metrics.map(m => m.seriesLabel).join(',')\" />"
+        template: "<div data-test=\"chart-stub\" :data-y-label=\"data.yLabel\" :data-x-label=\"data.xLabel\" :data-series-labels=\"data.metrics.map(m => m.seriesLabel).join(',')\" />"
     }
 }));
 
@@ -116,6 +116,30 @@ const VAL_F1 = {
         }]
     }]
 };
+// Same metric name (VAL_LOSS) under two different x-axis labels — must render as two separate plots
+// (FLIP#148), with the tabs disambiguated by their x-label.
+const VAL_LOSS_EPOCH = {
+    yLabel: "VAL_LOSS",
+    xLabel: "epoch",
+    metrics: [{
+        seriesLabel: "Kings College Hospital",
+        data: [{
+            xValue: 1,
+            yValue: 0.4
+        }]
+    }]
+};
+const VAL_LOSS_ROUND = {
+    yLabel: "VAL_LOSS",
+    xLabel: "Global Round",
+    metrics: [{
+        seriesLabel: "Kings College Hospital",
+        data: [{
+            xValue: 1,
+            yValue: 0.5
+        }]
+    }]
+};
 
 describe("TrainingMetrics", () => {
     beforeEach(() => {
@@ -168,7 +192,7 @@ describe("TrainingMetrics", () => {
         const wrapper = mountTrainingMetrics();
         await flushPromises();
 
-        await wrapper.get("[data-test=training-plot-tab-VAL-F1-SCORE]").trigger("click");
+        await wrapper.get("[data-test=training-plot-tab-VAL-F1-SCORE-globalRound]").trigger("click");
         await flushPromises();
 
         const tabs = wrapper.findAll("[role=tab]");
@@ -219,7 +243,7 @@ describe("TrainingMetrics", () => {
         await flushPromises();
 
         // Switch to the second tab so it has a non-default active label.
-        await wrapper.get("[data-test=training-plot-tab-VAL-F1-SCORE]").trigger("click");
+        await wrapper.get("[data-test=training-plot-tab-VAL-F1-SCORE-globalRound]").trigger("click");
         await flushPromises();
         expect(wrapper.find("[data-test=chart-stub]").attributes("data-y-label")).toBe("VAL-F1-SCORE");
 
@@ -242,5 +266,35 @@ describe("TrainingMetrics", () => {
 
         expect(wrapper.find("[data-test=chart-stub]").exists()).toBe(false);
         expect(wrapper.text()).toContain("Any metrics generated during training will show here.");
+    });
+
+    test("renders a separate tab per (metric, x-label) and disambiguates same-metric tabs", async () => {
+        setData([VAL_LOSS_EPOCH, VAL_LOSS_ROUND]);
+        const wrapper = mountTrainingMetrics();
+        await flushPromises();
+
+        const tabs = wrapper.findAll("[role=tab]");
+        // Two plots for the same metric name because their x-axis labels differ (FLIP#148).
+        expect(tabs).toHaveLength(2);
+        expect(tabs[0].text()).toBe("VAL_LOSS · epoch");
+        expect(tabs[1].text()).toBe("VAL_LOSS · Global Round");
+
+        // First plot active by default — identified by (yLabel, xLabel), not yLabel alone.
+        const stub = wrapper.find("[data-test=chart-stub]");
+        expect(stub.attributes("data-y-label")).toBe("VAL_LOSS");
+        expect(stub.attributes("data-x-label")).toBe("epoch");
+    });
+
+    test("switches between same-metric plots that differ only by x-label", async () => {
+        setData([VAL_LOSS_EPOCH, VAL_LOSS_ROUND]);
+        const wrapper = mountTrainingMetrics();
+        await flushPromises();
+
+        await wrapper.findAll("[role=tab]")[1].trigger("click");
+        await flushPromises();
+
+        const stub = wrapper.find("[data-test=chart-stub]");
+        expect(stub.attributes("data-y-label")).toBe("VAL_LOSS");
+        expect(stub.attributes("data-x-label")).toBe("Global Round");
     });
 });

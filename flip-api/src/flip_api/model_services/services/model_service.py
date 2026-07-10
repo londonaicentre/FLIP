@@ -357,7 +357,9 @@ def get_metrics(model_id: UUID, session: Session) -> list[IModelMetrics]:
     """
     logger.debug("Attempting to retrieve the metrics results for the model...")
 
-    results = session.exec(select(FLMetrics).where(FLMetrics.model_id == model_id)).all()
+    results = session.exec(
+        select(FLMetrics).where(FLMetrics.model_id == model_id).order_by(col(FLMetrics.x_value))
+    ).all()
 
     if not results:
         logger.warning("No metrics have been found")
@@ -369,16 +371,19 @@ def get_metrics(model_id: UUID, session: Session) -> list[IModelMetrics]:
     for trust_id, code, name in session.exec(select(Trust.id, Trust.code, Trust.name)).all():
         trust_label[trust_id] = code or name
 
-    # metrics_map: label -> IModelMetrics
-    metrics_map: dict[str, IModelMetrics] = {}
+    # metrics_map: (label, x_label) -> IModelMetrics. A plot's identity is the pair, so the same
+    # metric logged against different x-axis labels renders as separate plots rather than being
+    # overlaid on one axis (FLIP#148). x_label defaults to "Global Round" for legacy rows.
+    metrics_map: dict[tuple[str, str], IModelMetrics] = {}
 
     for row in results:
-        # Create or get the IModelMetrics for the label
-        if row.label not in metrics_map:
-            metrics_map[row.label] = IModelMetrics(yLabel=row.label, xLabel="globalRound", metrics=[])
+        # Create or get the IModelMetrics for this (label, x_label) plot
+        key = (row.label, row.x_label)
+        if key not in metrics_map:
+            metrics_map[key] = IModelMetrics(yLabel=row.label, xLabel=row.x_label, metrics=[])
 
-        # Get the list of series for this label
-        metric = metrics_map[row.label]
+        # Get the list of series for this plot
+        metric = metrics_map[key]
 
         series_label = trust_label.get(row.trust, str(row.trust))
 
@@ -388,8 +393,8 @@ def get_metrics(model_id: UUID, session: Session) -> list[IModelMetrics]:
             series = IModelMetricsData(seriesLabel=series_label, data=[])
             metric.metrics.append(series)
 
-        # Add the data point
-        series.data.append(IModelMetricsValue(xValue=row.global_round, yValue=row.result))
+        # Add the data point at its plot coordinate (global_round is provenance, not the x)
+        series.data.append(IModelMetricsValue(xValue=row.x_value, yValue=row.result))
 
     return list(metrics_map.values())
 

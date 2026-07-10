@@ -20,20 +20,28 @@ from flip.utils.utils import Utils
 
 
 def send_metrics_value(
-    label: str, value: float, fl_ctx: FLContext, round: int | None = None, flip: FLIP = FLIP()
+    label: str,
+    value: float,
+    fl_ctx: FLContext,
+    x_value: float | None = None,
+    x_label: str | None = None,
+    flip: FLIP = FLIP(),
 ) -> None:
     """
     Sends a metric value to the Central Hub.
 
-    If 'round' is provided, it will be included in the event data sent to the Central Hub. This allows the client to
-    specify the x-value for the metric, which can be different from the global round number. If 'round' is not provided,
-    the Central Hub will use the global round number as the x-value for the metric.
+    The metric is always recorded against the FL global round it is reported in (provenance). Where it is
+    *plotted* is the (x_label, x_value) pair: 'x_value' is the x-coordinate (e.g. an epoch counter, a step,
+    any float) and 'x_label' names the x-axis (e.g. "epoch"). Both default to the FL global round / the
+    "Global Round" axis when absent. A plot's identity is (label, x_label), so the same metric logged under
+    different x-labels renders as separate plots (see https://github.com/londonaicentre/FLIP/issues/148).
 
     Args:
         label: The label of the metric.
         value: The value of the metric.
         fl_ctx: The federated learning context.
-        round: The round number (default: None).
+        x_value: The x-coordinate the metric is plotted at (default: None -> the FL global round).
+        x_label: The label naming the x-axis (default: None -> "Global Round").
         flip: FLIP instance used for logging (default: FLIP()).
     """
     if not isinstance(label, str):
@@ -47,11 +55,14 @@ def send_metrics_value(
         flip.logger.error("Error: no engine in fl_ctx, cannot fire metrics event")
         return
 
-    # Create a DXO - if 'round' is provided include it in the data, otherwise just send the label and value
-    if round is not None:
-        dxo = DXO(data_kind=DataKind.METRICS, data={"label": label, "value": value, "round": round})
-    else:
-        dxo = DXO(data_kind=DataKind.METRICS, data={"label": label, "value": value})
+    # Build the DXO data. 'x_value' (x-coordinate) and 'x_label' (x-axis label) are optional and only
+    # included when provided, so the server can fall back to the global round / the "Global Round" label.
+    data: dict = {"label": label, "value": value}
+    if x_value is not None:
+        data["x_value"] = x_value
+    if x_label is not None:
+        data["x_label"] = x_label
+    dxo = DXO(data_kind=DataKind.METRICS, data=data)
 
     event_data = dxo.to_shareable()
 
@@ -67,10 +78,11 @@ def send_metrics_value(
     engine.fire_event(FlipEvents.SEND_RESULT, fl_ctx)
 
     flip.logger.debug(
-        "Fired metrics event: label=%s value=%s round=%s",
+        "Fired metrics event: label=%s value=%s x_value=%s x_label=%s",
         label,
         value,
-        round,
+        x_value,
+        x_label,
     )
 
 
@@ -96,28 +108,22 @@ def handle_metrics_event(event_data: Shareable, global_round: int, model_id: str
     # The client name is the participant name we specified in the FLARE provisioning file (project yaml file).
     client_name = event_data.get_header(FedEventHeader.ORIGIN)
 
-    # Extract the metrics data from the event data. The client should have sent the metric label and value, and
-    # optionally a 'round' value.
+    # Extract the metrics data from the event data. The client sends the metric label and value, and optionally
+    # an 'x_value' (x-coordinate) and 'x_label' (x-axis label).
     metrics_data = from_shareable(event_data).data
 
-    if "round" in metrics_data.keys():
-        # Override the global rounds with the 'round' value sent by the client if it is provided. This allows the client
-        # to specify the x-value for the metric, which can be different from the global round number.
-        # TODO let the client specify an x-value for the metric that is not necessarily the round number, and use that
-        # x-value when sending the metric to the Central Hub (see https://github.com/londonaicentre/FLIP/issues/148).
-        flip.send_metrics(
-            client_name=client_name,
-            model_id=model_id,
-            label=metrics_data["label"],
-            value=metrics_data["value"],
-            round=metrics_data["round"],
-        )
-    else:
-        # Legacy behaviour: if the client does not provide 'round', use the global round as the x-value for the metric.
-        flip.send_metrics(
-            client_name=client_name,
-            model_id=model_id,
-            label=metrics_data["label"],
-            value=metrics_data["value"],
-            round=global_round,
-        )
+    # global_round is provenance — always the server's current round, never overridden by the client. The
+    # client may place the point elsewhere on the plot via 'x_value' (e.g. an epoch/step counter) and name
+    # the axis via 'x_label'; absent, the hub plots it at the global round on the "Global Round" axis. A
+    # plot's identity is (label, x_label), so distinct x-labels render as separate plots (see
+    # https://github.com/londonaicentre/FLIP/issues/148). 'round' is the pre-x_value DXO spelling, read as
+    # a fallback so a stale client image doesn't silently lose its per-epoch coordinates.
+    flip.send_metrics(
+        client_name=client_name,
+        model_id=model_id,
+        label=metrics_data["label"],
+        value=metrics_data["value"],
+        global_round=global_round,
+        x_value=metrics_data.get("x_value", metrics_data.get("round")),
+        x_label=metrics_data.get("x_label"),
+    )
