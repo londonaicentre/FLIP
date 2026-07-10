@@ -53,7 +53,7 @@ from data_utils import (
     get_mapping,
     get_xray_transforms,
 )
-from metrics_utils import apply_label_mapping, compute_auroc, delong_roc_test
+from metrics_utils import apply_label_mapping, benjamini_hochberg, compute_auroc, delong_roc_test
 from models import _build_arkplus_raw
 from monai.data import DataLoader, Dataset
 from nvflare.app_opt.pt import PTModelPersistenceFormatManager
@@ -251,9 +251,14 @@ def compute_metrics(
     """Compute per-model per-lesion AUROC and (for >= 2 models) pairwise DeLong p-values.
 
     Returns the aggregate-only metrics dict the server collects into ``evaluation_results.json``:
-    ``{model_name: {auroc_<lesion>: ..., delong_p_values: {lesion: {other_model: p}}}}``. The DeLong
-    ``delong_p_values`` sub-dict matches the legacy executor's shape — diagonal (model vs. self) is
-    hardcoded ``1.0``; off-diagonal is the two-sided DeLong test. No per-sample data is included.
+    ``{model_name: {auroc_<lesion>: ..., delong_p_values: {...}, delong_q_values: {...}}}``. The
+    DeLong ``delong_p_values`` sub-dict matches the legacy executor's shape — diagonal (model vs.
+    self) is hardcoded ``1.0``; off-diagonal is the two-sided DeLong test. ``delong_q_values`` mirrors
+    the same shape with Benjamini-Hochberg FDR-adjusted q-values: each model *pair* is corrected as
+    its own independent family across that pair's lesion tests (never pooled across multiple pairs,
+    should a third model ever be configured), since reporting 5 uncorrected simultaneous per-lesion
+    p-values risks over-interpreting a difference that's just finite-sample noise. No per-sample data
+    is included.
     """
     sorted_lesions = sorted(lesion_items, key=lambda x: x[0])
     n_models = len(model_names)
@@ -270,25 +275,42 @@ def compute_metrics(
     if n_models < 2:
         return metrics
 
-    # Pairwise DeLong test between every model pair, per lesion. Diagonal (self vs self) is 1.0.
-    delong_map: dict[str, dict[str, dict[str, float]]] = {
+    # Pairwise DeLong test between every model pair, per lesion, with a per-pair BH (Benjamini-
+    # Hochberg) FDR correction across that pair's lesion tests. Each (i, j) pair is corrected as its
+    # own independent family — never pooled across multiple pairs — since a reader interprets one
+    # pair's lesion verdicts together, and additional pairs answer logically distinct questions.
+    # Diagonal (self vs self) is 1.0 for both p- and q-values.
+    delong_p_map: dict[str, dict[str, dict[str, float]]] = {
+        m: {name: {other: 1.0 for other in model_names} for _, name in sorted_lesions} for m in model_names
+    }
+    delong_q_map: dict[str, dict[str, dict[str, float]]] = {
         m: {name: {other: 1.0 for other in model_names} for _, name in sorted_lesions} for m in model_names
     }
     for i in range(n_models):
         for j in range(i + 1, n_models):
             name_a, name_b = model_names[i], model_names[j]
+
+            # Collect this pair's p-values across all lesions first, so BH can see the whole family.
+            pair_pvalues: list[float] = []
             for idx, name in sorted_lesions:
                 result = delong_roc_test(
                     all_targets[name_a][:, idx],
                     all_predictions[name_a][:, idx],
                     all_predictions[name_b][:, idx],
                 )
-                p = float(result["pvalue"])
-                delong_map[name_a][name][name_b] = p
-                delong_map[name_b][name][name_a] = p
+                pair_pvalues.append(float(result["pvalue"]))
+
+            pair_qvalues = benjamini_hochberg(pair_pvalues)
+
+            for (idx, name), p, q in zip(sorted_lesions, pair_pvalues, pair_qvalues):
+                delong_p_map[name_a][name][name_b] = p
+                delong_p_map[name_b][name][name_a] = p
+                delong_q_map[name_a][name][name_b] = q
+                delong_q_map[name_b][name][name_a] = q
 
     for model_name in model_names:
-        metrics[model_name]["delong_p_values"] = delong_map[model_name]
+        metrics[model_name]["delong_p_values"] = delong_p_map[model_name]
+        metrics[model_name]["delong_q_values"] = delong_q_map[model_name]
 
     return metrics
 

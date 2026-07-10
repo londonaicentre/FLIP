@@ -160,7 +160,12 @@ def delong_roc_test(
     AUCs are computed via the ψ kernel (Mann-Whitney U-statistic)
     for consistency with the test's internal covariance structure.
 
-    Returns dict with keys: auc_a, auc_b, statistic (z), pvalue (two-sided).
+    Returns dict with keys: auc_a, auc_b, statistic (z), pvalue (two-sided). ``statistic``/``pvalue``
+    are NaN whenever the test/variance can't be estimated: either ground truth has only one class, or
+    either class has fewer than 2 members (``_delong_covariance`` can't estimate a variance from a
+    single sample, and treating it as zero — rather than refusing to compute a p-value — would silently
+    understate Var(AUC_a - AUC_b) and produce an anti-conservative p-value in exactly the low-sample
+    regime where the test is least reliable).
     """
     if len(np.unique(y_true)) < 2:
         return {
@@ -171,6 +176,15 @@ def delong_roc_test(
         }
 
     s10, s01, auc_a, auc_b, n_pos, n_neg = _delong_covariance(y_true, y_score_a, y_score_b)
+
+    if n_pos < 2 or n_neg < 2:
+        # AUC is still well-defined here (both classes are present) — only the variance/test isn't.
+        return {
+            "auc_a": auc_a,
+            "auc_b": auc_b,
+            "statistic": float("nan"),
+            "pvalue": float("nan"),
+        }
 
     # DeLong variance decomposition (eq. 5)
     # Var(AUC_a - AUC_b) = L^T (s10/n_pos + s01/n_neg) L,  L = [1, -1]^T
@@ -192,6 +206,45 @@ def delong_roc_test(
         "statistic": float(z),
         "pvalue": float(p),
     }
+
+
+def benjamini_hochberg(p_values: list[float]) -> list[float]:
+    """Benjamini-Hochberg FDR-adjusted q-values for one family of jointly-interpreted p-values.
+
+    NaN entries (e.g. from `delong_roc_test` on a degenerate cohort) are excluded from the ranking
+    and pass through unchanged as NaN — they carry no information and must not shift the ranks of
+    the real p-values. `n` in the BH formula is the count of non-NaN entries, not the family's
+    nominal size. Output q-values are monotone (by construction, via the running-minimum step) and
+    clipped to `[0, 1]`.
+
+    Args:
+        p_values: p-values for one family of simultaneous tests (e.g. one model pair's per-lesion
+            DeLong tests). Order is preserved in the output.
+
+    Returns:
+        q-values, same length/order as `p_values`; NaN in, NaN out at the same positions.
+    """
+    p = np.asarray(p_values, dtype=float)
+    q = np.full_like(p, np.nan)
+
+    valid_idx = np.flatnonzero(~np.isnan(p))
+    n = valid_idx.size
+    if n == 0:
+        return q.tolist()
+
+    p_valid = p[valid_idx]
+    order = np.argsort(p_valid, kind="stable")  # ascending: p_(1) <= ... <= p_(n)
+    ranked = p_valid[order]
+    ranks = np.arange(1, n + 1)
+    raw_q = ranked * n / ranks
+
+    # Enforce monotonicity: q_(i) = min(raw_q_(i), ..., raw_q_(n)), then clip to [0, 1].
+    q_sorted = np.clip(np.minimum.accumulate(raw_q[::-1])[::-1], 0.0, 1.0)
+
+    q_valid = np.empty(n)
+    q_valid[order] = q_sorted
+    q[valid_idx] = q_valid
+    return q.tolist()
 
 
 def apply_label_mapping(

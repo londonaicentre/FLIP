@@ -171,7 +171,8 @@ Useful targets: `make prepare-checkpoint` (prepare both checkpoints only), `make
 ## Output metrics
 
 The evaluator returns **aggregate** (cohort-level) metrics only — per-lesion AUROC per model plus pairwise
-DeLong p-values — collected by the server into `evaluation_results.json` keyed by site then model:
+DeLong p-values and Benjamini-Hochberg (BH) FDR-adjusted q-values — collected by the server into
+`evaluation_results.json` keyed by site then model:
 
 ```json
 {
@@ -188,6 +189,13 @@ DeLong p-values — collected by the server into `evaluation_results.json` keyed
                 "Infiltration": { "arkplus_pretrained": 1.0, "arkplus_finetuned": 0.42 },
                 "Lung Nodule or Mass": { "arkplus_pretrained": 1.0, "arkplus_finetuned": 0.07 },
                 "Pneumothorax": { "arkplus_pretrained": 1.0, "arkplus_finetuned": 0.51 }
+            },
+            "delong_q_values": {
+                "Effusion": { "arkplus_pretrained": 1.0, "arkplus_finetuned": 0.15 },
+                "Consolidation": { "arkplus_pretrained": 1.0, "arkplus_finetuned": 0.25 },
+                "Infiltration": { "arkplus_pretrained": 1.0, "arkplus_finetuned": 0.51 },
+                "Lung Nodule or Mass": { "arkplus_pretrained": 1.0, "arkplus_finetuned": 0.18 },
+                "Pneumothorax": { "arkplus_pretrained": 1.0, "arkplus_finetuned": 0.51 }
             }
         },
         "arkplus_finetuned": {
@@ -201,6 +209,13 @@ DeLong p-values — collected by the server into `evaluation_results.json` keyed
                 "Consolidation": { "arkplus_pretrained": 0.15, "arkplus_finetuned": 1.0 },
                 "Infiltration": { "arkplus_pretrained": 0.42, "arkplus_finetuned": 1.0 },
                 "Lung Nodule or Mass": { "arkplus_pretrained": 0.07, "arkplus_finetuned": 1.0 },
+                "Pneumothorax": { "arkplus_pretrained": 0.51, "arkplus_finetuned": 1.0 }
+            },
+            "delong_q_values": {
+                "Effusion": { "arkplus_pretrained": 0.15, "arkplus_finetuned": 1.0 },
+                "Consolidation": { "arkplus_pretrained": 0.25, "arkplus_finetuned": 1.0 },
+                "Infiltration": { "arkplus_pretrained": 0.51, "arkplus_finetuned": 1.0 },
+                "Lung Nodule or Mass": { "arkplus_pretrained": 0.18, "arkplus_finetuned": 1.0 },
                 "Pneumothorax": { "arkplus_pretrained": 0.51, "arkplus_finetuned": 1.0 }
             }
         }
@@ -218,7 +233,8 @@ DeLong p-values — collected by the server into `evaluation_results.json` keyed
 | Key | Type | Description |
 |-----|------|-------------|
 | `auroc_<Lesion>` | `float` | Area under the ROC curve for this lesion. Ranges `[0, 1]`; `NaN` if only one class is present in the ground truth. |
-| `delong_p_values` | `dict[str, dict[str, float]]` | Pairwise DeLong p-values for each lesion, keyed first by lesion name then by the *other* model name. The diagonal (model vs. self) is hardcoded `1.0` as a sanity check; off-diagonal entries are the two-sided DeLong test. Only present when ≥ 2 models are configured. |
+| `delong_p_values` | `dict[str, dict[str, float]]` | Pairwise DeLong p-values for each lesion, keyed first by lesion name then by the *other* model name. The diagonal (model vs. self) is hardcoded `1.0` as a sanity check; off-diagonal entries are the two-sided DeLong test. `NaN` if the lesion's cohort has only one class present, or if either class has fewer than 2 members (DeLong's variance estimate is inestimable with a single sample in either class). Only present when ≥ 2 models are configured. |
+| `delong_q_values` | `dict[str, dict[str, float]]` | Benjamini-Hochberg FDR-adjusted q-values, same shape and diagonal convention as `delong_p_values`. Corrected **per model pair**, across that pair's lesion-level p-values — each pair is its own independent correction family, never pooled across multiple pairs. `NaN` wherever the corresponding `delong_p_values` entry is `NaN` (excluded from that pair's correction, not folded into the other lesions' ranks). Only present when ≥ 2 models are configured. |
 
 Per-sample (row-level) predictions are deliberately **not** produced or exported: a per-patient list would
 leak the exact evaluation cohort size and be linkable to individual patients. (The previous executor-based
@@ -261,5 +277,37 @@ already-pooled `(B, C)` tensor.
 
 - DeLong p-values below machine epsilon are reported as `0.0`. The test is two-sided (H₀: AUC_a = AUC_b).
 - `delong_p_values` is only emitted when at least 2 models are configured in `config.json["models"]`.
+- `delong_q_values` applies Benjamini-Hochberg FDR correction independently per model pair, across that
+  pair's lesion-level DeLong p-values (5 tests per pair in this tutorial's config). If a third model is
+  ever added, each new pair gets its own independent correction — q-values are never pooled across pairs.
+- A lesion with a `NaN` p-value (either the cohort has only one class, or either class has fewer than 2
+  members) is excluded from its pair's BH correction and reported as `NaN` in `delong_q_values`, not
+  folded into the other lesions' ranks.
+- **Interpreting `delong_q_values`**: a q-value is not a rescaled or "corrected" version of that same
+  lesion's raw p-value — it is the smallest false-discovery-rate level at which this specific lesion's
+  comparison would be called significant, considering it jointly with the rest of its pair's lesion
+  tests. Concretely, `q <= 0.05` means "this finding survives if we're willing to accept a 5% false
+  discovery rate across this pair's lesion comparisons" — not "there's a 5% chance of this AUROC gap
+  under the null" (that's what the raw p-value alone would mean, without accounting for having run
+  multiple simultaneous lesion tests). A q-value can therefore differ substantially from its own raw
+  p-value (it's always `>= p`, and several lesions can share an identical q-value even with different
+  raw p-values) — comparing `q` against your chosen significance level is the correct way to decide
+  which lesions "survived" correction, not comparing the raw `delong_p_values` entries directly.
+  **Why ties happen:** the step-up rule always rejects a contiguous prefix of the sorted ranks — if rank
+  `k` crosses its own line `p_(k) <= (k/m)*Q`, every smaller rank `1..k-1` is swept into that same
+  rejection *regardless of whether their own raw value would have crossed at that `Q`*. So rank `i`'s
+  true q-value isn't "the `Q` at which `i` crosses its own line" — it's "the smallest `Q` at which *any*
+  rank `j >= i` crosses its own line," i.e. `q_(i) = min` over `j >= i` of `p_(j) * m/j`, computed as a
+  running minimum from the largest rank inward. Worked example with `m=3` sorted p-values `0.02, 0.025,
+  0.03`: the per-rank raw values are `0.06, 0.0375, 0.03` (not ascending), but the running min from the
+  back collapses all three to `q = 0.03` — rank 3's own crossing point is small enough to pull in ranks
+  1 and 2 even though their individual raw values were larger. That's the mechanism, not a bug: a later,
+  weaker-p lesion can still set the q-value for an earlier, stronger-p lesion in the same pair.
+  You can also go the other direction, from a chosen FDR level back to a raw-p cutoff: pick a target
+  `Q` for a given model pair, take every lesion in that pair with `q <= Q`, and the *largest* raw
+  p-value among them is the critical cutoff for that `Q` — every `delong_p_values` entry at or below
+  that cutoff is exactly the set that survives correction at `Q`. That's useful if you'd rather present
+  a table of raw p-values (or the AUROC gap) and bold/flag whichever cells clear that single cutoff,
+  stating `Q` and the derived cutoff together in the caption, instead of printing a `q` column.
 - Both models are loaded onto the GPU together; if you hit an out-of-memory error, reduce `BATCH_SIZE` in
   `config.json` (it defaults to 1) or evaluate on a smaller GPU-fitting cohort.
