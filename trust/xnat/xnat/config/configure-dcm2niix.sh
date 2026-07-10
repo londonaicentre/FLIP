@@ -28,31 +28,52 @@ set -euo pipefail
 XNAT_URL="http://xnat-web:8080" # internal to Docker network
 DCM2NIIX_NAME="dcm2niix"
 
-# Wait for XNAT to be available
+# Wait for XNAT to be available (bounded so a dead XNAT fails the deploy
+# loudly instead of printing dots forever).
 echo "Waiting for XNAT to be available..."
-until $(curl --output /dev/null --silent --head --fail $XNAT_URL/app/template/Login.vm); do
+elapsed=0
+until curl --output /dev/null --silent --head --fail "$XNAT_URL/app/template/Login.vm"; do
+  if [[ "$elapsed" -ge 900 ]]; then
+    echo "ERROR: XNAT did not become available within ${elapsed}s" >&2
+    exit 1
+  fi
   printf '.'
   sleep 1
+  elapsed=$((elapsed + 1))
 done
 echo "XNAT is up!"
 
-# Helper: curl that prints body, then exits with a clear error if the HTTP
-# status code is not 2xx. Solves the silent-failure problem where `curl -s`
-# discarded a 4xx/5xx body and the script kept going with empty state. Use
-# this for every write to XNAT's REST API.
+# Helper: curl wrapper for XNAT's REST API. On 2xx, emits the response body
+# on stdout for the caller to capture. On any other status — or a curl
+# transport failure — reports the request and body on stderr and returns
+# non-zero, which the script's `set -e` turns into an abort at the call
+# site (so don't call this inside `if`/`||` without handling the failure).
+# Use it for every request to XNAT's REST API, reads included: a silently
+# failed GET is exactly how the original empty-CMD_ID deploy failure arose
+# (bare `curl -s` discarded 4xx/5xx bodies and the script carried on with
+# empty state).
 xnat_curl() {
   local response
   local status
-  response=$(curl -sS -w '\n%{http_code}' "$@" -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_PASSWORD}")
+  local body
+  local curl_exit=0
+  response=$(curl -sS --connect-timeout 10 --max-time 120 -w '\n%{http_code}' "$@" \
+    -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_PASSWORD}") || curl_exit=$?
+  if [[ "$curl_exit" -ne 0 ]]; then
+    echo "ERROR: curl transport failure (exit $curl_exit)" >&2
+    echo "  args: $*" >&2
+    return 1
+  fi
   status=$(printf '%s' "$response" | tail -n1)
   body=$(printf '%s' "$response" | sed '$d')
-  if [[ "$status" -lt 200 || "$status" -ge 300 ]]; then
+  # Fail closed: anything other than a literal 2xx status line (including
+  # an empty or non-numeric one) is an error.
+  if ! [[ "$status" =~ ^2[0-9]{2}$ ]]; then
     echo "ERROR: XNAT request failed with HTTP $status" >&2
     echo "  args: $*" >&2
     echo "  body: $body" >&2
     return 1
   fi
-  # Body is exported on stdout for the caller to consume.
   printf '%s' "$body"
 }
 
@@ -60,7 +81,7 @@ xnat_curl() {
 # This is so that the container service can access the data
 echo "Adding path translation for container service..."
 
-# Replace ${DATA_PATH} in the file and store in a variable
+# Set path-translation-docker-prefix to $DATA_PATH in the backend config
 echo "Path translation with DATA_PATH=$DATA_PATH"
 backend_config=$(jq --arg data_path "$DATA_PATH" '.["path-translation-docker-prefix"] = $data_path' container-service-backend-configuration.json)
 
@@ -84,24 +105,29 @@ else
   echo "Command not found. Proceeding with addition."
 fi
 
-# Add dcm2niix command from json. POST /xapi/commands returns the created
-# command including its `id`; extract it directly to avoid the
-# eventual-consistency race the previous re-GET ran into (the GET could
-# return an empty array even after the POST succeeded, leaving the rest of
-# the script with empty CMD_ID and the validation curl 500ing on an
-# invalid URL).
+# Add dcm2niix command from json. POST /xapi/commands returns the new
+# command's numeric id as the response body — a bare JSON number, not the
+# command object (container-service 3.7.3: CommandRestApi.createCommand
+# returns ResponseEntity<Long>). Read the id straight from the POST
+# response rather than re-GETting /xapi/commands?name=...: that GET has
+# been observed on prod to return an empty array even after a successful
+# POST (root cause undiagnosed), which left CMD_ID empty and broke the
+# enable/validation URLs downstream. The wrapper name is not in the POST
+# response at all, so take it from the command definition we just posted.
 echo "Adding dcm2niix command..."
-POST_RESPONSE=$(xnat_curl -X POST "$XNAT_URL/xapi/commands" \
+CMD_ID=$(xnat_curl -X POST "$XNAT_URL/xapi/commands" \
   -H "Content-Type: application/json" \
   -d @dcm2niix_command.json)
-echo "POST response: $POST_RESPONSE"
 
-CMD_ID=$(echo "$POST_RESPONSE" | jq -r '.id // empty')
-dcm2niix_wrapper_name=$(echo "$POST_RESPONSE" | jq -r '.xnat[0].name // empty')
+if ! [[ "$CMD_ID" =~ ^[0-9]+$ ]]; then
+  echo "ERROR: POST /xapi/commands did not return a numeric command id." >&2
+  echo "  body: $CMD_ID" >&2
+  exit 1
+fi
 
-if [[ -z "$CMD_ID" || -z "$dcm2niix_wrapper_name" ]]; then
-  echo "ERROR: POST /xapi/commands did not return an id + xnat[0].name." >&2
-  echo "  body: $POST_RESPONSE" >&2
+dcm2niix_wrapper_name=$(jq -r '.xnat[0].name // empty' dcm2niix_command.json)
+if [[ -z "$dcm2niix_wrapper_name" ]]; then
+  echo "ERROR: no .xnat[0].name wrapper in dcm2niix_command.json." >&2
   exit 1
 fi
 
@@ -143,18 +169,25 @@ done
 # VALIDATION
 # ----------------------------------------------------------------
 
-# Verify dcm2niix command was registered and enabled. The xnat_curl helper
-# above already exits non-zero on any failure, so reaching this block means
-# the writes succeeded; this is a belt-and-braces check that the enable
-# state is queryable.
+# Every xnat_curl above aborts the script (via set -e) on a non-2xx
+# response, so reaching this block means every write was accepted; these
+# re-GETs check the resulting state actually persisted. The wrapper-enabled
+# endpoint returns a bare JSON boolean (container-service 3.7.3).
 echo " "
 echo "Validating dcm2niix setup..."
-xnat_curl "$XNAT_URL/xapi/commands/$CMD_ID/wrappers/$dcm2niix_wrapper_name/enabled" >/dev/null
+WRAPPER_ENABLED=$(xnat_curl "$XNAT_URL/xapi/commands/$CMD_ID/wrappers/$dcm2niix_wrapper_name/enabled")
+if [ "$WRAPPER_ENABLED" != "true" ]; then
+  echo "ERROR: dcm2niix wrapper is not enabled site-wide (expected true)" >&2
+  echo "  body: $WRAPPER_ENABLED" >&2
+  exit 1
+fi
 
 # Verify event service is enabled
-EVENT_STATUS=$(xnat_curl "$XNAT_URL/xapi/events/prefs" | jq -r '.enabled')
+EVENT_PREFS=$(xnat_curl "$XNAT_URL/xapi/events/prefs")
+EVENT_STATUS=$(echo "$EVENT_PREFS" | jq -r '.enabled // empty')
 if [ "$EVENT_STATUS" != "true" ]; then
-  echo "ERROR: Event service is not enabled (expected true, got $EVENT_STATUS)"
+  echo "ERROR: Event service is not enabled (expected true)" >&2
+  echo "  body: $EVENT_PREFS" >&2
   exit 1
 fi
 
