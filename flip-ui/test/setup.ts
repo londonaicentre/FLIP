@@ -72,11 +72,21 @@ beforeAll(async () => {
 
 // Cleanup after all tests
 afterAll(async () => {
+  // Belt-and-braces companion to the afterEach drain below, for imports kicked
+  // off outside a test body (e.g. in a spec's own afterAll hook) — FLIP#748.
+  await vi.dynamicImportSettled()
   console.log('Cleaning up test environment...')
 })
 
 // Cleanup after each test
 afterEach(async () => {
+  // FLIP#748: drain dynamic imports started during the test before the file's
+  // environment can be torn down. A fire-and-forget router.push() resolves its
+  // lazy route component via an unawaited dynamic import (e.g. signOut →
+  // routeChange.gotoLogin() → import of Login.vue and its ~icons modules); if
+  // that fetch is still in flight when vitest tears the environment down, it
+  // rejects as an EnvironmentTeardownError and fails an all-green run.
+  await vi.dynamicImportSettled()
   // Clear all mocks to ensure test isolation
   vi.clearAllMocks()
 })

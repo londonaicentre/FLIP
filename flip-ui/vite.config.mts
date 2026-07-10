@@ -12,6 +12,8 @@ import Inspector from "vite-plugin-vue-inspector";
 import Layouts from "vite-plugin-vue-layouts-next";
 import svgLoader from "vite-svg-loader";
 
+import iconStubPlugin from "./test/iconStubPlugin";
+
 // https://vitejs.dev/config/
 export default defineConfig(({ mode, command }) => {
 
@@ -55,10 +57,15 @@ export default defineConfig(({ mode, command }) => {
                     }
                 }),
             Inspector(),
-            Icons({
-                compiler: "vue3",
-                autoInstall: true
-            }),
+            // FLIP#748: under vitest, swap unplugin-icons for a synchronous stub of the
+            // whole ~icons/* namespace — the real plugin's async icon modules race spec
+            // teardown and fail all-green runs (see test/iconStubPlugin.ts).
+            mode === "test"
+                ? iconStubPlugin()
+                : Icons({
+                    compiler: "vue3",
+                    autoInstall: true
+                }),
             Components({
                 dts: false,
                 resolvers: IconsResolver({ prefix: "icon" })
