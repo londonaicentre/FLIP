@@ -167,18 +167,19 @@ Tests use pytest with coverage reporting and are located in ``tests/unit/``.
 Building the Docs Locally
 --------------------------
 
-From the repository root, run:
+``flip-utils`` is documented as part of the FLIP documentation. From the
+repository root, run:
 
 .. code-block:: bash
 
-   make docs
+   cd docs && make docs
 
-The generated HTML site will be written to ``docs/_build/html``. To clean
+The generated HTML site will be written to ``docs/build/html``. To clean
 previous builds:
 
 .. code-block:: bash
 
-   make docs-clean
+   cd docs && make clean
 
 
 How the API Reference is Generated
@@ -191,4 +192,6 @@ the built documentation for complete coverage of all public classes and function
 
 .. note::
 
-   The ``flip-utils`` package lives under ``flip-utils/`` in the `FLIP repository <https://github.com/londonaicentre/FLIP>`_.
+   The ``flip-utils`` package lives under ``flip-utils/`` in the `FLIP repository
+   <https://github.com/londonaicentre/FLIP>`_, and its documentation is published as part of the
+   `FLIP documentation <https://londonaicentreflip.readthedocs.io/en/latest/>`_.
