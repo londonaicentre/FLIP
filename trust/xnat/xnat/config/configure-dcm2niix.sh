@@ -32,11 +32,12 @@ DCM2NIIX_NAME="dcm2niix"
 # its own timeout, so a dead or wedged XNAT fails the deploy loudly instead
 # of printing dots forever).
 echo "Waiting for XNAT to be available..."
-deadline=$((SECONDS + 900))
+wait_start=$SECONDS
+deadline=$((wait_start + 900))
 until curl --output /dev/null --silent --head --fail \
   --connect-timeout 5 --max-time 10 "$XNAT_URL/app/template/Login.vm"; do
   if [[ "$SECONDS" -ge "$deadline" ]]; then
-    echo "ERROR: XNAT did not become available within ${SECONDS}s" >&2
+    echo "ERROR: XNAT did not become available within $((SECONDS - wait_start))s" >&2
     exit 1
   fi
   printf '.'
