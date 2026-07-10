@@ -1,8 +1,8 @@
 JOB_TYPE=standard_client_api
-SITE1_IMAGES_DIR=/home/localat24/data/DeCaf_MICCAI_2026/balanced_synthetic_split/re_final_site1/accession-resources
-SITE1_DATAFRAME=/home/localat24/data/DeCaf_MICCAI_2026/balanced_synthetic_split/re_final_site1/sample_get_dataframe_response.csv
-SITE2_IMAGES_DIR=/home/localat24/data/DeCaf_MICCAI_2026/balanced_synthetic_split/re_final_site2/accession-resources
-SITE2_DATAFRAME=/home/localat24/data/DeCaf_MICCAI_2026/balanced_synthetic_split/re_final_site2/sample_get_dataframe_response.csv
+SITE1_IMAGES_DIR=../../data/arkplus/site1/accession-resources
+SITE1_DATAFRAME=../../data/arkplus/site1/sample_get_dataframe_response.csv
+SITE2_IMAGES_DIR=../../data/arkplus/site2/accession-resources
+SITE2_DATAFRAME=../../data/arkplus/site2/sample_get_dataframe_response.csv
 RAW_CHECKPOINT=models/Ark6_swinLarge768_ep50.pth.tar
 FLIP_PROJECT_ID=
 FLIP_QUERY=

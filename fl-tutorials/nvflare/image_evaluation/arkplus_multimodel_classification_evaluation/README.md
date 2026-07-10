@@ -59,6 +59,18 @@ This app expects a DECAF-formatted chest X-ray dataset with:
 - A per-site CSV dataframe with `accession_id` and lesion labels
 - Images organised under `<images_dir>/<accession_id>/...` (DICOM)
 
+The quickest path uses the published reference dataset on Hugging Face. From the repo root:
+
+```bash
+make -C fl-tutorials download-arkplus-eval-data   # fetch + lay out data/arkplus/site{1,2}_holdoff/
+make -C fl-tutorials run-tutorial TUTORIAL=arkplus_multimodel_classification_evaluation
+```
+
+`download-arkplus-eval-data` pulls the `site1_holdoff`/`site2_holdoff` hold-out splits of
+[`aicentreflip/tutorials-arkplus-cxr-classification`](https://huggingface.co/datasets/aicentreflip/tutorials-arkplus-cxr-classification)
+and normalises them into `fl-tutorials/nvflare/data/arkplus/site{1,2}_holdoff/` (gitignored), matching
+this tutorial's `.env.app` defaults (the same hold-out splits the baseline tutorial evaluates).
+
 For local development, per-site paths are set in `.env.app`:
 
 - `DEV_IMAGES_DIR` / `DEV_DATAFRAME` (single-site dev default)
@@ -119,9 +131,10 @@ The zero-shot Ark+ checkpoint is produced from the raw Ark6 training output
 
 ### Fine-tuned model (arkplus_finetuned)
 
-The fine-tuned checkpoint is downloaded automatically from HuggingFace by `make run`/`make export` if not
-already present — no manual steps required. To use your own, set `FINETUNED_CHECKPOINT` in `.env.app` to a
-URL or a local (absolute) path.
+The fine-tuned checkpoint is downloaded automatically from
+[`aicentreflip/tutorials-arkplus-cxr-finetuned`](https://huggingface.co/aicentreflip/tutorials-arkplus-cxr-finetuned)
+on Hugging Face by `make run`/`make export` if not already present — no manual steps required. To use
+your own, set `FINETUNED_CHECKPOINT` in `.env.app` to a URL or a local (absolute) path.
 
 ## App configuration
 
@@ -129,7 +142,7 @@ Default local development settings are in `.env.app`:
 
 - `JOB_TYPE=evaluation_client_api`
 - `RAW_CHECKPOINT=models/Ark6_swinLarge768_ep50.pth.tar`
-- `FINETUNED_CHECKPOINT=` (empty → download the default fine-tuned model from HuggingFace)
+- `FINETUNED_CHECKPOINT=` (empty → download the default fine-tuned model from `aicentreflip/tutorials-arkplus-cxr-finetuned`)
 - `DEV_IMAGES_DIR` / `DEV_DATAFRAME` and the per-site `SITE{1,2}_*` paths
 
 Each model is defined in `app_files/arkplus_flat_models.py`, built by `app_files/models.py`

@@ -90,6 +90,20 @@ and `ARKPLUS` blocks.
 This app expects a DECAF-formatted chest X-ray dataset: a per-site CSV dataframe with `accession_id`
 and the lesion-label columns, plus DICOM images.
 
+The quickest path uses the published reference dataset on Hugging Face. From the repo root:
+
+```bash
+make -C fl-tutorials download-arkplus-finetuning-data   # fetch + lay out data/arkplus/site{1,2}/
+make -C fl-tutorials run-tutorial TUTORIAL=arkplus_fine_tuning
+```
+
+`download-arkplus-finetuning-data` pulls the `site1`/`site2` training splits of
+[`aicentreflip/tutorials-arkplus-cxr-classification`](https://huggingface.co/datasets/aicentreflip/tutorials-arkplus-cxr-classification)
+and normalises them into `fl-tutorials/nvflare/data/arkplus/site{1,2}/` (gitignored), matching this
+tutorial's `.env.app` defaults (`SITE{1,2}_IMAGES_DIR` / `SITE{1,2}_DATAFRAME`). Requires a GPU + the
+`flare-fl-base` image to run the simulator. To use your own data instead, point the per-site
+`.env.app` values at it.
+
 - **Simulator (`LOCAL_DEV=true`):** the two clients (`site-1`, `site-2`) train on distinct local data.
   The trainer selects a client's data by `flare.get_site_name()`; `app_files/data_utils.py` resolves
   the paths with the precedence `SITE{N}_IMAGES_DIR`/`SITE{N}_DATAFRAME` env → the single-site `DEV_*`

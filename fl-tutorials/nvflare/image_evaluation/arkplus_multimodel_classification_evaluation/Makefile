@@ -28,7 +28,7 @@ endif
 PROCESSED_CHECKPOINT := $(APP_DIR)/app_files/arkplus_pretrained_weights.pt
 # Multimodel-only: a second, fine-tuned model is evaluated alongside the foundation model.
 FINETUNED_DEST := $(APP_DIR)/app_files/arkplus_finetuned_weights.pt
-DEFAULT_FINETUNED_URL := https://huggingface.co/ParhomE/ArkPlusFLIPTutorial/resolve/main/model.pt
+DEFAULT_FINETUNED_URL := https://huggingface.co/aicentreflip/tutorials-arkplus-cxr-finetuned/resolve/main/model.pt
 
 # Resolve a (possibly empty) path against this app folder: absolute paths are kept, relative paths are
 # taken relative to the app directory, and empty stays empty. This lets .env.app (or a `make VAR=...`
