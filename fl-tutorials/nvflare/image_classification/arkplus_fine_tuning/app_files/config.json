@@ -41,19 +41,5 @@
     "REQUIRE_ARKPLUS_IMPORT": true,
     "INPUT_SIZE": 768,
     "LOAD_BACKBONE_ONLY": true
-  },
-  "SITE_DATA": {
-    "site-1": {
-      "images_dir": "/site-data/site-1/accession-resources",
-      "dataframe": "/site-data/site-1/sample_get_dataframe_response.csv"
-    },
-    "site-2": {
-      "images_dir": "/site-data/site-2/accession-resources",
-      "dataframe": "/site-data/site-2/sample_get_dataframe_response.csv"
-    },
-    "default": {
-      "images_dir": null,
-      "dataframe": null
-    }
   }
 }

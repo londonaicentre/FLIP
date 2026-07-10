@@ -68,12 +68,11 @@ For local development, per-site paths are set in `.env.app`:
 ### Per-site data in the simulator
 
 Unlike the previous executor-based implementation (whose testing harness Docker-mounted each site's data
-onto the `SITE_DATA` paths in `config.json`), the Client-API SimEnv runs **in-process with no Docker
+into the containers), the Client-API SimEnv runs **in-process with no Docker
 mounts**. Per-site data is therefore selected inside the evaluator: it calls `flare.get_site_name()`
 (`site-1`/`site-2`) and `app_files/data_utils.py` resolves the matching `SITE{N}_IMAGES_DIR` /
 `SITE{N}_DATAFRAME` from `.env.app` (falling back to the single `DEV_*` paths). So `site-1` and `site-2`
-score **different** hold-out sets. The `SITE_DATA` block in `config.json` is retained only as a legacy
-fallback (its `/site-data/...` paths were the old container-mount targets).
+score **different** hold-out sets.
 
 ### Simulator vs. real deployment
 

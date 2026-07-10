@@ -82,8 +82,8 @@ round 0.
 ## Configuration
 
 Training settings live in [`app_files/config.json`](app_files/config.json): `GLOBAL_ROUNDS`,
-`LOCAL_ROUNDS`, `LR_START`/`LR_END`, `VAL_SPLIT`/`SPLIT_SEED`, `BATCH_SIZE`, plus the `LESIONS`,
-`ARKPLUS` and `SITE_DATA` blocks.
+`LOCAL_ROUNDS`, `LR_START`/`LR_END`, `VAL_SPLIT`/`SPLIT_SEED`, `BATCH_SIZE`, plus the `LESIONS`
+and `ARKPLUS` blocks.
 
 ## Dataset setup
 
@@ -92,11 +92,9 @@ and the lesion-label columns, plus DICOM images.
 
 - **Simulator (`LOCAL_DEV=true`):** the two clients (`site-1`, `site-2`) train on distinct local data.
   The trainer selects a client's data by `flare.get_site_name()`; `app_files/data_utils.py` resolves
-  the paths with the precedence `SITE{N}_IMAGES_DIR`/`SITE{N}_DATAFRAME` env → the `config.json`
-  `SITE_DATA` entry → the single-site `DEV_*` env. The per-site env vars are set in [`.env.app`](.env.app)
-  (the `SITE_DATA` container paths are for the deployed harness, which does not run in the no-Docker
-  SimEnv).
-- **Real deployment (`LOCAL_DEV=false`):** `SITE_DATA` is ignored; the cohort dataframe comes from
+  the paths with the precedence `SITE{N}_IMAGES_DIR`/`SITE{N}_DATAFRAME` env → the single-site `DEV_*`
+  env. The per-site env vars are set in [`.env.app`](.env.app).
+- **Real deployment (`LOCAL_DEV=false`):** the cohort dataframe comes from
   `FLIP().get_dataframe(project_id, query)` and DICOMs from `FLIP().get_by_accession_number(...)`.
   `project_id` is passed to the trainer as `--project_id`; the cohort `query` is read from
   `config_fed_client.json` (see [`query.sql`](query.sql)).

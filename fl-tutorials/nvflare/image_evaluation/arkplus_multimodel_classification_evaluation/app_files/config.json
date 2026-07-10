@@ -52,16 +52,5 @@
         "AMP_DTYPE": "float16"
       }
     }
-  },
-
-  "SITE_DATA": {
-    "site-1": {
-      "images_dir": "/site-data/site-1/accession-resources",
-      "dataframe": "/site-data/site-1/sample_get_dataframe_response.csv"
-    },
-    "site-2": {
-      "images_dir": "/site-data/site-2/accession-resources",
-      "dataframe": "/site-data/site-2/sample_get_dataframe_response.csv"
-    }
   }
 }

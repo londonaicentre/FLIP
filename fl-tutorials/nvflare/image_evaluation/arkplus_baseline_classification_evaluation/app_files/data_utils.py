@@ -37,10 +37,10 @@ from monai.transforms.transform import MapTransform
 def _is_local_dev() -> bool:
     """Whether to read data from local files (simulator) or the FLIP API (real trust).
 
-    ``True`` in the NVFLARE simulator (``LOCAL_DEV=true``): resolve data from local
-    ``SITE_DATA``/``DEV_*`` paths. ``False`` on a real federated client: ignore
-    ``SITE_DATA`` and fetch the dataframe + DICOMs from the trust APIs via the FLIP
-    package. Mirrors the flip package's own ``LOCAL_DEV`` switch
+    ``True`` in the NVFLARE simulator (``LOCAL_DEV=true``): resolve data from the local
+    ``SITE{N}_*``/``DEV_*`` env paths. ``False`` on a real federated client: fetch the
+    dataframe + DICOMs from the trust APIs via the FLIP package. Mirrors the flip
+    package's own ``LOCAL_DEV`` switch
     (``flip.core.factory`` → ``FLIPStandardDev`` vs ``FLIPStandardProd``).
     """
     return bool(FlipConstants.LOCAL_DEV)
@@ -209,35 +209,21 @@ def normalize_site_name(site_name: str | None) -> str:
 
 
 def get_site_data_config(config: dict | None = None, site_name: str | None = None) -> SiteDataConfig:
-    cfg = config or load_config()
     requested_site = normalize_site_name(site_name)
-    site_data = cfg.get("SITE_DATA", {})
-
-    entry = None
-    for candidate in [requested_site, (site_name or "").strip(), "default"]:
-        if candidate and candidate in site_data:
-            entry = site_data[candidate]
-            break
-
-    if entry is None:
-        entry = {}
 
     # Per-site data resolution for the in-process Client-API simulator (no Docker mounts). Precedence:
     #   1. SITE{N}_IMAGES_DIR / SITE{N}_DATAFRAME env (mapped from the NVFLARE site name, "site-1" -> "SITE1")
-    #   2. the config SITE_DATA entry's path
-    #   3. the single-site DEV_* env
-    # Per-site env wins because config SITE_DATA holds the legacy container-mount targets (/site-data/...),
-    # which don't exist in the no-Docker SimEnv; the real per-site host paths live in .env.app as SITE{N}_*.
-    # (In the legacy executor tutorial this per-site wiring was done by the testing harness' Docker mounts.)
+    #   2. the single-site DEV_* env fallback
+    # The real per-site host paths live in .env.app as SITE{N}_*. (In the legacy executor tutorial this
+    # per-site wiring was done by the testing harness' Docker mounts.) The deployed run (LOCAL_DEV=false)
+    # ignores all of this and pulls data from the trust APIs instead — see _is_local_dev / _load_dataframe.
     site_env = requested_site.replace("-", "").upper() if requested_site else ""  # "site-1" -> "SITE1"
     images_dir = (
         (os.environ.get(f"{site_env}_IMAGES_DIR") if site_env else None)
-        or entry.get("images_dir")
         or os.environ.get("DEV_IMAGES_DIR")
     )
     dataframe = (
         (os.environ.get(f"{site_env}_DATAFRAME") if site_env else None)
-        or entry.get("dataframe")
         or os.environ.get("DEV_DATAFRAME")
     )
     resolved_site = requested_site or "default"
@@ -274,7 +260,7 @@ def _dicoms_for_accession(
     images_dir: str | None = None,
 ) -> list[Path]:
     if _is_local_dev():
-        # Local test-data path used by SITE_DATA / DEV_IMAGES_DIR (simulator only).
+        # Local test-data path used by SITE{N}_IMAGES_DIR / DEV_IMAGES_DIR (simulator only).
         root_path = images_dir or os.environ.get("DEV_IMAGES_DIR")
         if root_path:
             root = Path(root_path)
