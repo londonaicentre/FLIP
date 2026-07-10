@@ -8,7 +8,7 @@ source "$SCRIPT_DIR/utils.sh"
 
 check_aws_profile
 
-lock_id="${1:?Lock ID is required: force-unlock.sh <lock-id>"}
+lock_id="${1:?Lock ID is required: force-unlock.sh <lock-id>}"
 
 log_info "Force unlocking Terraform state (ID: $lock_id)..."
 # Unset static AWS credential env vars that would override the profile-based

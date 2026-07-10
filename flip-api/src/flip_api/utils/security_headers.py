@@ -36,11 +36,11 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 
     Content-Security-Policy is only added for ``text/html`` responses
     because flip-api is JSON-first: the SPA itself is served from
-    CloudFront + S3 and its CSP is set at the CloudFront edge. flip-api
-    only emits HTML on incidental error pages (e.g. unhandled-exception
-    fallbacks), where ``default-src 'self'`` plus the explicit
-    ``script-src``/``style-src``/``object-src``/``frame-ancestors``
-    directives below are sufficient. ``connect-src``, ``img-src``, and
+    CloudFront + S3 and its CSP is set at the CloudFront edge. The
+    CSP header here is defence-in-depth — in production flip-api never
+    emits HTML (``main.py`` sets ``docs_url=None`` when
+    ``ENV == "production"``), and the middleware's own fallback is a
+    ``PlainTextResponse``, not HTML. ``connect-src``, ``img-src``, and
     ``font-src`` are intentionally omitted: they all fall back to
     ``default-src 'self'``, which already blocks third-party loads.
 

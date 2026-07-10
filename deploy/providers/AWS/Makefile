@@ -42,7 +42,7 @@ export PROD
 # These env vars take priority over the AWS_PROFILE / SSO credential chain
 # in the AWS Go SDK (Terraform) and cause InvalidClientTokenId errors.
 _TF := unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_SECURITY_TOKEN; terraform
-_TF_AWS := unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_SECURITY_TOKEN; AWS_PROFILE=$(AWS_PROFILE)
+_AWS_ENV := unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_SECURITY_TOKEN; AWS_PROFILE=$(AWS_PROFILE)
 
 # Resolve FL_KIT_DATE from the backend-specific kit date: FLARE_KIT_DATE or FLOWER_KIT_DATE
 FL_KIT_DATE := $(if $(filter nvflare,$(FL_BACKEND)),$(FLARE_KIT_DATE),$(FLOWER_KIT_DATE))
@@ -261,17 +261,17 @@ migrate-flip-bucket: ## One-time: sync legacy flip_bucket prefixes into the thre
 	fi
 	@echo "📦 Migrating contents of s3://$(FLIP_BUCKET_NAME) into the three split buckets ..."
 	@echo "  • model file uploads → s3://$(FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME)/uploaded/"
-	@aws s3 sync \
+	@$(_AWS_ENV) aws s3 sync \
 		s3://$(FLIP_BUCKET_NAME)/model_files/uploaded/ \
 		s3://$(FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME)/uploaded/
 	@echo "  • FL results     → s3://$(FLIP_FL_RESULTS_BUCKET_NAME)/"
-	@aws s3 sync \
+	@$(_AWS_ENV) aws s3 sync \
 		s3://$(FLIP_BUCKET_NAME)/uploaded_federated_data/ \
 		s3://$(FLIP_FL_RESULTS_BUCKET_NAME)/
 	# The legacy base-application/ prefix is intentionally NOT migrated: the base FL
 	# application templates now ship in the flip-api image, not S3 (FLIP#724).
 	@echo "  • FL app dests   → s3://$(FLIP_APP_BUNDLES_BUCKET_NAME)/app_destinations/"
-	@aws s3 sync \
+	@$(_AWS_ENV) aws s3 sync \
 		s3://$(FLIP_BUCKET_NAME)/app_destination_bucket/ \
 		s3://$(FLIP_APP_BUNDLES_BUCKET_NAME)/app_destinations/
 	@echo "📦 Sync calls complete. Run \`make verify-flip-bucket-migration\` to confirm parity before decommissioning."
@@ -346,7 +346,7 @@ apply: ## Apply Terraform configuration to update AWS infrastructure (with envir
 .PHONY: import-cloudfront
 import-cloudfront: ## Import existing CloudFront distribution into terraform state
 	@echo "🔗 Importing existing CloudFront distribution..."
-	@terraform import aws_cloudfront_distribution.flip_ui E31HHLGOWBDENB
+	@$(_TF) import aws_cloudfront_distribution.flip_ui E31HHLGOWBDENB
 
 .PHONY: forward-trust
 forward-trust: ## SSM port-forward all Trust web UIs and API swagger docs (Ctrl+C to stop)
@@ -422,7 +422,7 @@ deploy-centralhub: ## Force-redeploy Central Hub ECS services and publish the UI
 	@set -e; \
 	for service in $(CENTRALHUB_ECS_SERVICES); do \
 	  echo "   ↻ $$service"; \
-	  AWS_PROFILE=$(AWS_PROFILE) AWS_REGION=$(AWS_REGION) aws ecs update-service \
+	  $(_AWS_ENV) AWS_REGION=$(AWS_REGION) aws ecs update-service \
 	    --cluster $(ECS_CLUSTER) \
 	    --service $$service \
 	    --force-new-deployment \
@@ -430,7 +430,7 @@ deploy-centralhub: ## Force-redeploy Central Hub ECS services and publish the UI
 	    --output text >/dev/null; \
 	done
 	@echo "⏳ Waiting for Central Hub ECS services to stabilise..."
-	@AWS_PROFILE=$(AWS_PROFILE) AWS_REGION=$(AWS_REGION) aws ecs wait services-stable \
+	@$(_AWS_ENV) AWS_REGION=$(AWS_REGION) aws ecs wait services-stable \
 	  --cluster $(ECS_CLUSTER) \
 	  --services $(CENTRALHUB_ECS_SERVICES)
 	@$(MAKE) deploy-ui PROD=$(PROD)
@@ -447,22 +447,24 @@ deploy-ui: ## Build flip-ui from the working tree and deploy it to S3 + invalida
 	@echo "📦 Syncing static assets to the deployed UI bucket..."
 	@# Hashed bundles are content-addressed and safe to cache forever.
 	@# index.html and window.js must never be cached long — they reference the hashed bundles.
-	@UI_BUCKET=$$($(_TF_AWS) terraform output -raw FlipUiBucketName); \
+	@UI_BUCKET=$$($(_AWS_ENV) terraform output -raw FlipUiBucketName); \
 	[ -n "$$UI_BUCKET" ] || { echo "❌ Terraform output FlipUiBucketName is empty"; exit 1; }; \
 	echo "   s3://$$UI_BUCKET/"; \
-	$(_TF_AWS) aws s3 sync ../../../flip-ui/dist/ s3://$$UI_BUCKET/ \
+	$(_AWS_ENV) aws s3 sync ../../../flip-ui/dist/ s3://$$UI_BUCKET/ \
 		--delete \
 		--cache-control "public, max-age=31536000, immutable" \
 		--exclude "index.html" --exclude "js/window.js"; \
-	$(_TF_AWS) aws s3 cp ../../../flip-ui/dist/index.html s3://$$UI_BUCKET/index.html \
+	$(_AWS_ENV) aws s3 cp ../../../flip-ui/dist/index.html s3://$$UI_BUCKET/index.html \
 		--cache-control "no-cache, no-store, must-revalidate" \
 		--content-type "text/html; charset=utf-8"; \
-	$(_TF_AWS) aws s3 cp ../../../flip-ui/dist/js/window.js s3://$$UI_BUCKET/js/window.js \
+	$(_AWS_ENV) aws s3 cp ../../../flip-ui/dist/js/window.js s3://$$UI_BUCKET/js/window.js \
 		--cache-control "no-cache, no-store, must-revalidate" \
 		--content-type "application/javascript; charset=utf-8"
 	@echo "🧹 Invalidating CloudFront..."
-	@$(_TF_AWS) aws cloudfront create-invalidation \
-		--distribution-id $$($(_TF_AWS) terraform output -raw CloudfrontDistributionId) \
+	@DIST_ID=$$($(_AWS_ENV) terraform output -raw CloudfrontDistributionId); \
+	[ -n "$$DIST_ID" ] || { echo "❌ Terraform output CloudfrontDistributionId is empty"; exit 1; }; \
+	$(_AWS_ENV) aws cloudfront create-invalidation \
+		--distribution-id "$$DIST_ID" \
 		--paths "/*" >/dev/null
 	@echo "✅ deploy-ui complete."
 
@@ -550,7 +552,7 @@ ifeq ($(FL_BACKEND),nvflare)
 	@[ -n "$(FL_KIT_SLOT)" ] || (echo ""; echo "❌  FL_KIT_SLOT not found — is trust/.env.$(KIT).$(KIT_ENV_SUFFIX) present with FL_KIT_SLOT set?"; echo ""; exit 1)
 	@TRUST_KIT_DIR=/tmp/$(FL_KIT_SLOT)_kit && \
 	  rm -rf $$TRUST_KIT_DIR && mkdir -p $$TRUST_KIT_DIR && \
-	  AWS_PROFILE=$(AWS_PROFILE) aws s3 sync \
+	  $(_AWS_ENV) aws s3 sync \
 	    s3://$(AICENTRE_BUCKET_NAME)/fl-flare-participant-kits/$(FL_KIT_DATE)/net-1/services/$(FL_KIT_SLOT)/ \
 	    $$TRUST_KIT_DIR && \
 	  echo "" && \
@@ -562,7 +564,7 @@ ifeq ($(FL_BACKEND),nvflare)
 else
 	@TRUST_KIT_DIR=/tmp/$(KIT)_kit && \
 	  rm -rf $$TRUST_KIT_DIR && mkdir -p $$TRUST_KIT_DIR/net-1 && \
-	  AWS_PROFILE=$(AWS_PROFILE) aws s3 sync \
+	  $(_AWS_ENV) aws s3 sync \
 	    s3://$(AICENTRE_BUCKET_NAME)/fl-flower-participant-kits/$(FL_KIT_DATE)/net-1/ \
 	    $$TRUST_KIT_DIR/net-1/ && \
 	  echo "" && \

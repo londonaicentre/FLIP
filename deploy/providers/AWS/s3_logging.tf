@@ -83,13 +83,11 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "flip_access_logs"
   }
 }
 
-resource "aws_s3_bucket_versioning" "flip_access_logs" {
-  bucket = aws_s3_bucket.flip_access_logs.id
-
-  versioning_configuration {
-    status = "Enabled"
-  }
-}
+# Versioning is intentionally NOT enabled on the access-logs bucket: S3
+# server access log delivery is write-only (never overwrites), so versioning
+# provides no value and would prevent the lifecycle rule from actually
+# deleting objects (expiration on a versioned bucket only writes delete
+# markers).
 
 resource "aws_s3_bucket_lifecycle_configuration" "flip_access_logs" {
   bucket = aws_s3_bucket.flip_access_logs.id

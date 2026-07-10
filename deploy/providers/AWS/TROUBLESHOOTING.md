@@ -718,7 +718,7 @@ grep 'XNAT_SERVICE_PASSWORD' .env.stag
 
 Check the effective Make value:
 ```bash
-cd /home/rd24/git/FLIP && \
+cd "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" && \
   printf 'include .env.stag\nall:\n\t@echo "PWD=[$(XNAT_SERVICE_PASSWORD)]"' \
   | make -f - PROD=stag
 ```
