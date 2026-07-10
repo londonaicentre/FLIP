@@ -179,7 +179,7 @@ If you regress this: confirm the ALB listener rule's `target_group_arn` is `aws_
 
 ### 1.9 Verifying which FL image an ECS task pulled — GuardDuty sidecar digest trap
 
-**Symptom**: After a `force-new-deployment` of `fl-server-net-1` / `fl-api-net-1`, you check the running task's image digest against the GHCR tag to confirm the new build is live. One container's `imageDigest` does **not** match the GHCR `:stag`/`:prod` manifest, and worse, querying GHCR for that digest returns **HTTP 404** (it does not exist in GHCR at all). Looks like the task is running a stale/unknown image.
+**Symptom**: After a `make deploy-centralhub` (or a legacy `--force-new-deployment`) of `fl-server-net-1` / `fl-api-net-1`, you check the running task's image digest against the GHCR tag — the pinned `sha-<short7>` tag since FLIP#751, the mutable `:stag`/`:prod` tag before it — to confirm the new build is live. One container's `imageDigest` does **not** match the GHCR manifest, and worse, querying GHCR for that digest returns **HTTP 404** (it does not exist in GHCR at all). Looks like the task is running a stale/unknown image.
 
 **Root cause**: GuardDuty Runtime Monitoring injects a sidecar container (`aws-guardduty-agent-*`) into every Fargate task. `aws ecs describe-tasks` returns `containers` as an **array**, and the GuardDuty agent often sorts **first** — so a query like `containers[0].imageDigest` reads the *agent's* digest, not the FL app container's. The GuardDuty agent image lives in an **AWS-internal ECR**, never GHCR, which is exactly why its digest 404s when you look it up in `ghcr.io`. The FL app container is a *different* element of the same array and its digest matches GHCR fine.
 
