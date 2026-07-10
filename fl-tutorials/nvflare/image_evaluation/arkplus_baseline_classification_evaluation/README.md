@@ -47,6 +47,18 @@ This app expects a DECAF-formatted chest X-ray dataset with:
 - A per-site CSV dataframe with `accession_id` and lesion labels
 - Images organised under `<images_dir>/<accession_id>/...` (DICOM)
 
+The quickest path uses the published reference dataset on Hugging Face. From the repo root:
+
+```bash
+make -C fl-tutorials download-arkplus-eval-data   # fetch + lay out data/arkplus/site{1,2}_holdoff/
+make -C fl-tutorials run-tutorial TUTORIAL=arkplus_baseline_classification_evaluation
+```
+
+`download-arkplus-eval-data` pulls the `site1_holdoff`/`site2_holdoff` hold-out splits of
+[`aicentreflip/tutorials-arkplus-cxr-classification`](https://huggingface.co/datasets/aicentreflip/tutorials-arkplus-cxr-classification)
+and normalises them into `fl-tutorials/nvflare/data/arkplus/site{1,2}_holdoff/` (gitignored), matching
+this tutorial's `.env.app` defaults.
+
 For local development, per-site paths are set in `.env.app`:
 
 - `DEV_IMAGES_DIR` / `DEV_DATAFRAME` (single-site dev default)
