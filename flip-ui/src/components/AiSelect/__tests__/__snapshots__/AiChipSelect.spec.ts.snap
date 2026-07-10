@@ -26,15 +26,8 @@ exports[`AI Chip Select > renders the component successfully 1`] = `
     >
       <svg
         class="w-5 h-5 text-gray-400 dark:text-gray-300"
-        height="1.2em"
-        viewBox="0 0 24 24"
-        width="1.2em"
-      >
-        <path
-          d="M7.41 8.58L12 13.17l4.59-4.59L18 10l-6 6l-6-6l1.41-1.42z"
-          fill="currentColor"
-        />
-      </svg>
+        data-icon="mdi:chevron-down"
+      />
     </span>
   </button>
   <transition-stub
