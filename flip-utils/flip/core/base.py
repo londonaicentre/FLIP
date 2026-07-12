@@ -75,7 +75,7 @@ class FLIPBase(ABC):
         Args:
             project_id (str): The project identifier
             accession_id (str): The accession ID of the imaging study
-            resource_type (Union[ResourceType, List[ResourceType]]): Type(s) of resources to download
+            resource_type (ResourceType | list[ResourceType]): Type(s) of resources to download
 
         Returns:
             Path: Path to the downloaded data
@@ -98,7 +98,7 @@ class FLIPBase(ABC):
             accession_id (str): The accession ID
             scan_id (str): The scan ID
             resource_id (str): The resource type ID
-            files (List[str]): List of file paths to upload
+            files (list[str]): List of file paths to upload
         """
 
     @abstractmethod
@@ -202,10 +202,10 @@ class FLIPBase(ABC):
         Check whether resource type is valid and returns them reformatted.
 
         Args:
-            resource_type (Union[ResourceType, List[ResourceType]]): Single ResourceType or list of ResourceTypes
+            resource_type (ResourceType | list[ResourceType]): Single ResourceType or list of ResourceTypes
 
         Returns:
-            List[ResourceType]: List of validated resource types
+            list[ResourceType]: List of validated resource types
 
         Raises:
             TypeError: If resource_type is not valid
