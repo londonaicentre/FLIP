@@ -12,9 +12,9 @@
 
 """Flower round-progress emission — the Flower twin of the NVFLARE round relay.
 
-Emits the typed round facts (``FLLogEvent``) that back the hub's RoundProgress
-card and round-aware activity feed. Facts only: the hub composes display text
-at serve time, so wording changes never require rebuilding FL images.
+Emits the typed round facts (``FLLogEvent``) that back the hub's round-aware
+activity feed. Facts only: the hub composes display text at serve time, so
+wording changes never require rebuilding FL images.
 
 Every helper is best-effort — a telemetry failure is logged and must never
 break the strategy loop (matching ``flip.flower.metrics``). Only the fl-server
@@ -27,10 +27,10 @@ templates should subclass it rather than calling these directly.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from flip import FLIP
-from flip.flower.metrics import _resolve_site_name
+from flip.flower.metrics import _resolve_site_name, handle_client_exception, handle_client_metrics
 from flip.schemas import FLLogEvent
 
 if TYPE_CHECKING:
@@ -38,7 +38,15 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["report_round_started", "report_client_result", "report_round_aggregated", "resolve_absent_site"]
+__all__ = [
+    "RoundTelemetry",
+    "report_round_started",
+    "report_client_result",
+    "report_round_aggregated",
+    "resolve_absent_site",
+]
+
+Phase = Literal["train", "evaluate"]
 
 
 def resolve_absent_site(
@@ -68,6 +76,84 @@ def resolve_absent_site(
     if len(absent) != 1:
         return None
     return site_by_node.get(next(iter(absent)))
+
+
+class RoundTelemetry:
+    """Per-run reply bookkeeping: who was dispatched, who answered, who fell out.
+
+    Extracted from ``FlipFedAvg`` (which needs ``flwr`` to import) so CI can pin
+    the two invariants that make crashed-client attribution safe:
+
+    - sites are learned from **every** reply before any absence is resolved, so a
+      client that identifies itself in the same batch still counts as present;
+    - each phase keeps its **own** dispatch roster — a train strategy's evaluate
+      arm may sample a different cohort, and resolving evaluate absences against
+      the train roster would put one trust's name on another trust's failure.
+    """
+
+    def __init__(self) -> None:
+        # node_id -> site name, learned from healthy replies across the whole run.
+        self.site_by_node: dict[int, str] = {}
+        self._dispatched_by_phase: dict[str, set[int]] = {}
+
+    def record_dispatch(self, phase: Phase, node_ids: set[int]) -> None:
+        """Record the node ids a phase's tasks were just sent to (replaces the
+        phase's previous roster — each round samples afresh).
+
+        Args:
+            phase: Which strategy phase dispatched.
+            node_ids: The ``dst_node_id`` of every dispatched message.
+        """
+        self._dispatched_by_phase[phase] = set(node_ids)
+
+    def dispatched_count(self, phase: Phase) -> int | None:
+        """How many clients the phase's current round was dispatched to.
+
+        Args:
+            phase: Which strategy phase to count.
+
+        Returns:
+            int | None: The roster size, or None when the phase never dispatched.
+        """
+        dispatched = self._dispatched_by_phase.get(phase)
+        return len(dispatched) if dispatched is not None else None
+
+    def forward_replies(
+        self, replies: list[Message], phase: Phase, server_round: int, model_id: str, flip: FLIP
+    ) -> int:
+        """Forward every reply's metrics, exception and round event to the hub.
+
+        Learns each healthy reply's site, then names the one client the phase
+        dispatched to that never answered (see ``resolve_absent_site``) so its
+        error is attributed to the right trust. fl-clients never reach the
+        Central Hub directly — every forward happens here, server-side.
+
+        Args:
+            replies: The round's reply Messages.
+            phase: The strategy phase these replies belong to.
+            server_round: Flower's 1-based round number.
+            model_id: The FLIP model ID for the run.
+            flip: The FLIP instance used to reach the Central Hub.
+
+        Returns:
+            int: How many replies were healthy.
+        """
+        for msg in replies:
+            site = _resolve_site_name(msg)
+            if site is not None:
+                self.site_by_node[msg.metadata.src_node_id] = site
+
+        responded = {msg.metadata.src_node_id for msg in replies if not msg.has_error()}
+        dispatched = self._dispatched_by_phase.get(phase, set())
+        absent_site = resolve_absent_site(dispatched, responded, self.site_by_node)
+
+        returned = 0
+        for msg in replies:
+            handle_client_metrics(msg, server_round, model_id, flip)
+            handle_client_exception(msg, model_id, flip, site_name=absent_site)
+            if report_client_result(msg, server_round, model_id, flip):
+                returned += 1
+        return returned
 
 
 def _serialized_size_bytes(msg: Message) -> int | None:

@@ -262,6 +262,44 @@ class TestFLIPStandardProdSendEvent:
 
             flip_prod.send_event(model_id=valid_model_id, event_type=FLLogEvent.ROUND_STARTED, global_round=1)
 
+    def test_send_event_swallows_payload_validation_errors(self, flip_prod):
+        """A malformed fact (e.g. an un-normalised 0-based round) must be logged and
+        dropped, not raised — send_event runs inside result acceptance."""
+        valid_model_id = "550e8400-e29b-41d4-a716-446655440000"
+
+        with (
+            patch("flip.core.standard.FlipConstants") as mock_constants,
+            patch("flip.core.standard.requests.post") as mock_post,
+        ):
+            mock_constants.FLIP_API_INTERNAL_URL = "https://hub.example.com"
+            mock_constants.INTERNAL_SERVICE_KEY_HEADER = "x-internal-service-key"
+            mock_constants.INTERNAL_SERVICE_KEY = "test-internal-key"
+
+            flip_prod.send_event(model_id=valid_model_id, event_type=FLLogEvent.ROUND_STARTED, global_round=0)
+
+            mock_post.assert_not_called()
+
+    def test_send_event_bounds_the_hub_post_with_a_timeout(self, flip_prod):
+        """The try/except around the post cannot catch a hang: a hub that accepts
+        TCP and stalls would otherwise freeze result acceptance mid-round."""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.text = "OK"
+        valid_model_id = "550e8400-e29b-41d4-a716-446655440000"
+
+        with (
+            patch("flip.core.standard.FlipConstants") as mock_constants,
+            patch("flip.core.standard.requests.post", return_value=mock_response) as mock_post,
+        ):
+            mock_constants.FLIP_API_INTERNAL_URL = "https://hub.example.com"
+            mock_constants.INTERNAL_SERVICE_KEY_HEADER = "x-internal-service-key"
+            mock_constants.INTERNAL_SERVICE_KEY = "test-internal-key"
+
+            flip_prod.send_event(model_id=valid_model_id, event_type=FLLogEvent.ROUND_STARTED, global_round=1)
+
+            timeout = mock_post.call_args.kwargs.get("timeout")
+            assert timeout is not None, "send_event must bound the hub post with a timeout"
+
 
 class TestFLIPStandardProdSendHandledExceptionSuccessFlag:
     """The exception path must persist as a failure row (red dot), not the success default."""

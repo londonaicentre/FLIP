@@ -499,6 +499,21 @@ class TestRoundEventRelay:
             details={"total_rounds": 5},
         )
 
+    def test_round_started_clears_the_previous_rounds_sticky_counts(self):
+        """A round with zero accepted results must not report round N-1's counts
+        on its ROUND_DONE — the sticky props are cleared at every round start."""
+        from nvflare.app_common.app_constant import AppConstants
+
+        handler, flip, fl_ctx = self._handler_and_ctx(
+            {AppConstants.CURRENT_ROUND: 2, AppConstants.NUM_ROUNDS: 5}
+        )
+
+        handler.handle_event(AppEventType.ROUND_STARTED, fl_ctx)
+
+        cleared = {call.args[0] for call in fl_ctx.set_prop.call_args_list if call.args[1] is None}
+        assert FlipProps.ROUND_RETURNED in cleared
+        assert FlipProps.ROUND_EXPECTED in cleared
+
     def test_round_started_without_total_omits_it(self):
         from nvflare.app_common.app_constant import AppConstants
 

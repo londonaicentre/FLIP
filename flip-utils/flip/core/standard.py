@@ -38,6 +38,11 @@ from flip.exceptions import ResultsUploadError
 from flip.schemas import FLLogEvent, TrainingLog, TrainingMetrics
 from flip.utils.utils import Utils
 
+# (connect, read) bound on hub telemetry posts. The surrounding try/except arms
+# cannot catch a hang — a hub that accepts TCP and then stalls would otherwise
+# freeze the FL loop at the call site (send_event runs inside result acceptance).
+_HUB_POST_TIMEOUT_SECONDS: tuple[int, int] = (5, 30)
+
 
 def _trust_internal_headers() -> dict[str, str]:
     """Return the auth header sent on every trust-internal call.
@@ -298,6 +303,7 @@ class FLIPStandardProd(FLIPBase):
             response = requests.put(
                 endpoint,
                 headers=_hub_internal_headers(),
+                timeout=_HUB_POST_TIMEOUT_SECONDS,
             )
             self.logger.info(f"Received response status code: {response.status_code}, response text: {response.text}")
             response.raise_for_status()
@@ -341,6 +347,7 @@ class FLIPStandardProd(FLIPBase):
                 endpoint,
                 json=payload,
                 headers=_hub_internal_headers(),
+                timeout=_HUB_POST_TIMEOUT_SECONDS,
             )
             self.logger.info(f"Received response status code: {response.status_code}, response text: {response.text}")
             response.raise_for_status()
@@ -395,6 +402,7 @@ class FLIPStandardProd(FLIPBase):
                 endpoint,
                 json=payload,
                 headers=_hub_internal_headers(),
+                timeout=_HUB_POST_TIMEOUT_SECONDS,
             )
             self.logger.info(f"Received response status code: {response.status_code}, response text: {response.text}")
             response.raise_for_status()
@@ -424,7 +432,9 @@ class FLIPStandardProd(FLIPBase):
         Sends a typed round-progress event to the Central Hub.
 
         Facts only — the hub composes display text at serve time. Best-effort:
-        a failed post is logged and never breaks training.
+        a failed post and a payload that fails validation are logged and never
+        break training. Only an invalid ``model_id`` raises — a deliberate
+        precondition, matching ``send_handled_exception``.
 
         Args:
             model_id (str): The ID of the model the event belongs to.
@@ -438,23 +448,28 @@ class FLIPStandardProd(FLIPBase):
         if Utils.is_valid_uuid(model_id) is False:
             raise ValueError(f"Invalid model ID: {model_id}, unable to send event")
 
-        payload = TrainingLog(
-            fl_client_name=client_name,
-            event_type=event_type,
-            global_round=global_round,
-            details=details,
-            success=success,
-        ).model_dump(mode="json")
-
         endpoint = _join_url(FlipConstants.FLIP_API_INTERNAL_URL, f"model/{model_id}/logs")
 
         self.logger.info(f"Attempting to send {event_type} (round {global_round}) to the Central Hub...")
 
         try:
+            # Constructed inside the guard: send_event runs inside result
+            # acceptance, so a malformed fact must be dropped, not raised.
+            payload = TrainingLog(
+                fl_client_name=client_name,
+                event_type=event_type,
+                global_round=global_round,
+                details=details,
+                success=success,
+            ).model_dump(mode="json")
+
             response = requests.post(
                 endpoint,
                 json=payload,
                 headers=_hub_internal_headers(),
+                # The except arms cannot catch a hang: a hub that accepts TCP
+                # and then stalls would freeze result acceptance mid-round.
+                timeout=_HUB_POST_TIMEOUT_SECONDS,
             )
             self.logger.info(f"Received response status code: {response.status_code}, response text: {response.text}")
             response.raise_for_status()

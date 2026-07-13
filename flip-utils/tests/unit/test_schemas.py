@@ -102,6 +102,17 @@ class TestTrainingLog:
         with pytest.raises(ValidationError):
             TrainingLog(event_type=FLLogEvent.ROUND_STARTED, global_round=0)
 
+    def test_unknown_event_type_is_accepted_for_forward_compat(self):
+        """The vocabulary is plain text end-to-end (mirrors flip-api): a newer
+        vocabulary member must serialise without a schema change here."""
+        payload = TrainingLog(event_type="SOMETHING_NEW", global_round=3)
+        assert payload.event_type == "SOMETHING_NEW"
+
+    @pytest.mark.parametrize("event_type", ["", "   "])
+    def test_blank_event_type_is_rejected(self, event_type):
+        with pytest.raises(ValidationError):
+            TrainingLog(event_type=event_type, global_round=3)
+
     def test_missing_field_raises(self):
         """Omitting a required field should raise a ValidationError."""
         with pytest.raises(ValidationError):

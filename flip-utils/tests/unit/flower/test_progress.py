@@ -19,6 +19,7 @@ Like ``flip.flower.metrics``, the module only references Flower types behind a
 from unittest.mock import Mock
 
 from flip.flower.progress import (
+    RoundTelemetry,
     report_client_result,
     report_round_aggregated,
     report_round_started,
@@ -29,7 +30,13 @@ from flip.schemas import FLLogEvent
 VALID_MODEL_ID = "123e4567-e89b-12d3-a456-426614174000"
 
 
-def _reply(site: str | None = "Trust_1", arrays_bytes: list[bytes] | None = None, has_error: bool = False) -> Mock:
+def _reply(
+    site: str | None = "Trust_1",
+    arrays_bytes: list[bytes] | None = None,
+    has_error: bool = False,
+    src_node_id: int = 42,
+    error: object | None = None,
+) -> Mock:
     """A minimal stand-in for a Flower reply Message (see test_metrics.py)."""
     content: dict[str, object] = {}
     if site is not None:
@@ -41,8 +48,9 @@ def _reply(site: str | None = "Trust_1", arrays_bytes: list[bytes] | None = None
 
     msg = Mock()
     msg.has_error.return_value = has_error
+    msg.error = error
     msg.content.get.side_effect = content.get
-    msg.metadata.src_node_id = 42
+    msg.metadata.src_node_id = src_node_id
     return msg
 
 
@@ -124,6 +132,16 @@ class TestReportClientResult:
 
         assert report_client_result(msg, server_round=1, model_id=VALID_MODEL_ID, flip=flip) is True
 
+    def test_unattributable_healthy_reply_skips_the_event_but_still_counts(self):
+        """No site → no hub row (a hub-level "someone uploaded" would be worse
+        than silence), but the reply WAS received so the round count keeps it."""
+        flip = Mock()
+        msg = _reply(site=None)
+
+        assert report_client_result(msg, server_round=1, model_id=VALID_MODEL_ID, flip=flip) is True
+
+        flip.send_event.assert_not_called()
+
 
 class TestReportRoundAggregated:
     def test_emits_counts(self):
@@ -182,3 +200,87 @@ class TestResolveAbsentSite:
     def test_absent_node_never_seen_before_yields_none(self):
         """A client that crashed before its first healthy reply has no known site."""
         assert resolve_absent_site({111, 333}, {111}, self.SITES) is None
+
+
+class TestRoundTelemetry:
+    """The per-phase dispatch bookkeeping behind FlipFedAvg.
+
+    Extracted from the strategy (which needs flwr to import) precisely so CI can
+    pin these behaviours: sites are learned from every reply before any absence
+    is resolved, and each phase's absences resolve against that phase's own
+    roster — a train strategy's evaluate arm may sample a different cohort.
+    """
+
+    def _telemetry_after_healthy_train_round(self, flip: Mock) -> RoundTelemetry:
+        """Round 1 trains on nodes 10 (GSTT) and 20 (KCH); both sites get learned."""
+        telemetry = RoundTelemetry()
+        telemetry.record_dispatch("train", {10, 20})
+        telemetry.forward_replies(
+            [_reply(site="GSTT", src_node_id=10), _reply(site="KCH", src_node_id=20)],
+            phase="train",
+            server_round=1,
+            model_id=VALID_MODEL_ID,
+            flip=flip,
+        )
+        return telemetry
+
+    def test_absent_client_is_named_by_elimination_within_its_phase(self):
+        flip = Mock()
+        telemetry = self._telemetry_after_healthy_train_round(flip)
+        telemetry.record_dispatch("train", {10, 20})
+
+        returned = telemetry.forward_replies(
+            [
+                _reply(site="GSTT", src_node_id=10),
+                # Flower synthesises the error reply for the dead node with a
+                # placeholder src_node_id, so only elimination can name it.
+                _reply(site=None, src_node_id=1, has_error=True, error="boom"),
+            ],
+            phase="train",
+            server_round=2,
+            model_id=VALID_MODEL_ID,
+            flip=flip,
+        )
+
+        assert returned == 1
+        assert flip.send_handled_exception.call_args.kwargs["client_name"] == "KCH"
+
+    def test_evaluate_absences_resolve_against_the_evaluate_roster_not_trains(self):
+        """Node 10 was never sent an evaluate task, so it must not be blamed for an
+        errored evaluate reply — nobody in the evaluate roster is actually absent."""
+        flip = Mock()
+        telemetry = self._telemetry_after_healthy_train_round(flip)  # train roster {10, 20}
+        telemetry.record_dispatch("evaluate", {20})
+
+        telemetry.forward_replies(
+            [
+                _reply(site="KCH", src_node_id=20),
+                _reply(site=None, src_node_id=1, has_error=True, error="boom"),
+            ],
+            phase="evaluate",
+            server_round=1,
+            model_id=VALID_MODEL_ID,
+            flip=flip,
+        )
+
+        assert flip.send_handled_exception.call_args.kwargs["client_name"] is None
+
+    def test_dispatched_count_is_per_phase(self):
+        telemetry = RoundTelemetry()
+        telemetry.record_dispatch("train", {10, 20})
+        telemetry.record_dispatch("evaluate", {20})
+
+        assert telemetry.dispatched_count("train") == 2
+        assert telemetry.dispatched_count("evaluate") == 1
+
+    def test_dispatched_count_is_none_before_any_dispatch(self):
+        assert RoundTelemetry().dispatched_count("evaluate") is None
+
+    def test_re_dispatch_replaces_the_phase_roster(self):
+        """Each round's dispatch overwrites the last — a node sampled out of round
+        N must not linger from round N-1 and read as absent forever."""
+        telemetry = RoundTelemetry()
+        telemetry.record_dispatch("train", {10, 20})
+        telemetry.record_dispatch("train", {10})
+
+        assert telemetry.dispatched_count("train") == 1
