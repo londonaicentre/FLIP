@@ -294,11 +294,13 @@ the UI (same as `make deploy-ui`):
 
 0. **FL quiesce warning** (FLIP#770). Replacing `fl-server-net-1` kills any in-flight training
    run (its run state is ephemeral) and strands the model at `TRAINING_STARTED` with its net stuck
-   `BUSY`. The deploy currently prints a reminder (it does **not** block): enable Deployment Mode
-   in the UI (Admin → Deployments) at any time — it pauses FL job pickup, so queued jobs hold and
-   only the current run (if any) needs to finish — wait until the platform is quiesced, deploy,
-   then disable Deployment Mode to resume the queue. `GET /fl/quiesce` (authenticated) reports
-   both facts: `deployment_mode` (the flag) and `fl_quiesced` (no net's scheduler `BUSY`).
+   `BUSY`. The deploy prints a reminder: enable Deployment Mode in the UI (Admin → Deployments) at
+   any time — it pauses FL job pickup, so queued jobs hold and only the current run (if any) needs
+   to finish — wait until the platform is quiesced, deploy, then disable Deployment Mode to resume
+   the queue. `GET /fl/quiesce` (authenticated) reports both facts: `deployment_mode` (the flag)
+   and `fl_quiesced` (no net's scheduler `BUSY`). On **prod** (`PROD=true`) the reminder is
+   followed by an interactive "Are you sure you want to continue?" confirmation; staging deploys
+   stay non-interactive.
 1. Resolves `TAG=sha-<short7>` from the tip of the env's branch — `PROD=true` → `origin/main`,
    `PROD=stag` → `origin/develop` (`git fetch` runs inside the target). The tag must match
    `sha-<7 hex chars>` — a mutable tag (e.g. a stray `TAG=stag`) is rejected before any AWS call.
