@@ -33,9 +33,9 @@ def get_quiesce_status(
     """
     Report whether the platform is quiesced for a Central Hub redeploy.
 
-    The deploy pre-flight (``make deploy-centralhub``) refuses to replace the hub services
-    unless deployment mode is enabled AND no net's scheduler is BUSY, so an in-flight
-    training run is never killed by a redeploy (FLIP#770).
+    An ECS replacement kills an in-flight training run, so the safe-redeploy condition is
+    deployment mode enabled AND no net's scheduler BUSY (FLIP#770). ``make deploy-centralhub``
+    prints a reminder pointing operators at this endpoint to verify both before deploying.
 
     Args:
         db (Session): Database session.

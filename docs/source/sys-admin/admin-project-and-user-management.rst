@@ -188,7 +188,7 @@ Deployment Mode also quiesces federated training so the Central Hub can be redep
 - A training run already in flight is allowed to finish normally (its results upload and final status are unaffected); it is only the start of *new* jobs that is paused.
 - Requests to initiate training are rejected with ``503 Service Unavailable`` while the mode is enabled.
 
-This means Deployment Mode can be enabled at any time — even mid-training — ahead of a planned redeploy: enable it, wait for the current run (if any) to reach a terminal status, redeploy, then disable it. The recommended Central Hub deploy command enforces exactly this precondition (see the ``deploy-centralhub`` quiesce pre-flight in the AWS deployment README), and the ``GET /fl/quiesce`` endpoint reports whether the platform is quiesced.
+This means Deployment Mode can be enabled at any time — even mid-training — ahead of a planned redeploy: enable it, wait for the current run (if any) to reach a terminal status, redeploy, then disable it. The Central Hub deploy command prints a reminder of this workflow (see ``deploy-centralhub`` in the AWS deployment README), and the ``GET /fl/quiesce`` endpoint reports whether the platform is quiesced (``deployment_mode`` plus ``fl_quiesced``, which is true when no net's scheduler is busy).
 
 .. figure:: ../assets/admin/deployment-mode.gif
    :align: center
