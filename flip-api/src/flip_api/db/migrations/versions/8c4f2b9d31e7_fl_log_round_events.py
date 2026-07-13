@@ -12,13 +12,13 @@
 
 """fl_logs typed round events
 
-Adds the typed-event columns backing the RoundProgress card and round-aware
-Live activity messages: the FL layer reports facts (event_type, global_round,
-details) and the hub composes display text at serve time. event_type is plain
-VARCHAR (validated by the FLLogEvent StrEnum at the API layer), deliberately
-not a native PG enum, so extending the event vocabulary never needs an
-ALTER TYPE migration. log becomes nullable because typed event rows carry no
-stored text.
+Adds the typed-event columns backing the round-aware Live activity messages:
+the FL layer reports facts (event_type, global_round, details) and the hub
+composes display text at serve time. event_type is plain VARCHAR end-to-end
+(senders use the FLLogEvent StrEnum vocabulary; the API accepts any validated
+text), deliberately not a native PG enum, so extending the event vocabulary
+never needs an ALTER TYPE migration — nor a hub deploy ahead of the FL images.
+log becomes nullable because typed event rows carry no stored text.
 
 Revision ID: 8c4f2b9d31e7
 Revises: 23aff57898a0

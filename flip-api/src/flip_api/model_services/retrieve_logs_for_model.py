@@ -21,7 +21,7 @@ from flip_api.auth.dependencies import verify_token
 from flip_api.db.database import get_session
 from flip_api.db.models.main_models import FLLogs, Model, Projects, Trust
 from flip_api.domain.interfaces.model import ILog
-from flip_api.model_services.services.log_rendering import render_log
+from flip_api.model_services.services.log_rendering import render_fallback, render_log
 from flip_api.model_services.services.model_service import get_model_status
 from flip_api.utils.logger import logger
 
@@ -86,6 +86,15 @@ def retrieve_logs_for_model_endpoint(
         # trust name + short code for display.
         trusts = {row[0]: (row[1], row[2]) for row in db.exec(select(Trust.id, Trust.name, Trust.code)).all()}
 
+        def display_text(log: FLLogs) -> str:
+            # Rows are persisted, so a renderer raise on one row would otherwise be
+            # a permanent 500 for the whole feed. Degrade that row alone.
+            try:
+                return render_log(log)
+            except Exception:
+                logger.exception(f"Failed to render log row {log.id}; serving degraded text")
+                return render_fallback(log)
+
         return [
             ILog(
                 id=log.id,
@@ -95,7 +104,7 @@ def retrieve_logs_for_model_endpoint(
                 trust_name=trusts[log.trust][0] if log.trust in trusts else None,
                 trust_code=trusts[log.trust][1] if log.trust in trusts else None,
                 global_round=log.global_round,
-                log=render_log(log),
+                log=display_text(log),
             )  # type: ignore[call-arg]
             for log in logs
         ]

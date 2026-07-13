@@ -231,3 +231,10 @@ def test_retrieve_model_reports_the_trusts_that_took_part(
         (gstt_id, "Guy's and St Thomas'", "GSTT"),
         (kch_id, "King's College Hospital", None),
     ]
+
+    # The roster must come from the dispatch record (the latest job's fl_job_trust
+    # rows), not ModelTrustIntersect — that table gets a row per approved trust at
+    # model creation, so sourcing it would mark excluded trusts as participants.
+    trusts_stmt = str(override_dependencies.exec.call_args_list[2].args[0])
+    assert "fl_job_trust" in trusts_stmt
+    assert "model_trust_intersect" not in trusts_stmt

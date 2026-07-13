@@ -85,3 +85,32 @@ class TestRenderLog:
 
     def test_row_with_neither_text_nor_event_renders_empty(self):
         assert render_log(_row(log=None)) == ""
+
+    @pytest.mark.parametrize(
+        "size_bytes",
+        ["2.3 MB", {"value": 12}, [1024], "nan", "inf"],
+    )
+    def test_client_result_with_unusable_size_degrades_to_sizeless_line(self, size_bytes):
+        """details is untyped JSONB, so a bad value must degrade this row — never raise.
+
+        Raising here would 500 the whole feed on every request once the row is
+        stored (the endpoint serves all rows of a model together).
+        """
+        row = _row(
+            event_type=FLLogEvent.CLIENT_RESULT_RECEIVED.value,
+            global_round=7,
+            details={"size_bytes": size_bytes},
+        )
+        assert render_log(row) == "Round 7 results returned"
+
+    @pytest.mark.parametrize(
+        ("returned", "expected"),
+        [("two", 5), (4, {"n": 5}), ("4", "5"), (None, 5)],
+    )
+    def test_round_aggregated_with_unusable_counts_degrades_to_bare_line(self, returned, expected):
+        row = _row(
+            event_type=FLLogEvent.ROUND_AGGREGATED.value,
+            global_round=6,
+            details={"returned": returned, "expected": expected},
+        )
+        assert render_log(row) == "Round 6 aggregated"

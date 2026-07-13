@@ -23,6 +23,7 @@ from flip_api.auth.dependencies import verify_token
 from flip_api.db.database import get_session
 from flip_api.db.models.main_models import FLLogs
 from flip_api.main import app
+from flip_api.model_services import retrieve_logs_for_model as retrieve_logs_module
 
 client = TestClient(app)
 
@@ -168,6 +169,56 @@ def test_retrieve_logs_event_rows_serve_rendered_text_and_round_fields(
     assert trust_row["trustName"] == "King's College Hospital"
     assert trust_row["trustCode"] == "KCH"
     assert trust_row["globalRound"] == 7
+
+
+def test_one_unrenderable_row_degrades_alone_instead_of_500ing_the_feed(
+    override_dependencies, mock_can_access_true, mock_model_status_ok
+):
+    """A renderer bug on one stored row must not take the whole feed down.
+
+    The row is persisted, so an unguarded raise here would turn into a permanent
+    500 for every subsequent GET of this model's logs. The endpoint isolates each
+    row: the poisoned one serves degraded text, its neighbours serve normally.
+    """
+    poisoned = FLLogs(
+        id=uuid4(),
+        model_id=test_model_id,
+        log_date=datetime.now(),
+        success=True,
+        event_type="ROUND_STARTED",
+        global_round=1,
+        details=None,
+    )
+    healthy = FLLogs(
+        id=uuid4(),
+        model_id=test_model_id,
+        log_date=datetime.now(),
+        success=True,
+        log="all good",
+    )
+
+    mock_model = MagicMock()
+    mock_exec_result = MagicMock()
+    mock_exec_result.all.return_value = [poisoned, healthy]
+    mock_trust_result = MagicMock()
+    mock_trust_result.all.return_value = []
+    override_dependencies.exec.side_effect = [mock_model, mock_exec_result, mock_trust_result]
+
+    real_render = retrieve_logs_module.render_log
+
+    def render_that_breaks_on_the_poisoned_row(row):
+        if row.id == poisoned.id:
+            raise ValueError("renderer bug")
+        return real_render(row)
+
+    with patch.object(retrieve_logs_module, "render_log", side_effect=render_that_breaks_on_the_poisoned_row):
+        response = client.get(f"/api/model/{test_model_id}/logs")
+
+    assert response.status_code == status.HTTP_200_OK
+    poisoned_row, healthy_row = response.json()
+    # Degraded, not invented: the fallback names the event so the row still says something true.
+    assert poisoned_row["log"] == "Round 1 · ROUND_STARTED"
+    assert healthy_row["log"] == "all good"
 
 
 def test_retrieve_logs_for_model_forbidden(mock_can_access_false):

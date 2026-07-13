@@ -120,8 +120,9 @@ class FLLogs(SQLModel, table=True):
     # Typed round events (FLLogEvent values). Stored as plain text — not a native
     # PG enum — so extending the vocabulary never needs an ALTER TYPE migration.
     # Event-specific facts (total_rounds, size_bytes, returned/expected) live in
-    # the JSONB details column; global_round is first-class because /progress
-    # groups and maxes on it. All three are null on legacy free-text rows.
+    # the JSONB details column; global_round is first-class so round-scoped
+    # queries can filter and order on it without reaching into the JSONB. All
+    # three are null on legacy free-text rows.
     event_type: str | None = Field(default=None)
     global_round: int | None = Field(default=None)
     details: dict | None = Field(default=None, sa_column=Column("details", JSONB, nullable=True))

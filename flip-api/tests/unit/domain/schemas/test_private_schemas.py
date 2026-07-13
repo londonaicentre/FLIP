@@ -72,6 +72,17 @@ class TestTrainingLog:
         with pytest.raises(ValidationError):
             TrainingLog(event_type=FLLogEvent.ROUND_STARTED, global_round=0)
 
+    def test_unknown_event_type_is_accepted_for_forward_compat(self):
+        """The vocabulary is plain text end-to-end: a newer FL image's event is
+        stored and served via the render fallback, never 422-rejected at ingest."""
+        payload = TrainingLog(event_type="SOMETHING_NEW", global_round=3)
+        assert payload.event_type == "SOMETHING_NEW"
+
+    @pytest.mark.parametrize("event_type", ["", "   "])
+    def test_blank_event_type_is_rejected(self, event_type):
+        with pytest.raises(ValidationError):
+            TrainingLog(event_type=event_type, global_round=3)
+
     def test_success_flag_round_trips(self):
         payload = TrainingLog(fl_client_name="Trust_1", log="boom", success=False)
         assert payload.success is False

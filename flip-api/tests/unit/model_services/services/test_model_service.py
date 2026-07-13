@@ -10,6 +10,7 @@
 # limitations under the License.
 #
 
+from datetime import datetime
 from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
@@ -20,6 +21,7 @@ from flip_api.domain.interfaces.model import IModelDetails
 from flip_api.domain.schemas.status import ModelStatus
 from flip_api.domain.schemas.types import FLLogEvent
 from flip_api.model_services.services.model_service import (
+    _run_trusts_by_model,
     add_log,
     delete_model,
     delete_models,
@@ -252,18 +254,18 @@ def test_get_metrics():
     result = get_metrics(model_id, session)
 
     assert len(result) == 1
-    assert result[0].yLabel == "accuracy"
-    assert result[0].xLabel == "globalRound"
+    assert result[0].y_label == "accuracy"
+    assert result[0].x_label == "global_round"
     assert len(result[0].metrics) == 2  # trust_a and trust_b
 
-    labels = sorted(m.seriesLabel for m in result[0].metrics)
+    labels = sorted(m.series_label for m in result[0].metrics)
     assert labels == ["Trust A", "Trust B"]
 
-    trust_a_data = next(m for m in result[0].metrics if m.seriesLabel == "Trust A").data
-    assert trust_a_data[0].xValue == 1
-    assert trust_a_data[0].yValue == 0.9
-    assert trust_a_data[1].xValue == 2
-    assert trust_a_data[1].yValue == 0.92
+    trust_a_data = next(m for m in result[0].metrics if m.series_label == "Trust A").data
+    assert trust_a_data[0].x_value == 1
+    assert trust_a_data[0].y_value == 0.9
+    assert trust_a_data[1].x_value == 2
+    assert trust_a_data[1].y_value == 0.92
 
 
 def test_get_metrics_resolves_trust_to_code():
@@ -287,7 +289,7 @@ def test_get_metrics_resolves_trust_to_code():
 
     result = get_metrics(model_id, session)
 
-    labels = sorted(m.seriesLabel for m in result[0].metrics)
+    labels = sorted(m.series_label for m in result[0].metrics)
     assert labels == ["GSTT", "UCLH"]
 
 
@@ -308,7 +310,7 @@ def test_get_metrics_falls_back_to_trust_name_when_no_code():
 
     result = get_metrics(model_id, session)
 
-    assert result[0].metrics[0].seriesLabel == "Trust Three"
+    assert result[0].metrics[0].series_label == "Trust Three"
 
 
 def test_get_metrics_no_results():
@@ -468,5 +470,38 @@ def test_get_metrics_orders_points_by_round():
     result = get_metrics(model_id, session)
 
     points = result[0].metrics[0].data
-    assert [p.xValue for p in points] == [1, 2, 3]
-    assert [p.yValue for p in points] == [0.9, 0.5, 0.3]
+    assert [p.x_value for p in points] == [1, 2, 3]
+    assert [p.y_value for p in points] == [0.9, 0.5, 0.3]
+
+
+def test_run_trusts_by_model_reads_latest_job_roster():
+    """Run trusts come from the latest FL job's fl_job_trust rows, not ModelTrustIntersect.
+
+    ModelTrustIntersect gets a row per approved trust at model creation, so sourcing
+    it would mark excluded trusts as participants; and a re-initiated model must
+    report only its newest job's roster.
+    """
+    session = MagicMock()
+    model_id = uuid4()
+    old_trust, new_trust = uuid4(), uuid4()
+    older, newer = datetime(2026, 1, 1), datetime(2026, 2, 1)
+    session.exec.return_value.all.return_value = [
+        (model_id, older, old_trust, "Old Trust", "OLD"),
+        (model_id, newer, new_trust, "New Trust", "NEW"),
+    ]
+
+    result = _run_trusts_by_model([model_id], session)
+
+    stmt = str(session.exec.call_args.args[0])
+    assert "fl_job_trust" in stmt
+    assert "model_trust_intersect" not in stmt
+    assert [(t.id, t.name, t.code) for t in result[model_id]] == [(new_trust, "New Trust", "NEW")]
+
+
+def test_run_trusts_by_model_empty_input_short_circuits():
+    session = MagicMock()
+
+    result = _run_trusts_by_model([], session)
+
+    assert result == {}
+    session.exec.assert_not_called()

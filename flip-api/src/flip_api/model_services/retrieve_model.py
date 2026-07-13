@@ -22,7 +22,7 @@ from sqlmodel import Session, col, select
 from flip_api.auth.access_manager import can_access_model
 from flip_api.auth.dependencies import verify_token
 from flip_api.db.database import get_session
-from flip_api.db.models.main_models import Model, ModelsAudit, ModelTrustIntersect, Trust, UploadedFiles
+from flip_api.db.models.main_models import FLJob, FLJobTrust, Model, ModelsAudit, Trust, UploadedFiles
 from flip_api.domain.interfaces.model import IModelResponse, IQuery, ITrustSummary
 from flip_api.domain.schemas.actions import ModelAuditAction
 from flip_api.domain.schemas.status import FileUploadStatus, ModelStatus
@@ -186,12 +186,20 @@ def retrieve_model(
                 continue
             latest_per_action[action_enum] = audit_date.isoformat(timespec="milliseconds")
 
-        # The trusts the run was dispatched to. Populated at initiate-training, so a
-        # pending model reports none.
+        # The trusts the run was dispatched to: the latest FL job's fl_job_trust
+        # roster, written at initiate-training. Deliberately NOT ModelTrustIntersect —
+        # that table gets a row per approved trust at model creation, so it lists the
+        # approved pool, not the selected subset. Empty before dispatch (no job yet).
+        latest_job_id = (
+            select(FLJob.id)
+            .where(col(FLJob.model_id) == model_id)
+            .order_by(col(FLJob.created).desc())
+            .limit(1)
+        ).scalar_subquery()
         trust_rows = db.exec(
             select(Trust.id, Trust.name, Trust.code)
-            .join(ModelTrustIntersect, col(ModelTrustIntersect.trust_id) == Trust.id)  # type: ignore[arg-type]
-            .where(col(ModelTrustIntersect.model_id) == model_id)
+            .join(FLJobTrust, col(FLJobTrust.trust_id) == Trust.id)  # type: ignore[arg-type]
+            .where(col(FLJobTrust.fl_job_id) == latest_job_id)
         ).all()
         trusts = [ITrustSummary(id=trust_id, name=name, code=code) for trust_id, name, code in trust_rows]
 

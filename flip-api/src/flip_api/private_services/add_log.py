@@ -64,14 +64,31 @@ def add_log_endpoint(
             # Flower: SUPERNODE_NAME). resolve_trust_from_fl_client_name hides that discrepancy and
             # returns the trust to validate against the model's approved trusts — see issue #538.
             trust = resolve_trust_from_fl_client_name(fl_client_name, db)
+            error_msg = None
             if trust is None:
                 error_msg = f"FL client '{fl_client_name}' could not be resolved to a trust (model: {model_id})"
-                logger.error(error_msg)
-                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error_msg)
-
-            if not validate_trust_ids(model_id=model_id, trust_ids=[trust.id], session=db):
+            elif not validate_trust_ids(model_id=model_id, trust_ids=[trust.id], session=db):
                 error_msg = f"The trust: {trust.name} is not associated with model: {model_id}"
+
+            if error_msg is not None:
                 logger.error(error_msg)
+                if training_log.log is not None and not training_log.success:
+                    # An error report is the one payload that must never be dropped:
+                    # uploaded apps control the reported site name, and a 400 here
+                    # would strand the traceback in fl-server container logs while
+                    # the user's model sits red. Keep it model-level, naming the
+                    # unattributable sender in the text. Typed events still 400 —
+                    # they carry no traceback, and a misattributed count is worse
+                    # than a rejected one.
+                    add_log(
+                        model_id=model_id,
+                        log=f"[unattributed client '{fl_client_name}'] {training_log.log}",
+                        session=db,
+                        success=False,
+                        trust=None,
+                        fl_client_name=fl_client_name,
+                    )
+                    return {"detail": "Created"}
                 raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error_msg)
 
         add_log(
