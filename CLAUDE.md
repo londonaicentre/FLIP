@@ -165,8 +165,11 @@ cd flip-api && uv run python -m tests.e2e_smoke \
   --data-enrichment-cmd 'uv run upload_labels_to_XNAT.py --flip-project-id "$FLIP_PROJECT_ID"'
 ```
 
-(Through `make e2e_smoke`, pass the id literally instead — `--data-enrichment-cmd 'uv run
-upload_labels_to_XNAT.py --flip-project-id <uuid>'` — which works when reusing a project via `--project-id`.)
+(Through `make` there are two working forms: `make -C flip-api e2e_smoke_spleen`, whose in-Makefile
+`EXTRA_ARGS` carries `$$FLIP_PROJECT_ID` — a `$$` escape survives the single make expansion; or the root
+`make e2e_smoke` with the id passed literally — `--flip-project-id <uuid>` — when reusing a project via
+`--project-id`. The root wrapper re-expands `EXTRA_ARGS` through a second make and shell, so no `$`-escape
+survives it: `$$` lands empty and `$$$$` injects the recipe shell's PID.)
 
 Enrichment must land **after** the pull and after DICOM→NIfTI conversion; the hook's position guarantees that.
 The uploader derives each target filename from the converted `input_*.nii.gz`, so with no `NIFTI` resource it
