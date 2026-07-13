@@ -142,8 +142,9 @@ const stubs = {
     },
     Training: {
         name: "Training",
-        props: ["flBackendLabel", "view"],
-        template: "<div data-test='training' :data-fl-backend-label='flBackendLabel' :data-view='view' />",
+        props: ["flBackendLabel", "view", "runTrusts"],
+        template: "<div data-test='training' :data-fl-backend-label='flBackendLabel' :data-view='view'" +
+            " :data-run-trusts='(runTrusts ?? []).join()' />",
         setup: () => ({
             initiateTraining: initiateTrainingSpy,
             isSubmitting: false,
@@ -751,6 +752,31 @@ describe("pages/project/[projectId]/model/[modelId] — Prepare/Run tabs", () =>
         expect(upload.attributes("data-can-upload")).toBe("false");
         // The run options stay on screen as a record of how the run was launched.
         expect(wrapper.find("[data-test='training']").attributes("data-view")).toBe("prepare");
+    });
+
+    it("the locked options pre-fill from the run's trust ids, not names", async () => {
+        // ITrustSummary carries both; the pre-filled form binds trust_ids, so a
+        // slip to t.name here would silently break the dispatched-run record.
+        mockSwrvData.value = makeModel([], {
+            status: "TRAINING_STARTED",
+            trusts: [
+                {
+                    id: "trust-a",
+                    name: "Guy's and St Thomas'",
+                    code: "GSTT"
+                },
+                {
+                    id: "trust-b",
+                    name: "King's College Hospital",
+                    code: null
+                }
+            ]
+        });
+        const wrapper = await mountPage();
+
+        await wrapper.find("[data-test='tab-prepare']").trigger("click");
+
+        expect(wrapper.find("[data-test='training']").attributes("data-run-trusts")).toBe("trust-a,trust-b");
     });
 
     it("the lifecycle belongs to Prepare — Run is for watching, not for staging", async () => {

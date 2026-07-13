@@ -56,19 +56,6 @@ export const getShortDateFromString = (dateString: string): string => {
     return format(new Date(dateString), "dd/MM/yyyy, HH:mm:ss");
 };
 
-// Compact duration for round timings: "45s", "8m 54s", "1h 11m".
-export const formatDurationShort = (seconds: number): string => {
-    const total = Math.max(0, Math.round(seconds));
-    const h = Math.floor(total / 3600);
-    const m = Math.floor((total % 3600) / 60);
-    const s = total % 60;
-
-    if (h > 0) return `${h}h ${m}m`;
-    if (m > 0) return `${m}m ${s}s`;
-
-    return `${s}s`;
-};
-
 export const getOrderedLogs = (logs: ILog[] | undefined, reverse = false): ILog[] => {
     if (!logs) {
         return [];

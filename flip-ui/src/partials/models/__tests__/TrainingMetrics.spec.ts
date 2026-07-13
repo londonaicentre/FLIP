@@ -87,7 +87,7 @@ function mountTrainingMetrics({ inProgress = false, approvedTrusts = [] }: Mount
 
 const TRAIN_LOSS = {
     yLabel: "TRAIN_LOSS",
-    xLabel: "globalRound",
+    xLabel: "global_round",
     metrics: [
         {
             seriesLabel: "Kings College Hospital",
@@ -107,7 +107,7 @@ const TRAIN_LOSS = {
 };
 const VAL_F1 = {
     yLabel: "VAL-F1-SCORE",
-    xLabel: "globalRound",
+    xLabel: "global_round",
     metrics: [{
         seriesLabel: "Kings College Hospital",
         data: [{

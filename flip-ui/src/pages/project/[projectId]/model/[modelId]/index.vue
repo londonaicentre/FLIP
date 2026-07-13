@@ -94,8 +94,9 @@
                 <!-- Prepare: the model files and the run options, exactly as at model
                      creation. Once dispatched nothing here is editable — the options
                      stay on screen as a record of how the run was launched, and the
-                     files stay downloadable. The lifecycle belongs here too: it tracks
-                     the model's path to dispatch, which Run has no use for.
+                     files stay downloadable. The lifecycle bar renders here so Prepare
+                     always answers "where is this model in its journey?"; Run leads
+                     with the live metrics and activity instead.
                      my-4 on top of the column's gap gives it ~32px of breathing room. -->
                 <template v-if="activeTab === 'prepare'">
                     <LifecycleTrack :steps="steps" class="my-4" />

@@ -56,8 +56,9 @@ export interface ILog {
     logDate: string;
     success: boolean;
     trustName: string | null;
-    // Trust short code (GSTT/KCH) for compact display; the 1-based federated
-    // round the row belongs to. Both null on hub rows and legacy entries.
+    // Trust short code (GSTT/KCH) for compact display — null on hub rows and for
+    // trusts without a code. globalRound is the 1-based federated round the row
+    // belongs to — hub event rows carry it too; null only on legacy/free-text rows.
     trustCode?: string | null;
     globalRound?: number | null;
     log: string;

@@ -547,4 +547,28 @@ describe("Training reads the real vee-validate form", () => {
         await flushPromises();
         expect(complete(wrapper)).toBe(false);
     });
+
+    it("still blocks a submit that bypasses the disabled button: the schema is the real gate", async () => {
+        // The page disables Initiate Training on optionsComplete, but the form is
+        // natively submittable (Enter key, or optionsComplete drifting from the
+        // schema). This drives the exposed submit path with a missing trust and
+        // pins that the schema itself rejects it and its message reaches the user.
+        const { initialiseTraining } = await import("@/services/model-service");
+        vi.mocked(initialiseTraining).mockClear();
+
+        const wrapper = mountWithRealForm();
+        await flushPromises();
+
+        // Only enrichment checked — no trust selected.
+        await wrapper.findAll("button[role=\"switch\"]")[0].trigger("click");
+        await flushPromises();
+
+        await wrapper.find("form").trigger("submit");
+
+        // yup validation resolves on a macrotask, so poll rather than flush.
+        await vi.waitFor(() => {
+            expect(wrapper.text()).toContain("You must select a minimum of one trust for training.");
+        });
+        expect(vi.mocked(initialiseTraining)).not.toHaveBeenCalled();
+    });
 });
