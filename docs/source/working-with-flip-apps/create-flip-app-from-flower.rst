@@ -341,6 +341,25 @@ Abridged from ``fl-tutorials/flower/3d_spleen_segmentation/pyproject.toml``:
    flip-project-id = "uuid"
    flip-cohort-query = "*"
 
+.. note::
+
+   **How dependencies resolve on-platform.** Your own ``pyproject.toml`` drives *local* development
+   (``pip install -e .`` / ``flwr run .``). When you upload the app to FLIP, the platform bundles your
+   model files into its own base template (``fl-apps/flower/<job_type>/``), whose ``pyproject.toml``
+   governs the run — uploaded files cannot override it. At run time, Flower's runtime dependency
+   installer resolves that template's dependencies fresh for every run (``uv sync`` into an isolated
+   per-run environment) on the SuperLink (``ServerApp``) and on each SuperNode (``ClientApp``), with two
+   pins set by the template's ``[tool.uv.sources]``:
+
+   - ``flip-utils`` installs from the source copy shipped inside the FL images at ``/opt/flip-utils`` —
+     never from PyPI — so the platform always runs the ``flip-utils`` matching its images.
+   - ``torch``/``torchvision`` come from PyTorch's cu128 wheel index (PyPI's default cu130 wheels
+     require a newer NVIDIA driver than FLIP hosts run).
+
+   Everything else resolves from PyPI at run time, so trust and hub hosts need outbound HTTPS to PyPI
+   and ``download.pytorch.org``. If your app needs a dependency the base template does not declare,
+   ask the platform operators to add it to the template.
+
 ************************************
 Submitting the app to FLIP
 ************************************

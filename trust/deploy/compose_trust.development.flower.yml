@@ -25,6 +25,15 @@ services:
       # Provisioned Flower secrets (certificates, keys)
       - ${FL_PROVISIONED_DIR}/net-1/certificates:/certs:ro
       - ${FL_PROVISIONED_DIR}/net-1/keys:/keys:ro
+      # Dev-overlay: working-tree flip-utils over the copy baked at /opt/flip-utils.
+      # The per-run `uv sync` (enabled below) builds flip-utils from that path (see
+      # fl-apps/flower/*/pyproject.toml [tool.uv.sources], FLIP#767), so edits under
+      # flip-utils/flip/ reach the next run without an image rebuild. Only the pieces
+      # the image bakes are mounted — the whole flip-utils/ would drag .venv along.
+      - ../flip-utils/pyproject.toml:/opt/flip-utils/pyproject.toml:ro
+      - ../flip-utils/README.md:/opt/flip-utils/README.md:ro
+      - ../flip-utils/docs:/opt/flip-utils/docs:ro
+      - ../flip-utils/flip:/opt/flip-utils/flip:ro
     environment:
       - NET_ID=net-1
       - SUPERNODE_NAME=${FL_KIT_SLOT}
@@ -51,6 +60,10 @@ services:
       - /keys/supernode_credentials_${FL_KIT_SLOT_NUMBER}
       - --clientappio-api-address
       - ${SUPERNODE_1_CLIENTAPPIO_API_ADDRESS:-127.0.0.1:9094}
+      # ClientApp-side runtime dependency install (default-off on SuperNodes in
+      # flwr 1.32): resolves the app's deps per run, with flip-utils pinned to
+      # /opt/flip-utils via the template's [tool.uv.sources] (FLIP#767).
+      - --allow-runtime-dependency-installation
     networks:
       - default
       - deploy_shared-net-1
@@ -67,6 +80,11 @@ services:
       # Provisioned Flower secrets (certificates, keys)
       - ${FL_PROVISIONED_DIR}/net-2/certificates:/certs:ro
       - ${FL_PROVISIONED_DIR}/net-2/keys:/keys:ro
+      # Dev-overlay: working-tree flip-utils over the baked copy (see net-1 note; FLIP#767).
+      - ../flip-utils/pyproject.toml:/opt/flip-utils/pyproject.toml:ro
+      - ../flip-utils/README.md:/opt/flip-utils/README.md:ro
+      - ../flip-utils/docs:/opt/flip-utils/docs:ro
+      - ../flip-utils/flip:/opt/flip-utils/flip:ro
     environment:
       - NET_ID=net-2
       - SUPERNODE_NAME=${FL_KIT_SLOT}
@@ -93,6 +111,8 @@ services:
       - /keys/supernode_credentials_${FL_KIT_SLOT_NUMBER}
       - --clientappio-api-address
       - ${SUPERNODE_2_CLIENTAPPIO_API_ADDRESS:-127.0.0.1:9095}
+      # ClientApp-side runtime dependency install — see net-1 note (FLIP#767).
+      - --allow-runtime-dependency-installation
     networks:
       - default
       - deploy_shared-net-2

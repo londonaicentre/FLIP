@@ -91,6 +91,16 @@ services:
       # /app/src/<model_id>; the evaluation ServerApp reads the checkpoint from
       # the path in the flip-job-dir run-config value the FL API injects at submit.
       - ${FL_JOBS_DIR}/net-1:/app/src
+      # Dev-overlay: working-tree flip-utils over the copy baked at /opt/flip-utils.
+      # The ServerApp's per-run `uv sync` (enabled by default on the SuperLink)
+      # builds flip-utils from that path (see fl-apps/flower/*/pyproject.toml
+      # [tool.uv.sources], FLIP#767), so edits under flip-utils/flip/ reach the
+      # next run without an image rebuild. Pathed off FL_JOBS_DIR like the
+      # register-supernode-keys.sh mount below.
+      - ${FL_JOBS_DIR}/../flip-utils/pyproject.toml:/opt/flip-utils/pyproject.toml:ro
+      - ${FL_JOBS_DIR}/../flip-utils/README.md:/opt/flip-utils/README.md:ro
+      - ${FL_JOBS_DIR}/../flip-utils/docs:/opt/flip-utils/docs:ro
+      - ${FL_JOBS_DIR}/../flip-utils/flip:/opt/flip-utils/flip:ro
     environment:
       - NET_ID=net-1
       - LOCAL_DEV=false
@@ -169,6 +179,11 @@ services:
       # /app/src/<model_id>; the evaluation ServerApp reads the checkpoint from
       # the path in the flip-job-dir run-config value the FL API injects at submit.
       - ${FL_JOBS_DIR}/net-2:/app/src
+      # Dev-overlay: working-tree flip-utils over the baked copy (see net-1 note; FLIP#767).
+      - ${FL_JOBS_DIR}/../flip-utils/pyproject.toml:/opt/flip-utils/pyproject.toml:ro
+      - ${FL_JOBS_DIR}/../flip-utils/README.md:/opt/flip-utils/README.md:ro
+      - ${FL_JOBS_DIR}/../flip-utils/docs:/opt/flip-utils/docs:ro
+      - ${FL_JOBS_DIR}/../flip-utils/flip:/opt/flip-utils/flip:ro
     environment:
       - NET_ID=net-2
       - LOCAL_DEV=false

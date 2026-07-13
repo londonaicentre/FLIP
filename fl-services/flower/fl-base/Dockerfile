@@ -27,18 +27,23 @@ WORKDIR /app
 # (torch/MONAI/etc.); flip-utils' readme points at docs/overview.rst and its
 # version at flip/__init__.py, so both are copied.
 #
+# The source is kept at /opt/flip-utils after the install: Flower's runtime
+# dependency installer (`uv sync` on every app launch) resolves the fl-apps
+# templates' `[tool.uv.sources] flip-utils = { path = "/opt/flip-utils" }`
+# against this copy, so FL runs always execute the in-repo flip-utils rather
+# than a PyPI release (#767). Removing this directory fails every app launch.
+#
 # --extra-index-url points pip at PyTorch's CUDA-12.8 wheel index. Combined with
 # flip-utils' "torch>=2.11,<2.12" pin, pip picks torch 2.11.x+cu128 — the highest
 # torch that runs on the host NVIDIA driver 575.x (cu13 wheels need driver >=580).
 # --chown=app:app: flwr/base runs as the non-root `app` user, and COPY defaults
-# to root ownership — so without this the `rm -rf /tmp/flip-utils` below fails
-# with "Permission denied" (app cannot unlink root-owned files under sticky /tmp).
-COPY --chown=app:app flip-utils/pyproject.toml flip-utils/README.md /tmp/flip-utils/
-COPY --chown=app:app flip-utils/docs/ /tmp/flip-utils/docs/
-COPY --chown=app:app flip-utils/flip/ /tmp/flip-utils/flip/
-RUN python -m pip install -U --no-cache-dir "/tmp/flip-utils[full]" \
-      --extra-index-url https://download.pytorch.org/whl/cu128 \
-  && rm -rf /tmp/flip-utils
+# to root ownership — the runtime installer builds flip-utils from this dir as
+# `app`, and the dev compose bind-mounts the working tree over it.
+COPY --chown=app:app flip-utils/pyproject.toml flip-utils/README.md /opt/flip-utils/
+COPY --chown=app:app flip-utils/docs/ /opt/flip-utils/docs/
+COPY --chown=app:app flip-utils/flip/ /opt/flip-utils/flip/
+RUN python -m pip install -U --no-cache-dir "/opt/flip-utils[full]" \
+      --extra-index-url https://download.pytorch.org/whl/cu128
 
 # Copy register-supernode-keys.sh (used by the secure / central-hub topology to
 # register SuperNode public keys with the SuperLink).
