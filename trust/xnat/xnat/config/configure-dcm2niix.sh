@@ -50,6 +50,19 @@ curl -s -X POST "$XNAT_URL/xapi/docker/server" \
   -H "Content-Type: application/json" \
   -d "$backend_config"
 
+# The Container Service reaches Docker through the xnat-socket-proxy sidecar
+# (see docker-compose-stack.yml), not a socket mounted into xnat-web. Fail loudly
+# here if that path is broken — the command registration below would still
+# "succeed", but every dcm2niix launch would then fail at conversion time.
+echo "Pinging Docker through the socket proxy..."
+ping_status=$(curl -s -o /dev/null -w "%{http_code}" "$XNAT_URL/xapi/docker/server/ping" \
+  -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_PASSWORD}")
+if [[ "$ping_status" != "200" ]]; then
+  echo "ERROR: Container Service cannot reach Docker via xnat-socket-proxy (HTTP $ping_status)"
+  exit 1
+fi
+echo "Container Service -> Docker (via xnat-socket-proxy): OK"
+
 # ----------------------------------------------------------------
 # CONTAINER SERVICE
 # ----------------------------------------------------------------

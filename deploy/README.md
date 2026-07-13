@@ -255,6 +255,7 @@ Each Dockerfile explicitly drops root privileges by running the application as a
 | xnat-web | `xnat` | Created in the XNAT Dockerfile (UID 1001) |
 | xnat-nginx | `nginx` | Pre-existing in the base image (`nginx`) |
 | xnat-db | `postgres` | Pre-existing in the base image (`postgres`) |
+| xnat-socket-proxy | `root` | Upstream `tecnativa/docker-socket-proxy` image — HAProxy connects to the root-owned Docker socket as its owner. Runs under `cap_drop: ALL` with no capabilities added back. |
 | flip-db / omop-db | `postgres` | Pre-existing in the base image (`postgres`) |
 
 **Bind-mount ownership.** Because XNAT (`xnat`, UID 1001) and Orthanc (`orthanc`, UID 999) no
@@ -283,6 +284,7 @@ crash-loop under `cap_drop: ALL`. The per-service grants in the compose files ar
 | flip-db, omop-db, xnat-db | `CHOWN`, `DAC_OVERRIDE`, `FOWNER`, `SETUID`, `SETGID` | The official postgres entrypoint runs as root and `gosu`-drops to the `postgres` user (`SETUID`/`SETGID`). On every start it re-runs `chmod 00700 $PGDATA` and a `chown` sweep over the persisted data dir, which on subsequent boots is already owned by `postgres` with mode `0700` — `chmod` on a dir owned by another uid needs `FOWNER` and traversing it needs `DAC_OVERRIDE`. Without them the container exits 1 on a persisted volume (see commit history, FLIP#485). |
 | orthanc | `CHOWN` | Runs non-root (UID 999) from PID 1, so no capabilities survive into the process anyway; the storage bind mount is made 999-writable at the provisioning layer rather than fixed up with in-container caps. `CHOWN` is kept only as the shared baseline. |
 | xnat-nginx | `CHOWN`, `NET_BIND_SERVICE` | `NET_BIND_SERVICE` lets the non-root `nginx` user bind port 80 (Docker sets `net.ipv4.ip_unprivileged_port_start=0`, but capabilities are still checked). |
+| xnat-socket-proxy | *(none)* | HAProxy runs as root, which owns the mounted Docker socket, so it connects with an empty capability set — nothing needs adding back on top of `cap_drop: ALL`. See [Docker Socket Isolation](#docker-socket-isolation-xnat-container-service). |
 | flip-ui (development only) | `CHOWN`, `DAC_OVERRIDE`, `SETUID`, `SETGID`, `NET_BIND_SERVICE` | Vite dev server with bind-mounted source; not present in production where the UI ships as static files served by CloudFront. |
 
 Notably **not** granted anywhere: `SYS_ADMIN`, `SYS_PTRACE`, `SYS_MODULE`, `MAC_*`, `AUDIT_*`,
@@ -303,6 +305,38 @@ container.
 > stack with the same `DOCKER_REGISTRY=`/`XNAT_TAG=dev` overrides so `docker stack deploy`
 > resolves the locally built image instead of the GHCR one.
 
+### Docker Socket Isolation (XNAT Container Service)
+
+XNAT's Container Service plugin launches processing containers — currently `xnat/dcm2niix`,
+which every project created with DICOM→NIfTI conversion enabled triggers automatically on scan
+archive. It used to do this through `/var/run/docker.sock` mounted straight into `xnat-web`,
+which is a root-equivalent capability: anything that compromises XNAT can exec into any container
+on the host, start privileged containers, or mount arbitrary host paths.
+
+`xnat-web` no longer mounts the socket. The XNAT stack instead runs a
+[`tecnativa/docker-socket-proxy`](https://github.com/Tecnativa/docker-socket-proxy) sidecar
+(`xnat-socket-proxy` in `trust/xnat/docker-compose-stack.yml`) that holds the socket read-only
+and serves a filtered Docker API on the stack-internal network only (`tcp://xnat-socket-proxy:2375`,
+no published host port). The Container Service is pointed at that endpoint by
+`trust/xnat/xnat/config/container-service-backend-configuration.json`, which
+`configure-dcm2niix.sh` POSTs to `/xapi/docker/server` — and the configure run now hard-fails if
+`/xapi/docker/server/ping` cannot reach Docker through the proxy, instead of leaving a
+registered-but-unlaunchable dcm2niix command behind.
+
+The proxy allowlists only what a swarm-mode Container Service launch needs — `SERVICES`
+(+ `POST` for the mutating calls), `TASKS`, `NODES`, `IMAGES` (pull-on-init), `INFO`, `SWARM`
+(the plugin's swarm-mode connection test is a `GET /swarm` inspect), plus the proxy's default
+`PING`/`VERSION`/`EVENTS`. Everything else is refused with a 403: `exec`, the container API,
+volumes, networks, secrets, configs, plugins, and build.
+
+This is a choke point, not a sandbox. Two residual powers are worth stating plainly: the services
+API the Container Service depends on can itself create a service with an arbitrary host bind
+mount, and because the proxy's `POST` switch is global, granting `SWARM` also exposes
+`POST /swarm/*`. So a fully compromised `xnat-web` is not contained — but it loses direct
+container/exec access entirely, and every remaining call now crosses one auditable gateway
+(`docker service logs <stack>_xnat-socket-proxy` shows the full request log) instead of speaking
+to the raw socket.
+
 ### No New Privileges
 
 Nearly every container declares `security_opt: [no-new-privileges:true]` to prevent privilege escalation
@@ -310,9 +344,10 @@ via `setuid` binaries or `LD_PRELOAD` injection. The same dev-only services exem
 (pgadmin, register-supernode-keys, fl-clients) also omit `no-new-privileges`, and the XNAT swarm
 stack ignores the `security_opt` key (see caveat below).
 
-> **XNAT swarm caveat.** The XNAT stack (`xnat-web`, `xnat-db`, `xnat-nginx`) is deployed with
+> **XNAT swarm caveat.** The XNAT stack (`xnat-web`, `xnat-db`, `xnat-nginx`, `xnat-socket-proxy`)
+> is deployed with
 > `docker stack deploy` (see `trust/xnat/Makefile`), and swarm **ignores** the `security_opt` key —
-> so `no-new-privileges` is *not* applied to those three services from the compose file. The
+> so `no-new-privileges` is *not* applied to those four services from the compose file. The
 > `cap_drop`/`cap_add` hardening still takes effect (swarm honours those). To enforce
 > no-new-privileges on XNAT hosts, set it as the Docker daemon default in `/etc/docker/daemon.json`:
 > `{ "no-new-privileges": true }`. Verify with the `docker inspect` command below.
