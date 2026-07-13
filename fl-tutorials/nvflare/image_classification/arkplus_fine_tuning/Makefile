@@ -16,7 +16,8 @@ APP_DIR := $(CURDIR)
 # image. A bare `uv run` would resolve to the repo-root venv, which has no torch/nvflare/monai. The
 # checkpoint-preprocessing target instead uses the tutorial-local `uv run` (this dir's pyproject.toml:
 # torch + timm, no NVFLARE), matching the legacy tutorial.
-FLIP_UTILS := $(abspath $(APP_DIR)/../../../../flip-utils)
+REPO_ROOT := $(abspath $(APP_DIR)/../../../..)
+FLIP_UTILS := $(REPO_ROOT)/flip-utils
 UV_RUN := uv run --project $(FLIP_UTILS) --extra full
 
 # --- Load app-specific env ---
@@ -34,6 +35,13 @@ endif
 # submit time and overrides whatever the recipe baked in.
 NUM_ROUNDS ?= 3
 N_CLIENTS ?= 2
+
+# Simulator workspace + metrics output. WORKSPACE matches job.py's default and is deliberately NOT
+# the shared harness dir (../../testing/runs/workspace): `make metrics` auto-discovers the log with
+# the most round events under the workspace tree, and the shared dir accumulates round logs from
+# other tutorials' runs, so a stale log could be picked up instead of this tutorial's.
+WORKSPACE ?= /tmp/nvflare/arkplus_finetuning_client_api
+METRICS_OUT ?= $(REPO_ROOT)/model_metrics
 
 # The backbone checkpoint the server loads (config.json SERVER_CHECKPOINT). Staged into app_files/ so
 # stage_app_files() bundles it into the server custom dir; clients receive the backbone at round 0.
@@ -55,7 +63,7 @@ override SITE2_IMAGES_DIR := $(call abspath_app,$(SITE2_IMAGES_DIR))
 override SITE2_DATAFRAME  := $(call abspath_app,$(SITE2_DATAFRAME))
 override DATA_ROOT        := $(call abspath_app,$(DATA_ROOT))
 
-.PHONY: run export sim download-raw-checkpoint prepare-checkpoint dataset-figure clean
+.PHONY: run export sim metrics download-raw-checkpoint prepare-checkpoint dataset-figure clean
 
 # --- Raw checkpoint download ---
 download-raw-checkpoint:
@@ -135,7 +143,16 @@ sim:
 	$(UV_RUN) python job.py \
 		--n_clients $(N_CLIENTS) \
 		--num_rounds $(NUM_ROUNDS) \
-		--workspace ../../testing/runs/workspace
+		--workspace $(WORKSPACE)
+
+# --- Extract round metrics from the simulator logs (run after `make sim`/`make run`) ---
+# Parses the FLIP ScatterAndGather controller events in the simulator server log and writes the same
+# rounds.tsv / summary.md / boxplot artefacts as scripts/extract_model_metrics.sh produces for a
+# platform run, so the two are directly comparable. Optional:
+# COMPARE=/path/to/platform/rounds.tsv adds a side-by-side steady-state overhead table.
+metrics:
+	bash "$(REPO_ROOT)/scripts/extract_simulator_metrics.sh" "$(WORKSPACE)" \
+		-o "$(METRICS_OUT)" $(if $(COMPARE),--compare "$(COMPARE)")
 
 # --- Tutorial-harness entrypoint ---
 # The shared harness (fl-tutorials/nvflare/Makefile) auto-discovers any dir with a .env.app and invokes

@@ -349,6 +349,18 @@ trust/.env.*
 # Contains client.key / client.crt — never commit.
 trust/fl_participant_kits/
 
+# Per-trust NVFLARE startup kits unpacked on a trust host (e.g. trust/fl-kit-gstt/net-1/
+# services/Trust_1/). Same client.key / client.crt content — never commit.
+trust/fl-kit-*/
+
+# NVFLARE provisioning workspace left on a host by legacy in-deploy provisioning
+# (deploy/workspace/net-*/ with state/cert.json + startup kits). Provisioning now
+# lives under fl-services/<backend>/provision/ (already ignored above) — never commit.
+deploy/workspace/
+
+# Local Python env some AWS tooling installs in-tree
+deploy/providers/AWS/pip/
+
 trust/terraform.tfstate
 
 .claude/settings.local.json
@@ -456,3 +468,8 @@ fl-tutorials/nvflare/image_segmentation/3d_spleen_segmentation/uv.lock
 fl-services/flower/provision/creds/
 fl-services/flower/runs/
 fl-tutorials/flower/data/
+
+# Round-metric extraction output (scripts/extract_model_metrics.sh /
+# scripts/extract_simulator_metrics.sh and the tutorials' `make metrics` write
+# rounds.tsv + summary.md + boxplots here) — data artifacts, not source.
+model_metrics/

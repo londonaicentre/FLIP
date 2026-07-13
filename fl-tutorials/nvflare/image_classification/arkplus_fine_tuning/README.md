@@ -175,6 +175,32 @@ uv run --project ../../../../flip-utils --extra full python job.py --n_clients 3
 > (The standalone NVFLARE submit path, `make -C fl-services/nvflare submit`, is not wired — run
 > locally via the simulator, or exercise the platform path through the FLIP UI / `make e2e_smoke`.)
 
+## Round metrics & platform comparison
+
+After a simulator run, `make metrics` parses the FLIP `ScatterAndGather` controller events
+(`Round N started/finished`, `Start/End aggregation`, `Contribution ... ACCEPTED`) from the
+simulator server log — the same lines `scripts/extract_model_metrics.sh` pulls from CloudWatch for
+a deployed run — and writes the same artefacts (`rounds.tsv`, `summary.md`, a timing boxplot) under
+`model_metrics/` at the repo root:
+
+```bash
+make run NUM_ROUNDS=50            # full-length local replica (GPU, hours; smoke-test with the default 3 first)
+make metrics                      # -> model_metrics/simulator-<workspace>-<timestamp>/
+make metrics COMPARE=/path/to/platform/rounds.tsv   # adds a platform − simulator overhead table
+```
+
+`COMPARE` takes a `rounds.tsv` produced by `scripts/extract_model_metrics.sh` for a platform run of
+this same app; the summary then includes a side-by-side steady-state table (round duration,
+aggregation time, inter-round gap), i.e. a baseline for the overhead the platform adds over bare
+local training. Knobs: `WORKSPACE` (simulator workspace parsed for logs; defaults to `job.py`'s
+`/tmp/nvflare/arkplus_finetuning_client_api`) and `METRICS_OUT` (output base directory).
+
+> **Interpretation caveat.** Both simulated clients share one host and one GPU
+> (`num_threads = num_clients`), so simulator round durations bundle GPU contention between the two
+> clients; the platform − simulator round-duration delta in turn bundles WAN transfer, platform
+> orchestration, and hardware differences. The aggregation and inter-round-gap rows are the clean
+> comparables — the generated `summary.md` spells this out.
+
 ## Key files
 
 - [`job.py`](job.py): builds `FlipFedAvgRecipe` (with `aggregate_only_regex`), stages `app_files/`
