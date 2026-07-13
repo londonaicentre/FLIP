@@ -87,7 +87,9 @@
             <!-- pb-8 matches the px-8 side margins, so the window-filling cards keep
                  the same breathing room below as beside them. -->
             <div class="flex flex-col flex-1 min-h-0 gap-4 px-8 pt-4 pb-8">
-                <ModelTabs v-model="activeTab" :status="modelData?.status" class="mt-2" />
+                <!-- -my-2 pulls the chip row into the column's gap-4 on both sides, so the
+                     stage tabs read as part of the header band rather than a spaced row. -->
+                <ModelTabs v-model="activeTab" :status="modelData?.status" class="-my-2" />
 
                 <!-- Prepare: the model files and the run options, exactly as at model
                      creation. Once dispatched nothing here is editable — the options

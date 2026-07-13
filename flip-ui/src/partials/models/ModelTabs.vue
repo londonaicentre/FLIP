@@ -31,7 +31,7 @@
                 :data-test="`tab-${tab.id}`"
                 :disabled="tab.locked"
                 :aria-current="tab.id === modelValue ? 'page' : undefined"
-                class="inline-flex items-center gap-2 rounded-full border px-4 py-2 text-sm font-semibold
+                class="inline-flex items-center gap-2 rounded-full border px-4 py-1.5 text-sm font-semibold
                        transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500
                        focus-visible:ring-offset-2 dark:focus-visible:ring-offset-dark-canvas"
                 :class="chipClass(tab)"
