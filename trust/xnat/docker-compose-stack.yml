@@ -34,6 +34,11 @@ services:
       - XNAT_SERVICE_PASSWORD=${XNAT_SERVICE_PASSWORD}
       - XNAT_PORT=${XNAT_PORT}
       - PACS_DICOM_PORT=${PACS_DICOM_PORT}
+    # Dual-homed: the trust overlay for everything else, plus the stack-scoped
+    # socket-proxy network — the only route to the Docker API proxy below.
+    networks:
+      - default
+      - socket-proxy
 
   xnat-db:
     image: ${DOCKER_REGISTRY}xnat-db:${XNAT_TAG}
@@ -92,6 +97,9 @@ services:
   # xnat-web does not mount the Docker socket: the plugin reaches Docker over
   # tcp://xnat-socket-proxy:2375 (set in xnat/config/container-service-backend-
   # configuration.json), and only this proxy holds the (root-equivalent) socket.
+  # The proxy lives on the stack-scoped internal socket-proxy network (below),
+  # NOT the shared trust overlay — only the dual-homed xnat-web can reach it;
+  # trust-api, imaging-api, data-access-api, fl-client etc. have no route.
   # A compromised xnat-web is left with the allowlisted API groups below —
   # notably it can no longer exec into containers or reach the container,
   # volume, network and secret APIs at all. It is a choke point, not a sandbox:
@@ -135,8 +143,16 @@ services:
       - SWARM=1
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - socket-proxy
 
 networks:
   default:
     name: ${DOCKER_NETWORK_NAME}
     external: true
+  # Dedicated network for xnat-web -> xnat-socket-proxy traffic. Swarm prefixes
+  # it per stack (<stack>_socket-proxy), so each trust's proxy is reachable only
+  # from its own xnat-web. internal: the proxy needs no egress, only the socket.
+  socket-proxy:
+    driver: overlay
+    internal: true
