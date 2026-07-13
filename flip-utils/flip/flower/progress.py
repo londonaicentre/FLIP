@@ -84,8 +84,9 @@ class RoundTelemetry:
     Extracted from ``FlipFedAvg`` (which needs ``flwr`` to import) so CI can pin
     the two invariants that make crashed-client attribution safe:
 
-    - sites are learned from **every** reply before any absence is resolved, so a
-      client that identifies itself in the same batch still counts as present;
+    - absent clients are named only from sites learned off healthy replies
+      (accumulated across the whole run) — never guessed from the placeholder
+      identity on a synthesised error reply;
     - each phase keeps its **own** dispatch roster — a train strategy's evaluate
       arm may sample a different cohort, and resolving evaluate absences against
       the train roster would put one trust's name on another trust's failure.
@@ -94,7 +95,7 @@ class RoundTelemetry:
     def __init__(self) -> None:
         # node_id -> site name, learned from healthy replies across the whole run.
         self.site_by_node: dict[int, str] = {}
-        self._dispatched_by_phase: dict[str, set[int]] = {}
+        self._dispatched_by_phase: dict[Phase, set[int]] = {}
 
     def record_dispatch(self, phase: Phase, node_ids: set[int]) -> None:
         """Record the node ids a phase's tasks were just sent to (replaces the
@@ -169,6 +170,10 @@ def _serialized_size_bytes(msg: Message) -> int | None:
             return None
         return int(sum(len(arr.data) for arr in record.values()))
     except Exception:
+        # Distinguishes "my probe broke" (e.g. a Flower record-shape change)
+        # from the legitimate no-arrays case above — otherwise sizes vanish
+        # silently forever after an upgrade.
+        logger.debug("Could not size a reply's arrays record", exc_info=True)
         return None
 
 

@@ -206,9 +206,10 @@ class TestRoundTelemetry:
     """The per-phase dispatch bookkeeping behind FlipFedAvg.
 
     Extracted from the strategy (which needs flwr to import) precisely so CI can
-    pin these behaviours: sites are learned from every reply before any absence
-    is resolved, and each phase's absences resolve against that phase's own
-    roster — a train strategy's evaluate arm may sample a different cohort.
+    pin these behaviours: absent clients are named only from sites learned off
+    healthy replies across the run, and each phase's absences resolve against
+    that phase's own roster — a train strategy's evaluate arm may sample a
+    different cohort.
     """
 
     def _telemetry_after_healthy_train_round(self, flip: Mock) -> RoundTelemetry:

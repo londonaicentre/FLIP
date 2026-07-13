@@ -119,6 +119,7 @@ import { getStatusEnumValue, IInitTraining, initialiseTraining,
     ModelStatusEnum } from "@/services/model-service";
 import { Snackbar } from "@/utils/snackbar";
 
+import type { ModelTab } from "./ModelTabs.vue";
 import Timeline from "./Timeline.vue";
 import TrainingMetrics from "./TrainingMetrics.vue";
 import TrainingOptions from "./TrainingOptions.vue";
@@ -135,7 +136,7 @@ interface ITrainingProps {
     runTrusts?: string[];
     // Which stage tab is showing: "prepare" owns the run options (locked once the
     // model is dispatched); "run" owns the metrics and the activity feed.
-    view: "prepare" | "run";
+    view: ModelTab;
 }
 
 const props = withDefaults(defineProps<ITrainingProps>(), {

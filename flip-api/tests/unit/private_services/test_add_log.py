@@ -234,6 +234,9 @@ class TestAddLogEndpoint:
         assert kwargs["trust"] is None
         assert "mystery-host" in kwargs["log"]
         assert "trust exception: boom" in kwargs["log"]
+        # The row must say WHY attribution failed — users can't see hub logs, and
+        # "unknown slot" vs "wrong model" point at different operator fixes.
+        assert "unknown FL kit slot" in kwargs["log"]
 
     @patch("flip_api.private_services.add_log.resolve_trust_from_fl_client_name", return_value=resolved_trust)
     @patch("flip_api.private_services.add_log.validate_trust_ids", return_value=False)
@@ -250,6 +253,7 @@ class TestAddLogEndpoint:
         assert kwargs["success"] is False
         assert kwargs["trust"] is None
         assert "trust exception: boom" in kwargs["log"]
+        assert "not associated with this model" in kwargs["log"]
 
     @patch("flip_api.private_services.add_log.resolve_trust_from_fl_client_name", return_value=None)
     def test_unresolvable_typed_event_still_400s(self, mock_resolve, mock_db_session):

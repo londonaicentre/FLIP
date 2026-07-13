@@ -115,7 +115,10 @@ class FLLogs(SQLModel, table=True):
     fl_client_name: str | None = Field(default=None)
     # Free display/exception text. Null for typed event rows, whose text is
     # composed at serve time by log_rendering.render_log so wording changes
-    # never require an FL-image rebuild.
+    # never require an FL-image rebuild. The log-XOR-event shape is enforced at
+    # the Pydantic ingest boundary only — a DB CHECK constraint was considered
+    # and deliberately deferred — so internal add_log callers must supply
+    # exactly one of log/event_type (an all-NULL row renders as an empty line).
     log: str | None = Field(default=None)
     # Typed round events (FLLogEvent values). Stored as plain text — not a native
     # PG enum — so extending the vocabulary never needs an ALTER TYPE migration.

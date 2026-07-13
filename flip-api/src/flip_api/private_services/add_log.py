@@ -65,10 +65,16 @@ def add_log_endpoint(
             # returns the trust to validate against the model's approved trusts — see issue #538.
             trust = resolve_trust_from_fl_client_name(fl_client_name, db)
             error_msg = None
+            # Shown to the user on the fallback row: "unknown slot" and "wrong
+            # model" point at different operator fixes, and hub logs aren't
+            # visible to them.
+            attribution_failure = None
             if trust is None:
                 error_msg = f"FL client '{fl_client_name}' could not be resolved to a trust (model: {model_id})"
+                attribution_failure = "unknown FL kit slot"
             elif not validate_trust_ids(model_id=model_id, trust_ids=[trust.id], session=db):
                 error_msg = f"The trust: {trust.name} is not associated with model: {model_id}"
+                attribution_failure = "not associated with this model"
 
             if error_msg is not None:
                 logger.error(error_msg)
@@ -82,7 +88,7 @@ def add_log_endpoint(
                     # than a rejected one.
                     add_log(
                         model_id=model_id,
-                        log=f"[unattributed client '{fl_client_name}'] {training_log.log}",
+                        log=f"[unattributed client '{fl_client_name}' — {attribution_failure}] {training_log.log}",
                         session=db,
                         success=False,
                         trust=None,

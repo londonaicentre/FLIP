@@ -279,26 +279,45 @@ class TestFLIPStandardProdSendEvent:
 
             mock_post.assert_not_called()
 
-    def test_send_event_bounds_the_hub_post_with_a_timeout(self, flip_prod):
-        """The try/except around the post cannot catch a hang: a hub that accepts
-        TCP and stalls would otherwise freeze result acceptance mid-round."""
+    @pytest.mark.parametrize(
+        ("verb", "call"),
+        [
+            ("put", lambda flip: flip.update_status("550e8400-e29b-41d4-a716-446655440000", ModelStatus.ERROR)),
+            ("post", lambda flip: flip.send_metrics("Trust_1", "550e8400-e29b-41d4-a716-446655440000", "loss", 0.5, 1)),
+            (
+                "post",
+                lambda flip: flip.send_handled_exception("boom", "Trust_1", "550e8400-e29b-41d4-a716-446655440000"),
+            ),
+            (
+                "post",
+                lambda flip: flip.send_event(
+                    model_id="550e8400-e29b-41d4-a716-446655440000",
+                    event_type=FLLogEvent.ROUND_STARTED,
+                    global_round=1,
+                ),
+            ),
+        ],
+        ids=["update_status", "send_metrics", "send_handled_exception", "send_event"],
+    )
+    def test_every_hub_call_is_bounded_by_a_timeout(self, flip_prod, verb, call):
+        """The try/except around a hub call cannot catch a hang: a hub that accepts
+        TCP and stalls would otherwise freeze the FL loop (send_event/send_metrics
+        run inside result acceptance)."""
         mock_response = Mock()
         mock_response.status_code = 200
         mock_response.text = "OK"
-        valid_model_id = "550e8400-e29b-41d4-a716-446655440000"
 
         with (
             patch("flip.core.standard.FlipConstants") as mock_constants,
-            patch("flip.core.standard.requests.post", return_value=mock_response) as mock_post,
+            patch(f"flip.core.standard.requests.{verb}", return_value=mock_response) as mock_request,
         ):
             mock_constants.FLIP_API_INTERNAL_URL = "https://hub.example.com"
             mock_constants.INTERNAL_SERVICE_KEY_HEADER = "x-internal-service-key"
             mock_constants.INTERNAL_SERVICE_KEY = "test-internal-key"
 
-            flip_prod.send_event(model_id=valid_model_id, event_type=FLLogEvent.ROUND_STARTED, global_round=1)
+            call(flip_prod)
 
-            timeout = mock_post.call_args.kwargs.get("timeout")
-            assert timeout is not None, "send_event must bound the hub post with a timeout"
+            assert mock_request.call_args.kwargs.get("timeout") is not None, "hub call must carry a timeout"
 
 
 class TestFLIPStandardProdSendHandledExceptionSuccessFlag:

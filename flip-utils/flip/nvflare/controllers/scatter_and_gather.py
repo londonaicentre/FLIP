@@ -145,8 +145,11 @@ class ScatterAndGather(NVFlareScatterAndGather):
             try:
                 dxo = from_shareable(result)
                 size_bytes = int(sum(getattr(arr, "nbytes", 0) for arr in dxo.data.values()))
-            except Exception:
-                pass
+            except Exception as e:
+                # Distinguishes "my probe broke" (e.g. an NVFLARE shareable-shape
+                # change) from a genuinely sizeless result — otherwise sizes
+                # vanish silently forever after an upgrade.
+                self.log_debug(fl_ctx, f"Could not size the client update: {e}")
 
             accepted = self._round_acceptances.setdefault(self._current_round, set())
             accepted.add(client_name)

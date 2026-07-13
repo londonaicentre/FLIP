@@ -38,9 +38,11 @@ from flip.exceptions import ResultsUploadError
 from flip.schemas import FLLogEvent, TrainingLog, TrainingMetrics
 from flip.utils.utils import Utils
 
-# (connect, read) bound on hub telemetry posts. The surrounding try/except arms
-# cannot catch a hang — a hub that accepts TCP and then stalls would otherwise
-# freeze the FL loop at the call site (send_event runs inside result acceptance).
+# (connect, read) bound on every hub call (update_status, send_metrics,
+# send_handled_exception, send_event). The surrounding try/except arms cannot
+# catch a hang — a hub that accepts TCP and then stalls would otherwise freeze
+# the FL loop at the call site; send_event and send_metrics run inside result
+# acceptance, the worst place to block.
 _HUB_POST_TIMEOUT_SECONDS: tuple[int, int] = (5, 30)
 
 

@@ -62,14 +62,14 @@ class FlipFedAvg(FedAvg):
         self.flip = flip
         self.model_id = model_id
         self.num_rounds: int | None = None
-        # How many clients the current round's train phase was dispatched to;
-        # None means this round has no train phase (evaluation-only strategy).
-        self._expected_train_replies: int | None = None
         # Reply bookkeeping for crashed-client attribution: a crashed reply carries
         # neither content nor its sender's real node id, so the tracker names the
         # trust that fell out by elimination — per phase, since the evaluate arm may
-        # sample a different cohort than train. All logic (and its tests) live in
-        # flip.flower.progress; this class only wires the FedAvg hooks to it.
+        # sample a different cohort than train. The tracker also owns the round's
+        # dispatch counts (the "k of m" denominators, and the round-event ownership
+        # test: no train dispatch this round means evaluate owns the round events).
+        # All logic (and its tests) live in flip.flower.progress; this class only
+        # wires the FedAvg hooks to it.
         self._telemetry = RoundTelemetry()
 
     def start(self, grid: Grid, initial_arrays: ArrayRecord, num_rounds: int = 3, **kwargs):
@@ -83,7 +83,6 @@ class FlipFedAvg(FedAvg):
     ) -> Iterable[Message]:
         """Dispatch the round's train tasks, reporting the round start."""
         messages = list(super().configure_train(server_round, arrays, config, grid))
-        self._expected_train_replies = len(messages) if messages else None
         self._telemetry.record_dispatch("train", {msg.metadata.dst_node_id for msg in messages})
         if messages:
             report_round_started(self.flip, self.model_id, server_round, self.num_rounds)
@@ -95,8 +94,10 @@ class FlipFedAvg(FedAvg):
         returned = self._telemetry.forward_replies(replies, "train", server_round, self.model_id, self.flip)
 
         result = super().aggregate_train(server_round, replies)
-        if self._expected_train_replies is not None:
-            report_round_aggregated(self.flip, self.model_id, server_round, returned, self._expected_train_replies)
+        if self._telemetry.dispatched_count("train"):
+            report_round_aggregated(
+                self.flip, self.model_id, server_round, returned, self._telemetry.dispatched_count("train")
+            )
         return result
 
     def configure_evaluate(
@@ -107,7 +108,7 @@ class FlipFedAvg(FedAvg):
         # Always recorded — evaluate absences must resolve against the evaluate
         # roster even when the train phase owns the round events.
         self._telemetry.record_dispatch("evaluate", {msg.metadata.dst_node_id for msg in messages})
-        if messages and self._expected_train_replies is None:
+        if messages and not self._telemetry.dispatched_count("train"):
             report_round_started(self.flip, self.model_id, server_round, self.num_rounds)
         return messages
 
@@ -117,9 +118,11 @@ class FlipFedAvg(FedAvg):
         returned = self._telemetry.forward_replies(replies, "evaluate", server_round, self.model_id, self.flip)
 
         result = super().aggregate_evaluate(server_round, replies)
-        if replies and self._expected_train_replies is None:
+        if not self._telemetry.dispatched_count("train") and self._telemetry.dispatched_count("evaluate"):
             # The dispatch count is the honest denominator: a client that fell out
-            # without even a synthesised error reply must still deflate "k of m".
+            # without even a synthesised error reply must still deflate "k of m" —
+            # and a dispatched round with zero replies still closes as "0 of m",
+            # mirroring the train arm, rather than looking hung.
             report_round_aggregated(
                 self.flip, self.model_id, server_round, returned, self._telemetry.dispatched_count("evaluate")
             )
