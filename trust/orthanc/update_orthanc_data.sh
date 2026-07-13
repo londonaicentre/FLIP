@@ -119,10 +119,10 @@ update_trust() {
   fi
 
   echo "🗑️  Removing existing orthanc storage dir for Trust ${trust_num}..."
-  # The storage dir is chmod'd 777 by this script (see below), so regular rm
-  # suffices even when the container has left uid-999-owned files behind.
   if [[ -e "${storage_dir}" ]]; then
-    rm -rf "${storage_dir}"
+    # Orthanc (uid 999) creates uid-999-owned subdirs after first run, so a plain rm
+    # by the host user can't traverse them. Use sudo to force removal.
+    sudo rm -rf "${storage_dir}"
   fi
   mkdir -p "${storage_dir}"
 

@@ -182,7 +182,8 @@ services:
     volumes:
       # Mount the host AWS credentials (needed to upload model results to S3). The image
       # pins HOME=/app (kept even under the root override), so boto3 looks under /app/.aws/.
-      # Running as root, it reads the 0640 key + 0600 SSO token there regardless of perms.
+      # Running as root with DAC_OVERRIDE (granted below — cap_drop: ALL strips root's
+      # implicit DAC bypass), it reads the 0640 key + 0600 SSO token there.
       # sso/cache is rw so boto3 can refresh the cached token in place.
       - ~/.aws/config:/app/.aws/config:ro
       - ~/.aws/sso/cache:/app/.aws/sso/cache:rw
@@ -212,6 +213,18 @@ services:
       - --enable-supernode-auth
       - --health-server-address
       - 0.0.0.0:9097
+    ports:
+      - 9095:9093
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      # The root override above still needs DAC_OVERRIDE under cap_drop: ALL to read
+      # the host-owned 0640 TLS key and 0600 SSO token cache — root's implicit DAC
+      # bypass is itself a capability, and it is dropped here (FLIP#485).
+      - DAC_OVERRIDE
     networks:
       - shared-net-2
     restart: unless-stopped

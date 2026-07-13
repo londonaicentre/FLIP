@@ -38,13 +38,6 @@ services:
       - ALL
     cap_add:
       - CHOWN
-      # The container runs as root, but its bind mounts (the provisioned NVFLARE kit
-      # with 0600 keys; on fl-server also the operator's 0600 AWS SSO token cache) are
-      # owned by the host uid. cap_drop: ALL strips root's implicit DAC bypass, so
-      # DAC_OVERRIDE is needed to read them; the entrypoint also chmods kit scripts it
-      # does not own (FOWNER). Without these the container crash-loops (FLIP#485).
-      - DAC_OVERRIDE
-      - FOWNER
     volumes:
       # Provisioned NVFLARE admin secrets (certificates, fed_admin.json)
       - ${FL_PROVISIONED_DIR}/net-1/services/flip-fl-api-net-1/local:/app/admin/local
@@ -77,13 +70,6 @@ services:
       - ALL
     cap_add:
       - CHOWN
-      # The container runs as root, but its bind mounts (the provisioned NVFLARE kit
-      # with 0600 keys; on fl-server also the operator's 0600 AWS SSO token cache) are
-      # owned by the host uid. cap_drop: ALL strips root's implicit DAC bypass, so
-      # DAC_OVERRIDE is needed to read them; the entrypoint also chmods kit scripts it
-      # does not own (FOWNER). Without these the container crash-loops (FLIP#485).
-      - DAC_OVERRIDE
-      - FOWNER
     volumes:
       # Provisioned NVFLARE admin secrets (certificates, fed_admin.json)
       - ${FL_PROVISIONED_DIR}/net-2/services/flip-fl-api-net-2/local:/app/admin/local

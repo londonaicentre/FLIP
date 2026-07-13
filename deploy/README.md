@@ -250,7 +250,7 @@ Each Dockerfile explicitly drops root privileges by running the application as a
 | Service | User | Notes |
 |---------|------|-------|
 | flip-api | `app` (UID 49999) | Set in the flip-api Dockerfile |
-| flip-ui | `node` | Set in the flip-ui Dockerfile (non-root Vite dev server) |
+| flip-ui | `root` | Intentionally runs as root in dev (Vite dev server with bind-mounted source); not present in production where the UI ships as static files served by CloudFront. |
 | orthanc | `orthanc` (UID 999) | Set via `USER orthanc` in the orthanc Dockerfile; the user pre-exists in the `orthancteam/orthanc` base image |
 | xnat-web | `xnat` | Created in the XNAT Dockerfile (UID 1001) |
 | xnat-nginx | `nginx` | Pre-existing in the base image (`nginx`) |
@@ -270,16 +270,19 @@ storage world-writable so a developer needs no `sudo` to re-seed it.
 ### Linux Capability Restrictions
 
 Every container drops **all** Linux capabilities (`cap_drop: [ALL]`) and only adds back what the
-service strictly requires. The per-service grants in the compose files are:
+service strictly requires. A few dev-only services (pgadmin, register-supernode-keys, fl-clients)
+are deliberately exempted because their entrypoints depend on root capabilities that would
+crash-loop under `cap_drop: ALL`. The per-service grants in the compose files are:
 
 | Service(s) | Granted capabilities | Reason |
 |------------|----------------------|--------|
-| flip-api, fl-api (Flower), trust-api, imaging-api, data-access-api, pgadmin, xnat-web, loki, alloy, grafana | `CHOWN` | In-container init/entrypoint fixes ownership on volume paths it owns. |
-| fl-api, fl-server (NVFLARE) | `CHOWN`, `DAC_OVERRIDE`, `FOWNER` | The containers run as root, but the provisioned NVFLARE kits are bind-mounted owned by the provisioning uid with 0600 keys. `cap_drop: ALL` strips root's implicit DAC bypass, so without `DAC_OVERRIDE` the fl-server crash-loops on `/app/startup/server.key`; the entrypoint also `chmod`s kit scripts it does not own (`FOWNER`). In dev, the same grant lets the root fl-server read the operator's 0600 AWS SSO token cache for the S3 results upload. |
+| flip-api, fl-api (Flower), trust-api, imaging-api, data-access-api, xnat-web, loki, alloy, grafana | `CHOWN` | In-container init/entrypoint fixes ownership on volume paths it owns. |
+| fl-api (NVFLARE) | `CHOWN` | The `flare-fl-api` image runs as user `flip` (UID 1001, non-root), so only the `CHOWN` baseline is needed; `DAC_OVERRIDE` and `FOWNER` are inert for non-root processes. |
+| fl-server (NVFLARE) | `CHOWN`, `DAC_OVERRIDE`, `FOWNER` | The container runs as root, but the provisioned NVFLARE kits are bind-mounted owned by the provisioning uid with 0600 keys. `cap_drop: ALL` strips root's implicit DAC bypass, so without `DAC_OVERRIDE` the fl-server crash-loops on `/app/startup/server.key`; the entrypoint also `chmod`s kit scripts it does not own (`FOWNER`). In dev, the same grant lets the root fl-server read the operator's 0600 AWS SSO token cache for the S3 results upload. |
 | fl-server (Flower, development only) | `CHOWN`, `DAC_OVERRIDE` | The dev compose runs the SuperLink as root (see the `user: "0:0"` comment in `compose.development.flower.yml`) to read the host-provisioned 0640 TLS keys and the operator's 0600 SSO token cache; `cap_drop: ALL` strips root's implicit DAC bypass, so `DAC_OVERRIDE` is granted back. Production runs the image's non-root user with instance-role AWS credentials and keeps the `CHOWN` baseline. |
 | flip-db, omop-db, xnat-db | `CHOWN`, `DAC_OVERRIDE`, `FOWNER`, `SETUID`, `SETGID` | The official postgres entrypoint runs as root and `gosu`-drops to the `postgres` user (`SETUID`/`SETGID`). On every start it re-runs `chmod 00700 $PGDATA` and a `chown` sweep over the persisted data dir, which on subsequent boots is already owned by `postgres` with mode `0700` — `chmod` on a dir owned by another uid needs `FOWNER` and traversing it needs `DAC_OVERRIDE`. Without them the container exits 1 on a persisted volume (see commit history, FLIP#485). |
 | orthanc | `CHOWN` | Runs non-root (UID 999) from PID 1, so no capabilities survive into the process anyway; the storage bind mount is made 999-writable at the provisioning layer rather than fixed up with in-container caps. `CHOWN` is kept only as the shared baseline. |
-| xnat-nginx | `CHOWN`, `NET_BIND_SERVICE` | `NET_BIND_SERVICE` lets the non-root `nginx` user bind port 80. |
+| xnat-nginx | `CHOWN`, `NET_BIND_SERVICE` | `NET_BIND_SERVICE` lets the non-root `nginx` user bind port 80 (Docker sets `net.ipv4.ip_unprivileged_port_start=0`, but capabilities are still checked). |
 | flip-ui (development only) | `CHOWN`, `DAC_OVERRIDE`, `SETUID`, `SETGID`, `NET_BIND_SERVICE` | Vite dev server with bind-mounted source; not present in production where the UI ships as static files served by CloudFront. |
 
 Notably **not** granted anywhere: `SYS_ADMIN`, `SYS_PTRACE`, `SYS_MODULE`, `MAC_*`, `AUDIT_*`,
@@ -302,9 +305,10 @@ container.
 
 ### No New Privileges
 
-Every container declares `security_opt: [no-new-privileges:true]` to prevent privilege escalation
-via `setuid` binaries or `LD_PRELOAD` injection. This blocks scenarios where a compromised
-container process could escalate back to root even with restricted capabilities.
+Nearly every container declares `security_opt: [no-new-privileges:true]` to prevent privilege escalation
+via `setuid` binaries or `LD_PRELOAD` injection. The same dev-only services exempted from `cap_drop`
+(pgadmin, register-supernode-keys, fl-clients) also omit `no-new-privileges`, and the XNAT swarm
+stack ignores the `security_opt` key (see caveat below).
 
 > **XNAT swarm caveat.** The XNAT stack (`xnat-web`, `xnat-db`, `xnat-nginx`) is deployed with
 > `docker stack deploy` (see `trust/xnat/Makefile`), and swarm **ignores** the `security_opt` key —
