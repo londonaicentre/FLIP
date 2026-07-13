@@ -433,8 +433,43 @@ deploy-centralhub: ## Deploy Central Hub ECS services at the env branch tip (new
 	## (register-task-definition rejects an empty tags array). Pass TAG=sha-<short7> to
 	## deploy a hotfix / feature-branch image (build it first via workflow_dispatch — see
 	## CLAUDE.md); revert with `make rollback-centralhub`.
+	## FL quiesce pre-flight (FLIP#770): an ECS replacement kills any in-flight training run
+	## (fl-server run state is ephemeral) and strands its model/net, so refuse to deploy
+	## unless deployment mode is ON and no net is BUSY. Needs a hub bearer token in
+	## FLIP_DEPLOY_TOKEN (or FLIP_E2E_TOKEN); SKIP_QUIESCE_CHECK=true overrides — also
+	## needed for the first deploy of a hub image that predates GET /fl/quiesce.
 	@set -e; \
 	export AWS_PROFILE=$(AWS_PROFILE) AWS_REGION=$(AWS_REGION); \
+	if [ "$(SKIP_QUIESCE_CHECK)" = "true" ]; then \
+	  echo "⚠️  SKIP_QUIESCE_CHECK=true — skipping the FL quiesce pre-flight."; \
+	  echo "   If a training run is in flight it WILL be killed and its model/net stranded (FLIP#770)."; \
+	else \
+	  token="$${FLIP_DEPLOY_TOKEN:-$$FLIP_E2E_TOKEN}"; \
+	  [ -n "$$token" ] || { \
+	    echo "❌ FL quiesce pre-flight needs a hub bearer token in FLIP_DEPLOY_TOKEN (or FLIP_E2E_TOKEN)."; \
+	    echo "   The pre-flight refuses to redeploy while a training run is in flight — an ECS"; \
+	    echo "   replacement kills the run and strands its net BUSY. Mint a token (see README"; \
+	    echo "   'Central Hub deploys and rollback'), or re-run with SKIP_QUIESCE_CHECK=true if you"; \
+	    echo "   accept killing any in-flight run. Nothing has been deployed."; \
+	    exit 1; }; \
+	  echo "🔎 FL quiesce pre-flight against $(CENTRAL_HUB_API_URL)/fl/quiesce..."; \
+	  quiesce=$$(curl -fsS -H "Authorization: Bearer $$token" "$(CENTRAL_HUB_API_URL)/fl/quiesce") || { \
+	    echo "❌ Could not read $(CENTRAL_HUB_API_URL)/fl/quiesce (expired token? a hub image that"; \
+	    echo "   predates FLIP#770 has no such endpoint — that first deploy needs"; \
+	    echo "   SKIP_QUIESCE_CHECK=true). Nothing has been deployed."; \
+	    exit 1; }; \
+	  printf '%s' "$$quiesce" | jq -e '.deployment_mode' >/dev/null || { \
+	    echo "❌ Deployment mode is OFF. Enable it in the UI (Admin → Deployments) so nothing new"; \
+	    echo "   starts, wait for any running job to finish, then re-run. Nothing has been deployed."; \
+	    exit 1; }; \
+	  printf '%s' "$$quiesce" | jq -e '.fl_quiesced' >/dev/null || { \
+	    busy=$$(printf '%s' "$$quiesce" | jq -r '[.schedulers[] | select(.status=="BUSY").net] | join(", ")'); \
+	    echo "❌ Training in flight on: $$busy. Deployment mode is on, so nothing new will start —"; \
+	    echo "   wait for the run to reach a terminal status (or stop it via the model page /"; \
+	    echo "   POST /fl/stop/<model_id>), then re-run. Nothing has been deployed."; \
+	    exit 1; }; \
+	  echo "   ✓ Quiesced: deployment mode on, no BUSY nets."; \
+	fi; \
 	TAG="$(TAG)"; \
 	if [ -z "$$TAG" ]; then \
 	  echo "🔎 Resolving deploy tag from the tip of $(DEPLOY_GIT_REF)..."; \

@@ -35,7 +35,7 @@ make full-deploy PROD=true                    # Full prod deploy
 make full-deploy-hybrid PROD=<stag|true> [LOCAL_TRUST_IP=<ip>]  # Hybrid with on-prem trust
 make full-deploy-hub-only PROD=<stag|true>    # Hub only, NO cloud Trust EC2 (all trusts on-prem, e.g. GPU hosts) — see README "Hub-only Deployment"
 make init/plan/apply                          # Terraform workflow
-make deploy-centralhub                        # ECS deploy at env branch tip via sha-<short7> task-def revisions + CloudFront UI (FLIP#751; TAG= to pin)
+make deploy-centralhub                        # ECS deploy at env branch tip via sha-<short7> task-def revisions + CloudFront UI (FLIP#751; TAG= to pin). FL quiesce pre-flight (FLIP#770): refuses unless GET /fl/quiesce reports deployment mode ON + no BUSY net; needs FLIP_DEPLOY_TOKEN (or FLIP_E2E_TOKEN) bearer; SKIP_QUIESCE_CHECK=true bypasses (kills any in-flight run; required once while the hub image predates /fl/quiesce)
 make rollback-centralhub                      # Repoint ECS services at the previous ACTIVE task-def revision + deregister the rolled-away one
 make deploy-trust                             # Deploy trust stack to EC2
 make deploy-ui                                # Build + sync UI to S3 + invalidate CloudFront

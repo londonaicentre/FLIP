@@ -292,6 +292,17 @@ make status
 `fl-server-net-1`) by **immutable image tag + task-definition revision** (FLIP#751), then publishes
 the UI (same as `make deploy-ui`):
 
+0. **FL quiesce pre-flight** (FLIP#770). Replacing `fl-server-net-1` kills any in-flight training
+   run (its run state is ephemeral) and strands the model at `TRAINING_STARTED` with its net stuck
+   `BUSY`, so the deploy refuses to start unless the hub reports itself quiesced via
+   `GET /fl/quiesce`: **deployment mode enabled AND no net's scheduler BUSY**. The intended
+   workflow: enable Deployment Mode in the UI (Admin → Deployments) at any time — it pauses FL job
+   pickup, so queued jobs hold and only the current run (if any) needs to finish — wait until the
+   pre-flight passes, deploy, then disable Deployment Mode to resume the queue. The check calls the
+   hub API with a bearer token from `FLIP_DEPLOY_TOKEN` (or `FLIP_E2E_TOKEN`; any platform user's
+   token works — mint one the same way as for the staging e2e). `SKIP_QUIESCE_CHECK=true` bypasses
+   the check for emergencies — and is required for the **first** deploy of this feature, since a
+   hub image predating FLIP#770 has no `/fl/quiesce` endpoint.
 1. Resolves `TAG=sha-<short7>` from the tip of the env's branch — `PROD=true` → `origin/main`,
    `PROD=stag` → `origin/develop` (`git fetch` runs inside the target). The tag must match
    `sha-<7 hex chars>` — a mutable tag (e.g. a stray `TAG=stag`) is rejected before any AWS call.
@@ -314,9 +325,10 @@ the UI (same as `make deploy-ui`):
    in the same run are listed so a partial deploy is visible.
 
 ```bash
-make deploy-centralhub PROD=stag                    # deploy the tip of develop to staging
-make deploy-centralhub PROD=true                    # deploy the tip of main to production
-make deploy-centralhub PROD=stag TAG=sha-1a2b3c4    # pin a specific / hotfix build
+FLIP_DEPLOY_TOKEN=<bearer> make deploy-centralhub PROD=stag   # deploy the tip of develop to staging
+FLIP_DEPLOY_TOKEN=<bearer> make deploy-centralhub PROD=true   # deploy the tip of main to production
+FLIP_DEPLOY_TOKEN=<bearer> make deploy-centralhub PROD=stag TAG=sha-1a2b3c4  # pin a specific / hotfix build
+make deploy-centralhub PROD=stag SKIP_QUIESCE_CHECK=true      # bypass the FL quiesce pre-flight (kills any in-flight run)
 make rollback-centralhub PROD=stag                  # repoint services at the previous revision
 ```
 

@@ -27,6 +27,15 @@ def mock_db():
     return MagicMock()
 
 
+@pytest.fixture(autouse=True)
+def deployment_mode_disabled():
+    # With a MagicMock session the real is_deployment_mode_enabled would read a
+    # truthy row and report the gate as closed, so default it to open here; the
+    # deployment-mode tests below override the return value.
+    with patch("flip_api.fl_services.run_jobs.is_deployment_mode_enabled", return_value=False) as mock_enabled:
+        yield mock_enabled
+
+
 @pytest.fixture
 def mock_check_for_available_net():
     with patch("flip_api.fl_services.run_jobs.check_for_available_net") as mock_check:
@@ -88,6 +97,35 @@ def test_run_jobs_failure(mock_db, mock_check_for_available_net, mock_check_for_
             run_jobs_core(mock_db)
         assert exc_info.value.status_code == 500
         assert "start error" in exc_info.value.detail
+
+
+# ── deployment-mode gate tests ──────────────────────────────────────────────
+
+
+def test_run_jobs_deployment_mode_pauses_job_pickup(
+    mock_db, deployment_mode_disabled, mock_check_for_available_net, mock_check_for_queued_jobs, caplog
+):
+    """Deployment mode enabled → no net lookup, no job pickup, no training start."""
+    deployment_mode_disabled.return_value = True
+
+    with patch("flip_api.fl_services.run_jobs.prepare_and_start_training") as mock_prepare:
+        response = run_jobs_core(mock_db)
+
+    assert response is None
+    assert "Deployment mode enabled" in caplog.text
+    mock_check_for_available_net.assert_not_called()
+    mock_check_for_queued_jobs.assert_not_called()
+    mock_prepare.assert_not_called()
+
+
+def test_run_jobs_deployment_mode_still_recovers_stale_schedulers(mock_db, deployment_mode_disabled):
+    """Stale-BUSY scheduler recovery must keep running while the gate is closed."""
+    deployment_mode_disabled.return_value = True
+    mock_db.execute.return_value.rowcount = 0
+
+    run_jobs_core(mock_db)
+
+    mock_db.execute.assert_called_once()
 
 
 # ── _recover_stale_busy_schedulers tests ────────────────────────────────────

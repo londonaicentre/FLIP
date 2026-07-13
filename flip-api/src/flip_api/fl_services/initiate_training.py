@@ -23,7 +23,9 @@ from flip_api.domain.interfaces.fl import IInitiateTrainingInputPayload
 from flip_api.domain.schemas.status import ModelStatus
 from flip_api.fl_services.services.fl_service import add_fl_job
 from flip_api.model_services.services.model_service import add_log, update_model_status
+from flip_api.utils.constants import SERVICE_UNAVAILABLE_MESSAGE
 from flip_api.utils.logger import logger
+from flip_api.utils.site_manager import is_deployment_mode_enabled
 
 router = APIRouter(prefix="/fl", tags=["fl_services"])
 
@@ -58,6 +60,9 @@ def initiate_training(
                         error during the initiation process.
     """
     logger.debug(f"Initiating training for model ID: {model_id} by user ID: {user_id} with payload: {payload}")
+
+    if is_deployment_mode_enabled(db):
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=SERVICE_UNAVAILABLE_MESSAGE)
 
     if not can_modify_model(user_id, model_id, db):
         raise HTTPException(
