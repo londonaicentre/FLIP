@@ -348,6 +348,28 @@ the image back — re-run `make plan` after any `make deploy-centralhub`.
 > **Prod rollout note:** switch *production* deploys to this flow only after the 24 Jul 2026 DECAF
 > deadline (BDMS is live on legacy prod until then). Staging can adopt it immediately.
 
+### Growing the FL kit-slot pool (`add-fl-kits`)
+
+When trust registration fails with `NoFreeKitSlotError` ("No FL kit slots available…"),
+the deployment has run out of pre-provisioned FL kit slots. One command mints, uploads,
+and activates `N` more (NVFLARE only):
+
+```bash
+make add-fl-kits N=2 PROD=stag|true   # YES=1 to skip the confirmation prompt
+```
+
+It runs `scripts/add_fl_kits.sh`: discovers the deployment's nets from S3, restores +
+fingerprint-verifies each net's CA workspace (`fl-services/nvflare/provision/workspace-<env>/`),
+mints the next `Trust_<n>` names on **every** net via `nvflare provision --add_client`
+(existing kits untouched — no CA rotation), uploads **only** the new kits additively
+(never `aws s3 sync --delete`), appends the names to `FL_KIT_SLOT_NAMES` in the env file,
+and finishes with `make apply-flip-secret` — a targeted plan/apply of only
+`module.flip_api_secret`, which re-renders the secret's `fl_kit_slot_names` key from the
+env file. flip-api re-reads that key when its slot pool runs dry (reconcile-on-miss), so
+the new slots are claimable by the next `make register-trust KIT=<CODE>` with **no
+restart and no task-definition change**. Kit-minting details and the manual fallback:
+[`fl-services/nvflare/README.md`](../../../fl-services/nvflare/README.md#onboarding-a-new-client-onto-an-existing-network).
+
 ### Deployment to Different Environments
 
 **Staging:**

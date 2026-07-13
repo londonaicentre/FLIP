@@ -29,10 +29,12 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from uuid import UUID
 
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, col, select
 
 from flip_api.auth import trust_key_cache
 from flip_api.db.models.main_models import FLKitSlot, Trust
+from flip_api.db.seed.fl_kit_slots import insert_missing_slots, resolve_fl_kit_slot_names
 from flip_api.domain.schemas.actions import TrustAuditAction
 from flip_api.scripts.generate_trust_key import generate_trust_key
 from flip_api.trusts_services.utils.audit_helper import audit_trust_action
@@ -71,6 +73,27 @@ class RegisteredTrust:
     fl_kit_slot: FLKitSlot
     trust_api_key: str
     trust_internal_service_key: str
+
+
+def _claim_free_slot(session: Session) -> FLKitSlot | None:
+    """Lock and return the lowest-numbered unassigned FL kit slot, if any.
+
+    SKIP LOCKED so two concurrent registrations never collide on the same row.
+
+    Args:
+        session (Session): The registration transaction's SQLModel session.
+
+    Returns:
+        FLKitSlot | None: The claimed (row-locked) slot, or ``None`` when the pool
+        has no unassigned rows.
+    """
+    return session.exec(
+        select(FLKitSlot)
+        .where(col(FLKitSlot.assigned_to_trust_id).is_(None))
+        .order_by(col(FLKitSlot.slot_number).asc())
+        .limit(1)
+        .with_for_update(skip_locked=True)
+    ).first()
 
 
 def register_trust(
@@ -133,17 +156,26 @@ def register_trust(
 
     # Claim the next free FL kit slot in the same transaction as the insert.
     # SKIP LOCKED so two concurrent registrations don't collide on the same row.
-    slot = session.exec(
-        select(FLKitSlot)
-        .where(col(FLKitSlot.assigned_to_trust_id).is_(None))
-        .order_by(col(FLKitSlot.slot_number).asc())
-        .limit(1)
-        .with_for_update(skip_locked=True)
-    ).first()
+    slot = _claim_free_slot(session)
+    if slot is None:
+        # Pool exhausted — but the configured slot list may have grown since boot
+        # (in production the FLIP_API secret is the live source; see
+        # resolve_fl_kit_slot_names). Reconcile additively and retry the claim once.
+        try:
+            with session.begin_nested():
+                insert_missing_slots(session, resolve_fl_kit_slot_names())
+        except IntegrityError:
+            # A concurrent registration inserted the same slot rows between our
+            # existence check and the savepoint flush (slot_name is the PK). Fine —
+            # the rows exist either way; the retried claim below sees them.
+            pass
+        slot = _claim_free_slot(session)
     if slot is None:
         raise NoFreeKitSlotError(
-            "No FL kit slots available. Pre-provision more FL kit slots "
-            "and add them to FL_KIT_SLOT_NAMES."
+            "No FL kit slots available. Pre-provision more FL kit slots and add them "
+            "to FL_KIT_SLOT_NAMES (development) or to the FLIP_API secret via "
+            "`make apply-flip-secret` (stag/prod) — no restart needed, the pool "
+            "reconciles on the next registration."
         )
 
     session.add(trust)

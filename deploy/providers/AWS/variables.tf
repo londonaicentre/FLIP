@@ -103,7 +103,7 @@ variable "INTERNAL_SERVICE_KEY" {
 }
 
 variable "FL_KIT_SLOT_NAMES" {
-  description = "JSON list (as a string) of FL kit-slot names that seed the fl_kit_slot pool register_trust claims from on the flip-api ECS task. Empty ⇒ NoFreeKitSlotError on trust registration. Mirrors compose.production.yml; set via the env file (TF_VAR_FL_KIT_SLOT_NAMES)."
+  description = "JSON list (as a string) of FL kit-slot names that seed the fl_kit_slot pool register_trust claims from. Rendered into two places: the flip-api task-definition env (boot seed / fallback) and the FLIP_API secret's fl_kit_slot_names key — the runtime source, so growing the pool is an env-file edit + `make apply-flip-secret` (register_trust reconciles on a pool miss; no restart). Empty ⇒ NoFreeKitSlotError on trust registration. Set via the env file (TF_VAR_FL_KIT_SLOT_NAMES)."
   type        = string
   default     = "[]"
 }

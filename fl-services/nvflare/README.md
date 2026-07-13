@@ -142,6 +142,15 @@ This reuses the network's existing root CA (loaded from the preserved
 already-onboarded participant's kit byte-identical — no re-provision, no CA rotation, no
 fleet-wide redeploy. The new kit lands in `workspace-<env>/net-N/services/<CLIENT_NAME>/`.
 
+**One-command path (stag/prod).** `make -C deploy/providers/AWS add-fl-kits N=<n>
+PROD=stag|true` runs this whole section end to end: it discovers the deployment's nets
+from S3, restores + fingerprint-verifies each net's CA workspace, mints the next `N`
+`Trust_<n>` names on **every** net (slot names are global across nets — see the hub
+section below), uploads only the new kits additively, appends the names to
+`FL_KIT_SLOT_NAMES` in the env file, and applies the FLIP_API secret
+(`make apply-flip-secret`) so the slots are immediately claimable. The manual steps below
+are what it automates — use them for unusual cases (custom slot names, a single net).
+
 **CA-state custody.** The preserved `state/` is the hard prerequisite: it holds the root
 CA that signs the new kit. The workspace is gitignored, so it exists only in the checkout
 that provisioned (or last added to) the net. `upload-kits-to-s3` mirrors it to S3
@@ -190,27 +199,31 @@ aws s3 cp provision/workspace-<env>/net-<N>/state/cert.json \
 ### Activating the new slot on the hub
 
 A kit in S3 is not yet claimable. `register_trust` claims rows from the hub's
-`fl_kit_slot` DB pool, which is seeded from the `FL_KIT_SLOT_NAMES` env var **only at
-flip-api boot** (`flip_api/db/seed/fl_kit_slots.py` — additive; it never deletes or
-re-assigns rows, so existing trust↔slot bindings are safe across restarts). An exhausted
-pool surfaces at registration as `NoFreeKitSlotError: "No FL kit slots available…"`.
-To activate the new slot:
+`fl_kit_slot` DB pool (`flip_api/db/seed/fl_kit_slots.py` — additive; it never deletes or
+re-assigns rows, so existing trust↔slot bindings are safe). The pool is seeded at
+flip-api boot and **reconciled on demand**: when a registration finds the pool exhausted,
+flip-api re-reads the configured slot list and additively inserts any new names before
+failing with `NoFreeKitSlotError: "No FL kit slots available…"`. The configured list
+comes from the env-appropriate source (`resolve_fl_kit_slot_names`):
 
-- **Dev**: add the name to `FL_KIT_SLOT_NAMES` in `.env.development` and restart flip-api.
-- **Stag/prod (ECS)**: add the name to `FL_KIT_SLOT_NAMES` in `.env.stag` /
-  `.env.production` (this keeps future Terraform renders in sync — `locals.tf` bakes the
-  value into the flip-api task definition via `TF_VAR_FL_KIT_SLOT_NAMES`), then register a
-  new flip-api task-definition revision carrying the updated value and point the service
-  at it with `aws ecs update-service`. Note `make deploy-centralhub` will **not** propagate
-  it — it clones the current task definition and swaps only the image tag — and a full
-  `make apply` is the wrong tool for an env-only change. Avoid bouncing flip-api while an
-  FL run is live (in-flight metrics/results uploads can fail during the swap) — check the
-  `/ecs/fl-server-net-<N>` logs for activity first.
+- **Dev**: the `FL_KIT_SLOT_NAMES` env var. Add the name to `.env.development` and
+  restart flip-api (settings load once per process).
+- **Stag/prod (ECS)**: the `fl_kit_slot_names` key of the **FLIP_API Secrets Manager
+  secret** — the runtime source of truth (the task-definition env value is only the
+  bootstrap/fallback). Add the name to `FL_KIT_SLOT_NAMES` in `.env.stag` /
+  `.env.production` and run `make -C deploy/providers/AWS apply-flip-secret PROD=stag|true`
+  (a targeted plan/apply that re-renders the secret from the env file). **No restart, no
+  task-definition change**: the next registration reconciles the pool from the secret.
+  (`make add-fl-kits` runs this step for you.)
 
-On restart the seed inserts the new row, and `make register-trust KIT=<CODE>` (see the
-[root README](../../README.md#trust-registration)) claims it — registration writes the
-claimed `FL_KIT_SLOT` / `FL_KIT_SLOT_NUMBER` into the trust's kit file, and the
+Then `make register-trust KIT=<CODE>` (see the
+[root README](../../README.md#trust-registration)) claims the slot — registration writes
+the claimed `FL_KIT_SLOT` / `FL_KIT_SLOT_NUMBER` into the trust's kit file, and the
 trust-host deploy pulls that kit from the S3 path above.
+
+> Flower caveat: the dynamic path is NVFLARE-only. Flower's per-slot SuperNode key
+> labelling reads `TRUST_NAMES` at net startup, so a slot added at runtime isn't usable
+> on a running Flower net until its containers are recreated.
 
 ## Standalone targets
 

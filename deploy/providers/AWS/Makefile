@@ -312,6 +312,34 @@ apply-cert: ## Apply only the ACM certificate (step 1 of 2 for HTTPS)
 	@terraform apply -target=aws_acm_certificate.flip -auto-approve
 	@echo "✅ Certificate created! Now run 'make plan' and 'make apply' to deploy DNS validation."
 
+.PHONY: plan-flip-secret
+plan-flip-secret: ## Plan only the FLIP_API secret (e.g. FL_KIT_SLOT_NAMES pool growth)
+	@echo "📋 Planning FLIP_API secret..."
+	@terraform plan -target=module.flip_api_secret -out=plan-flip-secret.tfplan
+
+.PHONY: apply-flip-secret
+apply-flip-secret: ## Apply only the FLIP_API secret — the FL kit-slot activation path
+	## Re-renders the secret from the env file's TF_VAR_* values (incl. the
+	## fl_kit_slot_names key). flip-api re-reads the secret when the slot pool runs
+	## dry (register_trust reconcile), so new kit slots become claimable with no
+	## task-definition change and no restart. Targeted on purpose: never run a full
+	## prod `make apply` for this (AMI drift can force-replace trust EC2s).
+	@echo "🔐 Planning + applying FLIP_API secret..."
+	@terraform plan -target=module.flip_api_secret -out=plan-flip-secret.tfplan
+	@terraform apply plan-flip-secret.tfplan
+	@echo "✅ FLIP_API secret applied — new FL kit slots (if any) are claimable on the next trust registration."
+
+.PHONY: add-fl-kits
+add-fl-kits: ## Mint, upload, and activate N new FL kit slots end to end (NVFLARE; PROD=stag|true)
+	## Wraps scripts/add_fl_kits.sh: discover nets from S3 → restore/fingerprint-verify
+	## each net's CA workspace → mint each new Trust_<n> on every net → additive S3
+	## upload (never sync --delete) → append the names to FL_KIT_SLOT_NAMES in the env
+	## file. Then re-invokes make for apply-flip-secret so the sub-make re-reads the
+	## just-edited env file (this parse's TF_VAR_FL_KIT_SLOT_NAMES predates the edit).
+	@[ -n "$(N)" ] || { echo "❌ N is required, e.g. make add-fl-kits N=2 PROD=true"; exit 1; }
+	@MAIN_ENV_FILE=$(MAIN_ENV_FILE) N=$(N) YES=$(YES) FL_BACKEND=$(FL_BACKEND) ./scripts/add_fl_kits.sh
+	@$(MAKE) apply-flip-secret PROD=$(PROD)
+
 .PHONY: destroy-cert
 destroy-cert: ## Destroy only the ACM certificate (use with caution - will break HTTPS)
 	@echo "💥 Destroying ACM certificate (Step 1/2)..."

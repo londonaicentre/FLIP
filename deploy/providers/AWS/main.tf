@@ -175,6 +175,13 @@ module "flip_api_secret" {
     aes_key                   = var.AES_KEY_BASE64
     internal_service_key_hash = var.INTERNAL_SERVICE_KEY_HASH
     internal_service_key      = var.INTERNAL_SERVICE_KEY
+    # Runtime source of the FL kit-slot pool (flip-api resolve_fl_kit_slot_names):
+    # not sensitive, but it rides in this secret so the pool can grow via a
+    # targeted apply (`make apply-flip-secret`) with no task-definition change,
+    # no IAM change (the flip-api task role already reads this secret), and no
+    # restart — register_trust reconciles the pool when it runs dry. The value
+    # stays a JSON-list *string* (as in the env file); flip-api json.loads it.
+    fl_kit_slot_names = var.FL_KIT_SLOT_NAMES
   })
 }
 
