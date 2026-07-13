@@ -465,8 +465,9 @@ deploy-centralhub: ## Deploy Central Hub ECS services at the env branch tip (new
 	  printf '%s' "$$quiesce" | jq -e '.fl_quiesced' >/dev/null || { \
 	    busy=$$(printf '%s' "$$quiesce" | jq -r '[.schedulers[] | select(.status=="BUSY").net] | join(", ")'); \
 	    echo "❌ Training in flight on: $$busy. Deployment mode is on, so nothing new will start —"; \
-	    echo "   wait for the run to reach a terminal status (or stop it via the model page /"; \
-	    echo "   POST /fl/stop/<model_id>), then re-run. Nothing has been deployed."; \
+	    echo "   wait for the run to reach a terminal status (or stop it: POST /fl/stop/<model_id>;"; \
+	    echo "   the UI is curtained while deployment mode is on), then re-run."; \
+	    echo "   Nothing has been deployed."; \
 	    exit 1; }; \
 	  echo "   ✓ Quiesced: deployment mode on, no BUSY nets."; \
 	fi; \
