@@ -31,7 +31,8 @@ WORKDIR /app
 # dependency installer (`uv sync` on every app launch) resolves the fl-apps
 # templates' `[tool.uv.sources] flip-utils = { path = "/opt/flip-utils" }`
 # against this copy, so FL runs always execute the in-repo flip-utils rather
-# than a PyPI release (#767). Removing this directory fails every app launch.
+# than a PyPI release (#767). Removing this directory fails the launch of
+# every platform app (each fl-apps template pins it).
 #
 # --extra-index-url points pip at PyTorch's CUDA-12.8 wheel index. Combined with
 # flip-utils' "torch>=2.11,<2.12" pin, pip picks torch 2.11.x+cu128 — the highest

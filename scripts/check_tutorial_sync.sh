@@ -22,7 +22,9 @@
 # pyprojects carry platform-only [tool.uv] tables (flip-utils pinned to the
 # /opt/flip-utils source baked into the FL images, torch pinned to the cu128
 # index -- FLIP#767) that must not reach the tutorials, whose pyprojects drive
-# workstation venvs where /opt/flip-utils does not exist.
+# workstation venvs where /opt/flip-utils does not exist. Accepted trade-off:
+# dependency-list drift between a tutorial pyproject and its template is no
+# longer CI-guarded -- keep their [project] dependencies aligned by hand.
 #
 # Paths are relative to the repo root (this script lives in scripts/, so cd up one).
 cd "$(dirname "$0")/.." || exit 1

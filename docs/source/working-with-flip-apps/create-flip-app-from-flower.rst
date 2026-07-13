@@ -45,7 +45,7 @@ If you are starting from scratch, copy the in-tree ``fl-apps/flower/standard/`` 
 
 .. note::
 
-   The ``flip-utils`` package (published on PyPI, imported as ``flip``) is pre-installed in every FLIP FL node image. You only need to declare it as a dependency in your ``pyproject.toml`` for local development — you do not have to vendor or install it at run time.
+   The ``flip-utils`` package (published on PyPI, imported as ``flip``) ships inside every FLIP FL node image and is installed per run from that in-image source (see the dependency-resolution note under *Wiring it up via pyproject.toml* below). You only need to declare it as a dependency in your ``pyproject.toml`` for local development — you do not have to vendor it.
 
 *******************************************
 ServerApp: reporting model lifecycle status

@@ -69,8 +69,8 @@ the images from your branch (`make build-fl FL_BACKEND=flower` — the source la
 `/opt/flip-utils`) and restart the flower services onto the rebuilt `:dev` images
 (`make restart-fl FL_BACKEND=flower DOCKER_FL_REGISTRY= DOCKER_FL_TAG=dev` for the hub stack).
 Every flip-utils change ships via an image rebuild — the containers run whatever their image bakes,
-so confirm the running container carries your change
-(`docker exec <supernode> head /opt/flip-utils/flip/__init__.py`) before trusting a run.
+so confirm the running container carries your change by inspecting the file you edited
+(`docker exec <supernode> cat /opt/flip-utils/flip/<changed file>`) before trusting a run.
 
 > ⚠️ The pin lives in the **fl-apps templates**, so it covers hub-stack runs (flip-api bundles every
 > uploaded app with a template). The standalone stacks below submit apps straight from
