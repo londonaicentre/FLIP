@@ -19,13 +19,15 @@ from sqlmodel import Session, select
 from flip_api.config import get_settings
 from flip_api.db.models.main_models import FLKitSlot
 from flip_api.db.seed.seed_logger import logger
-from flip_api.utils.get_secrets import get_secret
+from flip_api.utils.get_parameters import get_parameter
 
-# Key inside the FLIP_API Secrets Manager secret holding the JSON list of slot names.
-# The secret is the runtime source of truth in production so operators can grow the
-# pool with a targeted `terraform apply` of the secret — no task-definition revision,
-# no flip-api restart (register_trust reconciles on a pool miss).
-_FL_KIT_SLOT_NAMES_SECRET_KEY = "fl_kit_slot_names"
+# SSM parameter holding the JSON list of slot names (Terraform-managed, see
+# deploy/providers/AWS/parameter_store.tf). The parameter is the runtime source of
+# truth in production so operators can grow the pool with a targeted `terraform
+# apply` of just this parameter — no task-definition revision, no flip-api restart
+# (register_trust reconciles on a pool miss). Slot names are plain configuration,
+# not secrets, hence Parameter Store per the /flip/* convention.
+_FL_KIT_SLOT_NAMES_PARAMETER = "/flip/fl_kit_slot_names"
 
 _SLOT_NUMBER_RE = re.compile(r"_(\d+)$")
 
@@ -52,23 +54,23 @@ def _slot_number(slot_name: str) -> int:
 def resolve_fl_kit_slot_names() -> list[str]:
     """Resolve the configured FL kit-slot names from their environment's single source.
 
-    In production the source is the ``fl_kit_slot_names`` key of the FLIP_API Secrets
-    Manager secret (a JSON list string, rendered by Terraform from the env file's
-    ``FL_KIT_SLOT_NAMES``), so the pool can grow via a targeted apply of the secret
-    without a task-definition change or restart. In development the source is the
+    In production the source is the ``/flip/fl_kit_slot_names`` SSM parameter (a JSON
+    list string, rendered by Terraform from the env file's ``FL_KIT_SLOT_NAMES``), so
+    the pool can grow via a targeted apply of just that parameter without a
+    task-definition change or restart. In development the source is the
     ``FL_KIT_SLOT_NAMES`` env var (a ``DevSettings``-only field).
 
-    Deliberately no prod fallback: a failure to fetch or parse the secret returns an
-    empty list — the boot seed and the registration reconcile are additive, so
+    Deliberately no prod fallback: a failure to fetch or parse the parameter returns
+    an empty list — the boot seed and the registration reconcile are additive, so
     existing pool rows and assignments are untouched; the pool simply cannot grow
-    until the secret is fixed, and nothing stale masks that. The log level splits
-    the two situations: a missing key is the expected state until the first
-    ``make apply-flip-secret`` after this code deploys (WARNING); an AWS error or a
-    malformed value means the source of truth is broken (ERROR).
+    until the parameter is fixed, and nothing stale masks that. The log level splits
+    the two situations: a missing parameter is the expected state until the first
+    ``make apply-fl-kit-slots`` after this code deploys (WARNING); any other AWS
+    error or a malformed value means the source of truth is broken (ERROR).
 
     Returns:
         list[str]: The configured slot names; empty when none are configured or the
-        secret is unreadable.
+        parameter is unreadable.
     """
     if get_settings().ENV != "production":
         # getattr: the field exists only on DevSettings, and mypy sees the
@@ -76,23 +78,21 @@ def resolve_fl_kit_slot_names() -> list[str]:
         return getattr(get_settings(), "FL_KIT_SLOT_NAMES", []) or []
 
     try:
-        slot_names = json.loads(get_secret(_FL_KIT_SLOT_NAMES_SECRET_KEY))
+        slot_names = json.loads(get_parameter(_FL_KIT_SLOT_NAMES_PARAMETER))
         if not isinstance(slot_names, list) or not all(isinstance(name, str) for name in slot_names):
             raise ValueError(f"expected a JSON list of strings, got: {slot_names!r}"[:200])
         return slot_names
-    except KeyError:
-        logger.warning(
-            f"'{_FL_KIT_SLOT_NAMES_SECRET_KEY}' is not in the FLIP_API secret yet — run "
-            "`make -C deploy/providers/AWS apply-flip-secret` to populate it. The kit-slot pool cannot "
-            "grow until then (existing slots and assignments are unaffected)."
-        )
-        return []
     except (BotoCoreError, ClientError, TypeError, ValueError) as e:
-        # TypeError covers a hand-edited secret holding a native JSON array instead of the
-        # JSON-list *string* Terraform renders (json.loads then rejects the non-str input).
+        if isinstance(e, ClientError) and e.response.get("Error", {}).get("Code") == "ParameterNotFound":
+            logger.warning(
+                f"SSM parameter '{_FL_KIT_SLOT_NAMES_PARAMETER}' does not exist yet — run "
+                "`make -C deploy/providers/AWS apply-fl-kit-slots` to create it. The kit-slot pool "
+                "cannot grow until then (existing slots and assignments are unaffected)."
+            )
+            return []
         logger.error(
-            f"Could not read '{_FL_KIT_SLOT_NAMES_SECRET_KEY}' from the FLIP_API secret ({e!r}). The kit-slot "
-            "pool cannot grow until this is fixed — new slots applied with `make apply-flip-secret` will NOT "
+            f"Could not read SSM parameter '{_FL_KIT_SLOT_NAMES_PARAMETER}' ({e!r}). The kit-slot pool "
+            "cannot grow until this is fixed — new slots applied with `make apply-fl-kit-slots` will NOT "
             "become claimable (existing slots and assignments are unaffected)."
         )
         return []

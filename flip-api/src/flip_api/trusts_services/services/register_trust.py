@@ -182,9 +182,9 @@ def register_trust(
         logger.error(
             "FL kit slot pool exhausted even after reconcile. Development: add slots to FL_KIT_SLOT_NAMES and "
             "restart flip-api. Stag/prod: append the new slot names to FL_KIT_SLOT_NAMES in the env file and run "
-            "`make -C deploy/providers/AWS apply-flip-secret` (or grow the pool end-to-end with `make add-fl-kits`). "
-            "If slots were already applied and still don't appear, check earlier logs for FLIP_API-secret read "
-            "errors — the resolver may be falling back to the env value."
+            "`make -C deploy/providers/AWS apply-fl-kit-slots` (or grow the pool end-to-end with `make "
+            "add-fl-kits`). If slots were already applied and still don't appear, check earlier logs for "
+            "/flip/fl_kit_slot_names SSM read errors."
         )
         raise NoFreeKitSlotError("No FL kit slots available. Pre-provision more FL kits and try again.")
 

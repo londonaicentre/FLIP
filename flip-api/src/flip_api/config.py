@@ -193,9 +193,9 @@ class DevSettings(Settings):
     # FL kit slot pool names — one per pre-provisioned FL kit (workspace/net-N/services/<slot>).
     # Seeded into `fl_kit_slot` so POST /admin/trusts can hand each joining trust the next
     # free slot regardless of the trust's friendly name. Dev-only on purpose: in production
-    # the pool's single source is the FLIP_API secret's fl_kit_slot_names key (see
+    # the pool's single source is the /flip/fl_kit_slot_names SSM parameter (see
     # db/seed/fl_kit_slots.resolve_fl_kit_slot_names) — there is no env-var fallback, so a
-    # broken secret can't be silently masked by stale task-definition env. Defaults to []
+    # broken parameter can't be silently masked by stale task-definition env. Defaults to []
     # so existing dev envs aren't required to set it; in that case the pool is empty until
     # the admin provisions kits and adds them here.
     FL_KIT_SLOT_NAMES: list[str] = []

@@ -88,35 +88,37 @@ def test_seed_empty_pool_is_noop(mock_get_settings, mock_session):
 
 
 class TestResolveFlKitSlotNames:
-    """Single source per env: dev = the DevSettings-only env var, prod = the FLIP_API
-    secret with NO env fallback (a broken secret yields an empty list, loudly).
+    """Single source per env: dev = the DevSettings-only env var, prod = the
+    /flip/fl_kit_slot_names SSM parameter with NO env fallback (a broken parameter
+    yields an empty list, loudly).
     """
 
-    @patch("flip_api.db.seed.fl_kit_slots.get_secret")
+    @patch("flip_api.db.seed.fl_kit_slots.get_parameter")
     @patch("flip_api.db.seed.fl_kit_slots.get_settings")
-    def test_dev_reads_settings_and_never_touches_the_secret(self, mock_get_settings, mock_get_secret):
+    def test_dev_reads_settings_and_never_touches_ssm(self, mock_get_settings, mock_get_parameter):
         mock_get_settings.return_value = SimpleNamespace(ENV="development", FL_KIT_SLOT_NAMES=["Trust_1"])
 
         assert resolve_fl_kit_slot_names() == ["Trust_1"]
-        mock_get_secret.assert_not_called()
+        mock_get_parameter.assert_not_called()
 
-    @patch("flip_api.db.seed.fl_kit_slots.get_secret")
+    @patch("flip_api.db.seed.fl_kit_slots.get_parameter")
     @patch("flip_api.db.seed.fl_kit_slots.get_settings")
-    def test_prod_parses_json_list_from_secret(self, mock_get_settings, mock_get_secret):
+    def test_prod_parses_json_list_from_parameter(self, mock_get_settings, mock_get_parameter):
         mock_get_settings.return_value = SimpleNamespace(ENV="production")
-        mock_get_secret.return_value = '["Trust_1", "Trust_2", "Trust_3"]'
+        mock_get_parameter.return_value = '["Trust_1", "Trust_2", "Trust_3"]'
 
         assert resolve_fl_kit_slot_names() == ["Trust_1", "Trust_2", "Trust_3"]
-        mock_get_secret.assert_called_once_with("fl_kit_slot_names")
+        # Pins the parameter name against Terraform's aws_ssm_parameter resource.
+        mock_get_parameter.assert_called_once_with("/flip/fl_kit_slot_names")
 
-    @patch("flip_api.db.seed.fl_kit_slots.get_secret")
+    @patch("flip_api.db.seed.fl_kit_slots.get_parameter")
     @patch("flip_api.db.seed.fl_kit_slots.get_settings")
-    def test_prod_missing_key_returns_empty_and_warns(self, mock_get_settings, mock_get_secret, caplog):
-        """The missing key is the expected state until the first apply-flip-secret after
-        deploy — WARNING (not ERROR), empty list, and no env-var resurrection.
+    def test_prod_missing_parameter_returns_empty_and_warns(self, mock_get_settings, mock_get_parameter, caplog):
+        """A missing parameter is the expected state until the first apply-fl-kit-slots
+        after deploy — WARNING (not ERROR), empty list, and no env-var resurrection.
         """
         mock_get_settings.return_value = SimpleNamespace(ENV="production")
-        mock_get_secret.side_effect = KeyError("fl_kit_slot_names")
+        mock_get_parameter.side_effect = ClientError({"Error": {"Code": "ParameterNotFound"}}, "GetParameter")
 
         with caplog.at_level(logging.WARNING, logger="flip_api.seed"):
             assert resolve_fl_kit_slot_names() == []
@@ -124,61 +126,66 @@ class TestResolveFlKitSlotNames:
         assert "fl_kit_slot_names" in caplog.text
         assert caplog.records[-1].levelno == logging.WARNING
 
-    @patch("flip_api.db.seed.fl_kit_slots.get_secret")
+    @patch("flip_api.db.seed.fl_kit_slots.get_parameter")
     @patch("flip_api.db.seed.fl_kit_slots.get_settings")
-    def test_prod_aws_error_returns_empty(self, mock_get_settings, mock_get_secret):
+    def test_prod_aws_error_returns_empty_and_logs_error(self, mock_get_settings, mock_get_parameter, caplog):
+        """Any non-ParameterNotFound AWS failure (e.g. the IAM read not applied yet) is
+        broken config, not the rollout state — ERROR, not WARNING.
+        """
         mock_get_settings.return_value = SimpleNamespace(ENV="production")
-        mock_get_secret.side_effect = ClientError({"Error": {"Code": "AccessDenied"}}, "GetSecretValue")
+        mock_get_parameter.side_effect = ClientError({"Error": {"Code": "AccessDeniedException"}}, "GetParameter")
 
-        assert resolve_fl_kit_slot_names() == []
+        with caplog.at_level(logging.ERROR, logger="flip_api.seed"):
+            assert resolve_fl_kit_slot_names() == []
 
-    @patch("flip_api.db.seed.fl_kit_slots.get_secret")
+        assert caplog.records[-1].levelno == logging.ERROR
+
+    @patch("flip_api.db.seed.fl_kit_slots.get_parameter")
     @patch("flip_api.db.seed.fl_kit_slots.get_settings")
-    def test_prod_botocore_error_returns_empty(self, mock_get_settings, mock_get_secret):
+    def test_prod_botocore_error_returns_empty(self, mock_get_settings, mock_get_parameter):
         """BotoCoreError subclasses (no credentials, endpoint unreachable) aren't ClientError."""
         mock_get_settings.return_value = SimpleNamespace(ENV="production")
-        mock_get_secret.side_effect = EndpointConnectionError(endpoint_url="https://secretsmanager.test")
+        mock_get_parameter.side_effect = EndpointConnectionError(endpoint_url="https://ssm.test")
 
         assert resolve_fl_kit_slot_names() == []
 
-    # The last two payloads are NOT strings: a hand-edited secret holding a native JSON
-    # array (or null) makes json.loads raise TypeError, which must return empty rather
-    # than crash-loop the fail-fast boot seed.
+    # GetParameter always returns a string, so the last two (non-string) payloads are
+    # theoretical — kept so the guard against a crash-looping boot seed stays pinned.
     @pytest.mark.parametrize(
         "payload", ["not json", '"Trust_1"', '{"Trust_1": 1}', '["Trust_1", 2]', ["Trust_1"], None]
     )
-    @patch("flip_api.db.seed.fl_kit_slots.get_secret")
+    @patch("flip_api.db.seed.fl_kit_slots.get_parameter")
     @patch("flip_api.db.seed.fl_kit_slots.get_settings")
-    def test_prod_malformed_secret_value_returns_empty_and_logs_error(
-        self, mock_get_settings, mock_get_secret, payload, caplog
+    def test_prod_malformed_parameter_value_returns_empty_and_logs_error(
+        self, mock_get_settings, mock_get_parameter, payload, caplog
     ):
         mock_get_settings.return_value = SimpleNamespace(ENV="production")
-        mock_get_secret.return_value = payload
+        mock_get_parameter.return_value = payload
 
         with caplog.at_level(logging.ERROR, logger="flip_api.seed"):
             assert resolve_fl_kit_slot_names() == []
 
         # A malformed value is broken config (not the transient rollout state), so the
-        # empty result must be loud: ERROR, naming the secret key.
+        # empty result must be loud: ERROR, naming the parameter.
         assert "fl_kit_slot_names" in caplog.text
         assert caplog.records[-1].levelno == logging.ERROR
 
-    @patch("flip_api.db.seed.fl_kit_slots.get_secret")
+    @patch("flip_api.db.seed.fl_kit_slots.get_parameter")
     @patch("flip_api.db.seed.fl_kit_slots.get_settings")
-    def test_prod_empty_secret_list_is_respected(self, mock_get_settings, mock_get_secret):
+    def test_prod_empty_parameter_list_is_respected(self, mock_get_settings, mock_get_parameter):
         """A valid empty list is configuration, not an error — no log noise, no growth."""
         mock_get_settings.return_value = SimpleNamespace(ENV="production")
-        mock_get_secret.return_value = "[]"
+        mock_get_parameter.return_value = "[]"
 
         assert resolve_fl_kit_slot_names() == []
 
 
-@patch("flip_api.db.seed.fl_kit_slots.get_secret")
+@patch("flip_api.db.seed.fl_kit_slots.get_parameter")
 @patch("flip_api.db.seed.fl_kit_slots.get_settings")
-def test_seed_reads_the_secret_in_prod(mock_get_settings, mock_get_secret, mock_session):
-    """Boot seeding goes through the resolver: in prod the secret feeds the pool."""
-    mock_get_settings.return_value = SimpleNamespace(ENV="production", FL_KIT_SLOT_NAMES=[])
-    mock_get_secret.return_value = '["Trust_9"]'
+def test_seed_reads_the_parameter_in_prod(mock_get_settings, mock_get_parameter, mock_session):
+    """Boot seeding goes through the resolver: in prod the SSM parameter feeds the pool."""
+    mock_get_settings.return_value = SimpleNamespace(ENV="production")
+    mock_get_parameter.return_value = '["Trust_9"]'
     mock_session.exec.side_effect = [MagicMock(first=MagicMock(return_value=None))]
 
     seed_fl_kit_slots(mock_session)

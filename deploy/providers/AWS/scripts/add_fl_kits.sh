@@ -21,8 +21,8 @@
 #      plus a refresh of each net's mirrored state/cert.json CA registry
 #   5. append the names to FL_KIT_SLOT_NAMES in the env file
 #
-# The caller (`make add-fl-kits`) then applies the FLIP_API secret
-# (`make apply-flip-secret`), after which the new slots are claimable on the next
+# The caller (`make add-fl-kits`) then applies the /flip/fl_kit_slot_names SSM parameter
+# (`make apply-fl-kit-slots`), after which the new slots are claimable on the next
 # trust registration — flip-api reconciles its pool on a miss, so no restart and no
 # task-definition change is needed.
 #
@@ -91,7 +91,7 @@ on_error() {
         echo "   Kits already uploaded this run: ${UPLOADED[*]}" >&2
         echo "   Do NOT re-run add-fl-kits to recover — it would mint HIGHER numbers and orphan the" >&2
         echo "   names above. Instead: append the uploaded names to FL_KIT_SLOT_NAMES in" >&2
-        echo "   ${MAIN_ENV_FILE} and run 'make apply-flip-secret PROD=${PROD}' (a name uploaded to" >&2
+        echo "   ${MAIN_ENV_FILE} and run 'make apply-fl-kit-slots PROD=${PROD}' (a name uploaded to" >&2
         echo "   only SOME nets must first be minted on the missing nets — see the nvflare README)." >&2
     fi
 }
@@ -267,5 +267,5 @@ print(f"   FL_KIT_SLOT_NAMES in {path} now: {json.dumps(names)}")
 PYEOF
 
 echo ""
-log "Kits minted + uploaded. Next: the caller applies the FLIP_API secret (make apply-flip-secret)"
+log "Kits minted + uploaded. Next: the caller applies the SSM parameter (make apply-fl-kit-slots)"
 log "so the new slots become claimable on the next trust registration — no restart needed."

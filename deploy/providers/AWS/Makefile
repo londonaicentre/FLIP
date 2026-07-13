@@ -312,40 +312,40 @@ apply-cert: ## Apply only the ACM certificate (step 1 of 2 for HTTPS)
 	@terraform apply -target=aws_acm_certificate.flip -auto-approve
 	@echo "✅ Certificate created! Now run 'make plan' and 'make apply' to deploy DNS validation."
 
-.PHONY: plan-flip-secret
-plan-flip-secret: ## Plan only the FLIP_API secret (e.g. FL_KIT_SLOT_NAMES pool growth)
-	@echo "📋 Planning FLIP_API secret..."
-	@terraform plan -target=module.flip_api_secret -out=plan-flip-secret.tfplan
+.PHONY: plan-fl-kit-slots
+plan-fl-kit-slots: ## Plan only the /flip/fl_kit_slot_names SSM parameter (+ flip-api task-role read)
+	@echo "📋 Planning FL kit-slot parameter..."
+	@terraform plan -target=aws_ssm_parameter.fl_kit_slot_names \
+		-target=aws_iam_role_policy.ecs_flip_api_task -out=plan-fl-kit-slots.tfplan
 
-.PHONY: apply-flip-secret
-apply-flip-secret: ## Apply only the FLIP_API secret — the FL kit-slot activation path
-	## Re-renders the secret from the env file's TF_VAR_* values (incl. the
-	## fl_kit_slot_names key). flip-api re-reads the secret when the slot pool runs
-	## dry (register_trust reconcile), so new kit slots become claimable with no
-	## task-definition change and no restart. Targeted on purpose: never run a full
-	## prod `make apply` for this (AMI drift can force-replace trust EC2s).
-	@echo "⚠️  This re-renders the WHOLE FLIP_API secret from $(MAIN_ENV_FILE):"
-	@echo "   aes_key, internal_service_key, internal_service_key_hash AND fl_kit_slot_names."
-	@echo "   The plan below shows only '(sensitive value)' — it cannot show WHICH keys change."
-	@echo "   If your local env file has drifted from the deployed values (rotated keys, another"
-	@echo "   operator's checkout), applying will silently rotate live keys and break trust comms."
-	@echo "🔐 Planning + applying FLIP_API secret..."
-	@terraform plan -target=module.flip_api_secret -out=plan-flip-secret.tfplan
-	@terraform apply plan-flip-secret.tfplan
-	@echo "✅ FLIP_API secret applied — new FL kit slots (if any) are claimable on the next trust registration."
+.PHONY: apply-fl-kit-slots
+apply-fl-kit-slots: ## Apply only the FL kit-slot SSM parameter — the slot activation path
+	## Re-renders /flip/fl_kit_slot_names from the env file's FL_KIT_SLOT_NAMES.
+	## flip-api re-reads the parameter when the slot pool runs dry (register_trust
+	## reconcile), so new kit slots become claimable with no task-definition change
+	## and no restart. The plan diff is plain-text (the list is not a secret) —
+	## review it before it applies. Also targets the flip-api task-role policy so
+	## the first rollout (which adds the ssm:GetParameter read) is self-contained;
+	## a no-op on every later run. Targeted on purpose: never run a full prod
+	## `make apply` for this (AMI drift can force-replace trust EC2s).
+	@echo "🎛️  Planning + applying FL kit-slot parameter..."
+	@terraform plan -target=aws_ssm_parameter.fl_kit_slot_names \
+		-target=aws_iam_role_policy.ecs_flip_api_task -out=plan-fl-kit-slots.tfplan
+	@terraform apply plan-fl-kit-slots.tfplan
+	@echo "✅ FL kit-slot parameter applied — new slots (if any) are claimable on the next trust registration."
 
 .PHONY: add-fl-kits
 add-fl-kits: ## Mint, upload, and activate N new FL kit slots end to end (NVFLARE; PROD=stag|true)
 	## Wraps scripts/add_fl_kits.sh: discover nets from S3 → restore/fingerprint-verify
 	## each net's CA workspace → mint each new Trust_<n> on every net → additive S3
 	## upload (never sync --delete) → append the names to FL_KIT_SLOT_NAMES in the env
-	## file. Then re-invokes make for apply-flip-secret so the sub-make re-reads the
+	## file. Then re-invokes make for apply-fl-kit-slots so the sub-make re-reads the
 	## just-edited env file (this parse's TF_VAR_FL_KIT_SLOT_NAMES predates the edit).
 	@[ -n "$(N)" ] || { echo "❌ N is required, e.g. make add-fl-kits N=2 PROD=true"; exit 1; }
 	@MAIN_ENV_FILE=$(MAIN_ENV_FILE) N=$(N) YES=$(YES) FL_BACKEND=$(FL_BACKEND) ./scripts/add_fl_kits.sh
-	@$(MAKE) apply-flip-secret PROD=$(PROD) || { \
+	@$(MAKE) apply-fl-kit-slots PROD=$(PROD) || { \
 	  echo "❌ Secret apply failed AFTER the kits were minted, uploaded, and appended to the env file."; \
-	  echo "   Recover with just: make apply-flip-secret PROD=$(PROD)"; \
+	  echo "   Recover with just: make apply-fl-kit-slots PROD=$(PROD)"; \
 	  echo "   Do NOT re-run add-fl-kits — it would mint additional, higher-numbered kits."; \
 	  exit 1; }
 

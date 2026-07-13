@@ -147,9 +147,10 @@ PROD=stag|true` runs this whole section end to end: it discovers the deployment'
 from S3, restores + fingerprint-verifies each net's CA workspace, mints the next `N`
 `Trust_<n>` names on **every** net (slot names are global across nets — see the hub
 section below), uploads only the new kits additively, appends the names to
-`FL_KIT_SLOT_NAMES` in the env file, and applies the FLIP_API secret
-(`make apply-flip-secret`) so the slots are immediately claimable. The manual steps below
-are what it automates — use them for unusual cases (custom slot names, a single net).
+`FL_KIT_SLOT_NAMES` in the env file, and applies the `/flip/fl_kit_slot_names` SSM
+parameter (`make apply-fl-kit-slots`) so the slots are immediately claimable. The manual
+steps below are what it automates — use them for unusual cases (custom slot names, a
+single net).
 
 **CA-state custody.** The preserved `state/` is the hard prerequisite: it holds the root
 CA that signs the new kit. The workspace is gitignored, so it exists only in the checkout
@@ -210,15 +211,15 @@ list has a single source per environment (`resolve_fl_kit_slot_names`):
 
 - **Dev**: the `FL_KIT_SLOT_NAMES` env var (a `DevSettings`-only field). Add the name to
   `.env.development` and restart flip-api (settings load once per process).
-- **Stag/prod (ECS)**: the `fl_kit_slot_names` key of the **FLIP_API Secrets Manager
-  secret** — the only production source (there is deliberately no env fallback: a broken
-  or missing key means the pool can't grow, loudly, rather than silently serving stale
-  env values). Add the name to `FL_KIT_SLOT_NAMES` in `.env.stag` / `.env.production`
-  and run `make -C deploy/providers/AWS apply-flip-secret PROD=stag|true` (a targeted
-  plan/apply that re-renders the secret from the env file — note it re-renders **every**
-  key in that secret, so make sure your env file matches the deployed values). **No
+- **Stag/prod (ECS)**: the **`/flip/fl_kit_slot_names` SSM parameter** — the only
+  production source (the list is plain configuration, not a secret, and there is
+  deliberately no env fallback: a broken or missing parameter means the pool can't grow,
+  loudly, rather than silently serving stale env values). Add the name to
+  `FL_KIT_SLOT_NAMES` in `.env.stag` / `.env.production` and run
+  `make -C deploy/providers/AWS apply-fl-kit-slots PROD=stag|true` — a targeted
+  plan/apply of just that parameter, with a plain-text diff you can review. **No
   restart, no task-definition change**: the next registration reconciles the pool from
-  the secret. (`make add-fl-kits` runs this step for you.)
+  the parameter. (`make add-fl-kits` runs this step for you.)
 
 Then `make register-trust KIT=<CODE>` (see the
 [root README](../../README.md#trust-registration)) claims the slot — registration writes

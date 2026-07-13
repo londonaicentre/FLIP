@@ -301,11 +301,11 @@ class FLKitSlot(SQLModel, table=True):
     one global slot row covers all nets, so the assignment doesn't need a net_id column.
 
     Lifecycle: rows are seeded at boot from the resolved slot names (one per
-    pre-provisioned FL kit slot; ``resolve_fl_kit_slot_names`` — the FLIP_API secret in
-    production, the ``FL_KIT_SLOT_NAMES`` env var in dev) and additively reconciled from
-    the same source when a registration finds the pool exhausted. ``POST /admin/trusts``
-    claims the next ``assigned_to_trust_id IS NULL`` row in the same transaction as the
-    trust insert.
+    pre-provisioned FL kit slot; ``resolve_fl_kit_slot_names`` — the
+    ``/flip/fl_kit_slot_names`` SSM parameter in production, the ``FL_KIT_SLOT_NAMES``
+    env var in dev) and additively reconciled from the same source when a registration
+    finds the pool exhausted. ``POST /admin/trusts`` claims the next
+    ``assigned_to_trust_id IS NULL`` row in the same transaction as the trust insert.
     """
 
     __tablename__ = "fl_kit_slot"  # type: ignore
