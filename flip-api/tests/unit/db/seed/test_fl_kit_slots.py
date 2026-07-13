@@ -10,17 +10,19 @@
 # limitations under the License.
 #
 
+import logging
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
-from botocore.exceptions import ClientError
+from botocore.exceptions import ClientError, EndpointConnectionError
 from sqlmodel import Session
 
 from flip_api.db.models.main_models import FLKitSlot
 from flip_api.db.seed.fl_kit_slots import (
     _NON_NUMERIC_SLOT_NUMBER,
     _slot_number,
+    insert_missing_slots,
     resolve_fl_kit_slot_names,
     seed_fl_kit_slots,
 )
@@ -86,7 +88,9 @@ def test_seed_empty_pool_is_noop(mock_get_settings, mock_session):
 
 
 class TestResolveFlKitSlotNames:
-    """The env-appropriate source split: dev = env var, prod = FLIP_API secret (env fallback)."""
+    """Single source per env: dev = the DevSettings-only env var, prod = the FLIP_API
+    secret with NO env fallback (a broken secret yields an empty list, loudly).
+    """
 
     @patch("flip_api.db.seed.fl_kit_slots.get_secret")
     @patch("flip_api.db.seed.fl_kit_slots.get_settings")
@@ -99,7 +103,7 @@ class TestResolveFlKitSlotNames:
     @patch("flip_api.db.seed.fl_kit_slots.get_secret")
     @patch("flip_api.db.seed.fl_kit_slots.get_settings")
     def test_prod_parses_json_list_from_secret(self, mock_get_settings, mock_get_secret):
-        mock_get_settings.return_value = SimpleNamespace(ENV="production", FL_KIT_SLOT_NAMES=["Trust_1"])
+        mock_get_settings.return_value = SimpleNamespace(ENV="production")
         mock_get_secret.return_value = '["Trust_1", "Trust_2", "Trust_3"]'
 
         assert resolve_fl_kit_slot_names() == ["Trust_1", "Trust_2", "Trust_3"]
@@ -107,25 +111,93 @@ class TestResolveFlKitSlotNames:
 
     @patch("flip_api.db.seed.fl_kit_slots.get_secret")
     @patch("flip_api.db.seed.fl_kit_slots.get_settings")
-    def test_prod_missing_secret_key_falls_back_to_settings(self, mock_get_settings, mock_get_secret):
-        mock_get_settings.return_value = SimpleNamespace(ENV="production", FL_KIT_SLOT_NAMES=["Trust_1"])
+    def test_prod_missing_key_returns_empty_and_warns(self, mock_get_settings, mock_get_secret, caplog):
+        """The missing key is the expected state until the first apply-flip-secret after
+        deploy — WARNING (not ERROR), empty list, and no env-var resurrection.
+        """
+        mock_get_settings.return_value = SimpleNamespace(ENV="production")
         mock_get_secret.side_effect = KeyError("fl_kit_slot_names")
 
-        assert resolve_fl_kit_slot_names() == ["Trust_1"]
+        with caplog.at_level(logging.WARNING, logger="flip_api.seed"):
+            assert resolve_fl_kit_slot_names() == []
+
+        assert "fl_kit_slot_names" in caplog.text
+        assert caplog.records[-1].levelno == logging.WARNING
 
     @patch("flip_api.db.seed.fl_kit_slots.get_secret")
     @patch("flip_api.db.seed.fl_kit_slots.get_settings")
-    def test_prod_aws_error_falls_back_to_settings(self, mock_get_settings, mock_get_secret):
-        mock_get_settings.return_value = SimpleNamespace(ENV="production", FL_KIT_SLOT_NAMES=["Trust_1"])
+    def test_prod_aws_error_returns_empty(self, mock_get_settings, mock_get_secret):
+        mock_get_settings.return_value = SimpleNamespace(ENV="production")
         mock_get_secret.side_effect = ClientError({"Error": {"Code": "AccessDenied"}}, "GetSecretValue")
 
-        assert resolve_fl_kit_slot_names() == ["Trust_1"]
+        assert resolve_fl_kit_slot_names() == []
 
-    @pytest.mark.parametrize("payload", ["not json", '"Trust_1"', '{"Trust_1": 1}', '["Trust_1", 2]'])
     @patch("flip_api.db.seed.fl_kit_slots.get_secret")
     @patch("flip_api.db.seed.fl_kit_slots.get_settings")
-    def test_prod_malformed_secret_value_falls_back_to_settings(self, mock_get_settings, mock_get_secret, payload):
-        mock_get_settings.return_value = SimpleNamespace(ENV="production", FL_KIT_SLOT_NAMES=["Trust_1"])
+    def test_prod_botocore_error_returns_empty(self, mock_get_settings, mock_get_secret):
+        """BotoCoreError subclasses (no credentials, endpoint unreachable) aren't ClientError."""
+        mock_get_settings.return_value = SimpleNamespace(ENV="production")
+        mock_get_secret.side_effect = EndpointConnectionError(endpoint_url="https://secretsmanager.test")
+
+        assert resolve_fl_kit_slot_names() == []
+
+    # The last two payloads are NOT strings: a hand-edited secret holding a native JSON
+    # array (or null) makes json.loads raise TypeError, which must return empty rather
+    # than crash-loop the fail-fast boot seed.
+    @pytest.mark.parametrize(
+        "payload", ["not json", '"Trust_1"', '{"Trust_1": 1}', '["Trust_1", 2]', ["Trust_1"], None]
+    )
+    @patch("flip_api.db.seed.fl_kit_slots.get_secret")
+    @patch("flip_api.db.seed.fl_kit_slots.get_settings")
+    def test_prod_malformed_secret_value_returns_empty_and_logs_error(
+        self, mock_get_settings, mock_get_secret, payload, caplog
+    ):
+        mock_get_settings.return_value = SimpleNamespace(ENV="production")
         mock_get_secret.return_value = payload
 
-        assert resolve_fl_kit_slot_names() == ["Trust_1"]
+        with caplog.at_level(logging.ERROR, logger="flip_api.seed"):
+            assert resolve_fl_kit_slot_names() == []
+
+        # A malformed value is broken config (not the transient rollout state), so the
+        # empty result must be loud: ERROR, naming the secret key.
+        assert "fl_kit_slot_names" in caplog.text
+        assert caplog.records[-1].levelno == logging.ERROR
+
+    @patch("flip_api.db.seed.fl_kit_slots.get_secret")
+    @patch("flip_api.db.seed.fl_kit_slots.get_settings")
+    def test_prod_empty_secret_list_is_respected(self, mock_get_settings, mock_get_secret):
+        """A valid empty list is configuration, not an error — no log noise, no growth."""
+        mock_get_settings.return_value = SimpleNamespace(ENV="production")
+        mock_get_secret.return_value = "[]"
+
+        assert resolve_fl_kit_slot_names() == []
+
+
+@patch("flip_api.db.seed.fl_kit_slots.get_secret")
+@patch("flip_api.db.seed.fl_kit_slots.get_settings")
+def test_seed_reads_the_secret_in_prod(mock_get_settings, mock_get_secret, mock_session):
+    """Boot seeding goes through the resolver: in prod the secret feeds the pool."""
+    mock_get_settings.return_value = SimpleNamespace(ENV="production", FL_KIT_SLOT_NAMES=[])
+    mock_get_secret.return_value = '["Trust_9"]'
+    mock_session.exec.side_effect = [MagicMock(first=MagicMock(return_value=None))]
+
+    seed_fl_kit_slots(mock_session)
+
+    assert [c.args[0].slot_name for c in mock_session.add.call_args_list] == ["Trust_9"]
+    mock_session.commit.assert_called_once()
+
+
+def test_insert_missing_slots_returns_only_new_names_and_never_commits(mock_session):
+    """The return value feeds the reconcile's log line, and committing is the caller's
+    job — a commit here would break register_trust's savepoint semantics.
+    """
+    existing = FLKitSlot(slot_name="Trust_1", slot_number=1)
+    mock_session.exec.side_effect = [
+        MagicMock(first=MagicMock(return_value=existing)),
+        MagicMock(first=MagicMock(return_value=None)),
+    ]
+
+    inserted = insert_missing_slots(mock_session, ["Trust_1", "Trust_2"])
+
+    assert inserted == ["Trust_2"]
+    mock_session.commit.assert_not_called()

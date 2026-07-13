@@ -125,7 +125,10 @@ locals {
       # 1800s (MAX_PUT_PRESIGNED_URL_TTL_SECONDS), so multi-GB uploads must
       # complete within 30 minutes or they time out at the edge.
       MAX_MODEL_FILE_BYTES = "5000000000"
-      FL_KIT_SLOT_NAMES    = var.FL_KIT_SLOT_NAMES
+      # FL_KIT_SLOT_NAMES is deliberately NOT in the task env: in production the
+      # kit-slot pool's single source is the FLIP_API secret's fl_kit_slot_names
+      # key (main.tf), read at runtime by resolve_fl_kit_slot_names — an env copy
+      # here would be dead config that apply-flip-secret never updates.
     })
     fl_server = {
       LOCAL_DEV                      = "false"

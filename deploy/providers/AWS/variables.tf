@@ -103,7 +103,7 @@ variable "INTERNAL_SERVICE_KEY" {
 }
 
 variable "FL_KIT_SLOT_NAMES" {
-  description = "JSON list (as a string) of FL kit-slot names that seed the fl_kit_slot pool register_trust claims from. Rendered into two places: the flip-api task-definition env (boot seed / fallback) and the FLIP_API secret's fl_kit_slot_names key — the runtime source, so growing the pool is an env-file edit + `make apply-flip-secret` (register_trust reconciles on a pool miss; no restart). Empty ⇒ NoFreeKitSlotError on trust registration. Set via the env file (TF_VAR_FL_KIT_SLOT_NAMES)."
+  description = "JSON list (as a string) of FL kit-slot names for the fl_kit_slot pool register_trust claims from. Rendered ONLY into the FLIP_API secret's fl_kit_slot_names key — flip-api's single production source, read at boot seeding and re-read when a registration finds the pool exhausted. Growing the pool is an env-file edit + `make apply-flip-secret` (no restart, no task-definition change). Empty ⇒ NoFreeKitSlotError on trust registration. Set via the env file (TF_VAR_FL_KIT_SLOT_NAMES)."
   type        = string
   default     = "[]"
 }

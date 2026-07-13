@@ -200,21 +200,25 @@ aws s3 cp provision/workspace-<env>/net-<N>/state/cert.json \
 
 A kit in S3 is not yet claimable. `register_trust` claims rows from the hub's
 `fl_kit_slot` DB pool (`flip_api/db/seed/fl_kit_slots.py` — additive; it never deletes or
-re-assigns rows, so existing trust↔slot bindings are safe). The pool is seeded at
-flip-api boot and **reconciled on demand**: when a registration finds the pool exhausted,
-flip-api re-reads the configured slot list and additively inserts any new names before
-failing with `NoFreeKitSlotError: "No FL kit slots available…"`. The configured list
-comes from the env-appropriate source (`resolve_fl_kit_slot_names`):
+re-assigns rows, so existing trust↔slot bindings are safe). One pool row covers **all**
+nets — every net carries a kit per slot name, which is why the minting steps above run
+per net. The pool is seeded at flip-api boot and **reconciled on demand**: when a
+registration finds the pool exhausted, flip-api re-reads the configured slot list,
+additively inserts any new names, and retries the claim; only if the pool is still empty
+does it fail with `NoFreeKitSlotError: "No FL kit slots available…"`. The configured
+list has a single source per environment (`resolve_fl_kit_slot_names`):
 
-- **Dev**: the `FL_KIT_SLOT_NAMES` env var. Add the name to `.env.development` and
-  restart flip-api (settings load once per process).
+- **Dev**: the `FL_KIT_SLOT_NAMES` env var (a `DevSettings`-only field). Add the name to
+  `.env.development` and restart flip-api (settings load once per process).
 - **Stag/prod (ECS)**: the `fl_kit_slot_names` key of the **FLIP_API Secrets Manager
-  secret** — the runtime source of truth (the task-definition env value is only the
-  bootstrap/fallback). Add the name to `FL_KIT_SLOT_NAMES` in `.env.stag` /
-  `.env.production` and run `make -C deploy/providers/AWS apply-flip-secret PROD=stag|true`
-  (a targeted plan/apply that re-renders the secret from the env file). **No restart, no
-  task-definition change**: the next registration reconciles the pool from the secret.
-  (`make add-fl-kits` runs this step for you.)
+  secret** — the only production source (there is deliberately no env fallback: a broken
+  or missing key means the pool can't grow, loudly, rather than silently serving stale
+  env values). Add the name to `FL_KIT_SLOT_NAMES` in `.env.stag` / `.env.production`
+  and run `make -C deploy/providers/AWS apply-flip-secret PROD=stag|true` (a targeted
+  plan/apply that re-renders the secret from the env file — note it re-renders **every**
+  key in that secret, so make sure your env file matches the deployed values). **No
+  restart, no task-definition change**: the next registration reconciles the pool from
+  the secret. (`make add-fl-kits` runs this step for you.)
 
 Then `make register-trust KIT=<CODE>` (see the
 [root README](../../README.md#trust-registration)) claims the slot — registration writes

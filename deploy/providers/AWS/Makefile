@@ -324,6 +324,11 @@ apply-flip-secret: ## Apply only the FLIP_API secret — the FL kit-slot activat
 	## dry (register_trust reconcile), so new kit slots become claimable with no
 	## task-definition change and no restart. Targeted on purpose: never run a full
 	## prod `make apply` for this (AMI drift can force-replace trust EC2s).
+	@echo "⚠️  This re-renders the WHOLE FLIP_API secret from $(MAIN_ENV_FILE):"
+	@echo "   aes_key, internal_service_key, internal_service_key_hash AND fl_kit_slot_names."
+	@echo "   The plan below shows only '(sensitive value)' — it cannot show WHICH keys change."
+	@echo "   If your local env file has drifted from the deployed values (rotated keys, another"
+	@echo "   operator's checkout), applying will silently rotate live keys and break trust comms."
 	@echo "🔐 Planning + applying FLIP_API secret..."
 	@terraform plan -target=module.flip_api_secret -out=plan-flip-secret.tfplan
 	@terraform apply plan-flip-secret.tfplan
@@ -338,7 +343,11 @@ add-fl-kits: ## Mint, upload, and activate N new FL kit slots end to end (NVFLAR
 	## just-edited env file (this parse's TF_VAR_FL_KIT_SLOT_NAMES predates the edit).
 	@[ -n "$(N)" ] || { echo "❌ N is required, e.g. make add-fl-kits N=2 PROD=true"; exit 1; }
 	@MAIN_ENV_FILE=$(MAIN_ENV_FILE) N=$(N) YES=$(YES) FL_BACKEND=$(FL_BACKEND) ./scripts/add_fl_kits.sh
-	@$(MAKE) apply-flip-secret PROD=$(PROD)
+	@$(MAKE) apply-flip-secret PROD=$(PROD) || { \
+	  echo "❌ Secret apply failed AFTER the kits were minted, uploaded, and appended to the env file."; \
+	  echo "   Recover with just: make apply-flip-secret PROD=$(PROD)"; \
+	  echo "   Do NOT re-run add-fl-kits — it would mint additional, higher-numbered kits."; \
+	  exit 1; }
 
 .PHONY: destroy-cert
 destroy-cert: ## Destroy only the ACM certificate (use with caution - will break HTTPS)

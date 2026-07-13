@@ -13,7 +13,7 @@
 import json
 import re
 
-from botocore.exceptions import ClientError
+from botocore.exceptions import BotoCoreError, ClientError
 from sqlmodel import Session, select
 
 from flip_api.config import get_settings
@@ -50,36 +50,52 @@ def _slot_number(slot_name: str) -> int:
 
 
 def resolve_fl_kit_slot_names() -> list[str]:
-    """Resolve the configured FL kit-slot names from their environment-appropriate source.
+    """Resolve the configured FL kit-slot names from their environment's single source.
 
-    In production the source of truth is the ``fl_kit_slot_names`` key of the FLIP_API
-    Secrets Manager secret (a JSON list string, rendered by Terraform from the env
-    file's ``FL_KIT_SLOT_NAMES``), so the pool can grow via a targeted apply of the
-    secret without a task-definition change or restart. In development the
-    ``FL_KIT_SLOT_NAMES`` env var is used directly.
+    In production the source is the ``fl_kit_slot_names`` key of the FLIP_API Secrets
+    Manager secret (a JSON list string, rendered by Terraform from the env file's
+    ``FL_KIT_SLOT_NAMES``), so the pool can grow via a targeted apply of the secret
+    without a task-definition change or restart. In development the source is the
+    ``FL_KIT_SLOT_NAMES`` env var (a ``DevSettings``-only field).
 
-    Any failure to fetch or parse the secret (key not yet present, AWS error,
-    malformed JSON, non-list payload) falls back to the env-var setting with a
-    warning — this keeps rollout order-safe: the code can ship before the secret
-    gains the key, and the task-definition env value still applies.
+    Deliberately no prod fallback: a failure to fetch or parse the secret returns an
+    empty list — the boot seed and the registration reconcile are additive, so
+    existing pool rows and assignments are untouched; the pool simply cannot grow
+    until the secret is fixed, and nothing stale masks that. The log level splits
+    the two situations: a missing key is the expected state until the first
+    ``make apply-flip-secret`` after this code deploys (WARNING); an AWS error or a
+    malformed value means the source of truth is broken (ERROR).
 
     Returns:
-        list[str]: The configured slot names; empty when none are configured.
+        list[str]: The configured slot names; empty when none are configured or the
+        secret is unreadable.
     """
     if get_settings().ENV != "production":
-        return get_settings().FL_KIT_SLOT_NAMES or []
+        # getattr: the field exists only on DevSettings, and mypy sees the
+        # DevSettings | ProdSettings union here.
+        return getattr(get_settings(), "FL_KIT_SLOT_NAMES", []) or []
 
     try:
         slot_names = json.loads(get_secret(_FL_KIT_SLOT_NAMES_SECRET_KEY))
         if not isinstance(slot_names, list) or not all(isinstance(name, str) for name in slot_names):
-            raise ValueError(f"expected a JSON list of strings, got {type(slot_names).__name__}")
+            raise ValueError(f"expected a JSON list of strings, got: {slot_names!r}"[:200])
         return slot_names
-    except (KeyError, ClientError, ValueError) as e:
+    except KeyError:
         logger.warning(
-            f"Could not read '{_FL_KIT_SLOT_NAMES_SECRET_KEY}' from the FLIP_API secret ({e}); "
-            "falling back to the FL_KIT_SLOT_NAMES environment value."
+            f"'{_FL_KIT_SLOT_NAMES_SECRET_KEY}' is not in the FLIP_API secret yet — run "
+            "`make -C deploy/providers/AWS apply-flip-secret` to populate it. The kit-slot pool cannot "
+            "grow until then (existing slots and assignments are unaffected)."
         )
-        return get_settings().FL_KIT_SLOT_NAMES or []
+        return []
+    except (BotoCoreError, ClientError, TypeError, ValueError) as e:
+        # TypeError covers a hand-edited secret holding a native JSON array instead of the
+        # JSON-list *string* Terraform renders (json.loads then rejects the non-str input).
+        logger.error(
+            f"Could not read '{_FL_KIT_SLOT_NAMES_SECRET_KEY}' from the FLIP_API secret ({e!r}). The kit-slot "
+            "pool cannot grow until this is fixed — new slots applied with `make apply-flip-secret` will NOT "
+            "become claimable (existing slots and assignments are unaffected)."
+        )
+        return []
 
 
 def insert_missing_slots(session: Session, slot_names: list[str]) -> list[str]:

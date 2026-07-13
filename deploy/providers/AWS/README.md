@@ -362,12 +362,21 @@ It runs `scripts/add_fl_kits.sh`: discovers the deployment's nets from S3, resto
 fingerprint-verifies each net's CA workspace (`fl-services/nvflare/provision/workspace-<env>/`),
 mints the next `Trust_<n>` names on **every** net via `nvflare provision --add_client`
 (existing kits untouched — no CA rotation), uploads **only** the new kits additively
-(never `aws s3 sync --delete`), appends the names to `FL_KIT_SLOT_NAMES` in the env file,
-and finishes with `make apply-flip-secret` — a targeted plan/apply of only
+(never `aws s3 sync --delete`) plus a refresh of each net's mirrored `state/cert.json`,
+and appends the names to `FL_KIT_SLOT_NAMES` in the env file; the make target then
+finishes with `make apply-flip-secret` — a targeted plan/apply of only
 `module.flip_api_secret`, which re-renders the secret's `fl_kit_slot_names` key from the
 env file. flip-api re-reads that key when its slot pool runs dry (reconcile-on-miss), so
 the new slots are claimable by the next `make register-trust KIT=<CODE>` with **no
-restart and no task-definition change**. Kit-minting details and the manual fallback:
+restart and no task-definition change**.
+
+> ⚠️ `apply-flip-secret` re-renders **every** key in the FLIP_API secret from your env
+> file — `aes_key`, `internal_service_key`, and `internal_service_key_hash` ride along
+> with `fl_kit_slot_names`, and the plan shows only `(sensitive value)`. Make sure the
+> env file matches the deployed values before applying; a drifted checkout would
+> silently rotate live keys.
+
+Kit-minting details and the manual fallback:
 [`fl-services/nvflare/README.md`](../../../fl-services/nvflare/README.md#onboarding-a-new-client-onto-an-existing-network).
 
 ### Deployment to Different Environments

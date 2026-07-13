@@ -174,6 +174,31 @@ def test_register_trust_409_when_pool_exhausted(mock_gen_key, mock_resolve):
 
 @patch("flip_api.trusts_services.services.register_trust.resolve_fl_kit_slot_names")
 @patch("flip_api.trusts_services.services.register_trust.generate_trust_key")
+def test_register_trust_409_when_all_configured_slots_are_assigned(mock_gen_key, mock_resolve):
+    """The realistic prod exhaustion: the resolver returns the same names as ever, all
+    rows already exist (and are assigned) — reconcile inserts nothing, retry misses, 409.
+    """
+    mock_gen_key.side_effect = [("k", "h"), ("k", "h")]
+    mock_resolve.return_value = ["Trust_1"]
+    assigned = FLKitSlot(slot_name="Trust_1", slot_number=1)
+    assigned.assigned_to_trust_id = uuid4()
+    session = MagicMock()
+    session.exec.side_effect = [
+        MagicMock(first=MagicMock(return_value=None)),  # duplicate-name lookup
+        MagicMock(first=MagicMock(return_value=None)),  # first slot claim
+        MagicMock(first=MagicMock(return_value=assigned)),  # insert_missing_slots: row exists
+        MagicMock(first=MagicMock(return_value=None)),  # claim retry still misses
+    ]
+
+    with pytest.raises(NoFreeKitSlotError, match="No FL kit slots available"):
+        register_trust(name="GSTT", code="GSTT", region=None, session=session)
+
+    session.commit.assert_not_called()
+    session.add.assert_not_called()
+
+
+@patch("flip_api.trusts_services.services.register_trust.resolve_fl_kit_slot_names")
+@patch("flip_api.trusts_services.services.register_trust.generate_trust_key")
 def test_register_trust_reconciles_grown_pool_without_restart(mock_gen_key, mock_resolve):
     """Config grew since boot (e.g. secret updated): the miss triggers an additive
     reconcile and the retried claim succeeds — no restart needed.
@@ -225,4 +250,7 @@ def test_register_trust_tolerates_concurrent_reconcile_insert(mock_gen_key, mock
     result = register_trust(name="BDMS", code="BDMS", region=None, session=session)
 
     assert result.fl_kit_slot.slot_name == "Trust_3"
+    assert won_slot.assigned_to_trust_id == result.trust.id
+    added_trusts = [c.args[0] for c in session.add.call_args_list if isinstance(c.args[0], Trust)]
+    assert [t.name for t in added_trusts] == ["BDMS"]
     session.commit.assert_called_once()

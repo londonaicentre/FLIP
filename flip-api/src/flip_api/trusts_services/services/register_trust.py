@@ -38,6 +38,7 @@ from flip_api.db.seed.fl_kit_slots import insert_missing_slots, resolve_fl_kit_s
 from flip_api.domain.schemas.actions import TrustAuditAction
 from flip_api.scripts.generate_trust_key import generate_trust_key
 from flip_api.trusts_services.utils.audit_helper import audit_trust_action
+from flip_api.utils.logger import logger
 
 
 class TrustRegistrationError(Exception):
@@ -126,7 +127,8 @@ def register_trust(
         EmptyTrustNameError: ``name.strip()`` is empty.
         EmptyTrustCodeError: ``code`` is missing or empty after strip.
         DuplicateTrustError: A trust with this name already exists.
-        NoFreeKitSlotError: The ``fl_kit_slot`` pool has no unassigned rows.
+        NoFreeKitSlotError: The ``fl_kit_slot`` pool has no unassigned rows, even
+            after the on-miss reconcile from the configured slot names.
     """
     name = name.strip()
     if not name:
@@ -163,20 +165,28 @@ def register_trust(
         # resolve_fl_kit_slot_names). Reconcile additively and retry the claim once.
         try:
             with session.begin_nested():
-                insert_missing_slots(session, resolve_fl_kit_slot_names())
-        except IntegrityError:
+                inserted = insert_missing_slots(session, resolve_fl_kit_slot_names())
+            if inserted:
+                logger.info(f"FL kit slot pool reconciled at registration: added {inserted}")
+        except IntegrityError as e:
             # A concurrent registration inserted the same slot rows between our
             # existence check and the savepoint flush (slot_name is the PK). Fine —
-            # the rows exist either way; the retried claim below sees them.
-            pass
+            # the rows exist either way; the retried claim below sees them. Only the
+            # new FLKitSlot rows are pending inside this savepoint (the trust insert
+            # comes later), so nothing else can be the flush that raised here.
+            logger.info(f"Concurrent registration reconciled the FL kit slot pool first ({e.orig!r}); retrying claim")
         slot = _claim_free_slot(session)
     if slot is None:
-        raise NoFreeKitSlotError(
-            "No FL kit slots available. Pre-provision more FL kit slots and add them "
-            "to FL_KIT_SLOT_NAMES (development) or to the FLIP_API secret via "
-            "`make apply-flip-secret` (stag/prod) — no restart needed, the pool "
-            "reconciles on the next registration."
+        # The raised message is user-facing (UI snackbar / CLI); the operator
+        # remediation lives here in the logs.
+        logger.error(
+            "FL kit slot pool exhausted even after reconcile. Development: add slots to FL_KIT_SLOT_NAMES and "
+            "restart flip-api. Stag/prod: append the new slot names to FL_KIT_SLOT_NAMES in the env file and run "
+            "`make -C deploy/providers/AWS apply-flip-secret` (or grow the pool end-to-end with `make add-fl-kits`). "
+            "If slots were already applied and still don't appear, check earlier logs for FLIP_API-secret read "
+            "errors — the resolver may be falling back to the env value."
         )
+        raise NoFreeKitSlotError("No FL kit slots available. Pre-provision more FL kits and try again.")
 
     session.add(trust)
     session.flush()  # populate trust.id before binding the slot

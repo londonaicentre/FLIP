@@ -17,7 +17,8 @@
 #   1. discover the deployment's nets from S3 and compute the next Trust_<n> names
 #   2. restore + fingerprint-verify each net's CA workspace (state/ holds the root CA)
 #   3. mint each new name on EVERY net (`nvflare provision --add_client` via make)
-#   4. upload ONLY the new kits to S3 (additive `aws s3 cp`; never `sync --delete`)
+#   4. upload ONLY the new kits to S3 (additive `aws s3 cp`; never `sync --delete`),
+#      plus a refresh of each net's mirrored state/cert.json CA registry
 #   5. append the names to FL_KIT_SLOT_NAMES in the env file
 #
 # The caller (`make add-fl-kits`) then applies the FLIP_API secret
@@ -30,9 +31,15 @@
 # FLARE_KIT_DATE, AWS_PROFILE, FL_BACKEND, PROD) plus N / YES / MAIN_ENV_FILE.
 #
 # Safety invariants (live trusts' kits are sacred):
-#   - never writes into an existing S3 kit prefix; refuses if the target is non-empty
+#   - never writes into an existing S3 kit prefix; the emptiness check fails CLOSED
+#     (an S3 error aborts the run, it is never read as "empty")
 #   - never uses `upload-kits-to-s3` (`aws s3 sync --delete` over the whole net)
 #   - aborts if the local root CA fingerprint differs from the S3 server kit's
+#     (the kit's rootCA.pem stands in for the CA in state/cert.json — normal
+#     provisioning always writes them together)
+#   - a mid-run failure prints exactly what was uploaded and how to recover;
+#     re-running add-fl-kits is NOT the recovery (it would mint higher numbers
+#     and orphan the already-uploaded names)
 
 set -euo pipefail
 
@@ -67,13 +74,53 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../../.." && pwd)"
 NVFLARE_DIR="${REPO_ROOT}/fl-services/nvflare"
 WORKSPACE_PARENT="${NVFLARE_DIR}/provision/workspace-${ENV_NAME}"
-BASE_S3="s3://${AICENTRE_BUCKET_NAME}/fl-flare-participant-kits/${FLARE_KIT_DATE}"
+KEY_PREFIX="fl-flare-participant-kits/${FLARE_KIT_DATE}"
+BASE_S3="s3://${AICENTRE_BUCKET_NAME}/${KEY_PREFIX}"
 
 log() { echo "🧩 $*"; }
 
+# A mid-run abort must tell the operator what already reached S3 and how to
+# recover — the instinctive fix (re-running add-fl-kits) is the WRONG one: new
+# names are computed from what exists in S3, so a re-run mints higher numbers
+# and permanently orphans the ones uploaded here.
+UPLOADED=()
+on_error() {
+    echo "" >&2
+    echo "❌ add-fl-kits aborted." >&2
+    if [[ ${#UPLOADED[@]} -gt 0 ]]; then
+        echo "   Kits already uploaded this run: ${UPLOADED[*]}" >&2
+        echo "   Do NOT re-run add-fl-kits to recover — it would mint HIGHER numbers and orphan the" >&2
+        echo "   names above. Instead: append the uploaded names to FL_KIT_SLOT_NAMES in" >&2
+        echo "   ${MAIN_ENV_FILE} and run 'make apply-flip-secret PROD=${PROD}' (a name uploaded to" >&2
+        echo "   only SOME nets must first be minted on the missing nets — see the nvflare README)." >&2
+    fi
+}
+trap on_error ERR
+
+# --- 0. Fail early on a bad env file (before anything is minted or uploaded) ---
+
+env_names="$(python3 -c '
+import json, re, sys
+for line in open(sys.argv[1]):
+    m = re.match(r"^FL_KIT_SLOT_NAMES=(.*)$", line.strip())
+    if m:
+        print("\n".join(json.loads(m.group(1))))
+        break
+else:
+    sys.exit(f"FL_KIT_SLOT_NAMES not found in {sys.argv[1]}")
+' "${MAIN_ENV_FILE}")" || {
+    echo "❌ FL_KIT_SLOT_NAMES is missing or not valid JSON in ${MAIN_ENV_FILE} — fix it before" >&2
+    echo "   running add-fl-kits (step 5 appends the new names to that line)." >&2
+    exit 1
+}
+
 # --- 1. Discover nets + compute the new slot names -----------------------------
 
-mapfile -t NETS < <(aws s3 ls "${BASE_S3}/" | awk '{print $2}' | grep -oE '^net-[0-9]+' | sort -V)
+nets_listing="$(aws s3 ls "${BASE_S3}/")" || {
+    echo "❌ Could not list ${BASE_S3}/ — AWS error above (credentials/profile?), not a config issue." >&2
+    exit 1
+}
+mapfile -t NETS < <(printf '%s\n' "${nets_listing}" | awk '{print $2}' | grep -oE '^net-[0-9]+' | sort -V)
 if [[ "${#NETS[@]}" -eq 0 ]]; then
     echo "❌ No net-* prefixes under ${BASE_S3}/ — is FLARE_KIT_DATE correct?" >&2
     exit 1
@@ -86,19 +133,18 @@ log "Nets in S3 (${FLARE_KIT_DATE}): ${NETS[*]}"
 # env-file entry have drifted apart.
 existing_names=()
 for net in "${NETS[@]}"; do
+    services_listing="$(aws s3 ls "${BASE_S3}/${net}/services/")" || {
+        echo "❌ Could not list ${BASE_S3}/${net}/services/ — refusing to compute slot numbers" >&2
+        echo "   from an incomplete view (a missed name here could reuse a live trust's slot)." >&2
+        exit 1
+    }
     while IFS= read -r name; do
-        existing_names+=("${name}")
-    done < <(aws s3 ls "${BASE_S3}/${net}/services/" | awk '{print $2}' | grep -oE '^Trust_[^/]+' || true)
+        [[ -n "${name}" ]] && existing_names+=("${name}")
+    done < <(printf '%s\n' "${services_listing}" | awk '{print $2}' | grep -oE '^Trust_[^/]+' || true)
 done
 while IFS= read -r name; do
-    existing_names+=("${name}")
-done < <(python3 -c '
-import json, re, sys
-for line in open(sys.argv[1]):
-    m = re.match(r"^FL_KIT_SLOT_NAMES=(.*)$", line.strip())
-    if m:
-        print("\n".join(json.loads(m.group(1))))
-' "${MAIN_ENV_FILE}")
+    [[ -n "${name}" ]] && existing_names+=("${name}")
+done <<<"${env_names}"
 
 max_num=0
 for name in "${existing_names[@]}"; do
@@ -136,6 +182,14 @@ for net in "${NETS[@]}"; do
     if [[ ! -f "${workspace}/state/cert.json" ]]; then
         log "${net}: no local CA state — restoring workspace from ${BASE_S3}/${net}/"
         aws s3 cp "${BASE_S3}/${net}/state/" "${workspace}/state/" --recursive --only-show-errors
+        if [[ ! -f "${workspace}/state/cert.json" ]]; then
+            echo "❌ ${net}: the S3 mirror has no state/cert.json — this net's CA state was never" >&2
+            echo "   uploaded, so kits can only be minted from the checkout that provisioned it." >&2
+            echo "   (Do NOT re-provision: that rotates the CA and forces a fleet-wide redeploy.)" >&2
+            exit 1
+        fi
+    fi
+    if [[ ! -f "${workspace}/${server_kit}/startup/rootCA.pem" ]]; then
         aws s3 cp "${BASE_S3}/${net}/${server_kit}/" "${workspace}/${server_kit}/" --recursive --only-show-errors
     fi
 
@@ -157,8 +211,16 @@ for net in "${NETS[@]}"; do
 
     for name in "${NEW_NAMES[@]}"; do
         # Refuse to touch a non-empty S3 prefix — an existing kit may belong to a
-        # live trust; add-client.sh separately refuses existing local kits.
-        if [[ -n "$(aws s3 ls "${BASE_S3}/${net}/services/${name}/" 2>/dev/null)" ]]; then
+        # live trust; add-client.sh separately refuses existing local kits. This
+        # check fails CLOSED: KeyCount comes from s3api (non-zero exit on any AWS
+        # error aborts the run), never from empty output of a failed listing.
+        key_count="$(aws s3api list-objects-v2 --bucket "${AICENTRE_BUCKET_NAME}" \
+            --prefix "${KEY_PREFIX}/${net}/services/${name}/" --max-keys 1 \
+            --query 'KeyCount' --output text)" || {
+            echo "❌ ${net}: could not check whether ${name}/ already exists in S3 — refusing to upload blind." >&2
+            exit 1
+        }
+        if [[ "${key_count}" != "0" ]]; then
             echo "❌ ${net}: ${BASE_S3}/${net}/services/${name}/ already has objects — refusing to overwrite." >&2
             exit 1
         fi
@@ -169,6 +231,7 @@ for net in "${NETS[@]}"; do
         log "${net}: uploading ${name} (additive)..."
         aws s3 cp "${workspace}/services/${name}/" "${BASE_S3}/${net}/services/${name}/" \
             --recursive --only-show-errors
+        UPLOADED+=("${net}/${name}")
     done
 
     # Refresh the mirrored CA registry so the next add from a fresh checkout signs
