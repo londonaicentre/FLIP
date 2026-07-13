@@ -43,6 +43,10 @@ N_CLIENTS ?= 2
 WORKSPACE ?= /tmp/nvflare/arkplus_finetuning_client_api
 METRICS_OUT ?= $(REPO_ROOT)/model_metrics
 
+# Round count for the one-shot `make experiment` replica — matches the deployed run's
+# GLOBAL_ROUNDS (config.json), unlike the quick-smoke NUM_ROUNDS default of 3.
+EXPERIMENT_ROUNDS ?= 50
+
 # The backbone checkpoint the server loads (config.json SERVER_CHECKPOINT). Staged into app_files/ so
 # stage_app_files() bundles it into the server custom dir; clients receive the backbone at round 0.
 PROCESSED_CHECKPOINT := $(APP_DIR)/app_files/pretrained_weights.pt
@@ -63,7 +67,7 @@ override SITE2_IMAGES_DIR := $(call abspath_app,$(SITE2_IMAGES_DIR))
 override SITE2_DATAFRAME  := $(call abspath_app,$(SITE2_DATAFRAME))
 override DATA_ROOT        := $(call abspath_app,$(DATA_ROOT))
 
-.PHONY: run export sim metrics download-raw-checkpoint prepare-checkpoint dataset-figure clean
+.PHONY: run export sim metrics experiment package download-raw-checkpoint prepare-checkpoint dataset-figure clean
 
 # --- Raw checkpoint download ---
 download-raw-checkpoint:
@@ -152,7 +156,60 @@ sim:
 # COMPARE=/path/to/platform/rounds.tsv adds a side-by-side steady-state overhead table.
 metrics:
 	bash "$(REPO_ROOT)/scripts/extract_simulator_metrics.sh" "$(WORKSPACE)" \
-		-o "$(METRICS_OUT)" $(if $(COMPARE),--compare "$(COMPARE)")
+		-o "$(METRICS_OUT)" $(if $(COMPARE),--compare "$(COMPARE)") $(if $(RUN_NAME),--run-name "$(RUN_NAME)")
+
+# --- One-shot cross-site experiment (no hub / AWS access needed) ---
+# Everything a collaborating site needs to reproduce the simulator baseline and send the results
+# back: fetch the HF tutorial data (~6.3 GB) and the Ark+ checkpoint when missing, run the
+# full-length simulator replica (EXPERIMENT_ROUNDS, default 50), then extract the round metrics
+# and pack metrics + simulator logs + host/provenance info into a single archive in this
+# directory. Requires Linux, uv, and an NVIDIA GPU (pick one with CUDA_VISIBLE_DEVICES).
+experiment:
+	@if [ -d "$(SITE1_IMAGES_DIR)" ] && [ -d "$(SITE2_IMAGES_DIR)" ]; then \
+		echo "✅ Ark+ tutorial data present."; \
+	else \
+		$(MAKE) --no-print-directory -C "$(REPO_ROOT)/fl-tutorials" download-arkplus-finetuning-data; \
+	fi
+	@if [ ! -f "$(PROCESSED_CHECKPOINT)" ] && [ ! -f "$(RAW_CHECKPOINT)" ]; then \
+		$(MAKE) --no-print-directory download-raw-checkpoint; \
+	fi
+	@$(MAKE) --no-print-directory prepare-checkpoint
+	@$(MAKE) --no-print-directory sim NUM_ROUNDS="$(EXPERIMENT_ROUNDS)"
+	@$(MAKE) --no-print-directory package
+
+# Extract metrics from the last simulator run and bundle them with the workspace logs (model
+# files excluded), config.json, .env.app, and host info (GPU, OS, git commit) into
+# arkplus_sim_experiment_<host>_<stamp>.zip (.tar.gz when zip is not installed). Split out from
+# `experiment` so a finished run can be re-packaged without re-simulating.
+package:
+	@set -e; \
+	stamp="$$(date +%Y%m%dT%H%M%S)"; host="$$(hostname -s)"; \
+	run_name="simulator-arkplus-$${host}-$${stamp}"; \
+	$(MAKE) --no-print-directory metrics RUN_NAME="$$run_name"; \
+	out="$(METRICS_OUT)/$$run_name"; \
+	mkdir -p "$$out/logs" "$$out/provenance"; \
+	( cd "$(WORKSPACE)" && find . -type f \
+		\( -name 'log*.txt' -o -name '*.log' -o -name 'log.json' -o -name 'error_log.txt' \) \
+		-size -64M -exec cp --parents {} "$$out/logs/" \; ); \
+	cp "$(APP_DIR)/app_files/config.json" "$$out/provenance/config.json"; \
+	cp "$(APP_DIR)/.env.app" "$$out/provenance/env.app.txt" 2>/dev/null || true; \
+	{ echo "generated: $$(date -Is)"; \
+	  echo "host: $$(hostname)"; \
+	  echo "git_commit: $$(git -C "$(REPO_ROOT)" rev-parse HEAD 2>/dev/null || echo unknown)"; \
+	  echo "git_branch: $$(git -C "$(REPO_ROOT)" rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)"; \
+	  echo "experiment_rounds: $(EXPERIMENT_ROUNDS)"; \
+	  echo "workspace: $(WORKSPACE)"; \
+	  echo; uname -a; \
+	  echo; nvidia-smi 2>/dev/null || echo "nvidia-smi unavailable"; \
+	} > "$$out/provenance/host_info.txt"; \
+	if command -v zip >/dev/null 2>&1; then \
+		archive="$(APP_DIR)/arkplus_sim_experiment_$${host}_$${stamp}.zip"; \
+		( cd "$(METRICS_OUT)" && zip -qr "$$archive" "$$run_name" ); \
+	else \
+		archive="$(APP_DIR)/arkplus_sim_experiment_$${host}_$${stamp}.tar.gz"; \
+		tar -czf "$$archive" -C "$(METRICS_OUT)" "$$run_name"; \
+	fi; \
+	echo ""; echo "📦 Experiment bundle ready to send back: $$archive"
 
 # --- Tutorial-harness entrypoint ---
 # The shared harness (fl-tutorials/nvflare/Makefile) auto-discovers any dir with a .env.app and invokes

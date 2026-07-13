@@ -3,3 +3,5 @@
 fl_job/
 uv.lock
 models/
+# `make experiment`/`make package` result bundles (sent back for comparison, not committed)
+arkplus_sim_experiment_*

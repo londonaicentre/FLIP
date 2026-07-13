@@ -201,6 +201,29 @@ local training. Knobs: `WORKSPACE` (simulator workspace parsed for logs; default
 > orchestration, and hardware differences. The aggregation and inter-round-gap rows are the clean
 > comparables — the generated `summary.md` spells this out.
 
+### One-command cross-site replication
+
+For a collaborating site reproducing the baseline (no FLIP hub or AWS access needed), a single
+target chains the whole experiment — download the HF tutorial data (~6.3 GB) and the Ark+
+checkpoint if missing, run the full-length simulator replica, extract the metrics, and pack
+everything to send back:
+
+```bash
+git clone <repo> && cd FLIP/fl-tutorials/nvflare/image_classification/arkplus_fine_tuning
+make experiment          # hours on GPU; produces arkplus_sim_experiment_<host>_<stamp>.zip here
+```
+
+The bundle contains the metrics artefacts (`rounds.tsv`, `summary.md`, boxplot), the simulator
+logs (model files excluded), and a `provenance/` folder (`config.json`, `.env.app`,
+`host_info.txt` with GPU/OS/git-commit) so runs from different sites can be compared like-for-like.
+
+Prerequisites: Linux with an NVIDIA GPU + drivers, [`uv`](https://docs.astral.sh/uv/) on `PATH`
+(the first run builds the flip-utils environment automatically), internet access (Hugging Face +
+Dropbox), and ~15 GB free disk. On a multi-GPU host pick a device with
+`CUDA_VISIBLE_DEVICES=<n> make experiment`. Knobs: `EXPERIMENT_ROUNDS` (default `50`, the deployed
+run's `GLOBAL_ROUNDS`). If the simulation finished but packing failed (or you want to re-send),
+`make package` re-bundles the last run without re-simulating.
+
 ## Key files
 
 - [`job.py`](job.py): builds `FlipFedAvgRecipe` (with `aggregate_only_regex`), stages `app_files/`
