@@ -329,6 +329,14 @@ The proxy allowlists only what a swarm-mode Container Service launch needs — `
 `PING`/`VERSION`/`EVENTS`. Everything else is refused with a 403: `exec`, the container API,
 volumes, networks, secrets, configs, plugins, and build.
 
+**Multiple trusts on one host.** Each trust's XNAT is a separate swarm stack on its own overlay
+network (`xnat<N>` on `deploy_trust-network-<N>`), so each gets its **own** proxy — they are not
+shared, which keeps the trust boundary intact. The identical `xnat-socket-proxy` service name in
+both stacks does not collide: swarm resolves it per-network, so each `xnat-web` reaches only its
+own proxy (cross-stack access is refused), and the proxy publishes no host port. Both proxies
+holding the same host socket is fine — it serves concurrent clients, exactly as it did when each
+`xnat-web` mounted it directly.
+
 This is a choke point, not a sandbox. Two residual powers are worth stating plainly: the services
 API the Container Service depends on can itself create a service with an arbitrary host bind
 mount, and because the proxy's `POST` switch is global, granting `SWARM` also exposes
