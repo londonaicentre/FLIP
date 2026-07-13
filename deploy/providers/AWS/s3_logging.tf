@@ -20,8 +20,20 @@
 # Retention: 90 days for compliance auditing.
 ############################
 
+locals {
+  # Kept as a plan-time-known string rather than referencing
+  # aws_s3_bucket.flip_access_logs.id: the module's
+  # aws_s3_bucket_logging.this is count-gated on logging_target_bucket, and a
+  # count cannot depend on a not-yet-created bucket's .id (unknown until
+  # apply) — passing .id makes `terraform plan` fail with "Invalid count
+  # argument" on any environment where this bucket does not yet exist. The
+  # module callers pass this local; first-apply ordering is still guaranteed
+  # by their `depends_on = [aws_s3_bucket_acl.flip_access_logs]`.
+  access_logs_bucket_name = "flip-access-logs-${var.flip_alb_subdomain}"
+}
+
 resource "aws_s3_bucket" "flip_access_logs" {
-  bucket = "flip-access-logs-${var.flip_alb_subdomain}"
+  bucket = local.access_logs_bucket_name
 
   tags = {
     Name = "flip-access-logs"
