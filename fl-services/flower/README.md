@@ -64,20 +64,20 @@ in the `fl-apps/flower/*` template pyprojects steer the per-run resolution inste
 All other dependencies resolve from PyPI per run, so SuperLink/SuperNode hosts need outbound HTTPS
 to PyPI and `download.pytorch.org`.
 
-**Testing an unpublished flip-utils** therefore needs no PyPI release and no version bump:
-
-- rebuild the images from your branch (`make build-fl FL_BACKEND=flower` — the source lands at
-  `/opt/flip-utils`), or
-- just use the dev composes: they bind-mount the working tree's `flip-utils/` pieces over
-  `/opt/flip-utils` on the SuperLink and SuperNodes, so an edit under `flip-utils/flip/` reaches
-  the **next run** with no rebuild and no restart.
+**Testing an unpublished flip-utils** therefore needs no PyPI release and no version bump: rebuild
+the images from your branch (`make build-fl FL_BACKEND=flower` — the source lands at
+`/opt/flip-utils`) and restart the flower services onto the rebuilt `:dev` images
+(`make restart-fl FL_BACKEND=flower DOCKER_FL_REGISTRY= DOCKER_FL_TAG=dev` for the hub stack).
+Every flip-utils change ships via an image rebuild — the containers run whatever their image bakes,
+so confirm the running container carries your change
+(`docker exec <supernode> head /opt/flip-utils/flip/__init__.py`) before trusting a run.
 
 > ⚠️ The pin lives in the **fl-apps templates**, so it covers hub-stack runs (flip-api bundles every
 > uploaded app with a template). The standalone stacks below submit apps straight from
 > `fl-tutorials/flower/`, whose pyprojects do **not** pin flip-utils — a tutorial submitted there
 > runtime-installs its declared `flip-utils` from PyPI (the plain Flower model). To exercise an
 > unpublished flip-utils via `make submit`, temporarily add the same `[tool.uv.sources]` pin to the
-> tutorial's pyproject — the bind-mounts above already provide `/opt/flip-utils` in-container.
+> tutorial's pyproject — the images bake `/opt/flip-utils` in-container.
 
 ## Step-by-step provisioning
 

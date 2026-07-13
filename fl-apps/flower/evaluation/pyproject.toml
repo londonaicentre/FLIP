@@ -47,7 +47,7 @@ packages = ["."]
 #   * flip-utils installs from the source baked into the FL images at
 #     /opt/flip-utils — never from PyPI — so FL runs always execute the in-repo
 #     flip-utils. To test unpublished flip-utils changes, rebuild the FL images
-#     (`make build-fl FL_BACKEND=flower`) or use the dev compose bind-mount.
+#     (`make build-fl FL_BACKEND=flower`).
 #   * torch/torchvision come from PyTorch's cu128 index: PyPI's default cu130
 #     wheels need NVIDIA driver >=580 (dev hosts run 575.x). This mirrors the
 #     pin in flip-utils' own pyproject, which does NOT apply here — uv honors

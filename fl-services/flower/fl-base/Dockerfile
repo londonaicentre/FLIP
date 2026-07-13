@@ -38,7 +38,7 @@ WORKDIR /app
 # torch that runs on the host NVIDIA driver 575.x (cu13 wheels need driver >=580).
 # --chown=app:app: flwr/base runs as the non-root `app` user, and COPY defaults
 # to root ownership — the runtime installer builds flip-utils from this dir as
-# `app`, and the dev compose bind-mounts the working tree over it.
+# `app`.
 COPY --chown=app:app flip-utils/pyproject.toml flip-utils/README.md /opt/flip-utils/
 COPY --chown=app:app flip-utils/docs/ /opt/flip-utils/docs/
 COPY --chown=app:app flip-utils/flip/ /opt/flip-utils/flip/
