@@ -441,8 +441,27 @@ deploy-centralhub: ## Deploy Central Hub ECS services at the env branch tip (new
 	## (register-task-definition rejects an empty tags array). Pass TAG=sha-<short7> to
 	## deploy a hotfix / feature-branch image (build it first via workflow_dispatch — see
 	## CLAUDE.md); revert with `make rollback-centralhub`.
+	## FL quiesce warning (FLIP#770): an ECS replacement kills any in-flight training run
+	## (fl-server run state is ephemeral) and strands its model/net BUSY. For now this is a
+	## printed reminder only, not an enforced gate — enable Deployment Mode first (it pauses
+	## FL job pickup) and wait for any running job to finish; GET /fl/quiesce reports both.
+	## On prod (PROD=true) the reminder also asks for interactive confirmation; stag proceeds
+	## without prompting so scripted staging deploys stay non-interactive.
 	@set -e; \
 	export AWS_PROFILE=$(AWS_PROFILE) AWS_REGION=$(AWS_REGION); \
+	echo "⚠️  FL quiesce reminder (FLIP#770): replacing fl-server-net-1 kills any in-flight"; \
+	echo "   training run and strands its model at TRAINING_STARTED with its net stuck BUSY."; \
+	echo "   Before deploying: enable Deployment Mode (Admin → Deployments) — it pauses FL job"; \
+	echo "   pickup, so queued jobs hold — and wait for any running job to finish."; \
+	echo "   GET $(CENTRAL_HUB_API_URL)/fl/quiesce reports both (deployment_mode + fl_quiesced)."; \
+	if [ "$(PROD)" = "true" ]; then \
+	  printf "   Are you sure you want to continue? [y/N] "; \
+	  read -r answer; \
+	  case "$$answer" in \
+	    [Yy]|[Yy][Ee][Ss]) ;; \
+	    *) echo "❌ Aborted — nothing has been deployed."; exit 1;; \
+	  esac; \
+	fi; \
 	TAG="$(TAG)"; \
 	if [ -z "$$TAG" ]; then \
 	  echo "🔎 Resolving deploy tag from the tip of $(DEPLOY_GIT_REF)..."; \
