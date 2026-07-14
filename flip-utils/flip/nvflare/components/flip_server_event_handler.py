@@ -18,6 +18,7 @@ from nvflare.app_common.app_event_type import AppEventType
 from flip import FLIP
 from flip.constants import FlipEvents, ModelStatus
 from flip.exceptions import ResultsUploadError
+from flip.nvflare.components.evaluation_json_generator import EvaluationJsonGenerator
 from flip.nvflare.components.persist_and_cleanup import PersistToS3AndCleanup
 from flip.nvflare.runtime import get_flip_model_id
 
@@ -78,6 +79,42 @@ class ServerEventHandler(FLComponent):
         """
         self.flip.update_status(self._resolve_model_id(fl_ctx), status)
 
+    def _evaluation_wholly_failed(self) -> bool:
+        """Whether this is an evaluation job in which every validate task failed.
+
+        Training jobs wire the base ``ValidationJsonGenerator``, which tracks no failures, so the
+        isinstance check also serves as the "is this an evaluation job" test.
+
+        Returns:
+            bool: True when the evaluation produced failures and no results at all.
+        """
+        generator = self.validation_json_generator
+        return isinstance(generator, EvaluationJsonGenerator) and generator.all_tasks_failed()
+
+    def _terminal_status(self, default: ModelStatus) -> ModelStatus:
+        """Resolve the run's terminal status, most salient cause first.
+
+        A recorded fatal system error is the root cause and outranks everything. A user-requested
+        abort outranks the evaluation failures it necessarily caused (aborting a run cancels its
+        in-flight validate tasks, which must not be reported as ERROR). An evaluation in which every
+        validate task failed outranks ``default`` — otherwise a wholly failed run reports success on
+        an empty results file (FLIP#754), or reports a trailing upload failure as its cause.
+
+        Args:
+            default (ModelStatus): The status to use when no failure cause is recorded — the outcome
+                of the upload itself.
+
+        Returns:
+            ModelStatus: The status to report to the hub.
+        """
+        if self.fatal_error:
+            return ModelStatus.ERROR
+        if self.final_status == ModelStatus.STOPPED:
+            return ModelStatus.STOPPED
+        if self._evaluation_wholly_failed():
+            return ModelStatus.ERROR
+        return default
+
     def handle_event(self, event_type: str, fl_ctx: FLContext) -> None:
         self.__set_dependencies(fl_ctx)
 
@@ -116,21 +153,12 @@ class ServerEventHandler(FLComponent):
             self.log_info(fl_ctx, "End run event received")
 
             try:
+                # The results are uploaded even when the evaluation wholly failed: the zip carries
+                # the error_log.txt and evaluation_failures.json that explain why.
                 self.persist_and_cleanup.execute(fl_ctx)
-
-                if self.final_status != ModelStatus.STOPPED:
-                    self.final_status = ModelStatus.RESULTS_UPLOADED
-
-                if self.fatal_error:
-                    self.final_status = ModelStatus.ERROR
+                self.final_status = self._terminal_status(ModelStatus.RESULTS_UPLOADED)
             except ResultsUploadError:
-                # Preserve the more salient terminal states: a recorded fatal system
-                # error (root cause) and a user-requested abort take precedence over a
-                # trailing upload failure, matching the success-path precedence above.
-                if self.fatal_error:
-                    self.final_status = ModelStatus.ERROR
-                elif self.final_status != ModelStatus.STOPPED:
-                    self.final_status = ModelStatus.RESULTS_UPLOAD_FAILED
+                self.final_status = self._terminal_status(ModelStatus.RESULTS_UPLOAD_FAILED)
             except Exception:
                 self.final_status = ModelStatus.ERROR
 

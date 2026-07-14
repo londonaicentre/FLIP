@@ -523,23 +523,54 @@ def check_trust_pipeline() -> None:
 
 
 def check_xnat_health() -> None:
-    """Verify XNAT is serving its API (not a setup page)."""
+    """Verify XNAT is serving its API (not a setup page).
+
+    XNAT REST endpoints use session-based auth: obtain a JSESSIONID cookie
+    via Basic Auth on ``POST /data/JSESSION``, then present that cookie on
+    subsequent API calls.
+    """
     print_status("INFO", "Checking XNAT API health (not setup page)...")
 
     py = """\
-import os, requests
-r = requests.get(
-    "http://xnat-web:8080/data/projects",
-    auth=(os.environ.get("XNAT_SERVICE_USER", "flipServiceAccount"),
-          os.environ.get("XNAT_SERVICE_PASSWORD", "")),
-    timeout=10,
-)
-print(r.status_code, r.headers.get("content-type", "").split(";")[0])
+import os, re, requests
+
+XNAT_URL = "http://xnat-web:8080"
+USER = os.environ.get("XNAT_SERVICE_USER", "flipServiceAccount")
+PASS = os.environ.get("XNAT_SERVICE_PASSWORD", "")
+
+# Step 1: Obtain JSESSIONID via XNAT session endpoint
+session_url = f"{XNAT_URL}/data/JSESSION"
+creds = (USER, PASS)
+session_resp = requests.post(session_url, auth=creds, timeout=10)
+
+if session_resp.status_code != 200:
+    # Print real content-type — caller distinguishes 401 (auth failure)
+    # from non-HTTP responses.
+    print(session_resp.status_code,
+          session_resp.headers.get("content-type", "").split(";")[0])
+else:
+    token = session_resp.text.strip()
+    # Validate JSESSIONID token before using as a cookie header value.
+    # A setup page returns multi-line HTML — feeding that into a Cookie
+    # header raises InvalidHeader, which masks the XNAT problem as an
+    # SSH failure.
+    if not re.match(r'^[A-Za-z0-9]+$', token):
+        print("0", f"invalid-token:{token[:100]}")
+    else:
+        # Step 2: Use session cookie to call API
+        headers = {"Cookie": f"JSESSIONID={token}"}
+        r = requests.get(
+            f"{XNAT_URL}/data/projects", headers=headers, timeout=10
+        )
+        print(r.status_code, r.headers.get("content-type", "").split(";")[0])
 """
     success, output = run_remote_python("flip-trust", "trust1-imaging-api-1", py, timeout=25)
 
     if not success or "Traceback" in output:
-        print_status("INFO", "Could not check XNAT (SSH unavailable)")
+        if not success and "Traceback" not in output:
+            print_status("INFO", "Could not check XNAT (SSH unavailable)")
+        else:
+            print_status("FAIL", "XNAT health check script crashed — XNAT may be in setup mode")
         return
 
     parts = output.strip().split()
@@ -549,12 +580,14 @@ print(r.status_code, r.headers.get("content-type", "").split(";")[0])
 
     try:
         code = int(parts[0])
-        ctype = parts[1] if len(parts) > 1 else ""
-    except (ValueError, IndexError):
+        ctype = " ".join(parts[1:])
+    except ValueError:
         print_status("WARN", f"Could not parse XNAT response: {output[:100]}")
         return
 
-    if code == 200 and "html" not in ctype.lower():
+    if code == 0:
+        print_status("FAIL", f"XNAT session endpoint returned invalid token ({ctype})")
+    elif code == 200 and "html" not in ctype.lower():
         print_status("PASS", f"XNAT API responding (HTTP {code})")
     elif code == 200 and "html" in ctype.lower():
         print_status("FAIL", "XNAT returned HTML (setup page?) — restart XNAT web container")

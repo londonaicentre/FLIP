@@ -33,9 +33,26 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     """Inject standard HTTP security headers on every response.
 
     These headers are safe for both HTML (SPA) and JSON (API) responses.
-    Content-Security-Policy is only added for responses with a ``text/html``
-    content type; for API JSON responses (the norm) CSP is not set by this
-    middleware — only at the CloudFront edge for the SPA.
+
+    Content-Security-Policy is only added for ``text/html`` responses
+    because flip-api is JSON-first: the SPA itself is served from
+    CloudFront + S3 and its CSP is set at the CloudFront edge. The
+    CSP header here is defence-in-depth — in production flip-api never
+    emits HTML (``main.py`` sets ``docs_url=None`` when
+    ``ENV == "production"``), and the middleware's own fallback is a
+    ``PlainTextResponse``, not HTML. ``connect-src``, ``img-src``, and
+    ``font-src`` are intentionally omitted: they all fall back to
+    ``default-src 'self'``, which already blocks third-party loads.
+
+    The FastAPI docs routes (``/api/docs``, ``/api/redoc``,
+    ``/api/openapi.json``) are explicitly excluded from CSP injection:
+    Swagger UI and ReDoc ship inline scripts and load their bundles
+    from ``cdn.jsdelivr.net``, both of which the default
+    ``script-src 'self'`` would block. These pages are off in
+    production (``main.py`` sets ``docs_url=None`` when
+    ``ENV == "production"``); the exclusion only keeps them usable in
+    dev/stag. All other security headers (HSTS, XFO, XCTO, RP) still
+    apply to docs routes.
     """
 
     SECURITY_HEADERS = {
@@ -45,6 +62,10 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         "Referrer-Policy": "strict-origin-when-cross-origin",
     }
 
+    # Paths whose responses are exempt from CSP injection. Swagger UI
+    # and ReDoc use inline scripts and load bundles from
+    # cdn.jsdelivr.net, which the strict CSP below would block; the
+    # OpenAPI schema endpoint is included so the docs UIs can fetch it.
     DOCS_PATHS = ("/api/docs", "/api/redoc", "/api/openapi.json")
 
     CSP = (
@@ -60,20 +81,11 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 
         Wraps ``call_next`` in try/except so that security headers are
         injected even when the downstream handler raises an unhandled
-        exception.  On the exception path the traceback is logged and a
+        exception. On the exception path the traceback is logged and a
         500 fallback response is returned with the same security
         headers — this is more secure than re-raising and letting the
         framework's outermost error middleware produce a bare response
         with no headers.
-
-        CSP is skipped on FastAPI docs routes (``/api/docs``,
-        ``/api/redoc``, ``/api/openapi.json``) because Swagger UI and
-        ReDoc load JavaScript and CSS from ``cdn.jsdelivr.net`` and run
-        inline init scripts that the enforcing CSP would block.  These
-        routes are disabled in production anyway (see
-        ``flip_api/main.py``), so the gap only affects dev/staging.
-        All other security headers (HSTS, XFO, XCTO, RP) still apply
-        to docs routes.
 
         Args:
             request: The incoming HTTP request.
@@ -89,7 +101,8 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             response = PlainTextResponse("Internal Server Error", status_code=500)
         for header, value in self.SECURITY_HEADERS.items():
             response.headers[header] = value
-        # CSP only applies to HTML responses — no-op for API JSON.
+        # CSP only applies to HTML responses — no-op for API JSON. Skip
+        # the docs UI paths so Swagger/ReDoc keep working in dev/stag.
         content_type = response.headers.get("content-type", "")
         if "text/html" in content_type and not request.url.path.startswith(self.DOCS_PATHS):
             response.headers["Content-Security-Policy"] = self.CSP
