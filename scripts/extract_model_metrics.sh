@@ -459,8 +459,8 @@ fi
 
 # Single-pass min/max in awk: `sort | head -1` under pipefail dies with SIGPIPE (141)
 # once the input outgrows the pipe buffer, because head exits after one line.
-TRUE_START_MS="$(awk 'NR==1||$1+0<min{min=$1+0} END{print min}' "$MODEL_LINES_FILE")"
-TRUE_END_MS="$(awk 'NR==1||$1+0>max{max=$1+0} END{print max}' "$MODEL_LINES_FILE")"
+TRUE_START_MS="$(awk 'NR==1||$1+0<min{min=$1+0} END{printf "%.0f\n", min}' "$MODEL_LINES_FILE")"
+TRUE_END_MS="$(awk 'NR==1||$1+0>max{max=$1+0} END{printf "%.0f\n", max}' "$MODEL_LINES_FILE")"
 
 # --------------------------------------------------------------------------------------
 # Step 3: status-transition timeline (metric #5: wall-clock time, phase breakdown)
@@ -532,8 +532,8 @@ log "Identified ${n_attempts} training attempt(s) for this model"
 FL_SPAN_START_MS="$TRUE_START_MS"
 FL_SPAN_END_MS="$TRUE_END_MS"
 if [[ -s "$ATTEMPTS_FILE" ]]; then
-    FL_SPAN_START_MS="$(awk -F'\t' 'NR==1||$1+0<min{min=$1+0} END{print min}' "$ATTEMPTS_FILE")"
-    FL_SPAN_END_MS="$(awk -F'\t' 'NR==1||$2+0>max{max=$2+0} END{print max}' "$ATTEMPTS_FILE")"
+    FL_SPAN_START_MS="$(awk -F'\t' 'NR==1||$1+0<min{min=$1+0} END{printf "%.0f\n", min}' "$ATTEMPTS_FILE")"
+    FL_SPAN_END_MS="$(awk -F'\t' 'NR==1||$2+0>max{max=$2+0} END{printf "%.0f\n", max}' "$ATTEMPTS_FILE")"
 fi
 FL_SPAN_START_MS=$(( FL_SPAN_START_MS - PAD_MS ))
 FL_SPAN_END_MS=$(( FL_SPAN_END_MS + PAD_MS ))
@@ -656,8 +656,8 @@ elif [[ "$BACKEND" == "flower" ]]; then
         | sort -n -k1,1 -k2,2 > "${WORK_DIR}/flower_rounds.tsv" || true
     if [[ -s "${WORK_DIR}/flower_rounds.tsv" ]]; then
         cut -f1 "${WORK_DIR}/flower_rounds.tsv" | sort -un | while read -r r; do
-            start_ms="$(awk -v r="$r" -F'\t' '$1==r && (m==""||$2+0<m){m=$2+0} END{print m}' "${WORK_DIR}/flower_rounds.tsv")"
-            end_ms="$(awk -v r="$r" -F'\t' '$1==r && (m==""||$2+0>m){m=$2+0} END{print m}' "${WORK_DIR}/flower_rounds.tsv")"
+            start_ms="$(awk -v r="$r" -F'\t' '$1==r && (m==""||$2+0<m){m=$2+0} END{printf "%.0f\n", m}' "${WORK_DIR}/flower_rounds.tsv")"
+            end_ms="$(awk -v r="$r" -F'\t' '$1==r && (m==""||$2+0>m){m=$2+0} END{printf "%.0f\n", m}' "${WORK_DIR}/flower_rounds.tsv")"
             printf '%s\t%s\t%s\t-\t-\t-\t-\n' "$r" "$start_ms" "$end_ms" >> "$ROUND_TABLE_FILE"
         done
     fi
