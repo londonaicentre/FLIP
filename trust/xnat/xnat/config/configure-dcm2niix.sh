@@ -45,10 +45,32 @@ echo "Path translation with DATA_PATH=$DATA_PATH"
 backend_config=$(jq --arg data_path "$DATA_PATH" '.["path-translation-docker-prefix"] = $data_path' container-service-backend-configuration.json)
 
 echo "backend_config: $backend_config"
-curl -s -X POST "$XNAT_URL/xapi/docker/server" \
+# curl exits 0 on HTTP 4xx/5xx (no --fail), so check the status explicitly — if XNAT
+# rejects the new backend config, the ping below could still pass against a previously
+# registered backend and mask the failure. "000" = transport error / timeout.
+post_status=$(curl -s -o /tmp/docker-server-post.json --max-time 60 -w "%{http_code}" \
+  -X POST "$XNAT_URL/xapi/docker/server" \
   -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_PASSWORD}" \
   -H "Content-Type: application/json" \
-  -d "$backend_config"
+  -d "$backend_config") || post_status="000"
+if [[ "$post_status" != 2* ]]; then
+  echo "ERROR: POST /xapi/docker/server returned HTTP $post_status"
+  cat /tmp/docker-server-post.json 2>/dev/null || true
+  exit 1
+fi
+
+# The Container Service reaches Docker through the xnat-socket-proxy sidecar
+# (see docker-compose-stack.yml), not a socket mounted into xnat-web. Fail loudly
+# here if that path is broken — the command registration below would still
+# "succeed", but every dcm2niix launch would then fail at conversion time.
+echo "Pinging Docker through the socket proxy..."
+ping_status=$(curl -s -o /dev/null --max-time 60 -w "%{http_code}" "$XNAT_URL/xapi/docker/server/ping" \
+  -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_PASSWORD}") || ping_status="000"
+if [[ "$ping_status" != "200" ]]; then
+  echo "ERROR: Container Service cannot reach Docker via xnat-socket-proxy (HTTP $ping_status)"
+  exit 1
+fi
+echo "Container Service -> Docker (via xnat-socket-proxy): OK"
 
 # ----------------------------------------------------------------
 # CONTAINER SERVICE

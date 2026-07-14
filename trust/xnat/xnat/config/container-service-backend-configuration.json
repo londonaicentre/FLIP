@@ -1,6 +1,6 @@
 {
-    "name": "Local socket",
-    "host": "unix:///var/run/docker.sock",
+    "name": "Socket proxy",
+    "host": "tcp://xnat-socket-proxy:2375",
     "cert-path": "",
     "swarm-mode": true,
     "path-translation-xnat-prefix": "/data/xnat",
