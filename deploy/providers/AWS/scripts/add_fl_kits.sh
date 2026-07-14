@@ -26,11 +26,15 @@
 # trust registration — flip-api reconciles its pool on a miss, so no restart and no
 # task-definition change is needed.
 #
-# Invoked by `make -C deploy/providers/AWS add-fl-kits N=<n> PROD=stag|true [YES=1]`,
-# which exports the env-file vars this script reads (AICENTRE_BUCKET_NAME,
-# FLARE_KIT_DATE, AWS_PROFILE, FL_BACKEND, PROD) plus N / YES / MAIN_ENV_FILE.
+# Invoked by `make -C deploy/providers/AWS add-fl-kits N=<n> PROD=stag|true [YES=1]
+# [MINT_ANYWAY=1]`, which exports the env-file vars this script reads
+# (AICENTRE_BUCKET_NAME, FLARE_KIT_DATE, AWS_PROFILE, FL_BACKEND, PROD) plus
+# N / YES / MINT_ANYWAY / MAIN_ENV_FILE.
 #
 # Safety invariants (live trusts' kits are sacred):
+#   - refuses to mint while a kit minted on every net is missing from FL_KIT_SLOT_NAMES:
+#     that spare only needs ACTIVATING (env edit + apply-fl-kit-slots), and minting past
+#     it strands it. MINT_ANYWAY=1 overrides
 #   - never writes into an existing S3 kit prefix; the emptiness check fails CLOSED
 #     (an S3 error aborts the run, it is never read as "empty")
 #   - never uses `upload-kits-to-s3` (`aws s3 sync --delete` over the whole net)
@@ -49,6 +53,7 @@ AICENTRE_BUCKET_NAME="${AICENTRE_BUCKET_NAME:?AICENTRE_BUCKET_NAME must be set (
 FLARE_KIT_DATE="${FLARE_KIT_DATE:?FLARE_KIT_DATE must be set (run via make with PROD=stag|true)}"
 MAIN_ENV_FILE="${MAIN_ENV_FILE:?MAIN_ENV_FILE must be set (the env file to append FL_KIT_SLOT_NAMES to)}"
 YES="${YES:-}"
+MINT_ANYWAY="${MINT_ANYWAY:-}"
 
 if [[ "${FL_BACKEND:-nvflare}" != "nvflare" ]]; then
     echo "❌ add-fl-kits supports FL_BACKEND=nvflare only. Flower kits are per-supernode key" >&2
@@ -132,6 +137,7 @@ log "Nets in S3 (${FLARE_KIT_DATE}): ${NETS[*]}"
 # where the new names start, so a name is never reused even if a kit upload and an
 # env-file entry have drifted apart.
 existing_names=()
+s3_names=()  # one entry per (net, name) — the repeat count is what identifies a kit minted on EVERY net
 for net in "${NETS[@]}"; do
     services_listing="$(aws s3 ls "${BASE_S3}/${net}/services/")" || {
         echo "❌ Could not list ${BASE_S3}/${net}/services/ — refusing to compute slot numbers" >&2
@@ -139,12 +145,41 @@ for net in "${NETS[@]}"; do
         exit 1
     }
     while IFS= read -r name; do
-        [[ -n "${name}" ]] && existing_names+=("${name}")
+        [[ -n "${name}" ]] && existing_names+=("${name}") && s3_names+=("${name}")
     done < <(printf '%s\n' "${services_listing}" | awk '{print $2}' | grep -oE '^Trust_[^/]+' || true)
 done
 while IFS= read -r name; do
     [[ -n "${name}" ]] && existing_names+=("${name}")
 done <<<"${env_names}"
+
+# Spare kits: minted on EVERY net yet absent from FL_KIT_SLOT_NAMES. Activating one
+# is an env-file edit + `apply-fl-kit-slots` — no new certs, no upload, no restart —
+# so minting past it would strand a perfectly good kit and push the numbering further
+# from the pool. Refuse by default; MINT_ANYWAY=1 for a deliberate fresh mint.
+# Counted per net (not a plain union) so a half-uploaded kit from a failed run is NOT
+# offered for activation — it exists on some nets only, and a client whose net lacks
+# the kit cannot join. Those still bump max_num below, so their names are never reused.
+spare_names=()
+if [[ "${#s3_names[@]}" -gt 0 ]]; then
+    while IFS= read -r name; do
+        [[ -n "${name}" ]] && spare_names+=("${name}")
+    done < <(comm -23 \
+        <(printf '%s\n' "${s3_names[@]}" | grep -E '^Trust_[0-9]+$' | sort | uniq -c |
+            awk -v nets="${#NETS[@]}" '$1 == nets { print $2 }' | sort -u) \
+        <(printf '%s\n' "${env_names}" | grep -E '^Trust_[0-9]+$' | sort -u))
+fi
+if [[ "${#spare_names[@]}" -gt 0 && "${MINT_ANYWAY}" != "1" ]]; then
+    echo "❌ ${#spare_names[@]} kit(s) are already minted on every net but are NOT in FL_KIT_SLOT_NAMES:" >&2
+    echo "     ${spare_names[*]}" >&2
+    echo "" >&2
+    echo "   Activate one instead of minting — it is already provisioned on every net:" >&2
+    echo "     1. add the name(s) to FL_KIT_SLOT_NAMES in ${MAIN_ENV_FILE}" >&2
+    echo "     2. make -C deploy/providers/AWS apply-fl-kit-slots PROD=${PROD}" >&2
+    echo "   The next trust registration reconciles the pool and claims it — no restart." >&2
+    echo "" >&2
+    echo "   To mint a NEW kit anyway (e.g. you want fresh certs), re-run with MINT_ANYWAY=1." >&2
+    exit 1
+fi
 
 max_num=0
 for name in "${existing_names[@]}"; do

@@ -360,12 +360,22 @@ the image back — re-run `make plan` after any `make deploy-centralhub`.
 ### Growing the FL kit-slot pool (`add-fl-kits`)
 
 When trust registration fails with `NoFreeKitSlotError` ("No FL kit slots available…"),
-the deployment has run out of pre-provisioned FL kit slots. One command mints, uploads,
+the deployment has run out of *claimable* FL kit slots. One command mints, uploads,
 and activates `N` more (NVFLARE only):
 
 ```bash
 make add-fl-kits N=2 PROD=stag|true   # YES=1 to skip the confirmation prompt
 ```
+
+**First: is a kit already minted?** A slot is claimable only when its name is in
+`FL_KIT_SLOT_NAMES` *and* its kit exists in S3, and those two can drift — a deployment
+provisioned with a batch of spare kits has kits nobody can claim. If a kit is already
+minted on every net but missing from the list, it needs **activating, not minting**:
+add the name to `FL_KIT_SLOT_NAMES` and run `make apply-fl-kit-slots PROD=…` (no certs,
+no upload, no restart). `add-fl-kits` refuses to run while such spares exist and names
+them; `MINT_ANYWAY=1` overrides if you genuinely want a fresh kit. (Stag hit exactly
+this on 2026-07-14: 48 spare kits, so it wanted to mint `Trust_51` instead of using the
+idle `Trust_3`.)
 
 It runs `scripts/add_fl_kits.sh`: discovers the deployment's nets from S3, restores +
 fingerprint-verifies each net's CA workspace (`fl-services/nvflare/provision/workspace-<env>/`),
@@ -380,6 +390,15 @@ kit-slot list is plain configuration, so the plan diff is human-readable — rev
 it scrolls past. flip-api re-reads the parameter when its slot pool runs dry
 (reconcile-on-miss), so the new slots are claimable by the next
 `make register-trust KIT=<CODE>` with **no restart and no task-definition change**.
+
+> **The targeted apply is not literally one resource.** `-target` applies the target's
+> whole dependency closure, and the flip-api task-role policy references the bucket
+> modules, whose server-access logging points at `aws_s3_bucket.flip_access_logs`. On an
+> environment whose state predates that S3-logging hardening, the first
+> `apply-fl-kit-slots` therefore *also* creates `flip-access-logs-<subdomain>` and its
+> ACL/ownership controls. It is additive (stag, 2026-07-14: **4 to add, 1 to change, 0 to
+> destroy**) and neither prod nor stag had the bucket, so expect it on the first prod
+> activation too. Nothing is replaced or destroyed — but read the plan before confirming.
 
 Kit-minting details and the manual fallback:
 [`fl-services/nvflare/README.md`](../../../fl-services/nvflare/README.md#onboarding-a-new-client-onto-an-existing-network).

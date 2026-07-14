@@ -64,9 +64,14 @@ def resolve_fl_kit_slot_names() -> list[str]:
     an empty list — the boot seed and the registration reconcile are additive, so
     existing pool rows and assignments are untouched; the pool simply cannot grow
     until the parameter is fixed, and nothing stale masks that. The log level splits
-    the two situations: a missing parameter is the expected state until the first
-    ``make apply-fl-kit-slots`` after this code deploys (WARNING); any other AWS
-    error or a malformed value means the source of truth is broken (ERROR).
+    the two situations: a missing parameter is a not-yet-provisioned source (WARNING);
+    any other AWS error or a malformed value means the source of truth is broken (ERROR).
+
+    Note the pre-activation state is ERROR, not WARNING: ``make apply-fl-kit-slots``
+    creates the parameter *and* grants the task role's ``ssm:GetParameter``, so an
+    image deployed before that apply gets ``AccessDeniedException`` (ERROR) rather than
+    ``ParameterNotFound`` — observed on stag 2026-07-14. Either way the pool is intact
+    and the log names the fix.
 
     Returns:
         list[str]: The configured slot names; empty when none are configured or the

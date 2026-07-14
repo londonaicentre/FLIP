@@ -152,6 +152,15 @@ parameter (`make apply-fl-kit-slots`) so the slots are immediately claimable. Th
 steps below are what it automates — use them for unusual cases (custom slot names, a
 single net).
 
+**Minting vs activating.** A kit existing in S3 and a slot being *claimable* are two
+different things: the hub only claims names listed in `FL_KIT_SLOT_NAMES` (via the SSM
+parameter). A net provisioned with spare kits therefore has kits no trust can claim, and
+those need **activating, not minting** — add the name to `FL_KIT_SLOT_NAMES`, run
+`make -C deploy/providers/AWS apply-fl-kit-slots PROD=…`, done (no certs, no upload, no
+restart). `add-fl-kits` refuses to mint while a kit minted on every net is missing from
+the list, and prints the names to activate; pass `MINT_ANYWAY=1` to mint fresh kits past
+them anyway.
+
 **CA-state custody.** The preserved `state/` is the hard prerequisite: it holds the root
 CA that signs the new kit. The workspace is gitignored, so it exists only in the checkout
 that provisioned (or last added to) the net. `upload-kits-to-s3` mirrors it to S3

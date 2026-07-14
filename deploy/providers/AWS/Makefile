@@ -336,6 +336,14 @@ apply-fl-kit-slots: ## Apply only the FL kit-slot SSM parameter — the slot act
 	## the first rollout (which adds the ssm:GetParameter read) is self-contained;
 	## a no-op on every later run. Targeted on purpose: never run a full prod
 	## `make apply` for this (AMI drift can force-replace trust EC2s).
+	##
+	## NOT literally one resource: -target applies the target's whole dependency
+	## closure, and the task-role policy references the bucket modules, whose
+	## server-access logging targets aws_s3_bucket.flip_access_logs. So on an env whose
+	## state predates that S3-logging hardening the first run ALSO creates
+	## flip-access-logs-<subdomain> + its ACL/ownership (additive, 0 destroys). Seen on
+	## stag 2026-07-14: 4 to add, 1 to change, 0 to destroy. Prod has no access-logs
+	## bucket either — expect the same there. The plan prints before it applies: read it.
 	@echo "🎛️  Planning + applying FL kit-slot parameter..."
 	@$(_TF) plan -target=aws_ssm_parameter.fl_kit_slot_names \
 		-target=aws_iam_role_policy.ecs_flip_api_task -out=plan-fl-kit-slots.tfplan
@@ -349,8 +357,12 @@ add-fl-kits: ## Mint, upload, and activate N new FL kit slots end to end (NVFLAR
 	## upload (never sync --delete) → append the names to FL_KIT_SLOT_NAMES in the env
 	## file. Then re-invokes make for apply-fl-kit-slots so the sub-make re-reads the
 	## just-edited env file (this parse's TF_VAR_FL_KIT_SLOT_NAMES predates the edit).
+	## Refuses to mint when a kit is already minted on every net but missing from
+	## FL_KIT_SLOT_NAMES — that spare only needs ACTIVATING (apply-fl-kit-slots).
+	## MINT_ANYWAY=1 forces a fresh mint past such spares.
 	@[ -n "$(N)" ] || { echo "❌ N is required, e.g. make add-fl-kits N=2 PROD=true"; exit 1; }
-	@$(_AWS_ENV) MAIN_ENV_FILE=$(MAIN_ENV_FILE) N=$(N) YES=$(YES) FL_BACKEND=$(FL_BACKEND) ./scripts/add_fl_kits.sh
+	@$(_AWS_ENV) MAIN_ENV_FILE=$(MAIN_ENV_FILE) N=$(N) YES=$(YES) MINT_ANYWAY=$(MINT_ANYWAY) \
+		FL_BACKEND=$(FL_BACKEND) ./scripts/add_fl_kits.sh
 	@$(MAKE) apply-fl-kit-slots PROD=$(PROD) || { \
 	  echo "❌ Parameter apply failed AFTER the kits were minted, uploaded, and appended to the env file."; \
 	  echo "   Recover with just: make apply-fl-kit-slots PROD=$(PROD)"; \
