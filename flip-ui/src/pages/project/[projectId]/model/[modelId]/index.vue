@@ -251,7 +251,7 @@ const steps = computed((): IStep[] => {
     const dates = [
         modelData.value?.creationTimestamp,
         modelData.value?.preparedAt,
-        modelData.value?.trainingStartedAt,
+        modelData.value?.runningAt,
         modelData.value?.resultsUploadedAt
     ];
 

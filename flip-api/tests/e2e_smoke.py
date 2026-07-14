@@ -74,7 +74,7 @@ ABORT_MIDWAY_NAME_SUFFIX = " (abort-midway)"
 # finish short-circuits wait_for_training_finished cleanly on the first poll.
 TRAINING_PROGRESS_STATUSES = {
     ModelStatus.PREPARED.value,
-    ModelStatus.TRAINING_STARTED.value,
+    ModelStatus.RUNNING.value,
     ModelStatus.RESULTS_UPLOADED.value,
 }
 
@@ -608,15 +608,15 @@ def wait_for_training_finished(
 def wait_for_training_running(
     client: requests.Session, headers: dict[str, str], model_id: str, timeout_s: int
 ) -> str:
-    """Block until the model reports TRAINING_STARTED — a genuinely live FL job.
+    """Block until the model reports RUNNING — a genuinely live FL job.
 
     ``wait_for_training_started`` returns on the first status past INITIATED, which
     can be the transient PREPARED. The --abort-midway stop test wants a running job,
-    so poll on for TRAINING_STARTED specifically. If training races to RESULTS_UPLOADED
+    so poll on for RUNNING specifically. If training races to RESULTS_UPLOADED
     first, return that — stopping an already-finished job is still a valid idempotency
     check, the caller just notes it.
     """
-    _log(f"⏳ Waiting for model to reach TRAINING_STARTED (timeout {timeout_s}s)")
+    _log(f"⏳ Waiting for model to reach RUNNING (timeout {timeout_s}s)")
     deadline = time.monotonic() + timeout_s
     last_status = ""
     poll_interval = 5
@@ -631,11 +631,11 @@ def wait_for_training_running(
             last_status = status
         if status == ModelStatus.ERROR.value:
             raise SmokeFailure("Model entered ERROR state before training started — check fl-server logs")
-        if status in (ModelStatus.TRAINING_STARTED.value, ModelStatus.RESULTS_UPLOADED.value):
+        if status in (ModelStatus.RUNNING.value, ModelStatus.RESULTS_UPLOADED.value):
             return status
         time.sleep(poll_interval)
     raise SmokeFailure(
-        f"Model did not reach TRAINING_STARTED within {timeout_s}s (last status: {last_status or 'unknown'})."
+        f"Model did not reach RUNNING within {timeout_s}s (last status: {last_status or 'unknown'})."
     )
 
 

@@ -458,7 +458,7 @@ describe("model-service", () => {
             expect(buildModelSteps("PENDING").map(s => s.name)).toEqual([
                 "Model Created",
                 "Model Prepared",
-                "Training",
+                "Running",
                 "Results Uploaded"
             ]);
         });
@@ -467,17 +467,17 @@ describe("model-service", () => {
             expect(buildModelSteps("RESULTS_UPLOADED").every(s => s.completed)).toBe(true);
         });
 
-        it("ERROR flags Training as an error", () => {
-            // A genuine training failure should still surface on the Training milestone.
-            const step = stepByName("ERROR", "Training");
+        it("ERROR flags Running as an error", () => {
+            // A genuine job failure should still surface on the Running milestone.
+            const step = stepByName("ERROR", "Running");
             expect(step.error).toBe(true);
             expect(step.completed).toBeFalsy();
         });
 
-        it("RESULTS_UPLOAD_FAILED keeps Training completed (training did finish)", () => {
-            // The bug this fixes: an upload failure must not paint the Training
-            // milestone as failed, because training itself completed successfully.
-            const step = stepByName("RESULTS_UPLOAD_FAILED", "Training");
+        it("RESULTS_UPLOAD_FAILED keeps Running completed (the job did finish)", () => {
+            // The bug this fixes: an upload failure must not paint the Running
+            // milestone as failed, because the job itself completed successfully.
+            const step = stepByName("RESULTS_UPLOAD_FAILED", "Running");
             expect(step.completed).toBe(true);
             expect(step.error).toBeFalsy();
             expect(step.inProgress).toBeFalsy();
@@ -497,7 +497,7 @@ describe("model-service", () => {
             // getStatusEnumValue maps anything unknown to ERROR so a stale UI bundle
             // receiving a newer status degrades gracefully rather than crashing.
             expect(() => buildModelSteps("NONSENSE" as ModelStatus)).not.toThrow();
-            expect(stepByName("NONSENSE" as ModelStatus, "Training").error).toBe(true);
+            expect(stepByName("NONSENSE" as ModelStatus, "Running").error).toBe(true);
         });
     });
 

@@ -45,7 +45,7 @@ class FedAvgWithClientMetrics(FedAvg):
     def start(self, grid: Grid, initial_arrays: ArrayRecord, num_rounds: int = 3, **kwargs):
         """Override start to capture num_rounds for evaluation control."""
         self.num_rounds = num_rounds
-        self.flip.update_status(self.model_id, ModelStatus.TRAINING_STARTED)
+        self.flip.update_status(self.model_id, ModelStatus.RUNNING)
         return super().start(grid, initial_arrays, num_rounds, **kwargs)
 
     def configure_evaluate(

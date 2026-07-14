@@ -209,7 +209,7 @@ describe("Training metrics + live-activity responsive layout", () => {
     }
 
     it("stacks the cards by default and only goes side-by-side on wide (xl) screens", () => {
-        const wrapper = mountTraining({ status: "TRAINING_STARTED" });
+        const wrapper = mountTraining({ status: "RUNNING" });
 
         const { container } = layoutParts(wrapper);
 
@@ -218,7 +218,7 @@ describe("Training metrics + live-activity responsive layout", () => {
     });
 
     it("makes the live-activity card full-width when stacked and a fixed column only at xl+", () => {
-        const wrapper = mountTraining({ status: "TRAINING_STARTED" });
+        const wrapper = mountTraining({ status: "RUNNING" });
 
         const { liveCard } = layoutParts(wrapper);
 
@@ -228,7 +228,7 @@ describe("Training metrics + live-activity responsive layout", () => {
     });
 
     it("lets the metrics card take the remaining width beside the activity card", () => {
-        const wrapper = mountTraining({ status: "TRAINING_STARTED" });
+        const wrapper = mountTraining({ status: "RUNNING" });
 
         const { metricsCard } = layoutParts(wrapper);
 
@@ -237,7 +237,7 @@ describe("Training metrics + live-activity responsive layout", () => {
     });
 
     it("matches the sibling card heights at xl instead of letting the timeline set them", () => {
-        const wrapper = mountTraining({ status: "TRAINING_STARTED" });
+        const wrapper = mountTraining({ status: "RUNNING" });
 
         const { liveCard, innerColumn } = layoutParts(wrapper);
 
@@ -251,7 +251,7 @@ describe("Training metrics + live-activity responsive layout", () => {
     });
 
     it("never lets the timeline scroll horizontally", () => {
-        const wrapper = mountTraining({ status: "TRAINING_STARTED" });
+        const wrapper = mountTraining({ status: "RUNNING" });
 
         const { scrollWrap } = layoutParts(wrapper);
 
@@ -263,7 +263,7 @@ describe("Training Live activity status dot", () => {
     const dotSelector = "[data-test=live-activity-dot]";
 
     it("is primary (in-progress) when training is running", () => {
-        const wrapper = mountTraining({ status: "TRAINING_STARTED" });
+        const wrapper = mountTraining({ status: "RUNNING" });
 
         const dot = wrapper.find(dotSelector);
 

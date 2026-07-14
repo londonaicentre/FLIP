@@ -66,7 +66,7 @@ def invoke_model_status_update_endpoint(
             ModelStatus.STOPPED: "Training has been stopped for this model.",
             ModelStatus.INITIATED: "This model has been selected from the queue and will be prepared for training.",
             ModelStatus.PREPARED: "This model has been prepared and will begin training.",
-            ModelStatus.TRAINING_STARTED: "Training has started for this model.",
+            ModelStatus.RUNNING: "The job for this model is now running.",
             ModelStatus.RESULTS_UPLOADED: "The results of this model have been uploaded and can now be downloaded.",
             ModelStatus.RESULTS_UPLOAD_FAILED: "Training completed successfully, but uploading the results failed.",
         }.get(model_status)
