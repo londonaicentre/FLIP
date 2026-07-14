@@ -432,26 +432,23 @@ For full configuration reference, secrets management, troubleshooting, and known
 
 The repository is organised as follows:
 
-- `deploy`: Contains the Docker deployment and infrastructure files
-- `docs`: Contains the documentation files
-- `flip-api`: Contains the central hub API service
-- `flip-ui`: Contains the UI service
-- `flip-utils`: Contains the pip-installable flip-utils Python library
-- `fl-services`: Contains the FL Docker services (server, client, admin API)
-- `fl-apps`: Contains FL app templates and utility scripts
-- `fl-tutorials`: Contains end-to-end tutorial examples (xray classification, spleen seg/eval, diffusion)
-- `trust`: Contains the services that would be deployed in individual trust environments.
-  - `data-access-api`: Contains the data access API service
-  - `imaging-api`: Contains the imaging API service
-  - `observability`: Contains the observability stack (Grafana, Loki, Alloy)
-  - `omop-db`: Contains a mocked OMOP database
-  - `orthanc`: Contains a mocked PACS service (uses [Orthanc](https://www.orthanc-server.com/))
-  - `trust-api`: Contains the trust API service
-  - `xnat`: Contains a mocked [XNAT](https://www.xnat.org/) service
-- `flip-utils`: The `flip` Python package — platform logic, NVFLARE components, Flower helpers
-- `fl-services`: Docker images for FL networks — `fl-server`, `fl-client`, `fl-api-base`, `fl-base`
-- `fl-apps`: FL job-type implementations / app templates (`standard`, `evaluation`, `diffusion_model`, `fed_opt`)
-- `fl-tutorials`: Runnable end-to-end tutorial examples
+- `deploy`: Docker Compose deployment and infrastructure files (dev/prod, flower/nvflare); AWS/Kubernetes/local providers under `deploy/providers/`
+- `docs`: Sphinx documentation (ReadTheDocs)
+- `flip-api`: Central Hub API service (Python/FastAPI)
+- `flip-ui`: Frontend UI (Vue 3 / TypeScript / TailwindCSS)
+- `flip-utils`: The `flip` Python package (pip-installable `flip-utils`) — platform logic, NVFLARE components, Flower helpers
+- `fl-services`: Docker images for FL networks, per backend: `fl-services/nvflare/{fl-server,fl-client,fl-api-base,fl-base}` and `fl-services/flower/{superlink,supernode,fl-api-flower,fl-base}`. Each backend's `Makefile` also owns its network provisioning under `provision/`.
+- `fl-apps`: FL app templates per backend: `fl-apps/nvflare/{standard,standard_client_api,evaluation,evaluation_client_api,diffusion_model,fed_opt}`, `fl-apps/flower/{standard,evaluation}` (plus `check_required_files.sh`)
+- `fl-tutorials`: End-to-end tutorial examples per backend: `fl-tutorials/nvflare/` (xray classification, spleen seg/eval, diffusion) and `fl-tutorials/flower/` (xray classification, 3D spleen seg, numpy)
+- `trust`: Services deployed inside each trust environment
+  - `data-access-api`: Data-access API (OMOP queries)
+  - `imaging-api`: DICOM image retrieval API
+  - `observability`: Observability stack (Grafana, Loki, Alloy)
+  - `omop-db`: Mocked OMOP database
+  - `orthanc`: Mocked PACS service (uses [Orthanc](https://www.orthanc-server.com/))
+  - `trust-api`: Trust API gateway
+  - `xnat`: Mocked [XNAT](https://www.xnat.org/) service
+- `scripts`: Utility scripts (incl. `check-fl-provisioned.sh` — the `make up` FL-kit guard)
 
 ### Trust Authentication
 
