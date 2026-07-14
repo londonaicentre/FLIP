@@ -161,8 +161,8 @@ def register_trust(
     slot = _claim_free_slot(session)
     if slot is None:
         # Pool exhausted — but the configured slot list may have grown since boot
-        # (in production the FLIP_API secret is the live source; see
-        # resolve_fl_kit_slot_names). Reconcile additively and retry the claim once.
+        # (in production the /flip/fl_kit_slot_names SSM parameter is the live source;
+        # see resolve_fl_kit_slot_names). Reconcile additively and retry the claim once.
         try:
             with session.begin_nested():
                 inserted = insert_missing_slots(session, resolve_fl_kit_slot_names())
@@ -182,9 +182,9 @@ def register_trust(
         logger.error(
             "FL kit slot pool exhausted even after reconcile. Development: add slots to FL_KIT_SLOT_NAMES and "
             "restart flip-api. Stag/prod: append the new slot names to FL_KIT_SLOT_NAMES in the env file and run "
-            "`make -C deploy/providers/AWS apply-fl-kit-slots` (or grow the pool end-to-end with `make "
-            "add-fl-kits`). If slots were already applied and still don't appear, check earlier logs for "
-            "/flip/fl_kit_slot_names SSM read errors."
+            "`make -C deploy/providers/AWS apply-fl-kit-slots` (or grow the pool end-to-end with "
+            "`make -C deploy/providers/AWS add-fl-kits`). If slots were already applied and still don't appear, "
+            "check earlier logs for /flip/fl_kit_slot_names SSM read errors."
         )
         raise NoFreeKitSlotError("No FL kit slots available. Pre-provision more FL kits and try again.")
 
