@@ -77,6 +77,11 @@ The ``flip`` package is organized into logical modules:
    - ``components/`` — Event handlers, persistors, privacy filters, model locators, etc.
    - ``metrics.py`` — Metrics collection and reporting
 
+``flip.flower``
+   Flower-specific helpers:
+
+   - ``metrics.py`` — Server-side metrics collection and reporting for Flower runs
+
 
 Using the FLIP Factory
 ~~~~~~~~~~~~~~~~~~~~~~
@@ -100,14 +105,19 @@ Job Types
 
 Set the job type via the ``JOB_TYPE`` environment variable:
 
-====================  ====================================================================================
-Type                  Description
-====================  ====================================================================================
-``standard``          Federated training with FedAvg aggregation (default)
-``evaluation``        Distributed model evaluation without training
-``diffusion_model``   Two-stage training: VAE encoder followed by diffusion model training
-``fed_opt``           Custom federated optimization with flexible aggregation strategies
-====================  ====================================================================================
+===========================  ====================================================================================
+Type                         Description
+===========================  ====================================================================================
+``standard``                 Federated training with FedAvg aggregation (default; NVFLARE Executor API)
+``standard_client_api``      Federated training via the NVFLARE Client API (Client-API path used for Ark+ etc.)
+``evaluation``               Distributed model evaluation without training (NVFLARE Executor API)
+``evaluation_client_api``    Distributed model evaluation via the NVFLARE Client API (head-only eval path)
+``diffusion_model``          Two-stage training: VAE encoder followed by diffusion model training
+``fed_opt``                  Custom federated optimization with flexible aggregation strategies
+===========================  ====================================================================================
+
+The Flower backend ships its own ``standard`` and ``evaluation`` templates under
+``fl-apps/flower/`` — selected at the deploy layer by ``FL_BACKEND=flower``.
 
 
 User Application Requirements
@@ -143,11 +153,17 @@ To test FL applications locally before deploying to production:
 
 2. Place your application files in ``fl-apps/nvflare/<JOB_TYPE>/app/custom/`` (e.g. fl-apps/nvflare/standard/app/custom/).
 
-3. Run the simulator in Docker:
+3. Run one of the shipped tutorials against the NVFLARE simulator from the repository root:
 
    .. code-block:: bash
 
-      make run-container
+      make -C fl-tutorials run-tutorial TUTORIAL=xray_classification
+      # list every available tutorial with:
+      make -C fl-tutorials list-tutorials
+
+   The simulator harness is documented in ``fl-tutorials/nvflare/testing/`` and is driven per-tutorial
+   via that tutorial's ``.env.app``. See ``fl-services/nvflare/README.md`` for building the local
+   ``:dev`` FL images the harness uses.
 
 
 Running Tests
