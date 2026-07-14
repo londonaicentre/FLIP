@@ -344,7 +344,7 @@ add-fl-kits: ## Mint, upload, and activate N new FL kit slots end to end (NVFLAR
 	@[ -n "$(N)" ] || { echo "❌ N is required, e.g. make add-fl-kits N=2 PROD=true"; exit 1; }
 	@MAIN_ENV_FILE=$(MAIN_ENV_FILE) N=$(N) YES=$(YES) FL_BACKEND=$(FL_BACKEND) ./scripts/add_fl_kits.sh
 	@$(MAKE) apply-fl-kit-slots PROD=$(PROD) || { \
-	  echo "❌ Secret apply failed AFTER the kits were minted, uploaded, and appended to the env file."; \
+	  echo "❌ Parameter apply failed AFTER the kits were minted, uploaded, and appended to the env file."; \
 	  echo "   Recover with just: make apply-fl-kit-slots PROD=$(PROD)"; \
 	  echo "   Do NOT re-run add-fl-kits — it would mint additional, higher-numbered kits."; \
 	  exit 1; }

@@ -65,8 +65,8 @@ services:
       - NET_ENDPOINTS=${NET_ENDPOINTS}
       - FL_BACKEND=${FL_BACKEND}
       # No FL_KIT_SLOT_NAMES here: in production the kit-slot pool's single source
-      # is the FLIP_API secret's fl_kit_slot_names key (read at runtime by
+      # is the /flip/fl_kit_slot_names SSM parameter (read at runtime by
       # resolve_fl_kit_slot_names) — an env copy would be dead config that
-      # apply-flip-secret never updates.
+      # apply-fl-kit-slots never updates.
     restart: unless-stopped
     container_name: flip-api
