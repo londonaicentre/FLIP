@@ -20,6 +20,7 @@ from pydantic import ValidationError
 from flip_api.db.models.main_models import Trust
 from flip_api.domain.interfaces.fl import IInitiateTrainingInputPayload
 from flip_api.fl_services.initiate_training import initiate_training
+from flip_api.utils.constants import SERVICE_UNAVAILABLE_MESSAGE
 
 
 def _trust(name: str, trust_id: UUID | None = None) -> Trust:
@@ -53,6 +54,15 @@ def fake_request():
     req = MagicMock(spec=Request)
     req.scope = {"request_id": "req-id"}
     return req
+
+
+@pytest.fixture(autouse=True)
+def deployment_mode_disabled():
+    # With a MagicMock session the real is_deployment_mode_enabled would read a
+    # truthy row and 503 every request, so default it to disabled here; the
+    # deployment-mode test below overrides the return value.
+    with patch("flip_api.fl_services.initiate_training.is_deployment_mode_enabled", return_value=False) as mock_enabled:
+        yield mock_enabled
 
 
 @pytest.fixture
@@ -144,6 +154,21 @@ def test_initiate_training_failure(model_id, fake_request, mock_db, client1, moc
             initiate_training(model_id, payload, fake_request, mock_db, user_id="user123")
         assert exc_info.value.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
         assert "Unexpected error" in exc_info.value.detail
+
+
+def test_initiate_training_unavailable_in_deployment_mode(
+    model_id, fake_request, mock_db, client1, deployment_mode_disabled, mock_can_modify_model, mock_add_fl_job
+):
+    """Deployment mode enabled → 503, and nothing is queued."""
+    deployment_mode_disabled.return_value = True
+    payload = IInitiateTrainingInputPayload(trust_ids=[client1.id])
+
+    with pytest.raises(HTTPException) as exc_info:
+        initiate_training(model_id, payload, fake_request, mock_db, user_id="user123")
+
+    assert exc_info.value.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
+    assert exc_info.value.detail == SERVICE_UNAVAILABLE_MESSAGE
+    mock_add_fl_job.assert_not_called()
 
 
 def test_initiate_training_rejects_unknown_trusts(

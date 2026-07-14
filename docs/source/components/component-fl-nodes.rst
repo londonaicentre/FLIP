@@ -105,6 +105,33 @@ Note the reported upload sizes measure slightly different things per backend —
 The server will also use the package to update the status, as well as to upload the final results, which will be first saved in the server, to the final S3 buckets users can download from.
 
 
+Privacy filters on shared model updates
+---------------------------------------
+
+Before a client's training result leaves a site, the NVFLARE training job types (`standard`, `fed_opt`,
+`diffusion_model`, `standard_client_api`) pass it through a percentile-based privacy filter
+(``PercentilePrivacy``, following Shokri & Shmatikov, "Privacy-preserving deep learning", CCS '15):
+
+- weight-diff components with magnitude **below** the ``percentile``-th percentile are zeroed, so only the
+  largest ``100 - percentile`` % of each update's components are shared;
+- the surviving components are truncated to ``±gamma``.
+
+FLIP ships the stock NVFLARE defaults — ``percentile=10``, ``gamma=0.01`` (share the top 90 %, clip at 0.01).
+Both values can be tuned per app in the job's ``config_fed_client.json`` (or via
+``FlipFedAvgRecipe(percentile_privacy=...)`` for recipe-generated jobs), and the filter can be disabled for a
+run with ``off: true``. Two caveats for anyone changing them:
+
+- **Raising** ``percentile`` **sharply degrades training.** At e.g. 95 only the top 5 % of every update
+  survives, which stalls FedAvg convergence; on a frozen-backbone (head-only) finetune it silently resets the
+  global head every round. For that reason the head-only ``KeepOnlyVars`` filter is always ordered before
+  ``PercentilePrivacy``, so the percentile is computed over the trainable parameters only, never the frozen
+  backbone's all-zero diffs.
+- **This is a heuristic output filter, not formal differential privacy.** Sparsifying and clipping each shared
+  update bounds what a single round reveals, but adds no calibrated noise and carries no
+  ``(epsilon, delta)`` guarantee. It complements — rather than replaces — FLIP's primary output controls
+  (review of the uploaded app code and aggregate-only results).
+
+
 Disclaimer: some things are still under construction!
 -----------------------------------------------------
 

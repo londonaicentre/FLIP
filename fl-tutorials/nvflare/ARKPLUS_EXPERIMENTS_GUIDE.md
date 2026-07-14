@@ -94,7 +94,7 @@ export AWS_PROFILE=stag                 # must match; the Makefile enforces it
 make aws-login                          # SSO
 make plan  PROD=stag DEPLOY_TRUST_EC2=false   # hub-only (trusts run on the desktop)
 make apply PROD=stag DEPLOY_TRUST_EC2=false   # run plan + apply as SEPARATE commands
-make deploy-centralhub                  # force a fresh ECS rollout of the hub services
+make deploy-centralhub                  # roll the hub services to the develop tip (sha-<short7> task-def revisions)
 make deploy-ui                          # ship the UI (S3 + CloudFront)
 ```
 
@@ -278,7 +278,14 @@ Results (cross-site metrics) are on the model's page in the UI, or via
 
 Pretrained Ark+ checkpoint scored against each trust's **holdout** cohort
 (GSTT/Trust_1 n=478, KCH/Trust_2 n=468). Read from
-`evaluation_results/evaluation_results.json` in the downloaded results zip:
+`evaluation_results/evaluation_results.json` in the downloaded results zip.
+
+> **Shape change (FLIP#754).** Runs from that fix onwards nest the metrics one level deeper —
+> `{"<trust>": {"SRV_<model_name>": {...}}}` rather than `{"<trust>": {...}}`. Keying on the trust
+> alone made each evaluated model overwrite the previous one, so a multimodel evaluation only ever
+> reported its last model. The zip also carries `evaluation_results/evaluation_failures.json`, and a
+> run whose every `validate` task fails now ends in `ERROR` instead of `RESULTS_UPLOADED`. The table
+> below predates the change and is single-model, so its numbers are unaffected.
 
 | Lesion | GSTT (Trust_1) AUROC | KCH (Trust_2) AUROC |
 |---|---|---|

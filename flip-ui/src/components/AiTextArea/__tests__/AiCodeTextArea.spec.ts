@@ -14,6 +14,7 @@
 
 
 import { mountComponent } from "@test/helper";
+import { flushPromises } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
 import { expect } from "vitest";
 
@@ -121,6 +122,33 @@ describe("Ai Code TextArea", () => {
         await comp.find("[data-test=copy-code-btn]").trigger("click");
 
         expect(writeText).toHaveBeenCalledWith("SELECT person_id FROM person;");
+    });
+
+    test("swallows a clipboard failure and stays in its idle state", async () => {
+        const writeText = vi.fn().mockRejectedValue(new Error("denied"));
+        Object.defineProperty(navigator, "clipboard", {
+            value: { writeText },
+            configurable: true
+        });
+
+        const comp = mountComponent(AiCodeTextArea, {
+            props: {
+                name: "test-code-textarea",
+                label: "Test Code Label",
+                copyable: true,
+                initialValue: "SELECT person_id FROM person;"
+            },
+            global: { plugins: [createPinia()] }
+        });
+
+        const button = comp.find("[data-test=copy-code-btn]");
+        await button.trigger("click");
+        await flushPromises();
+
+        // The rejected write is swallowed (no unhandled rejection from the click)
+        // and the "copied" check feedback never shows — the button stays idle.
+        expect(writeText).toHaveBeenCalledWith("SELECT person_id FROM person;");
+        expect(button.attributes("aria-label")).toBe("Copy to clipboard");
     });
 
     test("blocks focus entirely when readonly so mobile taps can't summon a caret", () => {

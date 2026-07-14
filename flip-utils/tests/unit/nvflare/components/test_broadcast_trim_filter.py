@@ -14,7 +14,7 @@ from unittest.mock import MagicMock
 from nvflare.apis.dxo import DXO, DataKind
 from nvflare.app_common.app_constant import AppConstants
 
-from flip.nvflare.components.broadcast_trim_filter import TrimBroadcastVars
+from flip.nvflare.components.broadcast_trim_filter import TrimBroadcastVars, TrimEvalBroadcastVars
 
 
 def _ctx():
@@ -87,3 +87,39 @@ class TestTrimBroadcastVars:
         f = TrimBroadcastVars(include_vars="omni_heads")
         out = f.process_dxo(_dxo(DataKind.WEIGHT_DIFF), _shareable(2), _ctx())
         assert set(out.data.keys()) == {"omni_heads.0.weight", "omni_heads.0.bias"}
+
+
+class TestTrimEvalBroadcastVars:
+    """The evaluation counterpart trims the ``validate`` broadcast unconditionally (there is no
+    round header on cross-site validation, so the round-gated parent would never trim it)."""
+
+    def test_trims_when_no_round_header(self):
+        f = TrimEvalBroadcastVars(include_vars="omni_heads")
+        out = f.process_dxo(_dxo(), _shareable(None), _ctx())
+        assert set(out.data.keys()) == {"omni_heads.0.weight", "omni_heads.0.bias"}
+
+    def test_trims_even_at_round_zero(self):
+        """Round 0 would pass through untouched in the round-gated parent; the eval variant still
+        trims (the client already holds the backbone by validation time)."""
+        f = TrimEvalBroadcastVars(include_vars="omni_heads")
+        out = f.process_dxo(_dxo(), _shareable(0), _ctx())
+        assert set(out.data.keys()) == {"omni_heads.0.weight", "omni_heads.0.bias"}
+
+    def test_does_not_mutate_the_input_dict(self):
+        f = TrimEvalBroadcastVars(include_vars="omni_heads")
+        dxo = _dxo()
+        original_dict = dxo.data
+        original_keys = set(original_dict.keys())
+        out = f.process_dxo(dxo, _shareable(None), _ctx())
+        assert set(original_dict.keys()) == original_keys
+        assert out.data is not original_dict
+
+    def test_warns_and_broadcasts_full_when_regex_matches_nothing(self):
+        f = TrimEvalBroadcastVars(include_vars="does_not_exist")
+        f.log_warning = MagicMock()
+        assert f.process_dxo(_dxo(), _shareable(None), _ctx()) is None
+        f.log_warning.assert_called_once()
+
+    def test_noop_when_include_vars_empty(self):
+        assert TrimEvalBroadcastVars(include_vars="").process_dxo(_dxo(), _shareable(None), _ctx()) is None
+        assert TrimEvalBroadcastVars(include_vars=None).process_dxo(_dxo(), _shareable(None), _ctx()) is None

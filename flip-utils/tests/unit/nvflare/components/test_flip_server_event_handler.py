@@ -18,6 +18,7 @@ from nvflare.app_common.app_event_type import AppEventType
 
 from flip.constants import FlipEvents, FlipProps, ModelStatus
 from flip.exceptions import ResultsUploadError
+from flip.nvflare.components.evaluation_json_generator import EvaluationJsonGenerator
 from flip.nvflare.components.flip_server_event_handler import ServerEventHandler
 from flip.nvflare.components.persist_and_cleanup import PersistToS3AndCleanup
 from flip.nvflare.components.validation_json_generator import ValidationJsonGenerator
@@ -459,6 +460,103 @@ class TestServerEventHandler:
         assert "must be PersistToS3AndCleanup" in str(handler.system_panic.call_args)
         handler.system_panic.assert_called_once()
         assert "must be PersistToS3AndCleanup" in str(handler.system_panic.call_args)
+
+    # --- FLIP#754: an evaluation whose every validate task failed must not report success ---
+
+    @staticmethod
+    def _end_run(handler, *, all_tasks_failed, flip):
+        """Drive END_RUN with an evaluation generator reporting the given all-failed verdict."""
+        fl_ctx = MagicMock()
+        fl_ctx.get_peer_context.return_value = None
+        engine = MagicMock()
+        fl_ctx.get_engine.return_value = engine
+
+        json_generator = Mock(spec=EvaluationJsonGenerator)
+        json_generator.all_tasks_failed.return_value = all_tasks_failed
+        persist_cleanup = Mock(spec=PersistToS3AndCleanup)
+        persist_cleanup.execute.return_value = None
+        engine.get_component.side_effect = lambda comp_id: (
+            json_generator if comp_id == "json_generator" else persist_cleanup
+        )
+
+        handler.handle_event(EventType.END_RUN, fl_ctx)
+        return persist_cleanup
+
+    def test_end_run_reports_error_when_every_evaluation_task_failed(self):
+        """FLIP#754: 4/4 aborted validate tasks previously reported RESULTS_UPLOADED."""
+        model_id = "123e4567-e89b-12d3-a456-426614174000"
+        flip = MagicMock()
+        handler = ServerEventHandler(model_id=model_id, flip=flip)
+
+        self._end_run(handler, all_tasks_failed=True, flip=flip)
+
+        assert handler.final_status == ModelStatus.ERROR
+        flip.update_status.assert_called_with(model_id, ModelStatus.ERROR)
+
+    def test_end_run_still_uploads_results_when_every_evaluation_task_failed(self):
+        """The zip carries error_log.txt and evaluation_failures.json, so it must still upload."""
+        flip = MagicMock()
+        handler = ServerEventHandler(model_id="123e4567-e89b-12d3-a456-426614174000", flip=flip)
+
+        persist_cleanup = self._end_run(handler, all_tasks_failed=True, flip=flip)
+
+        persist_cleanup.execute.assert_called_once()
+
+    def test_end_run_reports_results_uploaded_on_partial_evaluation_failure(self):
+        """Some clients succeeded: the successful results still count as a completed run."""
+        model_id = "123e4567-e89b-12d3-a456-426614174000"
+        flip = MagicMock()
+        handler = ServerEventHandler(model_id=model_id, flip=flip)
+
+        self._end_run(handler, all_tasks_failed=False, flip=flip)
+
+        assert handler.final_status == ModelStatus.RESULTS_UPLOADED
+        flip.update_status.assert_called_with(model_id, ModelStatus.RESULTS_UPLOADED)
+
+    def test_end_run_keeps_stopped_when_a_user_abort_failed_every_task(self):
+        """A user-requested stop aborts every in-flight validate task; that is STOPPED, not ERROR."""
+        model_id = "123e4567-e89b-12d3-a456-426614174000"
+        flip = MagicMock()
+        handler = ServerEventHandler(model_id=model_id, flip=flip)
+        handler.final_status = ModelStatus.STOPPED
+
+        self._end_run(handler, all_tasks_failed=True, flip=flip)
+
+        assert handler.final_status == ModelStatus.STOPPED
+        flip.update_status.assert_called_with(model_id, ModelStatus.STOPPED)
+
+    def test_end_run_reports_error_when_a_fatal_error_accompanies_a_failed_evaluation(self):
+        """A fatal system error stays the most salient terminal state."""
+        model_id = "123e4567-e89b-12d3-a456-426614174000"
+        flip = MagicMock()
+        handler = ServerEventHandler(model_id=model_id, flip=flip)
+        handler.fatal_error = True
+
+        self._end_run(handler, all_tasks_failed=True, flip=flip)
+
+        assert handler.final_status == ModelStatus.ERROR
+
+    def test_end_run_reports_upload_failed_when_upload_breaks_after_a_clean_evaluation(self):
+        """Regression guard: the new all-failed branch must not shadow RESULTS_UPLOAD_FAILED."""
+        flip = MagicMock()
+        handler = ServerEventHandler(model_id="123e4567-e89b-12d3-a456-426614174000", flip=flip)
+
+        fl_ctx = MagicMock()
+        fl_ctx.get_peer_context.return_value = None
+        engine = MagicMock()
+        fl_ctx.get_engine.return_value = engine
+
+        json_generator = Mock(spec=EvaluationJsonGenerator)
+        json_generator.all_tasks_failed.return_value = False
+        persist_cleanup = Mock(spec=PersistToS3AndCleanup)
+        persist_cleanup.execute.side_effect = ResultsUploadError("boom")
+        engine.get_component.side_effect = lambda comp_id: (
+            json_generator if comp_id == "json_generator" else persist_cleanup
+        )
+
+        handler.handle_event(EventType.END_RUN, fl_ctx)
+
+        assert handler.final_status == ModelStatus.RESULTS_UPLOAD_FAILED
 
 
 class TestRoundEventRelay:

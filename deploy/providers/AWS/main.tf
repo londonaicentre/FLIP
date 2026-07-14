@@ -314,6 +314,7 @@ resource "aws_instance" "ec2_instance" {
     volume_size           = 10
     volume_type           = "gp3"
     delete_on_termination = true
+    encrypted             = true
   }
 }
 

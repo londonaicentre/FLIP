@@ -205,6 +205,11 @@ class FlipMetricsLabel(StrEnum):
 
 
 class FlipMetaKey(StrEnum):
-    """Metadata keys used in FLIP (diffusion model specific)."""
+    """Metadata keys FLIP components attach to DXO meta."""
 
+    # Diffusion model specific.
     STAGE = "stage"
+    # Name of the config.json['models'] entry an evaluation broadcast carries. Stamped by
+    # EvaluationModelLocator so Client-API evaluators can attribute each validate task's weights —
+    # the stock MODEL_OWNER header does not survive the Client-API FLModel conversion.
+    EVAL_MODEL_NAME = "flip_eval_model_name"

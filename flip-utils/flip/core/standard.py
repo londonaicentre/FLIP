@@ -178,7 +178,7 @@ class FLIPStandardProd(FLIPBase):
         Args:
             project_id (str): The ID of the project.
             accession_id (str): The accession ID of the imaging study.
-            resource_type (Union[ResourceType, List[ResourceType]]): The type of resource to download. Defaults to
+            resource_type (ResourceType | list[ResourceType]): The type of resource to download. Defaults to
             ResourceType.NIFTI.
 
         Returns:
@@ -240,7 +240,7 @@ class FLIPStandardProd(FLIPBase):
             accession_id (str): Accession ID to upload the resource to
             scan_id (str): ID of the scan to upload
             resource_id (str): Type of resource that is being uploaded (e.g. NIFTI)
-            files (List[str]): List of files to upload
+            files (list[str]): List of files to upload
         """
         if not isinstance(project_id, str):
             raise TypeError(f"expect project id to be string, but got {type(project_id)}")
@@ -604,7 +604,7 @@ class FLIPStandardDev(FLIPBase):
         Args:
             project_id (str): Project identifier
             accession_id (str): Accession ID to retrieve
-            resource_type (Union[ResourceType, List[ResourceType]]): Type of imaging resource (not used in dev)
+            resource_type (ResourceType | list[ResourceType]): Type of imaging resource (not used in dev)
 
         Returns:
             Path: Path to the accession_id folder within the images folder.
