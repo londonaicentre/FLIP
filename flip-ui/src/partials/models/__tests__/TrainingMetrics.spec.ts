@@ -131,6 +131,22 @@ describe("TrainingMetrics", () => {
         expect(wrapper.find("[role=tablist]").exists()).toBe(false);
     });
 
+    test("renders the empty state as a tall centred placeholder with the chart icon above the copy", async () => {
+        setData([]);
+        const wrapper = mountTrainingMetrics();
+        await flushPromises();
+
+        const emptyState = wrapper.find("[data-test='metrics-empty-state']");
+        for (const cls of ["min-h-[16rem]", "flex-col", "items-center", "justify-center", "rounded-lg"]) {
+            expect(emptyState.classes()).toContain(cls);
+        }
+
+        const icon = emptyState.find("svg");
+        for (const cls of ["w-12", "h-12", "mx-auto"]) {
+            expect(icon.classes()).toContain(cls);
+        }
+    });
+
     test("renders one tab per yLabel and activates the first chart by default", async () => {
         setData([TRAIN_LOSS, VAL_F1]);
         const wrapper = mountTrainingMetrics();

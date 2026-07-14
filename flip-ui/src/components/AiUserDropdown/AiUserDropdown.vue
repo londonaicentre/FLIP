@@ -25,19 +25,15 @@
                 >
                     <span class="flex items-center justify-between w-full">
                         <span class="flex items-center justify-between min-w-0 space-x-3">
-                            <div
-                                class="flex items-center justify-center overflow-hidden bg-gray-100 dark:bg-dark-surface rounded-full w-7 h-7"
-                            >
-                                <icon-ph-user-square-duotone
-                                    class="flex-shrink-0 w-6 h-6 text-gray-500 dark:text-gray-300 rounded-full"
-                                />
-                            </div>
+                            <icon-ph-user-circle
+                                class="flex-shrink-0 w-7 h-7 text-gray-500 dark:text-gray-300"
+                            />
                             <span class="flex-col flex-1 hidden min-w-0 md:flex">
                                 <span class="font-semibold truncate select-none">
                                     {{ displayName }}{{ role ? ` (${role})` : '' }}
                                 </span>
                             </span>
-                            <icon-heroicons-outline-selector
+                            <icon-ph-caret-down
                                 class="flex-shrink-0 w-4 h-4 text-gray-400 dark:text-gray-300 group-hover:text-gray-500 dark:group-hover:text-gray-200"
                                 aria-hidden="true"
                             />
@@ -78,8 +74,8 @@
                             data-test="sign-out-btn"
                             @click="emit('toggleDarkMode')"
                         >
-                            <icon-ph-sun-duotone v-if="isDark" class="dark:group-hover:text-yellow-200 h-5 w-5 mr-3 text-gray-500 dark:text-gray-300 transition group-hover:text-gray-600" />
-                            <icon-ph-moon-stars-duotone v-else class="h-5 w-5 mr-3 text-gray-500 dark:text-gray-300 transition group-hover:text-gray-600 dark:group-hover:text-gray-200" />
+                            <icon-ph-sun v-if="isDark" class="dark:group-hover:text-yellow-200 h-5 w-5 mr-3 text-gray-500 dark:text-gray-300 transition group-hover:text-gray-600" />
+                            <icon-ph-moon v-else class="h-5 w-5 mr-3 text-gray-500 dark:text-gray-300 transition group-hover:text-gray-600 dark:group-hover:text-gray-200" />
                             {{ isDark ? 'Light Mode' : "Dark Mode" }}
                         </button>
                     </MenuItem>
@@ -94,7 +90,7 @@
                             data-test="change-password-btn"
                             @click="changePassword"
                         >
-                            <icon-ph-lock-duotone
+                            <icon-ph-lock
                                 class="w-5 h-5 mr-3 text-gray-500 dark:text-gray-300 transition group-hover:text-gray-600 dark:group-hover:text-gray-200"
                                 aria-hidden="true"
                             />

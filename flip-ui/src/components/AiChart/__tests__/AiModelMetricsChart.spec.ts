@@ -113,6 +113,37 @@ describe("AiModelMetricsChart", () => {
         expect(setOption).toHaveBeenCalled();
     });
 
+    it("overlays the legend and toolbox inside the plot instead of reserving a side column", async () => {
+        mountChart();
+        await nextTick();
+        await flushPromises();
+
+        const opts = setOption.mock.calls[0][0];
+        // The grid takes the full card width — no 160px legend column on the right.
+        expect(opts.grid.right).toBeLessThanOrEqual(24);
+        // Toolbox pinned to the plot's top-right corner, legend floating vertically
+        // centred on the right edge, with a translucent backing so it stays legible
+        // over the series lines.
+        expect(opts.toolbox.right).toBe(12);
+        expect(opts.toolbox.top).toBe(8);
+        expect(opts.legend.right).toBe(12);
+        expect(opts.legend.top).toBe("middle");
+        expect(opts.legend.backgroundColor).toBeTruthy();
+    });
+
+    it("ships no persistent zoom UI, only the on-demand toolbox box-zoom", async () => {
+        mountChart();
+        await nextTick();
+        await flushPromises();
+
+        const opts = setOption.mock.calls[0][0];
+        // No dataZoom components: no slider bar under the plot, no scroll/trackpad
+        // hijack. Zoom lives behind the toolbox magnifier instead.
+        expect(opts.dataZoom).toBeUndefined();
+        expect(opts.toolbox.feature.dataZoom.show).toBe(true);
+        expect(opts.toolbox.feature.dataZoom.filterMode).toBe("none");
+    });
+
     it("emits a line series per metric and sorts the legend alphabetically", async () => {
         mountChart();
         await nextTick();
@@ -175,7 +206,9 @@ describe("AiModelMetricsChart", () => {
         expect(opts.backgroundColor).toBe("transparent");
         expect(opts.grid.backgroundColor).toBe("transparent");
         expect(opts.series[0].itemStyle.color).toBe(CHART_SERIES_COLORS.light[0]);
-        expect(opts.toolbox).toEqual(chartToolbox(false));
+        // The shared toolbox theme applies as-is; this chart adds its own
+        // on-demand box-zoom feature on top (covered by the zoom test above).
+        expect(opts.toolbox).toMatchObject(chartToolbox(false));
 
         // The off-token fills/inks flagged in the dark-mode review must not resurface.
         const flattened = JSON.stringify(opts);

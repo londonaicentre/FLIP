@@ -11,6 +11,9 @@ check_aws_profile
 lock_id="${1:?Lock ID is required: force-unlock.sh <lock-id>}"
 
 log_info "Force unlocking Terraform state (ID: $lock_id)..."
+# Unset static AWS credential env vars that would override the profile-based
+# SSO chain (invalid security token).
+unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_SECURITY_TOKEN
 if terraform force-unlock -force "$lock_id"; then
     log_success "Lock released"
 else

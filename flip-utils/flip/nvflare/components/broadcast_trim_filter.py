@@ -50,6 +50,12 @@ class TrimBroadcastVars(DXOFilter):
             supported_data_kinds=[DataKind.WEIGHTS, DataKind.WEIGHT_DIFF],
             data_kinds_to_filter=data_kinds,
         )
+        # Stored under the exact constructor-param name so NVFLARE's FedJob/Recipe export round-trips it:
+        # FedJob serialises a component's args by matching instance attributes to __init__ param names, so
+        # without this the recipe-exported config would drop include_vars and the filter would silently
+        # become a no-op. (The deploy-time fl-server injection writes args.include_vars explicitly, so only
+        # the recipe/export path depended on this.)
+        self.include_vars = include_vars
         # None when no (or empty) regex is given — the filter is then a no-op (full model every round).
         self.pattern = re.compile(include_vars) if isinstance(include_vars, str) and include_vars else None
 
@@ -63,21 +69,62 @@ class TrimBroadcastVars(DXOFilter):
             # the frozen backbone once. Returning None leaves the DXO untouched.
             return None
 
+        return self._trim_to_pattern(dxo, fl_ctx)
+
+    def _trim_to_pattern(self, dxo: DXO, fl_ctx: FLContext) -> DXO | None:
+        """Trim ``dxo.data`` to only the weight keys matching ``self.pattern``.
+
+        Shared by the round-gated training filter and the always-trim evaluation variant
+        (:class:`TrimEvalBroadcastVars`). Non-mutating on the caller's dict — it builds a new dict —
+        because on the server ``dxo.data`` aliases the retained global model, so popping keys would
+        corrupt the server's own weights.
+
+        Args:
+            dxo (DXO): the outgoing broadcast DXO whose ``data`` (a weights dict) is trimmed.
+            fl_ctx (FLContext): the FL context, used only for logging.
+
+        Returns:
+            DXO | None: the DXO with its data trimmed to the matching (head) keys, or ``None`` (leave
+            the DXO untouched, i.e. broadcast the full model) when the regex matches no keys.
+        """
+        assert self.pattern is not None  # callers guard the no-pattern (no-op) case before dispatching here
         weights = dxo.data
         trimmed = {name: value for name, value in weights.items() if self.pattern.search(name)}
         if not trimmed:
             # Matching nothing almost certainly means a wrong regex — broadcast the full model rather
-            # than an empty one (clients would have nothing to train from).
+            # than an empty one (clients would have nothing to train from / validate).
             self.log_warning(
                 fl_ctx,
-                f"TrimBroadcastVars: regex {self.pattern.pattern!r} matched no keys; broadcasting full model.",
+                f"{type(self).__name__}: regex {self.pattern.pattern!r} matched no keys; broadcasting full model.",
             )
             return None
 
         self.log_info(
             fl_ctx,
-            f"TrimBroadcastVars: broadcasting {len(trimmed)} of {len(weights)} var(s) "
-            f"matching {self.pattern.pattern!r} at round {current_round}.",
+            f"{type(self).__name__}: broadcasting {len(trimmed)} of {len(weights)} var(s) "
+            f"matching {self.pattern.pattern!r}.",
         )
         dxo.data = trimmed
         return dxo
+
+
+class TrimEvalBroadcastVars(TrimBroadcastVars):
+    """Server-side ``task_data_filter`` for the ``validate`` task: broadcast ONLY the trainable head.
+
+    The evaluation counterpart of :class:`TrimBroadcastVars`. Post-training cross-site validation
+    (``GlobalModelEval``) re-broadcasts the full ~759 MiB global model to every client purely so it
+    can be scored — but for a frozen-backbone fine-tune the backbone is byte-identical to the
+    pretrained checkpoint each client already received at training round 0, so re-shipping it is pure
+    waste. This trims the ``validate`` broadcast down to just the head; the client's
+    :class:`ReconstructFullModelForEval` merges it back onto the backbone it cached during training,
+    so the validator still receives a full state dict — no change to user validation code is required.
+
+    Unlike :class:`TrimBroadcastVars`, the trim is **unconditional**: the cross-site-validation task
+    carries no ``CURRENT_ROUND`` header (the round-gated parent would therefore never trim it), and
+    the client always already holds the backbone by the time validation runs.
+    """
+
+    def process_dxo(self, dxo: DXO, shareable: Shareable, fl_ctx: FLContext) -> DXO | None:
+        if self.pattern is None:
+            return None
+        return self._trim_to_pattern(dxo, fl_ctx)

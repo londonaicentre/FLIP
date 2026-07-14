@@ -304,7 +304,7 @@ This runs the following steps in order:
 | 8 | `make update-env` | Refresh `.env.stag` with Terraform outputs |
 | 9 | `make ssh-config` | Write SSM-tunnelled `Host flip` / `Host flip-trust` into `~/.ssh/config` |
 | 10 | `make ansible-init` | Configure Trust EC2 with Docker, CloudWatch, and FL assets |
-| 11 | `make deploy-centralhub` | Force-redeploy ECS Fargate services + sync UI to S3 + invalidate CloudFront |
+| 11 | `make deploy-centralhub` | Deploy ECS Fargate services at the env branch tip (immutable `sha-<short7>` task-def revisions) + sync UI to S3 + invalidate CloudFront |
 | 12 | `make register-trusts` | Register trusts on the hub and write per-trust kit files |
 | 13 | `make deploy-trust` | Deploy trust stack to Trust EC2 via Docker Compose |
 | 14 | `make status` | Health checks |

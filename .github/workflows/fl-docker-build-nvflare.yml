@@ -52,10 +52,18 @@ jobs:
       - name: Determine image tags
         id: tags
         run: |
-          BASE_TAGS="${REGISTRY}/${ORG}/${BASE_IMAGE}:${{ github.sha }}"
-          SERVER_TAGS="${REGISTRY}/${ORG}/${SERVER_IMAGE}:${{ github.sha }}"
-          CLIENT_TAGS="${REGISTRY}/${ORG}/${CLIENT_IMAGE}:${{ github.sha }}"
-          API_TAGS="${REGISTRY}/${ORG}/${API_IMAGE}:${{ github.sha }}"
+          # Immutable short-SHA tag (FLIP#751): the server/api images are consumed by
+          # `make deploy-centralhub`; the base/client tags are pushed uniformly. Length 7
+          # must match the tag resolution in deploy/providers/AWS/Makefile.
+          # Persisted to GITHUB_ENV so the per-image build/push/cleanup steps see it.
+          SHORT_SHA="$(echo "${{ github.sha }}" | cut -c1-7)"
+          [[ -n "$SHORT_SHA" ]] || { echo "::error::empty commit SHA — cannot compute the sha-<short7> tag"; exit 1; }
+          echo "SHORT_SHA=${SHORT_SHA}" >> $GITHUB_ENV
+
+          BASE_TAGS="${REGISTRY}/${ORG}/${BASE_IMAGE}:${{ github.sha }},${REGISTRY}/${ORG}/${BASE_IMAGE}:sha-${SHORT_SHA}"
+          SERVER_TAGS="${REGISTRY}/${ORG}/${SERVER_IMAGE}:${{ github.sha }},${REGISTRY}/${ORG}/${SERVER_IMAGE}:sha-${SHORT_SHA}"
+          CLIENT_TAGS="${REGISTRY}/${ORG}/${CLIENT_IMAGE}:${{ github.sha }},${REGISTRY}/${ORG}/${CLIENT_IMAGE}:sha-${SHORT_SHA}"
+          API_TAGS="${REGISTRY}/${ORG}/${API_IMAGE}:${{ github.sha }},${REGISTRY}/${ORG}/${API_IMAGE}:sha-${SHORT_SHA}"
 
           if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
             BASE_TAGS="${BASE_TAGS},${REGISTRY}/${ORG}/${BASE_IMAGE}:prod"
@@ -100,7 +108,8 @@ jobs:
         run: |
           docker build ${BUILD_ARGS} \
             -f fl-services/nvflare/fl-base/Dockerfile \
-            -t $REGISTRY/$ORG/$BASE_IMAGE:${{ github.sha }} .
+            -t $REGISTRY/$ORG/$BASE_IMAGE:${{ github.sha }} \
+            -t $REGISTRY/$ORG/$BASE_IMAGE:sha-$SHORT_SHA .
 
           # Tag environment-specific
           if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
@@ -114,6 +123,7 @@ jobs:
       - name: Push Base Image
         run: |
           docker push $REGISTRY/$ORG/$BASE_IMAGE:${{ github.sha }}
+          docker push $REGISTRY/$ORG/$BASE_IMAGE:sha-$SHORT_SHA
           if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
             docker push $REGISTRY/$ORG/$BASE_IMAGE:prod
           elif [[ "${{ github.ref }}" == "refs/heads/develop" ]]; then
@@ -124,6 +134,7 @@ jobs:
       - name: Cleanup after base image
         run: |
           # Remove untagged local copies but keep the SHA-tagged image for dependent builds
+          docker rmi $REGISTRY/$ORG/$BASE_IMAGE:sha-$SHORT_SHA || true
           if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
             docker rmi $REGISTRY/$ORG/$BASE_IMAGE:prod || true
           elif [[ "${{ github.ref }}" == "refs/heads/develop" ]]; then
@@ -141,7 +152,8 @@ jobs:
           docker build ${BUILD_ARGS} \
             -f fl-services/nvflare/fl-server/Dockerfile \
             --build-arg BASE_REF=$REGISTRY/$ORG/$BASE_IMAGE:${{ github.sha }} \
-            -t $REGISTRY/$ORG/$SERVER_IMAGE:${{ github.sha }} fl-services/nvflare/fl-server
+            -t $REGISTRY/$ORG/$SERVER_IMAGE:${{ github.sha }} \
+            -t $REGISTRY/$ORG/$SERVER_IMAGE:sha-$SHORT_SHA fl-services/nvflare/fl-server
 
           if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
             docker tag $REGISTRY/$ORG/$SERVER_IMAGE:${{ github.sha }} $REGISTRY/$ORG/$SERVER_IMAGE:prod
@@ -154,6 +166,7 @@ jobs:
       - name: Push FL Server Image
         run: |
           docker push $REGISTRY/$ORG/$SERVER_IMAGE:${{ github.sha }}
+          docker push $REGISTRY/$ORG/$SERVER_IMAGE:sha-$SHORT_SHA
           if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
             docker push $REGISTRY/$ORG/$SERVER_IMAGE:prod
           elif [[ "${{ github.ref }}" == "refs/heads/develop" ]]; then
@@ -164,6 +177,7 @@ jobs:
       - name: Cleanup after FL Server
         run: |
           docker rmi $REGISTRY/$ORG/$SERVER_IMAGE:${{ github.sha }} || true
+          docker rmi $REGISTRY/$ORG/$SERVER_IMAGE:sha-$SHORT_SHA || true
           if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
             docker rmi $REGISTRY/$ORG/$SERVER_IMAGE:prod || true
           elif [[ "${{ github.ref }}" == "refs/heads/develop" ]]; then
@@ -181,7 +195,8 @@ jobs:
           docker build ${BUILD_ARGS} \
             -f fl-services/nvflare/fl-client/Dockerfile \
             --build-arg BASE_REF=$REGISTRY/$ORG/$BASE_IMAGE:${{ github.sha }} \
-            -t $REGISTRY/$ORG/$CLIENT_IMAGE:${{ github.sha }} fl-services/nvflare/fl-client
+            -t $REGISTRY/$ORG/$CLIENT_IMAGE:${{ github.sha }} \
+            -t $REGISTRY/$ORG/$CLIENT_IMAGE:sha-$SHORT_SHA fl-services/nvflare/fl-client
 
           if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
             docker tag $REGISTRY/$ORG/$CLIENT_IMAGE:${{ github.sha }} $REGISTRY/$ORG/$CLIENT_IMAGE:prod
@@ -194,6 +209,7 @@ jobs:
       - name: Push FL Client Image
         run: |
           docker push $REGISTRY/$ORG/$CLIENT_IMAGE:${{ github.sha }}
+          docker push $REGISTRY/$ORG/$CLIENT_IMAGE:sha-$SHORT_SHA
           if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
             docker push $REGISTRY/$ORG/$CLIENT_IMAGE:prod
           elif [[ "${{ github.ref }}" == "refs/heads/develop" ]]; then
@@ -204,6 +220,7 @@ jobs:
       - name: Cleanup after FL Client
         run: |
           docker rmi $REGISTRY/$ORG/$CLIENT_IMAGE:${{ github.sha }} || true
+          docker rmi $REGISTRY/$ORG/$CLIENT_IMAGE:sha-$SHORT_SHA || true
           if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
             docker rmi $REGISTRY/$ORG/$CLIENT_IMAGE:prod || true
           elif [[ "${{ github.ref }}" == "refs/heads/develop" ]]; then
@@ -220,7 +237,8 @@ jobs:
         run: |
           docker build ${BUILD_ARGS} \
             -f fl-services/nvflare/fl-api-base/Dockerfile \
-            -t $REGISTRY/$ORG/$API_IMAGE:${{ github.sha }} fl-services/nvflare/fl-api-base
+            -t $REGISTRY/$ORG/$API_IMAGE:${{ github.sha }} \
+            -t $REGISTRY/$ORG/$API_IMAGE:sha-$SHORT_SHA fl-services/nvflare/fl-api-base
 
           if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
             docker tag $REGISTRY/$ORG/$API_IMAGE:${{ github.sha }} $REGISTRY/$ORG/$API_IMAGE:prod
@@ -233,6 +251,7 @@ jobs:
       - name: Push FL API Image
         run: |
           docker push $REGISTRY/$ORG/$API_IMAGE:${{ github.sha }}
+          docker push $REGISTRY/$ORG/$API_IMAGE:sha-$SHORT_SHA
           if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
             docker push $REGISTRY/$ORG/$API_IMAGE:prod
           elif [[ "${{ github.ref }}" == "refs/heads/develop" ]]; then
@@ -243,6 +262,7 @@ jobs:
       - name: Final cleanup
         run: |
           docker rmi $REGISTRY/$ORG/$API_IMAGE:${{ github.sha }} || true
+          docker rmi $REGISTRY/$ORG/$API_IMAGE:sha-$SHORT_SHA || true
           if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
             docker rmi $REGISTRY/$ORG/$API_IMAGE:prod || true
           elif [[ "${{ github.ref }}" == "refs/heads/develop" ]]; then

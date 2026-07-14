@@ -40,8 +40,8 @@
         "id": "percentile_privacy",
         "path": "flip.nvflare.components.PercentilePrivacy",
         "args": {
-          "gamma": 2.0,
-          "percentile": 95,
+          "gamma": 0.01,
+          "percentile": 10,
           "off": false
       }
         }

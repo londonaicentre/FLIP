@@ -19,30 +19,32 @@
     <div class="flex flex-col w-full h-full">
         <div class="w-full px-8 pt-8 pb-8 overflow-y-auto">
             <!-- Header — design ref: ConnectionA (CSHeader) in design_handoff_full/05_connection/connection.jsx -->
-            <div class="flex flex-col gap-4 mb-4 sm:flex-row sm:items-end sm:justify-between">
-                <div>
-                    <p class="text-xs font-mono uppercase tracking-widest text-gray-500 dark:text-gray-300">
-                        Federation · {{ trusts?.length ?? 0 }} {{ (trusts?.length ?? 0) === 1 ? "trust" : "trusts" }}
-                    </p>
+            <div class="mb-4">
+                <p class="text-xs font-mono uppercase tracking-widest text-gray-500 dark:text-gray-300">
+                    Federation · {{ trusts?.length ?? 0 }} {{ (trusts?.length ?? 0) === 1 ? "trust" : "trusts" }}
+                </p>
+                <div class="flex items-center justify-between gap-4">
                     <h1 class="text-3xl font-semibold font-heading mt-1 text-gray-900 dark:text-gray-100">
                         <span class="text-primary-600 underline decoration-4 decoration-primary-500/60 underline-offset-8 dark:text-white">Connection</span>
                         <span class="ml-2">status</span>
                     </h1>
-                    <p class="mt-2 text-sm text-gray-500 dark:text-gray-300" data-test="subtitle">
-                        {{ subtitle }}
-                    </p>
-                </div>
-                <div class="flex-shrink-0 sm:pb-4">
                     <AiButton
                         v-if="isAdmin"
                         primary
                         large
+                        class="shrink-0"
                         data-test="add-trust-btn"
+                        aria-label="Add Trust"
+                        tooltip="Add Trust"
                         @click="showAddTrustModal = true"
                     >
-                        Add Trust
+                        <icon-mdi-plus class="lg:mr-2" />
+                        <span class="hidden lg:inline">Add Trust</span>
                     </AiButton>
                 </div>
+                <p class="mt-2 text-sm text-gray-500 dark:text-gray-300" data-test="subtitle">
+                    {{ subtitle }}
+                </p>
             </div>
 
             <!-- View toggle: list (ConnectionA) vs radial (ConnectionD) -->
@@ -64,7 +66,7 @@
                             : 'text-gray-500 hover:text-gray-800 dark:text-gray-300 dark:hover:text-gray-200'"
                         @click="viewMode = 'list'"
                     >
-                        <icon-ph-list-bullets-duotone class="w-4 h-4" />
+                        <icon-ph-list-bullets class="w-4 h-4" />
                         List
                     </button>
                     <button
@@ -78,122 +80,148 @@
                             : 'text-gray-500 hover:text-gray-800 dark:text-gray-300 dark:hover:text-gray-200'"
                         @click="viewMode = 'radial'"
                     >
-                        <icon-ph-share-network-duotone class="w-4 h-4" />
+                        <icon-ph-share-network class="w-4 h-4" />
                         Topology
                     </button>
                 </div>
             </div>
 
-            <!-- Summary card (CSSummary) -->
-            <AiCard v-if="viewMode === 'list'" class="mb-4">
-                <div class="flex flex-wrap">
-                    <div
-                        v-for="(s, idx) in summaryCells"
-                        :key="s.key"
-                        class="flex flex-col gap-1 px-6 py-4 min-w-[140px]"
-                        :class="{ 'border-l border-gray-200 dark:border-dark-border': idx > 0 }"
-                    >
-                        <div class="flex items-center gap-2">
-                            <span class="inline-block w-2 h-2 rounded-full" :class="s.dotClass" />
-                            <span class="text-[11px] font-mono uppercase tracking-widest text-gray-500 dark:text-gray-300">
-                                {{ s.label }}
-                            </span>
-                        </div>
-                        <div
-                            class="font-heading font-semibold text-3xl leading-none"
-                            :class="s.count > 0 && s.key !== 'online' ? s.warnTextClass : 'text-gray-900 dark:text-gray-100'"
-                        >
-                            {{ s.count }}
-                        </div>
+            <!-- Filter tiles: one per connection state, each a toggle (models-page idiom).
+                 Click the active tile to reset. -->
+            <div v-if="viewMode === 'list'" class="flex flex-wrap gap-3 mb-4">
+                <button
+                    v-for="tile in TILES"
+                    :key="tile.key"
+                    type="button"
+                    :data-test="`filter-tile-${tile.key}`"
+                    :aria-pressed="activeTile === tile.key"
+                    class="flex-1 min-w-[150px] rounded-xl border bg-white px-4 py-3 text-left transition dark:bg-dark-surface"
+                    :class="activeTile === tile.key
+                        ? [tile.ring, 'ring-[3px]']
+                        : 'border-gray-200 hover:border-gray-300 dark:border-dark-border dark:hover:border-dark-border-strong'"
+                    @click="toggleTile(tile.key)"
+                >
+                    <div class="flex items-center gap-2">
+                        <span class="inline-block w-2 h-2 rounded-full" :class="tile.dot" />
+                        <span class="text-[11px] font-mono uppercase tracking-widest text-gray-500 dark:text-gray-300">
+                            {{ tile.label }}
+                        </span>
                     </div>
-                </div>
-            </AiCard>
+                    <div
+                        :data-test="`filter-tile-count-${tile.key}`"
+                        class="mt-1 text-2xl font-heading font-bold text-gray-900 dark:text-gray-100"
+                    >
+                        {{ stateCounts[tile.key] }}
+                    </div>
+                </button>
+            </div>
 
             <!-- Status table (ConnectionA table) -->
             <AiCard v-if="viewMode === 'list'">
                 <div v-if="!trusts" class="p-8 text-center">
                     <AiLoader />
                 </div>
-                <div v-else class="overflow-x-auto">
-                    <table class="w-full">
-                        <thead>
-                            <tr class="bg-gray-50 dark:bg-dark-surface border-b border-gray-200 dark:border-dark-border">
-                                <th
-                                    v-for="col in columns"
-                                    :key="col.key ?? col.label"
-                                    :data-test="col.key ? `sort-header-${col.key}` : undefined"
-                                    class="px-4 py-3 text-xs font-mono uppercase tracking-widest text-gray-500 dark:text-gray-300 font-medium select-none"
-                                    :class="[
-                                        col.align === 'right' ? 'text-right' : 'text-left',
-                                        col.width ?? '',
-                                        col.key ? 'cursor-pointer hover:text-gray-700 dark:hover:text-gray-200' : ''
-                                    ]"
-                                    @click="col.key ? toggleSort(col.key) : undefined"
+                <template v-else>
+                    <!-- Mobile: stacked two-line trust rows (design handoff 3a) — the
+                         7-column table collapses badly below sm. Same data, same sort
+                         state, no horizontal squashing. -->
+                    <div data-test="trusts-stacked-list" class="sm:hidden">
+                        <div
+                            class="flex items-center gap-2 px-4 py-2 bg-gray-50 border-b border-gray-200
+                            dark:bg-dark-surface dark:border-dark-border"
+                        >
+                            <span class="flex-1 text-[10.5px] font-mono uppercase tracking-widest text-gray-500 dark:text-gray-300">
+                                Trusts
+                            </span>
+                            <Menu as="div" class="relative">
+                                <MenuButton
+                                    data-test="mobile-sort-btn"
+                                    class="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-bold rounded
+                                    border border-gray-300 bg-white text-gray-700 dark:text-gray-300
+                                    dark:border-dark-border-strong dark:bg-dark-canvas transition
+                                    hover:bg-gray-100 dark:hover:bg-dark-surface"
                                 >
-                                    {{ col.label }}
-                                    <span
-                                        v-if="col.key && sortKey === col.key"
-                                        class="ml-1 text-primary-600 dark:text-primary-300"
-                                    >{{ sortDir === "asc" ? "↑" : "↓" }}</span>
-                                </th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <tr
-                                v-for="(t, idx) in sortedTrusts"
+                                    Sort: {{ activeSortLabel }} {{ sortDir === "asc" ? "↑" : "↓" }}
+                                </MenuButton>
+                                <MenuItems
+                                    class="absolute right-0 z-10 mt-1 w-40 py-1 origin-top-right bg-white rounded-md
+                                    shadow-lg ring-1 ring-black/5 dark:bg-dark-canvas dark:ring-white/20
+                                    focus:outline-none"
+                                >
+                                    <MenuItem
+                                        v-for="opt in MOBILE_SORT_OPTIONS"
+                                        :key="opt.key"
+                                        v-slot="{ active }"
+                                    >
+                                        <button
+                                            type="button"
+                                            :data-test="`mobile-sort-${opt.key}`"
+                                            class="flex items-center justify-between w-full px-3 py-2 text-sm text-left
+                                            text-gray-700 dark:text-gray-300"
+                                            :class="{ 'bg-gray-100 dark:bg-dark-surface': active }"
+                                            @click="toggleSort(opt.key)"
+                                        >
+                                            {{ opt.label }}
+                                            <span v-if="sortKey === opt.key" class="text-primary-600 dark:text-primary-300">
+                                                {{ sortDir === "asc" ? "↑" : "↓" }}
+                                            </span>
+                                        </button>
+                                    </MenuItem>
+                                </MenuItems>
+                            </Menu>
+                        </div>
+                        <div class="divide-y divide-gray-100 dark:divide-dark-border">
+                            <div
+                                v-for="t in displayedTrusts"
                                 :key="t.id"
-                                data-test="trust-row"
-                                :class="[
-                                    idx > 0 ? 'border-t border-gray-100 dark:border-dark-border' : '',
-                                    t._state === 'offline' ? 'bg-red-50/40 dark:bg-red-900/10' : 'dark:bg-dark-surface'
-                                ]"
+                                data-test="trust-row-mobile"
+                                class="px-4 py-3"
+                                :class="t._state === 'offline' ? 'bg-red-50/40 dark:bg-red-900/10' : ''"
                             >
-                                <td class="px-4 py-4 align-middle">
-                                    <div class="inline-flex items-center gap-2">
-                                        <span class="inline-block w-2 h-2 rounded-full" :class="dotClass(t._state)" />
-                                        <span
-                                            class="inline-block px-2 py-0.5 rounded text-xs font-medium"
-                                            :class="pillClass(t._state)"
-                                        >
-                                            {{ stateLabel(t._state) }}
-                                        </span>
-                                    </div>
-                                </td>
-                                <td class="px-4 py-4 align-middle">
-                                    <div class="flex flex-col">
-                                        <span
-                                            class="font-semibold font-heading text-base text-gray-900 dark:text-gray-100"
-                                            data-test="trust-name"
-                                        >
+                                <div class="flex items-start gap-2.5">
+                                    <span class="inline-block w-2 h-2 mt-[5px] rounded-full shrink-0" :class="dotClass(t._state)" />
+                                    <div class="flex-1 min-w-0">
+                                        <div class="font-heading font-semibold text-sm text-gray-900 dark:text-gray-100">
                                             {{ t.name }}
-                                        </span>
-                                        <span
+                                        </div>
+                                        <div
                                             v-if="t.code && t.code !== t.name"
-                                            class="font-mono text-xs text-gray-500 dark:text-gray-300 mt-0.5"
-                                            data-test="trust-code"
+                                            data-test="trust-code-mobile"
+                                            class="font-mono text-[11px] text-gray-500 dark:text-gray-300 mt-0.5"
                                         >
                                             {{ t.code }}
-                                        </span>
+                                        </div>
                                     </div>
-                                </td>
-                                <td class="px-4 py-4 align-middle text-base text-gray-600 dark:text-gray-300">
-                                    {{ t.region ?? "—" }}
-                                </td>
-                                <td
-                                    class="px-4 py-4 align-middle font-mono text-sm"
-                                    :class="t._state === 'offline' ? 'text-red-600 dark:text-red-400' : 'text-gray-600 dark:text-gray-300'"
-                                    data-test="trust-heartbeat"
-                                >
-                                    {{ heartbeatText(t.last_heartbeat) }}
-                                </td>
-                                <td class="px-4 py-4 align-middle text-right font-mono text-base text-gray-900 dark:text-gray-100">
-                                    {{ t.project_count }}
-                                </td>
-                                <td class="px-4 py-4 align-middle" data-test="trust-uptime">
+                                    <span
+                                        class="inline-block px-2 py-0.5 rounded text-[11px] font-medium shrink-0"
+                                        :class="pillClass(t._state)"
+                                    >
+                                        {{ stateLabel(t._state) }}
+                                    </span>
+                                </div>
+                                <div class="flex items-center gap-1.5 mt-2 pl-[18px]">
+                                    <span class="font-mono text-[11px] text-gray-600 dark:text-gray-300">
+                                        {{ t.region ?? "—" }}
+                                    </span>
+                                    <span class="text-gray-300 dark:text-gray-600">·</span>
+                                    <span
+                                        data-test="trust-heartbeat-mobile"
+                                        class="font-mono text-[11px]"
+                                        :class="t._state === 'offline'
+                                            ? 'text-red-600 dark:text-red-400'
+                                            : 'text-gray-600 dark:text-gray-300'"
+                                    >
+                                        {{ heartbeatText(t.last_heartbeat) }}
+                                    </span>
+                                    <span class="text-gray-300 dark:text-gray-600">·</span>
+                                    <span class="font-mono text-[11px] text-gray-600 dark:text-gray-300">
+                                        {{ t.project_count }} {{ t.project_count === 1 ? "project" : "projects" }}
+                                    </span>
+                                    <span class="flex-1" />
                                     <svg
                                         :width="uptimeSvg.w"
                                         :height="uptimeSvg.h"
-                                        class="block"
+                                        class="block shrink-0"
                                         :title="uptimeTitle"
                                     >
                                         <polyline
@@ -214,17 +242,128 @@
                                             :opacity="i === t._uptimeDots.length - 1 ? 1 : 0.35"
                                         />
                                     </svg>
-                                </td>
-                                <td class="px-4 py-4" />
-                            </tr>
-                            <tr v-if="!sortedTrusts.length">
-                                <td colspan="7" class="text-center py-6 text-gray-500 dark:text-gray-300">
-                                    No trusts registered yet.
-                                </td>
-                            </tr>
-                        </tbody>
-                    </table>
-                </div>
+                                </div>
+                            </div>
+                            <div v-if="!displayedTrusts.length" class="text-center py-6 text-gray-500 dark:text-gray-300">
+                                {{ activeTile ? "No trusts match this filter." : "No trusts registered yet." }}
+                            </div>
+                        </div>
+                    </div>
+                    <div class="hidden sm:block overflow-x-auto">
+                        <!-- ring-0/shadow-none + transparent tbody override main.css's global
+                             table chrome (ring, shadow, dark:bg-gray-800 tbody, gray-700
+                             dividers) so dark mode shows the card canvas through the rows,
+                             matching the stacked mobile list. -->
+                        <table class="w-full ring-0 shadow-none">
+                            <thead>
+                                <tr class="bg-gray-50 dark:bg-dark-surface border-b border-gray-200 dark:border-dark-border">
+                                    <th
+                                        v-for="col in columns"
+                                        :key="col.key ?? col.label"
+                                        :data-test="col.key ? `sort-header-${col.key}` : undefined"
+                                        class="px-4 py-3 text-xs font-mono uppercase tracking-widest text-gray-500 dark:text-gray-300 font-medium select-none"
+                                        :class="[
+                                            col.align === 'right' ? 'text-right' : 'text-left',
+                                            col.width ?? '',
+                                            col.key ? 'cursor-pointer hover:text-gray-700 dark:hover:text-gray-200' : ''
+                                        ]"
+                                        @click="col.key ? toggleSort(col.key) : undefined"
+                                    >
+                                        {{ col.label }}
+                                        <span
+                                            v-if="col.key && sortKey === col.key"
+                                            class="ml-1 text-primary-600 dark:text-primary-300"
+                                        >{{ sortDir === "asc" ? "↑" : "↓" }}</span>
+                                    </th>
+                                </tr>
+                            </thead>
+                            <tbody class="dark:bg-transparent divide-gray-100 dark:divide-dark-border">
+                                <tr
+                                    v-for="(t, idx) in displayedTrusts"
+                                    :key="t.id"
+                                    data-test="trust-row"
+                                    :class="[
+                                        idx > 0 ? 'border-t border-gray-100 dark:border-dark-border' : '',
+                                        t._state === 'offline' ? 'bg-red-50/40 dark:bg-red-900/10' : ''
+                                    ]"
+                                >
+                                    <td class="px-4 py-4 align-middle">
+                                        <div class="inline-flex items-center gap-2">
+                                            <span class="inline-block w-2 h-2 rounded-full" :class="dotClass(t._state)" />
+                                            <span
+                                                class="inline-block px-2 py-0.5 rounded text-xs font-medium"
+                                                :class="pillClass(t._state)"
+                                            >
+                                                {{ stateLabel(t._state) }}
+                                            </span>
+                                        </div>
+                                    </td>
+                                    <td class="px-4 py-4 align-middle w-full max-w-0">
+                                        <div class="flex flex-col min-w-0">
+                                            <span
+                                                class="font-semibold font-heading text-base text-gray-900 dark:text-gray-100 truncate"
+                                                data-test="trust-name"
+                                            >
+                                                {{ t.name }}
+                                            </span>
+                                            <span
+                                                v-if="t.code && t.code !== t.name"
+                                                class="font-mono text-xs text-gray-500 dark:text-gray-300 mt-0.5 truncate"
+                                                data-test="trust-code"
+                                            >
+                                                {{ t.code }}
+                                            </span>
+                                        </div>
+                                    </td>
+                                    <td class="px-4 py-4 align-middle text-base text-gray-600 dark:text-gray-300">
+                                        {{ t.region ?? "—" }}
+                                    </td>
+                                    <td
+                                        class="px-4 py-4 align-middle font-mono text-sm"
+                                        :class="t._state === 'offline' ? 'text-red-600 dark:text-red-400' : 'text-gray-600 dark:text-gray-300'"
+                                        data-test="trust-heartbeat"
+                                    >
+                                        {{ heartbeatText(t.last_heartbeat) }}
+                                    </td>
+                                    <td class="px-4 py-4 align-middle text-right font-mono text-base text-gray-900 dark:text-gray-100">
+                                        {{ t.project_count }}
+                                    </td>
+                                    <td class="px-4 py-4 align-middle" data-test="trust-uptime">
+                                        <svg
+                                            :width="uptimeSvg.w"
+                                            :height="uptimeSvg.h"
+                                            class="block"
+                                            :title="uptimeTitle"
+                                        >
+                                            <polyline
+                                                :points="t._uptimePoints"
+                                                fill="none"
+                                                :stroke="uptimeStroke(t._state)"
+                                                stroke-width="1.6"
+                                                stroke-linejoin="round"
+                                                stroke-linecap="round"
+                                            />
+                                            <circle
+                                                v-for="(pt, i) in t._uptimeDots"
+                                                :key="i"
+                                                :cx="pt.x"
+                                                :cy="pt.y"
+                                                r="1.6"
+                                                :fill="uptimeStroke(t._state)"
+                                                :opacity="i === t._uptimeDots.length - 1 ? 1 : 0.35"
+                                            />
+                                        </svg>
+                                    </td>
+                                </tr>
+                                <tr v-if="!displayedTrusts.length">
+                                    <td colspan="6" class="text-center py-6 text-gray-500 dark:text-gray-300">
+                                        {{ activeTile ? "No trusts match this filter." : "No trusts registered yet." }}
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </template>
             </AiCard>
 
             <!-- Radial view (ConnectionD) — design ref: design_handoff_full/05_connection/connection-2.jsx -->
@@ -242,7 +381,11 @@
                         </div>
                     </div>
 
-                    <div class="absolute top-4 right-5 z-10 flex gap-3.5 items-center bg-white dark:bg-dark-canvas px-3 py-2 border border-gray-200 dark:border-dark-border rounded-lg">
+                    <div
+                        data-test="radial-legend"
+                        class="absolute top-4 right-5 z-10 flex flex-col items-start gap-1.5 bg-white
+                        dark:bg-dark-canvas px-3 py-2 border border-gray-200 dark:border-dark-border rounded-lg"
+                    >
                         <span
                             v-for="legend in radialLegend"
                             :key="legend.state"
@@ -313,6 +456,9 @@
                                     :stroke-width="node.state === 'online' ? 1.4 : 0.8"
                                     :stroke-opacity="node.state === 'offline' ? 0.4 : node.state === 'online' ? 0.5 : 0.2"
                                     :stroke-dasharray="node.state === 'offline' ? '3 4' : 'none'"
+                                    :class="node.state === 'offline'
+                                        ? 'dark:stroke-red-400 dark:[stroke-opacity:0.7]'
+                                        : ''"
                                 />
                                 <line
                                     v-if="node.state === 'online'"
@@ -520,6 +666,7 @@
 </template>
 
 <script setup lang="ts">
+import { Menu, MenuButton, MenuItem, MenuItems } from "@headlessui/vue";
 import useSWRV from "swrv";
 import { computed, ref } from "vue";
 
@@ -651,7 +798,7 @@ interface IColumn {
 
 // Header config drives both the rendered <th>s and the per-column sort handler.
 // Keys correspond to entries in `sortComparators`; columns without a key
-// (sparkline, action) render as inert headers.
+// (sparkline) render as inert headers.
 const columns: IColumn[] = [
     {
         key: "severity",
@@ -661,7 +808,9 @@ const columns: IColumn[] = [
     {
         key: "name",
         label: "Trust",
-        width: "min-w-[18rem]"
+        // Absorbs the leftover width; the cell's max-w-0 lets it squash and
+        // truncate instead of pinning the table wider than the viewport.
+        width: "w-full"
     },
     {
         key: "region",
@@ -677,8 +826,7 @@ const columns: IColumn[] = [
         align: "right",
         width: "w-20"
     },
-    { label: "7d uptime" },
-    { label: "" }
+    { label: "7d uptime" }
 ];
 
 // Alphabetical by name is the default — admins land on a predictable list and
@@ -697,6 +845,35 @@ const SORT_COMPARATORS: Record<SortKey, (a: IRenderedTrust, b: IRenderedTrust) =
     heartbeat: (a, b) => heartbeatAge(a) - heartbeatAge(b) || a.name.localeCompare(b.name),
     projects: (a, b) => a.project_count - b.project_count || a.name.localeCompare(b.name)
 };
+
+// Mobile sort menu (design 3a): the stacked rows have no column headers, so the
+// five sortable keys move into a Sort button. Same state and comparators.
+const MOBILE_SORT_OPTIONS: { key: SortKey; label: string }[] = [
+    {
+        key: "severity",
+        label: "Severity"
+    },
+    {
+        key: "name",
+        label: "Name"
+    },
+    {
+        key: "region",
+        label: "Region"
+    },
+    {
+        key: "heartbeat",
+        label: "Heartbeat"
+    },
+    {
+        key: "projects",
+        label: "Projects"
+    }
+];
+
+const activeSortLabel = computed(
+    () => MOBILE_SORT_OPTIONS.find(o => o.key === sortKey.value)?.label ?? "Name"
+);
 
 // First click on a new column sorts ascending; subsequent clicks toggle direction.
 const toggleSort = (key: SortKey) => {
@@ -736,7 +913,44 @@ const sortedTrusts = computed<IRenderedTrust[]>(() => {
     return arr;
 });
 
-const summaryCells = computed(() => {
+// Summary filter tiles — one per connection state (models-page idiom). `dot`/`ring`
+// are whole literal Tailwind classes so the JIT compiler emits them.
+interface ITile {
+    key: TrustState;
+    label: string;
+    dot: string;
+    ring: string;
+}
+
+const TILES: ITile[] = [
+    {
+        key: "online",
+        label: "Online",
+        dot: "bg-emerald-600",
+        ring: "border-emerald-600 ring-emerald-600/40"
+    },
+    {
+        key: "degraded",
+        label: "Degraded",
+        dot: "bg-amber-500",
+        ring: "border-amber-500 ring-amber-500/40"
+    },
+    {
+        key: "offline",
+        label: "Offline",
+        dot: "bg-red-500",
+        ring: "border-red-500 ring-red-500/40"
+    }
+];
+
+const activeTile = ref<TrustState | null>(null);
+
+// Toggle a tile: clicking the active tile clears the filter, otherwise filters to its state.
+const toggleTile = (key: TrustState): void => {
+    activeTile.value = activeTile.value === key ? null : key;
+};
+
+const stateCounts = computed<Record<TrustState, number>>(() => {
     const counts: Record<TrustState, number> = {
         online: 0,
         degraded: 0,
@@ -744,30 +958,13 @@ const summaryCells = computed(() => {
     };
     for (const t of trusts.value ?? []) counts[trustState(t)]++;
 
-    return [
-        {
-            key: "online",
-            label: "Online",
-            count: counts.online,
-            dotClass: "bg-emerald-600",
-            warnTextClass: "text-emerald-700"
-        },
-        {
-            key: "degraded",
-            label: "Degraded",
-            count: counts.degraded,
-            dotClass: "bg-amber-500",
-            warnTextClass: "text-amber-600 dark:text-amber-400"
-        },
-        {
-            key: "offline",
-            label: "Offline",
-            count: counts.offline,
-            dotClass: "bg-red-500",
-            warnTextClass: "text-red-600 dark:text-red-400"
-        }
-    ];
+    return counts;
 });
+
+// The table renders the sorted list narrowed to the active tile's state (all when no filter).
+const displayedTrusts = computed<IRenderedTrust[]>(() =>
+    activeTile.value ? sortedTrusts.value.filter(t => t._state === activeTile.value) : sortedTrusts.value
+);
 
 const subtitle = computed(() => {
     if (!trusts.value) return "Loading…";

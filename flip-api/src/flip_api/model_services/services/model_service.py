@@ -511,6 +511,7 @@ def get_all_models_service(
         IAllModelsResponse(
             id=model.id,
             name=model.name,
+            description=model.description,
             status=model.status,
             project_id=model.project_id,
             project_name=project_name,

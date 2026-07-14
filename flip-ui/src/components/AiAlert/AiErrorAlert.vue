@@ -17,7 +17,7 @@
     >
         <div class="flex items-center justify-center">
             <div class="flex-shrink-0">
-                <icon-ic-twotone-cancel
+                <icon-ph-x-circle-fill
                     class="w-5 h-5 text-red-500 dark:text-red-200"
                 />
             </div>

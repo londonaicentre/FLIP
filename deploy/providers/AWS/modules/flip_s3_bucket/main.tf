@@ -20,6 +20,52 @@
 # pending PR #438 (presigned PUT → POST migration), fl-results is on
 # `["GET"]`, and app-bundles passes an empty list (server-only).
 
+locals {
+  # Build the list of policy statements. The HTTPS-only DenyHTTP statement is
+  # always included; the MFA-delete statement is added only when
+  # var.mfa_delete_protection is true. Both are merged into a single bucket
+  # policy because S3 supports only one bucket policy document per bucket.
+  bucket_policy_statements = concat(
+    [
+      {
+        Sid       = "DenyHTTP"
+        Effect    = "Deny"
+        Principal = "*"
+        Action    = "s3:*"
+        Resource = [
+          aws_s3_bucket.this.arn,
+          "${aws_s3_bucket.this.arn}/*",
+        ]
+        Condition = {
+          Bool = {
+            "aws:SecureTransport" = "false"
+          }
+        }
+      },
+    ],
+    var.mfa_delete_protection ? [
+      {
+        # `BoolIfExists` (not `Bool`) is deliberate: with plain `Bool`, a
+        # request that omits the `aws:MultiFactorAuthPresent` context key
+        # entirely produces no match, so the Deny would never fire and
+        # the version delete would slip through. `BoolIfExists` treats an
+        # absent key as if it were `false`, which is what we want here —
+        # any caller who can't prove MFA is denied.
+        Sid       = "RequireMFADeleteObjectVersion"
+        Effect    = "Deny"
+        Principal = "*"
+        Action    = "s3:DeleteObjectVersion"
+        Resource  = "${aws_s3_bucket.this.arn}/*"
+        Condition = {
+          BoolIfExists = {
+            "aws:MultiFactorAuthPresent" = "false"
+          }
+        }
+      },
+    ] : [],
+  )
+}
+
 resource "aws_s3_bucket" "this" {
   bucket = var.bucket_name
   lifecycle {
@@ -62,6 +108,35 @@ resource "aws_s3_bucket_versioning" "this" {
   versioning_configuration {
     status = "Enabled"
   }
+}
+
+# Bucket policy — enforce HTTPS-only access and optionally require MFA for
+# DeleteObjectVersion. Both statements live in a single bucket policy document
+# because S3 supports only one bucket policy per bucket. The DenyHTTP statement
+# denies every S3 action (`s3:*`) when the request is over plain HTTP
+# (defense-in-depth alongside SSE-KMS at rest, and the broadest action set
+# satisfies AWS Config's `S3_BUCKET_SSL_REQUESTS_ONLY` rule).
+# The RequireMFADeleteObjectVersion statement (only when
+# var.mfa_delete_protection is true) prevents attackers with stolen long-term
+# credentials from destroying versioned data.
+resource "aws_s3_bucket_policy" "this" {
+  bucket = aws_s3_bucket.this.id
+
+  policy = jsonencode({
+    Version   = "2012-10-17"
+    Statement = local.bucket_policy_statements
+  })
+}
+
+# Server access logging — delivers access logs to the central logging bucket.
+# Skipped when logging_target_bucket is empty (default).
+resource "aws_s3_bucket_logging" "this" {
+  count = var.logging_target_bucket != "" ? 1 : 0
+
+  bucket = aws_s3_bucket.this.id
+
+  target_bucket = var.logging_target_bucket
+  target_prefix = "${var.bucket_name}/"
 }
 
 # CORS is only created when cors_methods is non-empty. Server-only buckets
