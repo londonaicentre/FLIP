@@ -97,8 +97,9 @@ def resolve_fl_kit_slot_names() -> list[str]:
             return []
         logger.error(
             f"Could not read SSM parameter '{_FL_KIT_SLOT_NAMES_PARAMETER}' ({e!r}). The kit-slot pool "
-            "cannot grow until this is fixed — new slots applied with `make apply-fl-kit-slots` will NOT "
-            "become claimable (existing slots and assignments are unaffected)."
+            "cannot grow until this is fixed — new slots applied with "
+            "`make -C deploy/providers/AWS apply-fl-kit-slots` will NOT become claimable "
+            "(existing slots and assignments are unaffected)."
         )
         return []
 
