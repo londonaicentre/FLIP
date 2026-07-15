@@ -140,6 +140,44 @@ create → upload → train → download. The image-pull wait still runs but ret
 studies are already pulled — so it lets you iterate on training/app code (and re-run after an upload
 or fl-api change) without re-creating the project and re-pulling DICOM (~6 min/backend) each time.
 
+**Smoking the spleen segmentation app requires a data-enrichment step (it needs labels).** *Data enrichment*
+is the platform stage where a model developer adds whatever an app needs on top of the pulled imaging data in
+XNAT (`docs/source/user-guides/user-common.rst` — a project cannot start training until enrichment is
+confirmed complete, even when nothing was added). **Segmentation apps need one:** the trust PACS supplies CT
+*images* only, while the spleen apps (`fl-tutorials/<backend>/3d_spleen_segmentation*`) pair each converted
+`input_*.nii.gz` with a sibling `label_*.nii.gz`. Skip it and the smoke pulls, converts, starts training and
+then dies with `num_samples=0` (preceded by `⚠️ No matching segmentation for input_*.nii.gz`) — which reads
+like an app or data-pull bug.
+
+`e2e_smoke` has a hook for exactly this: `--data-enrichment-cwd` + `--data-enrichment-cmd` run a shell command
+**between the image pull and training**, with `FLIP_PROJECT_ID` exported. For spleen the enrichment is
+`upload_labels_to_XNAT.py` from the **private** repo `londonaicentre/flip_project_spleen_segmentation` (needs
+its `.xnat1.cfg` / `.xnat2.cfg` — one per trust XNAT — and its MSD labels); it resolves each trust's XNAT
+project by `secondary_ID == <FLIP project_id>` and writes each label into the scan's existing `NIFTI` resource,
+renaming `input_` → `label_`. Invoke the smoke **directly** rather than through `make`, because `make` mangles
+the `$` in `EXTRA_ARGS` before the enrichment command reaches the shell:
+
+```bash
+cd flip-api && uv run python -m tests.e2e_smoke \
+  --model-files-dir ../fl-tutorials/nvflare/image_segmentation/3d_spleen_segmentation/app_files \
+  --query-file ../fl-tutorials/nvflare/image_segmentation/3d_spleen_segmentation/query.sql \
+  --data-enrichment-cwd <path-to>/flip_project_spleen_segmentation \
+  --data-enrichment-cmd 'uv run upload_labels_to_XNAT.py --flip-project-id "$FLIP_PROJECT_ID"'
+```
+
+(Through `make` there are two working forms: `make -C flip-api e2e_smoke_spleen`, whose in-Makefile
+`EXTRA_ARGS` carries `$$FLIP_PROJECT_ID` — a `$$` escape survives the single make expansion; or the root
+`make e2e_smoke` with the id passed literally — `--flip-project-id <uuid>` — when reusing a project via
+`--project-id`. The root wrapper re-expands `EXTRA_ARGS` through a second make and shell, so no `$`-escape
+survives it: `$$` lands empty and `$$$$` injects the recipe shell's PID.)
+
+Enrichment must land **after** the pull and after DICOM→NIfTI conversion; the hook's position guarantees that.
+The uploader derives each target filename from the converted `input_*.nii.gz`, so with no `NIFTI` resource it
+silently skips every scan (`-> skipped: no NIFTI resource`) and you get the same opaque `num_samples=0` — i.e.
+a broken XNAT Container Service surfaces as "no labels". Removing the private-repo dependency (so spleen is
+runnable outside the org and in CI) is tracked in FLIP#776. The xray classification tutorial reads DICOM
+directly and needs no enrichment.
+
 **Testing a change on BOTH FL backends in one sitting (the backend switch).** The pulled DICOM lives in
 each trust's Orthanc/XNAT, which `make restart-fl` leaves untouched — so you can pull once on the first
 backend and *reuse the same project* for the second, skipping the second image pull entirely:
