@@ -157,9 +157,10 @@ different things: the hub only claims names listed in `FL_KIT_SLOT_NAMES` (via t
 parameter). A net provisioned with spare kits therefore has kits no trust can claim, and
 those need **activating, not minting** — add the name to `FL_KIT_SLOT_NAMES`, run
 `make -C deploy/providers/AWS apply-fl-kit-slots PROD=…`, done (no certs, no upload, no
-restart). `add-fl-kits` refuses to mint while a kit minted on every net is missing from
-the list, and prints the names to activate; pass `MINT_ANYWAY=1` to mint fresh kits past
-them anyway.
+restart). `add-fl-kits N=<n>` does this for you: it treats `N` as "ensure N more live
+slots" and activates up to `N` such spares (lowest-numbered first) before minting the
+shortfall, so a good kit is never stranded and, when spares cover `N`, nothing is minted
+at all.
 
 **CA-state custody.** The preserved `state/` is the hard prerequisite: it holds the root
 CA that signs the new kit. The workspace is gitignored, so it exists only in the checkout

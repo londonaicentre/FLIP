@@ -367,22 +367,24 @@ and activates `N` more (NVFLARE only):
 make add-fl-kits N=2 PROD=stag|true   # YES=1 to skip the confirmation prompt
 ```
 
-**First: is a kit already minted?** A slot is claimable only when its name is in
+**Activation vs minting is automatic.** A slot is claimable only when its name is in
 `FL_KIT_SLOT_NAMES` *and* its kit exists in S3, and those two can drift — a deployment
-provisioned with a batch of spare kits has kits nobody can claim. If a kit is already
-minted on every net but missing from the list, it needs **activating, not minting**:
-add the name to `FL_KIT_SLOT_NAMES` and run `make apply-fl-kit-slots PROD=…` (no certs,
-no upload, no restart). `add-fl-kits` refuses to run while such spares exist and names
-them; `MINT_ANYWAY=1` overrides if you genuinely want a fresh kit. (Stag hit exactly
-this on 2026-07-14: 48 spare kits, so it wanted to mint `Trust_51` instead of using the
-idle `Trust_3`.)
+provisioned with a batch of spare kits has kits nobody can claim. `add-fl-kits N=<n>`
+treats `N` as *"ensure N more live slots"*, not a mint count: it **activates** up to `N`
+such spares first (lowest-numbered first — just an env-file edit, no certs, no upload,
+no restart) and only **mints** the shortfall. When spares cover the request it mints
+nothing and skips the CA workspace entirely, so growing the pool past over-provisioned
+kits needs none of the provisioning toolchain. (Stag on 2026-07-14 held 48 spare kits:
+`add-fl-kits N=1` now just activates the idle `Trust_3` in seconds instead of minting
+`Trust_51`.)
 
-It runs `scripts/add_fl_kits.sh`: discovers the deployment's nets from S3, restores +
-fingerprint-verifies each net's CA workspace (`fl-services/nvflare/provision/workspace-<env>/`),
-mints the next `Trust_<n>` names on **every** net via `nvflare provision --add_client`
-(existing kits untouched — no CA rotation), uploads **only** the new kits additively
-(never `aws s3 sync --delete`) plus a refresh of each net's mirrored `state/cert.json`,
-and appends the names to `FL_KIT_SLOT_NAMES` in the env file; the make target then
+It runs `scripts/add_fl_kits.sh`: discovers the deployment's nets from S3, activates any
+spares toward `N`, and for the remaining shortfall restores + fingerprint-verifies each
+net's CA workspace (`fl-services/nvflare/provision/workspace-<env>/`) and mints the next
+`Trust_<n>` names on **every** net via `nvflare provision --add_client` (existing kits
+untouched — no CA rotation), uploads **only** the new kits additively (never
+`aws s3 sync --delete`) plus a refresh of each net's mirrored `state/cert.json`, and
+appends the activated + minted names to `FL_KIT_SLOT_NAMES` in the env file; the make target then
 finishes with `make apply-fl-kit-slots` — a targeted plan/apply of only the
 `/flip/fl_kit_slot_names` SSM parameter (plus the flip-api task-role policy that grants
 its read, so the first rollout is self-contained), re-rendered from the env file. The

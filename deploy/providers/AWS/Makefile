@@ -351,17 +351,18 @@ apply-fl-kit-slots: ## Apply only the FL kit-slot SSM parameter — the slot act
 	@echo "✅ FL kit-slot parameter applied — new slots (if any) are claimable on the next trust registration."
 
 .PHONY: add-fl-kits
-add-fl-kits: ## Mint, upload, and activate N new FL kit slots end to end (NVFLARE; PROD=stag|true)
-	## Wraps scripts/add_fl_kits.sh: discover nets from S3 → restore/fingerprint-verify
-	## each net's CA workspace → mint each new Trust_<n> on every net → additive S3
-	## upload (never sync --delete) → append the names to FL_KIT_SLOT_NAMES in the env
-	## file. Then re-invokes make for apply-fl-kit-slots so the sub-make re-reads the
-	## just-edited env file (this parse's TF_VAR_FL_KIT_SLOT_NAMES predates the edit).
-	## Refuses to mint when a kit is already minted on every net but missing from
-	## FL_KIT_SLOT_NAMES — that spare only needs ACTIVATING (apply-fl-kit-slots).
-	## MINT_ANYWAY=1 forces a fresh mint past such spares.
+add-fl-kits: ## Ensure N more claimable FL kit slots exist, end to end (NVFLARE; PROD=stag|true)
+	## Wraps scripts/add_fl_kits.sh: discover nets from S3 → ACTIVATE up to N spares
+	## (kits already minted on every net but not yet in FL_KIT_SLOT_NAMES — no certs, no
+	## upload) → MINT only the shortfall on every net (restore/fingerprint-verify each
+	## net's CA workspace, additive S3 upload, never sync --delete) → append the activated
+	## + minted names to FL_KIT_SLOT_NAMES in the env file. Then re-invokes make for
+	## apply-fl-kit-slots so the sub-make re-reads the just-edited env file (this parse's
+	## TF_VAR_FL_KIT_SLOT_NAMES predates the edit). N is a target ("N more live slots"),
+	## not a mint count — spares are reused before any fresh mint, so a good kit is never
+	## stranded and, when spares cover N, nothing is minted at all.
 	@[ -n "$(N)" ] || { echo "❌ N is required, e.g. make add-fl-kits N=2 PROD=true"; exit 1; }
-	@$(_AWS_ENV) MAIN_ENV_FILE=$(MAIN_ENV_FILE) N=$(N) YES=$(YES) MINT_ANYWAY=$(MINT_ANYWAY) \
+	@$(_AWS_ENV) MAIN_ENV_FILE=$(MAIN_ENV_FILE) N=$(N) YES=$(YES) \
 		FL_BACKEND=$(FL_BACKEND) ./scripts/add_fl_kits.sh
 	@$(MAKE) apply-fl-kit-slots PROD=$(PROD) || { \
 	  echo "❌ Parameter apply failed AFTER the kits were minted, uploaded, and appended to the env file."; \
