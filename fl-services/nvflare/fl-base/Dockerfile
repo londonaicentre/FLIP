@@ -39,3 +39,17 @@ COPY flip-utils/flip/ ./flip/
 # --frozen ensures exact versions from uv.lock are used
 # Install with full optional dependencies for ML frameworks
 RUN uv sync --frozen --no-cache --extra full $(if [ "$LOCAL_DEV" = "true" ]; then echo "--dev"; else echo "--no-dev"; fi)
+
+# Create a non-root user so the FL server and client containers never run as root
+# (GHSA-8465). UID/GID/UNAME are build args wired by the compose files so the
+# container user matches the host UID that owns bind-mounted provision directories
+# in dev. In prod (no bind-mounts), the defaults (UID 1000 / GID 1000 / flip) apply.
+# USER is NOT set here — derived images (fl-server, fl-client) switch after their
+# own COPY/RUN so the user owns the files those instructions create.
+ARG UID
+ARG GID
+ARG UNAME
+RUN groupadd -g ${GID} ${UNAME} && \
+    useradd -u ${UID} -g ${GID} -m -d /home/${UNAME} -s /bin/bash ${UNAME}
+
+RUN chown -R ${UNAME}:${UNAME} /app
