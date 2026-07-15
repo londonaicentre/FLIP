@@ -68,5 +68,11 @@ services:
       # is the /flip/fl_kit_slot_names SSM parameter (read at runtime by
       # resolve_fl_kit_slot_names) — an env copy would be dead config that
       # apply-fl-kit-slots never updates.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
     restart: unless-stopped
     container_name: flip-api
