@@ -101,6 +101,10 @@ on_error() {
         echo "   names above. Instead: append the uploaded names to FL_KIT_SLOT_NAMES in" >&2
         echo "   ${MAIN_ENV_FILE} and run 'make apply-fl-kit-slots PROD=${PROD}' (a name uploaded to" >&2
         echo "   only SOME nets must first be minted on the missing nets — see the nvflare README)." >&2
+    else
+        echo "   Nothing was minted or uploaded. If this failed during the env-file edit (step 5)," >&2
+        echo "   check FL_KIT_SLOT_NAMES in ${MAIN_ENV_FILE} is intact, then re-run once the" >&2
+        echo "   underlying error is fixed — a pure activation is safe to re-run." >&2
     fi
 }
 trap on_error ERR
@@ -160,9 +164,10 @@ done <<<"${env_names}"
 # so we activate spares before minting: a good kit is never stranded and the numbering
 # never skips past it. Sorted lowest-number-first (`sort -t_ -k2 -n`) to drain idle
 # slots in the same order the hub claims them (slot_number ASC).
-# Counted per net (not a plain union) so a half-uploaded kit from a failed run is NOT
-# offered for activation — it exists on some nets only, and a client whose net lacks
-# the kit cannot join. Those still bump max_num below, so their names are never reused.
+# Counted per net (not a plain union): a kit missing entirely from a net (count < nets)
+# is excluded here, and a kit present-but-incomplete on a net (an interrupted final-net
+# upload still leaves a prefix, so it counts) is caught by the completeness check before
+# activation below. Excluded names still bump max_num below, so they are never reused.
 spare_names=()
 if [[ "${#s3_names[@]}" -gt 0 ]]; then
     while IFS= read -r name; do
@@ -205,17 +210,50 @@ APPEND_NAMES=()
 [[ "${#ACTIVATE_NAMES[@]}" -gt 0 ]] && APPEND_NAMES+=("${ACTIVATE_NAMES[@]}")
 [[ "${#MINT_NAMES[@]}" -gt 0 ]] && APPEND_NAMES+=("${MINT_NAMES[@]}")
 
+# A spare qualifies for activation only if its kit is COMPLETE on every net. The per-net
+# count above only proves a prefix exists, which a kit whose final net's recursive
+# `aws s3 cp` upload was interrupted still satisfies (≥1 object under services/<name>/).
+# Activating such a partial kit would silently hand a trust a slot it cannot join on the
+# short net, so verify the essential startup files exist on every net and fail closed on
+# a gap — a partial kit is an interrupted-run anomaly to clean up (see the mid-run
+# recovery in fl-services/nvflare/README.md), not something to activate. Only the ≤N
+# names we are about to activate are checked, not every spare.
+if [[ "${#ACTIVATE_NAMES[@]}" -gt 0 ]]; then
+    for name in "${ACTIVATE_NAMES[@]}"; do
+        for net in "${NETS[@]}"; do
+            startup_keys="$(aws s3api list-objects-v2 --bucket "${AICENTRE_BUCKET_NAME}" \
+                --prefix "${KEY_PREFIX}/${net}/services/${name}/startup/" \
+                --query 'Contents[].Key' --output text)" || {
+                echo "❌ could not verify ${name}/ on ${net} — refusing to activate a spare blind." >&2
+                exit 1
+            }
+            for required in client.crt client.key rootCA.pem fed_client.json sub_start.sh; do
+                if [[ "${startup_keys}" != *"/startup/${required}"* ]]; then
+                    echo "❌ spare ${name} is incomplete on ${net}: missing startup/${required}." >&2
+                    echo "   A partially-uploaded kit (an interrupted prior add-fl-kits run) must be cleaned" >&2
+                    echo "   up before it can be activated — see the mid-run recovery in" >&2
+                    echo "   fl-services/nvflare/README.md. Refusing to activate an incomplete kit." >&2
+                    exit 1
+                fi
+            done
+        done
+    done
+fi
+
 activate_display="(none — no spare kits)"
 [[ "${#ACTIVATE_NAMES[@]}" -gt 0 ]] && activate_display="${ACTIVATE_NAMES[*]}"
 mint_display="(none — spares cover N)"
-[[ "${#MINT_NAMES[@]}" -gt 0 ]] && mint_display="${MINT_NAMES[*]}  (existing max: Trust_${max_num})"
+[[ "${#MINT_NAMES[@]}" -gt 0 ]] && mint_display="${MINT_NAMES[*]}"
+# Show the "existing max" hint only when minting; noise otherwise.
+mint_line="${mint_display}"
+[[ "${#MINT_NAMES[@]}" -gt 0 ]] && mint_line="${mint_display}  (existing max: Trust_${max_num})"
 
 echo ""
 echo "   Plan (${ENV_NAME}):  ${N} more live slot(s)"
 echo "     bucket        ${AICENTRE_BUCKET_NAME} (kit date ${FLARE_KIT_DATE})"
 echo "     nets          ${NETS[*]}"
 echo "     activate      ${activate_display}"
-echo "     mint          ${mint_display}"
+echo "     mint          ${mint_line}"
 echo "     env file      ${MAIN_ENV_FILE}"
 echo ""
 if [[ "${YES}" != "1" ]]; then

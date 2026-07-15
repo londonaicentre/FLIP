@@ -143,14 +143,17 @@ already-onboarded participant's kit byte-identical — no re-provision, no CA ro
 fleet-wide redeploy. The new kit lands in `workspace-<env>/net-N/services/<CLIENT_NAME>/`.
 
 **One-command path (stag/prod).** `make -C deploy/providers/AWS add-fl-kits N=<n>
-PROD=stag|true` runs this whole section end to end: it discovers the deployment's nets
-from S3, restores + fingerprint-verifies each net's CA workspace, mints the next `N`
-`Trust_<n>` names on **every** net (slot names are global across nets — see the hub
-section below), uploads only the new kits additively, appends the names to
-`FL_KIT_SLOT_NAMES` in the env file, and applies the `/flip/fl_kit_slot_names` SSM
-parameter (`make apply-fl-kit-slots`) so the slots are immediately claimable. The manual
-steps below are what it automates — use them for unusual cases (custom slot names, a
-single net).
+PROD=stag|true` runs this whole section end to end. `N` is a target ("ensure N more live
+slots"), not a mint count: it discovers the deployment's nets from S3, **activates** up
+to `N` existing spares first (env-file edit only — no CA workspace, no certs, no upload),
+and for any remaining shortfall restores + fingerprint-verifies each net's CA workspace
+and mints the next `Trust_<n>` names on **every** net (slot names are global across nets —
+see the hub section below), uploads only the new kits additively. When spares cover `N`
+nothing is minted and the CA workspace is never touched. It then appends the activated +
+minted names to `FL_KIT_SLOT_NAMES` in the env file and applies the
+`/flip/fl_kit_slot_names` SSM parameter (`make apply-fl-kit-slots`) so the slots are
+immediately claimable. The manual steps below are what it automates — use them for
+unusual cases (custom slot names, a single net).
 
 **Minting vs activating.** A kit existing in S3 and a slot being *claimable* are two
 different things: the hub only claims names listed in `FL_KIT_SLOT_NAMES` (via the SSM

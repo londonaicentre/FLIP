@@ -365,9 +365,11 @@ add-fl-kits: ## Ensure N more claimable FL kit slots exist, end to end (NVFLARE;
 	@$(_AWS_ENV) MAIN_ENV_FILE=$(MAIN_ENV_FILE) N=$(N) YES=$(YES) \
 		FL_BACKEND=$(FL_BACKEND) ./scripts/add_fl_kits.sh
 	@$(MAKE) apply-fl-kit-slots PROD=$(PROD) || { \
-	  echo "❌ Parameter apply failed AFTER the kits were minted, uploaded, and appended to the env file."; \
+	  echo "❌ Parameter apply failed AFTER the new slot names were appended to the env file"; \
+	  echo "   (and any shortfall minted + uploaded)."; \
 	  echo "   Recover with just: make apply-fl-kit-slots PROD=$(PROD)"; \
-	  echo "   Do NOT re-run add-fl-kits — it would mint additional, higher-numbered kits."; \
+	  echo "   Do NOT re-run add-fl-kits — it would grow the pool by another N slots (activating"; \
+	  echo "   more spares or minting higher-numbered kits)."; \
 	  exit 1; }
 
 .PHONY: destroy-cert

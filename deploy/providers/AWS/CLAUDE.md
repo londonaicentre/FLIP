@@ -46,7 +46,7 @@ make provision-local-trust                     # Provision an on-prem trust host
 make allow-local-trust-nlb LOCAL_TRUST_IP=<ip>  # Open the FL-server NLB to a trust's reported IP
 make package-onprem-trust-kit KIT=<CODE>      # Tarball a filled-in trust/.env.<CODE>.<env> + FL kit slice for an on-prem operator
 make delete-trust NAME=<name>                 # Hard-delete a trust on the hub (frees the slot)
-make add-fl-kits N=<n> PROD=<stag|true>       # Mint + upload + activate N new FL kit slots (NVFLARE; no restart — see README)
+make add-fl-kits N=<n> PROD=<stag|true>       # Ensure N more claimable FL kit slots — activate spares first, mint only the shortfall (NVFLARE; no restart — see README)
 make apply-fl-kit-slots                       # Targeted plan/apply of the /flip/fl_kit_slot_names SSM parameter (slot activation path)
 make destroy                                  # Selective destroy (preserves Cognito, Secrets, S3)
 make aws-login                                # AWS SSO login
