@@ -248,9 +248,12 @@ export function buildModelSteps(status: ModelStatus | undefined): IStep[] {
         {
             id: "03",
             name: "Running",
+            // PREPARED means the job is staged but not yet executing (the fl-server flips it to
+            // RUNNING once the run is live), so the step reads "Starting" until then — mirroring
+            // the "Model Queued" sub-state on the Model Prepared step.
             description:
-                (statusValue >= ModelStatusEnum.PREPARED && statusValue < ModelStatusEnum.RESULTS_UPLOADED)
-                    ? "In Progress" : undefined,
+                statusValue === ModelStatusEnum.PREPARED ? "Starting"
+                    : statusValue === ModelStatusEnum.RUNNING ? "In Progress" : undefined,
             inProgress: statusValue >= ModelStatusEnum.PREPARED && !isStopped && !isError && !isUploadFailed,
             completed: statusValue > ModelStatusEnum.RUNNING || isUploadFailed,
             error: isError,

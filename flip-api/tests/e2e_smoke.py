@@ -630,7 +630,7 @@ def wait_for_training_running(
             _log(f"  📊 status={status}")
             last_status = status
         if status == ModelStatus.ERROR.value:
-            raise SmokeFailure("Model entered ERROR state before training started — check fl-server logs")
+            raise SmokeFailure("Model entered ERROR state before reaching RUNNING — check fl-server logs")
         if status in (ModelStatus.RUNNING.value, ModelStatus.RESULTS_UPLOADED.value):
             return status
         time.sleep(poll_interval)

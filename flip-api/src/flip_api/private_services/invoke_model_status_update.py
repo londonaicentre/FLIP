@@ -62,13 +62,13 @@ def invoke_model_status_update_endpoint(
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Model ID: {model_id} does not exist")
 
         log_message = {
-            ModelStatus.ERROR: "There has been an error whilst running training for this model.",
-            ModelStatus.STOPPED: "Training has been stopped for this model.",
-            ModelStatus.INITIATED: "This model has been selected from the queue and will be prepared for training.",
-            ModelStatus.PREPARED: "This model has been prepared and will begin training.",
+            ModelStatus.ERROR: "There has been an error whilst running the job for this model.",
+            ModelStatus.STOPPED: "The job for this model has been stopped.",
+            ModelStatus.INITIATED: "This model has been selected from the queue and will be prepared to run.",
+            ModelStatus.PREPARED: "This model has been prepared and its job will begin shortly.",
             ModelStatus.RUNNING: "The job for this model is now running.",
             ModelStatus.RESULTS_UPLOADED: "The results of this model have been uploaded and can now be downloaded.",
-            ModelStatus.RESULTS_UPLOAD_FAILED: "Training completed successfully, but uploading the results failed.",
+            ModelStatus.RESULTS_UPLOAD_FAILED: "The job completed successfully, but uploading the results failed.",
         }.get(model_status)
 
         if log_message:

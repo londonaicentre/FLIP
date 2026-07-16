@@ -493,6 +493,22 @@ describe("model-service", () => {
             expect(stepByName("RESULTS_UPLOAD_FAILED", "Model Prepared").completed).toBe(true);
         });
 
+        it("PREPARED shows Running as Starting — the job is staged but not yet executing", () => {
+            const step = stepByName("PREPARED", "Running");
+            expect(step.description).toBe("Starting");
+            expect(step.inProgress).toBe(true);
+        });
+
+        it("RUNNING shows Running as In Progress", () => {
+            const step = stepByName("RUNNING", "Running");
+            expect(step.description).toBe("In Progress");
+            expect(step.inProgress).toBe(true);
+        });
+
+        it("RESULTS_UPLOADED clears the Running description", () => {
+            expect(stepByName("RESULTS_UPLOADED", "Running").description).toBeUndefined();
+        });
+
         it("an unrecognised status degrades to error handling without throwing", () => {
             // getStatusEnumValue maps anything unknown to ERROR so a stale UI bundle
             // receiving a newer status degrades gracefully rather than crashing.
