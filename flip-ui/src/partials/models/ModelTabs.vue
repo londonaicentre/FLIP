@@ -11,63 +11,50 @@
   limitations under the License.
 -->
 
-<!-- Staged chip tabs for the model page (design handoff 03c): Prepare -> Run.
-     Run is locked until the model is dispatched, since there is nothing to watch. -->
+<!-- Ghost tab nav for the model page (design 04·A ProjectChrome, TAB-NAV.md):
+     Prepare -> Run as flat ghost buttons — no border, no underline; the soft
+     paper fill is the whole active indicator. Run is locked until the model is
+     dispatched, since there is nothing to watch. -->
 <template>
-    <nav class="flex items-center" aria-label="Model stages">
-        <template v-for="(tab, index) in tabs" :key="tab.id">
-            <!-- The connector fills once the model is dispatched: the stage it leads
-                 to is now real, and the line carries the eye across to it. -->
+    <nav class="flex items-center gap-1" aria-label="Model stages">
+        <button
+            v-for="tab in tabs"
+            :key="tab.id"
+            type="button"
+            :data-test="`tab-${tab.id}`"
+            :disabled="tab.locked"
+            :aria-current="tab.id === modelValue ? 'page' : undefined"
+            class="inline-flex items-center gap-2 rounded-lg px-3.5 py-2 text-[13px] font-semibold
+                   transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500
+                   focus-visible:ring-offset-2 dark:focus-visible:ring-offset-dark-canvas"
+            :class="tabClass(tab)"
+            @click="select(tab)"
+        >
             <span
-                v-if="index > 0"
-                data-test="tab-connector"
-                class="w-6 h-px"
-                :class="pending ? 'bg-gray-200 dark:bg-dark-border' : 'bg-primary-500'"
+                v-if="tab.id === 'run' && live"
+                class="relative flex items-center justify-center w-1.5 h-1.5"
+            >
+                <span
+                    data-test="tab-run-live"
+                    class="absolute inline-flex w-full h-full rounded-full opacity-60 animate-ping bg-fuchsia-500"
+                />
+                <span class="relative inline-flex w-1.5 h-1.5 rounded-full bg-fuchsia-500" />
+            </span>
+
+            <icon-ph-check-bold
+                v-if="tab.done"
+                :data-test="`tab-${tab.id}-done`"
+                class="w-3 h-3 text-green-600 dark:text-green-400"
                 aria-hidden="true"
             />
 
-            <button
-                type="button"
-                :data-test="`tab-${tab.id}`"
-                :disabled="tab.locked"
-                :aria-current="tab.id === modelValue ? 'page' : undefined"
-                class="inline-flex items-center gap-2 rounded-full border px-4 py-1.5 text-sm font-semibold
-                       transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500
-                       focus-visible:ring-offset-2 dark:focus-visible:ring-offset-dark-canvas"
-                :class="chipClass(tab)"
-                @click="select(tab)"
-            >
-                <span
-                    v-if="tab.id === 'run' && live"
-                    class="relative flex items-center justify-center w-1.5 h-1.5"
-                >
-                    <span
-                        data-test="tab-run-live"
-                        class="absolute inline-flex w-full h-full rounded-full opacity-60 animate-ping"
-                        :class="tab.id === modelValue ? 'bg-white' : 'bg-fuchsia-500'"
-                    />
-                    <span
-                        class="relative inline-flex w-1.5 h-1.5 rounded-full"
-                        :class="tab.id === modelValue ? 'bg-white' : 'bg-fuchsia-500'"
-                    />
-                </span>
+            {{ tab.label }}
 
-                <icon-ph-check-bold
-                    v-if="tab.done"
-                    :data-test="`tab-${tab.id}-done`"
-                    class="w-3 h-3"
-                    :class="tab.id === modelValue ? 'text-white' : 'text-green-600 dark:text-green-400'"
-                    aria-hidden="true"
-                />
-
-                {{ tab.label }}
-
-                <span
-                    v-if="tab.locked"
-                    class="font-mono text-[10px] font-normal tracking-[0.04em]"
-                >after start</span>
-            </button>
-        </template>
+            <span
+                v-if="tab.locked"
+                class="font-mono text-[10px] font-normal tracking-[0.04em]"
+            >after start</span>
+        </button>
     </nav>
 </template>
 
@@ -125,22 +112,16 @@ const tabs = computed<Tab[]>(() => [
     }
 ]);
 
-// A stage the model has reached is outlined in the chip purple, so the pair reads
-// as a path already walked. Prepare is always reached; Run only once dispatched.
-function borderClass(tab: Tab): string {
-    const reached = tab.id === "prepare" || !pending.value;
+// Active is ink on the soft paper fill; inactive is muted ink over nothing
+// (TAB-NAV.md). Dark mode maps ink onto the standard gray ramp and the fill
+// onto the raised surface, per the palette rules in tailwind.config.js.
+function tabClass(tab: Tab): string {
+    if (tab.id === props.modelValue) return "text-ink bg-paper-2 dark:text-gray-100 dark:bg-dark-raised";
+    // The dark ink floor is gray-300 (see dark-mode-contrast guard); opacity
+    // carries the locked dimming instead of a darker gray.
+    if (tab.locked) return "text-ink-3 dark:text-gray-300 opacity-60 cursor-default";
 
-    return reached ? "border-primary-500" : "border-gray-200 dark:border-dark-border";
-}
-
-function chipClass(tab: Tab): string {
-    const border = borderClass(tab);
-    if (tab.id === props.modelValue) return `bg-primary-500 text-white ${border}`;
-    if (tab.locked) {
-        return `bg-white dark:bg-dark-canvas text-gray-400 dark:text-gray-300 cursor-default ${border}`;
-    }
-
-    return `bg-white dark:bg-dark-canvas text-gray-700 dark:text-gray-300 ${border}`;
+    return "text-ink-3 hover:text-ink dark:text-gray-300 dark:hover:text-gray-200";
 }
 
 function select(tab: Tab): void {
