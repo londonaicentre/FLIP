@@ -133,4 +133,45 @@ describe("AiSwitch", () => {
         expect(comp.get("[data-test=switch-knob]").classes()).toContain("translate-x-1");
     });
 
+    it("a disabled switch is natively disabled, not just aria-disabled", async () => {
+        // aria-disabled alone leaves the button focusable and Headless UI's internal
+        // handlers reachable (they never check the prop, and would flip aria-checked
+        // for screen readers even with the knob and form value guarded). The native
+        // attribute makes the browser deliver no events at all and drops the dead
+        // control from the tab order — jsdom dispatches events regardless, so this
+        // pins the attribute rather than the resulting behaviour.
+        const comp = mount(AiSwitch, {
+            props: {
+                name: "flag",
+                value: true,
+                disabled: true
+            },
+            global: {
+                plugins: [createTestingPinia({
+                    createSpy: vi.fn,
+                    stubActions: false
+                })]
+            }
+        });
+
+        expect(comp.find("button[role=\"switch\"]").attributes("disabled")).toBeDefined();
+    });
+
+    it("an enabled switch carries no native disabled attribute", async () => {
+        const comp = mount(AiSwitch, {
+            props: {
+                name: "flag",
+                value: true
+            },
+            global: {
+                plugins: [createTestingPinia({
+                    createSpy: vi.fn,
+                    stubActions: false
+                })]
+            }
+        });
+
+        expect(comp.find("button[role=\"switch\"]").attributes("disabled")).toBeUndefined();
+    });
+
 });
