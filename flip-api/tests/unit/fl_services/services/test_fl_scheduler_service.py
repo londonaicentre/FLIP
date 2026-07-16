@@ -151,7 +151,10 @@ def test_remove_job_from_queue(fake_session, model_id):
     job = MagicMock()
     fake_session.exec.return_value.all.return_value = [job]
 
-    fl_scheduler_service.remove_job_from_queue(model_id, fake_session)
+    # Patched so its own add_log commit doesn't skew the count asserted below;
+    # the re-emission behaviour has its own tests in TestLogQueuePositions.
+    with patch.object(fl_scheduler_service, "log_queue_positions"):
+        fl_scheduler_service.remove_job_from_queue(model_id, fake_session)
 
     assert job.status == JobStatus.DELETED
     assert job.completed is not None
@@ -463,3 +466,34 @@ class TestLogQueuePositions:
         fake_session.exec.side_effect = _exec_returning([job], [])
         with patch.object(fl_scheduler_service, "add_log", side_effect=Exception("db down")):
             fl_scheduler_service.log_queue_positions(fake_session)  # must not raise
+
+    def test_update_fl_scheduler_reemits_queue_positions(self, fake_session, model_id, fl_job_id):
+        """Completing a still-QUEUED job (stopped/errored queued model) re-ranks the tail."""
+        job = MagicMock()
+        job.id = fl_job_id
+        fake_session.exec.side_effect = [
+            MagicMock(first=MagicMock(return_value=job)),
+            MagicMock(first=MagicMock(return_value=MagicMock())),
+        ]
+        with patch.object(fl_scheduler_service, "log_queue_positions") as mock_positions:
+            fl_scheduler_service.update_fl_scheduler(model_id, fake_session)
+        mock_positions.assert_called_once_with(fake_session)
+
+    def test_update_fl_scheduler_without_a_job_does_not_reemit(self, fake_session, model_id):
+        fake_session.exec.return_value.first.return_value = None
+        with patch.object(fl_scheduler_service, "log_queue_positions") as mock_positions:
+            fl_scheduler_service.update_fl_scheduler(model_id, fake_session)
+        mock_positions.assert_not_called()
+
+    def test_remove_job_from_queue_reemits_queue_positions(self, fake_session, model_id):
+        """Deleting a queued job (stop/abort of a queued model) re-ranks everything behind it."""
+        fake_session.exec.return_value.all.return_value = [MagicMock()]
+        with patch.object(fl_scheduler_service, "log_queue_positions") as mock_positions:
+            fl_scheduler_service.remove_job_from_queue(model_id, fake_session)
+        mock_positions.assert_called_once_with(fake_session)
+
+    def test_remove_job_from_queue_without_jobs_does_not_reemit(self, fake_session, model_id):
+        fake_session.exec.return_value.all.return_value = []
+        with patch.object(fl_scheduler_service, "log_queue_positions") as mock_positions:
+            fl_scheduler_service.remove_job_from_queue(model_id, fake_session)
+        mock_positions.assert_not_called()

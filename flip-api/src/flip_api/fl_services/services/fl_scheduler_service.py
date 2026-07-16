@@ -116,6 +116,9 @@ def remove_job_from_queue(model_id: UUID, session: Session) -> None:
         session.commit()
         logger.info("Set job(s) as deleted")
 
+        # Deleting a queued job re-ranks everything behind it.
+        log_queue_positions(session)
+
     except SQLAlchemyError as e:
         session.rollback()
         logger.error(f"Error removing job from queue: {e}")
@@ -652,6 +655,13 @@ def update_fl_scheduler(model_id: UUID, session: Session) -> None:
                 session.add(scheduler)
 
         session.commit()
+
+        if job:
+            # Completing a still-QUEUED job (e.g. a queued model stopped or
+            # errored) re-ranks everything behind it; for a job already picked
+            # up this no-ops (emit-on-change).
+            log_queue_positions(session)
+
         if job and scheduler:
             logger.info(
                 "FL job %s set to COMPLETED, scheduler %s released to AVAILABLE.",
