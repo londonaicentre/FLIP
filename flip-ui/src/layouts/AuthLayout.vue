@@ -87,7 +87,7 @@
             </div>
             <footer
                 data-test="auth-footer-links"
-                class="absolute bottom-4 left-1/2 -translate-x-1/2 flex flex-row items-center justify-center gap-6 text-xs font-heading text-gray-500 dark:text-gray-300 z-10"
+                class="absolute bottom-4 left-1/2 -translate-x-1/2 flex flex-row items-center justify-center gap-6 text-xs text-center font-heading text-gray-500 dark:text-gray-300 z-10"
             >
                 <a
                     v-for="link in footerLinks"

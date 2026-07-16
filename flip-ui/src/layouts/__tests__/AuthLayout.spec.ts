@@ -71,6 +71,12 @@ describe("Auth Layout", () => {
         expect(component.find(".h-screen").exists()).toBe(false);
     });
 
+    it("centres the footer links' text when the labels wrap on narrow screens", () => {
+        const footer = mountLayout().find("[data-test=\"auth-footer-links\"]");
+
+        expect(footer.classes()).toContain("text-center");
+    });
+
     it("fades the corner artwork's letterbox-facing cut edges (iOS-scoped via main.css)", () => {
         const component = mountLayout();
 
