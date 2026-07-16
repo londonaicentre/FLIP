@@ -11,7 +11,7 @@
   limitations under the License.
 -->
 
-<!-- Ghost tab nav for the model page (design 04·A ProjectChrome, TAB-NAV.md):
+<!-- Ghost tab nav for the model page (design 04·A ProjectChrome):
      Prepare -> Run as flat ghost buttons — no border, no underline; the soft
      paper fill is the whole active indicator. Run is locked until the model is
      dispatched, since there is nothing to watch. -->
@@ -112,11 +112,12 @@ const tabs = computed<Tab[]>(() => [
     }
 ]);
 
-// Active is ink on the soft paper fill; inactive is muted ink over nothing
-// (TAB-NAV.md). Dark mode maps ink onto the standard gray ramp and the fill
-// onto the raised surface, per the palette rules in tailwind.config.js.
+// Active is ink on a soft translucent ink fill; inactive is muted ink over
+// nothing (design 04·A ProjectChrome ghost buttons). The fill is alpha ink
+// (white in dark mode) rather than a fixed paper tone so it reads against
+// the warm body background, which sits within 2% of the handoff's paper-2.
 function tabClass(tab: Tab): string {
-    if (tab.id === props.modelValue) return "text-ink bg-paper-2 dark:text-gray-100 dark:bg-dark-raised";
+    if (tab.id === props.modelValue) return "text-ink bg-ink/10 dark:text-gray-100 dark:bg-white/15";
     // The dark ink floor is gray-300 (see dark-mode-contrast guard); opacity
     // carries the locked dimming instead of a darker gray.
     if (tab.locked) return "text-ink-3 dark:text-gray-300 opacity-60 cursor-default";

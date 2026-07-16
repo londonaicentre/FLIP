@@ -107,7 +107,7 @@ describe("ModelTabs", () => {
         }
     });
 
-    test("no connector between the tabs — the nav is a plain narrow-gap row (TAB-NAV.md)", () => {
+    test("no connector between the tabs — the nav is a plain narrow-gap row (design 04·A)", () => {
         const pending = mountTabs("PENDING");
         expect(pending.find("[data-test=tab-connector]").exists()).toBe(false);
         expect(pending.find("nav").classes()).toContain("gap-1");
@@ -118,7 +118,7 @@ describe("ModelTabs", () => {
         const active = started.find("[data-test=tab-run]");
         const inactive = started.find("[data-test=tab-prepare]");
 
-        expect(active.classes()).toContain("bg-paper-2");
+        expect(active.classes()).toContain("bg-ink/10");
         expect(active.classes()).toContain("text-ink");
         // No border, no underline, no pill — the filled rectangle is the whole
         // active indicator (design 04·A ProjectChrome ghost buttons, radius 8).
