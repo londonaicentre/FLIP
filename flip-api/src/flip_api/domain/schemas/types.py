@@ -37,6 +37,11 @@ class FLLogEvent(StrEnum):
     ROUND_STARTED = "ROUND_STARTED"
     CLIENT_RESULT_RECEIVED = "CLIENT_RESULT_RECEIVED"
     ROUND_AGGREGATED = "ROUND_AGGREGATED"
+    # Hub-emitted (by the FL scheduler at queue mutations), never sent by FL
+    # images: the model's 1-based place in the FL training queue, re-logged on
+    # every movement. Carries no global_round; details = {"position": n,
+    # "job_id": str(FLJob.id)} — job_id keys emit-on-change per training run.
+    QUEUE_POSITION = "QUEUE_POSITION"
 
 
 class FLBackend(StrEnum):

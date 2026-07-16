@@ -20,7 +20,7 @@ are baked and deployed to every trust.
 """
 
 import math
-from typing import Any
+from typing import Any, TypeGuard
 
 from flip_api.db.models.main_models import FLLogs
 from flip_api.domain.schemas.types import FLLogEvent
@@ -58,7 +58,7 @@ def _format_bytes(size_bytes: Any) -> str | None:
     return f"{int(raw)} B"  # pragma: no cover - unreachable, satisfies mypy
 
 
-def _is_count(value: Any) -> bool:
+def _is_count(value: Any) -> TypeGuard[int]:
     """True when a ``details`` value is a genuine integer count (bools excluded)."""
     return isinstance(value, int) and not isinstance(value, bool)
 
@@ -99,6 +99,13 @@ def render_log(row: FLLogs) -> str:
         if _is_count(returned) and _is_count(expected):
             return f"Round {row.global_round} aggregated · {returned} of {expected} trusts returned"
         return f"Round {row.global_round} aggregated"
+
+    if row.event_type == FLLogEvent.QUEUE_POSITION:
+        position = details.get("position")
+        if _is_count(position) and position >= 1:
+            return f"Model Queued ({position})"
+        # A row with an unusable stored position must not invent one.
+        return "Model Queued"
 
     if row.event_type is not None:
         return f"Round {row.global_round} · {row.event_type}"
