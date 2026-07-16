@@ -21,6 +21,7 @@ model. These are SQL-shaped joins + access filters that pass silently under a
 mocked session, so they are exercised against the throwaway Postgres.
 """
 
+from datetime import datetime
 from uuid import UUID, uuid4
 
 from fastapi.testclient import TestClient
@@ -34,7 +35,7 @@ from flip_api.db.models.main_models import (
     Trust,
 )
 from flip_api.db.models.user_models import UserProfile
-from flip_api.domain.schemas.status import ModelStatus, ProjectStatus, TrustIntersectStatus
+from flip_api.domain.schemas.status import JobStatus, ModelStatus, ProjectStatus, TrustIntersectStatus
 from tests.integration.conftest import admin_user, override_verify_token_as
 
 MODELS_URL = "/api/models"
@@ -379,3 +380,36 @@ def test_status_counts_exclude_inaccessible_projects(
     counts = client.get(MODELS_URL).json()["statusCounts"]
 
     assert counts.get("PENDING") == 1
+
+
+def test_queued_models_carry_their_queue_position(client: TestClient, session, project_factory, model_factory):
+    """Queued rows expose their 1-based FIFO rank (issue #788); picked-up rows expose null."""
+    admin_id = admin_user(session)
+    project = _add_project(session, project_factory, owner_id=admin_id, name="Queue")
+    first = _add_model(
+        session, model_factory, project_id=project.id, owner_id=admin_id,
+        name="first-queued", status=ModelStatus.INITIATED,
+    )
+    second = _add_model(
+        session, model_factory, project_id=project.id, owner_id=admin_id,
+        name="second-queued", status=ModelStatus.INITIATED,
+    )
+    picked = _add_model(
+        session, model_factory, project_id=project.id, owner_id=admin_id,
+        name="picked-up", status=ModelStatus.INITIATED,
+    )
+    # The queue is QUEUED jobs by created ascending; the picked job left it despite
+    # being the oldest, so it must not occupy a position.
+    session.add(FLJob(model_id=first.id, created=datetime(2026, 1, 1, 10, 0, 0)))
+    session.add(FLJob(model_id=second.id, created=datetime(2026, 1, 1, 10, 5, 0)))
+    session.add(FLJob(model_id=picked.id, status=JobStatus.IN_PROGRESS, created=datetime(2026, 1, 1, 9, 0, 0)))
+    session.commit()
+
+    override_verify_token_as(admin_id)
+    response = client.get(MODELS_URL)
+
+    assert response.status_code == 200
+    by_name = {row["name"]: row for row in response.json()["data"]}
+    assert by_name["first-queued"]["queuePosition"] == 1
+    assert by_name["second-queued"]["queuePosition"] == 2
+    assert by_name["picked-up"]["queuePosition"] is None

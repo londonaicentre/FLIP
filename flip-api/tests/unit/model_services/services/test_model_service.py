@@ -28,6 +28,7 @@ from flip_api.model_services.services.model_service import (
     edit_model,
     get_metrics,
     get_model_status,
+    queued_positions_by_model,
     resolve_trust_from_fl_client_name,
     update_model_status,
     validate_trust_ids,
@@ -505,3 +506,27 @@ def test_run_trusts_by_model_empty_input_short_circuits():
 
     assert result == {}
     session.exec.assert_not_called()
+
+
+def test_queued_positions_by_model_ranks_by_scheduler_pickup_order():
+    """Positions are the 1-based rank over QUEUED jobs in created order (FIFO)."""
+    session = MagicMock()
+    first, second = uuid4(), uuid4()
+    session.exec.return_value.all.return_value = [first, second]
+
+    assert queued_positions_by_model(session) == {first: 1, second: 2}
+
+
+def test_queued_positions_by_model_keeps_the_earliest_position_per_model():
+    session = MagicMock()
+    model_id = uuid4()
+    session.exec.return_value.all.return_value = [model_id, model_id]
+
+    assert queued_positions_by_model(session) == {model_id: 1}
+
+
+def test_queued_positions_by_model_empty_queue():
+    session = MagicMock()
+    session.exec.return_value.all.return_value = []
+
+    assert queued_positions_by_model(session) == {}

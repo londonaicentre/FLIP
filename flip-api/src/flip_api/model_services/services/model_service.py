@@ -41,7 +41,7 @@ from flip_api.domain.interfaces.model import (
     ITrustSummary,
 )
 from flip_api.domain.schemas.actions import ModelAuditAction
-from flip_api.domain.schemas.status import ModelStatus
+from flip_api.domain.schemas.status import JobStatus, ModelStatus
 from flip_api.fl_services.services import fl_scheduler_service
 from flip_api.model_services.utils.audit_helper import audit_model_action, audit_model_actions
 from flip_api.utils.logger import logger
@@ -460,6 +460,29 @@ def _run_trusts_by_model(model_ids: list[UUID], session: Session) -> dict[UUID, 
     return trusts_by_model
 
 
+def queued_positions_by_model(session: Session) -> dict[UUID, int]:
+    """Map each queued model to its 1-based place in the FL training queue.
+
+    The rank mirrors the scheduler's pickup order exactly — QUEUED ``FLJob``
+    rows by ``created`` ascending (``check_for_queued_jobs``) — so position 1
+    is the next model to start when a net frees up. Models with no queued job
+    are simply absent.
+
+    Args:
+        session (Session): The database session.
+
+    Returns:
+        dict[UUID, int]: Model id to 1-based queue position.
+    """
+    queued_model_ids = session.exec(
+        select(FLJob.model_id).where(FLJob.status == JobStatus.QUEUED).order_by(col(FLJob.created).asc())
+    ).all()
+    positions: dict[UUID, int] = {}
+    for position, queued_model_id in enumerate(queued_model_ids, start=1):
+        positions.setdefault(queued_model_id, position)
+    return positions
+
+
 def get_all_models_service(
     session: Session,
     user_id: UUID | None,
@@ -541,6 +564,7 @@ def get_all_models_service(
     }
 
     trusts_by_model = _run_trusts_by_model([model.id for model, _, _ in rows], session)
+    queue_positions = queued_positions_by_model(session)
 
     data = [
         IAllModelsResponse(
@@ -553,6 +577,7 @@ def get_all_models_service(
             owner_id=model.owner_id,
             owner_name=owner_name,
             trusts=trusts_by_model.get(model.id, []),
+            queue_position=queue_positions.get(model.id),
         )  # type: ignore[call-arg]
         for model, project_name, owner_name in rows
     ]
