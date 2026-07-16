@@ -24,7 +24,7 @@ import shutil
 import tempfile
 from datetime import datetime
 from pathlib import Path
-from typing import override
+from typing import Any, override
 from urllib.parse import urlparse
 
 import boto3
@@ -35,8 +35,15 @@ from requests import HTTPError
 from flip.constants.flip_constants import FlipConstants, ModelStatus, ResourceType
 from flip.core.base import FLIPBase
 from flip.exceptions import ResultsUploadError
-from flip.schemas import DEFAULT_X_AXIS_LABEL, TrainingLog, TrainingMetrics
+from flip.schemas import DEFAULT_X_AXIS_LABEL, FLLogEvent, TrainingLog, TrainingMetrics
 from flip.utils.utils import Utils
+
+# (connect, read) bound on every hub call (update_status, send_metrics,
+# send_handled_exception, send_event). The surrounding try/except arms cannot
+# catch a hang — a hub that accepts TCP and then stalls would otherwise freeze
+# the FL loop at the call site; send_event and send_metrics run inside result
+# acceptance, the worst place to block.
+_HUB_POST_TIMEOUT_SECONDS: tuple[int, int] = (5, 30)
 
 
 def _trust_internal_headers() -> dict[str, str]:
@@ -171,7 +178,7 @@ class FLIPStandardProd(FLIPBase):
         Args:
             project_id (str): The ID of the project.
             accession_id (str): The accession ID of the imaging study.
-            resource_type (Union[ResourceType, List[ResourceType]]): The type of resource to download. Defaults to
+            resource_type (ResourceType | list[ResourceType]): The type of resource to download. Defaults to
             ResourceType.NIFTI.
 
         Returns:
@@ -233,7 +240,7 @@ class FLIPStandardProd(FLIPBase):
             accession_id (str): Accession ID to upload the resource to
             scan_id (str): ID of the scan to upload
             resource_id (str): Type of resource that is being uploaded (e.g. NIFTI)
-            files (List[str]): List of files to upload
+            files (list[str]): List of files to upload
         """
         if not isinstance(project_id, str):
             raise TypeError(f"expect project id to be string, but got {type(project_id)}")
@@ -298,6 +305,7 @@ class FLIPStandardProd(FLIPBase):
             response = requests.put(
                 endpoint,
                 headers=_hub_internal_headers(),
+                timeout=_HUB_POST_TIMEOUT_SECONDS,
             )
             self.logger.info(f"Received response status code: {response.status_code}, response text: {response.text}")
             response.raise_for_status()
@@ -360,6 +368,7 @@ class FLIPStandardProd(FLIPBase):
                 endpoint,
                 json=payload,
                 headers=_hub_internal_headers(),
+                timeout=_HUB_POST_TIMEOUT_SECONDS,
             )
             self.logger.info(f"Received response status code: {response.status_code}, response text: {response.text}")
             response.raise_for_status()
@@ -376,27 +385,33 @@ class FLIPStandardProd(FLIPBase):
             self.logger.exception(e)
 
     @override
-    def send_handled_exception(self, formatted_exception: str, client_name: str, model_id: str) -> None:
+    def send_handled_exception(self, formatted_exception: str, client_name: str | None, model_id: str) -> None:
         """
         Sends a handled exception to the Central Hub.
 
         Args:
             formatted_exception (str): The formatted exception message.
-            client_name (str): The name of the client that raised the exception.
+            client_name (str | None): The name of the client that raised the exception.
+                None when the client cannot be identified (e.g. a Flower reply that
+                crashed before its first healthy response), in which case the hub
+                records the exception model-level rather than rejecting it.
             model_id (str): The ID of the model associated with the exception.
         """
         if not isinstance(formatted_exception, str):
             raise TypeError(f"formatted_exception must be type str but got {type(formatted_exception)}")
 
-        if not isinstance(client_name, str):
-            raise TypeError(f"client_name must be type str but got {type(client_name)}")
+        if client_name is not None and not isinstance(client_name, str):
+            raise TypeError(f"client_name must be type str or None but got {type(client_name)}")
 
         if Utils.is_valid_uuid(model_id) is False:
             raise ValueError(f"Invalid model ID: {model_id}, unable to send exception")
 
+        # success=False so the hub persists (and the UI shows) a failure row —
+        # the ingest default is success=True.
         payload = TrainingLog(
             fl_client_name=client_name,
             log=formatted_exception,
+            success=False,
         ).model_dump()
 
         endpoint = _join_url(FlipConstants.FLIP_API_INTERNAL_URL, f"model/{model_id}/logs")
@@ -408,6 +423,7 @@ class FLIPStandardProd(FLIPBase):
                 endpoint,
                 json=payload,
                 headers=_hub_internal_headers(),
+                timeout=_HUB_POST_TIMEOUT_SECONDS,
             )
             self.logger.info(f"Received response status code: {response.status_code}, response text: {response.text}")
             response.raise_for_status()
@@ -421,6 +437,73 @@ class FLIPStandardProd(FLIPBase):
             self.logger.exception(http_err)
         except Exception as e:
             self.logger.error("Something went wrong when sending the exception to the Central Hub, see exception below")
+            self.logger.exception(e)
+
+    @override
+    def send_event(
+        self,
+        model_id: str,
+        event_type: FLLogEvent,
+        global_round: int,
+        client_name: str | None = None,
+        details: dict[str, Any] | None = None,
+        success: bool = True,
+    ) -> None:
+        """
+        Sends a typed round-progress event to the Central Hub.
+
+        Facts only — the hub composes display text at serve time. Best-effort:
+        a failed post and a payload that fails validation are logged and never
+        break training. Only an invalid ``model_id`` raises — a deliberate
+        precondition, matching ``send_handled_exception``.
+
+        Args:
+            model_id (str): The ID of the model the event belongs to.
+            event_type (FLLogEvent): Which round event this is.
+            global_round (int): The 1-based federated round.
+            client_name (str | None): FL client identity for trust-attributed
+                events; None for hub-attributed ones.
+            details (dict[str, Any] | None): Event-specific facts.
+            success (bool): Whether the event marks a healthy step.
+        """
+        if Utils.is_valid_uuid(model_id) is False:
+            raise ValueError(f"Invalid model ID: {model_id}, unable to send event")
+
+        endpoint = _join_url(FlipConstants.FLIP_API_INTERNAL_URL, f"model/{model_id}/logs")
+
+        self.logger.info(f"Attempting to send {event_type} (round {global_round}) to the Central Hub...")
+
+        try:
+            # Constructed inside the guard: send_event runs inside result
+            # acceptance, so a malformed fact must be dropped, not raised.
+            payload = TrainingLog(
+                fl_client_name=client_name,
+                event_type=event_type,
+                global_round=global_round,
+                details=details,
+                success=success,
+            ).model_dump(mode="json")
+
+            response = requests.post(
+                endpoint,
+                json=payload,
+                headers=_hub_internal_headers(),
+                # The except arms cannot catch a hang: a hub that accepts TCP
+                # and then stalls would freeze result acceptance mid-round.
+                timeout=_HUB_POST_TIMEOUT_SECONDS,
+            )
+            self.logger.info(f"Received response status code: {response.status_code}, response text: {response.text}")
+            response.raise_for_status()
+
+            self.logger.info(f"Successfully sent {event_type} for round {global_round}")
+        except HTTPError as http_err:
+            self.logger.error(
+                f"An http error occurred when sending a round event to the Central Hub, "
+                f"see exception below | status code {http_err.response.status_code}"
+            )
+            self.logger.exception(http_err)
+        except Exception as e:
+            self.logger.error("Something went wrong when sending a round event to the Central Hub, see exception below")
             self.logger.exception(e)
 
     @override
@@ -540,7 +623,7 @@ class FLIPStandardDev(FLIPBase):
         Args:
             project_id (str): Project identifier
             accession_id (str): Accession ID to retrieve
-            resource_type (Union[ResourceType, List[ResourceType]]): Type of imaging resource (not used in dev)
+            resource_type (ResourceType | list[ResourceType]): Type of imaging resource (not used in dev)
 
         Returns:
             Path: Path to the accession_id folder within the images folder.
@@ -600,9 +683,22 @@ class FLIPStandardDev(FLIPBase):
         )
 
     @override
-    def send_handled_exception(self, formatted_exception: str, client_name: str, model_id: str) -> None:
+    def send_handled_exception(self, formatted_exception: str, client_name: str | None, model_id: str) -> None:
         """Log only in dev mode - no actual exception sending."""
         self.logger.info("[DEV] Exception → reported from %s", client_name)
+
+    @override
+    def send_event(
+        self,
+        model_id: str,
+        event_type: FLLogEvent,
+        global_round: int,
+        client_name: str | None = None,
+        details: dict[str, Any] | None = None,
+        success: bool = True,
+    ) -> None:
+        """Log only in dev mode - no actual event sending."""
+        self.logger.info("[DEV] Event → %s (round %d) from %s", event_type, global_round, client_name or "hub")
 
     @override
     def upload_results_to_s3(self, results_folder: Path, model_id: str) -> None:

@@ -21,6 +21,24 @@ TrimStr = Annotated[str, StringConstraints(min_length=1, strip_whitespace=True)]
 NonEmptyUUIDList = Annotated[list[UUID], Field(min_length=1)]
 
 
+class FLLogEvent(StrEnum):
+    """Typed FL progress events accepted by ``POST /model/{id}/logs``.
+
+    The FL layer reports **facts** (event type + structured fields); the display
+    text is composed hub-side at serve time (``log_rendering.py``), so wording
+    changes are a flip-api redeploy and never an FL-image rebuild. Stored in the
+    plain-text ``fl_logs.event_type`` column — deliberately NOT a native PG enum,
+    so extending this vocabulary never needs an ``ALTER TYPE`` migration.
+
+    Rounds are 1-based on every event, on both backends (NVFLARE's internal
+    ``_current_round`` is 0-based and is normalised at the emission boundary).
+    """
+
+    ROUND_STARTED = "ROUND_STARTED"
+    CLIENT_RESULT_RECEIVED = "CLIENT_RESULT_RECEIVED"
+    ROUND_AGGREGATED = "ROUND_AGGREGATED"
+
+
 class FLBackend(StrEnum):
     """The set of supported federated-learning backends.
 

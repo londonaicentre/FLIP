@@ -19,10 +19,12 @@ This module contains the abstract base class for all FLIP implementations.
 import logging
 from abc import ABC, abstractmethod
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 
 from flip.constants.flip_constants import ModelStatus, ResourceType
+from flip.schemas import FLLogEvent
 
 
 class FLIPBase(ABC):
@@ -75,7 +77,7 @@ class FLIPBase(ABC):
         Args:
             project_id (str): The project identifier
             accession_id (str): The accession ID of the imaging study
-            resource_type (Union[ResourceType, List[ResourceType]]): Type(s) of resources to download
+            resource_type (ResourceType | list[ResourceType]): Type(s) of resources to download
 
         Returns:
             Path: Path to the downloaded data
@@ -98,7 +100,7 @@ class FLIPBase(ABC):
             accession_id (str): The accession ID
             scan_id (str): The scan ID
             resource_id (str): The resource type ID
-            files (List[str]): List of file paths to upload
+            files (list[str]): List of file paths to upload
         """
 
     @abstractmethod
@@ -139,14 +141,43 @@ class FLIPBase(ABC):
         """
 
     @abstractmethod
-    def send_handled_exception(self, formatted_exception: str, client_name: str, model_id: str) -> None:
+    def send_handled_exception(self, formatted_exception: str, client_name: str | None, model_id: str) -> None:
         """
         Sends a training-related exception to Central Hub.
 
         Args:
             formatted_exception (str): The formatted exception message
-            client_name (str): The client name that raised the exception
+            client_name (str | None): The client name that raised the exception; None when
+                the client cannot be identified, so the hub records it model-level
             model_id (str): The model UUID
+        """
+
+    @abstractmethod
+    def send_event(
+        self,
+        model_id: str,
+        event_type: FLLogEvent,
+        global_round: int,
+        client_name: str | None = None,
+        details: dict[str, Any] | None = None,
+        success: bool = True,
+    ) -> None:
+        """
+        Sends a typed round-progress event to the Central Hub.
+
+        The event carries facts only — the hub composes the display text at
+        serve time, so wording never lives in FL images. Best-effort like every
+        hub call: a failed post is logged and never breaks training.
+
+        Args:
+            model_id (str): The model UUID
+            event_type (FLLogEvent): Which round event this is
+            global_round (int): The 1-based federated round the event belongs to
+            client_name (str | None): FL client identity for trust-attributed
+                events (e.g. CLIENT_RESULT_RECEIVED); None for hub-attributed ones
+            details (dict[str, Any] | None): Event-specific facts (total_rounds,
+                size_bytes, returned/expected counts)
+            success (bool): Whether the event marks a healthy step
         """
 
     @abstractmethod
@@ -216,10 +247,10 @@ class FLIPBase(ABC):
         Check whether resource type is valid and returns them reformatted.
 
         Args:
-            resource_type (Union[ResourceType, List[ResourceType]]): Single ResourceType or list of ResourceTypes
+            resource_type (ResourceType | list[ResourceType]): Single ResourceType or list of ResourceTypes
 
         Returns:
-            List[ResourceType]: List of validated resource types
+            list[ResourceType]: List of validated resource types
 
         Raises:
             TypeError: If resource_type is not valid

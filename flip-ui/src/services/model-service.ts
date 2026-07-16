@@ -56,6 +56,11 @@ export interface ILog {
     logDate: string;
     success: boolean;
     trustName: string | null;
+    // Trust short code (GSTT/KCH) for compact display — null on hub rows and for
+    // trusts without a code. globalRound is the 1-based federated round the row
+    // belongs to — hub event rows carry it too; null only on legacy/free-text rows.
+    trustCode?: string | null;
+    globalRound?: number | null;
     log: string;
 }
 
@@ -77,6 +82,8 @@ export interface IModelDashboard {
     preparedAt?: string | null;
     trainingStartedAt?: string | null;
     resultsUploadedAt?: string | null;
+    // The trusts the run was dispatched to. Empty before dispatch.
+    trusts?: IModelSummaryTrust[];
 }
 
 export interface IModelCreate {
@@ -480,3 +487,4 @@ export async function getModelMetrics(url: string): Promise<IModelMetricData[]> 
 
     return response.data ?? [];
 }
+

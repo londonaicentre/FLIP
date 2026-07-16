@@ -11,12 +11,15 @@
 #
 
 from collections import defaultdict
+from datetime import datetime
 from typing import Any
 from uuid import UUID
 
 from sqlmodel import Session, and_, col, desc, func, or_, select
 
 from flip_api.db.models.main_models import (
+    FLJob,
+    FLJobTrust,
     FLKitSlot,
     FLLogs,
     FLMetrics,
@@ -140,19 +143,23 @@ def update_model_status(
 
 def add_log(
     model_id: UUID,
-    log: str,
+    log: str | None,
     session: Session,
     transaction: Any | None = None,
     success: bool = True,
     trust: Trust | None = None,
     fl_client_name: str | None = None,
+    event_type: str | None = None,
+    global_round: int | None = None,
+    details: dict[str, Any] | None = None,
 ) -> None:
     """
     Add a log entry to the database
 
     Args:
         model_id (UUID): The ID of the model.
-        log (str): The log message to be added.
+        log (str | None): The log message to be added. None for typed event rows,
+            whose display text is composed at serve time.
         session (Session): The database session.
         transaction (Any | None): Optional transaction to control commit behavior.
         success (bool): Indicates if the log entry is a success or failure.
@@ -160,6 +167,12 @@ def add_log(
             reported by an FL client. None for model-level (hub) logs.
         fl_client_name (str | None): The FL client name as reported by the FL server.
             None for model-level logs.
+        event_type (str | None): The typed round event this row records, when the FL
+            server reported a structured fact rather than free text. Senders use the
+            FLLogEvent vocabulary but the value is stored as plain text.
+        global_round (int | None): 1-based federated round the event belongs to.
+        details (dict[str, Any] | None): Event-specific facts (e.g. total_rounds,
+            size_bytes, returned/expected counts).
 
     Returns:
         None
@@ -177,6 +190,9 @@ def add_log(
         success=success,
         trust=trust.id if trust is not None else None,
         fl_client_name=fl_client_name,
+        event_type=event_type,
+        global_round=global_round,
+        details=details,
     )
 
     try:
@@ -380,7 +396,7 @@ def get_metrics(model_id: UUID, session: Session) -> list[IModelMetrics]:
         # Create or get the IModelMetrics for this (label, x_label) plot
         key = (row.label, row.x_label)
         if key not in metrics_map:
-            metrics_map[key] = IModelMetrics(yLabel=row.label, xLabel=row.x_label, metrics=[])
+            metrics_map[key] = IModelMetrics(y_label=row.label, x_label=row.x_label, metrics=[])
 
         # Get the list of series for this plot
         metric = metrics_map[key]
@@ -388,23 +404,32 @@ def get_metrics(model_id: UUID, session: Session) -> list[IModelMetrics]:
         series_label = trust_label.get(row.trust, str(row.trust))
 
         # Find or create the series for this trust
-        series = next((s for s in metric.metrics if s.seriesLabel == series_label), None)
+        series = next((s for s in metric.metrics if s.series_label == series_label), None)
         if not series:
-            series = IModelMetricsData(seriesLabel=series_label, data=[])
+            series = IModelMetricsData(series_label=series_label, data=[])
             metric.metrics.append(series)
 
         # Add the data point at its plot coordinate (global_round is provenance, not the x)
-        series.data.append(IModelMetricsValue(xValue=row.x_value, yValue=row.result))
+        series.data.append(IModelMetricsValue(x_value=row.x_value, y_value=row.result))
+
+    # The query has no inherent ordering, so points arrive interleaved and a chart
+    # drawn in array order zig-zags. Sort each series by its x coordinate; ties
+    # keep their insertion order.
+    for metric in metrics_map.values():
+        for series in metric.metrics:
+            series.data.sort(key=lambda point: point.x_value)
 
     return list(metrics_map.values())
 
 
 def _run_trusts_by_model(model_ids: list[UUID], session: Session) -> dict[UUID, list[ITrustSummary]]:
-    """Group each model's participating (run) trusts, keyed by model id.
+    """Group each model's dispatched (run) trusts, keyed by model id.
 
-    Reads ``ModelTrustIntersect`` -> ``Trust`` (the same source as
-    ``retrieve_trusts_in_model``). Only populated once training is initiated, so
-    models awaiting dispatch simply map to an empty list.
+    Reads each model's latest FL job's ``fl_job_trust`` roster — the trusts
+    actually selected at initiate-training. Deliberately NOT
+    ``ModelTrustIntersect``: that table gets a row per approved trust at model
+    creation, so it lists the approved pool, not the selected subset. Models
+    awaiting dispatch have no job and simply map to an empty list.
 
     Args:
         model_ids (list[UUID]): Model ids to fetch trusts for. Empty input short-circuits.
@@ -418,12 +443,22 @@ def _run_trusts_by_model(model_ids: list[UUID], session: Session) -> dict[UUID, 
         return trusts_by_model
 
     rows = session.exec(
-        select(ModelTrustIntersect.model_id, Trust.id, Trust.name, Trust.code)
-        .join(Trust, col(Trust.id) == ModelTrustIntersect.trust_id)
-        .where(col(ModelTrustIntersect.model_id).in_(model_ids))
+        select(FLJob.model_id, FLJob.created, Trust.id, Trust.name, Trust.code)  # type: ignore[call-overload]
+        .join(FLJobTrust, col(FLJobTrust.fl_job_id) == FLJob.id)
+        .join(Trust, col(Trust.id) == FLJobTrust.trust_id)
+        .where(col(FLJob.model_id).in_(model_ids))
     ).all()
-    for model_id, trust_id, trust_name, trust_code in rows:
-        if model_id is None:
+
+    # A model can accumulate jobs across re-initiations; only the newest job's
+    # roster is "the run's trusts".
+    latest_created: dict[UUID, datetime] = {}
+    for model_id, created, _trust_id, _trust_name, _trust_code in rows:
+        if model_id is None or created is None:
+            continue
+        if model_id not in latest_created or created > latest_created[model_id]:
+            latest_created[model_id] = created
+    for model_id, created, trust_id, trust_name, trust_code in rows:
+        if model_id is None or created != latest_created.get(model_id):
             continue
         trusts_by_model[model_id].append(ITrustSummary(id=trust_id, name=trust_name, code=trust_code))
 

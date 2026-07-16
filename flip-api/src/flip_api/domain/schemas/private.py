@@ -88,8 +88,44 @@ class TrainingMetrics(BaseModel):
 
 
 class TrainingLog(BaseModel):
-    fl_client_name: str
-    log: str
+    """One row for ``POST /model/{id}/logs``: free text XOR a typed round event.
+
+    Mirrored in ``flip-utils/flip/schemas.py`` (the FL-side sender) — keep the two
+    in sync. Two mutually exclusive shapes:
+
+    - **Free text** (``log`` set): exception reports and legacy messages. The text
+      is stored and served verbatim.
+    - **Typed event** (``event_type`` set): a round-progress fact. Display text is
+      composed hub-side at serve time, so the FL layer never bakes in wording.
+
+    ``fl_client_name`` is the FL kit slot when the row is trust-attributed, or
+    ``None`` for hub-attributed rows (e.g. ``ROUND_STARTED``). Old FL images keep
+    sending the original ``{fl_client_name, log}`` shape — every new field is
+    optional with a compatible default.
+    """
+
+    fl_client_name: str | None = None
+    log: str | None = None
+    # Senders use the FLLogEvent vocabulary, but the field is plain validated text
+    # end-to-end (like the fl_logs column): a newer FL image's event is stored and
+    # served via the unknown-event render fallback, never rejected at ingest.
+    event_type: str | None = Field(default=None, max_length=64)
+    # 1-based on both backends; every event in the vocabulary is round-scoped. The
+    # ceiling is the PG INTEGER max of the fl_logs.global_round column — without it
+    # an oversized round passes validation and 500s at insert.
+    global_round: int | None = Field(default=None, ge=1, le=2_147_483_647)
+    details: dict[str, Any] | None = None
+    success: bool = True
+
+    @model_validator(mode="after")
+    def _log_xor_event(self) -> "TrainingLog":
+        if (self.log is None) == (self.event_type is None):
+            raise ValueError("Exactly one of 'log' and 'event_type' must be set")
+        if self.event_type is not None and not self.event_type.strip():
+            raise ValueError("'event_type' must be non-blank when set")
+        if self.event_type is not None and self.global_round is None:
+            raise ValueError("'global_round' is required when 'event_type' is set")
+        return self
 
 
 class ProjectApprovalBody(BaseModel):

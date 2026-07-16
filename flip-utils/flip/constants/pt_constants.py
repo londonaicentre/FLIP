@@ -32,5 +32,6 @@ class PTConstants:
 
     # Evaluation results (evaluation job type)
     EvalResultsFilename = "evaluation_results.json"
+    EvalFailuresFilename = "evaluation_failures.json"
     EvalDir = "evaluation_results"
     EvalTaskName = "evaluation"

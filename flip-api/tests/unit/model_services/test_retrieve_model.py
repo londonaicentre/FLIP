@@ -114,13 +114,16 @@ def test_retrieve_model_success(
     mock_result.mappings.return_value.first.return_value = mock_raw_sql_result
     override_dependencies.execute.return_value = mock_result
 
-    # Two follow-up SQLModel queries after the raw SQL: Model.creation_timestamp,
-    # then ModelsAudit rows. Both return empty so the new lifecycle fields stay None.
+    # Three follow-up SQLModel queries after the raw SQL: Model.creation_timestamp,
+    # ModelsAudit rows, then the participating trusts. All empty so the lifecycle
+    # fields stay None and `trusts` stays empty.
     creation_call = MagicMock()
     creation_call.first.return_value = None
     audit_call = MagicMock()
     audit_call.all.return_value = []
-    override_dependencies.exec.side_effect = [creation_call, audit_call]
+    trusts_call = MagicMock()
+    trusts_call.all.return_value = []
+    override_dependencies.exec.side_effect = [creation_call, audit_call, trusts_call]
 
     # response = client.get(f"/model/{test_model_id}")
     result = retrieve_model(model_id=test_model_id, db=override_dependencies, user_id=test_user_id)
@@ -189,3 +192,49 @@ def test_load_sql_reads_file_contents():
 
     assert result == dummy_sql
     mocked_open.assert_called_once_with("query.sql", "r")
+
+
+def test_retrieve_model_reports_the_trusts_that_took_part(
+    override_dependencies,
+    mock_can_access_true,
+    mock_load_sql,
+):
+    """A dispatched model carries its run trusts, so the UI can show which took part."""
+    gstt_id, kch_id = uuid4(), uuid4()
+
+    mock_result = MagicMock()
+    mock_result.mappings.return_value.first.return_value = {
+        "model_id": str(test_model_id),
+        "model_name": "Test Model",
+        "model_description": "Desc",
+        "project_id": str(uuid4()),
+        "status": ModelStatus.TRAINING_STARTED.value,
+        "files": [],
+        "query": None,
+    }
+    override_dependencies.execute.return_value = mock_result
+
+    creation_call = MagicMock()
+    creation_call.first.return_value = None
+    audit_call = MagicMock()
+    audit_call.all.return_value = []
+    trusts_call = MagicMock()
+    trusts_call.all.return_value = [
+        (gstt_id, "Guy's and St Thomas'", "GSTT"),
+        (kch_id, "King's College Hospital", None),
+    ]
+    override_dependencies.exec.side_effect = [creation_call, audit_call, trusts_call]
+
+    result = retrieve_model(model_id=test_model_id, db=override_dependencies, user_id=test_user_id)
+
+    assert [(t.id, t.name, t.code) for t in result.trusts] == [
+        (gstt_id, "Guy's and St Thomas'", "GSTT"),
+        (kch_id, "King's College Hospital", None),
+    ]
+
+    # The roster must come from the dispatch record (the latest job's fl_job_trust
+    # rows), not ModelTrustIntersect — that table gets a row per approved trust at
+    # model creation, so sourcing it would mark excluded trusts as participants.
+    trusts_stmt = str(override_dependencies.exec.call_args_list[2].args[0])
+    assert "fl_job_trust" in trusts_stmt
+    assert "model_trust_intersect" not in trusts_stmt

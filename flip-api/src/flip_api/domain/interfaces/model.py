@@ -49,8 +49,8 @@ class IAllModelsResponse(BaseModel):
 
     Joins a model to its owning project (name), the owner's display name and the
     model's run trusts. ``owner_name`` is null when the owner has no UserProfile
-    row; ``trusts`` is empty until training is initiated (no ModelTrustIntersect
-    rows exist before dispatch).
+    row; ``trusts`` is the latest FL job's dispatch roster (fl_job_trust), so it
+    is empty until training is initiated.
     """
 
     id: UUID
@@ -164,6 +164,9 @@ class IModelResponse(BaseModel):
     prepared_at: str | None = Field(default=None, alias="preparedAt")
     training_started_at: str | None = Field(default=None, alias="trainingStartedAt")
     results_uploaded_at: str | None = Field(default=None, alias="resultsUploadedAt")
+    # The trusts the run was dispatched to — the latest FL job's fl_job_trust
+    # roster. Empty before dispatch, when the model has no job yet.
+    trusts: list[ITrustSummary] = Field(default_factory=list)
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -198,6 +201,13 @@ class ILog(BaseModel):
     log_date: datetime = Field(..., alias="logDate")
     success: bool
     trust_name: str | None = Field(default=None, alias="trustName")
+    # Trust short code (GSTT/KCH) for compact display; null for hub rows and
+    # trusts without a code. The round the row belongs to (1-based) is exposed
+    # for round-aware grouping in the UI; null on legacy/free-text rows.
+    trust_code: str | None = Field(default=None, alias="trustCode")
+    global_round: int | None = Field(default=None, alias="globalRound")
+    # Always populated on serve: free text verbatim, or event rows rendered by
+    # log_rendering.render_log.
     log: str
 
     model_config = ConfigDict(
@@ -211,17 +221,28 @@ class IModelAuditAction(BaseModel):
     userid: str
 
 
+class ITrainingMetricsResponse(BaseModel):
+    trust: str
+    globalround: int
+    label: str
+    result: float
+
+
+# Response-only models: Python attributes are snake_case; the wire format the UI
+# reads stays camelCase via serialization aliases (FastAPI serialises
+# response_model by alias). x_value is a float, not an int — arbitrary x axes
+# (FLIP#148) carry fractional values.
 class IModelMetricsValue(BaseModel):
-    xValue: float
-    yValue: float
+    x_value: float = Field(..., serialization_alias="xValue")
+    y_value: float = Field(..., serialization_alias="yValue")
 
 
 class IModelMetricsData(BaseModel):
     data: list[IModelMetricsValue]
-    seriesLabel: str
+    series_label: str = Field(..., serialization_alias="seriesLabel")
 
 
 class IModelMetrics(BaseModel):
-    yLabel: str
-    xLabel: str
+    y_label: str = Field(..., serialization_alias="yLabel")
+    x_label: str = Field(..., serialization_alias="xLabel")
     metrics: list[IModelMetricsData]

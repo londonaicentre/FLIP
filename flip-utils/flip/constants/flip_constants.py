@@ -168,6 +168,19 @@ class FlipEvents:
     TASK_INITIATED = "_task_initiated"
 
 
+class FlipProps:
+    """fl_ctx property names FLIP components use to share round telemetry.
+
+    Set (sticky, so they survive across NVFLARE contexts) by the FLIP
+    ScatterAndGather controller as client results are accepted; read by
+    ServerEventHandler when relaying ROUND_DONE to the hub as a
+    ROUND_AGGREGATED event.
+    """
+
+    ROUND_RETURNED = "_flip_round_returned"
+    ROUND_EXPECTED = "_flip_round_expected"
+
+
 class ModelStatus(StrEnum):
     """Model training status values."""
 

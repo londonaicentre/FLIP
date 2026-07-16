@@ -13,7 +13,7 @@
 """add x_label and x_value to fl_metrics
 
 Revision ID: ee61ab95ef2b
-Revises: 23aff57898a0
+Revises: 8c4f2b9d31e7
 Create Date: 2026-07-10 18:28:41.397629
 
 """
@@ -24,7 +24,10 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = 'ee61ab95ef2b'
-down_revision: str | None = '23aff57898a0'
+# Re-parented onto the fl_logs typed-round-events revision when this branch was
+# rebased onto feat/round-progress-card (#757) — both originally revised
+# 23aff57898a0, and alembic needs a single linear head.
+down_revision: str | None = '8c4f2b9d31e7'
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

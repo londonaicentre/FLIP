@@ -22,13 +22,13 @@ pip-installable `flip` Python package (published as `flip-utils` on PyPI) that s
 image and is imported as `from flip import ...` by user-uploaded training code. Sibling FL trees in the same mono-repo:
 
 - **[`flip-utils/flip/`](./flip/)** — pip-installable Python package with platform logic, NVFLARE components, Flower helpers and utilities (this directory)
-- **[`../fl-apps/`](../fl-apps/)** — FL job-type implementations / app templates (`standard`, `evaluation`, `diffusion_model`, `fed_opt`)
-- **[`../fl-tutorials/`](../fl-tutorials/)** — runnable end-to-end tutorial examples
-- **[`../fl-services/`](../fl-services/)** — Docker images for FL networks (server, clients, admin API)
+- **[`../fl-apps/`](../fl-apps/)** — FL job-type implementations / app templates per backend (`nvflare/{standard,standard_client_api,evaluation,evaluation_client_api,diffusion_model,fed_opt}`, `flower/{standard,evaluation}`)
+- **[`../fl-tutorials/`](../fl-tutorials/)** — runnable end-to-end tutorial examples per backend (`nvflare/`, `flower/`)
+- **[`../fl-services/`](../fl-services/)** — Docker images and network provisioning for FL networks per backend (`nvflare/`, `flower/`); each backend's `Makefile` owns build / provision / up / down / submit
 
-The rest of this README is still being reconciled with the mono-repo layout — paths like `tutorials/` and `fl-services/` referred to here are
-the now-sibling top-level `fl-tutorials/` and `fl-services/` trees, and Make targets called out below run from the
-`flip-utils/` directory.
+Paths like `tutorials/` referenced in older sections of this README refer to the now-sibling top-level
+[`../fl-tutorials/`](../fl-tutorials/) tree, and Make targets called out below run from the `flip-utils/` directory
+unless otherwise noted.
 
 ## Table of Contents
 

@@ -45,7 +45,7 @@ If you are starting from scratch, copy the in-tree ``fl-apps/flower/standard/`` 
 
 .. note::
 
-   The ``flip-utils`` package (published on PyPI, imported as ``flip``) is pre-installed in every FLIP FL node image. You only need to declare it as a dependency in your ``pyproject.toml`` for local development — you do not have to vendor or install it at run time.
+   The ``flip-utils`` package (published on PyPI, imported as ``flip``) ships inside every FLIP FL node image and is installed per run from that in-image source (see the dependency-resolution note under *Wiring it up via pyproject.toml* below). You only need to declare it as a dependency in your ``pyproject.toml`` for local development — you do not have to vendor it.
 
 *******************************************
 ServerApp: reporting model lifecycle status
@@ -349,6 +349,25 @@ Abridged from ``fl-tutorials/flower/3d_spleen_segmentation/pyproject.toml``:
    flip-model-id = "uuid"
    flip-project-id = "uuid"
    flip-cohort-query = "*"
+
+.. note::
+
+   **How dependencies resolve on-platform.** Your own ``pyproject.toml`` drives *local* development
+   (``pip install -e .`` / ``flwr run .``). When you upload the app to FLIP, the platform bundles your
+   model files into its own base template (``fl-apps/flower/<job_type>/``), whose ``pyproject.toml``
+   governs the run — uploaded files cannot override it. At run time, Flower's runtime dependency
+   installer resolves that template's dependencies fresh for every run (``uv sync`` into an isolated
+   per-run environment) on the SuperLink (``ServerApp``) and on each SuperNode (``ClientApp``), with two
+   pins set by the template's ``[tool.uv.sources]``:
+
+   - ``flip-utils`` installs from the source copy shipped inside the FL images at ``/opt/flip-utils`` —
+     never from PyPI — so the platform always runs the ``flip-utils`` matching its images.
+   - ``torch``/``torchvision`` come from PyTorch's cu128 wheel index (PyPI's default cu130 wheels
+     require a newer NVIDIA driver than FLIP hosts run).
+
+   Everything else resolves from PyPI at run time, so trust and hub hosts need outbound HTTPS to PyPI
+   and ``download.pytorch.org``. If your app needs a dependency the base template does not declare,
+   ask the platform operators to add it to the template.
 
 ************************************
 Submitting the app to FLIP

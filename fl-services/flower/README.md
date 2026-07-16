@@ -43,6 +43,42 @@ make up FL_BACKEND=flower DOCKER_FL_REGISTRY= DOCKER_FL_TAG=dev   # run the hub 
 `DOCKER_FL_REGISTRY=` empties the registry so Docker resolves the local `flower-*:dev` images
 (see [`deploy/fl_backend.mk`](../../deploy/fl_backend.mk)).
 
+## Runtime dependency installation (and where flip-utils comes from)
+
+Flower ≥1.32 installs an app's declared dependencies **at run time**: when a run starts, the
+SuperLink (ServerApp side) and each SuperNode (ClientApp side, opted in with
+`--allow-runtime-dependency-installation` in the composes) run `uv sync` against the FAB's
+`pyproject.toml` into an isolated per-run environment, which is prepended to `sys.path`.
+
+Left alone, that would resolve `flip-utils` from **PyPI**, silently shadowing the in-repo copy baked
+into the images ([#767](https://github.com/londonaicentre/FLIP/issues/767)). Two `[tool.uv]` tables
+in the `fl-apps/flower/*` template pyprojects steer the per-run resolution instead:
+
+- `[tool.uv.sources] flip-utils = { path = "/opt/flip-utils" }` — `fl-base` keeps the in-repo
+  flip-utils **source** at `/opt/flip-utils` after installing it, and every run builds flip-utils
+  from that path. uv never consults PyPI for a name with a source override, so the platform always
+  runs the flip-utils matching its images.
+- `torch`/`torchvision` are pinned to PyTorch's cu128 index (PyPI's default cu130 wheels need
+  NVIDIA driver ≥580; FLIP hosts run 575.x).
+
+All other dependencies resolve from PyPI per run, so SuperLink/SuperNode hosts need outbound HTTPS
+to PyPI and `download.pytorch.org`.
+
+**Testing an unpublished flip-utils** therefore needs no PyPI release and no version bump: rebuild
+the images from your branch (`make build-fl FL_BACKEND=flower` — the source lands at
+`/opt/flip-utils`) and restart the flower services onto the rebuilt `:dev` images
+(`make restart-fl FL_BACKEND=flower DOCKER_FL_REGISTRY= DOCKER_FL_TAG=dev` for the hub stack).
+Every flip-utils change ships via an image rebuild — the containers run whatever their image bakes,
+so confirm the running container carries your change by inspecting the file you edited
+(`docker exec <supernode> cat /opt/flip-utils/flip/<changed file>`) before trusting a run.
+
+> ⚠️ The pin lives in the **fl-apps templates**, so it covers hub-stack runs (flip-api bundles every
+> uploaded app with a template). The standalone stacks below submit apps straight from
+> `fl-tutorials/flower/`, whose pyprojects do **not** pin flip-utils — a tutorial submitted there
+> runtime-installs its declared `flip-utils` from PyPI (the plain Flower model). To exercise an
+> unpublished flip-utils via `make submit`, temporarily add the same `[tool.uv.sources]` pin to the
+> tutorial's pyproject — the images bake `/opt/flip-utils` in-container.
+
 ## Step-by-step provisioning
 
 Provisioning lives under [`provision/`](provision/): the [`scripts/`](provision/scripts/) that

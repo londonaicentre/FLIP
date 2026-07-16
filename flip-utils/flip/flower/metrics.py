@@ -92,6 +92,11 @@ def handle_client_metrics(
         return
 
     site_name = _resolve_site_name(msg)
+    if site_name is None:
+        # A healthy reply always carries its site; without one the hub cannot
+        # attribute the metric to a trust, so there is nothing useful to send.
+        logger.warning("Dropping metrics from an unattributable client (node %s)", msg.metadata.src_node_id)
+        return
 
     for label, value in dict(metrics).items():
         if label in _BOOKKEEPING_KEYS or not isinstance(value, (int, float)):
@@ -129,6 +134,7 @@ def handle_client_exception(
     msg: Message,
     model_id: str,
     flip: FLIP = FLIP(),
+    site_name: str | None = None,
 ) -> None:
     """Forward a crashed-client reply to the Central Hub and mark the run ERROR.
 
@@ -138,6 +144,14 @@ def handle_client_exception(
     without the latter, a crashed client would leave the Hub showing a
     still-running run indefinitely.
 
+    A crashed reply carries neither content nor a usable node id, so the caller
+    may supply ``site_name`` (``FlipFedAvg`` names the client by elimination).
+    When the client cannot be identified the exception is reported model-level
+    (``client_name=None``) rather than under a fabricated ``unknown_<node_id>``
+    name: hubs older than the round-telemetry release reject an unresolvable
+    name outright (losing the traceback), and current hubs keep the row only as
+    an "unattributed client" fallback — the fabricated name is noise either way.
+
     Only the fl-server should call this function — fl-clients must not hold
     the credentials needed to reach the Central Hub.
 
@@ -146,11 +160,12 @@ def handle_client_exception(
         model_id: The FLIP model ID. Validated by the underlying ``flip``
             implementation when it reaches the Central Hub.
         flip: The FLIP instance used to reach the Central Hub.
+        site_name: The client's site, when the caller established it out-of-band.
     """
     if not msg.has_error():
         return
 
-    site_name = _resolve_site_name(msg)
+    site_name = site_name or _resolve_site_name(msg)
     error_msg = str(msg.error) if msg.error else "Unknown client error"
 
     try:
@@ -169,16 +184,26 @@ def handle_client_exception(
         logger.exception("Failed to transition model %s to ERROR status", model_id)
 
 
-def _resolve_site_name(msg: Message) -> str:
-    """Return the client's site name, falling back to the source node id.
+def _resolve_site_name(msg: Message) -> str | None:
+    """Return the client's site name from its reply, or None when absent.
 
     Accepts either ``"site"`` (standard tutorial convention) or
     ``"client_name"`` (used by the evaluation tutorial) from the config record
     so downstream apps can pick either key.
 
     Tolerates content-less messages — Flower raises ``ValueError`` when
-    ``msg.content`` is accessed on an errored reply, and the exception
-    handler legitimately encounters that case.
+    ``msg.content`` is accessed on an errored reply, and the exception handler
+    legitimately encounters that case. Such a reply also carries a placeholder
+    ``src_node_id``, so it identifies nothing: return None rather than inventing
+    an ``unknown_<node_id>`` name the hub cannot resolve to a trust. Callers that
+    hold round context (``FlipFedAvg``) name the client by elimination instead;
+    see ``flip.flower.progress.resolve_absent_site``.
+
+    Args:
+        msg: A Flower reply Message from a client.
+
+    Returns:
+        str | None: The site name, or None when the reply does not carry one.
     """
     try:
         config = msg.content.get("config")
@@ -187,8 +212,8 @@ def _resolve_site_name(msg: Message) -> str:
     if config:
         for key in ("site", "client_name"):
             if key in config:
-                return config[key]
-    return f"unknown_{msg.metadata.src_node_id}"
+                return str(config[key])
+    return None
 
 
 # Trailing-suffix spellings that set a metric's plot x-coordinate. ".x_" is the canonical form;

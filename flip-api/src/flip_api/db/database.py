@@ -173,9 +173,16 @@ def get_session() -> Generator[Session, None, None]:
     """
     Create a new SQLModel session.
 
+    The ``with`` block is load-bearing: FastAPI finalises this dependency by
+    throwing the endpoint's exception into the generator at the ``yield`` (or
+    closing it on disconnect/cancellation), so a bare ``yield`` followed by
+    ``session.close()`` never closes the session on those paths — the
+    checked-out connection is stranded ``idle in transaction`` until the
+    process restarts, and enough of them exhaust the pool and take the whole
+    API down (FLIP#773).
+
     Yields:
         Session: A new SQLModel session.
     """
-    session = Session(get_engine())
-    yield session
-    session.close()
+    with Session(get_engine()) as session:
+        yield session

@@ -16,11 +16,13 @@ import pytest
 from nvflare.apis.event_type import EventType
 from nvflare.app_common.app_event_type import AppEventType
 
-from flip.constants import FlipEvents, ModelStatus
+from flip.constants import FlipEvents, FlipProps, ModelStatus
 from flip.exceptions import ResultsUploadError
+from flip.nvflare.components.evaluation_json_generator import EvaluationJsonGenerator
 from flip.nvflare.components.flip_server_event_handler import ServerEventHandler
 from flip.nvflare.components.persist_and_cleanup import PersistToS3AndCleanup
 from flip.nvflare.components.validation_json_generator import ValidationJsonGenerator
+from flip.schemas import FLLogEvent
 
 
 class TestServerEventHandler:
@@ -458,3 +460,211 @@ class TestServerEventHandler:
         assert "must be PersistToS3AndCleanup" in str(handler.system_panic.call_args)
         handler.system_panic.assert_called_once()
         assert "must be PersistToS3AndCleanup" in str(handler.system_panic.call_args)
+
+    # --- FLIP#754: an evaluation whose every validate task failed must not report success ---
+
+    @staticmethod
+    def _end_run(handler, *, all_tasks_failed, flip):
+        """Drive END_RUN with an evaluation generator reporting the given all-failed verdict."""
+        fl_ctx = MagicMock()
+        fl_ctx.get_peer_context.return_value = None
+        engine = MagicMock()
+        fl_ctx.get_engine.return_value = engine
+
+        json_generator = Mock(spec=EvaluationJsonGenerator)
+        json_generator.all_tasks_failed.return_value = all_tasks_failed
+        persist_cleanup = Mock(spec=PersistToS3AndCleanup)
+        persist_cleanup.execute.return_value = None
+        engine.get_component.side_effect = lambda comp_id: (
+            json_generator if comp_id == "json_generator" else persist_cleanup
+        )
+
+        handler.handle_event(EventType.END_RUN, fl_ctx)
+        return persist_cleanup
+
+    def test_end_run_reports_error_when_every_evaluation_task_failed(self):
+        """FLIP#754: 4/4 aborted validate tasks previously reported RESULTS_UPLOADED."""
+        model_id = "123e4567-e89b-12d3-a456-426614174000"
+        flip = MagicMock()
+        handler = ServerEventHandler(model_id=model_id, flip=flip)
+
+        self._end_run(handler, all_tasks_failed=True, flip=flip)
+
+        assert handler.final_status == ModelStatus.ERROR
+        flip.update_status.assert_called_with(model_id, ModelStatus.ERROR)
+
+    def test_end_run_still_uploads_results_when_every_evaluation_task_failed(self):
+        """The zip carries error_log.txt and evaluation_failures.json, so it must still upload."""
+        flip = MagicMock()
+        handler = ServerEventHandler(model_id="123e4567-e89b-12d3-a456-426614174000", flip=flip)
+
+        persist_cleanup = self._end_run(handler, all_tasks_failed=True, flip=flip)
+
+        persist_cleanup.execute.assert_called_once()
+
+    def test_end_run_reports_results_uploaded_on_partial_evaluation_failure(self):
+        """Some clients succeeded: the successful results still count as a completed run."""
+        model_id = "123e4567-e89b-12d3-a456-426614174000"
+        flip = MagicMock()
+        handler = ServerEventHandler(model_id=model_id, flip=flip)
+
+        self._end_run(handler, all_tasks_failed=False, flip=flip)
+
+        assert handler.final_status == ModelStatus.RESULTS_UPLOADED
+        flip.update_status.assert_called_with(model_id, ModelStatus.RESULTS_UPLOADED)
+
+    def test_end_run_keeps_stopped_when_a_user_abort_failed_every_task(self):
+        """A user-requested stop aborts every in-flight validate task; that is STOPPED, not ERROR."""
+        model_id = "123e4567-e89b-12d3-a456-426614174000"
+        flip = MagicMock()
+        handler = ServerEventHandler(model_id=model_id, flip=flip)
+        handler.final_status = ModelStatus.STOPPED
+
+        self._end_run(handler, all_tasks_failed=True, flip=flip)
+
+        assert handler.final_status == ModelStatus.STOPPED
+        flip.update_status.assert_called_with(model_id, ModelStatus.STOPPED)
+
+    def test_end_run_reports_error_when_a_fatal_error_accompanies_a_failed_evaluation(self):
+        """A fatal system error stays the most salient terminal state."""
+        model_id = "123e4567-e89b-12d3-a456-426614174000"
+        flip = MagicMock()
+        handler = ServerEventHandler(model_id=model_id, flip=flip)
+        handler.fatal_error = True
+
+        self._end_run(handler, all_tasks_failed=True, flip=flip)
+
+        assert handler.final_status == ModelStatus.ERROR
+
+    def test_end_run_reports_upload_failed_when_upload_breaks_after_a_clean_evaluation(self):
+        """Regression guard: the new all-failed branch must not shadow RESULTS_UPLOAD_FAILED."""
+        flip = MagicMock()
+        handler = ServerEventHandler(model_id="123e4567-e89b-12d3-a456-426614174000", flip=flip)
+
+        fl_ctx = MagicMock()
+        fl_ctx.get_peer_context.return_value = None
+        engine = MagicMock()
+        fl_ctx.get_engine.return_value = engine
+
+        json_generator = Mock(spec=EvaluationJsonGenerator)
+        json_generator.all_tasks_failed.return_value = False
+        persist_cleanup = Mock(spec=PersistToS3AndCleanup)
+        persist_cleanup.execute.side_effect = ResultsUploadError("boom")
+        engine.get_component.side_effect = lambda comp_id: (
+            json_generator if comp_id == "json_generator" else persist_cleanup
+        )
+
+        handler.handle_event(EventType.END_RUN, fl_ctx)
+
+        assert handler.final_status == ModelStatus.RESULTS_UPLOAD_FAILED
+
+
+class TestRoundEventRelay:
+    """ROUND_STARTED / ROUND_DONE are relayed to the hub as typed facts (1-based rounds)."""
+
+    MODEL_ID = "123e4567-e89b-12d3-a456-426614174000"
+
+    def _handler_and_ctx(self, props):
+        flip = MagicMock()
+        handler = ServerEventHandler(model_id=self.MODEL_ID, flip=flip)
+
+        fl_ctx = MagicMock()
+        fl_ctx.get_peer_context.return_value = None
+        engine = MagicMock()
+        fl_ctx.get_engine.return_value = engine
+        json_generator = Mock(spec=ValidationJsonGenerator)
+        persist_cleanup = Mock(spec=PersistToS3AndCleanup)
+        engine.get_component.side_effect = lambda comp_id: (
+            json_generator if comp_id == "json_generator" else persist_cleanup
+        )
+        fl_ctx.get_prop.side_effect = lambda key, default=None: props.get(key, default)
+        return handler, flip, fl_ctx
+
+    def test_round_started_relays_one_based_round_and_total(self):
+        from nvflare.app_common.app_constant import AppConstants
+
+        # NVFLARE's _current_round is 0-based: prop 2 means round 3 of 5.
+        handler, flip, fl_ctx = self._handler_and_ctx(
+            {AppConstants.CURRENT_ROUND: 2, AppConstants.NUM_ROUNDS: 5}
+        )
+
+        handler.handle_event(AppEventType.ROUND_STARTED, fl_ctx)
+
+        flip.send_event.assert_called_once_with(
+            model_id=self.MODEL_ID,
+            event_type=FLLogEvent.ROUND_STARTED,
+            global_round=3,
+            details={"total_rounds": 5},
+        )
+
+    def test_round_started_clears_the_previous_rounds_sticky_counts(self):
+        """A round with zero accepted results must not report round N-1's counts
+        on its ROUND_DONE — the sticky props are cleared at every round start."""
+        from nvflare.app_common.app_constant import AppConstants
+
+        handler, flip, fl_ctx = self._handler_and_ctx(
+            {AppConstants.CURRENT_ROUND: 2, AppConstants.NUM_ROUNDS: 5}
+        )
+
+        handler.handle_event(AppEventType.ROUND_STARTED, fl_ctx)
+
+        cleared = {call.args[0] for call in fl_ctx.set_prop.call_args_list if call.args[1] is None}
+        assert FlipProps.ROUND_RETURNED in cleared
+        assert FlipProps.ROUND_EXPECTED in cleared
+
+    def test_round_started_without_total_omits_it(self):
+        from nvflare.app_common.app_constant import AppConstants
+
+        handler, flip, fl_ctx = self._handler_and_ctx({AppConstants.CURRENT_ROUND: 0})
+
+        handler.handle_event(AppEventType.ROUND_STARTED, fl_ctx)
+
+        flip.send_event.assert_called_once_with(
+            model_id=self.MODEL_ID,
+            event_type=FLLogEvent.ROUND_STARTED,
+            global_round=1,
+            details=None,
+        )
+
+    def test_round_done_relays_aggregated_with_counts(self):
+        from nvflare.app_common.app_constant import AppConstants
+
+        handler, flip, fl_ctx = self._handler_and_ctx(
+            {
+                AppConstants.CURRENT_ROUND: 2,
+                FlipProps.ROUND_RETURNED: 4,
+                FlipProps.ROUND_EXPECTED: 5,
+            }
+        )
+
+        handler.handle_event(AppEventType.ROUND_DONE, fl_ctx)
+
+        flip.send_event.assert_called_once_with(
+            model_id=self.MODEL_ID,
+            event_type=FLLogEvent.ROUND_AGGREGATED,
+            global_round=3,
+            details={"returned": 4, "expected": 5},
+        )
+
+    def test_round_done_without_counts_omits_details(self):
+        from nvflare.app_common.app_constant import AppConstants
+
+        handler, flip, fl_ctx = self._handler_and_ctx({AppConstants.CURRENT_ROUND: 0})
+
+        handler.handle_event(AppEventType.ROUND_DONE, fl_ctx)
+
+        flip.send_event.assert_called_once_with(
+            model_id=self.MODEL_ID,
+            event_type=FLLogEvent.ROUND_AGGREGATED,
+            global_round=1,
+            details=None,
+        )
+
+    def test_no_round_prop_means_no_event(self):
+        """A ROUND_STARTED without CURRENT_ROUND on the context relays nothing."""
+        handler, flip, fl_ctx = self._handler_and_ctx({})
+
+        handler.handle_event(AppEventType.ROUND_STARTED, fl_ctx)
+        handler.handle_event(AppEventType.ROUND_DONE, fl_ctx)
+
+        flip.send_event.assert_not_called()
