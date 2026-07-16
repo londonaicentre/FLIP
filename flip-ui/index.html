@@ -18,7 +18,10 @@
   <meta charset="UTF-8" />
   <link rel="icon" href="/favicon.ico" sizes="any" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <!-- viewport-fit=cover: iOS letterboxes the layout viewport inside the safe area without it, so
+       positioned elements (the corner artwork at top-0/bottom-0) can never reach the physical
+       screen edges and their bleed-cropped cut edges show as floating straight lines. -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <!-- Pre-hydration default (light `body` token): the page paints light until useDark() applies
        the dark class, then useThemeColorMeta keeps this tag in sync with the app theme. -->
   <meta name="theme-color" content="#FAF7F5" />
