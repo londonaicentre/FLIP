@@ -84,8 +84,10 @@ class TrainingLog(BaseModel):
     # end-to-end (like the fl_logs column): a newer FL image's event is stored and
     # served via the unknown-event render fallback, never rejected at ingest.
     event_type: str | None = Field(default=None, max_length=64)
-    # 1-based on both backends; every event in the vocabulary is round-scoped.
-    global_round: int | None = Field(default=None, ge=1)
+    # 1-based on both backends; every event in the vocabulary is round-scoped. The
+    # ceiling is the PG INTEGER max of the fl_logs.global_round column — without it
+    # an oversized round passes validation and 500s at insert.
+    global_round: int | None = Field(default=None, ge=1, le=2_147_483_647)
     details: dict[str, Any] | None = None
     success: bool = True
 

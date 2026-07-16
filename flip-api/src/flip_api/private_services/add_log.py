@@ -40,7 +40,9 @@ def add_log_endpoint(
     Add a log entry to the database for a specific model.
 
     This endpoint is internal-only: it accepts requests from the fl-server on the
-    Central Hub (authenticated via INTERNAL_SERVICE_KEY_HEADER).
+    Central Hub (authenticated via INTERNAL_SERVICE_KEY_HEADER). The payload is
+    either a free-text row (``log`` set) or a typed round event (``event_type``
+    set) — ``TrainingLog`` enforces the two shapes.
 
     Args:
         model_id (UUID): The ID of the model.
@@ -51,7 +53,10 @@ def add_log_endpoint(
         dict[str, str]: A confirmation message indicating the log entry was created.
 
     Raises:
-        HTTPException: If the trust is not associated with the model or if there is an internal server error.
+        HTTPException: 400 when the sender cannot be attributed (unknown FL client
+            name, or the resolved trust is not associated with the model) — except
+            for failed free-text rows, which are stored model-level instead so an
+            error report is never dropped; 500 on an internal server error.
     """
     fl_client_name = training_log.fl_client_name
 

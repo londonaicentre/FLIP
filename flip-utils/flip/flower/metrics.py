@@ -141,7 +141,9 @@ def handle_client_exception(
     may supply ``site_name`` (``FlipFedAvg`` names the client by elimination).
     When the client cannot be identified the exception is reported model-level
     (``client_name=None``) rather than under a fabricated ``unknown_<node_id>``
-    name, which the hub would reject — losing the traceback entirely.
+    name: hubs older than the round-telemetry release reject an unresolvable
+    name outright (losing the traceback), and current hubs keep the row only as
+    an "unattributed client" fallback — the fabricated name is noise either way.
 
     Only the fl-server should call this function — fl-clients must not hold
     the credentials needed to reach the Central Hub.

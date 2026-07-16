@@ -52,7 +52,7 @@ Phase = Literal["train", "evaluate"]
 def resolve_absent_site(
     dispatched_nodes: set[int], responded_nodes: set[int], site_by_node: dict[int, str]
 ) -> str | None:
-    """Name the single client that was dispatched a task but never answered.
+    """Name the single client that was dispatched a task but never returned a healthy reply.
 
     Flower stamps a placeholder ``src_node_id`` on the error reply it synthesises
     for an unreachable node, so a dead client cannot be recognised from its own
@@ -125,8 +125,8 @@ class RoundTelemetry:
         """Forward every reply's metrics, exception and round event to the hub.
 
         Learns each healthy reply's site, then names the one client the phase
-        dispatched to that never answered (see ``resolve_absent_site``) so its
-        error is attributed to the right trust. fl-clients never reach the
+        dispatched to that never returned a healthy reply (see
+        ``resolve_absent_site``) so its error is attributed to the right trust. fl-clients never reach the
         Central Hub directly — every forward happens here, server-side.
 
         Args:
