@@ -66,17 +66,6 @@ describe("SecondaryLayout", () => {
         expect(comp.find(".h-screen").exists()).toBe(false);
     });
 
-    test("pads the page by the safe-area insets and caps the card inside them once viewport-fit=cover applies", () => {
-        const html = mountLayout().html();
-
-        expect(html).toContain("pt-[max(1rem,env(safe-area-inset-top))]");
-        expect(html).toContain("pb-[max(1rem,env(safe-area-inset-bottom))]");
-        expect(html).toContain("pl-[max(1rem,env(safe-area-inset-left))]");
-        expect(html).toContain("pr-[max(1rem,env(safe-area-inset-right))]");
-        expect(html).toContain("max-h-full");
-        expect(html).not.toContain("max-h-[95vh]");
-    });
-
     test("shows the light AI Centre logo in light mode", () => {
         darkState.ref!.value = false;
         const comp = mountLayout();

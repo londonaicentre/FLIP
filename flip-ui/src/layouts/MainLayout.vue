@@ -12,7 +12,7 @@
 -->
 
 <template>
-    <div class="flex flex-col w-full h-screen pt-[env(safe-area-inset-top)] font-sans antialiased text-gray-700 dark:text-gray-300 bg-body dark:bg-dark-surface">
+    <div class="flex flex-col w-full h-screen font-sans antialiased text-gray-700 dark:text-gray-300 bg-body dark:bg-dark-surface">
         <transition name="slidedown">
             <AiBanner v-if="details?.banner?.enabled" :message="details.banner.message" :link="details.banner.link" />
         </transition>

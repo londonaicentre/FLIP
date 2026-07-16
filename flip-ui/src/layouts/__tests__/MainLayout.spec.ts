@@ -182,10 +182,6 @@ describe("MainLayout", () => {
 
             expect(wrapper.exists()).toBe(true);
         });
-
-        it("keeps the app shell below the status bar once viewport-fit=cover applies", () => {
-            expect(mountMainLayout().html()).toContain("pt-[env(safe-area-inset-top)]");
-        });
     });
 
     describe("userRole", () => {

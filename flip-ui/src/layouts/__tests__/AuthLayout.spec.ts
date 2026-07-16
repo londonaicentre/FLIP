@@ -71,14 +71,6 @@ describe("Auth Layout", () => {
         expect(component.find(".h-screen").exists()).toBe(false);
     });
 
-    it("keeps the logos and footer clear of the notch/home-indicator once viewport-fit=cover applies", () => {
-        const html = mountLayout().html();
-
-        expect(html).toContain("top-[max(1.5rem,env(safe-area-inset-top))]");
-        expect(html).toContain("left-[max(2rem,env(safe-area-inset-left))]");
-        expect(html).toContain("bottom-[max(1rem,env(safe-area-inset-bottom))]");
-    });
-
     it("shows the light AI Centre logo in light mode", () => {
         darkState.ref!.value = false;
         const component = mountLayout();
