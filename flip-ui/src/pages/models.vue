@@ -176,7 +176,7 @@
                                         :class="statusPillClass(model.status)"
                                     >
                                         <span class="inline-block w-1.5 h-1.5 rounded-full" :class="statusDotClass(model.status)" />
-                                        {{ modelStatusLabel(model.status) }}
+                                        {{ modelStatusLabelWithQueue(model.status, model.queuePosition) }}
                                     </span>
                                 </div>
                             </div>
@@ -225,7 +225,7 @@
                                         :class="statusPillClass(model.status)"
                                     >
                                         <span class="inline-block w-1.5 h-1.5 rounded-full" :class="statusDotClass(model.status)" />
-                                        {{ modelStatusLabel(model.status) }}
+                                        {{ modelStatusLabelWithQueue(model.status, model.queuePosition) }}
                                     </span>
                                 </div>
                                 <div v-if="model.trusts.length" class="flex flex-wrap items-center gap-1.5 mt-2">
@@ -287,7 +287,7 @@ import { getAllModels,
     isModelStatusError,
     ModelStatus,
     modelStatusDotClass as statusDotClass,
-    modelStatusLabel,
+    modelStatusLabelWithQueue,
     modelStatusPillClass as statusPillClass } from "@/services/model-service";
 
 const pageSize = 20;

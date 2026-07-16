@@ -177,6 +177,26 @@ describe("Models Page", () => {
         expect(wrapper.find("[data-test='model-status-indicator']").text()).toBe("Training Started");
     });
 
+    test("a queued model's status pill carries its queue position", async () => {
+        setModels([makeModel({
+            status: "INITIATED",
+            queuePosition: 2
+        })]);
+        const wrapper = mountPage();
+        await wrapper.vm.$nextTick();
+
+        expect(wrapper.find("[data-test='model-status-indicator']").text()).toBe("Model Queued (2)");
+        expect(wrapper.find("[data-test='model-status-indicator-mobile']").text()).toBe("Model Queued (2)");
+    });
+
+    test("a queued model without a position keeps the plain label", async () => {
+        setModels([makeModel({ status: "INITIATED" })]);
+        const wrapper = mountPage();
+        await wrapper.vm.$nextTick();
+
+        expect(wrapper.find("[data-test='model-status-indicator']").text()).toBe("Model Queued");
+    });
+
     test("stacks mobile rows with the status pill and green-dot trust chips below sm", async () => {
         setModels([makeModel({
             trusts: [trust("GSTT"), trust("KCH")],
