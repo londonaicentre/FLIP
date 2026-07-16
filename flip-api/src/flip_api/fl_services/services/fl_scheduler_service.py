@@ -21,6 +21,7 @@ from sqlmodel import Session, col, select
 from flip_api.db.models.main_models import (
     FLJob,
     FLKitSlot,
+    FLLogs,
     FLNets,
     FLScheduler,
     Model,
@@ -37,7 +38,7 @@ from flip_api.domain.schemas.status import (
     ModelStatus,
     NetStatus,
 )
-from flip_api.domain.schemas.types import FLBackend
+from flip_api.domain.schemas.types import FLBackend, FLLogEvent
 from flip_api.fl_services.services.fl_service import (
     bundle_flower_application,
     bundle_nvflare_application,
@@ -119,6 +120,62 @@ def remove_job_from_queue(model_id: UUID, session: Session) -> None:
         session.rollback()
         logger.error(f"Error removing job from queue: {e}")
         raise DatabaseError("Error removing job from queue") from e
+
+
+def log_queue_positions(session: Session) -> None:
+    """Emit one typed activity row per queued model whose queue position changed.
+
+    The FL queue is ``FLJob`` rows in ``QUEUED`` status, ordered by ``created``
+    ascending — exactly the order ``check_for_queued_jobs`` picks from, so
+    position 1 is the next model to start when a net frees up. For each queued
+    job the last logged ``QUEUE_POSITION`` row is compared (keyed by job id, so
+    a re-initiated model always re-logs its first position); a row is written
+    only when the position is new or changed, making the function idempotent —
+    callers invoke it after any queue mutation without worrying about noise.
+
+    Positions are a display nicety: any failure is logged and swallowed so an
+    emission problem can never wedge the scheduler tick or the caller's queue
+    mutation.
+
+    Args:
+        session (Session): The database session.
+
+    Returns:
+        None
+    """
+    try:
+        queued_jobs = session.exec(
+            select(FLJob).where(FLJob.status == JobStatus.QUEUED).order_by(cast(Column, FLJob.created).asc())
+        ).all()
+        if not queued_jobs:
+            return
+
+        prior_rows = session.exec(
+            select(FLLogs)
+            .where(
+                col(FLLogs.model_id).in_([job.model_id for job in queued_jobs]),
+                FLLogs.event_type == FLLogEvent.QUEUE_POSITION.value,
+            )
+            .order_by(cast(Column, FLLogs.log_date).desc())
+        ).all()
+        last_by_model: dict[UUID, FLLogs] = {}
+        for row in prior_rows:
+            last_by_model.setdefault(row.model_id, row)
+
+        for position, job in enumerate(queued_jobs, start=1):
+            last = last_by_model.get(job.model_id)
+            last_details = (last.details or {}) if last is not None else {}
+            if last_details.get("job_id") == str(job.id) and last_details.get("position") == position:
+                continue
+            add_log(
+                job.model_id,
+                None,
+                session,
+                event_type=FLLogEvent.QUEUE_POSITION.value,
+                details={"position": position, "job_id": str(job.id)},
+            )
+    except Exception:
+        logger.exception("Failed to emit queue-position logs")
 
 
 def revert_scheduler_pickup(scheduler_id: UUID, session: Session) -> None:

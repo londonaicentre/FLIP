@@ -15,6 +15,7 @@ from uuid import uuid4
 
 import pytest
 
+from flip_api.db.models.main_models import FLJob, FLLogs
 from flip_api.domain.interfaces.fl import (
     IJobResponse,
     INetDetails,
@@ -22,7 +23,7 @@ from flip_api.domain.interfaces.fl import (
     ISchedulerResponse,
 )
 from flip_api.domain.schemas.status import JobStatus, ModelStatus, NetStatus
-from flip_api.domain.schemas.types import FLBackend
+from flip_api.domain.schemas.types import FLBackend, FLLogEvent
 from flip_api.fl_services.services import fl_scheduler_service
 from flip_api.utils.exceptions import NotFoundError
 
@@ -356,3 +357,109 @@ def test_get_slot_names_by_trust_ids_maps_assigned_slots(fake_session):
     result = fl_scheduler_service.get_slot_names_by_trust_ids([trust_a, trust_b], fake_session)
 
     assert result == {trust_a: "Trust_1", trust_b: "Trust_2"}
+
+
+def _queued_job(model_id=None):
+    return FLJob(id=uuid4(), model_id=model_id or uuid4())
+
+
+def _position_row(model_id, job_id, position):
+    return FLLogs(
+        model_id=model_id,
+        success=True,
+        event_type=FLLogEvent.QUEUE_POSITION.value,
+        details={"position": position, "job_id": str(job_id)},
+    )
+
+
+def _exec_returning(*result_lists):
+    """One MagicMock per session.exec(...) call, whose .all() yields the given list."""
+    return [MagicMock(all=MagicMock(return_value=list(results))) for results in result_lists]
+
+
+class TestLogQueuePositions:
+    """log_queue_positions writes one typed row per queued model whose position changed.
+
+    Emit-on-change keyed by job id makes the helper idempotent, so every queue
+    mutation site can call it unconditionally without spamming the feed.
+    """
+
+    def test_empty_queue_emits_nothing(self, fake_session):
+        fake_session.exec.side_effect = _exec_returning([])
+        with patch.object(fl_scheduler_service, "add_log") as mock_add_log:
+            fl_scheduler_service.log_queue_positions(fake_session)
+        mock_add_log.assert_not_called()
+
+    def test_new_job_gets_its_position_logged(self, fake_session):
+        job = _queued_job()
+        fake_session.exec.side_effect = _exec_returning([job], [])
+        with patch.object(fl_scheduler_service, "add_log") as mock_add_log:
+            fl_scheduler_service.log_queue_positions(fake_session)
+        mock_add_log.assert_called_once_with(
+            job.model_id,
+            None,
+            fake_session,
+            event_type=FLLogEvent.QUEUE_POSITION.value,
+            details={"position": 1, "job_id": str(job.id)},
+        )
+
+    def test_unchanged_position_is_not_relogged(self, fake_session):
+        job = _queued_job()
+        fake_session.exec.side_effect = _exec_returning([job], [_position_row(job.model_id, job.id, 1)])
+        with patch.object(fl_scheduler_service, "add_log") as mock_add_log:
+            fl_scheduler_service.log_queue_positions(fake_session)
+        mock_add_log.assert_not_called()
+
+    def test_moved_job_logs_its_new_position(self, fake_session):
+        job = _queued_job()
+        fake_session.exec.side_effect = _exec_returning([job], [_position_row(job.model_id, job.id, 2)])
+        with patch.object(fl_scheduler_service, "add_log") as mock_add_log:
+            fl_scheduler_service.log_queue_positions(fake_session)
+        mock_add_log.assert_called_once_with(
+            job.model_id,
+            None,
+            fake_session,
+            event_type=FLLogEvent.QUEUE_POSITION.value,
+            details={"position": 1, "job_id": str(job.id)},
+        )
+
+    def test_second_of_two_queued_jobs_gets_position_two(self, fake_session):
+        first, second = _queued_job(), _queued_job()
+        fake_session.exec.side_effect = _exec_returning(
+            [first, second], [_position_row(first.model_id, first.id, 1)]
+        )
+        with patch.object(fl_scheduler_service, "add_log") as mock_add_log:
+            fl_scheduler_service.log_queue_positions(fake_session)
+        mock_add_log.assert_called_once_with(
+            second.model_id,
+            None,
+            fake_session,
+            event_type=FLLogEvent.QUEUE_POSITION.value,
+            details={"position": 2, "job_id": str(second.id)},
+        )
+
+    def test_reinitiated_model_relogs_even_at_the_same_position(self, fake_session):
+        # Same model, new job: the prior row belongs to the model's previous run,
+        # so its matching position must not suppress the new run's first row.
+        job = _queued_job()
+        fake_session.exec.side_effect = _exec_returning([job], [_position_row(job.model_id, uuid4(), 1)])
+        with patch.object(fl_scheduler_service, "add_log") as mock_add_log:
+            fl_scheduler_service.log_queue_positions(fake_session)
+        mock_add_log.assert_called_once()
+
+    def test_only_the_latest_prior_row_counts(self, fake_session):
+        # Rows arrive newest-first; an older matching row behind a newer different
+        # one must not suppress emission.
+        job = _queued_job()
+        newer = _position_row(job.model_id, job.id, 2)
+        older = _position_row(job.model_id, job.id, 1)
+        fake_session.exec.side_effect = _exec_returning([job], [newer, older])
+        with patch.object(fl_scheduler_service, "add_log") as mock_add_log:
+            fl_scheduler_service.log_queue_positions(fake_session)
+        mock_add_log.assert_called_once()
+
+    def test_emission_failure_never_raises(self, fake_session):
+        job = _queued_job()
+        fake_session.exec.side_effect = _exec_returning([job], [])
+        with patch.object(fl_scheduler_service, "add_log", side_effect=Exception("db down")):
+            fl_scheduler_service.log_queue_positions(fake_session)  # must not raise
