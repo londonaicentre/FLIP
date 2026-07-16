@@ -64,6 +64,13 @@ describe("Auth Layout", () => {
         expect(component.find("img[alt=\"NHS logo\"]").exists()).toBe(false);
     });
 
+    it("sizes the page to the dynamic viewport (h-dvh) so mobile browser bars leave no black bands", () => {
+        const component = mountLayout();
+
+        expect(component.find(".h-dvh").exists()).toBe(true);
+        expect(component.find(".h-screen").exists()).toBe(false);
+    });
+
     it("shows the light AI Centre logo in light mode", () => {
         darkState.ref!.value = false;
         const component = mountLayout();

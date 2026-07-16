@@ -88,7 +88,10 @@
     }
 
     body {
-        @apply overflow-hidden;
+        /* Paint the page colour on the document itself: on mobile the layouts' own 100vh/100dvh
+           box can fall short of the visible viewport (dynamic URL bar, keyboard, overscroll), and
+           `color-scheme: dark` would render the uncovered canvas black. */
+        @apply overflow-hidden bg-body dark:bg-dark-canvas;
     }
 
     .font-bold {

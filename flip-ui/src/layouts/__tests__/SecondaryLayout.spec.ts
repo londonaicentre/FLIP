@@ -59,6 +59,13 @@ describe("SecondaryLayout", () => {
         expect(mountLayout().find(".bg-body").exists()).toBe(true);
     });
 
+    test("sizes the page to the dynamic viewport (h-dvh) so mobile browser bars leave no black bands", () => {
+        const comp = mountLayout();
+
+        expect(comp.find(".h-dvh").exists()).toBe(true);
+        expect(comp.find(".h-screen").exists()).toBe(false);
+    });
+
     test("shows the light AI Centre logo in light mode", () => {
         darkState.ref!.value = false;
         const comp = mountLayout();

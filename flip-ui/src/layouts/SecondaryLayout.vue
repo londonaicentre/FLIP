@@ -13,7 +13,7 @@
 
 <template>
     <AiErrorAlert v-if="errorStore.hasError" class="absolute z-10" />
-    <div class="bg-body relative dark:bg-dark-canvas flex justify-center items-center h-screen w-screen">
+    <div class="bg-body relative dark:bg-dark-canvas flex justify-center items-center h-dvh w-screen">
         <div class="absolute bottom-0 left-0">
             <img src="@/assets/login/bottom-left.svg?url">
         </div>
