@@ -164,15 +164,19 @@ def log_queue_positions(session: Session) -> None:
             )
             .order_by(cast(Column, FLLogs.log_date).desc())
         ).all()
-        last_by_model: dict[UUID, FLLogs] = {}
+        # Keyed by job id (not model id): a model can hold two QUEUED jobs (no
+        # uniqueness on FLJob.model_id), and a model-keyed lookup would let the
+        # newest row suppress one job while forcing the other to re-emit forever.
+        last_details_by_job: dict[str, dict] = {}
         for row in prior_rows:
-            last_by_model.setdefault(row.model_id, row)
+            row_details = row.details or {}
+            row_job_id = row_details.get("job_id")
+            if isinstance(row_job_id, str):
+                last_details_by_job.setdefault(row_job_id, row_details)
 
         emitted = False
         for position, job in enumerate(queued_jobs, start=1):
-            last = last_by_model.get(job.model_id)
-            last_details = (last.details or {}) if last is not None else {}
-            if last_details.get("job_id") == str(job.id) and last_details.get("position") == position:
+            if last_details_by_job.get(str(job.id), {}).get("position") == position:
                 continue
             # A non-None transaction makes add_log skip its per-row commit; the
             # whole batch lands in the single commit below.

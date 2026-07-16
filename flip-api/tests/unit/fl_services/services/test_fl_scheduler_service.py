@@ -448,6 +448,21 @@ class TestLogQueuePositions:
             transaction=fake_session,
         )
 
+    def test_two_queued_jobs_of_the_same_model_do_not_oscillate(self, fake_session):
+        # FLJob has no uniqueness on model_id, so a double initiate can queue the
+        # same model twice. The last-row lookup is keyed by job id, so each job
+        # compares against its own latest row — a model-keyed lookup would let the
+        # newest row suppress one job and re-emit the other forever (oscillation).
+        model_id = uuid4()
+        job_a, job_b = _queued_job(model_id), _queued_job(model_id)
+        newer = _position_row(model_id, job_b.id, 2)
+        older = _position_row(model_id, job_a.id, 1)
+        fake_session.exec.side_effect = _exec_returning([job_a, job_b], [newer, older])
+        with patch.object(fl_scheduler_service, "add_log") as mock_add_log:
+            fl_scheduler_service.log_queue_positions(fake_session)
+        mock_add_log.assert_not_called()
+        fake_session.commit.assert_not_called()
+
     def test_reinitiated_model_relogs_even_at_the_same_position(self, fake_session):
         # Same model, new job: the prior row belongs to the model's previous run,
         # so its matching position must not suppress the new run's first row.
