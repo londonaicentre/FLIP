@@ -15,10 +15,10 @@
     <AiErrorAlert v-if="errorStore.hasError" class="absolute z-10" />
     <div class="bg-body relative dark:bg-dark-canvas flex justify-center items-center h-dvh w-screen">
         <div class="absolute bottom-0 left-0">
-            <img src="@/assets/login/bottom-left.svg?url" class="corner-art-fade-bottom">
+            <img src="@/assets/login/bottom-left.svg?url" alt="" class="corner-art-fade-bottom">
         </div>
         <div class="absolute top-0 right-0">
-            <img src="@/assets/login/top-right.svg?url" class="corner-art-fade-top">
+            <img src="@/assets/login/top-right.svg?url" alt="" class="corner-art-fade-top">
         </div>
         <div
             class="p-6 bg-white flex dark:bg-dark-surface w-full md:min-w-[760px] md:max-w-[800px] max-w-[75vh] min-h-[75vh] max-h-[95vh] shadow-xl rounded-md relative overflow-hidden m-4"
