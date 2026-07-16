@@ -25,9 +25,10 @@ from flip_api.domain.interfaces.fl import (
     IServerStatus,
     IStartTrainingBody,
 )
-from flip_api.domain.schemas.status import ClientStatus
+from flip_api.domain.schemas.status import ClientStatus, JobStatus
 from flip_api.domain.schemas.types import FLBackend
 from flip_api.fl_services.services import fl_service
+from flip_api.utils.exceptions import JobAbortedError
 
 
 @pytest.fixture
@@ -259,6 +260,73 @@ def test_start_training_with_config(
     )
     mock_upload.assert_called_once()
     mock_submit.assert_called_once()
+
+
+@patch("flip_api.fl_services.services.fl_service.submit_job")
+@patch("flip_api.fl_services.services.fl_service.upload_app")
+@patch("flip_api.fl_services.services.fl_service.encrypt")
+@patch("flip_api.fl_services.services.fl_scheduler_service.get_required_training_details")
+def test_start_training_skips_upload_when_job_already_deleted(
+    mock_get_required,
+    mock_encrypt,
+    mock_upload,
+    mock_submit,
+    model_id,
+    fl_job_id,
+    fake_session,
+):
+    # A concurrent abort DELETEd the job before the prepare thread reached the upload: the gate
+    # must fire before the (up to 900s) app transfer even starts.
+    mock_get_required.return_value = MagicMock(project_id="proj", cohort_query="query")
+    mock_encrypt.return_value = "encrypted"
+    fake_session.exec.return_value.one_or_none.return_value = JobStatus.DELETED
+
+    with pytest.raises(JobAbortedError):
+        fl_service.start_training(
+            model_id=model_id,
+            fl_job_id=fl_job_id,
+            clients=["client1"],
+            endpoint="endpoint",
+            bundle_urls=["url"],
+            session=fake_session,
+        )
+
+    mock_upload.assert_not_called()
+    mock_submit.assert_not_called()
+
+
+@patch("flip_api.fl_services.services.fl_service.submit_job")
+@patch("flip_api.fl_services.services.fl_service.upload_app")
+@patch("flip_api.fl_services.services.fl_service.encrypt")
+@patch("flip_api.fl_services.services.fl_scheduler_service.get_required_training_details")
+def test_start_training_skips_submit_when_job_deleted_during_upload(
+    mock_get_required,
+    mock_encrypt,
+    mock_upload,
+    mock_submit,
+    model_id,
+    fl_job_id,
+    fake_session,
+):
+    # The abort landed while upload_app was in flight: the second gate must stop the job from
+    # being submitted to the fl-server (submit_job is the side effect that creates the backend
+    # run and stamps fl_backend_job_id onto the DELETED row).
+    mock_get_required.return_value = MagicMock(project_id="proj", cohort_query="query")
+    mock_encrypt.return_value = "encrypted"
+    fake_session.exec.return_value.one_or_none.side_effect = [JobStatus.IN_PROGRESS, JobStatus.DELETED]
+
+    with pytest.raises(JobAbortedError):
+        fl_service.start_training(
+            model_id=model_id,
+            fl_job_id=fl_job_id,
+            clients=["client1"],
+            endpoint="endpoint",
+            bundle_urls=["url"],
+            session=fake_session,
+        )
+
+    mock_upload.assert_called_once()
+    mock_submit.assert_not_called()
 
 
 @patch("flip_api.fl_services.services.fl_service.JobRequiredFiles.is_valid_job_type", return_value=True)
@@ -1022,7 +1090,9 @@ def test_extract_current_job_data_multiple_found(mock_http_get):
 @patch("flip_api.fl_services.services.fl_service.abort_job")
 @patch("flip_api.fl_services.services.fl_scheduler_service.get_net_by_model_id")
 @patch("flip_api.fl_services.services.fl_scheduler_service.remove_job_from_queue")
+@patch("flip_api.fl_services.services.fl_scheduler_service.release_scheduler_for_model")
 def test_abort_model_training_success(
+    mock_release,
     mock_remove,
     mock_get_net,
     mock_abort,
@@ -1043,6 +1113,9 @@ def test_abort_model_training_success(
 
     fl_service.abort_model_training(request, model_id, fake_session)
     mock_abort.assert_called_once_with("http://fl-api-endpoint", "job123")
+    # The dequeue DELETEs the job, so update_fl_scheduler can no longer free the net —
+    # the abort path must release it itself once the abort has been delivered.
+    mock_release.assert_called_once_with(model_id, fake_session)
 
 
 @patch("flip_api.fl_services.services.fl_service.extract_current_job_data")
@@ -1051,7 +1124,9 @@ def test_abort_model_training_success(
 @patch("flip_api.fl_services.services.fl_service.abort_job")
 @patch("flip_api.fl_services.services.fl_scheduler_service.get_net_by_model_id")
 @patch("flip_api.fl_services.services.fl_scheduler_service.remove_job_from_queue")
+@patch("flip_api.fl_services.services.fl_scheduler_service.release_scheduler_for_model")
 def test_abort_model_training_idempotent_when_no_running_job(
+    mock_release,
     mock_remove,
     mock_get_net,
     mock_abort,
@@ -1073,6 +1148,7 @@ def test_abort_model_training_idempotent_when_no_running_job(
     # No running job -> idempotent no-op: must not raise and must not call abort_job.
     fl_service.abort_model_training(request, model_id, fake_session)
     mock_abort.assert_not_called()
+    mock_release.assert_called_once_with(model_id, fake_session)
 
 
 def test_add_fl_job_creates_job(model_id, fake_session):
@@ -1352,7 +1428,45 @@ def test_extract_current_job_data_non_list_raises(mock_http_get):
 @patch("flip_api.fl_services.services.fl_service.abort_job")
 @patch("flip_api.fl_services.services.fl_scheduler_service.get_net_by_model_id")
 @patch("flip_api.fl_services.services.fl_scheduler_service.remove_job_from_queue")
+@patch("flip_api.fl_services.services.fl_scheduler_service.release_scheduler_for_model")
+def test_abort_model_training_pre_submit_frees_net(
+    mock_release,
+    mock_remove,
+    mock_get_net,
+    mock_abort,
+    mock_fetch_server_status,
+    mock_get_fl_backend_job_id_by_model_id,
+    mock_extract_current_job_data,
+    model_id,
+    fake_session,
+):
+    # Pre-running window (#787): the job was scheduled (net BUSY) but never submitted to the
+    # fl-server, so fl_backend_job_id is still NULL and the backend-job-id lookup raises.
+    mock_get_fl_backend_job_id_by_model_id.side_effect = ValueError("No FL backend job ID found")
+
+    request = MagicMock()
+    request.path_params = {}
+
+    fl_service.abort_model_training(request, model_id, fake_session)
+
+    # The job is dequeued and the BUSY net released immediately — not left for the watchdog.
+    mock_remove.assert_called_once_with(model_id, fake_session)
+    mock_release.assert_called_once_with(model_id, fake_session)
+    # There is nothing to abort on the fl-server side.
+    mock_fetch_server_status.assert_not_called()
+    mock_extract_current_job_data.assert_not_called()
+    mock_abort.assert_not_called()
+
+
+@patch("flip_api.fl_services.services.fl_service.extract_current_job_data")
+@patch("flip_api.fl_services.services.fl_service.get_fl_backend_job_id_by_model_id")
+@patch("flip_api.fl_services.services.fl_service.fetch_server_status")
+@patch("flip_api.fl_services.services.fl_service.abort_job")
+@patch("flip_api.fl_services.services.fl_scheduler_service.get_net_by_model_id")
+@patch("flip_api.fl_services.services.fl_scheduler_service.remove_job_from_queue")
+@patch("flip_api.fl_services.services.fl_scheduler_service.release_scheduler_for_model")
 def test_abort_model_training_raises_when_server_not_running(
+    mock_release,
     mock_remove,
     mock_get_net,
     mock_abort,
@@ -1375,6 +1489,8 @@ def test_abort_model_training_raises_when_server_not_running(
     # The abort must short-circuit before consulting the job list or issuing an abort.
     mock_extract_current_job_data.assert_not_called()
     mock_abort.assert_not_called()
+    # The abort was never delivered, so the net must NOT be released — the job may still be live.
+    mock_release.assert_not_called()
 
 
 @patch("flip_api.fl_services.services.fl_service.extract_current_job_data")

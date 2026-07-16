@@ -24,7 +24,7 @@ from flip_api.domain.interfaces.fl import (
 from flip_api.domain.schemas.status import JobStatus, ModelStatus, NetStatus
 from flip_api.domain.schemas.types import FLBackend
 from flip_api.fl_services.services import fl_scheduler_service
-from flip_api.utils.exceptions import NotFoundError
+from flip_api.utils.exceptions import JobAbortedError, NotFoundError
 
 
 @pytest.fixture
@@ -65,13 +65,14 @@ def test_prepare_and_start_training_success(fake_session, model_id, fl_job_id):
         # without touching the DB or any boot-time env var.
         mock_get_net.return_value = INetDetails(endpoint="endpoint", name="net-name", fl_backend=FLBackend.NVFLARE)
 
-        fl_scheduler_service.prepare_and_start_training(
+        started = fl_scheduler_service.prepare_and_start_training(
             model_id=model_id,
             fl_job_id=fl_job_id,
             trust_ids=[uuid4()],
             session=fake_session,
         )
 
+        assert started is True
         mock_bundle.assert_called_once_with(model_id)
         mock_validate_clients.assert_called_once()
         mock_start.assert_called_once()
@@ -91,7 +92,12 @@ def test_prepare_and_start_training_failure(fake_session, model_id, fl_job_id):
     ):
         # Net reports nvflare so the nvflare bundler (patched to raise) is the path taken.
         mock_get_net.return_value = INetDetails(endpoint="endpoint", name="net-name", fl_backend=FLBackend.NVFLARE)
-        with pytest.raises(Exception, match="bundle failed"):
+        with (
+            patch(
+                "flip_api.fl_services.services.fl_scheduler_service.release_scheduler_for_model"
+            ) as mock_release,
+            pytest.raises(Exception, match="bundle failed"),
+        ):
             fl_scheduler_service.prepare_and_start_training(
                 model_id=model_id,
                 fl_job_id=fl_job_id,
@@ -102,6 +108,42 @@ def test_prepare_and_start_training_failure(fake_session, model_id, fl_job_id):
         mock_remove.assert_called_once_with(fl_job_id, fake_session)
         mock_status.assert_called_once_with(model_id, ModelStatus.ERROR, fake_session)
         mock_log.assert_called_once_with(model_id, "bundle failed", fake_session, success=False)
+        # The failure handler must actually free the BUSY net, not leave it to the watchdog.
+        mock_release.assert_called_once_with(model_id, fake_session)
+
+
+def test_prepare_and_start_training_aborted_mid_prepare_returns_false(fake_session, model_id, fl_job_id):
+    with (
+        patch(
+            "flip_api.fl_services.services.fl_scheduler_service.bundle_nvflare_application",
+            return_value="s3://dest/model",
+        ),
+        patch("flip_api.fl_services.services.fl_scheduler_service.get_net_by_model_id") as mock_get_net,
+        patch("flip_api.fl_services.services.fl_scheduler_service.validate_client_availability"),
+        patch("flip_api.fl_services.services.fl_scheduler_service.get_bundle_urls", return_value=["url1"]),
+        patch(
+            "flip_api.fl_services.services.fl_scheduler_service.start_training",
+            side_effect=JobAbortedError("aborted"),
+        ),
+        patch("flip_api.fl_services.services.fl_scheduler_service.release_scheduler_for_model") as mock_release,
+        patch("flip_api.fl_services.services.fl_scheduler_service.remove_job") as mock_remove,
+        patch("flip_api.fl_services.services.fl_scheduler_service.update_model_status") as mock_status,
+    ):
+        mock_get_net.return_value = INetDetails(endpoint="endpoint", name="net-name", fl_backend=FLBackend.NVFLARE)
+
+        started = fl_scheduler_service.prepare_and_start_training(
+            model_id=model_id,
+            fl_job_id=fl_job_id,
+            trust_ids=[uuid4()],
+            session=fake_session,
+        )
+
+    # A user abort mid-prepare is not a scheduler error: no re-raise, no ERROR status, and the
+    # job is already DELETED so remove_job must not run (it would also null `started`).
+    assert started is False
+    mock_remove.assert_not_called()
+    mock_status.assert_not_called()
+    mock_release.assert_called_once_with(model_id, fake_session)
 
 
 def test_update_fl_scheduler_success(fake_session, model_id, fl_job_id):
@@ -180,6 +222,27 @@ def test_revert_scheduler_pickup_not_found(fake_session):
     missing_scheduler_id = "missing-id"
     with pytest.raises(NotFoundError, match=f"FLScheduler with id {missing_scheduler_id} not found"):
         fl_scheduler_service.revert_scheduler_pickup(missing_scheduler_id, fake_session)
+
+
+def test_release_scheduler_for_model_releases_busy_scheduler(fake_session, model_id):
+    scheduler = MagicMock()
+    fake_session.exec.return_value.all.return_value = [scheduler]
+
+    with patch("flip_api.fl_services.services.fl_scheduler_service.revert_scheduler_pickup") as mock_revert:
+        released = fl_scheduler_service.release_scheduler_for_model(model_id, fake_session)
+
+    mock_revert.assert_called_once_with(scheduler.id, fake_session)
+    assert released == 1
+
+
+def test_release_scheduler_for_model_none_found(fake_session, model_id):
+    fake_session.exec.return_value.all.return_value = []
+
+    with patch("flip_api.fl_services.services.fl_scheduler_service.revert_scheduler_pickup") as mock_revert:
+        released = fl_scheduler_service.release_scheduler_for_model(model_id, fake_session)
+
+    mock_revert.assert_not_called()
+    assert released == 0
 
 
 def test_get_net_by_model_id(fake_session, model_id):

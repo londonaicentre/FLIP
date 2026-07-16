@@ -71,7 +71,9 @@ def invoke_model_status_update_endpoint(
             ModelStatus.RESULTS_UPLOAD_FAILED: "Training completed successfully, but uploading the results failed.",
         }.get(model_status)
 
-        if log_message:
+        # `updated != model_status` means update_model_status ignored the transition (e.g. a
+        # STOPPED model receiving a late TRAINING_STARTED) — don't write a misleading log line.
+        if log_message and updated == model_status:
             add_log(
                 model_id,
                 log_message,

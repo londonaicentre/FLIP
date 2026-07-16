@@ -104,6 +104,25 @@ class TestInvokeModelStatusUpdateEndpoint:
         assert response.json() == {"success": "status set"}
         mock_add_log.assert_not_called()
 
+    @patch(MOCKED_ADD_LOG_PATH)
+    @patch(MOCKED_UPDATE_STATUS_PATH)
+    def test_invoke_update_ignored_transition_writes_no_log(
+        self,
+        mock_update: MagicMock,
+        mock_add_log: MagicMock,
+        client: TestClient,
+        model_id: UUID,
+    ):
+        # A STOPPED model ignores a late TRAINING_STARTED callback (#787): update_model_status
+        # returns the unchanged STOPPED, so the endpoint must not write a lying "Training has
+        # started for this model." timeline entry.
+        mock_update.return_value = ModelStatus.STOPPED
+
+        response = client.put(f"/api/model/{model_id}/status/{ModelStatus.TRAINING_STARTED.value}")
+
+        assert response.status_code == status.HTTP_200_OK
+        mock_add_log.assert_not_called()
+
     @patch(MOCKED_UPDATE_STATUS_PATH)
     def test_invoke_update_model_not_found(
         self,

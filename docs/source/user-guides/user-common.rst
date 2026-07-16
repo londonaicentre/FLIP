@@ -521,6 +521,11 @@ Stop Training
 2. Click the 'Stop Training' button
 3. When the model training has been stopped, the progress bar will show at which stage the process was stopped
 
+While the model is still queued (the status shows 'Model Queued', before training has started) the same button
+reads **'Abort job'** instead: clicking it removes the job from the queue, marks the model as Stopped, and
+immediately releases the training *net* so the next queued job can start. A stopped model expects no results —
+'Download Results' stays disabled — but it can be initiated for training again.
+
 .. figure:: ../assets/flip/stop-training.gif
    :width: 600
    :align: center

@@ -17,7 +17,7 @@ from typing import Any
 from uuid import UUID
 
 from fastapi import Request
-from sqlmodel import Session, select
+from sqlmodel import Session, col, select
 
 from flip_api.config import get_settings
 from flip_api.db.database import get_engine
@@ -30,9 +30,10 @@ from flip_api.domain.interfaces.fl import (
     IStartTrainingBody,
     JobRequiredFiles,
 )
-from flip_api.domain.schemas.status import FLJobStatus, FLTargets
+from flip_api.domain.schemas.status import FLJobStatus, FLTargets, JobStatus
 from flip_api.domain.schemas.types import FLBackend
 from flip_api.utils.encryption import encrypt
+from flip_api.utils.exceptions import JobAbortedError
 from flip_api.utils.http import http_delete, http_get, http_post
 from flip_api.utils.logger import logger
 from flip_api.utils.s3_client import S3Client
@@ -330,6 +331,25 @@ def abort_job(endpoint: str, job_id: str) -> dict:
     return response
 
 
+def _raise_if_job_aborted(fl_job_id: UUID, session: Session) -> None:
+    """
+    Abort gate for the prepare window: raise if the FL job was DELETED mid-prepare.
+
+    Selects the status column (not the entity) so the check bypasses the session identity map
+    and sees the latest committed value from a concurrent abort (READ COMMITTED).
+
+    Args:
+        fl_job_id (UUID): The ID of the FL job to check.
+        session (Session): SQLModel session.
+
+    Raises:
+        JobAbortedError: If the job no longer exists or was DELETED by a concurrent abort.
+    """
+    job_status = session.exec(select(col(FLJob.status)).where(FLJob.id == fl_job_id)).one_or_none()
+    if job_status is None or job_status == JobStatus.DELETED:
+        raise JobAbortedError(f"FL job {fl_job_id} was aborted before submission")
+
+
 def start_training(
     model_id: UUID,
     fl_job_id: UUID,
@@ -366,7 +386,12 @@ def start_training(
         bundle_urls=bundle_urls,
     )
 
+    # Gate before the (up to 900s) app transfer, and again right before submission: submit_job
+    # is the side effect that creates the backend run, so a job aborted mid-prepare (#787) must
+    # never reach it.
+    _raise_if_job_aborted(fl_job_id, session)
     upload_app(model_id, training_details, endpoint)
+    _raise_if_job_aborted(fl_job_id, session)
     logger.info(f"Submitting job for training for model {model_id} with FL job ID {fl_job_id}")
     submit_job(fl_job_id, endpoint, model_id, session)
 
@@ -918,9 +943,11 @@ def abort_model_training(request: Request, model_id: UUID, session: Session) -> 
     """
     logger.debug(f"Checking if model {model_id} is currently running...")
 
-    try:
-        from flip_api.fl_services.services import fl_scheduler_service
+    # Imported locally to avoid the fl_service -> model_service -> fl_scheduler_service cycle.
+    from flip_api.fl_services.services import fl_scheduler_service
+    from flip_api.model_services.services.model_service import add_log
 
+    try:
         # Always try to remove the job from queue
         fl_scheduler_service.remove_job_from_queue(model_id, session)
 
@@ -932,7 +959,16 @@ def abort_model_training(request: Request, model_id: UUID, session: Session) -> 
         logger.info(f"Net info for model {model_id}: endpoint={net_endpoint}, name={net_name}")
 
     except Exception as e:
-        logger.info(f"Model {model_id} not currently running training; removed from queue. Reason: {e}")
+        # Pre-running window (#787): the job was dequeued but was never submitted to the
+        # fl-server (fl_backend_job_id still NULL), so there is nothing to abort — but the net
+        # may already be BUSY with this job's pickup. Release it now rather than leaving it to
+        # the stale-BUSY watchdog on the next scheduler tick.
+        released = fl_scheduler_service.release_scheduler_for_model(model_id, session)
+        logger.info(
+            f"Model {model_id} not currently running training; removed from queue "
+            f"(released {released} scheduler(s)). Reason: {e}"
+        )
+        add_log(model_id, "Training job aborted before start; training slot released.", session)
         return
 
     server_status = fetch_server_status(net_endpoint)
@@ -944,8 +980,10 @@ def abort_model_training(request: Request, model_id: UUID, session: Session) -> 
         raise ValueError(error_msg)
 
     # If there is no running job for this model, it is already terminal — abort is an
-    # idempotent no-op.
+    # idempotent no-op. The jobs were just dequeued above, so free the net promptly instead of
+    # leaving it to the stale-BUSY watchdog.
     if extract_current_job_data(net_endpoint, fl_backend_job_id) is None:
+        fl_scheduler_service.release_scheduler_for_model(model_id, session)
         logger.info(
             f"No running FL job for model {model_id} (job ID {fl_backend_job_id}); "
             f"already stopped — nothing to abort."
@@ -967,6 +1005,11 @@ def abort_model_training(request: Request, model_id: UUID, session: Session) -> 
     response = abort_job(net_endpoint, fl_backend_job_id)
 
     logger.info(f"Abort job response ({target=}, {clients=}): {response}")
+
+    # The dequeue above DELETEd the model's jobs, so update_fl_scheduler (which only considers
+    # non-DELETED jobs) can no longer free the net — release it here now the abort is delivered.
+    released = fl_scheduler_service.release_scheduler_for_model(model_id, session)
+    logger.info(f"Released {released} scheduler(s) for model {model_id} after abort")
 
 
 def add_fl_job(model_id: UUID, trusts: list[Trust], session: Session) -> None:
