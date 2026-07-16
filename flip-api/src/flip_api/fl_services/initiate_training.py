@@ -87,7 +87,7 @@ def initiate_training(
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Model ID: {model_id} does not exist")
 
         # One typed row per queue movement: this emits the new job's initial
-        # position ("Model Queued (n)"), replacing the old free-text enqueue line.
+        # position ("Model Queued (n)").
         log_queue_positions(db)
         add_log(model_id, f"Selected trusts for training: {', '.join(t.name for t in trusts)}", db)
 

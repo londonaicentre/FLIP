@@ -84,7 +84,8 @@ class TrainingLog(BaseModel):
     # end-to-end (like the fl_logs column): a newer FL image's event is stored and
     # served via the unknown-event render fallback, never rejected at ingest.
     event_type: str | None = Field(default=None, max_length=64)
-    # 1-based on both backends; every event in the vocabulary is round-scoped.
+    # 1-based on both backends; every event this endpoint accepts is round-scoped
+    # (the hub-emitted, round-less QUEUE_POSITION is written directly, never ingested here).
     global_round: int | None = Field(default=None, ge=1)
     details: dict[str, Any] | None = None
     success: bool = True

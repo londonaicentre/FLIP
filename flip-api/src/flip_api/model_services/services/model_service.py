@@ -167,9 +167,10 @@ def add_log(
             reported by an FL client. None for model-level (hub) logs.
         fl_client_name (str | None): The FL client name as reported by the FL server.
             None for model-level logs.
-        event_type (str | None): The typed round event this row records, when the FL
-            server reported a structured fact rather than free text. Senders use the
-            FLLogEvent vocabulary but the value is stored as plain text.
+        event_type (str | None): The typed event this row records, when a structured
+            fact rather than free text was reported — round events from the FL server,
+            QUEUE_POSITION from the hub's own FL scheduler. Senders use the FLLogEvent
+            vocabulary but the value is stored as plain text.
         global_round (int | None): 1-based federated round the event belongs to.
         details (dict[str, Any] | None): Event-specific facts (e.g. total_rounds,
             size_bytes, returned/expected counts).
@@ -464,9 +465,12 @@ def queued_positions_by_model(session: Session) -> dict[UUID, int]:
     """Map each queued model to its 1-based place in the FL training queue.
 
     The rank mirrors the scheduler's pickup order exactly — QUEUED ``FLJob``
-    rows by ``created`` ascending (``check_for_queued_jobs``) — so position 1
-    is the next model to start when a net frees up. Models with no queued job
-    are simply absent.
+    rows by ``created`` ascending, ``id`` as tiebreak (``check_for_queued_jobs``)
+    — so position 1 is the next model to start when a net frees up. Models with
+    no queued job are simply absent. A model queued twice (``FLJob`` has no
+    uniqueness on ``model_id``) maps to its earliest position, so the status
+    pill shows the position the model will actually be picked at, while the
+    activity feed logs each job's own position.
 
     Args:
         session (Session): The database session.
@@ -475,7 +479,9 @@ def queued_positions_by_model(session: Session) -> dict[UUID, int]:
         dict[UUID, int]: Model id to 1-based queue position.
     """
     queued_model_ids = session.exec(
-        select(FLJob.model_id).where(FLJob.status == JobStatus.QUEUED).order_by(col(FLJob.created).asc())
+        select(FLJob.model_id)
+        .where(FLJob.status == JobStatus.QUEUED)
+        .order_by(col(FLJob.created).asc(), col(FLJob.id).asc())
     ).all()
     positions: dict[UUID, int] = {}
     for position, queued_model_id in enumerate(queued_model_ids, start=1):

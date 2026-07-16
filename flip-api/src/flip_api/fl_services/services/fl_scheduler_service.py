@@ -126,7 +126,7 @@ def remove_job_from_queue(model_id: UUID, session: Session) -> None:
 
 
 def log_queue_positions(session: Session) -> None:
-    """Emit one typed activity row per queued model whose queue position changed.
+    """Emit one typed activity row per queued job whose queue position changed.
 
     The FL queue is ``FLJob`` rows in ``QUEUED`` status, ordered by ``created``
     ascending — exactly the order ``check_for_queued_jobs`` picks from, so
@@ -140,8 +140,9 @@ def log_queue_positions(session: Session) -> None:
 
     Positions are a display nicety: any failure is logged, the batch is rolled
     back, and nothing is raised — an emission problem can never wedge the
-    scheduler tick or the caller's queue mutation. Callers invoke this after
-    their own commit, so the rollback cannot discard caller state.
+    scheduler tick or the caller's queue mutation. **Precondition:** call this
+    only after the caller has committed its own mutation; the failure-path
+    rollback would otherwise discard the caller's uncommitted state.
 
     Args:
         session (Session): The database session.
@@ -150,8 +151,12 @@ def log_queue_positions(session: Session) -> None:
         None
     """
     try:
+        # id is the tiebreak on identical created timestamps so this ranking,
+        # queued_positions_by_model and check_for_queued_jobs can never disagree.
         queued_jobs = session.exec(
-            select(FLJob).where(FLJob.status == JobStatus.QUEUED).order_by(cast(Column, FLJob.created).asc())
+            select(FLJob)
+            .where(FLJob.status == JobStatus.QUEUED)
+            .order_by(cast(Column, FLJob.created).asc(), cast(Column, FLJob.id).asc())
         ).all()
         if not queued_jobs:
             return
@@ -196,7 +201,13 @@ def log_queue_positions(session: Session) -> None:
         try:
             session.rollback()
         except Exception:
-            logger.exception("Failed to roll back queue-position emission")
+            # A session whose rollback failed raises PendingRollbackError on
+            # every subsequent use — handed back to run_jobs_core it would fail
+            # the training start and wedge the net. invalidate() discards the
+            # broken connection without running ROLLBACK on it, leaving the
+            # session reusable on a fresh connection.
+            logger.exception("Failed to roll back queue-position emission; invalidating session")
+            session.invalidate()
 
 
 def revert_scheduler_pickup(scheduler_id: UUID, session: Session) -> None:
@@ -460,11 +471,13 @@ def check_for_queued_jobs(scheduler_id: UUID, session: Session) -> IJobResponse 
     logger.info("Checking for any queued jobs...")
 
     try:
-        # Find the earliest queued job
+        # Find the earliest queued job. The id tiebreak on identical created
+        # timestamps keeps the pickup order in exact agreement with the ranks
+        # shown by log_queue_positions / queued_positions_by_model.
         job_stmt = (
             select(FLJob)
             .where(FLJob.status == JobStatus.QUEUED)
-            .order_by(cast(Column, FLJob.created).asc())
+            .order_by(cast(Column, FLJob.created).asc(), cast(Column, FLJob.id).asc())
             .limit(1)
             .with_for_update(skip_locked=True)
         )
@@ -677,7 +690,8 @@ def update_fl_scheduler(model_id: UUID, session: Session) -> None:
         if job:
             # Completing a still-QUEUED job (e.g. a queued model stopped or
             # errored) re-ranks everything behind it; for a job already picked
-            # up this no-ops (emit-on-change).
+            # up this normally emits nothing (emit-on-change), though it also
+            # self-heals rows a previously failed emission rolled back.
             log_queue_positions(session)
 
         if job and scheduler:

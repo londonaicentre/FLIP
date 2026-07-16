@@ -12,11 +12,12 @@
 
 """Display-text composition for the model activity feed.
 
-The FL layer reports **facts** — typed events with structured details
-(``FLLogEvent`` rows in ``fl_logs``) — and this module is the single place
-those facts become English. Keeping the wording hub-side means copy changes
-ship with a flip-api redeploy and never require rebuilding the FL images that
-are baked and deployed to every trust.
+The reporting layer — the FL images for round events, the hub's FL scheduler
+for queue positions — records **facts**: typed events with structured details
+(``FLLogEvent`` rows in ``fl_logs``). This module is the single place those
+facts become English. Keeping the wording hub-side means copy changes ship
+with a flip-api redeploy and never require rebuilding the FL images that are
+baked and deployed to every trust.
 """
 
 import math

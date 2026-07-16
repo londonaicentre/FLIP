@@ -151,7 +151,7 @@ def test_remove_job_from_queue(fake_session, model_id):
     job = MagicMock()
     fake_session.exec.return_value.all.return_value = [job]
 
-    # Patched so its own add_log commit doesn't skew the count asserted below;
+    # Patched so its batch commit doesn't skew the count asserted below;
     # the re-emission behaviour has its own tests in TestLogQueuePositions.
     with patch.object(fl_scheduler_service, "log_queue_positions"):
         fl_scheduler_service.remove_job_from_queue(model_id, fake_session)
@@ -381,7 +381,7 @@ def _exec_returning(*result_lists):
 
 
 class TestLogQueuePositions:
-    """log_queue_positions writes one typed row per queued model whose position changed.
+    """log_queue_positions writes one typed row per queued job whose position changed.
 
     Emit-on-change keyed by job id makes the helper idempotent, so every queue
     mutation site can call it unconditionally without spamming the feed.
@@ -483,6 +483,15 @@ class TestLogQueuePositions:
             fl_scheduler_service.log_queue_positions(fake_session)
         mock_add_log.assert_called_once()
 
+    def test_batched_rows_land_in_a_single_commit(self, fake_session):
+        # add_log deliberately unpatched: transaction= must make it defer its
+        # per-row commit so the whole emission lands in the one batch commit.
+        first, second = _queued_job(), _queued_job()
+        fake_session.exec.side_effect = _exec_returning([first, second], [])
+        fl_scheduler_service.log_queue_positions(fake_session)
+        assert fake_session.add.call_count == 2
+        fake_session.commit.assert_called_once()
+
     def test_emission_failure_never_raises_and_rolls_back(self, fake_session):
         job = _queued_job()
         fake_session.exec.side_effect = _exec_returning([job], [])
@@ -490,6 +499,7 @@ class TestLogQueuePositions:
             fl_scheduler_service.log_queue_positions(fake_session)  # must not raise
         fake_session.rollback.assert_called_once()
         fake_session.commit.assert_not_called()
+        fake_session.invalidate.assert_not_called()
 
     def test_emission_failure_with_failing_rollback_still_never_raises(self, fake_session):
         job = _queued_job()
@@ -497,6 +507,10 @@ class TestLogQueuePositions:
         fake_session.rollback.side_effect = Exception("rollback failed")
         with patch.object(fl_scheduler_service, "add_log", side_effect=Exception("db down")):
             fl_scheduler_service.log_queue_positions(fake_session)  # must not raise
+        # A failed rollback leaves the session raising PendingRollbackError on
+        # every subsequent use; invalidate() is what hands the caller back a
+        # session that works on a fresh connection.
+        fake_session.invalidate.assert_called_once()
 
     def test_update_fl_scheduler_reemits_queue_positions(self, fake_session, model_id, fl_job_id):
         """Completing a still-QUEUED job (stopped/errored queued model) re-ranks the tail."""

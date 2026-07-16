@@ -236,7 +236,8 @@ export function getStatusEnumValue(status: string | undefined): number {
 
 /**
  * Builds the four-step lifecycle tracker (Created → Prepared → Training → Uploaded)
- * shown on the model page, derived from the model's single status value.
+ * shown on the model page, derived from the model's status plus the optional queue
+ * position, which only feeds step 02's description while the model is INITIATED.
  *
  * When training is stopped or errors, prior completed steps stay completed (✅)
  * rather than showing 🚫. RESULTS_UPLOAD_FAILED means training finished but the
@@ -244,7 +245,7 @@ export function getStatusEnumValue(status: string | undefined): number {
  * "Results Uploaded" shows the error. See issue #29.
  *
  * Per-step dates (creation/prepared/training/results timestamps) are layered on
- * by the caller, which holds the model record; this helper is purely status-driven.
+ * by the caller, which holds the model record.
  */
 export function buildModelSteps(status: ModelStatus | undefined, queuePosition?: number | null): IStep[] {
     const statusValue = getStatusEnumValue(status);

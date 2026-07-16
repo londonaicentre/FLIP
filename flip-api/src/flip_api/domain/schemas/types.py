@@ -22,16 +22,21 @@ NonEmptyUUIDList = Annotated[list[UUID], Field(min_length=1)]
 
 
 class FLLogEvent(StrEnum):
-    """Typed FL progress events accepted by ``POST /model/{id}/logs``.
+    """Typed activity-feed events stored in ``fl_logs.event_type``.
 
-    The FL layer reports **facts** (event type + structured fields); the display
-    text is composed hub-side at serve time (``log_rendering.py``), so wording
-    changes are a flip-api redeploy and never an FL-image rebuild. Stored in the
-    plain-text ``fl_logs.event_type`` column — deliberately NOT a native PG enum,
-    so extending this vocabulary never needs an ``ALTER TYPE`` migration.
+    The reporting layer sends **facts** (event type + structured fields); the
+    display text is composed hub-side at serve time (``log_rendering.py``), so
+    wording changes are a flip-api redeploy and never an FL-image rebuild.
+    Stored in the plain-text ``fl_logs.event_type`` column — deliberately NOT a
+    native PG enum, so extending this vocabulary never needs an ``ALTER TYPE``
+    migration.
 
-    Rounds are 1-based on every event, on both backends (NVFLARE's internal
-    ``_current_round`` is 0-based and is normalised at the emission boundary).
+    The round events arrive from the FL layer via ``POST /model/{id}/logs`` and
+    are 1-based on both backends (NVFLARE's internal ``_current_round`` is
+    0-based and is normalised at the emission boundary). ``QUEUE_POSITION`` is
+    the exception: hub-emitted and round-less, it is written directly by the FL
+    scheduler and never arrives through the ingest endpoint (whose validator
+    requires ``global_round`` on typed events).
     """
 
     ROUND_STARTED = "ROUND_STARTED"
