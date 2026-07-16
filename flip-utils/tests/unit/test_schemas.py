@@ -56,13 +56,13 @@ class TestTrainingMetrics:
             "label": "LOSS_FUNCTION",
             "result": 0.42,
             "x_value": 3.0,
-            "x_label": "Global Round",
+            "x_label": "Global Rounds",
         }
 
     def test_x_label_defaults_to_global_round(self):
         """x_label defaults to the historical axis label when the client doesn't set one (FLIP#148)."""
         metrics = TrainingMetrics(fl_client_name="site-1", global_round=1, label="loss", result=1.0)
-        assert metrics.x_label == "Global Round"
+        assert metrics.x_label == "Global Rounds"
 
     def test_model_dump_emits_custom_x_label(self):
         """A client-supplied x_label is carried on the wire (FLIP#148)."""

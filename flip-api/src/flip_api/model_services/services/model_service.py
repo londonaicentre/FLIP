@@ -389,7 +389,7 @@ def get_metrics(model_id: UUID, session: Session) -> list[IModelMetrics]:
 
     # metrics_map: (label, x_label) -> IModelMetrics. A plot's identity is the pair, so the same
     # metric logged against different x-axis labels renders as separate plots rather than being
-    # overlaid on one axis (FLIP#148). x_label defaults to "Global Round" for legacy rows.
+    # overlaid on one axis (FLIP#148). x_label defaults to "Global Rounds" for legacy rows.
     metrics_map: dict[tuple[str, str], IModelMetrics] = {}
 
     for row in results:

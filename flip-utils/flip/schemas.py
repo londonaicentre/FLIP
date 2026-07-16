@@ -27,14 +27,14 @@ from pydantic import BaseModel, Field, model_validator
 # Default label naming the x-axis of an FL training-metric plot, applied when a metric is sent without
 # an explicit x-axis label (the historical behaviour: the x-axis is the FL global round). Mirrors
 # flip-api's flip_api.utils.constants.DEFAULT_X_AXIS_LABEL — keep the two in sync (FLIP#148).
-DEFAULT_X_AXIS_LABEL = "Global Round"
+DEFAULT_X_AXIS_LABEL = "Global Rounds"
 
 
 def split_x_label(key: str) -> tuple[str, str | None]:
     """Split a metric key of the form ``<label>[@<x_label>]`` into ``(label, x_label)``.
 
     The ``@<x_label>`` segment names the x-axis a metric is plotted against (FLIP#148); absent, the
-    x_label is ``None`` and the hub defaults it to "Global Round". Shared by every path that encodes
+    x_label is ``None`` and the hub defaults it to "Global Rounds". Shared by every path that encodes
     the x-label inside a metric name (Flower MetricRecord keys, NVFLARE Client-API SummaryWriter tags).
 
     Args:
@@ -75,7 +75,7 @@ class TrainingMetrics(BaseModel):
 
     ``global_round`` is provenance — always the FL global round the metric was reported in, never
     overridden. The plot coordinate is the (``x_label``, ``x_value``) pair, defaulting to the global
-    round on the "Global Round" axis — see FLIP#148.
+    round on the "Global Rounds" axis — see FLIP#148.
     """
 
     fl_client_name: str

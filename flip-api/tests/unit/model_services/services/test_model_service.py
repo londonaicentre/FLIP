@@ -258,7 +258,7 @@ def test_get_metrics():
 
     assert len(result) == 1
     assert result[0].y_label == "accuracy"
-    assert result[0].x_label == "Global Round"
+    assert result[0].x_label == "Global Rounds"
     assert len(result[0].metrics) == 2  # trust_a and trust_b
 
     labels = sorted(m.series_label for m in result[0].metrics)
@@ -311,7 +311,7 @@ def test_get_metrics_separates_plots_by_x_label():
     )
     m_round = FLMetrics(
         model_id=model_id, trust=trust_a, fl_client_name="Trust_1", label="loss",
-        x_label="Global Round", global_round=1, x_value=1.0, result=0.8,
+        x_label="Global Rounds", global_round=1, x_value=1.0, result=0.8,
     )
 
     session.exec.side_effect = [
@@ -322,7 +322,7 @@ def test_get_metrics_separates_plots_by_x_label():
     result = get_metrics(model_id, session)
 
     assert len(result) == 2
-    assert {(m.y_label, m.x_label) for m in result} == {("loss", "epoch"), ("loss", "Global Round")}
+    assert {(m.y_label, m.x_label) for m in result} == {("loss", "epoch"), ("loss", "Global Rounds")}
     # Each plot holds only its own point.
     for plot in result:
         assert len(plot.metrics) == 1

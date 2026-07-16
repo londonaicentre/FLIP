@@ -230,7 +230,7 @@ def _parse_metric_key(key: str) -> tuple[str, float | None, str | None]:
       ``.x_1.5``, ``.x_1e-3``). Absent or non-numeric -> ``None`` (the hub plots the metric at its FL
       global round). ``.round_<N>`` is the deprecated pre-x_value spelling and still parses.
     - ``@<x_label>`` (optional) names the x-axis, e.g. "epoch"; absent -> ``None`` (the hub defaults it
-      to "Global Round"). A plot's identity is (label, x_label), so distinct x-labels render as separate
+      to "Global Rounds"). A plot's identity is (label, x_label), so distinct x-labels render as separate
       plots — see https://github.com/londonaicentre/FLIP/issues/148.
 
     Examples: ``"loss"`` -> ("loss", None, None); ``"loss.x_1.5"`` -> ("loss", 1.5, None);

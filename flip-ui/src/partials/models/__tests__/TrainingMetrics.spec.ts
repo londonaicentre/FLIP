@@ -131,7 +131,7 @@ const VAL_LOSS_EPOCH = {
 };
 const VAL_LOSS_ROUND = {
     yLabel: "VAL_LOSS",
-    xLabel: "Global Round",
+    xLabel: "Global Rounds",
     metrics: [{
         seriesLabel: "Kings College Hospital",
         data: [{
@@ -485,7 +485,7 @@ describe("TrainingMetrics chart sizing", () => {
         // Two plots for the same metric name because their x-axis labels differ (FLIP#148).
         expect(tabs).toHaveLength(2);
         expect(tabs[0].text()).toBe("VAL_LOSS · epoch");
-        expect(tabs[1].text()).toBe("VAL_LOSS · Global Round");
+        expect(tabs[1].text()).toBe("VAL_LOSS · Global Rounds");
 
         // First plot active by default — identified by (yLabel, xLabel), not yLabel alone.
         const stub = wrapper.find("[data-test=chart-stub]");
@@ -503,6 +503,6 @@ describe("TrainingMetrics chart sizing", () => {
 
         const stub = wrapper.find("[data-test=chart-stub]");
         expect(stub.attributes("data-y-label")).toBe("VAL_LOSS");
-        expect(stub.attributes("data-x-label")).toBe("Global Round");
+        expect(stub.attributes("data-x-label")).toBe("Global Rounds");
     });
 });

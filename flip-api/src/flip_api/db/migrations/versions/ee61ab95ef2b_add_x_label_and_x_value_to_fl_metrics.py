@@ -39,11 +39,11 @@ def upgrade() -> None:
     #
     # x_label names the x-axis a metric is plotted against. A NOT NULL column added to a table with
     # existing rows needs a default to backfill them, so ship a server_default of the historical
-    # label ("Global Round"). The app always supplies x_label on insert (SQLModel field default), so
+    # label ("Global Rounds"). The app always supplies x_label on insert (SQLModel field default), so
     # the DB default is only a backfill + safety net.
     op.add_column(
         'fl_metrics',
-        sa.Column('x_label', sa.String(), nullable=False, server_default='Global Round'),
+        sa.Column('x_label', sa.String(), nullable=False, server_default='Global Rounds'),
     )
     # x_value is the x-coordinate. Existing rows were plotted at their global_round, so backfill from
     # that column (a per-row value — can't be a constant server_default) before tightening to NOT

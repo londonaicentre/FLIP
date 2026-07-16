@@ -137,7 +137,7 @@ class FLIPBase(ABC):
             x_value (float | None): The x-coordinate the metric is plotted at (e.g. an epoch counter).
                 ``None`` plots it at ``global_round``.
             x_label (str | None): Label naming the x-axis the metric is plotted against. ``None`` lets the
-                hub default it to "Global Round". A plot's identity is (label, x_label) — see FLIP#148.
+                hub default it to "Global Rounds". A plot's identity is (label, x_label) — see FLIP#148.
         """
 
     @abstractmethod

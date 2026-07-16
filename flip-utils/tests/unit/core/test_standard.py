@@ -650,14 +650,14 @@ class TestFLIPStandardProdSendMetrics:
                 "label": "LOSS_FUNCTION",
                 "result": 0.42,
                 "x_value": 3.0,
-                "x_label": "Global Round",
+                "x_label": "Global Rounds",
             }
             assert mock_post.call_args.kwargs["headers"] == {
                 "x-internal-service-key": "test-internal-key",
             }
 
     def test_send_metrics_includes_custom_x_label_in_payload(self, flip_prod):
-        """A custom x_label is sent in the payload; omitting it defaults to "Global Round" (FLIP#148)."""
+        """A custom x_label is sent in the payload; omitting it defaults to "Global Rounds" (FLIP#148)."""
         mock_response = Mock()
         mock_response.status_code = 200
         mock_response.text = "OK"

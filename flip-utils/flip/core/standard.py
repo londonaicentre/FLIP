@@ -344,7 +344,7 @@ class FLIPStandardProd(FLIPBase):
                 plot coordinate).
             x_value (float | None): The x-coordinate the metric is plotted at; ``None`` plots it at
                 ``global_round`` (the schema backfills it).
-            x_label (str | None): Label naming the x-axis; falls back to "Global Round" when not given.
+            x_label (str | None): Label naming the x-axis; falls back to "Global Rounds" when not given.
         """
         # model_validate (not kwargs) so a None x_value reaches the schema's backfill validator,
         # which resolves it to the global round — the schema owns that default, not this call site.

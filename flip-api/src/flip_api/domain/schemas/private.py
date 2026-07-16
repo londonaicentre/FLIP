@@ -60,7 +60,7 @@ class TrainingMetrics(BaseModel):
 
     ``global_round`` is provenance — always the FL global round the metric was reported in, never
     overridden. The plot coordinate is the (``x_label``, ``x_value``) pair, defaulting to the global
-    round on the "Global Round" axis — see FLIP#148.
+    round on the "Global Rounds" axis — see FLIP#148.
     """
 
     fl_client_name: str

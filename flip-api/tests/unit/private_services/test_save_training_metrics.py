@@ -90,7 +90,7 @@ class TestTrainingMetricsModel:
     def test_payload_defaults_x_label_to_global_round(self, sample_metrics_payload_dict):
         # A client that doesn't send x_label falls back to the default axis label (back-compat).
         metrics = TrainingMetrics(**sample_metrics_payload_dict)
-        assert metrics.x_label == "Global Round"
+        assert metrics.x_label == "Global Rounds"
 
     def test_payload_accepts_custom_x_label(self, sample_metrics_payload_dict):
         metrics = TrainingMetrics(**sample_metrics_payload_dict, x_label="epoch")

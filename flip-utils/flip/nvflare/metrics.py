@@ -33,7 +33,7 @@ def send_metrics_value(
     The metric is always recorded against the FL global round it is reported in (provenance). Where it is
     *plotted* is the (x_label, x_value) pair: 'x_value' is the x-coordinate (e.g. an epoch counter, a step,
     any float) and 'x_label' names the x-axis (e.g. "epoch"). Both default to the FL global round / the
-    "Global Round" axis when absent. A plot's identity is (label, x_label), so the same metric logged under
+    "Global Rounds" axis when absent. A plot's identity is (label, x_label), so the same metric logged under
     different x-labels renders as separate plots (see https://github.com/londonaicentre/FLIP/issues/148).
 
     Args:
@@ -41,7 +41,7 @@ def send_metrics_value(
         value: The value of the metric.
         fl_ctx: The federated learning context.
         x_value: The x-coordinate the metric is plotted at (default: None -> the FL global round).
-        x_label: The label naming the x-axis (default: None -> "Global Round").
+        x_label: The label naming the x-axis (default: None -> "Global Rounds").
         flip: FLIP instance used for logging (default: FLIP()).
     """
     if not isinstance(label, str):
@@ -56,7 +56,7 @@ def send_metrics_value(
         return
 
     # Build the DXO data. 'x_value' (x-coordinate) and 'x_label' (x-axis label) are optional and only
-    # included when provided, so the server can fall back to the global round / the "Global Round" label.
+    # included when provided, so the server can fall back to the global round / the "Global Rounds" label.
     data: dict = {"label": label, "value": value}
     if x_value is not None:
         data["x_value"] = x_value
@@ -114,7 +114,7 @@ def handle_metrics_event(event_data: Shareable, global_round: int, model_id: str
 
     # global_round is provenance — always the server's current round, never overridden by the client. The
     # client may place the point elsewhere on the plot via 'x_value' (e.g. an epoch/step counter) and name
-    # the axis via 'x_label'; absent, the hub plots it at the global round on the "Global Round" axis. A
+    # the axis via 'x_label'; absent, the hub plots it at the global round on the "Global Rounds" axis. A
     # plot's identity is (label, x_label), so distinct x-labels render as separate plots (see
     # https://github.com/londonaicentre/FLIP/issues/148). 'round' is the pre-x_value DXO spelling, read as
     # a fallback so a stale client image doesn't silently lose its per-epoch coordinates.
