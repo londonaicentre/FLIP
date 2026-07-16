@@ -18,7 +18,10 @@
   <meta charset="UTF-8" />
   <link rel="icon" href="/favicon.ico" sizes="any" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <!-- viewport-fit=cover: without it iOS 26 Safari letterboxes the page inside the safe area and
+       paints the exposed status-bar/address-bar regions itself (it no longer honours theme-color),
+       which shows as black bands. Content keeps clear of the insets via env(safe-area-inset-*). -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <!-- Pre-hydration default (light `body` token): the page paints light until useDark() applies
        the dark class, then useThemeColorMeta keeps this tag in sync with the app theme. -->
   <meta name="theme-color" content="#FAF7F5" />

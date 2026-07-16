@@ -13,7 +13,11 @@
 
 <template>
     <AiErrorAlert v-if="errorStore.hasError" class="absolute z-10" />
-    <div class="bg-body relative dark:bg-dark-canvas flex justify-center items-center h-dvh w-screen">
+    <div
+        class="bg-body relative dark:bg-dark-canvas flex justify-center items-center h-dvh w-screen
+            pt-[max(1rem,env(safe-area-inset-top))] pb-[max(1rem,env(safe-area-inset-bottom))]
+            pl-[max(1rem,env(safe-area-inset-left))] pr-[max(1rem,env(safe-area-inset-right))]"
+    >
         <div class="absolute bottom-0 left-0">
             <img src="@/assets/login/bottom-left.svg?url">
         </div>
@@ -21,7 +25,7 @@
             <img src="@/assets/login/top-right.svg?url">
         </div>
         <div
-            class="p-6 bg-white flex dark:bg-dark-surface w-full md:min-w-[760px] md:max-w-[800px] max-w-[75vh] min-h-[75vh] max-h-[95vh] shadow-xl rounded-md relative overflow-hidden m-4"
+            class="p-6 bg-white flex dark:bg-dark-surface w-full md:min-w-[760px] md:max-w-[800px] max-w-[75vh] min-h-[75vh] max-h-full shadow-xl rounded-md relative overflow-hidden"
         >
             <div class="flex flex-col gap-2 w-full relative">
                 <img
