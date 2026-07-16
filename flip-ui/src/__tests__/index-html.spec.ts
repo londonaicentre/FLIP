@@ -21,13 +21,14 @@ import { describe, expect, it } from "vitest";
 const indexHtml = readFileSync(resolve(__dirname, "../../index.html"), "utf-8");
 
 describe("index.html document metas", () => {
-    it("declares viewport-fit=cover so iOS lets the page (and corner artwork) reach the screen edges", () => {
-        // Without viewport-fit=cover, iOS letterboxes the layout viewport inside the safe area:
-        // the corner artwork anchored at top-0/bottom-0 stops short of the physical screen edges
-        // and its bleed-cropped cut edges show as floating straight lines (#791).
+    it("does not declare viewport-fit=cover (inert in portrait, notch hazard in landscape)", () => {
+        // Measured on iOS 26 Safari (#791): in portrait the page is letterboxed inside the browser
+        // chrome regardless of viewport-fit, with safe-area insets reporting 0 — cover changes
+        // nothing. In landscape, cover slides content under the notch, which would need
+        // env(safe-area-inset-*) guards on every layout. Re-add cover only together with those.
         const viewport = indexHtml.match(/<meta name="viewport" content="([^"]*)"/);
 
-        expect(viewport?.[1]).toContain("viewport-fit=cover");
+        expect(viewport?.[1]).not.toContain("viewport-fit");
         expect(viewport?.[1]).toContain("width=device-width");
     });
 

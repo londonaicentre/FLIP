@@ -104,6 +104,28 @@
 }
 
 @layer components {
+    /* iOS Safari confines page rendering to a letterbox inset from the physical screen: fixed
+       elements clip at its edges, canvas background images anchor to it, and safe-area insets
+       report 0 in portrait (measured on iOS 26, #791). The bleed-cropped login corner artwork
+       can therefore never reach the true screen corners there, and its straight cut edges show
+       as floating lines against the (full-screen) body background. Fade the letterbox-facing
+       cut edge instead so the artwork dissolves into the background. iOS-only: on desktop and
+       Android the artwork sits flush with the viewport corners and the hard edges are invisible.
+       (hover: none) excludes macOS Safari; -webkit-touch-callout support excludes Android. */
+    @media (hover: none) {
+        @supports (-webkit-touch-callout: none) {
+            .corner-art-fade-top {
+                -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 48px);
+                mask-image: linear-gradient(to bottom, transparent 0, #000 48px);
+            }
+
+            .corner-art-fade-bottom {
+                -webkit-mask-image: linear-gradient(to top, transparent 0, #000 48px);
+                mask-image: linear-gradient(to top, transparent 0, #000 48px);
+            }
+        }
+    }
+
     table {
         @apply w-full rounded overflow-hidden table-auto shadow-sm ring-1 ring-black/10 dark:ring-white/20 border-collapse;
     }

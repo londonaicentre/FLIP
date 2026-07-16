@@ -71,6 +71,13 @@ describe("Auth Layout", () => {
         expect(component.find(".h-screen").exists()).toBe(false);
     });
 
+    it("fades the corner artwork's letterbox-facing cut edges (iOS-scoped via main.css)", () => {
+        const component = mountLayout();
+
+        expect(component.find(".absolute.top-0.right-0 img.corner-art-fade-top").exists()).toBe(true);
+        expect(component.find(".absolute.bottom-0.left-0 img.corner-art-fade-bottom").exists()).toBe(true);
+    });
+
     it("shows the light AI Centre logo in light mode", () => {
         darkState.ref!.value = false;
         const component = mountLayout();

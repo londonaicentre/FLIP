@@ -56,10 +56,10 @@
                 </a>
             </div>
             <div class="absolute top-0 right-0">
-                <img src="@/assets/login/top-right.svg?url" alt="">
+                <img src="@/assets/login/top-right.svg?url" alt="" class="corner-art-fade-top">
             </div>
             <div class="absolute bottom-0 left-0">
-                <img src="@/assets/login/bottom-left.svg?url" alt="">
+                <img src="@/assets/login/bottom-left.svg?url" alt="" class="corner-art-fade-bottom">
             </div>
             <div
                 class="flex flex-row w-full md:max-w-md min-h-[417px] relative m-4"
