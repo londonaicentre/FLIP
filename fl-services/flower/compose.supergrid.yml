@@ -1,0 +1,123 @@
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# SuperGrid spike rig (FLIP#744): the two dev SuperNodes + the fl-api adapter
+# ONLY, pointed at an EXTERNAL SuperLink (e.g. Flower SuperGrid) instead of the
+# local `superlink` service in compose.dev.yml. TLS: the supernodes get neither
+# --insecure nor --root-certificates, so they validate the endpoint against the
+# image's system CA store (public-CA TLS). fl-api gets the same effect by
+# pointing SUPERLINK_ROOT_CERTIFICATES at the system bundle (entrypoint.sh has
+# no address-only public-TLS mode). Node auth uses the in-tree dev keys by
+# default — register their .pub keys with the target federation first.
+#
+# SuperGrid splits planes across hostnames (both :443, public CA):
+#   fleet  (SuperNodes)  fleet-supergrid.flower.ai:443
+#   control (flwr CLI)   supergrid.flower.ai
+#
+# Required env:
+#   SUPERGRID_ADDRESS          external SuperLink Fleet API address, <host>[:port]
+# Optional env:
+#   SUPERGRID_CONTROL_ADDRESS  Control API address for fl-api (default: supergrid.flower.ai)
+#   SUPERNODE_KEYS_DIR         dir with supernode_credentials_{1,2} (default ./provision/creds/net-1/keys)
+#   DEV_IMAGES_DIR / DEV_DATAFRAME  ClientApp dev fixtures (default: xray mini dataset)
+#   DOCKER_GID / WORKING_DIR   as in compose.dev.yml
+#
+# Usage:
+#   docker compose -f compose.supergrid.yml -p flwr-supergrid up -d supernode-1 supernode-2
+services:
+  fl-api:
+    image: flower-fl-api:dev
+    group_add: &host-gid ["${DOCKER_GID:-1000}"]
+    environment:
+      - SUPERLINK_ADDRESS=${SUPERGRID_CONTROL_ADDRESS:-supergrid.flower.ai}
+      # No gRPC health service is expected on a managed SuperLink; probing the
+      # main endpoint records what /check_server_status would report against it.
+      - SUPERLINK_HEALTH_ADDRESS=${SUPERGRID_HEALTH_ADDRESS:-supergrid.flower.ai:443}
+      # System CA bundle: makes entrypoint.sh emit a TLS (not insecure) config
+      # for a public-CA endpoint without needing a custom root cert.
+      - SUPERLINK_ROOT_CERTIFICATES=${SUPERLINK_ROOT_CERTIFICATES:-/etc/ssl/certs/ca-certificates.crt}
+      - FLOWER_SRC_ROOT=/app/src
+    volumes:
+      - ../../fl-tutorials/flower:/app/src
+      - ../../fl-services/flower/fl-api-flower/fl_api:/app/fl_api
+      - ../../fl-services/flower/fl-api-flower/tests:/app/tests
+    networks:
+      - flwr-supergrid-net
+
+  supernode-1:
+    image: flower-supernode:dev
+    working_dir: /app
+    group_add: *host-gid
+    environment:
+      - SUPERNODE_NAME=Trust_1
+      - LOCAL_DEV=true
+      - DEV_IMAGES_DIR=/images
+      - DEV_DATAFRAME=/dataframe_file
+      - WORKING_DIR=/app/runs
+    volumes:
+      - ${SUPERNODE_KEYS_DIR:-./provision/creds/net-1/keys}:/keys:ro
+      - ${DEV_IMAGES_DIR:-../../fl-tutorials/flower/data/xrays_mini_300/accession-resources}:/images
+      - ${DEV_DATAFRAME:-../../fl-tutorials/flower/data/xrays_mini_300/sample_get_dataframe_response.csv}:/dataframe_file:ro
+      - ${WORKING_DIR:-/tmp/flwr-dev-runs}:/app/runs
+    command:
+      - --superlink
+      - ${SUPERGRID_ADDRESS}
+      - --auth-supernode-private-key
+      - /keys/supernode_credentials_1
+      - --health-server-address
+      - ${SUPERNODE_HEALTH_SERVER_BIND_ADDRESS:-0.0.0.0:9098}
+      - --allow-runtime-dependency-installation
+    deploy:
+      resources:
+        limits:
+          cpus: "4"
+    # Uncomment for GPU-backed ClientApps:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+    networks:
+      - flwr-supergrid-net
+
+  supernode-2:
+    image: flower-supernode:dev
+    working_dir: /app
+    group_add: *host-gid
+    environment:
+      - SUPERNODE_NAME=Trust_2
+      - LOCAL_DEV=true
+      - DEV_IMAGES_DIR=/images
+      - DEV_DATAFRAME=/dataframe_file
+      - WORKING_DIR=/app/runs
+    volumes:
+      - ${SUPERNODE_KEYS_DIR:-./provision/creds/net-1/keys}:/keys:ro
+      - ${DEV_IMAGES_DIR:-../../fl-tutorials/flower/data/xrays_mini_300/accession-resources}:/images
+      - ${DEV_DATAFRAME:-../../fl-tutorials/flower/data/xrays_mini_300/sample_get_dataframe_response.csv}:/dataframe_file:ro
+      - ${WORKING_DIR:-/tmp/flwr-dev-runs}:/app/runs
+    command:
+      - --superlink
+      - ${SUPERGRID_ADDRESS}
+      - --auth-supernode-private-key
+      - /keys/supernode_credentials_2
+      - --health-server-address
+      - ${SUPERNODE_HEALTH_SERVER_BIND_ADDRESS:-0.0.0.0:9098}
+      - --allow-runtime-dependency-installation
+    deploy:
+      resources:
+        limits:
+          cpus: "4"
+    networks:
+      - flwr-supergrid-net
+
+networks:
+  flwr-supergrid-net:
+    name: flwr-supergrid-net
