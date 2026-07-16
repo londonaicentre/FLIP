@@ -392,6 +392,7 @@ class TestLogQueuePositions:
         with patch.object(fl_scheduler_service, "add_log") as mock_add_log:
             fl_scheduler_service.log_queue_positions(fake_session)
         mock_add_log.assert_not_called()
+        fake_session.commit.assert_not_called()
 
     def test_new_job_gets_its_position_logged(self, fake_session):
         job = _queued_job()
@@ -404,7 +405,10 @@ class TestLogQueuePositions:
             fake_session,
             event_type=FLLogEvent.QUEUE_POSITION.value,
             details={"position": 1, "job_id": str(job.id)},
+            transaction=fake_session,
         )
+        # The rows are batched: one commit for the whole emission, not one per row.
+        fake_session.commit.assert_called_once()
 
     def test_unchanged_position_is_not_relogged(self, fake_session):
         job = _queued_job()
@@ -412,6 +416,7 @@ class TestLogQueuePositions:
         with patch.object(fl_scheduler_service, "add_log") as mock_add_log:
             fl_scheduler_service.log_queue_positions(fake_session)
         mock_add_log.assert_not_called()
+        fake_session.commit.assert_not_called()
 
     def test_moved_job_logs_its_new_position(self, fake_session):
         job = _queued_job()
@@ -424,6 +429,7 @@ class TestLogQueuePositions:
             fake_session,
             event_type=FLLogEvent.QUEUE_POSITION.value,
             details={"position": 1, "job_id": str(job.id)},
+            transaction=fake_session,
         )
 
     def test_second_of_two_queued_jobs_gets_position_two(self, fake_session):
@@ -439,6 +445,7 @@ class TestLogQueuePositions:
             fake_session,
             event_type=FLLogEvent.QUEUE_POSITION.value,
             details={"position": 2, "job_id": str(second.id)},
+            transaction=fake_session,
         )
 
     def test_reinitiated_model_relogs_even_at_the_same_position(self, fake_session):
@@ -461,9 +468,18 @@ class TestLogQueuePositions:
             fl_scheduler_service.log_queue_positions(fake_session)
         mock_add_log.assert_called_once()
 
-    def test_emission_failure_never_raises(self, fake_session):
+    def test_emission_failure_never_raises_and_rolls_back(self, fake_session):
         job = _queued_job()
         fake_session.exec.side_effect = _exec_returning([job], [])
+        with patch.object(fl_scheduler_service, "add_log", side_effect=Exception("db down")):
+            fl_scheduler_service.log_queue_positions(fake_session)  # must not raise
+        fake_session.rollback.assert_called_once()
+        fake_session.commit.assert_not_called()
+
+    def test_emission_failure_with_failing_rollback_still_never_raises(self, fake_session):
+        job = _queued_job()
+        fake_session.exec.side_effect = _exec_returning([job], [])
+        fake_session.rollback.side_effect = Exception("rollback failed")
         with patch.object(fl_scheduler_service, "add_log", side_effect=Exception("db down")):
             fl_scheduler_service.log_queue_positions(fake_session)  # must not raise
 

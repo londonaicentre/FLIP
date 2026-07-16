@@ -165,10 +165,12 @@ export function modelStatusLabel(status: ModelStatus | undefined): string {
 }
 
 /**
- * Label for a model status with the model's FL queue position appended when it
- * is waiting in the training queue, e.g. "Model Queued (2)". Position 1 is the
- * next model to start when a net frees up; absent or unusable positions render
- * the plain label.
+ * Label for a model status with the FL queue position appended whenever a usable
+ * (>= 1) position is supplied, e.g. "Model Queued (2)" — position 1 is the next
+ * model to start when a net frees up. The helper itself is status-agnostic; the
+ * backend only supplies a position while the model has a queued job waiting for
+ * a net, so in practice the suffix appears on queued models. Absent or unusable
+ * positions render the plain label.
  */
 export function modelStatusLabelWithQueue(status: ModelStatus | undefined, queuePosition?: number | null): string {
     const label = modelStatusLabel(status);

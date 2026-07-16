@@ -135,10 +135,13 @@ def log_queue_positions(session: Session) -> None:
     a re-initiated model always re-logs its first position); a row is written
     only when the position is new or changed, making the function idempotent —
     callers invoke it after any queue mutation without worrying about noise.
+    Rows are batched into a single commit so a deep queue never costs O(N)
+    commits per mutation.
 
-    Positions are a display nicety: any failure is logged and swallowed so an
-    emission problem can never wedge the scheduler tick or the caller's queue
-    mutation.
+    Positions are a display nicety: any failure is logged, the batch is rolled
+    back, and nothing is raised — an emission problem can never wedge the
+    scheduler tick or the caller's queue mutation. Callers invoke this after
+    their own commit, so the rollback cannot discard caller state.
 
     Args:
         session (Session): The database session.
@@ -165,20 +168,31 @@ def log_queue_positions(session: Session) -> None:
         for row in prior_rows:
             last_by_model.setdefault(row.model_id, row)
 
+        emitted = False
         for position, job in enumerate(queued_jobs, start=1):
             last = last_by_model.get(job.model_id)
             last_details = (last.details or {}) if last is not None else {}
             if last_details.get("job_id") == str(job.id) and last_details.get("position") == position:
                 continue
+            # A non-None transaction makes add_log skip its per-row commit; the
+            # whole batch lands in the single commit below.
             add_log(
                 job.model_id,
                 None,
                 session,
                 event_type=FLLogEvent.QUEUE_POSITION.value,
                 details={"position": position, "job_id": str(job.id)},
+                transaction=session,
             )
+            emitted = True
+        if emitted:
+            session.commit()
     except Exception:
         logger.exception("Failed to emit queue-position logs")
+        try:
+            session.rollback()
+        except Exception:
+            logger.exception("Failed to roll back queue-position emission")
 
 
 def revert_scheduler_pickup(scheduler_id: UUID, session: Session) -> None:
