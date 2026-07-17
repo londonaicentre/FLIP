@@ -27,13 +27,20 @@ import { useAuthStore } from "@/store/auth";
 export const IS_DEMO = import.meta.env.VITE_DEMO === "true";
 
 /**
- * Pre-built zip of the recorded run's uploaded model files (including the
- * 795 MB pretrained checkpoint), hosted on the public demo assets bucket.
- * Used by the "Download all" button in demo builds — the in-browser mock
- * cannot stream file bodies of that size.
+ * Pre-built zips of each recorded run's uploaded model files (including the
+ * ~795 MB checkpoints), hosted on the public demo assets bucket, keyed by
+ * model id. Used by the "Download all" button in demo builds — the
+ * in-browser mock cannot stream file bodies of that size.
  */
-export const DEMO_MODEL_FILES_ZIP_URL =
-    "https://flipprod-demo-assets.s3.eu-west-2.amazonaws.com/ark_demo/model-24985ec3-3349-435b-afcd-f38972d8695d-files.zip";
+const DEMO_ASSETS = "https://flipprod-demo-assets.s3.eu-west-2.amazonaws.com/ark_demo";
+export const DEMO_MODEL_FILES_ZIP_URLS: Record<string, string> = {
+    // Fine-tuning run
+    "24985ec3-3349-435b-afcd-f38972d8695d": `${DEMO_ASSETS}/model-24985ec3-3349-435b-afcd-f38972d8695d-files.zip`,
+    // Evaluation: single-model baseline
+    "db780699-61a9-4701-990f-8f43ac03f4ab": `${DEMO_ASSETS}/model-db780699-61a9-4701-990f-8f43ac03f4ab-files.zip`,
+    // Evaluation: pretrained-vs-finetuned comparison
+    "fcf8cb36-5685-4085-abc1-14bd25151566": `${DEMO_ASSETS}/model-fcf8cb36-5685-4085-abc1-14bd25151566-files.zip`
+};
 
 /**
  * Seed a read-only "viewer" identity so the app chrome renders a signed-in

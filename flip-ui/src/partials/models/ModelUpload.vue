@@ -147,7 +147,7 @@ import AiCard from "@/components/AiCard/AiCard.vue";
 import AiLoader from "@/components/AiLoader/AiLoader.vue";
 import AiConfirmModal from "@/components/AiModal/AiConfirmModal.vue";
 import { usePermissions } from "@/composables/usePermissions";
-import { DEMO_MODEL_FILES_ZIP_URL, IS_DEMO } from "@/demo/bootstrap";
+import { DEMO_MODEL_FILES_ZIP_URLS, IS_DEMO } from "@/demo/bootstrap";
 import { FileInfo, FileUploadStatus } from "@/interfaces/model/types";
 import { deleteModelFile, downloadModelFile, processScannedFile } from "@/services/file-service";
 import { JobType } from "@/services/model-service";
@@ -349,16 +349,19 @@ const closeFileDeletion = () => {
 const downloadAllAsZip = async () => {
     if (downloadingAll.value) return;
 
-    // Public Ark+ demo: the recorded run's file bundle (including the 795 MB
-    // pretrained checkpoint) is hosted as a pre-built zip on the public demo
-    // assets bucket — the in-browser mock can't stream file bodies of that
-    // size. Vite inlines IS_DEMO, so normal builds keep the JSZip path only.
+    // Public Ark+ demo: each recorded run's file bundle (including the ~795 MB
+    // checkpoints) is hosted as a pre-built zip on the public demo assets
+    // bucket — the in-browser mock can't stream file bodies of that size.
+    // Vite inlines IS_DEMO, so normal builds keep the JSZip path only.
     if (IS_DEMO) {
-        const link = document.createElement("a");
-        link.href = DEMO_MODEL_FILES_ZIP_URL;
-        document.body.appendChild(link);
-        link.click();
-        link.remove();
+        const zipUrl = DEMO_MODEL_FILES_ZIP_URLS[props.modelId];
+        if (zipUrl) {
+            const link = document.createElement("a");
+            link.href = zipUrl;
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+        }
 
         return;
     }

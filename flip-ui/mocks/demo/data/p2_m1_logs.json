@@ -1,0 +1,42 @@
+[
+  {
+    "id": "c9d1f5fb-be4f-4d76-abea-9b94e2255943",
+    "modelId": "db780699-61a9-4701-990f-8f43ac03f4ab",
+    "logDate": "2026-07-17T18:11:04.552412",
+    "success": true,
+    "trustName": null,
+    "trustCode": null,
+    "globalRound": null,
+    "log": "This model has been added to the queue."
+  },
+  {
+    "id": "4e738f66-2615-4eb6-a4ac-1317c3b06ccc",
+    "modelId": "db780699-61a9-4701-990f-8f43ac03f4ab",
+    "logDate": "2026-07-17T18:11:04.585653",
+    "success": true,
+    "trustName": null,
+    "trustCode": null,
+    "globalRound": null,
+    "log": "Selected trusts for training: Bangkok Dusit Medical Services, King's College London"
+  },
+  {
+    "id": "ec3f4459-5e78-42d1-a44a-7a3a8f3c31fe",
+    "modelId": "db780699-61a9-4701-990f-8f43ac03f4ab",
+    "logDate": "2026-07-17T18:11:43.198947",
+    "success": true,
+    "trustName": null,
+    "trustCode": null,
+    "globalRound": null,
+    "log": "Model training assigned to 'net-1'"
+  },
+  {
+    "id": "8e412f0b-efef-4cb8-8387-67190820a507",
+    "modelId": "db780699-61a9-4701-990f-8f43ac03f4ab",
+    "logDate": "2026-07-17T18:23:36.354203",
+    "success": true,
+    "trustName": null,
+    "trustCode": null,
+    "globalRound": null,
+    "log": "The results of this model have been uploaded and can now be downloaded."
+  }
+]
