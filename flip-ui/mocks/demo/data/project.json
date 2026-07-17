@@ -1,0 +1,60 @@
+{
+  "id": "f48850b7-3101-46d1-8fa7-a00bf01d2597",
+  "name": "Ark+ Finetuning (2-trust, 50r)",
+  "description": "Cross-border federated fine-tuning and evaluation of the Ark+ chest X-ray foundation model across two FLIP trust nodes (UK and Thailand), using fully synthetic CXR cohorts held in each site's OMOP database. Each cohort covers five findings \u2014 pleural effusion, consolidation, infiltration, lung nodule or mass, and pneumothorax \u2014 with 20% withheld per site as a holdout set for a companion federated evaluation project.\n\nWe plan to keep the pretrained Ark+ encoder frozen and train a fresh 5-class classification head with FedAvg over 50 global rounds (5 local epochs per round), exchanging head-only parameter updates passed through a selective parameter-sharing privacy filter, so per-round payloads remain in the tens of kilobytes. Imaging data will be resolved from each site's PACS into its local XNAT cache and never leaves the trust; only model updates and aggregate metrics cross site boundaries. The trained global model will subsequently be scored against the pretrained baseline on each site's holdout cohort via the federated evaluation job type (per-class AUROC with DeLong significance testing). Each institution independently reviews and approves this project under its own governance before any data access occurs.",
+  "ownerId": "c622c224-d0d1-704e-0b6d-711d8d4605ca",
+  "ownerName": null,
+  "userCount": 0,
+  "deleted": false,
+  "approved": null,
+  "creationtimestamp": "2026-07-06T08:04:34.546Z",
+  "stagedAt": "2026-07-06T08:04:40.530Z",
+  "status": "APPROVED",
+  "approvedTrusts": [
+    {
+      "id": "f43abcd0-be77-4dc8-89c6-4b8aa98b6183",
+      "name": "Bangkok Dusit Medical Services",
+      "code": "BDMS",
+      "approved": true,
+      "approvedAt": "2026-07-06T08:04:40.625"
+    },
+    {
+      "id": "16f5b300-8ff4-4f1a-9a60-1989b3b54489",
+      "name": "King's College London",
+      "code": "KCL",
+      "approved": true,
+      "approvedAt": "2026-07-06T08:04:40.631"
+    }
+  ],
+  "query": {
+    "id": "e6c33e9e-f69a-4942-9cd9-0a074cf1ae1a",
+    "name": "E2E smoke query",
+    "query": "-- Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London\n-- Licensed under the Apache License, Version 2.0 (the \"License\");\n-- you may not use this file except in compliance with the License.\n-- You may obtain a copy of the License at\n--     http://www.apache.org/licenses/LICENSE-2.0\n-- Unless required by applicable law or agreed to in writing, software\n-- distributed under the License is distributed on an \"AS IS\" BASIS,\n-- WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\n-- See the License for the specific language governing permissions and\n-- limitations under the License.\n\nWITH project_images AS (\n    SELECT io.image_occurrence_id, io.accession_id, io.image_occurrence_date, io.modality_concept_id\n    FROM omop.image_occurrence io\n    JOIN omop.procedure_occurrence pr ON pr.procedure_occurrence_id = io.procedure_occurrence_id\n    WHERE pr.procedure_source_value = 'Chest X-ray'\n),\nfeature_observation AS (\n    -- image_feature rows that link to the observation table (carry the Yes/No labels)\n    SELECT ife.image_occurrence_id, ife.image_feature_concept_id, ife.image_feature_event_id\n    FROM omop.image_feature ife\n    WHERE ife.image_feature_event_field_concept_id = 1147304\n      AND ife.image_occurrence_id IN (SELECT image_occurrence_id FROM project_images)\n),\nobservation_value AS (\n    -- pivot the per-label observations to one row per image occurrence\n    SELECT fo.image_occurrence_id,\n        MAX(CASE WHEN image_feature_concept_id = 4215818  THEN vc.concept_name END) AS effusion,\n        MAX(CASE WHEN image_feature_concept_id = 4196943  THEN vc.concept_name END) AS edema,\n        MAX(CASE WHEN image_feature_concept_id = 4319884  THEN vc.concept_name END) AS consolidation,\n        MAX(CASE WHEN image_feature_concept_id = 4264333  THEN vc.concept_name END) AS infiltration,\n        MAX(CASE WHEN image_feature_concept_id = 4214641  THEN vc.concept_name END) AS lung_nodule_or_mass,\n        MAX(CASE WHEN image_feature_concept_id = 253796   THEN vc.concept_name END) AS pneumothorax,\n        MAX(CASE WHEN image_feature_concept_id = 40481136 THEN vc.concept_name END) AS normal_lungs\n    FROM feature_observation fo\n    JOIN omop.observation o ON o.observation_id = fo.image_feature_event_id\n    JOIN omop.concept vc ON vc.concept_id = o.value_as_concept_id\n    GROUP BY fo.image_occurrence_id\n)\nSELECT\n    pi.accession_id,\n    pi.image_occurrence_date AS \"Image date\",\n    modality.concept_name    AS \"Modality\",\n    ov.effusion              AS \"Effusion\",\n    ov.edema                 AS \"Edema\",\n    ov.consolidation         AS \"Consolidation\",\n    ov.infiltration          AS \"Infiltration\",\n    ov.lung_nodule_or_mass   AS \"Lung Nodule or Mass\",\n    ov.pneumothorax          AS \"Pneumothorax\",\n    ov.normal_lungs          AS \"Lungs in normal arrangement\"\nFROM project_images pi\nJOIN observation_value ov ON ov.image_occurrence_id = pi.image_occurrence_id\nJOIN omop.concept modality ON modality.concept_id = pi.modality_concept_id\nORDER BY pi.accession_id\n",
+    "queriedTrustIds": [
+      "f43abcd0-be77-4dc8-89c6-4b8aa98b6183",
+      "16f5b300-8ff4-4f1a-9a60-1989b3b54489"
+    ],
+    "pendingTrustIds": [],
+    "cancelledTrustIds": [],
+    "respondedTrustIds": [
+      "f43abcd0-be77-4dc8-89c6-4b8aa98b6183",
+      "16f5b300-8ff4-4f1a-9a60-1989b3b54489"
+    ],
+    "erroredTrustIds": [],
+    "emptyTrustIds": [],
+    "totalCohort": 3782,
+    "created": "2026-07-06T08:04:34.745Z",
+    "createdBy": "AI Centre Admin"
+  },
+  "ownerEmail": "demo@flip.local",
+  "users": [
+    {
+      "id": "c622c224-d0d1-704e-0b6d-711d8d4605ca",
+      "email": "demo@flip.local",
+      "name": "",
+      "organisation": "",
+      "isDisabled": false
+    }
+  ],
+  "dicom_to_nifti": false
+}

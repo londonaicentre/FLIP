@@ -1,0 +1,103 @@
+{
+  "modelId": "24985ec3-3349-435b-afcd-f38972d8695d",
+  "modelName": "Ark+ Finetuning 50r client_api (arkplus-apps 8a188867)",
+  "modelDescription": "Federated fine-tuning of the pretrained Ark+ (Swin-Large, 768px) chest X-ray foundation model for 5-finding classification. The encoder stays frozen; a fresh 5-class linear head is trained with FedAvg over 50 global rounds of 5 local epochs (batch size 4, Adam, exponential LR decay 1.5e-3 to 1.5e-4 during round 0, fixed thereafter; mean per-logit BCE loss). Only head parameter updates are exchanged, passed through a selective parameter-sharing privacy filter (10% quantile threshold), keeping per-round payloads in the tens of kilobytes after the round-0 checkpoint broadcast. The resulting global model will be compared against the pretrained baseline on each site's holdout cohort in a separate federated evaluation job.",
+  "projectId": "f48850b7-3101-46d1-8fa7-a00bf01d2597",
+  "status": "RESULTS_UPLOADED",
+  "query": {
+    "id": "e6c33e9e-f69a-4942-9cd9-0a074cf1ae1a",
+    "name": "E2E smoke query",
+    "query": "-- Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London\n-- Licensed under the Apache License, Version 2.0 (the \"License\");\n-- you may not use this file except in compliance with the License.\n-- You may obtain a copy of the License at\n--     http://www.apache.org/licenses/LICENSE-2.0\n-- Unless required by applicable law or agreed to in writing, software\n-- distributed under the License is distributed on an \"AS IS\" BASIS,\n-- WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\n-- See the License for the specific language governing permissions and\n-- limitations under the License.\n\nWITH project_images AS (\n    SELECT io.image_occurrence_id, io.accession_id, io.image_occurrence_date, io.modality_concept_id\n    FROM omop.image_occurrence io\n    JOIN omop.procedure_occurrence pr ON pr.procedure_occurrence_id = io.procedure_occurrence_id\n    WHERE pr.procedure_source_value = 'Chest X-ray'\n),\nfeature_observation AS (\n    -- image_feature rows that link to the observation table (carry the Yes/No labels)\n    SELECT ife.image_occurrence_id, ife.image_feature_concept_id, ife.image_feature_event_id\n    FROM omop.image_feature ife\n    WHERE ife.image_feature_event_field_concept_id = 1147304\n      AND ife.image_occurrence_id IN (SELECT image_occurrence_id FROM project_images)\n),\nobservation_value AS (\n    -- pivot the per-label observations to one row per image occurrence\n    SELECT fo.image_occurrence_id,\n        MAX(CASE WHEN image_feature_concept_id = 4215818  THEN vc.concept_name END) AS effusion,\n        MAX(CASE WHEN image_feature_concept_id = 4196943  THEN vc.concept_name END) AS edema,\n        MAX(CASE WHEN image_feature_concept_id = 4319884  THEN vc.concept_name END) AS consolidation,\n        MAX(CASE WHEN image_feature_concept_id = 4264333  THEN vc.concept_name END) AS infiltration,\n        MAX(CASE WHEN image_feature_concept_id = 4214641  THEN vc.concept_name END) AS lung_nodule_or_mass,\n        MAX(CASE WHEN image_feature_concept_id = 253796   THEN vc.concept_name END) AS pneumothorax,\n        MAX(CASE WHEN image_feature_concept_id = 40481136 THEN vc.concept_name END) AS normal_lungs\n    FROM feature_observation fo\n    JOIN omop.observation o ON o.observation_id = fo.image_feature_event_id\n    JOIN omop.concept vc ON vc.concept_id = o.value_as_concept_id\n    GROUP BY fo.image_occurrence_id\n)\nSELECT\n    pi.accession_id,\n    pi.image_occurrence_date AS \"Image date\",\n    modality.concept_name    AS \"Modality\",\n    ov.effusion              AS \"Effusion\",\n    ov.edema                 AS \"Edema\",\n    ov.consolidation         AS \"Consolidation\",\n    ov.infiltration          AS \"Infiltration\",\n    ov.lung_nodule_or_mass   AS \"Lung Nodule or Mass\",\n    ov.pneumothorax          AS \"Pneumothorax\",\n    ov.normal_lungs          AS \"Lungs in normal arrangement\"\nFROM project_images pi\nJOIN observation_value ov ON ov.image_occurrence_id = pi.image_occurrence_id\nJOIN omop.concept modality ON modality.concept_id = pi.modality_concept_id\nORDER BY pi.accession_id\n",
+    "results": null
+  },
+  "files": [
+    {
+      "id": "31b9cc93-5a54-4bc4-8731-3351d2bf987c",
+      "name": "arkplus_flat_models.py",
+      "status": "COMPLETED",
+      "size": 9062.0,
+      "type": "text/x-python",
+      "tag": null,
+      "model_id": "24985ec3-3349-435b-afcd-f38972d8695d"
+    },
+    {
+      "id": "46c33051-6b47-40e4-8cda-a578eb8ed2d7",
+      "name": "arkplus_flat_utils.py",
+      "status": "COMPLETED",
+      "size": 11873.0,
+      "type": "text/x-python",
+      "tag": null,
+      "model_id": "24985ec3-3349-435b-afcd-f38972d8695d"
+    },
+    {
+      "id": "f968beab-bb86-46a8-8125-d92c697f5110",
+      "name": "config.json",
+      "status": "COMPLETED",
+      "size": 1024.0,
+      "type": "application/json",
+      "tag": null,
+      "model_id": "24985ec3-3349-435b-afcd-f38972d8695d"
+    },
+    {
+      "id": "fb5a79ed-0d4f-4abe-aeda-2fa558da3f51",
+      "name": "data_utils.py",
+      "status": "COMPLETED",
+      "size": 17353.0,
+      "type": "text/x-python",
+      "tag": null,
+      "model_id": "24985ec3-3349-435b-afcd-f38972d8695d"
+    },
+    {
+      "id": "be6f11f5-a400-4a8f-a00c-6d7180a74128",
+      "name": "loss_and_metrics.py",
+      "status": "COMPLETED",
+      "size": 2600.0,
+      "type": "text/x-python",
+      "tag": null,
+      "model_id": "24985ec3-3349-435b-afcd-f38972d8695d"
+    },
+    {
+      "id": "67bc1689-d853-409c-aa0b-9c922846eb8c",
+      "name": "models.py",
+      "status": "COMPLETED",
+      "size": 7245.0,
+      "type": "text/x-python",
+      "tag": null,
+      "model_id": "24985ec3-3349-435b-afcd-f38972d8695d"
+    },
+    {
+      "id": "86939f21-9c4b-4791-b8c0-190a711867d8",
+      "name": "pretrained_weights.pt",
+      "status": "COMPLETED",
+      "size": 795507300.0,
+      "type": "application/vnd.snesdev-page-table",
+      "tag": null,
+      "model_id": "24985ec3-3349-435b-afcd-f38972d8695d"
+    },
+    {
+      "id": "13442780-3f44-461a-abe0-21d85525d80a",
+      "name": "trainer.py",
+      "status": "COMPLETED",
+      "size": 22096.0,
+      "type": "text/x-python",
+      "tag": null,
+      "model_id": "24985ec3-3349-435b-afcd-f38972d8695d"
+    }
+  ],
+  "creationTimestamp": "2026-07-13T09:30:15.229",
+  "preparedAt": "2026-07-13T09:31:52.006",
+  "trainingStartedAt": "2026-07-13T09:31:52.058",
+  "resultsUploadedAt": "2026-07-13T20:56:11.387",
+  "trusts": [
+    {
+      "id": "16f5b300-8ff4-4f1a-9a60-1989b3b54489",
+      "name": "King's College London",
+      "code": "KCL"
+    },
+    {
+      "id": "f43abcd0-be77-4dc8-89c6-4b8aa98b6183",
+      "name": "Bangkok Dusit Medical Services",
+      "code": "BDMS"
+    }
+  ]
+}
