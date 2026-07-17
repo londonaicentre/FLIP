@@ -15,9 +15,16 @@ import svgLoader from "vite-svg-loader";
 import iconStubPlugin from "./test/iconStubPlugin";
 
 // https://vitejs.dev/config/
-export default defineConfig(({ mode, command }) => {
+export default defineConfig(({ mode, command, isPreview }) => {
 
     const env = loadEnv(mode, process.cwd());
+
+    // Public Ark+ demo build (`vite --mode demo` / `vite build --mode demo`).
+    // The deployable build (and `vite preview`, which serves that build) lives
+    // under /ark_demo/; the dev server stays at "/" so local eyeballing needs
+    // no path juggling.
+    const isDemo = mode === "demo";
+    const demoBase = isDemo && (command === "build" || isPreview);
 
     // Belt-and-braces guard for `vite build` invoked directly (bypassing
     // the npm prebuild hook in package.json). Vite inlines VITE_LOCAL at
@@ -46,6 +53,7 @@ export default defineConfig(({ mode, command }) => {
     );
 
     return {
+        base: demoBase ? "/ark_demo/" : "/",
         plugins: [
             progress(),
             vue(
@@ -103,7 +111,12 @@ export default defineConfig(({ mode, command }) => {
                 }
             ]
         },
-        define: envWithProcessPrefix,
+        define: {
+            ...envWithProcessPrefix,
+            // Inline the demo flag deterministically for `--mode demo`, independent
+            // of .env-file / process-env resolution quirks.
+            ...(isDemo ? { "import.meta.env.VITE_DEMO": JSON.stringify("true") } : {})
+        },
         build: {
             sourcemap: false,
             chunkSizeWarningLimit: 1024,

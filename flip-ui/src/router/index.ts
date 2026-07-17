@@ -32,7 +32,9 @@ import { authCheck } from "@/utils/auth";
 const CHUNK_RELOAD_KEY = "flip:chunk-reload";
 
 const router = createRouter({
-    history: createWebHistory(),
+    // BASE_URL is "/" for normal/dev builds and "/ark_demo/" for the demo build
+    // (vite.config sets `base`), so deep links resolve under the hosting prefix.
+    history: createWebHistory(import.meta.env.BASE_URL),
     routes,
     scrollBehavior(to) {
         if (to.hash) {
@@ -55,6 +57,18 @@ export const beforeEachGuard = (
     next: NavigationGuardNext
 ): void => {
     startRouteProgress();
+
+    // Public Ark+ demo: the only meaningful destinations are the demo project
+    // and its model. Send the estate-level entry points (home / Projects list)
+    // to the demo project so visitors never see an unrelated list. Vite inlines
+    // the flag, so this branch never ships in a normal build.
+    if (import.meta.env.VITE_DEMO === "true") {
+        const DEMO_PROJECT_PATH = "/project/f48850b7-3101-46d1-8fa7-a00bf01d2597";
+        if (to.path === "/" || to.path === "/projects" || to.name === "Projects") {
+            return next(DEMO_PROJECT_PATH);
+        }
+    }
+
     /** Ensure the user is logged in */
     authCheck(to, from, next);
 };
