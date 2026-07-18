@@ -19,8 +19,11 @@
  * (project f48850b7…, model 24985ec3…), captured verbatim from the production
  * API on 2026-07-17 and stored as JSON under ./data/. The only edits applied
  * at capture time were:
- *   1. every e-mail address replaced with demo@flip.local; and
- *   2. the live presigned S3 URL in fl_results.json replaced with an inert
+ *   1. every e-mail address replaced with demo@flip.local;
+ *   2. every personal name (e.g. the query creator's) replaced with the
+ *      demo identity "FLIP Demo" — the register is published
+ *      unauthenticated, so it must carry no individual's identifiers; and
+ *   3. the live presigned S3 URL in fl_results.json replaced with an inert
  *      relative path (a leaked presigned URL is a time-limited download
  *      capability; the demo must ship none).
  *

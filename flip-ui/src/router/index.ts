@@ -57,7 +57,6 @@ export const beforeEachGuard = (
     next: NavigationGuardNext
 ): void => {
     startRouteProgress();
-
     /** Ensure the user is logged in */
     authCheck(to, from, next);
 };

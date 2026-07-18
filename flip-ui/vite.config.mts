@@ -42,6 +42,22 @@ export default defineConfig(({ mode, command, isPreview }) => {
         );
     }
 
+    // Same stakes for the public-demo flag: VITE_DEMO bypasses Cognito auth
+    // and swaps the real API for the offline demo Mirage server
+    // (mocks/demo-server.ts). The only supported way to set it is
+    // `--mode demo`, where the `define` below inlines it deterministically —
+    // so any build where it arrives through the environment instead is a
+    // mis-configured production build, not a demo build.
+    if (command === "build" && !isDemo && env.VITE_DEMO === "true") {
+        throw new Error(
+            "Refusing to build flip-ui: VITE_DEMO=true is set. " +
+            "VITE_DEMO bypasses Cognito auth and boots the offline demo " +
+            "MirageJS server; the only supported way to build the demo " +
+            "bundle is `npm run build:demo` (vite build --mode demo). " +
+            "Unset VITE_DEMO before running `vite build`."
+        );
+    }
+
     const envWithProcessPrefix = Object.entries(env).reduce(
         (prev, [key, val]) => {
             return {
