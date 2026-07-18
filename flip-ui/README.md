@@ -78,6 +78,12 @@ The build regenerates `dist/js/window.js` from
 environment and points at no real backend. Host the bundle as a CloudFront behaviour (or any
 static prefix) at `/ark_demo/` next to the real app.
 
+The large download bundles (results + model files, several hundred MB each) are not part of the
+bundle: they are served by the production CloudFront distribution at `/ark_demo/assets/*` from a
+private, OAC-locked S3 bucket with the WAF in the request path (Terraform:
+`deploy/providers/AWS/cloudfront.tf`, "Public Ark+ demo download assets"; bucket name via
+`DEMO_ASSETS_BUCKET_NAME`). Nothing in the demo is fetched from a public S3 URL.
+
 ## Configuration
 
 The flip-ui reads its runtime configuration from `window.*` globals set by

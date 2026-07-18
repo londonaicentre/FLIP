@@ -28,11 +28,14 @@ export const IS_DEMO = import.meta.env.VITE_DEMO === "true";
 
 /**
  * Pre-built zips of each recorded run's uploaded model files (including the
- * ~795 MB checkpoints), hosted on the public demo assets bucket, keyed by
- * model id. Used by the "Download all" button in demo builds — the
- * in-browser mock cannot stream file bodies of that size.
+ * ~795 MB checkpoints), keyed by model id. Used by the "Download all" button
+ * in demo builds — the in-browser mock cannot stream file bodies of that
+ * size. Served through the production CloudFront distribution
+ * (/ark_demo/assets/* behaviour → OAC-locked S3 origin, WAF in path), never
+ * from a public S3 URL — see deploy/providers/AWS/cloudfront.tf
+ * ("Public Ark+ demo download assets").
  */
-const DEMO_ASSETS = "https://flipprod-demo-assets.s3.eu-west-2.amazonaws.com/ark_demo";
+const DEMO_ASSETS = "https://app.flip.aicentre.co.uk/ark_demo/assets";
 export const DEMO_MODEL_FILES_ZIP_URLS: Record<string, string> = {
     // Fine-tuning run
     "24985ec3-3349-435b-afcd-f38972d8695d": `${DEMO_ASSETS}/model-24985ec3-3349-435b-afcd-f38972d8695d-files.zip`,

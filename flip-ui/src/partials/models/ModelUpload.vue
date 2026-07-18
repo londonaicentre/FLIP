@@ -350,9 +350,9 @@ const downloadAllAsZip = async () => {
     if (downloadingAll.value) return;
 
     // Public Ark+ demo: each recorded run's file bundle (including the ~795 MB
-    // checkpoints) is hosted as a pre-built zip on the public demo assets
-    // bucket — the in-browser mock can't stream file bodies of that size.
-    // Vite inlines IS_DEMO, so normal builds keep the JSZip path only.
+    // checkpoints) is a pre-built zip served through the CloudFront
+    // demo-assets behaviour — the in-browser mock can't stream file bodies of
+    // that size. Vite inlines IS_DEMO, so normal builds keep the JSZip path only.
     if (IS_DEMO) {
         const zipUrl = DEMO_MODEL_FILES_ZIP_URLS[props.modelId];
         if (zipUrl) {

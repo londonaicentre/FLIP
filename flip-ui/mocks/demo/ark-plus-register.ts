@@ -23,9 +23,10 @@
  *   2. every personal name (e.g. the query creator's) replaced with the
  *      demo identity "FLIP Demo" — the register is published
  *      unauthenticated, so it must carry no individual's identifiers; and
- *   3. the live presigned S3 URL in fl_results.json replaced with an inert
- *      relative path (a leaked presigned URL is a time-limited download
- *      capability; the demo must ship none).
+ *   3. the live presigned S3 URL in fl_results.json replaced with the
+ *      CloudFront-served demo-assets URL (/ark_demo/assets/*, OAC-locked
+ *      bucket behind the production distribution — a leaked presigned URL
+ *      is a time-limited download capability; the demo must ship none).
  *
  * Institution names (King's College London, Bangkok Dusit Medical Services,
  * Guy's and St Thomas' Trust, AI Centre Private) are shown verbatim by

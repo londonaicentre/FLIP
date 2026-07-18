@@ -124,7 +124,8 @@ const filesByModel: Record<string, unknown> = {
     [P2_M2]: filesGetP2M2
 };
 
-// Result-bundle links are public demo-assets objects (never presigned URLs).
+// Result-bundle links point at the CloudFront demo-assets behaviour
+// (/ark_demo/assets/*) — never presigned URLs, never raw S3.
 const flResultsByModel: Record<string, unknown> = {
     [P1_M1]: flResultsP1M1,
     [P2_M1]: flResultsP2M1,

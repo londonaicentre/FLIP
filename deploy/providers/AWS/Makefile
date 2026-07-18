@@ -153,6 +153,9 @@ export TF_VAR_SES_VERIFIED_EMAIL=${SES_VERIFIED_EMAIL}
 export TF_VAR_flip_alb_subdomain=${ALB_SUBDOMAIN}
 export TF_VAR_flip_nlb_subdomain=${NLB_SUBDOMAIN}
 export TF_VAR_FLIP_UI_BUCKET_NAME=${FLIP_UI_BUCKET_NAME}
+# Optional: bucket holding the public Ark+ demo download bundles, served via
+# CloudFront at /ark_demo/assets/*. Unset => no demo-assets resources (stag).
+export TF_VAR_DEMO_ASSETS_BUCKET_NAME=${DEMO_ASSETS_BUCKET_NAME}
 # flip-api / fl-* env vars consumed by ECS task definitions (locals.tf).
 # These mirror compose.production.yml so the running container sees the same
 # values whether it runs on EC2+compose or ECS Fargate.

@@ -156,6 +156,42 @@ The UI is served from S3 behind CloudFront at the canonical user-facing subdomai
 
 **Subsequent UI deploys**: just `make deploy-ui PROD=stag|true` — builds the UI from the working tree, regenerates `window.js`, syncs to S3, invalidates CloudFront. No Terraform involved.
 
+### Ark+ demo download assets (`/ark_demo/assets/*`)
+
+The public Ark+ demo (flip-ui `npm run build:demo`) offers multi-hundred-MB result and model-file
+zips for download. These are served by the **same CloudFront distribution** at `/ark_demo/assets/*`
+from a dedicated S3 bucket (prod: `flipprod-demo-assets`) that is **not public**: CloudFront reads
+it via OAC exactly like the flip-ui bucket, all four public-access blocks are on, and the bucket
+policy grants `s3:GetObject` on the `ark_demo/assets/*` prefix to this distribution only. Serving
+through CloudFront (instead of the public-prefix S3 URL the demo used pre-rollout) puts the WAF
+rate-limit rule in the download path and moves anonymous egress from raw S3 rates to CloudFront's.
+
+The bucket itself is intentionally **not Terraform-managed** — bundles are staged manually per demo
+release and the bucket must survive `make destroy`. Terraform manages only the access edges
+(public-access block, OAC bucket policy, CloudFront origin + behaviour), all gated on
+`DEMO_ASSETS_BUCKET_NAME` in `.env.production` (leave unset on stag — no demo, no resources).
+
+Rollout / new-bundle staging:
+
+```bash
+# Stage bundles under the prefix the CloudFront behaviour maps to
+aws s3 cp s3://flipprod-demo-assets/ark_demo/<bundle>.zip \
+          s3://flipprod-demo-assets/ark_demo/assets/<bundle>.zip --profile prod   # server-side copy
+
+# DEMO_ASSETS_BUCKET_NAME=flipprod-demo-assets in .env.production, then:
+cd deploy/providers/AWS
+make plan PROD=true    # expect: +OAC, +PAB, +bucket policy, ~distribution (origin + behaviour)
+make apply PROD=true
+
+# Verify: CloudFront serves, raw S3 is sealed
+curl -sI https://app.flip.aicentre.co.uk/ark_demo/assets/<bundle>.zip   # 200
+curl -sI https://flipprod-demo-assets.s3.eu-west-2.amazonaws.com/ark_demo/<bundle>.zip  # 403
+```
+
+The demo UI's download URLs live in `flip-ui/src/demo/bootstrap.ts` (model-files zips) and
+`flip-ui/mocks/demo/data/*flres*.json` / `fl_results.json` (results zips); keep them pointing at
+`https://app.flip.aicentre.co.uk/ark_demo/assets/…`.
+
 ### FLIP application S3 buckets
 
 The Central Hub uses four S3 buckets, each with a distinct purpose, access pattern, and CORS surface. The three **FLIP application buckets** were split out of a single legacy `flip{env}` bucket so each tenant can carry the minimum CORS surface its consumer needs (a CORS change for one tenant no longer drags every other tenant along, and a browser-direct bucket can no longer accidentally expose objects belonging to a server-only flow).

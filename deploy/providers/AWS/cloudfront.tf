@@ -192,7 +192,8 @@ resource "aws_s3_bucket_acl" "cloudfront_logs" {
     grant {
       grantee {
         type = "CanonicalUser"
-        id   = "c4c1ede66af53448b93c283ce9448c4ba468c9432aa01d700d3878632f77d2d0"
+        # Public AWS-documented canonical user id, not a credential.
+        id = "c4c1ede66af53448b93c283ce9448c4ba468c9432aa01d700d3878632f77d2d0" # pragma: allowlist secret
       }
       permission = "FULL_CONTROL"
     }
@@ -276,6 +277,80 @@ resource "aws_s3_bucket_versioning" "flip_ui" {
   versioning_configuration {
     status = "Enabled"
   }
+}
+
+############################
+# Public Ark+ demo download assets (optional; prod only)
+#
+# The demo SPA (flip-ui `npm run build:demo`) offers multi-hundred-MB result
+# and model-file bundles for download. Serving them straight from a public
+# S3 prefix exposes raw S3 egress rates to anonymous hotlinking with no
+# throttle; fronting them with CloudFront puts the WAF (rate-limit rule
+# above) and CloudFront's cheaper egress in the path, and lets the bucket
+# drop ALL public access — CloudFront reads it via OAC, exactly like the
+# flip-ui bucket.
+#
+# The bucket is deliberately not Terraform-managed: its lifecycle is manual
+# (bundles are staged by hand per demo release) and it must survive
+# `make destroy`. Terraform manages the access edges only: the
+# public-access block, the OAC-scoped bucket policy, and the CloudFront
+# origin + /ark_demo/assets/* behavior on the main distribution.
+# Everything is gated on DEMO_ASSETS_BUCKET_NAME being non-empty.
+############################
+
+locals {
+  demo_assets_enabled = var.DEMO_ASSETS_BUCKET_NAME != ""
+}
+
+data "aws_s3_bucket" "demo_assets" {
+  count  = local.demo_assets_enabled ? 1 : 0
+  bucket = var.DEMO_ASSETS_BUCKET_NAME
+}
+
+resource "aws_cloudfront_origin_access_control" "demo_assets" {
+  count                             = local.demo_assets_enabled ? 1 : 0
+  name                              = "demo-assets-${var.flip_alb_subdomain}"
+  description                       = "OAC for the Ark+ demo assets S3 bucket"
+  origin_access_control_origin_type = "s3"
+  signing_behavior                  = "always"
+  signing_protocol                  = "sigv4"
+}
+
+# All four blocks on: with OAC in place nothing about this bucket is public
+# any more — a leftover public-read policy (how the demo assets were served
+# before this behavior existed) is replaced by aws_s3_bucket_policy below.
+resource "aws_s3_bucket_public_access_block" "demo_assets" {
+  count                   = local.demo_assets_enabled ? 1 : 0
+  bucket                  = data.aws_s3_bucket.demo_assets[0].id
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
+}
+
+# Scoped to the ark_demo/assets/ prefix, not the whole bucket, so only the
+# keys the demo behavior maps to are reachable even through CloudFront —
+# anything else staged in the bucket stays private. No s3:ListBucket: a
+# missing key returns 403 instead of an XML key listing.
+resource "aws_s3_bucket_policy" "demo_assets" {
+  count  = local.demo_assets_enabled ? 1 : 0
+  bucket = data.aws_s3_bucket.demo_assets[0].id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Sid       = "AllowCloudFrontOACDemoAssetsPrefix"
+      Effect    = "Allow"
+      Principal = { Service = "cloudfront.amazonaws.com" }
+      Action    = "s3:GetObject"
+      Resource  = "${data.aws_s3_bucket.demo_assets[0].arn}/ark_demo/assets/*"
+      Condition = {
+        StringEquals = {
+          "AWS:SourceArn" = aws_cloudfront_distribution.flip_ui.arn
+        }
+      }
+    }]
+  })
 }
 
 ############################
@@ -654,6 +729,17 @@ resource "aws_cloudfront_distribution" "flip_ui" {
     }
   }
 
+  # Ark+ demo download assets (see the demo-assets section above). Present
+  # only when DEMO_ASSETS_BUCKET_NAME is set.
+  dynamic "origin" {
+    for_each = local.demo_assets_enabled ? [1] : []
+    content {
+      domain_name              = data.aws_s3_bucket.demo_assets[0].bucket_regional_domain_name
+      origin_id                = "s3-demo-assets"
+      origin_access_control_id = aws_cloudfront_origin_access_control.demo_assets[0].id
+    }
+  }
+
   default_cache_behavior {
     target_origin_id           = "s3-flip-ui"
     viewer_protocol_policy     = "redirect-to-https"
@@ -681,6 +767,24 @@ resource "aws_cloudfront_distribution" "flip_ui" {
     cache_policy_id            = local.cloudfront_policy_caching_disabled
     origin_request_policy_id   = aws_cloudfront_origin_request_policy.flip_api.id
     response_headers_policy_id = aws_cloudfront_response_headers_policy.flip_api.id
+  }
+
+  # Ark+ demo downloads: read-only, immutable zips, so CachingOptimized is
+  # safe and keeps repeat downloads off S3. No response-headers policy or
+  # viewer function — these are direct file downloads, not HTML. Listed
+  # before any future /ark_demo/* SPA behavior (CloudFront matches ordered
+  # behaviors in sequence, most-specific must come first).
+  dynamic "ordered_cache_behavior" {
+    for_each = local.demo_assets_enabled ? [1] : []
+    content {
+      path_pattern           = "/ark_demo/assets/*"
+      target_origin_id       = "s3-demo-assets"
+      viewer_protocol_policy = "redirect-to-https"
+      allowed_methods        = ["GET", "HEAD"]
+      cached_methods         = ["GET", "HEAD"]
+      compress               = true
+      cache_policy_id        = local.cloudfront_policy_caching_optimized
+    }
   }
 
   restrictions {
