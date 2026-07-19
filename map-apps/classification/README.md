@@ -31,6 +31,21 @@ one of the following is a place where a wrong assumption fails **silently** rath
 | `Sample_Rules_Text` | `app.py` | Modality must match your data. Radiographs are `CR` or `DX`, **not** `CT` — a copied CT rule selects nothing and the app still exits 0. |
 | `ModelInfo` / `EquipmentInfo` | `app.py` | Provenance recorded in the SR instance. |
 
+## If you are targeting deepcOS
+
+This template is closer to ready than the segmentation one. A deepcOS engine report expresses
+results as findings — a coded clinical concept with a confidence score and a present or absent
+state — which is what `compute()` already produces internally before formatting it as text. The
+remaining work is assigning coded concepts to the label names and emitting the report alongside
+the SR, not changing how inference works.
+
+Report **every** label the model can produce with an explicit present/absent state, not only those
+above threshold: that is what lets downstream systems accept or reject findings individually. This
+template already evaluates every label, so it is a formatting change rather than a behavioural one.
+
+See [Deploying to deepcOS](../../docs/source/working-with-flip-apps/package-model-as-map.rst) for
+the report's required fields and how it is discovered.
+
 ## Verifying
 
 DICOM SR has no pixel data, so there is nothing to overlay — read the content back:

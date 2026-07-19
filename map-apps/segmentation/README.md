@@ -49,6 +49,25 @@ for a worked pair of bundle configs, and the
 [packaging guide](../../docs/source/working-with-flip-apps/package-model-as-map.rst) for how to
 transcribe transforms from a training application.
 
+## If you are targeting deepcOS, this template is not finished
+
+The DICOM SEG this template writes is accepted as-is — deepcOS forwards DICOM artefacts written to
+the output directory, so nothing about the pixel output needs to change.
+
+What is missing is the other half. A deepcOS submission must also express, in machine-readable
+form, whatever the engine encoded in pixel data. A mask is exactly that case, and the enriched
+output model has no dense mask representation to restate it into — so what a submission carries is
+the mask's **derived clinical content**: the segmented volume, as a quantity with coded units and
+an anatomical attribute.
+
+**Nothing in this template computes that.** `DICOMSegmentationWriterOperator` emits pixels and
+stops. Adding it means counting foreground voxels and scaling by the volume's spacing, then
+emitting it alongside the SEG. Small, but genuinely new — do not assume it falls out of the
+existing pipeline.
+
+See [Deploying to deepcOS](../../docs/source/working-with-flip-apps/package-model-as-map.rst) for
+what else a submission requires.
+
 ## Verifying
 
 Do not trust the exit code. Confirm the artefact is a real, correctly-referenced SEG:
