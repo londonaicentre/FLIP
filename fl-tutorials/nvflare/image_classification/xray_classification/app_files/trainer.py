@@ -17,7 +17,8 @@ from pathlib import Path
 import numpy as np
 import pydicom
 import torch
-from data_utils import Lesion, LesionDict, get_labels_from_radiology_row, get_lesion_label, get_xray_transforms
+from data_utils import Lesion, LesionDict, get_labels_from_radiology_row, get_lesion_label
+from transforms import get_xray_transforms
 from flip import FLIP
 from flip.constants import PTConstants, ResourceType
 from flip.nvflare.metrics import send_metrics_value

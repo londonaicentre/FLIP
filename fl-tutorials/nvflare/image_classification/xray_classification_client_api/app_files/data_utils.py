@@ -13,7 +13,6 @@
 
 from collections.abc import Sequence
 
-import monai.transforms as mt
 import torch
 from pandas import Series
 from pydantic import BaseModel
@@ -74,18 +73,6 @@ def get_lesion_label(in_batch: dict, lesions: LesionDict):
     out_tensor = [in_batch[les.lesion] for les in sorted(lesions.items, key=lambda x: x.id)]
     return torch.stack(out_tensor, dim=1).float()
 
-
-def get_xray_transforms(is_validation: bool = False):
-    transforms = [
-        mt.LoadImaged(keys=["image"]),
-        mt.EnsureChannelFirstd(keys=["image"], channel_dim="no_channel"),
-        mt.Resized(keys=["image"], spatial_size=[224, 224]),
-        mt.Rotate90d(keys=["image"], k=-1),
-        mt.ScaleIntensityd(keys=["image"]),
-    ]
-    if not is_validation:
-        transforms.append(mt.RandAffined(keys=["image"], rotate_range=[-0.05, 0.05], scale_range=[0.01, 0.05]))
-    return mt.Compose(transforms)
 
 
 def validate_lesions(in_lesions: list, lesions: LesionDict):
