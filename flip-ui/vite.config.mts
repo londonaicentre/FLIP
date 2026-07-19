@@ -136,6 +136,15 @@ export default defineConfig(({ mode, command, isPreview }) => {
         build: {
             sourcemap: false,
             chunkSizeWarningLimit: 1024,
+            // Demo build only: Vite's default assetsDir ("assets") would put the
+            // SPA's own JS/CSS/font bundle at /ark_demo/assets/*, colliding with
+            // the CloudFront behavior that routes /ark_demo/assets/* to the
+            // separate demo-downloads S3 bucket (deploy/providers/AWS/cloudfront.tf,
+            // "Public Ark+ demo download assets"). That behavior would intercept
+            // the bundle's own JS/CSS requests and 403 them against the wrong
+            // bucket, breaking the app before Vue ever mounts. Non-demo builds
+            // keep Vite's default.
+            assetsDir: isDemo ? "static" : "assets",
             rolldownOptions: {
                 output: {
                     manualChunks: (id) => {
