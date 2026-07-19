@@ -192,6 +192,40 @@ The demo UI's download URLs live in `flip-ui/src/demo/bootstrap.ts` (model-files
 `flip-ui/mocks/demo/data/*flres*.json` / `fl_results.json` (results zips); keep them pointing at
 `https://app.flip.aicentre.co.uk/ark_demo/assets/…`.
 
+#### `/ark_demo/*` origin isolation (same-origin hosting)
+
+The demo SPA itself (everything under `/ark_demo/` that isn't a downloadable bundle — the built
+`flip-ui` demo bundle, uploaded to the **same** `FLIP_UI_BUCKET_NAME` bucket under an `ark_demo/`
+prefix) shares an origin with the real, authenticated app. That means a real signed-in user's
+Cognito tokens in `localStorage` are technically reachable by any JS running under
+`app.flip.aicentre.co.uk` — including a hypothetical XSS bug in the demo bundle. Rather than move
+the demo to a separate subdomain, the mitigation is a dedicated, **enforcing** (not report-only)
+`aws_cloudfront_response_headers_policy.ark_demo_spa` attached only to the `/ark_demo/*` behaviour:
+`connect-src 'none'` blocks every fetch/XHR/WebSocket the page could make, so even if a token were
+read from `localStorage` there is nowhere on the network to send it. The demo's Mirage mock server
+never touches the real browser network stack (it replaces `XMLHttpRequest`/`fetch` outright), so
+this has no effect on demo functionality — confirmed by the original PR's Chrome net-log audit.
+
+Three ordered behaviours now exist for the demo, evaluated in this precedence order (CloudFront
+uses the first `path_pattern` match, so order matters):
+1. `/api/*` → ALB (existing, real-app API)
+2. `/ark_demo/assets/*` → `flipprod-demo-assets` bucket (download bundles, no CSP — direct file
+   downloads, not HTML)
+3. `/ark_demo/*` → `flip-ui` bucket, same origin as the real app but with the strict demo CSP above
+
+The shared `spa_rewrite` CloudFront Function (attached to both the default behaviour and
+`/ark_demo/*`) is prefix-aware: a deep link under `/ark_demo/` falls back to `/ark_demo/index.html`,
+never the real app's `/index.html` — the earlier version would have silently served the real
+(Cognito-gated) app for a demo URL.
+
+**Vite `assetsDir` collision (already fixed, worth knowing about):** Vite's default `assetsDir`
+(`"assets"`) would put the demo bundle's own JS/CSS/font chunks at `/ark_demo/assets/*.js`, which
+collides with behaviour 2 above — that behaviour would intercept the bundle's own asset requests
+and serve them (wrongly, 403) from the downloads bucket instead of the `flip-ui` bucket, breaking
+the app before Vue mounts. `flip-ui/vite.config.mts` sets `assetsDir: "static"` for `--mode demo`
+specifically to avoid this; the real build is unaffected (still `dist/assets`). If the demo build
+config ever changes, re-check that its own output prefix doesn't re-collide with `ark_demo/assets/`.
+
 ### FLIP application S3 buckets
 
 The Central Hub uses four S3 buckets, each with a distinct purpose, access pattern, and CORS surface. The three **FLIP application buckets** were split out of a single legacy `flip{env}` bucket so each tenant can carry the minimum CORS surface its consumer needs (a CORS change for one tenant no longer drags every other tenant along, and a browser-direct bucket can no longer accidentally expose objects belonging to a server-only flow).
