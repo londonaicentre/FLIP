@@ -79,11 +79,20 @@ _INPUT_SHAPE = (1, 1, 8, 8)
 
 @pytest.fixture(autouse=True)
 def _restore_import_state():
-    """Undo the ``sys.path`` / ``sys.modules`` mutation that loading an app's models.py performs."""
+    """Undo the ``sys.path`` / ``sys.modules`` mutation that loading an app's models.py performs.
+
+    ``models`` is restored to whatever it was, rather than simply removed. Other suites register a
+    stub module once at import time (``sys.modules.setdefault("models", ...)``), so deleting the
+    key here would leave those tests with nothing to find when they run afterwards.
+    """
     original_path = list(sys.path)
+    original_models = sys.modules.get("models")
     yield
     sys.path[:] = original_path
-    sys.modules.pop("models", None)
+    if original_models is None:
+        sys.modules.pop("models", None)
+    else:
+        sys.modules["models"] = original_models
 
 
 def _reference_state_dict(out_channels: int = 2) -> OrderedDict:
