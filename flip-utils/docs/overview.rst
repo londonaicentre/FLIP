@@ -60,7 +60,6 @@ The ``flip`` package is organized into logical modules:
    - ``FlipConstants`` — Pydantic-settings configuration singleton
    - ``ResourceType`` — Enum for imaging resource types (DICOM, NIFTI, etc.)
    - ``ModelStatus`` — Enum for model training states
-   - ``JobType`` — Enum for supported FL job types
    - ``PTConstants`` — PyTorch-specific constants and settings
 
 ``flip.utils``

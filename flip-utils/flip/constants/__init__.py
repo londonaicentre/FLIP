@@ -24,7 +24,6 @@ Exports:
     - FlipMetaKey: Metadata key constants
     - FlipMetricsLabel: Metrics label constants
     - PTConstants: PyTorch-related constants
-    - JobType: Enum for FLIP job types
 """
 
 from flip.constants.flip_constants import (
@@ -38,7 +37,6 @@ from flip.constants.flip_constants import (
     ProdSettings,
     ResourceType,
 )
-from flip.constants.job_types import JobType
 from flip.constants.pt_constants import PTConstants
 
 __all__ = [
@@ -52,5 +50,4 @@ __all__ = [
     "FlipMetaKey",
     "FlipMetricsLabel",
     "PTConstants",
-    "JobType",
 ]

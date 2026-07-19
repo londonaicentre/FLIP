@@ -16,74 +16,33 @@ from unittest.mock import patch
 
 import pytest
 
-from flip.constants import JobType
 from flip.core.factory import FLIP
 from flip.core.standard import FLIPStandardDev, FLIPStandardProd
 
 
 class TestFLIPFactory:
-    """Test the FLIP factory function."""
+    """Test the FLIP factory function.
+
+    The implementation is selected by environment alone. ``job_type`` was removed because it
+    discriminated nothing — every branch returned the same object — and the set of valid job types
+    is defined by the per-backend manifest, not by this package.
+    """
 
     @patch("flip.core.factory.FlipConstants")
-    def test_factory_creates_standard_dev(self, mock_constants):
-        """Factory should create FLIPStandardDev for standard job type in dev mode."""
+    def test_factory_creates_dev_under_local_dev(self, mock_constants):
+        """Factory should create FLIPStandardDev when LOCAL_DEV=true."""
         mock_constants.LOCAL_DEV = True
 
-        result = FLIP(JobType.STANDARD)
-        assert isinstance(result, FLIPStandardDev)
-
-    @patch("flip.core.factory.FlipConstants")
-    def test_factory_creates_evaluation_dev(self, mock_constants):
-        """Factory should create FLIPStandardDev for evaluation job type."""
-        mock_constants.LOCAL_DEV = True
-
-        result = FLIP(JobType.EVALUATION)
-        assert isinstance(result, FLIPStandardDev)
-
-    @patch("flip.core.factory.FlipConstants")
-    def test_factory_creates_fed_opt_dev(self, mock_constants):
-        """Factory should create FLIPStandardDev for fed_opt job type."""
-        mock_constants.LOCAL_DEV = True
-
-        result = FLIP(JobType.FED_OPT)
-        assert isinstance(result, FLIPStandardDev)
-
-    @patch("flip.core.factory.FlipConstants")
-    def test_factory_creates_diffusion_dev(self, mock_constants):
-        """Factory should create FLIPStandardDev for diffusion_model job type."""
-        mock_constants.LOCAL_DEV = True
-
-        result = FLIP(JobType.DIFFUSION)
-        assert isinstance(result, FLIPStandardDev)
+        assert isinstance(FLIP(), FLIPStandardDev)
 
     @patch("flip.core.factory.FlipConstants")
     def test_factory_creates_prod_when_not_local_dev(self, mock_constants):
         """Factory should create FLIPStandardProd when LOCAL_DEV=false."""
-
         mock_constants.LOCAL_DEV = False
 
-        result = FLIP(JobType.STANDARD)
-        assert isinstance(result, FLIPStandardProd)
+        assert isinstance(FLIP(), FLIPStandardProd)
 
-    def test_factory_rejects_invalid_job_type(self):
-        """Factory should raise ValueError for invalid job type string."""
-        with pytest.raises(ValueError, match="Unknown job_type"):
-            FLIP("invalid_job_type")
-
-    @patch("flip.core.factory.FlipConstants")
-    def test_factory_accepts_string_job_types(self, mock_constants):
-        """Factory should accept job type as string."""
-
-        mock_constants.LOCAL_DEV = True
-
-        result = FLIP("standard")
-        assert isinstance(result, FLIPStandardDev)
-
-        result = FLIP("evaluation")
-        assert isinstance(result, FLIPStandardDev)
-
-        result = FLIP("fed_opt")
-        assert isinstance(result, FLIPStandardDev)
-
-        result = FLIP("diffusion_model")
-        assert isinstance(result, FLIPStandardDev)
+    def test_factory_takes_no_arguments(self):
+        """job_type is gone rather than ignored, so passing it fails loudly and names FLIP()."""
+        with pytest.raises(TypeError, match="job_type"):
+            FLIP(job_type="standard")  # type: ignore[call-arg]

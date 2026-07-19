@@ -18,7 +18,7 @@ import pandas as pd
 import pytest
 
 from flip import FLIP, FLIPBase
-from flip.constants import FlipConstants, JobType, ModelStatus, PTConstants, ResourceType
+from flip.constants import FlipConstants, ModelStatus, PTConstants, ResourceType
 from flip.core.standard import FLIPStandardDev
 from flip.utils import Utils
 
@@ -36,7 +36,6 @@ class TestFlipPackageImports:
         assert FlipConstants is not None
         assert ResourceType.NIFTI.value == "NIFTI"
         assert ModelStatus.PENDING.value == "PENDING"
-        assert JobType.STANDARD.value == "standard"
 
     def test_import_utils(self):
         """Should be able to import utils."""
@@ -52,44 +51,10 @@ class TestFlipFactory:
         flip = FLIP()
         assert isinstance(flip, FLIPStandardDev)
 
-    def test_factory_accepts_string_job_type(self):
-        """Factory should accept string job types."""
-        flip = FLIP(job_type="standard")
-        assert flip is not None
-
-        flip = FLIP(job_type="evaluation")
-        assert flip is not None
-
-        flip = FLIP(job_type="fed_opt")
-        assert flip is not None
-
-    def test_factory_accepts_enum_job_type(self):
-        """Factory should accept JobType enum."""
-        flip = FLIP(job_type=JobType.STANDARD)
-        assert flip is not None
-
-        flip = FLIP(job_type=JobType.EVALUATION)
-        assert flip is not None
-
-    def test_factory_raises_on_invalid_job_type(self):
-        """Factory should raise ValueError for invalid job types."""
-        with pytest.raises(ValueError, match="Unknown job_type"):
-            FLIP(job_type="invalid_type")
-
-
-class TestJobTypeEnum:
-    """Test the JobType enum."""
-
-    def test_job_type_values(self):
-        """JobType enum should have expected values."""
-        assert JobType.STANDARD.value == "standard"
-        assert JobType.EVALUATION.value == "evaluation"
-        assert JobType.FED_OPT.value == "fed_opt"
-        assert JobType.DIFFUSION.value == "diffusion_model"
-
-    def test_job_type_all_members(self):
-        """JobType should have exactly 4 members."""
-        assert len(JobType) == 4
+    def test_factory_takes_no_arguments(self):
+        """The factory selects by environment alone; job_type no longer exists."""
+        with pytest.raises(TypeError, match="job_type"):
+            FLIP(job_type="standard")  # type: ignore[call-arg]
 
 
 class TestFLIPStandardDev:
