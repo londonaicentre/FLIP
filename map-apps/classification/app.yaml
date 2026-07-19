@@ -1,0 +1,13 @@
+%YAML 1.2
+---
+application:
+  title: FLIP MAP - Chest Radiograph Classification
+  version: 0.0.1
+  inputFormats: ["file"]
+  outputFormats: ["file"]
+
+resources:
+  cpu: 1
+  gpu: 1
+  memory: 1Gi
+  gpuMemory: 4Gi
