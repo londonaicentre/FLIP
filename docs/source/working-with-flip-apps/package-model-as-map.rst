@@ -738,12 +738,62 @@ own library and emit a structured *engine report* alongside its DICOM output. In
 therefore happens **inside the operator**, which means the ``map-apps/`` templates here are the
 inner layer of a deepcOS submission, not the submission itself.
 
-**Results are reported as structured findings, not only as DICOM objects.** deepc's model
-describes findings as coded clinical concepts (SNOMED CT) attached to a patient/study/series
-hierarchy, carried in the engine report, with derived DICOM instances as an additional channel.
-The earlier framing of this problem as "does deepcOS accept DICOM SEG?" was therefore the wrong
-question — the primary result channel is the engine report, and pixel-level artefacts are a
-separate concern covered elsewhere in the vendor documentation.
+**Results are reported as structured clinical findings, not as pixel data.** The engine report
+follows the DICOM hierarchy — patient, study, series, instance — and each level can carry
+analysis results. Those results take three forms: *findings* (a coded clinical concept, optionally
+with a confidence score and a present/absent state), *quantities* (a numeric value with coded
+units and an anatomical attribute), and *regions of interest* (a polygon of two-dimensional points
+tied to one referenced DICOM instance).
+
+Concepts are SNOMED CT or RadLex terms. Where no standard term exists, the vendor documents an
+escape hatch for expressing a locally-defined concept, so terminology gaps do not block an
+integration.
+
+**DICOM output is carried, and the answer to the original question is yes.** An engine writes
+whatever artefacts it needs into the configured output directory, and DICOM files placed there are
+collected and forwarded onward automatically. A DICOM SEG is therefore a perfectly acceptable
+output — the concern that prompted this investigation does not apply. The engine report is
+discovered by filename convention rather than by configuration.
+
+**But pixel output alone is not sufficient.** The vendor is explicit that where an engine encodes
+its result in pixel data, that same information must *also* be expressed in machine-readable form
+in the engine report, so it can be extracted downstream. **A DICOM SEG is exactly that case.**
+Emitting the mask without a corresponding report entry would satisfy the letter of "DICOM is
+forwarded" while withholding the content that makes it useful.
+
+**This reframes the segmentation question rather than answering it with a format.** The enriched
+output model has no dense mask representation — the closest construct is a per-instance polygon —
+so the machine-readable half of a segmentation result is not the mask restated. It is the mask's
+*derived clinical content*: a segmented volume expressed as a quantity with coded units and an
+anatomical attribute, optionally with regions of interest for display. The SEG carries the pixels;
+the report carries the meaning.
+
+.. warning::
+
+   The engine report includes a field for asserting an **all-negative** result — a clinically
+   valid statement that no abnormality was found, which can drive automatic negative reporting
+   downstream. The vendor reserves it for engines holding the appropriate regulatory clearance.
+
+   A FLIP research model is neither CE-marked nor FDA-cleared, so **leave that field null**, which
+   is what the vendor's own sample report does. This is not the same as being unable to express a
+   negative: reporting a finding with an explicit *absent* state is the supported way to say "this
+   model looked for X and did not find it", and carries none of the same clearance implications.
+   The distinction is between reporting what the model found and certifying that a study is clear.
+
+**The report is found by filename, and three of its fields are mandatory.** It is written into the
+same output directory as the DICOM artefacts, as JSON or YAML, and is recognised by carrying
+``deepcreport`` somewhere in its filename — matched case-insensitively, so
+``spleen-deepcReport.json`` qualifies while ``report_deepc.json`` does not. The job status, the
+coded messages and the engine result are all required.
+
+Job status deserves attention rather than being set to success at the end. The vendor points out
+that a process exit code does not reliably indicate whether the *analysis* succeeded — which is
+exactly the failure mode described in :ref:`Step 6 <map-view-result>`, where a MAP whose series
+selection matched nothing exits zero having produced no output. The coded messages field is the
+place to surface that kind of condition rather than letting it pass silently.
+
+A validator for completed engine responses is available in the vendor's tooling, and is worth
+running before any submission rather than discovering a schema problem at the far end.
 
 **The supported dependency set is older than the one this guide pins.** deepc's MONAI-compatible
 variant targets an earlier MONAI Deploy App SDK and holoscan release, an earlier Python, and
@@ -758,16 +808,27 @@ What this changes for FLIP
   deepcOS submission needs its own. Keeping inference logic free of SDK-version-specific code
   makes that cheap — the ``map-apps/`` templates already do, because the model arrives as a
   self-contained TorchScript bundle.
-* **Classification translates almost directly.** A per-label probability with a present/absent
-  state and a coded concept is close to what ``map-apps/classification`` already emits; the work
-  is mapping FLIP's label names onto SNOMED CT concepts.
-* **Segmentation does not yet have an answer** for how mask output is carried; that is covered
-  elsewhere in the vendor documentation, not on the MONAI integration page.
+* **Classification is close to mechanical.** ``map-apps/classification`` already produces exactly
+  what a finding needs: a per-label probability and a present/absent decision against a threshold.
+  The remaining work is assigning coded concepts to the FLIP label names, which is a clinical
+  terminology task rather than an engineering one, and is not blocked by a term being missing.
+* **The DICOM SEG stays.** It is what a viewer overlays, what :ref:`Step 6 <map-view-result>`
+  verifies against, what any platform in the AIDE lineage consumes, and it is forwarded by
+  deepcOS as-is. Nothing about the segmentation template's output needs to change.
+* **Segmentation gains a derived quantity it does not currently compute.** The DICOM SEG writer
+  emits pixels and stops, so a deepcOS submission would need the mask's clinical content as well —
+  a segmented volume, which means voxel counting against the volume's spacing. That is a genuine
+  addition, and a small one, but it is new work rather than a reformatting of something already
+  produced.
+* **Listing every finding the model can produce is worth doing, not just the positive ones.** The
+  vendor notes that reporting each supported finding with an explicit present or absent state lets
+  downstream systems accept or reject individual findings, generate free-text reports, and run
+  performance analytics. For the xray classifier this means reporting both labels every time,
+  which is what ``map-apps/classification`` already does internally.
 
 Still to establish
 ------------------
 
-* How segmentation masks are carried as artefacts.
 * Runtime constraints: network and persistent-storage policy, model size limits, timeouts.
 * Who defines the DICOM-tag routing rule that triggers an engine — deepc or the site.
 * The research / non-CE-marked pathway. A FLIP research model is neither CE-marked nor
