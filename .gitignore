@@ -456,3 +456,8 @@ fl-tutorials/nvflare/image_segmentation/3d_spleen_segmentation/uv.lock
 fl-services/flower/provision/creds/
 fl-services/flower/runs/
 fl-tutorials/flower/data/
+
+# Default output dir for scripts/extract_model_metrics.sh and
+# scripts/extract_simulator_metrics.sh (per-model round timings, logs, boxplots) —
+# local analysis scratch, not repo content.
+/model_metrics/
