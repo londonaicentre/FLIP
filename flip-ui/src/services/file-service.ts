@@ -35,10 +35,35 @@ export interface IModelConfig {
     [key: string]: unknown;
 }
 
-export const downloadModelFile = async (url: string): Promise<Blob> => {
-    const response: AxiosResponse<Blob> = await _http.get(url, { responseType: "blob" });
+interface IPresignedDownloadResponse {
+    url: string;
+    fileName: string;
+}
 
-    return response.data;
+/**
+ * Downloads a model file's bytes.
+ *
+ * Two steps: first ask flip-api for a short-lived presigned S3 URL (a tiny
+ * JSON response, safe under the shared client's timeout), then fetch the
+ * actual bytes directly from S3 with the global `fetch` API. `fetch` is used
+ * instead of the shared axios client for the byte transfer because that
+ * client would prepend `baseURL`, attach an `Authorization` header S3 doesn't
+ * expect, and re-apply the very request timeout this two-step flow exists to
+ * avoid (large files can take far longer than 30s to transfer).
+ */
+export const downloadModelFile = async (url: string): Promise<Blob> => {
+    const presigned: AxiosResponse<IPresignedDownloadResponse> = await _http.get(url);
+    const response = await fetch(presigned.data.url);
+
+    if (!response.ok) {
+        // An expired/malformed presigned URL resolves normally under fetch
+        // (unlike axios, which throws on a non-2xx) — without this check
+        // response.blob() would silently return S3's XML error body as if
+        // it were the file's real bytes.
+        throw new Error(`Download rejected by storage (status ${response.status})`);
+    }
+
+    return response.blob();
 };
 
 /**

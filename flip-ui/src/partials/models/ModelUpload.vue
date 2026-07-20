@@ -345,19 +345,26 @@ const closeFileDeletion = () => {
     fileToDelete.value = undefined;
 };
 
+// Caps how many files download-all fetches at once so one huge file doesn't
+// starve/timeout the rest. Simple sequential batching (no worker-pool): a
+// batch waits for its slowest member before the next starts, which is an
+// acceptable tradeoff for the simplicity of no new dependency.
+const DOWNLOAD_ALL_CONCURRENCY = 3;
+
 const downloadAllAsZip = async () => {
     if (downloadingAll.value) return;
     downloadingAll.value = true;
     try {
         const all = internalFiles.value.concat(uploadingFiles.value);
         const zip = new JSZip();
-        // Fetch in parallel so the user isn't waiting on serial round-trips.
-        // JSZip handles ordering inside the archive itself.
-        await Promise.all(all.map(async file => {
-            const path = `/files/model/${props.modelId}/${encodeURIComponent(file.name)}`;
-            const blob = await downloadModelFile(path);
-            zip.file(file.name, blob);
-        }));
+        for (let i = 0; i < all.length; i += DOWNLOAD_ALL_CONCURRENCY) {
+            const batch = all.slice(i, i + DOWNLOAD_ALL_CONCURRENCY);
+            await Promise.all(batch.map(async file => {
+                const path = `/files/model/${props.modelId}/${encodeURIComponent(file.name)}`;
+                const blob = await downloadModelFile(path);
+                zip.file(file.name, blob);
+            }));
+        }
         const archive = await zip.generateAsync({ type: "blob" });
         const url = URL.createObjectURL(archive);
         const a = document.createElement("a");
@@ -394,6 +401,11 @@ const downloadFile = async (fileName: string) => {
         a.remove();
 
         URL.revokeObjectURL(blobUrl);
+    } catch {
+        Snackbar.error({
+            title: "Download failed",
+            text: `Could not download ${fileName}. Please try again.`
+        });
     } finally {
         downloadingFile.value = undefined;
     }

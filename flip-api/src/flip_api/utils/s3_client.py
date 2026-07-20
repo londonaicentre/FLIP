@@ -33,14 +33,16 @@ from flip_api.utils.logger import logger
 # "file bytes <= MAX_MODEL_FILE_BYTES" semantic the UI guard mirrors.
 _MULTIPART_OVERHEAD_BUFFER_BYTES = 16 * 1024
 
-# Upper bound on PUT pre-signed URL lifetime. A leaked URL is a writable
-# capability against the upload bucket, so the leak window must stay tight.
-# 1800s (30 min) is the security ceiling — callers may pass less. It was
-# raised from 600s to accommodate larger model-file uploads (up to the
-# MAX_MODEL_FILE_BYTES cap): an upload can't reliably finish inside a
-# 10-minute window on a typical link, and an expired policy aborts the
-# transfer at the S3 edge. Moving this value requires a security review.
-MAX_PUT_PRESIGNED_URL_TTL_SECONDS = 1800
+# Upper bound on pre-signed URL lifetime, for both PUT (upload) and GET
+# (download) URLs. A leaked URL is a capability against the bucket in
+# either direction — writable for PUT, readable for GET — so the leak
+# window must stay tight regardless of method. 1800s (30 min) is the
+# security ceiling — callers may pass less. It was raised from 600s to
+# accommodate larger model-file uploads (up to the MAX_MODEL_FILE_BYTES
+# cap): an upload can't reliably finish inside a 10-minute window on a
+# typical link, and an expired policy aborts the transfer at the S3 edge.
+# Moving this value requires a security review.
+MAX_PRESIGNED_URL_TTL_SECONDS = 1800
 
 
 def parse_s3_path(s3_path: str) -> tuple[str, str]:
@@ -71,13 +73,27 @@ class S3Client:
         """Initialize S3 client with AWS credentials."""
         self.client = boto3.client("s3", region_name=get_settings().AWS_REGION)
 
-    def get_presigned_url(self, s3_path: str, expiration: int = 3600) -> str:
+    def get_presigned_url(
+        self,
+        s3_path: str,
+        expiration: int = 3600,
+        response_content_disposition: str | None = None,
+    ) -> str:
         """
         Generate a pre-signed URL for downloading a file from S3.
 
         Args:
             s3_path: Full S3 path (e.g., s3://bucket-name/key)
-            expiration: URL expiration time in seconds (default: 1 hour)
+            expiration: URL expiration time in seconds (default: 1 hour). Values
+                above ``MAX_PRESIGNED_URL_TTL_SECONDS`` are silently clamped to
+                the ceiling — a warning is logged so an over-limit caller
+                leaves an audit trail. Silent clamping is deliberate: the
+                ceiling is a hard security policy, never an error condition.
+            response_content_disposition: If provided, overrides the
+                ``Content-Disposition`` response header S3 sends back for
+                this GET — lets the browser save the file under the right
+                name even though the client never touches flip-api's own
+                response headers for the transfer itself.
 
         Returns:
             str: Pre-signed URL string
@@ -86,11 +102,21 @@ class S3Client:
             Exception: If URL generation fails
         """
         bucket, key = parse_s3_path(s3_path)
+        ttl = min(expiration, MAX_PRESIGNED_URL_TTL_SECONDS)
+        if expiration > MAX_PRESIGNED_URL_TTL_SECONDS:
+            logger.warning(
+                f"Requested GET pre-signed URL TTL {expiration}s exceeds the "
+                f"{MAX_PRESIGNED_URL_TTL_SECONDS}s security ceiling; clamped to {ttl}s."
+            )
+
+        params: dict[str, Any] = {"Bucket": bucket, "Key": key}
+        if response_content_disposition is not None:
+            params["ResponseContentDisposition"] = response_content_disposition
 
         url = self.client.generate_presigned_url(
             "get_object",
-            Params={"Bucket": bucket, "Key": key},
-            ExpiresIn=expiration,
+            Params=params,
+            ExpiresIn=ttl,
         )
         return url
 
@@ -99,7 +125,7 @@ class S3Client:
         s3_path: str,
         max_bytes: int,
         content_type: str | None = None,
-        expiration: int = MAX_PUT_PRESIGNED_URL_TTL_SECONDS,
+        expiration: int = MAX_PRESIGNED_URL_TTL_SECONDS,
     ) -> dict[str, Any]:
         """
         Generate a pre-signed POST policy for uploading a file to S3 with
@@ -123,7 +149,7 @@ class S3Client:
                 Content-Type to this exact value. If ``None``, any
                 Content-Type is accepted but the size cap still applies.
             expiration (int): URL/policy expiration (seconds). Values above
-                ``MAX_PUT_PRESIGNED_URL_TTL_SECONDS`` are silently clamped to
+                ``MAX_PRESIGNED_URL_TTL_SECONDS`` are silently clamped to
                 the ceiling — a warning is logged so an over-limit caller
                 leaves an audit trail. Silent clamping is deliberate: the
                 ceiling is a hard security policy, never an error condition.
@@ -136,11 +162,11 @@ class S3Client:
             Exception: If policy generation fails.
         """
         bucket, key = parse_s3_path(s3_path)
-        ttl = min(expiration, MAX_PUT_PRESIGNED_URL_TTL_SECONDS)
-        if expiration > MAX_PUT_PRESIGNED_URL_TTL_SECONDS:
+        ttl = min(expiration, MAX_PRESIGNED_URL_TTL_SECONDS)
+        if expiration > MAX_PRESIGNED_URL_TTL_SECONDS:
             logger.warning(
                 f"Requested PUT pre-signed POST TTL {expiration}s exceeds the "
-                f"{MAX_PUT_PRESIGNED_URL_TTL_SECONDS}s security ceiling; clamped to {ttl}s."
+                f"{MAX_PRESIGNED_URL_TTL_SECONDS}s security ceiling; clamped to {ttl}s."
             )
         try:
             request_body_cap = max_bytes + _MULTIPART_OVERHEAD_BUFFER_BYTES

@@ -677,6 +677,32 @@ describe("ModelUpload", () => {
             revokeObjectURLSpy.mockRestore();
         });
 
+        test("downloadFile snackbars with the file name when the download rejects", async () => {
+            // Previously downloadFile had no catch at all — a rejection failed
+            // silently with no user-visible feedback.
+            mockDownloadModelFile.mockRejectedValueOnce(new Error("network"));
+
+            const files: FileInfo[] = [
+                {
+                    id: "1",
+                    name: "model.py",
+                    size: 1024,
+                    status: FileUploadStatus.COMPLETED
+                }
+            ];
+            const wrapper = mountModelUpload({ files }, { hasPermissions: true });
+            await flushPromises();
+
+            const rowButtons = wrapper.findAll("li button");
+            await rowButtons[0].trigger("click");
+            await flushPromises();
+
+            expect(mockSnackbarError).toHaveBeenCalledWith({
+                title: "Download failed",
+                text: "Could not download model.py. Please try again."
+            });
+        });
+
         test("viewer (no CanManageProjects) does not see the download button", async () => {
             const files: FileInfo[] = [
                 {
@@ -825,6 +851,40 @@ describe("ModelUpload", () => {
 
             // Wrap up so we don't leak a pending promise.
             resolveFirst!(new Blob(["x"]));
+        });
+
+        test("download-all fetches in batches of 3, not all files at once", async () => {
+            // 4 files -> batch 1 is the first 3, batch 2 is the remaining 1.
+            // Hold every download open so we can prove batch 2 hasn't started
+            // until batch 1 fully resolves.
+            const resolvers: Array<(b: Blob) => void> = [];
+            mockDownloadModelFile.mockImplementation(() =>
+                new Promise<Blob>(resolve => { resolvers.push(resolve); })
+            );
+
+            const files: FileInfo[] = Array.from({ length: 4 }, (_, i) => ({
+                id: String(i + 1),
+                name: `file-${i + 1}.py`,
+                size: 10,
+                status: FileUploadStatus.COMPLETED
+            }));
+            const wrapper = mountModelUpload({ files }, { hasPermissions: true });
+            await flushPromises();
+
+            await wrapper.find("[data-test=download-all-files-btn]").trigger("click");
+            await flushPromises();
+
+            // Only the first batch (3 files) should have started.
+            expect(mockDownloadModelFile).toHaveBeenCalledTimes(3);
+
+            // Resolving batch 1 lets the loop move on to batch 2 (1 file).
+            resolvers.splice(0).forEach(resolve => resolve(new Blob(["x"])));
+            await flushPromises();
+            expect(mockDownloadModelFile).toHaveBeenCalledTimes(4);
+
+            // Resolve the last file so the zip generation completes cleanly.
+            resolvers.splice(0).forEach(resolve => resolve(new Blob(["y"])));
+            await flushPromises();
         });
     });
 });
