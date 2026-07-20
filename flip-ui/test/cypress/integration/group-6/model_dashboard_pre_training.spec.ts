@@ -30,10 +30,16 @@ describe("Model Dashboard - Pre Training", () => {
         ).as("projectWithQuery");
         cy.intercept("GET", `/model/${modelId}/logs`, [])
             .as("getLogs");
-        // Intercept config.json file download for job type detection
+        // Intercept config.json file download for job type detection. The
+        // endpoint returns a presigned URL {url, fileName} rather than the
+        // file bytes directly (FLIP#784), so the byte fetch that follows
+        // needs its own intercept too.
         cy.intercept("GET", `/files/model/${modelId}/config.json`, {
-            fixture: "model/configJsonStandard.json"
+            body: { url: "https://fake-presigned.example.com/config.json", fileName: "config.json" }
         }).as("getConfigJson");
+        cy.intercept("GET", "https://fake-presigned.example.com/config.json", {
+            fixture: "model/configJsonStandard.json"
+        }).as("getConfigJsonBytes");
         // The page calls /model/job-types in onBeforeMount and again from
         // file-service.getJobTypeFromConfig; without a stub the request
         // hangs/404s, jobTypes stays empty, and the watcher that gates
@@ -214,8 +220,11 @@ describe("Model Dashboard - Pre Training with only one approved trust", () => {
         cy.intercept("GET", `/model/${modelId}/logs`, [])
             .as("getLogs");
         cy.intercept("GET", `/files/model/${modelId}/config.json`, {
-            fixture: "model/configJsonStandard.json"
+            body: { url: "https://fake-presigned.example.com/config.json", fileName: "config.json" }
         }).as("getConfigJson");
+        cy.intercept("GET", "https://fake-presigned.example.com/config.json", {
+            fixture: "model/configJsonStandard.json"
+        }).as("getConfigJsonBytes");
         cy.intercept("GET", "/model/job-types", {
             standard: ["trainer.py", "validator.py", "models.py", "config.json"]
         }).as("getJobTypes");
