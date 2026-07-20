@@ -126,6 +126,7 @@ locals {
       # complete within 30 minutes or they time out at the edge.
       MAX_MODEL_FILE_BYTES = "5000000000"
       FL_KIT_SLOT_NAMES    = var.FL_KIT_SLOT_NAMES
+      PER_JOB_FL_SERVER    = tostring(var.PER_JOB_FL_SERVER)
     })
     fl_server = {
       LOCAL_DEV                      = "false"
@@ -160,6 +161,10 @@ locals {
       # CPU-only. Default 0; set via TF_VAR_JOB_RESOURCE_SPEC_* for GPU jobs.
       JOB_RESOURCE_SPEC_NUM_GPUS           = tostring(var.JOB_RESOURCE_SPEC_NUM_GPUS)
       JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB = tostring(var.JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB)
+      # Mirrors flip_api's PER_JOB_FL_SERVER above — same Terraform variable, single source of
+      # truth (FLIP#735). Both services must agree on whether an unreachable fl-server is an
+      # unplanned outage or the normal idle state between jobs.
+      PER_JOB_FL_SERVER = tostring(var.PER_JOB_FL_SERVER)
     }
   }
 }

@@ -28,6 +28,9 @@ services:
       # mem <= the client's advertised mem_per_gpu_in_GiB) so jobs train on the GPU.
       - JOB_RESOURCE_SPEC_NUM_GPUS=${JOB_RESOURCE_SPEC_NUM_GPUS:-0}
       - JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB=${JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB:-0}
+      # FLIP#735: mirrors flip-api's PER_JOB_FL_SERVER (compose.production.yml) — same source
+      # var, both services must agree on whether fl-server going unreachable is an outage or idle.
+      - PER_JOB_FL_SERVER=${PER_JOB_FL_SERVER:-false}
     ports:
       - "${FL_API_PORT}:8000"
     security_opt:

@@ -291,6 +291,31 @@ def get_nets(session: Session) -> list[INetDetails]:
         raise DatabaseError("Error getting nets") from e
 
 
+def is_net_busy(net_name: str, session: Session) -> bool:
+    """Check whether the net's scheduler is BUSY (a job is actually running).
+
+    Used to gate PER_JOB_FL_SERVER-only behavior (FLIP#735) that should skip an idle-by-design net
+    — e.g. keep_fl_api_session_alive has no session worth keeping alive while nothing is training.
+
+    Args:
+        net_name (str): Name of the net (``FLNets.name``).
+        session (Session): SQLModel session.
+
+    Returns:
+        bool: True if a ``FLScheduler`` row for this net exists with status BUSY.
+
+    Raises:
+        DatabaseError: If the query fails at the DB layer.
+    """
+    try:
+        statement = select(FLScheduler).join(FLNets).where(FLNets.name == net_name)
+        scheduler = session.exec(statement).first()
+        return scheduler is not None and scheduler.status == NetStatus.BUSY
+    except SQLAlchemyError as e:
+        logger.error(f"Error checking scheduler status for net {net_name}: {e}")
+        raise DatabaseError(f"Error checking scheduler status for net {net_name}") from e
+
+
 def resolve_backend(session: Session, net: INetDetails | None = None) -> FLBackend:
     """Resolve the active FL backend at runtime from the nets (never from a static env var).
 

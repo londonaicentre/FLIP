@@ -15,7 +15,7 @@ from types import SimpleNamespace
 from unittest.mock import call, patch
 
 import pytest
-from nvflare.fuel.flare_api.api_spec import InternalError, SessionClosed
+from nvflare.fuel.flare_api.api_spec import InternalError, NoConnection, SessionClosed
 
 from fl_api.utils.flip_session import FLIP_Session
 from fl_api.utils.schemas import ServerInfoModel, SystemInfoModel
@@ -28,9 +28,15 @@ FL_ADMIN_DIR = str(Path(__file__).parents[2] / "admin")
 def session(mock_session_init):
     """
     Create a FLIP_Session without invoking real NVFlare Session initialization.
+
+    Starts marked as already connected: session_inactive/SessionClosed retry paths can only be hit
+    after a real connection existed, so that's the realistic starting point for testing them. Tests
+    of the lazy first-connect path (FLIP#735) explicitly reset ``_connected`` to False.
     """
     mock_session_init.return_value = None
-    return FLIP_Session(username="u", startup_path="p", secure_mode=False, debug=False)
+    session = FLIP_Session(username="u", startup_path="p", secure_mode=False, debug=False)
+    session._connected = True
+    return session
 
 
 def test_do_command_retries_once_on_session_inactive(session):
@@ -82,6 +88,73 @@ def test_do_command_propagates_exception_if_retry_fails_after_reconnect(session)
 
     mock_reconnect.assert_called_once_with()
     assert parent_do_command.call_count == 2
+
+
+def test_do_command_connects_lazily_when_never_connected(session):
+    """✅ First _do_command call connects if the session was never successfully connected
+    (PER_JOB_FL_SERVER let boot proceed with an unreachable fl-server, FLIP#735)."""
+    session._connected = False
+    with (
+        patch("nvflare.fuel.flare_api.flare_api.Session._do_command", return_value={"ok": True}) as parent_do_command,
+        patch.object(session, "try_connect") as try_connect,
+    ):
+        result = session._do_command("CMD")
+
+    assert result == {"ok": True}
+    try_connect.assert_called_once_with(timeout=5.0)
+    parent_do_command.assert_called_once_with("CMD")
+
+
+def test_do_command_skips_connect_when_already_connected(session):
+    """✅ No extra connect attempt once the session has already connected successfully."""
+    session._connected = True
+    with (
+        patch("nvflare.fuel.flare_api.flare_api.Session._do_command", return_value={"ok": True}),
+        patch.object(session, "try_connect") as try_connect,
+    ):
+        result = session._do_command("CMD")
+
+    assert result == {"ok": True}
+    try_connect.assert_not_called()
+
+
+def test_try_connect_marks_session_connected_on_success(session):
+    """✅ try_connect flips _connected to True only after the parent call succeeds."""
+    session._connected = False
+    with patch("nvflare.fuel.flare_api.flare_api.Session.try_connect") as parent_try_connect:
+        session.try_connect(5.0)
+
+    parent_try_connect.assert_called_once_with(5.0)
+    assert session._connected is True
+    assert session.is_connected is True
+
+
+def test_try_connect_does_not_mark_connected_on_failure(session):
+    """✅ try_connect leaves _connected False when the parent call raises."""
+    session._connected = False
+    with patch("nvflare.fuel.flare_api.flare_api.Session.try_connect", side_effect=NoConnection("down")):
+        with pytest.raises(NoConnection):
+            session.try_connect(5.0)
+
+    assert session._connected is False
+    assert session.is_connected is False
+
+
+def test_reconnect_resets_connected_flag_before_reinitializing(session):
+    """✅ _reconnect marks _connected False up front, before re-init and reconnect, so a failed
+    reconnect never leaves a stale True from the previous (now-closed) session."""
+    session.username = "u"  # real Session.__init__ sets this; the fixture mocks it out
+    with (
+        patch("nvflare.fuel.flare_api.flare_api.Session.__init__", return_value=None) as mock_init,
+        patch.object(session, "try_connect") as mock_try_connect,
+    ):
+        session._reconnect()
+
+    mock_init.assert_called_once()
+    mock_try_connect.assert_called_once_with(timeout=5.0)
+    # try_connect is mocked out here, so nothing re-sets _connected to True in this test —
+    # confirms _reconnect itself is what clears the flag, not a side effect of try_connect.
+    assert session._connected is False
 
 
 def test_check_server_status_returns_server_info(session):

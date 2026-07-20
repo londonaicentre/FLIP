@@ -118,6 +118,12 @@ export TF_VAR_MIN_CLIENTS=${MIN_CLIENTS}
 ifneq ($(JOB_RESOURCE_SPEC_NUM_GPUS),)
 export TF_VAR_JOB_RESOURCE_SPEC_NUM_GPUS=${JOB_RESOURCE_SPEC_NUM_GPUS}
 endif
+# FLIP#735: scale fl-server-net-1 to zero between jobs. Default false in variables.tf; set
+# PER_JOB_FL_SERVER=true in the env file (stag first) once Phase 2 has landed. Conditional export
+# for the same reason as the GPU resource-spec vars above (empty string ≠ bool for Terraform).
+ifneq ($(PER_JOB_FL_SERVER),)
+export TF_VAR_PER_JOB_FL_SERVER=${PER_JOB_FL_SERVER}
+endif
 ifneq ($(JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB),)
 export TF_VAR_JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB=${JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB}
 endif
