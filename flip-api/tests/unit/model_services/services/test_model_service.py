@@ -483,11 +483,12 @@ def test_run_trusts_by_model_reads_latest_job_roster():
     """
     session = MagicMock()
     model_id = uuid4()
+    old_job, new_job = uuid4(), uuid4()
     old_trust, new_trust = uuid4(), uuid4()
     older, newer = datetime(2026, 1, 1), datetime(2026, 2, 1)
     session.exec.return_value.all.return_value = [
-        (model_id, older, old_trust, "Old Trust", "OLD"),
-        (model_id, newer, new_trust, "New Trust", "NEW"),
+        (old_job, model_id, older, old_trust, "Old Trust", "OLD"),
+        (new_job, model_id, newer, new_trust, "New Trust", "NEW"),
     ]
 
     result = _run_trusts_by_model([model_id], session)
@@ -496,6 +497,24 @@ def test_run_trusts_by_model_reads_latest_job_roster():
     assert "fl_job_trust" in stmt
     assert "model_trust_intersect" not in stmt
     assert [(t.id, t.name, t.code) for t in result[model_id]] == [(new_trust, "New Trust", "NEW")]
+
+
+def test_run_trusts_by_model_created_tie_keeps_one_jobs_roster():
+    """Two jobs sharing a created microsecond must not merge rosters (duplicate
+    trusts); the tie breaks on job id, matching retrieve_model's ordering."""
+    session = MagicMock()
+    model_id = uuid4()
+    job_a, job_b = sorted([uuid4(), uuid4()])
+    trust_id = uuid4()
+    created = datetime(2026, 2, 1)
+    session.exec.return_value.all.return_value = [
+        (job_a, model_id, created, trust_id, "Trust", "TR"),
+        (job_b, model_id, created, trust_id, "Trust", "TR"),
+    ]
+
+    result = _run_trusts_by_model([model_id], session)
+
+    assert [(t.id, t.name, t.code) for t in result[model_id]] == [(trust_id, "Trust", "TR")]
 
 
 def test_run_trusts_by_model_empty_input_short_circuits():

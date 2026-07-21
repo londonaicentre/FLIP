@@ -438,22 +438,25 @@ def _run_trusts_by_model(model_ids: list[UUID], session: Session) -> dict[UUID, 
         return trusts_by_model
 
     rows = session.exec(
-        select(FLJob.model_id, FLJob.created, Trust.id, Trust.name, Trust.code)  # type: ignore[call-overload]
+        select(FLJob.id, FLJob.model_id, FLJob.created, Trust.id, Trust.name, Trust.code)  # type: ignore[call-overload]
         .join(FLJobTrust, col(FLJobTrust.fl_job_id) == FLJob.id)
         .join(Trust, col(Trust.id) == FLJobTrust.trust_id)
         .where(col(FLJob.model_id).in_(model_ids))
     ).all()
 
     # A model can accumulate jobs across re-initiations; only the newest job's
-    # roster is "the run's trusts".
-    latest_created: dict[UUID, datetime] = {}
-    for model_id, created, _trust_id, _trust_name, _trust_code in rows:
+    # roster is "the run's trusts". Jobs can share a created microsecond (fast
+    # successive dispatches), so ties break on job id — keeping exactly one
+    # job's roster (no merged/duplicated trusts) and agreeing with the
+    # (created, id) ordering of the single-model view in retrieve_model.py.
+    latest_job: dict[UUID, tuple[datetime, UUID]] = {}
+    for job_id, model_id, created, _trust_id, _trust_name, _trust_code in rows:
         if model_id is None or created is None:
             continue
-        if model_id not in latest_created or created > latest_created[model_id]:
-            latest_created[model_id] = created
-    for model_id, created, trust_id, trust_name, trust_code in rows:
-        if model_id is None or created != latest_created.get(model_id):
+        if model_id not in latest_job or (created, job_id) > latest_job[model_id]:
+            latest_job[model_id] = (created, job_id)
+    for job_id, model_id, created, trust_id, trust_name, trust_code in rows:
+        if model_id is None or latest_job.get(model_id) != (created, job_id):
             continue
         trusts_by_model[model_id].append(ITrustSummary(id=trust_id, name=trust_name, code=trust_code))
 

@@ -190,10 +190,12 @@ def retrieve_model(
         # roster, written at initiate-training. Deliberately NOT ModelTrustIntersect —
         # that table gets a row per approved trust at model creation, so it lists the
         # approved pool, not the selected subset. Empty before dispatch (no job yet).
+        # Ties on created (same-microsecond writes) break on id, matching the
+        # (created, id) pick of the list view's _run_trusts_by_model.
         latest_job_id = (
             select(FLJob.id)
             .where(col(FLJob.model_id) == model_id)
-            .order_by(col(FLJob.created).desc())
+            .order_by(col(FLJob.created).desc(), col(FLJob.id).desc())
             .limit(1)
         ).scalar_subquery()
         trust_rows = db.exec(
