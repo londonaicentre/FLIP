@@ -14,7 +14,7 @@
 <template>
     <AiErrorAlert v-if="errorStore.hasError" class="absolute z-10" />
     <div class="bg-body dark:bg-dark-canvas">
-        <div class="flex items-center justify-center h-dvh">
+        <div class="flex items-center justify-center h-screen supports-[height:100dvh]:h-dvh">
             <div class="absolute top-6 left-8 z-10 flex items-center gap-4">
                 <a
                     href="https://www.aicentre.co.uk/"

@@ -59,11 +59,11 @@ describe("SecondaryLayout", () => {
         expect(mountLayout().find(".bg-body").exists()).toBe(true);
     });
 
-    test("sizes the page to the dynamic viewport (h-dvh) so mobile browser bars leave no black bands", () => {
-        const comp = mountLayout();
+    test("sizes the page to the dynamic viewport (dvh) with a 100vh fallback for browsers without dvh", () => {
+        const sizer = mountLayout().find(".h-screen");
 
-        expect(comp.find(".h-dvh").exists()).toBe(true);
-        expect(comp.find(".h-screen").exists()).toBe(false);
+        expect(sizer.exists()).toBe(true);
+        expect(sizer.classes()).toContain("supports-[height:100dvh]:h-dvh");
     });
 
     test("fades the corner artwork's letterbox-facing cut edges (iOS-scoped via main.css)", () => {

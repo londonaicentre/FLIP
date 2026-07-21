@@ -64,11 +64,11 @@ describe("Auth Layout", () => {
         expect(component.find("img[alt=\"NHS logo\"]").exists()).toBe(false);
     });
 
-    it("sizes the page to the dynamic viewport (h-dvh) so mobile browser bars leave no black bands", () => {
-        const component = mountLayout();
+    it("sizes the page to the dynamic viewport (dvh) with a 100vh fallback for browsers without dvh", () => {
+        const sizer = mountLayout().find(".h-screen");
 
-        expect(component.find(".h-dvh").exists()).toBe(true);
-        expect(component.find(".h-screen").exists()).toBe(false);
+        expect(sizer.exists()).toBe(true);
+        expect(sizer.classes()).toContain("supports-[height:100dvh]:h-dvh");
     });
 
     it("centres the footer links' text when the labels wrap on narrow screens", () => {
