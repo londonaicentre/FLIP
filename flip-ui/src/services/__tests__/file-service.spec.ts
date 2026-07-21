@@ -42,6 +42,7 @@ import { deleteModelFile,
     downloadModelFile,
     getJobTypeFromConfig,
     getModelConfig,
+    getModelFileDownloadUrl,
     processScannedFile,
     resolveModelConfigState } from "@/services/file-service";
 import { DEFAULT_JOB_TYPE } from "@/services/model-service";
@@ -266,6 +267,27 @@ describe("downloadModelFile", () => {
         expect(httpGet).toHaveBeenCalledWith("/files/model/m-1/trainer.py");
         expect(fetchMock).toHaveBeenCalledWith("https://s3.example.com/signed");
         expect(result).toBe(blob);
+    });
+
+    it("does not touch fetch when only the presigned URL is requested", async () => {
+        // getModelFileDownloadUrl exists so callers (per-file download button)
+        // can hand the URL straight to the browser — streamed download, no
+        // in-memory Blob. It must not trigger the byte fetch itself.
+        httpGet.mockResolvedValueOnce({
+            data: {
+                url: "https://s3.example.com/signed",
+                fileName: "weights.bin"
+            }
+        });
+
+        const result = await getModelFileDownloadUrl("/files/model/m-1/weights.bin");
+
+        expect(httpGet).toHaveBeenCalledWith("/files/model/m-1/weights.bin");
+        expect(result).toEqual({
+            url: "https://s3.example.com/signed",
+            fileName: "weights.bin"
+        });
+        expect(fetchMock).not.toHaveBeenCalled();
     });
 
     it("throws instead of returning S3's error body as a blob when the presigned URL fetch fails", async () => {
