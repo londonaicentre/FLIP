@@ -138,7 +138,7 @@ class TestFLIPStandardDevUpdateStatus:
     def test_update_status_runs_without_error_in_dev_mode(self, flip_dev):
         """update_status should run without error in dev mode (no-op)."""
         # Should not raise any exception - it's a no-op in dev mode
-        flip_dev.update_status(model_id="model-123", new_model_status=ModelStatus.TRAINING_STARTED)
+        flip_dev.update_status(model_id="model-123", new_model_status=ModelStatus.RUNNING)
 
 
 class TestFLIPStandardDevSendHandledException:
@@ -555,7 +555,7 @@ class TestFLIPStandardProdUpdateStatus:
             mock_constants.INTERNAL_SERVICE_KEY_HEADER = "x-internal-service-key"
             mock_constants.INTERNAL_SERVICE_KEY = "test-internal-key"
 
-            flip_prod.update_status(valid_model_id, ModelStatus.TRAINING_STARTED)
+            flip_prod.update_status(valid_model_id, ModelStatus.RUNNING)
 
             # Verify API was called
             mock_put.assert_called_once()
@@ -566,7 +566,7 @@ class TestFLIPStandardProdUpdateStatus:
     def test_update_status_rejects_invalid_uuid(self, flip_prod):
         """update_status should reject invalid model IDs."""
         with pytest.raises(ValueError, match="Invalid model ID"):
-            flip_prod.update_status("model-123", ModelStatus.TRAINING_STARTED)
+            flip_prod.update_status("model-123", ModelStatus.RUNNING)
 
 
 class TestFLIPStandardProdSendHandledException:

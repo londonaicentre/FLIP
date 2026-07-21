@@ -39,9 +39,10 @@ class ScatterAndGather(NVFlareScatterAndGather):
         re-serialises the full global model every round; for a ~759 MiB model that re-introduces the
         very per-round memory churn ``memory_gc_rounds`` exists to bound. FLIP never snapshotted, so
         ``0`` also preserves prior behaviour. It stays configurable for callers that want resilience.
-      * :meth:`_accept_train_result` — reports a client-side execution exception to the hub, and
+      * :meth:`_accept_train_result` — reports a client-side execution exception to the hub,
         converts a (possibly partial, frozen-backbone) ``WEIGHT_DIFF`` head update into full
-        ``WEIGHTS`` before aggregation, since FLIP's aggregator expects ``WEIGHTS`` (FLIP#684).
+        ``WEIGHTS`` before aggregation, since FLIP's aggregator expects ``WEIGHTS`` (FLIP#684),
+        and relays each genuinely accepted result to the hub as a ``CLIENT_RESULT_RECEIVED`` fact.
       * :meth:`handle_event` — relays FLIP metrics on ``FlipEvents.SEND_RESULT``.
       * :meth:`_check_abort_signal` — fires ``FlipEvents.ABORTED`` so downstream components (e.g.
         ``PersistToS3AndCleanup``) can persist results on an aborted run.
@@ -120,36 +121,46 @@ class ScatterAndGather(NVFlareScatterAndGather):
                     )
             return bool(super()._accept_train_result(client_name, result, fl_ctx, is_unknown_task))
 
-        # Relay the accepted upload to the hub before reconstruction rewrites the
-        # shareable — the reported size is the client's actual (possibly partial,
-        # head-only) update, not the reconstructed full model.
-        self._report_client_result(client_name, result, fl_ctx)
+        # Size the client's actual (possibly partial, head-only) update now — reconstruction
+        # below rewrites the shareable into the full model.
+        size_bytes = self._client_update_size(result, fl_ctx)
 
         # OK result: reconstruct full WEIGHTS from the (partial) WEIGHT_DIFF before the base aggregates.
         result = self._diff_to_weights(result, fl_ctx)
-        return bool(super()._accept_train_result(client_name, result, fl_ctx, is_unknown_task))
+        accepted = bool(super()._accept_train_result(client_name, result, fl_ctx, is_unknown_task))
 
-    def _report_client_result(self, client_name: str, result: Shareable, fl_ctx: FLContext) -> None:
+        # Relay only what the base class genuinely accepted: an aggregator-rejected result
+        # (e.g. a stale contribution_round cookie) or a late unknown-task reply (whose weights
+        # belong to an earlier round) must not surface as an accepted upload of the current
+        # round or inflate the "k of m" in ROUND_AGGREGATED.
+        if accepted and not is_unknown_task:
+            self._report_client_result(client_name, size_bytes, fl_ctx)
+        return accepted
+
+    def _client_update_size(self, result: Shareable, fl_ctx: FLContext) -> int | None:
+        """Best-effort byte size of the client's update; ``None`` when it cannot be sized."""
+        try:
+            dxo = from_shareable(result)
+            return int(sum(getattr(arr, "nbytes", 0) for arr in dxo.data.values()))
+        except Exception as e:
+            # Distinguishes "my probe broke" (e.g. an NVFLARE shareable-shape
+            # change) from a genuinely sizeless result — otherwise sizes
+            # vanish silently forever after an upgrade.
+            self.log_debug(fl_ctx, f"Could not size the client update: {e}")
+            return None
+
+    def _report_client_result(self, client_name: str, size_bytes: int | None, fl_ctx: FLContext) -> None:
         """Emit a CLIENT_RESULT_RECEIVED fact and refresh the per-round acceptance counts.
 
-        Best-effort telemetry: any failure here is logged and must never block result
-        acceptance. The counts are shared as sticky fl_ctx props so ServerEventHandler
-        can attach them to the ROUND_AGGREGATED event on ROUND_DONE. NVFLARE's
-        ``_current_round`` is 0-based; the wire contract is 1-based.
+        Called only after the base class (and its aggregator) accepted the result — the
+        event's contract is "per accepted result". Best-effort telemetry: any failure here
+        is logged and must never block result acceptance. The counts are shared as sticky
+        fl_ctx props so ServerEventHandler can attach them to the ROUND_AGGREGATED event on
+        ROUND_DONE. NVFLARE's ``_current_round`` is 0-based; the wire contract is 1-based.
         """
         try:
             if self._current_round is None:
                 return
-
-            size_bytes = None
-            try:
-                dxo = from_shareable(result)
-                size_bytes = int(sum(getattr(arr, "nbytes", 0) for arr in dxo.data.values()))
-            except Exception as e:
-                # Distinguishes "my probe broke" (e.g. an NVFLARE shareable-shape
-                # change) from a genuinely sizeless result — otherwise sizes
-                # vanish silently forever after an upgrade.
-                self.log_debug(fl_ctx, f"Could not size the client update: {e}")
 
             accepted = self._round_acceptances.setdefault(self._current_round, set())
             accepted.add(client_name)

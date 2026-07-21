@@ -95,6 +95,10 @@ def main(grid: Grid, context: Context, flip: FLIP = FLIP()) -> None:
         fraction_evaluate=1.0,  # All clients evaluate
     )
 
+    # The evaluation rounds start here — mirrors the standard template's strategy,
+    # which reports RUNNING when its rounds start (#782).
+    flip.update_status(model_id, ModelStatus.RUNNING)
+
     _ = strategy.start(
         grid=grid,
         initial_arrays=arrays,

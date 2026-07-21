@@ -89,10 +89,34 @@ class TestTrainingLog:
         payload = TrainingLog(event_type="SOMETHING_NEW", global_round=3)
         assert payload.event_type == "SOMETHING_NEW"
 
+    def test_queue_position_is_rejected_even_with_a_global_round(self):
+        """QUEUE_POSITION is hub-emitted by definition. Requiring global_round does
+        not keep it out (a spoofed payload can just carry one), so the validator
+        refuses the event_type itself — otherwise the row would render in the feed
+        and could perturb the scheduler's emit-on-change dedup."""
+        with pytest.raises(ValidationError, match="QUEUE_POSITION"):
+            TrainingLog(
+                event_type=FLLogEvent.QUEUE_POSITION,
+                global_round=1,
+                details={"position": 1, "job_id": "some-job"},
+            )
+
     @pytest.mark.parametrize("event_type", ["", "   "])
     def test_blank_event_type_is_rejected(self, event_type):
         with pytest.raises(ValidationError):
             TrainingLog(event_type=event_type, global_round=3)
+
+    def test_oversized_details_is_rejected(self):
+        """details is persisted verbatim into JSONB and flip.send_event is reachable
+        from uploaded app code — an unbounded payload must 422 like an oversized
+        event_type or global_round would, not land in the column."""
+        with pytest.raises(ValidationError, match="details"):
+            TrainingLog(event_type=FLLogEvent.ROUND_STARTED, global_round=1, details={"blob": "x" * 8192})
+
+    def test_details_within_the_bound_is_accepted(self):
+        details = {"blob": "x" * 4000}
+        payload = TrainingLog(event_type=FLLogEvent.ROUND_STARTED, global_round=1, details=details)
+        assert payload.details == details
 
     def test_success_flag_round_trips(self):
         payload = TrainingLog(fl_client_name="Trust_1", log="boom", success=False)

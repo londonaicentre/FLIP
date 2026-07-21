@@ -355,6 +355,47 @@ class TestClientResultTelemetry:
         prop_calls = {call.args[0]: call.args[1] for call in fl_ctx.set_prop.call_args_list}
         assert prop_calls[FlipProps.ROUND_RETURNED] == 1
 
+    def test_aggregator_rejected_result_emits_no_event_and_no_counts(self):
+        """A rejected contribution (e.g. a stale contribution_round cookie) is not an
+        accepted upload: no CLIENT_RESULT_RECEIVED, no bump of the sticky counts."""
+        controller = self._controller()
+        controller.aggregator.accept.return_value = False
+        fl_ctx = _ctx()
+
+        accepted = controller._accept_train_result(client_name="Trust_1", result=self._ok_result(), fl_ctx=fl_ctx)
+
+        assert accepted is False
+        controller.flip.send_event.assert_not_called()
+        assert FlipProps.ROUND_RETURNED not in {call.args[0] for call in fl_ctx.set_prop.call_args_list}
+
+    def test_unknown_task_result_emits_no_event_and_no_counts(self):
+        """A late result routed via process_result_of_unknown_task carries an earlier
+        round's weights — it must not be reported against the current round."""
+        controller = self._controller()
+        fl_ctx = _ctx()
+
+        accepted = controller._accept_train_result(
+            client_name="Trust_1", result=self._ok_result(), fl_ctx=fl_ctx, is_unknown_task=True
+        )
+
+        assert accepted is True  # stock still forwards it to the aggregator
+        controller.flip.send_event.assert_not_called()
+        assert FlipProps.ROUND_RETURNED not in {call.args[0] for call in fl_ctx.set_prop.call_args_list}
+
+    def test_reported_size_is_the_original_diff_not_the_reconstruction(self):
+        """A head-only partial diff must report its own size, not the full model's —
+        the size is probed before _diff_to_weights rewrites the shareable."""
+        controller = self._controller()
+        controller._global_weights = {
+            "weights": {"w1": np.zeros(4, dtype=np.float32), "w2": np.zeros(4, dtype=np.float32)}
+        }
+        result = DXO(data_kind=DataKind.WEIGHT_DIFF, data={"w1": np.zeros(4, dtype=np.float32)}).to_shareable()
+        result.add_cookie(AppConstants.CONTRIBUTION_ROUND, 2)
+
+        controller._accept_train_result(client_name="Trust_1", result=result, fl_ctx=_ctx())
+
+        assert controller.flip.send_event.call_args.kwargs["details"] == {"size_bytes": 16}
+
     def test_telemetry_failure_never_blocks_acceptance(self):
         """The result must be accepted even if the hub relay explodes."""
         controller = self._controller()

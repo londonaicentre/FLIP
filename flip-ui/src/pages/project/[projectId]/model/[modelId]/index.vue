@@ -292,11 +292,11 @@ const steps = computed((): IStep[] => {
     const dates = [
         modelData.value?.creationTimestamp,
         modelData.value?.preparedAt,
-        modelData.value?.trainingStartedAt,
+        modelData.value?.runningAt,
         modelData.value?.resultsUploadedAt
     ];
 
-    return buildModelSteps(modelData.value?.status).map((step, i) => ({
+    return buildModelSteps(modelData.value?.status, modelData.value?.queuePosition).map((step, i) => ({
         ...step,
         date: dates[i] ?? null
     }));

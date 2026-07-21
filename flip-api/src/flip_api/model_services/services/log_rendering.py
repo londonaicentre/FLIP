@@ -12,15 +12,16 @@
 
 """Display-text composition for the model activity feed.
 
-The FL layer reports **facts** — typed events with structured details
-(``FLLogEvent`` rows in ``fl_logs``) — and this module is the single place
-those facts become English. Keeping the wording hub-side means copy changes
-ship with a flip-api redeploy and never require rebuilding the FL images that
-are baked and deployed to every trust.
+The reporting layer — the FL images for round events, the hub's FL scheduler
+for queue positions — records **facts**: typed events with structured details
+(``FLLogEvent`` rows in ``fl_logs``). This module is the single place those
+facts become English. Keeping the wording hub-side means copy changes ship
+with a flip-api redeploy and never require rebuilding the FL images that are
+baked and deployed to every trust.
 """
 
 import math
-from typing import Any
+from typing import Any, TypeGuard
 
 from flip_api.db.models.main_models import FLLogs
 from flip_api.domain.schemas.types import FLLogEvent
@@ -42,13 +43,17 @@ def _format_bytes(size_bytes: Any) -> str | None:
 
     Returns:
         str | None: e.g. ``"2.3 MB"`` (whole bytes without decimals), or
-        ``None`` when the stored value is not a finite number.
+        ``None`` when the stored value is not a finite non-negative number.
     """
+    # float() accepts booleans (float(True) == 1.0), which would render a
+    # "1 B" size that never existed; mirror _is_count and treat them as unusable.
+    if isinstance(size_bytes, bool):
+        return None
     try:
         size = float(size_bytes)
     except (TypeError, ValueError):
         return None
-    if not math.isfinite(size):
+    if not math.isfinite(size) or size < 0:
         return None
     raw = size
     for unit in _BYTE_UNITS:
@@ -58,7 +63,7 @@ def _format_bytes(size_bytes: Any) -> str | None:
     return f"{int(raw)} B"  # pragma: no cover - unreachable, satisfies mypy
 
 
-def _is_count(value: Any) -> bool:
+def _is_count(value: Any) -> TypeGuard[int]:
     """True when a ``details`` value is a genuine integer count (bools excluded)."""
     return isinstance(value, int) and not isinstance(value, bool)
 
@@ -99,6 +104,13 @@ def render_log(row: FLLogs) -> str:
         if _is_count(returned) and _is_count(expected):
             return f"Round {row.global_round} aggregated · {returned} of {expected} trusts returned"
         return f"Round {row.global_round} aggregated"
+
+    if row.event_type == FLLogEvent.QUEUE_POSITION:
+        position = details.get("position")
+        if _is_count(position) and position >= 1:
+            return f"Model Queued ({position})"
+        # A row with an unusable stored position must not invent one.
+        return "Model Queued"
 
     if row.event_type is not None:
         return f"Round {row.global_round} · {row.event_type}"

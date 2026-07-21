@@ -91,9 +91,15 @@ def mock_add_log():
         yield mock
 
 
+@pytest.fixture
+def mock_log_queue_positions():
+    with patch("flip_api.fl_services.initiate_training.log_queue_positions") as mock:
+        yield mock
+
+
 def test_initiate_training_success(
     model_id, fake_request, mock_db, client1, mock_can_modify_model, mock_add_fl_job, mock_update_model_status,
-    mock_add_log
+    mock_add_log, mock_log_queue_positions
 ):
     payload = IInitiateTrainingInputPayload(trust_ids=[client1.id])
     response = initiate_training(model_id, payload, fake_request, mock_db, user_id="user123")
@@ -106,10 +112,13 @@ def test_initiate_training_success(
     assert [t.name for t in called_trusts] == ["client1"]
 
     mock_update_model_status.assert_called_once()
-    assert mock_add_log.call_count == 2
+    # The enqueue announcement is a typed queue-position row ("Model Queued (n)"),
+    # emitted via log_queue_positions; add_log carries only the trusts audit line.
+    mock_log_queue_positions.assert_called_once_with(mock_db)
+    assert mock_add_log.call_count == 1
     # Audit log uses names extracted from the resolved Trust rows, not the raw payload ids.
-    second_log_msg = mock_add_log.call_args_list[1].args[1]
-    assert "client1" in second_log_msg
+    trusts_log_msg = mock_add_log.call_args_list[0].args[1]
+    assert "client1" in trusts_log_msg
 
 
 def test_initiate_training_passes_full_trust_rows_to_add_fl_job(

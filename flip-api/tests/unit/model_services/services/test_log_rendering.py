@@ -88,7 +88,7 @@ class TestRenderLog:
 
     @pytest.mark.parametrize(
         "size_bytes",
-        ["2.3 MB", {"value": 12}, [1024], "nan", "inf"],
+        ["2.3 MB", {"value": 12}, [1024], "nan", "inf", True, False, -5, -0.1],
     )
     def test_client_result_with_unusable_size_degrades_to_sizeless_line(self, size_bytes):
         """details is untyped JSONB, so a bad value must degrade this row — never raise.
@@ -114,3 +114,16 @@ class TestRenderLog:
             details={"returned": returned, "expected": expected},
         )
         assert render_log(row) == "Round 6 aggregated"
+
+    def test_queue_position(self):
+        row = _row(event_type=FLLogEvent.QUEUE_POSITION.value, details={"position": 3, "job_id": str(uuid4())})
+        assert render_log(row) == "Model Queued (3)"
+
+    @pytest.mark.parametrize(
+        "details",
+        [None, {}, {"position": "3"}, {"position": True}, {"position": 0}, {"position": -1}, {"position": 2.5}],
+    )
+    def test_queue_position_with_unusable_position_degrades_positionless(self, details):
+        """A row with an unusable stored position must not invent one."""
+        row = _row(event_type=FLLogEvent.QUEUE_POSITION.value, details=details)
+        assert render_log(row) == "Model Queued"

@@ -28,6 +28,7 @@ from flip_api.model_services.services.model_service import (
     edit_model,
     get_metrics,
     get_model_status,
+    queued_positions_by_model,
     resolve_trust_from_fl_client_name,
     update_model_status,
     validate_trust_ids,
@@ -435,7 +436,7 @@ def test_update_model_status_notifies_scheduler_on_terminal_status(mock_audit, m
     to retire the run — confirms the side-effect on transition.
     """
     session = MagicMock()
-    mock_model = MagicMock(status=ModelStatus.TRAINING_STARTED)
+    mock_model = MagicMock(status=ModelStatus.RUNNING)
     session.get.return_value = mock_model
     model_id = uuid4()
 
@@ -550,11 +551,12 @@ def test_run_trusts_by_model_reads_latest_job_roster():
     """
     session = MagicMock()
     model_id = uuid4()
+    old_job, new_job = uuid4(), uuid4()
     old_trust, new_trust = uuid4(), uuid4()
     older, newer = datetime(2026, 1, 1), datetime(2026, 2, 1)
     session.exec.return_value.all.return_value = [
-        (model_id, older, old_trust, "Old Trust", "OLD"),
-        (model_id, newer, new_trust, "New Trust", "NEW"),
+        (old_job, model_id, older, old_trust, "Old Trust", "OLD"),
+        (new_job, model_id, newer, new_trust, "New Trust", "NEW"),
     ]
 
     result = _run_trusts_by_model([model_id], session)
@@ -565,6 +567,24 @@ def test_run_trusts_by_model_reads_latest_job_roster():
     assert [(t.id, t.name, t.code) for t in result[model_id]] == [(new_trust, "New Trust", "NEW")]
 
 
+def test_run_trusts_by_model_created_tie_keeps_one_jobs_roster():
+    """Two jobs sharing a created microsecond must not merge rosters (duplicate
+    trusts); the tie breaks on job id, matching retrieve_model's ordering."""
+    session = MagicMock()
+    model_id = uuid4()
+    job_a, job_b = sorted([uuid4(), uuid4()])
+    trust_id = uuid4()
+    created = datetime(2026, 2, 1)
+    session.exec.return_value.all.return_value = [
+        (job_a, model_id, created, trust_id, "Trust", "TR"),
+        (job_b, model_id, created, trust_id, "Trust", "TR"),
+    ]
+
+    result = _run_trusts_by_model([model_id], session)
+
+    assert [(t.id, t.name, t.code) for t in result[model_id]] == [(trust_id, "Trust", "TR")]
+
+
 def test_run_trusts_by_model_empty_input_short_circuits():
     session = MagicMock()
 
@@ -572,3 +592,27 @@ def test_run_trusts_by_model_empty_input_short_circuits():
 
     assert result == {}
     session.exec.assert_not_called()
+
+
+def test_queued_positions_by_model_ranks_by_scheduler_pickup_order():
+    """Positions are the 1-based rank over QUEUED jobs in created order (FIFO)."""
+    session = MagicMock()
+    first, second = uuid4(), uuid4()
+    session.exec.return_value.all.return_value = [first, second]
+
+    assert queued_positions_by_model(session) == {first: 1, second: 2}
+
+
+def test_queued_positions_by_model_keeps_the_earliest_position_per_model():
+    session = MagicMock()
+    model_id = uuid4()
+    session.exec.return_value.all.return_value = [model_id, model_id]
+
+    assert queued_positions_by_model(session) == {model_id: 1}
+
+
+def test_queued_positions_by_model_empty_queue():
+    session = MagicMock()
+    session.exec.return_value.all.return_value = []
+
+    assert queued_positions_by_model(session) == {}

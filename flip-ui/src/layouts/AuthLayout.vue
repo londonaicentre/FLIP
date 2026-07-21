@@ -14,7 +14,7 @@
 <template>
     <AiErrorAlert v-if="errorStore.hasError" class="absolute z-10" />
     <div class="bg-body dark:bg-dark-canvas">
-        <div class="flex items-center justify-center h-screen">
+        <div class="flex items-center justify-center h-screen supports-[height:100dvh]:h-dvh">
             <div class="absolute top-6 left-8 z-10 flex items-center gap-4">
                 <a
                     href="https://www.aicentre.co.uk/"
@@ -56,10 +56,10 @@
                 </a>
             </div>
             <div class="absolute top-0 right-0">
-                <img src="@/assets/login/top-right.svg?url" alt="">
+                <img src="@/assets/login/top-right.svg?url" alt="" class="corner-art-fade-top">
             </div>
             <div class="absolute bottom-0 left-0">
-                <img src="@/assets/login/bottom-left.svg?url" alt="">
+                <img src="@/assets/login/bottom-left.svg?url" alt="" class="corner-art-fade-bottom">
             </div>
             <div
                 class="flex flex-row w-full md:max-w-md min-h-[417px] relative m-4"
@@ -87,7 +87,7 @@
             </div>
             <footer
                 data-test="auth-footer-links"
-                class="absolute bottom-4 left-1/2 -translate-x-1/2 flex flex-row items-center justify-center gap-6 text-xs font-heading text-gray-500 dark:text-gray-300 z-10"
+                class="absolute bottom-4 left-1/2 -translate-x-1/2 flex flex-row items-center justify-center gap-6 text-xs text-center font-heading text-gray-500 dark:text-gray-300 z-10"
             >
                 <a
                     v-for="link in footerLinks"

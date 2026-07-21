@@ -62,6 +62,9 @@ class IAllModelsResponse(BaseModel):
     owner_id: UUID = Field(..., alias="ownerId")
     owner_name: str | None = Field(default=None, alias="ownerName")
     trusts: list[ITrustSummary] = Field(default_factory=list)
+    # The model's 1-based place in the FL training queue (position 1 = next to
+    # be picked up); None unless the model has a QUEUED job waiting for a net.
+    queue_position: int | None = Field(default=None, alias="queuePosition")
 
     model_config = ConfigDict(populate_by_name=True, arbitrary_types_allowed=True)
 
@@ -162,11 +165,14 @@ class IModelResponse(BaseModel):
     # stage. ``creation_timestamp`` is just ``Model.creation_timestamp``.
     creation_timestamp: str | None = Field(default=None, alias="creationTimestamp")
     prepared_at: str | None = Field(default=None, alias="preparedAt")
-    training_started_at: str | None = Field(default=None, alias="trainingStartedAt")
+    running_at: str | None = Field(default=None, alias="runningAt")
     results_uploaded_at: str | None = Field(default=None, alias="resultsUploadedAt")
     # The trusts the run was dispatched to — the latest FL job's fl_job_trust
     # roster. Empty before dispatch, when the model has no job yet.
     trusts: list[ITrustSummary] = Field(default_factory=list)
+    # The model's 1-based place in the FL training queue (position 1 = next to
+    # be picked up); None unless the model has a QUEUED job waiting for a net.
+    queue_position: int | None = Field(default=None, alias="queuePosition")
 
     model_config = ConfigDict(
         populate_by_name=True,

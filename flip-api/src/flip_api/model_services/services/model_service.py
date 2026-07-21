@@ -41,7 +41,7 @@ from flip_api.domain.interfaces.model import (
     ITrustSummary,
 )
 from flip_api.domain.schemas.actions import ModelAuditAction
-from flip_api.domain.schemas.status import ModelStatus
+from flip_api.domain.schemas.status import JobStatus, ModelStatus
 from flip_api.fl_services.services import fl_scheduler_service
 from flip_api.model_services.utils.audit_helper import audit_model_action, audit_model_actions
 from flip_api.utils.logger import logger
@@ -81,7 +81,7 @@ def edit_model(model_id: UUID, model_details: IModelDetails, user_id: UUID, sess
 
 _STATUS_AUDIT_MAP: dict[ModelStatus, ModelAuditAction] = {
     ModelStatus.PREPARED: ModelAuditAction.PREPARED,
-    ModelStatus.TRAINING_STARTED: ModelAuditAction.TRAINING_STARTED,
+    ModelStatus.RUNNING: ModelAuditAction.RUNNING,
     ModelStatus.RESULTS_UPLOADED: ModelAuditAction.RESULTS_UPLOADED,
 }
 
@@ -167,9 +167,10 @@ def add_log(
             reported by an FL client. None for model-level (hub) logs.
         fl_client_name (str | None): The FL client name as reported by the FL server.
             None for model-level logs.
-        event_type (str | None): The typed round event this row records, when the FL
-            server reported a structured fact rather than free text. Senders use the
-            FLLogEvent vocabulary but the value is stored as plain text.
+        event_type (str | None): The typed event this row records, when a structured
+            fact rather than free text was reported — round events from the FL server,
+            QUEUE_POSITION from the hub's own FL scheduler. Senders use the FLLogEvent
+            vocabulary but the value is stored as plain text.
         global_round (int | None): 1-based federated round the event belongs to.
         details (dict[str, Any] | None): Event-specific facts (e.g. total_rounds,
             size_bytes, returned/expected counts).
@@ -443,26 +444,57 @@ def _run_trusts_by_model(model_ids: list[UUID], session: Session) -> dict[UUID, 
         return trusts_by_model
 
     rows = session.exec(
-        select(FLJob.model_id, FLJob.created, Trust.id, Trust.name, Trust.code)  # type: ignore[call-overload]
+        select(FLJob.id, FLJob.model_id, FLJob.created, Trust.id, Trust.name, Trust.code)  # type: ignore[call-overload]
         .join(FLJobTrust, col(FLJobTrust.fl_job_id) == FLJob.id)
         .join(Trust, col(Trust.id) == FLJobTrust.trust_id)
         .where(col(FLJob.model_id).in_(model_ids))
     ).all()
 
     # A model can accumulate jobs across re-initiations; only the newest job's
-    # roster is "the run's trusts".
-    latest_created: dict[UUID, datetime] = {}
-    for model_id, created, _trust_id, _trust_name, _trust_code in rows:
+    # roster is "the run's trusts". Jobs can share a created microsecond (fast
+    # successive dispatches), so ties break on job id — keeping exactly one
+    # job's roster (no merged/duplicated trusts) and agreeing with the
+    # (created, id) ordering of the single-model view in retrieve_model.py.
+    latest_job: dict[UUID, tuple[datetime, UUID]] = {}
+    for job_id, model_id, created, _trust_id, _trust_name, _trust_code in rows:
         if model_id is None or created is None:
             continue
-        if model_id not in latest_created or created > latest_created[model_id]:
-            latest_created[model_id] = created
-    for model_id, created, trust_id, trust_name, trust_code in rows:
-        if model_id is None or created != latest_created.get(model_id):
+        if model_id not in latest_job or (created, job_id) > latest_job[model_id]:
+            latest_job[model_id] = (created, job_id)
+    for job_id, model_id, created, trust_id, trust_name, trust_code in rows:
+        if model_id is None or latest_job.get(model_id) != (created, job_id):
             continue
         trusts_by_model[model_id].append(ITrustSummary(id=trust_id, name=trust_name, code=trust_code))
 
     return trusts_by_model
+
+
+def queued_positions_by_model(session: Session) -> dict[UUID, int]:
+    """Map each queued model to its 1-based place in the FL training queue.
+
+    The rank mirrors the scheduler's pickup order exactly — QUEUED ``FLJob``
+    rows by ``created`` ascending, ``id`` as tiebreak (``check_for_queued_jobs``)
+    — so position 1 is the next model to start when a net frees up. Models with
+    no queued job are simply absent. A model queued twice (``FLJob`` has no
+    uniqueness on ``model_id``) maps to its earliest position, so the status
+    pill shows the position the model will actually be picked at, while the
+    activity feed logs each job's own position.
+
+    Args:
+        session (Session): The database session.
+
+    Returns:
+        dict[UUID, int]: Model id to 1-based queue position.
+    """
+    queued_model_ids = session.exec(
+        select(FLJob.model_id)
+        .where(FLJob.status == JobStatus.QUEUED)
+        .order_by(col(FLJob.created).asc(), col(FLJob.id).asc())
+    ).all()
+    positions: dict[UUID, int] = {}
+    for position, queued_model_id in enumerate(queued_model_ids, start=1):
+        positions.setdefault(queued_model_id, position)
+    return positions
 
 
 def get_all_models_service(
@@ -546,6 +578,7 @@ def get_all_models_service(
     }
 
     trusts_by_model = _run_trusts_by_model([model.id for model, _, _ in rows], session)
+    queue_positions = queued_positions_by_model(session)
 
     data = [
         IAllModelsResponse(
@@ -558,6 +591,7 @@ def get_all_models_service(
             owner_id=model.owner_id,
             owner_name=owner_name,
             trusts=trusts_by_model.get(model.id, []),
+            queue_position=queue_positions.get(model.id),
         )  # type: ignore[call-arg]
         for model, project_name, owner_name in rows
     ]

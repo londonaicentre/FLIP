@@ -181,17 +181,79 @@ class TestTrainingLog:
         with pytest.raises(ValidationError):
             TrainingLog(event_type=event_type, global_round=3)
 
+    def test_queue_position_is_rejected(self):
+        """QUEUE_POSITION is reserved for the hub's own FL scheduler (mirrors
+        flip-api, which 422-rejects it at ingest) — refusing it here fails fast
+        FL-side instead of after the POST."""
+        with pytest.raises(ValidationError, match="QUEUE_POSITION"):
+            TrainingLog(event_type="QUEUE_POSITION", global_round=1)
+
     def test_missing_field_raises(self):
         """Omitting a required field should raise a ValidationError."""
         with pytest.raises(ValidationError):
             TrainingLog.model_validate({"fl_client_name": "site-1"})
+
+    def test_oversized_details_is_rejected(self):
+        """Mirrors the hub-side ingest bound: an oversized payload from app code
+        fails fast here, inside send_event's best-effort guard, instead of being
+        posted and 422-rejected (or bloating the hub's JSONB column)."""
+        with pytest.raises(ValidationError, match="details"):
+            TrainingLog(event_type=FLLogEvent.ROUND_STARTED, global_round=1, details={"blob": "x" * 8192})
+
+    def test_details_within_the_bound_is_accepted(self):
+        details = {"blob": "x" * 4000}
+        payload = TrainingLog(event_type=FLLogEvent.ROUND_STARTED, global_round=1, details=details)
+        assert payload.details == details
+
+
+_HUB_RESERVED_EVENT = "QUEUE_POSITION"
+
+
+class _StripHubReservedEvent(ast.NodeTransformer):
+    """Drop statements that reference the hub-reserved QUEUE_POSITION event.
+
+    The QUEUE_POSITION reservation is the one sanctioned mirror asymmetry: the hub
+    declares the enum member and rejects it at ingest, while the FL side omits the
+    member and rejects it at send — with direction-appropriate wording on each side.
+    Those statements are excluded from the AST comparison and pinned by shape in
+    ``test_queue_position_stays_hub_reserved`` instead.
+    """
+
+    def visit_Assign(self, node: ast.Assign) -> ast.Assign | None:
+        if any(isinstance(target, ast.Name) and target.id == _HUB_RESERVED_EVENT for target in node.targets):
+            return None
+        return node
+
+    def visit_If(self, node: ast.If) -> ast.AST | None:
+        if _HUB_RESERVED_EVENT in ast.dump(node.test):
+            return None
+        return self.generic_visit(node)
+
+
+def _class_def(path: Path, class_name: str) -> ast.ClassDef:
+    """Return the AST of a top-level class definition in a source file.
+
+    Args:
+        path (Path): The Python source file to parse.
+        class_name (str): The top-level class to extract.
+
+    Returns:
+        ast.ClassDef: The class definition node.
+    """
+    module = ast.parse(path.read_text())
+    for node in module.body:
+        if isinstance(node, ast.ClassDef) and node.name == class_name:
+            return node
+    raise AssertionError(f"class {class_name} not found in {path}")
 
 
 def _class_body_ast(path: Path, class_name: str) -> list[str]:
     """Return the AST dump of each statement in a class body, docstring excluded.
 
     Docstrings and comments may legitimately differ between the two mirrors;
-    field definitions, constraints and validators may not.
+    field definitions, constraints and validators may not — except the
+    hub-reserved QUEUE_POSITION statements, which are stripped from both sides
+    (see ``_StripHubReservedEvent``).
 
     Args:
         path (Path): The Python source file to parse.
@@ -200,14 +262,11 @@ def _class_body_ast(path: Path, class_name: str) -> list[str]:
     Returns:
         list[str]: One ``ast.dump`` string per non-docstring body statement.
     """
-    module = ast.parse(path.read_text())
-    for node in module.body:
-        if isinstance(node, ast.ClassDef) and node.name == class_name:
-            body = node.body
-            if body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant):
-                body = body[1:]
-            return [ast.dump(stmt) for stmt in body]
-    raise AssertionError(f"class {class_name} not found in {path}")
+    body = _class_def(path, class_name).body
+    if body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant):
+        body = body[1:]
+    stripped = (_StripHubReservedEvent().visit(stmt) for stmt in body)
+    return [ast.dump(stmt) for stmt in stripped if stmt is not None]
 
 
 class TestHubMirrorStaysInSync:
@@ -216,7 +275,9 @@ class TestHubMirrorStaysInSync:
     The hub validates against its own copies of these definitions (kept in sync
     by hand — the two packages share no code). Drift would surface only as 422s
     silently swallowed by the best-effort senders; this fails the build instead.
-    Compared at the AST level so docstrings and comments stay free to differ.
+    Compared at the AST level so docstrings and comments stay free to differ. The
+    hub-reserved QUEUE_POSITION statements are the one sanctioned asymmetry —
+    excluded from the comparison and pinned separately below.
     """
 
     @pytest.mark.parametrize(
@@ -231,3 +292,21 @@ class TestHubMirrorStaysInSync:
         fl_side = _class_body_ast(Path(flip.schemas.__file__), class_name)
         hub_side = _class_body_ast(_REPO_ROOT / hub_path, class_name)
         assert fl_side == hub_side, f"{class_name} drifted from its flip-api mirror ({hub_path}) — update both together"
+
+    def test_queue_position_stays_hub_reserved(self):
+        """Pin the shape of the one sanctioned mirror divergence.
+
+        The hub's FLLogEvent must be exactly the FL-side vocabulary plus the
+        hub-emitted QUEUE_POSITION, which this package deliberately omits — FL
+        images must never send it. Each side's validator rejection of the event
+        is pinned behaviourally by that side's own tests.
+        """
+        hub_enum = _class_def(_REPO_ROOT / "flip-api/src/flip_api/domain/schemas/types.py", "FLLogEvent")
+        hub_members = [
+            target.id
+            for stmt in hub_enum.body
+            if isinstance(stmt, ast.Assign)
+            for target in stmt.targets
+            if isinstance(target, ast.Name)
+        ]
+        assert hub_members == [*[event.name for event in FLLogEvent], _HUB_RESERVED_EVENT]

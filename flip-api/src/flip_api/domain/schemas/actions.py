@@ -26,10 +26,10 @@ class ModelAuditAction(StrEnum):
     EDIT = "EDIT"
     # Status-transition audits keyed by the new ModelStatus value. Recorded in
     # update_model_status so the model lifecycle UI can render real dates for
-    # "Prepared / Training started / Results uploaded" instead of static "done"
+    # "Prepared / Running / Results uploaded" instead of static "done"
     # labels. Only stages surfaced in the lifecycle bar are tracked.
     PREPARED = "PREPARED"
-    TRAINING_STARTED = "TRAINING_STARTED"
+    RUNNING = "RUNNING"
     RESULTS_UPLOADED = "RESULTS_UPLOADED"
 
 

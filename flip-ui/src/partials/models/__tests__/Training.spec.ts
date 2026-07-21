@@ -230,7 +230,7 @@ describe("Training metrics + live-activity responsive layout", () => {
     }
 
     it("stacks the cards by default and only goes side-by-side on wide (xl) screens", () => {
-        const wrapper = mountTraining({ status: "TRAINING_STARTED" });
+        const wrapper = mountTraining({ status: "RUNNING" });
 
         const { container } = layoutParts(wrapper);
 
@@ -239,7 +239,7 @@ describe("Training metrics + live-activity responsive layout", () => {
     });
 
     it("lets both cards stretch to the window instead of pinning them to a fixed height", () => {
-        const wrapper = mountTraining({ status: "TRAINING_STARTED" });
+        const wrapper = mountTraining({ status: "RUNNING" });
 
         const { container, metricsCard, liveCard } = layoutParts(wrapper);
 
@@ -252,7 +252,7 @@ describe("Training metrics + live-activity responsive layout", () => {
     });
 
     it("splits the height between the stacked cards, with floors for a short phone", () => {
-        const wrapper = mountTraining({ status: "TRAINING_STARTED" });
+        const wrapper = mountTraining({ status: "RUNNING" });
 
         const { metricsCard, liveCard } = layoutParts(wrapper);
 
@@ -265,7 +265,7 @@ describe("Training metrics + live-activity responsive layout", () => {
     });
 
     it("scrolls the activity feed inside its card rather than running off the page", () => {
-        const wrapper = mountTraining({ status: "TRAINING_STARTED" });
+        const wrapper = mountTraining({ status: "RUNNING" });
 
         const { scrollWrap } = layoutParts(wrapper);
 
@@ -274,7 +274,7 @@ describe("Training metrics + live-activity responsive layout", () => {
     });
 
     it("makes the live-activity card full-width when stacked and a fixed column only at xl+", () => {
-        const wrapper = mountTraining({ status: "TRAINING_STARTED" });
+        const wrapper = mountTraining({ status: "RUNNING" });
 
         const { liveCard } = layoutParts(wrapper);
 
@@ -284,7 +284,7 @@ describe("Training metrics + live-activity responsive layout", () => {
     });
 
     it("lets the metrics card take the remaining width beside the activity card", () => {
-        const wrapper = mountTraining({ status: "TRAINING_STARTED" });
+        const wrapper = mountTraining({ status: "RUNNING" });
 
         const { metricsCard } = layoutParts(wrapper);
 
@@ -293,7 +293,7 @@ describe("Training metrics + live-activity responsive layout", () => {
     });
 
     it("keeps a long timeline from driving the card's height", () => {
-        const wrapper = mountTraining({ status: "TRAINING_STARTED" });
+        const wrapper = mountTraining({ status: "RUNNING" });
 
         const { liveCard } = layoutParts(wrapper);
 
@@ -303,7 +303,7 @@ describe("Training metrics + live-activity responsive layout", () => {
     });
 
     it("never lets the timeline scroll horizontally", () => {
-        const wrapper = mountTraining({ status: "TRAINING_STARTED" });
+        const wrapper = mountTraining({ status: "RUNNING" });
 
         const { scrollWrap } = layoutParts(wrapper);
 
@@ -315,7 +315,7 @@ describe("Training Live activity status dot", () => {
     const dotSelector = "[data-test=live-activity-dot]";
 
     it("is primary (in-progress) when training is running", () => {
-        const wrapper = mountTraining({ status: "TRAINING_STARTED" });
+        const wrapper = mountTraining({ status: "RUNNING" });
 
         const dot = wrapper.find(dotSelector);
 
@@ -377,7 +377,7 @@ describe("Training view", () => {
         // must not be editable.
         const wrapper = mountTraining({
             view: "prepare",
-            status: "TRAINING_STARTED"
+            status: "RUNNING"
         });
 
         const options = wrapper.find("[data-test=training-options]");
@@ -398,7 +398,7 @@ describe("Training view", () => {
     it("the run view shows monitoring and never the options form", () => {
         const wrapper = mountTraining({
             view: "run",
-            status: "TRAINING_STARTED"
+            status: "RUNNING"
         });
 
         expect(wrapper.find("[data-test=training-timeline]").exists()).toBe(true);
@@ -423,7 +423,7 @@ describe("Training options reflect a dispatched run", () => {
 
     it("pre-fills the trusts a dispatched run went to, so the switches read as on", () => {
         const wrapper = mountTraining({
-            status: "TRAINING_STARTED",
+            status: "RUNNING",
             view: "prepare",
             runTrusts: ["trust-a", "trust-b"]
         });
