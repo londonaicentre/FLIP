@@ -35,25 +35,42 @@ export interface IModelConfig {
     [key: string]: unknown;
 }
 
-interface IPresignedDownloadResponse {
+export interface IPresignedDownloadResponse {
     url: string;
     fileName: string;
 }
 
 /**
+ * Asks flip-api for a short-lived presigned S3 GET URL for a model file.
+ *
+ * A tiny JSON response, safe under the shared axios client's timeout. What to
+ * do with the URL is the caller's choice: navigate the browser straight to it
+ * (streamed download, no memory bound — S3 serves it with
+ * `Content-Disposition: attachment`) or fetch its bytes into a Blob when the
+ * content itself is needed (config.json parsing, zip bundling).
+ */
+export const getModelFileDownloadUrl = async (url: string): Promise<IPresignedDownloadResponse> => {
+    const response: AxiosResponse<IPresignedDownloadResponse> = await _http.get(url);
+
+    return response.data;
+};
+
+/**
  * Downloads a model file's bytes.
  *
- * Two steps: first ask flip-api for a short-lived presigned S3 URL (a tiny
- * JSON response, safe under the shared client's timeout), then fetch the
- * actual bytes directly from S3 with the global `fetch` API. `fetch` is used
- * instead of the shared axios client for the byte transfer because that
- * client would prepend `baseURL`, attach an `Authorization` header S3 doesn't
- * expect, and re-apply the very request timeout this two-step flow exists to
- * avoid (large files can take far longer than 30s to transfer).
+ * Two steps: first ask flip-api for a short-lived presigned S3 URL, then
+ * fetch the actual bytes directly from S3 with the global `fetch` API.
+ * `fetch` is used instead of the shared axios client for the byte transfer
+ * because that client would prepend `baseURL`, attach an `Authorization`
+ * header S3 doesn't expect, and re-apply the very request timeout this
+ * two-step flow exists to avoid (large files can take far longer than 30s
+ * to transfer). Note the returned Blob lives in memory — for a plain
+ * "save this file" action prefer navigating to
+ * `getModelFileDownloadUrl(...).url` instead.
  */
 export const downloadModelFile = async (url: string): Promise<Blob> => {
-    const presigned: AxiosResponse<IPresignedDownloadResponse> = await _http.get(url);
-    const response = await fetch(presigned.data.url);
+    const presigned = await getModelFileDownloadUrl(url);
+    const response = await fetch(presigned.url);
 
     if (!response.ok) {
         // An expired/malformed presigned URL resolves normally under fetch

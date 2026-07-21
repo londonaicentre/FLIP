@@ -75,10 +75,12 @@ const policyFor = (overrides: { maxBytes?: number } = {}) => ({
 const mockProcessScannedFile = vi.fn();
 const mockDeleteModelFile = vi.fn();
 const mockDownloadModelFile = vi.fn();
+const mockGetModelFileDownloadUrl = vi.fn();
 vi.mock("@/services/file-service", () => ({
     processScannedFile: (...args: unknown[]) => mockProcessScannedFile(...args),
     deleteModelFile: (...args: unknown[]) => mockDeleteModelFile(...args),
-    downloadModelFile: (...args: unknown[]) => mockDownloadModelFile(...args)
+    downloadModelFile: (...args: unknown[]) => mockDownloadModelFile(...args),
+    getModelFileDownloadUrl: (...args: unknown[]) => mockGetModelFileDownloadUrl(...args)
 }));
 
 // JobType is imported by ModelUpload only as a type annotation; the
@@ -220,6 +222,7 @@ describe("ModelUpload", () => {
         mockProcessScannedFile.mockReset();
         mockDeleteModelFile.mockReset();
         mockDownloadModelFile.mockReset();
+        mockGetModelFileDownloadUrl.mockReset();
         mockSnackbarSuccess.mockReset();
         mockSnackbarError.mockReset();
         mockRoute.params = {
@@ -636,17 +639,23 @@ describe("ModelUpload", () => {
     });
 
     describe("download flow", () => {
-        test("downloadFile fetches the blob and triggers an <a> click", async () => {
-            const blob = new Blob(["fake content"], { type: "text/plain" });
-            mockDownloadModelFile.mockResolvedValue(blob);
+        test("downloadFile navigates an <a> straight to the presigned URL (no Blob)", async () => {
+            // The per-file button must NOT buffer the file into memory: it
+            // fetches only the presigned URL and lets the browser's download
+            // manager stream from S3 (Content-Disposition: attachment is set
+            // server-side). A Blob round-trip would cap downloads at what the
+            // tab can hold — files can reach MAX_MODEL_FILE_BYTES (5 GiB).
+            mockGetModelFileDownloadUrl.mockResolvedValue({
+                url: "https://s3.example.com/signed-download",
+                fileName: "model.py"
+            });
 
-            // jsdom's URL.createObjectURL throws on Blob by default; spy
-            // so the component's download-link plumbing runs to completion
-            // and we can assert on the URL lifecycle.
-            const createObjectURLSpy = vi
-                .spyOn(URL, "createObjectURL")
-                .mockReturnValue("blob:fake");
-            const revokeObjectURLSpy = vi.spyOn(URL, "revokeObjectURL").mockReturnValue(undefined);
+            let clickedHref: string | undefined;
+            const clickSpy = vi
+                .spyOn(HTMLAnchorElement.prototype, "click")
+                .mockImplementation(function (this: HTMLAnchorElement) {
+                    clickedHref = this.href;
+                });
 
             const files: FileInfo[] = [
                 {
@@ -667,20 +676,20 @@ describe("ModelUpload", () => {
             await rowButtons[0].trigger("click");
             await flushPromises();
 
-            expect(mockDownloadModelFile).toHaveBeenCalledWith(
+            expect(mockGetModelFileDownloadUrl).toHaveBeenCalledWith(
                 "/files/model/model-under-test/model.py"
             );
-            expect(createObjectURLSpy).toHaveBeenCalledWith(blob);
-            expect(revokeObjectURLSpy).toHaveBeenCalledWith("blob:fake");
+            expect(clickedHref).toBe("https://s3.example.com/signed-download");
+            // The byte-fetching path must stay untouched by a plain download.
+            expect(mockDownloadModelFile).not.toHaveBeenCalled();
 
-            createObjectURLSpy.mockRestore();
-            revokeObjectURLSpy.mockRestore();
+            clickSpy.mockRestore();
         });
 
-        test("downloadFile snackbars with the file name when the download rejects", async () => {
+        test("downloadFile snackbars with the file name when the URL request rejects", async () => {
             // Previously downloadFile had no catch at all — a rejection failed
             // silently with no user-visible feedback.
-            mockDownloadModelFile.mockRejectedValueOnce(new Error("network"));
+            mockGetModelFileDownloadUrl.mockRejectedValueOnce(new Error("network"));
 
             const files: FileInfo[] = [
                 {
