@@ -88,7 +88,7 @@ class TestRenderLog:
 
     @pytest.mark.parametrize(
         "size_bytes",
-        ["2.3 MB", {"value": 12}, [1024], "nan", "inf"],
+        ["2.3 MB", {"value": 12}, [1024], "nan", "inf", True, False, -5, -0.1],
     )
     def test_client_result_with_unusable_size_degrades_to_sizeless_line(self, size_bytes):
         """details is untyped JSONB, so a bad value must degrade this row — never raise.

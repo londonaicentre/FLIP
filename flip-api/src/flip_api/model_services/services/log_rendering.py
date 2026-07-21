@@ -42,13 +42,17 @@ def _format_bytes(size_bytes: Any) -> str | None:
 
     Returns:
         str | None: e.g. ``"2.3 MB"`` (whole bytes without decimals), or
-        ``None`` when the stored value is not a finite number.
+        ``None`` when the stored value is not a finite non-negative number.
     """
+    # float() accepts booleans (float(True) == 1.0), which would render a
+    # "1 B" size that never existed; mirror _is_count and treat them as unusable.
+    if isinstance(size_bytes, bool):
+        return None
     try:
         size = float(size_bytes)
     except (TypeError, ValueError):
         return None
-    if not math.isfinite(size):
+    if not math.isfinite(size) or size < 0:
         return None
     raw = size
     for unit in _BYTE_UNITS:
