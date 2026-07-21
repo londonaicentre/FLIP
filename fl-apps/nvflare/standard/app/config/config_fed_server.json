@@ -8,15 +8,21 @@
     "heart_beat_timeout": 600
   },
   "task_data_filters": [],
-  "task_result_filters": [],
+  "task_result_filters": [
+    {
+      "tasks": ["validate", "post_validation"],
+      "filters": [{"path": "flip.nvflare.components.ClientExceptionReporter", "args": {}}]
+    }
+  ],
   "components": [
     {
       "id": "persistor",
-      "path": "nvflare.app_opt.pt.file_model_persistor.PTFileModelPersistor",
+      "path": "flip.nvflare.components.InitialCheckpointPTModelPersistor",
       "args": {
         "model": {
           "path": "models.get_model"
-        }
+        },
+        "model_id": "{model_id}"
       }
     },
     {
@@ -85,13 +91,20 @@
     },
     {
       "id": "cross_site_validate",
-      "name": "CrossSiteModelEval",
-      "path": "flip.nvflare.controllers.CrossSiteModelEval",
+      "name": "GlobalModelEval",
+      "path": "nvflare.app_common.workflows.global_model_eval.GlobalModelEval",
       "args": {
         "model_locator_id": "model_locator",
         "participating_clients": "{participating_clients}",
-        "validation_timeout": 12000,
-        "model_id": "{model_id}"
+        "validation_timeout": 12000
+      }
+    },
+    {
+      "id": "post_validation_cleanup",
+      "path": "flip.nvflare.controllers.BroadcastTask",
+      "args": {
+        "task_name": "post_validation",
+        "participating_clients": "{participating_clients}"
       }
     }
   ]

@@ -90,4 +90,37 @@ describe("AddTrustModal rendering", () => {
         // The name field no longer mis-describes itself as the auth identifier.
         expect(text).not.toContain("authenticate with the hub");
     });
+
+    it("centres the dialog on mobile instead of pinning it to the bottom", () => {
+        const wrapper = mountModal();
+
+        const layout = wrapper.find(".h-screen");
+        expect(layout.classes()).toContain("items-center");
+        expect(layout.classes()).not.toContain("items-end");
+    });
+
+    it("closes from the header cross button like Cancel", async () => {
+        const wrapper = mountModal();
+
+        await wrapper.find("[data-test=add-trust-close-x-btn]").trigger("click");
+
+        expect(wrapper.emitted("closeModal")).toHaveLength(1);
+    });
+
+    it("keeps the footer buttons on one row at every width", () => {
+        const wrapper = mountModal();
+
+        // AiButton puts its class attribute on a wrapper div around the native button.
+        const confirm = wrapper.find("[data-test=confirm-create-trust-btn]").element.parentElement;
+        const cancel = wrapper.find("[data-test=close-add-trust-modal-btn]").element.parentElement;
+
+        // The two buttons fit side by side even on phones — no full-width
+        // stacking, no vertical gap, just a right-aligned row everywhere.
+        const footer = confirm?.parentElement;
+        expect(footer?.className).toContain("flex-row-reverse");
+        expect(confirm?.className).toMatch(/(?:^|\s)ml-2(?:\s|$)/);
+        expect(confirm?.className).not.toContain("w-full");
+        expect(cancel?.className).not.toContain("w-full");
+        expect(cancel?.className).not.toContain("mt-2");
+    });
 });

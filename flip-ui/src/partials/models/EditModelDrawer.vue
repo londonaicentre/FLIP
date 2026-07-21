@@ -39,13 +39,13 @@
                         leave-to="translate-x-full"
                     >
                         <div class="w-screen max-w-md">
-                            <Form :validation-schema="schema" class="flex flex-col h-full bg-white divide-y divide-gray-100 shadow-xl dark:bg-gray-800 dark:divide-gray-700 dark:ring-1 dark:ring-white/20" @submit="update">
-                                <div class="p-4 bg-primary-500 dark:bg-gray-900 sm:px-6">
+                            <Form :validation-schema="schema" class="flex flex-col h-full bg-white divide-y divide-gray-100 shadow-xl dark:bg-dark-surface dark:divide-dark-border dark:ring-1 dark:ring-white/20" @submit="update">
+                                <div class="p-4 bg-primary-500 dark:bg-dark-canvas sm:px-6">
                                     <div class="flex items-center justify-between">
                                         <DialogTitle class="text-xl font-bold font-heading text-primary-100">
                                             Edit model details
                                         </DialogTitle>
-                                        <div class="flex items-start ml-3 h-7 text-primary-300 dark:text-gray-400">
+                                        <div class="flex items-start ml-3 h-7 text-primary-300 dark:text-gray-300">
                                             <button
                                                 type="button"
                                                 class="!text-primary-300 cursor-pointer hover:text-primary-100 transition focus:outline-none focus:ring-1 rounded focus:ring-primary-400"
@@ -58,7 +58,7 @@
                                         </div>
                                     </div>
                                     <div class="mt-1">
-                                        <p class="text-sm text-primary-200 dark:text-gray-500">
+                                        <p class="text-sm text-primary-200 dark:text-gray-300">
                                             Edit your model details below.
                                         </p>
                                     </div>
@@ -120,7 +120,7 @@
                                         </div>
                                     </div>
                                 </div>
-                                <div class="flex justify-end flex-shrink-0 p-4 space-x-4 bg-gray-50 dark:bg-gray-900">
+                                <div class="flex justify-end flex-shrink-0 p-4 space-x-4 bg-gray-50 dark:bg-dark-canvas">
                                     <AiButton
                                         @click="closeDrawer"
                                     >
@@ -157,7 +157,7 @@
                         <p>Your username will be recorded against this action.</p>
                         <p>
                             To delete this model, enter
-                            <code class="p-1 font-bold tracking-tight bg-gray-100 rounded dark:bg-gray-700 dark:text-primary-200">{{ name }}</code>
+                            <code class="p-1 font-bold tracking-tight bg-gray-100 rounded dark:bg-dark-raised dark:text-primary-200">{{ name }}</code>
                             below.
                         </p>
                     </div>

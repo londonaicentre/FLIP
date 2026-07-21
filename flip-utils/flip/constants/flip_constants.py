@@ -64,6 +64,13 @@ class ProdSettings(_Common):
     INTERNAL_SERVICE_KEY_HEADER: str = "X-Internal-Service-Key"
     INTERNAL_SERVICE_KEY: str = ""
 
+    # Hub-local shared volume where the FL API stages a de-bundled evaluation
+    # checkpoint (keyed by <model_id>/<checkpoint>) for the fl-server to read from
+    # disk. Mirrors the Flower backend's /app/src shared mount: the checkpoint is
+    # never bundled into the NVFLARE app, so it is never deployed to clients. The
+    # fl-server mounts this path; clients do not.
+    SERVER_CHECKPOINT_ROOT: str = "/app/server-checkpoints"
+
     # -- Client-only: fl-client on trust side calls local APIs using these --
     DATA_ACCESS_API_URL: HttpUrl = "http://localhost:8001"  # type: ignore[assignment]
     IMAGING_API_URL: HttpUrl = "http://localhost:8002"  # type: ignore[assignment]
@@ -161,13 +168,28 @@ class FlipEvents:
     TASK_INITIATED = "_task_initiated"
 
 
+class FlipProps:
+    """fl_ctx property names FLIP components use to share round telemetry.
+
+    Set (sticky, so they survive across NVFLARE contexts) by the FLIP
+    ScatterAndGather controller as client results are accepted; read by
+    ServerEventHandler when relaying ROUND_DONE to the hub as a
+    ROUND_AGGREGATED event.
+    """
+
+    ROUND_RETURNED = "_flip_round_returned"
+    ROUND_EXPECTED = "_flip_round_expected"
+
+
 class ModelStatus(StrEnum):
-    """Model training status values."""
+    """Model job status values."""
 
     PENDING = "PENDING"
     INITIATED = "INITIATED"
     PREPARED = "PREPARED"
-    TRAINING_STARTED = "TRAINING_STARTED"
+    # Job-type-neutral "the FL job is executing" status (renamed from
+    # TRAINING_STARTED, #782) — evaluation jobs report it too.
+    RUNNING = "RUNNING"
     RESULTS_UPLOADED = "RESULTS_UPLOADED"
     ERROR = "ERROR"
     STOPPED = "STOPPED"
@@ -185,6 +207,11 @@ class FlipMetricsLabel(StrEnum):
 
 
 class FlipMetaKey(StrEnum):
-    """Metadata keys used in FLIP (diffusion model specific)."""
+    """Metadata keys FLIP components attach to DXO meta."""
 
+    # Diffusion model specific.
     STAGE = "stage"
+    # Name of the config.json['models'] entry an evaluation broadcast carries. Stamped by
+    # EvaluationModelLocator so Client-API evaluators can attribute each validate task's weights —
+    # the stock MODEL_OWNER header does not survive the Client-API FLModel conversion.
+    EVAL_MODEL_NAME = "flip_eval_model_name"

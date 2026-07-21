@@ -10,6 +10,7 @@
 # limitations under the License.
 #
 
+import os
 from pathlib import Path
 from unittest.mock import MagicMock, Mock, call, patch
 
@@ -171,7 +172,70 @@ class TestPersistToS3AndCleanup:
 
         # Should move global model, best model, trainer.py, and validator.py if they exist
         assert mock_move.call_count == 4
-        mock_rmtree.assert_called_once()
+        # Two dirs are pruned before zipping: app_server + cross_site_val/model_shareables.
+        assert mock_rmtree.call_count == 2
+
+    @patch("flip.nvflare.components.persist_and_cleanup.FlipConstants")
+    @patch("shutil.move")
+    @patch("shutil.rmtree")
+    @patch("os.path.isfile")
+    @patch("os.path.isdir")
+    def test_upload_results_prunes_cross_site_val_models(
+        self, mock_isdir, mock_isfile, mock_rmtree, mock_move, mock_constants
+    ):
+        """The cross-site-eval model artefacts must be pruned from the results zip.
+
+        CrossSiteModelEval writes each validated model to ``cross_site_val/model_shareables/`` only to
+        broadcast it to clients for scoring (e.g. the ~759 MiB Ark+ evaluation checkpoint the user
+        already uploaded) — an eval input, not an output. Metrics (``evaluation_results/``) and the raw
+        per-site shareables (``cross_site_val/result_shareables/``) are retained.
+        """
+        mock_constants.LOCAL_DEV = False
+        run_dir = "/mock/workspace/run"
+        cross_val_models_dir = os.path.join(run_dir, "cross_site_val", "model_shareables")
+
+        flip = MagicMock()
+        component = PersistToS3AndCleanup(model_id="123e4567-e89b-12d3-a456-426614174000", flip=flip)
+
+        fl_ctx = MagicMock()
+        fl_ctx.get_peer_context.return_value = None
+        fl_ctx.get_job_id.return_value = "job-123"
+        fl_ctx.get_engine.return_value.get_workspace.return_value.get_run_dir.return_value = run_dir
+
+        mock_isfile.return_value = False  # no global model / trainer / validator to move
+        # Only the cross-site-eval model dir "exists" (not app_server), isolating the prune under test.
+        mock_isdir.side_effect = lambda p: p == cross_val_models_dir
+
+        component.upload_results_to_s3_bucket(fl_ctx)
+
+        mock_rmtree.assert_called_once_with(cross_val_models_dir)
+        flip.upload_results_to_s3.assert_called_once()
+
+    @patch("flip.nvflare.components.persist_and_cleanup.FlipConstants")
+    @patch("shutil.move")
+    @patch("shutil.rmtree")
+    @patch("os.path.isfile")
+    @patch("os.path.isdir")
+    def test_upload_results_training_job_has_no_cross_site_val(
+        self, mock_isdir, mock_isfile, mock_rmtree, mock_move, mock_constants
+    ):
+        """Training jobs have no ``cross_site_val`` dir, so the prune is a safe no-op there."""
+        mock_constants.LOCAL_DEV = False
+        flip = MagicMock()
+        component = PersistToS3AndCleanup(model_id="123e4567-e89b-12d3-a456-426614174000", flip=flip)
+
+        fl_ctx = MagicMock()
+        fl_ctx.get_peer_context.return_value = None
+        fl_ctx.get_job_id.return_value = "job-123"
+        fl_ctx.get_engine.return_value.get_workspace.return_value.get_run_dir.return_value = "/mock/workspace/run"
+
+        mock_isfile.return_value = False
+        mock_isdir.return_value = False  # neither app_server nor cross_site_val exist
+
+        component.upload_results_to_s3_bucket(fl_ctx)
+
+        mock_rmtree.assert_not_called()
+        flip.upload_results_to_s3.assert_called_once()
 
     @patch("os.path.isdir")
     def test_cleanup(self, mock_isdir):

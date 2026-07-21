@@ -11,10 +11,14 @@
 
 # Description: This file contains the FLIP_EVALUATOR class which is responsible for validating the model.
 import json
+import logging
 from pathlib import Path
 
 import nibabel as nib
+import pandas as pd
 import torch
+from flip import FLIP
+from flip.constants import PTConstants, ResourceType
 from models import model_paths
 from monai.data import DataLoader, Dataset, decollate_batch
 from monai.metrics import DiceMetric, HausdorffDistanceMetric, MeanIoU, SurfaceDiceMetric
@@ -26,10 +30,8 @@ from nvflare.apis.fl_constant import ReturnCode
 from nvflare.apis.fl_context import FLContext
 from nvflare.apis.shareable import Shareable, make_reply
 from nvflare.apis.signal import Signal
+from tqdm import tqdm
 from transforms import get_eval_transforms, get_sliding_window_inferer
-
-from flip import FLIP
-from flip.constants import PTConstants, ResourceType
 
 # Surface tolerance in voxels for the normalized Surface Dice metric: the boundary deviation treated
 # as acceptable, one entry per foreground class (spleen). Tune per dataset/voxel spacing.
@@ -44,6 +46,10 @@ class FLIP_EVALUATOR(Executor):
         super(FLIP_EVALUATOR, self).__init__()
 
         self._evaluate_task_name = evaluate_task_name
+
+        # Logger
+        self.logger = logging.getLogger(self.__class__.__name__)
+        self.logger.setLevel(logging.INFO)
 
         # Load the config
         self.config = {}
@@ -69,12 +75,24 @@ class FLIP_EVALUATOR(Executor):
         self.post_pred = AsDiscrete(argmax=True, to_onehot=self.num_classes)
         self.swi = get_sliding_window_inferer(sw_device=self.device)
 
-    def get_image_and_label_list(self, dataframe):
-        """Returns a list of dicts, each dict containing the path to an image and its corresponding label."""
+    def get_image_and_label_list(self, dataframe: pd.DataFrame) -> list[dict[str, str]]:
+        """
+        Returns a list of dicts, each dict containing the path to an image and its corresponding label.
 
-        datalist = []
-        # loop over each accession id in the train set
-        for accession_id in dataframe["accession_id"]:
+        Args:
+            dataframe (pd.DataFrame): DataFrame containing accession IDs to fetch images and labels for.
+
+        Returns:
+            list[dict[str, str]]: List of dicts with keys "image" and "label" for every matched pair in the cohort.
+        """
+        datalist: list[dict[str, str]] = []
+
+        for accession_id in tqdm(
+            dataframe["accession_id"],
+            total=len(dataframe),
+            desc="Processing cohort",
+            unit="accession",
+        ):
             try:
                 accession_folder_path = self.flip.get_by_accession_number(
                     self.project_id,
@@ -85,65 +103,45 @@ class FLIP_EVALUATOR(Executor):
                     ],
                 )
             except Exception as err:
-                print(f"Could not get image data folder path for {accession_id}: {err}")
+                self.logger.info("⚠️ Could not fetch images for accession_id=%s: %s", accession_id, err)
                 continue
-            # accession_folder_path = Path(f"/app/data/images/net-1/{accession_id}")
 
-            print(accession_folder_path)
-
+            # get all images in the accession folder that match the pattern "input_*.nii.gz"
             all_images = list(accession_folder_path.rglob("input_*.nii.gz"))
-            print(all_images)
 
-            this_accession_matches = 0
-            print(f"Total base count found for accession_id {accession_id}: {len(all_images)}")
             for img in all_images:
                 # for each image, find the corresponding segmentation mask
                 seg = str(img).replace("/input_", "/label_")
 
                 if not Path(seg).exists():
-                    print(f"No matching segmentation mask for {img}.")
+                    self.logger.info("⚠️ No matching segmentation for %s", img.name)
                     continue
 
                 try:
                     img_header = nib.load(str(img))
-                except nib.filebasedimages.ImageFileError as err:
-                    print(f"Problem loading header of base image {str(img)}.")
-                    print(f"{err=}")
-                    print(f"{type(err)=}")
-                    print(f"{err.args=}")
-                    continue
-
-                try:
                     seg_header = nib.load(seg)
                 except nib.filebasedimages.ImageFileError as err:
-                    print(f"Problem loading header of segmentation {str(seg)}.")
-                    print(f"{err=}")
-                    print(f"{type(err)=}")
-                    print(f"{err.args=}")
+                    self.logger.info("⚠️ Invalid image pair for %s: %s", img.name, err)
                     continue
 
-                # check is 3D and at least 128x128x128 in size and seg is the same
+                # Some QC checks to ensure the image and segmentation are valid and match
+                # check is 3D and at least 128x128x128 in size and seg is the same shape as the image
                 if len(img_header.shape) != 3:
-                    print(f"Image has other than 3 dimensions (it has {len(img_header.shape)}.)")
+                    self.logger.info("⚠️ Skipping non-3D image %s", img.name)
                     continue
-                elif any([img_dim != seg_dim for img_dim, seg_dim in zip(img_header.shape, seg_header.shape)]):
-                    print(
-                        f"Image dimensions ({img_header.shape}) do not match "
-                        f"segmentation dimensions ({seg_header.shape})."
+
+                if img_header.shape != seg_header.shape:
+                    self.logger.info(
+                        "⚠️ Shape mismatch for %s: image=%s label=%s",
+                        img.name,
+                        img_header.shape,
+                        seg_header.shape,
                     )
                     continue
-                else:
-                    # defines keys for image and segmentation
-                    datalist.append({"image": str(img), "label": seg})
-                    print("Matching base image and segmentation added.")
-                    this_accession_matches += 1
 
-            print(f"Added {this_accession_matches} matched image + segmentation pairs for {accession_id}.")
+                datalist.append({"image": str(img), "label": seg})
 
-        # Evaluation-only: score every matched image/label pair in this
-        # client's cohort, not a held-out fraction.
-        print(f"Found {len(datalist)} files in total — evaluating all of them.")
-
+        self.logger.info("Dataset ready: %d image/label pairs - evaluating all of them.", len(datalist))
         return datalist
 
     def _build_metrics(self):
@@ -164,7 +162,7 @@ class FLIP_EVALUATOR(Executor):
             "mean_iou": MeanIoU(include_background=False, reduction="mean"),
         }
 
-    def _aggregate_results(self, metrics):
+    def _aggregate_results(self, metrics: dict) -> dict:
         """Aggregate each model's accumulated metrics into a cohort-level results dict.
 
         Args:
@@ -189,7 +187,7 @@ class FLIP_EVALUATOR(Executor):
             metrics[model_name] = self._build_metrics()
 
         num_images = 0
-        self.logger.info(len(self.test_loader))
+        self.logger.info("Test loader length: %d", len(self.test_loader))
 
         with torch.no_grad():
             for i, batch in enumerate(self.test_loader):
@@ -220,7 +218,7 @@ class FLIP_EVALUATOR(Executor):
 
                 batch_size = images.shape[0]
                 num_images += batch_size
-                self.logger.info(f"Validator Iteration: {i}, Num Images: {num_images}")
+                self.logger.info("Validator Iteration: %d, Num Images: %d", i, num_images)
 
             # Aggregate each metric to a single cohort-level scalar, then reset for the next run.
             json_results = self._aggregate_results(metrics)

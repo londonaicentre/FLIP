@@ -180,8 +180,11 @@ function mountModelUpload(
                 AiSkeleton: { template: "<div data-test=\"ai-skeleton\" />" },
                 AiLoader: { template: "<div data-test=\"ai-loader\" />" },
                 AiButton: {
-                    template: "<button @click=\"$emit('click')\" :disabled=\"loading\"><slot /></button>",
-                    props: ["small", "loading"],
+                    // Mirrors the real AiButton shape (wrapper div + native
+                    // button, aria-label as a declared prop) so accessibility
+                    // assertions exercise the real wiring, not the stub's.
+                    template: "<div @click=\"$emit('click')\"><button :aria-label=\"ariaLabel\" :disabled=\"loading\"><slot /></button></div>",
+                    props: ["small", "loading", "ariaLabel"],
                     emits: ["click"]
                 },
                 AiConfirmModal: {
@@ -255,6 +258,58 @@ describe("ModelUpload", () => {
     });
 
     describe("props.files handling", () => {
+        test("gives the icon-only file action buttons accessible names", async () => {
+            const wrapper = mountModelUpload({
+                files: [{
+                    id: "1",
+                    name: "model.py",
+                    size: 1024,
+                    status: FileUploadStatus.COMPLETED
+                }],
+                loading: false
+            });
+            await flushPromises();
+
+            // Screen readers announce icon-only buttons as just "button"
+            // without an accessible name (Lighthouse button-name).
+            expect(wrapper.find("button[aria-label='Download model.py']").exists()).toBe(true);
+            expect(wrapper.find("button[aria-label='Delete model.py']").exists()).toBe(true);
+        });
+
+        test("hides the delete button on errored files when the user cannot upload", async () => {
+            const wrapper = mountModelUpload({
+                files: [{
+                    id: "1",
+                    name: "model.py",
+                    size: 1024,
+                    status: FileUploadStatus.ERROR
+                }],
+                canUpload: false,
+                loading: false
+            });
+            await flushPromises();
+
+            // `canUpload && COMPLETED || ERROR` used to expose the destructive
+            // action to viewers / after training locked the model.
+            expect(wrapper.find("button[aria-label='Delete model.py']").exists()).toBe(false);
+        });
+
+        test("shows the delete button on errored files when the user can upload", async () => {
+            const wrapper = mountModelUpload({
+                files: [{
+                    id: "1",
+                    name: "model.py",
+                    size: 1024,
+                    status: FileUploadStatus.ERROR
+                }],
+                canUpload: true,
+                loading: false
+            });
+            await flushPromises();
+
+            expect(wrapper.find("button[aria-label='Delete model.py']").exists()).toBe(true);
+        });
+
         test("mirrors props.files into the visible list on mount", async () => {
             const files: FileInfo[] = [
                 {
@@ -689,6 +744,30 @@ describe("ModelUpload", () => {
             createObjectURLSpy.mockRestore();
             revokeObjectURLSpy.mockRestore();
             clickSpy.mockRestore();
+        });
+
+        test("download-all collapses its label below lg and keeps an aria-label", async () => {
+            // Same collapse treatment as the page-header actions: below lg the
+            // label hides leaving the icon, with an aria-label on the native
+            // button keeping it named for screen readers.
+            const files: FileInfo[] = [
+                {
+                    id: "1",
+                    name: "a.py",
+                    size: 10,
+                    status: FileUploadStatus.COMPLETED
+                }
+            ];
+            const wrapper = mountModelUpload({ files }, { hasPermissions: true });
+            await flushPromises();
+
+            const holder = wrapper.find("[data-test=download-all-files-btn]");
+            expect(holder.exists()).toBe(true);
+            // aria-label is a declared AiButton prop wired to the inner native button.
+            expect(holder.find("button").attributes("aria-label")).toBe("Download all");
+            const label = holder.find("span.hidden.lg\\:inline");
+            expect(label.exists()).toBe(true);
+            expect(label.text()).toBe("Download all");
         });
 
         test("download-all snackbars when a file fetch fails", async () => {

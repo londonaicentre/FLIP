@@ -22,8 +22,9 @@ counterpart of the legacy [`evaluation`](../evaluation/README.md) template, whic
 `COLLECTION`) server flow.
 
 Here the server reuses the same cross-site validation path as the
-[`standard_client_api`](../standard_client_api/README.md) training template: `InitEvaluation` → `CrossSiteModelEval`
-(with `submit_model` disabled, so only the server-provided model is validated). The model is sourced
+[`standard_client_api`](../standard_client_api/README.md) training template:
+`InitEvaluation` → stock `GlobalModelEval` → `BroadcastTask` cleanup.
+Only the server-provided model is validated. The model is sourced
 by the single-model `EvaluationModelLocator` and broadcast to clients as one `FLModel`.
 
 The base configs (`app/config/config_fed_server.json`, `app/config/config_fed_client.json`) and
@@ -34,23 +35,54 @@ regenerate via `recipe.py` after any recipe change and commit the result.
 
 1. `InitEvaluation` reports evaluation start to the Central Hub, runs the client image-cleanup task,
    and validates that `config.json` declares the model(s) to evaluate.
-2. `CrossSiteModelEval` loads the uploaded checkpoint via `EvaluationModelLocator` and broadcasts it to
+2. `GlobalModelEval` loads the uploaded checkpoint via `EvaluationModelLocator` and broadcasts it to
    every site as a single `FLModel` (`validate` task).
 3. Each site runs the user's `evaluator.py` via `InProcessClientAPIExecutor`, using the NVFLARE Client
    API `is_evaluate()` path (`flare.receive()` / `flare.send()`) to receive the model and return
    **aggregate-only** metrics (`DataKind.METRICS`).
-4. `EvaluationJsonGenerator` collects the metrics into `evaluation_results.json`, and
-   `PersistToS3AndCleanup` zips + uploads the run directory to S3.
+4. `EvaluationJsonGenerator` collects the metrics into `evaluation_results.json` and every failed
+   `validate` task into `evaluation_failures.json`, and `PersistToS3AndCleanup` zips + uploads the
+   run directory to S3.
 
 There is **no `validator.py`** and no client model submission — the evaluator only scores the
 server-provided model.
+
+## Outputs
+
+Both files land in `evaluation_results/` inside the results zip.
+
+`evaluation_results.json` is keyed by data site, then by the validated model's name (`GlobalModelEval`
+sends one `validate` task per (model, client), so each model gets its own entry):
+
+```json
+{
+  "Trust_1": {
+    "SRV_arkplus_pretrained": { "auroc": 0.839 },
+    "SRV_arkplus_finetuned": { "auroc": 0.871 }
+  }
+}
+```
+
+`evaluation_failures.json` lists every `validate` task that did not return metrics. It is always
+written, so an empty list `[]` positively means "no task failed" rather than "this FLIP version
+didn't record them":
+
+```json
+[{ "model": "SRV_arkplus_pretrained", "client": "Trust_1", "return_code": "TASK_ABORTED" }]
+```
+
+When **every** `validate` task fails the model ends in `ERROR`, not `RESULTS_UPLOADED`. The results
+are still uploaded either way — the zip is what carries `evaluation_failures.json` and `error_log.txt`.
+A partial failure (some tasks succeeded) uploads the successful metrics and reports `RESULTS_UPLOADED`,
+with the failed tasks recorded in `evaluation_failures.json`.
 
 ## Execution sequence
 
 **Server — `config_fed_server.json` `workflows` (run in order):**
 
 1. `flip.nvflare.controllers.InitEvaluation`
-2. `flip.nvflare.controllers.CrossSiteModelEval` (`submit_model_task_name=""`)
+2. `nvflare.app_common.workflows.global_model_eval.GlobalModelEval`
+3. `flip.nvflare.controllers.BroadcastTask`
 
 **Client — `config_fed_client.json` `executors`:**
 

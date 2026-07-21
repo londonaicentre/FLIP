@@ -86,6 +86,14 @@ jobs:
 
           TAGS="${REGISTRY}/${IMAGE_NAME}:${SHA}"
 
+          # An empty sha would silently publish a mutable literal `sha-` tag — refuse.
+          [[ -n "$SHA" ]] || { echo "::error::empty commit SHA — cannot compute the sha-<short7> tag"; exit 1; }
+
+          # Immutable short-SHA tag (FLIP#751), pushed uniformly on every publish; today
+          # only the hub ECS images are consumed (by `make deploy-centralhub`). Length 7
+          # must match the tag resolution in deploy/providers/AWS/Makefile.
+          TAGS="${TAGS},${REGISTRY}/${IMAGE_NAME}:sha-${SHA:0:7}"
+
           # Branch name sanitization
           SAFE_REF_NAME=$(echo "$REF_NAME" | sed 's/[^a-zA-Z0-9]/-/g')
           TAGS="${TAGS},${REGISTRY}/${IMAGE_NAME}:${SAFE_REF_NAME}"

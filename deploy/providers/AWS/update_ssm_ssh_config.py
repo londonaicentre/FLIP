@@ -41,11 +41,14 @@ class HostConfig:
 
     alias: str
     instance_output: str
+    # Optional hosts are skipped (with a notice) when their Terraform output is
+    # empty — e.g. the trust EC2 on a hub-only deployment (deploy_trust_ec2=false).
+    optional: bool = False
 
 
 HOST_CONFIGS: tuple[HostConfig, ...] = (
     HostConfig(alias="flip", instance_output="Ec2InstanceId"),
-    HostConfig(alias="flip-trust", instance_output="TrustEc2InstanceId"),
+    HostConfig(alias="flip-trust", instance_output="TrustEc2InstanceId", optional=True),
 )
 
 
@@ -61,11 +64,13 @@ def _run(cmd: list[str], timeout: int = 20) -> str:
         ) from exc
 
 
-def _terraform_output(name: str) -> str:
-    """Read a required Terraform output value."""
+def _terraform_output(name: str, required: bool = True) -> str:
+    """Read a Terraform output value; empty/null is an error unless ``required=False``."""
     value = _run(["terraform", "output", "-raw", name])
     if not value or value == "null":
-        raise click.ClickException(f"Terraform output {name} is empty or null.")
+        if required:
+            raise click.ClickException(f"Terraform output {name} is empty or null.")
+        return ""
     return value
 
 
@@ -149,7 +154,13 @@ def main(ssh_config: Path, terraform_dir: Path, dry_run: bool, aws_profile: str 
 
         updated_content = current_content
         for host in HOST_CONFIGS:
-            instance_id = _terraform_output(host.instance_output)
+            instance_id = _terraform_output(host.instance_output, required=not host.optional)
+            if not instance_id:
+                click.echo(
+                    f"Skipping SSH host '{host.alias}': Terraform output {host.instance_output} "
+                    "is empty (hub-only deployment, no cloud trust EC2)."
+                )
+                continue
             new_block = _build_host_block(host.alias, instance_id, region, resolved_profile)
             updated_content = _replace_or_append_host_block(updated_content, host.alias, new_block)
 

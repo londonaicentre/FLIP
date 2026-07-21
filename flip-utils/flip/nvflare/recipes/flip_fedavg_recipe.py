@@ -57,24 +57,30 @@ from nvflare.apis.dxo import DataKind
 from nvflare.app_common.aggregators import InTimeAccumulateWeightedAggregator
 from nvflare.app_common.executors.in_process_client_api_executor import InProcessClientAPIExecutor
 from nvflare.app_common.shareablegenerators.full_model_shareable_generator import FullModelShareableGenerator
-from nvflare.app_opt.pt.file_model_persistor import PTFileModelPersistor
+from nvflare.app_common.workflows.cross_site_model_eval import CrossSiteModelEval
+from nvflare.app_common.workflows.global_model_eval import GlobalModelEval
 from nvflare.job_config.defs import FilterType
 from nvflare.recipe.spec import Recipe
 
-from flip.constants import PTConstants
+from flip.constants import FlipTasks
 from flip.nvflare.components import (
     CleanupImages,
     ClientEventHandler,
+    ClientExceptionReporter,
     FlipAnalyticsBridge,
+    InitialCheckpointPTModelPersistor,
+    KeepOnlyVars,
     PersistToS3AndCleanup,
     PTModelLocator,
+    ReconstructFullModel,
     ServerEventHandler,
+    TrimBroadcastVars,
     ValidationJsonGenerator,
 )
 from flip.nvflare.components import (
     PercentilePrivacy as PercentilePrivacyFilter,
 )
-from flip.nvflare.controllers import CrossSiteModelEval, InitTraining, ScatterAndGather
+from flip.nvflare.controllers import BroadcastTask, InitTraining, ScatterAndGather
 from flip.nvflare.runtime import FLIP_CUSTOM_PROPS_KEY, FLIP_MODEL_ID_KEY
 
 # Default UUID used by SimEnv/PocEnv runs when the caller doesn't pass one. Pinned so dev runs
@@ -84,15 +90,29 @@ _DEV_MODEL_ID = "00000000-0000-0000-0000-000000000001"
 
 @dataclass
 class PercentilePrivacy:
-    """Percentile-based DP noise filter configuration."""
+    """Percentile-based DP noise filter configuration.
 
-    gamma: float = 2.0
-    percentile: int = 95
+    Stock NVFLARE semantics (Shokri & Shmatikov "largest percentile to share"): components of the
+    per-step weight diff with magnitude BELOW the ``percentile``-th percentile are zeroed (only the
+    top ``100 - percentile`` % are shared), and the survivors are truncated to ``±gamma`` (absolute).
+    Defaults match stock NVFLARE (share top 90%, clip at 0.01). Do NOT raise ``percentile`` towards
+    95+ — that discards ~all of the update and stalls FedAvg convergence; with a frozen-backbone
+    head-only update it silently resets the global head every round.
+    """
+
+    gamma: float = 0.01
+    percentile: int = 10
     off: bool = False
 
 
 class FlipFedAvgRecipe(Recipe):
     """FLIP FedAvg recipe wired for the NVFLARE Client API.
+
+    Head-only (frozen-backbone) aggregation is canonically driven in production by the fl-server's
+    deploy-time injection from ``config.json``'s ``AGGREGATE_ONLY_REGEX`` (FLIP#730/#733), so the
+    shipped ``standard_client_api`` template bakes no head-only filters. The ``aggregate_only_regex``
+    constructor arg below wires an equivalent recipe-baked chain only for SimEnv/PocEnv runs, where no
+    deploy step exists to inject one.
 
     Args:
         num_rounds: Number of federated rounds.
@@ -111,8 +131,21 @@ class FlipFedAvgRecipe(Recipe):
         project_id, query: Top-level keys on the client config (consumed by the FLIP-API
             placeholder substitution and read by the trainer at runtime).
         local_rounds: Top-level local_rounds key on the client config.
-        train_task_name, submit_model_task_name, evaluate_task_name: NVFlare task names.
+        train_task_name, submit_model_task_name, evaluate_task_name: NVFlare task names. Client-model
+            submission is disabled by default so post-training evaluation covers only the aggregated
+            global model. Pass ``"submit_model"`` to opt into the full all-to-all matrix.
         params_exchange_format, params_transfer_type: NVFlare param-exchange knobs.
+        aggregate_only_regex: when set, wire the frozen-backbone head-only filters — KeepOnlyVars
+            (client result filter, ordered BEFORE PercentilePrivacy), ReconstructFullModel (client data
+            filter) and TrimBroadcastVars (server data filter) — so only params matching the regex are
+            aggregated per round and, after round 0, broadcast. Empty (default) wires none. Mirrors the
+            fl-server's deploy-time injection from config.json's ``AGGREGATE_ONLY_REGEX``, which is the
+            canonical path for production jobs (the shipped ``standard_client_api`` template bakes no
+            head-only filters): the fl-server folds any recipe-baked chains into its own — a single
+            ``["train", "validate"]`` ``ReconstructFullModelForEval`` chain that also extends the
+            head-only broadcast to cross-site validation, superseding the recipe's train-only
+            ``ReconstructFullModel`` (FLIP#730/#733). This arg stands alone only where that deploy step
+            doesn't run (SimEnv/PocEnv), so the ``validate`` broadcast stays full-model there.
         best_model_metric: Validation metric label for best-model selection (e.g., "VAL_DICE", "VAL_LOSS").
             If None, tracks any validation metric (VAL_* or TEST_*).
         best_model_metric_minimize: If True, lower metric values are better (e.g., for VAL_LOSS).
@@ -135,10 +168,11 @@ class FlipFedAvgRecipe(Recipe):
         query: str = "SELECT * FROM Table;",
         local_rounds: int = 1,
         train_task_name: str = "train",
-        submit_model_task_name: str = "submit_model",
+        submit_model_task_name: str = "",
         evaluate_task_name: str = "validate",
         params_exchange_format: str = "numpy",
         params_transfer_type: str = "FULL",
+        aggregate_only_regex: str = "",
         best_model_metric: str | None = None,
         best_model_metric_minimize: bool = False,
     ):
@@ -159,6 +193,7 @@ class FlipFedAvgRecipe(Recipe):
         self.evaluate_task_name = evaluate_task_name
         self.params_exchange_format = params_exchange_format
         self.params_transfer_type = params_transfer_type
+        self.aggregate_only_regex = aggregate_only_regex
         self.best_model_metric = best_model_metric
         self.best_model_metric_minimize = best_model_metric_minimize
 
@@ -176,12 +211,13 @@ class FlipFedAvgRecipe(Recipe):
             meta_props={FLIP_CUSTOM_PROPS_KEY: {FLIP_MODEL_ID_KEY: self.model_id}},
         )
 
-        # Server: persistence and aggregation primitives.
+        # Server: persistence and aggregation primitives. InitialCheckpointPTModelPersistor seeds the
+        # round-0 global model from a server-side SERVER_CHECKPOINT (frozen-backbone finetuning); with no
+        # SERVER_CHECKPOINT declared it is a drop-in for the stock PTFileModelPersistor. model_id is
+        # resolved lazily from meta.json custom_props at runtime (like the other FLIP components), so it
+        # is not passed as a component arg.
         persistor_id = job.to_server(
-            PTFileModelPersistor(
-                model={"path": "models.get_model"},
-                best_global_model_file_name=PTConstants.BestModelFilename,
-            ),
+            InitialCheckpointPTModelPersistor(model={"path": "models.get_model"}),
             id="persistor",
         )
         shareable_generator_id = job.to_server(FullModelShareableGenerator(), id="shareable_generator")
@@ -195,7 +231,7 @@ class FlipFedAvgRecipe(Recipe):
         job.to_server(ServerEventHandler(), id="flip_server_event_handler")
         job.to_server(PersistToS3AndCleanup(persistor_id=persistor_id), id="persist_and_cleanup")
 
-        # Server: workflows in execution order — init → train → cross-site validate.
+        # Server workflows: init → train → model evaluation → post-validation cleanup.
         job.to_server(InitTraining(min_clients=self.min_clients))
         job.to_server(
             ScatterAndGather(
@@ -213,17 +249,46 @@ class FlipFedAvgRecipe(Recipe):
                 best_model_metric_minimize=self.best_model_metric_minimize,
             )
         )
-        job.to_server(
-            CrossSiteModelEval(
+        if self.submit_model_task_name:
+            evaluation_controller = CrossSiteModelEval(
+                model_locator_id="model_locator",
+                submit_model_task_name=self.submit_model_task_name,
+                validation_timeout=self.validation_timeout,
+            )
+        else:
+            evaluation_controller = GlobalModelEval(
                 model_locator_id="model_locator",
                 validation_timeout=self.validation_timeout,
             )
+        job.to_server(evaluation_controller)
+        evaluation_result_tasks = [self.evaluate_task_name, FlipTasks.POST_VALIDATION.value]
+        if self.submit_model_task_name:
+            evaluation_result_tasks.insert(0, self.submit_model_task_name)
+        job.to_server(
+            ClientExceptionReporter(),
+            filter_type=FilterType.TASK_RESULT,
+            tasks=evaluation_result_tasks,
         )
+        job.to_server(BroadcastTask(task_name=FlipTasks.POST_VALIDATION.value))
+
+        # Server: head-only broadcast trim (frozen-backbone finetuning). After round 0 the server
+        # broadcasts only the vars matching the regex; clients rebuild the full model via
+        # ReconstructFullModel. No-op unless aggregate_only_regex is set.
+        if self.aggregate_only_regex:
+            job.to_server(
+                TrimBroadcastVars(include_vars=self.aggregate_only_regex),
+                tasks=[self.train_task_name],
+                filter_type=FilterType.TASK_DATA,
+                id="trim_broadcast_to_trainable",
+            )
 
         # Clients: cleanup executor for init/post tasks.
         job.to_clients(CleanupImages(), tasks=["init_training", "post_validation"])
 
-        # Clients: Client API trainer for train / submit_model / validate.
+        # Clients: Client API trainer for train / optional submit_model / validate.
+        executor_tasks = [self.train_task_name, self.evaluate_task_name]
+        if self.submit_model_task_name:
+            executor_tasks.insert(1, self.submit_model_task_name)
         job.to_clients(
             InProcessClientAPIExecutor(
                 task_script_path=self.train_script,
@@ -234,8 +299,26 @@ class FlipFedAvgRecipe(Recipe):
                 params_exchange_format=self.params_exchange_format,
                 params_transfer_type=self.params_transfer_type,
             ),
-            tasks=[self.train_task_name, self.submit_model_task_name, self.evaluate_task_name],
+            tasks=executor_tasks,
         )
+
+        # Clients: head-only round-trip (frozen-backbone finetuning). KeepOnlyVars MUST be wired before
+        # PercentilePrivacy so the percentile cutoff sees only the trainable head, not the frozen
+        # backbone's ~0 diffs; ReconstructFullModel rebuilds the full model from the trimmed broadcast.
+        # No-op unless aggregate_only_regex is set.
+        if self.aggregate_only_regex:
+            job.to_clients(
+                KeepOnlyVars(include_vars=self.aggregate_only_regex),
+                filter_type=FilterType.TASK_RESULT,
+                tasks=[self.train_task_name],
+                id="keep_only_trainable_vars",
+            )
+            job.to_clients(
+                ReconstructFullModel(),
+                filter_type=FilterType.TASK_DATA,
+                tasks=[self.train_task_name],
+                id="reconstruct_full_model",
+            )
 
         # Clients: percentile-privacy DP noise on training results.
         job.to_clients(
@@ -287,4 +370,6 @@ class FlipFedAvgRecipe(Recipe):
         config.setdefault("project_id", self.project_id)
         config.setdefault("query", self.query)
         config.setdefault("local_rounds", self.local_rounds)
-        client_cfg.write_text(json.dumps(config, indent=2))
+        # Trailing newline: keeps the committed standard_client_api template stable across
+        # regenerations and satisfies the end-of-file-fixer pre-commit hook.
+        client_cfg.write_text(json.dumps(config, indent=2) + "\n")

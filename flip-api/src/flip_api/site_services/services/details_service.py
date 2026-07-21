@@ -27,7 +27,7 @@ def get_site_details(db: Session) -> ISiteDetails:
         db (Session): Database session.
 
     Returns:
-        SiteDetails: Current site details including banner and deployment mode.
+        ISiteDetails: Current site details including banner and deployment mode.
 
     Raises:
         HTTPException: If site details cannot be fetched due to an error.

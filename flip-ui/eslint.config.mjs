@@ -68,7 +68,12 @@ export default defineConfigWithVueTs(
                 tabWidth: 4,
                 code: 120,
                 ignoreUrls: true,
-                ignorePattern: "(class=\"([\\s\\S]*?)\")|(d=\"([\\s\\S]*?)\")|(=\"([\\s\\S]*?)\")|(@apply\\s([^;]*);)",
+                // ignoreStrings / ignoreTemplateLiterals below only see <script> tokens: vue-eslint-parser
+                // keeps <template> expression tokens out of the stream max-len inspects, so long Tailwind
+                // strings inside multiline :class bindings slip through. ignorePattern IS matched on raw line
+                // text, so mirror that intent here for single-quoted strings and template literals (single
+                // quotes are template-only — `quotes: "double"` enforces double quotes everywhere else).
+                ignorePattern: "(class=\"([\\s\\S]*?)\")|(d=\"([\\s\\S]*?)\")|(=\"([\\s\\S]*?)\")|(@apply\\s([^;]*);)|('[^']*')|(`[^`]*`)",
                 ignoreStrings: true,
                 ignoreTemplateLiterals: true,
             }],

@@ -12,10 +12,12 @@
 -->
 
 <template>
-    <section>
-        <AiCard>
-            <div>
-                <div class="flex items-center gap-3 p-4">
+    <!-- The card fills the height its column is given; the file list is what
+         scrolls, so the heading and the uploader stay put. -->
+    <section class="flex flex-col flex-1 min-h-0">
+        <AiCard class="flex flex-col flex-1 min-h-0">
+            <div class="flex flex-col flex-1 min-h-0">
+                <div class="flex items-center gap-3 p-4 shrink-0">
                     <h2 class="text-lg font-semibold leading-loose font-heading grow">
                         Model Files
                     </h2>
@@ -23,14 +25,16 @@
                         v-if="canDownloadAll"
                         light
                         data-test="download-all-files-btn"
+                        aria-label="Download all"
+                        tooltip="Download all"
                         :loading="downloadingAll"
                         @click="downloadAllAsZip"
                     >
-                        <icon-ph-download-duotone class="w-4 h-4 mr-2" />
-                        Download all
+                        <icon-ph-download-duotone class="w-4 h-4 lg:mr-2" />
+                        <span class="hidden lg:inline">Download all</span>
                     </AiButton>
                 </div>
-                <div class="border-t border-gray-200 dark:border-gray-700">
+                <div class="flex flex-col flex-1 min-h-0 border-t border-gray-200 dark:border-dark-border">
                     <AiAlert
                         v-if="canUpload"
                         variant="info"
@@ -63,11 +67,11 @@
                     <ul
                         v-else-if="internalFiles.concat(uploadingFiles).length"
                         role="list"
-                        class="border-t divide-y divide-gray-200 border-t-gray-200 dark:divide-gray-700 dark:border-t-gray-700"
+                        class="flex-1 min-h-0 overflow-y-auto border-t divide-y divide-gray-200 border-t-gray-200 dark:divide-dark-border dark:border-t-gray-700"
                     >
                         <li v-for="file in internalFiles.concat(uploadingFiles)" :key="file.id" class="flex flex-row items-center gap-3 px-4 py-1.5 transition group">
                             <div
-                                class="relative flex items-center justify-end transition bg-white rounded-full w-5 h-5 dark:bg-gray-900 ring-2 ring-offset-1 dark:ring-offset-gray-900 shrink-0"
+                                class="relative flex items-center justify-end transition bg-white rounded-full w-5 h-5 dark:bg-dark-canvas ring-2 ring-offset-1 dark:ring-offset-dark-canvas shrink-0"
                                 :class="[
                                     file.status === FileUploadStatus.COMPLETED &&
                                         'ring-green-600/70 dark:ring-green-400',
@@ -76,7 +80,7 @@
                                     file.status === FileUploadStatus.ERROR && 'ring-red-600/70 dark:ring-red-400',
                                 ]"
                             >
-                                <div class="relative flex items-center justify-center w-full h-full text-gray-700 bg-gray-100 border border-gray-300 rounded-full shadow dark:bg-gray-800 dark:text-gray-300 dark:border-gray-500 text-[10px]">
+                                <div class="relative flex items-center justify-center w-full h-full text-gray-700 bg-gray-100 border border-gray-300 rounded-full shadow dark:bg-dark-surface dark:text-gray-300 dark:border-dark-border-strong text-[10px]">
                                     <Transition name="fade" mode="out-in">
                                         <AiLoader v-if="file.status === FileUploadStatus.UPLOADING" small data-test="file-upload-status-uploading" />
                                         <AiLoader v-else-if="file.status === FileUploadStatus.SCANNING" small data-test="file-upload-status-scanning" />
@@ -92,18 +96,24 @@
                                 >
                                     {{ file.name }}
                                 </p>
-                                <div class="text-xs font-mono text-gray-500 dark:text-gray-400 shrink-0">
+                                <div class="text-xs font-mono text-gray-500 dark:text-gray-300 shrink-0">
                                     {{ formatBytes(file.size) }}
                                 </div>
                             </div>
                             <div class="flex gap-2 shrink-0">
                                 <Transition name="fade">
-                                    <AiButton v-if="!isViewer && file.status === FileUploadStatus.COMPLETED" small :loading="downloadingFile === file.name" @click="() => downloadFile(file.name)">
+                                    <AiButton
+                                        v-if="!isViewer && file.status === FileUploadStatus.COMPLETED"
+                                        small
+                                        :loading="downloadingFile === file.name"
+                                        :aria-label="`Download ${file.name}`"
+                                        @click="() => downloadFile(file.name)"
+                                    >
                                         <icon-ph-download-duotone />
                                     </AiButton>
                                 </Transition>
                                 <Transition name="fade">
-                                    <AiButton v-if="canUpload && file.status === FileUploadStatus.COMPLETED || file.status === FileUploadStatus.ERROR" small @click="() => confirmDeleteFile(file.name)">
+                                    <AiButton v-if="canUpload && (file.status === FileUploadStatus.COMPLETED || file.status === FileUploadStatus.ERROR)" small :aria-label="`Delete ${file.name}`" @click="() => confirmDeleteFile(file.name)">
                                         <icon-ph-trash-duotone class="text-red-500 dark:text-red-400" />
                                     </AiButton>
                                 </Transition>

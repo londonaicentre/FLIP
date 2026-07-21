@@ -10,6 +10,7 @@
 # limitations under the License.
 #
 
+import os
 import shutil
 from pathlib import Path
 from urllib.parse import urlparse
@@ -17,7 +18,12 @@ from urllib.parse import urlparse
 import requests
 from fastapi import HTTPException
 
-from fl_api.utils.constants import META
+from fl_api.utils.constants import (
+    META,
+    SERVER_CHECKPOINT_ROOT_DEFAULT,
+    SERVER_CHECKPOINT_ROOT_ENV,
+    SERVER_CHECKPOINTS_PREFIX,
+)
 from fl_api.utils.io_utils import read_config
 from fl_api.utils.logger import logger
 from fl_api.utils.prepare_config import (
@@ -30,6 +36,52 @@ from fl_api.utils.prepare_config import (
 )
 from fl_api.utils.schemas import FLAggregators, TrainingRound, UploadAppRequest
 from fl_api.utils.validation import safe_join, validate_bundle_url
+
+# De-bundled evaluation checkpoints are large (hundreds of MB); allow far more time than the
+# code-file default used for the rest of the bundle.
+_SERVER_CHECKPOINT_DOWNLOAD_TIMEOUT_SECONDS = 900
+
+
+def _server_checkpoint_root() -> Path:
+    """Root of the shared volume where server-only checkpoints are staged for the fl-server."""
+    return Path(os.getenv(SERVER_CHECKPOINT_ROOT_ENV, SERVER_CHECKPOINT_ROOT_DEFAULT))
+
+
+def _stage_server_checkpoint(url: str, model_id: str, file_name: str) -> None:
+    """Download a de-bundled evaluation checkpoint to the shared server-checkpoint volume.
+
+    Written to ``<SERVER_CHECKPOINT_ROOT>/<model_id>/<file_name>`` — outside the NVFLARE job dir —
+    so it is never part of the submitted job and never deployed to clients. The fl-server mounts
+    the same volume and loads the checkpoint from disk. Mirrors the Flower backend's /app/src mount.
+
+    Assumes the shared volume is actually mounted at ``SERVER_CHECKPOINT_ROOT`` — there is no
+    mount-presence check, so without one the ``mkdir`` below lands on the container's own disk and
+    the fl-server never sees the checkpoint (its locators log "not found" and skip the model). On
+    AWS this combination cannot occur: ``enable_efs`` gates the whole fl-api task definition, env
+    var and volume together (see ``deploy/providers/AWS/variables.tf``).
+    """
+    dest_dir = safe_join(_server_checkpoint_root(), model_id)
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    dest_path = safe_join(dest_dir, file_name)
+
+    # Stream the download to disk in chunks. Evaluation checkpoints are large
+    # (the Ark+ weights are ~759 MiB), so buffering the whole body in memory
+    # (resp.content) OOM-killed the fl-api container on Fargate (FLIP#695); an
+    # 8 MiB chunk keeps peak memory flat regardless of checkpoint size.
+    with requests.get(
+        url, timeout=_SERVER_CHECKPOINT_DOWNLOAD_TIMEOUT_SECONDS, allow_redirects=False, stream=True
+    ) as resp:
+        # Mirror the SSRF/redirect guard used for the rest of the bundle: a 3xx would dodge
+        # validate_bundle_url (which only saw the original URL), and raise_for_status() stops an
+        # S3 error body from being written out as the checkpoint.
+        if resp.is_redirect or resp.is_permanent_redirect:
+            raise HTTPException(status_code=400, detail=f"Bundle URL returned a redirect: {url!r}.")
+        resp.raise_for_status()
+        with open(dest_path, "wb") as fh:
+            for chunk in resp.iter_content(chunk_size=8 * 1024 * 1024):
+                if chunk:
+                    fh.write(chunk)
+    logger.info(f"Staged server-side checkpoint at {dest_path}")
 
 
 def _infer_app_folder_name(model_id: str, s3_file_dir: str) -> str:
@@ -153,6 +205,12 @@ def upload_application(model_id: str, body: UploadAppRequest, upload_dir: str) -
         logger.warning(f"Job directory {job_dir} already exists, removing it...")
         shutil.rmtree(job_dir, ignore_errors=True)
 
+    # Clear any previously-staged server-side checkpoints for this model on the shared volume.
+    checkpoint_dir = safe_join(_server_checkpoint_root(), model_id)
+    if checkpoint_dir.exists():
+        logger.warning(f"Server-checkpoint directory {checkpoint_dir} already exists, removing it...")
+        shutil.rmtree(checkpoint_dir, ignore_errors=True)
+
     # Create default app folder (some bundles may only populate 'app')
     (job_dir / "app").mkdir(parents=True, exist_ok=True)
 
@@ -169,6 +227,12 @@ def upload_application(model_id: str, body: UploadAppRequest, upload_dir: str) -
 
         path = urlparse(url).path
         s3_file_dir, file_name = str(Path(path).parent), Path(path).name
+
+        # Server-only evaluation checkpoints are staged on the shared volume for the fl-server
+        # to load from disk; they are NOT part of the NVFLARE job (never deployed to clients).
+        if f"/{SERVER_CHECKPOINTS_PREFIX}" in s3_file_dir:
+            _stage_server_checkpoint(url, model_id, file_name)
+            continue
 
         try:
             resp = requests.get(url, timeout=60, allow_redirects=False)
@@ -246,6 +310,7 @@ def upload_application(model_id: str, body: UploadAppRequest, upload_dir: str) -
                 model_id,
                 body.project_id,
                 body.cohort_query,
+                aggregate_only_regex=config.AGGREGATE_ONLY_REGEX,
             )
 
             # Check if config_fed_server.json exists and verify its config.
@@ -257,6 +322,7 @@ def upload_application(model_id: str, body: UploadAppRequest, upload_dir: str) -
                 ignore_result_error,
                 aggregator,
                 aggregation_weights,
+                aggregate_only_regex=config.AGGREGATE_ONLY_REGEX,
             )
 
             # Configure the environment.json file if it exists.

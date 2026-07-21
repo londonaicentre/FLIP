@@ -59,7 +59,3 @@ cypress/build/*
 builds/
 
 coverage
-
-# Per-backend job-types/required-files manifests are pulled from S3 at runtime
-# (S3 is the single source of truth) and must never be committed.
-src/flip_api/assets/job_types_and_required_files.*.json

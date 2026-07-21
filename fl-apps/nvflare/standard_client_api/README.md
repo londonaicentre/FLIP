@@ -19,7 +19,7 @@ This is the NVFLARE **Client API** job type (`JOB_TYPE=standard_client_api`). It
 **Federated Averaging** round-trip as the [`standard`](../standard/README.md) template but drives
 client training through the NVFLARE Client API
 (`InProcessClientAPIExecutor`) rather than the legacy `RUN_TRAINER`/`RUN_VALIDATOR` executor pair.
-The server side is identical: `InitTraining` → `ScatterAndGather` → `CrossSiteModelEval`.
+The server side is: `InitTraining` → `ScatterAndGather` → stock `GlobalModelEval` → `BroadcastTask` cleanup.
 
 The base configs (`app/config/config_fed_server.json`, `app/config/config_fed_client.json`) and
 `meta.json` are **recipe-generated** from `flip.nvflare.recipes.FlipFedAvgRecipe`. Do not
@@ -36,7 +36,7 @@ For each global round (`num_rounds` in the recipe / `ScatterAndGather` args):
 4. The server aggregates them with `InTimeAccumulateWeightedAggregator` (weighted by samples) and
    persists the global model with `PTFileModelPersistor`.
 
-There is **no `validator.py`** — validation is handled server-side via `CrossSiteModelEval` and
+There is **no `validator.py`** — validation is orchestrated server-side via `GlobalModelEval` and
 `ValidationJsonGenerator`. The `PercentilePrivacy` filter applies on training task results only.
 
 ## Execution sequence
@@ -45,14 +45,19 @@ There is **no `validator.py`** — validation is handled server-side via `CrossS
 
 1. `init_training` — `flip.nvflare.controllers.InitTraining`
 2. `scatter_and_gather` — `flip.nvflare.controllers.ScatterAndGather`
-3. `cross_site_validate` — `flip.nvflare.controllers.CrossSiteModelEval`
+3. `controller2` — stock `nvflare.app_common.workflows.global_model_eval.GlobalModelEval`
+4. `controller3` — `flip.nvflare.controllers.BroadcastTask`
 
 **Client — `config_fed_client.json` `executors` / `filters`:**
 
 - `init_training`, `post_validation` → `flip.nvflare.components.CleanupImages`
-- `train`, `submit_model`, `validate` → `nvflare.app_common.executors.InProcessClientAPIExecutor`
+- `train`, `validate` → `nvflare.app_common.executors.InProcessClientAPIExecutor`
 - `train` result → `flip.nvflare.components.PercentilePrivacy` (DP noise filter)
 - Event handlers: `ClientEventHandler`, `FlipAnalyticsBridge`
+
+Post-training evaluation sends only the aggregated global model to each trust. The default template does not
+request or redistribute client-local models; callers constructing `FlipFedAvgRecipe` directly can explicitly
+set `submit_model_task_name="submit_model"` to restore full cross-site evaluation.
 
 ## What does the user upload?
 

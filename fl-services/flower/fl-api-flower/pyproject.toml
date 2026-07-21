@@ -40,6 +40,10 @@ dev = [
 [tool.uv]
 # 72h supply-chain cooldown; see CONTRIBUTING.md ("Dependency cooldown").
 exclude-newer = "3 days"
+# flwr pins cryptography<47.0.0 even in its latest release (GHSA-537c-gmf6-5ccf
+# needs >=48.0.1); override past that ceiling since flwr only uses cryptography
+# for TLS cert loading in secure aggregation, a stable surface across majors.
+override-dependencies = ["cryptography>=48.0.1"]
 
 [tool.coverage.report]
 exclude_lines = ["if __name__ == .__main__.:"]

@@ -37,7 +37,7 @@
                                     </span>
                                 </h3>
                             </div>
-                            <p class="max-w-2xl my-6 text-gray-400">
+                            <p class="my-6 text-gray-400 dark:text-gray-300">
                                 Enabling the <strong class="font-bold">site banner</strong> will show a message on every
                                 page to all users across the platform.
                                 You can edit and preview the banner below.
@@ -48,17 +48,16 @@
                         </div>
                     </div>
                     <div class="relative p-4">
-                        <div class="overflow-hidden border border-gray-300 rounded-lg shadow-lg dark:border-gray-700 bg-gray-50 dark:bg-gray-900">
+                        <div class="overflow-hidden border border-gray-300 rounded-lg shadow-lg dark:border-dark-border bg-gray-50 dark:bg-dark-canvas">
                             <div class="w-full">
                                 <div class="p-2 transition bg-primary-500 sm:p-3">
                                     <div class="flex flex-wrap items-center justify-between">
                                         <div class="flex items-center flex-1">
-                                            <span class="flex p-2 rounded-lg bg-primary-700">
-                                                <icon-ph-megaphone-duotone
-                                                    class="w-6 h-6 text-white"
-                                                    aria-hidden="true"
-                                                />
-                                            </span>
+                                            <!-- Mirrored so the megaphone points right, into the message. -->
+                                            <icon-ph-megaphone
+                                                class="w-6 h-6 text-white -scale-x-100 shrink-0"
+                                                aria-hidden="true"
+                                            />
                                             <p class="ml-3 font-medium text-white" v-text="values.message" />
                                         </div>
                                         <div

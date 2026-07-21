@@ -166,6 +166,21 @@ class PersistToS3AndCleanup(FLComponent):
                 self.log_info(fl_ctx, f"Removing app_server directory: {app_server_path}")
                 shutil.rmtree(app_server_path)
 
+            # Drop the cross-site-eval model artefacts before zipping. CrossSiteModelEval persists
+            # every validated model to cross_site_val/model_shareables/ purely to broadcast it to the
+            # clients for scoring — e.g. the server-loaded evaluation checkpoint (~759 MiB for Ark+,
+            # ~1.5 GiB for the multimodel variant), which the user already uploaded. It is an input to
+            # the eval, not an output, so re-shipping it in the results zip is pure waste. The metrics
+            # live in evaluation_results/evaluation_results.json (EvaluationJsonGenerator) and the raw
+            # per-model/per-site shareables in cross_site_val/result_shareables/ — both retained. For
+            # training jobs this directory does not exist, so the guard makes this a no-op there.
+            cross_val_models_dir = os.path.join(
+                run_dir, AppConstants.CROSS_VAL_DIR, AppConstants.CROSS_VAL_MODEL_DIR_NAME
+            )
+            if os.path.isdir(cross_val_models_dir):
+                self.log_info(fl_ctx, f"Removing cross-site-eval model artefacts before upload: {cross_val_models_dir}")
+                shutil.rmtree(cross_val_models_dir)
+
             self.flip.upload_results_to_s3(run_dir, self._resolve_model_id(fl_ctx))
 
         except Exception as e:

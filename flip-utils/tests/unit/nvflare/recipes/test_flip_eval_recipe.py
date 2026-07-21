@@ -94,12 +94,15 @@ class TestFlipEvalRecipe:
             server_blob = json.dumps(server_cfg)
             # The bespoke ModelEval/EvaluationPTModelLocator are NOT used — the recipe reuses the
             # shared cross-site validate path with the single-model locator + evaluation JSON generator.
-            assert "CrossSiteModelEval" in server_blob
+            assert "GlobalModelEval" in server_blob
+            assert "nvflare.app_common.workflows.global_model_eval.GlobalModelEval" in server_blob
+            assert "ClientExceptionReporter" in server_blob
+            assert "BroadcastTask" in server_blob
             assert "EvaluationModelLocator" in server_blob
             assert "EvaluationJsonGenerator" in server_blob
             assert "InitEvaluation" in server_blob
             # The bespoke ModelEval controller (fed_evaluation.ModelEval) and its multi-model
-            # COLLECTION locator are not wired — note CrossSiteModelEval merely *contains* the
+            # COLLECTION locator are not wired — note GlobalModelEval merely *contains* the
             # substring "ModelEval", so match the bespoke module path precisely.
             assert "fed_evaluation.ModelEval" not in server_blob
             assert "EvaluationPTModelLocator" not in server_blob

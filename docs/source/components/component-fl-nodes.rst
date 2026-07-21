@@ -43,7 +43,7 @@ A federated learning job is an ensemble of files (among which we can find `pytho
 we call an app. Some of these files are required to run the app (for instance, the `pyproject.toml` file in a Flower app),
 and some are optional. 
 
-The job type is passed as key `job_type` in the `config.json` (for NVFLARE) or `pyproject.toml` (for Flower).
+The job type is passed as key `job_type` in the `config.json` file (for both NVFLARE and Flower apps).
 
 Once uploaded, the UI will indicate which files are required for the specific job. 
 
@@ -96,8 +96,40 @@ These calls - among others - communicate with the Imaging API and retrieve the d
 For communication with the Central Hub:
 - `flip.update_status(model_id, new_model_status)`: these calls will update the Central Hub about status on the specific model that is running (example: when it started training, or if there's an error).
 - `flip.send_metrics(client_name, model_id, label, value, round)`: sends a metric to the central hub so that it can plot the training results
+- `flip.send_event(model_id, event_type, global_round, ...)`: sends a typed round-progress **fact** to the Central Hub — one of ``ROUND_STARTED``, ``CLIENT_RESULT_RECEIVED`` (with the serialized update size in ``details.size_bytes``) or ``ROUND_AGGREGATED`` (with ``returned``/``expected`` counts). The hub composes the display text shown in the model page's Live activity feed at serve time, so wording changes ship with a flip-api redeploy and never require rebuilding FL images. Rounds are 1-based on both backends.
+
+The fl-server emits these events automatically — NVFLARE via the FLIP ``ScatterAndGather``/``ServerEventHandler`` components (wired by path in each template's server config, so no app-template changes were required), Flower via the ``flip.flower.strategy.FlipFedAvg`` base strategy the app templates subclass. User training code never calls ``send_event`` directly. Pre-existing **Flower** apps (whose uploaded strategy subclasses stock ``FedAvg``) keep working and simply emit no round telemetry; pre-existing **NVFLARE** apps reference the FLIP components by path from the baked ``flip`` package, so they start emitting as soon as the fl-server image carries this version — with no app change.
+
+Note the reported upload sizes measure slightly different things per backend — NVFLARE sums the in-memory tensor sizes of the client's (possibly partial) weight update, Flower sums the serialized array buffers — each internally consistent within a run.
 
 The server will also use the package to update the status, as well as to upload the final results, which will be first saved in the server, to the final S3 buckets users can download from.
+
+
+Privacy filters on shared model updates
+---------------------------------------
+
+Before a client's training result leaves a site, the NVFLARE training job types (`standard`, `fed_opt`,
+`diffusion_model`, `standard_client_api`) pass it through a percentile-based privacy filter
+(``PercentilePrivacy``, following Shokri & Shmatikov, "Privacy-preserving deep learning", CCS '15):
+
+- weight-diff components with magnitude **below** the ``percentile``-th percentile are zeroed, so only the
+  largest ``100 - percentile`` % of each update's components are shared;
+- the surviving components are truncated to ``±gamma``.
+
+FLIP ships the stock NVFLARE defaults — ``percentile=10``, ``gamma=0.01`` (share the top 90 %, clip at 0.01).
+Both values can be tuned per app in the job's ``config_fed_client.json`` (or via
+``FlipFedAvgRecipe(percentile_privacy=...)`` for recipe-generated jobs), and the filter can be disabled for a
+run with ``off: true``. Two caveats for anyone changing them:
+
+- **Raising** ``percentile`` **sharply degrades training.** At e.g. 95 only the top 5 % of every update
+  survives, which stalls FedAvg convergence; on a frozen-backbone (head-only) finetune it silently resets the
+  global head every round. For that reason the head-only ``KeepOnlyVars`` filter is always ordered before
+  ``PercentilePrivacy``, so the percentile is computed over the trainable parameters only, never the frozen
+  backbone's all-zero diffs.
+- **This is a heuristic output filter, not formal differential privacy.** Sparsifying and clipping each shared
+  update bounds what a single round reveals, but adds no calibrated noise and carries no
+  ``(epsilon, delta)`` guarantee. It complements — rather than replaces — FLIP's primary output controls
+  (review of the uploaded app code and aggregate-only results).
 
 
 Disclaimer: some things are still under construction!
@@ -106,9 +138,11 @@ Disclaimer: some things are still under construction!
 There are currently some elements that are still under construction, and might not adjust exactly to 
 the description above:
 
-- for the Flower framework, users have to upload the `server_app.py` in addition to the `client_app.py` and additional auxiliary code, but in the future, this will not be the case. 
-- the static files (non-modifiable files) from NVFLARE are being moved from S3 buckets to the flip package. Currently, anything that isn't the `config_fed_server.json` and `config_fed_client.json` files is hosted in S3 buckets,
-  whereas the rest of the files are in the flip package. You can check what a fully bundled app looks like by consulting
+- for the Flower framework, users have to upload the `server_app.py` in addition to the `client_app.py` and additional auxiliary code, but in the future, this will not be the case.
+- for the class-based NVFLARE job types (`standard`, `evaluation`, `fed_opt`, `diffusion_model`) the user upload is intentionally minimal — `trainer.py` / `validator.py` / `models.py` / `config.json` — and the rest of the app is filled in from
+  the static (non-modifiable) templates baked into the flip-api image at `FL_APP_BASE_DIR` (`fl-apps/`, see FLIP#724).
+  These templates used to be published to an S3 bucket; that path has been removed. You can check what a fully bundled app looks like by consulting
   the per-job-type implementations under `fl-apps/ <https://github.com/londonaicentre/FLIP/tree/develop/fl-apps/nvflare>`_.
-- we will be soon moving to a fully Pythonic version of NVFLARE apps, more up-to-date and easy to use.
+- the modern NVFLARE Client API job types (`standard_client_api`, `evaluation_client_api`) instead let the user upload a plain training/evaluation script that calls
+  ``nvflare.client`` directly. Over time, more job types will migrate to this recipe-driven model.
 

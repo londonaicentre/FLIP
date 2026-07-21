@@ -15,10 +15,14 @@ import os
 import tempfile
 from unittest.mock import MagicMock, Mock
 
+import numpy as np
 from nvflare.apis.dxo import DXO, DataKind
 from nvflare.apis.event_type import EventType
 from nvflare.app_common.app_constant import AppConstants
 from nvflare.app_common.app_event_type import AppEventType
+from nvflare.app_common.widgets.validation_json_generator import (
+    ValidationJsonGenerator as NVFlareValidationJsonGenerator,
+)
 
 from flip.nvflare.components.validation_json_generator import ValidationJsonGenerator
 
@@ -249,3 +253,60 @@ class TestValidationJsonGenerator:
         for model in models:
             assert model in self.generator._val_results[data_client]
             assert model in self.generator._val_results[data_client]
+
+    # --- de-fork contract: thin subclass of stock, dispatched manually ---
+
+    def test_subclasses_stock_validation_json_generator(self):
+        """De-fork guard: subclass stock so the COLLECTION/T2 branch + numpy encoder track upstream."""
+        assert issubclass(ValidationJsonGenerator, NVFlareValidationJsonGenerator)
+        assert isinstance(ValidationJsonGenerator(), NVFlareValidationJsonGenerator)
+
+    def test_handle_event_is_a_noop(self):
+        """FLIP dispatches manually via handle_evaluation_events (ServerEventHandler). The
+        auto-dispatched handle_event must NOT process events, or every result is counted twice."""
+        dxo = DXO(data_kind=DataKind.METRICS, data={"accuracy": 0.9})
+        self.fl_ctx.get_prop.side_effect = lambda key, default=None: {
+            AppConstants.MODEL_OWNER: "m",
+            AppConstants.DATA_CLIENT: "c",
+            AppConstants.VALIDATION_RESULT: dxo.to_shareable(),
+        }.get(key, default)
+
+        self.generator.handle_event(AppEventType.VALIDATION_RESULT_RECEIVED, self.fl_ctx)
+
+        assert self.generator._val_results == {}
+
+    def test_handle_evaluation_events_collection_dxo_unpacks_leaves(self):
+        """Gained from stock: a COLLECTION (T2) DXO unpacks each leaf metric (fork rejected it)."""
+        leaf = DXO(data_kind=DataKind.METRICS, data={"accuracy": 0.8})
+        collection = DXO(data_kind=DataKind.COLLECTION, data={"sub_client": leaf})
+        self.fl_ctx.get_prop.side_effect = lambda key, default=None: {
+            AppConstants.MODEL_OWNER: "model1",
+            AppConstants.DATA_CLIENT: "site1",
+            AppConstants.VALIDATION_RESULT: collection.to_shareable(),
+        }.get(key, default)
+
+        self.generator.handle_evaluation_events(AppEventType.VALIDATION_RESULT_RECEIVED, self.fl_ctx)
+
+        assert self.generator._val_results != {}, "COLLECTION dxo should be unpacked, not rejected"
+        recorded = [metric for client in self.generator._val_results.values() for metric in client.values()]
+        assert {"accuracy": 0.8} in recorded
+
+    def test_handle_end_run_encodes_numpy_floats(self):
+        """Gained from stock: np.float32 metrics serialise via the to_serializable encoder."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            run_dir = os.path.join(tmpdir, "run_1")
+            os.makedirs(run_dir)
+            mock_engine = Mock()
+            mock_engine.get_workspace.return_value.get_run_dir.return_value = run_dir
+            self.fl_ctx.get_engine.return_value = mock_engine
+            self.fl_ctx.get_job_id.return_value = "job_123"
+            # 0.5 is exactly representable in float32, so the round-trip is exact — the point is
+            # that np.float32 serialises at all (the fork's plain json.dump raised TypeError).
+            self.generator._val_results = {"site1": {"model1": {"accuracy": np.float32(0.5)}}}
+
+            self.generator.handle_evaluation_events(EventType.END_RUN, self.fl_ctx)
+
+            json_file = os.path.join(run_dir, self.generator._results_dir, self.generator._json_file_name)
+            with open(json_file) as f:
+                saved = json.load(f)
+            assert saved["site1"]["model1"]["accuracy"] == 0.5

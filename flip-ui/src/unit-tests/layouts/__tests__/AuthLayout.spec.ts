@@ -55,7 +55,6 @@ function mountLayout(route: { name: string; path: string }): VueWrapper {
             plugins: [createTestingPinia({ createSpy: vi.fn })],
             stubs: {
                 AiErrorAlert: true,
-                LoginBranding: true,
                 "router-view": true
             }
         }

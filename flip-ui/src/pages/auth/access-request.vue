@@ -41,6 +41,7 @@
                 type="email"
                 label="Email address"
                 data-test="email-input"
+                autocomplete="email"
                 required
                 :error="errors.message"
                 :input-props="{tabindex: 1}"

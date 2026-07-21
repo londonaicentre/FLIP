@@ -17,14 +17,17 @@ import { describe, expect, it, vi } from "vitest";
 import { nextTick } from "vue";
 
 import AiModelMetricsChart from "@/components/AiChart/AiModelMetricsChart.vue";
+import { CHART_SERIES_COLORS, chartToolbox } from "@/components/AiChart/chartTheme";
 
 const setOption = vi.fn();
 const resize = vi.fn();
+const on = vi.fn();
 
 vi.mock("echarts/core", () => ({
     init: vi.fn(() => ({
         setOption,
-        resize
+        resize,
+        on
     })),
     use: vi.fn()
 }));
@@ -93,6 +96,7 @@ describe("AiModelMetricsChart", () => {
     beforeEach(() => {
         setOption.mockReset();
         resize.mockReset();
+        on.mockReset();
         vi.useFakeTimers();
     });
 
@@ -107,6 +111,41 @@ describe("AiModelMetricsChart", () => {
 
         expect(wrapper.exists()).toBe(true);
         expect(setOption).toHaveBeenCalled();
+    });
+
+    it("floats the legend over the plot and lifts the toolbox above it, reserving no side column", async () => {
+        mountChart();
+        await nextTick();
+        await flushPromises();
+
+        const opts = setOption.mock.calls[0][0];
+        // The grid takes the full card width — no 160px legend column on the right.
+        expect(opts.grid.right).toBeLessThanOrEqual(24);
+        // The toolbox sits above the plot, not on the lines. Its icons are echarts'
+        // default 15px tall, and its box carries a default 5px padding that silently
+        // pushes them down into the plot — so the grid must clear icons *and* padding.
+        expect(opts.toolbox.right).toBe(8);
+        expect(opts.toolbox.top).toBe(0);
+        expect(opts.toolbox.padding).toBe(0);
+        expect(opts.toolbox.top + opts.toolbox.padding + 15).toBeLessThanOrEqual(opts.grid.top);
+        // The legend still floats vertically centred on the right edge, with a
+        // translucent backing so it stays legible over the series lines.
+        expect(opts.legend.right).toBe(12);
+        expect(opts.legend.top).toBe("middle");
+        expect(opts.legend.backgroundColor).toBeTruthy();
+    });
+
+    it("ships no persistent zoom UI, only the on-demand toolbox box-zoom", async () => {
+        mountChart();
+        await nextTick();
+        await flushPromises();
+
+        const opts = setOption.mock.calls[0][0];
+        // No dataZoom components: no slider bar under the plot, no scroll/trackpad
+        // hijack. Zoom lives behind the toolbox magnifier instead.
+        expect(opts.dataZoom).toBeUndefined();
+        expect(opts.toolbox.feature.dataZoom.show).toBe(true);
+        expect(opts.toolbox.feature.dataZoom.filterMode).toBe("none");
     });
 
     it("emits a line series per metric and sorts the legend alphabetically", async () => {
@@ -159,6 +198,109 @@ describe("AiModelMetricsChart", () => {
 
         const opts = setOption.mock.calls[0][0];
         expect(opts.series[0].data).toEqual([[1, 0.1], [2, 0.2], [3, 0.3]]);
+    });
+
+    it("themes chrome and series from the shared chart theme", async () => {
+        mountChart();
+        await nextTick();
+        await flushPromises();
+
+        const opts = setOption.mock.calls[0][0];
+        expect(opts.color).toEqual([...CHART_SERIES_COLORS.light]);
+        expect(opts.backgroundColor).toBe("transparent");
+        expect(opts.grid.backgroundColor).toBe("transparent");
+        expect(opts.series[0].itemStyle.color).toBe(CHART_SERIES_COLORS.light[0]);
+        // The shared toolbox theme applies as-is; this chart adds its own
+        // on-demand box-zoom feature on top (covered by the zoom test above).
+        expect(opts.toolbox).toMatchObject(chartToolbox(false));
+
+        // The off-token fills/inks flagged in the dark-mode review must not resurface.
+        const flattened = JSON.stringify(opts);
+        for (const legacyHex of ["#111827", "#282A36", "#4A5462"]) {
+            expect(flattened).not.toContain(legacyHex);
+        }
+    });
+
+    it("gives a ninth series a dashed line rather than silently repeating a colour", async () => {
+        mount(AiModelMetricsChart, {
+            props: {
+                data: {
+                    yLabel: "y",
+                    xLabel: "x",
+                    metrics: Array.from({ length: 9 }, (_, i) => ({
+                        seriesLabel: `Trust ${i}`,
+                        data: [{
+                            xValue: 1,
+                            yValue: i
+                        }]
+                    }))
+                }
+            },
+            global: {
+                plugins: [createTestingPinia({
+                    createSpy: vi.fn,
+                    stubActions: false
+                })]
+            }
+        });
+        await nextTick();
+        await flushPromises();
+
+        const opts = setOption.mock.calls[0][0];
+        expect(opts.series[0].lineStyle.type).toBe("solid");
+        expect(opts.series[8].itemStyle.color).toBe(CHART_SERIES_COLORS.light[0]);
+        expect(opts.series[8].lineStyle.type).toBe("dashed");
+    });
+
+    it("guards the animation maths against an empty series", async () => {
+        mount(AiModelMetricsChart, {
+            props: {
+                data: {
+                    yLabel: "y",
+                    xLabel: "x",
+                    metrics: [{
+                        seriesLabel: "empty",
+                        data: []
+                    }]
+                }
+            },
+            global: {
+                plugins: [createTestingPinia({
+                    createSpy: vi.fn,
+                    stubActions: false
+                })]
+            }
+        });
+        await nextTick();
+        await flushPromises();
+
+        // 3000 / 0 = Infinity would reach echarts as animationDuration.
+        const opts = setOption.mock.calls[0][0];
+        expect(Number.isFinite(opts.series[0].animationDuration)).toBe(true);
+    });
+
+    it("keeps the user's bar-plot toggle across data refreshes", async () => {
+        const wrapper = mountChart();
+        await nextTick();
+        await flushPromises();
+
+        // The user flips the toolbox magicType to "bar" — echarts announces it.
+        const magicTypeHandler = on.mock.calls.find(([event]) => event === "magictypechanged")?.[1];
+        expect(magicTypeHandler).toBeDefined();
+        magicTypeHandler({ currentType: "bar" });
+
+        // The 5s training poll delivers fresh data → the full options re-push
+        // must respect the user's choice instead of stomping it back to line.
+        await wrapper.setProps({
+            data: {
+                ...DATA,
+                metrics: [...DATA.metrics]
+            }
+        });
+        await flushPromises();
+
+        const opts = setOption.mock.calls.at(-1)![0];
+        expect(opts.series.every((s: { type: string }) => s.type === "bar")).toBe(true);
     });
 
     it("re-pushes the chart option on the 500ms post-mount tick", async () => {

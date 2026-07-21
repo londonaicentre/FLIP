@@ -17,14 +17,9 @@
 import { computed, ComputedRef } from "vue";
 
 import { IAIHeaderProps } from "@/components/AiHeader/AiHeader.vue";
-import { IMainNavigationProps } from "@/components/AiMainNavigation/AiMainNavigation.vue";
 import { useAuthStore } from "@/store/auth";
-import AdminIcon from "~icons/heroicons-outline/finger-print";
-import projectsIcon from "~icons/ic/twotone-library-books";
-import ConnectionIcon from "~icons/ph/plug-duotone";
 
-
-export default function useNavigation(props: IMainNavigationProps | IAIHeaderProps): ComputedRef {
+export default function useNavigation(props: IAIHeaderProps): ComputedRef {
     const authStore = useAuthStore();
 
     return computed(() => [
@@ -32,21 +27,24 @@ export default function useNavigation(props: IMainNavigationProps | IAIHeaderPro
             name: "Projects",
             href: "/projects",
             current: props.currentPage.startsWith("/project"),
-            icon: projectsIcon,
+            canAccess: true
+        },
+        {
+            name: "Models",
+            href: "/models",
+            current: props.currentPage === "/models",
             canAccess: true
         },
         {
             name: "Connection Status",
             href: "/connectionstatus",
             current: props.currentPage === "/connectionstatus",
-            icon: ConnectionIcon,
             canAccess: true
         },
         {
             name: "Admin",
             href: "/admin",
             current: props.currentPage.startsWith("/admin"),
-            icon: AdminIcon,
             canAccess: authStore.hasPermissions(["CanAccessAdminPanel"])
         }
     ].filter(item => item.canAccess));

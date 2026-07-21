@@ -21,5 +21,8 @@ Request details:
   Email: {{email}}
   Purpose: {{purpose}}
 
+To action this request, sign in to FLIP and open the Admin > Access Requests
+tab, where you can enrol the requester as a user or dismiss the request.
+
 The FLIP Team
 Federated Learning and Interoperability Platform

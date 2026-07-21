@@ -45,7 +45,7 @@ If you are starting from scratch, copy the in-tree ``fl-apps/flower/standard/`` 
 
 .. note::
 
-   The ``flip-utils`` package (published on PyPI, imported as ``flip``) is pre-installed in every FLIP FL node image. You only need to declare it as a dependency in your ``pyproject.toml`` for local development — you do not have to vendor or install it at run time.
+   The ``flip-utils`` package (published on PyPI, imported as ``flip``) ships inside every FLIP FL node image and is installed per run from that in-image source (see the dependency-resolution note under *Wiring it up via pyproject.toml* below). You only need to declare it as a dependency in your ``pyproject.toml`` for local development — you do not have to vendor it.
 
 *******************************************
 ServerApp: reporting model lifecycle status
@@ -108,14 +108,15 @@ Wrap your training entry point with four ``update_status`` calls. These drive th
    arrays = ArrayRecord(model.state_dict())
    strategy = FedAvg(fraction_train=1.0, fraction_evaluate=0.0)
 
+   flip.update_status(model_id, ModelStatus.RUNNING)            # the rounds start here
+
    strategy.start(grid=grid, initial_arrays=arrays, num_rounds=num_rounds)
 
-   flip.update_status(model_id, ModelStatus.TRAINING_STARTED)   # after strategy.start returns
    flip.update_status(model_id, ModelStatus.RESULTS_UPLOADED)   # after post-training finalisation
 
 .. warning::
 
-   Forgetting the final ``ModelStatus.RESULTS_UPLOADED`` transition will leave the model indefinitely in the "training" state in the FLIP UI even though execution has ended.
+   Forgetting the final ``ModelStatus.RESULTS_UPLOADED`` transition will leave the model indefinitely in the "running" state in the FLIP UI even though execution has ended.
 
 Full minimal example
 =====================
@@ -149,9 +150,10 @@ Reproduced from ``fl-apps/flower/standard/app/server_app.py``:
        arrays = ArrayRecord(model.state_dict())
        strategy = FedAvg(fraction_train=1.0, fraction_evaluate=0.0)
 
+       flip.update_status(flip_model_id, ModelStatus.RUNNING)
+
        strategy.start(grid=grid, initial_arrays=arrays, num_rounds=num_rounds)
 
-       flip.update_status(flip_model_id, ModelStatus.TRAINING_STARTED)
        flip.update_status(flip_model_id, ModelStatus.RESULTS_UPLOADED)
 
 ***********************
@@ -295,7 +297,7 @@ Per-round, per-client metrics are pushed to the central hub with ``flip.send_met
 
 .. warning::
 
-   ``SUPERNODE_NAME`` must match the trust name registered in the central-hub database exactly, otherwise metrics will be recorded against ``unknown_client`` and will not be attributable to the site in the FLIP UI. The FLIP-provisioned SuperNode images set ``SUPERNODE_NAME`` for you; if you are running locally you must export it yourself.
+   ``SUPERNODE_NAME`` is the trust's **FL kit slot** (e.g. ``Trust_1``, ``Trust_2``) — the same slot name flip-api assigns to that trust in the FLKitSlot table — and **not** the trust's display name. The hub resolves the slot back to the owning trust when saving metrics (see ``resolve_trust_from_fl_client_name`` in ``flip_api.model_services``); a slot that matches no assignment is recorded against ``unknown_client`` and will not be attributable to the site in the FLIP UI. FLIP-provisioned SuperNode compose files set ``SUPERNODE_NAME=${FL_KIT_SLOT}`` for you; if you are running a SuperNode locally you must export the slot yourself.
 
 .. note::
 
@@ -319,7 +321,7 @@ Abridged from ``fl-tutorials/flower/3d_spleen_segmentation/pyproject.toml``:
    name = "quickstart-monai"
    version = "1.0.0"
    dependencies = [
-       "flip-utils>=0.1.2",
+       "flip-utils>=0.1.8",
        "flwr[simulation]>=1.26.1",
        # ... your model-framework deps (monai, torch, nibabel, ...)
    ]
@@ -341,6 +343,25 @@ Abridged from ``fl-tutorials/flower/3d_spleen_segmentation/pyproject.toml``:
    flip-project-id = "uuid"
    flip-cohort-query = "*"
 
+.. note::
+
+   **How dependencies resolve on-platform.** Your own ``pyproject.toml`` drives *local* development
+   (``pip install -e .`` / ``flwr run .``). When you upload the app to FLIP, the platform bundles your
+   model files into its own base template (``fl-apps/flower/<job_type>/``), whose ``pyproject.toml``
+   governs the run — uploaded files cannot override it. At run time, Flower's runtime dependency
+   installer resolves that template's dependencies fresh for every run (``uv sync`` into an isolated
+   per-run environment) on the SuperLink (``ServerApp``) and on each SuperNode (``ClientApp``), with two
+   pins set by the template's ``[tool.uv.sources]``:
+
+   - ``flip-utils`` installs from the source copy shipped inside the FL images at ``/opt/flip-utils`` —
+     never from PyPI — so the platform always runs the ``flip-utils`` matching its images.
+   - ``torch``/``torchvision`` come from PyTorch's cu128 wheel index (PyPI's default cu130 wheels
+     require a newer NVIDIA driver than FLIP hosts run).
+
+   Everything else resolves from PyPI at run time, so trust and hub hosts need outbound HTTPS to PyPI
+   and ``download.pytorch.org``. If your app needs a dependency the base template does not declare,
+   ask the platform operators to add it to the template.
+
 ************************************
 Submitting the app to FLIP
 ************************************
@@ -350,7 +371,7 @@ Once your app runs locally (see the next section), upload it through the FLIP UI
 At submit time, the FLIP FL API:
 
 - Injects ``flip-model-id``, ``flip-project-id``, and ``flip-cohort-query`` into your app's run config.
-- Sets ``SUPERNODE_NAME`` on each participating trust's SuperNode container.
+- Sets ``SUPERNODE_NAME`` on each participating trust's SuperNode container to the trust's assigned FL kit slot (e.g. ``Trust_1``).
 - Starts the ``ServerApp`` on the Central Hub's SuperLink and the ``ClientApp`` on each approved trust's SuperNode.
 
 ************************************
@@ -379,6 +400,6 @@ Common pitfalls
 ***************************
 
 - **Missing ``RESULTS_UPLOADED``.** Forgetting the final ``flip.update_status(model_id, ModelStatus.RESULTS_UPLOADED)`` call leaves the model stuck on "training" in the UI.
-- **Wrong ``SUPERNODE_NAME``.** Metrics pushed with a name that does not match the trust's central-hub registration land under ``unknown_client`` and will not appear on the per-site chart.
+- **Wrong ``SUPERNODE_NAME``.** ``SUPERNODE_NAME`` must be the trust's **FL kit slot** (``Trust_1``, ``Trust_2``, ...), not the trust display name — metrics pushed with any other value land under ``unknown_client`` and will not appear on the per-site chart.
 - **Undeclared run-config keys.** ``flwr run`` (and therefore FLIP's FL API) can only override keys already declared in ``[tool.flwr.app.config]``. Declaring ``flip-model-id``, ``flip-project-id``, and ``flip-cohort-query`` with placeholder values is mandatory even though the real values are injected by FLIP.
 - **Missing ``ResourceType``.** If a trust does not have the resource type you requested for a given accession, ``get_by_accession_number`` will raise. Always wrap the call in ``try / except`` and skip the accession on failure so a single bad study does not abort the whole round.

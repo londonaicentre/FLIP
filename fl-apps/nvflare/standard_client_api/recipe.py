@@ -11,14 +11,11 @@
 
 """Driver script: regenerate the committed standard_client_api app/config JSONs and meta.json.
 
-Run from the flip-utils venv (needs flip + nvflare + torch):
+Run from the flip-utils venv (needs the ``full`` extra — flip + nvflare + torch):
 
-    cd flip-utils && uv run --no-sync python - <<'PY'
-    import sys, types, torch, runpy
-    m = types.ModuleType("models"); m.get_model = lambda: torch.nn.Linear(1, 1); sys.modules["models"] = m
-    sys.argv = ["recipe.py", "--output", "../fl-apps/nvflare/standard_client_api"]
-    runpy.run_path("../fl-apps/nvflare/standard_client_api/recipe.py", run_name="__main__")
-    PY
+    cd flip-utils && uv run --no-sync python \\
+        ../fl-apps/nvflare/standard_client_api/recipe.py \\
+        --output ../fl-apps/nvflare/standard_client_api
 
 Do NOT hand-edit the generated JSON files — regenerate them via this script after any
 recipe change and commit the result.
@@ -27,11 +24,33 @@ recipe change and commit the result.
 from __future__ import annotations
 
 import argparse
-import shutil
+import os
+import sys
 import tempfile
 from pathlib import Path
 
-from flip.nvflare.recipes import FlipFedAvgRecipe
+# Pin the hash seed before importing NVFLARE (via flip): export_job serialises some task lists via
+# sets, whose iteration order depends on PYTHONHASHSEED, so an unpinned seed yields spurious
+# task-order diffs on every regeneration. The seed must be set before interpreter start, so re-exec
+# once when it isn't already fixed.
+if os.environ.get("PYTHONHASHSEED") != "0":
+    os.environ["PYTHONHASHSEED"] = "0"
+    os.execv(sys.executable, [sys.executable, *sys.argv])
+
+from flip.nvflare.recipes import FlipFedAvgRecipe  # noqa: E402  (imported after the hash-seed pin)
+
+
+def _copy_json(src: Path, dest: Path) -> None:
+    """Copy a generated JSON file, guaranteeing exactly one trailing newline.
+
+    NVFLARE's ``export_job`` emits ``config_fed_server.json`` / ``meta.json`` without a trailing
+    newline. Normalising on copy keeps the committed templates stable across regenerations and
+    satisfies the ``end-of-file-fixer`` pre-commit hook.
+    """
+    text = src.read_text()
+    if not text.endswith("\n"):
+        text += "\n"
+    dest.write_text(text)
 
 
 def main() -> None:
@@ -56,8 +75,8 @@ def main() -> None:
         exported_root = Path(tmp) / recipe.job.name
         exported_config = exported_root / "app" / "config"
         for name in ("config_fed_server.json", "config_fed_client.json"):
-            shutil.copyfile(exported_config / name, dest_config / name)
-        shutil.copyfile(exported_root / "meta.json", args.output / "meta.json")
+            _copy_json(exported_config / name, dest_config / name)
+        _copy_json(exported_root / "meta.json", args.output / "meta.json")
 
     print(f"Wrote {dest_config}/config_fed_server.json")
     print(f"Wrote {dest_config}/config_fed_client.json")

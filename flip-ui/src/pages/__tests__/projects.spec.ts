@@ -305,6 +305,21 @@ describe("Projects Page", () => {
         expect(wrapper.find("[data-test='add-project-btn']").exists()).toBe(false);
     });
 
+    test("puts Create project on the title row and collapses it to a plus below lg", async () => {
+        setProject(makeProject("STAGED", []));
+        const wrapper = mountPage();
+        await wrapper.vm.$nextTick();
+
+        const btn = wrapper.find("[data-test='add-project-btn']");
+        // Same row as the h1 — not a separate bottom-aligned block.
+        expect(btn.element.parentElement?.querySelector("h1")).toBeTruthy();
+        // Icon-collapse idiom: plus icon always, label only at lg+.
+        expect(btn.find("svg").exists()).toBe(true);
+        const label = btn.find("span.hidden");
+        expect(label.text()).toBe("Create project");
+        expect(label.classes()).toContain("lg:inline");
+    });
+
     test("clicking Create project toggles the create-project modal store", async () => {
         setProject(makeProject("STAGED", []));
         const wrapper = mountPage();

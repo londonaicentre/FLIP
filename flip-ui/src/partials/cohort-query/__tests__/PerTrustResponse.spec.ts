@@ -92,6 +92,15 @@ describe("PerTrustResponse", () => {
         swrvMock.value = null;
     });
 
+    it("frames itself as a flat border box that still fills its column", () => {
+        const wrapper = mountPerTrustResponse();
+
+        expect(wrapper.classes()).toContain("border");
+        expect(wrapper.classes()).toContain("rounded-xl");
+        expect(wrapper.classes()).toContain("h-full");
+        expect(wrapper.find("[data-test='ai-card']").exists()).toBe(false);
+    });
+
     it("shows every trust as running before any results arrive", () => {
         const wrapper = mountPerTrustResponse();
 

@@ -55,12 +55,23 @@ class Settings(BaseSettings):
     UPLOADED_MODEL_FILES_BUCKET: str
     SCANNED_MODEL_FILES_BUCKET: str
     UPLOADED_FEDERATED_DATA_BUCKET: str
-    FL_APP_BASE_BUCKET: str
     FL_APP_DESTINATION_BUCKET: str
+
+    # Local directory holding the base FL application templates (the repo's fl-apps/ tree),
+    # baked into the flip-api image and bind-mounted in dev. The bundler walks
+    # <FL_APP_BASE_DIR>/<backend>/<job_type>/ and uploads those files into
+    # FL_APP_DESTINATION_BUCKET/<model_id>; the per-backend required_files.json manifest is
+    # read from <FL_APP_BASE_DIR>/<backend>/required_files.json. Defaults to the baked-in
+    # image path; override to mount operator-provided templates. Replaces the former
+    # FL_APP_BASE_BUCKET S3 dependency (FLIP#724).
+    FL_APP_BASE_DIR: str = "/app/fl-apps"
 
     # Hard cap on model-file uploads. Bound on the presigned POST policy so
     # S3 rejects oversized payloads at the edge — the hub never sees them.
-    MAX_MODEL_FILE_BYTES: int = 100 * 1024 * 1024
+    # Raised to 5 GiB so large evaluation checkpoints (e.g. the ~759 MiB Ark+
+    # weights, ~1.5 GiB for the multimodel variant) can be uploaded; the FL API
+    # stages such checkpoints server-side rather than bundling them into the app.
+    MAX_MODEL_FILE_BYTES: int = 5 * 1024 * 1024 * 1024
     PRE_SIGNED_URL_EXPIRATION_SECONDS: int = 3600
 
     # Reimport imaging project studies
@@ -141,15 +152,16 @@ class Settings(BaseSettings):
     @field_validator("MAX_MODEL_FILE_BYTES", mode="before")
     @classmethod
     def coerce_empty_max_model_file_bytes(cls, v: object) -> object:
-        """Treat empty-string MAX_MODEL_FILE_BYTES as the default 100 MiB.
+        """Treat empty-string MAX_MODEL_FILE_BYTES as the field default 5 GiB.
 
         GitHub Actions environments inject empty-string env vars for every
         var that isn't explicitly set in the environment scope; Pydantic
         treats that as a real override and rejects it against ``int``.
-        Same shape as ``coerce_empty_env`` / ``coerce_empty_mfa``.
+        Same shape as ``coerce_empty_env`` / ``coerce_empty_mfa``. Must stay
+        in sync with the ``MAX_MODEL_FILE_BYTES`` field default above.
         """
         if v is None or v == "":
-            return 100 * 1024 * 1024
+            return 5 * 1024 * 1024 * 1024
         return v
 
     @field_validator("PRE_SIGNED_URL_EXPIRATION_SECONDS", mode="before")

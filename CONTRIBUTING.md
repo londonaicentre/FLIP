@@ -65,9 +65,9 @@ FLIP/
 │   ├── trust-api/          # Trust API
 │   └── xnat/               # Mocked XNAT service
 ├── flip-utils/         # `flip` Python package — platform logic, NVFLARE components, Flower helpers
-├── fl-services/        # Docker images for FL networks, per backend: fl-services/nvflare/{fl-server,fl-client,fl-api-base,fl-base}
-├── fl-apps/            # FL app templates per backend: fl-apps/nvflare/{standard,evaluation,diffusion_model,fed_opt} (+ check_required_files.sh)
-└── fl-tutorials/       # End-to-end tutorial examples per backend: fl-tutorials/nvflare/ (xray classification, spleen seg/eval, diffusion)
+├── fl-services/        # Docker images for FL networks, per backend: fl-services/nvflare/{fl-server,fl-client,fl-api-base,fl-base}, fl-services/flower/{superlink,supernode,fl-api-flower,fl-base}
+├── fl-apps/            # FL app templates per backend: fl-apps/nvflare/{standard,standard_client_api,evaluation,evaluation_client_api,diffusion_model,fed_opt}, fl-apps/flower/{standard,evaluation} (+ check_required_files.sh)
+└── fl-tutorials/       # End-to-end tutorial examples per backend: fl-tutorials/nvflare/ (xray classification, spleen seg/eval, diffusion), fl-tutorials/flower/ (xray classification, 3D spleen seg, numpy)
 ```
 
 ## Setting up the development environment
@@ -289,7 +289,6 @@ pushes. These are:
 
 - **Image publishing** — `Build and Push NVFLARE/Flower FL Docker Images`, and the `orthanc`, `xnat-*`, `flip-api`,
   and `trust-*` GHCR build-and-push workflows.
-- **S3 sync** — the `fl-apps-push-s3-*` workflows (AWS OIDC into the upstream account).
 - **Releases** — `release.yml` and `release-pypi.yml` (git tags, GitHub releases, PyPI publishing).
 
 Everything that **validates** your change still runs on your fork, and a red result there is a real failure to fix:
@@ -349,7 +348,7 @@ target-version = "py312"
 
 [tool.ruff.lint]
 preview = true
-select = ['I', 'F', 'E', 'W', 'PT', 'UP006', 'UP007', 'UP035', 'UP045']
+select = ['I', 'F', 'E', 'W', 'PT', 'UP006', 'UP007', 'UP035', 'UP042', 'UP045']
 ```
 
 We also use [mypy](https://github.com/python/mypy) for static type checking.
@@ -407,16 +406,16 @@ make unit_test
 `make tests` is a narrower target that runs `flip-ui` unit and Cypress e2e tests followed by the full `flip-api`
 test suite (ruff, mypy, and pytest).
 
-For the migrated FL base library (now in `flip-utils/`), unit tests can be run with:
+For the FL base library in `flip-utils/`, unit tests can be run either directly with pytest or via the shipped
+Makefile target:
 
 ```bash
 cd flip-utils && uv run pytest tests/unit -s -vv
+# or:
+make -C flip-utils unit-test   # ruff --fix + pytest with coverage
 ```
 
-(The inherited `make unit-test` target documented in [`flip-utils/README.md`](flip-utils/README.md) is part of the
-still-in-progress reconciliation called out at the top of that README — `flip-utils/` does not yet ship a Makefile in
-this mono-repo.) See [`flip-utils/README.md`](flip-utils/README.md) (the "Unit Tests" / "Integration Testing"
-sections — subject to the in-progress reconciliation noted there) for the FL package's tests, and
+See [`flip-utils/README.md`](flip-utils/README.md) for the FL package's tests, and
 [`fl-services/nvflare/README.md`](fl-services/nvflare/README.md) for provisioning FL networks.
 
 **Kubernetes chart testing**: The K8s Helm chart at `deploy/providers/kubernetes/` can be tested with:
