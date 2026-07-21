@@ -10,6 +10,7 @@
 # limitations under the License.
 #
 
+import json
 from datetime import datetime
 from typing import Any
 from uuid import UUID
@@ -88,6 +89,9 @@ class TrainingLog(BaseModel):
     # ceiling is the PG INTEGER max of the fl_logs.global_round column — without it
     # an oversized round passes validation and 500s at insert.
     global_round: int | None = Field(default=None, ge=1, le=2_147_483_647)
+    # Bounded by _bound_details below — same defence-in-depth rationale as the caps on
+    # event_type and global_round: flip.send_event is reachable from uploaded server-side
+    # app code, and details is persisted verbatim into JSONB per event row.
     details: dict[str, Any] | None = None
     success: bool = True
 
@@ -99,6 +103,15 @@ class TrainingLog(BaseModel):
             raise ValueError("'event_type' must be non-blank when set")
         if self.event_type is not None and self.global_round is None:
             raise ValueError("'global_round' is required when 'event_type' is set")
+        return self
+
+    @model_validator(mode="after")
+    def _bound_details(self) -> "TrainingLog":
+        # json.dumps escapes non-ASCII by default, so len() counts bytes. The known event
+        # vocabularies need < 100 bytes; 8192 leaves room for future facts while keeping a
+        # hostile payload from bloating the fl_logs JSONB column.
+        if self.details is not None and len(json.dumps(self.details, default=str)) > 8192:
+            raise ValueError("'details' must serialize to at most 8192 bytes")
         return self
 
 

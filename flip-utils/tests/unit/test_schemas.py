@@ -134,6 +134,18 @@ class TestTrainingLog:
         with pytest.raises(ValidationError):
             TrainingLog.model_validate({"fl_client_name": "site-1"})
 
+    def test_oversized_details_is_rejected(self):
+        """Mirrors the hub-side ingest bound: an oversized payload from app code
+        fails fast here, inside send_event's best-effort guard, instead of being
+        posted and 422-rejected (or bloating the hub's JSONB column)."""
+        with pytest.raises(ValidationError, match="details"):
+            TrainingLog(event_type=FLLogEvent.ROUND_STARTED, global_round=1, details={"blob": "x" * 8192})
+
+    def test_details_within_the_bound_is_accepted(self):
+        details = {"blob": "x" * 4000}
+        payload = TrainingLog(event_type=FLLogEvent.ROUND_STARTED, global_round=1, details=details)
+        assert payload.details == details
+
 
 def _class_body_ast(path: Path, class_name: str) -> list[str]:
     """Return the AST dump of each statement in a class body, docstring excluded.

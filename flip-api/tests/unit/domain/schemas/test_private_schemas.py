@@ -94,6 +94,18 @@ class TestTrainingLog:
         with pytest.raises(ValidationError):
             TrainingLog(event_type=event_type, global_round=3)
 
+    def test_oversized_details_is_rejected(self):
+        """details is persisted verbatim into JSONB and flip.send_event is reachable
+        from uploaded app code — an unbounded payload must 422 like an oversized
+        event_type or global_round would, not land in the column."""
+        with pytest.raises(ValidationError, match="details"):
+            TrainingLog(event_type=FLLogEvent.ROUND_STARTED, global_round=1, details={"blob": "x" * 8192})
+
+    def test_details_within_the_bound_is_accepted(self):
+        details = {"blob": "x" * 4000}
+        payload = TrainingLog(event_type=FLLogEvent.ROUND_STARTED, global_round=1, details=details)
+        assert payload.details == details
+
     def test_success_flag_round_trips(self):
         payload = TrainingLog(fl_client_name="Trust_1", log="boom", success=False)
         assert payload.success is False
