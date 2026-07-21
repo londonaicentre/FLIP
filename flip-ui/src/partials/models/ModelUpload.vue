@@ -148,7 +148,10 @@ import AiLoader from "@/components/AiLoader/AiLoader.vue";
 import AiConfirmModal from "@/components/AiModal/AiConfirmModal.vue";
 import { usePermissions } from "@/composables/usePermissions";
 import { FileInfo, FileUploadStatus } from "@/interfaces/model/types";
-import { deleteModelFile, downloadModelFile, getModelFileDownloadUrl, processScannedFile } from "@/services/file-service";
+import { deleteModelFile,
+    downloadModelFile,
+    getModelFileDownloadUrl,
+    processScannedFile } from "@/services/file-service";
 import { JobType } from "@/services/model-service";
 import { createPreSignedUrl, FileTooLargeError, uploadFile as uploadFileService } from "@/utils/file";
 import { formatBytes, getRandomId } from "@/utils/helpers";
