@@ -170,17 +170,17 @@ describe("Models Page", () => {
     });
 
     test("renders a human-readable status label", async () => {
-        setModels([makeModel({ status: "TRAINING_STARTED" })]);
+        setModels([makeModel({ status: "RUNNING" })]);
         const wrapper = mountPage();
         await wrapper.vm.$nextTick();
 
-        expect(wrapper.find("[data-test='model-status-indicator']").text()).toBe("Training Started");
+        expect(wrapper.find("[data-test='model-status-indicator']").text()).toBe("Running");
     });
 
     test("stacks mobile rows with the status pill and green-dot trust chips below sm", async () => {
         setModels([makeModel({
             trusts: [trust("GSTT"), trust("KCH")],
-            status: "TRAINING_STARTED",
+            status: "RUNNING",
             description: "Predicts stroke outcomes"
         })]);
         const wrapper = mountPage();
@@ -197,7 +197,7 @@ describe("Models Page", () => {
         const pill = mobile.find("[data-test='model-status-indicator-mobile']");
         expect(pill.classes()).toContain("rounded-full");
         expect(pill.classes().join(" ")).toContain("bg-fuchsia-100");
-        expect(pill.text()).toBe("Training Started");
+        expect(pill.text()).toBe("Running");
         // …and the same green-dot trust chips.
         const chips = mobile.findAll("[data-test='model-trust-chip-mobile']");
         expect(chips).toHaveLength(2);
@@ -250,8 +250,8 @@ describe("Models Page", () => {
     });
 
     test("renders a filter tile per group with counts summed from statusCounts", async () => {
-        setModels([makeModel({ status: "TRAINING_STARTED" })], {
-            TRAINING_STARTED: 3,
+        setModels([makeModel({ status: "RUNNING" })], {
+            RUNNING: 3,
             PENDING: 1,
             INITIATED: 2,
             ERROR: 1,
@@ -260,8 +260,8 @@ describe("Models Page", () => {
         const wrapper = mountPage();
         await wrapper.vm.$nextTick();
 
-        expect(wrapper.find("[data-test='filter-tile-training']").exists()).toBe(true);
-        expect(wrapper.find("[data-test='filter-tile-count-training']").text()).toBe("3");
+        expect(wrapper.find("[data-test='filter-tile-running']").exists()).toBe(true);
+        expect(wrapper.find("[data-test='filter-tile-count-running']").text()).toBe("3");
         // Preparing groups PENDING + PREPARED = 1 (a just-created model is being prepared, not queued).
         expect(wrapper.find("[data-test='filter-tile-count-preparing']").text()).toBe("1");
         // Queued is INITIATED only = 2.
@@ -270,7 +270,7 @@ describe("Models Page", () => {
         expect(wrapper.find("[data-test='filter-tile-count-attention']").text()).toBe("2");
     });
 
-    test("orders the tiles with Preparing before In training", async () => {
+    test("orders the tiles with Preparing before Running", async () => {
         setModels([makeModel()]);
         const wrapper = mountPage();
         await wrapper.vm.$nextTick();
@@ -278,29 +278,29 @@ describe("Models Page", () => {
         const keys = wrapper.findAll("button[data-test^='filter-tile-']").map(b => b.attributes("data-test"));
         expect(keys).toEqual([
             "filter-tile-preparing",
-            "filter-tile-training",
+            "filter-tile-running",
             "filter-tile-queued",
             "filter-tile-completed",
             "filter-tile-attention"
         ]);
     });
 
-    test("opens with In training + Queued selected and unions further tile clicks", async () => {
+    test("opens with Running + Queued selected and unions further tile clicks", async () => {
         setModels([makeModel()]);
         const wrapper = mountPage();
         await wrapper.vm.$nextTick();
 
-        expect(wrapper.find("[data-test='filter-tile-training']").attributes("aria-pressed")).toBe("true");
+        expect(wrapper.find("[data-test='filter-tile-running']").attributes("aria-pressed")).toBe("true");
         expect(wrapper.find("[data-test='filter-tile-queued']").attributes("aria-pressed")).toBe("true");
         expect(wrapper.find("[data-test='filter-tile-completed']").attributes("aria-pressed")).toBe("false");
-        expect(swrvKey.fn!()).toContain("status=TRAINING_STARTED,INITIATED");
+        expect(swrvKey.fn!()).toContain("status=RUNNING,INITIATED");
 
         // Adding a tile unions its statuses into the filter…
         await wrapper.find("[data-test='filter-tile-completed']").trigger("click");
-        expect(swrvKey.fn!()).toContain("status=TRAINING_STARTED,INITIATED,RESULTS_UPLOADED");
+        expect(swrvKey.fn!()).toContain("status=RUNNING,INITIATED,RESULTS_UPLOADED");
 
         // …and deselecting everything clears the status filter entirely.
-        await wrapper.find("[data-test='filter-tile-training']").trigger("click");
+        await wrapper.find("[data-test='filter-tile-running']").trigger("click");
         await wrapper.find("[data-test='filter-tile-queued']").trigger("click");
         await wrapper.find("[data-test='filter-tile-completed']").trigger("click");
         expect(swrvKey.fn!()).not.toContain("status=");
@@ -377,7 +377,7 @@ describe("Models Page", () => {
     });
 
     test("each row carries a status-coloured left rail", async () => {
-        setModels([makeModel({ status: "TRAINING_STARTED" })]);
+        setModels([makeModel({ status: "RUNNING" })]);
         const wrapper = mountPage();
         await wrapper.vm.$nextTick();
 
@@ -387,8 +387,8 @@ describe("Models Page", () => {
         expect(rail.classes().some(c => c.includes("fuchsia"))).toBe(true);
     });
 
-    test("TRAINING_STARTED status pill matches the In-training fuchsia, not amber", async () => {
-        setModels([makeModel({ status: "TRAINING_STARTED" })]);
+    test("RUNNING status pill matches the Running-tile fuchsia, not amber", async () => {
+        setModels([makeModel({ status: "RUNNING" })]);
         const wrapper = mountPage();
         await wrapper.vm.$nextTick();
 

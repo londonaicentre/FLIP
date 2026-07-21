@@ -405,7 +405,7 @@ describe("pages/project/[projectId]/model/[modelId]", () => {
                 name: "config.json",
                 status: FileUploadStatus.COMPLETED
             }],
-            { status: "TRAINING_STARTED" }
+            { status: "RUNNING" }
         );
         const wrapper = await mountPage();
         await flushPromises();
@@ -526,7 +526,7 @@ describe("pages/project/[projectId]/model/[modelId]", () => {
                 name: "config.json",
                 status: FileUploadStatus.COMPLETED
             }],
-            { status: "TRAINING_STARTED" }
+            { status: "RUNNING" }
         );
         const wrapper = await mountPage();
         await flushPromises();

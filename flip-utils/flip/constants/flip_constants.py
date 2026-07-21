@@ -169,12 +169,14 @@ class FlipEvents:
 
 
 class ModelStatus(StrEnum):
-    """Model training status values."""
+    """Model job status values."""
 
     PENDING = "PENDING"
     INITIATED = "INITIATED"
     PREPARED = "PREPARED"
-    TRAINING_STARTED = "TRAINING_STARTED"
+    # Job-type-neutral "the FL job is executing" status (renamed from
+    # TRAINING_STARTED, #782) — evaluation jobs report it too.
+    RUNNING = "RUNNING"
     RESULTS_UPLOADED = "RESULTS_UPLOADED"
     ERROR = "ERROR"
     STOPPED = "STOPPED"

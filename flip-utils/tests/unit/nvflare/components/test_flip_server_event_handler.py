@@ -144,7 +144,28 @@ class TestServerEventHandler:
 
         handler.handle_event(AppEventType.TRAINING_STARTED, fl_ctx)
 
-        flip.update_status.assert_called_with(model_id, ModelStatus.TRAINING_STARTED)
+        flip.update_status.assert_called_with(model_id, ModelStatus.RUNNING)
+
+    def test_handle_event_task_initiated(self):
+        """Test handle_event with TASK_INITIATED event (evaluation jobs, #782)"""
+        model_id = "123e4567-e89b-12d3-a456-426614174000"
+        flip = MagicMock()
+        handler = ServerEventHandler(model_id=model_id, flip=flip)
+
+        fl_ctx = MagicMock()
+        fl_ctx.get_peer_context.return_value = None
+        engine = MagicMock()
+        fl_ctx.get_engine.return_value = engine
+
+        json_generator = Mock(spec=ValidationJsonGenerator)
+        persist_cleanup = Mock(spec=PersistToS3AndCleanup)
+        engine.get_component.side_effect = lambda comp_id: (
+            json_generator if comp_id == "json_generator" else persist_cleanup
+        )
+
+        handler.handle_event(FlipEvents.TASK_INITIATED, fl_ctx)
+
+        flip.update_status.assert_called_with(model_id, ModelStatus.RUNNING)
 
     def test_handle_event_fatal_system_error(self):
         """Test handle_event with FATAL_SYSTEM_ERROR event"""

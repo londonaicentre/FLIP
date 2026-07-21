@@ -108,14 +108,15 @@ Wrap your training entry point with four ``update_status`` calls. These drive th
    arrays = ArrayRecord(model.state_dict())
    strategy = FedAvg(fraction_train=1.0, fraction_evaluate=0.0)
 
+   flip.update_status(model_id, ModelStatus.RUNNING)            # the rounds start here
+
    strategy.start(grid=grid, initial_arrays=arrays, num_rounds=num_rounds)
 
-   flip.update_status(model_id, ModelStatus.TRAINING_STARTED)   # after strategy.start returns
    flip.update_status(model_id, ModelStatus.RESULTS_UPLOADED)   # after post-training finalisation
 
 .. warning::
 
-   Forgetting the final ``ModelStatus.RESULTS_UPLOADED`` transition will leave the model indefinitely in the "training" state in the FLIP UI even though execution has ended.
+   Forgetting the final ``ModelStatus.RESULTS_UPLOADED`` transition will leave the model indefinitely in the "running" state in the FLIP UI even though execution has ended.
 
 Full minimal example
 =====================
@@ -149,9 +150,10 @@ Reproduced from ``fl-apps/flower/standard/app/server_app.py``:
        arrays = ArrayRecord(model.state_dict())
        strategy = FedAvg(fraction_train=1.0, fraction_evaluate=0.0)
 
+       flip.update_status(flip_model_id, ModelStatus.RUNNING)
+
        strategy.start(grid=grid, initial_arrays=arrays, num_rounds=num_rounds)
 
-       flip.update_status(flip_model_id, ModelStatus.TRAINING_STARTED)
        flip.update_status(flip_model_id, ModelStatus.RESULTS_UPLOADED)
 
 ***********************
