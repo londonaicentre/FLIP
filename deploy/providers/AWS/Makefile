@@ -343,10 +343,19 @@ apply-fl-kit-slots: ## Apply only the FL kit-slot SSM parameter — the slot act
 	## state predates that S3-logging hardening the first run ALSO creates
 	## flip-access-logs-<subdomain> + its ACL/ownership (additive, 0 destroys). Seen on
 	## stag 2026-07-14: 4 to add, 1 to change, 0 to destroy. Prod has no access-logs
-	## bucket either — expect the same there. The plan prints before it applies: read it.
-	@echo "🎛️  Planning + applying FL kit-slot parameter..."
+	## bucket either — expect the same there. The plan prints and pauses for
+	## confirmation before it applies (YES=1 skips the pause, matching add_fl_kits.sh).
+	@echo "🎛️  Planning FL kit-slot parameter..."
 	@$(_TF) plan -target=aws_ssm_parameter.fl_kit_slot_names \
 		-target=aws_iam_role_policy.ecs_flip_api_task -out=plan-fl-kit-slots.tfplan
+	@if [ "$(YES)" != "1" ]; then \
+	  printf "   Apply this plan? [y/N] "; \
+	  read -r answer; \
+	  case "$$answer" in \
+	    [Yy]|[Yy][Ee][Ss]) ;; \
+	    *) echo "❌ Aborted — nothing applied (plan saved at plan-fl-kit-slots.tfplan)."; exit 1;; \
+	  esac; \
+	fi
 	@$(_TF) apply plan-fl-kit-slots.tfplan
 	@echo "✅ FL kit-slot parameter applied — new slots (if any) are claimable on the next trust registration."
 
@@ -364,7 +373,7 @@ add-fl-kits: ## Ensure N more claimable FL kit slots exist, end to end (NVFLARE;
 	@[ -n "$(N)" ] || { echo "❌ N is required, e.g. make add-fl-kits N=2 PROD=true"; exit 1; }
 	@$(_AWS_ENV) MAIN_ENV_FILE=$(MAIN_ENV_FILE) N=$(N) YES=$(YES) \
 		FL_BACKEND=$(FL_BACKEND) ./scripts/add_fl_kits.sh
-	@$(MAKE) apply-fl-kit-slots PROD=$(PROD) || { \
+	@$(MAKE) apply-fl-kit-slots PROD=$(PROD) YES=$(YES) || { \
 	  echo "❌ Parameter apply failed AFTER the new slot names were appended to the env file"; \
 	  echo "   (and any shortfall minted + uploaded)."; \
 	  echo "   Recover with just: make apply-fl-kit-slots PROD=$(PROD)"; \

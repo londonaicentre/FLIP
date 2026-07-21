@@ -364,7 +364,7 @@ the deployment has run out of *claimable* FL kit slots. One command mints, uploa
 and activates `N` more (NVFLARE only):
 
 ```bash
-make add-fl-kits N=2 PROD=stag|true   # YES=1 to skip the confirmation prompt
+make add-fl-kits N=2 PROD=stag|true   # YES=1 to skip both confirmation prompts (kit plan + Terraform plan)
 ```
 
 **Activation vs minting is automatic.** A slot is claimable only when its name is in
@@ -388,8 +388,9 @@ appends the activated + minted names to `FL_KIT_SLOT_NAMES` in the env file; the
 finishes with `make apply-fl-kit-slots` — a targeted plan/apply of only the
 `/flip/fl_kit_slot_names` SSM parameter (plus the flip-api task-role policy that grants
 its read, so the first rollout is self-contained), re-rendered from the env file. The
-kit-slot list is plain configuration, so the plan diff is human-readable — review it as
-it scrolls past. flip-api re-reads the parameter when its slot pool runs dry
+kit-slot list is plain configuration, so the plan diff is human-readable — the target
+pauses for a confirmation after the plan prints (`YES=1` skips it), so read it before
+answering. flip-api re-reads the parameter when its slot pool runs dry
 (reconcile-on-miss), so the new slots are claimable by the next
 `make register-trust KIT=<CODE>` with **no restart and no task-definition change**.
 
