@@ -18,6 +18,7 @@ from pydantic import BaseModel, Field, model_validator, validator
 
 from flip_api.config import get_settings
 from flip_api.domain.schemas.status import TaskType
+from flip_api.domain.schemas.types import FLLogEvent
 
 
 class Results(BaseModel):
@@ -82,10 +83,14 @@ class TrainingLog(BaseModel):
     log: str | None = None
     # Senders use the FLLogEvent vocabulary, but the field is plain validated text
     # end-to-end (like the fl_logs column): a newer FL image's event is stored and
-    # served via the unknown-event render fallback, never rejected at ingest.
+    # served via the unknown-event render fallback, never rejected at ingest. The
+    # one exception is the hub-reserved QUEUE_POSITION, refused below: a spoofed
+    # row would render in the feed and could perturb the FL scheduler's
+    # emit-on-change dedup (which compares against any stored row).
     event_type: str | None = Field(default=None, max_length=64)
     # 1-based on both backends; every event this endpoint accepts is round-scoped
-    # (the hub-emitted, round-less QUEUE_POSITION is written directly, never ingested here).
+    # (the hub-emitted, round-less QUEUE_POSITION is written directly by the FL
+    # scheduler and rejected at this boundary).
     global_round: int | None = Field(default=None, ge=1)
     details: dict[str, Any] | None = None
     success: bool = True
@@ -96,6 +101,8 @@ class TrainingLog(BaseModel):
             raise ValueError("Exactly one of 'log' and 'event_type' must be set")
         if self.event_type is not None and not self.event_type.strip():
             raise ValueError("'event_type' must be non-blank when set")
+        if self.event_type == FLLogEvent.QUEUE_POSITION:
+            raise ValueError("'QUEUE_POSITION' is emitted by the hub's FL scheduler and cannot be ingested")
         if self.event_type is not None and self.global_round is None:
             raise ValueError("'global_round' is required when 'event_type' is set")
         return self

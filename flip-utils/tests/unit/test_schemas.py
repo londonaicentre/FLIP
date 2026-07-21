@@ -113,6 +113,13 @@ class TestTrainingLog:
         with pytest.raises(ValidationError):
             TrainingLog(event_type=event_type, global_round=3)
 
+    def test_queue_position_is_rejected(self):
+        """QUEUE_POSITION is reserved for the hub's own FL scheduler (mirrors
+        flip-api, which 422-rejects it at ingest) — refusing it here fails fast
+        FL-side instead of after the POST."""
+        with pytest.raises(ValidationError, match="QUEUE_POSITION"):
+            TrainingLog(event_type="QUEUE_POSITION", global_round=1)
+
     def test_missing_field_raises(self):
         """Omitting a required field should raise a ValidationError."""
         with pytest.raises(ValidationError):

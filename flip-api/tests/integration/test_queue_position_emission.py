@@ -14,12 +14,13 @@
 
 ``log_queue_positions`` is SQL-shaped end to end: the ranks come from the
 ``created``-ascending (``id``-tiebroken) queue query, the emit-on-change dedup
-reads prior rows ``log_date``-descending, the compared payload round-trips
-through the JSONB ``details`` column, and the batch relies on ``add_log``
-deferring its per-row commit under ``transaction=``. All of that passes
-silently under a mocked session — the unit tests fabricate both result sets —
-so the invariants are exercised here against the throwaway Postgres, ending
-with the rendered feed a researcher actually sees.
+collapses each job's history to its newest row inside Postgres (``DISTINCT ON``
+over the JSONB job id, ``log_date``-descending), the compared payload
+round-trips through the JSONB ``details`` column, and the batch relies on
+``add_log`` deferring its per-row commit under ``transaction=``. All of that
+passes silently under a mocked session — the unit tests fabricate both result
+sets — so the invariants are exercised here against the throwaway Postgres,
+ending with the rendered feed a researcher actually sees.
 """
 
 from datetime import datetime

@@ -35,8 +35,9 @@ class FLLogEvent(StrEnum):
     are 1-based on both backends (NVFLARE's internal ``_current_round`` is
     0-based and is normalised at the emission boundary). ``QUEUE_POSITION`` is
     the exception: hub-emitted and round-less, it is written directly by the FL
-    scheduler and never arrives through the ingest endpoint (whose validator
-    requires ``global_round`` on typed events).
+    scheduler, and the ingest endpoint's validator (``TrainingLog``) rejects it
+    outright — a spoofed row could otherwise perturb the scheduler's
+    emit-on-change dedup, which compares against any stored row.
     """
 
     ROUND_STARTED = "ROUND_STARTED"

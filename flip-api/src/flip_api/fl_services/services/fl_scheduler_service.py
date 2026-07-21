@@ -138,6 +138,19 @@ def log_queue_positions(session: Session) -> None:
     Rows are batched into a single commit so a deep queue never costs O(N)
     commits per mutation.
 
+    Idempotence holds for serialized callers only: emit-on-change is a
+    read-then-write with nothing locked, so concurrent calls (the scheduler
+    tick on its ``BackgroundScheduler`` thread vs a request thread, or a
+    second flip-api replica) can both read the same prior rows and both
+    write, leaving duplicate — or transiently contradictory — feed rows.
+    That is tolerated: positions are a display nicety and the next mutation
+    self-heals. The hub currently runs one flip-api replica with a single
+    Uvicorn worker (ECS ``desired_count = 1``, no autoscaling; ``fastapi
+    run`` without ``--workers``), so only in-process thread interleaving can
+    race. Scaling flip-api out multiplies the emission sites per tick — close
+    the race then with ``SELECT ... FOR UPDATE`` on the queued jobs or a
+    partial unique index over the ``details`` (job_id, position) pair.
+
     Positions are a display nicety: any failure is logged, the batch is rolled
     back, and nothing is raised — an emission problem can never wedge the
     scheduler tick or the caller's queue mutation. **Precondition:** call this
@@ -161,23 +174,34 @@ def log_queue_positions(session: Session) -> None:
         if not queued_jobs:
             return
 
-        prior_rows = session.exec(
-            select(FLLogs)
+        # DISTINCT ON collapses each job's history to its newest row inside
+        # Postgres, and only the compared details payload is fetched — a
+        # model's QUEUE_POSITION rows accumulate for life (each drain of a
+        # depth-N queue writes O(N^2) rows in total), so materialising every
+        # historical row as a full ORM object would grow monotonically with
+        # usage. If this scan ever shows up in slow-query logs regardless, the
+        # next lever is an index on (model_id, event_type) in a future
+        # Alembic revision.
+        prior_job_id = col(FLLogs.details)["job_id"].astext
+        prior_details = session.exec(
+            select(cast(Column, FLLogs.details))
             .where(
                 col(FLLogs.model_id).in_([job.model_id for job in queued_jobs]),
                 FLLogs.event_type == FLLogEvent.QUEUE_POSITION.value,
             )
-            .order_by(cast(Column, FLLogs.log_date).desc())
+            .distinct(prior_job_id)
+            .order_by(prior_job_id, cast(Column, FLLogs.log_date).desc())
         ).all()
         # Keyed by job id (not model id): a model can hold two QUEUED jobs (no
         # uniqueness on FLJob.model_id), and a model-keyed lookup would let the
         # newest row suppress one job while forcing the other to re-emit forever.
+        # setdefault keeps first-seen-newest as defense in depth should the
+        # query ever hand back more than one row per job.
         last_details_by_job: dict[str, dict] = {}
-        for row in prior_rows:
-            row_details = row.details or {}
-            row_job_id = row_details.get("job_id")
+        for row_details in prior_details:
+            row_job_id = (row_details or {}).get("job_id")
             if isinstance(row_job_id, str):
-                last_details_by_job.setdefault(row_job_id, row_details)
+                last_details_by_job.setdefault(row_job_id, row_details or {})
 
         emitted = False
         for position, job in enumerate(queued_jobs, start=1):

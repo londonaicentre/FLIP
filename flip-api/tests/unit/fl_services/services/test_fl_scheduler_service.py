@@ -15,7 +15,7 @@ from uuid import uuid4
 
 import pytest
 
-from flip_api.db.models.main_models import FLJob, FLLogs
+from flip_api.db.models.main_models import FLJob
 from flip_api.domain.interfaces.fl import (
     IJobResponse,
     INetDetails,
@@ -366,13 +366,9 @@ def _queued_job(model_id=None):
     return FLJob(id=uuid4(), model_id=model_id or uuid4())
 
 
-def _position_row(model_id, job_id, position):
-    return FLLogs(
-        model_id=model_id,
-        success=True,
-        event_type=FLLogEvent.QUEUE_POSITION.value,
-        details={"position": position, "job_id": str(job_id)},
-    )
+def _position_details(job_id, position):
+    """One details payload, as the DISTINCT ON dedup query returns them (JSONB dicts, not rows)."""
+    return {"position": position, "job_id": str(job_id)}
 
 
 def _exec_returning(*result_lists):
@@ -412,7 +408,7 @@ class TestLogQueuePositions:
 
     def test_unchanged_position_is_not_relogged(self, fake_session):
         job = _queued_job()
-        fake_session.exec.side_effect = _exec_returning([job], [_position_row(job.model_id, job.id, 1)])
+        fake_session.exec.side_effect = _exec_returning([job], [_position_details(job.id, 1)])
         with patch.object(fl_scheduler_service, "add_log") as mock_add_log:
             fl_scheduler_service.log_queue_positions(fake_session)
         mock_add_log.assert_not_called()
@@ -420,7 +416,7 @@ class TestLogQueuePositions:
 
     def test_moved_job_logs_its_new_position(self, fake_session):
         job = _queued_job()
-        fake_session.exec.side_effect = _exec_returning([job], [_position_row(job.model_id, job.id, 2)])
+        fake_session.exec.side_effect = _exec_returning([job], [_position_details(job.id, 2)])
         with patch.object(fl_scheduler_service, "add_log") as mock_add_log:
             fl_scheduler_service.log_queue_positions(fake_session)
         mock_add_log.assert_called_once_with(
@@ -435,7 +431,7 @@ class TestLogQueuePositions:
     def test_second_of_two_queued_jobs_gets_position_two(self, fake_session):
         first, second = _queued_job(), _queued_job()
         fake_session.exec.side_effect = _exec_returning(
-            [first, second], [_position_row(first.model_id, first.id, 1)]
+            [first, second], [_position_details(first.id, 1)]
         )
         with patch.object(fl_scheduler_service, "add_log") as mock_add_log:
             fl_scheduler_service.log_queue_positions(fake_session)
@@ -455,8 +451,8 @@ class TestLogQueuePositions:
         # newest row suppress one job and re-emit the other forever (oscillation).
         model_id = uuid4()
         job_a, job_b = _queued_job(model_id), _queued_job(model_id)
-        newer = _position_row(model_id, job_b.id, 2)
-        older = _position_row(model_id, job_a.id, 1)
+        newer = _position_details(job_b.id, 2)
+        older = _position_details(job_a.id, 1)
         fake_session.exec.side_effect = _exec_returning([job_a, job_b], [newer, older])
         with patch.object(fl_scheduler_service, "add_log") as mock_add_log:
             fl_scheduler_service.log_queue_positions(fake_session)
@@ -467,17 +463,18 @@ class TestLogQueuePositions:
         # Same model, new job: the prior row belongs to the model's previous run,
         # so its matching position must not suppress the new run's first row.
         job = _queued_job()
-        fake_session.exec.side_effect = _exec_returning([job], [_position_row(job.model_id, uuid4(), 1)])
+        fake_session.exec.side_effect = _exec_returning([job], [_position_details(uuid4(), 1)])
         with patch.object(fl_scheduler_service, "add_log") as mock_add_log:
             fl_scheduler_service.log_queue_positions(fake_session)
         mock_add_log.assert_called_once()
 
     def test_only_the_latest_prior_row_counts(self, fake_session):
-        # Rows arrive newest-first; an older matching row behind a newer different
-        # one must not suppress emission.
+        # DISTINCT ON should hand back one row per job, but the Python fold keeps
+        # first-seen (newest, per the query's ordering) as defense in depth: an
+        # older matching row behind a newer different one must not suppress emission.
         job = _queued_job()
-        newer = _position_row(job.model_id, job.id, 2)
-        older = _position_row(job.model_id, job.id, 1)
+        newer = _position_details(job.id, 2)
+        older = _position_details(job.id, 1)
         fake_session.exec.side_effect = _exec_returning([job], [newer, older])
         with patch.object(fl_scheduler_service, "add_log") as mock_add_log:
             fl_scheduler_service.log_queue_positions(fake_session)

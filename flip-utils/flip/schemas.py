@@ -70,7 +70,10 @@ class TrainingLog(BaseModel):
     log: str | None = None
     # Senders use the FLLogEvent vocabulary, but the field is plain validated text
     # end-to-end (like the fl_logs column): a newer FL image's event is stored and
-    # served via the unknown-event render fallback, never rejected at ingest.
+    # served via the unknown-event render fallback, never rejected at ingest. The
+    # one exception is QUEUE_POSITION (absent from the enum above on purpose):
+    # it is reserved for the hub's own FL scheduler and the hub 422-rejects it,
+    # so refusing it here fails fast FL-side instead.
     event_type: str | None = Field(default=None, max_length=64)
     # 1-based on both backends; every event in the vocabulary is round-scoped.
     global_round: int | None = Field(default=None, ge=1)
@@ -83,6 +86,8 @@ class TrainingLog(BaseModel):
             raise ValueError("Exactly one of 'log' and 'event_type' must be set")
         if self.event_type is not None and not self.event_type.strip():
             raise ValueError("'event_type' must be non-blank when set")
+        if self.event_type == "QUEUE_POSITION":
+            raise ValueError("'QUEUE_POSITION' is emitted by the hub's FL scheduler and cannot be sent")
         if self.event_type is not None and self.global_round is None:
             raise ValueError("'global_round' is required when 'event_type' is set")
         return self
