@@ -90,7 +90,10 @@ log() { echo "🧩 $*"; }
 # A mid-run abort must tell the operator what already reached S3 and how to
 # recover — the instinctive fix (re-running add-fl-kits) is the WRONG one: new
 # names are computed from what exists in S3, so a re-run mints higher numbers
-# and permanently orphans the ones uploaded here.
+# and permanently orphans the ones uploaded here. The ERR trap only covers
+# command failures; guard aborts must go through die(), which routes their
+# message through the same recovery reporting (an explicit `exit 1` bypasses
+# the trap, which would lose the guidance on exactly the partial-run paths).
 UPLOADED=()
 on_error() {
     echo "" >&2
@@ -108,6 +111,12 @@ on_error() {
     fi
 }
 trap on_error ERR
+
+die() {
+    printf '%s\n' "$@" >&2
+    on_error
+    exit 1
+}
 
 # --- 0. Fail early on a bad env file (before anything is minted or uploaded) ---
 
@@ -255,6 +264,13 @@ echo "     nets          ${NETS[*]}"
 echo "     activate      ${activate_display}"
 echo "     mint          ${mint_line}"
 echo "     env file      ${MAIN_ENV_FILE}"
+if [[ "${#ACTIVATE_NAMES[@]}" -gt 0 ]]; then
+    # Spare detection sees S3 and the env file, not the hub's fl_kit_slot table (rows are
+    # never deleted). A previously-activated name that later dropped out of the env file
+    # would be "activated" again here yet add zero claimable capacity.
+    echo "     ⚠️  activation assumes ${MAIN_ENV_FILE} still lists every previously-activated"
+    echo "        name — see 'Activating the new slot on the hub' in fl-services/nvflare/README.md."
+fi
 echo ""
 if [[ "${YES}" != "1" ]]; then
     read -r -p "   Proceed? [y/N] " answer
@@ -277,10 +293,9 @@ for net in "${NETS[@]}"; do
         log "${net}: no local CA state — restoring workspace from ${BASE_S3}/${net}/"
         aws s3 cp "${BASE_S3}/${net}/state/" "${workspace}/state/" --recursive --only-show-errors
         if [[ ! -f "${workspace}/state/cert.json" ]]; then
-            echo "❌ ${net}: the S3 mirror has no state/cert.json — this net's CA state was never" >&2
-            echo "   uploaded, so kits can only be minted from the checkout that provisioned it." >&2
-            echo "   (Do NOT re-provision: that rotates the CA and forces a fleet-wide redeploy.)" >&2
-            exit 1
+            die "❌ ${net}: the S3 mirror has no state/cert.json — this net's CA state was never" \
+                "   uploaded, so kits can only be minted from the checkout that provisioned it." \
+                "   (Do NOT re-provision: that rotates the CA and forces a fleet-wide redeploy.)"
         fi
     fi
     if [[ ! -f "${workspace}/${server_kit}/startup/rootCA.pem" ]]; then
@@ -295,11 +310,10 @@ for net in "${NETS[@]}"; do
     local_fp="$(openssl x509 -in "${workspace}/${server_kit}/startup/rootCA.pem" -noout -fingerprint -sha256)"
     s3_fp="$(openssl x509 -in "${s3_root_ca}" -noout -fingerprint -sha256)"
     if [[ "${local_fp}" != "${s3_fp}" ]]; then
-        echo "❌ ${net}: local root CA does not match the live S3 kits — refusing to mint." >&2
-        echo "   local: ${local_fp}" >&2
-        echo "   s3:    ${s3_fp}" >&2
-        echo "   The workspace at ${workspace} is not the one that provisioned this net." >&2
-        exit 1
+        die "❌ ${net}: local root CA does not match the live S3 kits — refusing to mint." \
+            "   local: ${local_fp}" \
+            "   s3:    ${s3_fp}" \
+            "   The workspace at ${workspace} is not the one that provisioned this net."
     fi
     rm -f "${s3_root_ca}"
 
@@ -310,13 +324,10 @@ for net in "${NETS[@]}"; do
         # error aborts the run), never from empty output of a failed listing.
         key_count="$(aws s3api list-objects-v2 --bucket "${AICENTRE_BUCKET_NAME}" \
             --prefix "${KEY_PREFIX}/${net}/services/${name}/" --max-keys 1 \
-            --query 'KeyCount' --output text)" || {
-            echo "❌ ${net}: could not check whether ${name}/ already exists in S3 — refusing to upload blind." >&2
-            exit 1
-        }
+            --query 'KeyCount' --output text)" ||
+            die "❌ ${net}: could not check whether ${name}/ already exists in S3 — refusing to upload blind."
         if [[ "${key_count}" != "0" ]]; then
-            echo "❌ ${net}: ${BASE_S3}/${net}/services/${name}/ already has objects — refusing to overwrite." >&2
-            exit 1
+            die "❌ ${net}: ${BASE_S3}/${net}/services/${name}/ already has objects — refusing to overwrite."
         fi
 
         log "${net}: minting ${name} against the existing root CA..."

@@ -234,6 +234,16 @@ list has a single source per environment (`resolve_fl_kit_slot_names`):
   restart, no task-definition change**: the next registration reconciles the pool from
   the parameter. (`make add-fl-kits` runs this step for you.)
 
+> **The env file must stay a superset of every name ever activated.** Pool rows are
+> never deleted, and `add-fl-kits` detects spares purely as *minted-in-S3 on every net
+> but absent from `FL_KIT_SLOT_NAMES`* — it cannot see the hub's `fl_kit_slot` table. If
+> a previously-activated name drops out of the env file (a restored or hand-edited
+> copy), the script "activates" it again: the run reports success, the reconcile inserts
+> nothing (the row already exists — possibly assigned to a live trust), and **zero
+> claimable capacity is added**, so the next registration still fails with
+> `NoFreeKitSlotError`. Treat the `FL_KIT_SLOT_NAMES` list as append-only — `N` means
+> "N more live slots" only while that invariant holds.
+
 Then `make register-trust KIT=<CODE>` (see the
 [root README](../../README.md#trust-registration)) claims the slot — registration writes
 the claimed `FL_KIT_SLOT` / `FL_KIT_SLOT_NUMBER` into the trust's kit file, and the
