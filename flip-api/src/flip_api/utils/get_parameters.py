@@ -41,4 +41,7 @@ def get_parameter(name: str, region_name: str = "") -> str:
     region_name = get_settings().AWS_REGION if not region_name else region_name
 
     client = boto3.session.Session().client(service_name="ssm", region_name=region_name)
-    return client.get_parameter(Name=name)["Parameter"]["Value"]
+    # WithDecryption is a no-op for String parameters but keeps this util correct if a
+    # parameter is ever hardened to SecureString (without it, GetParameter returns
+    # ciphertext and every caller's parse breaks behind a malformed-value error).
+    return client.get_parameter(Name=name, WithDecryption=True)["Parameter"]["Value"]

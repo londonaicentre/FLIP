@@ -42,7 +42,8 @@ def test_get_parameter_returns_value(mock_settings, mock_boto3_session):
     assert get_parameter("/flip/fl_kit_slot_names") == '["Trust_1"]'
 
     mock_session.return_value.client.assert_called_once_with(service_name="ssm", region_name="test-west-1")
-    mock_client.get_parameter.assert_called_once_with(Name="/flip/fl_kit_slot_names")
+    # WithDecryption future-proofs against a String→SecureString hardening (no-op today).
+    mock_client.get_parameter.assert_called_once_with(Name="/flip/fl_kit_slot_names", WithDecryption=True)
 
 
 def test_get_parameter_uses_explicit_region_over_settings(mock_settings, mock_boto3_session):
