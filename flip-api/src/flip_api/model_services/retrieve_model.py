@@ -171,7 +171,7 @@ def retrieve_model(
                 col(ModelsAudit.action).in_(
                     [
                         ModelAuditAction.PREPARED,
-                        ModelAuditAction.TRAINING_STARTED,
+                        ModelAuditAction.RUNNING,
                         ModelAuditAction.RESULTS_UPLOADED,
                     ]
                 ),
@@ -220,7 +220,7 @@ def retrieve_model(
             files=files,
             creation_timestamp=creation_timestamp,
             prepared_at=latest_per_action.get(ModelAuditAction.PREPARED),
-            training_started_at=latest_per_action.get(ModelAuditAction.TRAINING_STARTED),
+            running_at=latest_per_action.get(ModelAuditAction.RUNNING),
             results_uploaded_at=latest_per_action.get(ModelAuditAction.RESULTS_UPLOADED),
             trusts=trusts,
             queue_position=queue_position,

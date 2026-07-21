@@ -81,7 +81,7 @@ def edit_model(model_id: UUID, model_details: IModelDetails, user_id: UUID, sess
 
 _STATUS_AUDIT_MAP: dict[ModelStatus, ModelAuditAction] = {
     ModelStatus.PREPARED: ModelAuditAction.PREPARED,
-    ModelStatus.TRAINING_STARTED: ModelAuditAction.TRAINING_STARTED,
+    ModelStatus.RUNNING: ModelAuditAction.RUNNING,
     ModelStatus.RESULTS_UPLOADED: ModelAuditAction.RESULTS_UPLOADED,
 }
 

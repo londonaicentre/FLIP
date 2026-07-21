@@ -80,7 +80,7 @@ export interface IModelDashboard {
     files: FileInfo[];
     creationTimestamp?: string | null;
     preparedAt?: string | null;
-    trainingStartedAt?: string | null;
+    runningAt?: string | null;
     resultsUploadedAt?: string | null;
     // The trusts the run was dispatched to. Empty before dispatch.
     trusts?: IModelSummaryTrust[];
@@ -129,7 +129,7 @@ export type ModelStatus =
     "PENDING" |
     "INITIATED" |
     "PREPARED" |
-    "TRAINING_STARTED" |
+    "RUNNING" |
     "RESULTS_UPLOADED" |
     "RESULTS_UPLOAD_FAILED" |
     "ERROR" |
@@ -141,7 +141,7 @@ export enum ModelStatusEnum {
     "PENDING",
     "INITIATED",
     "PREPARED",
-    "TRAINING_STARTED",
+    "RUNNING",
     "RESULTS_UPLOADED",
     // Appended last so the existing ordinal comparisons keep working: training
     // finished but the results upload failed, so it sorts after RESULTS_UPLOADED.
@@ -152,7 +152,7 @@ const MODEL_STATUS_LABELS: Record<ModelStatus, string> = {
     PENDING: "Model Created",
     INITIATED: "Model Queued",
     PREPARED: "Model Prepared",
-    TRAINING_STARTED: "Training Started",
+    RUNNING: "Running",
     RESULTS_UPLOADED: "Results Uploaded",
     RESULTS_UPLOAD_FAILED: "Results Upload Failed",
     ERROR: "Error",
@@ -195,7 +195,7 @@ export function modelStatusPillClass(status: ModelStatus | undefined): string {
     if (status === "RESULTS_UPLOADED") {
         return "bg-emerald-100 text-emerald-900 dark:bg-emerald-900/40 dark:text-emerald-100";
     }
-    if (status === "TRAINING_STARTED") {
+    if (status === "RUNNING") {
         return "bg-fuchsia-100 text-fuchsia-800 dark:bg-fuchsia-900/40 dark:text-fuchsia-200";
     }
     if (status === "PREPARED") {
@@ -209,7 +209,7 @@ export function modelStatusPillClass(status: ModelStatus | undefined): string {
 export function modelStatusDotClass(status: ModelStatus | undefined): string {
     if (isModelStatusError(status)) return "bg-red-500";
     if (status === "RESULTS_UPLOADED") return "bg-emerald-500";
-    if (status === "TRAINING_STARTED") return "bg-fuchsia-500";
+    if (status === "RUNNING") return "bg-fuchsia-500";
     if (status === "PREPARED") return "bg-amber-500";
 
     return "bg-gray-400";
@@ -235,13 +235,13 @@ export function getStatusEnumValue(status: string | undefined): number {
 }
 
 /**
- * Builds the four-step lifecycle tracker (Created → Prepared → Training → Uploaded)
+ * Builds the four-step lifecycle tracker (Created → Prepared → Running → Uploaded)
  * shown on the model page, derived from the model's status plus the optional queue
  * position, which only feeds step 02's description while the model is INITIATED.
  *
- * When training is stopped or errors, prior completed steps stay completed (✅)
- * rather than showing 🚫. RESULTS_UPLOAD_FAILED means training finished but the
- * post-training results upload failed, so "Training" stays completed and only
+ * When the job is stopped or errors, prior completed steps stay completed (✅)
+ * rather than showing 🚫. RESULTS_UPLOAD_FAILED means the job finished but the
+ * post-run results upload failed, so "Running" stays completed and only
  * "Results Uploaded" shows the error. See issue #29.
  *
  * Per-step dates (creation/prepared/training/results timestamps) are layered on
@@ -252,7 +252,7 @@ export function buildModelSteps(status: ModelStatus | undefined, queuePosition?:
     const isStopped = statusValue === ModelStatusEnum.STOPPED;
     const isError = statusValue === ModelStatusEnum.ERROR;
     const isUploadFailed = statusValue === ModelStatusEnum.RESULTS_UPLOAD_FAILED;
-    // RESULTS_UPLOAD_FAILED (ordinal 7) already satisfies the >= PREPARED / > TRAINING_STARTED
+    // RESULTS_UPLOAD_FAILED (ordinal 7) already satisfies the >= PREPARED / > RUNNING
     // comparisons in the "completed" flags below, so isUploadFailed is technically redundant
     // there today. It is kept explicit so the steps stay correct if the enum is reordered, and
     // to mirror its load-bearing use in the inProgress / error flags.
@@ -274,12 +274,15 @@ export function buildModelSteps(status: ModelStatus | undefined, queuePosition?:
         },
         {
             id: "03",
-            name: "Training",
+            name: "Running",
+            // PREPARED means the job is staged but not yet executing (the fl-server flips it to
+            // RUNNING once the run is live), so the step reads "Starting" until then — mirroring
+            // the "Model Queued" sub-state on the Model Prepared step.
             description:
-                (statusValue >= ModelStatusEnum.PREPARED && statusValue < ModelStatusEnum.RESULTS_UPLOADED)
-                    ? "In Progress" : undefined,
+                statusValue === ModelStatusEnum.PREPARED ? "Starting"
+                    : statusValue === ModelStatusEnum.RUNNING ? "In Progress" : undefined,
             inProgress: statusValue >= ModelStatusEnum.PREPARED && !isStopped && !isError && !isUploadFailed,
-            completed: statusValue > ModelStatusEnum.TRAINING_STARTED || isUploadFailed,
+            completed: statusValue > ModelStatusEnum.RUNNING || isUploadFailed,
             error: isError,
             stopped: isStopped
         },

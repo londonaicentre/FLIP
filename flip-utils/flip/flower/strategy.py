@@ -13,7 +13,7 @@
 """FLIP's Flower base strategy — FedAvg plus Central Hub telemetry.
 
 ``FlipFedAvg`` is the durable home for everything a FLIP Flower server app
-reports to the hub: the TRAINING_STARTED status, per-client metric and
+reports to the hub: the RUNNING status, per-client metric and
 exception forwarding (``flip.flower.metrics``), and the typed round events
 (``flip.flower.progress``). App templates subclass it and keep only their
 app-specific behaviour; the telemetry evolves here, in flip-utils, without
@@ -73,9 +73,9 @@ class FlipFedAvg(FedAvg):
         self._telemetry = RoundTelemetry()
 
     def start(self, grid: Grid, initial_arrays: ArrayRecord, num_rounds: int = 3, **kwargs):
-        """Capture the round total and mark the run as training on the hub."""
+        """Capture the round total and mark the run as executing on the hub."""
         self.num_rounds = num_rounds
-        self.flip.update_status(self.model_id, ModelStatus.TRAINING_STARTED)
+        self.flip.update_status(self.model_id, ModelStatus.RUNNING)
         return super().start(grid, initial_arrays, num_rounds, **kwargs)
 
     def configure_train(

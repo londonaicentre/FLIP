@@ -34,7 +34,7 @@ describe("ModelTabs", () => {
     });
 
     test("marks the active chip for assistive tech", () => {
-        const comp = mountTabs("TRAINING_STARTED", "run");
+        const comp = mountTabs("RUNNING", "run");
 
         expect(comp.find("[data-test=tab-run]").attributes("aria-current")).toBe("page");
         expect(comp.find("[data-test=tab-prepare]").attributes("aria-current")).toBeUndefined();
@@ -63,7 +63,7 @@ describe("ModelTabs", () => {
     });
 
     test("switching back to Prepare is always allowed", async () => {
-        const comp = mountTabs("TRAINING_STARTED", "run");
+        const comp = mountTabs("RUNNING", "run");
 
         await comp.find("[data-test=tab-prepare]").trigger("click");
 
@@ -74,21 +74,21 @@ describe("ModelTabs", () => {
         const pending = mountTabs("PENDING");
         expect(pending.find("[data-test=tab-prepare-done]").exists()).toBe(false);
 
-        const started = mountTabs("TRAINING_STARTED", "run");
+        const started = mountTabs("RUNNING", "run");
         expect(started.find("[data-test=tab-prepare-done]").exists()).toBe(true);
     });
 
     test("Prepare stays ticked when you open it — the stage is still done", () => {
-        const comp = mountTabs("TRAINING_STARTED", "prepare");
+        const comp = mountTabs("RUNNING", "prepare");
 
         expect(comp.find("[data-test=tab-prepare-done]").exists()).toBe(true);
     });
 
     test("the tick reads green on the open and closed tab alike — the active fill is light", () => {
-        const open = mountTabs("TRAINING_STARTED", "prepare");
+        const open = mountTabs("RUNNING", "prepare");
         expect(open.find("[data-test=tab-prepare-done]").classes()).toContain("text-green-600");
 
-        const closed = mountTabs("TRAINING_STARTED", "run");
+        const closed = mountTabs("RUNNING", "run");
         expect(closed.find("[data-test=tab-prepare-done]").classes()).toContain("text-green-600");
     });
 
@@ -96,7 +96,7 @@ describe("ModelTabs", () => {
         const uploaded = mountTabs("RESULTS_UPLOADED", "run");
         expect(uploaded.find("[data-test=tab-run-done]").exists()).toBe(true);
 
-        const live = mountTabs("TRAINING_STARTED", "run");
+        const live = mountTabs("RUNNING", "run");
         expect(live.find("[data-test=tab-run-done]").exists()).toBe(false);
     });
 
@@ -114,7 +114,7 @@ describe("ModelTabs", () => {
     });
 
     test("tabs are flat ghost buttons: active is ink on a soft paper fill, inactive muted text", () => {
-        const started = mountTabs("TRAINING_STARTED", "run");
+        const started = mountTabs("RUNNING", "run");
         const active = started.find("[data-test=tab-run]");
         const inactive = started.find("[data-test=tab-prepare]");
 
@@ -132,7 +132,7 @@ describe("ModelTabs", () => {
     });
 
     test("the Run chip pulses only while the run is in progress", () => {
-        const live = mountTabs("TRAINING_STARTED", "run");
+        const live = mountTabs("RUNNING", "run");
         expect(live.find("[data-test=tab-run-live]").exists()).toBe(true);
 
         const finished = mountTabs("RESULTS_UPLOADED", "run");

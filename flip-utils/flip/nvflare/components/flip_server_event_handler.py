@@ -198,7 +198,15 @@ class ServerEventHandler(FLComponent):
 
         elif event_type == AppEventType.TRAINING_STARTED:
             self.log_info(fl_ctx, "Training started event received")
-            self._update_status(fl_ctx, ModelStatus.TRAINING_STARTED)
+            self._update_status(fl_ctx, ModelStatus.RUNNING)
+
+        elif event_type == FlipEvents.TASK_INITIATED:
+            # Fired by InitEvaluation when an evaluation job finishes initialising.
+            # Evaluation workflows never fire the training events above, so this is
+            # the only mid-run transition an eval job gets (#782). Training templates
+            # don't run InitEvaluation, so there is no RUNNING → PREPARED zigzag.
+            self.log_info(fl_ctx, "Task initiated event received")
+            self._update_status(fl_ctx, ModelStatus.RUNNING)
 
         elif event_type == AppEventType.ROUND_STARTED:
             self._relay_round_event(fl_ctx, FLLogEvent.ROUND_STARTED)

@@ -420,7 +420,7 @@ describe("pages/project/[projectId]/model/[modelId]", () => {
                 name: "config.json",
                 status: FileUploadStatus.COMPLETED
             }],
-            { status: "TRAINING_STARTED" }
+            { status: "RUNNING" }
         );
         const wrapper = await mountPage();
         await flushPromises();
@@ -541,7 +541,7 @@ describe("pages/project/[projectId]/model/[modelId]", () => {
                 name: "config.json",
                 status: FileUploadStatus.COMPLETED
             }],
-            { status: "TRAINING_STARTED" }
+            { status: "RUNNING" }
         );
         const wrapper = await mountPage();
         await flushPromises();
@@ -733,7 +733,7 @@ describe("pages/project/[projectId]/model/[modelId] — Prepare/Run tabs", () =>
     });
 
     it("a dispatched model opens on Run, and the model files are out of the way", async () => {
-        mockSwrvData.value = makeModel([], { status: "TRAINING_STARTED" });
+        mockSwrvData.value = makeModel([], { status: "RUNNING" });
         const wrapper = await mountPage();
 
         expect(wrapper.find("[data-test='model-tabs']").attributes("data-active")).toBe("run");
@@ -742,7 +742,7 @@ describe("pages/project/[projectId]/model/[modelId] — Prepare/Run tabs", () =>
     });
 
     it("Prepare stays reachable during a run, read-only but still downloadable", async () => {
-        mockSwrvData.value = makeModel([], { status: "TRAINING_STARTED" });
+        mockSwrvData.value = makeModel([], { status: "RUNNING" });
         const wrapper = await mountPage();
 
         await wrapper.find("[data-test='tab-prepare']").trigger("click");
@@ -758,7 +758,7 @@ describe("pages/project/[projectId]/model/[modelId] — Prepare/Run tabs", () =>
         // ITrustSummary carries both; the pre-filled form binds trust_ids, so a
         // slip to t.name here would silently break the dispatched-run record.
         mockSwrvData.value = makeModel([], {
-            status: "TRAINING_STARTED",
+            status: "RUNNING",
             trusts: [
                 {
                     id: "trust-a",
@@ -780,7 +780,7 @@ describe("pages/project/[projectId]/model/[modelId] — Prepare/Run tabs", () =>
     });
 
     it("the lifecycle belongs to Prepare — Run is for watching, not for staging", async () => {
-        mockSwrvData.value = makeModel([], { status: "TRAINING_STARTED" });
+        mockSwrvData.value = makeModel([], { status: "RUNNING" });
         const wrapper = await mountPage();
 
         expect(wrapper.find("[data-test='lifecycle-track']").exists()).toBe(false);
@@ -819,7 +819,7 @@ describe("pages/project/[projectId]/model/[modelId] — Prepare/Run tabs", () =>
 
 describe("pages/project/[projectId]/model/[modelId] — header actions follow the stage", () => {
     it("Edit Model belongs to Prepare, the run actions to Run", async () => {
-        mockSwrvData.value = makeModel([], { status: "TRAINING_STARTED" });
+        mockSwrvData.value = makeModel([], { status: "RUNNING" });
         const wrapper = await mountPage();
 
         // Opens on Run: stop / download live here, editing does not.

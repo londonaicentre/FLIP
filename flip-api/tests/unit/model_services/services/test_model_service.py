@@ -372,7 +372,7 @@ def test_update_model_status_notifies_scheduler_on_terminal_status(mock_audit, m
     to retire the run — confirms the side-effect on transition.
     """
     session = MagicMock()
-    mock_model = MagicMock(status=ModelStatus.TRAINING_STARTED)
+    mock_model = MagicMock(status=ModelStatus.RUNNING)
     session.get.return_value = mock_model
     model_id = uuid4()
 

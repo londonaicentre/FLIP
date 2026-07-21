@@ -212,7 +212,7 @@ def test_retrieve_model_reports_the_trusts_that_took_part(
         "model_name": "Test Model",
         "model_description": "Desc",
         "project_id": str(uuid4()),
-        "status": ModelStatus.TRAINING_STARTED.value,
+        "status": ModelStatus.RUNNING.value,
         "files": [],
         "query": None,
     }
