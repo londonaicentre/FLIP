@@ -572,6 +572,7 @@ class TestRoundEventRelay:
         fl_ctx.get_peer_context.return_value = None
         engine = MagicMock()
         fl_ctx.get_engine.return_value = engine
+        engine.get_clients.return_value = [Mock(), Mock(), Mock()]
         json_generator = Mock(spec=ValidationJsonGenerator)
         persist_cleanup = Mock(spec=PersistToS3AndCleanup)
         engine.get_component.side_effect = lambda comp_id: (
@@ -597,9 +598,10 @@ class TestRoundEventRelay:
             details={"total_rounds": 5},
         )
 
-    def test_round_started_clears_the_previous_rounds_sticky_counts(self):
-        """A round with zero accepted results must not report round N-1's counts
-        on its ROUND_DONE — the sticky props are cleared at every round start."""
+    def test_round_started_seeds_the_counts_so_an_all_fail_round_reports_zero(self):
+        """A round with zero accepted results must not report round N-1's counts on its
+        ROUND_DONE — the sticky props are re-seeded to "0 of m" at every round start, so
+        the all-clients-failed round closes with an honest count, not a bare line."""
         from nvflare.app_common.app_constant import AppConstants
 
         handler, flip, fl_ctx = self._handler_and_ctx(
@@ -608,9 +610,23 @@ class TestRoundEventRelay:
 
         handler.handle_event(AppEventType.ROUND_STARTED, fl_ctx)
 
-        cleared = {call.args[0] for call in fl_ctx.set_prop.call_args_list if call.args[1] is None}
-        assert FlipProps.ROUND_RETURNED in cleared
-        assert FlipProps.ROUND_EXPECTED in cleared
+        seeded = {call.args[0]: call.args[1] for call in fl_ctx.set_prop.call_args_list}
+        assert seeded[FlipProps.ROUND_RETURNED] == 0
+        assert seeded[FlipProps.ROUND_EXPECTED] == 3  # the harness engine's client count
+
+    def test_round_started_with_unreadable_engine_degrades_to_uncounted(self):
+        """No client roster to seed from → both counts clear to None and the round
+        degrades to the bare aggregated wording rather than claiming a denominator."""
+        from nvflare.app_common.app_constant import AppConstants
+
+        handler, flip, fl_ctx = self._handler_and_ctx({AppConstants.CURRENT_ROUND: 2})
+        fl_ctx.get_engine.return_value.get_clients.side_effect = RuntimeError("engine gone")
+
+        handler.handle_event(AppEventType.ROUND_STARTED, fl_ctx)
+
+        seeded = {call.args[0]: call.args[1] for call in fl_ctx.set_prop.call_args_list}
+        assert seeded[FlipProps.ROUND_RETURNED] is None
+        assert seeded[FlipProps.ROUND_EXPECTED] is None
 
     def test_round_started_without_total_omits_it(self):
         from nvflare.app_common.app_constant import AppConstants
