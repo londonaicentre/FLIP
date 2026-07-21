@@ -10,6 +10,7 @@
 # limitations under the License.
 #
 
+from datetime import datetime
 from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
@@ -18,13 +19,16 @@ import pytest
 from flip_api.db.models.main_models import FLMetrics, Model
 from flip_api.domain.interfaces.model import IModelDetails
 from flip_api.domain.schemas.status import ModelStatus
+from flip_api.domain.schemas.types import FLLogEvent
 from flip_api.model_services.services.model_service import (
+    _run_trusts_by_model,
     add_log,
     delete_model,
     delete_models,
     edit_model,
     get_metrics,
     get_model_status,
+    queued_positions_by_model,
     resolve_trust_from_fl_client_name,
     update_model_status,
     validate_trust_ids,
@@ -100,6 +104,35 @@ def test_add_log_failure():
     with pytest.raises(Exception, match="DB error"):
         add_log(uuid4(), "Log message", session)
     session.rollback.assert_called()
+
+
+def test_add_log_persists_event_fields():
+    """Typed event rows land with event_type/global_round/details and no display text."""
+    session = MagicMock()
+    add_log(
+        uuid4(),
+        None,
+        session,
+        event_type=FLLogEvent.ROUND_STARTED,
+        global_round=7,
+        details={"total_rounds": 15},
+    )
+    row = session.add.call_args.args[0]
+    assert row.log is None
+    assert row.event_type == FLLogEvent.ROUND_STARTED
+    assert row.global_round == 7
+    assert row.details == {"total_rounds": 15}
+
+
+def test_add_log_event_fields_default_null():
+    """Legacy free-text writes stay exactly as they were: all event columns null."""
+    session = MagicMock()
+    add_log(uuid4(), "Log message", session)
+    row = session.add.call_args.args[0]
+    assert row.log == "Log message"
+    assert row.event_type is None
+    assert row.global_round is None
+    assert row.details is None
 
 
 def test_delete_model_success():
@@ -222,18 +255,18 @@ def test_get_metrics():
     result = get_metrics(model_id, session)
 
     assert len(result) == 1
-    assert result[0].yLabel == "accuracy"
-    assert result[0].xLabel == "globalRound"
+    assert result[0].y_label == "accuracy"
+    assert result[0].x_label == "global_round"
     assert len(result[0].metrics) == 2  # trust_a and trust_b
 
-    labels = sorted(m.seriesLabel for m in result[0].metrics)
+    labels = sorted(m.series_label for m in result[0].metrics)
     assert labels == ["Trust A", "Trust B"]
 
-    trust_a_data = next(m for m in result[0].metrics if m.seriesLabel == "Trust A").data
-    assert trust_a_data[0].xValue == 1
-    assert trust_a_data[0].yValue == 0.9
-    assert trust_a_data[1].xValue == 2
-    assert trust_a_data[1].yValue == 0.92
+    trust_a_data = next(m for m in result[0].metrics if m.series_label == "Trust A").data
+    assert trust_a_data[0].x_value == 1
+    assert trust_a_data[0].y_value == 0.9
+    assert trust_a_data[1].x_value == 2
+    assert trust_a_data[1].y_value == 0.92
 
 
 def test_get_metrics_resolves_trust_to_code():
@@ -257,7 +290,7 @@ def test_get_metrics_resolves_trust_to_code():
 
     result = get_metrics(model_id, session)
 
-    labels = sorted(m.seriesLabel for m in result[0].metrics)
+    labels = sorted(m.series_label for m in result[0].metrics)
     assert labels == ["GSTT", "UCLH"]
 
 
@@ -278,7 +311,7 @@ def test_get_metrics_falls_back_to_trust_name_when_no_code():
 
     result = get_metrics(model_id, session)
 
-    assert result[0].metrics[0].seriesLabel == "Trust Three"
+    assert result[0].metrics[0].series_label == "Trust Three"
 
 
 def test_get_metrics_no_results():
@@ -412,3 +445,107 @@ def test_validate_trust_ids_returns_true_for_empty_input():
     session.exec.return_value.all.return_value = [uuid4()]
 
     assert validate_trust_ids(uuid4(), [], session) is True
+
+
+def test_get_metrics_orders_points_by_round():
+    """Chart points must ascend by round regardless of the row order Postgres returns.
+
+    The query has no inherent ordering, and real runs come back interleaved (an
+    observed series: [1, 1, 2, 3, 2, 4, 5, 6, 3, 7, ...]). Plotting that array
+    order draws a zig-zag, and "the latest value" reads whichever row happened to
+    land last.
+    """
+    session = MagicMock()
+    model_id = uuid4()
+    trust_a = uuid4()
+
+    rows = [
+        FLMetrics(model_id=model_id, trust=trust_a, fl_client_name="T1", label="LOSS", global_round=r, result=y)
+        for r, y in [(3, 0.3), (1, 0.9), (2, 0.5)]
+    ]
+    session.exec.side_effect = [
+        MagicMock(all=MagicMock(return_value=rows)),
+        MagicMock(all=MagicMock(return_value=[(trust_a, "GSTT", "Guy's")])),
+    ]
+
+    result = get_metrics(model_id, session)
+
+    points = result[0].metrics[0].data
+    assert [p.x_value for p in points] == [1, 2, 3]
+    assert [p.y_value for p in points] == [0.9, 0.5, 0.3]
+
+
+def test_run_trusts_by_model_reads_latest_job_roster():
+    """Run trusts come from the latest FL job's fl_job_trust rows, not ModelTrustIntersect.
+
+    ModelTrustIntersect gets a row per approved trust at model creation, so sourcing
+    it would mark excluded trusts as participants; and a re-initiated model must
+    report only its newest job's roster.
+    """
+    session = MagicMock()
+    model_id = uuid4()
+    old_job, new_job = uuid4(), uuid4()
+    old_trust, new_trust = uuid4(), uuid4()
+    older, newer = datetime(2026, 1, 1), datetime(2026, 2, 1)
+    session.exec.return_value.all.return_value = [
+        (old_job, model_id, older, old_trust, "Old Trust", "OLD"),
+        (new_job, model_id, newer, new_trust, "New Trust", "NEW"),
+    ]
+
+    result = _run_trusts_by_model([model_id], session)
+
+    stmt = str(session.exec.call_args.args[0])
+    assert "fl_job_trust" in stmt
+    assert "model_trust_intersect" not in stmt
+    assert [(t.id, t.name, t.code) for t in result[model_id]] == [(new_trust, "New Trust", "NEW")]
+
+
+def test_run_trusts_by_model_created_tie_keeps_one_jobs_roster():
+    """Two jobs sharing a created microsecond must not merge rosters (duplicate
+    trusts); the tie breaks on job id, matching retrieve_model's ordering."""
+    session = MagicMock()
+    model_id = uuid4()
+    job_a, job_b = sorted([uuid4(), uuid4()])
+    trust_id = uuid4()
+    created = datetime(2026, 2, 1)
+    session.exec.return_value.all.return_value = [
+        (job_a, model_id, created, trust_id, "Trust", "TR"),
+        (job_b, model_id, created, trust_id, "Trust", "TR"),
+    ]
+
+    result = _run_trusts_by_model([model_id], session)
+
+    assert [(t.id, t.name, t.code) for t in result[model_id]] == [(trust_id, "Trust", "TR")]
+
+
+def test_run_trusts_by_model_empty_input_short_circuits():
+    session = MagicMock()
+
+    result = _run_trusts_by_model([], session)
+
+    assert result == {}
+    session.exec.assert_not_called()
+
+
+def test_queued_positions_by_model_ranks_by_scheduler_pickup_order():
+    """Positions are the 1-based rank over QUEUED jobs in created order (FIFO)."""
+    session = MagicMock()
+    first, second = uuid4(), uuid4()
+    session.exec.return_value.all.return_value = [first, second]
+
+    assert queued_positions_by_model(session) == {first: 1, second: 2}
+
+
+def test_queued_positions_by_model_keeps_the_earliest_position_per_model():
+    session = MagicMock()
+    model_id = uuid4()
+    session.exec.return_value.all.return_value = [model_id, model_id]
+
+    assert queued_positions_by_model(session) == {model_id: 1}
+
+
+def test_queued_positions_by_model_empty_queue():
+    session = MagicMock()
+    session.exec.return_value.all.return_value = []
+
+    assert queued_positions_by_model(session) == {}

@@ -21,8 +21,8 @@
         <AiLoader />
     </template>
     <div v-else class="relative flex flex-col h-full overflow-hidden">
-        <div class="flex-grow h-full overflow-y-auto">
-            <header class="px-6 pt-4">
+        <div class="flex flex-col flex-grow h-full overflow-y-auto">
+            <header class="shrink-0 px-8 pt-4">
                 <router-link
                     to="/projects"
                     class="text-xs font-semibold tracking-wider uppercase font-mono text-gray-500 hover:text-primary-500 dark:text-gray-300 dark:hover:text-primary-300"
@@ -44,8 +44,14 @@
                     </h1>
                     <!-- Below lg the button labels hide (icon + tooltip only) so the
                          actions stop squashing the truncating model title. -->
+                    <!-- Each action belongs to a stage: you edit and dispatch a model in
+                         Prepare; you stop it and collect its results in Run. -->
                     <div class="flex items-center gap-3 shrink-0">
-                        <AiGuard v-if="!isViewer" :permissions="editProjectPermissions" :bypass="isOwnerOrHasAccess()">
+                        <AiGuard
+                            v-if="!isViewer && activeTab === 'prepare'"
+                            :permissions="editProjectPermissions"
+                            :bypass="isOwnerOrHasAccess()"
+                        >
                             <AiButton
                                 light
                                 data-test="edit-model-btn"
@@ -58,56 +64,90 @@
                             </AiButton>
                         </AiGuard>
                         <AiButton
-                            v-if="!isViewer && isTrainingPending()"
+                            v-if="!isViewer && isTrainingPending() && activeTab === 'prepare'"
                             primary
                             data-test="initiate-training-btn"
                             aria-label="Initiate Training"
                             tooltip="Initiate Training"
-                            :disabled="!readyToTrain"
+                            :disabled="!readyToTrain || !trainingRef?.optionsComplete"
                             :loading="trainingRef?.isSubmitting ?? false"
                             @click="trainingRef?.initiateTraining()"
                         >
                             <icon-ph-play-fill class="lg:mr-2" />
                             <span class="hidden lg:inline">Initiate Training</span>
                         </AiButton>
-                        <TrainingActionsMenu v-if="!isViewer && !isTrainingPending()" :status="getStatusEnumValue(modelData?.status)" />
+                        <TrainingActionsMenu
+                            v-if="!isViewer && !isTrainingPending() && activeTab === 'run'"
+                            :status="getStatusEnumValue(modelData?.status)"
+                        />
                     </div>
                 </div>
             </header>
 
-            <div class="flex flex-col gap-4 p-4">
-                <!-- my-4 on top of the column's gap/padding gives the lifecycle ~32px of
-                     breathing room above and below. -->
-                <LifecycleTrack :steps="steps" class="my-4" />
+            <!-- pb-8 matches the px-8 side margins, so the window-filling cards keep
+                 the same breathing room below as beside them. -->
+            <div class="flex flex-col flex-1 min-h-0 gap-4 px-8 pt-4 pb-8">
+                <!-- -my-2 pulls the chip row into the column's gap-4 on both sides, so the
+                     stage tabs read as part of the header band rather than a spaced row. -->
+                <ModelTabs v-model="activeTab" :status="modelData?.status" class="-my-2" />
 
-                <div class="flex flex-col gap-4 lg:flex-row lg:gap-4">
-                    <aside class="lg:w-80 2xl:min-w-[30rem] shrink-0">
-                        <ModelUpload
-                            :files="modelData.files ?? []"
-                            :loading="!modelData"
-                            :can-upload="!trainingStartedOrStopped && !isViewer"
-                            :model-id="modelData.modelId"
-                            :required-files="requiredFiles"
-                            :job-type="currentJobType"
-                            @uploaded="update"
-                            @deleted-file="onFileDeleted"
-                        />
-                    </aside>
+                <!-- Prepare: the model files and the run options, exactly as at model
+                     creation. Once dispatched nothing here is editable — the options
+                     stay on screen as a record of how the run was launched, and the
+                     files stay downloadable. The lifecycle bar renders here so Prepare
+                     always answers "where is this model in its journey?"; Run leads
+                     with the live metrics and activity instead.
+                     my-4 on top of the column's gap gives it ~32px of breathing room. -->
+                <template v-if="activeTab === 'prepare'">
+                    <LifecycleTrack :steps="steps" class="my-4" />
 
-                    <div class="flex-1 min-w-0">
-                        <Training
-                            ref="trainingRef"
-                            :can-train="readyToTrain"
-                            :status="modelData?.status"
-                            :all-files-uploaded="allFilesUploaded"
-                            :required-files="requiredFiles"
-                            :uploaded-file-names="modelData?.files?.map(f => f.name) ?? []"
-                            :job-type="currentJobType"
-                            :fl-backend-label="flBackendLabel"
-                            @started="trainingInitialised"
-                        />
+                    <div class="flex flex-col flex-1 min-h-0 gap-4 lg:flex-row lg:gap-4">
+                        <aside
+                            class="flex flex-col flex-1 lg:flex-none lg:w-80 2xl:min-w-[30rem] shrink-0
+                                   min-h-[20rem] lg:min-h-0"
+                        >
+                            <ModelUpload
+                                :files="modelData.files ?? []"
+                                :loading="!modelData"
+                                :can-upload="!trainingStartedOrStopped && !isViewer"
+                                :model-id="modelData.modelId"
+                                :required-files="requiredFiles"
+                                :job-type="currentJobType"
+                                @uploaded="update"
+                                @deleted-file="onFileDeleted"
+                            />
+                        </aside>
+
+                        <div class="flex flex-col flex-1 min-w-0 min-h-[24rem] lg:min-h-0">
+                            <Training
+                                ref="trainingRef"
+                                view="prepare"
+                                :run-trusts="runTrusts"
+                                :can-train="readyToTrain"
+                                :status="modelData?.status"
+                                :all-files-uploaded="allFilesUploaded"
+                                :required-files="requiredFiles"
+                                :uploaded-file-names="modelData?.files?.map(f => f.name) ?? []"
+                                :job-type="currentJobType"
+                                :fl-backend-label="flBackendLabel"
+                                @started="trainingInitialised"
+                            />
+                        </div>
                     </div>
-                </div>
+                </template>
+
+                <!-- Run: metrics and the activity feed. -->
+                <Training
+                    v-else
+                    view="run"
+                    :can-train="readyToTrain"
+                    :status="modelData?.status"
+                    :all-files-uploaded="allFilesUploaded"
+                    :required-files="requiredFiles"
+                    :uploaded-file-names="modelData?.files?.map(f => f.name) ?? []"
+                    :job-type="currentJobType"
+                    :fl-backend-label="flBackendLabel"
+                />
             </div>
 
             <EditModelDrawer
@@ -138,6 +178,7 @@ import { usePermissions } from "@/composables/usePermissions";
 import { FileUploadStatus } from "@/interfaces/model/types";
 import { IStep } from "@/interfaces/steps";
 import EditModelDrawer, { IEditModel } from "@/partials/models/EditModelDrawer.vue";
+import ModelTabs, { type ModelTab } from "@/partials/models/ModelTabs.vue";
 import ModelUpload from "@/partials/models/ModelUpload.vue";
 import Training from "@/partials/models/Training.vue";
 import TrainingActionsMenu from "@/partials/models/TrainingActionsMenu.vue";
@@ -255,12 +296,14 @@ const steps = computed((): IStep[] => {
         modelData.value?.resultsUploadedAt
     ];
 
-    return buildModelSteps(modelData.value?.status).map((step, i) => ({
+    return buildModelSteps(modelData.value?.status, modelData.value?.queuePosition).map((step, i) => ({
         ...step,
         date: dates[i] ?? null
     }));
 });
 
+// The trusts the run was dispatched to, so Prepare can show which took part.
+const runTrusts = computed(() => modelData.value?.trusts?.map(t => t.id) ?? []);
 
 const readyToTrain = computed(() => {
     return !trainingStartedOrStopped.value
@@ -314,10 +357,23 @@ const onFileDeleted = () => {
     update();
 };
 
+// Nothing is worth watching until the model is dispatched, so a pending model opens
+// on Prepare and anything else on Run. Seeded from the first payload only — after
+// that the tab is the user's to choose, and a 5s poll must not yank them back.
+const activeTab = ref<ModelTab>("prepare");
+const tabSeeded = ref(false);
+
+watch(modelData, (model) => {
+    if (!model || tabSeeded.value) return;
+    activeTab.value = model.status === "PENDING" ? "prepare" : "run";
+    tabSeeded.value = true;
+}, { immediate: true });
+
 const trainingInitialised = () => {
     if (modelData.value?.status) {
         modelData.value.status = "INITIATED";
     }
+    activeTab.value = "run";
 };
 
 const isTrainingPending = () => {

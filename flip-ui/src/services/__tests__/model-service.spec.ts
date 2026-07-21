@@ -14,7 +14,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { _http } from "@/services/api";
-import { buildModelSteps, clearJobTypesCache, createModel, DEFAULT_JOB_TYPE, deleteModel, editModel, fetchJobTypes, getAllModels, getDownloadUrlForResults, getLogsForModel, getModel, getModelFileStatus, getModelMetrics, getModels, getPreSignedUrl, getRequiredFilesForJobType, getStatusEnumValue, initialiseTraining, isValidJobType, type ModelStatus, ModelStatusEnum, stopTraining, uploadModelFile } from "@/services/model-service";
+import { buildModelSteps, clearJobTypesCache, createModel, DEFAULT_JOB_TYPE, deleteModel, editModel, fetchJobTypes, getAllModels, getDownloadUrlForResults, getLogsForModel, getModel, getModelFileStatus, getModelMetrics, getModels, getPreSignedUrl, getRequiredFilesForJobType, getStatusEnumValue, initialiseTraining, isValidJobType, type ModelStatus, ModelStatusEnum, modelStatusLabelWithQueue, stopTraining, uploadModelFile } from "@/services/model-service";
 
 vi.mock("@/services/api", () => ({
     _http: {
@@ -514,6 +514,29 @@ describe("model-service", () => {
             // receiving a newer status degrades gracefully rather than crashing.
             expect(() => buildModelSteps("NONSENSE" as ModelStatus)).not.toThrow();
             expect(stepByName("NONSENSE" as ModelStatus, "Running").error).toBe(true);
+        });
+
+        it("INITIATED with a queue position describes step 02 as Model Queued (n)", () => {
+            const step = buildModelSteps("INITIATED", 2).find(s => s.name === "Model Prepared");
+            expect(step?.description).toBe("Model Queued (2)");
+        });
+
+        it("INITIATED without a queue position keeps the plain Model Queued description", () => {
+            expect(stepByName("INITIATED", "Model Prepared").description).toBe("Model Queued");
+        });
+    });
+
+    describe("modelStatusLabelWithQueue", () => {
+        it("appends the queue position when present", () => {
+            expect(modelStatusLabelWithQueue("INITIATED", 2)).toBe("Model Queued (2)");
+        });
+
+        it.each([[undefined], [null], [0], [-1]])("omits the suffix for %s", (position) => {
+            expect(modelStatusLabelWithQueue("INITIATED", position as number | null | undefined)).toBe("Model Queued");
+        });
+
+        it("appends to whatever label the status maps to", () => {
+            expect(modelStatusLabelWithQueue("PENDING", 3)).toBe("Model Created (3)");
         });
     });
 

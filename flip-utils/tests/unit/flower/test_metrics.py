@@ -157,14 +157,18 @@ class TestHandleClientMetrics:
             round=7,
         )
 
-    def test_falls_back_to_src_node_id_when_site_missing(self):
+    def test_metrics_without_a_site_are_dropped(self):
+        """The hub cannot attribute a metric to a trust without a site name.
+
+        Previously these were sent under a fabricated ``unknown_<node_id>``, which
+        the hub rejected with a 400 on every metric of every round.
+        """
         msg = _build_message(metrics={"loss": 0.1}, site=None, src_node_id=7)
         flip = Mock()
 
         handle_client_metrics(msg, server_round=1, model_id=VALID_MODEL_ID, flip=flip)
 
-        (_, kwargs), = flip.send_metrics.call_args_list
-        assert kwargs["client_name"] == "unknown_7"
+        flip.send_metrics.assert_not_called()
 
     def test_accepts_client_name_config_key_as_site_fallback(self):
         msg = _build_message(metrics={"loss": 0.1}, client_name="Trust_5")
@@ -238,14 +242,15 @@ class TestHandleClientException:
         )
         flip.update_status.assert_called_once_with(VALID_MODEL_ID, ModelStatus.ERROR)
 
-    def test_falls_back_to_src_node_id_when_site_missing(self):
+    def test_unattributable_exception_goes_model_level(self):
+        """No site => report the traceback against the model, not a fake client name."""
         msg = _build_message(has_error=True, error=RuntimeError("x"), site=None, src_node_id=11)
         flip = Mock()
 
         handle_client_exception(msg, model_id=VALID_MODEL_ID, flip=flip)
 
         (_, kwargs), = flip.send_handled_exception.call_args_list
-        assert kwargs["client_name"] == "unknown_11"
+        assert kwargs["client_name"] is None
 
     def test_hub_exception_is_swallowed(self):
         msg = _build_message(has_error=True, error=RuntimeError("x"), site="Trust_1")
@@ -272,7 +277,8 @@ class TestHandleClientException:
 
     def test_content_access_value_error_on_errored_reply(self):
         # Flower raises ValueError on msg.content when a reply carries only an error;
-        # the handler must still resolve a site name and transition status.
+        # with no cached site the exception is reported model-level, and the run
+        # still transitions to ERROR.
         msg = Mock()
         msg.has_error.return_value = True
         msg.error = RuntimeError("boom")
@@ -283,5 +289,38 @@ class TestHandleClientException:
         handle_client_exception(msg, model_id=VALID_MODEL_ID, flip=flip)
 
         (_, kwargs), = flip.send_handled_exception.call_args_list
-        assert kwargs["client_name"] == "unknown_99"
+        assert kwargs["client_name"] is None
         flip.update_status.assert_called_once_with(VALID_MODEL_ID, ModelStatus.ERROR)
+
+    def test_caller_supplied_site_attributes_a_content_less_reply(self):
+        """The strategy names the absent client by elimination and passes it in."""
+        msg = Mock()
+        msg.has_error.return_value = True
+        msg.error = RuntimeError("boom")
+        type(msg).content = property(lambda self: (_ for _ in ()).throw(ValueError("no content")))
+        msg.metadata.src_node_id = 1  # Flower's placeholder id on a synthesised error reply
+        flip = Mock()
+
+        handle_client_exception(msg, model_id=VALID_MODEL_ID, flip=flip, site_name="Trust_2")
+
+        (_, kwargs), = flip.send_handled_exception.call_args_list
+        assert kwargs["client_name"] == "Trust_2"
+
+
+class TestSiteAttributionForErroredReplies:
+    """A crashed client's reply identifies nothing, so its site must come from elsewhere.
+
+    Flower raises on ``msg.content`` for an errored reply and stamps a placeholder
+    ``src_node_id`` on the error it synthesises for an unreachable node. Without help
+    the old code sent ``unknown_<node_id>``, which the hub cannot map to a trust — the
+    exception was rejected (400) and its traceback lost. The strategy now names the
+    absent client by elimination and hands the site in.
+    """
+
+    def test_caller_supplied_site_wins_when_the_reply_has_none(self):
+        msg = _build_message(has_error=True, error="boom", site=None, src_node_id=1)
+        flip = Mock()
+
+        handle_client_exception(msg, VALID_MODEL_ID, flip, site_name="Trust_2")
+
+        assert flip.send_handled_exception.call_args.kwargs["client_name"] == "Trust_2"

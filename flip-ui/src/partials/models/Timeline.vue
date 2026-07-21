@@ -53,8 +53,9 @@
                                                         :class="log.trustName
                                                             ? 'text-gray-800 dark:text-gray-200'
                                                             : 'text-primary-600 dark:text-primary-300'"
+                                                        :title="log.trustName ?? undefined"
                                                     >
-                                                        {{ log.trustName ?? "Hub" }}
+                                                        {{ log.trustCode ?? log.trustName ?? "Hub" }}
                                                     </span>
                                                     <span class="text-[10px] font-mono text-gray-500 dark:text-gray-300 shrink-0" data-test="log-timestamp">
                                                         {{ getShortDateFromString(log.logDate) }}
