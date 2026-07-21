@@ -18,6 +18,8 @@ import { resolve } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+import { THEME_COLOR_LIGHT } from "../composables/useThemeColorMeta";
+
 const indexHtml = readFileSync(resolve(__dirname, "../../index.html"), "utf-8");
 
 describe("index.html document metas", () => {
@@ -32,7 +34,7 @@ describe("index.html document metas", () => {
         expect(viewport?.[1]).toContain("width=device-width");
     });
 
-    it("ships a pre-hydration theme-color for browsers that honour it", () => {
-        expect(indexHtml).toMatch(/<meta name="theme-color" content="#FAF7F5"/);
+    it("ships a pre-hydration theme-color matching the light page background", () => {
+        expect(indexHtml).toContain(`<meta name="theme-color" content="${THEME_COLOR_LIGHT}"`);
     });
 });

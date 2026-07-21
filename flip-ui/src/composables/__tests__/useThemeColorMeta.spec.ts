@@ -16,6 +16,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { nextTick, ref } from "vue";
 
+import tailwindConfig from "../../../tailwind.config.js";
 import useThemeColorMeta, { THEME_COLOR_DARK, THEME_COLOR_LIGHT } from "../useThemeColorMeta";
 
 const getMeta = () => document.head.querySelector<HTMLMetaElement>("meta[name=\"theme-color\"]");
@@ -23,6 +24,13 @@ const getMeta = () => document.head.querySelector<HTMLMetaElement>("meta[name=\"
 describe("useThemeColorMeta", () => {
     beforeEach(() => {
         getMeta()?.remove();
+    });
+
+    it("mirrors the Tailwind page-background tokens (theme.colors.body / theme.colors.dark.canvas)", () => {
+        const tokens = tailwindConfig.theme.extend.colors;
+
+        expect(THEME_COLOR_LIGHT).toBe(tokens.body);
+        expect(THEME_COLOR_DARK).toBe(tokens.dark.canvas);
     });
 
     it("creates the meta tag and applies the light page colour immediately", () => {

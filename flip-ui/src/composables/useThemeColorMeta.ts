@@ -15,8 +15,9 @@
 
 import { Ref, watch } from "vue";
 
-// Page-background tokens from tailwind.config.js (theme.colors.body / theme.colors.dark.canvas) —
-// keep in sync if those change.
+// Page-background tokens from tailwind.config.js (theme.colors.body / theme.colors.dark.canvas);
+// useThemeColorMeta.spec.ts asserts they match, so a palette change fails tests instead of
+// silently desynchronising the browser-chrome tint from the page background.
 export const THEME_COLOR_LIGHT = "#FAF7F5";
 export const THEME_COLOR_DARK = "#0B1018";
 
