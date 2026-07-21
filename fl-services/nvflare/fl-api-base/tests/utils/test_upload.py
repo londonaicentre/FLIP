@@ -322,6 +322,35 @@ def test_validate_config_aggregate_only_regex_defaults_none():
     assert validate_config({"LOCAL_ROUNDS": 3}).AGGREGATE_ONLY_REGEX is None
 
 
+def test_validate_config_accepts_best_model_metric():
+    config = validate_config({"BEST_MODEL_METRIC": "VAL_DICE"})
+    assert config.BEST_MODEL_METRIC == "VAL_DICE"
+    # Minimize defaults False (higher-is-better) when only the metric is given.
+    assert config.BEST_MODEL_METRIC_MINIMIZE is False
+
+
+def test_validate_config_best_model_metric_minimize():
+    config = validate_config({"BEST_MODEL_METRIC": "VAL_LOSS", "BEST_MODEL_METRIC_MINIMIZE": True})
+    assert config.BEST_MODEL_METRIC == "VAL_LOSS"
+    assert config.BEST_MODEL_METRIC_MINIMIZE is True
+
+
+def test_validate_config_rejects_non_string_best_model_metric():
+    with pytest.raises(ValueError, match="BEST_MODEL_METRIC must be a string"):
+        validate_config({"BEST_MODEL_METRIC": 123})
+
+
+def test_validate_config_rejects_non_bool_best_model_metric_minimize():
+    with pytest.raises(ValueError, match="BEST_MODEL_METRIC_MINIMIZE must be a boolean"):
+        validate_config({"BEST_MODEL_METRIC": "VAL_DICE", "BEST_MODEL_METRIC_MINIMIZE": "yes"})
+
+
+def test_validate_config_best_model_metric_defaults_none():
+    result = validate_config({"LOCAL_ROUNDS": 3})
+    assert result.BEST_MODEL_METRIC is None
+    assert result.BEST_MODEL_METRIC_MINIMIZE is False
+
+
 def test_validate_config_rejects_non_dict_weights():
     with pytest.raises(ValueError, match="AGGREGATION_WEIGHTS must be a dictionary"):
         validate_config({"AGGREGATION_WEIGHTS": ["client1"]})
