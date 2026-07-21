@@ -76,7 +76,7 @@ class S3Client:
     def get_presigned_url(
         self,
         s3_path: str,
-        expiration: int = 3600,
+        expiration: int = MAX_PRESIGNED_URL_TTL_SECONDS,
         response_content_disposition: str | None = None,
     ) -> str:
         """
@@ -84,7 +84,9 @@ class S3Client:
 
         Args:
             s3_path: Full S3 path (e.g., s3://bucket-name/key)
-            expiration: URL expiration time in seconds (default: 1 hour). Values
+            expiration: URL expiration time in seconds (default: the 1800s
+                security ceiling, so default callers never trip the clamp
+                warning below). Values
                 above ``MAX_PRESIGNED_URL_TTL_SECONDS`` are silently clamped to
                 the ceiling — a warning is logged so an over-limit caller
                 leaves an audit trail. Silent clamping is deliberate: the

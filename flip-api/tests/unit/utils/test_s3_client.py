@@ -35,6 +35,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from botocore.exceptions import ClientError
 
+from flip_api.config import Settings
 from flip_api.utils.s3_client import (
     _MULTIPART_OVERHEAD_BUFFER_BYTES,
     MAX_PRESIGNED_URL_TTL_SECONDS,
@@ -224,6 +225,14 @@ def test_max_presigned_url_ttl_is_1800s():
     assert MAX_PRESIGNED_URL_TTL_SECONDS == 1800
 
 
+def test_settings_default_ttl_equals_ceiling():
+    """Pin PRE_SIGNED_URL_EXPIRATION_SECONDS' default to the ceiling: a higher
+    default would be clamped anyway and make every default-configured
+    deployment log the clamp warning on each presigned upload/download.
+    """
+    assert Settings.model_fields["PRE_SIGNED_URL_EXPIRATION_SECONDS"].default == MAX_PRESIGNED_URL_TTL_SECONDS
+
+
 def test_get_put_presigned_post_does_not_log_url_on_client_error(caplog, s3_client_with_mock_boto):
     """If boto raises ``ClientError``, the error log line must not contain the URL.
 
@@ -292,10 +301,12 @@ def test_get_presigned_url_caps_ttl_at_security_ceiling(s3_client_with_mock_boto
     assert kwargs["ExpiresIn"] == MAX_PRESIGNED_URL_TTL_SECONDS
 
 
-def test_get_presigned_url_default_ttl_is_clamped(s3_client_with_mock_boto):
-    """The function's own 3600s default must also be clamped — it exceeds the
-    1800s ceiling, and previously ``get_presigned_url`` applied no clamp at all.
+def test_get_presigned_url_default_ttl_is_ceiling_without_warning(caplog, s3_client_with_mock_boto):
+    """The function's default TTL must equal the ceiling AND not trip the clamp
+    warning — a default-behaving caller is within policy, so warning on it would
+    turn the clamp's audit trail into per-call noise.
     """
+    caplog.set_level(logging.WARNING, logger="uvicorn")
     s3, boto_instance = s3_client_with_mock_boto
     boto_instance.generate_presigned_url.return_value = "https://example.s3.amazonaws.com/signed"
 
@@ -303,6 +314,8 @@ def test_get_presigned_url_default_ttl_is_clamped(s3_client_with_mock_boto):
 
     kwargs = boto_instance.generate_presigned_url.call_args.kwargs
     assert kwargs["ExpiresIn"] == MAX_PRESIGNED_URL_TTL_SECONDS
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert not warnings, f"Default TTL must not warn: {[r.getMessage() for r in warnings]}"
 
 
 def test_get_presigned_url_at_ceiling_passes_through(s3_client_with_mock_boto):
