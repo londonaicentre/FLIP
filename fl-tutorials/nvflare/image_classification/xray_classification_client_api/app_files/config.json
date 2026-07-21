@@ -1,6 +1,7 @@
 {
   "job_type": "standard_client_api",
   "LOCAL_ROUNDS": 3,
+  "GLOBAL_ROUNDS": 3,
   "LR_START": 0.001,
   "LR_END": 0.0001,
   "VAL_SPLIT": 0.2,
