@@ -84,9 +84,9 @@ describe("ModelTabs", () => {
         expect(comp.find("[data-test=tab-prepare-done]").exists()).toBe(true);
     });
 
-    test("the tick on the open chip is white, so it reads against the filled chip", () => {
+    test("the tick reads green on the open and closed tab alike — the active fill is light", () => {
         const open = mountTabs("TRAINING_STARTED", "prepare");
-        expect(open.find("[data-test=tab-prepare-done]").classes()).toContain("text-white");
+        expect(open.find("[data-test=tab-prepare-done]").classes()).toContain("text-green-600");
 
         const closed = mountTabs("TRAINING_STARTED", "run");
         expect(closed.find("[data-test=tab-prepare-done]").classes()).toContain("text-green-600");
@@ -107,26 +107,28 @@ describe("ModelTabs", () => {
         }
     });
 
-    test("the connector joins the chips, and fills once the model is dispatched", () => {
+    test("no connector between the tabs — the nav is a plain narrow-gap row (design 04·A)", () => {
         const pending = mountTabs("PENDING");
-        const connector = pending.find("[data-test=tab-connector]");
-        expect(connector.classes()).toContain("bg-gray-200");
-
-        const started = mountTabs("TRAINING_STARTED", "run");
-        expect(started.find("[data-test=tab-connector]").classes()).toContain("bg-primary-500");
-
-        // No gap on the row: the connector itself is the spacing, so it meets both chips.
-        expect(pending.find("nav").classes()).not.toContain("gap-2");
+        expect(pending.find("[data-test=tab-connector]").exists()).toBe(false);
+        expect(pending.find("nav").classes()).toContain("gap-1");
     });
 
-    test("Prepare is always outlined in purple; Run only once the model is dispatched", () => {
-        const pending = mountTabs("PENDING");
-        expect(pending.find("[data-test=tab-prepare]").classes()).toContain("border-primary-500");
-        expect(pending.find("[data-test=tab-run]").classes()).toContain("border-gray-200");
-
+    test("tabs are flat ghost buttons: active is ink on a soft paper fill, inactive muted text", () => {
         const started = mountTabs("TRAINING_STARTED", "run");
-        expect(started.find("[data-test=tab-prepare]").classes()).toContain("border-primary-500");
-        expect(started.find("[data-test=tab-run]").classes()).toContain("border-primary-500");
+        const active = started.find("[data-test=tab-run]");
+        const inactive = started.find("[data-test=tab-prepare]");
+
+        expect(active.classes()).toContain("bg-ink/10");
+        expect(active.classes()).toContain("text-ink");
+        // No border, no underline, no pill — the filled rectangle is the whole
+        // active indicator (design 04·A ProjectChrome ghost buttons, radius 8).
+        expect(active.classes()).toContain("rounded-lg");
+        expect(active.classes()).not.toContain("rounded-full");
+        expect(active.classes().some(c => c.startsWith("border"))).toBe(false);
+
+        expect(inactive.classes()).toContain("text-ink-3");
+        expect(inactive.classes().some(c => c.startsWith("bg-"))).toBe(false);
+        expect(inactive.classes().some(c => c.startsWith("border"))).toBe(false);
     });
 
     test("the Run chip pulses only while the run is in progress", () => {

@@ -72,6 +72,17 @@ class TestTrainingLog:
         with pytest.raises(ValidationError):
             TrainingLog(event_type=FLLogEvent.ROUND_STARTED, global_round=0)
 
+    def test_global_round_above_pg_integer_max_is_rejected(self):
+        """The fl_logs.global_round column is PG INTEGER: an oversized round must
+        422 at validation rather than 500 at insert — uploaded app code can reach
+        this endpoint with arbitrary ints via flip.send_event."""
+        with pytest.raises(ValidationError):
+            TrainingLog(event_type=FLLogEvent.ROUND_STARTED, global_round=2**31)
+
+    def test_global_round_at_pg_integer_max_is_accepted(self):
+        payload = TrainingLog(event_type=FLLogEvent.ROUND_STARTED, global_round=2**31 - 1)
+        assert payload.global_round == 2**31 - 1
+
     def test_unknown_event_type_is_accepted_for_forward_compat(self):
         """The vocabulary is plain text end-to-end: a newer FL image's event is
         stored and served via the render fallback, never 422-rejected at ingest."""

@@ -75,8 +75,10 @@ class TrainingLog(BaseModel):
     # it is reserved for the hub's own FL scheduler and the hub 422-rejects it,
     # so refusing it here fails fast FL-side instead.
     event_type: str | None = Field(default=None, max_length=64)
-    # 1-based on both backends; every event in the vocabulary is round-scoped.
-    global_round: int | None = Field(default=None, ge=1)
+    # 1-based on both backends; every event in the vocabulary is round-scoped. The
+    # ceiling is the PG INTEGER max of the hub's fl_logs.global_round column —
+    # matching it here fails an oversized round sender-side instead of 500ing hub-side.
+    global_round: int | None = Field(default=None, ge=1, le=2_147_483_647)
     details: dict[str, Any] | None = None
     success: bool = True
 

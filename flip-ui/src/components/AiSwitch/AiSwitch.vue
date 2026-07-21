@@ -20,12 +20,16 @@
                 {{ checked ? label.enabled : label.disabled }}
             </SwitchLabel>
             <!-- A disabled switch stays on screen, greyed out: its position is the
-                 clearest statement of the setting it records. -->
+                 clearest statement of the setting it records. Natively disabled (not
+                 just aria-disabled): Headless UI's internal handlers never check the
+                 prop, so only the browser refusing to deliver events keeps them — and
+                 the aria-checked flip they'd announce — unreachable. -->
             <Switch
                 :id="uuid"
                 :name="name"
                 :model="checked"
                 :data-test="dataTest"
+                :disabled="disabled"
                 :aria-disabled="disabled || undefined"
                 class="relative inline-flex items-center h-6 transition-colors rounded-full w-11 focus:outline-none focus:ring-2 focus:ring-primary-500 dark:focus:ring-primary-400 focus:ring-offset-2 dark:ring-offset-dark-canvas"
                 :class="[
