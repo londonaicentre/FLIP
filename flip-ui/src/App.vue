@@ -24,6 +24,7 @@ import { watch } from "vue";
 
 import AiRouteProgress from "@/components/AiRouteProgress/AiRouteProgress.vue";
 import AiSnackbar from "@/components/AiSnackbar/AiSnackbar.vue";
+import useThemeColorMeta from "@/composables/useThemeColorMeta";
 
 import { getHealth } from "./services/health-service";
 import { getSiteDetails } from "./services/site-service";
@@ -35,7 +36,7 @@ import { useTrustStore } from "./store/trusts";
 const healthStore = useHealthcheckStore();
 const trustStore = useTrustStore();
 const detailsStore = useSiteDetailsStore();
-useDark();
+useThemeColorMeta(useDark());
 
 const { data: health } = useSWRV(
     "/trust/health",

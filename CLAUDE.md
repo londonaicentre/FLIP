@@ -15,7 +15,7 @@ FLIP/
 ├── flip-ui/            # Frontend UI (Vue 3 / TypeScript / TailwindCSS)
 ├── flip-utils/         # FLIP Python library (pip-installable flip-utils)
 ├── fl-services/        # FL Docker services + network provisioning, per backend (Makefile owns build/provision/up/down/submit; flower also up-secure): fl-services/nvflare/{fl-base,fl-server,fl-client,fl-api-base, provision/{net-*_project_*.yml, scripts/, workspace-{dev,stag,prod}/ gitignored}}, fl-services/flower/{fl-base,superlink,supernode,fl-api-flower, provision/{scripts/, creds/ gitignored}} (#622)
-├── fl-apps/            # FL app templates per backend: fl-apps/nvflare/{standard,fed_opt,evaluation,diffusion_model}, fl-apps/flower/{standard,evaluation} + check_required_files.sh (cross-backend CI validator at root)
+├── fl-apps/            # FL app templates per backend: fl-apps/nvflare/{standard,standard_client_api,fed_opt,evaluation,evaluation_client_api,diffusion_model}, fl-apps/flower/{standard,evaluation} + check_required_files.sh (cross-backend CI validator at root)
 ├── fl-tutorials/       # FL tutorials per backend: fl-tutorials/nvflare/{image_*,testing}, fl-tutorials/flower/{xray_classification,3d_spleen_segmentation*,numpy} (root Makefile forwards by FL_BACKEND); xray classification, spleen seg/eval, diffusion
 ├── trust/
 │   ├── trust-api/      # Trust API gateway (Python/FastAPI)
@@ -47,7 +47,7 @@ backends are also provisioned in-tree (gitignored): `deploy/fl_backend.mk` point
 | ------- | ----------- |
 | Backend APIs | Python 3.12+, FastAPI, SQLAlchemy/SQLModel, Pydantic |
 | Frontend | Vue 3, TypeScript, Vite, TailwindCSS, Pinia |
-| Database | PostgreSQL (asyncpg) |
+| Database | PostgreSQL (psycopg2 + SQLModel sync sessions; RDS Proxy + IAM auth in prod) |
 | Package mgmt (Python) | UV (`uv sync`, `uv add`) |
 | Package mgmt (JS) | npm |
 | Testing | pytest (unit + integration), Vitest (frontend unit), Cypress (frontend e2e) |
@@ -139,6 +139,44 @@ existing approved project: it skips cohort submission + approval and jumps strai
 create → upload → train → download. The image-pull wait still runs but returns immediately when the
 studies are already pulled — so it lets you iterate on training/app code (and re-run after an upload
 or fl-api change) without re-creating the project and re-pulling DICOM (~6 min/backend) each time.
+
+**Smoking the spleen segmentation app requires a data-enrichment step (it needs labels).** *Data enrichment*
+is the platform stage where a model developer adds whatever an app needs on top of the pulled imaging data in
+XNAT (`docs/source/user-guides/user-common.rst` — a project cannot start training until enrichment is
+confirmed complete, even when nothing was added). **Segmentation apps need one:** the trust PACS supplies CT
+*images* only, while the spleen apps (`fl-tutorials/<backend>/3d_spleen_segmentation*`) pair each converted
+`input_*.nii.gz` with a sibling `label_*.nii.gz`. Skip it and the smoke pulls, converts, starts training and
+then dies with `num_samples=0` (preceded by `⚠️ No matching segmentation for input_*.nii.gz`) — which reads
+like an app or data-pull bug.
+
+`e2e_smoke` has a hook for exactly this: `--data-enrichment-cwd` + `--data-enrichment-cmd` run a shell command
+**between the image pull and training**, with `FLIP_PROJECT_ID` exported. For spleen the enrichment is
+`upload_labels_to_XNAT.py` from the **private** repo `londonaicentre/flip_project_spleen_segmentation` (needs
+its `.xnat1.cfg` / `.xnat2.cfg` — one per trust XNAT — and its MSD labels); it resolves each trust's XNAT
+project by `secondary_ID == <FLIP project_id>` and writes each label into the scan's existing `NIFTI` resource,
+renaming `input_` → `label_`. Invoke the smoke **directly** rather than through `make`, because `make` mangles
+the `$` in `EXTRA_ARGS` before the enrichment command reaches the shell:
+
+```bash
+cd flip-api && uv run python -m tests.e2e_smoke \
+  --model-files-dir ../fl-tutorials/nvflare/image_segmentation/3d_spleen_segmentation/app_files \
+  --query-file ../fl-tutorials/nvflare/image_segmentation/3d_spleen_segmentation/query.sql \
+  --data-enrichment-cwd <path-to>/flip_project_spleen_segmentation \
+  --data-enrichment-cmd 'uv run upload_labels_to_XNAT.py --flip-project-id "$FLIP_PROJECT_ID"'
+```
+
+(Through `make` there are two working forms: `make -C flip-api e2e_smoke_spleen`, whose in-Makefile
+`EXTRA_ARGS` carries `$$FLIP_PROJECT_ID` — a `$$` escape survives the single make expansion; or the root
+`make e2e_smoke` with the id passed literally — `--flip-project-id <uuid>` — when reusing a project via
+`--project-id`. The root wrapper re-expands `EXTRA_ARGS` through a second make and shell, so no `$`-escape
+survives it: `$$` lands empty and `$$$$` injects the recipe shell's PID.)
+
+Enrichment must land **after** the pull and after DICOM→NIfTI conversion; the hook's position guarantees that.
+The uploader derives each target filename from the converted `input_*.nii.gz`, so with no `NIFTI` resource it
+silently skips every scan (`-> skipped: no NIFTI resource`) and you get the same opaque `num_samples=0` — i.e.
+a broken XNAT Container Service surfaces as "no labels". Removing the private-repo dependency (so spleen is
+runnable outside the org and in CI) is tracked in FLIP#776. The xray classification tutorial reads DICOM
+directly and needs no enrichment.
 
 **Testing a change on BOTH FL backends in one sitting (the backend switch).** The pulled DICOM lives in
 each trust's Orthanc/XNAT, which `make restart-fl` leaves untouched — so you can pull once on the first
@@ -274,7 +312,7 @@ After changes, evaluate if docs need updating:
 - Docstrings: Google style. Naming: snake_case. Imports: alphabetically sorted.
 - Source layout: `src/[service_name]/`. Tests: `tests/unit/`, `tests/integration/`.
 - Test placement: a test goes in `tests/integration/` if and only if it touches a real backing service (Postgres via `session` fixture, real AWS, a running sibling API, real Orthanc/XNAT/OMOP). If every external dependency is mocked, it's a unit test in `tests/unit/`. FastAPI `TestClient` alone does not make a test "integration". See `CONTRIBUTING.md` ("Where does my test go?") for the canonical rule.
-- Dependency injection: FastAPI `Depends()`. Async DB: asyncpg with async context managers.
+- Dependency injection: FastAPI `Depends()`. DB: sync SQLModel `Session` via `get_session()` — the `with Session(...)` block is load-bearing on error paths (FLIP#773). Prod authenticates through RDS Proxy with a per-connection IAM token (SQLAlchemy `do_connect` hook, passwordless engine URL).
 
 ### JavaScript/TypeScript (flip-ui)
 
@@ -301,7 +339,7 @@ After changes, evaluate if docs need updating:
 
 - `FL_BACKEND` — `nvflare` (default) or `flower`. Two roles: (1) deploy layer — selects which fl-* images run (compose/Makefile); (2) flip-api — sets the `FLNets.fl_backend` column at seed time. The seeded value is **canonical**: flip-api reads `FL_BACKEND` only at seeding and never reconciles it at runtime. To switch frameworks, `make restart-fl FL_BACKEND=...` recreates flip-api so its startup seeding re-applies the backend onto every net.
 - `FL_PROVISIONED_DIR` — path to the in-tree provisioned FL artifacts, derived per-backend by `deploy/fl_backend.mk` from `FL_BACKEND`: `fl-services/nvflare/provision/workspace-dev` (nvflare startup kits) or `fl-services/flower/provision/creds` (flower per-net TLS certs + SuperNode keys). Both gitignored. Read only by the dev compose overlays for the cert/workspace volume mounts; override at the CLI for a one-off (`make up FL_PROVISIONED_DIR=...`). FL Makefiles are **per-backend** — each `fl-services/<backend>/Makefile` owns that backend's `build`/`provision`/`up`/`down`/`submit` (flower also `up-secure`); the root Makefile forwards only `build-fl` by `FL_BACKEND`. Each backend's `fl-services/<backend>/Makefile` also owns its network provisioning (NVFLARE adds `provision`/`provision-2-nets`/`provision-stag`/`provision-prod`/`upload-kits-to-s3`; the project YAMLs, `scripts/`, and gitignored `workspace-{dev,stag,prod}/` output live under `provision/`). Provision with `make -C fl-services/nvflare provision-2-nets` (nvflare) or `make -C fl-services/flower provision NET_NUMBER=<N>` (flower). To run a backend standalone + submit without the full stack: `make -C fl-services/<backend> up` (or `up-secure`) then `make -C fl-services/<backend> submit APP=<job>`.
-- `FL_APP_BASE_DIR` — Local directory holding the base FL application templates (the repo's `fl-apps/` tree), baked into the flip-api image and bind-mounted in dev. flip-api walks `<FL_APP_BASE_DIR>/<backend>/<job_type>/` to bundle an application (uploading those files into `FL_APP_DESTINATION_BUCKET/<model_id>`) and reads each backend's manifest from `<FL_APP_BASE_DIR>/<backend>/required_files.json`. Default `/app/fl-apps`; override to mount operator-provided templates. Replaces the removed `FL_APP_BASE_BUCKET` S3 dependency (FLIP#724): base templates are no longer published to S3 (the `fl-apps-push-s3-*` sync workflows are gone), so a template hotfix now ships by rebuilding + redeploying the flip-api image rather than syncing S3. `fl-apps/` is baked into the image via a BuildKit named build context (`fl_apps=../fl-apps`) since it sits outside flip-api's build context.
+- `FL_APP_BASE_DIR` — Local directory holding the base FL application templates (the repo's `fl-apps/` tree), baked into the flip-api image and bind-mounted in dev. flip-api walks `<FL_APP_BASE_DIR>/<backend>/<job_type>/` to bundle an application (uploading those files into `FL_APP_DESTINATION_BUCKET/<model_id>`) and reads each backend's manifest from `<FL_APP_BASE_DIR>/<backend>/required_files.json`. Default `/app/fl-apps`; override to mount operator-provided templates. Replaces the removed `FL_APP_BASE_BUCKET` S3 dependency (FLIP#724): base templates are no longer published to S3 (the `fl-apps-push-s3-*` sync workflows are gone), so a template hotfix now ships by rebuilding + redeploying the flip-api image rather than syncing S3. `fl-apps/` is baked into the image via a BuildKit named build context (`fl_apps=../fl-apps`) since it sits outside flip-api's build context. For the Flower backend, the template pyprojects also steer Flower's **per-run dependency install** (`uv sync` on every app launch; SuperNodes opt in via `--allow-runtime-dependency-installation` in the composes): `[tool.uv.sources]` pins `flip-utils` to the source kept at `/opt/flip-utils` inside the FL images (never PyPI — FLIP#767; a flip-utils change ships by rebuilding the FL images, `make build-fl FL_BACKEND=flower`) and torch/torchvision to the cu128 index (PyPI's default cu130 wheels need driver >=580).
 - `PROD` — `true` (production), `stag` (staging), unset (development)
 - `AES_KEY_BASE64` — encryption key for trust communication
 - A remote trust operator only needs their kit file (`trust/.env.<KIT>`) — no hub `.env.<env>` needed on trust hosts.
@@ -335,7 +373,7 @@ GitHub Actions: `test_flip_api.yml`, `test_flip_ui.yml`, `test_trust_*.yml`, `do
 
 **The application `docker_build_*.yml` workflows (`flip_api`, `trust_trust_api`, `trust_imaging_api`, `trust_data_access_api`) auto-publish to GHCR only after their service's test workflow passes on `develop` or `main`.** They trigger via `workflow_run` on the matching test workflow (`FLIP API CI`, `Trust - Trust API CI`, etc.) and a job-level `if` gates on `workflow_run.conclusion == 'success'` — a red test suite never publishes. Path filtering is inherited from the test workflow, so a build still only fires when that service changed. (`orthanc`, `xnat_*` keep their direct push trigger — they have no test suite to gate on; `flip-ui` is a CI smoke test that never publishes.)
 
-Every publish also pushes an immutable **`sha-<short7>`** tag (first 7 chars of the built commit) alongside the mutable `:stag`/`:prod` tags. Hub ECS deploys pin these sha tags via task-definition revisions — `make deploy-centralhub` resolves the env branch tip's tag, `make rollback-centralhub` repoints at the previous revision (FLIP#751; see `deploy/providers/AWS/README.md` "Central Hub deploys and rollback").
+Every publish also pushes an immutable **`sha-<short7>`** tag (first 7 chars of the built commit) alongside the mutable `:stag`/`:prod` tags. Hub ECS deploys pin these sha tags via task-definition revisions — `make deploy-centralhub` resolves the env branch tip's tag, `make rollback-centralhub` repoints at the previous revision (FLIP#751; see `deploy/providers/AWS/README.md` "Central Hub deploys and rollback"). `deploy-centralhub` also prints an **FL quiesce reminder** (FLIP#770; on `PROD=true` it adds an interactive are-you-sure confirmation, stag stays non-interactive): replacing `fl-server-net-1` kills any in-flight training run, so enable deployment mode first — it pauses FL job pickup (queued jobs hold; the running job finishes and frees its net) — and wait until the hub's `GET /fl/quiesce` reports deployment mode ON and no BUSY net, making "enable mode → wait → deploy → disable" the standard redeploy workflow.
 
 > **Note:** `workflow_run` triggers only take effect once these workflow files are on the repo's **default branch**. The first merge that introduces them won't retroactively publish; subsequent qualifying pushes will.
 

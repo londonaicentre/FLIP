@@ -51,6 +51,10 @@ services:
       - /keys/supernode_credentials_${FL_KIT_SLOT_NUMBER}
       - --clientappio-api-address
       - ${SUPERNODE_1_CLIENTAPPIO_API_ADDRESS:-127.0.0.1:9094}
+      # ClientApp-side runtime dependency install (default-off on SuperNodes in
+      # flwr 1.32): resolves the app's deps per run, with flip-utils pinned to
+      # /opt/flip-utils via the template's [tool.uv.sources] (FLIP#767).
+      - --allow-runtime-dependency-installation
     networks:
       - default
       - deploy_shared-net-1
@@ -93,6 +97,8 @@ services:
       - /keys/supernode_credentials_${FL_KIT_SLOT_NUMBER}
       - --clientappio-api-address
       - ${SUPERNODE_2_CLIENTAPPIO_API_ADDRESS:-127.0.0.1:9095}
+      # ClientApp-side runtime dependency install — see net-1 note (FLIP#767).
+      - --allow-runtime-dependency-installation
     networks:
       - default
       - deploy_shared-net-2

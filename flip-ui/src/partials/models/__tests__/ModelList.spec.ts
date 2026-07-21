@@ -199,20 +199,20 @@ describe("ModelList — Status column", () => {
         expect(cell.find("[data-test='model-status-icon-tick']").exists()).toBe(true);
     });
 
-    test("TRAINING_STARTED renders 'Training Started' with a tick", async () => {
+    test("RUNNING renders 'Running' with a tick", async () => {
         setData({
             data: [{
                 id: "m1",
                 name: "A",
                 description: "",
-                status: "TRAINING_STARTED"
+                status: "RUNNING"
             }]
         });
         const wrapper = mountModelList();
         await flushPromises();
 
         const cell = wrapper.find("[data-test='model-status-m1']");
-        expect(cell.text()).toContain("Training Started");
+        expect(cell.text()).toContain("Running");
         expect(cell.find("[data-test='model-status-icon-tick']").exists()).toBe(true);
     });
 
@@ -300,7 +300,7 @@ describe("ModelList — mobile stacked rows (design 5a)", () => {
             id: "m1",
             name: "Alpha",
             description: "First model",
-            status: "TRAINING_STARTED",
+            status: "RUNNING",
             trusts: [
                 {
                     id: "t1",
@@ -358,7 +358,7 @@ describe("ModelList — mobile stacked rows (design 5a)", () => {
         // The /models pill idiom: coloured chip + status dot inside it.
         expect(chip.classes().join(" ")).toContain("bg-fuchsia-100");
         expect(chip.find("span.rounded-full").classes().join(" ")).toContain("bg-fuchsia-500");
-        expect(chip.text()).toContain("Training Started");
+        expect(chip.text()).toContain("Running");
     });
 
     test("clamps the description to two lines and falls back to the placeholder", async () => {

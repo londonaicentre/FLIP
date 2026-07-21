@@ -21,9 +21,12 @@ from flip_api.db.database import get_session
 from flip_api.db.models.main_models import Trust
 from flip_api.domain.interfaces.fl import IInitiateTrainingInputPayload
 from flip_api.domain.schemas.status import ModelStatus
+from flip_api.fl_services.services.fl_scheduler_service import log_queue_positions
 from flip_api.fl_services.services.fl_service import add_fl_job
 from flip_api.model_services.services.model_service import add_log, update_model_status
+from flip_api.utils.constants import SERVICE_UNAVAILABLE_MESSAGE
 from flip_api.utils.logger import logger
+from flip_api.utils.site_manager import is_deployment_mode_enabled
 
 router = APIRouter(prefix="/fl", tags=["fl_services"])
 
@@ -59,6 +62,9 @@ def initiate_training(
     """
     logger.debug(f"Initiating training for model ID: {model_id} by user ID: {user_id} with payload: {payload}")
 
+    if is_deployment_mode_enabled(db):
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=SERVICE_UNAVAILABLE_MESSAGE)
+
     if not can_modify_model(user_id, model_id, db):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail=f"User with ID: {user_id} is not allowed to modify this model"
@@ -80,7 +86,9 @@ def initiate_training(
         if not updated:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Model ID: {model_id} does not exist")
 
-        add_log(model_id, "This model has been added to the queue.", db)
+        # One typed row per queue movement: this emits the new job's initial
+        # position ("Model Queued (n)").
+        log_queue_positions(db)
         add_log(model_id, f"Selected trusts for training: {', '.join(t.name for t in trusts)}", db)
 
     except HTTPException:

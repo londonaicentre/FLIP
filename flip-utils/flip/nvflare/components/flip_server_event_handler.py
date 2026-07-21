@@ -13,13 +13,16 @@
 from nvflare.apis.event_type import EventType
 from nvflare.apis.fl_component import FLComponent
 from nvflare.apis.fl_context import FLContext
+from nvflare.app_common.app_constant import AppConstants
 from nvflare.app_common.app_event_type import AppEventType
 
 from flip import FLIP
-from flip.constants import FlipEvents, ModelStatus
+from flip.constants import FlipEvents, FlipProps, ModelStatus
 from flip.exceptions import ResultsUploadError
+from flip.nvflare.components.evaluation_json_generator import EvaluationJsonGenerator
 from flip.nvflare.components.persist_and_cleanup import PersistToS3AndCleanup
 from flip.nvflare.runtime import get_flip_model_id
+from flip.schemas import FLLogEvent
 
 
 class ServerEventHandler(FLComponent):
@@ -78,6 +81,104 @@ class ServerEventHandler(FLComponent):
         """
         self.flip.update_status(self._resolve_model_id(fl_ctx), status)
 
+    def _relay_round_event(self, fl_ctx: FLContext, event: FLLogEvent) -> None:
+        """Relay a stock round boundary to the hub as a typed fact.
+
+        Facts only — display text is composed hub-side. NVFLARE's
+        ``CURRENT_ROUND`` prop is 0-based; the wire contract is 1-based.
+        ``ROUND_AGGREGATED`` counts come from the sticky props seeded here at
+        round start ("0 of m") and overwritten by the FLIP ScatterAndGather
+        controller as it accepts client results.
+
+        Args:
+            fl_ctx (FLContext): The FL context carrying the round props.
+            event (FLLogEvent): ROUND_STARTED or ROUND_AGGREGATED.
+        """
+        current_round = fl_ctx.get_prop(AppConstants.CURRENT_ROUND)
+        if current_round is None:
+            return
+
+        details = None
+        if event == FLLogEvent.ROUND_STARTED:
+            num_rounds = fl_ctx.get_prop(AppConstants.NUM_ROUNDS)
+            if num_rounds is not None:
+                details = {"total_rounds": num_rounds}
+            # Reset the counts at round start so ROUND_DONE never reports the previous
+            # round's numbers — and seed them to "0 of m" rather than clearing to None,
+            # so a round in which every client fails still closes with an honest count
+            # (mirroring the Flower arm) instead of a bare "Round N aggregated". The
+            # denominator is derived exactly as stock SAG derives _current_num_targets
+            # (len(engine.get_clients())) — the controller attribute itself still holds
+            # the previous round's value when ROUND_STARTED fires. Acceptances overwrite
+            # both counts; an unreadable engine degrades to the uncounted wording.
+            expected = self._expected_client_count(fl_ctx)
+            fl_ctx.set_prop(FlipProps.ROUND_RETURNED, 0 if expected is not None else None, private=True, sticky=True)
+            fl_ctx.set_prop(FlipProps.ROUND_EXPECTED, expected, private=True, sticky=True)
+        else:
+            returned = fl_ctx.get_prop(FlipProps.ROUND_RETURNED)
+            expected = fl_ctx.get_prop(FlipProps.ROUND_EXPECTED)
+            if returned is not None and expected is not None:
+                details = {"returned": returned, "expected": expected}
+
+        self.flip.send_event(
+            model_id=self._resolve_model_id(fl_ctx),
+            event_type=event,
+            global_round=current_round + 1,
+            details=details,
+        )
+
+    def _expected_client_count(self, fl_ctx: FLContext) -> int | None:
+        """Best-effort count of the clients targeted this round; ``None`` when unavailable.
+
+        Args:
+            fl_ctx (FLContext): The FL context to read the engine from.
+
+        Returns:
+            int | None: ``len(engine.get_clients())``, or ``None`` when the engine
+            cannot be read (the round then closes with the uncounted wording).
+        """
+        try:
+            return len(fl_ctx.get_engine().get_clients())
+        except Exception as e:
+            self.log_debug(fl_ctx, f"Could not read the participating client count: {e}")
+            return None
+
+    def _evaluation_wholly_failed(self) -> bool:
+        """Whether this is an evaluation job in which every validate task failed.
+
+        Training jobs wire the base ``ValidationJsonGenerator``, which tracks no failures, so the
+        isinstance check also serves as the "is this an evaluation job" test.
+
+        Returns:
+            bool: True when the evaluation produced failures and no results at all.
+        """
+        generator = self.validation_json_generator
+        return isinstance(generator, EvaluationJsonGenerator) and generator.all_tasks_failed()
+
+    def _terminal_status(self, default: ModelStatus) -> ModelStatus:
+        """Resolve the run's terminal status, most salient cause first.
+
+        A recorded fatal system error is the root cause and outranks everything. A user-requested
+        abort outranks the evaluation failures it necessarily caused (aborting a run cancels its
+        in-flight validate tasks, which must not be reported as ERROR). An evaluation in which every
+        validate task failed outranks ``default`` — otherwise a wholly failed run reports success on
+        an empty results file (FLIP#754), or reports a trailing upload failure as its cause.
+
+        Args:
+            default (ModelStatus): The status to use when no failure cause is recorded — the outcome
+                of the upload itself.
+
+        Returns:
+            ModelStatus: The status to report to the hub.
+        """
+        if self.fatal_error:
+            return ModelStatus.ERROR
+        if self.final_status == ModelStatus.STOPPED:
+            return ModelStatus.STOPPED
+        if self._evaluation_wholly_failed():
+            return ModelStatus.ERROR
+        return default
+
     def handle_event(self, event_type: str, fl_ctx: FLContext) -> None:
         self.__set_dependencies(fl_ctx)
 
@@ -97,7 +198,21 @@ class ServerEventHandler(FLComponent):
 
         elif event_type == AppEventType.TRAINING_STARTED:
             self.log_info(fl_ctx, "Training started event received")
-            self._update_status(fl_ctx, ModelStatus.TRAINING_STARTED)
+            self._update_status(fl_ctx, ModelStatus.RUNNING)
+
+        elif event_type == FlipEvents.TASK_INITIATED:
+            # Fired by InitEvaluation when an evaluation job finishes initialising.
+            # Evaluation workflows never fire the training events above, so this is
+            # the only mid-run transition an eval job gets (#782). Training templates
+            # don't run InitEvaluation, so there is no RUNNING → PREPARED zigzag.
+            self.log_info(fl_ctx, "Task initiated event received")
+            self._update_status(fl_ctx, ModelStatus.RUNNING)
+
+        elif event_type == AppEventType.ROUND_STARTED:
+            self._relay_round_event(fl_ctx, FLLogEvent.ROUND_STARTED)
+
+        elif event_type == AppEventType.ROUND_DONE:
+            self._relay_round_event(fl_ctx, FLLogEvent.ROUND_AGGREGATED)
 
         elif event_type == AppEventType.TRAINING_FINISHED:
             self.log_info(fl_ctx, "Training finished event received")
@@ -116,21 +231,12 @@ class ServerEventHandler(FLComponent):
             self.log_info(fl_ctx, "End run event received")
 
             try:
+                # The results are uploaded even when the evaluation wholly failed: the zip carries
+                # the error_log.txt and evaluation_failures.json that explain why.
                 self.persist_and_cleanup.execute(fl_ctx)
-
-                if self.final_status != ModelStatus.STOPPED:
-                    self.final_status = ModelStatus.RESULTS_UPLOADED
-
-                if self.fatal_error:
-                    self.final_status = ModelStatus.ERROR
+                self.final_status = self._terminal_status(ModelStatus.RESULTS_UPLOADED)
             except ResultsUploadError:
-                # Preserve the more salient terminal states: a recorded fatal system
-                # error (root cause) and a user-requested abort take precedence over a
-                # trailing upload failure, matching the success-path precedence above.
-                if self.fatal_error:
-                    self.final_status = ModelStatus.ERROR
-                elif self.final_status != ModelStatus.STOPPED:
-                    self.final_status = ModelStatus.RESULTS_UPLOAD_FAILED
+                self.final_status = self._terminal_status(ModelStatus.RESULTS_UPLOAD_FAILED)
             except Exception:
                 self.final_status = ModelStatus.ERROR
 
