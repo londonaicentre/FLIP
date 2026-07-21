@@ -84,6 +84,9 @@ export interface IModelDashboard {
     resultsUploadedAt?: string | null;
     // The trusts the run was dispatched to. Empty before dispatch.
     trusts?: IModelSummaryTrust[];
+    // The model's 1-based place in the FL training queue (1 = next to be picked
+    // up); null/absent unless the model has a queued job waiting for a net.
+    queuePosition?: number | null;
 }
 
 export interface IModelCreate {
@@ -161,6 +164,20 @@ export function modelStatusLabel(status: ModelStatus | undefined): string {
     return status ? MODEL_STATUS_LABELS[status] ?? "—" : "—";
 }
 
+/**
+ * Label for a model status with the FL queue position appended whenever a usable
+ * (>= 1) position is supplied, e.g. "Model Queued (2)" — position 1 is the next
+ * model to start when a net frees up. The helper itself is status-agnostic; the
+ * backend only supplies a position while the model has a queued job waiting for
+ * a net, so in practice the suffix appears on queued models. Absent or unusable
+ * positions render the plain label.
+ */
+export function modelStatusLabelWithQueue(status: ModelStatus | undefined, queuePosition?: number | null): string {
+    const label = modelStatusLabel(status);
+
+    return queuePosition != null && queuePosition >= 1 ? `${label} (${queuePosition})` : label;
+}
+
 /** True for terminal failure / cancellation states (drives the red-cross icon). */
 export function isModelStatusError(status: ModelStatus | undefined): boolean {
     return status === "ERROR" || status === "STOPPED" || status === "RESULTS_UPLOAD_FAILED";
@@ -219,7 +236,8 @@ export function getStatusEnumValue(status: string | undefined): number {
 
 /**
  * Builds the four-step lifecycle tracker (Created → Prepared → Training → Uploaded)
- * shown on the model page, derived from the model's single status value.
+ * shown on the model page, derived from the model's status plus the optional queue
+ * position, which only feeds step 02's description while the model is INITIATED.
  *
  * When training is stopped or errors, prior completed steps stay completed (✅)
  * rather than showing 🚫. RESULTS_UPLOAD_FAILED means training finished but the
@@ -227,9 +245,9 @@ export function getStatusEnumValue(status: string | undefined): number {
  * "Results Uploaded" shows the error. See issue #29.
  *
  * Per-step dates (creation/prepared/training/results timestamps) are layered on
- * by the caller, which holds the model record; this helper is purely status-driven.
+ * by the caller, which holds the model record.
  */
-export function buildModelSteps(status: ModelStatus | undefined): IStep[] {
+export function buildModelSteps(status: ModelStatus | undefined, queuePosition?: number | null): IStep[] {
     const statusValue = getStatusEnumValue(status);
     const isStopped = statusValue === ModelStatusEnum.STOPPED;
     const isError = statusValue === ModelStatusEnum.ERROR;
@@ -248,7 +266,9 @@ export function buildModelSteps(status: ModelStatus | undefined): IStep[] {
         {
             id: "02",
             name: "Model Prepared",
-            description: statusValue === ModelStatusEnum.INITIATED ? "Model Queued" : undefined,
+            description: statusValue === ModelStatusEnum.INITIATED
+                ? modelStatusLabelWithQueue("INITIATED", queuePosition)
+                : undefined,
             inProgress: statusValue === ModelStatusEnum.INITIATED,
             completed: statusValue >= ModelStatusEnum.PREPARED || isStopped || isError || isUploadFailed
         },
@@ -379,6 +399,9 @@ export interface IModelSummary {
     ownerId: string;
     ownerName?: string | null;
     trusts: IModelSummaryTrust[];
+    // The model's 1-based place in the FL training queue (1 = next to be picked
+    // up); null/absent unless the model has a queued job waiting for a net.
+    queuePosition?: number | null;
 }
 
 /**

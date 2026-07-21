@@ -120,7 +120,8 @@ class FLLogs(SQLModel, table=True):
     # and deliberately deferred — so internal add_log callers must supply
     # exactly one of log/event_type (an all-NULL row renders as an empty line).
     log: str | None = Field(default=None)
-    # Typed round events (FLLogEvent values). Stored as plain text — not a native
+    # Typed events (FLLogEvent values): round progress reported by the FL layer,
+    # plus hub-emitted rows (QUEUE_POSITION). Stored as plain text — not a native
     # PG enum — so extending the vocabulary never needs an ALTER TYPE migration.
     # Event-specific facts (total_rounds, size_bytes, returned/expected) live in
     # the JSONB details column; global_round is first-class so round-scoped

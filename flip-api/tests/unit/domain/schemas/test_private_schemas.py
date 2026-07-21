@@ -89,6 +89,18 @@ class TestTrainingLog:
         payload = TrainingLog(event_type="SOMETHING_NEW", global_round=3)
         assert payload.event_type == "SOMETHING_NEW"
 
+    def test_queue_position_is_rejected_even_with_a_global_round(self):
+        """QUEUE_POSITION is hub-emitted by definition. Requiring global_round does
+        not keep it out (a spoofed payload can just carry one), so the validator
+        refuses the event_type itself — otherwise the row would render in the feed
+        and could perturb the scheduler's emit-on-change dedup."""
+        with pytest.raises(ValidationError, match="QUEUE_POSITION"):
+            TrainingLog(
+                event_type=FLLogEvent.QUEUE_POSITION,
+                global_round=1,
+                details={"position": 1, "job_id": "some-job"},
+            )
+
     @pytest.mark.parametrize("event_type", ["", "   "])
     def test_blank_event_type_is_rejected(self, event_type):
         with pytest.raises(ValidationError):

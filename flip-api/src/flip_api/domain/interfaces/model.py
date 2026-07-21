@@ -62,6 +62,9 @@ class IAllModelsResponse(BaseModel):
     owner_id: UUID = Field(..., alias="ownerId")
     owner_name: str | None = Field(default=None, alias="ownerName")
     trusts: list[ITrustSummary] = Field(default_factory=list)
+    # The model's 1-based place in the FL training queue (position 1 = next to
+    # be picked up); None unless the model has a QUEUED job waiting for a net.
+    queue_position: int | None = Field(default=None, alias="queuePosition")
 
     model_config = ConfigDict(populate_by_name=True, arbitrary_types_allowed=True)
 
@@ -167,6 +170,9 @@ class IModelResponse(BaseModel):
     # The trusts the run was dispatched to — the latest FL job's fl_job_trust
     # roster. Empty before dispatch, when the model has no job yet.
     trusts: list[ITrustSummary] = Field(default_factory=list)
+    # The model's 1-based place in the FL training queue (position 1 = next to
+    # be picked up); None unless the model has a QUEUED job waiting for a net.
+    queue_position: int | None = Field(default=None, alias="queuePosition")
 
     model_config = ConfigDict(
         populate_by_name=True,

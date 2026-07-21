@@ -26,6 +26,7 @@ from flip_api.db.models.main_models import FLJob, FLJobTrust, Model, ModelsAudit
 from flip_api.domain.interfaces.model import IModelResponse, IQuery, ITrustSummary
 from flip_api.domain.schemas.actions import ModelAuditAction
 from flip_api.domain.schemas.status import FileUploadStatus, ModelStatus
+from flip_api.model_services.services.model_service import queued_positions_by_model
 from flip_api.utils.logger import logger
 
 RETRIEVE_MODEL_QUERY_FILE = f"{os.path.dirname(os.path.abspath(__file__))}/retrieve_model_query.sql"
@@ -205,6 +206,10 @@ def retrieve_model(
         ).all()
         trusts = [ITrustSummary(id=trust_id, name=name, code=code) for trust_id, name, code in trust_rows]
 
+        # Where this model stands in the FL training queue (1-based; None once
+        # its job is picked up or it has none) — same source as the estate list.
+        queue_position = queued_positions_by_model(db).get(model_id)
+
         return IModelResponse(
             model_id=result["model_id"],
             model_name=result["model_name"],
@@ -218,6 +223,7 @@ def retrieve_model(
             training_started_at=latest_per_action.get(ModelAuditAction.TRAINING_STARTED),
             results_uploaded_at=latest_per_action.get(ModelAuditAction.RESULTS_UPLOADED),
             trusts=trusts,
+            queue_position=queue_position,
         )  # type: ignore[call-arg]
 
     except SQLAlchemyError:
