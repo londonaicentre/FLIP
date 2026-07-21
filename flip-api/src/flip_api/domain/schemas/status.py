@@ -83,7 +83,8 @@ class ModelStatus(Enum):
     def _missing_(cls, value: object) -> "ModelStatus | None":
         # Back-compat alias: fl-server images deploy separately from flip-api, so a
         # pre-rename fl-server may still report "TRAINING_STARTED" (#782). Accept it
-        # as RUNNING until every deployed FL image is post-rename.
+        # as RUNNING until every deployed FL image is post-rename — removal is
+        # tracked in #803.
         if value == "TRAINING_STARTED":
             return cls.RUNNING
         return None
