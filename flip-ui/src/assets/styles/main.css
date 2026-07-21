@@ -111,7 +111,12 @@
        as floating lines against the (full-screen) body background. Fade the letterbox-facing
        cut edge instead so the artwork dissolves into the background. iOS-only: on desktop and
        Android the artwork sits flush with the viewport corners and the hard edges are invisible.
-       (hover: none) excludes macOS Safari; -webkit-touch-callout support excludes Android. */
+       The @supports guard alone scopes to the iOS family — only iOS/iPadOS WebKit parses
+       -webkit-touch-callout (macOS Safari and Android engines do not); (hover: none) is
+       belt-and-braces against future engines adopting the property. iPads stay covered even
+       with a trackpad attached: WebKit hardcodes the primary pointer as non-hover-capable on
+       the iOS family (WebPageIOS.mm isMousePrimaryPointingDevice, Mac Catalyst excepted) — an
+       attached mouse only flips any-hover/any-pointer, never (hover)/(pointer). */
     @media (hover: none) {
         @supports (-webkit-touch-callout: none) {
             .corner-art-fade-top {
