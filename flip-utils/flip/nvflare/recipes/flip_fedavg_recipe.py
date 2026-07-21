@@ -57,6 +57,7 @@ from nvflare.apis.dxo import DataKind
 from nvflare.app_common.aggregators import InTimeAccumulateWeightedAggregator
 from nvflare.app_common.executors.in_process_client_api_executor import InProcessClientAPIExecutor
 from nvflare.app_common.shareablegenerators.full_model_shareable_generator import FullModelShareableGenerator
+from nvflare.app_common.widgets.intime_model_selector import IntimeModelSelector
 from nvflare.app_common.workflows.cross_site_model_eval import CrossSiteModelEval
 from nvflare.app_common.workflows.global_model_eval import GlobalModelEval
 from nvflare.job_config.defs import FilterType
@@ -146,6 +147,16 @@ class FlipFedAvgRecipe(Recipe):
             head-only broadcast to cross-site validation, superseding the recipe's train-only
             ``ReconstructFullModel`` (FLIP#730/#733). This arg stands alone only where that deploy step
             doesn't run (SimEnv/PocEnv), so the ``validate`` broadcast stays full-model there.
+        best_model_metric: when set, wire stock ``IntimeModelSelector`` keyed on this metric so the
+            best global model is saved alongside the final one (FLIP#673). Clients must report the
+            metric — evaluated on the *received* global model, before local training — via
+            ``FLModel(metrics={...})``; the selector weight-averages it across clients each round
+            and fires ``GLOBAL_BEST_MODEL_AVAILABLE`` on improvement, which the persistor answers
+            by saving ``best_FL_global_model.pt`` in the same format as the final model. Round 0 is
+            skipped (there is no aggregated model yet). Empty/None (default) wires no selector and
+            no best model is saved.
+        best_model_metric_minimize: True negates the key metric for selection, for loss-like
+            metrics where lower is better. Defaults to False (higher is better).
     """
 
     def __init__(
@@ -169,6 +180,8 @@ class FlipFedAvgRecipe(Recipe):
         params_exchange_format: str = "numpy",
         params_transfer_type: str = "FULL",
         aggregate_only_regex: str = "",
+        best_model_metric: str | None = None,
+        best_model_metric_minimize: bool = False,
     ):
         self.num_rounds = num_rounds
         self.min_clients = min_clients
@@ -188,6 +201,8 @@ class FlipFedAvgRecipe(Recipe):
         self.params_exchange_format = params_exchange_format
         self.params_transfer_type = params_transfer_type
         self.aggregate_only_regex = aggregate_only_regex
+        self.best_model_metric = best_model_metric
+        self.best_model_metric_minimize = best_model_metric_minimize
 
         super().__init__(self._build_fed_job())
 
@@ -222,6 +237,20 @@ class FlipFedAvgRecipe(Recipe):
         job.to_server(ValidationJsonGenerator(), id="json_generator")
         job.to_server(ServerEventHandler(), id="flip_server_event_handler")
         job.to_server(PersistToS3AndCleanup(persistor_id=persistor_id), id="persist_and_cleanup")
+
+        # Server: best-global-model selection (FLIP#673). Stock IntimeModelSelector averages the
+        # client-reported key metric (DXO meta INITIAL_METRICS, i.e. FLModel.metrics — evaluated by
+        # each client on the received global model before local training) and fires
+        # GLOBAL_BEST_MODEL_AVAILABLE on improvement; the persistor saves best_FL_global_model.pt.
+        # No selector wired when unset → no best checkpoint is ever written.
+        if self.best_model_metric:
+            job.to_server(
+                IntimeModelSelector(
+                    key_metric=self.best_model_metric,
+                    negate_key_metric=self.best_model_metric_minimize,
+                ),
+                id="model_selector",
+            )
 
         # Server workflows: init → train → model evaluation → post-validation cleanup.
         job.to_server(InitTraining(min_clients=self.min_clients))

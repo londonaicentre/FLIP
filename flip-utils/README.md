@@ -104,8 +104,27 @@ User-provided files go in the job's `custom/` directory and are dynamically impo
 | `trainer.py` | Training logic — must export `FLIP_TRAINER` class |
 | `validator.py` | Validation logic — must export `FLIP_VALIDATOR` class |
 | `models.py` | Model definitions — must export `get_model()` function |
-| `config.json` | Hyperparameters — must include `LOCAL_ROUNDS` and `LEARNING_RATE` |
+| `config.json` | Hyperparameters — must include `LOCAL_ROUNDS` and `LEARNING_RATE`; optional `BEST_MODEL_METRIC` / `BEST_MODEL_METRIC_MINIMIZE` enable best-model selection (see below) |
 | `transforms.py` | Data transforms (optional) |
+
+### Best-Model Selection (optional)
+
+By default only the final aggregated model is saved. Setting `BEST_MODEL_METRIC` (and, for
+loss-like metrics, `BEST_MODEL_METRIC_MINIMIZE: true`) wires NVFLARE's stock
+`IntimeModelSelector` into the job so the best global model is saved too:
+
+- Each round, clients evaluate the **received global model** on their local validation split
+  *before* training and report the metrics via `FLModel(metrics={...})` — so the selection metric
+  measures exactly the checkpoint being considered.
+- The selector averages the chosen metric across clients and, on improvement, has the persistor
+  save `best_FL_global_model.pt` next to `FL_global_model.pt` — same file format as the final
+  model. Round 0 is skipped (no aggregated model exists yet).
+- The results zip contains the best model only when selection ran and saved one; no best file is
+  fabricated from the final model otherwise.
+
+The metric label must be one the trainer reports (e.g. the client-API x-ray tutorial reports
+`VAL_LOSS`, per-lesion `VAL-<METRIC>-<lesion>` and macro `VAL-<METRIC>` labels). Currently wired
+for the `standard_client_api` recipe path (`FlipFedAvgRecipe(best_model_metric=...)`).
 
 ### Job Types
 

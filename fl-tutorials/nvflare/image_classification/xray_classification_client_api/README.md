@@ -32,6 +32,19 @@ Binary Cross-Entropy loss with masking of don't-care labels (`-1`). Validation r
 each local round inside the trainer (`VALIDATE_EVERY` in `config.json`). Cross-site model evaluation
 is handled by the server workflow — no `validator.py` needed.
 
+### Best-model selection
+
+`BEST_MODEL_METRIC` in `config.json` enables saving the best global model alongside the final one
+(`BEST_MODEL_METRIC_MINIMIZE: true` for loss-like metrics where lower is better). Each round the
+trainer evaluates the *received* global model on its validation split before training
+(`evaluate_global_model`) and reports the metrics on the returned `FLModel`; the server's stock
+`IntimeModelSelector` averages the chosen metric across clients and saves
+`best_FL_global_model.pt` whenever it improves. Valid labels are `VAL_LOSS`, per-lesion
+`VAL-<METRIC>-<lesion>` and macro `VAL-<METRIC>` (mean across lesions) for
+`F1-SCORE`/`PRECISION`/`RECALL` — the default is macro `VAL-F1-SCORE`. Remove both keys to skip
+selection (and the extra per-round validation pass); the results zip then contains only the final
+model. Round 0 is never selected (no aggregated model exists yet).
+
 ## FLIP-specific values
 
 `FLIP_PROJECT_ID` and `FLIP_QUERY` are read from environment variables (set stubs in `.env.app`).
