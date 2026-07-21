@@ -22,8 +22,8 @@ against the synthetic DeCaf MICCAI-2026 dataset).
 | # | Experiment | Tutorial dir (`fl-tutorials/nvflare/`) | Job type | Dataset | Cohort SQL discriminator |
 |---|---|---|---|---|---|
 | 1 | **Baseline evaluation** | `image_evaluation/arkplus_baseline_classification_evaluation` | `evaluation_client_api` | **holdout** | `procedure_source_value = 'Chest X-ray (holdout)'` |
-| 2 | **Finetuning** | `image_classification/arkplus_fine_tuning` | `standard` (training) | **finetuning** (train split) | `procedure_source_value = 'Chest X-ray'` |
-| 3 | **Multimodel evaluation** | `image_evaluation/arkplus_multimodel_classification_evaluation` | `evaluation` | **holdout** | `procedure_source_value = 'Chest X-ray (holdout)'` |
+| 2 | **Finetuning** | `image_classification/arkplus_fine_tuning` | `standard_client_api` (training) | **finetuning** (train split) | `procedure_source_value = 'Chest X-ray'` |
+| 3 | **Multimodel evaluation** | `image_evaluation/arkplus_multimodel_classification_evaluation` | `evaluation_client_api` | **holdout** | `procedure_source_value = 'Chest X-ray (holdout)'` |
 
 **Dependency:** the multimodel evaluation (3) evaluates the pretrained **and** the finetuned
 checkpoint, so run finetuning (2) first and feed its output checkpoint into (3).
@@ -32,7 +32,11 @@ Each tutorial's `app_files/` carries the model code + `config.json`; the pretrai
 (`arkplus_pretrained_weights.pt`, ~759 MiB) ship in the baseline/multimodel `app_files/`. The
 hub **de-bundles** these large checkpoints server-side (they are staged on the fl-server, never
 shipped to clients — see FLIP#695), so the model-file upload cap must allow ~759 MiB
-(`MAX_MODEL_FILE_BYTES`, default 5 GiB on the hub).
+(`MAX_MODEL_FILE_BYTES`, default 5 GiB on the hub). The multimodel evaluation (3) additionally
+requires the fl-server's `flip` package to **name its evaluation broadcasts**
+(`EvaluationModelLocator` stamping `flip_eval_model_name` on each validate task's DXO meta) — the
+evaluator attributes each broadcast's weights by that key and fails with a clear error on older
+fl-server images.
 
 > **⚠️ The finetuning checkpoint is different from the eval checkpoints — it must be _backbone-only_.**
 > The **eval** experiments (1, 3) score the *full* foundation model, so their `pretrained_weights.pt`
@@ -252,8 +256,23 @@ Key flags (all optional, sensible defaults):
 --project-name "Ark+ Multimodel Eval" --model-name "Ark+ Multimodel Eval"
 ```
 
-For (3), put the finetuned checkpoint produced by (2) into the multimodel `app_files/` (its
-`config.json` references both `RAW_CHECKPOINT` and `FINETUNED_CHECKPOINT`) before uploading.
+For (3), stage the finetuned checkpoint produced by (2) into the multimodel `app_files/` as
+`arkplus_finetuned_weights.pt` (referenced by `models.arkplus_finetuned.checkpoint` in the
+multimodel `config.json`, alongside the pretrained `arkplus_pretrained_weights.pt`). **Unwrap it
+first:** the finetuning run's downloadable result is `FL_global_model.pt`, a *wrapped*
+`OrderedDict({'model': <state_dict>, 'train_conf': …})`, but the evaluation job loads a **bare**
+state dict — extract the inner `state_dict` and re-save:
+
+```python
+import torch
+# weights_only=True: FL_global_model.pt is only tensors + a plain config dict, so load it safely
+# (avoids unpickling arbitrary objects).
+ck = torch.load("FL_global_model.pt", map_location="cpu", weights_only=True)   # from the finetune results zip
+torch.save(ck["model"], "arkplus_finetuned_weights.pt")                        # 333-tensor bare state_dict; omni_heads.0 = (5, 1376)
+```
+
+The keys must match the eval model (`arkplus_singlehead`, `NUM_CLASSES_LIST: [5]`); a wrapped dict or
+a head-shape mismatch makes the server persistor load fail and the model go straight to `ERROR`.
 
 Results (cross-site metrics) are on the model's page in the UI, or via
 `GET /api/model/<model_id>/metrics`.
@@ -273,12 +292,20 @@ Results (cross-site metrics) are on the model's page in the UI, or via
 | Model → `ERROR`, `Server disconnected without sending a response` | fl-api/fl-server OOM loading the 759 MiB checkpoint | Size `fl-api-net-1` ≥ 4 GiB, `fl-server-net-1` ≥ 8 GiB (`ecs_tasks.tf`) |
 | **Finetuning** model → `ERROR` right after `init_training` (never reaches a `train` task); fl-server log shows `RuntimeError: Error(s) in loading state_dict for ArkPlusNVFlareWrapper: size mismatch for ark_model.omni_heads.0.weight: copying a param with shape torch.Size([14, 1376]) … current model is torch.Size([5, 1376])` | The `SERVER_CHECKPOINT` staged for finetuning is **not backbone-only** — it still carries the foundation model's 14-class `omni_heads.*`. The server persistor loads it `strict=False`, which tolerates *missing/unexpected* keys but **not a shape mismatch on a shared key**, so the 14-class head can't seat in the fresh 5-class model. Typically caused by pointing `pretrained_weights.pt` at the **eval** checkpoint (which keeps the heads) instead of the finetuning one. | Use a **backbone-only** `pretrained_weights.pt` — produce it via the finetuning tutorial's `make prepare-checkpoint` (`process_tools/preprocess_checkpoints.py`, which strips `omni_heads.*`). Quick fix if you only have a head-carrying copy: `torch.load` it and re-save `{k:v for k,v in sd.items() if not k.startswith("omni_heads.")}`. See the finetuning-checkpoint note under **The three experiments**. |
 | Eval reports `RESULTS_UPLOADED` but **metrics are empty**; fl-client log shows `RuntimeError: No DICOM image/label pairs found`, and imaging-api logs `Trust-side storage error … [Errno 13] Permission denied: '/app/data/images/net-1/…-scans-ALL.zip'` | The eval-time per-accession DICOM download writes into the shared bind mount `trust/data/<KIT>` → `/app/data/images` (host uid 1001), but its `net-1/` subdir was created by the **root** fl-client, so imaging-api (uid 1000) can't write DICOMs into it. `get_dataframe`/`project_id` are fine — only the image write fails, so every accession is skipped and the datalist is empty. | Make the per-net dir writable by imaging-api's uid on each trust (container-root = host-root on the bind mount, so no host `sudo`): `docker exec -u 0 <trust>-imaging-api-1 chown -R 1000:1000 /app/data/images/net-1`. Durable — `CleanupImages` only clears the dir's *contents*, never re-creates it. |
+| **Finetuning** (`standard_client_api`) model OOMs during **post-training cross-site validation** — all `train`/aggregation rounds finished (metrics reach the last local epoch), then fl-server `MemoryUtilized` spikes to the 8 GiB task ceiling and the job child process exits; the model **orphans at `TRAINING_STARTED`** (crash lands before `END_RUN`, so `PersistToS3AndCleanup` never runs → empty S3 results, net stays `BUSY`). Prod-only — staging (both trusts on one fast-local desktop) doesn't hit it. | The stock `CrossSiteModelEval` runs a `submit_model` all-to-all (each client's full model collected server-side **plus** the global model broadcast), and over a **slow-link trust** (e.g. BDMS/Thailand) the full ~759 MiB copies stay resident for minutes → OOM (~97 % of 8 GiB). | Finetune eval now defaults to **`GlobalModelEval`** (broadcasts only the aggregated global model; no `submit_model` matrix) — peak memory drops to ~75 % and the run completes to `RESULTS_UPLOADED`. To clear an already-orphaned model + free the net: `POST /fl/stop/{model_id}`. Head-only eval broadcast (only the trained head crosses the wire) is a further optimisation. |
 
 ## Results — baseline evaluation (validated on staging, 2026-07-03)
 
 Pretrained Ark+ checkpoint scored against each trust's **holdout** cohort
 (GSTT/Trust_1 n=478, KCH/Trust_2 n=468). Read from
-`evaluation_results/evaluation_results.json` in the downloaded results zip:
+`evaluation_results/evaluation_results.json` in the downloaded results zip.
+
+> **Shape change (FLIP#754).** Runs from that fix onwards nest the metrics one level deeper —
+> `{"<trust>": {"SRV_<model_name>": {...}}}` rather than `{"<trust>": {...}}`. Keying on the trust
+> alone made each evaluated model overwrite the previous one, so a multimodel evaluation only ever
+> reported its last model. The zip also carries `evaluation_results/evaluation_failures.json`, and a
+> run whose every `validate` task fails now ends in `ERROR` instead of `RESULTS_UPLOADED`. The table
+> below predates the change and is single-model, so its numbers are unaffected.
 
 | Lesion | GSTT (Trust_1) AUROC | KCH (Trust_2) AUROC |
 |---|---|---|
@@ -322,9 +349,19 @@ possible, exercised together for the first time here:
   backbone went out once, not five times; clients reconstructed the full model locally from it and
   trained normally.
 
-There's no cross-site metric from training itself (no held-out split is scored during `standard`
+There's no cross-site metric from training itself (no held-out split is scored during `standard_client_api`
 training) — the finetuned checkpoint is scored downstream in the multimodel evaluation below,
 which is what actually demonstrates the finetune improved the model.
+
+> **Reproduced on production (GSTT + BDMS), 2026-07-07.** On prod the finetune's post-training
+> cross-site validation surfaced a **third** memory issue not seen on staging: broadcasting the full
+> ~759 MiB model to the clients OOM-crashed the fl-server (the slow BDMS/Thailand link kept the
+> full-model copies resident for minutes, pushing `MemoryUtilized` to ~97 % of the 8 GiB task).
+> Because the crash landed *before* NVFLARE's `END_RUN`, results never persisted and the model
+> orphaned at `TRAINING_STARTED` (net wedged `BUSY`). Fixed by switching finetune eval to
+> **`GlobalModelEval`** (only the aggregated global model is broadcast; the `submit_model` all-to-all
+> is dropped) — peak memory fell to ~75 % and the run completed cleanly. See the cross-site-val OOM
+> row in Troubleshooting.
 
 ## Results — multimodel evaluation: finetuned vs. pretrained (validated on staging, 2026-07-04)
 

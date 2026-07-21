@@ -74,6 +74,20 @@ describe("Timeline", () => {
         expect(comp.text()).toContain("Trust A");
     });
 
+    test("prefers the trust short code over the full name when the API sends one", () => {
+        mockLogs.logs[1].trustCode = "KCH";
+
+        const comp = mount(Timeline, {
+            props: { complete: true },
+            global: { stubs: { AiLoader: true } }
+        });
+
+        expect(comp.text()).toContain("KCH");
+        expect(comp.text()).not.toContain("Trust A");
+
+        delete mockLogs.logs[1].trustCode;
+    });
+
     test("fills the parent card width instead of forcing a fixed-width horizontal scroll", () => {
         const comp = mount(Timeline, {
             props: { complete: true },

@@ -152,15 +152,16 @@ class Settings(BaseSettings):
     @field_validator("MAX_MODEL_FILE_BYTES", mode="before")
     @classmethod
     def coerce_empty_max_model_file_bytes(cls, v: object) -> object:
-        """Treat empty-string MAX_MODEL_FILE_BYTES as the default 100 MiB.
+        """Treat empty-string MAX_MODEL_FILE_BYTES as the field default 5 GiB.
 
         GitHub Actions environments inject empty-string env vars for every
         var that isn't explicitly set in the environment scope; Pydantic
         treats that as a real override and rejects it against ``int``.
-        Same shape as ``coerce_empty_env`` / ``coerce_empty_mfa``.
+        Same shape as ``coerce_empty_env`` / ``coerce_empty_mfa``. Must stay
+        in sync with the ``MAX_MODEL_FILE_BYTES`` field default above.
         """
         if v is None or v == "":
-            return 100 * 1024 * 1024
+            return 5 * 1024 * 1024 * 1024
         return v
 
     @field_validator("PRE_SIGNED_URL_EXPIRATION_SECONDS", mode="before")

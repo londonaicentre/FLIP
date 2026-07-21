@@ -687,17 +687,20 @@ def create_cognito_user(email: str, user_pool_id: str) -> UUID:
 
         logger.debug(f"Response from create user request: {response}")
 
-        # Extract user ID (sub) from attributes
-        user_id = next((attr["Value"] for attr in response["User"]["Attributes"] if attr["Name"] == "sub"), None)
+        # Extract user ID (sub) from attributes. Cognito serialises attributes
+        # as strings; the `sub` value is a UUID string that we materialise into
+        # a `UUID` here so callers get the type the signature advertises (and
+        # SQLModel doesn't have to coerce a str back into a UUID at write time).
+        user_id_str = next((attr["Value"] for attr in response["User"]["Attributes"] if attr["Name"] == "sub"), None)
 
-        if not user_id:
+        if not user_id_str:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="User created but could not get user ID"
             )
 
         logger.info("User has been created successfully")
 
-        return user_id
+        return UUID(user_id_str)
 
     except ClientError as e:
         if e.response["Error"]["Code"] == "UsernameExistsException":

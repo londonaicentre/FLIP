@@ -15,7 +15,7 @@ FLIP/
 ├── flip-ui/            # Frontend UI (Vue 3 / TypeScript / TailwindCSS)
 ├── flip-utils/         # FLIP Python library (pip-installable flip-utils)
 ├── fl-services/        # FL Docker services + network provisioning, per backend (Makefile owns build/provision/up/down/submit; flower also up-secure): fl-services/nvflare/{fl-base,fl-server,fl-client,fl-api-base, provision/{net-*_project_*.yml, scripts/, workspace-{dev,stag,prod}/ gitignored}}, fl-services/flower/{fl-base,superlink,supernode,fl-api-flower, provision/{scripts/, creds/ gitignored}} (#622)
-├── fl-apps/            # FL app templates per backend: fl-apps/nvflare/{standard,fed_opt,evaluation,diffusion_model}, fl-apps/flower/{standard,evaluation} + check_required_files.sh (cross-backend CI validator at root)
+├── fl-apps/            # FL app templates per backend: fl-apps/nvflare/{standard,standard_client_api,fed_opt,evaluation,evaluation_client_api,diffusion_model}, fl-apps/flower/{standard,evaluation} + check_required_files.sh (cross-backend CI validator at root)
 ├── fl-tutorials/       # FL tutorials per backend: fl-tutorials/nvflare/{image_*,testing}, fl-tutorials/flower/{xray_classification,3d_spleen_segmentation*,numpy} (root Makefile forwards by FL_BACKEND); xray classification, spleen seg/eval, diffusion
 ├── trust/
 │   ├── trust-api/      # Trust API gateway (Python/FastAPI)
@@ -47,7 +47,7 @@ backends are also provisioned in-tree (gitignored): `deploy/fl_backend.mk` point
 | ------- | ----------- |
 | Backend APIs | Python 3.12+, FastAPI, SQLAlchemy/SQLModel, Pydantic |
 | Frontend | Vue 3, TypeScript, Vite, TailwindCSS, Pinia |
-| Database | PostgreSQL (asyncpg) |
+| Database | PostgreSQL (psycopg2 + SQLModel sync sessions; RDS Proxy + IAM auth in prod) |
 | Package mgmt (Python) | UV (`uv sync`, `uv add`) |
 | Package mgmt (JS) | npm |
 | Testing | pytest (unit + integration), Vitest (frontend unit), Cypress (frontend e2e) |
@@ -272,7 +272,7 @@ After changes, evaluate if docs need updating:
 - Docstrings: Google style. Naming: snake_case. Imports: alphabetically sorted.
 - Source layout: `src/[service_name]/`. Tests: `tests/unit/`, `tests/integration/`.
 - Test placement: a test goes in `tests/integration/` if and only if it touches a real backing service (Postgres via `session` fixture, real AWS, a running sibling API, real Orthanc/XNAT/OMOP). If every external dependency is mocked, it's a unit test in `tests/unit/`. FastAPI `TestClient` alone does not make a test "integration". See `CONTRIBUTING.md` ("Where does my test go?") for the canonical rule.
-- Dependency injection: FastAPI `Depends()`. Async DB: asyncpg with async context managers.
+- Dependency injection: FastAPI `Depends()`. DB: sync SQLModel `Session` via `get_session()` — the `with Session(...)` block is load-bearing on error paths (FLIP#773). Prod authenticates through RDS Proxy with a per-connection IAM token (SQLAlchemy `do_connect` hook, passwordless engine URL).
 
 ### JavaScript/TypeScript (flip-ui)
 

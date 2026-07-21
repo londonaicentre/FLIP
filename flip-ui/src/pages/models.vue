@@ -176,7 +176,7 @@
                                         :class="statusPillClass(model.status)"
                                     >
                                         <span class="inline-block w-1.5 h-1.5 rounded-full" :class="statusDotClass(model.status)" />
-                                        {{ modelStatusLabel(model.status) }}
+                                        {{ modelStatusLabelWithQueue(model.status, model.queuePosition) }}
                                     </span>
                                 </div>
                             </div>
@@ -225,7 +225,7 @@
                                         :class="statusPillClass(model.status)"
                                     >
                                         <span class="inline-block w-1.5 h-1.5 rounded-full" :class="statusDotClass(model.status)" />
-                                        {{ modelStatusLabel(model.status) }}
+                                        {{ modelStatusLabelWithQueue(model.status, model.queuePosition) }}
                                     </span>
                                 </div>
                                 <div v-if="model.trusts.length" class="flex flex-wrap items-center gap-1.5 mt-2">
@@ -287,7 +287,7 @@ import { getAllModels,
     isModelStatusError,
     ModelStatus,
     modelStatusDotClass as statusDotClass,
-    modelStatusLabel,
+    modelStatusLabelWithQueue,
     modelStatusPillClass as statusPillClass } from "@/services/model-service";
 
 const pageSize = 20;
@@ -297,7 +297,7 @@ const pageNumber = ref(1);
 const searchQueryParam = ref("");
 const statusQueryParam = ref("");
 
-type GroupKey = "training" | "preparing" | "queued" | "completed" | "attention";
+type GroupKey = "running" | "preparing" | "queued" | "completed" | "attention";
 
 interface ITile {
     key: GroupKey;
@@ -320,9 +320,9 @@ const TILES: ITile[] = [
         ring: "border-amber-500 ring-amber-500/40"
     },
     {
-        key: "training",
-        label: "In training",
-        statuses: ["TRAINING_STARTED"],
+        key: "running",
+        label: "Running",
+        statuses: ["RUNNING"],
         dot: "bg-fuchsia-500",
         ring: "border-fuchsia-500 ring-fuchsia-500/40"
     },
@@ -351,8 +351,8 @@ const TILES: ITile[] = [
 
 // Tiles are accumulative: each click toggles a group in or out of the selection
 // and the list shows the union. An empty selection means no status filter (all
-// models). The page opens on the active work: In training + Queued.
-const activeTiles = ref<Set<GroupKey>>(new Set(["training", "queued"]));
+// models). The page opens on the active work: Running + Queued.
+const activeTiles = ref<Set<GroupKey>>(new Set(["running", "queued"]));
 
 const syncStatusFilter = (): void => {
     const statuses = TILES.filter(t => activeTiles.value.has(t.key)).flatMap(t => t.statuses);
@@ -453,7 +453,7 @@ const STATUS_RANK: Record<ModelStatus, number> = {
     PENDING: 0,
     INITIATED: 1,
     PREPARED: 2,
-    TRAINING_STARTED: 3,
+    RUNNING: 3,
     RESULTS_UPLOADED: 4,
     RESULTS_UPLOAD_FAILED: 5,
     ERROR: 6,
@@ -476,13 +476,13 @@ const sortedModels = computed<IModelSummary[]>(() => {
     return [...models.value].sort(sortDir.value === "asc" ? cmp : (a, b) => cmp(b, a));
 });
 
-// Status-toned left rail: magenta = live training, amber = preparing, emerald =
+// Status-toned left rail: magenta = running, amber = preparing, emerald =
 // completed, red = needs attention, neutral = created/queued. PENDING groups under
 // the Preparing tile but keeps the neutral tone — nothing is running yet.
 const railClass = (status: ModelStatus | undefined): string => {
     if (isModelStatusError(status)) return "bg-red-500";
     if (status === "RESULTS_UPLOADED") return "bg-emerald-500";
-    if (status === "TRAINING_STARTED") return "bg-fuchsia-500";
+    if (status === "RUNNING") return "bg-fuchsia-500";
     if (status === "PREPARED") return "bg-amber-500";
 
     return "bg-gray-300 dark:bg-gray-600";

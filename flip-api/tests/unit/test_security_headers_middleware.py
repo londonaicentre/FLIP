@@ -57,12 +57,10 @@ def test_security_headers_on_unhandled_exception():
 
     assert response.status_code == 500
     assert response.text == "Internal Server Error"
-    assert response.headers["strict-transport-security"] == \
-        "max-age=31536000; includeSubDomains"
+    assert response.headers["strict-transport-security"] == "max-age=31536000; includeSubDomains"
     assert response.headers["x-frame-options"] == "DENY"
     assert response.headers["x-content-type-options"] == "nosniff"
-    assert response.headers["referrer-policy"] == \
-        "strict-origin-when-cross-origin"
+    assert response.headers["referrer-policy"] == "strict-origin-when-cross-origin"
 
 
 def test_security_headers_no_csp_on_json_response():

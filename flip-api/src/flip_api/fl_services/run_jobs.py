@@ -19,9 +19,11 @@ from flip_api.domain.schemas.status import NetStatus
 from flip_api.fl_services.services.fl_scheduler_service import (
     check_for_available_net,
     check_for_queued_jobs,
+    log_queue_positions,
     prepare_and_start_training,
 )
 from flip_api.utils.logger import logger
+from flip_api.utils.site_manager import is_deployment_mode_enabled
 
 
 def _recover_stale_busy_schedulers(db: Session) -> int:
@@ -73,6 +75,12 @@ def run_jobs_core(db: Session) -> None:
     try:
         _recover_stale_busy_schedulers(db)
 
+        # Deployment mode is the operator's quiesce gate: in-flight jobs finish and
+        # free their nets, but nothing new is picked up until the mode is disabled.
+        if is_deployment_mode_enabled(db):
+            logger.info("Deployment mode enabled — pausing FL job pickup. 🚧")
+            return
+
         # Step 1: Find an available net
         scheduler = check_for_available_net(db)
 
@@ -89,6 +97,9 @@ def run_jobs_core(db: Session) -> None:
                 "net": scheduler.netId,
             })
             return
+
+        # The pickup just advanced every remaining queued model one place.
+        log_queue_positions(db)
 
         # Step 3: Prepare and start training
         logger.info({

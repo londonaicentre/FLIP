@@ -57,16 +57,25 @@ The operator role used to provision infrastructure needs the following managed
 policies (or equivalent custom permissions):
 
 - ``AmazonEC2FullAccess``
+- ``AmazonECS_FullAccess``
 - ``AmazonRDSFullAccess``
+- ``AmazonElasticFileSystemFullAccess``
 - ``CloudWatchLogsFullAccess``
 - ``SecretsManagerReadWrite``
 - ``IAMFullAccess``
-- ``ElasticLoadBalancingFullAccess``
+- ``ElasticLoadBalancingFullAccess`` (covers ALB and NLB)
+- ``CloudFrontFullAccess``
+- ``AWSWAFFullAccess``
+- ``AWSCertificateManagerFullAccess``
+- ``AmazonRoute53FullAccess``
+- ``AWSCloudMapFullAccess``
+- ``AmazonSSMFullAccess``
 - ``AmazonSESFullAccess`` (optional, for email functionality)
 
 Deployed EC2 instances themselves use **scoped least-privilege roles** rather
 than these broad permissions — see ``deploy/providers/AWS/iam_ecs.tf`` for the
-exact policy attachments.
+exact policy attachments. The canonical list lives in
+``deploy/providers/AWS/README.md`` under "Required IAM permissions".
 
 *********************
 Full-stack deployment

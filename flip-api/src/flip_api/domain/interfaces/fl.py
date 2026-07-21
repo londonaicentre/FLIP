@@ -18,7 +18,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator
 
 from flip_api.config import get_settings
-from flip_api.domain.schemas.status import ClientStatus, FLJobStatus
+from flip_api.domain.schemas.status import ClientStatus, FLJobStatus, NetStatus
 from flip_api.domain.schemas.types import FLBackend
 from flip_api.utils.constants import REQUIRED_FILES_MANIFEST_NAME
 from flip_api.utils.logger import logger
@@ -200,6 +200,22 @@ class INetStatus(BaseModel):
     registered_clients: int | None = None
     net_in_use: bool | None = None
     clients: list[IClientStatus]
+
+
+class ISchedulerStatus(BaseModel):
+    """Scheduler state of a single FL net."""
+
+    net: str
+    status: NetStatus
+
+
+class IQuiesceStatus(BaseModel):
+    """Platform quiesce state consumed by the deploy pre-flight (FLIP#770)."""
+
+    deployment_mode: bool
+    # True when no net's scheduler is BUSY — i.e. no training run is in flight.
+    fl_quiesced: bool
+    schedulers: list[ISchedulerStatus]
 
 
 class IOverridableConfig(BaseModel):
