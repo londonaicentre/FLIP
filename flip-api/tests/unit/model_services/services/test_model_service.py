@@ -271,9 +271,11 @@ def test_get_metrics():
     assert trust_a_data[1].x_value == 2
     assert trust_a_data[1].y_value == 0.92
 
-    # Points come back sorted for plotting: the rows query orders by the x coordinate.
+    # The rows query is deliberately unordered: the stable in-memory sort owns the series order
+    # (asserted above), and a DB ORDER BY x_value would return equal-x rows in unspecified order,
+    # weakening the ties-keep-insertion-order guarantee.
     rows_stmt_sql = str(session.exec.call_args_list[0][0][0]).lower()
-    assert "order by" in rows_stmt_sql
+    assert "order by" not in rows_stmt_sql
     assert "x_value" in rows_stmt_sql
 
 

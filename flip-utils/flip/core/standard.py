@@ -348,6 +348,9 @@ class FLIPStandardProd(FLIPBase):
         """
         # model_validate (not kwargs) so a None x_value reaches the schema's backfill validator,
         # which resolves it to the global round — the schema owns that default, not this call site.
+        # `or` (not an explicit None check) is deliberate for x_label: "" is not a meaningful axis
+        # name and the hub rejects it (min_length=1), so a falsy label coalesces to the default
+        # rather than shipping a guaranteed-reject payload.
         payload = TrainingMetrics.model_validate(
             {
                 "fl_client_name": client_name,

@@ -374,9 +374,10 @@ def get_metrics(model_id: UUID, session: Session) -> list[IModelMetrics]:
     """
     logger.debug("Attempting to retrieve the metrics results for the model...")
 
-    results = session.exec(
-        select(FLMetrics).where(FLMetrics.model_id == model_id).order_by(col(FLMetrics.x_value))
-    ).all()
+    # Deliberately unordered: the stable in-memory sort below fully determines each series' order,
+    # and an ORDER BY x_value here would return equal-x rows in unspecified order — weakening the
+    # ties-keep-insertion-order guarantee rather than helping it.
+    results = session.exec(select(FLMetrics).where(FLMetrics.model_id == model_id)).all()
 
     if not results:
         logger.warning("No metrics have been found")

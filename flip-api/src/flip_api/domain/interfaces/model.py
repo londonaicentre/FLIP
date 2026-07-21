@@ -227,13 +227,6 @@ class IModelAuditAction(BaseModel):
     userid: str
 
 
-class ITrainingMetricsResponse(BaseModel):
-    trust: str
-    globalround: int
-    label: str
-    result: float
-
-
 # Response-only models: Python attributes are snake_case; the wire format the UI
 # reads stays camelCase via serialization aliases (FastAPI serialises
 # response_model by alias). x_value is a float, not an int — arbitrary x axes

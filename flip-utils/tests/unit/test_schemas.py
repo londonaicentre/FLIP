@@ -95,6 +95,17 @@ class TestTrainingMetrics:
         with pytest.raises(ValidationError):
             TrainingMetrics(fl_client_name="site-1", global_round=1, label="loss", result=1.0, x_value=bad_x)
 
+    @pytest.mark.parametrize("bad_label", ["", "x" * 65])
+    def test_out_of_bounds_x_label_rejected(self, bad_label):
+        """x_label is plot identity and the rendered axis title: empty or oversized labels are refused."""
+        with pytest.raises(ValidationError):
+            TrainingMetrics(fl_client_name="site-1", global_round=1, label="loss", result=1.0, x_label=bad_label)
+
+    def test_x_label_at_the_length_bound_is_accepted(self):
+        """A 64-char x_label sits exactly on the bound and must validate."""
+        metrics = TrainingMetrics(fl_client_name="site-1", global_round=1, label="loss", result=1.0, x_label="x" * 64)
+        assert metrics.x_label == "x" * 64
+
     def test_global_round_accepts_zero(self):
         """global_round of 0 is the first round and must be valid."""
         metrics = TrainingMetrics(fl_client_name="site-1", global_round=0, label="loss", result=1.0)
@@ -292,6 +303,27 @@ class TestHubMirrorStaysInSync:
         fl_side = _class_body_ast(Path(flip.schemas.__file__), class_name)
         hub_side = _class_body_ast(_REPO_ROOT / hub_path, class_name)
         assert fl_side == hub_side, f"{class_name} drifted from its flip-api mirror ({hub_path}) — update both together"
+
+    def test_default_x_axis_label_value_matches_flip_api_constant(self):
+        """Pin the two DEFAULT_X_AXIS_LABEL constant *values* to each other.
+
+        The AST mirror guard above compares ``Field(default=DEFAULT_X_AXIS_LABEL)``
+        by *name*, so the constants' values can skew without failing it — and a
+        skew silently splits one logical plot onto two differently-named axes
+        depending on which side applied the default.
+        """
+        constants_module = ast.parse((_REPO_ROOT / "flip-api/src/flip_api/utils/constants.py").read_text())
+        hub_values = [
+            stmt.value.value
+            for stmt in constants_module.body
+            if isinstance(stmt, ast.Assign)
+            and isinstance(stmt.value, ast.Constant)
+            for target in stmt.targets
+            if isinstance(target, ast.Name) and target.id == "DEFAULT_X_AXIS_LABEL"
+        ]
+        assert hub_values == [flip.schemas.DEFAULT_X_AXIS_LABEL], (
+            "DEFAULT_X_AXIS_LABEL value drifted between flip-utils and flip-api — update both together"
+        )
 
     def test_queue_position_stays_hub_reserved(self):
         """Pin the shape of the one sanctioned mirror divergence.

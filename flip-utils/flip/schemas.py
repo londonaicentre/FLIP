@@ -89,7 +89,9 @@ class TrainingMetrics(BaseModel):
     x_value: float = Field(allow_inf_nan=False)
     # Label naming the x-axis this metric is plotted against; defaults to the FL global round axis when
     # the client doesn't send one. A plot's identity is the (label, x_label) pair — see FLIP#148.
-    x_label: str = Field(default=DEFAULT_X_AXIS_LABEL)
+    # Bounded to match the hub's ingest limits: a too-long or empty label is refused at send time
+    # (inside the senders' try/except) rather than 422ing at the hub.
+    x_label: str = Field(default=DEFAULT_X_AXIS_LABEL, min_length=1, max_length=64)
 
     @model_validator(mode="before")
     @classmethod

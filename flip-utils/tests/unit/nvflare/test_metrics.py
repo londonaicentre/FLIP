@@ -96,6 +96,22 @@ class TestSendMetricsValue:
         assert dxo.data_kind == DataKind.METRICS
         assert dxo.data == {"label": "accuracy", "value": 0.9}
 
+    def test_send_metrics_value_omits_non_finite_x_value(self):
+        """A non-finite coordinate is caught at its source: omitted from the DXO with a warning."""
+        fl_ctx = Mock(spec=FLContext)
+        mock_engine = Mock()
+        fl_ctx.get_engine.return_value = mock_engine
+        flip = Mock()
+
+        send_metrics_value("loss", 0.5, fl_ctx, x_value=float("inf"), flip=flip)
+
+        event_data_shareable = next(
+            c.args[1] for c in fl_ctx.set_prop.call_args_list if c.args[0] == FLContextKey.EVENT_DATA
+        )
+        dxo = from_shareable(event_data_shareable)
+        assert dxo.data == {"label": "loss", "value": 0.5}
+        flip.logger.warning.assert_called_once()
+
     def test_send_metrics_value_includes_x_label_when_provided(self):
         """send_metrics_value should include x_label in the DXO data when given (FLIP#148)."""
         fl_ctx = Mock(spec=FLContext)
@@ -207,6 +223,59 @@ class TestHandleMetricsEvent:
             x_value=7,
             x_label=None,
         )
+
+    def test_handle_metrics_event_falls_back_to_round_when_x_value_is_none(self):
+        """An explicit None x_value must still fall back to the legacy 'round' coordinate."""
+        dxo = DXO(data_kind=DataKind.METRICS, data={"label": "loss", "value": 0.5, "x_value": None, "round": 4})
+        event_data = dxo.to_shareable()
+        event_data.set_header(FedEventHeader.ORIGIN, "site-1")
+
+        flip = Mock()
+
+        handle_metrics_event(
+            event_data=event_data,
+            global_round=1,
+            model_id="123e4567-e89b-12d3-a456-426614174000",
+            flip=flip,
+        )
+
+        assert flip.send_metrics.call_args.kwargs["x_value"] == 4
+
+    def test_handle_metrics_event_drops_non_finite_x_value(self):
+        """A NaN/inf coordinate is dropped to None (hub plots at the global round), mirroring Flower."""
+        dxo = DXO(data_kind=DataKind.METRICS, data={"label": "loss", "value": 0.5, "x_value": float("nan")})
+        event_data = dxo.to_shareable()
+        event_data.set_header(FedEventHeader.ORIGIN, "site-1")
+
+        flip = Mock()
+
+        handle_metrics_event(
+            event_data=event_data,
+            global_round=2,
+            model_id="123e4567-e89b-12d3-a456-426614174000",
+            flip=flip,
+        )
+
+        assert flip.send_metrics.call_args.kwargs["x_value"] is None
+        flip.logger.warning.assert_called_once()
+
+    def test_handle_metrics_event_survives_send_metrics_failure(self):
+        """One bad metric must not propagate out of NVFLARE's event dispatch (matches the Flower loop)."""
+        dxo = DXO(data_kind=DataKind.METRICS, data={"label": "loss", "value": 0.5})
+        event_data = dxo.to_shareable()
+        event_data.set_header(FedEventHeader.ORIGIN, "site-1")
+
+        flip = Mock()
+        flip.send_metrics.side_effect = RuntimeError("validation blew up")
+
+        handle_metrics_event(
+            event_data=event_data,
+            global_round=1,
+            model_id="123e4567-e89b-12d3-a456-426614174000",
+            flip=flip,
+        )
+
+        flip.logger.exception.assert_called_once()
 
     def test_handle_metrics_event_forwards_x_label(self):
         """handle_metrics_event should forward a client-supplied x_label to the hub (FLIP#148)."""

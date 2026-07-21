@@ -9,6 +9,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import math
+
 from nvflare.apis.dxo import DXO, DataKind, from_shareable
 from nvflare.apis.fl_constant import EventScope, FedEventHeader, FLContextKey
 from nvflare.apis.fl_context import FLContext
@@ -54,6 +56,13 @@ def send_metrics_value(
     if engine is None:
         flip.logger.error("Error: no engine in fl_ctx, cannot fire metrics event")
         return
+
+    # Catch a degenerate coordinate at its source: a NaN/inf x_value would be rejected server-side
+    # anyway (the hub schema enforces allow_inf_nan=False), so drop it here with a warning and let the
+    # metric plot at the global round instead.
+    if x_value is not None and not (isinstance(x_value, (int, float)) and math.isfinite(x_value)):
+        flip.logger.warning(f"Dropping non-finite x_value {x_value!r} for metric {label}; plotting at the global round")
+        x_value = None
 
     # Build the DXO data. 'x_value' (x-coordinate) and 'x_label' (x-axis label) are optional and only
     # included when provided, so the server can fall back to the global round / the "Global Rounds" label.
@@ -117,13 +126,35 @@ def handle_metrics_event(event_data: Shareable, global_round: int, model_id: str
     # the axis via 'x_label'; absent, the hub plots it at the global round on the "Global Rounds" axis. A
     # plot's identity is (label, x_label), so distinct x-labels render as separate plots (see
     # https://github.com/londonaicentre/FLIP/issues/148). 'round' is the pre-x_value DXO spelling, read as
-    # a fallback so a stale client image doesn't silently lose its per-epoch coordinates.
-    flip.send_metrics(
-        client_name=client_name,
-        model_id=model_id,
-        label=metrics_data["label"],
-        value=metrics_data["value"],
-        global_round=global_round,
-        x_value=metrics_data.get("x_value", metrics_data.get("round")),
-        x_label=metrics_data.get("x_label"),
-    )
+    # a fallback — including when 'x_value' is present but None — so a stale client image doesn't
+    # silently lose its per-epoch coordinates.
+    x_value = metrics_data.get("x_value")
+    if x_value is None:
+        x_value = metrics_data.get("round")
+
+    # This is the guard that holds against old/foreign client images: a non-finite coordinate would
+    # fail TrainingMetrics validation inside send_metrics *before* its try block and propagate out of
+    # NVFLARE's event dispatch, losing the metric with a server traceback. Mirror the Flower leg
+    # (_parse_metric_key): drop it to None so the hub plots the point at the global round.
+    if x_value is not None and not (isinstance(x_value, (int, float)) and math.isfinite(x_value)):
+        flip.logger.warning(
+            f"Dropping non-finite x_value {x_value!r} for metric {metrics_data.get('label')}; "
+            f"plotting at the global round"
+        )
+        x_value = None
+
+    try:
+        flip.send_metrics(
+            client_name=client_name,
+            model_id=model_id,
+            label=metrics_data["label"],
+            value=metrics_data["value"],
+            global_round=global_round,
+            x_value=x_value,
+            x_label=metrics_data.get("x_label"),
+        )
+    except Exception:
+        # Never let one bad metric escape into NVFLARE's event dispatch (matches the
+        # Flower forward loop) — the metric is lost, but the run and the round's
+        # remaining metrics carry on.
+        flip.logger.exception(f"Failed to forward metric {metrics_data.get('label')} to the hub")
