@@ -22,6 +22,7 @@ import logging
 from pathlib import Path
 
 import deepc_report
+import numpy as np
 from monai.deploy.core import Fragment, Image, Operator, OperatorSpec
 
 # MONAI Deploy image metadata keys for the DICOM identifiers, with the DICOM-attribute spellings as
@@ -60,16 +61,21 @@ class DeepcSegReportOperator(Operator):
         study_uid = self._first(metadata, _STUDY_UID_KEYS)
         series_uid = self._first(metadata, _SERIES_UID_KEYS)
 
+        # Drop any singleton channel axis the bundle's post-processing may leave on the label map,
+        # so its dimensionality matches the three voxel spacings.
+        mask = np.squeeze(seg_image.asnumpy())
+
         try:
             spacing = deepc_report.voxel_spacing(metadata)
+            volume_ml = deepc_report.segmented_volume_ml(mask, spacing)
         except ValueError as error:
-            # No spacing means no trustworthy volume. Surface it as a degraded report rather than
-            # emitting a fabricated number — the same silent-empty-output failure mode the report
-            # is meant to catch.
+            # A missing spacing or an unexpected mask shape means no trustworthy volume. Surface it
+            # as a degraded report rather than emitting a fabricated number — the same
+            # silent-empty-output failure mode the report is meant to catch.
             self._logger.error(f"Cannot compute segmented volume: {error}")
             report = deepc_report.build_engine_report(
                 quantities=[],
-                messages=[deepc_report.coded_message("SEG_NO_SPACING", str(error))],
+                messages=[deepc_report.coded_message("SEG_VOLUME_UNAVAILABLE", str(error))],
                 status="DEGRADED",
                 study_uid=study_uid,
                 series_uid=series_uid,
@@ -78,7 +84,6 @@ class DeepcSegReportOperator(Operator):
             self._logger.info(f"Wrote degraded engine report to {written}")
             return
 
-        volume_ml = deepc_report.segmented_volume_ml(seg_image.asnumpy(), spacing)
         self._logger.info(f"Segmented volume: {volume_ml:.2f} mL")
         report = deepc_report.build_engine_report(
             quantities=[deepc_report.volume_quantity(volume_ml)],
