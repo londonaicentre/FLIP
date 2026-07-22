@@ -34,6 +34,7 @@ from app.strategy import (
 )
 
 FinalModelFilename = PTConstants.PTFileModelName
+BestModelFilename = PTConstants.PTBestFileModelName
 CrossValResultsJsonFilename = PTConstants.CrossValResultsJsonFilename
 
 
@@ -48,6 +49,10 @@ def main(grid: Grid, context: Context, flip: FLIP = FLIP()) -> None:
     run_config = context.run_config
     model_id = run_config.get("flip-model-id", "monai-flower-tutorial-model")
     num_rounds = int(run_config.get("num-server-rounds", 1))
+    # Best-model selection is opt-in: an empty metric key leaves behaviour unchanged
+    # (final-round-only evaluation, no best checkpoint).
+    best_model_metric = str(run_config.get("best-model-metric", "")) or None
+    best_model_metric_minimize = bool(run_config.get("best-model-metric-minimize", False))
 
     flip.update_status(model_id, ModelStatus.INITIATED)
 
@@ -62,6 +67,8 @@ def main(grid: Grid, context: Context, flip: FLIP = FLIP()) -> None:
         model_id=model_id,
         fraction_train=1.0,
         fraction_evaluate=1.0,
+        best_model_metric=best_model_metric,
+        best_model_metric_minimize=best_model_metric_minimize,
     )
 
     result = strategy.start(
@@ -85,6 +92,18 @@ def main(grid: Grid, context: Context, flip: FLIP = FLIP()) -> None:
         state_dict = result.arrays.to_torch_state_dict()
         torch.save(state_dict, output_dir / FinalModelFilename)
         log(INFO, "✓ Final model saved to %s", output_dir / FinalModelFilename)
+        # Save the best model alongside it when a selection actually happened —
+        # nothing is fabricated from the final model otherwise.
+        if strategy.best_model_arrays is not None:
+            torch.save(strategy.best_model_arrays.to_torch_state_dict(), output_dir / BestModelFilename)
+            log(
+                INFO,
+                "✓ Best model (round %s, %s=%s) saved to %s",
+                strategy.best_model_round,
+                best_model_metric,
+                strategy.best_model_metric_value,
+                output_dir / BestModelFilename,
+            )
     except Exception as e:
         log(INFO, "Failed to save final model: %s", str(e))
         flip.update_status(model_id, ModelStatus.ERROR)
@@ -109,7 +128,9 @@ def main(grid: Grid, context: Context, flip: FLIP = FLIP()) -> None:
     # Structure evaluation metrics: aggregated + per-client at same level
     evaluation_metrics = {"aggregated": eval_metrics_aggregated}
 
-    # Add per-client metrics from the last round (since evaluation only happens once)
+    # Add per-client metrics from the last evaluated round (the final round —
+    # best-model selection also evaluates earlier rounds, but the cross-site
+    # table reports the final model)
     if per_client_eval_metrics:
         last_eval_round = max(per_client_eval_metrics.keys())
         for site_name, metrics in per_client_eval_metrics[last_eval_round].items():
@@ -121,6 +142,14 @@ def main(grid: Grid, context: Context, flip: FLIP = FLIP()) -> None:
         "train_metrics": train_metrics,
         "evaluation_metrics": evaluation_metrics,
     }
+    if strategy.best_model_arrays is not None:
+        cross_val_results["best_model"] = BestModelFilename
+        cross_val_results["best_round"] = strategy.best_model_round
+        cross_val_results["best_metric"] = {
+            "name": best_model_metric,
+            "value": strategy.best_model_metric_value,
+            "minimize": best_model_metric_minimize,
+        }
 
     json_path = output_dir / CrossValResultsJsonFilename
     with open(json_path, "w") as f:
