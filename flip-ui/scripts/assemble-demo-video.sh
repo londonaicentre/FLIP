@@ -65,10 +65,15 @@ concat_list="$workdir/concat.txt"
 ENTROPY_THRESHOLD=1.2
 SAMPLE_FPS=5
 FALLBACK_TRIM_SECONDS=0.8
+# Clips (1-based indices, comma-separated) whose head should start after the
+# LAST leading blank run instead of the first contentful frame — used for the
+# stealth segments, where a briefly-visible sign-in precedes the hidden
+# stretch before the dashboard reveal.
+HEAD_AFTER_BLANK="${DEMO_HEAD_AFTER_BLANK:-5,6}"
 
 detect_content_span() {
     # Prints "start end" (s) for a clip's contentful span, or nothing.
-    local segment="$1"
+    local segment="$1" head_mode="${2:-first}"
     # Crop to the AUT viewport first — the raw capture also contains the dark
     # runner bezel, whose contrast against the blank page inflates entropy.
     (ffmpeg -hide_banner -i "$segment" \
@@ -95,9 +100,20 @@ for line in sys.stdin:
 # cost is ≤1/${SAMPLE_FPS}s of real content, imperceptible against the
 # multi-second holds every segment starts and ends on).
 del sample_dt
-content = [tt for tt, vv in zip(times, vals) if vv >= threshold]
-if content:
-    print(f'{content[0]:.2f} {content[-1]:.2f}')
+head_mode = '${head_mode}'
+content_idx = [i for i, vv in enumerate(vals) if vv >= threshold]
+if content_idx:
+    start = times[content_idx[0]]
+    if head_mode == 'afterblank':
+        # Start after the LAST blank sample in the first 8s that still has
+        # content after it (skips a visible sign-in + hidden stretch).
+        blanks = [i for i, (tt, vv) in enumerate(zip(times, vals)) if tt <= 8.0 and vv < threshold]
+        for i in reversed(blanks):
+            later = [j for j in content_idx if j > i]
+            if later:
+                start = times[later[0]]
+                break
+    print(f'{start:.2f} {times[content_idx[-1]]:.2f}')
 "
 }
 
@@ -105,7 +121,11 @@ i=0
 for segment in "${sorted[@]}"; do
     i=$((i + 1))
     clip="$workdir/$(printf '%02d' "$i").mp4"
-    span=$(detect_content_span "$segment")
+    head_mode="first"
+    if [[ ",${HEAD_AFTER_BLANK}," == *",${i},"* ]]; then
+        head_mode="afterblank"
+    fi
+    span=$(detect_content_span "$segment" "$head_mode")
     trim_args=()
     if [ -n "$span" ]; then
         span_start=${span% *}
@@ -129,9 +149,39 @@ print(f'{max(1.0, int(h) * 3600 + int(m) * 60 + float(s) - ${FALLBACK_TRIM_SECON
     ffmpeg -hide_banner -loglevel error -y -i "$segment" "${trim_args[@]}" \
         -vf "crop=${CROP_WIDTH}:${CROP_HEIGHT}:${CROP_X}:${CROP_Y},fps=${FPS},format=yuv420p" \
         -c:v libx264 -preset veryfast -crf 18 -an "$clip"
-    echo "file '$clip'" >> "$concat_list"
+done
+
+# Optional blur crossfades between selected clip pairs (1-based indices,
+# comma-separated, e.g. "4-5" bridges training-start → training-progress;
+# "none" disables). Each transition is a short xfade clip built from the
+# boundary frames and spliced into the concat.
+TRANSITIONS="${DEMO_TRANSITIONS:-4-5}"
+TRANSITION_SECONDS=0.8
+
+: > "$concat_list"
+count=$i
+for ((j = 1; j <= count; j++)); do
+    printf "file '%s'\n" "$workdir/$(printf '%02d' "$j").mp4" >> "$concat_list"
+    next=$((j + 1))
+    if [ "$TRANSITIONS" != "none" ] && [ "$next" -le "$count" ] \
+        && [[ ",${TRANSITIONS}," == *",${j}-${next},"* ]]; then
+        clip_a="$workdir/$(printf '%02d' "$j").mp4"
+        clip_b="$workdir/$(printf '%02d' "$next").mp4"
+        ffmpeg -hide_banner -loglevel error -y -sseof -0.1 -i "$clip_a" -frames:v 1 "$workdir/t${j}a.png"
+        ffmpeg -hide_banner -loglevel error -y -i "$clip_b" -frames:v 1 "$workdir/t${j}b.png"
+        ffmpeg -hide_banner -loglevel error -y \
+            -loop 1 -t "$TRANSITION_SECONDS" -i "$workdir/t${j}a.png" \
+            -loop 1 -t "$TRANSITION_SECONDS" -i "$workdir/t${j}b.png" \
+            -filter_complex "[0:v][1:v]xfade=transition=hblur:duration=${TRANSITION_SECONDS}:offset=0,fps=${FPS},format=yuv420p" \
+            -c:v libx264 -preset veryfast -crf 18 -an "$workdir/trans${j}.mp4"
+        printf "file '%s'\n" "$workdir/trans${j}.mp4" >> "$concat_list"
+        echo "  blur transition between clips ${j} and ${next}"
+    fi
 done
 
 mkdir -p "$(dirname "$OUT")"
-ffmpeg -hide_banner -loglevel error -y -f concat -safe 0 -i "$concat_list" -c copy "$OUT"
+# Re-encode the concat — the generated transition clips make stream-copy
+# concatenation unreliable across encoder parameter differences.
+ffmpeg -hide_banner -loglevel error -y -f concat -safe 0 -i "$concat_list" \
+    -c:v libx264 -preset veryfast -crf 18 -pix_fmt yuv420p -an "$OUT"
 echo "assembled ${#sorted[@]} segments -> $OUT"

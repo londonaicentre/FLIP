@@ -59,11 +59,30 @@ describe("FLIP demo — create project", () => {
         cy.demoCaption("A researcher signs in to FLIP — the Federated Learning Interoperability Platform", 1400);
         cy.demoLogin(email, password, { scenic: true });
 
-        // Land on the projects page and let it breathe before acting — the
-        // click on Create Project should be a visible, deliberate step.
+        // Land on the projects page and let it breathe before acting.
         cy.getBySel("add-project-btn", { timeout: 60000 }).should("be.visible");
         cy.demoCaption("The researcher's project workspace", 700);
         cy.demoPause(1500);
+
+        // Before setting up the study, a look at the federation's health on
+        // the Connection Status page — list view, then the topology.
+        cy.demoCaption("First, a look at Connection Status — is the federation healthy?", 700);
+        cy.contains("a", "Connection Status").demoClick();
+        cy.getBySel("trust-row", { timeout: 60000 }).should("have.length.at.least", 1);
+        cy.demoPause(2200);
+        cy.getBySel("view-toggle-radial").demoClick();
+        // The radial SVG reports visible while its layout is still settling —
+        // anchor on the legend too and hold, or the topology only flashes.
+        cy.getBySel("connection-radial-svg", { timeout: 30000 }).should("be.visible");
+        cy.getBySel("radial-legend", { timeout: 30000 }).scrollIntoView();
+        cy.getBySel("radial-legend").should("be.visible");
+        cy.demoCaption("Topology view — the federation at a glance", 800);
+        cy.demoPause(4000);
+
+        cy.demoCaption("Back to the workspace to set up the study", 600);
+        cy.contains("a", "Projects").first().demoClick();
+        cy.getBySel("add-project-btn", { timeout: 60000 }).should("be.visible");
+        cy.demoPause(900);
         cy.demoCaption("Creating a new research project", 700);
         cy.getBySel("add-project-btn").demoClick();
         // The list rows reuse some of these data-test hooks (e.g. the row

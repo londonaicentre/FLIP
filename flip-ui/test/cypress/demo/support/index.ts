@@ -23,6 +23,8 @@ import "../../docs/support/demoCursor";
 import "./demoCaption";
 import "./demoFlow";
 
+import { demoStealth } from "./demoFlow";
+
 // Each segment runs in a fresh browser, so the very first page paints in the
 // fallback font and visibly swaps once the web fonts arrive (FOUT) — right
 // at the start of the recording. Hide the first-loaded document until the
@@ -42,6 +44,10 @@ Cypress.on("window:before:load", (win) => {
     const doc = win.document;
     doc.documentElement.style.visibility = "hidden";
     const reveal = () => {
+        // Stealth segments stay hidden until the spec reveals explicitly.
+        if (demoStealth.active) {
+            return;
+        }
         doc.documentElement.style.visibility = "";
     };
     // Never hold the page hidden long — hard reveal after 4s regardless.

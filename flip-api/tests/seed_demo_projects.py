@@ -82,7 +82,7 @@ CATALOGUE: list[dict[str, Any]] = [
         },
     },
     {
-        "name": "Chest X-ray Pathology Classification",
+        "name": "Chest X-ray Findings Classification",
         "description": (
             "Multi-label CNN classifier for pleural effusion and edema on frontal chest radiographs, "
             "trained federatedly without imaging leaving any trust."
@@ -90,7 +90,7 @@ CATALOGUE: list[dict[str, Any]] = [
         "state": "approved_model",
         "query_file": XRAY_QUERY,
         "model": {
-            "name": "CXR Pathology CNN",
+            "name": "CXR Findings CNN",
             "description": "CNN classifier for effusion/edema findings, aggregated across trusts per round.",
             "files_dir": XRAY_APP_DIR,
         },

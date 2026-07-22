@@ -24,21 +24,11 @@ describe("FLIP demo — administrator approval", () => {
         const password = requireEnv("DEMO_ADMIN_PASSWORD");
         const projectId = requireEnv("DEMO_PROJECT_ID");
 
-        cy.demoLogin(email, password);
-        cy.demoCaption("A FLIP administrator signs in to review the request", 1400);
-
-        cy.visit("/connectionstatus");
-        cy.demoCaption("Connection Status — trust connectivity and FL network health at a glance", 600);
-        cy.getBySel("trust-row", { timeout: 60000 }).should("have.length.at.least", 1);
-        cy.demoPause(2200);
-        cy.getBySel("view-toggle-radial").demoClick();
-        // The radial SVG reports visible while its layout is still settling —
-        // anchor on the legend too and hold, or the topology only flashes.
-        cy.getBySel("connection-radial-svg", { timeout: 30000 }).should("be.visible");
-        cy.getBySel("radial-legend", { timeout: 30000 }).scrollIntoView();
-        cy.getBySel("radial-legend").should("be.visible");
-        cy.demoCaption("Topology view — the federation at a glance", 800);
-        cy.demoPause(4000);
+        // Scenic sign-in — the administrator's entrance deserves screen time.
+        cy.demoCaption("A FLIP administrator signs in to review the request", 1200);
+        cy.demoLogin(email, password, { scenic: true });
+        cy.demoCaption("The administrator sees every project on the platform", 800);
+        cy.demoPause(1600);
 
         cy.demoCaption("Opening the staged project for review", 600);
         cy.visit(`/project/${projectId}`);

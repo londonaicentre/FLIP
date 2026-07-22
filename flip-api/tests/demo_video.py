@@ -95,7 +95,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--project-description",
         default="Multi-trust federated study: CNN classification of pleural effusion and edema on chest radiographs.",
     )
-    parser.add_argument("--model-name", default="X-ray Pathology CNN")
+    parser.add_argument("--model-name", default="Chest X-ray CNN")
     parser.add_argument(
         "--model-description",
         default="CNN classifier trained with federated averaging across the participating trusts.",

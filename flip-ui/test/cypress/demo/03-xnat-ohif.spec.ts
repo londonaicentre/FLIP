@@ -62,6 +62,9 @@ describe("FLIP demo — XNAT + OHIF at the trust", () => {
         cy.reload();
         cy.demoCaption("The trust's XNAT home — imaging lives here, inside the hospital", 600);
         dismissSessionDialog();
+        // Let the Recent Data Activity panel finish loading before the dwell,
+        // so the home page is shown fully populated.
+        cy.contains("Loading recent data", { timeout: 60000 }).should("not.exist");
         cy.demoPause(4500);
 
         cy.demoCaption("Each FLIP project maps to an XNAT project holding its imported studies", 600);

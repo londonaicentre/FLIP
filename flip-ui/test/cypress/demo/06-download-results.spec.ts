@@ -17,7 +17,7 @@
 // downloads folder; on camera the click + snackbar-free happy path is the
 // story.
 
-import { requireEnv } from "./support/demoFlow";
+import { demoVisit, requireEnv, revealDemo } from "./support/demoFlow";
 
 describe("FLIP demo — download results", () => {
     it("downloads the federated training results", () => {
@@ -26,11 +26,15 @@ describe("FLIP demo — download results", () => {
         const projectId = requireEnv("DEMO_PROJECT_ID");
         const modelId = requireEnv("DEMO_MODEL_ID");
 
-        cy.demoLogin(email, password);
-        cy.visit(`/project/${projectId}/model/${modelId}`);
-        cy.demoCaption("Training complete — results are uploaded from the FL network", 1200);
+        // Stealth sign-in — the clip opens directly on the finished dashboard.
+        cy.demoLogin(email, password, { stealth: true });
+        demoVisit(`/project/${projectId}/model/${modelId}`);
+        cy.getBySel("training-timeline", { timeout: 60000 }).should("exist");
+        cy.getBySel("download-results-btn", { timeout: 120000 }).should("exist");
+        revealDemo();
 
-        cy.getBySel("training-timeline", { timeout: 60000 }).should("be.visible");
+        cy.demoCaption("Training complete — results are uploaded from the FL network", 1200);
+        cy.getBySel("training-timeline").should("be.visible");
         cy.demoPause(2000);
 
         cy.demoCaption("Downloading the aggregated global model", 800);

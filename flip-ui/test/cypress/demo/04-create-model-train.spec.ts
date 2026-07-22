@@ -57,7 +57,7 @@ describe("FLIP demo — create model and start training", () => {
                 });
             });
 
-        cy.demoCaption(`Uploading the ${backendLabel} training application`, 1000);
+        cy.demoCaption(`Uploading ${backendLabel} application bundle`, 1000);
         const filePaths = appFiles.map((name) => `${appDir}/${name}`);
         cy.getBySel("upload-file-btn").scrollIntoView();
         // The visible control is a drop zone; the real <input type=file
