@@ -39,6 +39,14 @@ working on and re-assemble:
 make demo-video DEMO_ARGS="--project-id <uuid> --from-segment 4"   # keep segs 1-3, redo 4-6
 make demo-video DEMO_ARGS="--video-scale 1 --skip-xnat"            # fast low-res draft
 bash scripts/assemble-demo-video.sh test/cypress/demo/videos out/flip-demo.mp4 3   # re-assemble only (from flip-ui/)
+
+# Spleen segmentation instead of chest X-ray (CT cohort; labels are added
+# off-camera between the import and the model segments — same enrichment
+# contract as e2e_smoke, FLIP_PROJECT_ID exported; escape $ once per make):
+make -C flip-api demo_video DEMO_ARGS="--app spleen \
+  --data-enrichment-cwd <path-to>/flip_project_spleen_segmentation \
+  --data-enrichment-cmd 'uv run upload_labels_to_XNAT.py --flip-project-id \"\$\$FLIP_PROJECT_ID\"' \
+  --out <abs-path>/flip-demo-spleen.mp4"
 ```
 
 A single segment can also be run standalone (see `run_segment` in `flip-api/tests/demo_video.py` for the exact
