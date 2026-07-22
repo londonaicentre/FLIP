@@ -1,0 +1,492 @@
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+"""Records the end-to-end FLIP demo video against the live dev stack.
+
+Drives the six Cypress demo segments (flip-ui/test/cypress/demo/) one at a
+time — each in its own Dockerised Cypress run — and performs the slow
+platform waits (cohort responses, imaging import, FL training) OFF-camera
+between segments, reusing tests/e2e_smoke.py's wait functions. Finally the
+segment mp4s are cropped + concatenated into one walkthrough video by
+flip-ui/scripts/assemble-demo-video.sh.
+
+The recording is genuine end to end: real Cognito sign-ins through the UI,
+real trust round-trips, real S3 presigned uploads, real federated training.
+
+Prerequisites:
+    - Full dev stack up (`make up`) with trusts registered and Orthanc seeded.
+    - A live AWS SSO session (`aws sso login --sso-session FLIP`) — presigned
+      uploads/downloads and the admin token fallback need it.
+    - Demo Cognito users (optional but recommended): `make demo-users`, then
+      restart flip-api so seeding grants their roles. Without them the
+      segments fall back to the well-known admin for both parts.
+
+Usage (preferred):
+    make demo-video                                   # from the repo root
+    make demo-video DEMO_ARGS="--skip-xnat"
+    make demo-video DEMO_ARGS="--project-id <uuid> --from-segment 4"
+
+Direct invocation:
+    cd flip-api && env DB_HOST=localhost uv run python -m tests.demo_video
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+import requests
+
+from flip_api.utils import constants
+from tests import e2e_smoke
+from tests.e2e_smoke import SmokeFailure, _get, _log
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+FLIP_UI_DIR = REPO_ROOT / "flip-ui"
+DEMO_DIR = FLIP_UI_DIR / "test" / "cypress" / "demo"
+STATE_FILE = DEMO_DIR / "state.json"
+VIDEOS_DIR = DEMO_DIR / "videos"
+OUT_DIR = DEMO_DIR / "out"
+CYPRESS_IMAGE = "cypress/included:14.5.2"
+
+SEGMENTS = [
+    "01-create-project",
+    "02-approve",
+    "03-xnat-ohif",
+    "04-create-model-train",
+    "05-follow-progress",
+    "06-download-results",
+]
+
+# Per-backend xray tutorial locations (mirrors the e2e_smoke Makefile defaults).
+TUTORIALS = {
+    "nvflare": {
+        "app_dir": "fl-tutorials/nvflare/image_classification/xray_classification/app_files",
+        "query_file": "fl-tutorials/nvflare/image_classification/xray_classification/query.sql",
+        "label": "NVFLARE",
+    },
+    "flower": {
+        "app_dir": "fl-tutorials/flower/xray_classification/app",
+        "query_file": "fl-tutorials/flower/xray_classification/query.sql",
+        "label": "Flower",
+    },
+}
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Record the end-to-end FLIP demo video")
+    parser.add_argument("--fl-backend", default=os.environ.get("FL_BACKEND", "nvflare"), choices=sorted(TUTORIALS))
+    parser.add_argument("--trusts", default=None, help="Comma-separated trust codes/names (default: all registered)")
+    parser.add_argument("--project-name", default="Federated Chest X-ray Classification")
+    parser.add_argument(
+        "--project-description",
+        default="Multi-trust federated study: CNN classification of pleural effusion and edema on chest radiographs.",
+    )
+    parser.add_argument("--model-name", default="X-ray Pathology CNN")
+    parser.add_argument(
+        "--model-description",
+        default="CNN classifier trained with federated averaging across the participating trusts.",
+    )
+    parser.add_argument("--project-id", default=None, help="Reuse an existing project (skips segment 1 context)")
+    parser.add_argument("--model-id", default=None, help="Reuse an existing model (with --from-segment 5/6)")
+    parser.add_argument(
+        "--from-segment",
+        type=int,
+        default=1,
+        choices=range(1, 7),
+        help="First segment to record; earlier segments must already have their mp4s for assembly",
+    )
+    parser.add_argument("--skip-xnat", action="store_true", help="Skip the XNAT/OHIF segment")
+    parser.add_argument(
+        "--xnat-url",
+        default="http://127.0.0.1:8104",
+        help=(
+            "Trust XNAT base URL for segment 3. Keep the IPv4 literal: the XNAT ports are published by "
+            "Docker Swarm ingress, which accepts but never answers ::1 connections — python-requests "
+            "resolves localhost to ::1 and read-times-out (browsers fall back to IPv4 on their own)."
+        ),
+    )
+    parser.add_argument("--xnat-username", default=os.environ.get("XNAT_ADMIN_USER", "admin"))
+    parser.add_argument("--xnat-password", default=os.environ.get("XNAT_ADMIN_PASSWORD", "admin"))
+    parser.add_argument("--cohort-timeout", type=int, default=300)
+    parser.add_argument("--image-pull-threshold", type=float, default=0.9)
+    parser.add_argument("--image-pull-timeout", type=int, default=2400)
+    parser.add_argument("--training-start-timeout", type=int, default=900)
+    parser.add_argument("--metrics-timeout", type=int, default=1500)
+    parser.add_argument("--training-finish-timeout", type=int, default=5400)
+    parser.add_argument("--out", default=str(OUT_DIR / "flip-demo.mp4"), help="Final assembled mp4 path")
+    parser.add_argument("--no-assemble", action="store_true", help="Record segments but skip the ffmpeg assembly")
+    return parser.parse_args(argv)
+
+
+def resolve_ui_credentials() -> tuple[tuple[str, str], tuple[str, str]]:
+    """Resolve the (researcher, admin) UI login credentials for the segments.
+
+    Prefers the dedicated demo users (DEMO_RESEARCHER_* / DEMO_ADMIN_* env
+    vars, provisioned by `make demo-users`); falls back to the well-known
+    admin so the video can still be recorded on a stack without demo users —
+    the same person then plays both parts.
+
+    Returns:
+        tuple[tuple[str, str], tuple[str, str]]: ((researcher_email,
+        researcher_password), (admin_email, admin_password)).
+    """
+    admin_password = os.environ.get("ADMIN_USER_PASSWORD", "")
+    fallback = (constants.ADMIN_EMAIL_1, admin_password)
+
+    researcher = (os.environ.get("DEMO_RESEARCHER_EMAIL", ""), os.environ.get("DEMO_RESEARCHER_PASSWORD", ""))
+    if not (researcher[0] and researcher[1]):
+        _log("⚠️  DEMO_RESEARCHER_EMAIL/PASSWORD not set — falling back to the admin user for researcher parts")
+        researcher = fallback
+
+    admin = (os.environ.get("DEMO_ADMIN_EMAIL", ""), os.environ.get("DEMO_ADMIN_PASSWORD", ""))
+    if not (admin[0] and admin[1]):
+        _log("⚠️  DEMO_ADMIN_EMAIL/PASSWORD not set — falling back to the well-known admin user")
+        admin = fallback
+
+    if not (researcher[1] and admin[1]):
+        raise SmokeFailure(
+            "No usable UI credentials: set DEMO_RESEARCHER_*/DEMO_ADMIN_* or ADMIN_USER_PASSWORD in the environment"
+        )
+    return researcher, admin
+
+
+def read_state() -> dict[str, str]:
+    if STATE_FILE.exists():
+        return json.loads(STATE_FILE.read_text())
+    return {}
+
+
+def write_state(state: dict[str, str]) -> None:
+    STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    STATE_FILE.write_text(json.dumps(state, indent=4))
+
+
+def run_segment(name: str, env: dict[str, str]) -> Path:
+    """Record one demo segment in a Dockerised Cypress run.
+
+    Env values are passed with bare `-e NAME` flags so secrets ride the
+    subprocess environment instead of the docker argv (visible in `ps`).
+
+    Args:
+        name (str): Segment name (spec basename without .spec.ts).
+        env (dict[str, str]): Environment values the spec reads via Cypress.env.
+
+    Returns:
+        Path: The recorded segment mp4.
+    """
+    spec_rel = f"test/cypress/demo/{name}.spec.ts"
+    video = VIDEOS_DIR / f"{name}.spec.ts.mp4"
+    video.unlink(missing_ok=True)
+    VIDEOS_DIR.mkdir(parents=True, exist_ok=True)
+
+    child_env = os.environ.copy()
+    cmd = [
+        "docker", "run", "--rm", "--network", "host", "--shm-size=2g",
+        "--user", f"{os.getuid()}:{os.getgid()}",
+        "-v", f"{REPO_ROOT}:/e2e", "-w", "/e2e/flip-ui",
+    ]
+    # Cypress + Chrome need a writable HOME when running as the host user.
+    for key, value in {"HOME": "/tmp/cypress-home", **env}.items():
+        child_env[key] = value
+        cmd += ["-e", key]
+    cmd += [
+        "--entrypoint", "cypress", CYPRESS_IMAGE,
+        "run", "--browser", "chrome", "--config-file", "cypress.demo.config.ts", "--spec", spec_rel,
+    ]
+
+    _log(f"🎬 Recording segment {name} …")
+    result = subprocess.run(cmd, env=child_env)
+    if result.returncode != 0:
+        raise SmokeFailure(
+            f"Segment {name} failed (exit {result.returncode}). "
+            f"See {VIDEOS_DIR / (name + '.spec.ts.mp4')} and {DEMO_DIR / 'screenshots'} for what happened."
+        )
+    if not video.exists():
+        raise SmokeFailure(f"Segment {name} passed but produced no video at {video}")
+    _log(f"  ✅ {video.relative_to(REPO_ROOT)}")
+    return video
+
+
+def resolve_xnat_ids(
+    xnat_url: str, username: str, password: str, flip_project_id: str, timeout_s: int = 600
+) -> dict[str, str]:
+    """Find the trust-XNAT project mirroring a FLIP project, plus one session.
+
+    The imaging import creates one XNAT project per FLIP project with
+    ``secondary_ID`` set to the FLIP project UUID
+    (trust/imaging-api services/projects.py), so match on that and take the
+    first experiment as the study to open in OHIF. The OHIF viewer URL needs
+    the subject id and experiment label too (the plugin's viewer.js builds
+    ``?subjectId=&projectId=&experimentId=&experimentLabel=``).
+
+    Args:
+        xnat_url (str): Base URL of the trust's XNAT (e.g. http://localhost:8104).
+        username (str): XNAT login.
+        password (str): XNAT password.
+        flip_project_id (str): FLIP project UUID to match against secondary_ID.
+        timeout_s (int): How long to keep polling for the project/experiments.
+
+    Returns:
+        dict[str, str]: project, subject, experiment and label ids for the viewer URL.
+    """
+    _log(f"🔎 Resolving XNAT project for FLIP project {flip_project_id} at {xnat_url}")
+    deadline = time.monotonic() + timeout_s
+    # One pooled session: right after a big import XNAT answers slowly, and
+    # per-request basic auth would also mint a fresh JSESSION every poll.
+    xnat = requests.Session()
+    xnat.auth = (username, password)
+    while time.monotonic() < deadline:
+        try:
+            resp = xnat.get(f"{xnat_url}/data/projects?format=json", timeout=60)
+            if resp.status_code < 300:
+                rows = resp.json()["ResultSet"]["Result"]
+                match = next((r for r in rows if r.get("secondary_ID") == flip_project_id), None)
+                if match:
+                    xnat_project_id = match["ID"]
+                    exp_resp = xnat.get(
+                        f"{xnat_url}/data/projects/{xnat_project_id}/experiments?format=json",
+                        timeout=60,
+                    )
+                    if exp_resp.status_code < 300:
+                        experiments = exp_resp.json()["ResultSet"]["Result"]
+                        if experiments:
+                            experiment = experiments[0]
+                            detail = xnat.get(
+                                f"{xnat_url}/data/experiments/{experiment['ID']}?format=json",
+                                timeout=60,
+                            )
+                            fields = detail.json()["items"][0]["data_fields"] if detail.status_code < 300 else {}
+                            resolved = {
+                                "project": xnat_project_id,
+                                "subject": str(fields.get("subject_ID", "")),
+                                "experiment": experiment["ID"],
+                                "label": str(experiment.get("label") or fields.get("label", "")),
+                            }
+                            if resolved["subject"]:
+                                _log(f"  ✅ XNAT ids: {resolved}")
+                                return resolved
+        except requests.exceptions.RequestException as exc:
+            _log(f"  ⚠️  XNAT query error ({type(exc).__name__}); retrying")
+        time.sleep(10)
+    raise SmokeFailure(
+        f"Could not resolve an XNAT project with secondary_ID={flip_project_id} (and ≥1 experiment) "
+        f"at {xnat_url} within {timeout_s}s"
+    )
+
+
+def wait_for_first_metrics(
+    client: requests.Session, headers: dict[str, str], model_id: str, timeout_s: int
+) -> None:
+    """Block until the model has at least one training metric point.
+
+    Segment 5's charts are only worth recording once real data exists. Not
+    fatal on timeout — the dashboard still shows the live timeline — so this
+    degrades to a loud warning.
+    """
+    _log(f"⏳ Waiting for first training metrics (timeout {timeout_s}s)")
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        resp = e2e_smoke._try_request(_get, client, f"/model/{model_id}/metrics", headers)
+        if resp is not None and resp.status_code < 300:
+            try:
+                charts = resp.json() or []
+            except ValueError:
+                charts = []
+            points = sum(len(series.get("data") or []) for chart in charts for series in chart.get("metrics") or [])
+            if points > 0:
+                _log(f"  ✅ metrics flowing ({points} point(s))")
+                return
+        time.sleep(10)
+    _log("⚠️  No metrics appeared in time — recording segment 5 anyway (charts may show the empty state)")
+
+
+def app_files_for(app_dir: Path) -> list[str]:
+    """List the uploadable app files, mirroring the UI's blacklist filter."""
+    blacklist = e2e_smoke._blacklisted_filenames()
+    names = sorted(
+        p.name
+        for p in app_dir.iterdir()
+        if p.is_file() and not p.name.startswith(".") and p.suffix != ".pyc" and p.name not in blacklist
+    )
+    if not names:
+        raise SmokeFailure(f"No uploadable app files found in {app_dir}")
+    return names
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
+    tutorial = TUTORIALS[args.fl_backend]
+    app_dir = REPO_ROOT / tutorial["app_dir"]
+    query_file = REPO_ROOT / tutorial["query_file"]
+    for required in (app_dir, query_file):
+        if not required.exists():
+            raise SmokeFailure(f"Tutorial path missing: {required}")
+
+    researcher, admin = resolve_ui_credentials()
+    _log(f"🎭 Researcher part: {researcher[0]} | Admin part: {admin[0]}")
+
+    # Hub session for the off-camera waits (same auth as e2e_smoke).
+    client = requests.Session()
+    client.headers.update({"Content-Type": "application/json"})
+    headers = e2e_smoke.authenticate()
+
+    trusts = e2e_smoke._ensure_ok(_get(client, "/trust/", headers), "list trusts").json()
+    trusts = e2e_smoke.select_trusts(trusts, args.trusts)
+    if not trusts:
+        raise SmokeFailure("No trusts registered on the hub")
+    _log(f"🏥 Demo trusts: {[t.get('code') or t['name'] for t in trusts]}")
+
+    # Fresh start wipes previous segment videos; resumes keep them for assembly.
+    if args.from_segment == 1:
+        if VIDEOS_DIR.exists():
+            for old in VIDEOS_DIR.glob("*.mp4"):
+                old.unlink()
+        STATE_FILE.unlink(missing_ok=True)
+        if args.project_id:
+            write_state({"projectId": args.project_id})
+    else:
+        state = read_state()
+        if args.project_id:
+            state["projectId"] = args.project_id
+        if args.model_id:
+            state["modelId"] = args.model_id
+        if not state.get("projectId"):
+            raise SmokeFailure("--from-segment > 1 needs --project-id (or an existing state.json)")
+        write_state(state)
+
+    # Paths handed to the specs are relative to the Cypress project root
+    # (flip-ui/) inside the container mount.
+    query_rel = os.path.relpath(query_file, FLIP_UI_DIR)
+    app_dir_rel = os.path.relpath(app_dir, FLIP_UI_DIR)
+
+    researcher_env = {"DEMO_RESEARCHER_EMAIL": researcher[0], "DEMO_RESEARCHER_PASSWORD": researcher[1]}
+
+    # ── Segment 1: researcher creates project + cohort query ──────────────
+    if args.from_segment <= 1:
+        run_segment(
+            "01-create-project",
+            {
+                **researcher_env,
+                "DEMO_PROJECT_NAME": args.project_name,
+                "DEMO_PROJECT_DESCRIPTION": args.project_description,
+                "DEMO_QUERY_FILE": query_rel,
+            },
+        )
+    project_id = read_state().get("projectId", "")
+    if not project_id:
+        raise SmokeFailure("Segment 1 did not record a projectId in state.json")
+    _log(f"🆔 project_id={project_id}")
+
+    required_trust_ids = {str(t["id"]) for t in trusts}
+    required_trust_names = {t["name"] for t in trusts}
+    e2e_smoke.wait_for_trusts_responded(
+        client, headers, project_id, timeout_s=args.cohort_timeout, required_trust_ids=required_trust_ids
+    )
+
+    # ── Segment 2: admin checks connection status, stages + approves ──────
+    if args.from_segment <= 2:
+        run_segment(
+            "02-approve",
+            {
+                "DEMO_ADMIN_EMAIL": admin[0],
+                "DEMO_ADMIN_PASSWORD": admin[1],
+                "DEMO_PROJECT_ID": project_id,
+            },
+        )
+
+    # ── Off-camera: the imaging import (the ~6 min wait) ──────────────────
+    e2e_smoke.wait_for_image_pull(
+        client,
+        headers,
+        project_id,
+        threshold=args.image_pull_threshold,
+        timeout_s=args.image_pull_timeout,
+        required_trust_names=required_trust_names,
+    )
+
+    # ── Segment 3: XNAT + OHIF at one trust ───────────────────────────────
+    if not args.skip_xnat and args.from_segment <= 3:
+        xnat_ids = resolve_xnat_ids(args.xnat_url, args.xnat_username, args.xnat_password, project_id)
+        run_segment(
+            "03-xnat-ohif",
+            {
+                "CYPRESS_BASE_URL": args.xnat_url,
+                "DEMO_XNAT_USERNAME": args.xnat_username,
+                "DEMO_XNAT_PASSWORD": args.xnat_password,
+                "DEMO_XNAT_PROJECT_ID": xnat_ids["project"],
+                "DEMO_XNAT_SUBJECT_ID": xnat_ids["subject"],
+                "DEMO_XNAT_EXPERIMENT_ID": xnat_ids["experiment"],
+                "DEMO_XNAT_EXPERIMENT_LABEL": xnat_ids["label"],
+            },
+        )
+
+    # ── Segment 4: model + app upload + initiate training ────────────────
+    if args.from_segment <= 4:
+        run_segment(
+            "04-create-model-train",
+            {
+                **researcher_env,
+                "DEMO_PROJECT_ID": project_id,
+                "DEMO_MODEL_NAME": args.model_name,
+                "DEMO_MODEL_DESCRIPTION": args.model_description,
+                "DEMO_APP_DIR": app_dir_rel,
+                "DEMO_APP_FILES": ",".join(app_files_for(app_dir)),
+                "DEMO_BACKEND_LABEL": tutorial["label"],
+            },
+        )
+    model_id = read_state().get("modelId", "")
+    if not model_id:
+        raise SmokeFailure("Segment 4 did not record a modelId in state.json")
+    _log(f"🆔 model_id={model_id}")
+
+    # ── Off-camera: training spins up and produces its first metrics ─────
+    e2e_smoke.wait_for_training_started(client, headers, model_id, timeout_s=args.training_start_timeout)
+    wait_for_first_metrics(client, headers, model_id, timeout_s=args.metrics_timeout)
+
+    # ── Segment 5: live progress ──────────────────────────────────────────
+    ids_env = {**researcher_env, "DEMO_PROJECT_ID": project_id, "DEMO_MODEL_ID": model_id}
+    if args.from_segment <= 5:
+        run_segment("05-follow-progress", ids_env)
+
+    # ── Off-camera: training runs to completion + results upload ─────────
+    e2e_smoke.wait_for_training_finished(client, headers, model_id, timeout_s=args.training_finish_timeout)
+
+    # ── Segment 6: download the results ──────────────────────────────────
+    run_segment("06-download-results", ids_env)
+
+    if args.no_assemble:
+        _log("⏭️  --no-assemble: segment mp4s left in " + str(VIDEOS_DIR))
+        return 0
+
+    out_path = Path(args.out).resolve()
+    _log("🎞️  Assembling final video …")
+    result = subprocess.run(
+        ["bash", "scripts/assemble-demo-video.sh", str(VIDEOS_DIR), str(out_path)],
+        cwd=FLIP_UI_DIR,
+    )
+    if result.returncode != 0:
+        raise SmokeFailure("Video assembly failed — segment mp4s are intact in " + str(VIDEOS_DIR))
+    _log(f"🎉 Demo video ready: {out_path}")
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except SmokeFailure as failure:
+        _log(f"❌ {failure}")
+        sys.exit(1)

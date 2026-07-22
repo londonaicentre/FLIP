@@ -19,7 +19,15 @@ from flip_api.db.seed.seed_logger import logger
 from flip_api.utils.cognito_helpers import (
     get_user_by_email_or_id,
 )
-from flip_api.utils.constants import ADMIN_EMAIL_1, ADMIN_EMAIL_2, ADMIN_EMAIL_3, RESEARCHER_EMAIL, VIEWER_EMAIL
+from flip_api.utils.constants import (
+    ADMIN_EMAIL_1,
+    ADMIN_EMAIL_2,
+    ADMIN_EMAIL_3,
+    DEMO_ADMIN_EMAIL,
+    DEMO_RESEARCHER_EMAIL,
+    RESEARCHER_EMAIL,
+    VIEWER_EMAIL,
+)
 
 MAIN_USER_PROFILES = {
     ADMIN_EMAIL_1: ("AI Centre Admin", "London AI Centre"),
@@ -27,6 +35,11 @@ MAIN_USER_PROFILES = {
     ADMIN_EMAIL_3: ("Rafael Garcia-Dias", "King's College London"),
     RESEARCHER_EMAIL: ("Rafael Garcia-Dias", "King's College London"),
     VIEWER_EMAIL: ("Alexandre Triay", "London AI Centre"),
+    # Demo-video identities (flip_api/scripts/create_demo_users.py). Seeding
+    # skips them with a warning when they don't exist in Cognito, so stacks
+    # that never run the demo are unaffected.
+    DEMO_RESEARCHER_EMAIL: ("Demo Researcher", "London AI Centre"),
+    DEMO_ADMIN_EMAIL: ("Demo Admin", "London AI Centre"),
 }
 
 
@@ -161,5 +174,12 @@ def seed_main_users(session: Session) -> None:
 
     # Ensure the Viewer role grant.
     _ensure_user_and_role_resilient(VIEWER_EMAIL, RoleRef.VIEWER, session, *MAIN_USER_PROFILES[VIEWER_EMAIL])
+
+    # Demo-video identities — no-ops (with a warning) until the users are
+    # provisioned in Cognito via flip_api/scripts/create_demo_users.py.
+    _ensure_user_and_role_resilient(
+        DEMO_RESEARCHER_EMAIL, RoleRef.RESEARCHER, session, *MAIN_USER_PROFILES[DEMO_RESEARCHER_EMAIL]
+    )
+    _ensure_user_and_role_resilient(DEMO_ADMIN_EMAIL, RoleRef.ADMIN, session, *MAIN_USER_PROFILES[DEMO_ADMIN_EMAIL])
 
     logger.info("✅ Finished seeding main users.")
