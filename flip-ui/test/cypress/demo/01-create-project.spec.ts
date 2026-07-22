@@ -59,7 +59,12 @@ describe("FLIP demo — create project", () => {
         cy.demoCaption("A researcher signs in to FLIP — the Federated Learning Interoperability Platform", 1400);
         cy.demoLogin(email, password, { scenic: true });
 
-        cy.demoCaption("Creating a new research project", 800);
+        // Land on the projects page and let it breathe before acting — the
+        // click on Create Project should be a visible, deliberate step.
+        cy.getBySel("add-project-btn", { timeout: 60000 }).should("be.visible");
+        cy.demoCaption("The researcher's project workspace", 700);
+        cy.demoPause(1500);
+        cy.demoCaption("Creating a new research project", 700);
         cy.getBySel("add-project-btn").demoClick();
         // The list rows reuse some of these data-test hooks (e.g. the row
         // title is also project-name), so scope to the open modal — the

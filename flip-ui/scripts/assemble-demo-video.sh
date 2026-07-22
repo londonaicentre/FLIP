@@ -54,33 +54,31 @@ trap 'rm -rf "$workdir"' EXIT
 concat_list="$workdir/concat.txt"
 : > "$concat_list"
 
-# Cypress keeps recording past the last command and captures its "Default
-# blank page" teardown screen at every clip's tail, for a variable duration.
-# Detect the real content end instead of trimming a fixed amount: the
-# teardown frames are near-uniform (luma entropy < ~0.9 even with the caption
-# pill re-injected on them) while every segment's final held app frame
-# measures ≥ ~1.9 — cut each clip at its last frame above the threshold.
+# Cypress records beyond the spec on BOTH ends of every clip: its "Default
+# blank page" (cy logo) shows before the first cy.visit renders and again for
+# a variable 0-3s after the last command. Detect the real content span
+# instead of trimming fixed amounts: blank/teardown frames are near-uniform
+# (luma entropy < ~0.9 even with the caption pill re-injected on them) while
+# real app frames measure ≥ ~1.9 — keep from the first frame above the
+# threshold to the last. This also drops the white load-flash at each
+# segment's head, so the concat cuts land straight on rendered pages.
 ENTROPY_THRESHOLD=1.2
-TAIL_WINDOW_SECONDS=6
-TAIL_SAMPLE_FPS=5
+SAMPLE_FPS=5
 FALLBACK_TRIM_SECONDS=0.8
 
-detect_content_end() {
-    # Prints the keep-duration (s) for a clip, or nothing if undetectable.
-    local segment="$1" dur_s="$2"
-    local start
-    start=$(python3 -c "print(max(0, ${dur_s} - ${TAIL_WINDOW_SECONDS}))")
+detect_content_span() {
+    # Prints "start end" (s) for a clip's contentful span, or nothing.
+    local segment="$1"
     # Crop to the AUT viewport first — the raw capture also contains the dark
     # runner bezel, whose contrast against the blank page inflates entropy.
-    (ffmpeg -hide_banner -ss "$start" -i "$segment" \
-        -vf "crop=${CROP_WIDTH}:${CROP_HEIGHT}:${CROP_X}:${CROP_Y},fps=${TAIL_SAMPLE_FPS},scale=480:-1,format=gray,entropy,metadata=mode=print:file=-" \
+    (ffmpeg -hide_banner -i "$segment" \
+        -vf "crop=${CROP_WIDTH}:${CROP_HEIGHT}:${CROP_X}:${CROP_Y},fps=${SAMPLE_FPS},scale=480:-1,format=gray,entropy,metadata=mode=print:file=-" \
         -f null - 2>&1 || true) | python3 -c "
 import re
 import sys
 
-start = float('${start}')
 threshold = float('${ENTROPY_THRESHOLD}')
-sample_dt = 1.0 / ${TAIL_SAMPLE_FPS}
+sample_dt = 1.0 / ${SAMPLE_FPS}
 times, vals = [], []
 t = None
 for line in sys.stdin:
@@ -90,12 +88,16 @@ for line in sys.stdin:
         continue
     m = re.search(r'entropy\.entropy\.normal\.Y=([0-9.]+)', line)
     if m and t is not None:
-        times.append(start + t)
+        times.append(t)
         vals.append(float(m.group(1)))
-for tt, vv in zip(reversed(times), reversed(vals)):
-    if vv >= threshold:
-        print(f'{tt + sample_dt:.2f}')
-        break
+# Cut exactly at the sampled contentful frames: padding by a sample
+# interval on either side re-includes blank frames (at ${SAMPLE_FPS}fps the
+# cost is ≤1/${SAMPLE_FPS}s of real content, imperceptible against the
+# multi-second holds every segment starts and ends on).
+del sample_dt
+content = [tt for tt, vv in zip(times, vals) if vv >= threshold]
+if content:
+    print(f'{content[0]:.2f} {content[-1]:.2f}')
 "
 }
 
@@ -103,19 +105,26 @@ i=0
 for segment in "${sorted[@]}"; do
     i=$((i + 1))
     clip="$workdir/$(printf '%02d' "$i").mp4"
-    # `ffmpeg -i` with no output exits non-zero by design — tolerate it.
-    duration=$( (ffmpeg -i "$segment" 2>&1 || true) | grep -oE "Duration: [0-9:.]+" | cut -d' ' -f2 || true)
+    span=$(detect_content_span "$segment")
     trim_args=()
-    if [ -n "$duration" ]; then
-        dur_s=$(python3 -c "h, m, s = '${duration}'.split(':'); print(int(h) * 3600 + int(m) * 60 + float(s))")
-        keep=$(detect_content_end "$segment" "$dur_s")
-        if [ -z "$keep" ]; then
-            keep=$(python3 -c "print(max(1.0, ${dur_s} - ${FALLBACK_TRIM_SECONDS}))")
-        fi
-        trim_args=(-t "$keep")
-        echo "  cropping $(basename "$segment") (keeping ${keep}s of ${dur_s}s)"
+    if [ -n "$span" ]; then
+        span_start=${span% *}
+        span_end=${span#* }
+        keep=$(python3 -c "print(f'{${span_end} - ${span_start}:.2f}')")
+        # -ss placed AFTER -i: frame-accurate output seeking, so no blank
+        # keyframe leaks back in at the head.
+        trim_args=(-ss "$span_start" -t "$keep")
+        echo "  cropping $(basename "$segment") (content ${span_start}s → ${span_end}s)"
     else
-        echo "  cropping $(basename "$segment") (duration unknown — no trim)"
+        duration=$( (ffmpeg -i "$segment" 2>&1 || true) | grep -oE "Duration: [0-9:.]+" | cut -d' ' -f2 || true)
+        if [ -n "$duration" ]; then
+            keep=$(python3 -c "
+h, m, s = '${duration}'.split(':')
+print(f'{max(1.0, int(h) * 3600 + int(m) * 60 + float(s) - ${FALLBACK_TRIM_SECONDS}):.2f}')
+")
+            trim_args=(-t "$keep")
+        fi
+        echo "  cropping $(basename "$segment") (span undetected — fallback trim)"
     fi
     ffmpeg -hide_banner -loglevel error -y -i "$segment" "${trim_args[@]}" \
         -vf "crop=${CROP_WIDTH}:${CROP_HEIGHT}:${CROP_X}:${CROP_Y},fps=${FPS},format=yuv420p" \
