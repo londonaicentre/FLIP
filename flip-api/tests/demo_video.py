@@ -475,7 +475,7 @@ def main(argv: list[str] | None = None) -> int:
     _log(f"🆔 model_id={model_id}")
 
     # ── Off-camera: training spins up and produces its first metrics ─────
-    e2e_smoke.wait_for_training_started(client, headers, model_id, timeout_s=args.training_start_timeout)
+    e2e_smoke.wait_for_model_advanced(client, headers, model_id, timeout_s=args.training_start_timeout)
     wait_for_first_metrics(client, headers, model_id, timeout_s=args.metrics_timeout)
 
     # ── Segment 5: live progress ──────────────────────────────────────────
