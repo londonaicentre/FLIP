@@ -118,6 +118,35 @@ For example:
 
 You can add new commands to the Makefile to create smaller deployments for testing and development.
 
+### Demo Video and Demo Data
+
+`make demo-video` records the full end-to-end walkthrough as one mp4 against the **running dev stack** — real
+Cognito sign-ins, real trust round-trips, real S3 presigned uploads and a real federated training run. The journey:
+a researcher creates a project, writes the cohort query and tours the per-trust aggregate charts, stages the
+project → an administrator checks Connection Status and approves → the imported cohort is reviewed in a trust's
+XNAT/OHIF viewer → a model is created, the training app uploaded and federated training run → live metrics →
+results download. Six Cypress segments record the on-camera beats; the slow platform waits (cohort responses,
+imaging import, FL training) happen off-camera between them. Local dev tool — not run in CI.
+
+```bash
+# one-off setup
+aws sso login --sso-session FLIP        # presigned URLs + Cognito admin calls need a live session
+make demo-users                         # create the demo Cognito users (reads DEMO_*_PASSWORD from env)
+docker restart flip-api                 # boot seeding grants the demo users their roles
+
+# record
+make demo-video                         # → flip-ui/test/cypress/demo/out/flip-demo.mp4 (~3 min, ~13 MB, 3840x2400)
+```
+
+Useful `DEMO_ARGS`: `--skip-xnat`, `--project-id <uuid> --from-segment <n>` (iterate on later segments without
+re-running the import), `--trusts GSTT`, `--fl-backend flower`, `--video-scale 1` (fast drafts; default 3 records
+the 1280x800 viewport at 3840x2400). Details: `flip-ui/test/cypress/demo/README.md`.
+
+`make seed-demo-projects` pre-populates a fresh platform with a curated catalogue of radiology projects (spleen
+CT segmentation, chest X-ray classification, …) in **honest lifecycle states** built through the real API — no
+fabricated metrics or results. `EXTRA_ARGS="--states unstaged,unstaged_query,staged"` defers the approved entries
+(approval starts a real imaging import); `EXTRA_ARGS="--cleanup"` deletes everything it created.
+
 ### Docker Swarm Deployment
 
 The XNAT services are deployed using Docker Swarm mode for better resource management and scalability. Docker Swarm is automatically used when running `make up` or `make up-trusts`.

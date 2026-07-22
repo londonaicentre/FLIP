@@ -56,6 +56,9 @@ make migration MESSAGE="..."   # autogenerate a revision from the model diff (fl
 make migration_downgrade       # alembic downgrade -1
 make migration_history         # alembic history
 make migration_current         # alembic current
+make demo_video    # record the end-to-end demo video against the running stack (tests/demo_video.py; DEMO_ARGS=...)
+make create_demo_users         # provision the demo Cognito users (DEMO_*_PASSWORD from env; restart flip-api after)
+make seed_demo_projects        # seed the curated radiology catalogue (EXTRA_ARGS="--cleanup" removes it)
 ```
 
 ## Conventions
