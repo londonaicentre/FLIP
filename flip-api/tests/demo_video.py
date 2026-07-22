@@ -47,6 +47,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from typing import Any
 
 import requests
 
@@ -71,34 +72,79 @@ SEGMENTS = [
     "06-download-results",
 ]
 
-# Per-backend xray tutorial locations (mirrors the e2e_smoke Makefile defaults).
-TUTORIALS = {
-    "nvflare": {
-        "app_dir": "fl-tutorials/nvflare/image_classification/xray_classification/app_files",
-        "query_file": "fl-tutorials/nvflare/image_classification/xray_classification/query.sql",
-        "label": "NVFLARE",
+# Per-app recording profiles: on-camera names plus the per-backend tutorial
+# locations (mirroring the e2e_smoke Makefile defaults). CLI name flags
+# override the profile values.
+APPS: dict[str, dict[str, Any]] = {
+    "xray": {
+        "project_name": "Federated Chest X-ray Classification",
+        "project_description": (
+            "Multi-trust federated study: CNN classification of pleural effusion and edema on chest radiographs."
+        ),
+        "model_name": "Chest X-ray CNN",
+        "model_description": "CNN classifier trained with federated averaging across the participating trusts.",
+        "backends": {
+            "nvflare": {
+                "app_dir": "fl-tutorials/nvflare/image_classification/xray_classification/app_files",
+                "query_file": "fl-tutorials/nvflare/image_classification/xray_classification/query.sql",
+                "label": "NVFLARE",
+            },
+            "flower": {
+                "app_dir": "fl-tutorials/flower/xray_classification/app",
+                "query_file": "fl-tutorials/flower/xray_classification/query.sql",
+                "label": "Flower",
+            },
+        },
     },
-    "flower": {
-        "app_dir": "fl-tutorials/flower/xray_classification/app",
-        "query_file": "fl-tutorials/flower/xray_classification/query.sql",
-        "label": "Flower",
+    "spleen": {
+        "project_name": "Federated 3D Spleen Segmentation",
+        "project_description": (
+            "Multi-trust federated study: 3D U-Net segmentation of the spleen on abdominal CT volumes."
+        ),
+        "model_name": "Spleen 3D U-Net",
+        "model_description": "3D U-Net trained with federated averaging on trust-held abdominal CT volumes.",
+        "backends": {
+            "nvflare": {
+                "app_dir": "fl-tutorials/nvflare/image_segmentation/3d_spleen_segmentation/app_files",
+                "query_file": "fl-tutorials/nvflare/image_segmentation/3d_spleen_segmentation/query.sql",
+                "label": "NVFLARE",
+            },
+            "flower": {
+                "app_dir": "fl-tutorials/flower/3d_spleen_segmentation/app",
+                "query_file": "fl-tutorials/flower/3d_spleen_segmentation/query.sql",
+                "label": "Flower",
+            },
+        },
     },
 }
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Record the end-to-end FLIP demo video")
-    parser.add_argument("--fl-backend", default=os.environ.get("FL_BACKEND", "nvflare"), choices=sorted(TUTORIALS))
-    parser.add_argument("--trusts", default=None, help="Comma-separated trust codes/names (default: all registered)")
-    parser.add_argument("--project-name", default="Federated Chest X-ray Classification")
+    parser.add_argument("--app", default="xray", choices=sorted(APPS), help="Which tutorial app the demo records")
     parser.add_argument(
-        "--project-description",
-        default="Multi-trust federated study: CNN classification of pleural effusion and edema on chest radiographs.",
+        "--fl-backend",
+        default=os.environ.get("FL_BACKEND", "nvflare"),
+        choices=sorted(APPS["xray"]["backends"]),
     )
-    parser.add_argument("--model-name", default="Chest X-ray CNN")
+    parser.add_argument("--trusts", default=None, help="Comma-separated trust codes/names (default: all registered)")
+    parser.add_argument("--project-name", default=None, help="Override the app profile's project name")
+    parser.add_argument("--project-description", default=None, help="Override the app profile's project description")
+    parser.add_argument("--model-name", default=None, help="Override the app profile's model name")
+    parser.add_argument("--model-description", default=None, help="Override the app profile's model description")
     parser.add_argument(
-        "--model-description",
-        default="CNN classifier trained with federated averaging across the participating trusts.",
+        "--data-enrichment-cwd",
+        default=None,
+        help="Directory to run --data-enrichment-cmd in (e.g. the spleen label-upload repo checkout)",
+    )
+    parser.add_argument(
+        "--data-enrichment-cmd",
+        default=None,
+        help=(
+            "Shell command run OFF-camera between the imaging import and the model segments, with "
+            "FLIP_PROJECT_ID exported — e.g. the spleen tutorial's upload_labels_to_XNAT.py (labels must be "
+            "in place before training)"
+        ),
     )
     parser.add_argument("--project-id", default=None, help="Reuse an existing project (skips segment 1 context)")
     parser.add_argument("--model-id", default=None, help="Reuse an existing model (with --from-segment 5/6)")
@@ -346,7 +392,16 @@ def app_files_for(app_dir: Path) -> list[str]:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
-    tutorial = TUTORIALS[args.fl_backend]
+    profile = APPS[args.app]
+    tutorial = profile["backends"][args.fl_backend]
+    project_name = args.project_name or profile["project_name"]
+    project_description = args.project_description or profile["project_description"]
+    model_name = args.model_name or profile["model_name"]
+    model_description = args.model_description or profile["model_description"]
+    if bool(args.data_enrichment_cwd) != bool(args.data_enrichment_cmd):
+        raise SmokeFailure("--data-enrichment-cwd and --data-enrichment-cmd must be provided together")
+    if args.data_enrichment_cwd and not Path(args.data_enrichment_cwd).is_dir():
+        raise SmokeFailure(f"--data-enrichment-cwd does not exist: {args.data_enrichment_cwd}")
     app_dir = REPO_ROOT / tutorial["app_dir"]
     query_file = REPO_ROOT / tutorial["query_file"]
     for required in (app_dir, query_file):
@@ -398,8 +453,8 @@ def main(argv: list[str] | None = None) -> int:
             "01-create-project",
             {
                 **researcher_env,
-                "DEMO_PROJECT_NAME": args.project_name,
-                "DEMO_PROJECT_DESCRIPTION": args.project_description,
+                "DEMO_PROJECT_NAME": project_name,
+                "DEMO_PROJECT_DESCRIPTION": project_description,
                 "DEMO_QUERY_FILE": query_rel,
             },
             video_scale=args.video_scale,
@@ -437,6 +492,10 @@ def main(argv: list[str] | None = None) -> int:
         required_trust_names=required_trust_names,
     )
 
+    # ── Off-camera: optional data enrichment (e.g. spleen labels) ────────
+    if args.data_enrichment_cwd and args.data_enrichment_cmd:
+        e2e_smoke.run_data_enrichment(Path(args.data_enrichment_cwd), args.data_enrichment_cmd, project_id)
+
     # ── Segment 3: XNAT + OHIF at one trust ───────────────────────────────
     if not args.skip_xnat and args.from_segment <= 3:
         xnat_ids = resolve_xnat_ids(args.xnat_url, args.xnat_username, args.xnat_password, project_id)
@@ -461,8 +520,8 @@ def main(argv: list[str] | None = None) -> int:
             {
                 **researcher_env,
                 "DEMO_PROJECT_ID": project_id,
-                "DEMO_MODEL_NAME": args.model_name,
-                "DEMO_MODEL_DESCRIPTION": args.model_description,
+                "DEMO_MODEL_NAME": model_name,
+                "DEMO_MODEL_DESCRIPTION": model_description,
                 "DEMO_APP_DIR": app_dir_rel,
                 "DEMO_APP_FILES": ",".join(app_files_for(app_dir)),
                 "DEMO_BACKEND_LABEL": tutorial["label"],
