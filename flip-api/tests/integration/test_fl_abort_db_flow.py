@@ -19,6 +19,7 @@ FLScheduler→FLJob join in ``release_scheduler_for_model``, and the assumption 
 after ``remove_job_from_queue``).
 """
 
+from datetime import datetime, timedelta
 from unittest.mock import MagicMock
 from uuid import uuid4
 
@@ -28,7 +29,7 @@ from flip_api.db.models.main_models import FLJob, FLNets, FLScheduler, Model
 from flip_api.domain.schemas.status import JobStatus, ModelStatus, NetStatus, ProjectStatus
 from flip_api.domain.schemas.types import FLBackend
 from flip_api.fl_services.services.fl_scheduler_service import release_scheduler_for_model
-from flip_api.fl_services.services.fl_service import abort_model_training
+from flip_api.fl_services.services.fl_service import abort_model_training, get_fl_backend_job_id_by_model_id
 
 
 @pytest.fixture
@@ -131,6 +132,56 @@ def test_release_scheduler_finds_net_through_deleted_job(session, scheduled_pre_
     assert scheduler is not None
     assert scheduler.status == NetStatus.AVAILABLE
     assert scheduler.job_id is None
+
+
+def test_abort_re_queued_model_with_job_history_frees_net(session, scheduled_pre_running_job):
+    """A second pre-running abort works after a re-queue (abort → STOPPED → INITIATED → abort).
+
+    The re-queue keeps the first attempt's DELETED job row, so the model holds two FLJob rows.
+    The backend-job-id lookup must read only the newest one — with ``one_or_none`` it raised
+    ``MultipleResultsFound``, which the narrowed except no longer swallows: the abort 500'd and
+    the BUSY net leaked.
+    """
+    ctx = scheduled_pre_running_job
+
+    earlier_attempt = FLJob(
+        model_id=ctx["model"].id,
+        status=JobStatus.DELETED,
+        fl_backend_job_id=None,
+        created=datetime.utcnow() - timedelta(minutes=5),
+    )
+    session.add(earlier_attempt)
+    session.commit()
+
+    abort_model_training(MagicMock(path_params={}), ctx["model"].id, session)
+
+    session.expire_all()
+    job = session.get(FLJob, ctx["job"].id)
+    scheduler = session.get(FLScheduler, ctx["scheduler"].id)
+    assert job is not None
+    assert job.status == JobStatus.DELETED
+    assert scheduler is not None
+    assert scheduler.status == NetStatus.AVAILABLE
+    assert scheduler.job_id is None
+
+
+def test_backend_job_id_lookup_returns_newest_job(session, scheduled_pre_running_job):
+    """With a stale DELETED row carrying an old backend id, the lookup returns the newest job's id."""
+    ctx = scheduled_pre_running_job
+
+    earlier_attempt = FLJob(
+        model_id=ctx["model"].id,
+        status=JobStatus.DELETED,
+        fl_backend_job_id="stale-backend-job-id",
+        created=datetime.utcnow() - timedelta(minutes=5),
+    )
+    session.add(earlier_attempt)
+    current = session.get(FLJob, ctx["job"].id)
+    assert current is not None
+    current.fl_backend_job_id = "current-backend-job-id"
+    session.commit()
+
+    assert get_fl_backend_job_id_by_model_id(ctx["model"].id, session) == "current-backend-job-id"
 
 
 def test_abort_stopped_model_ignores_late_results_upload(session, scheduled_pre_running_job):

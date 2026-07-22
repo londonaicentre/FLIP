@@ -109,7 +109,7 @@ def test_upload_app_calls_http_post(mock_post, model_id):
 
 def test_get_fl_backend_job_id_by_model_id(model_id, fake_session):
     result_proxy = MagicMock()
-    result_proxy.one_or_none.return_value = "job-id"
+    result_proxy.first.return_value = "job-id"
     fake_session.exec.return_value = result_proxy
     job_id = fl_service.get_fl_backend_job_id_by_model_id(model_id, fake_session)
     assert job_id == "job-id"
@@ -154,7 +154,7 @@ def test_fetch_client_status_success(mock_check_client):
 
 def test_get_fl_backend_job_id_by_model_id_not_found(model_id, fake_session):
     result_proxy = MagicMock()
-    result_proxy.one_or_none.return_value = None
+    result_proxy.first.return_value = None
     fake_session.exec.return_value = result_proxy
     with pytest.raises(ValueError, match=f"No backend job ID found for model_id {model_id}"):
         fl_service.get_fl_backend_job_id_by_model_id(model_id, fake_session)

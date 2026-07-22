@@ -13,10 +13,11 @@
 import json
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from uuid import UUID
 
 from fastapi import Request
+from sqlalchemy import Column
 from sqlmodel import Session, col, select
 
 from flip_api.config import get_settings
@@ -112,6 +113,12 @@ def get_fl_backend_job_id_by_model_id(model_id: UUID, session: Session) -> str:
     """
     Get the FL backend job ID associated with a given model ID
 
+    A re-queued model (STOPPED → INITIATED, #787) keeps its earlier DELETED job rows, so the
+    lookup reads only the newest job by ``created`` — the current training attempt (mirrors
+    ``update_fl_scheduler``). Deliberately no status filter: ``abort_model_training`` calls this
+    right after the dequeue flipped the current job to DELETED, and that job's backend id is
+    exactly the one to abort.
+
     Args:
         model_id (UUID): The ID of the model
         session (Session): SQLModel session object
@@ -120,11 +127,16 @@ def get_fl_backend_job_id_by_model_id(model_id: UUID, session: Session) -> str:
         str: The FL backend job ID associated with the model ID
 
     Raises:
-        ValueError: If the model ID is not found in the database
+        ValueError: If the model has no job, or its newest job was never submitted to the FL
+            backend (``fl_backend_job_id`` still NULL).
     """
-    statement = select(FLJob.fl_backend_job_id).where(FLJob.model_id == model_id)
-    result = session.exec(statement)
-    fl_backend_job_id = result.one_or_none()
+    statement = (
+        select(FLJob.fl_backend_job_id)
+        .where(FLJob.model_id == model_id)
+        .order_by(cast(Column, FLJob.created).desc())
+        .limit(1)
+    )
+    fl_backend_job_id = session.exec(statement).first()
 
     if fl_backend_job_id is None:
         raise ValueError(f"No backend job ID found for model_id {model_id}")
