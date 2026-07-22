@@ -19,7 +19,28 @@ on-the-wire contract for the ``/model/{id}/metrics`` and ``/model/{id}/logs``
 internal endpoints.
 """
 
-from pydantic import BaseModel, Field
+import json
+from enum import StrEnum
+from typing import Any
+
+from pydantic import BaseModel, Field, model_validator
+
+
+class FLLogEvent(StrEnum):
+    """Typed FL progress events for ``POST /model/{id}/logs``.
+
+    The FL layer reports **facts** (event type + structured details); display
+    text is composed hub-side at serve time, so wording changes are a flip-api
+    redeploy and never an FL-image rebuild. Mirrors flip-api's
+    ``domain/schemas/types.py::FLLogEvent``.
+
+    Rounds are 1-based on every event, on both backends (NVFLARE's internal
+    ``_current_round`` is 0-based and must be normalised before sending).
+    """
+
+    ROUND_STARTED = "ROUND_STARTED"
+    CLIENT_RESULT_RECEIVED = "CLIENT_RESULT_RECEIVED"
+    ROUND_AGGREGATED = "ROUND_AGGREGATED"
 
 
 class TrainingMetrics(BaseModel):
@@ -37,7 +58,52 @@ class TrainingMetrics(BaseModel):
 
 
 class TrainingLog(BaseModel):
-    """A log line (e.g. a handled exception) reported for one FL client."""
+    """One row for ``POST /model/{id}/logs``: free text XOR a typed round event.
 
-    fl_client_name: str
-    log: str
+    Mirrors flip-api's ``domain/schemas/private.py::TrainingLog`` — keep in sync.
+    Free-text rows (``log`` set) carry exception reports verbatim; typed event
+    rows (``event_type`` set) carry round-progress facts. ``fl_client_name`` is
+    ``None`` for hub-attributed rows (e.g. ``ROUND_STARTED`` from the fl-server's
+    own control flow).
+    """
+
+    fl_client_name: str | None = None
+    log: str | None = None
+    # Senders use the FLLogEvent vocabulary, but the field is plain validated text
+    # end-to-end (like the fl_logs column): a newer FL image's event is stored and
+    # served via the unknown-event render fallback, never rejected at ingest. The
+    # one exception is QUEUE_POSITION (absent from the enum above on purpose):
+    # it is reserved for the hub's own FL scheduler and the hub 422-rejects it,
+    # so refusing it here fails fast FL-side instead.
+    event_type: str | None = Field(default=None, max_length=64)
+    # 1-based on both backends; every event in the vocabulary is round-scoped. The
+    # ceiling is the PG INTEGER max of the hub's fl_logs.global_round column —
+    # matching it here fails an oversized round sender-side instead of 500ing hub-side.
+    global_round: int | None = Field(default=None, ge=1, le=2_147_483_647)
+    # Bounded by _bound_details below — same defence-in-depth rationale as the caps on
+    # event_type and global_round (mirrored hub-side, where details is persisted verbatim
+    # into JSONB per event row): flip.send_event is reachable from uploaded app code, and
+    # bounding here fails an oversized payload sender-side, inside send_event's guard.
+    details: dict[str, Any] | None = None
+    success: bool = True
+
+    @model_validator(mode="after")
+    def _log_xor_event(self) -> "TrainingLog":
+        if (self.log is None) == (self.event_type is None):
+            raise ValueError("Exactly one of 'log' and 'event_type' must be set")
+        if self.event_type is not None and not self.event_type.strip():
+            raise ValueError("'event_type' must be non-blank when set")
+        if self.event_type == "QUEUE_POSITION":
+            raise ValueError("'QUEUE_POSITION' is emitted by the hub's FL scheduler and cannot be sent")
+        if self.event_type is not None and self.global_round is None:
+            raise ValueError("'global_round' is required when 'event_type' is set")
+        return self
+
+    @model_validator(mode="after")
+    def _bound_details(self) -> "TrainingLog":
+        # json.dumps escapes non-ASCII by default, so len() counts bytes. The known event
+        # vocabularies need < 100 bytes; 8192 leaves room for future facts while keeping a
+        # hostile payload from bloating the fl_logs JSONB column.
+        if self.details is not None and len(json.dumps(self.details, default=str)) > 8192:
+            raise ValueError("'details' must serialize to at most 8192 bytes")
+        return self

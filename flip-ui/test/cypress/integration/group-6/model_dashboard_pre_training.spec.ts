@@ -115,10 +115,13 @@ describe("Model Dashboard - Pre Training", () => {
         cy.getBySel("trust-selection-0").click();
         cy.getBySel("trust-selection-1").click();
 
-        cy.getBySel("initiate-training-btn").click();
+        // The page disables Initiate Training until the run options are
+        // complete, rather than letting the click bounce off the schema.
+        cy.getBySel("initiate-training-btn").should("be.disabled");
 
-        cy.contains("Please confirm data enrichment.")
-            .should("be.visible");
+        // Confirming enrichment is the only missing criterion, so it unlocks the button.
+        cy.getBySel("data-enrichment-btn").click();
+        cy.getBySel("initiate-training-btn").should("be.enabled");
     });
 
     it("does not allow the user to initiate training if a minimum of one trust is not selected", () => {
@@ -130,10 +133,11 @@ describe("Model Dashboard - Pre Training", () => {
 
         cy.getBySel("data-enrichment-btn").click();
 
-        cy.getBySel("initiate-training-btn").click();
+        cy.getBySel("initiate-training-btn").should("be.disabled");
 
-        cy.contains("You must select a minimum of one trust for training.")
-            .should("be.visible");
+        // Selecting a trust is the only missing criterion, so it unlocks the button.
+        cy.getBySel("trust-selection-0").click();
+        cy.getBySel("initiate-training-btn").should("be.enabled");
     });
 
     it("enables user to initiate training given all criteria is met", () => {
@@ -239,10 +243,11 @@ describe("Model Dashboard - Pre Training with only one approved trust", () => {
 
         cy.getBySel("data-enrichment-btn").click();
 
-        cy.getBySel("initiate-training-btn").click();
+        cy.getBySel("initiate-training-btn").should("be.disabled");
 
-        cy.contains("You must select a minimum of one trust for training.")
-            .should("be.visible");
+        // Selecting the approved trust is the only missing criterion, so it unlocks the button.
+        cy.getBySel("trust-selection-0").click();
+        cy.getBySel("initiate-training-btn").should("be.enabled");
     });
 
     it("enables user to initiate training given all criteria is met", () => {

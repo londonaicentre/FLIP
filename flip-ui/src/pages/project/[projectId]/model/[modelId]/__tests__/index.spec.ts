@@ -106,6 +106,9 @@ vi.mock("@/services/model-service", async (importOriginal) => {
 });
 
 const initiateTrainingSpy = vi.fn();
+// Whether the Prepare form has a trust selected and enrichment confirmed. The real
+// Training derives this from the vee-validate form; here the tests drive it.
+const trainingOptionsComplete = ref(true);
 
 const stubs = {
     AiAlert: {
@@ -120,21 +123,32 @@ const stubs = {
     },
     AiGuard: { template: "<div><slot /></div>" },
     AiLoader: { template: "<div data-test='loader' />" },
-    LifecycleTrack: { template: "<div />" },
+    LifecycleTrack: { template: "<div data-test='lifecycle-track' />" },
     ModelDetails: { template: "<div />" },
     ModelUpload: {
         name: "ModelUpload",
-        template: "<div data-test='model-upload' />",
+        props: ["canUpload"],
+        template: "<div data-test='model-upload' :data-can-upload='canUpload' />",
         emits: ["uploaded", "deleted-file"]
     },
     QueryDetails: { template: "<div />" },
+    ModelTabs: {
+        name: "ModelTabs",
+        props: ["status", "modelValue"],
+        emits: ["update:modelValue"],
+        template: "<nav data-test='model-tabs' :data-active='modelValue'>" +
+            "<button data-test='tab-run' @click=\"$emit('update:modelValue', 'run')\" />" +
+            "<button data-test='tab-prepare' @click=\"$emit('update:modelValue', 'prepare')\" /></nav>"
+    },
     Training: {
         name: "Training",
-        props: ["flBackendLabel"],
-        template: "<div data-test='training' :data-fl-backend-label='flBackendLabel' />",
+        props: ["flBackendLabel", "view", "runTrusts"],
+        template: "<div data-test='training' :data-fl-backend-label='flBackendLabel' :data-view='view'" +
+            " :data-run-trusts='(runTrusts ?? []).join()' />",
         setup: () => ({
             initiateTraining: initiateTrainingSpy,
-            isSubmitting: false
+            isSubmitting: false,
+            optionsComplete: trainingOptionsComplete
         })
     },
     TrainingActionsMenu: {
@@ -226,6 +240,7 @@ async function mountPage(options: {
 }
 
 beforeEach(() => {
+    trainingOptionsComplete.value = true;
     mockSwrvData.value = undefined;
     mockSwrvError.value = null;
     flStatusData.value = undefined;
@@ -405,7 +420,7 @@ describe("pages/project/[projectId]/model/[modelId]", () => {
                 name: "config.json",
                 status: FileUploadStatus.COMPLETED
             }],
-            { status: "TRAINING_STARTED" }
+            { status: "RUNNING" }
         );
         const wrapper = await mountPage();
         await flushPromises();
@@ -526,7 +541,7 @@ describe("pages/project/[projectId]/model/[modelId]", () => {
                 name: "config.json",
                 status: FileUploadStatus.COMPLETED
             }],
-            { status: "TRAINING_STARTED" }
+            { status: "RUNNING" }
         );
         const wrapper = await mountPage();
         await flushPromises();
@@ -704,5 +719,171 @@ describe("pages/project/[projectId]/model/[modelId]", () => {
             expect(label.exists()).toBe(true);
             expect(label.text()).toBe("Initiate Training");
         });
+    });
+});
+
+describe("pages/project/[projectId]/model/[modelId] — Prepare/Run tabs", () => {
+    it("a pending model opens on Prepare, showing the model files and the run options", async () => {
+        mockSwrvData.value = makeModel([], { status: "PENDING" });
+        const wrapper = await mountPage();
+
+        expect(wrapper.find("[data-test='model-tabs']").attributes("data-active")).toBe("prepare");
+        expect(wrapper.find("[data-test='model-upload']").exists()).toBe(true);
+        expect(wrapper.find("[data-test='training']").attributes("data-view")).toBe("prepare");
+    });
+
+    it("a dispatched model opens on Run, and the model files are out of the way", async () => {
+        mockSwrvData.value = makeModel([], { status: "RUNNING" });
+        const wrapper = await mountPage();
+
+        expect(wrapper.find("[data-test='model-tabs']").attributes("data-active")).toBe("run");
+        expect(wrapper.find("[data-test='model-upload']").exists()).toBe(false);
+        expect(wrapper.find("[data-test='training']").attributes("data-view")).toBe("run");
+    });
+
+    it("Prepare stays reachable during a run, read-only but still downloadable", async () => {
+        mockSwrvData.value = makeModel([], { status: "RUNNING" });
+        const wrapper = await mountPage();
+
+        await wrapper.find("[data-test='tab-prepare']").trigger("click");
+
+        const upload = wrapper.find("[data-test='model-upload']");
+        expect(upload.exists()).toBe(true);
+        expect(upload.attributes("data-can-upload")).toBe("false");
+        // The run options stay on screen as a record of how the run was launched.
+        expect(wrapper.find("[data-test='training']").attributes("data-view")).toBe("prepare");
+    });
+
+    it("the locked options pre-fill from the run's trust ids, not names", async () => {
+        // ITrustSummary carries both; the pre-filled form binds trust_ids, so a
+        // slip to t.name here would silently break the dispatched-run record.
+        mockSwrvData.value = makeModel([], {
+            status: "RUNNING",
+            trusts: [
+                {
+                    id: "trust-a",
+                    name: "Guy's and St Thomas'",
+                    code: "GSTT"
+                },
+                {
+                    id: "trust-b",
+                    name: "King's College Hospital",
+                    code: null
+                }
+            ]
+        });
+        const wrapper = await mountPage();
+
+        await wrapper.find("[data-test='tab-prepare']").trigger("click");
+
+        expect(wrapper.find("[data-test='training']").attributes("data-run-trusts")).toBe("trust-a,trust-b");
+    });
+
+    it("the lifecycle belongs to Prepare — Run is for watching, not for staging", async () => {
+        mockSwrvData.value = makeModel([], { status: "RUNNING" });
+        const wrapper = await mountPage();
+
+        expect(wrapper.find("[data-test='lifecycle-track']").exists()).toBe(false);
+
+        await wrapper.find("[data-test='tab-prepare']").trigger("click");
+
+        expect(wrapper.find("[data-test='lifecycle-track']").exists()).toBe(true);
+    });
+
+    it("the Prepare cards fill the window too, and stack on a narrow screen", async () => {
+        mockSwrvData.value = makeModel([], { status: "PENDING" });
+        const wrapper = await mountPage();
+
+        const aside = wrapper.find("aside");
+        const row = aside.element.parentElement;
+
+        expect(row?.className).toContain("flex-1");
+        expect(row?.className).toContain("min-h-0");
+        expect(row?.className).toContain("lg:flex-row");
+        // Stacked it grows; beside the options it becomes a fixed-width column.
+        expect(aside.classes()).toContain("flex-1");
+        expect(aside.classes()).toContain("lg:flex-none");
+    });
+
+    it("dispatching the model moves you to the Run tab", async () => {
+        mockSwrvData.value = makeModel([], { status: "PENDING" });
+        const wrapper = await mountPage();
+        expect(wrapper.find("[data-test='model-tabs']").attributes("data-active")).toBe("prepare");
+
+        await wrapper.findComponent({ name: "Training" }).vm.$emit("started");
+        await flushPromises();
+
+        expect(wrapper.find("[data-test='model-tabs']").attributes("data-active")).toBe("run");
+    });
+});
+
+describe("pages/project/[projectId]/model/[modelId] — header actions follow the stage", () => {
+    it("Edit Model belongs to Prepare, the run actions to Run", async () => {
+        mockSwrvData.value = makeModel([], { status: "RUNNING" });
+        const wrapper = await mountPage();
+
+        // Opens on Run: stop / download live here, editing does not.
+        expect(wrapper.find("[data-test='training-actions-menu']").exists()).toBe(true);
+        expect(wrapper.find("[data-test='edit-model-btn']").exists()).toBe(false);
+
+        await wrapper.find("[data-test='tab-prepare']").trigger("click");
+
+        expect(wrapper.find("[data-test='training-actions-menu']").exists()).toBe(false);
+        expect(wrapper.find("[data-test='edit-model-btn']").exists()).toBe(true);
+    });
+
+    it("Initiate Training stays with the Prepare stage", async () => {
+        mockSwrvData.value = makeModel([], { status: "PENDING" });
+        const wrapper = await mountPage();
+
+        expect(wrapper.find("[data-test='initiate-training-btn']").exists()).toBe(true);
+        expect(wrapper.find("[data-test='training-actions-menu']").exists()).toBe(false);
+    });
+});
+
+
+describe("pages/project/[projectId]/model/[modelId] — Initiate Training needs complete run options", () => {
+    // A model that is otherwise ready: PENDING, every required file COMPLETED, a
+    // query present. Only the run options decide the button from here.
+    async function mountReadyModel() {
+        resolveModelConfigStateMock.mockResolvedValue({
+            changed: true,
+            configStatus: FileUploadStatus.COMPLETED,
+            jobType: "standard",
+            requiredFiles: jobTypes.standard
+        });
+        mockSwrvData.value = makeModel(
+            [
+                {
+                    name: "trainer.py",
+                    status: FileUploadStatus.COMPLETED
+                },
+                {
+                    name: "config.json",
+                    status: FileUploadStatus.COMPLETED
+                }
+            ],
+            { status: "PENDING" }
+        );
+        const wrapper = await mountPage();
+        await flushPromises();
+        await wrapper.vm.$nextTick();
+        await flushPromises();
+
+        return wrapper;
+    }
+
+    it("stays disabled until a trust is selected and enrichment is confirmed", async () => {
+        trainingOptionsComplete.value = false;
+
+        const wrapper = await mountReadyModel();
+
+        expect(wrapper.find("[data-test='initiate-training-btn']").attributes("disabled")).toBeDefined();
+    });
+
+    it("enables once a trust is selected and enrichment is confirmed", async () => {
+        const wrapper = await mountReadyModel();
+
+        expect(wrapper.find("[data-test='initiate-training-btn']").attributes("disabled")).toBeUndefined();
     });
 });
