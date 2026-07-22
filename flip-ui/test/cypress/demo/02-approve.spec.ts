@@ -49,11 +49,17 @@ describe("FLIP demo — administrator approval", () => {
         cy.demoPause(1500);
 
         // Approval dispatches the imaging import at the trusts — hold on the
-        // project page until the per-trust import status rows appear, so the
+        // project page until the per-trust import status rows appear, then
+        // keep holding until the trusts have actually onboarded the project
+        // (the "Awaiting creation…" cards flip to live import bars), so the
         // import is visibly underway before the story moves into XNAT.
         cy.demoCaption("Approval dispatched — the imaging import starts at each trust", 600);
         cy.get("[data-test^=\"import-bar-\"]", { timeout: 180000 }).should("have.length.at.least", 1);
         cy.get("[data-test^=\"import-bar-\"]").first().scrollIntoView({ duration: 800 });
-        cy.demoPause(4500);
+        cy.demoPause(2500);
+
+        cy.demoCaption("Each trust creates its XNAT project and begins retrieving the cohort", 600);
+        cy.contains("Awaiting creation", { timeout: 240000 }).should("not.exist");
+        cy.demoPause(5500);
     });
 });

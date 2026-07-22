@@ -25,6 +25,22 @@ const FADE_MS = 260;
 let currentText = "";
 
 const STYLE = `
+/* Demo-only click marker: make the cursor's click pulse unmistakable (the
+   docs-GIF suite keeps its subtle one). This style tag is injected after
+   demoCursor's, so these equal-specificity rules win the cascade. */
+#cypress-demo-cursor::after {
+  width: 26px;
+  height: 26px;
+  top: -7px;
+  left: -7px;
+  border-radius: 50%;
+  border: 3px solid rgba(124, 58, 237, 0.95);
+  background: rgba(124, 58, 237, 0.28);
+  transform-origin: 13px 13px;
+}
+#cypress-demo-cursor.cypress-demo-cursor-clicking::after {
+  animation-duration: 600ms;
+}
 #${CAPTION_ID} {
   position: fixed;
   left: 50%;
