@@ -14,6 +14,7 @@ from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
 import pytest
+from sqlalchemy.exc import SQLAlchemyError
 
 from flip_api.domain.interfaces.fl import (
     IJobResponse,
@@ -24,7 +25,7 @@ from flip_api.domain.interfaces.fl import (
 from flip_api.domain.schemas.status import JobStatus, ModelStatus, NetStatus
 from flip_api.domain.schemas.types import FLBackend
 from flip_api.fl_services.services import fl_scheduler_service
-from flip_api.utils.exceptions import JobAbortedError, NotFoundError
+from flip_api.utils.exceptions import DatabaseError, JobAbortedError, NotFoundError
 
 
 @pytest.fixture
@@ -243,6 +244,18 @@ def test_release_scheduler_for_model_none_found(fake_session, model_id):
 
     mock_revert.assert_not_called()
     assert released == 0
+
+
+def test_release_scheduler_for_model_lookup_db_error(fake_session, model_id):
+    fake_session.exec.side_effect = SQLAlchemyError("connection lost")
+
+    with (
+        patch("flip_api.fl_services.services.fl_scheduler_service.revert_scheduler_pickup") as mock_revert,
+        pytest.raises(DatabaseError, match="Error looking up BUSY scheduler for model"),
+    ):
+        fl_scheduler_service.release_scheduler_for_model(model_id, fake_session)
+
+    mock_revert.assert_not_called()
 
 
 def test_get_net_by_model_id(fake_session, model_id):

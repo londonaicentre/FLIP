@@ -40,6 +40,17 @@ vi.mock("@/services/model-service", async (importOriginal) => {
     };
 });
 
+const mockSnackbarError = vi.fn();
+
+vi.mock("@/utils/snackbar", () => ({
+    Snackbar: {
+        error: (...args: unknown[]) => mockSnackbarError(...args),
+        success: vi.fn(),
+        warning: vi.fn(),
+        show: vi.fn()
+    }
+}));
+
 function mountMenu(status: ModelStatusEnum = ModelStatusEnum.TRAINING_STARTED) {
     return mount(TrainingActionsMenu, {
         global: {
@@ -161,6 +172,36 @@ describe("TrainingActionsMenu abort vs stop affordance", () => {
 
         await (modal().props("continueAction") as () => Promise<void>)();
         expect(vi.mocked(stopTraining)).toHaveBeenCalledWith("model-1");
+        expect(modal().props("dialog")).toBe(false);
+    });
+
+    it("reports 'Failed to abort job' when the pre-running abort fails", async () => {
+        vi.mocked(stopTraining).mockRejectedValueOnce(new Error("network error"));
+        const wrapper = mountMenu(ModelStatusEnum.INITIATED);
+        const modal = () => wrapper.findComponent("[data-test=confirm-modal-stub]");
+
+        await wrapper.find("[data-test=stop-training-btn]").trigger("click");
+        await (modal().props("continueAction") as () => Promise<void>)();
+
+        expect(mockSnackbarError).toHaveBeenCalledWith({
+            title: "Something went wrong!",
+            text: "Failed to abort job"
+        });
+        expect(modal().props("dialog")).toBe(false);
+    });
+
+    it("reports 'Failed to stop training' when stopping a running model fails", async () => {
+        vi.mocked(stopTraining).mockRejectedValueOnce(new Error("network error"));
+        const wrapper = mountMenu(ModelStatusEnum.TRAINING_STARTED);
+        const modal = () => wrapper.findComponent("[data-test=confirm-modal-stub]");
+
+        await wrapper.find("[data-test=stop-training-btn]").trigger("click");
+        await (modal().props("continueAction") as () => Promise<void>)();
+
+        expect(mockSnackbarError).toHaveBeenCalledWith({
+            title: "Something went wrong!",
+            text: "Failed to stop training"
+        });
         expect(modal().props("dialog")).toBe(false);
     });
 });
