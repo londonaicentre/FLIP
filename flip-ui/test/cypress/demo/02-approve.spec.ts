@@ -56,6 +56,14 @@ describe("FLIP demo — administrator approval", () => {
         cy.getBySel("approve-project-btn").demoClick();
 
         cy.contains("Project Approved", { timeout: 90000 }).should("be.visible");
-        cy.demoPause(3000);
+        cy.demoPause(1500);
+
+        // Approval dispatches the imaging import at the trusts — hold on the
+        // project page until the per-trust import status rows appear, so the
+        // import is visibly underway before the story moves into XNAT.
+        cy.demoCaption("Approval dispatched — the imaging import starts at each trust", 600);
+        cy.get("[data-test^=\"import-bar-\"]", { timeout: 180000 }).should("have.length.at.least", 1);
+        cy.get("[data-test^=\"import-bar-\"]").first().scrollIntoView({ duration: 800 });
+        cy.demoPause(4500);
     });
 });
