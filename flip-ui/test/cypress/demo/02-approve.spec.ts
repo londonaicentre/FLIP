@@ -32,8 +32,13 @@ describe("FLIP demo — administrator approval", () => {
         cy.getBySel("trust-row", { timeout: 60000 }).should("have.length.at.least", 1);
         cy.demoPause(2200);
         cy.getBySel("view-toggle-radial").demoClick();
+        // The radial SVG reports visible while its layout is still settling —
+        // anchor on the legend too and hold, or the topology only flashes.
         cy.getBySel("connection-radial-svg", { timeout: 30000 }).should("be.visible");
-        cy.demoPause(2600);
+        cy.getBySel("radial-legend", { timeout: 30000 }).scrollIntoView();
+        cy.getBySel("radial-legend").should("be.visible");
+        cy.demoCaption("Topology view — the federation at a glance", 800);
+        cy.demoPause(4000);
 
         cy.demoCaption("Opening the staged project for review", 600);
         cy.visit(`/project/${projectId}`);

@@ -54,12 +54,29 @@ trap 'rm -rf "$workdir"' EXIT
 concat_list="$workdir/concat.txt"
 : > "$concat_list"
 
+# Cypress keeps recording for a beat after the last command and captures its
+# own "Default blank page" teardown screen — trim it off every clip's tail.
+# Safe because every segment ends on a >=3s intentional hold.
+TRIM_TAIL_SECONDS=0.8
+
 i=0
 for segment in "${sorted[@]}"; do
     i=$((i + 1))
     clip="$workdir/$(printf '%02d' "$i").mp4"
     echo "  cropping $(basename "$segment")"
-    ffmpeg -hide_banner -loglevel error -y -i "$segment" \
+    # `ffmpeg -i` with no output exits non-zero by design — tolerate it, and
+    # fall back to no trim if the duration can't be parsed.
+    duration=$( (ffmpeg -i "$segment" 2>&1 || true) | grep -oE "Duration: [0-9:.]+" | cut -d' ' -f2 || true)
+    trim_args=()
+    if [ -n "$duration" ]; then
+        keep=$(python3 -c "
+h, m, s = '${duration}'.split(':')
+total = int(h) * 3600 + int(m) * 60 + float(s)
+print(f'{max(1.0, total - ${TRIM_TAIL_SECONDS}):.2f}')
+")
+        trim_args=(-t "$keep")
+    fi
+    ffmpeg -hide_banner -loglevel error -y -i "$segment" "${trim_args[@]}" \
         -vf "crop=${CROP_WIDTH}:${CROP_HEIGHT}:${CROP_X}:${CROP_Y},fps=${FPS},format=yuv420p" \
         -c:v libx264 -preset veryfast -crf 18 -an "$clip"
     echo "file '$clip'" >> "$concat_list"

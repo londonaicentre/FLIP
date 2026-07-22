@@ -81,6 +81,10 @@ Cypress.Commands.add("demoLogin", (email: string, password: string, options?: { 
         });
     }
     cy.getBySel("login-btn").demoClick();
+    // The SRP round-trips take a couple of seconds — caption the wait so it
+    // reads as intentional rather than a stall. The next segment caption
+    // replaces this as soon as the app loads.
+    cy.demoCaption("Authenticating with the Central Hub…", 0);
 
     // Real SRP against the real pool — wait for the token cache to land.
     cy.window({ timeout: 60000 }).should((win) => {
