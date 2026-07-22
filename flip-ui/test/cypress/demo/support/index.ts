@@ -23,6 +23,45 @@ import "../../docs/support/demoCursor";
 import "./demoCaption";
 import "./demoFlow";
 
+// Each segment runs in a fresh browser, so the very first page paints in the
+// fallback font and visibly swaps once the web fonts arrive (FOUT) — right
+// at the start of the recording. Hide the first-loaded document until the
+// declared font faces are actually loaded: the hidden frames are uniform,
+// the assembly's content-span trim cuts them, and the segment opens
+// fonts-correct. NOTE `document.fonts.ready` is useless here — on an SPA it
+// resolves before the app has rendered any text (nothing is loading yet), so
+// instead poll for the CSS-declared FontFace entries and force-load them
+// all. Later navigations hit the font cache, so only the first load needs
+// this.
+let fontGuardApplied = false;
+Cypress.on("window:before:load", (win) => {
+    if (fontGuardApplied) {
+        return;
+    }
+    fontGuardApplied = true;
+    const doc = win.document;
+    doc.documentElement.style.visibility = "hidden";
+    const reveal = () => {
+        doc.documentElement.style.visibility = "";
+    };
+    // Never hold the page hidden long — hard reveal after 4s regardless.
+    win.setTimeout(reveal, 4000);
+    const tryLoadFonts = (attempt: number) => {
+        const faces = doc.fonts ? Array.from(doc.fonts) : [];
+        if (faces.length === 0) {
+            if (attempt < 35) {
+                win.setTimeout(() => tryLoadFonts(attempt + 1), 100);
+            } else {
+                reveal();
+            }
+
+            return;
+        }
+        Promise.all(faces.map((face) => face.load().catch(() => undefined))).then(reveal, reveal);
+    };
+    tryLoadFonts(0);
+});
+
 // Same runner-chrome hiding as the docs suite (see the rationale and the
 // Cypress-version pinning note in test/cypress/docs/support/index.ts): the
 // captured mp4 contains the whole runner window, so the command-log sidebar
