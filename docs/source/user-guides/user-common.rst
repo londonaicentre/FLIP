@@ -488,6 +488,8 @@ FLIP uses the concept of *nets* that are deployed on the Central Hub and remote 
 
 This scheduling capability means model developers can submit their model for training via the UI and need not be concerned with matters such as GPU capacity or existing jobs that are running/queued. When initiating training the platform will check for available nets and assign the model training to an available net.
 
+While a model is waiting for a net, its place in the queue is shown alongside its status — e.g. ``Model Queued (2)``, where position 1 is the next model to start — both on the Models page and on the model's page, and the model's Live activity feed logs a new line each time the model moves up the queue.
+
 Initiate Training
 -----------------
 

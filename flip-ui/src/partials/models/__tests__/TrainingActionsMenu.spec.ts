@@ -51,7 +51,7 @@ vi.mock("@/utils/snackbar", () => ({
     }
 }));
 
-function mountMenu(status: ModelStatusEnum = ModelStatusEnum.TRAINING_STARTED) {
+function mountMenu(status: ModelStatusEnum = ModelStatusEnum.RUNNING) {
     return mount(TrainingActionsMenu, {
         global: {
             stubs: {
@@ -137,7 +137,7 @@ describe("TrainingActionsMenu abort vs stop affordance", () => {
 
     it.each([
         ["PREPARED", ModelStatusEnum.PREPARED],
-        ["TRAINING_STARTED", ModelStatusEnum.TRAINING_STARTED]
+        ["RUNNING", ModelStatusEnum.RUNNING]
     ])("keeps the enabled Stop Training affordance at %s", (_name, status) => {
         const wrapper = mountMenu(status);
 
@@ -192,7 +192,7 @@ describe("TrainingActionsMenu abort vs stop affordance", () => {
 
     it("reports 'Failed to stop training' when stopping a running model fails", async () => {
         vi.mocked(stopTraining).mockRejectedValueOnce(new Error("network error"));
-        const wrapper = mountMenu(ModelStatusEnum.TRAINING_STARTED);
+        const wrapper = mountMenu(ModelStatusEnum.RUNNING);
         const modal = () => wrapper.findComponent("[data-test=confirm-modal-stub]");
 
         await wrapper.find("[data-test=stop-training-btn]").trigger("click");

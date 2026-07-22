@@ -34,6 +34,13 @@ module.exports = {
                 // design handoff's `--paper` token (#FAF7F5), a warm off-white
                 // with a pink undertone that complements the primary palette.
                 body: "#FAF7F5",
+                // Design-handoff ink tokens (04·A ProjectChrome): `ink` is the
+                // warm near-black text ink, `ink-3` its muted step. Ghost tab
+                // navs use them for text and (at low alpha) the active fill.
+                ink: {
+                    DEFAULT: "#1A1320",
+                    3: "#7A727F",
+                },
                 primary: {
                     100: "#F7F3F9",
                     200: "#DBC4E2",

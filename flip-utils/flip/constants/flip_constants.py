@@ -168,13 +168,28 @@ class FlipEvents:
     TASK_INITIATED = "_task_initiated"
 
 
+class FlipProps:
+    """fl_ctx property names FLIP components use to share round telemetry.
+
+    Set (sticky, so they survive across NVFLARE contexts) by the FLIP
+    ScatterAndGather controller as client results are accepted; read by
+    ServerEventHandler when relaying ROUND_DONE to the hub as a
+    ROUND_AGGREGATED event.
+    """
+
+    ROUND_RETURNED = "_flip_round_returned"
+    ROUND_EXPECTED = "_flip_round_expected"
+
+
 class ModelStatus(StrEnum):
-    """Model training status values."""
+    """Model job status values."""
 
     PENDING = "PENDING"
     INITIATED = "INITIATED"
     PREPARED = "PREPARED"
-    TRAINING_STARTED = "TRAINING_STARTED"
+    # Job-type-neutral "the FL job is executing" status (renamed from
+    # TRAINING_STARTED, #782) — evaluation jobs report it too.
+    RUNNING = "RUNNING"
     RESULTS_UPLOADED = "RESULTS_UPLOADED"
     ERROR = "ERROR"
     STOPPED = "STOPPED"
