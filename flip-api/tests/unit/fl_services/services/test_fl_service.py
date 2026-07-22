@@ -28,7 +28,7 @@ from flip_api.domain.interfaces.fl import (
 from flip_api.domain.schemas.status import ClientStatus, JobStatus
 from flip_api.domain.schemas.types import FLBackend
 from flip_api.fl_services.services import fl_service
-from flip_api.utils.exceptions import JobAbortedError
+from flip_api.utils.exceptions import DatabaseError, JobAbortedError, NotFoundError
 
 
 @pytest.fixture
@@ -1455,6 +1455,75 @@ def test_abort_model_training_pre_submit_frees_net(
     # There is nothing to abort on the fl-server side.
     mock_fetch_server_status.assert_not_called()
     mock_extract_current_job_data.assert_not_called()
+    mock_abort.assert_not_called()
+
+
+@patch("flip_api.fl_services.services.fl_service.extract_current_job_data")
+@patch("flip_api.fl_services.services.fl_service.get_fl_backend_job_id_by_model_id")
+@patch("flip_api.fl_services.services.fl_service.fetch_server_status")
+@patch("flip_api.fl_services.services.fl_service.abort_job")
+@patch("flip_api.fl_services.services.fl_scheduler_service.get_net_by_model_id")
+@patch("flip_api.fl_services.services.fl_scheduler_service.remove_job_from_queue")
+@patch("flip_api.fl_services.services.fl_scheduler_service.release_scheduler_for_model")
+def test_abort_model_training_pre_pickup_net_not_found_frees_net(
+    mock_release,
+    mock_remove,
+    mock_get_net,
+    mock_abort,
+    mock_fetch_server_status,
+    mock_get_fl_backend_job_id_by_model_id,
+    mock_extract_current_job_data,
+    model_id,
+    fake_session,
+):
+    # Queued-behind-another-job window: the job was dequeued but no scheduler picked it up yet,
+    # so the net lookup raises NotFoundError — the other expected pre-running signal.
+    mock_get_fl_backend_job_id_by_model_id.return_value = "job-1"
+    mock_get_net.side_effect = NotFoundError(f"Net not found for model ID: {model_id}")
+
+    request = MagicMock()
+    request.path_params = {}
+
+    fl_service.abort_model_training(request, model_id, fake_session)
+
+    mock_remove.assert_called_once_with(model_id, fake_session)
+    mock_release.assert_called_once_with(model_id, fake_session)
+    mock_fetch_server_status.assert_not_called()
+    mock_extract_current_job_data.assert_not_called()
+    mock_abort.assert_not_called()
+
+
+@patch("flip_api.fl_services.services.fl_service.extract_current_job_data")
+@patch("flip_api.fl_services.services.fl_service.get_fl_backend_job_id_by_model_id")
+@patch("flip_api.fl_services.services.fl_service.fetch_server_status")
+@patch("flip_api.fl_services.services.fl_service.abort_job")
+@patch("flip_api.fl_services.services.fl_scheduler_service.get_net_by_model_id")
+@patch("flip_api.fl_services.services.fl_scheduler_service.remove_job_from_queue")
+@patch("flip_api.fl_services.services.fl_scheduler_service.release_scheduler_for_model")
+def test_abort_model_training_db_error_propagates(
+    mock_release,
+    mock_remove,
+    mock_get_net,
+    mock_abort,
+    mock_fetch_server_status,
+    mock_get_fl_backend_job_id_by_model_id,
+    mock_extract_current_job_data,
+    model_id,
+    fake_session,
+):
+    # A DB failure during the dequeue means the abort did NOT happen: it must propagate, not be
+    # treated as the pre-running window (which would release the net and report success while
+    # the job is still queued).
+    mock_remove.side_effect = DatabaseError("Error removing job from queue")
+
+    request = MagicMock()
+    request.path_params = {}
+
+    with pytest.raises(DatabaseError, match="Error removing job from queue"):
+        fl_service.abort_model_training(request, model_id, fake_session)
+
+    mock_release.assert_not_called()
+    mock_fetch_server_status.assert_not_called()
     mock_abort.assert_not_called()
 
 

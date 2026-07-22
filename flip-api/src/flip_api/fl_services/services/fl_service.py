@@ -33,7 +33,7 @@ from flip_api.domain.interfaces.fl import (
 from flip_api.domain.schemas.status import FLJobStatus, FLTargets, JobStatus
 from flip_api.domain.schemas.types import FLBackend
 from flip_api.utils.encryption import encrypt
-from flip_api.utils.exceptions import JobAbortedError
+from flip_api.utils.exceptions import JobAbortedError, NotFoundError
 from flip_api.utils.http import http_delete, http_get, http_post
 from flip_api.utils.logger import logger
 from flip_api.utils.s3_client import S3Client
@@ -940,6 +940,8 @@ def abort_model_training(request: Request, model_id: UUID, session: Session) -> 
 
     Raises:
         ValueError: If the FL server is not running, or if ``target`` is invalid.
+        DatabaseError: If the dequeue or a scheduler lookup fails at the DB layer — surfaced
+            rather than swallowed, so a failed abort is never reported as a success.
     """
     logger.debug(f"Checking if model {model_id} is currently running...")
 
@@ -958,11 +960,13 @@ def abort_model_training(request: Request, model_id: UUID, session: Session) -> 
 
         logger.info(f"Net info for model {model_id}: endpoint={net_endpoint}, name={net_name}")
 
-    except Exception as e:
+    except (NotFoundError, ValueError) as e:
         # Pre-running window (#787): the job was dequeued but was never submitted to the
-        # fl-server (fl_backend_job_id still NULL), so there is nothing to abort — but the net
-        # may already be BUSY with this job's pickup. Release it now rather than leaving it to
-        # the stale-BUSY watchdog on the next scheduler tick.
+        # fl-server (fl_backend_job_id still NULL → ValueError) or no net is pinned to it yet
+        # (NotFoundError), so there is nothing to abort — but the net may already be BUSY with
+        # this job's pickup. Release it now rather than leaving it to the stale-BUSY watchdog on
+        # the next scheduler tick. Deliberately narrow: a DatabaseError here means the dequeue
+        # or lookup itself failed, and must surface as an error — not as a successful abort.
         released = fl_scheduler_service.release_scheduler_for_model(model_id, session)
         logger.info(
             f"Model {model_id} not currently running training; removed from queue "
