@@ -54,27 +54,68 @@ trap 'rm -rf "$workdir"' EXIT
 concat_list="$workdir/concat.txt"
 : > "$concat_list"
 
-# Cypress keeps recording for a beat after the last command and captures its
-# own "Default blank page" teardown screen — trim it off every clip's tail.
-# Safe because every segment ends on a >=3s intentional hold.
-TRIM_TAIL_SECONDS=0.8
+# Cypress keeps recording past the last command and captures its "Default
+# blank page" teardown screen at every clip's tail, for a variable duration.
+# Detect the real content end instead of trimming a fixed amount: the
+# teardown frames are near-uniform (luma entropy < ~0.9 even with the caption
+# pill re-injected on them) while every segment's final held app frame
+# measures ≥ ~1.9 — cut each clip at its last frame above the threshold.
+ENTROPY_THRESHOLD=1.2
+TAIL_WINDOW_SECONDS=6
+TAIL_SAMPLE_FPS=5
+FALLBACK_TRIM_SECONDS=0.8
+
+detect_content_end() {
+    # Prints the keep-duration (s) for a clip, or nothing if undetectable.
+    local segment="$1" dur_s="$2"
+    local start
+    start=$(python3 -c "print(max(0, ${dur_s} - ${TAIL_WINDOW_SECONDS}))")
+    # Crop to the AUT viewport first — the raw capture also contains the dark
+    # runner bezel, whose contrast against the blank page inflates entropy.
+    (ffmpeg -hide_banner -ss "$start" -i "$segment" \
+        -vf "crop=${CROP_WIDTH}:${CROP_HEIGHT}:${CROP_X}:${CROP_Y},fps=${TAIL_SAMPLE_FPS},scale=480:-1,format=gray,entropy,metadata=mode=print:file=-" \
+        -f null - 2>&1 || true) | python3 -c "
+import re
+import sys
+
+start = float('${start}')
+threshold = float('${ENTROPY_THRESHOLD}')
+sample_dt = 1.0 / ${TAIL_SAMPLE_FPS}
+times, vals = [], []
+t = None
+for line in sys.stdin:
+    m = re.search(r'pts_time:([0-9.]+)', line)
+    if m:
+        t = float(m.group(1))
+        continue
+    m = re.search(r'entropy\.entropy\.normal\.Y=([0-9.]+)', line)
+    if m and t is not None:
+        times.append(start + t)
+        vals.append(float(m.group(1)))
+for tt, vv in zip(reversed(times), reversed(vals)):
+    if vv >= threshold:
+        print(f'{tt + sample_dt:.2f}')
+        break
+"
+}
 
 i=0
 for segment in "${sorted[@]}"; do
     i=$((i + 1))
     clip="$workdir/$(printf '%02d' "$i").mp4"
-    echo "  cropping $(basename "$segment")"
-    # `ffmpeg -i` with no output exits non-zero by design — tolerate it, and
-    # fall back to no trim if the duration can't be parsed.
+    # `ffmpeg -i` with no output exits non-zero by design — tolerate it.
     duration=$( (ffmpeg -i "$segment" 2>&1 || true) | grep -oE "Duration: [0-9:.]+" | cut -d' ' -f2 || true)
     trim_args=()
     if [ -n "$duration" ]; then
-        keep=$(python3 -c "
-h, m, s = '${duration}'.split(':')
-total = int(h) * 3600 + int(m) * 60 + float(s)
-print(f'{max(1.0, total - ${TRIM_TAIL_SECONDS}):.2f}')
-")
+        dur_s=$(python3 -c "h, m, s = '${duration}'.split(':'); print(int(h) * 3600 + int(m) * 60 + float(s))")
+        keep=$(detect_content_end "$segment" "$dur_s")
+        if [ -z "$keep" ]; then
+            keep=$(python3 -c "print(max(1.0, ${dur_s} - ${FALLBACK_TRIM_SECONDS}))")
+        fi
         trim_args=(-t "$keep")
+        echo "  cropping $(basename "$segment") (keeping ${keep}s of ${dur_s}s)"
+    else
+        echo "  cropping $(basename "$segment") (duration unknown — no trim)"
     fi
     ffmpeg -hide_banner -loglevel error -y -i "$segment" "${trim_args[@]}" \
         -vf "crop=${CROP_WIDTH}:${CROP_HEIGHT}:${CROP_X}:${CROP_Y},fps=${FPS},format=yuv420p" \
