@@ -24,9 +24,6 @@ segmentation model means changing the bundle and the two application-specific bl
 import logging
 from pathlib import Path
 
-# Required for setting SegmentDescription attributes. Direct import as this is not part of App SDK package.
-from pydicom.sr.codedict import codes
-
 from monai.deploy.conditions import CountCondition
 from monai.deploy.core import AppContext, Application
 from monai.deploy.core.domain import Image
@@ -41,6 +38,9 @@ from monai.deploy.operators.monai_bundle_inference_operator import (
     MonaiBundleInferenceOperator,
 )
 from monai.deploy.operators.stl_conversion_operator import STLConversionOperator
+
+# Required for setting SegmentDescription attributes. Direct import as this is not part of App SDK package.
+from pydicom.sr.codedict import codes
 
 
 # @resource(cpu=1, gpu=1, memory="7Gi")
@@ -145,8 +145,8 @@ class AISpleenSegApp(Application):
             series_selector_op, dicom_seg_writer, {("study_selected_series_list", "study_selected_series_list")}
         )
         self.add_flow(bundle_spleen_seg_op, dicom_seg_writer, {("pred", "seg_image")})
-        # Create the surface mesh STL conversion operator and add it to the app execution flow, if needed, by
-        # uncommenting the following couple lines.
+        # Also emit a surface mesh (STL) alongside the DICOM SEG. This is wired in unconditionally
+        # here; drop the operator and its add_flow below if your deployment only consumes the SEG.
         stl_conversion_op = STLConversionOperator(
             self, output_file=app_output_path.joinpath("stl/spleen.stl"), name="stl_conversion_op"
         )

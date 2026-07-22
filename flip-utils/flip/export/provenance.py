@@ -19,8 +19,6 @@ review.
 
 Packaging runs separately from training and does not call the Central Hub, so these values are
 supplied by the caller — whoever is preparing the model for deployment — rather than discovered.
-Anything that *can* be read from the checkpoint on disk is filled in automatically by
-:func:`Provenance.from_checkpoint_facts`.
 """
 
 from __future__ import annotations
@@ -47,7 +45,8 @@ class Provenance:
         source_checkpoint (str): Filename of the checkpoint exported from.
         fl_backend (str): ``nvflare`` or ``flower``.
         flip_version (str): Version of the ``flip`` package that performed the export.
-        architecture (str): Model class name, as recorded in the checkpoint's ``train_conf``.
+        architecture (str): Model class name (caller-supplied; e.g. read from the checkpoint's
+            ``train_conf`` by the caller before constructing this record).
         extra (dict[str, Any]): Any additional caller-supplied fields.
     """
 

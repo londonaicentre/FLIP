@@ -15,17 +15,24 @@ A classification MAP cannot use ``MonaiBundleInferenceOperator``: that operator 
 an image, whereas a classifier produces labels. This operator therefore runs the scripted network
 itself and emits a text result, which the DICOM Structured Report writer turns into a DICOM object.
 
-The preprocessing below is transcribed from the training application's
-``data_utils.py::get_xray_transforms`` — resize to 224x224 and scale intensity to [0, 1] on a
-single channel. Keeping these in step with training is the app author's responsibility; a
-mismatch here degrades the result silently.
+The preprocessing below mirrors the training application's ``transforms.py::get_xray_transforms``
+(validation branch): resize to 224x224, then scale intensity to [0, 1] on a single channel. Keeping
+these in step with training is the app author's responsibility; a mismatch here degrades the result
+silently.
+
+One training step is deliberately NOT transcribed. Training applies ``Rotate90d(k=-1)`` to correct
+the orientation ``LoadImaged`` produces from a DICOM. This operator receives its array from
+``DICOMSeriesToVolumeOperator``, which builds the volume from ``ImageOrientationPatient`` — a
+different convention — so that rotation is calibrated to the training loader and is not transferable
+here. The correct orientation for THIS path is therefore unverified: confirm it against a real study
+with a probe image (see the packaging guide's probe-image agreement check) before trusting
+predictions, and add the appropriate ``Rotate90`` if the check shows one is needed.
 """
 
 import json
 import logging
 import os
 from pathlib import Path
-from typing import Optional
 
 import torch
 from monai.deploy.core import AppContext, ConditionType, Fragment, Image, Operator, OperatorSpec
@@ -56,7 +63,7 @@ class FlipXrayClassifierOperator(Operator):
         fragment: Fragment,
         *args,
         app_context: AppContext,
-        model_name: Optional[str] = "",
+        model_name: str | None = "",
         model_path: Path = MODEL_LOCAL_PATH,
         output_folder: Path = DEFAULT_OUTPUT_FOLDER,
         **kwargs,
@@ -99,7 +106,8 @@ class FlipXrayClassifierOperator(Operator):
         while array.ndim > 2:
             array = array[0]
 
-        pre = Compose([EnsureType(), ScaleIntensity(), Resize(spatial_size=(224, 224))])
+        # Resize before ScaleIntensity, matching the training chain's Resized -> ScaleIntensityd order.
+        pre = Compose([EnsureType(), Resize(spatial_size=(224, 224)), ScaleIntensity()])
         tensor = pre(array[None])  # add channel -> (1, 224, 224)
         batch = torch.as_tensor(tensor)[None].float().to(device)  # add batch -> (1, 1, 224, 224)
 

@@ -24,7 +24,6 @@ import logging
 from pathlib import Path
 
 from classifier_operator import FlipXrayClassifierOperator
-
 from monai.deploy.conditions import CountCondition
 from monai.deploy.core import AppContext, Application
 from monai.deploy.operators.dicom_data_loader_operator import DICOMDataLoaderOperator
@@ -90,8 +89,8 @@ class FlipXrayClassificationApp(Application):
         )
 
 
-# Select radiograph series. The FLIP tutorial data is Computed Radiography (CR); widen the
-# modality pattern if your site sends Digital Radiography (DX) instead.
+# Select radiograph series. This matches both Computed Radiography (CR) and Digital Radiography
+# (DX); narrow the modality pattern if you want only one of them.
 Sample_Rules_Text = """
 {
     "selections": [
