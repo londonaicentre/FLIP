@@ -24,7 +24,6 @@ import logging
 from pathlib import Path
 
 from classifier_operator import FlipXrayClassifierOperator
-
 from monai.deploy.conditions import CountCondition
 from monai.deploy.core import AppContext, Application
 from monai.deploy.operators.dicom_data_loader_operator import DICOMDataLoaderOperator

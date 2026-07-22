@@ -33,15 +33,25 @@ one of the following is a place where a wrong assumption fails **silently** rath
 
 ## If you are targeting deepcOS
 
-This template is closer to ready than the segmentation one. A deepcOS engine report expresses
-results as findings — a coded clinical concept with a confidence score and a present or absent
-state — which is what `compute()` already produces internally before formatting it as text. The
-remaining work is assigning coded concepts to the label names and emitting the report alongside
-the SR, not changing how inference works.
+A deepcOS engine report expresses results as findings — a coded clinical concept with a confidence
+score and a present or absent state — which is what `compute()` already produces internally before
+formatting it as text. This template **now emits that report** alongside the DICOM SR, as
+`*deepcReport.json`.
 
-Report **every** label the model can produce with an explicit present/absent state, not only those
-above threshold: that is what lets downstream systems accept or reject findings individually. This
-template already evaluates every label, so it is a formatting change rather than a behavioural one.
+The logic lives in `deepc_report.py` (SDK-free, unit-tested under `tests/`); the operator calls it
+after emitting the SR text. Two things it does deliberately:
+
+- **Assigns a SNOMED CT concept to each label.** `LABEL_CODINGS` maps the two NIH labels this model
+  emits — `Effusion` → *Pleural effusion* (`60046008`), `Edema` → *Pulmonary edema* (`19242006`).
+  A label with no standard term is still reported, under a `LOCAL` scheme, using the vendor's
+  documented escape hatch rather than being dropped.
+- **Reports every label with an explicit present/absent state**, not only those above threshold —
+  that is what lets a downstream system accept or reject each finding individually.
+
+**What is yours to finish:** replace `LABEL_CODINGS` with the concepts for *your* model's labels,
+and note that the report *shape* is a scaffold matching the fields the packaging guide records as
+required (`allNegative` left null for a research model), **not** deepc's confidential schema —
+validate against the vendor's own tooling before submission.
 
 See [Deploying to deepcOS](../../docs/source/working-with-flip-apps/package-model-as-map.rst) for
 the report's required fields and how it is discovered.

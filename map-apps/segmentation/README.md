@@ -49,21 +49,30 @@ for a worked pair of bundle configs, and the
 [packaging guide](../../docs/source/working-with-flip-apps/package-model-as-map.rst) for how to
 transcribe transforms from a training application.
 
-## If you are targeting deepcOS, this template is not finished
+## If you are targeting deepcOS
 
 The DICOM SEG this template writes is accepted as-is — deepcOS forwards DICOM artefacts written to
 the output directory, so nothing about the pixel output needs to change.
 
-What is missing is the other half. A deepcOS submission must also express, in machine-readable
-form, whatever the engine encoded in pixel data. A mask is exactly that case, and the enriched
-output model has no dense mask representation to restate it into — so what a submission carries is
-the mask's **derived clinical content**: the segmented volume, as a quantity with coded units and
-an anatomical attribute.
+The other half — expressing in machine-readable form what the mask encodes — **is now computed**.
+The enriched output model has no dense mask representation, so a segmentation submission carries the
+mask's **derived clinical content**: the segmented volume, as a quantity with coded units and an
+anatomical attribute. `DeepcSegReportOperator` counts the foreground voxels, scales by the source
+volume's spacing, and writes a `*deepcReport.json` engine report next to the SEG.
 
-**Nothing in this template computes that.** `DICOMSegmentationWriterOperator` emits pixels and
-stops. Adding it means counting foreground voxels and scaling by the volume's spacing, then
-emitting it alongside the SEG. Small, but genuinely new — do not assume it falls out of the
-existing pipeline.
+The logic lives in `deepc_report.py` (SDK-free, unit-tested under `tests/`); the operator is a thin
+adapter. Two guards matter:
+
+- **Voxel spacing must be present.** A missing spacing would silently corrupt the volume, so the
+  operator emits a *degraded* report with a coded message rather than a fabricated number.
+- **Job status is derived, not assumed.** A segmentation that produced no foreground voxels is the
+  silent-empty-output failure mode — a zero volume degrades the status instead of reporting success
+  over an empty result.
+
+**What is yours to finish:** the report *shape* is a scaffold matching the fields the packaging
+guide records as required (`jobStatus`, `codedMessages`, `engineResult`, `allNegative` left null),
+**not** deepc's confidential schema. Swap `SPLEEN` in `deepc_report.py` for the organ your model
+segments, and validate the output against the vendor's own tooling before submission.
 
 See [Deploying to deepcOS](../../docs/source/working-with-flip-apps/package-model-as-map.rst) for
 what else a submission requires.

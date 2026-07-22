@@ -25,8 +25,8 @@ import json
 import logging
 import os
 from pathlib import Path
-from typing import Optional
 
+import deepc_report
 import torch
 from monai.deploy.core import AppContext, ConditionType, Fragment, Image, Operator, OperatorSpec
 from monai.transforms import Activations, Compose, EnsureType, Resize, ScaleIntensity
@@ -56,7 +56,7 @@ class FlipXrayClassifierOperator(Operator):
         fragment: Fragment,
         *args,
         app_context: AppContext,
-        model_name: Optional[str] = "",
+        model_name: str | None = "",
         model_path: Path = MODEL_LOCAL_PATH,
         output_folder: Path = DEFAULT_OUTPUT_FOLDER,
         **kwargs,
@@ -129,3 +129,10 @@ class FlipXrayClassifierOperator(Operator):
         Path.mkdir(self.output_folder, parents=True, exist_ok=True)
         with open(self.output_folder / "classification.json", "w") as handle:
             json.dump({"findings": findings, "positive": positives}, handle, indent=2)
+
+        # Write the deepcOS engine report alongside the SR: a coded finding per label with its
+        # present/absent state, so a downstream system can accept or reject each one individually.
+        report = deepc_report.build_engine_report(
+            findings=deepc_report.build_findings(findings, POSITIVE_THRESHOLD)
+        )
+        deepc_report.write_engine_report(self.output_folder, report)
