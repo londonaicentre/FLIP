@@ -24,9 +24,6 @@ packaging this way keeps a FLIP model portable rather than tied to one vendor.
 > **Status: design spike.** The path below has been verified end to end on a development
 > workstation. It produces a MAP that runs standalone — it is **not** a deployment procedure for
 > any specific platform, and the vendor-supported dependency versions differ from those used here.
-> The deepcOS engine-report scaffold (`deepc_report.py` in each template) is **unit-tested** but has
-> not been re-run inside a full MAP, and its field shape is a stand-in for deepc's confidential
-> schema, not that schema.
 > See [`docs/source/working-with-flip-apps/package-model-as-map.rst`](../docs/source/working-with-flip-apps/package-model-as-map.rst)
 > for the full guide, the environment traps, and what remains open.
 

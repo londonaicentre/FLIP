@@ -808,43 +808,23 @@ What this changes for FLIP
   deepcOS submission needs its own. Keeping inference logic free of SDK-version-specific code
   makes that cheap — the ``map-apps/`` templates already do, because the model arrives as a
   self-contained TorchScript bundle.
-* **Classification now emits coded findings.** ``map-apps/classification`` already produced exactly
-  what a finding needs — a per-label probability and a present/absent decision against a threshold —
-  and now assigns each label a SNOMED CT concept and writes the engine report alongside the SR. The
-  two NIH labels map to *Pleural effusion* (``60046008``) and *Pulmonary edema* (``19242006``); a
-  label with no standard term is reported under a ``LOCAL`` scheme via the vendor's escape hatch
-  rather than dropped. Retargeting is a clinical-terminology task — swap ``LABEL_CODINGS`` — not an
-  engineering one.
+* **Classification is close to mechanical.** ``map-apps/classification`` already produces exactly
+  what a finding needs: a per-label probability and a present/absent decision against a threshold.
+  The remaining work is assigning coded concepts to the FLIP label names, which is a clinical
+  terminology task rather than an engineering one, and is not blocked by a term being missing.
 * **The DICOM SEG stays.** It is what a viewer overlays, what :ref:`Step 6 <map-view-result>`
   verifies against, what any platform in the AIDE lineage consumes, and it is forwarded by
   deepcOS as-is. Nothing about the segmentation template's output needs to change.
-* **Segmentation now computes the derived quantity.** The DICOM SEG writer emits pixels and stops,
-  so ``map-apps/segmentation`` gained ``DeepcSegReportOperator``: it counts foreground voxels,
-  scales by the source volume's spacing, and writes the segmented volume as a quantity in the engine
-  report next to the SEG. A missing spacing degrades the report rather than fabricating a number.
+* **Segmentation gains a derived quantity it does not currently compute.** The DICOM SEG writer
+  emits pixels and stops, so a deepcOS submission would need the mask's clinical content as well —
+  a segmented volume, which means voxel counting against the volume's spacing. That is a genuine
+  addition, and a small one, but it is new work rather than a reformatting of something already
+  produced.
 * **Listing every finding the model can produce is worth doing, not just the positive ones.** The
   vendor notes that reporting each supported finding with an explicit present or absent state lets
   downstream systems accept or reject individual findings, generate free-text reports, and run
-  performance analytics. For the xray classifier this means reporting both labels every time, which
-  ``map-apps/classification`` now does in the engine report, not only internally.
-
-The engine-report scaffold
---------------------------
-
-Both templates carry a small, SDK-free ``deepc_report.py`` (unit-tested under each template's
-``tests/``) that assembles the report and a thin operator that calls it. Two properties are worth
-carrying into any real integration:
-
-* **Job status is derived, not hardcoded.** A classifier that found nothing above threshold is a
-  valid negative — ``SUCCESS`` with every finding marked absent. An *empty segmentation* is the
-  opposite: zero foreground voxels is the silent-empty-output failure mode, so it degrades the
-  status and adds a coded message instead of reporting success over nothing.
-* **The regulatory ``allNegative`` field is left null**, as :ref:`the warning above <map-deepcos>`
-  requires for a research model.
-
-The field *shape* these modules produce matches only what this guide records as required — it is a
-scaffold, **not** deepc's confidential schema. Treat the vendor documentation as normative and run
-its validator before any submission.
+  performance analytics. For the xray classifier this means reporting both labels every time,
+  which is what ``map-apps/classification`` already does internally.
 
 Still to establish
 ------------------
