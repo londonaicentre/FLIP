@@ -13,3 +13,7 @@
 # Flower run-config overrides, passed to `flwr run --run-config` by fl-api-flower's
 # submit_run. Keys here override the base bundle pyproject.toml [tool.flwr.app.config].
 num-server-rounds = 4
+# Save the best aggregated global model by validation loss (lower is better);
+# ships best_FL_global_model.pt alongside FL_global_model.pt in the results.
+best-model-metric = "test_loss"
+best-model-metric-minimize = true

@@ -29,12 +29,12 @@ package (present in the Flower fl-server images) — it subclasses the real
 ``FedAvg``. Keep logic in the helpers; this class is wiring.
 """
 
-import logging
 from collections.abc import Iterable
+from logging import INFO
 from typing import cast
 
 from flwr.app import ArrayRecord, Message, MetricRecord
-from flwr.common import ConfigRecord
+from flwr.common import ConfigRecord, log
 from flwr.serverapp import Grid
 from flwr.serverapp.strategy import FedAvg
 
@@ -46,8 +46,6 @@ from flip.flower.progress import (
     report_round_started,
 )
 from flip.flower.selection import BestModelSelector
-
-logger = logging.getLogger(__name__)
 
 __all__ = ["FlipFedAvg"]
 
@@ -153,7 +151,9 @@ class FlipFedAvg(FedAvg):
             stashed = self._arrays_under_evaluation
             evaluated_arrays = stashed[1] if stashed is not None and stashed[0] == server_round else None
             if self._best_selector.consider(server_round, result, evaluated_arrays):
-                logger.info(
+                # flwr's own logger — a stdlib logger here never reaches the ServerApp output.
+                log(
+                    INFO,
                     "New best global model at round %d: %s=%s",
                     server_round,
                     self._best_selector.metric,
