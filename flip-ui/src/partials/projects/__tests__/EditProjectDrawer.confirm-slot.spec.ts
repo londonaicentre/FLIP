@@ -162,10 +162,11 @@ describe("EditProjectDrawer DICOM-to-NIfTI read-only field", () => {
         expect(html).toContain("cannot be changed");
     });
 
-    it("renders the toggle as read-only (the interactive switch is hidden while disabled)", () => {
-        const wrapper = mountDrawer(true);
+    it("renders the toggle as read-only: on screen, in position, but not interactive", () => {
+        const toggle = mountDrawer(true).find("[data-test=dicom-to-nifti-toggle]");
 
-        expect(wrapper.find("[data-test=dicom-to-nifti-toggle]").exists()).toBe(false);
+        expect(toggle.exists()).toBe(true);
+        expect(toggle.attributes("aria-disabled")).toBe("true");
     });
 
     it("shows 'Enabled' when the project's dicom_to_nifti is on", () => {

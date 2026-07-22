@@ -1,0 +1,4 @@
+# Tutorial-local artifacts (regenerated or downloaded; not committed).
+# Processed model weights (*.pt) are ignored globally at the repo root.
+uv.lock
+models/

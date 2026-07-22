@@ -12,10 +12,12 @@
 -->
 
 <template>
-    <section>
-        <AiCard>
-            <div>
-                <div class="flex items-center gap-3 p-4">
+    <!-- The card fills the height its column is given; the file list is what
+         scrolls, so the heading and the uploader stay put. -->
+    <section class="flex flex-col flex-1 min-h-0">
+        <AiCard class="flex flex-col flex-1 min-h-0">
+            <div class="flex flex-col flex-1 min-h-0">
+                <div class="flex items-center gap-3 p-4 shrink-0">
                     <h2 class="text-lg font-semibold leading-loose font-heading grow">
                         Model Files
                     </h2>
@@ -32,7 +34,7 @@
                         <span class="hidden lg:inline">Download all</span>
                     </AiButton>
                 </div>
-                <div class="border-t border-gray-200 dark:border-dark-border">
+                <div class="flex flex-col flex-1 min-h-0 border-t border-gray-200 dark:border-dark-border">
                     <AiAlert
                         v-if="canUpload"
                         variant="info"
@@ -65,7 +67,7 @@
                     <ul
                         v-else-if="internalFiles.concat(uploadingFiles).length"
                         role="list"
-                        class="border-t divide-y divide-gray-200 border-t-gray-200 dark:divide-dark-border dark:border-t-gray-700"
+                        class="flex-1 min-h-0 overflow-y-auto border-t divide-y divide-gray-200 border-t-gray-200 dark:divide-dark-border dark:border-t-gray-700"
                     >
                         <li v-for="file in internalFiles.concat(uploadingFiles)" :key="file.id" class="flex flex-row items-center gap-3 px-4 py-1.5 transition group">
                             <div
