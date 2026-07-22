@@ -21,6 +21,18 @@
 
 import { requireEnv } from "./support/demoFlow";
 
+// XNAT enforces a per-user session cap and pops a blocking "User session
+// ended" dialog when an older session gets culled mid-page. Dismiss it if
+// present so it never lingers in the recording.
+function dismissSessionDialog(): void {
+    cy.get("body").then(($body) => {
+        const ok = $body.find("button:contains('OK'):visible");
+        if (ok.length) {
+            cy.wrap(ok.first()).click({ force: true });
+        }
+    });
+}
+
 describe("FLIP demo — XNAT + OHIF at the trust", () => {
     // XNAT's Velocity pages and the OHIF bundle both throw benign script
     // errors that would otherwise fail the segment.
@@ -42,16 +54,24 @@ describe("FLIP demo — XNAT + OHIF at the trust", () => {
         });
         cy.get("form#login_form [type='submit'], form#login_form button").first().demoClick();
 
-        // XNAT's post-login landing page.
+        // XNAT's post-login landing page — hold long enough to take it in.
         cy.url({ timeout: 60000 }).should("not.include", "Login.vm");
-        cy.demoPause(1500);
+        // Under a scripted login XNAT's timeout widget can read a stale
+        // session-expiration cookie and grey the page out as "expired"; a
+        // fresh full-page load re-stamps the cookie and clears the overlay.
+        cy.reload();
+        cy.demoCaption("The trust's XNAT home — imaging lives here, inside the hospital", 600);
+        dismissSessionDialog();
+        cy.demoPause(4500);
 
         cy.demoCaption("Each FLIP project maps to an XNAT project holding its imported studies", 600);
         cy.visit(
             "/app/action/DisplayItemAction/search_value/" +
                 `${xnatProjectId}/search_element/xnat%3AprojectData/search_field/xnat%3AprojectData.ID`
         );
-        cy.demoPause(3200);
+        cy.demoPause(2000);
+        dismissSessionDialog();
+        cy.demoPause(2500);
 
         cy.demoCaption("Reviewing an imported study in the OHIF DICOM viewer", 600);
         // Same query-string shape the plugin's own "View Session" action
@@ -63,6 +83,6 @@ describe("FLIP demo — XNAT + OHIF at the trust", () => {
         );
         // OHIF pulls series metadata + pixel data before first render.
         cy.get("canvas", { timeout: 180000 }).should("be.visible");
-        cy.demoPause(6000);
+        cy.demoPause(7500);
     });
 });

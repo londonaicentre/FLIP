@@ -251,7 +251,9 @@ live AWS SSO session, and ideally the demo Cognito users — `make demo-users` (
 `DEMO_ADMIN_PASSWORD` from env, never committed) then restart flip-api so seeding grants their roles; without them
 the recorder falls back to the well-known admin for both parts. Useful `DEMO_ARGS`: `--skip-xnat`,
 `--project-id <uuid> --from-segment <n>` (iterate on later segments without re-running the pull), `--trusts GSTT`,
-`--fl-backend flower`. Segment mp4s + the final video land under `flip-ui/test/cypress/demo/` (gitignored).
+`--fl-backend flower`, `--video-scale 1` (fast drafts; the default 3 renders the browser at 3× device pixels so the
+1280x800 viewport is captured at 3840x2400 — 4K-class). Segment mp4s + the final video land under
+`flip-ui/test/cypress/demo/` (gitignored).
 
 ### Database migrations (flip-api)
 

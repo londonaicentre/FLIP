@@ -129,6 +129,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--training-finish-timeout", type=int, default=5400)
     parser.add_argument("--out", default=str(OUT_DIR / "flip-demo.mp4"), help="Final assembled mp4 path")
     parser.add_argument("--no-assemble", action="store_true", help="Record segments but skip the ffmpeg assembly")
+    parser.add_argument(
+        "--video-scale",
+        type=int,
+        default=3,
+        help=(
+            "Browser device-scale factor for the recording: 3 captures the 1280x800 viewport at 3840x2400 "
+            "(4K-class). Use 1 for fast draft runs. All segments in one assembly must share the same scale."
+        ),
+    )
     return parser.parse_args(argv)
 
 
@@ -175,7 +184,7 @@ def write_state(state: dict[str, str]) -> None:
     STATE_FILE.write_text(json.dumps(state, indent=4))
 
 
-def run_segment(name: str, env: dict[str, str]) -> Path:
+def run_segment(name: str, env: dict[str, str], video_scale: int = 1) -> Path:
     """Record one demo segment in a Dockerised Cypress run.
 
     Env values are passed with bare `-e NAME` flags so secrets ride the
@@ -200,7 +209,7 @@ def run_segment(name: str, env: dict[str, str]) -> Path:
         "-v", f"{REPO_ROOT}:/e2e", "-w", "/e2e/flip-ui",
     ]
     # Cypress + Chrome need a writable HOME when running as the host user.
-    for key, value in {"HOME": "/tmp/cypress-home", **env}.items():
+    for key, value in {"HOME": "/tmp/cypress-home", "DEMO_VIDEO_SCALE": str(video_scale), **env}.items():
         child_env[key] = value
         cmd += ["-e", key]
     cmd += [
@@ -249,6 +258,14 @@ def resolve_xnat_ids(
     # per-request basic auth would also mint a fresh JSESSION every poll.
     xnat = requests.Session()
     xnat.auth = (username, password)
+    # Sweep the user's accumulated sessions first — piles of stale JSESSIONs
+    # make XNAT show a sessions-per-IP attention banner and stale-expiry
+    # dialogs in the recording.
+    try:
+        xnat.delete(f"{xnat_url}/xapi/users/active/{username}", timeout=30)
+        _log("  🧹 cleared existing XNAT sessions for the demo user")
+    except requests.exceptions.RequestException:
+        _log("  ⚠️  could not clear XNAT sessions; continuing")
     while time.monotonic() < deadline:
         try:
             resp = xnat.get(f"{xnat_url}/data/projects?format=json", timeout=60)
@@ -385,6 +402,7 @@ def main(argv: list[str] | None = None) -> int:
                 "DEMO_PROJECT_DESCRIPTION": args.project_description,
                 "DEMO_QUERY_FILE": query_rel,
             },
+            video_scale=args.video_scale,
         )
     project_id = read_state().get("projectId", "")
     if not project_id:
@@ -406,6 +424,7 @@ def main(argv: list[str] | None = None) -> int:
                 "DEMO_ADMIN_PASSWORD": admin[1],
                 "DEMO_PROJECT_ID": project_id,
             },
+            video_scale=args.video_scale,
         )
 
     # ── Off-camera: the imaging import (the ~6 min wait) ──────────────────
@@ -432,6 +451,7 @@ def main(argv: list[str] | None = None) -> int:
                 "DEMO_XNAT_EXPERIMENT_ID": xnat_ids["experiment"],
                 "DEMO_XNAT_EXPERIMENT_LABEL": xnat_ids["label"],
             },
+            video_scale=args.video_scale,
         )
 
     # ── Segment 4: model + app upload + initiate training ────────────────
@@ -447,6 +467,7 @@ def main(argv: list[str] | None = None) -> int:
                 "DEMO_APP_FILES": ",".join(app_files_for(app_dir)),
                 "DEMO_BACKEND_LABEL": tutorial["label"],
             },
+            video_scale=args.video_scale,
         )
     model_id = read_state().get("modelId", "")
     if not model_id:
@@ -460,13 +481,13 @@ def main(argv: list[str] | None = None) -> int:
     # ── Segment 5: live progress ──────────────────────────────────────────
     ids_env = {**researcher_env, "DEMO_PROJECT_ID": project_id, "DEMO_MODEL_ID": model_id}
     if args.from_segment <= 5:
-        run_segment("05-follow-progress", ids_env)
+        run_segment("05-follow-progress", ids_env, video_scale=args.video_scale)
 
     # ── Off-camera: training runs to completion + results upload ─────────
     e2e_smoke.wait_for_training_finished(client, headers, model_id, timeout_s=args.training_finish_timeout)
 
     # ── Segment 6: download the results ──────────────────────────────────
-    run_segment("06-download-results", ids_env)
+    run_segment("06-download-results", ids_env, video_scale=args.video_scale)
 
     if args.no_assemble:
         _log("⏭️  --no-assemble: segment mp4s left in " + str(VIDEOS_DIR))
@@ -475,7 +496,7 @@ def main(argv: list[str] | None = None) -> int:
     out_path = Path(args.out).resolve()
     _log("🎞️  Assembling final video …")
     result = subprocess.run(
-        ["bash", "scripts/assemble-demo-video.sh", str(VIDEOS_DIR), str(out_path)],
+        ["bash", "scripts/assemble-demo-video.sh", str(VIDEOS_DIR), str(out_path), str(args.video_scale)],
         cwd=FLIP_UI_DIR,
     )
     if result.returncode != 0:

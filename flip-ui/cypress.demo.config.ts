@@ -24,6 +24,13 @@
 
 import { defineConfig } from "cypress";
 
+// Render the browser at N× device pixels for a high-resolution recording
+// (DEMO_VIDEO_SCALE=3 → the 1280x800 viewport captures at 3840x2400, i.e.
+// 4K-class). The window size below stays in DIPs; Chrome multiplies the
+// framebuffer, and scripts/assemble-demo-video.sh scales its crop window by
+// the same factor.
+const videoScale = Math.max(1, Number(process.env.DEMO_VIDEO_SCALE || "1") || 1);
+
 export default defineConfig({
     // 1280x800 viewport rendered 1:1 inside a 1920x1200 Chrome window; the
     // assembly script crops the AUT viewport back out of the capture.
@@ -72,6 +79,9 @@ export default defineConfig({
                         (arg) => !arg.startsWith("--window-size=")
                     );
                     sized.push("--window-size=1920,1200");
+                    if (videoScale > 1) {
+                        sized.push(`--force-device-scale-factor=${videoScale}`);
+                    }
                     launchOptions.args = sized;
                 }
 

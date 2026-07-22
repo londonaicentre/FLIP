@@ -11,10 +11,10 @@
  * limitations under the License.
  */
 
-// Demo segment 1 — the researcher signs in, creates a project and submits
-// the cohort query to the trusts. Runs against the live stack; the
-// orchestrator (flip-api/tests/demo_video.py) waits for the trusts to
-// respond off-camera after this segment.
+// Demo segment 1 — the researcher signs in, creates a project, opens it,
+// creates the cohort query from the project page, watches the aggregate
+// results come back from the trusts, and stages the project for approval.
+// Runs against the live stack; the admin approval is segment 2.
 
 import { requireEnv, saveDemoState } from "./support/demoFlow";
 
@@ -39,8 +39,16 @@ function stripLicenceHeader(sql: string): string {
     return lines.slice(start).join("\n").trim();
 }
 
+function setEditorValue(value: string): void {
+    cy.get(".CodeMirror", { timeout: 30000 }).then(($cm) => {
+        const editor = ($cm[0] as ICodeMirrorHost).CodeMirror;
+        editor.setValue(value);
+        editor.refresh();
+    });
+}
+
 describe("FLIP demo — create project", () => {
-    it("signs in, creates the project and submits the cohort query", () => {
+    it("creates the project, runs the cohort query and stages the project", () => {
         const email = requireEnv("DEMO_RESEARCHER_EMAIL");
         const password = requireEnv("DEMO_RESEARCHER_PASSWORD");
         const projectName = requireEnv("DEMO_PROJECT_NAME");
@@ -63,40 +71,66 @@ describe("FLIP demo — create project", () => {
             cy.getBySel("create-project-btn").demoClick();
         });
 
-        // The create call redirects to /project/<uuid> — capture the id for
-        // the orchestrator and the later segments.
+        // The create call redirects to the new project's page — capture the
+        // id for the orchestrator and the later segments, then let the page
+        // breathe before the next action.
         cy.url({ timeout: 60000 })
             .should("match", /\/project\/[0-9a-f-]{36}$/)
             .then((url) => {
-                const projectId = url.split("/").pop() as string;
-                saveDemoState({ projectId });
-
-                cy.demoCaption("Defining the patient cohort with an OMOP SQL query", 1200);
-                cy.visit(`/project/${projectId}/cohort-query`);
+                saveDemoState({ projectId: url.split("/").pop() as string });
             });
+        cy.demoCaption("The new project starts life unstaged, with no cohort defined yet", 800);
+        cy.demoPause(2200);
 
+        cy.demoCaption("Defining the patient cohort with an OMOP SQL query", 600);
+        cy.getBySel("create-query-btn").scrollIntoView();
+        cy.getBySel("create-query-btn").demoClick();
+
+        // Write the query into the CodeMirror editor in a few sweeps so the
+        // recording reads as authoring, not pasting.
         cy.readFile(queryFile).then((sql: string) => {
             const query = stripLicenceHeader(sql);
-            // The editor is CodeMirror 5 (AiCodeTextArea) — set the document
-            // through the editor API so the wrapper propagates the value into
-            // the form; typing ~60 lines of SQL char-by-char would eat the
-            // whole segment.
-            cy.get(".CodeMirror", { timeout: 30000 })
-                .should("be.visible")
-                .then(($cm) => {
-                    const editor = ($cm[0] as ICodeMirrorHost).CodeMirror;
-                    editor.setValue(query);
-                    editor.refresh();
-                });
+            const lines = query.split("\n");
+            const chunks = 4;
+            const perChunk = Math.ceil(lines.length / chunks);
+            for (let i = 1; i <= chunks; i++) {
+                setEditorValue(lines.slice(0, i * perChunk).join("\n"));
+                cy.demoPause(400);
+            }
         });
 
-        cy.demoPause(1600);
+        cy.demoPause(1000);
         cy.demoCaption("The query runs inside each NHS trust — only aggregate counts leave the hospital", 800);
         cy.getBySel("view-cohort-query-results-btn").demoClick();
-
-        // Trust round-trips are real: wait for the submission acknowledgement
-        // and let the per-trust response panel settle on camera.
         cy.contains("Cohort Query Sent", { timeout: 90000 }).should("be.visible");
+
+        // The trusts genuinely execute the query against their OMOP stores —
+        // hold on the page until the aggregate charts render, then tour them.
+        cy.demoCaption("Each trust runs the query against its own OMOP store and returns aggregates", 500);
+        cy.get("canvas", { timeout: 180000 }).should("have.length.at.least", 1);
+        cy.demoPause(1200);
+        cy.get("canvas").first().scrollIntoView({ duration: 900 });
+        cy.demoCaption("Aggregate cohort characteristics, per trust — no patient-level data", 500);
+        cy.demoPause(3000);
+        cy.get("canvas").last().scrollIntoView({ duration: 900 });
+        cy.demoPause(2800);
+
+        // Back on the project page, the researcher stages the project at the
+        // trusts that answered — this is what goes to the admin for approval.
+        cy.demoCaption("Staging the project at the trusts that returned a cohort", 800);
+        cy.url().then((url) => cy.visit(url.replace(/\/cohort-query$/, "")));
+        cy.get("[data-test$=\"-selector\"]", { timeout: 60000 })
+            .should("have.length.at.least", 1)
+            .each(($el) => {
+                cy.wrap($el).scrollIntoView();
+                cy.wrap($el).demoClick();
+            });
+        cy.getBySel("stage-project-btn").demoClick();
+
+        // Staging refetches the project; the staging panel disappears once
+        // the project is STAGED and awaiting admin approval.
+        cy.getBySel("stage-project-btn", { timeout: 90000 }).should("not.exist");
+        cy.demoCaption("The project is now staged, awaiting administrator approval", 500);
         cy.demoPause(3000);
     });
 });

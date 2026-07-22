@@ -16,18 +16,22 @@
 # the constants there and with cypress.demo.config.ts (1280x800 viewport
 # rendered 1:1 inside a 1920x1200 Chrome window).
 #
-# Usage: assemble-demo-video.sh [videos-dir] [out-file]
+# Usage: assemble-demo-video.sh [videos-dir] [out-file] [scale]
+#   scale (default 1) must match the DEMO_VIDEO_SCALE the segments were
+#   recorded with — the browser framebuffer (and therefore the crop window)
+#   is scale× the DIP geometry.
 
 set -euo pipefail
 
 VIDEOS_DIR="${1:-test/cypress/demo/videos}"
 OUT="${2:-test/cypress/demo/out/flip-demo.mp4}"
+SCALE="${3:-${DEMO_VIDEO_SCALE:-1}}"
 
-# Keep identical to CROP_* in scripts/videos-to-gifs.sh.
-CROP_WIDTH=1280
-CROP_HEIGHT=800
-CROP_X=540
-CROP_Y=80
+# Keep identical to CROP_* in scripts/videos-to-gifs.sh (at scale 1).
+CROP_WIDTH=$((1280 * SCALE))
+CROP_HEIGHT=$((800 * SCALE))
+CROP_X=$((540 * SCALE))
+CROP_Y=$((80 * SCALE))
 FPS=30
 
 if ! command -v ffmpeg >/dev/null 2>&1; then

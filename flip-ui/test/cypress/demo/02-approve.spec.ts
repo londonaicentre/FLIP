@@ -12,13 +12,14 @@
  */
 
 // Demo segment 2 — the FLIP administrator checks Connection Status, then
-// stages and approves the researcher's project. Approval kicks off the
-// imaging import at each trust, which the orchestrator waits out off-camera.
+// approves the project the researcher staged in segment 1. Approval kicks
+// off the imaging import at each trust, which the orchestrator waits out
+// off-camera.
 
 import { requireEnv } from "./support/demoFlow";
 
 describe("FLIP demo — administrator approval", () => {
-    it("reviews connection status, stages and approves the project", () => {
+    it("reviews connection status and approves the staged project", () => {
         const email = requireEnv("DEMO_ADMIN_EMAIL");
         const password = requireEnv("DEMO_ADMIN_PASSWORD");
         const projectId = requireEnv("DEMO_PROJECT_ID");
@@ -34,22 +35,13 @@ describe("FLIP demo — administrator approval", () => {
         cy.getBySel("connection-radial-svg", { timeout: 30000 }).should("be.visible");
         cy.demoPause(2600);
 
-        cy.demoCaption("Opening the new project for review", 600);
+        cy.demoCaption("Opening the staged project for review", 600);
         cy.visit(`/project/${projectId}`);
+        cy.demoPause(2000);
 
-        cy.demoCaption("Staging the project at the participating trusts", 1000);
-        // One switch per registered trust (data-test="<trust name>-selector").
-        cy.get("[data-test$=\"-selector\"]", { timeout: 60000 })
-            .should("have.length.at.least", 1)
-            .each(($el) => {
-                cy.wrap($el).scrollIntoView();
-                cy.wrap($el).demoClick();
-            });
-        cy.getBySel("stage-project-btn").demoClick();
-
-        // The page refetches the project after staging; the approval panel
-        // replaces the staging one.
-        cy.demoCaption("Approval authorises the imaging import at every trust", 400);
+        // The researcher staged the project in segment 1 — the admin picks
+        // the trusts to authorise and approves.
+        cy.demoCaption("Approval authorises the imaging import at every selected trust", 800);
         cy.get("[data-test^=\"trust-staged-\"]", { timeout: 90000 })
             .should("have.length.at.least", 1)
             .each(($el) => {
