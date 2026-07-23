@@ -58,5 +58,10 @@ docker command and the `DEMO_*` env each spec requires). Segments hand ids forwa
 - **XNAT**: reached via IPv4 literal from Python (the swarm ingress blackholes `::1`); the orchestrator sweeps the
   demo user's stale JSESSIONs before segment 3, and the spec reloads once after login to clear XNAT's stale
   session-expiration overlay.
+- **Keep still pages moving**: Cypress records through a Chrome CDP screencast that only emits on compositor
+  updates, so a page that paints once and then sits there (the OHIF viewer after it has drawn the study) yields
+  almost no frames — the beat collapses in video time and can miss the frame that shows the image. Any dwell on a
+  static page needs motion: `cy.demoHover(...)` walks the cursor overlay across an element for exactly this.
+  The assembler warns when a segment keeps less than `DEMO_MIN_SEGMENT_SECONDS` (10s), which is the symptom.
 
 All outputs here (`videos/`, `screenshots/`, `downloads/`, `out/`, `state.json`) are gitignored.

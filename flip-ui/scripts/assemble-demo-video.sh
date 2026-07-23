@@ -70,6 +70,10 @@ FALLBACK_TRIM_SECONDS=0.8
 # stealth segments, where a briefly-visible sign-in precedes the hidden
 # stretch before the dashboard reveal.
 HEAD_AFTER_BLANK="${DEMO_HEAD_AFTER_BLANK:-5,6}"
+# A killed Cypress run leaves a truncated mp4 behind, which this script would
+# otherwise stitch in without comment — a whole beat silently missing from the
+# cut. Every scripted segment holds for well over this, so flag the short ones.
+MIN_SEGMENT_SECONDS="${DEMO_MIN_SEGMENT_SECONDS:-10}"
 
 detect_content_span() {
     # Prints "start end" (s) for a clip's contentful span, or nothing.
@@ -127,6 +131,7 @@ for segment in "${sorted[@]}"; do
     fi
     span=$(detect_content_span "$segment" "$head_mode")
     trim_args=()
+    keep=""
     if [ -n "$span" ]; then
         span_start=${span% *}
         span_end=${span#* }
@@ -145,6 +150,9 @@ print(f'{max(1.0, int(h) * 3600 + int(m) * 60 + float(s) - ${FALLBACK_TRIM_SECON
             trim_args=(-t "$keep")
         fi
         echo "  cropping $(basename "$segment") (span undetected — fallback trim)"
+    fi
+    if [ -n "$keep" ] && python3 -c "import sys; sys.exit(0 if ${keep} < ${MIN_SEGMENT_SECONDS} else 1)"; then
+        echo "  ⚠️  $(basename "$segment") keeps only ${keep}s — likely a truncated take; re-record it" >&2
     fi
     ffmpeg -hide_banner -loglevel error -y -i "$segment" "${trim_args[@]}" \
         -vf "crop=${CROP_WIDTH}:${CROP_HEIGHT}:${CROP_X}:${CROP_Y},fps=${FPS},format=yuv420p" \

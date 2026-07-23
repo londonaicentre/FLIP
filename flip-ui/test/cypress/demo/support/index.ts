@@ -22,6 +22,7 @@ import "cypress-localstorage-commands";
 import "../../docs/support/demoCursor";
 import "./demoCaption";
 import "./demoFlow";
+import "./demoHover";
 
 import { demoStealth } from "./demoFlow";
 

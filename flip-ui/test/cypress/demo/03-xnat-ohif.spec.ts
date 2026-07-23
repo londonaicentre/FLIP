@@ -33,6 +33,21 @@ function dismissSessionDialog(): void {
     });
 }
 
+// Dismissing the dialog does not always clear XNAT's timeout widget: when it
+// reads a stale expiration cookie it greys the whole page out behind a
+// "Session Expired" mask, which then films as a washed-out screen. A fresh
+// full-page load re-stamps the cookie and repaints; do it only when the mask
+// is actually up so the happy path costs nothing.
+function clearSessionMask(): void {
+    dismissSessionDialog();
+    cy.get("body").then(($body) => {
+        if ($body.text().includes("Session Expired")) {
+            cy.reload();
+            dismissSessionDialog();
+        }
+    });
+}
+
 describe("FLIP demo — XNAT + OHIF at the trust", () => {
     // XNAT's Velocity pages and the OHIF bundle both throw benign script
     // errors that would otherwise fail the segment.
@@ -61,9 +76,11 @@ describe("FLIP demo — XNAT + OHIF at the trust", () => {
         // fresh full-page load re-stamps the cookie and clears the overlay.
         cy.reload();
         cy.demoCaption("The trust's XNAT home — imaging lives here, inside the hospital", 600);
-        dismissSessionDialog();
-        // Let the Recent Data Activity panel finish loading before the dwell,
-        // so the home page is shown fully populated.
+        clearSessionMask();
+        // Wait for the home page to be populated, not merely done loading —
+        // asserting only that the "Loading recent data" placeholder is gone
+        // also passes on a blank page that never rendered its panels.
+        cy.contains("Recent Data Activity", { timeout: 60000 }).should("be.visible");
         cy.contains("Loading recent data", { timeout: 60000 }).should("not.exist");
         cy.demoPause(4500);
 
@@ -73,7 +90,7 @@ describe("FLIP demo — XNAT + OHIF at the trust", () => {
                 `${xnatProjectId}/search_element/xnat%3AprojectData/search_field/xnat%3AprojectData.ID`
         );
         cy.demoPause(2000);
-        dismissSessionDialog();
+        clearSessionMask();
         cy.demoPause(2500);
 
         cy.demoCaption("Reviewing an imported study in the OHIF DICOM viewer", 600);
@@ -84,8 +101,40 @@ describe("FLIP demo — XNAT + OHIF at the trust", () => {
             `/VIEWER/?subjectId=${xnatSubjectId}&projectId=${xnatProjectId}` +
                 `&experimentId=${xnatExperimentId}&experimentLabel=${encodeURIComponent(xnatExperimentLabel)}`
         );
-        // OHIF pulls series metadata + pixel data before first render.
+        // Assert on the viewer's own chrome, not just any <canvas>: a session
+        // bounce lands back on an XNAT page, and this beat is the whole point
+        // of the segment — it must fail loudly rather than film the wrong page.
+        cy.contains(/back to xnat/i, { timeout: 120000 }).should("be.visible");
+        // OHIF pulls series metadata + pixel data before first render; the
+        // study viewport is the last canvas on the page (the series thumbnail
+        // is the first, and it paints well before the viewport does).
         cy.get("canvas", { timeout: 180000 }).should("be.visible");
-        cy.demoPause(7500);
+        cy.get("canvas").last().should("be.visible");
+
+        // Once OHIF has drawn the study the page is completely static, and
+        // Chrome only feeds the screencast on compositor updates — a still
+        // page records as almost no frames, which is how an earlier take shipped
+        // a black viewport. Walking the pointer over the image keeps frames
+        // coming (and reads as a clinician reviewing the study).
+        cy.get("canvas").last().demoHover({
+            fx: 0.42,
+            fy: 0.3,
+            dwellMs: 1200
+        });
+        cy.get("canvas").last().demoHover({
+            fx: 0.55,
+            fy: 0.5,
+            dwellMs: 1400
+        });
+        cy.get("canvas").last().demoHover({
+            fx: 0.45,
+            fy: 0.68,
+            dwellMs: 1400
+        });
+        cy.get("canvas").last().demoHover({
+            fx: 0.6,
+            fy: 0.42,
+            dwellMs: 1600
+        });
     });
 });
