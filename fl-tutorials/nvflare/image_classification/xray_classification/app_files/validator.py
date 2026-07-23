@@ -18,7 +18,6 @@ import numpy as np
 import pydicom
 import torch
 from data_utils import Lesion, LesionDict, get_labels_from_radiology_row, get_lesion_label
-from transforms import get_xray_transforms
 from flip import FLIP
 from flip.constants import ResourceType
 from flip.nvflare.metrics import send_metrics_value
@@ -32,6 +31,7 @@ from nvflare.apis.shareable import Shareable, make_reply
 from nvflare.apis.signal import Signal
 from nvflare.app_common.app_constant import AppConstants
 from tqdm import tqdm
+from transforms import get_xray_transforms
 
 
 class FLIP_VALIDATOR(Executor):

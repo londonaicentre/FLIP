@@ -74,7 +74,6 @@ def get_lesion_label(in_batch: dict, lesions: LesionDict):
     return torch.stack(out_tensor, dim=1).float()
 
 
-
 def validate_lesions(in_lesions: list, lesions: LesionDict):
     """
     Given a LesionsDict, verifies whether the the input lesions are valid and contained in LesionDict.
