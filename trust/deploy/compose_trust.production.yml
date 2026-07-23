@@ -52,6 +52,8 @@ services:
       - ALL
     cap_add:
       - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
     volumes:
       - ${ORTHANC_STORAGE_DIR:-/opt/flip/orthanc/orthanc-storage}:/var/lib/orthanc/db
     environment:
