@@ -26,7 +26,7 @@ make demo-video
 |---|------|---------|-----------|----------------------|
 | 1 | `01-create-project` | Researcher | Sign in → create project → project page → **Create Cohort Query** → write SQL → per-trust responses + aggregate charts → **stage the project** | cohort responses (already in) |
 | 2 | `02-approve` | Admin | Connection Status (list + radial) → open staged project → approve trusts | imaging import (~6 min) |
-| 3 | `03-xnat-ohif` | Trust user | XNAT login → project → OHIF DICOM view | — |
+| 3 | `03-xnat-ohif` | Trust user | XNAT login → project → OHIF DICOM view (+ DICOM-SEG overlay for segmentation apps) | — |
 | 4 | `04-create-model-train` | Researcher | Create model → upload app files (presigned) → initiate training | training start + first metrics |
 | 5 | `05-follow-progress` | Researcher | Live training timeline + metric charts | training finish (RESULTS_UPLOADED) |
 | 6 | `06-download-results` | Researcher | Download the aggregated results | assembly |
@@ -45,7 +45,7 @@ bash scripts/assemble-demo-video.sh test/cypress/demo/videos test/cypress/demo/o
 # Spleen segmentation instead of chest X-ray (CT cohort; labels are added
 # off-camera between the import and the model segments — same enrichment
 # contract as e2e_smoke, FLIP_PROJECT_ID exported; escape $ once per make):
-make -C flip-api demo_video DEMO_ARGS="--app spleen \
+make -C flip-api demo_video DEMO_ARGS="--app spleen --publish-segmentations \
   --data-enrichment-cwd <path-to>/flip_project_spleen_segmentation \
   --data-enrichment-cmd 'uv run upload_labels_to_XNAT.py --flip-project-id \"\$\$FLIP_PROJECT_ID\"'"
 # → out/flip-demo-spleen.mp4
@@ -68,6 +68,11 @@ docker command and the `DEMO_*` env each spec requires). Segments hand ids forwa
 - **XNAT**: reached via IPv4 literal from Python (the swarm ingress blackholes `::1`); the orchestrator sweeps the
   demo user's stale JSESSIONs before segment 3, and the spec reloads once after login to clear XNAT's stale
   session-expiration overlay.
+- **Segmentation overlay**: `--publish-segmentations` republishes the NIfTI labels that data enrichment put in
+  XNAT as DICOM-SEG ROI collections (`flip-api/tests/xnat_seg_upload.py`, conversion via dcmqi in Docker, upload via
+  the same `PUT /xapi/roi/.../collections/{label}?type=SEG` the viewer's own export uses). The orchestrator then
+  opens a session that actually has a collection and passes `DEMO_XNAT_SEG_NAME`, which switches on segment 3's
+  Masks → Import beat. Without it the segment just shows the images, which is right for the classification apps.
 - **Keep still pages moving**: Cypress records through a Chrome CDP screencast that only emits on compositor
   updates, so a page that paints once and then sits there (the OHIF viewer after it has drawn the study) yields
   almost no frames — the beat collapses in video time and can miss the frame that shows the image. Any dwell on a

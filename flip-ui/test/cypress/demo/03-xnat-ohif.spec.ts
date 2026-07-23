@@ -21,6 +21,35 @@
 
 import { requireEnv } from "./support/demoFlow";
 
+// Scroll the viewer to a slice that actually carries the imported segmentation,
+// and prove one was found. The mask occupies a contiguous run of slices that is
+// nowhere near the middle of the stack (a spleen sits at the bottom of an
+// abdominal CT), so picking a slice by guesswork films an empty viewport.
+// cornerstoneTools keys its labelmap by image index, which is the ground truth.
+function scrollToSegmentedSlice(): void {
+    cy.window().then((win) => {
+        /* eslint-disable @typescript-eslint/no-explicit-any */
+        const cs = (win as any).cornerstone;
+        const csTools = (win as any).cornerstoneTools;
+        const enabled = cs.getEnabledElements()[0];
+        const element = enabled.element;
+        const stack = csTools.getToolState(element, "stack").data[0];
+        const labelmap = csTools.getModule("segmentation").getters.labelmap3D(element, 0);
+        const slices = Object.keys(labelmap?.labelmaps2D ?? {})
+            .map(Number)
+            .filter((index) => !Number.isNaN(index))
+            .sort((a, b) => a - b);
+        expect(slices, "slices carrying the imported segmentation").to.have.length.greaterThan(0);
+
+        const target = slices[Math.floor(slices.length / 2)];
+        stack.currentImageIdIndex = target;
+
+        return cs.loadAndCacheImage(stack.imageIds[target]).then((image: unknown) => {
+            cs.displayImage(element, image);
+        });
+    });
+}
+
 // XNAT enforces a per-user session cap and pops a blocking "User session
 // ended" dialog when an older session gets culled mid-page. Dismiss it if
 // present so it never lingers in the recording.
@@ -136,5 +165,38 @@ describe("FLIP demo — XNAT + OHIF at the trust", () => {
             fy: 0.42,
             dwellMs: 1600
         });
+
+        // Segmentation apps only: the labels added during data enrichment are also
+        // published as a DICOM-SEG ROI collection, which the viewer draws over the
+        // images once imported. Classification demos have nothing to import, so the
+        // orchestrator only sets this when the session actually carries a collection.
+        if (Cypress.env("DEMO_XNAT_SEG_NAME")) {
+            const collectionName = String(Cypress.env("DEMO_XNAT_SEG_NAME"));
+            cy.demoCaption("The labels added during data enrichment travel with the imaging", 600);
+            cy.contains("Masks").demoClick();
+            cy.demoPause(1200);
+            cy.contains("Import").demoClick();
+            cy.demoPause(1600);
+            cy.contains(collectionName, { timeout: 60000 }).demoClick();
+            cy.demoPause(600);
+            cy.contains("Import selected").demoClick();
+
+            cy.demoCaption("Segmentation overlaid on the source CT — never leaving the trust", 600);
+            // The import decodes the SEG frame by frame; the labelmap is only
+            // complete once that settles.
+            cy.demoPause(7000);
+            scrollToSegmentedSlice();
+            cy.demoPause(1500);
+            cy.get("canvas").last().demoHover({
+                fx: 0.5,
+                fy: 0.45,
+                dwellMs: 1800
+            });
+            cy.get("canvas").last().demoHover({
+                fx: 0.58,
+                fy: 0.55,
+                dwellMs: 2200
+            });
+        }
     });
 });

@@ -52,7 +52,7 @@ from typing import Any
 import requests
 
 from flip_api.utils import constants
-from tests import e2e_smoke
+from tests import e2e_smoke, xnat_seg_upload
 from tests.e2e_smoke import SmokeFailure, _get, _log
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -163,6 +163,34 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "Trust XNAT base URL for segment 3. Keep the IPv4 literal: the XNAT ports are published by "
             "Docker Swarm ingress, which accepts but never answers ::1 connections — python-requests "
             "resolves localhost to ::1 and read-times-out (browsers fall back to IPv4 on their own)."
+        ),
+    )
+    parser.add_argument(
+        "--publish-segmentations",
+        action="store_true",
+        help=(
+            "After data enrichment, convert each NIfTI label already in XNAT to DICOM-SEG and upload it as an "
+            "ROI collection (tests.xnat_seg_upload), so segment 3 can show the segmentation overlaid in OHIF"
+        ),
+    )
+    parser.add_argument(
+        "--seg-segment-label", default="Spleen", help="Anatomical label encoded in the published DICOM-SEG"
+    )
+    parser.add_argument(
+        "--seg-limit",
+        type=int,
+        default=4,
+        help=(
+            "Sessions per trust to publish a DICOM-SEG for (0 = all). The demo opens one session, and each "
+            "conversion downloads a full series, so the default keeps the off-camera wait short"
+        ),
+    )
+    parser.add_argument(
+        "--seg-collection-name",
+        default="Spleen segmentation",
+        help=(
+            "Name the OHIF Masks > Import dialog lists the DICOM-SEG collection under — must match the "
+            "--collection-name given to tests.xnat_seg_upload during data enrichment"
         ),
     )
     parser.add_argument("--xnat-username", default=os.environ.get("XNAT_ADMIN_USER", "admin"))
@@ -280,6 +308,37 @@ def run_segment(name: str, env: dict[str, str], video_scale: int = 1) -> Path:
     return video
 
 
+def _pick_experiment(
+    xnat: requests.Session, xnat_url: str, experiments: list[dict[str, Any]]
+) -> dict[str, Any]:
+    """Choose the session to open in OHIF, preferring one with a segmentation to show.
+
+    Data enrichment only reaches the sessions it has labels for, so the first session of
+    a project is not necessarily one carrying a DICOM-SEG collection — opening that one
+    would film the viewer with nothing to overlay. Scan for a session that has an ROI
+    collection and take it; fall back to the first session when none do (the classification
+    apps, where there is nothing to import).
+
+    Args:
+        xnat (requests.Session): Authenticated XNAT session.
+        xnat_url (str): Base URL of the trust's XNAT.
+        experiments (list[dict[str, Any]]): Experiment rows from the project listing.
+
+    Returns:
+        dict[str, Any]: The chosen row, flagged with ``_has_roi_collection``.
+    """
+    for experiment in experiments:
+        resp = xnat.get(f"{xnat_url}/data/experiments/{experiment['ID']}/assessors?format=json", timeout=60)
+        if resp.status_code >= 300:
+            continue
+        if any(row.get("xsiType") == "icr:roiCollectionData" for row in resp.json()["ResultSet"]["Result"]):
+            experiment["_has_roi_collection"] = True
+            _log(f"  🎨 session {experiment['ID']} carries a segmentation collection")
+            return experiment
+
+    return experiments[0]
+
+
 def resolve_xnat_ids(
     xnat_url: str, username: str, password: str, flip_project_id: str, timeout_s: int = 600
 ) -> dict[str, str]:
@@ -331,7 +390,7 @@ def resolve_xnat_ids(
                     if exp_resp.status_code < 300:
                         experiments = exp_resp.json()["ResultSet"]["Result"]
                         if experiments:
-                            experiment = experiments[0]
+                            experiment = _pick_experiment(xnat, xnat_url, experiments)
                             detail = xnat.get(
                                 f"{xnat_url}/data/experiments/{experiment['ID']}?format=json",
                                 timeout=60,
@@ -342,6 +401,7 @@ def resolve_xnat_ids(
                                 "subject": str(fields.get("subject_ID", "")),
                                 "experiment": experiment["ID"],
                                 "label": str(experiment.get("label") or fields.get("label", "")),
+                                "has_segmentation": "yes" if experiment.get("_has_roi_collection") else "",
                             }
                             if resolved["subject"]:
                                 _log(f"  ✅ XNAT ids: {resolved}")
@@ -500,6 +560,20 @@ def main(argv: list[str] | None = None) -> int:
     if args.data_enrichment_cwd and args.data_enrichment_cmd:
         e2e_smoke.run_data_enrichment(Path(args.data_enrichment_cwd), args.data_enrichment_cmd, project_id)
 
+    # Second half of enrichment for a segmentation app: the NIfTI labels the app
+    # trains on are invisible to a viewer, so republish them as DICOM-SEG for the
+    # OHIF beat. Runs after the labels are in place, and only when asked for.
+    if args.publish_segmentations:
+        if xnat_seg_upload.main(
+            [
+                "--flip-project-id", project_id,
+                "--segment-label", args.seg_segment_label,
+                "--collection-name", args.seg_collection_name,
+                "--limit", str(args.seg_limit),
+            ]
+        ):
+            raise SmokeFailure("publishing DICOM-SEG collections failed — see the log above")
+
     # ── Segment 3: XNAT + OHIF at one trust ───────────────────────────────
     if not args.skip_xnat and args.from_segment <= 3:
         xnat_ids = resolve_xnat_ids(args.xnat_url, args.xnat_username, args.xnat_password, project_id)
@@ -513,6 +587,9 @@ def main(argv: list[str] | None = None) -> int:
                 "DEMO_XNAT_SUBJECT_ID": xnat_ids["subject"],
                 "DEMO_XNAT_EXPERIMENT_ID": xnat_ids["experiment"],
                 "DEMO_XNAT_EXPERIMENT_LABEL": xnat_ids["label"],
+                # Only set when the session really has a collection to import, so the
+                # segment skips the mask beat entirely for classification apps.
+                **({"DEMO_XNAT_SEG_NAME": args.seg_collection_name} if xnat_ids["has_segmentation"] else {}),
             },
             video_scale=args.video_scale,
         )
