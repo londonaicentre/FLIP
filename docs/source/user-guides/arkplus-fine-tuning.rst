@@ -58,7 +58,7 @@ Key training characteristics:
 * **50 global rounds × 5 local epochs**, batch size 4
 * **Head-only parameter exchange** (~6,885 parameters ≈ 27 KB per round) — the backbone is
   broadcast once at round 0, then cached locally
-* **Percentile privacy filter** (95th percentile, gamma 2.0) applied to head updates
+* **Percentile privacy filter** (10th percentile, gamma 0.01) applied to head updates
 * **Teacher–student EMA** available as an optional consistency regularisation
 * **Cross-site evaluation** runs at each round via the trainer's ``flare.is_evaluate()`` branch
 
@@ -110,9 +110,9 @@ defines the cohort.
 
 .. _arkplus-local-testing:
 
-************************
+*************************
 Local testing (simulator)
-************************
+*************************
 
 Before deploying to FLIP, test the app locally with NVFLARE's simulator. This runs both clients
 on one GPU, so it's useful for smoke-testing code changes and hyperparameter sweeps.
@@ -139,9 +139,9 @@ already exists). On a multi-GPU host pick a device with ``CUDA_VISIBLE_DEVICES=<
 
 .. _arkplus-submit-to-flip:
 
-*****************
+*******************
 Submitting to FLIP
-*****************
+*******************
 
 Once the app works locally, deploy it to the FLIP platform. The steps below mirror the
 :doc:`common FLIP workflow </flip-workflow>` — follow along with the Ark+ app as the concrete
@@ -248,7 +248,7 @@ Once all files are uploaded:
 #. In the model page, click **Start Training**
 #. The platform packages your app, deploys it to each selected trust, and begins the FL rounds
 #. Monitor progress in the FLIP UI — the model status transitions through ``INITIATED`` →
-   ``PREPARED`` → ``TRAINING_STARTED`` → ``RESULTS_UPLOADED``
+   ``PREPARED`` → ``RUNNING`` → ``RESULTS_UPLOADED``
 #. Per-round metrics (loss, per-lesion AUC) appear in the UI as training progresses
 
 A 50-round run with two sites on the Ark+ app takes approximately **11–12 hours** wall-clock,

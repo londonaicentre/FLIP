@@ -363,7 +363,7 @@ fmt_row() { local IFS=$'\t'; read -r m s n <<<"$1"; echo "| $2 | ${m} | ${s} | $
     echo "2. There is **no WAN, TLS, task encryption, or trust-side polling** — the round"
     echo "   envelope here is essentially pure local compute plus in-process transport."
     echo "3. Same controller and privacy-filter configuration as production"
-    echo "   (FlipFedAvgRecipe defaults: percentile=95, gamma=2.0), so server-side"
+    echo "   (FlipFedAvgRecipe defaults: percentile=10, gamma=0.01), so server-side"
     echo "   aggregation cost is directly comparable."
     echo "4. Platform-minus-simulator round-duration deltas therefore bundle network"
     echo "   transfer + platform overhead ± hardware differences; use the aggregation and"
