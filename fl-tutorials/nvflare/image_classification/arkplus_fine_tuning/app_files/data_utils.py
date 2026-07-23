@@ -170,8 +170,11 @@ def get_xray_transforms(is_validation: bool = False):
         mt.LoadImaged(keys=["image"]),
         mt.Lambdad(keys=["image"], func=_ensure_image_channel_first),
         mt.Resized(keys=["image"], spatial_size=[input_size, input_size]),
-        # mt.Rotate90d(keys=["image"], k=-1),
-        mt.Flipd(keys=["image"], spatial_axis=1),
+        # LoadImaged returns the array transposed - indexed (column, row) where DICOM PixelData
+        # is (row, column) - so swap the spatial axes back. Neither a Rotate90 nor a Flip undoes
+        # a transpose: Rotate90d(k=-1) leaves the radiograph upright but mirrored, and the Flipd
+        # that replaced it left the image lying on its side, which is what Ark+ was scored on.
+        mt.Transposed(keys=["image"], indices=(0, 2, 1)),
         mt.ScaleIntensityd(keys=["image"], channel_wise=True),
         mt.EnsureTyped(keys=["image"]),
         RepeatChannelImageNetNormalized(keys=["image"]),
