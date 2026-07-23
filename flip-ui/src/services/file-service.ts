@@ -35,10 +35,52 @@ export interface IModelConfig {
     [key: string]: unknown;
 }
 
-export const downloadModelFile = async (url: string): Promise<Blob> => {
-    const response: AxiosResponse<Blob> = await _http.get(url, { responseType: "blob" });
+export interface IPresignedDownloadResponse {
+    url: string;
+    fileName: string;
+}
+
+/**
+ * Asks flip-api for a short-lived presigned S3 GET URL for a model file.
+ *
+ * A tiny JSON response, safe under the shared axios client's timeout. What to
+ * do with the URL is the caller's choice: navigate the browser straight to it
+ * (streamed download, no memory bound — S3 serves it with
+ * `Content-Disposition: attachment`) or fetch its bytes into a Blob when the
+ * content itself is needed (config.json parsing, zip bundling).
+ */
+export const getModelFileDownloadUrl = async (url: string): Promise<IPresignedDownloadResponse> => {
+    const response: AxiosResponse<IPresignedDownloadResponse> = await _http.get(url);
 
     return response.data;
+};
+
+/**
+ * Downloads a model file's bytes.
+ *
+ * Two steps: first ask flip-api for a short-lived presigned S3 URL, then
+ * fetch the actual bytes directly from S3 with the global `fetch` API.
+ * `fetch` is used instead of the shared axios client for the byte transfer
+ * because that client would prepend `baseURL`, attach an `Authorization`
+ * header S3 doesn't expect, and re-apply the very request timeout this
+ * two-step flow exists to avoid (large files can take far longer than 30s
+ * to transfer). Note the returned Blob lives in memory — for a plain
+ * "save this file" action prefer navigating to
+ * `getModelFileDownloadUrl(...).url` instead.
+ */
+export const downloadModelFile = async (url: string): Promise<Blob> => {
+    const presigned = await getModelFileDownloadUrl(url);
+    const response = await fetch(presigned.url);
+
+    if (!response.ok) {
+        // An expired/malformed presigned URL resolves normally under fetch
+        // (unlike axios, which throws on a non-2xx) — without this check
+        // response.blob() would silently return S3's XML error body as if
+        // it were the file's real bytes.
+        throw new Error(`Download rejected by storage (status ${response.status})`);
+    }
+
+    return response.blob();
 };
 
 /**

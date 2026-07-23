@@ -129,6 +129,17 @@ class PresignedUploadResponse(BaseModel):
     maxBytes: int
 
 
+class PresignedDownloadResponse(BaseModel):
+    """Response for a presigned-GET model-file download request.
+
+    The client fetches the file's bytes directly from ``url`` (a short-lived
+    presigned S3 GET), bypassing flip-api entirely for the transfer itself.
+    """
+
+    url: str
+    fileName: str
+
+
 class ModelFile(BaseModel):
     id: str | None = None
     name: str
