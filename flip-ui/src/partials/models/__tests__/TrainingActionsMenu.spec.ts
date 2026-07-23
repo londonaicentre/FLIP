@@ -40,7 +40,7 @@ vi.mock("@/services/model-service", async (importOriginal) => {
     };
 });
 
-function mountMenu(status: ModelStatusEnum = ModelStatusEnum.TRAINING_STARTED) {
+function mountMenu(status: ModelStatusEnum = ModelStatusEnum.RUNNING) {
     return mount(TrainingActionsMenu, {
         global: {
             stubs: {

@@ -201,11 +201,11 @@ class TestIModelsInfoResponseSchema:
             id=model_id,
             name="Clinical Model",
             description="Predicts outcomes",
-            status=ModelStatus.TRAINING_STARTED,
+            status=ModelStatus.RUNNING,
             owner_id=owner_id,  # Renamed from owner_id
         )
         assert info.id == UUID(model_id)
-        assert info.status == ModelStatus.TRAINING_STARTED
+        assert info.status == ModelStatus.RUNNING
         assert info.owner_id == UUID(owner_id)
 
 

@@ -18,8 +18,30 @@
 FL_BACKEND ?= nvflare
 
 TUTORIAL_TARGETS := list-tutorials run-tutorial run-all-tutorials \
-	download-xray-data download-spleen-data test-template
+	download-xray-data download-spleen-data \
+	download-arkplus-finetuning-data download-arkplus-eval-data test-template
 
 .PHONY: $(TUTORIAL_TARGETS)
 $(TUTORIAL_TARGETS):
 	@$(MAKE) --no-print-directory -C $(FL_BACKEND) $@
+
+# ---------------------------------------------------------------------------
+# Lint / autoformat the tutorial sources. Runs ruff over the whole tree; ruff
+# auto-excludes the per-tutorial .venv/ trees and resolves config per-file
+# (NVFLARE tutorials inherit the repo-root rule set, Flower tutorials use their
+# own pyproject [tool.ruff]). Uses uvx so no synced venv is required.
+#
+# NOTE: `format` reformats every tutorial, including the Flower server_app.py /
+# strategy.py / evaluation pyproject.toml files that scripts/check_tutorial_sync.sh
+# requires to stay byte-identical to their fl-apps/flower/ templates. If `format`
+# touches one, re-sync by copying the fl-apps/flower/ template over the tutorial
+# file (see scripts/check_tutorial_sync.sh).
+RUFF ?= uvx ruff@0.14.7
+
+.PHONY: lint format
+lint:
+	$(RUFF) check .
+
+format:
+	$(RUFF) format .
+	$(RUFF) check --fix .

@@ -197,7 +197,7 @@ describe("LatestModels — defensive data access", () => {
                 id: "m1",
                 name: "Alpha",
                 description: "",
-                status: "TRAINING_STARTED"
+                status: "RUNNING"
             }]
         });
         const wrapper = mountLatestModels();
@@ -206,7 +206,7 @@ describe("LatestModels — defensive data access", () => {
         const chip = wrapper.find("[data-test='latest-model-status-chip']");
         expect(chip.classes()).toContain("rounded-full");
         expect(chip.classes().join(" ")).toContain("bg-fuchsia-100");
-        expect(chip.text()).toBe("Training Started");
+        expect(chip.text()).toBe("Running");
         // Same row as the name: they share a flex parent.
         const nameRow = chip.element.parentElement;
         expect(nameRow?.textContent).toContain("Alpha");

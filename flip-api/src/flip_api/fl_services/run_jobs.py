@@ -19,6 +19,7 @@ from flip_api.domain.schemas.status import NetStatus
 from flip_api.fl_services.services.fl_scheduler_service import (
     check_for_available_net,
     check_for_queued_jobs,
+    log_queue_positions,
     prepare_and_start_training,
 )
 from flip_api.utils.logger import logger
@@ -96,6 +97,9 @@ def run_jobs_core(db: Session) -> None:
                 "net": scheduler.netId,
             })
             return
+
+        # The pickup just advanced every remaining queued model one place.
+        log_queue_positions(db)
 
         # Step 3: Prepare and start training
         logger.info({

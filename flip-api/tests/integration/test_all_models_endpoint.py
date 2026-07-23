@@ -13,19 +13,21 @@
 """Integration coverage of the estate-wide ``GET /api/models`` endpoint (issue #726).
 
 The cross-project models list joins each model to its owning project (name), the
-model's run trusts (``ModelTrustIntersect`` -> ``Trust``) and the owner's display
-name, then applies the same access scoping as the projects list: a caller sees
-only models whose project they own or have ``ProjectUserAccess`` to, while a
-manager (``CAN_MANAGE_PROJECTS``) sees every model. These are SQL-shaped joins +
-access filters that pass silently under a mocked session, so they are exercised
-against the throwaway Postgres.
+model's run trusts (the latest FL job's ``fl_job_trust`` roster -> ``Trust``) and
+the owner's display name, then applies the same access scoping as the projects
+list: a caller sees only models whose project they own or have
+``ProjectUserAccess`` to, while a manager (``CAN_MANAGE_PROJECTS``) sees every
+model. These are SQL-shaped joins + access filters that pass silently under a
+mocked session, so they are exercised against the throwaway Postgres.
 """
 
+from datetime import datetime
 from uuid import UUID, uuid4
 
 from fastapi.testclient import TestClient
 
 from flip_api.db.models.main_models import (
+    FLJob,
     Model,
     ModelTrustIntersect,
     Projects,
@@ -33,7 +35,7 @@ from flip_api.db.models.main_models import (
     Trust,
 )
 from flip_api.db.models.user_models import UserProfile
-from flip_api.domain.schemas.status import ModelStatus, ProjectStatus, TrustIntersectStatus
+from flip_api.domain.schemas.status import JobStatus, ModelStatus, ProjectStatus, TrustIntersectStatus
 from tests.integration.conftest import admin_user, override_verify_token_as
 
 MODELS_URL = "/api/models"
@@ -70,15 +72,29 @@ def _grant_access(session, *, project_id: UUID, user_id: UUID) -> None:
     session.commit()
 
 
-def _add_run_trust(session, trust_factory, *, model_id: UUID, name: str, code: str) -> Trust:
+def _add_trust(session, trust_factory, *, name: str, code: str | None) -> Trust:
     trust = trust_factory.build(name=name, code=code)
     session.add(trust)
     session.commit()
+    return trust
+
+
+def _dispatch_run(session, *, model_id: UUID, trusts: list[Trust]) -> FLJob:
+    """Record a dispatched run the way initiate-training does: one FL job whose
+    ``fl_job_trust`` roster holds the selected trusts."""
+    job = FLJob(model_id=model_id, trusts=trusts)
+    session.add(job)
+    session.commit()
+    return job
+
+
+def _approve_trust_for_model(session, *, model_id: UUID, trust_id: UUID) -> None:
+    """Record a trust approval the way save_model does — one ModelTrustIntersect
+    row per approved trust at model creation. Deliberately NOT a dispatch record."""
     session.add(
-        ModelTrustIntersect(model_id=model_id, trust_id=trust.id, status=TrustIntersectStatus.INITIALISED)
+        ModelTrustIntersect(model_id=model_id, trust_id=trust_id, status=TrustIntersectStatus.INITIALISED)
     )
     session.commit()
-    return trust
 
 
 def _ids(payload) -> set[str]:
@@ -142,8 +158,15 @@ def test_row_carries_project_name_owner_name_and_run_trusts(
         name="stroke-v1",
         description="Predicts stroke outcomes from CT",
     )
-    _add_run_trust(session, trust_factory, model_id=model.id, name="Guy's & St Thomas'", code="GSTT")
-    _add_run_trust(session, trust_factory, model_id=model.id, name="King's College Hospital", code="KCH")
+    gstt = _add_trust(session, trust_factory, name="Guy's & St Thomas'", code="GSTT")
+    kch = _add_trust(session, trust_factory, name="King's College Hospital", code="KCH")
+    excluded = _add_trust(session, trust_factory, name="Excluded Trust", code="EXC")
+    # All three are approved for the model (what save_model records)...
+    for trust in (gstt, kch, excluded):
+        _approve_trust_for_model(session, model_id=model.id, trust_id=trust.id)
+    # ...but the run was dispatched to only two. The row must report the
+    # dispatch roster, not the approved pool.
+    _dispatch_run(session, model_id=model.id, trusts=[gstt, kch])
 
     override_verify_token_as(user_id)
     row = next(r for r in client.get(MODELS_URL).json()["data"] if r["id"] == str(model.id))
@@ -156,14 +179,18 @@ def test_row_carries_project_name_owner_name_and_run_trusts(
 
 
 def test_model_without_run_trusts_returns_empty_trusts(
-    client: TestClient, session, project_factory, model_factory
+    client: TestClient, session, project_factory, model_factory, trust_factory
 ):
-    """A model that has not been dispatched (no ModelTrustIntersect rows) has an empty trust list."""
+    """An undispatched model has an empty trust list — even once trusts are
+    approved for it (approval writes ModelTrustIntersect; only initiate-training
+    writes the fl_job_trust roster the endpoint reads)."""
     user_id = uuid4()
     project = _add_project(session, project_factory, owner_id=user_id, name="Fresh")
     model = _add_model(
         session, model_factory, project_id=project.id, owner_id=user_id, status=ModelStatus.PENDING
     )
+    approved = _add_trust(session, trust_factory, name="Approved But Idle", code="ABI")
+    _approve_trust_for_model(session, model_id=model.id, trust_id=approved.id)
 
     override_verify_token_as(user_id)
     row = next(r for r in client.get(MODELS_URL).json()["data"] if r["id"] == str(model.id))
@@ -177,7 +204,7 @@ def test_status_filter_narrows_results(client: TestClient, session, project_fact
     project = _add_project(session, project_factory, owner_id=user_id, name="Mixed")
     training = _add_model(
         session, model_factory, project_id=project.id, owner_id=user_id,
-        name="live", status=ModelStatus.TRAINING_STARTED,
+        name="live", status=ModelStatus.RUNNING,
     )
     _add_model(
         session, model_factory, project_id=project.id, owner_id=user_id,
@@ -185,7 +212,7 @@ def test_status_filter_narrows_results(client: TestClient, session, project_fact
     )
 
     override_verify_token_as(user_id)
-    response = client.get(MODELS_URL, params={"status": "TRAINING_STARTED"})
+    response = client.get(MODELS_URL, params={"status": "RUNNING"})
 
     assert response.status_code == 200
     assert _ids(response.json()) == {str(training.id)}
@@ -308,13 +335,13 @@ def test_response_carries_per_status_counts(client: TestClient, session, project
     project = _add_project(session, project_factory, owner_id=user_id, name="Counts")
     for _ in range(2):
         _add_model(session, model_factory, project_id=project.id, owner_id=user_id, status=ModelStatus.PENDING)
-    _add_model(session, model_factory, project_id=project.id, owner_id=user_id, status=ModelStatus.TRAINING_STARTED)
+    _add_model(session, model_factory, project_id=project.id, owner_id=user_id, status=ModelStatus.RUNNING)
 
     override_verify_token_as(user_id)
     counts = client.get(MODELS_URL).json()["statusCounts"]
 
     assert counts.get("PENDING") == 2
-    assert counts.get("TRAINING_STARTED") == 1
+    assert counts.get("RUNNING") == 1
 
 
 def test_status_counts_ignore_the_active_status_filter(
@@ -326,7 +353,7 @@ def test_status_counts_ignore_the_active_status_filter(
     pending = _add_model(
         session, model_factory, project_id=project.id, owner_id=user_id, status=ModelStatus.PENDING
     )
-    _add_model(session, model_factory, project_id=project.id, owner_id=user_id, status=ModelStatus.TRAINING_STARTED)
+    _add_model(session, model_factory, project_id=project.id, owner_id=user_id, status=ModelStatus.RUNNING)
 
     override_verify_token_as(user_id)
     body = client.get(MODELS_URL, params={"status": "PENDING"}).json()
@@ -335,7 +362,7 @@ def test_status_counts_ignore_the_active_status_filter(
     assert _ids(body) == {str(pending.id)}
     # ...but the tiles still see the full breakdown.
     assert body["statusCounts"].get("PENDING") == 1
-    assert body["statusCounts"].get("TRAINING_STARTED") == 1
+    assert body["statusCounts"].get("RUNNING") == 1
 
 
 def test_status_counts_exclude_inaccessible_projects(
@@ -353,3 +380,36 @@ def test_status_counts_exclude_inaccessible_projects(
     counts = client.get(MODELS_URL).json()["statusCounts"]
 
     assert counts.get("PENDING") == 1
+
+
+def test_queued_models_carry_their_queue_position(client: TestClient, session, project_factory, model_factory):
+    """Queued rows expose their 1-based FIFO rank (issue #788); picked-up rows expose null."""
+    admin_id = admin_user(session)
+    project = _add_project(session, project_factory, owner_id=admin_id, name="Queue")
+    first = _add_model(
+        session, model_factory, project_id=project.id, owner_id=admin_id,
+        name="first-queued", status=ModelStatus.INITIATED,
+    )
+    second = _add_model(
+        session, model_factory, project_id=project.id, owner_id=admin_id,
+        name="second-queued", status=ModelStatus.INITIATED,
+    )
+    picked = _add_model(
+        session, model_factory, project_id=project.id, owner_id=admin_id,
+        name="picked-up", status=ModelStatus.INITIATED,
+    )
+    # The queue is QUEUED jobs by created ascending; the picked job left it despite
+    # being the oldest, so it must not occupy a position.
+    session.add(FLJob(model_id=first.id, created=datetime(2026, 1, 1, 10, 0, 0)))
+    session.add(FLJob(model_id=second.id, created=datetime(2026, 1, 1, 10, 5, 0)))
+    session.add(FLJob(model_id=picked.id, status=JobStatus.IN_PROGRESS, created=datetime(2026, 1, 1, 9, 0, 0)))
+    session.commit()
+
+    override_verify_token_as(admin_id)
+    response = client.get(MODELS_URL)
+
+    assert response.status_code == 200
+    by_name = {row["name"]: row for row in response.json()["data"]}
+    assert by_name["first-queued"]["queuePosition"] == 1
+    assert by_name["second-queued"]["queuePosition"] == 2
+    assert by_name["picked-up"]["queuePosition"] is None
