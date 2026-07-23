@@ -26,10 +26,29 @@ one of the following is a place where a wrong assumption fails **silently** rath
 | `LABELS` | `classifier_operator.py` | Channel order must match the training labels. Reversed labels produce a confident, wrong report. |
 | Activation | `post_process` in `compute()` | Must match the training loss. The FLIP xray tutorial uses BCE, so outputs are **independent sigmoid** labels — a softmax would turn two findings into one either/or choice. |
 | Preprocessing | `pre` in `compute()` | Must mirror the app's validation transforms, not its training transforms (no random augmentation). |
+| Orientation | `Flip` in `pre` | **Do not transcribe your training chain's orientation transform literally.** Training loads DICOM with MONAI's `LoadImaged`, which returns the array transposed — `(column, row)`, not `PixelData`'s `(row, column)` — so its orientation transform is calibrated to that transpose. `DICOMSeriesToVolumeOperator` does not transpose, so the equivalent step here is a different transform. For the xray tutorial, training's `Rotate90d(k=-1)` composes with the transpose into a plain left-right mirror, which is why this operator uses `Flip(spatial_axis=1)`. Derive yours by comparison, not by copying (see below). |
 | Input size | `Resize(spatial_size=…)` | Must match what the network was trained on. |
 | `POSITIVE_THRESHOLD` | `classifier_operator.py` | Reporting threshold; state it in the report text. |
 | `Sample_Rules_Text` | `app.py` | Modality must match your data. Radiographs are `CR` or `DX`, **not** `CT` — a copied CT rule selects nothing and the app still exits 0. |
 | `ModelInfo` / `EquipmentInfo` | `app.py` | Provenance recorded in the SR instance. |
+
+## Checking the orientation for your own model
+
+Run one study through both paths and compare the arrays — do not reason about it. Dump what
+`DICOMSeriesToVolumeOperator` hands the operator, dump what your training chain's validation
+transforms produce for the same file, then find which of the eight rotation/flip combinations maps
+one onto the other:
+
+```python
+for k in range(4):
+    for name, fn in (("", lambda x: x), ("+fliplr", np.fliplr), ("+flipud", np.flipud)):
+        print(k, name, np.abs(fn(np.rot90(map_array, k)) - training_array).max())
+```
+
+The correct one gives `0.0` and every other is far from it, so the answer is unambiguous. Do this on
+a **non-square** image if you can: on a square one, a transpose and a rotation are indistinguishable
+by shape and it is easy to conclude the wrong thing. A mis-set orientation does not raise — it just
+degrades predictions, and for a chest radiograph a mirror also silently swaps left and right.
 
 ## If you are targeting deepcOS
 

@@ -337,6 +337,30 @@ If you are adapting a bundle from the MONAI Model Zoo, do not assume its preproc
 yours even when the architecture is identical — as the spleen intensity window above demonstrates,
 it may not.
 
+.. warning::
+
+   **Orientation transforms are the exception to "transcribe it verbatim".** Training and the MAP
+   reach the pixels through different loaders, and the orientation step is the one that is
+   calibrated to its loader rather than to the model.
+
+   MONAI's ``LoadImaged`` returns a DICOM's pixel array **transposed** — indexed
+   ``(column, row)``, where ``PixelData`` is ``(row, column)``. Training chains routinely carry a
+   rotation that exists to undo that transpose. The MAP's ``DICOMSeriesToVolumeOperator`` does not
+   transpose, so copying the rotation across applies a correction to something that was never
+   wrong, and you end up with a differently-wrong orientation.
+
+   The xray classification template is a worked example. Training applies ``Rotate90d(k=-1)`` after
+   ``LoadImaged``; transpose composed with that rotation is algebraically a plain left-right
+   mirror, so the network was in fact trained on mirrored radiographs, and the MAP has to mirror
+   too. ``map-apps/classification/classifier_operator.py`` therefore uses ``Flip(spatial_axis=1)``
+   and *not* ``Rotate90``.
+
+   Derive yours empirically — dump both arrays for one study and search the eight rotation/flip
+   combinations for the one that matches, as ``map-apps/classification/README.md`` describes. Use a
+   non-square image: on a square one, a transpose and a rotation cannot be told apart by shape.
+   Nothing about this failure is loud. The MAP runs, the SR is written, and the numbers are simply
+   worse than they should be.
+
 
 .. _map-package:
 
