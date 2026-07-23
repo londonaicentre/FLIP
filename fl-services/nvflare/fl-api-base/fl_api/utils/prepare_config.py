@@ -662,8 +662,8 @@ def validate_config(config: dict) -> IOverridableConfig:
 
     best_model_metric = config.get("BEST_MODEL_METRIC")
     if best_model_metric is not None:
-        if not isinstance(best_model_metric, str):
-            raise ValueError("BEST_MODEL_METRIC must be a string metric label")
+        if not isinstance(best_model_metric, str) or not best_model_metric.strip():
+            raise ValueError("BEST_MODEL_METRIC must be a non-empty string metric label")
         validated.BEST_MODEL_METRIC = best_model_metric
 
         minimize = config.get("BEST_MODEL_METRIC_MINIMIZE", False)
@@ -672,5 +672,9 @@ def validate_config(config: dict) -> IOverridableConfig:
         if not isinstance(minimize, bool):
             raise ValueError("BEST_MODEL_METRIC_MINIMIZE must be a boolean")
         validated.BEST_MODEL_METRIC_MINIMIZE = minimize
+    elif "BEST_MODEL_METRIC_MINIMIZE" in config:
+        # BEST_MODEL_METRIC_MINIMIZE only has meaning alongside a selector metric — silently
+        # accepting it without BEST_MODEL_METRIC would let a user believe it took effect.
+        raise ValueError("BEST_MODEL_METRIC_MINIMIZE requires BEST_MODEL_METRIC to also be set")
 
     return validated

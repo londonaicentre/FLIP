@@ -336,13 +336,28 @@ def test_validate_config_best_model_metric_minimize():
 
 
 def test_validate_config_rejects_non_string_best_model_metric():
-    with pytest.raises(ValueError, match="BEST_MODEL_METRIC must be a string"):
+    with pytest.raises(ValueError, match="BEST_MODEL_METRIC must be a non-empty string"):
         validate_config({"BEST_MODEL_METRIC": 123})
+
+
+def test_validate_config_rejects_empty_best_model_metric():
+    with pytest.raises(ValueError, match="BEST_MODEL_METRIC must be a non-empty string"):
+        validate_config({"BEST_MODEL_METRIC": ""})
+
+
+def test_validate_config_rejects_whitespace_only_best_model_metric():
+    with pytest.raises(ValueError, match="BEST_MODEL_METRIC must be a non-empty string"):
+        validate_config({"BEST_MODEL_METRIC": "   "})
 
 
 def test_validate_config_rejects_non_bool_best_model_metric_minimize():
     with pytest.raises(ValueError, match="BEST_MODEL_METRIC_MINIMIZE must be a boolean"):
         validate_config({"BEST_MODEL_METRIC": "VAL_DICE", "BEST_MODEL_METRIC_MINIMIZE": "yes"})
+
+
+def test_validate_config_rejects_best_model_metric_minimize_without_metric():
+    with pytest.raises(ValueError, match="BEST_MODEL_METRIC_MINIMIZE requires BEST_MODEL_METRIC"):
+        validate_config({"BEST_MODEL_METRIC_MINIMIZE": True})
 
 
 def test_validate_config_best_model_metric_defaults_none():

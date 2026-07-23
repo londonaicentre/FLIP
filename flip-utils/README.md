@@ -123,8 +123,11 @@ loss-like metrics, `BEST_MODEL_METRIC_MINIMIZE: true`) wires NVFLARE's stock
   fabricated from the final model otherwise.
 
 The metric label must be one the trainer reports (e.g. the client-API x-ray tutorial reports
-`VAL_LOSS`, per-lesion `VAL-<METRIC>-<lesion>` and macro `VAL-<METRIC>` labels). Currently wired
-for the `standard_client_api` recipe path (`FlipFedAvgRecipe(best_model_metric=...)`).
+`VAL_LOSS`, per-lesion `VAL-<METRIC>-<lesion>` and macro `VAL-<METRIC>` labels). Wired for both
+supported paths: the `standard_client_api` recipe (`FlipFedAvgRecipe(best_model_metric=...)`) and
+platform-submitted jobs, where fl-api-base's job-assembly step (`prepare_config.validate_config` /
+`configure_server`) reads `BEST_MODEL_METRIC` / `BEST_MODEL_METRIC_MINIMIZE` straight from the
+uploaded `config.json` and injects the same selector.
 
 ### Job Types
 

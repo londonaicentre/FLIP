@@ -15,6 +15,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, Mock, call, patch
 
 import pytest
+from nvflare.app_common.app_constant import DefaultCheckpointFileName
 from nvflare.app_opt.pt.file_model_persistor import PTFileModelPersistor
 
 from flip.constants import PTConstants
@@ -190,7 +191,9 @@ class TestPersistToS3AndCleanup:
         fabricated: shipping a copy of the final model as "best" would imply a selection happened.
         """
         mock_constants.LOCAL_DEV = False
-        best_model_path = os.path.join("/mock/workspace", "app_server", "model", "best_FL_global_model.pt")
+        best_model_path = os.path.join(
+            "/mock/workspace", "app_server", "model", DefaultCheckpointFileName.BEST_GLOBAL_MODEL
+        )
 
         flip = MagicMock()
         component = PersistToS3AndCleanup(model_id="123e4567-e89b-12d3-a456-426614174000", flip=flip)
