@@ -16,7 +16,8 @@ docker restart flip-api              # boot seeding grants the demo users their 
 
 # record (from the repo root; ~30-45 min end to end, dominated by import + training)
 make demo-video
-# → flip-ui/test/cypress/demo/out/flip-demo.mp4   (~3 min, ~13 MB, 3840x2400 @ 30fps)
+# → flip-ui/test/cypress/demo/out/flip-demo-xray.mp4   (~3 min, ~15 MB, 3840x2400 @ 30fps)
+#   (the final mp4 is named for the recorded app, so --app spleen lands beside it)
 ```
 
 ## The segments
@@ -38,15 +39,16 @@ working on and re-assemble:
 ```bash
 make demo-video DEMO_ARGS="--project-id <uuid> --from-segment 4"   # keep segs 1-3, redo 4-6
 make demo-video DEMO_ARGS="--video-scale 1 --skip-xnat"            # fast low-res draft
-bash scripts/assemble-demo-video.sh test/cypress/demo/videos out/flip-demo.mp4 3   # re-assemble only (from flip-ui/)
+# re-assemble only, from flip-ui/ (the script takes an explicit out path — it has no app to name itself after):
+bash scripts/assemble-demo-video.sh test/cypress/demo/videos test/cypress/demo/out/flip-demo-xray.mp4 3
 
 # Spleen segmentation instead of chest X-ray (CT cohort; labels are added
 # off-camera between the import and the model segments — same enrichment
 # contract as e2e_smoke, FLIP_PROJECT_ID exported; escape $ once per make):
 make -C flip-api demo_video DEMO_ARGS="--app spleen \
   --data-enrichment-cwd <path-to>/flip_project_spleen_segmentation \
-  --data-enrichment-cmd 'uv run upload_labels_to_XNAT.py --flip-project-id \"\$\$FLIP_PROJECT_ID\"' \
-  --out <abs-path>/flip-demo-spleen.mp4"
+  --data-enrichment-cmd 'uv run upload_labels_to_XNAT.py --flip-project-id \"\$\$FLIP_PROJECT_ID\"'"
+# → out/flip-demo-spleen.mp4
 ```
 
 A single segment can also be run standalone (see `run_segment` in `flip-api/tests/demo_video.py` for the exact

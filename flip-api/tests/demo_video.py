@@ -173,7 +173,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--training-start-timeout", type=int, default=900)
     parser.add_argument("--metrics-timeout", type=int, default=1500)
     parser.add_argument("--training-finish-timeout", type=int, default=5400)
-    parser.add_argument("--out", default=str(OUT_DIR / "flip-demo.mp4"), help="Final assembled mp4 path")
+    parser.add_argument(
+        "--out",
+        default=None,
+        help="Final assembled mp4 path (default: <demo>/out/flip-demo-<app>.mp4, so apps never overwrite each other)",
+    )
     parser.add_argument("--no-assemble", action="store_true", help="Record segments but skip the ffmpeg assembly")
     parser.add_argument(
         "--video-scale",
@@ -552,7 +556,7 @@ def main(argv: list[str] | None = None) -> int:
         _log("⏭️  --no-assemble: segment mp4s left in " + str(VIDEOS_DIR))
         return 0
 
-    out_path = Path(args.out).resolve()
+    out_path = Path(args.out).resolve() if args.out else (OUT_DIR / f"flip-demo-{args.app}.mp4").resolve()
     _log("🎞️  Assembling final video …")
     result = subprocess.run(
         ["bash", "scripts/assemble-demo-video.sh", str(VIDEOS_DIR), str(out_path), str(args.video_scale)],
