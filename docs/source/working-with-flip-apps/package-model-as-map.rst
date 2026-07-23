@@ -349,11 +349,13 @@ it may not.
    transpose, so copying the rotation across applies a correction to something that was never
    wrong, and you end up with a differently-wrong orientation.
 
-   The xray classification template is a worked example. Training applies ``Rotate90d(k=-1)`` after
-   ``LoadImaged``; transpose composed with that rotation is algebraically a plain left-right
-   mirror, so the network was in fact trained on mirrored radiographs, and the MAP has to mirror
-   too. ``map-apps/classification/classifier_operator.py`` therefore uses ``Flip(spatial_axis=1)``
-   and *not* ``Rotate90``.
+   The xray tutorial is a worked example of getting this wrong. It applied ``Rotate90d(k=-1)``
+   after ``LoadImaged`` — which does produce an upright radiograph, because the loaded image is
+   sideways. But a transpose composed with a rotation is algebraically a **mirror**, so the chain
+   was training on left-right flipped radiographs: anatomically plausible, visually undetectable,
+   and wrong. It now uses ``Transposed(keys=["image"], indices=(0, 2, 1))``, which undoes the
+   loader and nothing more. Because both paths then agree on the image as DICOM stores it,
+   ``map-apps/classification/classifier_operator.py`` needs no orientation transform at all.
 
    Derive yours empirically — dump both arrays for one study and search the eight rotation/flip
    combinations for the one that matches, as ``map-apps/classification/README.md`` describes. Use a

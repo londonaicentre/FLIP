@@ -33,7 +33,11 @@ def get_xray_transforms(is_validation: bool = False) -> mt.Compose:
         mt.LoadImaged(keys=["image"]),
         mt.EnsureChannelFirstd(keys=["image"], channel_dim="no_channel"),
         mt.Resized(keys=["image"], spatial_size=[224, 224]),
-        mt.Rotate90d(keys=["image"], k=-1),
+        # LoadImaged returns the array transposed - indexed (column, row) where DICOM PixelData is
+        # (row, column) - so swap the spatial axes back. A Rotate90 here would leave the radiograph
+        # upright but mirrored, which looks entirely correct and silently swaps the patient's left
+        # and right.
+        mt.Transposed(keys=["image"], indices=(0, 2, 1)),
         mt.ScaleIntensityd(keys=["image"]),
     ]
     if not is_validation:

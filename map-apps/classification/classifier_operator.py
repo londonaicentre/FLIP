@@ -20,18 +20,17 @@ The preprocessing below mirrors the training application's ``transforms.py::get_
 these in step with training is the app author's responsibility; a mismatch here degrades the result
 silently.
 
-The orientation step needs care, because the two paths read DICOM through different loaders. MONAI's
-``LoadImaged`` returns the pixel array transposed — indexed ``(column, row)`` rather than the
-``(row, column)`` of ``PixelData`` — and the training chain's ``Rotate90d(k=-1)`` composes with that
-transpose into a net left-right mirror. So the network was trained on mirrored radiographs. This
-operator instead receives its array from ``DICOMSeriesToVolumeOperator``, which preserves DICOM's
-``(row, column)`` order, and must therefore mirror explicitly to present the network the orientation
-it was trained on. ``Flip(spatial_axis=1)`` below does that; transcribing ``Rotate90`` instead would
-be wrong, as it corrects for a transpose this path never applies.
+There is deliberately **no orientation transform here**, and that is worth stating explicitly because
+the training chain has one. MONAI's ``LoadImaged`` returns a DICOM's pixel array transposed — indexed
+``(column, row)`` where ``PixelData`` is ``(row, column)`` — so the training chain carries a
+``Transposed`` step whose only job is to undo that. This operator receives its array from
+``DICOMSeriesToVolumeOperator``, which preserves DICOM's ``(row, column)`` order, so there is nothing
+to undo: both paths end up on the image as stored.
 
-This was verified rather than reasoned about: the same CR study pushed through the training chain and
-through this operator agrees bit-for-bit (``max|diff| == 0``) with the flip, on both a square and a
-non-square radiograph, and disagrees under every other rotation/flip combination.
+Do not "restore" an orientation transform here by transcribing one from a training chain. Verified by
+pushing the same CR study through both paths: with the training chain's ``Transposed`` and no
+transform here, the two agree bit-for-bit (``max|diff| == 0``) on both a square and a non-square
+radiograph, and disagree under every rotation or flip.
 """
 
 import json
@@ -41,7 +40,7 @@ from pathlib import Path
 
 import torch
 from monai.deploy.core import AppContext, ConditionType, Fragment, Image, Operator, OperatorSpec
-from monai.transforms import Activations, Compose, EnsureType, Flip, Resize, ScaleIntensity
+from monai.transforms import Activations, Compose, EnsureType, Resize, ScaleIntensity
 
 # Label semantics come from the training app's config.json LESIONS block. The trainer optimises a
 # binary cross-entropy loss, so the two outputs are independent binary labels read through a
@@ -111,9 +110,9 @@ class FlipXrayClassifierOperator(Operator):
         while array.ndim > 2:
             array = array[0]
 
-        # Same order as the training chain: Resized -> (orientation) -> ScaleIntensityd. The flip
-        # stands in for training's Rotate90d(k=-1); see the module docstring for why they differ.
-        pre = Compose([EnsureType(), Resize(spatial_size=(224, 224)), Flip(spatial_axis=1), ScaleIntensity()])
+        # Same order as the training chain: Resized -> ScaleIntensityd. No orientation transform —
+        # this path is already on the image as DICOM stores it; see the module docstring.
+        pre = Compose([EnsureType(), Resize(spatial_size=(224, 224)), ScaleIntensity()])
         tensor = pre(array[None])  # add channel -> (1, 224, 224)
         batch = torch.as_tensor(tensor)[None].float().to(device)  # add batch -> (1, 1, 224, 224)
 
