@@ -675,10 +675,11 @@ if [[ "$BACKEND" == "nvflare" ]]; then
     grep -oP '^\d+ .*Start aggregation\.' "$FL_SERVER_TEXT" | awk '{print $1}' > "$AGG_STARTS" || true
     grep -oP '^\d+ .*End aggregation\.' "$FL_SERVER_TEXT" | awk '{print $1}' > "$AGG_ENDS" || true
 
-    # Per-contribution lines. NVFLARE's IntimeModelSelector logs
+    # Per-contribution lines. Stock NVFLARE's ScatterAndGather controller itself logs
     #   "Contribution from <client> ACCEPTED|REJECTED by the aggregator at round <N>."
-    # (older builds omit " at round <N>", hence the optional group). The round tag lets us
-    # break contributions out per-round in the table below.
+    # (nvflare/app_common/workflows/scatter_and_gather.py; older builds omit " at round <N>",
+    # hence the optional group). The round tag lets us break contributions out per-round in
+    # the table below.
     # NB: the `|| true` on these is load-bearing — with `set -o pipefail`, a zero-match grep
     # fails the whole pipeline and set -e would abort the script (wc still prints 0 first).
     CONTRIB_FILE="${WORK_DIR}/contributions.tsv"   # verdict \t round ('-' if untagged)

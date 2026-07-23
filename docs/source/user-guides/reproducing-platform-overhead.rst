@@ -110,9 +110,10 @@ The bundle contains:
 * ``rounds.tsv`` — per-round timing table (round number, duration, aggregation time, gap)
 * ``summary.md`` — human-readable statistics (mean ± std, totals)
 * ``round_timings_boxplot.png`` — visual overview of per-round timing
-* ``experiment.log`` — the full simulator server log (model files excluded; metrics-only)
+* ``logs/`` — the simulator's log files under their original names, size-capped at 64 MiB each
+  (model files excluded; metrics-only)
 * ``provenance/config.json`` — the app configuration used
-* ``provenance/.env.app`` — per-site data paths and environment
+* ``provenance/env.app.txt`` — per-site data paths and environment (copy of ``.env.app``)
 * ``provenance/host_info.txt`` — GPU model, driver version, OS, git commit
 
 If you already ran the simulator and only need to re-bundle (e.g., the simulation completed but
