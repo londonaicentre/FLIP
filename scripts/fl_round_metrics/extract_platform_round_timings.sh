@@ -12,7 +12,7 @@
 # limitations under the License.
 #
 #
-# extract_model_metrics.sh — pull FL-run metrics for one model out of the Central Hub's
+# extract_platform_round_timings.sh — pull FL-run metrics for one model out of the Central Hub's
 # production CloudWatch logs (flip-api, fl-api-net-*, fl-server-net-*). Trust-side logs
 # (EC2, not CloudWatch) are out of scope — see the "NOT AVAILABLE" notes this script writes
 # into summary.md for anything that can only be observed there.
@@ -127,7 +127,7 @@ Arguments:
   <flip-ui-model-url>   e.g. https://app.flip.aicentre.co.uk/project/<project_id>/model/<model_id>
 
 Options:
-  -o, --output-dir DIR      Base output directory (default: ./model_metrics)
+  -o, --output-dir DIR      Base output directory (default: ./round_metrics)
       --profile PROFILE     AWS CLI profile (default: prod)
       --region REGION       AWS region (default: eu-west-2)
       --start ISO8601       Start of the search window (skips auto-discovery), e.g. 2026-06-30T09:00:00Z
@@ -152,7 +152,7 @@ Examples:
 EOF
 }
 
-OUTPUT_DIR="./model_metrics"
+OUTPUT_DIR="./round_metrics"
 AWS_PROFILE_ARG="prod"
 AWS_REGION_ARG="eu-west-2"
 USER_START=""

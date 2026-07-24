@@ -13,7 +13,7 @@
 #
 """Render seaborn boxplots of per-round FL timing metrics from a rounds.tsv.
 
-Companion to extract_model_metrics.sh, which writes rounds.tsv (one row per
+Companion to extract_platform_round_timings.sh (and its simulator sibling), which writes rounds.tsv (one row per
 communication round, ms-precision epoch columns) and invokes this script
 best-effort via `uv run --no-project --with pandas --with seaborn`. Not part of
 any FLIP service — pandas/seaborn are deliberately NOT project dependencies.
@@ -48,7 +48,7 @@ METRIC_ORDER = ["Round duration", "Aggregation", "Inter-round gap"]
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("rounds_tsv", help="rounds.tsv written by extract_model_metrics.sh")
+    parser.add_argument("rounds_tsv", help="rounds.tsv written by either extractor")
     parser.add_argument("output_png", help="path of the PNG to write")
     parser.add_argument("--model-id", default="unknown", help="model UUID (title only)")
     parser.add_argument("--backend", default="unknown", help="detected FL backend (title only)")

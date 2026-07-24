@@ -469,7 +469,7 @@ fl-services/flower/provision/creds/
 fl-services/flower/runs/
 fl-tutorials/flower/data/
 
-# Round-metric extraction output (scripts/extract_model_metrics.sh /
-# scripts/extract_simulator_metrics.sh and the tutorials' `make metrics` write
+# Round-timing extraction output (scripts/fl_round_metrics/ extractors and the
+# tutorials' `make round-metrics` write
 # rounds.tsv + summary.md + boxplots here) — data artifacts, not source.
-model_metrics/
+round_metrics/

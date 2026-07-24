@@ -177,19 +177,19 @@ uv run --project ../../../../flip-utils --extra full python job.py --n_clients 3
 
 ## Round metrics & platform comparison
 
-After a simulator run, `make metrics` parses the FLIP `ScatterAndGather` controller events
+After a simulator run, `make round-metrics` parses the FLIP `ScatterAndGather` controller events
 (`Round N started/finished`, `Start/End aggregation`, `Contribution ... ACCEPTED`) from the
-simulator server log — the same lines `scripts/extract_model_metrics.sh` pulls from CloudWatch for
+simulator server log — the same lines `scripts/fl_round_metrics/extract_platform_round_timings.sh` pulls from CloudWatch for
 a deployed run — and writes the same artefacts (`rounds.tsv`, `summary.md`, a timing boxplot) under
-`model_metrics/` at the repo root:
+`round_metrics/` in this directory:
 
 ```bash
 make run NUM_ROUNDS=50            # full-length local replica (GPU, hours; smoke-test with the default 3 first)
-make metrics                      # -> model_metrics/simulator-<workspace>-<timestamp>/
-make metrics COMPARE=/path/to/platform/rounds.tsv   # adds a platform − simulator overhead table
+make round-metrics                      # -> round_metrics/simulator-<workspace>-<timestamp>/
+make round-metrics COMPARE=/path/to/platform/rounds.tsv   # adds a platform − simulator overhead table
 ```
 
-`COMPARE` takes a `rounds.tsv` produced by `scripts/extract_model_metrics.sh` for a platform run of
+`COMPARE` takes a `rounds.tsv` produced by `scripts/fl_round_metrics/extract_platform_round_timings.sh` for a platform run of
 this same app; the summary then includes a side-by-side steady-state table (round duration,
 aggregation time, inter-round gap), i.e. a baseline for the overhead the platform adds over bare
 local training. Knobs: `WORKSPACE` (simulator workspace parsed for logs; defaults to `job.py`'s
@@ -210,7 +210,7 @@ everything to send back:
 
 ```bash
 git clone <repo> && cd FLIP/fl-tutorials/nvflare/image_classification/arkplus_fine_tuning
-make experiment          # hours on GPU; produces arkplus_sim_experiment_<host>_<stamp>.zip here
+make reproduce-overhead          # hours on GPU; produces arkplus_sim_experiment_<host>_<stamp>.zip here
 ```
 
 The bundle contains the metrics artefacts (`rounds.tsv`, `summary.md`, boxplot), the simulator
@@ -220,9 +220,9 @@ logs (model files excluded), and a `provenance/` folder (`config.json`, `.env.ap
 Prerequisites: Linux with an NVIDIA GPU + drivers, [`uv`](https://docs.astral.sh/uv/) on `PATH`
 (the first run builds the flip-utils environment automatically), internet access (Hugging Face +
 Dropbox), and ~15 GB free disk. On a multi-GPU host pick a device with
-`CUDA_VISIBLE_DEVICES=<n> make experiment`. Knobs: `EXPERIMENT_ROUNDS` (default `50`, the deployed
+`CUDA_VISIBLE_DEVICES=<n> make reproduce-overhead`. Knobs: `OVERHEAD_ROUNDS` (default `50`, the deployed
 run's `GLOBAL_ROUNDS`). If the simulation finished but packing failed (or you want to re-send),
-`make package` re-bundles the last run without re-simulating.
+`make package-overhead-bundle` re-bundles the last run without re-simulating.
 
 ## Key files
 
