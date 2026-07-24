@@ -95,6 +95,12 @@ class TestTrainingMetrics:
         with pytest.raises(ValidationError):
             TrainingMetrics(fl_client_name="site-1", global_round=1, label="loss", result=1.0, x_value=bad_x)
 
+    @pytest.mark.parametrize("bad_result", [float("nan"), float("inf"), float("-inf")])
+    def test_non_finite_result_rejected(self, bad_result):
+        """result carries the same JSON-encoding hazard as x_value, so it gets the same edge guard."""
+        with pytest.raises(ValidationError):
+            TrainingMetrics(fl_client_name="site-1", global_round=1, label="loss", result=bad_result)
+
     @pytest.mark.parametrize("bad_label", ["", "x" * 65])
     def test_out_of_bounds_x_label_rejected(self, bad_label):
         """x_label is plot identity and the rendered axis title: empty or oversized labels are refused."""

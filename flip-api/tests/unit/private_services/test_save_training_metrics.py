@@ -116,6 +116,12 @@ class TestTrainingMetricsModel:
         with pytest.raises(ValidationError):
             TrainingMetrics(**sample_metrics_payload_dict, x_value=float("nan"))
 
+    def test_payload_rejects_non_finite_result(self, sample_metrics_payload_dict):
+        # result carries the same JSON-encoding hazard as x_value: a persisted NaN/Inf would
+        # break the metrics response for the whole model, so reject it at the edge too.
+        with pytest.raises(ValidationError):
+            TrainingMetrics(**{**sample_metrics_payload_dict, "result": float("nan")})
+
 
 class TestServiceFunctions:
     def test_save_training_metrics_success(

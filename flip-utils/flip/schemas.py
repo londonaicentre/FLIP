@@ -82,10 +82,11 @@ class TrainingMetrics(BaseModel):
     fl_client_name: str
     global_round: int = Field(ge=0)
     label: str
-    result: float
+    # nan/inf are rejected here and on x_value below: a non-finite value would survive to the DB and
+    # then break JSON-encoding the hub's metrics response for the whole model.
+    result: float = Field(allow_inf_nan=False)
     # The x-coordinate this metric is plotted at. Defaults to the global round (see the validator
-    # below). nan/inf are rejected: they would survive to the DB and then break JSON-encoding the
-    # hub's metrics response for the whole model. (`result` has the same pre-existing hazard.)
+    # below).
     x_value: float = Field(allow_inf_nan=False)
     # Label naming the x-axis this metric is plotted against; defaults to the FL global round axis when
     # the client doesn't send one. A plot's identity is the (label, x_label) pair — see FLIP#148.
