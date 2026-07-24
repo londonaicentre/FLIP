@@ -1127,6 +1127,47 @@ def test_keep_fl_api_session_alive_swallows_errors(mock_session, mock_get_nets, 
     mock_fetch.assert_called_once_with("http://net1:8000")
 
 
+@patch("flip_api.fl_services.services.fl_scheduler_service.is_net_busy", return_value=False)
+@patch("flip_api.fl_services.get_status.fetch_server_status")
+@patch("flip_api.fl_services.services.fl_scheduler_service.get_nets")
+@patch("flip_api.fl_services.services.fl_service.Session")
+@patch("flip_api.fl_services.services.fl_service.get_settings")
+def test_keep_fl_api_session_alive_skips_idle_net_when_flag_on(
+    mock_get_settings, mock_session, mock_get_nets, mock_fetch, mock_is_net_busy
+):
+    # PER_JOB_FL_SERVER on + scheduler AVAILABLE (idle by design) -> no ping, no session to keep alive.
+    mock_get_settings.return_value.PER_JOB_FL_SERVER = True
+    mock_session.return_value.__enter__.return_value = MagicMock()
+    net = MagicMock(endpoint="http://net1:8000")
+    net.name = "net-1"
+    mock_get_nets.return_value = [net]
+
+    fl_service.keep_fl_api_session_alive()
+
+    mock_is_net_busy.assert_called_once_with("net-1", mock_session.return_value.__enter__.return_value)
+    mock_fetch.assert_not_called()
+
+
+@patch("flip_api.fl_services.services.fl_scheduler_service.is_net_busy", return_value=True)
+@patch("flip_api.fl_services.get_status.fetch_server_status")
+@patch("flip_api.fl_services.services.fl_scheduler_service.get_nets")
+@patch("flip_api.fl_services.services.fl_service.Session")
+@patch("flip_api.fl_services.services.fl_service.get_settings")
+def test_keep_fl_api_session_alive_pings_busy_net_when_flag_on(
+    mock_get_settings, mock_session, mock_get_nets, mock_fetch, mock_is_net_busy
+):
+    # PER_JOB_FL_SERVER on but scheduler BUSY -> still ping, a job is actually training.
+    mock_get_settings.return_value.PER_JOB_FL_SERVER = True
+    mock_session.return_value.__enter__.return_value = MagicMock()
+    net = MagicMock(endpoint="http://net1:8000")
+    net.name = "net-1"
+    mock_get_nets.return_value = [net]
+
+    fl_service.keep_fl_api_session_alive()
+
+    mock_fetch.assert_called_once_with("http://net1:8000")
+
+
 # --- submit_job success path ---------------------------------------------------------------------
 
 

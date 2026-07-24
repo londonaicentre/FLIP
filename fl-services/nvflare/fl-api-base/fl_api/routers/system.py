@@ -13,7 +13,10 @@
 # System and service status functions
 
 from fastapi import APIRouter, Depends, Query, status
+from nvflare.apis.fl_exception import FLCommunicationError
+from nvflare.fuel.flare_api.api_spec import NoConnection
 
+from fl_api.config import get_settings
 from fl_api.core.dependencies import get_session
 from fl_api.utils.flip_session import FLIP_Session
 from fl_api.utils.schemas import ClientInfoModel, ServerInfoModel, SystemInfoModel, TargetType
@@ -26,13 +29,23 @@ def check_server_status(session: FLIP_Session = Depends(get_session)) -> ServerI
     """
     Checks the status of the server.
 
+    With PER_JOB_FL_SERVER on, an unreachable fl-server is the normal idle-between-jobs state
+    (FLIP#735), not an error — this returns status="STOPPED" so flip-api can poll this endpoint as
+    a readiness probe. With the flag off, an unreachable server is still an unplanned outage and
+    this raises, unchanged.
+
     Args:
         session (FLIP_Session): the FLIP session instance.
 
     Returns:
         ServerInfoModel: status information about the server.
     """
-    return session.check_server_status()
+    try:
+        return session.check_server_status()
+    except (NoConnection, FLCommunicationError):
+        if not get_settings().PER_JOB_FL_SERVER:
+            raise
+        return ServerInfoModel(status="STOPPED", start_time=0.0)
 
 
 @router.get("/check_client_status", response_model=list[ClientInfoModel])

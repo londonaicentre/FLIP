@@ -196,6 +196,18 @@ variable "JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB" {
   default     = 0
 }
 
+# FLIP#735: scale fl-server-net-1 to zero between training jobs instead of running it 24/7.
+# Threaded as an identical env var into both flip-api and fl-api-net-1 (see ecs_task_env in
+# locals.tf) — both services must agree on whether an unreachable fl-server is an unplanned
+# outage (false, default: fl-api-net-1 crash-loops as today) or the normal idle-by-design state
+# between jobs (true: flip-api drives ecs:UpdateService, fl-api-net-1 tolerates the server being
+# down). Default false everywhere; set true in `.env.stag` only once Phase 2 has landed.
+variable "PER_JOB_FL_SERVER" {
+  description = "Scale fl-server-net-1 to zero between jobs instead of running it always-on"
+  type        = bool
+  default     = false
+}
+
 # Gates the whole FL-on-ECS stack, not just the file system: both FL task
 # definitions (fl-api-net-1, fl-server-net-1 in ecs_tasks.tf) carry
 # `count = var.enable_efs ? 1 : 0`, so their EFS volumes (including the shared

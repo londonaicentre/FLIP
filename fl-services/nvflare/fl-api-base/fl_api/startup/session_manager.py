@@ -11,6 +11,9 @@
 #
 
 
+from nvflare.apis.fl_exception import FLCommunicationError
+from nvflare.fuel.flare_api.api_spec import NoConnection
+
 from fl_api.config import get_settings
 from fl_api.utils.flip_session import FLIP_Session
 from fl_api.utils.logger import logger
@@ -19,6 +22,13 @@ from fl_api.utils.logger import logger
 def create_fl_session() -> FLIP_Session:
     """
     Initialize NVIDIA FLARE admin workspace and return a session object for interacting with it.
+
+    With PER_JOB_FL_SERVER off, an unreachable fl-server at boot is fatal (unchanged) — this is the
+    normal alerting signal for an unplanned outage. With it on, fl-server is expected to be down
+    most of the time (scaled to zero between jobs, FLIP#735), so a connection failure here is
+    logged and tolerated: the session connects lazily on first use (see FLIP_Session._do_command).
+    A non-connectivity failure (bad config, auth) still raises either way — only "can't reach the
+    server" is tolerated.
 
     Returns:
         FLIP_Session: An initialized FLIP_Session object.
@@ -43,10 +53,18 @@ def create_fl_session() -> FLIP_Session:
         debug=debug,
     )
 
-    # Try connecting the session here, so that we can catch any connection issues at startup
-    session.try_connect(get_settings().TIMEOUT_SESSION_CONNECT)
-
     logger.info(f"Upload directory set to: {session.upload_dir}")
     logger.info(f"Download directory set to: {session.download_dir}")
+
+    # Try connecting the session here, so that we can catch any connection issues at startup
+    try:
+        session.try_connect(get_settings().TIMEOUT_SESSION_CONNECT)
+    except (NoConnection, FLCommunicationError):
+        if not get_settings().PER_JOB_FL_SERVER:
+            raise
+        logger.warning(
+            "fl-server unreachable at boot; PER_JOB_FL_SERVER is on, treating this as the normal "
+            "idle-between-jobs state. Will connect lazily on first use."
+        )
 
     return session

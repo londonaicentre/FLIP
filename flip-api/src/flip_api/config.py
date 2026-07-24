@@ -91,6 +91,24 @@ class Settings(BaseSettings):
         30  # How often to check for projects with unimported studies (in minutes)
     )
 
+    # Per-job fl-server gate (FLIP#735). Defaults to False so the fl-server ECS service stays
+    # always-on everywhere until explicitly enabled (stag first). The same value is threaded as an
+    # env var into fl-api-net-1's task definition (see fl-services/nvflare/fl-api-base's own
+    # PER_JOB_FL_SERVER setting) from one shared Terraform variable — both services must agree on
+    # whether an unreachable fl-server is an unplanned outage (flag off, fl-api-net-1 crash-loops
+    # as today) or the normal idle state (flag on).
+    PER_JOB_FL_SERVER: bool = False
+
+    @field_validator("PER_JOB_FL_SERVER", mode="before")
+    @classmethod
+    def coerce_empty_per_job_fl_server(cls, v: str | bool | None) -> bool:
+        """Treat empty-string or None PER_JOB_FL_SERVER as the default False."""
+        if v is None or v == "":
+            return False
+        if isinstance(v, bool):
+            return v
+        return v.lower() in ("true", "1")  # type: ignore[union-attr]
+
     # Database settings
     DB_PORT: int
     DB_HOST: str = "localhost"

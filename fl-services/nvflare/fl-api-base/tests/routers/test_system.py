@@ -10,10 +10,11 @@
 # limitations under the License.
 #
 
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi import status
+from nvflare.fuel.flare_api.api_spec import NoConnection
 
 from fl_api.app import app
 from fl_api.core.dependencies import get_session
@@ -62,6 +63,33 @@ def test_check_server_status(client, mock_session):
     resp_json = resp.json()
     assert resp_json["status"] == "running"
     assert resp_json["start_time"] == 123.0
+
+
+def test_check_server_status_returns_stopped_when_unreachable_and_flag_on(client, mock_session):
+    """✅ PER_JOB_FL_SERVER on: an unreachable server reports STOPPED, not a 500 (FLIP#735)."""
+    app.dependency_overrides[system.get_session] = lambda: mock_session
+    mock_session.check_server_status.side_effect = NoConnection("cannot connect to server")
+
+    with patch("fl_api.routers.system.get_settings") as mock_get_settings:
+        mock_get_settings.return_value.PER_JOB_FL_SERVER = True
+        resp = client.get("/check_server_status")
+
+    assert resp.status_code == status.HTTP_200_OK
+    resp_json = resp.json()
+    assert resp_json["status"] == "STOPPED"
+    assert resp_json["start_time"] == 0.0
+
+
+def test_check_server_status_raises_when_unreachable_and_flag_off(client, mock_session):
+    """❌ PER_JOB_FL_SERVER off (default): an unreachable server still errors, unchanged."""
+    app.dependency_overrides[system.get_session] = lambda: mock_session
+    mock_session.check_server_status.side_effect = NoConnection("cannot connect to server")
+
+    with patch("fl_api.routers.system.get_settings") as mock_get_settings:
+        mock_get_settings.return_value.PER_JOB_FL_SERVER = False
+        resp = client.get("/check_server_status")
+
+    assert resp.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
 
 
 # ---------------------------------------------------------------------

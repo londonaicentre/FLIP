@@ -25,6 +25,12 @@ class Settings(BaseSettings):
 
     TIMEOUT_SESSION_CONNECT: float = 20.0
 
+    # Mirrors flip-api's PER_JOB_FL_SERVER (FLIP#735) — threaded in as an env var from the same
+    # shared Terraform variable so both services agree on whether fl-server going unreachable is
+    # an unplanned outage (flag off: fail fast at boot, as today) or the normal idle-by-design
+    # state between jobs (flag on: tolerate it and connect lazily on first use).
+    PER_JOB_FL_SERVER: bool = False
+
     # GPU resources that the submitted NVFLARE jobs need in order to schedule correctly.
     # TODO Currently this is set globally for all jobs, but we should allow per-job overrides in the future.
     # See https://github.com/londonaicentre/flip/issues/41

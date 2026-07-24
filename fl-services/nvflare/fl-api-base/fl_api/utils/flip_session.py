@@ -31,9 +31,20 @@ class FLIP_Session(Session):
         self._debug = debug
         super(FLIP_Session, self).__init__(username, startup_path, secure_mode, debug)
         self._error_buffer = None
+        # Tracked ourselves rather than inspecting nvflare's private `api.closed` — a freshly
+        # constructed AdminAPI is neither "closed" nor actually connected, so `api.closed` can't
+        # distinguish "never connected" (PER_JOB_FL_SERVER's lazy-boot case) from a live session.
+        self._connected = False
+
+    def try_connect(self, timeout: float) -> None:
+        """Connect the underlying admin API, tracking success so `_do_command` knows whether a
+        lazy first-use connect is needed (see PER_JOB_FL_SERVER in session_manager.py)."""
+        super().try_connect(timeout)
+        self._connected = True
 
     def _reconnect(self) -> None:
         """Re-initialise the underlying admin API and log in again after the session was closed."""
+        self._connected = False
         Session.__init__(self, self.username, self._startup_path, self._secure_mode, self._debug)
         self.try_connect(timeout=5.0)
 
@@ -41,14 +52,19 @@ class FLIP_Session(Session):
         """
         Override the _do_command method to add error handling for session inactivity or closure.
 
-        On ``InternalError`` with "session_inactive", reconnects via ``try_connect`` and retries once.
-        On ``SessionClosed`` (e.g. idle timeout, fl-server restart, network blip), fully re-initialises
-        the admin session via ``_reconnect`` and retries once. Any exception on the retry is logged and
-        re-raised immediately — there is no further retry loop.
+        If never successfully connected (PER_JOB_FL_SERVER let boot proceed with an unreachable
+        fl-server), connects lazily here on first use. On ``InternalError`` with "session_inactive",
+        reconnects via ``try_connect`` and retries once. On ``SessionClosed`` (e.g. idle timeout,
+        fl-server restart, network blip), fully re-initialises the admin session via ``_reconnect``
+        and retries once. Any exception on the retry is logged and re-raised immediately — there is
+        no further retry loop.
 
         Args:
             cmd (str): The command to be executed.
         """
+        if not self._connected:
+            logger.info("Session not yet connected; connecting now before running command: %s", cmd)
+            self.try_connect(timeout=5.0)
         try:
             return super()._do_command(cmd)
         except InternalError as e:
@@ -65,6 +81,11 @@ class FLIP_Session(Session):
             except Exception:
                 logger.error("Retry after reconnect failed for command: %s", cmd)
                 raise
+
+    @property
+    def is_connected(self) -> bool:
+        """Whether the admin session has ever successfully connected (see PER_JOB_FL_SERVER)."""
+        return self._connected
 
     def check_server_status(self) -> ServerInfoModel:
         """

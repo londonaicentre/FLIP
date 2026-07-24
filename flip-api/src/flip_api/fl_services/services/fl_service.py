@@ -1004,6 +1004,10 @@ def keep_fl_api_session_alive() -> None:
     A periodic function to keep the FL API session alive by making a simple request.
     This is useful to prevent the session from going idle or being shut down by the server.
 
+    With PER_JOB_FL_SERVER on, a net whose scheduler isn't BUSY is idle by design (FLIP#735) — its
+    fl-server is expected to be unreachable, so there's no session worth keeping alive and pinging
+    it would just be continuous log noise. Skip those nets entirely.
+
     TODO This was developed for the NVFLARE backend and might need to be revisited for the Flower backend.
     See https://github.com/NVIDIA/NVFlare/discussions/3526#discussioncomment-13574644
     """
@@ -1017,10 +1021,14 @@ def keep_fl_api_session_alive() -> None:
     # NOTE In the old implementation, we had 3 'nets' in the database, each with its own FLAdminAPI. So each net had a
     # separate FLAdminAPI endpoint. Here, there should just be 1 net for now. If we add more nets in the future, they
     # might all have the same FLARE_API endpoint, if the FLARE_API controls all controllers/clients.
+    per_job_fl_server = get_settings().PER_JOB_FL_SERVER
     with Session(get_engine()) as db:
         nets = fl_scheduler_service.get_nets(db)
 
         for net in nets:
+            if per_job_fl_server and not fl_scheduler_service.is_net_busy(net.name, db):
+                logger.debug(f"Net {net.name} is idle by design (PER_JOB_FL_SERVER); skipping keep-alive ping.")
+                continue
             try:
                 fetch_server_status(net.endpoint)
             except Exception as e:

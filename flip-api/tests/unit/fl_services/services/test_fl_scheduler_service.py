@@ -14,6 +14,7 @@ from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
 import pytest
+from sqlalchemy.exc import SQLAlchemyError
 
 from flip_api.db.models.main_models import FLJob
 from flip_api.domain.interfaces.fl import (
@@ -25,7 +26,7 @@ from flip_api.domain.interfaces.fl import (
 from flip_api.domain.schemas.status import JobStatus, ModelStatus, NetStatus
 from flip_api.domain.schemas.types import FLBackend, FLLogEvent
 from flip_api.fl_services.services import fl_scheduler_service
-from flip_api.utils.exceptions import NotFoundError
+from flip_api.utils.exceptions import DatabaseError, NotFoundError
 
 
 @pytest.fixture
@@ -236,6 +237,27 @@ def test_get_nets_no_results(fake_session):
     fake_session.exec.return_value.all.return_value = []
     with pytest.raises(Exception, match="No db response returned when querying for nets"):
         fl_scheduler_service.get_nets(fake_session)
+
+
+def test_is_net_busy_true_when_busy(fake_session):
+    fake_session.exec.return_value.first.return_value = MagicMock(status=NetStatus.BUSY)
+    assert fl_scheduler_service.is_net_busy("net-1", fake_session) is True
+
+
+def test_is_net_busy_false_when_available(fake_session):
+    fake_session.exec.return_value.first.return_value = MagicMock(status=NetStatus.AVAILABLE)
+    assert fl_scheduler_service.is_net_busy("net-1", fake_session) is False
+
+
+def test_is_net_busy_false_when_no_scheduler_row(fake_session):
+    fake_session.exec.return_value.first.return_value = None
+    assert fl_scheduler_service.is_net_busy("net-missing", fake_session) is False
+
+
+def test_is_net_busy_raises_database_error_on_sqlalchemy_error(fake_session):
+    fake_session.exec.side_effect = SQLAlchemyError("boom")
+    with pytest.raises(DatabaseError):
+        fl_scheduler_service.is_net_busy("net-1", fake_session)
 
 
 def test_check_for_available_net(fake_session):

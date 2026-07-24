@@ -124,6 +124,10 @@ services:
       # Settings.ENFORCE_MFA defaults to True elsewhere. Flip to `true`
       # here (and `make restart`) to test the MFA flow end-to-end locally.
       - ENFORCE_MFA=false
+      # FLIP#735: scale fl-server-net-1 to zero between jobs. Default false (unchanged
+      # always-on behavior); set PER_JOB_FL_SERVER=true in .env.development (and mirror on
+      # fl-api-net-1 below) to exercise the Phase 0 lazy-session/offline-status behavior locally.
+      - PER_JOB_FL_SERVER=${PER_JOB_FL_SERVER:-false}
       # Settings.LOG_LEVEL defaults to INFO so unknown environments emit
       # at INFO. Local dev defaults to DEBUG when LOG_LEVEL is unset
       # (override via LOG_LEVEL in .env.development) so debug-level
