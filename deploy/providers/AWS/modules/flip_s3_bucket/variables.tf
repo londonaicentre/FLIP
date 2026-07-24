@@ -17,6 +17,18 @@ variable "bucket_name" {
   description = "Globally-unique S3 bucket name. No default — every caller must pass an explicit name so a typo in one tenant never collides with another."
 }
 
+variable "logging_target_bucket" {
+  description = "S3 bucket name for server access logging. Set to empty string to disable."
+  type        = string
+  default     = ""
+}
+
+variable "mfa_delete_protection" {
+  description = "Enable MFA-gated DeleteObjectVersion via bucket policy"
+  type        = bool
+  default     = false
+}
+
 variable "cors_methods" {
   type        = list(string)
   description = "HTTP methods to allow on this bucket via CORS (e.g. [\"POST\"] for browser presigned uploads, [\"GET\"] for browser downloads). Leave empty for server-only buckets — no aws_s3_bucket_cors_configuration resource is created in that case, so the bucket exposes no CORS surface to the browser."

@@ -83,6 +83,7 @@ const fakeAxiosInstance = {
     get: vi.fn(),
     post: vi.fn(),
     put: vi.fn(),
+    patch: vi.fn(),
     delete: vi.fn()
 };
 
@@ -97,6 +98,7 @@ describe("api.ts Http client", () => {
         fakeAxiosInstance.get.mockReset();
         fakeAxiosInstance.post.mockReset();
         fakeAxiosInstance.put.mockReset();
+        fakeAxiosInstance.patch.mockReset();
         fakeAxiosInstance.delete.mockReset();
         fakeAxiosInstance.interceptors.request.use.mockClear();
         fakeAxiosInstance.interceptors.response.use.mockClear();
@@ -266,20 +268,23 @@ describe("api.ts Http client", () => {
     });
 
     describe("proxy methods", () => {
-        it("forwards get/post/put/delete to the underlying axios instance", async () => {
+        it("forwards get/post/put/patch/delete to the underlying axios instance", async () => {
             fakeAxiosInstance.get.mockResolvedValue({ data: "g" });
             fakeAxiosInstance.post.mockResolvedValue({ data: "p" });
             fakeAxiosInstance.put.mockResolvedValue({ data: "u" });
+            fakeAxiosInstance.patch.mockResolvedValue({ data: "pa" });
             fakeAxiosInstance.delete.mockResolvedValue({ data: "d" });
 
             await _http.get("/a");
             await _http.post("/b", { x: 1 });
             await _http.put("/c", { y: 2 });
+            await _http.patch("/e", { z: 3 });
             await _http.delete("/d");
 
             expect(fakeAxiosInstance.get).toHaveBeenCalledWith("/a", undefined);
             expect(fakeAxiosInstance.post).toHaveBeenCalledWith("/b", { x: 1 }, undefined);
             expect(fakeAxiosInstance.put).toHaveBeenCalledWith("/c", { y: 2 }, undefined);
+            expect(fakeAxiosInstance.patch).toHaveBeenCalledWith("/e", { z: 3 }, undefined);
             expect(fakeAxiosInstance.delete).toHaveBeenCalledWith("/d", undefined);
         });
 

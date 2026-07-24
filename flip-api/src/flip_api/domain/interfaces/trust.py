@@ -58,7 +58,7 @@ class ICreatedTrust(BaseModel):
 
     `fl_kit_slot` is the pre-provisioned FL participant identity assigned to this
     trust from the shared pool. The operator's containers mount the matching
-    ``workspace/net-N/services/<fl_kit_slot>/`` dirs from flip-fl-base; this is the
+    ``workspace/net-N/services/<fl_kit_slot>/`` provisioned kit dirs; this is the
     name the FL server sees on registration (independent of `name`).
     """
 

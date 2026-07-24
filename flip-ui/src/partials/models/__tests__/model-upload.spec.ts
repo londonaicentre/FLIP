@@ -75,10 +75,12 @@ const policyFor = (overrides: { maxBytes?: number } = {}) => ({
 const mockProcessScannedFile = vi.fn();
 const mockDeleteModelFile = vi.fn();
 const mockDownloadModelFile = vi.fn();
+const mockGetModelFileDownloadUrl = vi.fn();
 vi.mock("@/services/file-service", () => ({
     processScannedFile: (...args: unknown[]) => mockProcessScannedFile(...args),
     deleteModelFile: (...args: unknown[]) => mockDeleteModelFile(...args),
-    downloadModelFile: (...args: unknown[]) => mockDownloadModelFile(...args)
+    downloadModelFile: (...args: unknown[]) => mockDownloadModelFile(...args),
+    getModelFileDownloadUrl: (...args: unknown[]) => mockGetModelFileDownloadUrl(...args)
 }));
 
 // JobType is imported by ModelUpload only as a type annotation; the
@@ -180,8 +182,11 @@ function mountModelUpload(
                 AiSkeleton: { template: "<div data-test=\"ai-skeleton\" />" },
                 AiLoader: { template: "<div data-test=\"ai-loader\" />" },
                 AiButton: {
-                    template: "<button @click=\"$emit('click')\" :disabled=\"loading\"><slot /></button>",
-                    props: ["small", "loading"],
+                    // Mirrors the real AiButton shape (wrapper div + native
+                    // button, aria-label as a declared prop) so accessibility
+                    // assertions exercise the real wiring, not the stub's.
+                    template: "<div @click=\"$emit('click')\"><button :aria-label=\"ariaLabel\" :disabled=\"loading\"><slot /></button></div>",
+                    props: ["small", "loading", "ariaLabel"],
                     emits: ["click"]
                 },
                 AiConfirmModal: {
@@ -217,6 +222,7 @@ describe("ModelUpload", () => {
         mockProcessScannedFile.mockReset();
         mockDeleteModelFile.mockReset();
         mockDownloadModelFile.mockReset();
+        mockGetModelFileDownloadUrl.mockReset();
         mockSnackbarSuccess.mockReset();
         mockSnackbarError.mockReset();
         mockRoute.params = {
@@ -255,6 +261,58 @@ describe("ModelUpload", () => {
     });
 
     describe("props.files handling", () => {
+        test("gives the icon-only file action buttons accessible names", async () => {
+            const wrapper = mountModelUpload({
+                files: [{
+                    id: "1",
+                    name: "model.py",
+                    size: 1024,
+                    status: FileUploadStatus.COMPLETED
+                }],
+                loading: false
+            });
+            await flushPromises();
+
+            // Screen readers announce icon-only buttons as just "button"
+            // without an accessible name (Lighthouse button-name).
+            expect(wrapper.find("button[aria-label='Download model.py']").exists()).toBe(true);
+            expect(wrapper.find("button[aria-label='Delete model.py']").exists()).toBe(true);
+        });
+
+        test("hides the delete button on errored files when the user cannot upload", async () => {
+            const wrapper = mountModelUpload({
+                files: [{
+                    id: "1",
+                    name: "model.py",
+                    size: 1024,
+                    status: FileUploadStatus.ERROR
+                }],
+                canUpload: false,
+                loading: false
+            });
+            await flushPromises();
+
+            // `canUpload && COMPLETED || ERROR` used to expose the destructive
+            // action to viewers / after training locked the model.
+            expect(wrapper.find("button[aria-label='Delete model.py']").exists()).toBe(false);
+        });
+
+        test("shows the delete button on errored files when the user can upload", async () => {
+            const wrapper = mountModelUpload({
+                files: [{
+                    id: "1",
+                    name: "model.py",
+                    size: 1024,
+                    status: FileUploadStatus.ERROR
+                }],
+                canUpload: true,
+                loading: false
+            });
+            await flushPromises();
+
+            expect(wrapper.find("button[aria-label='Delete model.py']").exists()).toBe(true);
+        });
+
         test("mirrors props.files into the visible list on mount", async () => {
             const files: FileInfo[] = [
                 {
@@ -581,17 +639,23 @@ describe("ModelUpload", () => {
     });
 
     describe("download flow", () => {
-        test("downloadFile fetches the blob and triggers an <a> click", async () => {
-            const blob = new Blob(["fake content"], { type: "text/plain" });
-            mockDownloadModelFile.mockResolvedValue(blob);
+        test("downloadFile navigates an <a> straight to the presigned URL (no Blob)", async () => {
+            // The per-file button must NOT buffer the file into memory: it
+            // fetches only the presigned URL and lets the browser's download
+            // manager stream from S3 (Content-Disposition: attachment is set
+            // server-side). A Blob round-trip would cap downloads at what the
+            // tab can hold — files can reach MAX_MODEL_FILE_BYTES (5 GiB).
+            mockGetModelFileDownloadUrl.mockResolvedValue({
+                url: "https://s3.example.com/signed-download",
+                fileName: "model.py"
+            });
 
-            // jsdom's URL.createObjectURL throws on Blob by default; spy
-            // so the component's download-link plumbing runs to completion
-            // and we can assert on the URL lifecycle.
-            const createObjectURLSpy = vi
-                .spyOn(URL, "createObjectURL")
-                .mockReturnValue("blob:fake");
-            const revokeObjectURLSpy = vi.spyOn(URL, "revokeObjectURL").mockReturnValue(undefined);
+            let clickedHref: string | undefined;
+            const clickSpy = vi
+                .spyOn(HTMLAnchorElement.prototype, "click")
+                .mockImplementation(function (this: HTMLAnchorElement) {
+                    clickedHref = this.href;
+                });
 
             const files: FileInfo[] = [
                 {
@@ -612,14 +676,40 @@ describe("ModelUpload", () => {
             await rowButtons[0].trigger("click");
             await flushPromises();
 
-            expect(mockDownloadModelFile).toHaveBeenCalledWith(
+            expect(mockGetModelFileDownloadUrl).toHaveBeenCalledWith(
                 "/files/model/model-under-test/model.py"
             );
-            expect(createObjectURLSpy).toHaveBeenCalledWith(blob);
-            expect(revokeObjectURLSpy).toHaveBeenCalledWith("blob:fake");
+            expect(clickedHref).toBe("https://s3.example.com/signed-download");
+            // The byte-fetching path must stay untouched by a plain download.
+            expect(mockDownloadModelFile).not.toHaveBeenCalled();
 
-            createObjectURLSpy.mockRestore();
-            revokeObjectURLSpy.mockRestore();
+            clickSpy.mockRestore();
+        });
+
+        test("downloadFile snackbars with the file name when the URL request rejects", async () => {
+            // Previously downloadFile had no catch at all — a rejection failed
+            // silently with no user-visible feedback.
+            mockGetModelFileDownloadUrl.mockRejectedValueOnce(new Error("network"));
+
+            const files: FileInfo[] = [
+                {
+                    id: "1",
+                    name: "model.py",
+                    size: 1024,
+                    status: FileUploadStatus.COMPLETED
+                }
+            ];
+            const wrapper = mountModelUpload({ files }, { hasPermissions: true });
+            await flushPromises();
+
+            const rowButtons = wrapper.findAll("li button");
+            await rowButtons[0].trigger("click");
+            await flushPromises();
+
+            expect(mockSnackbarError).toHaveBeenCalledWith({
+                title: "Download failed",
+                text: "Could not download model.py. Please try again."
+            });
         });
 
         test("viewer (no CanManageProjects) does not see the download button", async () => {
@@ -691,6 +781,30 @@ describe("ModelUpload", () => {
             clickSpy.mockRestore();
         });
 
+        test("download-all collapses its label below lg and keeps an aria-label", async () => {
+            // Same collapse treatment as the page-header actions: below lg the
+            // label hides leaving the icon, with an aria-label on the native
+            // button keeping it named for screen readers.
+            const files: FileInfo[] = [
+                {
+                    id: "1",
+                    name: "a.py",
+                    size: 10,
+                    status: FileUploadStatus.COMPLETED
+                }
+            ];
+            const wrapper = mountModelUpload({ files }, { hasPermissions: true });
+            await flushPromises();
+
+            const holder = wrapper.find("[data-test=download-all-files-btn]");
+            expect(holder.exists()).toBe(true);
+            // aria-label is a declared AiButton prop wired to the inner native button.
+            expect(holder.find("button").attributes("aria-label")).toBe("Download all");
+            const label = holder.find("span.hidden.lg\\:inline");
+            expect(label.exists()).toBe(true);
+            expect(label.text()).toBe("Download all");
+        });
+
         test("download-all snackbars when a file fetch fails", async () => {
             mockDownloadModelFile.mockRejectedValue(new Error("network"));
             const createObjectURLSpy = vi
@@ -746,6 +860,40 @@ describe("ModelUpload", () => {
 
             // Wrap up so we don't leak a pending promise.
             resolveFirst!(new Blob(["x"]));
+        });
+
+        test("download-all fetches in batches of 3, not all files at once", async () => {
+            // 4 files -> batch 1 is the first 3, batch 2 is the remaining 1.
+            // Hold every download open so we can prove batch 2 hasn't started
+            // until batch 1 fully resolves.
+            const resolvers: Array<(b: Blob) => void> = [];
+            mockDownloadModelFile.mockImplementation(() =>
+                new Promise<Blob>(resolve => { resolvers.push(resolve); })
+            );
+
+            const files: FileInfo[] = Array.from({ length: 4 }, (_, i) => ({
+                id: String(i + 1),
+                name: `file-${i + 1}.py`,
+                size: 10,
+                status: FileUploadStatus.COMPLETED
+            }));
+            const wrapper = mountModelUpload({ files }, { hasPermissions: true });
+            await flushPromises();
+
+            await wrapper.find("[data-test=download-all-files-btn]").trigger("click");
+            await flushPromises();
+
+            // Only the first batch (3 files) should have started.
+            expect(mockDownloadModelFile).toHaveBeenCalledTimes(3);
+
+            // Resolving batch 1 lets the loop move on to batch 2 (1 file).
+            resolvers.splice(0).forEach(resolve => resolve(new Blob(["x"])));
+            await flushPromises();
+            expect(mockDownloadModelFile).toHaveBeenCalledTimes(4);
+
+            // Resolve the last file so the zip generation completes cleanly.
+            resolvers.splice(0).forEach(resolve => resolve(new Blob(["y"])));
+            await flushPromises();
         });
     });
 });

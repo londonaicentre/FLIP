@@ -25,6 +25,10 @@ permissions:
 
 jobs:
   build-and-push:
+    # Skip on forks: they cannot assume the upstream AWS OIDC role or push to
+    # ghcr.io/londonaicentre, so this whole build-and-publish job would otherwise
+    # show a spurious CI failure on fork pushes. Upstream publishing is unchanged.
+    if: github.repository == 'londonaicentre/FLIP'
     runs-on: ubuntu-latest
     permissions: # override top-level read-only default to allow GHCR push
       id-token: write # required for OIDC
@@ -57,7 +61,7 @@ jobs:
           ref: ${{ github.event.workflow_run.head_sha }}
 
       - name: Configure AWS credentials (OIDC)
-        uses: aws-actions/configure-aws-credentials@v4.2.1
+        uses: aws-actions/configure-aws-credentials@v6.2.1
         with:
           role-to-assume: ${{ vars.AWS_ROLE_TO_ASSUME }}
           role-session-name: ${{ vars.AWS_ROLE_SESSION_NAME }}
@@ -69,10 +73,19 @@ jobs:
           GH_REF_NAME: ${{ github.ref_name }}
           GH_EVENT_NAME: ${{ github.event_name }}
           GH_REF: ${{ github.ref }}
+          GH_SHA: ${{ github.sha }}
           GH_WR_BRANCH: ${{ github.event.workflow_run.head_branch }}
           GH_WR_EVENT: ${{ github.event.workflow_run.event }}
         run: |
           TAGS="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}"
+
+          # An empty sha would silently publish a mutable literal `sha-` tag — refuse.
+          [[ -n "$GH_SHA" ]] || { echo "::error::empty commit SHA — cannot compute the sha-<short7> tag"; exit 1; }
+
+          # Immutable short-SHA tag (FLIP#751), pushed uniformly on every publish; today
+          # only the hub ECS images are consumed (by `make deploy-centralhub`). Length 7
+          # must match the tag resolution in deploy/providers/AWS/Makefile.
+          TAGS="${TAGS},${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${GH_SHA:0:7}"
 
           # Branch name sanitization
           SAFE_REF_NAME=$(echo "$GH_REF_NAME" | sed 's/[^a-zA-Z0-9]/-/g')
@@ -116,7 +129,10 @@ jobs:
         run: aws s3 cp s3://${{ env.FLIP_ARTIFACTS_BUCKET_NAME }}/xnat/xnat-web-1.9.3.war build-artifacts/xnat-web-1.9.3.war
 
       - name: Download XNAT plugins
-        run: aws s3 sync s3://${{ env.FLIP_ARTIFACTS_BUCKET_NAME }}/xnat/plugins/ plugins/
+        # Exclude ohif-viewer: FLIP never opens the viewer, and its per-session
+        # metadata-rebuild listener is the dominant load on XNAT's Reactor
+        # EventBus (FLIP#662). Keep this in sync with scripts/ensure_plugins.sh.
+        run: aws s3 sync s3://${{ env.FLIP_ARTIFACTS_BUCKET_NAME }}/xnat/plugins/ plugins/ --exclude "ohif-viewer-*"
 
       - name: Build Docker image
         env:

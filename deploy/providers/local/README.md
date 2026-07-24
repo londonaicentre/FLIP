@@ -200,11 +200,13 @@ The host/network firewall must allow outbound to **two separate Central Hub host
 
 ### Dynamic Public IP
 
-The NLB security group allowlists the trust's public IP for FL traffic. If the public IP changes (common with residential broadband), update it:
+The NLB security group allowlists the trust's public IP for FL traffic. If the public IP changes (common with residential broadband), update it. Set `LOCAL_TRUST_PUBLIC_IPS` (an HCL list of every allowlisted IP) in the env file and reconcile with `allow-local-trust-nlb`:
 
 ```bash
-TF_VAR_local_trust_public_ip=<new-ip> make -C deploy/providers/AWS plan apply
+LOCAL_TRUST_PUBLIC_IPS='["<new-ip>"]' make -C deploy/providers/AWS allow-local-trust-nlb LOCAL_TRUST_IP=<new-ip>
 ```
+
+Re-running with an already-listed IP is a no-op (idempotent).
 
 ## Troubleshooting
 

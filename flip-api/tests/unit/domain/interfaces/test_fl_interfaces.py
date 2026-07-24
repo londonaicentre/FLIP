@@ -1,8 +1,8 @@
 import json
+from pathlib import Path
 from unittest.mock import patch
 
 from flip_api.domain.interfaces.fl import (
-    ASSETS_DIR,
     ClientStatus,
     IClientStatus,
     JobRequiredFiles,
@@ -114,18 +114,20 @@ class TestJobRequiredFiles:
 
 class TestManifestLoading:
     def test_required_job_types_file_builds_per_backend_path(self):
-        # The manifest path is per-backend, anchored under the assets dir.
-        assert required_job_types_file(FLBackend.NVFLARE) == ASSETS_DIR / "job_types_and_required_files.nvflare.json"
-        assert required_job_types_file(FLBackend.FLOWER) == ASSETS_DIR / "job_types_and_required_files.flower.json"
+        # The manifest path is per-backend, anchored under the local FL_APP_BASE_DIR tree (FLIP#724).
+        fake_settings = type("S", (), {"FL_APP_BASE_DIR": "/base"})()
+        with patch("flip_api.domain.interfaces.fl.get_settings", return_value=fake_settings):
+            assert required_job_types_file(FLBackend.NVFLARE) == Path("/base/nvflare/required_files.json")
+            assert required_job_types_file(FLBackend.FLOWER) == Path("/base/flower/required_files.json")
 
     def test_load_job_types_config_reads_manifest_from_disk(self, tmp_path):
         # _load_job_types_config reads and parses the on-disk manifest for the backend.
-        manifest = tmp_path / "job_types_and_required_files.nvflare.json"
+        manifest = tmp_path / "required_files.json"
         manifest.write_text(json.dumps({"standard": ["trainer.py", "config.json"]}))
         with patch("flip_api.domain.interfaces.fl.required_job_types_file", return_value=manifest):
             assert _load_job_types_config(FLBackend.NVFLARE) == {"standard": ["trainer.py", "config.json"]}
 
     def test_load_job_types_config_returns_empty_when_manifest_missing(self, tmp_path):
-        # If the manifest was never pulled (e.g. S3 unreachable), loading must not crash.
+        # If the baked-in manifest is absent (misconfigured FL_APP_BASE_DIR), loading must not crash.
         with patch("flip_api.domain.interfaces.fl.required_job_types_file", return_value=tmp_path / "absent.json"):
             assert _load_job_types_config(FLBackend.FLOWER) == {}

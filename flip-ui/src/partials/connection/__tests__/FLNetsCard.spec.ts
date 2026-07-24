@@ -317,7 +317,7 @@ describe("FLNetsCard", () => {
         });
     });
 
-    it("decorates the net card with the offline-glow when any client is offline", () => {
+    it("keeps the net card border free of the offline glow so it matches the trust table", () => {
         mockSwrvData.value = [
             {
                 name: "net-with-offline",
@@ -343,8 +343,10 @@ describe("FLNetsCard", () => {
             }
         ];
         const wrapper = mountFLNetsCard();
-        const glowEls = wrapper.findAll(".from-red-500");
-        // Exactly one card carries the glow div: the one with an offline client.
-        expect(glowEls.length).toBe(1);
+        // The blurred halo painted around the opaque card's edge in dark mode
+        // and read as a purple border next to the trust table — the offline
+        // signal lives in the per-client icons and the card heading instead.
+        expect(wrapper.findAll(".from-red-500").length).toBe(0);
+        expect(wrapper.findAll(".blur-md").length).toBe(0);
     });
 });

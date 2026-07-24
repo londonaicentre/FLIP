@@ -26,8 +26,11 @@ describe("docs: initiate training", () => {
         cy.intercept("GET", `/model/${modelId}/logs`, []).as("getLogs");
         cy.intercept("GET", `/model/${modelId}/metrics`, []).as("getMetrics");
         cy.intercept("GET", `/files/model/${modelId}/config.json`, {
-            fixture: "model/configJsonStandard.json"
+            body: { url: "https://fake-presigned.example.com/config.json", fileName: "config.json" }
         }).as("getConfigJson");
+        cy.intercept("GET", "https://fake-presigned.example.com/config.json", {
+            fixture: "model/configJsonStandard.json"
+        }).as("getConfigJsonBytes");
         cy.intercept("GET", "/model/job-types", {
             standard: ["trainer.py", "validator.py", "models.py", "config.json"]
         }).as("getJobTypes");
@@ -47,7 +50,9 @@ describe("docs: initiate training", () => {
         cy.getBySel("initiate-training-btn").demoClick();
         cy.wait("@initiateTraining");
 
-        cy.contains("Any results generated during training will show here.").should("be.visible");
+        // Once training is initiated the data-enrichment / trust-selection
+        // controls are replaced by the in-progress training view.
+        cy.getBySel("data-enrichment-btn").should("not.exist");
         cy.demoPause(1200);
     });
 });

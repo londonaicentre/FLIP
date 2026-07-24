@@ -27,10 +27,7 @@ describe("docs: reset user password", () => {
         cy.visit("/admin/users");
         cy.demoPause();
 
-        cy.getBySel("user").contains("researcher.user@flip.com").demoClick();
-        cy.demoPause();
-
-        cy.getBySel("more-options-btn").demoClick();
+        cy.getBySel("user").contains("Researcher User").demoClick();
         cy.demoPause();
 
         cy.getBySel("reset-password-btn").demoClick();

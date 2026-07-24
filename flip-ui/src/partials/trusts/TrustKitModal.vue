@@ -14,7 +14,7 @@
 <template>
     <TransitionRoot as="template" :show="dialog">
         <Dialog as="div" class="fixed inset-0 z-10" @close.capture="close">
-            <div class="flex items-end justify-center h-screen min-h-screen px-4 pt-4 text-center sm:block sm:p-0">
+            <div class="flex items-center justify-center h-screen min-h-screen p-4 text-center sm:block sm:p-0">
                 <TransitionChild
                     as="template"
                     enter="ease-out duration-300"
@@ -37,14 +37,14 @@
                     leave-to="opacity-0 translate-y-4 sm:translate-y-0 sm:scale-95"
                 >
                     <div class="inline-flex flex-col w-full max-w-2xl max-h-screen p-4 text-left align-middle rounded-lg">
-                        <div class="inline-flex flex-col w-full transition-all transform bg-white rounded-lg shadow-xl dark:bg-gray-800">
+                        <div class="inline-flex flex-col w-full transition-all transform bg-white rounded-lg shadow-xl dark:bg-dark-surface">
                             <DialogTitle
                                 as="h3"
                                 class="px-8 py-4 text-lg font-bold leading-6 text-left text-gray-700 dark:text-gray-300"
                             >
                                 {{ trust?.name ?? "Trust" }} kit — save these now
                             </DialogTitle>
-                            <div class="px-8 py-4 space-y-4 text-sm font-normal leading-5 dark:text-gray-400">
+                            <div class="px-8 py-4 space-y-4 text-sm font-normal leading-5 dark:text-gray-300">
                                 <div
                                     class="border-l-4 border-red-500 bg-red-50 dark:bg-red-900/20 p-3"
                                     data-test="kit-warning"
@@ -60,18 +60,19 @@
                                 </div>
 
                                 <div>
-                                    <div class="text-xs font-bold uppercase tracking-widest text-gray-500 mb-1">
+                                    <div class="text-xs font-bold uppercase tracking-widest text-gray-500 dark:text-gray-300 mb-1">
                                         Trust name
                                     </div>
-                                    <div class="font-mono text-sm bg-gray-50 dark:bg-gray-900 p-2 rounded">
+                                    <div class="font-mono text-sm bg-gray-50 dark:bg-dark-canvas p-2 rounded">
                                         {{ trust?.name ?? "—" }}
                                     </div>
                                 </div>
 
                                 <div data-test="all-credentials-section">
                                     <div class="flex items-center justify-between mb-1">
-                                        <span class="text-xs font-bold uppercase tracking-widest text-gray-500">
-                                            Kit credentials — paste into <code>trust/.env.&lt;CODE&gt;.&lt;env&gt;</code>
+                                        <span class="text-xs font-bold uppercase tracking-widest text-gray-500 dark:text-gray-300">
+                                            Kit credentials — paste into
+                                            <code>trust/.env.&lt;CODE&gt;.&lt;env&gt;</code>
                                         </span>
                                         <button
                                             type="button"
@@ -83,10 +84,10 @@
                                         </button>
                                     </div>
                                     <pre
-                                        class="font-mono text-xs bg-gray-50 dark:bg-gray-900 p-3 rounded whitespace-pre-wrap break-all"
+                                        class="font-mono text-xs bg-gray-50 dark:bg-dark-canvas p-3 rounded whitespace-pre-wrap break-all"
                                         data-test="all-credentials-block"
                                     >{{ allCredentialsBlock }}</pre>
-                                    <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                                    <p class="mt-1 text-xs text-gray-500 dark:text-gray-300">
                                         <code>FL_KIT_SLOT</code> is the FL identity clients register under;
                                         <code>EXPECTED_TRUST_ID</code> is an optional startup self-check.
                                     </p>
@@ -105,7 +106,7 @@
                                 </label>
                             </div>
 
-                            <div class="px-4 py-3 bg-gray-100 rounded-b-lg dark:bg-gray-900 sm:px-6 sm:flex sm:flex-row-reverse sm:flex-shrink-0">
+                            <div class="px-4 py-3 bg-gray-100 rounded-b-lg dark:bg-dark-canvas sm:px-6 sm:flex sm:flex-row-reverse sm:flex-shrink-0">
                                 <AiButton
                                     data-test="kit-done-btn"
                                     primary
@@ -134,8 +135,8 @@ import { ICreatedTrust } from "@/services/admin-trusts-service";
 import { Snackbar } from "@/utils/snackbar";
 
 interface ITrustKitModalProps {
-    dialog: boolean;
-    trust: ICreatedTrust | null;
+    dialog?: boolean;
+    trust?: ICreatedTrust | null;
 }
 
 const props = withDefaults(defineProps<ITrustKitModalProps>(), {

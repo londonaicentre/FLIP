@@ -97,7 +97,7 @@ applied a schema *diff* to an existing database.
 - Migration scripts live in `src/flip_api/db/migrations/` (so they ride the dev `src/`
   bind mount and the prod `COPY src/`); config is in `alembic.ini`.
 - `alembic.ini` holds **no** database URL or credentials. `env.py` reuses
-  `flip_api.db.database.engine`, so migrations inherit the exact same connection
+  `flip_api.db.database.get_engine()`, so migrations inherit the exact same connection
   string and the prod RDS-Proxy IAM authentication (a per-connection token minted
   by a `do_connect` hook). Tests inject their Testcontainers connection via
   `config.attributes["connection"]` instead.
@@ -166,7 +166,7 @@ A session-scoped autouse fixture (`aws_mock` in `tests/integration/conftest.py`)
 
 Per-service helper fixtures bootstrap the state each test needs:
 
-- `s3_buckets` — creates the buckets configured in `Settings` (`UPLOADED_MODEL_FILES_BUCKET`, `SCANNED_MODEL_FILES_BUCKET`, `UPLOADED_FEDERATED_DATA_BUCKET`, `FL_APP_BASE_BUCKET`, `FL_APP_DESTINATION_BUCKET`).
+- `s3_buckets` — creates the buckets configured in `Settings` (`UPLOADED_MODEL_FILES_BUCKET`, `SCANNED_MODEL_FILES_BUCKET`, `UPLOADED_FEDERATED_DATA_BUCKET`, `FL_APP_DESTINATION_BUCKET`). The base FL application templates are not an S3 bucket — they are read from the local `FL_APP_BASE_DIR` tree baked into the image (FLIP#724).
 - `cognito_user_pool` — creates a moto user pool + app client and rebinds `Settings.AWS_COGNITO_USER_POOL_ID` / `AWS_COGNITO_APP_CLIENT_ID` to point at them, clearing the `_cognito_client` `lru_cache` so the next call rebuilds against the fresh IDs.
 - `ses_send_email_recorder` — captures every `sesv2.send_email` call. moto v5 explicitly raises `NotImplementedError` on `send_email` with `Content.Template`, and every flip-api SES caller uses templated content; the recorder wraps the production-code path up to the SDK boundary so the test asserts the boto3 call shape (`FromEmailAddress`, `Destination.ToAddresses`, `TemplateName`, `TemplateData`). It's the closest approximation to a real SES round-trip moto's coverage allows today.
 

@@ -37,6 +37,7 @@ from flip_api.file_services import (
 )
 from flip_api.fl_services import (
     get_net_status,
+    get_quiesce_status,
     get_status,
     initiate_training,
     stop_training,
@@ -44,6 +45,7 @@ from flip_api.fl_services import (
 from flip_api.model_services import (
     delete_model,
     edit_model,
+    get_all_models,
     get_job_types,
     get_metrics,
     retrieve_logs_for_model,
@@ -186,6 +188,7 @@ ROUTERS: tuple[APIRouter, ...] = (
     uploaded_file.router,
     # FL services
     get_net_status.router,
+    get_quiesce_status.router,
     get_status.router,
     initiate_training.router,
     stop_training.router,
@@ -194,6 +197,7 @@ ROUTERS: tuple[APIRouter, ...] = (
     # Model services
     delete_model.router,
     edit_model.router,
+    get_all_models.router,
     get_metrics.router,
     retrieve_logs_for_model.router,
     retrieve_model_status_from_logs.router,

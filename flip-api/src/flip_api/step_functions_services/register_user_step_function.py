@@ -96,7 +96,7 @@ def register_user_step_function_endpoint(
     user_data: IRegisterUser,
     db: Session = Depends(get_session),
     token_id: UUID = Depends(verify_token),
-):
+) -> IRegisterUserDto:
     """
     Register a new user and assign roles.
 

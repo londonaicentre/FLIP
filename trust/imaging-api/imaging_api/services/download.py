@@ -186,11 +186,18 @@ def format_download_url(
         "scan",
         "assessor",
     ], "Type must be 'scan' or 'assessor'"
-    return (
+    base = (
         f"{XNAT_URL}/data/projects/{project_id}/subjects/{subject_id}/"
-        f"experiments/{experiment_id_or_label}/{assessor_type.lower()}s/"
-        f"ALL/resources/{resource_type}/files?format=zip"
+        f"experiments/{experiment_id_or_label}/{assessor_type.lower()}s/ALL"
     )
+    # resource_type=ALL means "every resource on the scan". XNAT has no literal ALL
+    # resource label — /resources/ALL/files 404s — so drop the resources segment and
+    # let XNAT return files across all resource labels. This also covers DICOM series
+    # whose resource XNAT labels other than "DICOM" (e.g. "secondary" for
+    # Secondary Capture SOP classes, as produced by synthetic datasets).
+    if resource_type.upper() == "ALL":
+        return f"{base}/files?format=zip"
+    return f"{base}/resources/{resource_type}/files?format=zip"
 
 
 def download_file(url: str, destination_path: str, headers: dict[str, str]) -> str:

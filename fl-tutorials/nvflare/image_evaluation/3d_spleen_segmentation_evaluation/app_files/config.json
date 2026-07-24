@@ -10,11 +10,5 @@
       "checkpoint": "model.pt",
       "path": "unet"
     }
-  },
-  "evaluation_output": {
-    "spleen": {
-      "mean_dice": 0.0,
-      "raw_dice": []
-    }
   }
 }

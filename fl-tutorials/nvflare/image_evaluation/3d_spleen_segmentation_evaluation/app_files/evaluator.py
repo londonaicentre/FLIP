@@ -11,14 +11,17 @@
 
 # Description: This file contains the FLIP_EVALUATOR class which is responsible for validating the model.
 import json
+import logging
 from pathlib import Path
 
 import nibabel as nib
-import numpy as np
+import pandas as pd
 import torch
+from flip import FLIP
+from flip.constants import PTConstants, ResourceType
 from models import model_paths
 from monai.data import DataLoader, Dataset, decollate_batch
-from monai.metrics import DiceMetric
+from monai.metrics import DiceMetric, HausdorffDistanceMetric, MeanIoU, SurfaceDiceMetric
 from monai.networks.utils import one_hot
 from monai.transforms import AsDiscrete
 from nvflare.apis.dxo import DXO, DataKind, from_shareable
@@ -27,10 +30,12 @@ from nvflare.apis.fl_constant import ReturnCode
 from nvflare.apis.fl_context import FLContext
 from nvflare.apis.shareable import Shareable, make_reply
 from nvflare.apis.signal import Signal
+from tqdm import tqdm
 from transforms import get_eval_transforms, get_sliding_window_inferer
 
-from flip import FLIP
-from flip.constants import PTConstants, ResourceType
+# Surface tolerance in voxels for the normalized Surface Dice metric: the boundary deviation treated
+# as acceptable, one entry per foreground class (spleen). Tune per dataset/voxel spacing.
+SURFACE_DICE_TOLERANCE_VOXELS = 1.0
 
 
 class FLIP_EVALUATOR(Executor):
@@ -41,6 +46,10 @@ class FLIP_EVALUATOR(Executor):
         super(FLIP_EVALUATOR, self).__init__()
 
         self._evaluate_task_name = evaluate_task_name
+
+        # Logger
+        self.logger = logging.getLogger(self.__class__.__name__)
+        self.logger.setLevel(logging.INFO)
 
         # Load the config
         self.config = {}
@@ -66,12 +75,24 @@ class FLIP_EVALUATOR(Executor):
         self.post_pred = AsDiscrete(argmax=True, to_onehot=self.num_classes)
         self.swi = get_sliding_window_inferer(sw_device=self.device)
 
-    def get_image_and_label_list(self, dataframe):
-        """Returns a list of dicts, each dict containing the path to an image and its corresponding label."""
+    def get_image_and_label_list(self, dataframe: pd.DataFrame) -> list[dict[str, str]]:
+        """
+        Returns a list of dicts, each dict containing the path to an image and its corresponding label.
 
-        datalist = []
-        # loop over each accession id in the train set
-        for accession_id in dataframe["accession_id"]:
+        Args:
+            dataframe (pd.DataFrame): DataFrame containing accession IDs to fetch images and labels for.
+
+        Returns:
+            list[dict[str, str]]: List of dicts with keys "image" and "label" for every matched pair in the cohort.
+        """
+        datalist: list[dict[str, str]] = []
+
+        for accession_id in tqdm(
+            dataframe["accession_id"],
+            total=len(dataframe),
+            desc="Processing cohort",
+            unit="accession",
+        ):
             try:
                 accession_folder_path = self.flip.get_by_accession_number(
                     self.project_id,
@@ -82,87 +103,91 @@ class FLIP_EVALUATOR(Executor):
                     ],
                 )
             except Exception as err:
-                print(f"Could not get image data folder path for {accession_id}: {err}")
+                self.logger.info("⚠️ Could not fetch images for accession_id=%s: %s", accession_id, err)
                 continue
-            # accession_folder_path = Path(f"/app/data/images/net-1/{accession_id}")
 
-            print(accession_folder_path)
-
+            # get all images in the accession folder that match the pattern "input_*.nii.gz"
             all_images = list(accession_folder_path.rglob("input_*.nii.gz"))
-            print(all_images)
 
-            this_accession_matches = 0
-            print(f"Total base count found for accession_id {accession_id}: {len(all_images)}")
             for img in all_images:
                 # for each image, find the corresponding segmentation mask
                 seg = str(img).replace("/input_", "/label_")
 
                 if not Path(seg).exists():
-                    print(f"No matching segmentation mask for {img}.")
+                    self.logger.info("⚠️ No matching segmentation for %s", img.name)
                     continue
 
                 try:
                     img_header = nib.load(str(img))
-                except nib.filebasedimages.ImageFileError as err:
-                    print(f"Problem loading header of base image {str(img)}.")
-                    print(f"{err=}")
-                    print(f"{type(err)=}")
-                    print(f"{err.args=}")
-                    continue
-
-                try:
                     seg_header = nib.load(seg)
                 except nib.filebasedimages.ImageFileError as err:
-                    print(f"Problem loading header of segmentation {str(seg)}.")
-                    print(f"{err=}")
-                    print(f"{type(err)=}")
-                    print(f"{err.args=}")
+                    self.logger.info("⚠️ Invalid image pair for %s: %s", img.name, err)
                     continue
 
-                # check is 3D and at least 128x128x128 in size and seg is the same
+                # Some QC checks to ensure the image and segmentation are valid and match
+                # check is 3D and at least 128x128x128 in size and seg is the same shape as the image
                 if len(img_header.shape) != 3:
-                    print(f"Image has other than 3 dimensions (it has {len(img_header.shape)}.)")
+                    self.logger.info("⚠️ Skipping non-3D image %s", img.name)
                     continue
-                elif any([img_dim != seg_dim for img_dim, seg_dim in zip(img_header.shape, seg_header.shape)]):
-                    print(
-                        f"Image dimensions ({img_header.shape}) do not match "
-                        f"segmentation dimensions ({seg_header.shape})."
+
+                if img_header.shape != seg_header.shape:
+                    self.logger.info(
+                        "⚠️ Shape mismatch for %s: image=%s label=%s",
+                        img.name,
+                        img_header.shape,
+                        seg_header.shape,
                     )
                     continue
-                else:
-                    # defines keys for image and segmentation
-                    datalist.append({"image": str(img), "label": seg})
-                    print("Matching base image and segmentation added.")
-                    this_accession_matches += 1
 
-            print(f"Added {this_accession_matches} matched image + segmentation pairs for {accession_id}.")
+                datalist.append({"image": str(img), "label": seg})
 
-        # Evaluation-only: score every matched image/label pair in this
-        # client's cohort, not a held-out fraction.
-        print(f"Found {len(datalist)} files in total — evaluating all of them.")
-
+        self.logger.info("Dataset ready: %d image/label pairs - evaluating all of them.", len(datalist))
         return datalist
 
-    def _get_json_results_from_numpy(self, metric_results):
-        output_results = {}
-        for model_name, dice_scores in metric_results.items():
-            output_results[model_name] = {
-                "spleen": {
-                    "mean_dice": np.mean(dice_scores[:, 1]).item(),
-                    "raw_dice": [float(i) for i in dice_scores[:, 1]],
-                }
-            }
+    def _build_metrics(self):
+        """Build the aggregate (cohort-mean) evaluation metrics for one model.
 
+        Returns:
+            dict[str, monai.metrics.Metric]: metric name -> MONAI metric, each with
+                include_background=False (score the foreground spleen class) and reduction='mean',
+                so aggregate() yields a single cohort-level scalar. No per-sample (row-level)
+                values are produced or exported.
+        """
+        return {
+            "mean_dice": DiceMetric(include_background=False, reduction="mean"),
+            "mean_hausdorff_95": HausdorffDistanceMetric(include_background=False, percentile=95, reduction="mean"),
+            "mean_surface_dice": SurfaceDiceMetric(
+                class_thresholds=[SURFACE_DICE_TOLERANCE_VOXELS], include_background=False, reduction="mean"
+            ),
+            "mean_iou": MeanIoU(include_background=False, reduction="mean"),
+        }
+
+    def _aggregate_results(self, metrics: dict) -> dict:
+        """Aggregate each model's accumulated metrics into a cohort-level results dict.
+
+        Args:
+            metrics (dict): model name -> {metric name -> accumulated MONAI metric}.
+
+        Returns:
+            dict: model name -> {'spleen': {metric name -> float}}. Only aggregate (cohort-mean)
+                values are emitted — per-sample (row-level) scores are an individual-level
+                disclosure (membership inference, cohort-size leak) and are not returned.
+        """
+        output_results = {}
+        for model_name, metric_map in metrics.items():
+            output_results[model_name] = {
+                "spleen": {name: float(metric.aggregate().item()) for name, metric in metric_map.items()}
+            }
         return output_results
 
     def do_validation(self, fl_ctx, abort_signal):
-        metric_results = {}
-        for model_name, _ in self.models.items():
+        metrics = {}
+        for model_name in self.models:
             self.models[model_name].eval()
-            metric_results[model_name] = DiceMetric(reduction="none")  # Create DiceMetric instance
+            metrics[model_name] = self._build_metrics()
 
         num_images = 0
-        self.logger.info(len(self.test_loader))
+        self.logger.info("Test loader length: %d", len(self.test_loader))
 
         with torch.no_grad():
             for i, batch in enumerate(self.test_loader):
@@ -174,7 +199,7 @@ class FLIP_EVALUATOR(Executor):
                     batch["label"].to(self.device),
                 )
 
-                for model_name, model in self.models.items():
+                for model_name in self.models:
                     self.models[model_name].to(self.device)
                     # perform sliding window inference to get a prediction for the whole volume.
                     output = self.swi(inputs=images, network=self.models[model_name])
@@ -186,24 +211,26 @@ class FLIP_EVALUATOR(Executor):
                     output = torch.stack([self.post_pred(i) for i in output], 0)
                     labels_one_hot = one_hot(labels, num_classes=self.num_classes)
 
-                    # Compute Dice metric using DiceMetric
-                    metric_results[model_name](output, labels_one_hot)  # Accumulate Dice scores
+                    # Accumulate every metric for this batch (Dice, HD95, Surface Dice, IoU).
+                    for metric in metrics[model_name].values():
+                        metric(output, labels_one_hot)
                     self.models[model_name].cpu()
 
                 batch_size = images.shape[0]
                 num_images += batch_size
-                self.logger.info(f"Validator Iteration: {i}, Num Images: {num_images}")
+                self.logger.info("Validator Iteration: %d, Num Images: %d", i, num_images)
 
-            # Compute final Dice score
-            for model_name, dice_metric in metric_results.items():
-                metric_results[model_name] = dice_metric.aggregate().cpu().numpy()
+            # Aggregate each metric to a single cohort-level scalar, then reset for the next run.
+            json_results = self._aggregate_results(metrics)
+            for metric_map in metrics.values():
+                for metric in metric_map.values():
+                    metric.reset()
 
-            dice_metric.reset()  # Reset metric for next validation phase
-
-            json_results = self._get_json_results_from_numpy(metric_results)
             message = ""
-            for model_name in self.models.keys():
-                message += f"{json_results[model_name]['spleen']['mean_dice']:.4f} ({model_name})"
+            for model_name in self.models:
+                scores = json_results[model_name]["spleen"]
+                metrics_str = ", ".join(f"{name}={value:.4f}" for name, value in scores.items())
+                message += f"[{model_name}] {metrics_str} "
             self.log_info(fl_ctx, f"Validator finished on the client side: {message}")
 
         return json_results

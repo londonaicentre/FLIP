@@ -127,7 +127,6 @@ def mocked_settings():
         AWS_SES_SENDER_EMAIL_ADDRESS="sender@example.com",
         UPLOADED_MODEL_FILES_BUCKET="mock-bucket",
         UPLOADED_FEDERATED_DATA_BUCKET="s3://mock-bucket-uploaded/uploaded_federated_data",
-        FL_APP_BASE_BUCKET="s3://mock-bucket-base-app/base_files",
         SCANNED_MODEL_FILES_BUCKET="s3://mock-bucket-scanned/model_files",
         FL_APP_DESTINATION_BUCKET="s3://mock-bucket-dest/dest_files",
     )
@@ -312,7 +311,7 @@ class TestS3Client:
 
             s3_client = S3Client()
             with pytest.raises(ClientError) as exc_info:
-                s3_client.get_presigned_url("test-bucket", "test-key")
+                s3_client.get_presigned_url("s3://test-bucket/test-key")
 
             assert "An error occurred (AccessDenied)" in str(exc_info.value)
 

@@ -37,7 +37,7 @@ meta:
                 :pre-icon="LockOutline"
                 :input-props="{inputmode: 'numeric', autocomplete: 'one-time-code', maxlength: 6}"
             />
-            <p class="text-sm text-gray-500 dark:text-gray-400" data-test="lost-authenticator-msg">
+            <p class="text-sm text-gray-500 dark:text-gray-300" data-test="lost-authenticator-msg">
                 Lost your authenticator? Ask a FLIP admin to reset MFA for you.
             </p>
             <div class="flex-grow" />

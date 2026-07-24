@@ -17,45 +17,157 @@
      card height. -->
 
 <template>
-    <div v-if="!data?.length" class="flex items-center gap-2 text-sm text-gray-500 dark:text-gray-300">
-        <icon-carbon-chart-line-data class="w-5 h-5 text-gray-400 shrink-0" />
-        <div>Any metrics generated during training will show here.</div>
-    </div>
-    <div v-else class="flex flex-col">
-        <div
-            role="tablist"
-            aria-label="Training plots"
-            class="flex items-center gap-1 shrink-0 overflow-x-auto pb-3"
-        >
-            <button
-                v-for="chart in data"
-                :key="chart.yLabel"
-                type="button"
-                role="tab"
-                :aria-selected="activeChartLabel === chart.yLabel"
-                :data-test="`training-plot-tab-${chart.yLabel}`"
-                class="inline-flex items-center px-3 py-1.5 rounded-full text-[13px] font-semibold whitespace-nowrap transition-all"
-                :class="activeChartLabel === chart.yLabel
-                    ? 'bg-primary-500 text-white shadow-sm'
-                    : 'text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200'"
-                @click="activeChartLabel = chart.yLabel"
-            >
-                {{ chart.yLabel }}
-            </button>
+    <div
+        v-if="!data?.length"
+        data-test="metrics-empty-state"
+        class="flex flex-col flex-1 items-center justify-center w-full min-h-[16rem] p-4
+        border-2 border-gray-100 dark:border-dark-border rounded-lg"
+    >
+        <div class="relative block w-full text-center">
+            <icon-ph-chart-line class="w-12 h-12 mx-auto text-gray-400 dark:text-gray-600" />
+            <div class="mt-2 text-sm text-gray-500 dark:text-gray-300">
+                Any metrics sent during the run will show here.
+            </div>
         </div>
-        <div class="w-full aspect-video max-h-[480px] pt-4" role="tabpanel">
+    </div>
+    <div v-else class="flex flex-col flex-1 min-h-0">
+        <div class="flex items-center gap-3 shrink-0 pb-3">
+            <!-- Picking one plot only means something while one plot is showing. On a
+                 narrow window a run's worth of chips scrolls off the screen, so the same
+                 choice becomes a select. It runs the full width up to the layout buttons:
+                 a capped select leaves the row's slack trailing behind the buttons, which
+                 then sit adrift of the card's right edge. -->
+            <select
+                v-if="view === 'single'"
+                v-model="activeChartId"
+                data-test="metrics-plot-select"
+                aria-label="Training plot"
+                class="flex-1 min-w-0 px-2 py-1.5 sm:hidden rounded-lg border text-[13px] font-semibold
+                       bg-white dark:bg-dark-canvas border-gray-200 dark:border-dark-border
+                       text-gray-700 dark:text-gray-300"
+            >
+                <option v-for="chart in charts" :key="chartId(chart)" :value="chartId(chart)">
+                    {{ tabLabel(chart) }}
+                </option>
+            </select>
+
+            <div
+                v-if="view === 'single'"
+                role="tablist"
+                aria-label="Training plots"
+                class="hidden sm:flex items-center flex-1 min-w-0 gap-1 overflow-x-auto"
+            >
+                <button
+                    v-for="chart in charts"
+                    :key="chartId(chart)"
+                    type="button"
+                    role="tab"
+                    :aria-selected="activeChartId === chartId(chart)"
+                    :data-test="`training-plot-tab-${chart.yLabel}-${chart.xLabel}`"
+                    class="inline-flex items-center px-3 py-1.5 rounded-full text-[13px] font-semibold whitespace-nowrap transition-all"
+                    :class="activeChartId === chartId(chart)
+                        ? 'bg-primary-500 text-white shadow-sm'
+                        : 'text-gray-500 hover:text-gray-800 dark:text-gray-300 dark:hover:text-gray-200'"
+                    @click="activeChartId = chartId(chart)"
+                >
+                    {{ tabLabel(chart) }}
+                </button>
+            </div>
+            <p v-else class="flex-1 min-w-0 text-[13px] text-gray-500 dark:text-gray-300">
+                {{ charts.length }} {{ charts.length === 1 ? "plot" : "plots" }}
+            </p>
+
+            <!-- ml-auto keeps these pinned to the card's right edge whatever leads the
+                 row, rather than relying on that element growing to fill it. -->
+            <div class="flex items-center gap-1 shrink-0 ml-auto" role="group" aria-label="Plot layout">
+                <button
+                    type="button"
+                    data-test="metrics-view-single"
+                    aria-label="Show one plot at a time"
+                    title="Show one plot at a time"
+                    :aria-pressed="view === 'single'"
+                    :class="viewButtonClass('single')"
+                    @click="view = 'single'"
+                >
+                    <icon-ph-square class="w-4 h-4" />
+                </button>
+                <button
+                    type="button"
+                    data-test="metrics-view-grid"
+                    aria-label="Show all plots in a grid"
+                    title="Show all plots in a grid"
+                    :aria-pressed="view === 'grid'"
+                    :class="viewButtonClass('grid')"
+                    @click="view = 'grid'"
+                >
+                    <icon-ph-squares-four class="w-4 h-4" />
+                </button>
+            </div>
+        </div>
+
+        <!-- The chart fills whatever height the card gives it rather than locking to
+             a 16:9 box. min-h-0 lets it shrink below its content on a short window;
+             the card carries the readability floor. -->
+        <div v-if="view === 'single'" class="w-full flex-1 min-h-0 pt-4" role="tabpanel">
             <AiMetricsChart v-if="activeChart" :data="activeChart" />
+        </div>
+
+        <!-- Every plot at once. The cells keep a readable height and the view scrolls,
+             rather than squeezing a run's worth of metrics into one screen. Scrolling
+             lives on this wrapper, NOT on the grid: when the grid itself is the
+             fixed-height scroll container, Chrome sizes its auto rows to split the
+             visible height equally, blind to the aspect-ratio heights of the cells —
+             which then overflow their rows and paint over the cards below. An
+             auto-height grid inside a scrolling wrapper sizes rows to their content. -->
+        <div
+            v-else
+            data-test="metrics-grid-scroller"
+            class="flex-1 min-h-0 overflow-y-auto"
+        >
+            <!-- pt-1, not pt-4: the header already carries pb-3, and the cells' rings sit
+                 outside their boxes, so this only has to keep the top row's ring unsheared. -->
+            <div
+                data-test="metrics-grid"
+                class="grid items-start grid-cols-1 gap-4 pt-1 px-1 md:grid-cols-2 2xl:grid-cols-3"
+            >
+                <!-- overflow-hidden keeps a mid-resize canvas — the chart resizes on a
+                     debounce — from painting over the cell below. -->
+                <figure
+                    v-for="chart in charts"
+                    :key="chartId(chart)"
+                    :data-test="`metrics-grid-cell-${chart.yLabel}-${chart.xLabel}`"
+                    class="flex flex-col p-2 overflow-hidden rounded-lg ring-1 ring-gray-100 dark:ring-white/25"
+                >
+                    <figcaption class="px-1 pb-0.5 text-xs font-semibold truncate shrink-0 text-gray-600 dark:text-gray-300">
+                        {{ tabLabel(chart) }}
+                    </figcaption>
+                    <!-- The ratio goes on the plot, not the cell: the caption and padding
+                         would eat into a cell-wide ratio and leave the plot itself flatter
+                         than 16:9 (measured 2.01 at two columns). Height follows width, with
+                         a floor for a phone and a ceiling so one column does not fill the
+                         screen. Below md the grid is a single column, so 16:9 stretches each
+                         plot the full width of the card and it reads long and flat — 3:2
+                         gives those the height back. -->
+                    <div
+                        :data-test="`metrics-grid-plot-${chart.yLabel}-${chart.xLabel}`"
+                        class="w-full aspect-[3/2] md:aspect-video min-h-[13rem] max-h-[24rem]"
+                    >
+                        <AiMetricsChart :data="chart" />
+                    </div>
+                </figure>
+            </div>
         </div>
     </div>
 </template>
 
 <script setup lang="ts">
+import { useStorage } from "@vueuse/core";
 import useSWRV from "swrv";
 import { computed, ref, watch } from "vue";
 import { useRoute } from "vue-router";
 
 import AiMetricsChart from "@/components/AiChart/AiModelMetricsChart.vue";
-import { getModelMetrics } from "@/services/model-service";
+import { getModelMetrics, type IModelMetricData } from "@/services/model-service";
 import { useProjectStore } from "@/store/project";
 
 interface ITrainingMetricsProps {
@@ -79,7 +191,12 @@ const { data } = useSWRV(
     }
 );
 
-const activeChartLabel = ref<string | null>(null);
+// A plot is identified by the (yLabel, xLabel) pair, not the metric name alone: the same metric
+// logged against different x-axis labels is a separate plot (FLIP#148). JSON-encoding the pair keeps
+// the composite key unambiguous for any label text.
+const chartId = (chart: IModelMetricData) => JSON.stringify([chart.yLabel, chart.xLabel]);
+
+const activeChartId = ref<string | null>(null);
 
 // Default to the first chart whenever the data first loads or the active tab
 // disappears from the response (e.g. backend dropped a metric).
@@ -87,16 +204,35 @@ watch(
     data,
     next => {
         if (!next?.length) {
-            activeChartLabel.value = null;
+            activeChartId.value = null;
 
             return;
         }
-        if (!activeChartLabel.value || !next.some(c => c.yLabel === activeChartLabel.value)) {
-            activeChartLabel.value = next[0].yLabel;
+        if (!activeChartId.value || !next.some(c => chartId(c) === activeChartId.value)) {
+            activeChartId.value = chartId(next[0]);
         }
     },
     { immediate: true }
 );
+
+// Distinct x-axis labels per metric name. A metric plotted against a single x-axis shows just its
+// name; only when the same metric appears under more than one x-label do we disambiguate the tabs.
+const xLabelsByMetric = computed(() => {
+    const map = new Map<string, Set<string>>();
+    for (const chart of data.value ?? []) {
+        const labels = map.get(chart.yLabel) ?? new Set<string>();
+        labels.add(chart.xLabel);
+        map.set(chart.yLabel, labels);
+    }
+
+    return map;
+});
+
+const tabLabel = (chart: IModelMetricData): string => {
+    const distinct = xLabelsByMetric.value.get(chart.yLabel)?.size ?? 1;
+
+    return distinct > 1 ? `${chart.yLabel} · ${chart.xLabel}` : chart.yLabel;
+};
 
 // Trust display name → short code, for legend brevity. Defends against the
 // backend metrics endpoint falling back to the long trust name when its
@@ -110,17 +246,34 @@ const nameToCode = computed(() => {
     return map;
 });
 
-const activeChart = computed(() => {
-    const chart = data.value?.find(c => c.yLabel === activeChartLabel.value);
-    if (!chart) return null;
+// Every chart, with trust names shortened to their codes. Both views draw from
+// this, so a legend reads the same whichever layout you are in.
+const charts = computed(() => {
     const codes = nameToCode.value;
 
-    return {
+    return (data.value ?? []).map(chart => ({
         ...chart,
         metrics: chart.metrics.map(s => ({
             ...s,
             seriesLabel: codes.get(s.seriesLabel) ?? s.seriesLabel
         }))
-    };
+    }));
 });
+
+const activeChart = computed(() => charts.value.find(c => chartId(c) === activeChartId.value) ?? null);
+
+// A run reports dozens of metrics, so "one at a time" and "all at once" are both
+// reasonable defaults; single is the initial one because it is the readable one.
+// The choice is remembered because this component is torn down and rebuilt every
+// time you step over to Prepare and back, and re-picking the grid each time grates.
+type PlotView = "single" | "grid";
+const view = useStorage<PlotView>("flip.metrics-plot-view", "single");
+
+function viewButtonClass(option: PlotView): string {
+    const base = "inline-flex items-center justify-center w-8 h-8 rounded-lg transition-colors";
+
+    return view.value === option
+        ? `${base} bg-primary-500 text-white`
+        : `${base} text-gray-500 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-dark-raised`;
+}
 </script>

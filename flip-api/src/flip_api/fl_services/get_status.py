@@ -36,7 +36,7 @@ def get_status_endpoint(
     request: Request,
     db: Session = Depends(get_session),
     user_id: UUID = Depends(verify_token),
-):
+) -> list[INetStatus]:
     """
     Retrieve the status of all federated learning networks.
 

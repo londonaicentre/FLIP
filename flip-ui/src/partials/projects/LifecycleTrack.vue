@@ -14,7 +14,7 @@
 <!-- Design ref: design_handoff_full/04_lifecycle/lifecycle.jsx — variant
      "B · Horizontal track" (LifecycleB, lines 139-171). Self-contained: the
      "current" stage is derived as the first non-completed step so callers can
-     keep passing the same IStep[] they pass to AiSteps elsewhere. -->
+     keep passing the shared IStep[] shape. -->
 
 <template>
     <div class="shrink-0">
@@ -28,7 +28,7 @@
                 <!-- Track (rail + progress) sits behind the circles; left/right
                      inset by half-stage so it stops at the edges of the row. -->
                 <div
-                    class="absolute h-[2px] bg-gray-200 dark:bg-gray-700 rounded"
+                    class="absolute h-[2px] bg-gray-200 dark:bg-dark-raised rounded"
                     :style="trackStyle"
                 />
                 <div
@@ -46,19 +46,19 @@
                         class="grid w-5 h-5 place-items-center rounded-full transition-all mb-1"
                         :class="circleClass(idx)"
                     >
-                        <icon-heroicons-outline-x
+                        <icon-ph-x-bold
                             v-if="step.error && !step.completed"
-                            class="w-3 h-3 text-white stroke-[2.5]"
+                            class="w-3 h-3 text-white"
                             aria-hidden="true"
                         />
-                        <icon-heroicons-outline-minus
+                        <icon-ph-stop-fill
                             v-else-if="step.stopped && !step.completed"
-                            class="w-3 h-3 text-white stroke-[2.5]"
+                            class="w-3 h-3 text-white"
                             aria-hidden="true"
                         />
-                        <icon-heroicons-outline-check
+                        <icon-ph-check-bold
                             v-else-if="step.completed"
-                            class="w-3 h-3 text-white stroke-[2.5]"
+                            class="w-3 h-3 text-white"
                             aria-hidden="true"
                         />
                         <span
@@ -75,7 +75,7 @@
                     </div>
                     <div
                         v-if="stageSubLabel(idx)"
-                        class="text-[10px] text-gray-500 dark:text-gray-400 mt-0.5 font-mono"
+                        class="text-[10px] text-gray-500 dark:text-gray-300 mt-0.5 font-mono"
                     >
                         {{ stageSubLabel(idx) }}
                     </div>
@@ -100,7 +100,7 @@ const completedCount = computed(() => props.steps.filter(s => s.completed).lengt
 
 // Current stage = first non-completed step. Caller doesn't have to set
 // `inProgress` explicitly — matches the implicit "next thing to do" the
-// existing AiSteps consumers rely on.
+// existing IStep consumers rely on.
 const currentIndex = computed(() => props.steps.findIndex(s => !s.completed));
 
 const isCurrent = (idx: number) => idx === currentIndex.value;
@@ -111,10 +111,10 @@ const circleClass = (idx: number): string => {
     if (step.stopped && !step.completed) return "bg-yellow-500 border-2 border-yellow-500";
     if (step.completed) return "bg-primary-500 border-2 border-primary-500";
     if (isCurrent(idx)) {
-        return "bg-white dark:bg-gray-900 border-[2.5px] border-primary-500 shadow-[0_0_0_5px_rgba(97,54,110,0.15)]";
+        return "bg-white dark:bg-dark-canvas border-[2.5px] border-primary-500 shadow-[0_0_0_5px_rgba(97,54,110,0.15)]";
     }
 
-    return "bg-white dark:bg-gray-900 border-2 border-gray-300 dark:border-gray-600";
+    return "bg-white dark:bg-dark-canvas border-2 border-gray-300 dark:border-dark-border-strong";
 };
 
 const stepTextClass = (idx: number): string => {
@@ -123,7 +123,7 @@ const stepTextClass = (idx: number): string => {
     if (step.stopped && !step.completed) return "text-yellow-700 dark:text-yellow-400";
     if (step.completed || isCurrent(idx)) return "text-gray-900 dark:text-gray-100";
 
-    return "text-gray-500 dark:text-gray-400";
+    return "text-gray-500 dark:text-gray-300";
 };
 
 const formatStageDate = (iso: string): string => new Date(iso).toLocaleDateString(undefined, {

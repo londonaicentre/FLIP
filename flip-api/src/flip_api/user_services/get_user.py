@@ -39,6 +39,7 @@ def get_user(
     Args:
         user_id (str): User ID or email.
         request (Request): FastAPI request object for headers.
+        db (Session): Database session.
         token_id (UUID): User ID from authentication token.
 
     Returns:

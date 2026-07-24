@@ -61,7 +61,7 @@ import boto3
 from sqlmodel import Session, select
 
 from flip_api.config import get_settings
-from flip_api.db.database import engine
+from flip_api.db.database import get_engine
 from flip_api.db.models.main_models import FLKitSlot, Trust
 from flip_api.trusts_services.services.register_trust import (
     TrustRegistrationError,
@@ -255,7 +255,7 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         try:
             kits = register_one_trust(
                 args.name, args.code, args.region, session, require_existing=args.require_existing

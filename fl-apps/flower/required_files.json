@@ -1,0 +1,10 @@
+{
+  "evaluation": [
+    "client_app.py",
+    "models.py"
+  ],
+  "standard": [
+    "client_app.py",
+    "models.py"
+  ]
+}

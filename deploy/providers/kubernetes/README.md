@@ -130,9 +130,12 @@ helm upgrade --install trust-release ./deploy/providers/kubernetes/ \
 >   `helm` reports the release failed and `patch-kit-secrets` is skipped, leaving
 >   trust-api on the stale seed key (`401`). Re-run it manually:
 >   `make -C deploy/providers/kubernetes patch-kit-secrets KIT=<CODE> PROD=stag`.
-> - For FL training, `sync-kit` strips the egress NetworkPolicy block each run
->   (see [#593](https://github.com/londonaicentre/FLIP/issues/593)); re-add it
->   before relying on the fl-client → fl-server connection.
+> - For FL training, `sync-kit` regenerates the FL-server egress allowance on
+>   every run (see [#593](https://github.com/londonaicentre/FLIP/issues/593)):
+>   when the kit carries `FL_SERVER_PORT` it emits `networkPolicies.allowedEgressPorts`
+>   into the override with a port-only rule for that port (alongside the chart's
+>   default DNS/HTTP/HTTPS ports), so the fl-client → fl-server gRPC is allowed
+>   without pinning the NLB's rotating IPs. No manual re-add is needed.
 
 ### 5. Verify the trust is polling
 

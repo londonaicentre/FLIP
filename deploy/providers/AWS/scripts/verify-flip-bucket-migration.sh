@@ -10,7 +10,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-# Parity-check the four prefixes synced by `make migrate-flip-bucket`.
+# Parity-check the three prefixes synced by `make migrate-flip-bucket`.
 #
 # Why: `aws s3 sync` exits 0 even when individual object copies fail
 # (per-object KMS / throttle / RequestTimeout errors), so the sync target's
@@ -144,9 +144,8 @@ check "model file uploads" \
 check "FL results" \
     "s3://${FLIP_BUCKET_NAME}/uploaded_federated_data/" \
     "s3://${FLIP_FL_RESULTS_BUCKET_NAME}/"
-check "FL base apps" \
-    "s3://${FLIP_BUCKET_NAME}/base-application/" \
-    "s3://${FLIP_APP_BUNDLES_BUCKET_NAME}/base-application/"
+# The legacy base-application/ prefix is not migrated or verified: the base FL
+# application templates now ship in the flip-api image, not S3 (FLIP#724).
 check "FL app destinations" \
     "s3://${FLIP_BUCKET_NAME}/app_destination_bucket/" \
     "s3://${FLIP_APP_BUNDLES_BUCKET_NAME}/app_destinations/"

@@ -2,6 +2,6 @@
 
 exports[`Ai Skeleton > Renders Component 1`] = `
 <div
-  class="w-full my-1 bg-gray-200 dark:bg-gray-700 rounded animate-pulse"
+  class="w-full my-1 bg-gray-200 dark:bg-dark-raised rounded animate-pulse"
 />
 `;

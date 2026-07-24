@@ -13,10 +13,6 @@
 
 # flip-utils — the `flip` Python package
 
-<p align="left">
-<img src="assets/flip-flare-logo.png" height="200" alt='flip-flare-logo' />
-</p>
-
 [![PyPI version](https://img.shields.io/pypi/v/flip-utils)](https://pypi.org/project/flip-utils/)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
 [![Documentation Status](https://readthedocs.org/projects/londonaicentreflip/badge/?version=latest)](https://londonaicentreflip.readthedocs.io/en/latest/)[![License](https://img.shields.io/badge/license-Apache--2.0-green.svg)](../LICENSE.md)
@@ -25,15 +21,14 @@ This directory is a sub-tree of the [FLIP](https://github.com/londonaicentre/FLI
 pip-installable `flip` Python package (published as `flip-utils` on PyPI) that ships inside every FL server / client
 image and is imported as `from flip import ...` by user-uploaded training code. Sibling FL trees in the same mono-repo:
 
-- **[`flip-utils/flip/`](./flip/)** — pip-installable Python package with platform logic, NVFLARE components, and utilities (this directory)
-- **[`../fl-apps/`](../fl-apps/)** — FL job-type implementations / app templates (`standard`, `evaluation`, `diffusion_model`, `fed_opt`)
-- **[`../fl-tutorials/`](../fl-tutorials/)** — runnable end-to-end tutorial examples
-- **[`../fl-services/`](../fl-services/)** — Docker images for FL networks (server, clients, admin API)
+- **[`flip-utils/flip/`](./flip/)** — pip-installable Python package with platform logic, NVFLARE components, Flower helpers and utilities (this directory)
+- **[`../fl-apps/`](../fl-apps/)** — FL job-type implementations / app templates per backend (`nvflare/{standard,standard_client_api,evaluation,evaluation_client_api,diffusion_model,fed_opt}`, `flower/{standard,evaluation}`)
+- **[`../fl-tutorials/`](../fl-tutorials/)** — runnable end-to-end tutorial examples per backend (`nvflare/`, `flower/`)
+- **[`../fl-services/`](../fl-services/)** — Docker images and network provisioning for FL networks per backend (`nvflare/`, `flower/`); each backend's `Makefile` owns build / provision / up / down / submit
 
-The rest of this README is largely inherited from the standalone `flip-fl-base` repository (now merged in) and is
-still being reconciled with the mono-repo layout — paths like `tutorials/` and `fl-services/` referred to here are
-the now-sibling top-level `fl-tutorials/` and `fl-services/` trees, and Make targets called out below run from the
-`flip-utils/` directory.
+Paths like `tutorials/` referenced in older sections of this README refer to the now-sibling top-level
+[`../fl-tutorials/`](../fl-tutorials/) tree, and Make targets called out below run from the `flip-utils/` directory
+unless otherwise noted.
 
 ## Table of Contents
 
@@ -86,7 +81,7 @@ flip/
 ├── utils/        # General utilities: Utils, model weight helpers
 ├── nvflare/      # NVFLARE-specific logic and components
 │   ├── executors/    # RUN_TRAINER, RUN_VALIDATOR, RUN_EVALUATOR wrappers
-│   ├── controllers/  # Workflow controllers (ScatterAndGather, CrossSiteModelEval, …)
+│   ├── controllers/  # FLIP workflows (ScatterAndGather, BroadcastTask, …)
 │   └── components/   # Event handlers, persistors, privacy filters, locators, …
 └── flower/       # Flower-specific server-side helpers
     └── metrics.py    # handle_client_metrics / handle_client_exception
@@ -122,6 +117,8 @@ Set via the `JOB_TYPE` environment variable:
 | `evaluation` | Distributed model evaluation without training |
 | `diffusion_model` | Two-stage training (VAE encoder + diffusion) |
 | `fed_opt` | Custom federated optimization |
+| `standard_client_api` | Federated averaging via the modern NVFLARE Client API (script-driven, uses `nvflare.client`) |
+| `evaluation_client_api` | Distributed model evaluation via the modern NVFLARE Client API |
 
 The corresponding configs live in `fl-apps/nvflare/<job_type>/app/config/`.
 
@@ -173,6 +170,8 @@ The [`../fl-tutorials/`](../fl-tutorials/) directory contains ready-to-use examp
 | `diffusion_model` | `image_synthesis/latent_diffusion_model` |
 | `fed_opt` | `image_segmentation/3d_spleen_segmentation` |
 | `evaluation` | `image_evaluation/3d_spleen_segmentation_evaluation` |
+| `standard_client_api` | `image_classification/xray_classification_client_api` |
+| `evaluation_client_api` | `image_evaluation/3d_spleen_segmentation_evaluation_client_api` |
 
 ---
 
@@ -191,10 +190,10 @@ The [`../fl-services/nvflare/`](../fl-services/nvflare/README.md) directory cont
 Generate the certificates, keys, and configuration for the 2 FL networks:
 
 ```bash
-make nvflare-provision-2-nets
+make -C fl-services/nvflare provision-2-nets
 ```
 
-This uses the network-specific provisioning project files (`deploy/providers/nvflare/net-1_project_dev.yml` and `net-2_project_dev.yml`) and provisions the network files in `deploy/workspace/net-1` and `deploy/workspace/net-2` (gitignored) using the [deploy/providers/nvflare/scripts/provision-network.sh](../deploy/providers/nvflare/scripts/provision-network.sh) script.
+This uses the network-specific provisioning project files (`fl-services/nvflare/provision/net-1_project_dev.yml` and `net-2_project_dev.yml`) and provisions the network files in `fl-services/nvflare/provision/workspace-dev/net-1` and `fl-services/nvflare/provision/workspace-dev/net-2` (gitignored) using the [fl-services/nvflare/provision/scripts/provision-network.sh](../fl-services/nvflare/provision/scripts/provision-network.sh) script.
 
 > ⚠️ **Warning**: Provisioned files contain cryptographic signatures. Any modification will cause errors. Always re-run provisioning if changes are needed.
 
@@ -206,24 +205,27 @@ clients won't be on the same Docker network as the FL server (as they are in dev
 Run:
 
 ```bash
-make nvflare-provision-stag
+make -C fl-services/nvflare provision-stag
 ```
 
 ### Creating a New Network
 
-Create a provisioning project file under `deploy/providers/nvflare/` (e.g. `net-3_project_dev.yml`) based on the template (`net-1_project_dev.yml`) (you'll likely need to change `fed_learn_port`) and run:
+Create a provisioning project file under `fl-services/nvflare/provision/` (e.g. `net-3_project_dev.yml`) based on the template (`net-1_project_dev.yml`) (you'll likely need to change `fed_learn_port`) and run:
 
 ```bash
-NET_NUMBER=3 make nvflare-provision
+make -C fl-services/nvflare provision NET_NUMBER=3
 ```
 
 ### Running a Network
 
+From ``fl-services/nvflare/`` (the per-backend Makefile that owns these targets — the
+``flip-utils/`` directory itself only ships ``unit-test``):
+
 ```bash
-make build NET_NUMBER=1   # Build Docker images
+make build                # Build the :dev FL images (flare-fl-{base,server,client,api})
 make up NET_NUMBER=1      # Start the network (server, 2 clients, API)
-make down NET_NUMBER=1    # Stop the network
-make clean NET_NUMBER=1   # Remove containers and images
+make down NET_NUMBER=1    # Stop the network — must match the NET_NUMBER used for `up`
+                          # (compose embeds it in container names + mount paths)
 ```
 
 ### Running the tutorials
@@ -240,27 +242,32 @@ make -C fl-tutorials run-all-tutorials
 
 GitHub Actions workflows use OIDC to authenticate to AWS (no long-lived keys).
 
-| Trigger | Target |
-| --------- | -------- |
-| PR to any branch | `s3://flipdev/base-application-dev/nvflare/pull-requests/<PR_NUMBER>` |
-| Merge to `develop` | `s3://flipdev/base-application/nvflare` and `s3://flipstag/base-application/nvflare` |
-| Merge to `main` | `s3://flipprod/base-application/nvflare` |
+The base FL application templates (this `fl-apps/` tree) are **no longer published to S3**. They are
+baked into the flip-api image at build time and read from a local directory (`FL_APP_BASE_DIR`,
+default `/app/fl-apps`); flip-api validates job types and bundles applications straight from that
+tree (FLIP#724). Two CI checks still guard the templates on every PR:
 
-> **Warning**: Never manually sync to the production bucket.
+- `fl-apps-check-required-files.yml` — regenerates each backend's `required_files.json` from the
+  per-template arrays and fails if the committed manifest is stale.
+- `fl-apps-check-tutorial-sync.yml` — keeps the Flower tutorials in sync with the `fl-apps/flower/`
+  templates.
 
-To test a PR on the FLIP platform, update `FL_APP_BASE_BUCKET` in the [flip repo environment variables](https://github.com/londonaicentre/FLIP/blob/main/.env.development) to point to your PR's S3 path.
+To exercise a PR's templates on a running FLIP stack **before merge**, rebuild the flip-api image
+from the PR branch (the templates ride along in the image) — for local dev the `../fl-apps` bind-mount
+means edits take effect immediately without a rebuild. A new job type needs no S3 sync: adding it to
+`fl-apps/<backend>/` and its `required_files.json` is enough, because flip-api reads both locally.
 
 ### Makefile Reference
 
 #### Network Management
 
-| Command | Description |
-| --------- | ------------- |
-| `make nvflare-provision NET_NUMBER=X` | Provision FL network X |
-| `make build NET_NUMBER=X` | Build Docker images for network X |
-| `make up NET_NUMBER=X` | Start FL network X |
-| `make down NET_NUMBER=X` | Stop FL network X |
-| `make clean NET_NUMBER=X` | Remove containers and images |
+| Command | Run from | Description |
+| --------- | --------- | ------------- |
+| `make -C fl-services/nvflare provision NET_NUMBER=X` | repo root | Provision FL network X |
+| `make -C fl-services/nvflare provision-2-nets` | repo root | Provision both dev FL networks |
+| `make build` | `fl-services/nvflare/` | Build the :dev FL images |
+| `make up NET_NUMBER=X` | `fl-services/nvflare/` | Start FL network X |
+| `make down NET_NUMBER=X` | `fl-services/nvflare/` | Stop FL network X (must match the `NET_NUMBER` used at `up`) |
 
 #### Testing
 
@@ -283,7 +290,7 @@ Each tutorial's dataset is downloaded per-tutorial — see the tutorial's own RE
 
 ## Security
 
-Please report security vulnerabilities responsibly. For details on how to report a vulnerability, see [SECURITY.md](./SECURITY.md).
+Please report security vulnerabilities responsibly. For details on how to report a vulnerability, see [SECURITY.md](../SECURITY.md).
 
 **⚠️ Do not open a public GitHub issue for security bugs; instead, use the private GitHub Security Advisory feature.**
 
@@ -291,4 +298,4 @@ Please report security vulnerabilities responsibly. For details on how to report
 
 ## Contributing
 
-For information on how to contribute to this project, see [CONTRIBUTING.md](./CONTRIBUTING.md).
+For information on how to contribute to this project, see [CONTRIBUTING.md](../CONTRIBUTING.md).

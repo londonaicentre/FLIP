@@ -18,6 +18,7 @@ import numpy as np
 from nvflare.apis.dxo import DXO, DataKind, MetaKey
 
 from flip.constants import FlipMetaKey
+from flip.nvflare.components.custom_percentile_privacy import PercentilePrivacy
 from flip.nvflare.components.stage_percentile_privacy import StagePercentilePrivacy
 
 
@@ -26,6 +27,12 @@ class TestStagePercentilePrivacy:
         self.fl_ctx = MagicMock()
         self.fl_ctx.get_peer_context.return_value = None
         self.shareable = MagicMock()
+
+    def test_subclasses_flip_percentile_privacy(self):
+        """De-fork guard: inherits FLIP's PercentilePrivacy __init__/off (and, transitively, stock)
+        while keeping its own per-stage process_dxo."""
+        assert issubclass(StagePercentilePrivacy, PercentilePrivacy)
+        assert isinstance(StagePercentilePrivacy(), PercentilePrivacy)
 
     def test_init_default_values(self):
         f = StagePercentilePrivacy()

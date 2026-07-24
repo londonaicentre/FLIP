@@ -18,10 +18,17 @@
 vi.mock("virtual:generated-pages", () => ({ default: [] }));
 vi.mock("virtual:generated-layouts", () => ({ setupLayouts: (r: unknown) => r }));
 vi.mock("@/utils/auth", () => ({ authCheck: vi.fn((_to, _from, next) => next?.()) }));
+vi.mock("@/router/progress", () => ({
+    startRouteProgress: vi.fn(),
+    doneRouteProgress: vi.fn()
+}));
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { RouteLocationNormalized } from "vue-router";
 
-import router, { routeChange } from "@/router";
+import router, { afterEachGuard, beforeEachGuard, handleRouteError, routeChange } from "@/router";
+import { doneRouteProgress, startRouteProgress } from "@/router/progress";
+import { authCheck } from "@/utils/auth";
 
 describe("routeChange", () => {
     let pushSpy: ReturnType<typeof vi.spyOn>;
@@ -104,5 +111,77 @@ describe("routeChange", () => {
     it("back calls router.back()", () => {
         routeChange.back();
         expect(backSpy).toHaveBeenCalled();
+    });
+});
+
+describe("navigation guards", () => {
+    // Minimal RouteLocationNormalized stand-in — the guards only read `fullPath`.
+    const to = { fullPath: "/projects" } as RouteLocationNormalized;
+    const from = { fullPath: "/" } as RouteLocationNormalized;
+    const assignMock = vi.fn();
+
+    beforeEach(() => {
+        vi.clearAllMocks();
+        sessionStorage.clear();
+        // jsdom's window.location.assign is a non-implemented no-op that warns;
+        // stub it so the reload path is observable (and silent).
+        vi.stubGlobal("location", { assign: assignMock });
+    });
+
+    afterEach(() => {
+        vi.unstubAllGlobals();
+    });
+
+    it("beforeEachGuard starts the progress bar and runs the auth check", () => {
+        const next = vi.fn();
+        beforeEachGuard(to, from, next);
+
+        expect(startRouteProgress).toHaveBeenCalledOnce();
+        expect(authCheck).toHaveBeenCalledWith(to, from, next);
+    });
+
+    it("afterEachGuard stops the progress bar and re-arms the reload guard on a clean navigation", () => {
+        sessionStorage.setItem("flip:chunk-reload", "1");
+        afterEachGuard(to, from, undefined);
+
+        expect(doneRouteProgress).toHaveBeenCalledOnce();
+        expect(sessionStorage.getItem("flip:chunk-reload")).toBeNull();
+    });
+
+    it("afterEachGuard leaves the reload guard set when the navigation failed", () => {
+        sessionStorage.setItem("flip:chunk-reload", "1");
+        // A NavigationFailure is truthy; the guard must not clear the flag.
+        afterEachGuard(to, from, { type: 4 } as never);
+
+        expect(doneRouteProgress).toHaveBeenCalledOnce();
+        expect(sessionStorage.getItem("flip:chunk-reload")).toBe("1");
+    });
+
+    it("handleRouteError reloads once on a stale-chunk load error", () => {
+        handleRouteError(new Error("Failed to fetch dynamically imported module: /assets/x.js"), to);
+
+        expect(doneRouteProgress).toHaveBeenCalledOnce();
+        expect(sessionStorage.getItem("flip:chunk-reload")).toBe("1");
+        expect(assignMock).toHaveBeenCalledWith("/projects");
+    });
+
+    it("handleRouteError does not reload a second time once the guard flag is set", () => {
+        sessionStorage.setItem("flip:chunk-reload", "1");
+        handleRouteError(new Error("error loading dynamically imported module"), to);
+
+        expect(assignMock).not.toHaveBeenCalled();
+    });
+
+    it("handleRouteError ignores non-chunk errors", () => {
+        handleRouteError(new Error("some unrelated navigation error"), to);
+
+        expect(assignMock).not.toHaveBeenCalled();
+        expect(sessionStorage.getItem("flip:chunk-reload")).toBeNull();
+    });
+
+    it("handleRouteError coerces a non-Error rejection to a string before matching", () => {
+        handleRouteError("importing a module script failed", to);
+
+        expect(assignMock).toHaveBeenCalledWith("/projects");
     });
 });

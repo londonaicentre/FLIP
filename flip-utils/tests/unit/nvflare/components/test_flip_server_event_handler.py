@@ -10,17 +10,19 @@
 # limitations under the License.
 #
 
-from unittest.mock import MagicMock, Mock
+from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 from nvflare.apis.event_type import EventType
 from nvflare.app_common.app_event_type import AppEventType
 
-from flip.constants import FlipEvents, ModelStatus
+from flip.constants import FlipEvents, FlipProps, ModelStatus
 from flip.exceptions import ResultsUploadError
+from flip.nvflare.components.evaluation_json_generator import EvaluationJsonGenerator
 from flip.nvflare.components.flip_server_event_handler import ServerEventHandler
 from flip.nvflare.components.persist_and_cleanup import PersistToS3AndCleanup
 from flip.nvflare.components.validation_json_generator import ValidationJsonGenerator
+from flip.schemas import FLLogEvent
 
 
 class TestServerEventHandler:
@@ -32,18 +34,37 @@ class TestServerEventHandler:
         flip = MagicMock()
         handler = ServerEventHandler(model_id=model_id, flip=flip)
 
-        assert handler.model_id == model_id
+        assert handler._model_id_fallback == model_id
+        assert handler._model_id is None
         assert handler.validation_json_generator_id == "json_generator"
         assert handler.persist_and_cleanup_id == "persist_and_cleanup"
         assert handler.flip == flip
         assert handler.fatal_error is False
         assert handler.final_status is None
 
-    def test_init_with_invalid_model_id_raises_error(self):
-        """Test initialization with invalid model UUID raises ValueError"""
+    def test_resolves_model_id_from_fallback_arg(self):
+        """_update_status resolves the model ID from the constructor fallback when no job-metadata prop is set."""
+        model_id = "abcdef01-2345-6789-abcd-ef0123456789"
         flip = MagicMock()
-        with pytest.raises(ValueError, match="is not a valid UUID"):
-            ServerEventHandler(model_id="invalid-uuid", flip=flip)
+        handler = ServerEventHandler(model_id=model_id, flip=flip)
+        fl_ctx = MagicMock()
+        fl_ctx.get_prop.return_value = None
+        handler._update_status(fl_ctx, ModelStatus.INITIATED)
+        flip.update_status.assert_called_once_with(model_id, ModelStatus.INITIATED)
+
+    def test_resolve_model_id_caches_after_first_call(self):
+        """_resolve_model_id resolves once and caches: a second call does not re-invoke get_flip_model_id."""
+        model_id = "abcdef01-2345-6789-abcd-ef0123456789"
+        handler = ServerEventHandler(model_id=model_id)
+        fl_ctx = MagicMock()
+
+        with patch(
+            "flip.nvflare.components.flip_server_event_handler.get_flip_model_id", return_value=model_id
+        ) as mock_resolve:
+            assert handler._resolve_model_id(fl_ctx) == model_id
+            assert handler._resolve_model_id(fl_ctx) == model_id
+
+        assert mock_resolve.call_count == 1
 
     def test_init_with_custom_component_ids(self):
         """Test initialization with custom component IDs"""
@@ -124,7 +145,28 @@ class TestServerEventHandler:
 
         handler.handle_event(AppEventType.TRAINING_STARTED, fl_ctx)
 
-        flip.update_status.assert_called_with(model_id, ModelStatus.TRAINING_STARTED)
+        flip.update_status.assert_called_with(model_id, ModelStatus.RUNNING)
+
+    def test_handle_event_task_initiated(self):
+        """Test handle_event with TASK_INITIATED event (evaluation jobs, #782)"""
+        model_id = "123e4567-e89b-12d3-a456-426614174000"
+        flip = MagicMock()
+        handler = ServerEventHandler(model_id=model_id, flip=flip)
+
+        fl_ctx = MagicMock()
+        fl_ctx.get_peer_context.return_value = None
+        engine = MagicMock()
+        fl_ctx.get_engine.return_value = engine
+
+        json_generator = Mock(spec=ValidationJsonGenerator)
+        persist_cleanup = Mock(spec=PersistToS3AndCleanup)
+        engine.get_component.side_effect = lambda comp_id: (
+            json_generator if comp_id == "json_generator" else persist_cleanup
+        )
+
+        handler.handle_event(FlipEvents.TASK_INITIATED, fl_ctx)
+
+        flip.update_status.assert_called_with(model_id, ModelStatus.RUNNING)
 
     def test_handle_event_fatal_system_error(self):
         """Test handle_event with FATAL_SYSTEM_ERROR event"""
@@ -439,3 +481,227 @@ class TestServerEventHandler:
         assert "must be PersistToS3AndCleanup" in str(handler.system_panic.call_args)
         handler.system_panic.assert_called_once()
         assert "must be PersistToS3AndCleanup" in str(handler.system_panic.call_args)
+
+    # --- FLIP#754: an evaluation whose every validate task failed must not report success ---
+
+    @staticmethod
+    def _end_run(handler, *, all_tasks_failed, flip):
+        """Drive END_RUN with an evaluation generator reporting the given all-failed verdict."""
+        fl_ctx = MagicMock()
+        fl_ctx.get_peer_context.return_value = None
+        engine = MagicMock()
+        fl_ctx.get_engine.return_value = engine
+
+        json_generator = Mock(spec=EvaluationJsonGenerator)
+        json_generator.all_tasks_failed.return_value = all_tasks_failed
+        persist_cleanup = Mock(spec=PersistToS3AndCleanup)
+        persist_cleanup.execute.return_value = None
+        engine.get_component.side_effect = lambda comp_id: (
+            json_generator if comp_id == "json_generator" else persist_cleanup
+        )
+
+        handler.handle_event(EventType.END_RUN, fl_ctx)
+        return persist_cleanup
+
+    def test_end_run_reports_error_when_every_evaluation_task_failed(self):
+        """FLIP#754: 4/4 aborted validate tasks previously reported RESULTS_UPLOADED."""
+        model_id = "123e4567-e89b-12d3-a456-426614174000"
+        flip = MagicMock()
+        handler = ServerEventHandler(model_id=model_id, flip=flip)
+
+        self._end_run(handler, all_tasks_failed=True, flip=flip)
+
+        assert handler.final_status == ModelStatus.ERROR
+        flip.update_status.assert_called_with(model_id, ModelStatus.ERROR)
+
+    def test_end_run_still_uploads_results_when_every_evaluation_task_failed(self):
+        """The zip carries error_log.txt and evaluation_failures.json, so it must still upload."""
+        flip = MagicMock()
+        handler = ServerEventHandler(model_id="123e4567-e89b-12d3-a456-426614174000", flip=flip)
+
+        persist_cleanup = self._end_run(handler, all_tasks_failed=True, flip=flip)
+
+        persist_cleanup.execute.assert_called_once()
+
+    def test_end_run_reports_results_uploaded_on_partial_evaluation_failure(self):
+        """Some clients succeeded: the successful results still count as a completed run."""
+        model_id = "123e4567-e89b-12d3-a456-426614174000"
+        flip = MagicMock()
+        handler = ServerEventHandler(model_id=model_id, flip=flip)
+
+        self._end_run(handler, all_tasks_failed=False, flip=flip)
+
+        assert handler.final_status == ModelStatus.RESULTS_UPLOADED
+        flip.update_status.assert_called_with(model_id, ModelStatus.RESULTS_UPLOADED)
+
+    def test_end_run_keeps_stopped_when_a_user_abort_failed_every_task(self):
+        """A user-requested stop aborts every in-flight validate task; that is STOPPED, not ERROR."""
+        model_id = "123e4567-e89b-12d3-a456-426614174000"
+        flip = MagicMock()
+        handler = ServerEventHandler(model_id=model_id, flip=flip)
+        handler.final_status = ModelStatus.STOPPED
+
+        self._end_run(handler, all_tasks_failed=True, flip=flip)
+
+        assert handler.final_status == ModelStatus.STOPPED
+        flip.update_status.assert_called_with(model_id, ModelStatus.STOPPED)
+
+    def test_end_run_reports_error_when_a_fatal_error_accompanies_a_failed_evaluation(self):
+        """A fatal system error stays the most salient terminal state."""
+        model_id = "123e4567-e89b-12d3-a456-426614174000"
+        flip = MagicMock()
+        handler = ServerEventHandler(model_id=model_id, flip=flip)
+        handler.fatal_error = True
+
+        self._end_run(handler, all_tasks_failed=True, flip=flip)
+
+        assert handler.final_status == ModelStatus.ERROR
+
+    def test_end_run_reports_upload_failed_when_upload_breaks_after_a_clean_evaluation(self):
+        """Regression guard: the new all-failed branch must not shadow RESULTS_UPLOAD_FAILED."""
+        flip = MagicMock()
+        handler = ServerEventHandler(model_id="123e4567-e89b-12d3-a456-426614174000", flip=flip)
+
+        fl_ctx = MagicMock()
+        fl_ctx.get_peer_context.return_value = None
+        engine = MagicMock()
+        fl_ctx.get_engine.return_value = engine
+
+        json_generator = Mock(spec=EvaluationJsonGenerator)
+        json_generator.all_tasks_failed.return_value = False
+        persist_cleanup = Mock(spec=PersistToS3AndCleanup)
+        persist_cleanup.execute.side_effect = ResultsUploadError("boom")
+        engine.get_component.side_effect = lambda comp_id: (
+            json_generator if comp_id == "json_generator" else persist_cleanup
+        )
+
+        handler.handle_event(EventType.END_RUN, fl_ctx)
+
+        assert handler.final_status == ModelStatus.RESULTS_UPLOAD_FAILED
+
+
+class TestRoundEventRelay:
+    """ROUND_STARTED / ROUND_DONE are relayed to the hub as typed facts (1-based rounds)."""
+
+    MODEL_ID = "123e4567-e89b-12d3-a456-426614174000"
+
+    def _handler_and_ctx(self, props):
+        flip = MagicMock()
+        handler = ServerEventHandler(model_id=self.MODEL_ID, flip=flip)
+
+        fl_ctx = MagicMock()
+        fl_ctx.get_peer_context.return_value = None
+        engine = MagicMock()
+        fl_ctx.get_engine.return_value = engine
+        engine.get_clients.return_value = [Mock(), Mock(), Mock()]
+        json_generator = Mock(spec=ValidationJsonGenerator)
+        persist_cleanup = Mock(spec=PersistToS3AndCleanup)
+        engine.get_component.side_effect = lambda comp_id: (
+            json_generator if comp_id == "json_generator" else persist_cleanup
+        )
+        fl_ctx.get_prop.side_effect = lambda key, default=None: props.get(key, default)
+        return handler, flip, fl_ctx
+
+    def test_round_started_relays_one_based_round_and_total(self):
+        from nvflare.app_common.app_constant import AppConstants
+
+        # NVFLARE's _current_round is 0-based: prop 2 means round 3 of 5.
+        handler, flip, fl_ctx = self._handler_and_ctx(
+            {AppConstants.CURRENT_ROUND: 2, AppConstants.NUM_ROUNDS: 5}
+        )
+
+        handler.handle_event(AppEventType.ROUND_STARTED, fl_ctx)
+
+        flip.send_event.assert_called_once_with(
+            model_id=self.MODEL_ID,
+            event_type=FLLogEvent.ROUND_STARTED,
+            global_round=3,
+            details={"total_rounds": 5},
+        )
+
+    def test_round_started_seeds_the_counts_so_an_all_fail_round_reports_zero(self):
+        """A round with zero accepted results must not report round N-1's counts on its
+        ROUND_DONE — the sticky props are re-seeded to "0 of m" at every round start, so
+        the all-clients-failed round closes with an honest count, not a bare line."""
+        from nvflare.app_common.app_constant import AppConstants
+
+        handler, flip, fl_ctx = self._handler_and_ctx(
+            {AppConstants.CURRENT_ROUND: 2, AppConstants.NUM_ROUNDS: 5}
+        )
+
+        handler.handle_event(AppEventType.ROUND_STARTED, fl_ctx)
+
+        seeded = {call.args[0]: call.args[1] for call in fl_ctx.set_prop.call_args_list}
+        assert seeded[FlipProps.ROUND_RETURNED] == 0
+        assert seeded[FlipProps.ROUND_EXPECTED] == 3  # the harness engine's client count
+
+    def test_round_started_with_unreadable_engine_degrades_to_uncounted(self):
+        """No client roster to seed from → both counts clear to None and the round
+        degrades to the bare aggregated wording rather than claiming a denominator."""
+        from nvflare.app_common.app_constant import AppConstants
+
+        handler, flip, fl_ctx = self._handler_and_ctx({AppConstants.CURRENT_ROUND: 2})
+        fl_ctx.get_engine.return_value.get_clients.side_effect = RuntimeError("engine gone")
+
+        handler.handle_event(AppEventType.ROUND_STARTED, fl_ctx)
+
+        seeded = {call.args[0]: call.args[1] for call in fl_ctx.set_prop.call_args_list}
+        assert seeded[FlipProps.ROUND_RETURNED] is None
+        assert seeded[FlipProps.ROUND_EXPECTED] is None
+
+    def test_round_started_without_total_omits_it(self):
+        from nvflare.app_common.app_constant import AppConstants
+
+        handler, flip, fl_ctx = self._handler_and_ctx({AppConstants.CURRENT_ROUND: 0})
+
+        handler.handle_event(AppEventType.ROUND_STARTED, fl_ctx)
+
+        flip.send_event.assert_called_once_with(
+            model_id=self.MODEL_ID,
+            event_type=FLLogEvent.ROUND_STARTED,
+            global_round=1,
+            details=None,
+        )
+
+    def test_round_done_relays_aggregated_with_counts(self):
+        from nvflare.app_common.app_constant import AppConstants
+
+        handler, flip, fl_ctx = self._handler_and_ctx(
+            {
+                AppConstants.CURRENT_ROUND: 2,
+                FlipProps.ROUND_RETURNED: 4,
+                FlipProps.ROUND_EXPECTED: 5,
+            }
+        )
+
+        handler.handle_event(AppEventType.ROUND_DONE, fl_ctx)
+
+        flip.send_event.assert_called_once_with(
+            model_id=self.MODEL_ID,
+            event_type=FLLogEvent.ROUND_AGGREGATED,
+            global_round=3,
+            details={"returned": 4, "expected": 5},
+        )
+
+    def test_round_done_without_counts_omits_details(self):
+        from nvflare.app_common.app_constant import AppConstants
+
+        handler, flip, fl_ctx = self._handler_and_ctx({AppConstants.CURRENT_ROUND: 0})
+
+        handler.handle_event(AppEventType.ROUND_DONE, fl_ctx)
+
+        flip.send_event.assert_called_once_with(
+            model_id=self.MODEL_ID,
+            event_type=FLLogEvent.ROUND_AGGREGATED,
+            global_round=1,
+            details=None,
+        )
+
+    def test_no_round_prop_means_no_event(self):
+        """A ROUND_STARTED without CURRENT_ROUND on the context relays nothing."""
+        handler, flip, fl_ctx = self._handler_and_ctx({})
+
+        handler.handle_event(AppEventType.ROUND_STARTED, fl_ctx)
+        handler.handle_event(AppEventType.ROUND_DONE, fl_ctx)
+
+        flip.send_event.assert_not_called()

@@ -1,8 +1,15 @@
-# Heavy NVFLARE tests that require PyTorch. Run manually via workflow_dispatch.
+# Heavy NVFLARE tests that require PyTorch. Runs on pushes that touch flip-utils/ (mirroring
+# unit-tests.yml) so the nvflare test tree's coverage reaches Codecov, plus manual dispatch.
+# The light unit-tests.yml job deselects the nvflare tree (`-k "not nvflare"`, no torch there),
+# so without this job nvflare files (e.g. the executors) show 0% patch coverage on PRs.
 name: Unit Tests — NVFLARE (heavy)
 
 on:
   workflow_dispatch:
+  push:
+    paths:
+      - "flip-utils/**"
+      - ".github/workflows/unit-tests-heavy.yml"
 
 permissions:
   contents: read
@@ -17,7 +24,7 @@ jobs:
         working-directory: ./flip-utils
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Python 3.12
         uses: actions/setup-python@v5
