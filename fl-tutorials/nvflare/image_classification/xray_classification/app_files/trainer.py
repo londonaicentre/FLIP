@@ -368,8 +368,21 @@ class FLIP_TRAINER(Executor):
                         continue
 
                     output = self.model(images)
-                    loss = get_bce_loss(output, labels).item()
-                    training_metrics_["loss"]["val"].append(loss)
+                    loss = get_bce_loss(output, labels)
+
+                    # Mirror the train loop's guard: np.nanmean below already excludes a NaN from
+                    # the epoch mean, but skipping silently would hide the degeneracy behind it
+                    # (see FLIP#764).
+                    if not torch.isfinite(loss):
+                        self.logger.warning(
+                            "Skipping val batch %d/%d: non-finite loss (%s)",
+                            i + 1,
+                            len(self.validation_dataloader),
+                            loss.item(),
+                        )
+                        continue
+
+                    training_metrics_["loss"]["val"].append(loss.item())
                     output = torch.sigmoid(output)
                     for pathology in self._lesions.get_lesion_list():
                         precision, recall, f1_score = compute_precision_recall_f1(

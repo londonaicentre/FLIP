@@ -322,7 +322,15 @@ def cross_site_validate(
                 continue
 
             output = model(images)
-            metrics["loss"].append(get_bce_loss(output, labels).item())
+            loss = get_bce_loss(output, labels)
+
+            # Mirror epoch_loop's guard: np.nanmean already excludes a NaN from the test mean, but
+            # skipping silently would hide the degeneracy behind it — keep it visible (FLIP#764).
+            if not torch.isfinite(loss):
+                logger.warning(f"Skipping test batch {i + 1}/{len(test_loader)}: non-finite loss ({loss.item()})")
+                continue
+
+            metrics["loss"].append(loss.item())
             probs = torch.sigmoid(output)
             for name in lesions.get_lesion_list():
                 precision, recall, f1 = compute_precision_recall_f1(probs, labels, name, lesions=lesions)

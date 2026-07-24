@@ -137,6 +137,12 @@ def validate_func(
             logits = model(images)
             loss = get_bce_loss(logits, labels)
 
+            # Mirror train_func's guard: np.nanmean in _aggregate already excludes a NaN from the
+            # epoch mean, but skipping silently would hide the degeneracy behind it (FLIP#764).
+            if not torch.isfinite(loss):
+                log(WARNING, f"Skipping val batch {i + 1}/{len(val_loader)}: non-finite loss ({loss.item()})")
+                continue
+
             metrics["loss"].append(loss.item())
             probs = torch.sigmoid(logits)
             for lesion in lesions.items:
