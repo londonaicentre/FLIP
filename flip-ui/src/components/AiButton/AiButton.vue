@@ -22,6 +22,7 @@
                 <button
                     class="relative flex flex-row justify-center btn-base"
                     :type="type"
+                    :aria-label="ariaLabel"
                     :data-test="dataTest"
                     :class="{
                         'btn-sm': small,
@@ -46,6 +47,7 @@
             <button
                 class="relative flex flex-row justify-center btn-base"
                 :type="type"
+                :aria-label="ariaLabel"
                 :data-test="dataTest"
                 :class="{
                     'btn-sm': small,
@@ -113,6 +115,9 @@ interface IAiButtonProps {
     tooltip?: string;
     link?: string;
     tabindex?: number;
+    // Declared as a prop so `aria-label` lands on the native <button> below
+    // instead of falling through to the wrapper <div>, where it is prohibited.
+    ariaLabel?: string;
 }
 
 withDefaults(
@@ -122,7 +127,8 @@ withDefaults(
         type: "button",
         tooltip: "",
         link: undefined,
-        tabindex: 0
+        tabindex: 0,
+        ariaLabel: undefined
     }
 );
 
@@ -136,9 +142,9 @@ const clickButton = () => {
 
 <style lang="css" scoped>
 .btn-base {
-    @apply inline-flex items-center px-3 py-2 border border-gray-300 dark:border-gray-600 shadow-sm text-sm;
-    @apply ring-offset-2 dark:ring-offset-gray-900 bg-white dark:bg-gray-900 hover:bg-gray-100 dark:hover:bg-gray-800 transition duration-300 rounded text-gray-700 dark:text-gray-400;
-    @apply focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 focus:bg-gray-50 dark:focus:ring-primary-400 dark:focus:bg-gray-900 focus:outline-none;
+    @apply inline-flex items-center px-3 py-2 border border-gray-300 dark:border-dark-border-strong shadow-sm text-sm;
+    @apply ring-offset-2 dark:ring-offset-dark-canvas bg-white dark:bg-dark-canvas hover:bg-gray-100 dark:hover:bg-dark-surface transition duration-300 rounded text-gray-700 dark:text-gray-300;
+    @apply focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 focus:bg-gray-50 dark:focus:ring-primary-400 dark:focus:bg-dark-canvas focus:outline-none;
     @apply truncate whitespace-nowrap font-bold leading-5 overflow-ellipsis;
 }
 
@@ -159,7 +165,7 @@ const clickButton = () => {
 }
 
 .btn-base.btn-text-secondary {
-    @apply border-0 shadow-none bg-transparent outline-none focus:ring-0 focus:bg-none focus:shadow-none focus:ring-offset-0 dark:hover:bg-gray-800 hover:bg-gray-100;
+    @apply border-0 shadow-none bg-transparent outline-none focus:ring-0 focus:bg-none focus:shadow-none focus:ring-offset-0 dark:hover:bg-dark-surface hover:bg-gray-100;
 }
 
 .btn-base.btn-text-error {
@@ -171,12 +177,12 @@ const clickButton = () => {
 }
 
 .btn-base.btn-light {
-    @apply border-0 text-primary-600 dark:text-gray-100 dark:bg-gray-700 dark:hover:bg-gray-800 bg-primary-200/70 hover:bg-primary-200 focus:bg-primary-200/70;
+    @apply border-0 text-primary-600 dark:text-gray-100 dark:bg-dark-raised dark:hover:bg-dark-surface bg-primary-200/70 hover:bg-primary-200 focus:bg-primary-200/70;
     @apply disabled:opacity-40 disabled:text-opacity-40 disabled:bg-primary-200 dark:disabled:bg-gray-900;
 }
 
 .btn-base.btn-clear {
-    @apply bg-transparent dark:hover:bg-gray-700 hover:bg-primary-200 focus:bg-primary-200/70 dark:text-primary-200 p-[calc(0.5rem_-_1px)];
+    @apply bg-transparent dark:hover:bg-dark-raised hover:bg-primary-200 focus:bg-primary-200/70 dark:text-primary-200 p-[calc(0.5rem_-_1px)];
 }
 
 .btn-base.btn-disabled {

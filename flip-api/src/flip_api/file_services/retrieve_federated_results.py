@@ -10,7 +10,6 @@
 # limitations under the License.
 #
 
-import json
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -84,14 +83,20 @@ def retrieve_federated_results(
         # List objects in bucket with model_id prefix
         try:
             list_objects = s3.list_objects(s3_path)
-        except Exception:
-            logger.error(f"An error occurred when finding the result data in {s3_path}")
+        except Exception as e:
+            # Drop ``exc_info``: the formatter would otherwise emit ``str(e)``
+            # via the traceback. A future boto error shape that embeds a URL
+            # fragment in its message would leak through that channel.
+            logger.error(
+                f"An error occurred when finding the result data in {s3_path} "
+                f"error_type={type(e).__name__}"
+            )
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="An error occurred when finding the result data",
             )
 
-        logger.debug(f"List of files returned: {json.dumps(list_objects, default=str)}")
+        logger.debug(f"Found {len(list_objects)} federated-result objects under {s3_path}")
 
         # Check if any files were found
         if len(list_objects) == 0:
@@ -102,20 +107,29 @@ def retrieve_federated_results(
         try:
             result = [s3.get_presigned_url(f) for f in list_objects]
         except Exception as e:
-            logger.error(f"Error message: {str(e)}")
+            logger.error(
+                f"Error generating pre-signed URLs for model {model_id} "
+                f"error_type={type(e).__name__}"
+            )
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="An error occurred when attempting to retrieve the files",
             )
 
-        logger.info(f"Output: {json.dumps(result)}")
+        # Never log the URL list: each entry contains X-Amz-Signature /
+        # X-Amz-Credential which together form a readable capability against
+        # the federated-results bucket.
+        logger.info(f"Returned {len(result)} pre-signed URLs for model {model_id}")
         return result
 
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Unhandled error: {str(e)}")
+        logger.error(
+            f"Unhandled error in retrieve_federated_results for model {model_id} "
+            f"error_type={type(e).__name__}"
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Internal server error: {e}",
+            detail="Internal server error",
         )

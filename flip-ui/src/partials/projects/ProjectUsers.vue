@@ -36,7 +36,7 @@
                 <template #labelRight>
                     <div
                         data-test="add-user-optional-text"
-                        class="mb-1 text-sm text-right text-gray-400"
+                        class="mb-1 text-sm text-right text-gray-400 dark:text-gray-300"
                     >
                         Optional
                     </div>
@@ -71,7 +71,7 @@
             />
         </div>
     </div>
-    <div v-if="readonly" class="mb-1 text-sm font-bold text-gray-700 dark:text-gray-400">
+    <div v-if="readonly" class="mb-1 text-sm font-bold text-gray-700 dark:text-gray-300">
         Additional Project Users
     </div>
     <div class="flex flex-col-reverse items-start w-full h-full mb-2 space-y-2 space-y-reverse overflow-y-auto">
@@ -79,7 +79,7 @@
             v-for="(row, i) in displayUsers"
             :key="row.id"
             data-test="added-user-project-list"
-            class="flex flex-row items-center w-full px-4 py-2 border border-gray-300 rounded-md dark:border-gray-600"
+            class="flex flex-row items-center w-full px-4 py-2 border border-gray-300 rounded-md dark:border-dark-border-strong"
         >
             <div class="text-sm font-bold truncate grow" :data-test="`added-user-${i}`">
                 {{ row.email }}
@@ -92,13 +92,13 @@
                 @click="() => removeUser(row.id)"
             >
                 <icon-mdi-close
-                    class="w-5 h-5 text-gray-500 transition dark:text-gray-400 hover:text-red-500 dark:hover:text-red-400"
+                    class="w-5 h-5 text-gray-500 transition dark:text-gray-300 hover:text-red-500 dark:hover:text-red-400"
                 />
             </button>
         </div>
         <div
             v-if="!displayUsers.length"
-            class="flex flex-row items-center justify-center w-full p-6 text-sm text-gray-600 border-2 border-gray-300 border-dashed rounded-md dark:text-gray-400 dark:border-gray-600"
+            class="flex flex-row items-center justify-center w-full p-6 text-sm text-gray-600 border-2 border-gray-300 border-dashed rounded-md dark:text-gray-300 dark:border-dark-border-strong"
         >
             No Project Users
         </div>
@@ -120,7 +120,7 @@ import { useAuthStore } from "@/store/auth";
 import { emailValidation } from "@/utils/forms/validation";
 
 export interface IProjectUsersProps {
-    users: IProjectUser[];
+    users?: IProjectUser[];
     readonly?: boolean;
 }
 
@@ -130,7 +130,10 @@ interface IAddUser {
 
 const props = withDefaults(
     defineProps<IProjectUsersProps>(),
-    { readonly: false, users: () => [] }
+    {
+        readonly: false,
+        users: () => []
+    }
 );
 
 const authStore = useAuthStore();
@@ -197,7 +200,7 @@ const removeUser = async(id: string): Promise<void> => {
             emit("updatedUsers", userList.value);
         }
 
-    } catch (e) {
+    } catch {
         return handleError("Something went wrong when removing the user");
     } finally {
         formSubmit.value = false;

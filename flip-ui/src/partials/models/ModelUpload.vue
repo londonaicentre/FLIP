@@ -12,23 +12,48 @@
 -->
 
 <template>
-    <section>
-        <AiCard>
-            <div>
-                <h2 class="p-4 text-lg font-semibold leading-loose font-heading">
-                    Model Files
-                </h2>
-                <div class="border-t border-gray-200 dark:border-gray-700">
+    <!-- The card fills the height its column is given; the file list is what
+         scrolls, so the heading and the uploader stay put. -->
+    <section class="flex flex-col flex-1 min-h-0">
+        <AiCard class="flex flex-col flex-1 min-h-0">
+            <div class="flex flex-col flex-1 min-h-0">
+                <div class="flex items-center gap-3 p-4 shrink-0">
+                    <h2 class="text-lg font-semibold leading-loose font-heading grow">
+                        Model Files
+                    </h2>
+                    <AiButton
+                        v-if="canDownloadAll"
+                        light
+                        data-test="download-all-files-btn"
+                        aria-label="Download all"
+                        tooltip="Download all"
+                        :loading="downloadingAll"
+                        @click="downloadAllAsZip"
+                    >
+                        <icon-ph-download-duotone class="w-4 h-4 lg:mr-2" />
+                        <span class="hidden lg:inline">Download all</span>
+                    </AiButton>
+                </div>
+                <div class="flex flex-col flex-1 min-h-0 border-t border-gray-200 dark:border-dark-border">
+                    <AiAlert
+                        v-if="canUpload"
+                        variant="info"
+                        class="w-full"
+                        :rounded="false"
+                        :bordered="false"
+                    >
+                        <div class="text-xs leading-snug">
+                            Your current job type is: <strong><code>{{ jobType }}</code></strong>.
+                            If you want to change it, add it as a <code>job_type</code> variable in your
+                            <code>config.json</code> file.
+                        </div>
+                    </AiAlert>
                     <div v-if="canUpload" class="flow-root p-2">
                         <div class="flex flex-col">
                             <template v-if="loading">
                                 <AiSkeleton class="w-full h-32 border-2 border-dashed rounded-lg border-primary-300" />
                             </template>
-                            <FileUpload
-                                :required-files="requiredFiles"
-                                :job-type="jobType"
-                                @new-files="uploadFile"
-                            />
+                            <FileUpload @new-files="uploadFile" />
                         </div>
                     </div>
                     <template v-if="loading">
@@ -42,11 +67,11 @@
                     <ul
                         v-else-if="internalFiles.concat(uploadingFiles).length"
                         role="list"
-                        class="border-t divide-y divide-gray-200 border-t-gray-200 dark:divide-gray-700 dark:border-t-gray-700"
+                        class="flex-1 min-h-0 overflow-y-auto border-t divide-y divide-gray-200 border-t-gray-200 dark:divide-dark-border dark:border-t-gray-700"
                     >
-                        <li v-for="file in internalFiles.concat(uploadingFiles)" :key="file.id" class="flex flex-row items-center gap-4 px-4 transition group">
+                        <li v-for="file in internalFiles.concat(uploadingFiles)" :key="file.id" class="flex flex-row items-center gap-3 px-4 py-1.5 transition group">
                             <div
-                                class="relative flex flex-col items-center justify-end transition bg-white rounded-full w-7 h-7 dark:bg-gray-900 ring-2 ring-offset-2 dark:ring-offset-gray-900 shrink-0"
+                                class="relative flex items-center justify-end transition bg-white rounded-full w-5 h-5 dark:bg-dark-canvas ring-2 ring-offset-1 dark:ring-offset-dark-canvas shrink-0"
                                 :class="[
                                     file.status === FileUploadStatus.COMPLETED &&
                                         'ring-green-600/70 dark:ring-green-400',
@@ -55,47 +80,40 @@
                                     file.status === FileUploadStatus.ERROR && 'ring-red-600/70 dark:ring-red-400',
                                 ]"
                             >
-                                <div class="relative flex items-center justify-center w-full text-gray-700 bg-gray-100 border border-gray-300 rounded-full shadow dark:bg-gray-800 dark:text-gray-300 grow dark:border-gray-500">
+                                <div class="relative flex items-center justify-center w-full h-full text-gray-700 bg-gray-100 border border-gray-300 rounded-full shadow dark:bg-dark-surface dark:text-gray-300 dark:border-dark-border-strong text-[10px]">
                                     <Transition name="fade" mode="out-in">
-                                        <AiLoader
-                                            v-if="file.status === FileUploadStatus.UPLOADING"
-                                            small
-                                            :data-test="`file-upload-status-uploading`"
-                                        />
-                                        <AiLoader
-                                            v-else-if="file.status === FileUploadStatus.SCANNING"
-                                            small
-                                            :data-test="`file-upload-status-scanning`"
-                                        />
-                                        <icon-ph-file-duotone
-                                            v-else-if="file.status === FileUploadStatus.COMPLETED"
-                                            :data-test="`file-upload-status-completed`"
-                                        />
-                                        <icon-ph-x-circle-duotone
-                                            v-else-if="file.status === FileUploadStatus.ERROR"
-                                            :data-test="`file-upload-status-error`"
-                                        />
+                                        <AiLoader v-if="file.status === FileUploadStatus.UPLOADING" small data-test="file-upload-status-uploading" />
+                                        <AiLoader v-else-if="file.status === FileUploadStatus.SCANNING" small data-test="file-upload-status-scanning" />
+                                        <icon-ph-file-duotone v-else-if="file.status === FileUploadStatus.COMPLETED" data-test="file-upload-status-completed" />
+                                        <icon-ph-x-circle-duotone v-else-if="file.status === FileUploadStatus.ERROR" data-test="file-upload-status-error" />
                                     </Transition>
                                 </div>
                             </div>
-                            <div class="flex flex-col items-start w-full py-4 truncate shrink">
+                            <div class="flex flex-row items-baseline gap-2 min-w-0 grow">
                                 <p
-                                    class="text-sm font-bold text-primary-600 dark:text-primary-200 shrink line-clamp-1"
+                                    class="text-sm font-semibold text-primary-600 dark:text-primary-200 truncate"
+                                    :title="file.name"
                                 >
                                     {{ file.name }}
                                 </p>
-                                <div class="mr-2 text-sm text-gray-400 truncate shrink-0">
+                                <div class="text-xs font-mono text-gray-500 dark:text-gray-300 shrink-0">
                                     {{ formatBytes(file.size) }}
                                 </div>
                             </div>
-                            <div class="flex gap-2 grow">
+                            <div class="flex gap-2 shrink-0">
                                 <Transition name="fade">
-                                    <AiButton v-if="!isObserver && file.status === FileUploadStatus.COMPLETED" small :loading="downloadingFile === file.name" @click="() => downloadFile(file.name)">
+                                    <AiButton
+                                        v-if="!isViewer && file.status === FileUploadStatus.COMPLETED"
+                                        small
+                                        :loading="downloadingFile === file.name"
+                                        :aria-label="`Download ${file.name}`"
+                                        @click="() => downloadFile(file.name)"
+                                    >
                                         <icon-ph-download-duotone />
                                     </AiButton>
                                 </Transition>
                                 <Transition name="fade">
-                                    <AiButton v-if="canUpload && file.status === FileUploadStatus.COMPLETED || file.status === FileUploadStatus.ERROR" small @click="() => confirmDeleteFile(file.name)">
+                                    <AiButton v-if="canUpload && (file.status === FileUploadStatus.COMPLETED || file.status === FileUploadStatus.ERROR)" small :aria-label="`Delete ${file.name}`" @click="() => confirmDeleteFile(file.name)">
                                         <icon-ph-trash-duotone class="text-red-500 dark:text-red-400" />
                                     </AiButton>
                                 </Transition>
@@ -121,18 +139,23 @@
 </template>
 
 <script lang="ts" setup>
+import JSZip from "jszip";
 import { computed, onMounted, ref, watch } from "vue";
 import { useRoute } from "vue-router";
 
+import AiAlert from "@/components/AiAlert/AiAlert.vue";
 import AiButton from "@/components/AiButton/AiButton.vue";
 import AiCard from "@/components/AiCard/AiCard.vue";
 import AiLoader from "@/components/AiLoader/AiLoader.vue";
 import AiConfirmModal from "@/components/AiModal/AiConfirmModal.vue";
+import { usePermissions } from "@/composables/usePermissions";
 import { FileInfo, FileUploadStatus } from "@/interfaces/model/types";
-import { deleteModelFile, downloadModelFile, processScannedFile } from "@/services/file-service";
-import { JobTypes } from "@/services/model-service";
-import { useAuthStore } from "@/store/auth";
-import { createPreSignedUrl, uploadFile as uploadFileService } from "@/utils/file";
+import { deleteModelFile,
+    downloadModelFile,
+    getModelFileDownloadUrl,
+    processScannedFile } from "@/services/file-service";
+import { JobType } from "@/services/model-service";
+import { createPreSignedUrl, FileTooLargeError, uploadFile as uploadFileService } from "@/utils/file";
 import { formatBytes, getRandomId } from "@/utils/helpers";
 import { Snackbar } from "@/utils/snackbar";
 
@@ -144,15 +167,14 @@ interface IModelUploadProps {
     canUpload: boolean;
     modelId: string;
     requiredFiles: string[];
-    jobType: JobTypes;
+    jobType: JobType;
 }
 
 const props = defineProps<IModelUploadProps>();
 
 const emits = defineEmits(["uploaded", "deletedFile"]);
 
-const authStore = useAuthStore();
-const isObserver = computed(() => !authStore.hasPermissions(["CanManageProjects"]));
+const { isViewer } = usePermissions();
 const route = useRoute();
 const internalFiles = ref<FileInfo[]>([]);
 const uploadingFiles = ref<FileInfo[]>([]);
@@ -160,7 +182,17 @@ const filesAreUploading = ref<boolean>(false);
 const confirmFileDeletion = ref<boolean>(false);
 const deletingFile = ref<boolean>(false);
 const downloadingFile = ref<string>();
+const downloadingAll = ref<boolean>(false);
 const fileToDelete = ref<string>();
+
+// "Download all" is offered only when every visible file finished uploading
+// + scanning. Any in-flight or errored file would either be missing from S3
+// or unsafe to bundle, so we hide the button rather than partial-zip.
+const canDownloadAll = computed(() => {
+    const all = internalFiles.value.concat(uploadingFiles.value);
+
+    return all.length > 0 && all.every(f => f.status === FileUploadStatus.COMPLETED);
+});
 
 watch(props, () => {
     handleFiles();
@@ -226,19 +258,23 @@ const uploadFile = async (fileList: FileList) => {
         }
 
         try {
-            const url = await createPreSignedUrl(
+            const policy = await createPreSignedUrl(
                 file,
                 "/files/preSignedUrl/model",
                 route.params["modelId"].toString()
             );
 
-            if (!url) {
-                throw Error("No presigned URL returned 😢");
+            if (!policy) {
+                throw Error("No presigned upload policy returned");
+            }
+
+            if (file.size > policy.maxBytes) {
+                throw new FileTooLargeError(policy.maxBytes, file.size);
             }
 
             await uploadFileService(
                 file,
-                url
+                policy
             );
 
             filesAreUploading.value = true;
@@ -273,10 +309,18 @@ const uploadFile = async (fileList: FileList) => {
                 erroredFile.status = FileUploadStatus.ERROR;
             }
 
-            Snackbar.error({
-                title: "Error uploading file",
-                text: "There was an error uploading this file. Please try again."
-            });
+            if (error instanceof FileTooLargeError) {
+                Snackbar.error({
+                    title: "File too large",
+                    text: `${file.name} is ${formatBytes(error.actualBytes)} which exceeds the `
+                        + `${formatBytes(error.limitBytes)} limit.`
+                }, 12_000);
+            } else {
+                Snackbar.error({
+                    title: "Error uploading file",
+                    text: "There was an error uploading this file. Please try again."
+                });
+            }
         }
     }
 
@@ -306,23 +350,73 @@ const closeFileDeletion = () => {
     fileToDelete.value = undefined;
 };
 
+// Caps how many files download-all fetches at once so one huge file doesn't
+// starve/timeout the rest. Simple sequential batching (no worker-pool): a
+// batch waits for its slowest member before the next starts, which is an
+// acceptable tradeoff for the simplicity of no new dependency.
+// Note the zip is assembled in memory (every blob + the archive), so
+// download-all is not suitable for multi-GiB files — the per-file button
+// streams via the browser instead and has no such bound.
+const DOWNLOAD_ALL_CONCURRENCY = 3;
+
+const downloadAllAsZip = async () => {
+    if (downloadingAll.value) return;
+    downloadingAll.value = true;
+    try {
+        const all = internalFiles.value.concat(uploadingFiles.value);
+        const zip = new JSZip();
+        for (let i = 0; i < all.length; i += DOWNLOAD_ALL_CONCURRENCY) {
+            const batch = all.slice(i, i + DOWNLOAD_ALL_CONCURRENCY);
+            await Promise.all(batch.map(async file => {
+                const path = `/files/model/${props.modelId}/${encodeURIComponent(file.name)}`;
+                const blob = await downloadModelFile(path);
+                zip.file(file.name, blob);
+            }));
+        }
+        const archive = await zip.generateAsync({ type: "blob" });
+        const url = URL.createObjectURL(archive);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `model-${props.modelId}-files.zip`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+    } catch {
+        Snackbar.error({
+            title: "Download failed",
+            text: "Could not bundle the model files into a zip. Please try again."
+        });
+    } finally {
+        downloadingAll.value = false;
+    }
+};
+
 const downloadFile = async (fileName: string) => {
     downloadingFile.value = fileName;
 
     try {
         const path = `/files/model/${props.modelId}/${encodeURIComponent(fileName)}`;
-        const blob = await downloadModelFile(path);
+        const { url } = await getModelFileDownloadUrl(path);
 
-        const blobUrl = URL.createObjectURL(blob);
-
+        // Navigate straight to the presigned URL rather than fetching into a
+        // Blob: S3 serves it with `Content-Disposition: attachment` (set
+        // server-side), so the browser's download manager streams it to disk.
+        // No in-memory copy — files up to MAX_MODEL_FILE_BYTES (5 GiB) stay
+        // downloadable where a Blob would exhaust the tab. The catch below
+        // still covers the likely failures (auth/404/500 from flip-api); an
+        // S3-side rejection after a fresh URL is rare enough to accept the
+        // browser's own error surface for it.
         const a = document.createElement("a");
-        a.href = blobUrl;
-        a.download = fileName;
+        a.href = url;
         document.body.appendChild(a);
         a.click();
         a.remove();
-
-        URL.revokeObjectURL(blobUrl);
+    } catch {
+        Snackbar.error({
+            title: "Download failed",
+            text: `Could not download ${fileName}. Please try again.`
+        });
     } finally {
         downloadingFile.value = undefined;
     }

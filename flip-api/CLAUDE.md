@@ -2,27 +2,28 @@
 
 ## Service Overview
 
-Central Hub REST API. FastAPI + asyncpg + SQLModel. Handles user auth (Cognito), project management, trust coordination, FL run orchestration, cohort queries, file management, and scheduling.
+Central Hub REST API. FastAPI + psycopg2 + SQLModel (sync sessions). Handles user auth (Cognito), project management, trust coordination, FL run orchestration, cohort queries, file management, and scheduling.
 
 ## Key Files
 
 | File | Purpose |
 |------|---------|
-| `src/flip_api/__init__.py` | FastAPI app factory, middleware, router registration |
+| `src/flip_api/main.py` | FastAPI app factory, middleware, router registration |
 | `src/flip_api/config.py` | Pydantic settings, env var loading |
-| `src/flip_api/db/database.py` | asyncpg async session, DB connection |
+| `src/flip_api/db/database.py` | SQLModel sync `Session` via `get_session()`; lazily-built engine; RDS Proxy + IAM auth `do_connect` hook in prod (FLIP#556); `with Session(...)` block load-bearing on error paths (FLIP#773) |
 | `src/flip_api/db/models/main_models.py` | SQLModel ORM: Project, Trust, Model, File, etc. |
 | `src/flip_api/db/models/user_models.py` | User, Role, Permission models |
-| `src/flip_api/db/seed/` | DB seed data: roles, permissions, trusts, FL scheduler, banners |
+| `src/flip_api/db/seed/` | DB seed data: roles, permissions, FL kit slots, FL scheduler, banners |
+| `src/flip_api/db/migrations/` | Alembic migrations (`env.py`, `versions/`); `alembic.ini` at the service root. **Alembic owns the schema** |
 | `src/flip_api/domain/schemas/` | Pydantic request/response schemas |
 | `src/flip_api/domain/interfaces/` | Repository interfaces (Dependency Inversion) |
 | `src/flip_api/auth/` | Cognito JWT verification, auth middleware |
-| `src/flip_api/scripts/` | Key generation (trust, internal service, env utils) |
+| `src/flip_api/scripts/` | Trust registration CLI (register_trust.py), internal-service-key generation, env utils |
 
 ## Service Modules
 
 | Module | Purpose |
-|--------|---------|
+| -------- | --------- |
 | `user_services/` | Register, authenticate, update/delete users, roles, permissions |
 | `project_services/` | Project CRUD, approval workflows |
 | `model_services/` | ML model management, metrics, logs, approvals |
@@ -41,7 +42,7 @@ Central Hub REST API. FastAPI + asyncpg + SQLModel. Handles user auth (Cognito),
 
 ```bash
 make test          # ruff + mypy + pytest (unit + integration)
-make unit_test     # ruff + mypy + pytest unit + step function tests (--skip-client --skip-db)
+make unit_test     # ruff + mypy + pytest unit + step function tests (--skip-client)
 make integration_test  # Integration tests only
 make local_test    # Tests without Docker (--skip-client --skip-db)
 make lint          # ruff check --fix (in Docker)
@@ -50,12 +51,18 @@ make build         # docker compose build
 make up            # Start flip-db then flip-api
 make down          # Stop flip-api then flip-db
 make debug         # Restart in debug mode (port 5678)
+make migrate       # alembic upgrade head (apply migrations)
+make migration MESSAGE="..."   # autogenerate a revision from the model diff (flip-db must be up)
+make migration_downgrade       # alembic downgrade -1
+make migration_history         # alembic history
+make migration_current         # alembic current
 ```
 
 ## Conventions
 
 - FastAPI `Depends()` for DI. Repository pattern in `domain/interfaces/`.
-- asyncpg connections via async context managers from `db/database.py`.
+- Sync SQLModel `Session` via `get_session()` dependency (`db/database.py`); the `with Session(...)` context is load-bearing on FastAPI error paths — a bare `yield` + `session.close()` strands the connection `idle in transaction` (FLIP#773).
+- DB schema is owned by **Alembic** (`db/migrations/`), not `SQLModel.metadata.create_all`. The entrypoint runs `alembic upgrade head` before seeding at boot (fail-fast). Every schema-affecting change to `db/models/*.py` must ship a revision — the integration drift guard (`tests/integration/test_migrations.py`) enforces it. Native-PG-enum gotcha: `ALTER TYPE … ADD VALUE` needs `op.get_context().autocommit_block()`, and downgrades dropping an enum-typed table must `DROP TYPE`.
 - pytest + factory_boy for test data. Fixtures in `conftest.py`.
-- Ruff config: line-length 120, select I/F/E/W/PT/UP* rules.
+- Ruff config: line-length 120, select I/F/E/W/PT + UP006/UP007/UP035/UP042/UP045 (`UP042` enforces `StrEnum` over the legacy `(str, Enum)` pattern).
 - All tests in `tests/unit/` and `tests/integration/`.

@@ -1,0 +1,118 @@
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Re-record the documentation GIFs whenever the UI changes on develop, then open
+# a PR back to develop with the regenerated assets. Functional CI
+# (test_flip_ui.yml) is untouched — video stays off there so the 6-shard PR
+# pipeline isn't slowed down.
+#
+# See flip-ui/test/cypress/docs/ for the demo specs and
+# flip-ui/scripts/videos-to-gifs.sh for the ffmpeg conversion.
+
+name: Regenerate docs GIFs
+
+on:
+  push:
+    branches: [develop]
+    paths:
+      - "flip-ui/src/**"
+      - "flip-ui/test/cypress/docs/**"
+      - "flip-ui/cypress.docs.config.ts"
+      - "flip-ui/scripts/videos-to-gifs.sh"
+      - ".github/workflows/regenerate_docs_gifs.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  regenerate:
+    # Skip on forks: their GitHub Actions token cannot create pull requests, so
+    # running this job there would only produce a spurious workflow failure.
+    if: github.repository == 'londonaicentre/FLIP'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      VITE_LOCAL: "false"
+      VITE_E2E: "true"
+      CENTRAL_HUB_API_URL: "http://localhost:8080"
+      AWS_COGNITO_USER_POOL_ID: "eu-west-2_DUMMY1234"
+      AWS_COGNITO_APP_CLIENT_ID: "dummyclientid1234567890ab"
+      AWS_REGION: "eu-west-2"
+      BLACKLISTED_MODEL_FILES: "flip.py,server_app.py"
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Set Node.js version
+        uses: actions/setup-node@v5
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: flip-ui/package-lock.json
+
+      - name: Install ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - name: Stub flip-ui/.env.development for Cypress
+        working-directory: ./flip-ui
+        run: |
+          cat > .env.development <<'EOF'
+          VITE_LOCAL=false
+          VITE_E2E=true
+          CENTRAL_HUB_API_URL=http://localhost:8080
+          AWS_COGNITO_USER_POOL_ID=eu-west-2_DUMMY1234
+          AWS_COGNITO_APP_CLIENT_ID=dummyclientid1234567890ab
+          AWS_REGION=eu-west-2
+          BLACKLISTED_MODEL_FILES=flip.py,server_app.py
+          EOF
+
+      - name: Record docs demo specs
+        uses: cypress-io/github-action@v7
+        with:
+          working-directory: flip-ui
+          browser: chrome
+          start: npm run test:start
+          wait-on: "http://localhost:4173"
+          wait-on-timeout: 120
+          config-file: cypress.docs.config.ts
+
+      - name: Convert videos to GIFs
+        working-directory: ./flip-ui
+        run: bash scripts/videos-to-gifs.sh
+
+      - name: Open PR with regenerated GIFs
+        uses: peter-evans/create-pull-request@v8
+        with:
+          branch: bot/regenerate-docs-gifs
+          base: develop
+          add-paths: |
+            docs/source/assets/admin/*.gif
+            docs/source/assets/flip/*.gif
+          commit-message: |
+            docs: regenerate documentation GIFs
+
+            Auto-regenerated from develop by .github/workflows/regenerate_docs_gifs.yml.
+
+            Signed-off-by: github-actions[bot] <github-actions[bot]@users.noreply.github.com>
+          title: "docs: regenerate documentation GIFs"
+          body: |
+            Auto-regenerated from `develop` @ ${{ github.sha }} by `.github/workflows/regenerate_docs_gifs.yml`.
+
+            **Heads-up:** re-recording is nondeterministic (Cypress frame timing
+            plus the animated demo cursor), so this PR shows *every* GIF as changed
+            even where the UI didn't. Review the rendered GIFs under
+            `docs/source/assets/admin/` and `docs/source/assets/flip/` and merge
+            only if the genuinely-changed clips look right — otherwise close it.
+            This branch is reused, so later develop merges refresh this same PR.
+          signoff: true
+          delete-branch: true

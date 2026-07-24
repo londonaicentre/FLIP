@@ -10,13 +10,13 @@
 # limitations under the License.
 #
 
-"""Generate a unique API key for a trust and return its SHA-256 hash.
+"""Generate a trust API key and its SHA-256 hash.
 
-Usage:
-    uv run python -m flip_api.scripts.generate_trust_key --trust-name Trust_1
+Pure utility, used by ``register_trust`` to mint a trust's API key and its
+internal-service key at registration time. There is no standalone CLI — keys
+are never added by hand; ``register_trust`` is the sole writer of the registry.
 """
 
-import argparse
 import hashlib
 import secrets
 
@@ -30,22 +30,3 @@ def generate_trust_key() -> tuple[str, str]:
     key = secrets.token_urlsafe(32)
     key_hash = hashlib.sha256(key.encode()).hexdigest()
     return key, key_hash
-
-
-def main() -> None:
-    """Generate and print a trust API key."""
-    parser = argparse.ArgumentParser(description="Generate a unique API key for a trust.")
-    parser.add_argument("--trust-name", required=True, help="Trust name (e.g. Trust_1)")
-    args = parser.parse_args()
-
-    key, key_hash = generate_trust_key()
-
-    print(f"Trust:     {args.trust_name}")
-    print(f"API Key:   {key}")
-    print(f"Key Hash:  {key_hash}")
-    print()
-    print(f'Add to TRUST_API_KEY_HASHES: "{args.trust_name}": "{key_hash}"')
-
-
-if __name__ == "__main__":
-    main()

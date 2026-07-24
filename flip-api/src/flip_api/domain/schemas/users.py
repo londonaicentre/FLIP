@@ -12,7 +12,7 @@
 
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
 
 
 class UserPermissionsResponse(BaseModel):
@@ -37,7 +37,7 @@ class GetUserById(GetUser):
     """Model specifically for retrieving a user by UUID."""
 
     @field_validator("userId")
-    def validate_uuid(cls, v):
+    def validate_uuid(cls, v: str) -> str:
         try:
             UUID(v)
         except ValueError:
@@ -51,11 +51,35 @@ class Disabled(BaseModel):
     disabled: bool
 
 
+class UpdateUser(BaseModel):
+    """Editable user state."""
+
+    disabled: bool | None = None
+    name: str | None = Field(default=None, min_length=1, max_length=255)
+    organisation: str | None = Field(default=None, min_length=1, max_length=255)
+
+    @model_validator(mode="after")
+    def validate_has_update(self) -> "UpdateUser":
+        if self.disabled is None and self.name is None and self.organisation is None:
+            raise ValueError("At least one user field must be supplied")
+        return self
+
+
+class UpdateUserResponse(BaseModel):
+    """Updated user fields."""
+
+    disabled: bool | None = None
+    name: str | None = None
+    organisation: str | None = None
+
+
 class CognitoUser(BaseModel):
     """Model for Cognito user data."""
 
     id: UUID = Field(..., description="User ID from Cognito")
     email: EmailStr = Field(..., description="User's email address")
+    name: str = Field(default="", description="User's display name")
+    organisation: str = Field(default="", description="User's organisation")
     is_disabled: bool = Field(default=False, description="Indicates if the user is disabled", alias="isDisabled")
 
     model_config = ConfigDict(

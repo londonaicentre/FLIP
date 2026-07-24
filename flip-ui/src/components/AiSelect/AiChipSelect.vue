@@ -14,7 +14,7 @@
 <template>
     <Listbox v-model="currentlySelected">
         <ListboxButton
-            class="relative w-full py-2 pl-3 pr-10 mt-2 text-left bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-700 rounded-md cursor-default focus:border-primary-500 focus:ring-primary-500 dark:focus:ring-primary-400 dark:focus:border-primary-400 focus:ring-1"
+            class="relative w-full py-2 pl-3 pr-10 mt-2 text-left bg-white dark:bg-dark-raised border border-gray-300 dark:border-dark-border rounded-md cursor-default focus:border-primary-500 focus:ring-primary-500 dark:focus:ring-primary-400 dark:focus:border-primary-400 focus:ring-1"
             :class="[
                 !!errorMessage &&
                     'ring-1 ring-red-500 focus:ring-red-500 text-red-500 dark:text-red-400 dark:focus:ring-red-400',
@@ -24,7 +24,7 @@
         >
             <span
                 class="block truncate"
-                :class="!!!currentlySelected && 'text-gray-500'"
+                :class="!!!currentlySelected && 'text-gray-500 dark:text-gray-300'"
                 data-test="chip-select"
             >
                 {{ currentlySelected?.description ?? defaultText }}
@@ -32,49 +32,47 @@
             <span
                 class="absolute inset-y-0 right-0 flex items-center pr-2 pointer-events-none"
             >
-                <icon-mdi-chevron-down class="w-5 h-5 text-gray-400" />
+                <icon-mdi-chevron-down class="w-5 h-5 text-gray-400 dark:text-gray-300" />
             </span>
         </ListboxButton>
-        <ListboxOptions>
-            <transition
-                enter-active-class="transition duration-100 ease-out"
-                enter-from-class="transform scale-95 opacity-0"
-                enter-to-class="transform scale-100 opacity-100"
-                leave-active-class="transition duration-75 ease-in"
-                leave-from-class="transform scale-100 opacity-100"
-                leave-to-class="transform scale-95 opacity-0"
+        <transition
+            enter-active-class="transition duration-100 ease-out"
+            enter-from-class="transform scale-95 opacity-0"
+            enter-to-class="transform scale-100 opacity-100"
+            leave-active-class="transition duration-75 ease-in"
+            leave-from-class="transform scale-100 opacity-100"
+            leave-to-class="transform scale-95 opacity-0"
+        >
+            <ListboxOptions
+                class="fixed z-10 py-2 origin-top-left bg-white dark:bg-dark-canvas dark:ring-white/20 rounded-md shadow-2xl w-60 ring-1 ring-black ring-opacity-5 focus:outline-none"
             >
-                <PopoverPanel
-                    class="fixed z-10 py-2 origin-top-left bg-white dark:bg-gray-900 dark:ring-white/20 rounded-md shadow-2xl w-60 ring-1 ring-black ring-opacity-5 focus:outline-none"
+                <ListboxOption
+                    v-for="option in options"
+                    v-slot="{ active }"
+                    :key="option.id"
+                    data-test="chip-select-option"
+                    :value="option"
                 >
-                    <ListboxOption
-                        v-for="option in options"
-                        v-slot="{ active }"
-                        :key="option.id"
-                        data-test="chip-select-option"
-                        :value="option"
+                    <li
+                        class="relative px-4 py-2 pl-10 select-none transition"
+                        :class="[
+                            (selectedOptionsInclude(option)
+                                || active)
+                                && 'text-primary-500 bg-primary-100 dark:bg-dark-surface dark:text-primary-200'
+                        ]"
                     >
-                        <li
-                            class="relative px-4 py-2 pl-10 select-none transition"
-                            :class="[
-                                (selectedOptionsInclude(option)
-                                    || active)
-                                    && 'text-primary-500 bg-primary-100 dark:bg-gray-800 dark:text-primary-200'
-                            ]"
+                        <span>{{ option.description }}</span>
+                        <span
+                            class="absolute inset-y-0 left-0 flex items-center pl-3"
                         >
-                            <span>{{ option.description }}</span>
-                            <span
-                                class="absolute inset-y-0 left-0 flex items-center pl-3"
-                            >
-                                <icon-mdi-check
-                                    v-if="selectedOptionsInclude(option)"
-                                />
-                            </span>
-                        </li>
-                    </ListboxOption>
-                </PopoverPanel>
-            </transition>
-        </ListboxOptions>
+                            <icon-mdi-check
+                                v-if="selectedOptionsInclude(option)"
+                            />
+                        </span>
+                    </li>
+                </ListboxOption>
+            </ListboxOptions>
+        </transition>
     </Listbox>
     <div v-if="!!errorMessage" class="mt-1 text-sm text-red-500 dark:text-red-400 error_message">
         {{ errorMessage }}
@@ -106,8 +104,8 @@ import { IOption } from "@/components/AiSelect/interfaces";
 import AiButton from "../AiButton/AiButton.vue";
 
 interface IAiChipSelectProperties {
-    errorMessage: string,
-    defaultText: string,
+    errorMessage?: string,
+    defaultText?: string,
     options: IOption[],
     selectedOptions: readonly DeepReadonly<FieldEntry>[],
 }

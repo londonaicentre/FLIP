@@ -1,0 +1,10 @@
+{
+    "name": "Kubernetes",
+    "backend": "kubernetes",
+    "host": "",
+    "cert-path": "",
+    "swarm-mode": false,
+    "pull-images-on-xnat-init": true,
+    "container-user": "",
+    "auto-cleanup": true
+}

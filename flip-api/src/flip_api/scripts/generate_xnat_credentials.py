@@ -19,13 +19,16 @@ The XNAT trust services (xnat-web + xnat-db) require three passwords:
 * ``XNAT_ACTIVEMQ_PASSWORD`` — ActiveMQ broker password used by XNAT for async work.
 
 These were previously committed to the repo with weak defaults and baked into
-the published Docker image at build time. They are now generated at deploy
-time and loaded into the containers as runtime environment variables only.
+the published Docker image at build time. They are now per-trust secrets: minted
+into the trust's kit file (``trust/.env.<CODE>.<env>``) at registration time and
+loaded into the containers as runtime environment variables only. The kit file is
+the target because trust hosts carry no hub env file — ``trust/xnat/Makefile``
+exports the kit's values for ``docker stack deploy`` substitution.
 
-Usage:
-    make generate-xnat-credentials
-    make generate-xnat-credentials ENV_FILE=.env.stag
-    make generate-xnat-credentials FORCE=1
+Usage (root Makefile wraps this per kit; runs automatically in register-trust):
+    make generate-xnat-credentials                 # every local kit file
+    make generate-xnat-credentials KIT=GSTT        # one kit
+    make generate-xnat-credentials FORCE=1         # rotate existing values
 """
 
 import argparse
@@ -34,8 +37,6 @@ import sys
 from pathlib import Path
 
 from flip_api.scripts.env_utils import read_env_value, update_or_append
-
-REPO_ROOT = Path(__file__).resolve().parents[4]
 
 PASSWORD_VARS = (
     "XNAT_DATASOURCE_PASSWORD",
@@ -81,8 +82,8 @@ def main() -> None:
     parser.add_argument(
         "--env-file",
         type=Path,
-        default=REPO_ROOT / ".env.development",
-        help="Path to the environment file to update (default: .env.development)",
+        required=True,
+        help="Path to the kit file to update (e.g. trust/.env.GSTT.development)",
     )
     parser.add_argument(
         "--force",

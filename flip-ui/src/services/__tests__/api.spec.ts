@@ -19,19 +19,18 @@ import { _http } from "@/services/api";
 import { useAuthStore } from "@/store/auth";
 import { Snackbar } from "@/utils/snackbar";
 
-vi.mock("aws-amplify/auth", () => ({
-    fetchAuthSession: vi.fn()
-}));
+vi.mock("aws-amplify/auth", () => ({ fetchAuthSession: vi.fn() }));
 
 // utils/auth registers a Hub.listen at import time; stub it so pulling in
 // api.ts (which transitively imports utils/auth for NO_FORCED_SIGNOUT_PATHS)
 // stays side-effect-free.
-vi.mock("aws-amplify/utils", () => ({
-    Hub: { listen: vi.fn() }
-}));
+vi.mock("aws-amplify/utils", () => ({ Hub: { listen: vi.fn() } }));
 
 vi.mock("@/router", () => ({
-    default: { push: vi.fn(), currentRoute: { value: { fullPath: "/" } } },
+    default: {
+        push: vi.fn(),
+        currentRoute: { value: { fullPath: "/" } }
+    },
     routeChange: { gotoLogin: vi.fn() }
 }));
 
@@ -84,14 +83,11 @@ const fakeAxiosInstance = {
     get: vi.fn(),
     post: vi.fn(),
     put: vi.fn(),
+    patch: vi.fn(),
     delete: vi.fn()
 };
 
-vi.mock("axios", () => ({
-    default: {
-        create: vi.fn(() => fakeAxiosInstance)
-    }
-}));
+vi.mock("axios", () => ({ default: { create: vi.fn(() => fakeAxiosInstance) } }));
 
 describe("api.ts Http client", () => {
     beforeEach(() => {
@@ -102,6 +98,7 @@ describe("api.ts Http client", () => {
         fakeAxiosInstance.get.mockReset();
         fakeAxiosInstance.post.mockReset();
         fakeAxiosInstance.put.mockReset();
+        fakeAxiosInstance.patch.mockReset();
         fakeAxiosInstance.delete.mockReset();
         fakeAxiosInstance.interceptors.request.use.mockClear();
         fakeAxiosInstance.interceptors.response.use.mockClear();
@@ -125,9 +122,7 @@ describe("api.ts Http client", () => {
 
     describe("request interceptor", () => {
         it("attaches Bearer token from the current Amplify session", async () => {
-            vi.mocked(fetchAuthSession).mockResolvedValue({
-                tokens: { idToken: { toString: () => "token-abc" } }
-            } as never);
+            vi.mocked(fetchAuthSession).mockResolvedValue({ tokens: { accessToken: { toString: () => "token-abc" } } } as never);
             primeHttp();
 
             const cfg = { headers: {} } as Record<string, unknown>;
@@ -148,7 +143,7 @@ describe("api.ts Http client", () => {
             expect((out.headers as Record<string, string>).Authorization).toBe("");
         });
 
-        it("returns the config unchanged when no idToken is present", async () => {
+        it("returns the config unchanged when no accessToken is present", async () => {
             vi.mocked(fetchAuthSession).mockResolvedValue({ tokens: undefined } as never);
             primeHttp();
 
@@ -190,7 +185,10 @@ describe("api.ts Http client", () => {
     describe("response interceptor", () => {
         it("passes successful responses through unchanged", () => {
             primeHttp();
-            const response = { status: 200, data: { ok: true } };
+            const response = {
+                status: 200,
+                data: { ok: true }
+            };
 
             expect(interceptors.responseOnFulfilled!(response)).toBe(response);
         });
@@ -270,20 +268,23 @@ describe("api.ts Http client", () => {
     });
 
     describe("proxy methods", () => {
-        it("forwards get/post/put/delete to the underlying axios instance", async () => {
+        it("forwards get/post/put/patch/delete to the underlying axios instance", async () => {
             fakeAxiosInstance.get.mockResolvedValue({ data: "g" });
             fakeAxiosInstance.post.mockResolvedValue({ data: "p" });
             fakeAxiosInstance.put.mockResolvedValue({ data: "u" });
+            fakeAxiosInstance.patch.mockResolvedValue({ data: "pa" });
             fakeAxiosInstance.delete.mockResolvedValue({ data: "d" });
 
             await _http.get("/a");
             await _http.post("/b", { x: 1 });
             await _http.put("/c", { y: 2 });
+            await _http.patch("/e", { z: 3 });
             await _http.delete("/d");
 
             expect(fakeAxiosInstance.get).toHaveBeenCalledWith("/a", undefined);
             expect(fakeAxiosInstance.post).toHaveBeenCalledWith("/b", { x: 1 }, undefined);
             expect(fakeAxiosInstance.put).toHaveBeenCalledWith("/c", { y: 2 }, undefined);
+            expect(fakeAxiosInstance.patch).toHaveBeenCalledWith("/e", { z: 3 }, undefined);
             expect(fakeAxiosInstance.delete).toHaveBeenCalledWith("/d", undefined);
         });
 

@@ -15,54 +15,51 @@
     <div>
         <Transition name="fade" mode="out-in">
             <AiLoader v-if="!project" />
-            <Form v-else :validation-schema="schema" class="flex flex-col w-full overflow-y-auto" @submit="runCohortQuery">
-                <AiAlert
-                    :variant="'info'"
-                    :text="queryLocked
-                        ? 'This query is now locked and can not be edited as the project has been staged.'
-                        : 'This query will be sent to all participating Trusts and the time taken can vary depending on the query.'
-                    "
-                    :bordered="false"
-                    :rounded="false"
-                />
-                <div class="relative p-4 transition">
-                    <div
-                        class="relative space-y-4"
-                    >
-                        <div class="relative h-full">
-                            <div class="space-y-4">
-                                <AiCodeTextArea
-                                    :initial-value="project?.query?.query"
-                                    :input-props="{readonly: queryLocked || isObserver}"
-                                    name="query"
-                                    label=""
-                                    data-test="cohort-query"
-                                />
-                                <div v-if="!queryLocked && !isObserver">
-                                    <AiButton
-                                        primary
-                                        :loading="formSubmitting"
-                                        :disabled="formSubmitting"
-                                        data-test="view-cohort-query-results-btn"
-                                        class="mb-1"
-                                        type="submit"
-                                    >
-                                        Run & Save Query
-                                    </AiButton>
-                                </div>
-                            </div>
+            <Form
+                v-else
+                id="cohort-query-form"
+                :validation-schema="schema"
+                class="flex flex-col w-full"
+                @submit="runCohortQuery"
+            >
+                <div class="grid grid-cols-1 gap-4 lg:grid-cols-3">
+                    <div class="space-y-2 lg:col-span-2">
+                        <div
+                            v-if="lastRunLine"
+                            class="flex items-center gap-1.5 text-xs font-semibold tracking-wider uppercase
+                            font-mono text-gray-500 dark:text-gray-300"
+                        >
+                            <icon-ph-file-sql
+                                data-test="last-run-sql-icon"
+                                class="w-4 h-4 shrink-0"
+                                aria-hidden="true"
+                            />
+                            {{ lastRunLine }}
+                        </div>
+                        <AiCodeTextArea
+                            :initial-value="project?.query?.query"
+                            :input-props="{readonly: queryLocked || isViewer}"
+                            :height="440"
+                            copyable
+                            name="query"
+                            label=""
+                            data-test="cohort-query"
+                        />
+                    </div>
+                    <div class="flex flex-col gap-3 min-h-[440px]">
+                        <CohortAggregateCard :submitting="formSubmitting" />
+                        <div class="flex-1 min-h-0">
+                            <PerTrustResponse :submitting="formSubmitting" />
                         </div>
                     </div>
                 </div>
-                <div v-if="queryId && !project?.query" class="flex items-center gap-2 px-4 py-3 text-sm text-blue-700 dark:text-blue-300">
-                    <icon-heroicons-outline-clock class="w-5 h-5" />
+                <div v-if="queryId && !project?.query" class="flex items-center gap-2 py-3 text-sm text-blue-700 dark:text-blue-300">
+                    <icon-ph-clock class="w-5 h-5" />
                     Awaiting trust results…
                 </div>
-                <div v-if="project?.query" class="relative p-4 pt-4 space-y-4 bg-gray-200 dark:bg-gray-600">
+                <div v-if="project?.query" class="pt-4">
                     <Transition name="slidedown">
-                        <div v-if="true" class="overflow-hidden border border-gray-300 rounded-lg shadow-lg dark:border-gray-700 bg-gray-50 dark:bg-gray-900">
-                            <QueryResultCharts />
-                        </div>
+                        <QueryResultCharts :submitting="formSubmitting" />
                     </Transition>
                 </div>
             </Form>
@@ -76,29 +73,30 @@ import { computed, onBeforeMount, ref, watch } from "vue";
 import { useRoute } from "vue-router";
 import { object, string } from "yup";
 
-import AiAlert from "@/components/AiAlert/AiAlert.vue";
-import AiButton from "@/components/AiButton/AiButton.vue";
 import AiCodeTextArea from "@/components/AiTextArea/AiCodeTextArea.vue";
+import { usePermissions } from "@/composables/usePermissions";
 import router from "@/router";
 import { ICohortQueryCreate, sendQuery } from "@/services/cohort-query-service";
 import { IProject } from "@/services/project-service";
-import { useAuthStore } from "@/store/auth";
 import { useProjectStore } from "@/store/project";
 import { containsForbiddenCommands } from "@/utils/cohort/query";
 import { Snackbar } from "@/utils/snackbar";
 
+import CohortAggregateCard from "./CohortAggregateCard.vue";
+import PerTrustResponse from "./PerTrustResponse.vue";
 import QueryResultCharts from "./QueryResultCharts.vue";
 
 const route = useRoute();
-const authStore = useAuthStore();
 const projectStore = useProjectStore();
-const isObserver = computed(() => !authStore.hasPermissions(["CanManageProjects"]));
+const { isViewer } = usePermissions();
 
 const queryId = ref<string>("");
 const project = ref<IProject>();
 const formSubmitting = ref<boolean>(false);
 
-const emits = defineEmits(["UpdateProject"]);
+const emits = defineEmits(["UpdateProject", "submittingChange"]);
+
+watch(formSubmitting, (v) => emits("submittingChange", v));
 
 onBeforeMount(() => {
     project.value = projectStore.project;
@@ -142,7 +140,13 @@ const runCohortQuery = async (v: unknown) => {
         if (response && response.trust.every(r => r.statusCode >= 200 && r.statusCode < 300)) {
             queryId.value = response.queryId;
 
-            hasResults();
+            // Ask the parent to reload the project. formSubmitting stays
+            // true here — the watch below flips it false once the project
+            // store carries the just-submitted query. Otherwise PerTrustResponse
+            // would briefly see submitting=false + project.query=null and
+            // render its "no query" empty state, flashing the trust rows out
+            // and back in.
+            emits("UpdateProject");
 
             Snackbar.show({
                 type: "success",
@@ -151,8 +155,6 @@ const runCohortQuery = async (v: unknown) => {
                 actionText: "View Project",
                 action: () => router.push({ path: `/project/${project.value?.id}` })
             });
-
-            formSubmitting.value = false;
 
             return;
         }
@@ -176,10 +178,45 @@ const runCohortQuery = async (v: unknown) => {
     }
 };
 
-const hasResults = () => {
-    formSubmitting.value = false;
-    emits("UpdateProject");
-};
+// Spans the submit + the parent's project reload — only complete when the
+// project store carries the just-submitted query. Belt-and-braces: a stale
+// queryId watch would never fire, but the user can navigate away.
+watch(
+    () => projectStore.project?.query?.id,
+    (qid) => {
+        if (qid && qid === queryId.value && formSubmitting.value) {
+            formSubmitting.value = false;
+        }
+    }
+);
 
 const queryLocked = computed(() => project?.value?.status !== "UNSTAGED");
+
+// "Last run 14:32 today by R. Patel" — built from the persisted query metadata.
+// `today`/`yesterday`/an absolute date is picked based on the calendar day in the
+// viewer's locale; `createdBy` is the display name resolved server-side from
+// UserProfile (null for legacy rows saved before created_by existed).
+const lastRunLine = computed(() => {
+    const q = project.value?.query;
+    if (!q?.created) return "";
+    const ts = new Date(q.created);
+    if (Number.isNaN(ts.getTime())) return "";
+    const time = ts.toLocaleTimeString([], {
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false
+    });
+    const now = new Date();
+    const sameDay = ts.toDateString() === now.toDateString();
+    const yesterday = new Date(now);
+    yesterday.setDate(now.getDate() - 1);
+    const dayLabel = sameDay
+        ? "today"
+        : ts.toDateString() === yesterday.toDateString()
+            ? "yesterday"
+            : `on ${ts.toLocaleDateString()}`;
+    const by = q.createdBy ? ` by ${q.createdBy}` : "";
+
+    return `Last run ${time} ${dayLabel}${by}`;
+});
 </script>

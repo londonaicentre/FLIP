@@ -22,7 +22,7 @@ import AddUser from "../ProjectUsers.vue";
 import { AddProjectUsers } from "../selectors";
 
 describe("Project Users Modal", () => {
-    let component: any;
+    let component: ReturnType<typeof mount>;
 
     beforeEach(() => {
         component = mount(AddUser, {

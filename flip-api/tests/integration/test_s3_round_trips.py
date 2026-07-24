@@ -27,8 +27,8 @@ Coverage:
   S3 object's metadata makes its way into the ``uploaded_files`` row.
 * ``GET /files/model/{model_id}/files/list`` — listing reflects the keys
   actually present in the scanned bucket.
-* ``GET /files/model/{model_id}/{file_name}`` — download streams the bytes
-  byte-for-byte.
+* ``GET /files/model/{model_id}/{file_name}`` — download returns a presigned URL
+  that itself serves the object's bytes byte-for-byte.
 * ``DELETE /files/model/{model_id}/{file_name}`` — endpoint removes the S3
   object and the DB row.
 * ``GET /files/model/{model_id}/fl/results`` — federated-results endpoint
@@ -138,12 +138,16 @@ def test_s3_client_list_objects_returns_full_paths_with_scheme(s3_buckets):
 # ---------------------------------------------------------------------------
 
 
-def test_post_presigned_url_endpoint_returns_working_upload_url(client: TestClient, session, s3_buckets):
-    """Endpoint returns a presigned PUT URL; the URL actually accepts an upload.
+def test_post_presigned_url_endpoint_returns_working_upload_policy(
+    client: TestClient, session, s3_buckets
+):
+    """Endpoint returns a presigned POST policy; the policy actually accepts an upload.
 
-    This is the strongest possible end-to-end S3 test: build the URL via the
-    endpoint, sign it with moto's signing path, send a real PUT through
-    ``requests``, then verify the object lands at the expected key.
+    Build the policy via the endpoint, sign it with moto's signing path, send
+    a real multipart POST through ``requests``, then verify the object lands
+    at the expected key. Locks in the contract that the response carries
+    ``url`` + ``fields`` + ``maxBytes`` and that the POSTed object materialises
+    in the bucket.
     """
     user_id = admin_user(session)
     _, model_id = _seed_project_and_model(session, user_id)
@@ -151,21 +155,74 @@ def test_post_presigned_url_endpoint_returns_working_upload_url(client: TestClie
 
     response = client.post(
         f"/api/files/preSignedUrl/model/{model_id}",
-        json={"fileName": "weights.bin"},
+        json={"fileName": "weights.bin", "contentType": "application/octet-stream"},
     )
     assert response.status_code == 200, response.text
-    presigned_url = response.json()
-    assert presigned_url, "endpoint returned an empty URL"
+    policy = response.json()
+    assert policy["url"], "endpoint returned an empty URL"
+    assert isinstance(policy["fields"], dict)
+    assert policy["maxBytes"] > 0
+    assert policy["fields"].get("Content-Type") == "application/octet-stream"
 
     payload = b"\x00\x01\x02moto-bytes"
-    put = requests.put(presigned_url, data=payload, timeout=10)
-    assert put.status_code == 200, put.text
+    post = requests.post(
+        policy["url"],
+        data=policy["fields"],
+        files={"file": ("weights.bin", payload, "application/octet-stream")},
+        timeout=10,
+    )
+    assert post.status_code in (200, 204), post.text
 
     settings = get_settings()
     bucket, prefix = _bucket_and_prefix(settings.UPLOADED_MODEL_FILES_BUCKET)
     expected_key = f"{prefix}/{model_id}/weights.bin"
     obj = boto3.client("s3").get_object(Bucket=bucket, Key=expected_key)
     assert obj["Body"].read() == payload
+
+
+def test_post_presigned_url_policy_carries_size_cap_and_content_type_lock(
+    client: TestClient, session, s3_buckets, monkeypatch
+):
+    """The policy returned by the endpoint must bake the size cap and the
+    Content-Type lock in directly.
+
+    Real S3 enforces ``content-length-range`` and Content-Type conditions
+    server-side — that's the actual storage-cost-DoS mitigation. moto's
+    fake doesn't enforce policy conditions on POST uploads (oversized
+    payloads still get a 204), so this test asserts the structural
+    contract by base64-decoding the policy field instead.
+    """
+    import base64
+    import json as _json
+
+    from flip_api.utils.s3_client import _MULTIPART_OVERHEAD_BUFFER_BYTES
+
+    user_id = admin_user(session)
+    _, model_id = _seed_project_and_model(session, user_id)
+    override_verify_token_as(user_id)
+
+    monkeypatch.setattr(get_settings(), "MAX_MODEL_FILE_BYTES", 64)
+
+    response = client.post(
+        f"/api/files/preSignedUrl/model/{model_id}",
+        json={"fileName": "huge.bin", "contentType": "application/octet-stream"},
+    )
+    assert response.status_code == 200, response.text
+    policy_response = response.json()
+    # The endpoint surfaces the raw file-size cap so the UI guard mirrors it.
+    assert policy_response["maxBytes"] == 64
+    assert policy_response["fields"]["Content-Type"] == "application/octet-stream"
+
+    decoded = _json.loads(base64.b64decode(policy_response["fields"]["policy"]))
+    conditions = decoded["conditions"]
+    # S3 sees ``max_bytes + buffer`` because content-length-range checks the
+    # whole encoded request body (multipart framing), not just the file part.
+    expected_cap = 64 + _MULTIPART_OVERHEAD_BUFFER_BYTES
+    assert ["content-length-range", 0, expected_cap] in conditions
+    assert any(
+        isinstance(c, dict) and c.get("Content-Type") == "application/octet-stream"
+        for c in conditions
+    )
 
 
 def test_post_presigned_url_endpoint_404_for_unknown_model(client: TestClient, session, s3_buckets):
@@ -277,8 +334,13 @@ def test_retrieve_model_files_list_404_when_no_objects(client: TestClient, sessi
 # ---------------------------------------------------------------------------
 
 
-def test_download_file_streams_bytes_byte_for_byte(client: TestClient, session, s3_buckets):
-    """The streamed response body must be byte-identical to the S3 object."""
+def test_download_file_returns_working_presigned_url(client: TestClient, session, s3_buckets):
+    """Endpoint returns a presigned GET URL, and that URL actually serves the exact bytes.
+
+    FLIP#784: the endpoint used to stream the object through flip-api (bounded by a
+    client-side timeout for large files); it now hands back a short-lived presigned
+    URL and the caller fetches bytes directly from S3.
+    """
     user_id = admin_user(session)
     _, model_id = _seed_project_and_model(session, user_id)
     override_verify_token_as(user_id)
@@ -304,7 +366,19 @@ def test_download_file_streams_bytes_byte_for_byte(client: TestClient, session, 
 
     response = client.get(f"/api/files/model/{model_id}/{file_name}")
     assert response.status_code == 200, response.text
-    assert response.content == payload
+    body = response.json()
+    assert body["fileName"] == file_name
+    # Presigned URLs carry a ``Signature=`` query param (SigV2) or an
+    # ``X-Amz-Signature=`` query param (SigV4); either confirms it was signed.
+    assert "Signature=" in body["url"] or "X-Amz-Signature=" in body["url"], f"not a presigned URL: {body['url']}"
+
+    # Note: the Content-Disposition override (see test_s3_client.py's
+    # get_presigned_url tests for that contract) isn't asserted here — moto's
+    # GetObject simulation doesn't echo back ResponseContentDisposition,
+    # unlike real S3.
+    download = requests.get(body["url"], timeout=10)
+    assert download.status_code == 200, download.text
+    assert download.content == payload
 
 
 def test_download_file_404_when_db_row_missing(client: TestClient, session, s3_buckets):

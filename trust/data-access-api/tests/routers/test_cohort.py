@@ -79,7 +79,7 @@ def test_receive_cohort_query_success(mock_get_statistics, mock_validate_query, 
 @patch("data_access_api.routers.cohort.validate_query")
 def test_receive_cohort_query_invalid_validation(mock_validate_query, mock_get_settings):
     mock_get_settings.return_value.COHORT_QUERY_THRESHOLD = 5
-    mock_validate_query.side_effect = ValueError("Invalid field in query")
+    mock_validate_query.side_effect = HTTPException(status_code=400, detail="Invalid field in query")
 
     response = client.post("/cohort", json=sample_query_input, headers=AUTH_HEADERS)
 
@@ -111,6 +111,12 @@ def test_receive_cohort_query_statistics_error(
 @patch("data_access_api.routers.cohort.get_settings")
 @patch("data_access_api.routers.cohort.validate_query")
 def test_receive_cohort_query_too_few_records(mock_validate_query, mock_get_settings, mock_get_records):
+    """Below-threshold count is a privacy-suppressed normal response, not an error.
+
+    Returning 200 with an empty ``data`` list lets trust-api forward a 0-count
+    result back to the hub so the per-trust UI status leaves "running" and shows
+    0 instead of getting stuck.
+    """
     mock_get_settings.return_value.COHORT_QUERY_THRESHOLD = 5
 
     # Mock DataFrame with fewer records than threshold
@@ -119,8 +125,37 @@ def test_receive_cohort_query_too_few_records(mock_validate_query, mock_get_sett
 
     response = client.post("/cohort", json=sample_query_input, headers=AUTH_HEADERS)
 
-    assert response.status_code == 400
-    assert response.json()["detail"] == "Query returned too few records: 3 (minimum required: 5)"
+    assert response.status_code == 200
+    body = response.json()
+    assert body["record_count"] == 0
+    assert body["data"] == []
+    # Below-threshold count is privacy-suppressed on the wire (a genuine zero is suppressed
+    # the same way, so it can't reveal whether >=1 patient matched) (#519).
+    assert body["suppressed"] is True
+    assert body["query_id"] == sample_query_input["query_id"]
+    assert body["trust_id"] == sample_query_input["trust_id"]
+
+
+@patch("data_access_api.routers.cohort.get_records")
+@patch("data_access_api.routers.cohort.get_settings")
+@patch("data_access_api.routers.cohort.validate_query")
+def test_receive_cohort_query_zero_records(mock_validate_query, mock_get_settings, mock_get_records):
+    """A query that genuinely returns 0 rows is privacy-suppressed identically to a
+    below-threshold count (suppressed=True), so the wire can't reveal a true zero from a
+    small count (#519, security review)."""
+    mock_get_settings.return_value.COHORT_QUERY_THRESHOLD = 5
+
+    mock_df = pd.DataFrame({"col1": []})
+    mock_get_records.return_value = mock_df
+
+    response = client.post("/cohort", json=sample_query_input, headers=AUTH_HEADERS)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["record_count"] == 0
+    assert body["data"] == []
+    # A genuine zero is suppressed the same as a 1..N-1 count — no membership leak.
+    assert body["suppressed"] is True
 
 
 @patch("data_access_api.routers.cohort.get_records")
@@ -174,7 +209,7 @@ def test_get_dataframe_success(mock_get_records, mock_decrypt):
 @patch("data_access_api.routers.cohort.validate_query")
 def test_get_dataframe_invalid_query(mock_validate_query, mock_decrypt):
     mock_decrypt.return_value = "decrypted-id"
-    mock_validate_query.side_effect = ValueError("Invalid query syntax")
+    mock_validate_query.side_effect = HTTPException(status_code=400, detail="Invalid query syntax")
 
     response = client.post("/cohort/dataframe", json=sample_dataframe_query, headers=AUTH_HEADERS)
 
@@ -252,7 +287,7 @@ def test_get_accession_ids_strips_trailing_semicolon(mock_get_records, mock_decr
 @patch("data_access_api.routers.cohort.validate_query")
 def test_get_accession_ids_invalid_query(mock_validate_query, mock_decrypt):
     mock_decrypt.return_value = "decrypted-id"
-    mock_validate_query.side_effect = ValueError("Invalid query syntax")
+    mock_validate_query.side_effect = HTTPException(status_code=400, detail="Invalid query syntax")
 
     response = client.post("/cohort/accession-ids", json=sample_dataframe_query, headers=AUTH_HEADERS)
 

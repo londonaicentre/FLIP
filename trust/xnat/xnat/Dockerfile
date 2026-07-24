@@ -42,6 +42,17 @@ COPY build-artifacts/xnat-web-${XNAT_VERSION}.war /tmp/xnat-web-${XNAT_VERSION}.
 RUN unzip -o -d ${TOMCAT_XNAT_FOLDER_PATH} /tmp/xnat-web-${XNAT_VERSION}.war
 RUN rm -f /tmp/xnat-web-${XNAT_VERSION}.war
 
+# Create a non-root xnat user and group, and set ownership on all XNAT paths
+RUN groupadd --system --gid 1001 xnat \
+    && useradd --system --uid 1001 --gid xnat --home "${XNAT_HOME}" --shell /sbin/nologin xnat \
+    && chown -R xnat:xnat \
+        "${TOMCAT_XNAT_FOLDER_PATH}" \
+        "${XNAT_HOME}" \
+        "${XNAT_ROOT}"
+
+# Switch to the non-root user before running the application
+USER xnat
+
 EXPOSE 8080
 
 ENV XNAT_HOME=${XNAT_HOME}
@@ -55,3 +66,8 @@ ADD plugins ${XNAT_HOME}/plugins
 
 # Copy config folder
 ADD config ${XNAT_ROOT}/config
+
+# Ensure the files added in the production stage are owned by xnat
+USER root
+RUN chown -R xnat:xnat "${XNAT_HOME}/plugins" "${XNAT_ROOT}/config"
+USER xnat

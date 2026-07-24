@@ -16,12 +16,21 @@
 
 import { setupLayouts } from "virtual:generated-layouts";
 import generatedRoutes from "virtual:generated-pages";
-import { createRouter, createWebHistory } from "vue-router";
+import { createRouter,
+    createWebHistory,
+    NavigationFailure,
+    NavigationGuardNext,
+    RouteLocationNormalized } from "vue-router";
 
 const routes = setupLayouts(generatedRoutes);
 
 // import { routes } from "@/router/routes";
+import { doneRouteProgress, startRouteProgress } from "@/router/progress";
 import { authCheck } from "@/utils/auth";
+
+// Guards a one-time reload when a lazy route chunk fails to load (see handleRouteError).
+const CHUNK_RELOAD_KEY = "flip:chunk-reload";
+
 const router = createRouter({
     history: createWebHistory(),
     routes,
@@ -34,10 +43,56 @@ const router = createRouter({
     }
 });
 
-router.beforeEach((to, from, next) => {
+// The three navigation hooks below are defined as named, exported functions
+// (rather than inline lambdas) so they can be unit-tested directly — driving
+// them through real navigations is flaky in jsdom, where window.location and
+// lazy-chunk imports aren't implemented.
+
+/** beforeEach: start the top-of-page progress bar, then run the auth guard. */
+export const beforeEachGuard = (
+    to: RouteLocationNormalized,
+    from: RouteLocationNormalized,
+    next: NavigationGuardNext
+): void => {
+    startRouteProgress();
     /** Ensure the user is logged in */
     authCheck(to, from, next);
-});
+};
+
+/** afterEach: stop the progress bar and, on a clean navigation, re-arm the guard. */
+export const afterEachGuard = (
+    _to: RouteLocationNormalized,
+    _from: RouteLocationNormalized,
+    failure?: NavigationFailure | void
+): void => {
+    doneRouteProgress();
+    // A clean navigation means the current chunks resolve, so re-arm the
+    // stale-chunk reload guard for any future deploy.
+    if (!failure) {
+        sessionStorage.removeItem(CHUNK_RELOAD_KEY);
+    }
+};
+
+// When a lazy route chunk fails to load — almost always because a new deploy
+// has replaced the hashed chunk files this still-open tab references — recover
+// by doing a single full reload to fetch the fresh index.html (and its current
+// chunk manifest). The sessionStorage flag stops this looping if the failure
+// is something other than a stale deploy.
+export const handleRouteError = (error: unknown, to: RouteLocationNormalized): void => {
+    doneRouteProgress();
+    const message = error instanceof Error ? error.message : String(error);
+    const isChunkLoadError = /failed to fetch dynamically imported module/i.test(message)
+        || /error loading dynamically imported module/i.test(message)
+        || /importing a module script failed/i.test(message);
+    if (isChunkLoadError && !sessionStorage.getItem(CHUNK_RELOAD_KEY)) {
+        sessionStorage.setItem(CHUNK_RELOAD_KEY, "1");
+        window.location.assign(to.fullPath);
+    }
+};
+
+router.beforeEach(beforeEachGuard);
+router.afterEach(afterEachGuard);
+router.onError(handleRouteError);
 
 
 export const routeChange = {
@@ -96,7 +151,6 @@ export const routeChange = {
     changePassword: (email: string): void => {
         router.push({
             name: "ChangePassword",
-            path: "/auth/change-password",
             params: { email }
         });
     },
@@ -110,10 +164,7 @@ export const routeChange = {
         router.push({ path: "/auth/mfa-verify" });
     },
     accessRequest: (): void => {
-        router.push({
-            name: "AccessRequest",
-            path: "/auth/access-request"
-        });
+        router.push({ path: "/auth/access-request" });
     },
     back: (): void => {
         router.back();

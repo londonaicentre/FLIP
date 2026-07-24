@@ -48,7 +48,7 @@ def mock_model_response(model_id):
         model_name="Test Model",
         model_description="This is a test model",
         project_id=uuid4(),
-        status="TRAINING_STARTED",
+        status="RUNNING",
         query=None,
         files=[],
     ).model_dump(mode="json", by_alias=True)
@@ -60,7 +60,7 @@ def mock_model_response(model_id):
 #     with patch(
 #         "flip_api.step_functions_services.retrieve_model_step_function.retrieve_model_status_from_logs"
 #     ) as mock:
-#         mock.return_value = {"modelStatus": "TRAINING_STARTED"}
+#         mock.return_value = {"modelStatus": "RUNNING"}
 #         yield mock
 
 

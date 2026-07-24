@@ -11,19 +11,23 @@
 #
 
 import uuid
-from io import BytesIO
 from unittest.mock import MagicMock, patch
 from urllib.parse import quote
 
 import pytest
 from fastapi import status
 from fastapi.exceptions import HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi.testclient import TestClient
 
+from flip_api.auth.dependencies import verify_token
 from flip_api.config import Settings
+from flip_api.db.database import get_session
+from flip_api.domain.schemas.file import PresignedDownloadResponse
 from flip_api.file_services.download_file import download_file
+from flip_api.main import app
 
 bucket = "s3://test-secure-bucket"
+presigned_url = "https://test-secure-bucket.s3.amazonaws.com/presigned-url?X-Amz-Signature=fake"
 
 
 @pytest.fixture
@@ -32,10 +36,7 @@ def mock_s3_client():
     with patch("flip_api.file_services.download_file.S3Client") as mock_client:
         s3_instance = MagicMock()
         mock_client.return_value = s3_instance
-
-        # Mock get_object to return file data
-        s3_response = {"Body": BytesIO(b"test file content"), "ContentType": "text/plain"}
-        s3_instance.get_object.return_value = s3_response
+        s3_instance.get_presigned_url.return_value = presigned_url
 
         yield s3_instance
 
@@ -85,21 +86,25 @@ def test_download_file_success(
     sample_file_name,
     mock_db_session,
 ):
-    """Test successful file download."""
+    """Test successful file download returns a pre-signed URL, not the file bytes."""
     # Call the function
     response = download_file(
         model_id=sample_model_id, file_name=sample_file_name, db=mock_db_session, user_id=sample_user_id
     )
 
-    # Assert: response type + headers
-    assert isinstance(response, StreamingResponse)
-    assert response.media_type == "text/plain"
+    # Assert: response shape
+    assert isinstance(response, PresignedDownloadResponse)
+    assert response.url == presigned_url
+    assert response.fileName == sample_file_name
 
+    # Verify the pre-signed URL was generated with the right S3 path, TTL, and
+    # a Content-Disposition override so the browser saves under the right name.
     expected_disposition = f"attachment; filename=\"{sample_file_name}\"; filename*=UTF-8''{quote(sample_file_name)}"
-    assert response.headers["Content-Disposition"] == expected_disposition
-
-    # Verify S3 calls
-    mock_s3_client.get_object.assert_called_once_with(f"{bucket}/{sample_model_id}/{sample_file_name}")
+    mock_s3_client.get_presigned_url.assert_called_once_with(
+        f"{bucket}/{sample_model_id}/{sample_file_name}",
+        expiration=mocked_settings.PRE_SIGNED_URL_EXPIRATION_SECONDS,
+        response_content_disposition=expected_disposition,
+    )
 
     # Assert: access check called
     mock_access_manager.assert_called_once_with(sample_user_id, sample_model_id, mock_db_session)
@@ -149,9 +154,9 @@ def test_download_file_s3_error(
     sample_file_name,
     mock_db_session,
 ):
-    """Test when there's an error getting the file from S3."""
+    """Test when there's an error generating the pre-signed URL."""
     # Configure mock to raise an exception
-    mock_s3_client.get_object.side_effect = Exception("S3 get_object error")
+    mock_s3_client.get_presigned_url.side_effect = Exception("S3 get_presigned_url error")
 
     # Call the function and expect an HTTPException
     with pytest.raises(HTTPException) as excinfo:
@@ -159,7 +164,7 @@ def test_download_file_s3_error(
 
     # Verify the status code is 500 (Internal Server Error)
     assert excinfo.value.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
-    assert "Error downloading" in str(excinfo.value.detail)
+    assert excinfo.value.detail == "Error downloading file"
 
 
 def test_download_file_general_exception(
@@ -176,3 +181,38 @@ def test_download_file_general_exception(
     # Verify the status code is 500 (Internal Server Error)
     assert excinfo.value.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
     assert "Internal server error" in str(excinfo.value.detail)
+
+
+@pytest.mark.parametrize(
+    "bad_file_name",
+    [
+        # ``..`` (literal) is collapsed by HTTP-client URL normalisation
+        # before the request is sent, so it never reaches the validator;
+        # the percent-encoded forms below are the real attack shape.
+        "..%2Fescape.bin",
+        "subdir%2Ffile.bin",
+        "subdir%5Cfile.bin",
+        "file%00.bin",
+    ],
+)
+def test_download_file_route_rejects_path_traversal_file_name(bad_file_name):
+    """Path-param validator must short-circuit before any DB or S3 access.
+
+    Without the ``SafeFileName`` annotation a request like
+    ``/files/model/<id>/..%2F..%2Fmodels%2Ffoo`` would percent-decode
+    inside the segment and let the route concatenate ``../../models/foo``
+    into ``s3_path``, escaping the ``{model_id}/`` prefix.
+    """
+    user_id = uuid.uuid4()
+    mock_session = MagicMock()
+    app.dependency_overrides[get_session] = lambda: mock_session
+    app.dependency_overrides[verify_token] = lambda: user_id
+    try:
+        with patch("flip_api.file_services.download_file.S3Client") as mock_s3_cls:
+            response = TestClient(app).get(f"/api/files/model/{uuid.uuid4()}/{bad_file_name}")
+        # Accept either 422 (validator rejects) or 404 (Starlette routing rejects
+        # the raw segment); the contract is that no S3 call happens.
+        assert response.status_code in (status.HTTP_404_NOT_FOUND, status.HTTP_422_UNPROCESSABLE_ENTITY)
+        mock_s3_cls.assert_not_called()
+    finally:
+        app.dependency_overrides.clear()

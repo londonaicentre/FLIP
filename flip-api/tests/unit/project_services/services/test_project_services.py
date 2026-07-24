@@ -305,6 +305,52 @@ class TestApproveProject:
         assert result is False
         mock_db_session.rollback.assert_called_once()
 
+    def test_approve_project_cancels_orphan_pending_tasks(
+        self, mock_db_session: MagicMock, sample_project: Projects, sample_trust_ids: list[UUID]
+    ):
+        """A trust the project is approved *without* (because it never
+        responded) shouldn't keep an orphan PENDING task sitting in the
+        queue. Approval flips those tasks to CANCELLED so the trust
+        skips them on its next poll."""
+        from flip_api.domain.schemas.status import TaskStatus
+
+        project_approval = IProjectApproval(project_id=sample_project.id, trust_ids=sample_trust_ids)
+        user_id = uuid4()
+        mock_db_session.get.return_value = sample_project
+
+        # Mock the trust-intersect lookup + latest_query + orphan tasks chain.
+        # one_or_none() drives the per-trust approval loop; .first() and .all()
+        # drive the new cancel block.
+        mock_intersect = MagicMock()
+        latest_query = MagicMock(id=uuid4())
+        orphan_a = MagicMock(status=TaskStatus.PENDING)
+        orphan_b = MagicMock(status=TaskStatus.PENDING)
+
+        approval_exec = MagicMock()
+        approval_exec.one_or_none.return_value = mock_intersect
+        latest_query_exec = MagicMock()
+        latest_query_exec.first.return_value = latest_query
+        orphan_exec = MagicMock()
+        orphan_exec.all.return_value = [orphan_a, orphan_b]
+
+        # Per-trust approval calls fire first (one per sample trust), then
+        # the latest-query lookup, then the orphan PENDING fetch.
+        mock_db_session.exec.side_effect = (
+            [approval_exec] * len(sample_trust_ids)
+            + [latest_query_exec, orphan_exec]
+        )
+
+        with (
+            patch(f"{MOCK_SERVICE_PATH}.update_project_status"),
+            patch(f"{MOCK_SERVICE_PATH}.audit_project_action"),
+        ):
+            assert approve_project(mock_db_session, project_approval, user_id) is True
+
+        assert orphan_a.status == TaskStatus.CANCELLED
+        assert orphan_b.status == TaskStatus.CANCELLED
+        assert orphan_a.updated_at is not None
+        assert orphan_b.updated_at is not None
+
 
 class TestStageProjectService:
     def test_stage_project_service_success(
@@ -388,9 +434,11 @@ class TestUnstageProjectService:
 
 
 class TestGetProjectQuery:
-    def test_returns_query_when_trusts_queried_is_zero(self):
-        """trusts_queried=0 should still return the query (not be treated as falsy)."""
-        query = IProjectQuery(id=uuid4(), name="Q", query="SELECT *", trusts_queried=0, total_cohort=0)
+    def test_returns_query_when_no_trusts_have_responded(self):
+        """An empty queried_trust_ids should still return the query — the
+        helper is only filtering out half-formed records (no id), not gating
+        on trust responses."""
+        query = IProjectQuery(id=uuid4(), name="Q", query="SELECT *", queried_trust_ids=[], total_cohort=0)
         project = MagicMock(spec=IProjectResponse)
         project.query = query
 
@@ -398,8 +446,10 @@ class TestGetProjectQuery:
 
         assert result is query
 
-    def test_returns_query_when_trusts_queried_is_positive(self):
-        query = IProjectQuery(id=uuid4(), name="Q", query="SELECT *", trusts_queried=3, total_cohort=100)
+    def test_returns_query_when_trusts_have_responded(self):
+        query = IProjectQuery(
+            id=uuid4(), name="Q", query="SELECT *", queried_trust_ids=[uuid4(), uuid4(), uuid4()], total_cohort=100
+        )
         project = MagicMock(spec=IProjectResponse)
         project.query = query
 
@@ -410,28 +460,6 @@ class TestGetProjectQuery:
     def test_returns_none_when_no_query(self):
         project = MagicMock(spec=IProjectResponse)
         project.query = None
-
-        result = get_project_query(project)
-
-        assert result is None
-
-    def test_returns_none_when_query_has_no_id(self):
-        query = MagicMock()
-        query.id = None
-        query.trusts_queried = 3
-        project = MagicMock(spec=IProjectResponse)
-        project.query = query
-
-        result = get_project_query(project)
-
-        assert result is None
-
-    def test_returns_none_when_trusts_queried_is_none(self):
-        query = MagicMock()
-        query.id = uuid4()
-        query.trusts_queried = None
-        project = MagicMock(spec=IProjectResponse)
-        project.query = query
 
         result = get_project_query(project)
 
@@ -464,14 +492,17 @@ class TestGetApprovedTrustsForProject:
 
 
 class TestGetTrustsApprovalStatusForProject:
-    def test_get_trusts_approval_status_unpacks_three_columns(self, mock_db_session: MagicMock):
+    def test_get_trusts_approval_status_unpacks_six_columns(self, mock_db_session: MagicMock):
         project_id = uuid4()
         trust_a, trust_b, trust_c = uuid4(), uuid4(), uuid4()
+        approved_at_a = datetime(2026, 3, 19, 10, 30, 0)
         mock_results = [
-            (trust_a, "Trust A", True),
-            (trust_b, "Trust B", False),
+            # Now joined-and-grouped by project_id; first column is project_id.
+            (project_id, trust_a, "Trust A", "TA", True, approved_at_a),
+            (project_id, trust_b, "Trust B", "TB", False, None),
             # `approved` may come back as None for unstaged trusts; should normalise to False.
-            (trust_c, "Trust C", None),
+            # `code` and `approved_at` may be None on legacy rows.
+            (project_id, trust_c, "Trust C", None, None, None),
         ]
 
         mock_db_session.exec.return_value.all.return_value = mock_results
@@ -480,9 +511,11 @@ class TestGetTrustsApprovalStatusForProject:
 
         assert len(result) == 3
         assert all(isinstance(t, IApprovedTrust) for t in result)
-        assert (result[0].id, result[0].name, result[0].approved) == (trust_a, "Trust A", True)
-        assert (result[1].id, result[1].name, result[1].approved) == (trust_b, "Trust B", False)
-        assert (result[2].id, result[2].name, result[2].approved) == (trust_c, "Trust C", False)
+        assert (result[0].id, result[0].name, result[0].code, result[0].approved) == (trust_a, "Trust A", "TA", True)
+        assert result[0].approved_at == approved_at_a.isoformat(timespec="milliseconds")
+        assert (result[1].id, result[1].name, result[1].code, result[1].approved) == (trust_b, "Trust B", "TB", False)
+        assert result[1].approved_at is None
+        assert (result[2].id, result[2].name, result[2].code, result[2].approved) == (trust_c, "Trust C", None, False)
 
     def test_get_trusts_approval_status_empty(self, mock_db_session: MagicMock):
         project_id = uuid4()
@@ -560,7 +593,10 @@ class TestGetReimportQueries:
         ch_project_id = uuid4()
         trust_id = uuid4()
 
-        query = Queries(id=uuid4(), name="Test Query", query="SELECT *", project_id=ch_project_id, created=None)
+        query = Queries(
+            id=uuid4(), name="Test Query", query="SELECT *", project_id=ch_project_id,
+            created=None, created_by=uuid4(),
+        )
         xnat_project_status = XNATProjectStatus(
             id=uuid4(),
             xnat_project_id=uuid4(),
@@ -613,20 +649,40 @@ class TestGetProject:
             description="desc",
             status="UNSTAGED",
         )
-        # Step 2: Mock query
-        mock_query = Queries(id=query_id, name="Test Query", query="SELECT *", project_id=project_id, created=None)
-        # Step 3: Mock trust count
-        mock_trust_count = 2
+        # Step 2: Mock query — queried_trust_ids is the persisted dispatched set.
+        trust_ok_1 = uuid4()
+        trust_ok_2 = uuid4()
+        trust_errored = uuid4()
+        mock_query = Queries(
+            id=query_id, name="Test Query", query="SELECT *", project_id=project_id,
+            created=None, created_by=uuid4(),
+            queried_trust_ids=[trust_ok_1, trust_ok_2, trust_errored],
+        )
+        # Step 3: Mock (trust_id, data) pairs — successful + errored — so the
+        # loader's queried/errored split is exercised end-to-end.
+        result_rows = [
+            (trust_ok_1, '{"record_count": 10, "data": [], "error": null}'),
+            (trust_ok_2, '{"record_count": 5, "data": [], "error": null}'),
+            (trust_errored, '{"record_count": 0, "data": [], "error": "OMOP timeout"}'),
+        ]
         # Step 4: Mock stats JSON
         stats_json = '{"TotalCount": 100}'
         mock_stats = QueryStats(id=uuid4(), query_id=query_id, stats=stats_json)
 
-        # Chain of .exec().first() returns:
+        # Mock chain in order: Projects, Queries ⋈ UserProfile,
+        # QueryResult.trust_id+.data, TrustTask (PENDING+CANCELLED), QueryStats.
+        trust_pending = uuid4()
+        trust_cancelled = uuid4()
+        from flip_api.domain.schemas.status import TaskStatus
         mock_db_session.exec.side_effect = [
-            MagicMock(first=MagicMock(return_value=mock_project)),  # first exec().first()
-            MagicMock(first=MagicMock(return_value=mock_query)),  # second exec().first()
-            MagicMock(first=MagicMock(return_value=2)),  # third exec().first()
-            MagicMock(first=MagicMock(return_value=mock_stats)),  # fourth exec().first()
+            MagicMock(first=MagicMock(return_value=mock_project)),  # select(Projects)
+            MagicMock(first=MagicMock(return_value=(mock_query, "Alex Triay"))),  # Queries ⋈ UserProfile
+            MagicMock(all=MagicMock(return_value=result_rows)),  # select(QueryResult.trust_id, .data)
+            MagicMock(all=MagicMock(return_value=[
+                (trust_pending, TaskStatus.PENDING),
+                (trust_cancelled, TaskStatus.CANCELLED),
+            ])),  # select(TrustTask.trust_id, .status) PENDING+CANCELLED
+            MagicMock(first=MagicMock(return_value=mock_stats)),  # select(QueryStats)
         ]
 
         result = get_project(project_id, mock_db_session)
@@ -634,8 +690,12 @@ class TestGetProject:
         assert isinstance(result, IProjectResponse)
         assert result.id == project_id
         assert isinstance(result.query, IProjectQuery)
-        assert result.query.trusts_queried == mock_trust_count
+        assert result.query.queried_trust_ids == [trust_ok_1, trust_ok_2, trust_errored]
+        assert result.query.errored_trust_ids == [trust_errored]
+        assert result.query.pending_trust_ids == [trust_pending]
+        assert result.query.cancelled_trust_ids == [trust_cancelled]
         assert result.query.total_cohort == 100
+        assert result.query.created_by == "Alex Triay"
 
     def test_get_project_not_found(self, mock_db_session: MagicMock):
         project_id = uuid4()
@@ -658,8 +718,8 @@ class TestGetProject:
         )
 
         mock_db_session.exec.side_effect = [
-            MagicMock(first=MagicMock(return_value=mock_project)),  # first exec().first()
-            MagicMock(first=MagicMock(return_value=[])),  # second exec().first() for query
+            MagicMock(first=MagicMock(return_value=mock_project)),  # select(Projects)
+            MagicMock(first=MagicMock(return_value=None)),  # Queries ⋈ UserProfile — no row
         ]
 
         result = get_project(project_id, mock_db_session)
@@ -679,15 +739,21 @@ class TestGetProject:
             description="desc",
             status="UNSTAGED",
         )
-        mock_query = Queries(id=query_id, name="Query X", query="bad sql", project_id=project_id, created=None)
+        mock_query = Queries(
+            id=query_id, name="Query X", query="bad sql", project_id=project_id,
+            created=None, created_by=uuid4(),
+        )
         mock_stats = QueryStats(id=uuid4(), query_id=query_id, stats="{not-valid-json")
 
-        # Chain of .exec().first() returns:
         mock_db_session.exec.side_effect = [
-            MagicMock(first=MagicMock(return_value=mock_project)),  # first exec().first()
-            MagicMock(first=MagicMock(return_value=mock_query)),  # second exec().first()
-            MagicMock(first=MagicMock(return_value=2)),  # third exec().first()
-            MagicMock(first=MagicMock(return_value=mock_stats)),  # fourth exec().first()
+            MagicMock(first=MagicMock(return_value=mock_project)),  # select(Projects)
+            MagicMock(first=MagicMock(return_value=(mock_query, None))),  # Queries ⋈ UserProfile
+            MagicMock(all=MagicMock(return_value=[
+                (uuid4(), '{"record_count": 1, "data": [], "error": null}'),
+                (uuid4(), '{"record_count": 2, "data": [], "error": null}'),
+            ])),  # select(QueryResult.trust_id, .data)
+            MagicMock(all=MagicMock(return_value=[])),  # select(TrustTask.trust_id, .status) PENDING+CANCELLED
+            MagicMock(first=MagicMock(return_value=mock_stats)),  # select(QueryStats)
         ]
 
         result = get_project(project_id, mock_db_session)
@@ -715,3 +781,242 @@ class TestGetUsersWithAccess:
         result = get_users_with_access(project_id, mock_db_session)
 
         assert result == []
+
+
+# Helpers introduced by the connection-status PR — _classify_responded_trust_ids,
+# update_project_user_access, plus warn paths in get_project_models_service /
+# unstage_project_service.
+
+
+class TestClassifyRespondedTrustIds:
+    """One pass over QueryResult rows splits responded trusts into errored vs empty.
+
+    A row whose `data` JSON fails to parse is treated as errored — better to surface the
+    trust as red than silently swallow a corrupt response, which would let staging include
+    a trust whose results we never validated. A non-errored trust with `record_count == 0`
+    (a genuine zero or a privacy-suppressed count, #519) is empty: responded but with no
+    usable cohort, so excluded from staging eligibility. `errored` and `empty` are disjoint.
+    """
+
+    def test_marks_malformed_json_as_errored(self):
+        from flip_api.project_services.services.project_services import _classify_responded_trust_ids
+
+        tid = uuid4()
+        responded, errored, empty = _classify_responded_trust_ids([(tid, "not-a-json-blob")], query_id=uuid4())
+
+        assert responded == [tid]
+        assert errored == [tid]
+        assert empty == []
+
+    def test_explicit_error_field_marks_trust_as_errored(self):
+        from flip_api.project_services.services.project_services import _classify_responded_trust_ids
+
+        tid = uuid4()
+        # An errored row is never double-flagged as empty even though its count is 0.
+        responded, errored, empty = _classify_responded_trust_ids(
+            [(tid, '{"record_count": 0, "error": "OMOP timeout"}')], query_id=uuid4()
+        )
+
+        assert responded == [tid]
+        assert errored == [tid]
+        assert empty == []
+
+    def test_success_payload_is_neither_errored_nor_empty(self):
+        from flip_api.project_services.services.project_services import _classify_responded_trust_ids
+
+        tid = uuid4()
+        responded, errored, empty = _classify_responded_trust_ids(
+            [(tid, '{"record_count": 7, "error": null}')], query_id=uuid4()
+        )
+
+        assert responded == [tid]
+        assert errored == []
+        assert empty == []
+
+    def test_zero_record_count_is_flagged_empty(self):
+        from flip_api.project_services.services.project_services import _classify_responded_trust_ids
+
+        tid = uuid4()
+        responded, errored, empty = _classify_responded_trust_ids(
+            [(tid, '{"record_count": 0, "error": null}')], query_id=uuid4()
+        )
+
+        assert responded == [tid]
+        assert errored == []
+        assert empty == [tid]
+
+    def test_suppressed_count_is_flagged_empty(self):
+        from flip_api.project_services.services.project_services import _classify_responded_trust_ids
+
+        tid = uuid4()
+        responded, errored, empty = _classify_responded_trust_ids(
+            [(tid, '{"record_count": 0, "suppressed": true, "error": null}')], query_id=uuid4()
+        )
+
+        assert responded == [tid]
+        assert errored == []
+        assert empty == [tid]
+
+    def test_mixed_batch_partitions_in_one_pass_preserving_order(self):
+        # Every distinct trust is "responded"; errored/empty are disjoint subsets in row order.
+        from flip_api.project_services.services.project_services import _classify_responded_trust_ids
+
+        ok, err, zero = uuid4(), uuid4(), uuid4()
+        responded, errored, empty = _classify_responded_trust_ids(
+            [
+                (ok, '{"record_count": 7}'),
+                (err, '{"record_count": 0, "error": "OMOP timeout"}'),
+                (None, '{"record_count": 0}'),  # no trust id — skipped entirely
+                (zero, '{"record_count": 0}'),
+            ],
+            query_id=uuid4(),
+        )
+
+        assert responded == [ok, err, zero]
+        assert errored == [err]
+        assert empty == [zero]
+
+    def test_missing_record_count_is_flagged_empty(self):
+        # A responded, non-errored row with no record_count defaults to 0 → empty (no
+        # usable cohort) — the safe back-compat reading for pre-upgrade rows.
+        from flip_api.project_services.services.project_services import _classify_responded_trust_ids
+
+        tid = uuid4()
+        responded, errored, empty = _classify_responded_trust_ids([(tid, '{"error": null}')], query_id=uuid4())
+
+        assert responded == [tid]
+        assert errored == []
+        assert empty == [tid]
+
+    def test_uncoercible_record_count_is_errored(self):
+        # A record_count that won't coerce to an int is treated like a malformed payload —
+        # errored, not an unhandled 500 on the read path (#519 review).
+        from flip_api.project_services.services.project_services import _classify_responded_trust_ids
+
+        tid = uuid4()
+        responded, errored, empty = _classify_responded_trust_ids(
+            [(tid, '{"record_count": "not-a-number"}')], query_id=uuid4()
+        )
+
+        assert responded == [tid]
+        assert errored == [tid]
+        assert empty == []
+
+    @pytest.mark.parametrize("blob", ["null", "[]", "true"])
+    def test_non_dict_json_is_errored(self, blob: str):
+        # Valid JSON that isn't an object (null/list/scalar) is treated like a malformed
+        # payload — errored, not an AttributeError on data.get() that would 500 the read.
+        from flip_api.project_services.services.project_services import _classify_responded_trust_ids
+
+        tid = uuid4()
+        responded, errored, empty = _classify_responded_trust_ids([(tid, blob)], query_id=uuid4())
+
+        assert responded == [tid]
+        assert errored == [tid]
+        assert empty == []
+
+
+class TestUpdateProjectUserAccess:
+    """Persists one `ProjectUserAccess` row per user id in a single commit.
+
+    The endpoint that calls this (`approve_project` and friends) already
+    guarantees the project exists, so there's no existence check here.
+    """
+
+    def test_persists_one_access_row_per_user(self, mock_db_session: MagicMock):
+        from flip_api.db.models.main_models import ProjectUserAccess
+        from flip_api.project_services.services.project_services import update_project_user_access
+
+        project_id = uuid4()
+        user_ids = [uuid4(), uuid4(), uuid4()]
+
+        update_project_user_access(project_id, user_ids, mock_db_session)
+
+        mock_db_session.add_all.assert_called_once()
+        added = mock_db_session.add_all.call_args.args[0]
+        assert len(added) == 3
+        assert all(isinstance(entry, ProjectUserAccess) for entry in added)
+        assert {entry.user_id for entry in added} == set(user_ids)
+        mock_db_session.commit.assert_called_once()
+
+    def test_empty_user_list_still_persists_an_empty_batch(self, mock_db_session: MagicMock):
+        """An empty list isn't an error — clearing then re-applying is a
+        legitimate code path (e.g. project owner removes all collaborators).
+        """
+        from flip_api.project_services.services.project_services import update_project_user_access
+
+        update_project_user_access(uuid4(), [], mock_db_session)
+
+        mock_db_session.add_all.assert_called_once_with([])
+        mock_db_session.commit.assert_called_once()
+
+
+def test_get_trusts_approval_status_for_projects_returns_empty_for_empty_input():
+    """`get_trusts_approval_status_for_projects` short-circuits on empty input
+    without issuing a SQL query — paginated callers can pass `[]` when their
+    page is empty without paying for a wasted round-trip.
+    """
+    from unittest.mock import MagicMock
+
+    from flip_api.project_services.services.project_services import (
+        get_trusts_approval_status_for_projects,
+    )
+
+    session = MagicMock()
+
+    result = get_trusts_approval_status_for_projects([], session)
+
+    assert result == {}
+    session.exec.assert_not_called()
+
+
+class TestGetProjectModelsServiceSearch:
+    """`get_project_models_service` accepts a `search` query-string param and
+    appends a case-insensitive name+description filter to both the model and
+    count queries.
+    """
+
+    def test_search_string_appends_filter_to_both_statements(self, mock_db_session: MagicMock):
+        mock_db_session.exec.return_value.first.return_value = 0
+        mock_db_session.exec.return_value.all.return_value = []
+
+        get_project_models_service(
+            project_id=uuid4(),
+            session=mock_db_session,
+            query_params={"search": "segmentation"},
+        )
+
+        # Two exec() calls: count then models. Both should carry the `like %seg%` predicate.
+        compiled_stmts = [
+            str(call.args[0].compile()).lower() for call in mock_db_session.exec.call_args_list
+        ]
+        for compiled in compiled_stmts:
+            assert "like" in compiled
+            assert "lower" in compiled
+
+
+class TestUnstageWarnsOnZeroDeletes:
+    def test_warns_when_no_rows_deleted_but_still_completes(
+        self, mock_db_session: MagicMock, sample_project: Projects
+    ):
+        """A staged project whose trust-intersect rows were already gone should
+        still flip back to UNSTAGED with a warn-log, not raise. Belt-and-braces
+        for projects whose state drifted out-of-band.
+        """
+        project_id = sample_project.id
+        mock_db_session.get.return_value = sample_project
+
+        zero_result = MagicMock()
+        zero_result.rowcount = 0
+        mock_db_session.execute.return_value = zero_result
+
+        with (
+            patch(f"{MOCK_SERVICE_PATH}.update_project_status") as mock_update_status,
+            patch(f"{MOCK_SERVICE_PATH}.audit_project_action") as mock_audit,
+            patch(f"{MOCK_SERVICE_PATH}.logger") as mock_logger,
+        ):
+            unstage_project_service(project_id, uuid4(), mock_db_session)
+
+            mock_logger.warn.assert_called_once()
+            mock_update_status.assert_called_once()
+            mock_audit.assert_called_once()

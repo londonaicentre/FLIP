@@ -42,6 +42,16 @@ services:
       - AWS_COGNITO_APP_CLIENT_ID=${AWS_COGNITO_APP_CLIENT_ID}
       - AWS_REGION=${AWS_REGION}
       - BLACKLISTED_MODEL_FILES=${BLACKLISTED_MODEL_FILES}
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - SETUID
+      - SETGID
+      - NET_BIND_SERVICE
     restart: unless-stopped
     networks:
       - default
@@ -49,12 +59,29 @@ services:
 
   flip-api:
     platform: linux/x86_64
+    # Pull the pre-built GHCR image by default (pull_policy: always); the local
+    # src/ bind-mount below overlays it so live reload still runs your working
+    # copy. `make up BUILD=true` rebuilds from the build: block instead.
+    # flip-ui is intentionally NOT given an image/pull_policy — it has no GHCR
+    # image (its workflow is a CI smoke test; prod serves it from S3/CloudFront).
+    image: ${DOCKER_REGISTRY}flip-api:${DOCKER_TAG}
+    pull_policy: always
+    # Dev-on-pull: the GHCR image bakes uid 1000 (flip); run the pulled image as
+    # the HOST uid so it can write the host-owned bind mounts (src/, ~/.aws).
+    # Paired with the HOME/UV_* env below so it never writes the image-owned
+    # .venv. No effect under BUILD=true (the image is already host-uid).
+    user: "${UID}:${GID}"
     build:
       args:
         UID: ${UID}
         GID: ${GID}
         UNAME: ${UNAME}
       context: ../flip-api
+      # fl-apps/ lives at the repo root, outside the flip-api build context. Pass it as a named
+      # additional context so the Dockerfile can `COPY --from=fl_apps` the base FL templates into
+      # the image (FLIP#724). Requires BuildKit (compose default).
+      additional_contexts:
+        fl_apps: ../fl-apps
       dockerfile: Dockerfile
       target: development
     ports:
@@ -67,6 +94,9 @@ services:
       - ../flip-api/entrypoint.sh:/app/entrypoint.sh
       - ../flip-api/tests/:/app/tests/
       - ../flip-api/.vscode:/app/.vscode
+      # Bind-mount the base FL app templates over the baked-in copy so template edits take effect
+      # without a rebuild (the bundler reads them from FL_APP_BASE_DIR=/app/fl-apps). FLIP#724.
+      - ../fl-apps/:/app/fl-apps/
       - ~/.aws/config:/home/${UNAME}/.aws/config:ro
       - ~/.aws/sso/cache:/home/${UNAME}/.aws/sso/cache:rw
     networks:
@@ -76,15 +106,41 @@ services:
       - shared-net-2
     environment:
       - ENV=development
+      # Dev-on-pull (see `user:` above): import flip_api via PYTHONPATH and skip
+      # the runtime editable install (UV_NO_SYNC) so the host-uid process never
+      # writes the image-owned .venv; keep uv's cache + HOME writable. HOME
+      # matches the ~/.aws mount path below so boto3 still finds credentials.
+      - HOME=/home/${UNAME}
+      - UV_CACHE_DIR=/tmp/uv-cache
+      - UV_NO_SYNC=1
+      - PYTHONPATH=/app/src
+      # Under user-mapping the host uid has no /etc/passwd entry, so libpq's
+      # getpwuid fails and the entrypoint's `pg_isready` gate returns "no
+      # attempt". PGUSER lets it skip the user lookup (it doesn't authenticate).
+      - PGUSER=${POSTGRES_USER}
       # Disable the app-layer MFA gate for local dev so developers aren't
       # forced through TOTP enrolment on a burner authenticator app just
       # to click around. Stag/prod compose files don't pass this through;
       # Settings.ENFORCE_MFA defaults to True elsewhere. Flip to `true`
       # here (and `make restart`) to test the MFA flow end-to-end locally.
       - ENFORCE_MFA=false
+      # Settings.LOG_LEVEL defaults to INFO so unknown environments emit
+      # at INFO. Local dev defaults to DEBUG when LOG_LEVEL is unset
+      # (override via LOG_LEVEL in .env.development) so debug-level
+      # diagnostics are still visible during development.
+      - LOG_LEVEL=${LOG_LEVEL:-DEBUG}
       - DEBUG=${DEBUG}
       - AWS_PROFILE=${AWS_PROFILE}
       - AWS_REGION=${AWS_REGION}
+      # Force boto3 to mint presigned URLs against the regional S3 endpoint
+      # (e.g. s3.eu-west-2.amazonaws.com) instead of the legacy global one
+      # (s3.amazonaws.com). DNS for a freshly created bucket in a non-us-east-1
+      # region can take up to ~24h to propagate on the global endpoint — see
+      # the matching note in compose.production.yml for the FLIP#24 incident
+      # that surfaced this. Regional endpoints never have this lag and are
+      # AWS's recommended path for non-us-east-1 buckets anyway.
+      # See compose.production.yml for the `:?` rationale (load-bearing guard).
+      - AWS_ENDPOINT_URL_S3=https://s3.${AWS_REGION:?AWS_REGION must be set in the env file}.amazonaws.com
       - AWS_COGNITO_USER_POOL_ID=${AWS_COGNITO_USER_POOL_ID}
       - AWS_COGNITO_APP_CLIENT_ID=${AWS_COGNITO_APP_CLIENT_ID}
       - POSTGRES_USER=${POSTGRES_USER}
@@ -93,7 +149,6 @@ services:
       - DB_PORT=${DB_PORT}
       - POSTGRES_DB=${POSTGRES_DB}
       - TRUST_API_KEY_HEADER=${TRUST_API_KEY_HEADER}
-      - TRUST_API_KEY_HASHES=${TRUST_API_KEY_HASHES}
       - INTERNAL_SERVICE_KEY_HEADER=${INTERNAL_SERVICE_KEY_HEADER}
       - INTERNAL_SERVICE_KEY_HASH=${INTERNAL_SERVICE_KEY_HASH}
       - AES_KEY_BASE64=${AES_KEY_BASE64}
@@ -103,12 +158,34 @@ services:
       - UPLOADED_MODEL_FILES_BUCKET=${UPLOADED_MODEL_FILES_BUCKET}
       - SCANNED_MODEL_FILES_BUCKET=${SCANNED_MODEL_FILES_BUCKET}
       - UPLOADED_FEDERATED_DATA_BUCKET=${UPLOADED_FEDERATED_DATA_BUCKET}
-      - FL_APP_BASE_BUCKET=${FL_APP_BASE_BUCKET}
       - FL_APP_DESTINATION_BUCKET=${FL_APP_DESTINATION_BUCKET}
       - NET_ENDPOINTS=${NET_ENDPOINTS}
       - FL_BACKEND=${FL_BACKEND}
       - ADMIN_USER_PASSWORD=${ADMIN_USER_PASSWORD}
-      - TRUST_NAMES=${TRUST_NAMES}
+      - FL_KIT_SLOT_NAMES=${FL_KIT_SLOT_NAMES}
+      # Hub-shared kit values — must be readable inside the container by
+      # flip_api/scripts/register_trust.py::_hub_shared_from_env() so that
+      # `make register-trusts` populates the per-trust kit file's managed
+      # block instead of leaving `<run-make-sync-trust-kit>` placeholders.
+      # Keep this list in lockstep with HUB_SHARED_ENV_KEYS in that script.
+      # (AES_KEY_BASE64, TRUST_API_KEY_HEADER, FL_BACKEND and
+      # UPLOADED_FEDERATED_DATA_BUCKET are passed above.)
+      - CENTRAL_HUB_API_URL=${CENTRAL_HUB_API_URL}
+      - FLOWER_KIT_DATE=${FLOWER_KIT_DATE}
+      - FLARE_KIT_DATE=${FLARE_KIT_DATE}
+      - DOCKER_TAG=${DOCKER_TAG}
+      - DOCKER_REGISTRY=${DOCKER_REGISTRY}
+      - DOCKER_FL_TAG=${DOCKER_FL_TAG}
+      - DOCKER_FL_REGISTRY=${DOCKER_FL_REGISTRY}
+      - DOCKER_FL_CLIENT_NAME=${DOCKER_FL_CLIENT_NAME}
+      - NLB_SUBDOMAIN=${NLB_SUBDOMAIN}
+      - FL_SERVER_PORT=${FL_SERVER_PORT}
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
     restart: unless-stopped
     container_name: flip-api
 
@@ -120,6 +197,16 @@ services:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETUID
+      - SETGID
     networks:
       - default
     container_name: flip-db
@@ -134,6 +221,11 @@ services:
     environment:
       PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL}
       PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD}
+    # pgadmin (dev-only; not in the production compose) starts as root and drops
+    # to the pgadmin user via sudo in its entrypoint. That is incompatible with
+    # no-new-privileges + cap_drop:ALL (sudo can't run, the setuid drop fails and
+    # the container crash-loops with exit 126). Left unhardened intentionally — it
+    # is never deployed to stag/prod.
     volumes:
       - pgadmin_data:/var/lib/pgadmin
     networks:

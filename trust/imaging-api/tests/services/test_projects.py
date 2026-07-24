@@ -35,7 +35,7 @@ from imaging_api.services.projects import (
     set_project_prearchive_settings,
     to_create_project,
 )
-from imaging_api.utils.exceptions import AlreadyExistsError, NotFoundError
+from imaging_api.utils.exceptions import AlreadyExistsError, NotFoundError, XnatFetchError
 
 
 @pytest.fixture
@@ -157,6 +157,59 @@ def test_create_payload_for_project_creation():
     assert "<secondary_ID>S1</secondary_ID>" in payload
     assert "<name>My Project</name>" in payload
     assert "<description>A description</description>" in payload
+
+
+def test_create_payload_for_project_creation_escapes_xml_control_chars():
+    """
+    name/description must be XML-escaped, never interpolated raw, so an
+    attacker-supplied value cannot inject elements into the projectData
+    document XNAT receives.
+    """
+    import xml.etree.ElementTree as ET
+
+    payload = create_payload_for_project_creation(
+        "http://xnat/projects",
+        "P1",
+        "S1",
+        'evil</name><name>injected',
+        "less < and & ampersand",
+    )
+
+    # Raw injection markers must be absent, replaced by entity references.
+    assert "</name><name>injected" not in payload
+    assert "&lt;/name&gt;&lt;name&gt;injected" in payload
+    assert "&lt;" in payload
+    assert "&amp;" in payload
+
+    # The payload still parses as a single projectData element with the
+    # attacker's value carried verbatim as text — never as markup. Children
+    # are in no namespace (only the root carries the xnat prefix).
+    root = ET.fromstring(payload)
+    name_elements = root.findall("name")
+    assert len(name_elements) == 1
+    assert name_elements[0].text == "evil</name><name>injected"
+
+
+def test_create_payload_for_project_creation_blocks_xxe_doctype():
+    """
+    XNAT-side payload must never carry a DOCTYPE/ENTITY block. ElementTree's
+    serializer never emits one, so attacker-controlled fields can't smuggle XXE
+    even when they look like a DOCTYPE declaration.
+    """
+    attacker_value = '<!DOCTYPE foo [<!ENTITY xxe SYSTEM "file:///etc/passwd">]>'
+    payload = create_payload_for_project_creation(
+        "http://xnat/projects",
+        "P1",
+        "S1",
+        attacker_value,
+        "",
+    )
+    # The serializer must never emit DOCTYPE/ENTITY markup tokens — they would
+    # only appear if the attacker value were interpolated raw.
+    assert "<!DOCTYPE" not in payload
+    assert "<!ENTITY" not in payload
+    # The attacker value survives only as escaped text, never as markup.
+    assert "&lt;!DOCTYPE" in payload
 
 
 # ===========================================================================
@@ -549,9 +602,36 @@ def test_get_experiments_success(mock_get_project, mock_get, headers):
 @patch("imaging_api.services.projects.get_project")
 def test_get_experiments_failure(mock_get_project, mock_get, headers):
     mock_get_project.return_value = Project(**_PROJECT_DICT)
-    mock_get.return_value = MagicMock(status_code=500, text="Error")
-    with pytest.raises(Exception, match="XNAT experiments fetch failed"):
+    # A real XNAT non-200 serves an HTML/plain-text body, so .json() raises. The status must be
+    # checked before the body is parsed, otherwise the JSON error masks the true HTTP status.
+    mock_get.return_value = MagicMock(
+        status_code=500, text="Error", json=MagicMock(side_effect=ValueError("no json")),
+    )
+    with pytest.raises(XnatFetchError, match="XNAT experiments fetch failed"):
         get_experiments("TEST", headers)
+
+
+@patch("imaging_api.services.projects.requests.get")
+@patch("imaging_api.services.projects.get_project")
+def test_get_experiments_uses_unfiltered_global_listing(mock_get_project, mock_get, headers):
+    # Regression guard: get_experiments must query the GLOBAL experiments endpoint filtered by
+    # project, NOT the project-scoped /data/projects/{id}/experiments. The project-scoped listing
+    # is filtered by per-data-type element security, so sessions whose modality is not registered
+    # there (e.g. xnat:dxSessionData for chest X-rays) are silently omitted and the import shows
+    # "0 imported". The global listing returns identical fields without that filter.
+    mock_get_project.return_value = Project(**_PROJECT_DICT)
+    mock_get.return_value = MagicMock(
+        status_code=200,
+        json=MagicMock(return_value={"ResultSet": {"Result": []}}),
+    )
+
+    get_experiments("TEST", headers)
+
+    called = mock_get.call_args
+    # Global endpoint, project passed as a (URL-encoded) query parameter — NOT the project-scoped path.
+    assert called.args[0].endswith("/data/experiments")
+    assert called.kwargs["params"] == {"project": "TEST"}
+    assert "/data/projects/TEST/experiments" not in called.args[0]
 
 
 # ===========================================================================

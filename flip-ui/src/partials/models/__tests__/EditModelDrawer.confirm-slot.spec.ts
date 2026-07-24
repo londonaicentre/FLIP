@@ -21,21 +21,23 @@ vi.mock("vue-router", async (importOriginal) => {
 
     return {
         ...actual,
-        useRoute: () => ({ params: {}, query: {} })
+        useRoute: () => ({
+            params: {},
+            query: {}
+        })
     };
 });
 
 vi.mock("@/router", () => ({
-    default: { push: vi.fn(), replace: vi.fn() }
+    default: {
+        push: vi.fn(),
+        replace: vi.fn()
+    }
 }));
 
-vi.mock("@/services/model-service", () => ({
-    deleteModel: vi.fn()
-}));
+vi.mock("@/services/model-service", () => ({ deleteModel: vi.fn() }));
 
-const confirmModalStub = {
-    template: "<div data-test=\"confirm-modal-stub\"><slot name=\"confirmation\" /></div>"
-};
+const confirmModalStub = { template: "<div data-test=\"confirm-modal-stub\"><slot name=\"confirmation\" /></div>" };
 
 describe("EditModelDrawer delete-confirmation slot", () => {
     const baseProps = {
@@ -59,7 +61,7 @@ describe("EditModelDrawer delete-confirmation slot", () => {
 
         const html = wrapper.html();
 
-        expect(html).toContain("Training for this model will also be stopped");
+        expect(html).toContain("Training for this model will be stopped");
         expect(html).toContain("Your username will be recorded against this action");
         expect(html).toContain("To delete this model, enter");
     });
@@ -71,7 +73,10 @@ describe("EditModelDrawer delete-confirmation slot", () => {
                 renderStubDefaultSlot: true,
                 stubs: { AiConfirmModal: confirmModalStub }
             },
-            props: { ...baseProps, name: payload }
+            props: {
+                ...baseProps,
+                name: payload
+            }
         });
 
         const slot = wrapper.find("[data-test=confirm-modal-stub]");

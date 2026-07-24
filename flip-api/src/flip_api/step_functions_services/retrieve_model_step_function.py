@@ -31,7 +31,7 @@ def retrieve_model_step_function_endpoint(
     request: Request,
     db: Session = Depends(get_session),
     user_id: UUID = Depends(verify_token),
-):
+) -> IModelResponse:
     """
     Retrieve model by ID, checking and updating its status first
 
@@ -41,7 +41,7 @@ def retrieve_model_step_function_endpoint(
         model_id (UUID): The ID of the model to retrieve.
         request (Request): The FastAPI request object.
         db (Session): The database session.
-        user_id (str): The ID of the current user.
+        user_id (UUID): The ID of the current user.
 
     Returns:
         IModelResponse: The response containing the model details.

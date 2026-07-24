@@ -18,16 +18,25 @@
                 Project Staging
             </h2>
         </div>
-        <Form v-if="trustsToStage?.length" v-slot="{errors}" :validation-schema="schema" @submit="stageProject">
+        <Form
+            v-if="trustsToStage?.length"
+            v-slot="{errors}"
+            :validation-schema="schema"
+            :initial-values="{ trusts: [] }"
+            @submit="stageProject"
+        >
             <div v-if="hasQuery" class="w-full gap-3 text-sm">
-                <ul role="list" class="border-gray-200 divide-y divide-gray-200 border-y dark:border-gray-700 dark:divide-gray-700">
+                <ul role="list" class="border-gray-200 divide-y divide-gray-200 border-y dark:border-dark-border dark:divide-dark-border">
                     <li v-for="trust in trustsToStage" :key="trust.id">
-                        <div class="flex items-center py-4 transition hover:bg-gray-50 dark:hover:bg-gray-800 group">
+                        <div class="flex items-center py-4 transition hover:bg-gray-50 dark:hover:bg-dark-surface group">
                             <div class="flex items-center flex-1 px-4 grow">
                                 <div class="flex-1 min-w-0">
                                     <div>
-                                        <p class="text-sm font-semibold truncate text-primary-600 dark:text-primary-200">
-                                            {{ trust.name }}
+                                        <p
+                                            class="text-sm font-semibold truncate text-primary-600 dark:text-primary-200"
+                                            :title="trust.name"
+                                        >
+                                            {{ trust.code || trust.name }}
                                         </p>
                                     </div>
                                 </div>
@@ -51,7 +60,7 @@
                 <div class="p-4">
                     <div class="inline-flex justify-end w-full space-x-4">
                         <AiButton
-                            v-if="!isObserver"
+                            v-if="!isViewer"
                             class="ml-2"
                             primary
                             small
@@ -93,6 +102,14 @@
         <AiLoader v-if="loadingTrusts" class="pb-4" />
         <div v-else-if="!trustsToStage?.length">
             <AiAlert
+                v-if="trustsLoadedCount > 0"
+                :rounded="false"
+                variant="info"
+                text="No trusts have returned cohort results yet, so there is nothing to stage."
+                :bordered="false"
+            />
+            <AiAlert
+                v-else
                 :rounded="false"
                 variant="error"
                 text="Unable to load Trusts, please try again. If the issue persists please contact the service desk."
@@ -104,20 +121,27 @@
 
 <script setup lang="ts">
 import { Form } from "vee-validate";
-import { computed, ref, watch } from "vue";
+import { ref, watch } from "vue";
 import { array, object, string } from "yup";
 
 import AiAlert from "@/components/AiAlert/AiAlert.vue";
 import AiButton from "@/components/AiButton/AiButton.vue";
 import AiCard from "@/components/AiCard/AiCard.vue";
 import AiLoader from "@/components/AiLoader/AiLoader.vue";
+import { usePermissions } from "@/composables/usePermissions";
 import { ITrustResponse } from "@/services/trust-service";
-import { useAuthStore } from "@/store/auth";
 import { useTrustStore } from "@/store/trusts";
+import { filterByQueriedTrustIds } from "@/utils/cohort/query";
 
 interface IProjectStagingProps {
     staging: boolean;
     hasQuery: boolean;
+    // Trust IDs that posted a successful, non-empty QueryResult. Stage
+    // selector is intersected with this — late-joiners, never-responded,
+    // errored, and empty (0-record/privacy-suppressed) trusts are all
+    // excluded because we have no usable cohort count for them. Computed by
+    // the parent as `respondedTrustIds − erroredTrustIds − emptyTrustIds`.
+    stageableTrustIds?: string[];
 }
 
 interface IFormValue {
@@ -128,30 +152,40 @@ interface ITrustToStage extends ITrustResponse {
     staged: boolean;
 }
 
-defineProps<IProjectStagingProps>();
+const props = defineProps<IProjectStagingProps>();
 
 const emits = defineEmits(["staged"]);
 
-const authStore = useAuthStore();
-const isObserver = computed(() => !authStore.hasPermissions(["CanManageProjects"]));
+const { isViewer } = usePermissions();
 
 const loadingTrusts = ref<boolean>(true);
 const trustsToStage = ref<ITrustToStage[]>();
+// Total trusts the store returned, before the stageable-set filter. Lets the
+// empty-state message tell "no trusts could be loaded" (a real error) apart
+// from "trusts loaded, but none have returned cohort results yet".
+const trustsLoadedCount = ref<number>(0);
 const trustStore = useTrustStore();
 
-watch(trustStore, () => {
+watch([trustStore, () => props.stageableTrustIds], () => {
     const trusts = Array.isArray(trustStore.getTrusts) ? trustStore.getTrusts : [];
+    trustsLoadedCount.value = trusts.length;
 
-    trustsToStage.value = trusts.map((trust) => ({
-        ...trust,
-        staged: false
-    }));
+    trustsToStage.value = filterByQueriedTrustIds(trusts, props.stageableTrustIds)
+        .map((trust) => ({
+            ...trust,
+            staged: false
+        }))
+        .sort((a, b) => (a.code || a.name).localeCompare(b.code || b.name));
 
     loadingTrusts.value = false;
 }, { immediate: true });
 
 const schema = object().shape({
+    // vee-validate collects same-named checkboxes into an array, but until two
+    // are checked it may hand a bare string through. Coerce to an array first
+    // so the .of/.min checks always see the right shape.
     trusts: array()
+        .transform((value) => (typeof value === "string" ? [value] : value))
         .of(string().required())
         .min(1, "You must select a minimum of one trust when staging.")
         .required("You must select a minimum of one trust when staging.")
@@ -161,7 +195,7 @@ const stageProject = (v: unknown) => {
 
     const formValue = v as IFormValue;
 
-    if (formValue.trusts.length > 0 ?? false) {
+    if (formValue.trusts.length > 0) {
         emits("staged", formValue.trusts);
     }
 };

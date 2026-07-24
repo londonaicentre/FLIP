@@ -65,7 +65,7 @@ export default defineComponent({
 
 <style lang="css" scoped>
 .label-base {
-    @apply bg-gray-50 text-gray-700 dark:bg-gray-600 dark:text-gray-100 font-semibold;
+    @apply bg-gray-50 text-gray-700 dark:bg-dark-raised dark:text-gray-100 font-semibold;
 }
 
 .label-info {

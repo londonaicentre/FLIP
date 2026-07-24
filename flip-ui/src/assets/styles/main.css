@@ -11,62 +11,72 @@
  * limitations under the License.
  */
 
-@import "highlightjs.css";
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
+/* font-display: swap — render fallback text immediately, swap in the web font
+   when it loads, so a slow font never blocks first paint (Lighthouse #586). */
 @font-face {
     font-family: 'JetBrainsMono';
     font-weight: 400 500;
+    font-display: swap;
     src: local('JetBrainsMono'), url(../fonts/JetBrainsMono/JetBrainsMono-Regular.woff2) format('woff2');
 }
 
 @font-face {
     font-family: 'JetBrainsMono';
     font-weight: 600 700;
+    font-display: swap;
     src: local('JetBrainsMono'), url(../fonts/JetBrainsMono/JetBrainsMono-SemiBold.woff2) format('woff2');
 }
 
 @font-face {
     font-family: 'JetBrainsMono';
     font-weight: 800 900;
+    font-display: swap;
     src: local('JetBrainsMono'), url(../fonts/JetBrainsMono/JetBrainsMono-ExtraBold.woff2) format('woff2');
 }
 
 @font-face {
     font-family: 'Inter';
     font-weight: 400 500;
+    font-display: swap;
     src: local('Inter'), url(../fonts/Inter/Inter-Medium.woff2) format('woff2');
 }
 
 @font-face {
     font-family: 'Inter';
     font-weight: 600 700;
+    font-display: swap;
     src: local('Inter'), url(../fonts/Inter/Inter-SemiBold.woff2) format('woff2');
 }
 
 @font-face {
     font-family: 'Inter';
     font-weight: 800 900;
+    font-display: swap;
     src: local('Inter'), url(../fonts/Inter/Inter-ExtraBold.woff2) format('woff2');
 }
 
 @font-face {
     font-family: 'Bai Jamjuree';
     font-weight: 400 500;
+    font-display: swap;
     src: local('Bai Jamjuree'), url(../fonts/BaiJamjuree/BaiJamjuree-Medium.ttf) format('truetype');
 }
 
 @font-face {
     font-family: 'Bai Jamjuree';
     font-weight: 600 700;
+    font-display: swap;
     src: local('Bai Jamjuree'), url(../fonts/BaiJamjuree/BaiJamjuree-SemiBold.ttf) format('truetype');
 }
 
 @font-face {
     font-family: 'Bai Jamjuree';
     font-weight: 800 900;
+    font-display: swap;
     src: local('Bai Jamjuree'), url(../fonts/BaiJamjuree/BaiJamjuree-Bold.ttf) format('truetype');
 }
 
@@ -78,7 +88,10 @@
     }
 
     body {
-        @apply overflow-hidden;
+        /* Paint the page colour on the document itself: on mobile the layouts' own 100vh/100dvh
+           box can fall short of the visible viewport (dynamic URL bar, keyboard, overscroll), and
+           `color-scheme: dark` would render the uncovered canvas black. */
+        @apply overflow-hidden bg-body dark:bg-dark-canvas;
     }
 
     .font-bold {
@@ -91,6 +104,33 @@
 }
 
 @layer components {
+    /* iOS Safari confines page rendering to a letterbox inset from the physical screen: fixed
+       elements clip at its edges, canvas background images anchor to it, and safe-area insets
+       report 0 in portrait (measured on iOS 26, #791). The bleed-cropped login corner artwork
+       can therefore never reach the true screen corners there, and its straight cut edges show
+       as floating lines against the (full-screen) body background. Fade the letterbox-facing
+       cut edge instead so the artwork dissolves into the background. iOS-only: on desktop and
+       Android the artwork sits flush with the viewport corners and the hard edges are invisible.
+       The @supports guard alone scopes to the iOS family — only iOS/iPadOS WebKit parses
+       -webkit-touch-callout (macOS Safari and Android engines do not); (hover: none) is
+       belt-and-braces against future engines adopting the property. iPads stay covered even
+       with a trackpad attached: WebKit hardcodes the primary pointer as non-hover-capable on
+       the iOS family (WebPageIOS.mm isMousePrimaryPointingDevice, Mac Catalyst excepted) — an
+       attached mouse only flips any-hover/any-pointer, never (hover)/(pointer). */
+    @media (hover: none) {
+        @supports (-webkit-touch-callout: none) {
+            .corner-art-fade-top {
+                -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 48px);
+                mask-image: linear-gradient(to bottom, transparent 0, #000 48px);
+            }
+
+            .corner-art-fade-bottom {
+                -webkit-mask-image: linear-gradient(to top, transparent 0, #000 48px);
+                mask-image: linear-gradient(to top, transparent 0, #000 48px);
+            }
+        }
+    }
+
     table {
         @apply w-full rounded overflow-hidden table-auto shadow-sm ring-1 ring-black/10 dark:ring-white/20 border-collapse;
     }
@@ -129,7 +169,7 @@
 }
 
 .CodeMirror * {
-    @apply  !font-mono text-base;
+    @apply  !font-mono text-sm;
 }
 
 .CodeMirror-line {

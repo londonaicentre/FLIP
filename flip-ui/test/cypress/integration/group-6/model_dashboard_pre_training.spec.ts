@@ -30,10 +30,16 @@ describe("Model Dashboard - Pre Training", () => {
         ).as("projectWithQuery");
         cy.intercept("GET", `/model/${modelId}/logs`, [])
             .as("getLogs");
-        // Intercept config.json file download for job type detection
+        // Intercept config.json file download for job type detection. The
+        // endpoint returns a presigned URL {url, fileName} rather than the
+        // file bytes directly (FLIP#784), so the byte fetch that follows
+        // needs its own intercept too.
         cy.intercept("GET", `/files/model/${modelId}/config.json`, {
-            fixture: "model/configJsonStandard.json"
+            body: { url: "https://fake-presigned.example.com/config.json", fileName: "config.json" }
         }).as("getConfigJson");
+        cy.intercept("GET", "https://fake-presigned.example.com/config.json", {
+            fixture: "model/configJsonStandard.json"
+        }).as("getConfigJsonBytes");
         // The page calls /model/job-types in onBeforeMount and again from
         // file-service.getJobTypeFromConfig; without a stub the request
         // hangs/404s, jobTypes stays empty, and the watcher that gates
@@ -109,10 +115,13 @@ describe("Model Dashboard - Pre Training", () => {
         cy.getBySel("trust-selection-0").click();
         cy.getBySel("trust-selection-1").click();
 
-        cy.getBySel("initiate-training-btn").click();
+        // The page disables Initiate Training until the run options are
+        // complete, rather than letting the click bounce off the schema.
+        cy.getBySel("initiate-training-btn").should("be.disabled");
 
-        cy.contains("Please confirm data enrichment.")
-            .should("be.visible");
+        // Confirming enrichment is the only missing criterion, so it unlocks the button.
+        cy.getBySel("data-enrichment-btn").click();
+        cy.getBySel("initiate-training-btn").should("be.enabled");
     });
 
     it("does not allow the user to initiate training if a minimum of one trust is not selected", () => {
@@ -124,10 +133,11 @@ describe("Model Dashboard - Pre Training", () => {
 
         cy.getBySel("data-enrichment-btn").click();
 
-        cy.getBySel("initiate-training-btn").click();
+        cy.getBySel("initiate-training-btn").should("be.disabled");
 
-        cy.contains("You must select a minimum of one trust for training.")
-            .should("be.visible");
+        // Selecting a trust is the only missing criterion, so it unlocks the button.
+        cy.getBySel("trust-selection-0").click();
+        cy.getBySel("initiate-training-btn").should("be.enabled");
     });
 
     it("enables user to initiate training given all criteria is met", () => {
@@ -147,9 +157,9 @@ describe("Model Dashboard - Pre Training", () => {
         cy.wait("@initialiseTraining");
 
         cy.get("@initialiseTraining").its("request.body").should("deep.equal", {
-            "trusts": [
-                "KCH",
-                "UCLH"
+            "trust_ids": [
+                "SOMEIDFORKCH",
+                "SOMEIDFORUCLH"
             ]
         });
 
@@ -176,9 +186,9 @@ describe("Model Dashboard - Pre Training", () => {
         cy.wait("@initialiseTraining");
 
         cy.get("@initialiseTraining").its("request.body").should("deep.equal", {
-            "trusts": [
-                "KCH",
-                "UCLH"
+            "trust_ids": [
+                "SOMEIDFORKCH",
+                "SOMEIDFORUCLH"
             ]
         });
 
@@ -188,32 +198,13 @@ describe("Model Dashboard - Pre Training", () => {
         cy.getBySel("trust-selection-1").should("not.exist");
     });
 
-    it("displays correct cohort query value and results", () => {
-
-
-        cy.intercept("POST", `/step/model/${modelId}`, { fixture: "model/getModel" })
-            .as("getModel");
-        cy.visit(`project/${projectId}/model/${modelId}`);
-        cy.wait("@getModel");
-
-        cy.intercept("GET", "cohort/*",
-            { fixture: "cohort/cohortQueryResultsOmop" })
-            .as("cohortResults");
-
-        cy.intercept("GET", "projects/" + projectId,
-            { fixture: "project/getProjectWithQuery" })
-            .as("project");
-
-        cy.wait("@projectWithQuery");
-
-        cy.getBySel("view-results-btn").click()
-            .wait("@cohortResults")
-            .then(() => {
-                cy.get("canvas").eq(0).scrollIntoView().should("be.visible");
-                cy.get("canvas").eq(1).scrollIntoView().should("be.visible");
-                cy.get("canvas").eq(2).scrollIntoView().should("be.visible");
-            });
-    });
+    // The "displays correct cohort query value and results" test that lived
+    // here drove a view-results-btn click on the model dashboard. The page
+    // redesign moved the cohort-query card (with view-results-btn) onto the
+    // project route — QueryDetails.vue is no longer mounted on /model/<id>.
+    // Cohort-query UI behavior is covered by the cohort specs (group-6 cohort/
+    // and the QueryResultCharts vitest suite), so the test was dropped rather
+    // than ported to the project page.
 });
 
 describe("Model Dashboard - Pre Training with only one approved trust", () => {
@@ -233,8 +224,11 @@ describe("Model Dashboard - Pre Training with only one approved trust", () => {
         cy.intercept("GET", `/model/${modelId}/logs`, [])
             .as("getLogs");
         cy.intercept("GET", `/files/model/${modelId}/config.json`, {
-            fixture: "model/configJsonStandard.json"
+            body: { url: "https://fake-presigned.example.com/config.json", fileName: "config.json" }
         }).as("getConfigJson");
+        cy.intercept("GET", "https://fake-presigned.example.com/config.json", {
+            fixture: "model/configJsonStandard.json"
+        }).as("getConfigJsonBytes");
         cy.intercept("GET", "/model/job-types", {
             standard: ["trainer.py", "validator.py", "models.py", "config.json"]
         }).as("getJobTypes");
@@ -249,10 +243,11 @@ describe("Model Dashboard - Pre Training with only one approved trust", () => {
 
         cy.getBySel("data-enrichment-btn").click();
 
-        cy.getBySel("initiate-training-btn").click();
+        cy.getBySel("initiate-training-btn").should("be.disabled");
 
-        cy.contains("You must select a minimum of one trust for training.")
-            .should("be.visible");
+        // Selecting the approved trust is the only missing criterion, so it unlocks the button.
+        cy.getBySel("trust-selection-0").click();
+        cy.getBySel("initiate-training-btn").should("be.enabled");
     });
 
     it("enables user to initiate training given all criteria is met", () => {
@@ -271,8 +266,8 @@ describe("Model Dashboard - Pre Training with only one approved trust", () => {
         cy.wait("@initialiseTraining");
 
         cy.get("@initialiseTraining").its("request.body").should("deep.equal", {
-            "trusts": [
-                "KCH"
+            "trust_ids": [
+                "SOMEIDFORKCH"
             ]
         });
 
@@ -297,8 +292,8 @@ describe("Model Dashboard - Pre Training with only one approved trust", () => {
         cy.wait("@initialiseTraining");
 
         cy.get("@initialiseTraining").its("request.body").should("deep.equal", {
-            "trusts": [
-                "KCH"
+            "trust_ids": [
+                "SOMEIDFORKCH"
             ]
         });
 

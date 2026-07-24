@@ -13,18 +13,20 @@ services:
           cpus: "6"
           memory: 8G
     environment:
-      - DATA_PATH=${XNAT_PATH}/${XNAT_PORT}/xnat-data
+      - DATA_PATH=${XNAT_DATA_DIR}/xnat-data
     volumes:
       - ${XNAT_PATH}/xnat/plugins:${XNAT_HOME}/plugins
       - ${XNAT_PATH}/xnat/config:${XNAT_ROOT}/config
       # XNAT's container service plugin executes Docker commands on the host
       # (via the mounted Docker socket). Those host-spawned containers need
       # access to XNAT data through host paths, so these must be bind-mounted.
-      # /${XNAT_PORT} isolates data directories per XNAT instance.
-      - ${XNAT_PATH}/${XNAT_PORT}/xnat-data/tomcat_logs:${XNAT_HOME}/logs
-      - ${XNAT_PATH}/${XNAT_PORT}/xnat-data/archive:${XNAT_ROOT}/archive
-      - ${XNAT_PATH}/${XNAT_PORT}/xnat-data/build:${XNAT_ROOT}/build
-      - ${XNAT_PATH}/${XNAT_PORT}/xnat-data/cache:${XNAT_ROOT}/cache
+      # XNAT_DATA_DIR is the absolute per-trust data dir resolved by
+      # trust/xnat/Makefile (see the XNAT_DATA_DIR comment there); using it
+      # here keeps Make's xnat-reset and these mounts pointing at the same dirs.
+      - ${XNAT_DATA_DIR}/xnat-data/tomcat_logs:${XNAT_HOME}/logs
+      - ${XNAT_DATA_DIR}/xnat-data/archive:${XNAT_ROOT}/archive
+      - ${XNAT_DATA_DIR}/xnat-data/build:${XNAT_ROOT}/build
+      - ${XNAT_DATA_DIR}/xnat-data/cache:${XNAT_ROOT}/cache
 
   xnat-db:
     volumes:

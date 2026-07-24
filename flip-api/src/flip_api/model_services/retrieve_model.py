@@ -17,14 +17,16 @@ from uuid import UUID
 from fastapi import Depends, HTTPException, Path, status
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
-from sqlmodel import Session
+from sqlmodel import Session, col, select
 
 from flip_api.auth.access_manager import can_access_model
 from flip_api.auth.dependencies import verify_token
 from flip_api.db.database import get_session
-from flip_api.db.models.main_models import UploadedFiles
-from flip_api.domain.interfaces.model import IModelResponse, IQuery
+from flip_api.db.models.main_models import FLJob, FLJobTrust, Model, ModelsAudit, Trust, UploadedFiles
+from flip_api.domain.interfaces.model import IModelResponse, IQuery, ITrustSummary
+from flip_api.domain.schemas.actions import ModelAuditAction
 from flip_api.domain.schemas.status import FileUploadStatus, ModelStatus
+from flip_api.model_services.services.model_service import queued_positions_by_model
 from flip_api.utils.logger import logger
 
 RETRIEVE_MODEL_QUERY_FILE = f"{os.path.dirname(os.path.abspath(__file__))}/retrieve_model_query.sql"
@@ -154,6 +156,60 @@ def retrieve_model(
         files = parse_files_from_result(result.get("files"), model_id) if result.get("files") else []
         logger.debug(f"Parsed files: {files}")
 
+        # Lifecycle timestamps — one tiny query for creation_timestamp, one for
+        # the tracked audit dates. Cheap; the raw SQL was already opinionated
+        # enough without forcing more aggregates into it.
+        model_row = db.exec(select(Model.creation_timestamp).where(Model.id == model_id)).first()
+        creation_timestamp = (
+            model_row.isoformat(timespec="milliseconds") if model_row else None
+        )
+
+        audit_rows = db.exec(
+            select(ModelsAudit.action, ModelsAudit.audit_date)
+            .where(
+                col(ModelsAudit.model_id) == model_id,
+                col(ModelsAudit.action).in_(
+                    [
+                        ModelAuditAction.PREPARED,
+                        ModelAuditAction.RUNNING,
+                        ModelAuditAction.RESULTS_UPLOADED,
+                    ]
+                ),
+            )
+            .order_by(col(ModelsAudit.action), col(ModelsAudit.audit_date).desc())
+        ).all()
+        latest_per_action: dict[ModelAuditAction, str] = {}
+        for raw_action, audit_date in audit_rows:
+            if audit_date is None:
+                continue
+            action_enum = ModelAuditAction(raw_action)
+            if action_enum in latest_per_action:
+                continue
+            latest_per_action[action_enum] = audit_date.isoformat(timespec="milliseconds")
+
+        # The trusts the run was dispatched to: the latest FL job's fl_job_trust
+        # roster, written at initiate-training. Deliberately NOT ModelTrustIntersect —
+        # that table gets a row per approved trust at model creation, so it lists the
+        # approved pool, not the selected subset. Empty before dispatch (no job yet).
+        # Ties on created (same-microsecond writes) break on id, matching the
+        # (created, id) pick of the list view's _run_trusts_by_model.
+        latest_job_id = (
+            select(FLJob.id)
+            .where(col(FLJob.model_id) == model_id)
+            .order_by(col(FLJob.created).desc(), col(FLJob.id).desc())
+            .limit(1)
+        ).scalar_subquery()
+        trust_rows = db.exec(
+            select(Trust.id, Trust.name, Trust.code)
+            .join(FLJobTrust, col(FLJobTrust.trust_id) == Trust.id)  # type: ignore[arg-type]
+            .where(col(FLJobTrust.fl_job_id) == latest_job_id)
+        ).all()
+        trusts = [ITrustSummary(id=trust_id, name=name, code=code) for trust_id, name, code in trust_rows]
+
+        # Where this model stands in the FL training queue (1-based; None once
+        # its job is picked up or it has none) — same source as the estate list.
+        queue_position = queued_positions_by_model(db).get(model_id)
+
         return IModelResponse(
             model_id=result["model_id"],
             model_name=result["model_name"],
@@ -162,6 +218,12 @@ def retrieve_model(
             status=model_status,
             query=query,
             files=files,
+            creation_timestamp=creation_timestamp,
+            prepared_at=latest_per_action.get(ModelAuditAction.PREPARED),
+            running_at=latest_per_action.get(ModelAuditAction.RUNNING),
+            results_uploaded_at=latest_per_action.get(ModelAuditAction.RESULTS_UPLOADED),
+            trusts=trusts,
+            queue_position=queue_position,
         )  # type: ignore[call-arg]
 
     except SQLAlchemyError:

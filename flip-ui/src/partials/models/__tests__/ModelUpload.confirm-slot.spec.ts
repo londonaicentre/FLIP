@@ -22,7 +22,10 @@ vi.mock("vue-router", async (importOriginal) => {
 
     return {
         ...actual,
-        useRoute: () => ({ params: {}, query: {} })
+        useRoute: () => ({
+            params: {},
+            query: {}
+        })
     };
 });
 
@@ -32,16 +35,12 @@ vi.mock("@/services/file-service", () => ({
     processScannedFile: vi.fn()
 }));
 
-const confirmModalStub = {
-    template: "<div data-test=\"confirm-modal-stub\"><slot name=\"confirmation\" /></div>"
-};
+const confirmModalStub = { template: "<div data-test=\"confirm-modal-stub\"><slot name=\"confirmation\" /></div>" };
 
 describe("ModelUpload delete-confirm slot", () => {
     it("renders the file-deletion confirmation slot via AiConfirmModal", async () => {
         const wrapper = mountComponent(ModelUpload, {
-            global: {
-                stubs: { AiConfirmModal: confirmModalStub }
-            },
+            global: { stubs: { AiConfirmModal: confirmModalStub } },
             props: {
                 files: [],
                 loading: false,
@@ -61,9 +60,7 @@ describe("ModelUpload delete-confirm slot", () => {
 
     it("escapes file names in the confirmation slot", async () => {
         const wrapper = mountComponent(ModelUpload, {
-            global: {
-                stubs: { AiConfirmModal: confirmModalStub }
-            },
+            global: { stubs: { AiConfirmModal: confirmModalStub } },
             props: {
                 files: [],
                 loading: false,

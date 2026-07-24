@@ -26,12 +26,16 @@ interface IUserPermissions {
 export interface IUser {
     id: string;
     email: string;
+    name: string;
+    organisation: string;
     roles: IRole[];
     isDisabled: boolean;
 }
 
 export interface IRegisterUserDto {
     email: string,
+    name: string,
+    organisation: string,
     roles: string[]
 }
 
@@ -39,9 +43,16 @@ export interface IUserDisabledStateDto {
     disabled: boolean
 }
 
+export interface IUserProfileDto {
+    name: string,
+    organisation: string
+}
+
 export interface IProjectUser {
     id: string;
     email: string;
+    name: string;
+    organisation: string;
     isDisabled: boolean;
 }
 
@@ -49,6 +60,20 @@ export interface IAccessRequest {
     email: string;
     fullName: string;
     reasonForAccess: string;
+}
+
+export type AccessRequestStatus = "PENDING" | "ENROLLED" | "DISMISSED";
+
+export interface IAccessRequestRecord {
+    id: string;
+    email: string;
+    fullName: string;
+    reasonForAccess: string;
+    status: AccessRequestStatus;
+    emailNotified: boolean;
+    handledByUserId: string | null;
+    createdAt: string;
+    updatedAt: string;
 }
 
 export async function getUserPermissions(id: string): Promise<IUserPermissions> {
@@ -102,6 +127,12 @@ Promise<IUserDisabledStateDto> {
     return response.data;
 }
 
+export async function updateUserProfile(userId: string, profile: IUserProfileDto): Promise<IUserProfileDto> {
+    const response = await _http.put<IUserProfileDto>(`/users/${userId}`, profile);
+
+    return response.data;
+}
+
 export async function validateUser(email: string): Promise<IProjectUser> {
     const response = await _http.get<IProjectUser>(`/users/${email}`);
 
@@ -124,4 +155,19 @@ export async function getMfaStatus(): Promise<{ enabled: boolean; required: bool
 
 export async function submitAccessRequest(requestBody: IAccessRequest): Promise<void> {
     await _http.post<string>("/users/access", requestBody, { headers: { Authorization: "" } });
+}
+
+export async function getAccessRequests(url: string): Promise<IPaginatedResponse<IAccessRequestRecord>> {
+    const response = await _http.get<IPaginatedResponse<IAccessRequestRecord>>(url);
+
+    return response.data;
+}
+
+export async function updateAccessRequestStatus(
+    id: string,
+    status: AccessRequestStatus
+): Promise<IAccessRequestRecord> {
+    const response = await _http.patch<IAccessRequestRecord>(`/users/access/${id}`, { status });
+
+    return response.data;
 }

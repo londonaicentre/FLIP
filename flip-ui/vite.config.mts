@@ -12,10 +12,28 @@ import Inspector from "vite-plugin-vue-inspector";
 import Layouts from "vite-plugin-vue-layouts-next";
 import svgLoader from "vite-svg-loader";
 
+import iconStubPlugin from "./test/iconStubPlugin";
+
 // https://vitejs.dev/config/
-export default defineConfig(({ mode }) => {
+export default defineConfig(({ mode, command }) => {
 
     const env = loadEnv(mode, process.cwd());
+
+    // Belt-and-braces guard for `vite build` invoked directly (bypassing
+    // the npm prebuild hook in package.json). Vite inlines VITE_LOCAL at
+    // build time and the auth-bypass branch in src/utils/auth.ts is then
+    // dead-code-eliminated only when the flag is anything but "true" —
+    // shipping a build with VITE_LOCAL=true would yield an unauthenticated
+    // bundle. The dev server (`vite` / `command === "serve"`) is
+    // unaffected, since that's the legitimate use of the flag.
+    if (command === "build" && env.VITE_LOCAL === "true") {
+        throw new Error(
+            "Refusing to build flip-ui: VITE_LOCAL=true is set. " +
+            "VITE_LOCAL bypasses Cognito auth and enables the MirageJS mock; " +
+            "it must never be inlined into a production build. Unset it or " +
+            "set it to 'false' before running `vite build`."
+        );
+    }
 
     const envWithProcessPrefix = Object.entries(env).reduce(
         (prev, [key, val]) => {
@@ -39,16 +57,26 @@ export default defineConfig(({ mode }) => {
                     }
                 }),
             Inspector(),
-            Icons({
-                compiler: "vue3",
-                autoInstall: true
-            }),
+            // FLIP#748: under vitest, swap unplugin-icons for a synchronous stub of the
+            // whole ~icons/* namespace — the real plugin's async icon modules race spec
+            // teardown and fail all-green runs (see test/iconStubPlugin.ts).
+            mode === "test"
+                ? iconStubPlugin()
+                : Icons({
+                    compiler: "vue3",
+                    autoInstall: true
+                }),
             Components({
                 dts: false,
                 resolvers: IconsResolver({ prefix: "icon" })
             }),
             svgLoader(),
-            Pages({ importMode: "sync" }),
+            // Lazy-load route components: each page becomes its own `() => import()`
+            // chunk fetched on navigation, instead of being eagerly bundled into the
+            // entry. This stops the public /auth/login route from shipping the entire
+            // authenticated app. Pairs with the `charts` manualChunk split below — see
+            // the router's onError handler for stale-chunk recovery.
+            Pages({ importMode: "async" }),
             Layouts({ defaultLayout: "MainLayout" })
         ],
         server: {
@@ -56,8 +84,8 @@ export default defineConfig(({ mode }) => {
             host: true,
             allowedHosts: [
                 "app.flip.aicentre.co.uk",
-                "stag.flip.aicentre.co.uk",
-            ],
+                "stag.flip.aicentre.co.uk"
+            ]
         },
         resolve: {
             alias: [
@@ -84,7 +112,12 @@ export default defineConfig(({ mode }) => {
                     manualChunks: (id) => {
                         if (id.includes("/node_modules/vue/") || id.includes("/node_modules/vue-router/")) return "app";
                         if (id.includes("/node_modules/aws-amplify/")) return "aws";
-                        if (id.includes("/node_modules/axios/") || id.includes("/node_modules/echarts/") || id.includes("/node_modules/vee-validate/")) return "misc";
+                        // echarts (+ its zrender renderer) is only used by the
+                        // authenticated metrics/cohort charts. Keep it in its own
+                        // chunk so the login route — which needs vee-validate, also
+                        // in `misc` — doesn't drag the charting library along with it.
+                        if (id.includes("/node_modules/echarts/") || id.includes("/node_modules/zrender/")) return "charts";
+                        if (id.includes("/node_modules/axios/") || id.includes("/node_modules/vee-validate/")) return "misc";
                     }
                 }
             }
@@ -109,8 +142,15 @@ export default defineConfig(({ mode }) => {
             globals: true,
             environment: "jsdom",
             setupFiles: ["./test/setup.ts"],
-            include: ["src/**/*.spec.ts"],
+            include: ["src/**/*.spec.ts", "scripts/**/*.spec.ts"],
             coverage: { reporter: ["text", "json", "cobertura"] },
+            server: {
+                deps: {
+                    // codemirror-editor-vue3 imports raw .css from node_modules;
+                    // inline it so Vite transforms those instead of Node choking.
+                    inline: ["codemirror-editor-vue3"]
+                }
+            },
             deps: {
                 optimizer: {
                     web: {

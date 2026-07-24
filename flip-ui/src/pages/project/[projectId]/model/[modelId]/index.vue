@@ -20,56 +20,134 @@
     <template v-if="!modelData">
         <AiLoader />
     </template>
-    <div v-else class="relative flex flex-col h-full lg:overflow-hidden">
-        <AiBreadcrumbs :pages="breadcrumbPages" :current="{ name: modelData.modelName }" />
-
-        <div class="flex items-center flex-shrink-0 px-4 py-4 space-x-4 bg-white shadow-sm dark:bg-gray-900">
-            <div class="flex items-center text-lg font-semibold truncate font-heading grow">
-                <span class="max-w-lg truncate">{{ modelData.modelName }}</span>
-            </div>
-            <div class="flex items-center space-x-8">
-                <AiGuard v-if="!isObserver" :permissions="editProjectPermissions" :bypass="isOwnerOrHasAccess()">
-                    <AiButton light data-test="edit-model-btn" @click="openEditModelDrawer">
-                        <icon-mdi-pencil-outline class="mr-2" />
-                        Edit Model
-                    </AiButton>
-                </AiGuard>
-            </div>
-        </div>
-
-        <AiSteps :steps="steps" />
-        <div
-            class="flex flex-col flex-1 min-w-0 space-y-4 lg:overflow-hidden grow lg:flex-row lg:space-x-2 lg:space-y-0"
-        >
-            <aside class="pt-4 pl-4 pr-4 lg:py-4 lg:pr-2 lg:overflow-y-auto">
-                <div class="flex flex-col w-full space-y-4 lg:w-80 2xl:min-w-[30rem]">
-                    <ModelDetails :model="modelData" />
-                    <ModelUpload
-                        :files="modelData.files ?? []"
-                        :loading="!modelData"
-                        :can-upload="!trainingStartedOrStopped && !isObserver"
-                        :model-id="modelData.modelId"
-                        :required-files="requiredFiles"
-                        :job-type="currentJobType"
-                        @uploaded="update"
-                        @deleted-file="onFileDeleted"
-                    />
-                    <QueryDetails :query-details="project?.query" />
+    <div v-else class="relative flex flex-col h-full overflow-hidden">
+        <div class="flex flex-col flex-grow h-full overflow-y-auto">
+            <header class="shrink-0 px-8 pt-4">
+                <router-link
+                    to="/projects"
+                    class="text-xs font-semibold tracking-wider uppercase font-mono text-gray-500 hover:text-primary-500 dark:text-gray-300 dark:hover:text-primary-300"
+                >
+                    Projects
+                </router-link>
+                <template v-if="project">
+                    <span class="mx-1 text-xs font-semibold tracking-wider uppercase font-mono text-gray-500 dark:text-gray-300">/</span>
+                    <router-link
+                        :to="`/project/${project.id}`"
+                        class="text-xs font-semibold tracking-wider uppercase font-mono text-gray-500 hover:text-primary-500 dark:text-gray-300 dark:hover:text-primary-300"
+                    >
+                        {{ project.name }}
+                    </router-link>
+                </template>
+                <div class="flex items-center justify-between gap-4 mt-2">
+                    <h1 class="text-3xl font-semibold font-heading mt-1 text-gray-900 dark:text-gray-100 truncate">
+                        <span class="max-w-2xl truncate">{{ modelData.modelName }}</span>
+                    </h1>
+                    <!-- Below lg the button labels hide (icon + tooltip only) so the
+                         actions stop squashing the truncating model title. -->
+                    <!-- Each action belongs to a stage: you edit and dispatch a model in
+                         Prepare; you stop it and collect its results in Run. -->
+                    <div class="flex items-center gap-3 shrink-0">
+                        <AiGuard
+                            v-if="!isViewer && activeTab === 'prepare'"
+                            :permissions="editProjectPermissions"
+                            :bypass="isOwnerOrHasAccess()"
+                        >
+                            <AiButton
+                                light
+                                data-test="edit-model-btn"
+                                aria-label="Edit Model"
+                                tooltip="Edit Model"
+                                @click="openEditModelDrawer"
+                            >
+                                <icon-ph-pencil-simple class="lg:mr-2" />
+                                <span class="hidden lg:inline">Edit Model</span>
+                            </AiButton>
+                        </AiGuard>
+                        <AiButton
+                            v-if="!isViewer && isTrainingPending() && activeTab === 'prepare'"
+                            primary
+                            data-test="initiate-training-btn"
+                            aria-label="Initiate Training"
+                            tooltip="Initiate Training"
+                            :disabled="!readyToTrain || !trainingRef?.optionsComplete"
+                            :loading="trainingRef?.isSubmitting ?? false"
+                            @click="trainingRef?.initiateTraining()"
+                        >
+                            <icon-ph-play-fill class="lg:mr-2" />
+                            <span class="hidden lg:inline">Initiate Training</span>
+                        </AiButton>
+                        <TrainingActionsMenu
+                            v-if="!isViewer && !isTrainingPending() && activeTab === 'run'"
+                            :status="getStatusEnumValue(modelData?.status)"
+                        />
+                    </div>
                 </div>
-            </aside>
+            </header>
 
-            <div class="flex flex-col flex-1 h-full min-w-0 px-4 pb-4 lg:p-0">
-                <div class="h-full space-y-4 lg:py-4 lg:pr-4 lg:pl-0 grow">
-                    <Training
-                        :can-train="readyToTrain"
-                        :status="modelData?.status"
-                        :all-files-uploaded="allFilesUploaded"
-                        :required-files="requiredFiles"
-                        :uploaded-file-names="modelData?.files?.map(f => f.name) ?? []"
-                        :job-type="currentJobType"
-                        @started="trainingInitialised"
-                    />
-                </div>
+            <!-- pb-8 matches the px-8 side margins, so the window-filling cards keep
+                 the same breathing room below as beside them. -->
+            <div class="flex flex-col flex-1 min-h-0 gap-4 px-8 pt-4 pb-8">
+                <!-- -my-2 pulls the chip row into the column's gap-4 on both sides, so the
+                     stage tabs read as part of the header band rather than a spaced row. -->
+                <ModelTabs v-model="activeTab" :status="modelData?.status" class="-my-2" />
+
+                <!-- Prepare: the model files and the run options, exactly as at model
+                     creation. Once dispatched nothing here is editable — the options
+                     stay on screen as a record of how the run was launched, and the
+                     files stay downloadable. The lifecycle bar renders here so Prepare
+                     always answers "where is this model in its journey?"; Run leads
+                     with the live metrics and activity instead.
+                     my-4 on top of the column's gap gives it ~32px of breathing room. -->
+                <template v-if="activeTab === 'prepare'">
+                    <LifecycleTrack :steps="steps" class="my-4" />
+
+                    <div class="flex flex-col flex-1 min-h-0 gap-4 lg:flex-row lg:gap-4">
+                        <aside
+                            class="flex flex-col flex-1 lg:flex-none lg:w-80 2xl:min-w-[30rem] shrink-0
+                                   min-h-[20rem] lg:min-h-0"
+                        >
+                            <ModelUpload
+                                :files="modelData.files ?? []"
+                                :loading="!modelData"
+                                :can-upload="!trainingStartedOrStopped && !isViewer"
+                                :model-id="modelData.modelId"
+                                :required-files="requiredFiles"
+                                :job-type="currentJobType"
+                                @uploaded="update"
+                                @deleted-file="onFileDeleted"
+                            />
+                        </aside>
+
+                        <div class="flex flex-col flex-1 min-w-0 min-h-[24rem] lg:min-h-0">
+                            <Training
+                                ref="trainingRef"
+                                view="prepare"
+                                :run-trusts="runTrusts"
+                                :can-train="readyToTrain"
+                                :status="modelData?.status"
+                                :all-files-uploaded="allFilesUploaded"
+                                :required-files="requiredFiles"
+                                :uploaded-file-names="modelData?.files?.map(f => f.name) ?? []"
+                                :job-type="currentJobType"
+                                :fl-backend-label="flBackendLabel"
+                                @started="trainingInitialised"
+                            />
+                        </div>
+                    </div>
+                </template>
+
+                <!-- Run: metrics and the activity feed. -->
+                <Training
+                    v-else
+                    view="run"
+                    :can-train="readyToTrain"
+                    :status="modelData?.status"
+                    :all-files-uploaded="allFilesUploaded"
+                    :required-files="requiredFiles"
+                    :uploaded-file-names="modelData?.files?.map(f => f.name) ?? []"
+                    :job-type="currentJobType"
+                    :fl-backend-label="flBackendLabel"
+                />
             </div>
 
             <EditModelDrawer
@@ -92,21 +170,23 @@ import useSWRV from "swrv";
 import { computed, onBeforeMount, ref, watch } from "vue";
 import { useRoute } from "vue-router";
 
-import AiBreadcrumbs, { IPage } from "@/components/AiBreadcrumbs/AiBreadcrumbs.vue";
 import AiButton from "@/components/AiButton/AiButton.vue";
 import AiGuard from "@/components/AiGuard/AiGuard.vue";
 import AiLoader from "@/components/AiLoader/AiLoader.vue";
-import AiSteps, { IStep } from "@/components/AiSteps/AiSteps.vue";
 import useErrorHandler from "@/composables/useErrorHandler";
+import { usePermissions } from "@/composables/usePermissions";
 import { FileUploadStatus } from "@/interfaces/model/types";
-import QueryDetails from "@/partials/cohort-query/QueryDetails.vue";
+import { IStep } from "@/interfaces/steps";
 import EditModelDrawer, { IEditModel } from "@/partials/models/EditModelDrawer.vue";
-import ModelDetails from "@/partials/models/ModelDetails.vue";
+import ModelTabs, { type ModelTab } from "@/partials/models/ModelTabs.vue";
 import ModelUpload from "@/partials/models/ModelUpload.vue";
 import Training from "@/partials/models/Training.vue";
+import TrainingActionsMenu from "@/partials/models/TrainingActionsMenu.vue";
+import LifecycleTrack from "@/partials/projects/LifecycleTrack.vue";
 import { routeChange } from "@/router";
 import { resolveModelConfigState } from "@/services/file-service";
-import { DEFAULT_JOB_TYPE, editModel, fetchJobTypes, getModel, getRequiredFilesForJobType, type JobType, type JobTypesResponse, ModelStatusEnum } from "@/services/model-service";
+import { getFLStatus } from "@/services/fl-service";
+import { buildModelSteps, DEFAULT_JOB_TYPE, editModel, fetchJobTypes, getModel, getRequiredFilesForJobType, getStatusEnumValue, type JobType, type JobTypesResponse, ModelStatusEnum } from "@/services/model-service";
 import { useAuthStore, UserPermissions } from "@/store/auth";
 import { useErrorStore } from "@/store/error";
 import { useProjectStore } from "@/store/project";
@@ -120,7 +200,13 @@ const projectStore = useProjectStore();
 const project = projectStore.project;
 const authStore = useAuthStore();
 const errorStore = useErrorStore();
-const isObserver = computed(() => !authStore.hasPermissions(["CanManageProjects"]));
+const { isViewer } = usePermissions();
+
+// Bridge to Training.vue: the form lives there (vee-validate context wraps
+// TrainingOptions) but the submit button lives in the page header. Page calls
+// `initiateTraining()` on this ref to fire the form's native submit, which
+// vee-validate intercepts and routes through the existing schema + handler.
+const trainingRef = ref<InstanceType<typeof Training> | null>(null);
 
 const allFilesUploaded = ref(false);
 const allFilesPassScan = ref(false);
@@ -149,21 +235,6 @@ onBeforeMount(async () => {
     requiredFiles.value = getRequiredFilesForJobType(jobTypes.value, DEFAULT_JOB_TYPE);
 });
 
-const breadcrumbPages: IPage[] = [
-    {
-        name: "Projects",
-        path: "/projects"
-    },
-    {
-        name: projectStore.project?.name ?? "",
-        path: `/project/${projectStore.project?.id ?? ""}`
-    },
-    {
-        name: "Models",
-        path: `/project/${projectStore.project?.id ?? ""}/models`
-    }
-];
-
 const { data: modelData, error, mutate } = useSWRV(
     `/step/model/${modelId}`,
     getModel,
@@ -174,6 +245,26 @@ const { data: modelData, error, mutate } = useSWRV(
         revalidateOnFocus: false,
         errorRetryCount: 3
     });
+
+const { data: flStatus } = useSWRV(
+    "fl/status",
+    getFLStatus,
+    {
+        dedupingInterval: 5_000,
+        shouldRetryOnError: false
+    }
+);
+
+const formatBackend = (backend: "nvflare" | "flower") =>
+    backend === "nvflare" ? "NVFlare" : "Flower";
+
+const flBackendLabel = computed(() => {
+    const backend = Array.isArray(flStatus.value)
+        ? flStatus.value.find(net => net.fl_backend)?.fl_backend
+        : undefined;
+
+    return backend ? formatBackend(backend) : undefined;
+});
 
 useErrorHandler(error);
 
@@ -195,58 +286,24 @@ watch(error, () => {
 });
 
 
-function getStatusEnumValue(status: string | undefined): number {
-    // Map string status (e.g. "PENDING") to ModelStatusEnum value
-    if (!status || !(status in ModelStatusEnum)) return ModelStatusEnum.ERROR;
-
-    // @ts-ignore
-    return ModelStatusEnum[status];
-}
-
+// Status drives the step flags (buildModelSteps); the per-step dates come from
+// the model record and are layered on here by position. See issue #29.
 const steps = computed((): IStep[] => {
-    const statusValue = getStatusEnumValue(modelData.value?.status);
-    const isStopped = statusValue === ModelStatusEnum.STOPPED;
-    const isError = statusValue === ModelStatusEnum.ERROR;
-
-    // When training is stopped or errors, prior completed steps should
-    // remain marked as completed (✅) rather than showing 🚫.
-    // A stopped/errored model must have been at least PREPARED, so
-    // "Model Prepared" stays completed and only later steps show the
-    // stopped/error indicator.  See issue #29.
-    return [
-        {
-            id: "01",
-            name: "Model Created",
-            completed: true
-        },
-        {
-            id: "02",
-            name: "Model Prepared",
-            description: statusValue === ModelStatusEnum.INITIATED ? "Model Queued" : undefined,
-            inProgress: statusValue === ModelStatusEnum.INITIATED,
-            completed: statusValue >= ModelStatusEnum.PREPARED || isStopped || isError
-        },
-        {
-            id: "03",
-            name: "Training Started",
-            description:
-                (statusValue >= ModelStatusEnum.PREPARED && statusValue < ModelStatusEnum.RESULTS_UPLOADED)
-                    ? "In Progress" : undefined,
-            inProgress: statusValue >= ModelStatusEnum.PREPARED && !isStopped && !isError,
-            completed: statusValue > ModelStatusEnum.TRAINING_STARTED,
-            error: isError,
-            stopped: isStopped
-        },
-        {
-            id: "04",
-            name: "Results Uploaded",
-            completed: statusValue === ModelStatusEnum.RESULTS_UPLOADED,
-            error: isError,
-            stopped: isStopped
-        }
+    const dates = [
+        modelData.value?.creationTimestamp,
+        modelData.value?.preparedAt,
+        modelData.value?.runningAt,
+        modelData.value?.resultsUploadedAt
     ];
+
+    return buildModelSteps(modelData.value?.status, modelData.value?.queuePosition).map((step, i) => ({
+        ...step,
+        date: dates[i] ?? null
+    }));
 });
 
+// The trusts the run was dispatched to, so Prepare can show which took part.
+const runTrusts = computed(() => modelData.value?.trusts?.map(t => t.id) ?? []);
 
 const readyToTrain = computed(() => {
     return !trainingStartedOrStopped.value
@@ -300,10 +357,23 @@ const onFileDeleted = () => {
     update();
 };
 
+// Nothing is worth watching until the model is dispatched, so a pending model opens
+// on Prepare and anything else on Run. Seeded from the first payload only — after
+// that the tab is the user's to choose, and a 5s poll must not yank them back.
+const activeTab = ref<ModelTab>("prepare");
+const tabSeeded = ref(false);
+
+watch(modelData, (model) => {
+    if (!model || tabSeeded.value) return;
+    activeTab.value = model.status === "PENDING" ? "prepare" : "run";
+    tabSeeded.value = true;
+}, { immediate: true });
+
 const trainingInitialised = () => {
     if (modelData.value?.status) {
         modelData.value.status = "INITIATED";
     }
+    activeTab.value = "run";
 };
 
 const isTrainingPending = () => {

@@ -9,7 +9,7 @@
 # version: '3.7'
 services:
   xnat-web:
-    image: ${DOCKER_REGISTRY}xnat-web:${DOCKER_TAG}
+    image: ${DOCKER_REGISTRY}xnat-web:${XNAT_TAG}
     deploy:
       replicas: 1
       restart_policy:
@@ -18,6 +18,12 @@ services:
         constraints: [node.role == manager]
     ports:
       - ${XNAT_PORT}:8080
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
     environment:
       - CATALINA_OPTS=-Xms${XNAT_MIN_HEAP} -Xmx${XNAT_MAX_HEAP} -Dxnat.home=${XNAT_HOME} -XX:+UseG1GC -Djava.awt.headless=true -XX:+ParallelRefProcEnabled -XX:ParallelGCThreads=6 -XX:+UseStringDeduplication
       - XNAT_HOME=${XNAT_HOME}
@@ -40,17 +46,40 @@ services:
       - XNAT_SMTP_AUTH=${XNAT_SMTP_AUTH}
       - XNAT_SMTP_USERNAME=${XNAT_SMTP_USERNAME}
       - XNAT_SMTP_PASSWORD=${XNAT_SMTP_PASSWORD}
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
+    # Dual-homed: the trust overlay for everything else, plus the stack-scoped
+    # socket-proxy network — the only route to the Docker API proxy below.
+    networks:
+      - default
+      - socket-proxy
 
   xnat-db:
-    image: ${DOCKER_REGISTRY}xnat-db:${DOCKER_TAG}
+    image: ${DOCKER_REGISTRY}xnat-db:${XNAT_TAG}
+    # Raise max_connections above the Postgres default (100). During a bulk DQR
+    # import XNAT opens many concurrent build connections, and an xnat-web restart
+    # briefly doubles the count (the old task's connections linger until reaped),
+    # which exhausted the pool and locked out even admin queries (FLIP#662).
+    command:
+      - postgres
+      - -c
+      - max_connections=300
+      - -c
+      - shared_buffers=512MB
     deploy:
       replicas: 1
       restart_policy:
         condition: any
       placement:
         constraints: [node.role == manager]
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETUID
+      - SETGID
     environment:
       - POSTGRES_PASSWORD=${XNAT_DATASOURCE_ADMIN_PASSWORD}
       - POSTGRES_DB=${XNAT_DATASOURCE_NAME}
@@ -59,17 +88,83 @@ services:
       - XNAT_DATASOURCE_PASSWORD=${XNAT_DATASOURCE_PASSWORD}
 
   xnat-nginx:
-    image: ${DOCKER_REGISTRY}xnat-nginx:${DOCKER_TAG}
+    image: ${DOCKER_REGISTRY}xnat-nginx:${XNAT_TAG}
     deploy:
       replicas: 1
       restart_policy:
         condition: any
       placement:
         constraints: [node.role == manager]
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - NET_BIND_SERVICE
     # ports:
     #   - "80:80"
+
+  # Filtered gateway to the host Docker API for the Container Service plugin.
+  # xnat-web does not mount the Docker socket: the plugin reaches Docker over
+  # tcp://xnat-socket-proxy:2375 (set in xnat/config/container-service-backend-
+  # configuration.json), and only this proxy holds the (root-equivalent) socket.
+  # The proxy lives on the stack-scoped internal socket-proxy network (below),
+  # NOT the shared trust overlay — only the dual-homed xnat-web can reach it;
+  # trust-api, imaging-api, data-access-api, fl-client etc. have no route.
+  # A compromised xnat-web is left with the allowlisted API groups below —
+  # notably it can no longer exec into containers or reach the container,
+  # volume, network and secret APIs at all. It is a choke point, not a sandbox:
+  # the services API that dcm2niix launches require can itself create services
+  # with host bind mounts (FLIP#485).
+  xnat-socket-proxy:
+    image: tecnativa/docker-socket-proxy:v0.4.2
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: any
+      placement:
+        # The services API is only served by a manager's Docker socket.
+        constraints: [node.role == manager]
+    security_opt:
+      - no-new-privileges:true
+    # No cap_add at all: haproxy (v0.4.2) runs as root, which owns the socket,
+    # so it connects with an empty capability set.
+    cap_drop:
+      - ALL
+    environment:
+      # The Container Service (swarm mode) launches dcm2niix as a one-shot swarm
+      # service: create/inspect/logs/remove need SERVICES (+ POST for the
+      # mutating calls), job state tracking needs TASKS, scheduling info needs
+      # NODES, and pull-images-on-xnat-init needs IMAGES. PING/VERSION/EVENTS
+      # are the proxy's defaults; the container, exec, volume, network, secret,
+      # config, plugin and build APIs all stay blocked (verified 403 from
+      # xnat-web).
+      - POST=1
+      - SERVICES=1
+      - TASKS=1
+      - NODES=1
+      - IMAGES=1
+      - INFO=1
+      # The Container Service's swarm-mode connection test is a swarm inspect
+      # (GET /swarm) — without this the /xapi/docker/server/ping gate in
+      # configure-dcm2niix.sh fails 403. The proxy's POST switch is global, so
+      # this also exposes POST /swarm/* (join/leave/update); that is strictly
+      # weaker than the services API the Container Service already requires,
+      # which can create services with arbitrary host mounts.
+      - SWARM=1
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - socket-proxy
 
 networks:
   default:
     name: ${DOCKER_NETWORK_NAME}
     external: true
+  # Dedicated network for xnat-web -> xnat-socket-proxy traffic. Swarm prefixes
+  # it per stack (<stack>_socket-proxy), so each trust's proxy is reachable only
+  # from its own xnat-web. internal: the proxy needs no egress, only the socket.
+  socket-proxy:
+    driver: overlay
+    internal: true

@@ -9,7 +9,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Dev-account Terraform root: Cognito + SES only.
+# Dev-account Terraform root: Cognito + SES + the three FLIP application S3
+# buckets (FLIP#24 — see ../README.md "FLIP application S3 buckets").
 #
 # Shares the same env file as the local Docker Compose dev stack
 # (../../../.env.development) so developers only maintain one set of
@@ -72,6 +73,15 @@ export TF_VAR_flip_cognito_admin_email
 export TF_VAR_flip_cognito_researcher_email ?= $(flip_cognito_researcher_email)
 export TF_VAR_ADMIN_USER_PASSWORD := $(ADMIN_USER_PASSWORD)
 export TF_VAR_SES_VERIFIED_EMAIL := $(SES_VERIFIED_EMAIL)
+
+# FLIP application S3 buckets (FLIP#24). Required, no defaults — value lives
+# in $(ENV_FILE). Fail fast with a useful message if missing.
+$(if $(FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME),,$(error 🪣 FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME must be set in $(ENV_FILE)))
+$(if $(FLIP_FL_RESULTS_BUCKET_NAME),,$(error 🪣 FLIP_FL_RESULTS_BUCKET_NAME must be set in $(ENV_FILE)))
+$(if $(FLIP_APP_BUNDLES_BUCKET_NAME),,$(error 🪣 FLIP_APP_BUNDLES_BUCKET_NAME must be set in $(ENV_FILE)))
+export TF_VAR_FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME := $(FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME)
+export TF_VAR_FLIP_FL_RESULTS_BUCKET_NAME          := $(FLIP_FL_RESULTS_BUCKET_NAME)
+export TF_VAR_FLIP_APP_BUNDLES_BUCKET_NAME         := $(FLIP_APP_BUNDLES_BUCKET_NAME)
 
 .PHONY: create-backend init plan apply destroy validate status fmt
 

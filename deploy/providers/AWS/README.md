@@ -21,6 +21,7 @@ This provider manages the **Central Hub** (always in AWS) and, optionally, one o
 | --- | --- | --- |
 | **Cloud** | AWS EC2 (same account as Central Hub) | This provider (`deploy/providers/AWS/`) |
 | **Hybrid / On-Premises** | Any Ubuntu host (home lab, hospital server, etc.) | [`deploy/providers/local/`](../local/README.md) + selected targets in this Makefile |
+| **Kubernetes** | Any Kubernetes cluster 1.28+ (EKS, AKS, on-prem) | [`deploy/providers/kubernetes/`](../kubernetes/README.md) Helm chart |
 
 In both models, trusts poll the Central Hub for tasks over HTTPS — all communication is **outbound from the trust** to the hub. The hub never makes inbound requests to trusts.
 
@@ -40,28 +41,42 @@ In both models, trusts poll the Central Hub for tasks over HTTPS — all communi
 
 Your AWS IAM role/user needs the following permissions for provisioning infrastructure:
 
-- **SSM**: `ssm:GetParameter` for fetching AMI IDs
-- **EC2**: Full access (VPC, instances, security groups, key pairs, Elastic IPs)
+- **SSM**: `ssm:GetParameter` for fetching AMI IDs; `ssm:PutParameter` / `ssm:GetParameter` on the Parameter Store entries consumed by ECS tasks
+- **EC2 / VPC**: Full access (VPC, instances, security groups, key pairs, Elastic IPs, NAT gateway, interface + gateway VPC endpoints)
 - **RDS**: `rds:CreateDBSubnetGroup`, `rds:CreateDBParameterGroup`, `rds:CreateDBInstance`
-- **CloudWatch Logs**: `logs:*`
+- **CloudWatch Logs**: `logs:*` (ECS task logs and WAF logs both land here)
 - **Secrets Manager**: Full access for storing database credentials and API secrets
-- **IAM**: Create and manage roles for EC2 instances
-- **Application Load Balancer**: Create and manage ALBs
+- **IAM**: Create and manage roles for EC2 instances and ECS task execution / task roles
+- **Application + Network Load Balancers**: Create and manage both the ALB (HTTPS API traffic) and the NLB (FL server TCP/gRPC traffic)
+- **ECS / Fargate**: `ecs:*` (cluster, task definitions, services). Task images come from **GHCR** (`ghcr.io/londonaicentre/...`) — no AWS-side image registry permissions needed (no ECR mirror). The bootstrap EFS-provisioning image (`amazon/aws-cli`) comes from Docker Hub and is also fetched through the NAT gateway, so private ECR API/DKR endpoints are not required.
+- **EFS**: `elasticfilesystem:*` for the shared workspace volumes mounted into FL Fargate tasks
+- **CloudFront + WAFv2**: Create and manage the UI distribution and the WebACL attached to it
+- **ACM**: Issue / import certificates in both `eu-west-2` (ALB origin) and `us-east-1` (CloudFront viewer)
+- **Route53**: Manage A-records for the canonical subdomain (CloudFront alias) and the FL-server NLB
+- **Service Discovery (Cloud Map)**: Create the private DNS namespace used for ECS task-to-task resolution
 - **SES**: Manage email templates (optional for email functionality)
 
 Managed policies that cover these requirements:
 
 - `AmazonEC2FullAccess`
+- `AmazonECS_FullAccess`
 - `AmazonRDSFullAccess`
+- `AmazonElasticFileSystemFullAccess`
 - `CloudWatchLogsFullAccess`
 - `SecretsManagerReadWrite`
 - `IAMFullAccess`
-- `ElasticLoadBalancingFullAccess`
+- `ElasticLoadBalancingFullAccess` (covers ALB and NLB)
+- `CloudFrontFullAccess`
+- `AWSWAFFullAccess`
+- `AWSCertificateManagerFullAccess`
+- `AmazonRoute53FullAccess`
+- `AWSCloudMapFullAccess`
+- `AmazonSSMFullAccess`
 - `AmazonSESFullAccess` (optional)
 
 **Note**: The deployed EC2 instances use separate, scoped IAM roles following the principle of least privilege:
 
-- **Central Hub** (`ec2-role`): SSM + CloudWatch managed policies, plus inline policies for `secretsmanager:GetSecretValue` on the FLIP API and DB secrets, Cognito user-pool admin actions on the FLIP user pool, S3 object access on the FLIP and AI Centre buckets, and `ses:SendEmail` on the verified sender identity.
+- **Central Hub bastion** (`ec2-role`): `AmazonSSMManagedInstanceCore` only. Application permissions belong to the ECS task roles; the bastion cannot read FLIP secrets or buckets and cannot call Cognito, SES, or CloudWatch Logs.
 - **Trust EC2** (`trust-ec2-role`): SSM + CloudWatch managed policies, plus a read-only S3 inline policy on the AI Centre bucket for FL participant-kit downloads. No Cognito, SES, Secrets Manager or FLIP application bucket access.
 
 ## Deployment Workflow
@@ -83,20 +98,146 @@ This command executes the following steps in order:
 2. **`aws-login`**: Authenticate with AWS SSO
 3. **`init`**: Initialize Terraform with environment-specific S3 backend
 4. **`import-persistent`**: Import existing persistent AWS resources to prevent replacement
-5. **`plan`**: Generate and review the initial Terraform execution plan
-6. **`apply`**: Apply infrastructure changes
-7. **`update-env`**: Refresh the root environment file with Terraform outputs
-8. **`ssh-config`**: Update `~/.ssh/config` with EC2 instance IPs
-9. **`ansible-init`**: Configure EC2 instances with Docker, CloudWatch, and FL assets
-10. **`deploy-centralhub`**: Deploy Central Hub services via Docker Compose
-11. **`deploy-trust`**: Deploy Trust services via Docker Compose
-12. **`status`**: Run comprehensive health checks
+5. **`generate-internal-service-key`**: Mint the fl-server → hub `INTERNAL_SERVICE_KEY` (idempotent — skipped if already set)
+6. **`plan`**: Generate and review the initial Terraform execution plan
+7. **`apply`**: Apply infrastructure changes
+8. **`update-env`**: Refresh the root environment file with Terraform outputs
+9. **`ssh-config`**: Update `~/.ssh/config` with SSM-managed EC2 instance IDs
+10. **`ansible-init`**: Patch both hosts, install `psql` on the Central Hub bastion, and provision Docker, AWS CLI, CloudWatch, and FL assets on the Trust EC2
+11. **`deploy-centralhub`**: Deploy the Central Hub ECS Fargate services (`flip-api`, `fl-api-net-1`, `fl-server-net-1`) at the tip of the env's branch via new task-definition revisions (see [Central Hub deploys and rollback](#central-hub-deploys-and-rollback-immutable-sha-tags)) and sync the UI to S3 + invalidate CloudFront
+12. **`register-trusts`**: Register every locally-present trust kit file (`trust/.env.<CODE>.<env>`) on the running hub and fill each kit with hub-shared values
+13. **`deploy-trust`**: Deploy Trust services via Docker Compose to the Trust EC2
+14. **`status`**: Run comprehensive health checks
+
+To provision only the minimal Central Hub bastion after a targeted Terraform
+change, run `make provision-bastion PROD=stag|true`; this does not touch the
+Trust EC2.
+
+### Hub-only Deployment (all trusts on-prem)
+
+Use `full-deploy-hub-only` when no trust should run in the cloud — typically because the
+FL workloads need hardware the trust EC2 doesn't have (it's a GPU-less `t3.xlarge`) and
+every trust will run on-prem hosts instead:
+
+```bash
+cd deploy/providers/AWS
+make full-deploy-hub-only PROD=stag   # or PROD=true
+make deploy-ui PROD=stag              # UI ships separately, same as full-deploy
+```
+
+This runs the same chain as `full-deploy` minus the cloud-trust steps (`deploy-trust`,
+`seed-trust-data`) and sets `DEPLOY_TRUST_EC2=false`, so Terraform provisions **no Trust
+EC2 at all** (`ssh-config` skips the `flip-trust` alias and the `trust_ec2` Ansible plays
+are no-ops). The cloud-trust targets fail fast with a pointer to the on-prem flow if run
+against a hub-only environment.
+
+> **Warning**: on an environment previously deployed with `full-deploy`, the hub-only
+> `apply` **destroys the existing Trust EC2** (its data volumes are not preserved).
+> Re-run with `DEPLOY_TRUST_EC2=true` (the default) to bring one back.
+
+Each on-prem trust then joins exactly as in the hybrid flow:
+
+1. Add the trust host's public IP to `LOCAL_TRUST_PUBLIC_IPS` in the env file, then
+   `make allow-local-trust-nlb PROD=<env>` (one NLB ingress rule per IP).
+2. Scaffold + register the kit: `make new-trust TRUST_CODE=<CODE> TRUST_NAME="..." TRUST_REGION=... PROD=<env>`
+   then `make register-trusts KIT=<CODE> PROD=<env>` (the `full-deploy-hub-only` chain
+   already registers every kit file present at deploy time).
+3. On the trust host: stage the FL kit (`make provision-local-trust KIT=<CODE>` on the
+   host, or point `FL_KIT_DIR` in the kit at a locally-provisioned workspace) and start
+   the stack: `env PROD=<env> make -C trust up-trust KIT=<CODE>`.
+
+Multiple on-prem trusts can share one host — give each kit non-colliding ports and data
+directories (see the shipped `trust/.env.*.development.example` kits for a working
+two-trust port allocation).
 
 ### flip-ui on S3 + CloudFront
 
 The UI is served from S3 behind CloudFront at the canonical user-facing subdomain (`stag.flip.aicentre.co.uk` / `app.flip.aicentre.co.uk`). CloudFront also forwards `/api/*` to the ALB, using a backend-only `api.<subdomain>` DNS name that only CloudFront uses — trusts and users never see it. CloudFront is the only supported UI-hosting path; there is no legacy EC2 UI container or ALB UI target group to fall back to.
 
 **Subsequent UI deploys**: just `make deploy-ui PROD=stag|true` — builds the UI from the working tree, regenerates `window.js`, syncs to S3, invalidates CloudFront. No Terraform involved.
+
+### FLIP application S3 buckets
+
+The Central Hub uses four S3 buckets, each with a distinct purpose, access pattern, and CORS surface. The three **FLIP application buckets** were split out of a single legacy `flip{env}` bucket so each tenant can carry the minimum CORS surface its consumer needs (a CORS change for one tenant no longer drags every other tenant along, and a browser-direct bucket can no longer accidentally expose objects belonging to a server-only flow).
+
+| Bucket (per env) | Env-var (`.env.{stag,production}`) | Consumer | Browser CORS | Holds |
+|---|---|---|---|---|
+| `flip{env}-model-files-uploads` | `FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME` | researcher browser (presigned **PUT** on `origin/develop`; flips to presigned **POST** once [#438](https://github.com/londonaicentre/FLIP/pull/438) lands), flip-api reads | `PUT` today; narrows to `POST` from `https://<flip_alb_subdomain>` when #438 merges | researcher-uploaded model artefacts under `uploaded/` (today the AV-scanned copy reads from the same prefix — see the FIXME in `.env.production`) |
+| `flip{env}-fl-results` | `FLIP_FL_RESULTS_BUCKET_NAME` | fl-server writes, researcher browser (presigned **GET**) | `GET` from `https://<flip_alb_subdomain>` | FL training output / aggregated weights — the whole bucket is dedicated to this tenant so no prefix is needed |
+| `flip{env}-app-bundles` | `FLIP_APP_BUNDLES_BUCKET_NAME` | flip-api (boto3 only) | **none** (server-only — no `aws_s3_bucket_cors_configuration` resource is emitted at all) | `app_destinations/<model_id>/` (per-bundle FL apps: base templates + user model files, assembled by flip-api). The base FL application templates themselves are baked into the flip-api image (FLIP#724), not stored here. |
+| `flip{env}-aicentre` | `AICENTRE_BUCKET_NAME` | Trust EC2 (`aws s3 cp` during Ansible), AI Centre operators | `PUT`, `GET` | FL participant kits |
+
+All four share standard configs: public access blocked, SSE-KMS server-side encryption with bucket keys enabled, versioning enabled. The three FLIP application buckets are rendered by the shared **`modules/flip_s3_bucket`** module, which is consumed by both `main.tf` (prod / stag) and `dev/main.tf` (dev account) — so a CORS or bucket-policy change plans identically across every environment, closing the dev-drift gap that masked the presigned-PUT → presigned-POST regression in #438.
+
+**Base FL application templates ship in the image, not S3.** As of FLIP#724 the base FL application templates (the repo's `fl-apps/` tree) are baked into the `flip-api` image and read from a local directory (`FL_APP_BASE_DIR`, default `/app/fl-apps`); flip-api bundles applications by uploading those local templates plus the user's model files into `flip{env}-app-bundles/app_destinations/<model_id>/`. There is no longer any CI that syncs templates to S3, so the `flip{env}-app-bundles` bucket is written **only** by flip-api at bundle time. Template hotfixes therefore ship by rebuilding and redeploying the `flip-api` image (see the migration note below).
+
+#### Migrating off the legacy single-bucket layout
+
+For an account that was created **before** the split, the legacy `flip{env}` bucket holds the contents that now belong in the three split buckets above. **Prod and dev were migrated as part of FLIP#24** (the bucket-split PR) — see that PR's description for the as-built details and verification logs. The only environment still pending a cutover at the time of writing is **stag**; the runbook below is the canonical reference for stag and for any future fresh prod/dev account that needs the same migration.
+
+The mechanism the runbook leans on:
+
+- The `removed { destroy = false }` blocks in `services.tf` drop the legacy bucket from Terraform state on the first apply **without** destroying the AWS resource — that's what lets `make migrate-flip-bucket` run against the still-live source.
+- `make verify-flip-bucket-migration` is the safety net for the fact that `aws s3 sync` exits 0 even when individual object copies fail (per-object KMS / throttle / timeout errors print to stderr but don't fail the sync). It computes a key-set subset check — every source key must exist on the destination; extras on the destination from post-cutover writes are allowed. Always green before `aws s3 rb`.
+- There is a brief window between `make apply` finishing and `make deploy-centralhub` finishing where flip-api's IAM no longer grants the legacy bucket but its env vars still point at it — every S3 call returns 403 during that window (~5 minutes). To eliminate it, temporarily add the legacy bucket back to the IAM grant for the duration of the deploy, then strip it in a follow-up apply.
+
+#### Stag migration runbook
+
+Stag's Terraform state is known to be missing ~70 live resources. The `removed` blocks plan as no-ops if `aws_s3_bucket.flip_bucket` was never registered in stag state to begin with — and the next stag apply would then try to *create* whatever `FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME` points to. If that's set to the legacy bucket name as a typo, the apply fails on `BucketAlreadyOwnedByYou`; if it's set to a new name but the new buckets already exist in AWS from a manual create, the apply also fails. The fix is to import every persistent resource first, then run apply / migrate / verify.
+
+```bash
+cd deploy/providers/AWS
+export AWS_PROFILE=stag && make aws-login              # if SSO has expired
+
+# 1. Bring stag's Terraform state in line with what's actually in AWS — this
+#    imports the three new application buckets (if a previous run created them
+#    manually), the AI Centre bucket, Secrets Manager, Cognito, SES, and ACM.
+#    It does NOT import the legacy `aws_s3_bucket.flip_bucket` (that resource
+#    has been removed from the configuration and replaced with `removed`
+#    blocks). The `removed` blocks then plan as no-ops on the stag-state gap,
+#    which is fine: nothing to remove means nothing accidentally gets removed.
+#    Idempotent: rerun safely after a fix.
+make import-persistent                                  # PROD unset → stag (see Makefile defaults)
+
+# 2. Plan — confirm the diff matches the prod cutover's shape:
+#    17 to add (3 new buckets), 3 to change (IAM rewires), 1 to destroy
+#    (old uploaded_federated_data SSM param renamed), 8 forgotten-from-state.
+#    If you see anything trying to DESTROY a bucket, stop — that means the
+#    import-persistent step missed something. Don't apply.
+make plan
+
+# 3. Apply — same diff as prod.
+make apply
+
+# 4. Sync the legacy prefixes (model_files/uploaded, uploaded_federated_data,
+#    app_destination_bucket) into the new buckets. (The base-application prefix
+#    is no longer synced — those templates now ship in the flip-api image, FLIP#724.)
+make migrate-flip-bucket
+
+# 5. Parity-check — must print all-✅ before continuing.
+make verify-flip-bucket-migration
+
+# 6. Redeploy stag's central hub so flip-api picks up the new bucket env vars.
+make deploy-centralhub
+
+# … browser smoke against stag's URL; FL e2e; 24–48h cooldown …
+
+# 7. Final verify + decommission.
+make verify-flip-bucket-migration
+aws s3 rm s3://flipstag --recursive
+aws s3 rb s3://flipstag
+```
+
+Two stag-specific watch-outs:
+
+- **`make import-persistent` failing partway through** is fine on a re-run — every import in `scripts/import-resources.sh` is idempotent (probes `terraform state list` before importing). The script will skip already-imported resources and only attempt the missing ones.
+- **The task definitions applied before `deploy-centralhub` need image tags from `.env.stag`** (`DOCKER_TAG`, `DOCKER_FL_TAG`) that exist in GHCR. Branch tags do **not** auto-build on push — trigger the relevant `docker_build_*` workflows via `workflow_dispatch` before applying a branch image tag (see [the build trigger note in CLAUDE.md](../../../CLAUDE.md#docker-image-builds-gated-on-tests-manual-trigger-for-branches)). These env-file tags are only Terraform's bootstrap defaults — day-to-day image deploys pin immutable `sha-<short7>` tags instead (see [Central Hub deploys and rollback](#central-hub-deploys-and-rollback-immutable-sha-tags)).
+
+For a **future fresh prod or dev** account that needs the same migration, the flow is the stag runbook above minus step 1 (`make import-persistent` is only needed on environments with the stag-style state gap) and with `PROD=true` on every `make` call for prod (dev uses the separate `deploy/providers/AWS/dev/` Terraform root, no `PROD=` flag).
+
+> **Do not `aws s3 rb s3://flipdev` on the legacy dev bucket.** The `test-data/` prefix in there (~42 objects) is consumed by external CI fixtures, so it is outside the scope of the FLIP#24 migration and must survive. Either leave the `flipdev` bucket alive solely for `test-data/`, or move `test-data/` to a dedicated bucket and update those references in lockstep before any `aws s3 rb`. The same constraint may apply to a `test-data/` prefix in `flipstag` / `flipprod` if one exists — check with `aws s3 ls s3://flipstag/test-data/` before decommissioning either.
+
+Once a decommission is complete in every environment, drop the `FLIP_BUCKET_NAME` line from `.env.*`, the `removed` blocks in `services.tf`, and the `migrate-flip-bucket` / `verify-flip-bucket-migration` Makefile targets in a follow-up PR.
 
 ### Manual Step-by-Step Deployment
 
@@ -132,13 +273,89 @@ make ssh-config
 # 8. Setup EC2 instances with Ansible
 make ansible-init
 
-# 9. Deploy services
+# 9. Deploy the Central Hub
 make deploy-centralhub
+
+# 10. Register every locally-present trust kit file on the hub and fill each kit with hub-shared values
+make register-trusts
+
+# 11. Deploy trust services
 make deploy-trust
 
-# 9. Check status
+# 12. Check status
 make status
 ```
+
+### Central Hub deploys and rollback (immutable SHA tags)
+
+`make deploy-centralhub` deploys the Central Hub ECS services (`flip-api`, `fl-api-net-1`,
+`fl-server-net-1`) by **immutable image tag + task-definition revision** (FLIP#751), then publishes
+the UI (same as `make deploy-ui`):
+
+0. **FL quiesce warning** (FLIP#770). Replacing `fl-server-net-1` kills any in-flight training
+   run (its run state is ephemeral) and strands the model at `TRAINING_STARTED` with its net stuck
+   `BUSY`. The deploy prints a reminder: enable Deployment Mode in the UI (Admin → Deployments) at
+   any time — it pauses FL job pickup, so queued jobs hold and only the current run (if any) needs
+   to finish — wait until the platform is quiesced, deploy, then disable Deployment Mode to resume
+   the queue. `GET /fl/quiesce` (authenticated) reports both facts: `deployment_mode` (the flag)
+   and `fl_quiesced` (no net's scheduler `BUSY`). On **prod** (`PROD=true`) the reminder is
+   followed by an interactive "Are you sure you want to continue?" confirmation; staging deploys
+   stay non-interactive.
+1. Resolves `TAG=sha-<short7>` from the tip of the env's branch — `PROD=true` → `origin/main`,
+   `PROD=stag` → `origin/develop` (`git fetch` runs inside the target). The tag must match
+   `sha-<7 hex chars>` — a mutable tag (e.g. a stray `TAG=stag`) is rejected before any AWS call.
+2. Verifies **every** service's image exists in GHCR at that tag **before mutating anything** — a
+   missing tag aborts with nothing deployed. The build workflows are path-filtered, so a merge that
+   didn't touch a service (most commonly a flip-api-only merge, which does not rebuild the FL
+   images) leaves that service without an image at the new tip; flip-api's build is additionally
+   test-gated (`workflow_run` on its test suite), so right after a merge its tag may still be
+   building. The guard names the workflow to check; trigger the missing build manually
+   (`gh workflow run <workflow>.yml --ref <branch>` builds the branch tip and publishes its sha
+   tag), then re-run the deploy. A non-404 registry error (outage, auth) is reported as such —
+   don't dispatch rebuilds for it. Non-`ghcr.io` registries skip the manifest check entirely
+   (LZA ECR pull-through cache, FLIP#749).
+3. Per service: registers a new task-definition revision with only the app container's image tag
+   swapped (containers are selected **by name**, never by index — the same convention as the
+   `describe-tasks` digest check in [`TROUBLESHOOTING.md` §1.9](TROUBLESHOOTING.md), robust to
+   sidecar/ordering changes) and repoints the service at the new revision. If the repoint fails,
+   the just-registered revision is deregistered again so the `max()` tracking in
+   `ecs_services.tf` cannot adopt a never-deployed revision, and any services already repointed
+   in the same run are listed so a partial deploy is visible.
+
+```bash
+make deploy-centralhub PROD=stag                    # deploy the tip of develop to staging
+make deploy-centralhub PROD=true                    # deploy the tip of main to production
+make deploy-centralhub PROD=stag TAG=sha-1a2b3c4    # pin a specific / hotfix build
+make rollback-centralhub PROD=stag                  # repoint services at the previous revision
+```
+
+`TAG=sha-<short7>` overrides the branch-tip resolution — this automates the previously manual
+runbook for feature-branch images: trigger the relevant `docker_build_*` / `fl-docker-build-*`
+workflow on your branch via `workflow_dispatch`, wait for green, then deploy its sha tag.
+
+`make rollback-centralhub` repoints each service at its previous ACTIVE task-definition revision —
+seconds, no rebuild — then **deregisters the revision it rolled away from** (it stays describable
+for forensics). The deregistration is what makes the rollback durable: `ecs_services.tf` tracks the
+*latest ACTIVE* revision, so leaving the bad revision ACTIVE would have the next `terraform apply`
+silently re-adopt it. It does not touch the UI bundle; re-run `make deploy-ui` from the matching
+commit if the UI must move too. After a *partial* deploy (some services repointed before a
+failure), don't roll back blindly — rollback moves **every** service down one revision, including
+the ones the failed deploy never touched; fix the missing build and re-run the deploy instead.
+
+The deploy ends by publishing the UI (same as `make deploy-ui`), which builds `flip-ui` **from your
+local working tree** — deploy from a clean checkout of the branch you are deploying.
+
+Terraform stays the owner of the task-definition *skeleton* (roles, env wiring, volumes). The
+services track `max(Terraform revision, latest ACTIVE revision)` (see `ecs_services.tf`), so an
+unrelated `terraform apply` does not roll a CLI-deployed image back. When an apply *does*
+re-register a task definition, the new Terraform revision goes live with the bootstrap image tags
+from the env file (`DOCKER_TAG`, `DOCKER_FL_TAG`) — re-run `make deploy-centralhub` afterwards to
+roll the sha-pinned image forward again. And because `make apply` applies the saved `plan.tfplan`,
+a plan generated **before** a CLI deploy snapshots the older revision and applying it would roll
+the image back — re-run `make plan` after any `make deploy-centralhub`.
+
+> **Prod rollout note:** switch *production* deploys to this flow only after the 24 Jul 2026 DECAF
+> deadline (BDMS is live on legacy prod until then). Staging can adopt it immediately.
 
 ### Deployment to Different Environments
 
@@ -214,28 +431,37 @@ See [`dev/README.md`](./dev/README.md) for the one-time `terraform import` workf
 
 ```
 deploy/providers/AWS/
-├── main.tf / services.tf       # prod + stag stack root (VPC, RDS, Cognito, SES, EC2)
-├── ecs.tf                      # ECS cluster + capacity providers (Central Hub migration foundation)
-├── efs.tf                      # EFS file systems for shared workspace volumes
+├── main.tf                     # VPC, IGW, NAT, subnets, RDS, Secrets, ALB, NLB, Route53, Central Hub + Trust EC2
+├── services.tf                 # Cognito + SES (delegated to modules), S3 buckets, IAM bindings
+├── ecs.tf                      # ECS cluster + Fargate capacity providers
+├── ecs_services.tf             # ECS Fargate services: flip-api, fl-api-net-1, fl-server-net-1
+├── ecs_tasks.tf                # ECS task definitions for the Central Hub services
+├── ecs_efs_provision.tf        # Bootstrapping job that seeds the EFS volumes
+├── ecs_sg.tf                   # ECS task security groups (per-service)
+├── efs.tf                      # EFS file systems + access points for shared FL workspace volumes
 ├── iam_ecs.tf                  # IAM execution + task roles for ECS Fargate tasks
-├── parameter_store.tf          # SSM Parameter Store entries consumed by ECS tasks
-├── service_discovery.tf        # Cloud Map private DNS namespace for ECS services
-├── vpc_endpoints.tf            # Interface endpoints (ECR, Secrets Manager, SSM, etc.)
+├── parameter_store.tf          # SSM Parameter Store entries consumed by ECS tasks (bucket URIs, internal URL, etc.)
+├── service_discovery.tf        # Cloud Map private DNS namespace (flip.local) for ECS task-to-task resolution
+├── vpc_endpoints.tf            # Interface endpoints (Secrets Manager, SSM, CloudWatch Logs) + S3 gateway endpoint
 ├── dhcp.tf                     # VPC DHCP option set
 ├── locals.tf                   # Shared locals
-├── cloudfront.tf               # CloudFront distribution for flip-ui
-├── certificate.tf              # ACM certificates (ALB + CloudFront)
+├── cloudfront.tf               # CloudFront distribution for flip-ui + attached WAFv2 WebACL
+├── certificate.tf              # ACM certificates (ALB in eu-west-2, CloudFront viewer in us-east-1)
 ├── modules/
 │   ├── cognito/                # shared: pool, domain, client, seed users
 │   ├── ses/                    # shared: sender identity, transactional templates
 │   ├── secgroup/               # shared: security-group wrapper
-│   └── trust_ec2/              # prod/stag only
+│   ├── flip_s3_bucket/         # shared: opinionated FLIP application S3 bucket
+│   └── trust_ec2/              # prod/stag only: Trust EC2 host
 └── dev/                        # dev-account root (calls cognito + ses modules)
 ```
 
-The ECS / EFS / parameter store files are the **foundation** for the Central Hub migration from EC2 +
-docker-compose to ECS Fargate. The cluster, IAM, and networking are provisioned today; task definitions
-and services land in subsequent PRs.
+The Central Hub application services (`flip-api`, `fl-api-net-1`, `fl-server-net-1`) run on **ECS
+Fargate**. `aws_instance.ec2_instance` is an intentional minimum-viable SSM bastion for ad-hoc
+PostgreSQL and network diagnostics: it runs no application containers, has no inbound security-group
+rules, and carries only the SSM managed IAM policy. The ALB's `/api/*` rule and the NLB's FL-server
+listener forward to ECS Fargate `target_type=ip` target groups
+(`aws_lb_target_group.ecs_flip_api`, `aws_lb_target_group.ecs_fl_server_tcp`).
 
 The Cognito and SES resources used to live at the root of the prod/stag stack. `services.tf` and `main.tf` ship `moved` blocks that re-anchor the old root addresses onto the new `module.cognito.*` / `module.ses.*` paths, so any state still on the old layout self-heals on the next plan — no manual `terraform state mv` needed. `scripts/import-resources.sh` already targets the module addresses, so a fresh import lands in the right place too.
 
@@ -251,24 +477,29 @@ make destroy
 
 - Trust EC2 instance
 - Central Hub EC2 instance
-- Application Load Balancer
+- ECS Fargate cluster, services, task definitions, and EFS file systems
+- Application Load Balancer (ALB) and Network Load Balancer (NLB)
+- CloudFront distribution + WAFv2 WebACL
+- Cloud Map private DNS namespace
+- VPC interface + gateway endpoints
 - RDS database (in `stag` only — `prod` is protected, see [RDS lifecycle](#rds-lifecycle-stag-vs-prod))
 - VPC, subnets, security groups, NAT gateway
-- IAM roles and policies
+- IAM roles and policies (EC2 + ECS execution/task roles)
+- SSM Parameter Store entries
 - Elastic IPs
 
 **What gets preserved:**
 
 - Cognito User Pool and users (authentication data)
 - Secrets Manager secret (FLIP_API configuration)
-- S3 bucket (application data)
+- S3 buckets — both the application buckets and the AI Centre bucket (see [FLIP application S3 buckets](#flip-application-s3-buckets))
 
 #### RDS lifecycle (stag vs prod)
 
 The RDS instance behaves differently per environment, driven by `TF_VAR_environment`:
 
 | Setting                            | `stag` (default) | `prod` (`PROD=true`)              |
-|------------------------------------|------------------|-----------------------------------|
+| ------------------------------------ | ------------------ | ----------------------------------- |
 | `skip_final_snapshot`              | `true`           | `false`                           |
 | `deletion_protection`              | `false`          | `true`                            |
 | `final_snapshot_identifier_prefix` | `flip-database-final` | `flip-database-final`        |
@@ -292,7 +523,7 @@ This validates:
 - ✅ Secrets Manager access
 - ✅ S3 bucket accessibility
 - ✅ Cognito User Pool configuration
-- ✅ Docker services on EC2 instances
+- ✅ Docker services on the Trust EC2 and ECS services on Fargate
 - ✅ HTTP endpoint availability
 - ✅ SSH connectivity
 - ✅ CloudWatch Logs configuration
@@ -329,7 +560,7 @@ This prints a list of URLs you can paste into your browser:
 | data-access-api swagger | `http://localhost:8010/docs` | Data access API documentation |
 | Grafana | `http://localhost:3000` | Observability dashboards |
 
-Press Ctrl+C to stop all forwards. The Central Hub UI and API are accessed directly via the public ALB domain (e.g. `https://app.flip.aicentre.co.uk`) — no port forwarding needed.
+Press Ctrl+C to stop all forwards. The Central Hub UI and API are accessed via the CloudFront distribution at the canonical subdomain (e.g. `https://app.flip.aicentre.co.uk`) — no port forwarding needed. The ALB is internal (private subnets, no public IP); CloudFront reaches it through a VPC origin.
 
 ## Hybrid Deployment: Adding an On-Premises Trust
 
@@ -339,32 +570,35 @@ Recommended orchestration target (works for both `PROD=stag` and `PROD=true`):
 
 ```bash
 cd deploy/providers/AWS
-make full-deploy-hybrid PROD=<stag|true> LOCAL_TRUST_IP=<public-ip> [LOCAL_TRUST_SSH_KEY=~/.ssh/trust_key]
+make full-deploy-hybrid PROD=<stag|true> [LOCAL_TRUST_IP=<public-ip>]
 ```
 
-This wrapper target runs the full AWS deployment, provisions the local trust, and redeploys the Central Hub so the new secret values are loaded. `PROD` is inherited from the environment — omit `LOCAL_TRUST_IP` to auto-detect the operator machine's public IP via `curl ipify.org`.
+This wrapper target runs the full AWS deployment, provisions the on-prem trust host, and redeploys the Central Hub so the new secret values are loaded. `PROD` is inherited from the environment — omit `LOCAL_TRUST_IP` to auto-detect the operator machine's public IP via `curl ipify.org`.
 You still need to:
 
-1. Start the trust stack on the host: `cd trust && env PROD=<stag|true> make up-local-trust`
+1. Start the trust stack on the host: `cd ../../.. && env PROD=<stag|true> make -C trust up-trust KIT=<CODE>` (the trust code you registered)
 2. Verify the trust can poll the hub (check trust-api logs for successful task polling)
 
-Or run provisioning directly:
+Or onboard the trust step by step — the trust operator provisions their own host,
+and the FLIP admin opens the firewall once the operator reports their public IP:
 
 ```bash
+# On the trust host (trust operator) — provision, then start the stack
 cd deploy/providers/AWS
+set -x ANSIBLE_BECOME_PASS (read -s -P 'Sudo password: ')   # fish; bash differs
+make provision-local-trust KIT=<CODE>
+cd ../../.. && env PROD=<stag|true> make -C trust up-trust KIT=<CODE>
 
-# Remote host (via SSH)
-make add-local-trust LOCAL_TRUST_IP=<public-ip> LOCAL_TRUST_SSH_KEY=~/.ssh/trust_key
-
-# Local machine (no SSH)
-set -x ANSIBLE_BECOME_PASS (read -s -P 'Sudo password: ')
-make add-local-trust LOCAL_TRUST_IP=<public-ip>
+# On the FLIP side (admin), once the operator reports their host's public IP:
+#   add it to LOCAL_TRUST_PUBLIC_IPS (an HCL list) in .env.stag / .env.production, e.g.
+#   LOCAL_TRUST_PUBLIC_IPS=["1.2.3.4"]
+cd deploy/providers/AWS
+make allow-local-trust-nlb LOCAL_TRUST_IP=<public-ip>
 ```
 
-After provisioning, complete the manual steps printed by the target:
+`allow-local-trust-nlb` runs a normal `terraform plan`/`apply` — the IPs are real config, so later full applies stay idempotent (no `-target`, no drift).
 
-1. Start the trust stack on the host: `cd trust && env PROD=stag make up-local-trust`
-2. Verify the trust can poll the hub (check trust-api logs for successful task polling)
+Verify the trust can poll the hub (check trust-api logs for successful task polling).
 
 Full details are in the [local provider README](../local/README.md).
 
@@ -403,12 +637,14 @@ The platform supports a cloud-only setup (Central Hub + Trust on AWS) or a hybri
 
 1. **flip-ui (Frontend)**: Served as static assets from an S3 bucket behind CloudFront at the canonical subdomain. See the [flip-ui on S3 + CloudFront](#flip-ui-on-s3--cloudfront) section.
 
-2. **Central Hub EC2**: Hosts the main application services (but **not** the UI — that lives in CloudFront)
-   - flip-api (Backend API)
-   - fl-api-net-1 (Federated Learning API for Network 1)
-   - fl-server-net-1 (Federated Learning Server for Network 1)
+2. **Central Hub application services (ECS Fargate, private subnets)**: The hub's application containers run as ECS Fargate tasks, not on EC2.
+   - `flip-api` (Backend API) — fronted by the ALB on `/api/*`
+   - `fl-api-net-1` (Federated Learning API for Network 1) — internal-only, reachable via Cloud Map `flip.local`
+   - `fl-server-net-1` (Federated Learning Server for Network 1) — fronted by the NLB for FL client TCP traffic
 
-3. **Trust EC2** (cloud model): Hosts trust-related services (automatically provisioned)
+3. **Central Hub SSM bastion** (`aws_instance.ec2_instance`, t3.micro, 10 GB root volume, **private subnet**): Intentional minimal host for ad-hoc `psql` and network diagnostics. It runs no application containers, has no inbound security-group rules, and is reachable only through SSM Session Manager / SSH-over-SSM.
+
+4. **Trust EC2** (cloud model, t3.xlarge, **private subnet**): Hosts trust-related services (automatically provisioned)
    - trust-api (polls hub for tasks)
    - imaging-api
    - data-access-api
@@ -417,77 +653,119 @@ The platform supports a cloud-only setup (Central Hub + Trust on AWS) or a hybri
    - Orthanc (DICOM server)
    - OMOP database
 
-4. **On-Premises Trust** (hybrid model, optional): Same trust services running on a local host
+5. **On-Premises Trust** (hybrid model, optional): Same trust services running on a local host
    - Provisioned via [`deploy/providers/local/`](../local/README.md)
    - Polls the Central Hub over the internet via HTTPS (outbound only)
 
-| Application Component |
-| ---------------------- |
-| **Central Hub (S3 + CloudFront)** |
-| FLIP UI ✅ |
-| **Central Hub (EC2)** |
-| FLIP API ✅ |
-| FL API ✅ |
-| FL Server ✅ |
-| **Trust Services** |
-| Trust API ✅ |
-| Imaging API ✅ |
-| Data Access API ✅ |
-| XNAT (medical imaging) ✅ |
-| Orthanc (DICOM server) ✅ |
+| Application Component | Runtime |
+| --------------------- | ------- |
+| **Central Hub (S3 + CloudFront)** | |
+| FLIP UI ✅ | S3 + CloudFront (WAFv2 attached) |
+| **Central Hub (ECS Fargate, private subnets)** | |
+| FLIP API ✅ | Fargate task behind ALB |
+| FL API ✅ | Fargate task, Cloud Map internal |
+| FL Server ✅ | Fargate task behind NLB |
+| **Trust Services (Docker Compose on Trust EC2, private subnet)** | |
+| Trust API ✅ | Trust EC2 |
+| Imaging API ✅ | Trust EC2 |
+| Data Access API ✅ | Trust EC2 |
+| XNAT (medical imaging) ✅ | Trust EC2 |
+| Orthanc (DICOM server) ✅ | Trust EC2 |
+
+All trust → hub traffic is **outbound from the trust** (the hub never dials the trust). Arrows
+in the diagram point in the direction in which each TCP connection is *initiated*, which is also
+the direction of the request flow.
 
 ```sh
-┌─────────────────┐
-│    Internet      │
-└────────┬────────┘
-         │
-    ┌────▼────────────────┐
-    │    CloudFront         │ (UI from S3; /api/* → ALB)
-    └────┬────────────────┘
-         │   /api/*
-    ┌────▼────┐
-    │   ALB    │ (HTTPS, ACM cert)
-    └────┬────┘
-         │
-    ┌────▼──────────────────────┐
-    │  Central Hub EC2          │
-    │  - flip-api               │
-    │  - fl-api                 │
-    │  - fl-server              │
-    └──────▲───────────▲────────┘
-           │           │
-     polls │           │ polls
-    (HTTPS)│           │(HTTPS)
-           │           │
-    ┌──────┴─────┐  ┌──┴──────────────────────┐
-    │ Trust EC2  │  │ On-Prem Trust (optional) │
-    │ (AWS)      │  │ (home/hospital network)  │
-    │            │  │                          │
-    │ trust-api  │  │ trust-api                │
-    │ imaging-api│  │ imaging-api              │
-    │ data-acc.. │  │ data-access-api          │
-    │ XNAT       │  │ fl-client                │
-    │ Orthanc    │  │                          │
-    │ fl-client  │  │                          │
-    └────────────┘  └──────────────────────────┘
+                            Users (browsers)
+                                  │ HTTPS:443
+                                  ▼
+                  ┌─────────────────────────────────────────┐
+                  │  CloudFront + WAFv2 WebACL               │
+                  │  - serves flip-ui from S3                │
+                  │  - /api/* → ALB origin (HTTPS-only)      │
+                  └─────────────────────┬───────────────────┘
+                                        │ HTTPS:443 via CloudFront VPC origin
+                                        │ (AWS-managed ENI in our VPC; ALB SG
+                                        │  accepts only the CloudFront-VPCOrigins
+                                        │  -Service-SG, so the ALB has no
+                                        │  internet-reachable path)
+                                        ▼
+                  ┌─────────────────────────────┐    ┌──────────────────────────────┐
+                  │  ALB (private subnets,       │    │  NLB (public subnets)        │
+                  │       internal=true)         │    │  TCP listener on             │
+                  │  eu-west-2 ACM cert          │    │  FL_SERVER_PORT               │
+                  │  https-listener: default 404;│    │  SG ingress allow-listed to: │
+                  │  /api/* → flip-api TG        │    │   FLIP VPC NAT public IP +   │
+                  │                              │    │   local_trust_public_ip      │
+                  └──────────────┬──────────────┘    └──────────────┬───────────────┘
+                                 │ → ip:8000                         │ → ip:FL_SERVER_PORT
+                                 ▼                                   ▼
+                  ┌──────────────────────────────────────────────────────────────────┐
+                  │  ECS Fargate tasks (private subnets, awsvpc)                       │
+                  │    flip-api    fl-api-net-1 (Cloud Map flip.local)    fl-server-net-1│
+                  │  Egress: VPC interface + S3 gateway endpoints + shared NAT Gateway   │
+                  │  Shared state: EFS access points (FL workspaces); RDS (private)      │
+                  └──────────────────────────────────────────────────────────────────┘
+
+                  Both trusts below initiate outbound to the hub on two paths
+                  (the hub never dials back):
+                    • HTTPS:443 → CloudFront         — poll for tasks
+                    • TCP:FL_SERVER_PORT → NLB        — FL client during training
+
+                  ┌─────────────────────────────┐    ┌──────────────────────────────┐
+                  │  Trust EC2 — AWS, private    │    │  On-Prem Trust — optional     │
+                  │  subnet, SSM-only inbound    │    │  Local network egress         │
+                  │  Egress: FLIP VPC NAT Gw     │    │  (not the FLIP VPC NAT Gw)    │
+                  │                              │    │                               │
+                  │  Services (Docker Compose):  │    │  Services (Docker Compose):   │
+                  │    trust-api   imaging-api   │    │    trust-api   imaging-api    │
+                  │    data-access-api   XNAT    │    │    data-access-api            │
+                  │    Orthanc   fl-client       │    │    fl-client                  │
+                  └─────────────────────────────┘    └──────────────────────────────┘
 ```
 
-![AWS architecture](docs/AWS.png "AWS architecture")
+![AWS architecture](docs/AWS.drawio.png "AWS architecture")
 
 ### Central Hub Infrastructure
 
-- **VPC**: Custom VPC with public/private subnets
-- **Central Hub EC2**: Single t3.medium instance in a **private subnet**, running Docker containers (UI, API, FL services)
+- **VPC**: Custom VPC (`10.0.0.0/16` by default) across 2 AZs, with public + private subnets and a single shared NAT Gateway
+- **ECS Fargate cluster**: Runs the Central Hub application services (`flip-api`, `fl-api-net-1`, `fl-server-net-1`) as awsvpc tasks in **private subnets**. Task definitions, services, and per-service security groups live in `ecs*.tf` and `iam_ecs.tf`.
+- **Central Hub SSM bastion**: t3.micro instance with a 10 GB root volume in a **private subnet**. It carries only the SSM managed IAM policy and a PostgreSQL client for ad-hoc RDS operations; application workloads run on ECS Fargate.
 - **Trust EC2**: Separate t3.xlarge instance in a **private subnet**, running Trust services via Docker Compose
   - Deployed using custom Terraform module (`modules/trust_ec2`)
   - Automatic Docker and Docker Compose installation via user_data
   - Automatic Docker network creation for inter-service communication
   - No inbound ports open — access via SSM (`ssh flip-trust`) and SSM port forwarding for XNAT/Orthanc debugging (`make forward-trust`)
-- **ALB**: Application Load Balancer for traffic routing
-- **RDS**: PostgreSQL 15 managed database (EOL: October 2027)
-- **CloudWatch**: Logging and monitoring for both EC2 instances
-- **Secrets Manager**: Secure storage for API secrets and database credentials
-- **S3 Backend**: Remote state storage with environment-specific buckets
+- **ALB (Application Load Balancer)**: HTTPS-only entrypoint for API traffic. **Internal** (`internal = true`), lives in the **private subnets** — it has no public IP and no internet-facing path. CloudFront reaches it via an `aws_cloudfront_vpc_origin` (AWS-managed ENI in this VPC). The ALB security group accepts HTTPS:443 only from the AWS-managed `CloudFront-VPCOrigins-Service-SG` (Option 2 in the AWS VPC origins docs — the documented most-restrictive pattern; a `vpc_cidr` rule would not work because AWS evaluates VPC-origin SG checks against the service-managed SG, not the ENI source IP). The `https-listener` returns 404 by default and routes `/api/*` to the `ecs-flip-api` target group (`target_type=ip`, port 8000). The legacy `http-redirect` listener on port 80 exists as a belt-and-braces fallback only — its SG has no port-80 ingress, so it is unreachable externally.
+- **NLB (Network Load Balancer)**: TCP pass-through entrypoint for FL server traffic. Lives in the **public subnets**. Listens on `FL_SERVER_PORT` and forwards to the `ecs-fl-server-tcp` target group (`target_type=ip`) so the `fl-server-net-1` Fargate task receives the connection. The NLB security group ingress is allow-listed: NAT Gateway public IP (so the AWS-resident Trust EC2 can reach the FL server) plus any `local_trust_public_ip` set in the env file (so an on-prem trust can reach it). HTTP/2 gRPC framing is opaque to the NLB and forwarded as-is. **Why an NLB and not the ALB?** NVFLARE FL traffic is end-to-end mutual-TLS over gRPC, and an ALB (Layer 7) terminates TLS, which breaks NVFLARE's own certificate handshake. An NLB (Layer 4) does raw TCP pass-through, so the FL client and FL server complete their mTLS handshake untouched.
+- **CloudFront + WAFv2**: Edge distribution that serves the `flip-ui` static site from S3 and forwards `/api/*` to the internal ALB via an `aws_cloudfront_vpc_origin` (HTTPS-only). A WAFv2 WebACL is attached to the distribution for L7 protection; WAF logs are shipped to CloudWatch Logs.
+- **ACM**: Two certificates — one in `eu-west-2` for the ALB, one in `us-east-1` for the CloudFront viewer.
+- **Route53**: `A` alias records for the canonical subdomain (→ CloudFront) and for the FL-server NLB.
+- **EFS**: Shared file systems and access points used by the FL services for workspace volumes (configs, certs, transfer dir). Mount targets live in the **private subnets**.
+- **Cloud Map (Service Discovery)**: Private DNS namespace `flip.local` used for ECS task-to-task resolution (e.g. `fl-api-net-1.flip.local`).
+- **VPC endpoints**: Interface endpoints (Secrets Manager, SSM, CloudWatch Logs, ECR API + DKR) in the **private subnets** plus an S3 gateway endpoint. Allow Fargate tasks to reach AWS APIs without traversing the NAT Gateway.
+- **RDS**: PostgreSQL 17 managed database (Terraform default, see `var.postgres_version`), in the **private subnets**. Subnet group + security group ingress restricted to the Central Hub EC2 SG and the `flip-api` ECS task SG.
+- **CloudWatch**: Logging and monitoring for ECS tasks, the Trust EC2, the WAFv2 ACL, and VPC endpoints. The minimal Central Hub bastion does not run the CloudWatch agent.
+- **Secrets Manager**: Secure storage for API secrets and database credentials (`FLIP_API` secret).
+- **SSM Parameter Store**: Configuration values read by ECS tasks at startup — bucket URIs, internal service URL, internal-service-key header name.
+- **S3 Backend**: Remote state storage with environment-specific buckets, DynamoDB lock table.
+
+### Subnet placement at a glance
+
+| Resource | Subnet | Notes |
+| --- | --- | --- |
+| Internet Gateway | (attached to VPC) | Route target for public subnets |
+| NAT Gateway | **Public** | Single shared NAT for all private-subnet egress |
+| ALB | **Private** (`internal = true`) | Reached only via the CloudFront VPC origin ENI; SG accepts 443 only from `CloudFront-VPCOrigins-Service-SG` |
+| NLB | **Public** | Security group ingress allow-listed to NAT public IP + on-prem Trust IP |
+| Central Hub SSM bastion (`aws_instance.ec2_instance`) | **Private** | t3.micro, 10 GB; no inbound rules or app workloads; `psql` + SSM only |
+| Trust EC2 (`module.trust_ec2`) | **Private** | No inbound ports; SSM-only |
+| ECS Fargate tasks (`flip-api`, `fl-api-net-1`, `fl-server-net-1`) | **Private** | `assign_public_ip = false`, awsvpc ENIs |
+| RDS (PostgreSQL) | **Private** | DB subnet group spans both private subnets |
+| EFS mount targets | **Private** | One per AZ |
+| VPC interface endpoints (Secrets Manager, SSM, Logs, ECR API/DKR) | **Private** | One ENI per AZ |
+| S3 gateway endpoint | (routes attached to private route tables) | No ENI |
 
 ### Trust Infrastructure
 
@@ -500,23 +778,28 @@ Trust services can run on AWS EC2 or on-premises. Both models use the same Docke
 - Automatic Docker network creation for inter-service communication
 - Runs in a private subnet with no inbound ports — XNAT and Orthanc accessible only via SSM port forwarding for debugging
 
-**On-Premises Trust** — provisioned via `make add-local-trust` and the Ansible playbook in [`deploy/providers/local/`](../local/README.md):
+**On-Premises Trust** — provisioned via `make provision-local-trust` and the Ansible playbook in [`deploy/providers/local/`](../local/README.md):
 
 - Same Docker Compose stack, running on a local Ubuntu host
 - No inbound port forwarding or firewall rules needed — all trust communication is outbound
 
 ### Port configuration
 
-| Port | Service | Status | Purpose |
-| ------ | --------- | --------- | --------- |
-| **22** | SSH | 🔴 **CLOSED** | Not exposed — remote access is via SSM Session Manager tunnel (see below) |
-| **80** | HTTP | 🟢 **OPEN** | ALB traffic |
-| **443** | HTTPS | 🟢 **OPEN** | ALB HTTPS entrypoint |
-| **3000** | FLIP UI | 🟢 **OPEN** | Frontend application |
-| **8080** | FLIP API | 🟢 **OPEN** | Backend API |
-| **8000** | FL API | 🟢 **OPEN** | Federated learning API |
-| **8002** | FL Server/Admin | 🟡 **CONDITIONAL** | Consolidated FL server/admin traffic (open to trust IPs only) |
-| | | | Trust API: no inbound port needed (trusts poll the hub outbound) |
+Ingress at the load balancers (not at any EC2 SG — both EC2 hosts are in private subnets with no inbound rules from the internet). The NLB is the only load balancer reachable directly from the internet; the ALB is internal and only reachable via the CloudFront VPC origin:
+
+| Port | Load balancer | Status | Source allow-list | Purpose |
+| ---- | ------------- | ------ | ----------------- | ------- |
+| **22** | — | 🔴 **CLOSED everywhere** | n/a | SSH never exposed — remote access is via SSM Session Manager tunnel |
+| **443** | ALB (internal) | 🟢 **OPEN to VPC origin only** | `CloudFront-VPCOrigins-Service-SG` | `/api/*` HTTPS traffic from CloudFront via the VPC origin ENI. Not reachable from the internet (ALB has no public IP). Default action returns 404. |
+| **80** | ALB (internal) | 🟡 **DEFINED, UNREACHABLE** | (no ingress rule) | Legacy HTTP→HTTPS redirect listener. SG has no port-80 ingress and the ALB has no public IP anyway; CloudFront already redirects HTTP→HTTPS at the edge and dials the origin HTTPS-only. |
+| **`FL_SERVER_PORT`** | NLB | 🟡 **CONDITIONAL** | NAT Gateway public IP + `local_trust_public_ip` if set | TCP/gRPC pass-through to the `fl-server-net-1` Fargate task |
+
+Ports referenced internally only (no internet-facing ingress; reached only from inside the VPC or from the load balancers):
+
+- **8000** — `flip-api` ECS task port (ALB target group target port). Not exposed externally.
+- **`FL_API_PORT`** — `fl-api-net-1` ECS task port. Cloud Map internal only; no LB and no external ingress.
+- **5432** — RDS PostgreSQL. Reachable only from the Central Hub EC2 SG and the `flip-api` ECS task SG.
+- **Trust API** — no inbound port needed; trusts poll the hub outbound.
 
 ### Remote Access via SSM Session Manager
 
@@ -583,7 +866,7 @@ Host flip
 **Connecting**
 
 ```bash
-ssh flip        # Central Hub
+ssh flip        # Central Hub SSM bastion
 ssh flip-trust  # Trust EC2
 ```
 
@@ -592,13 +875,13 @@ Both aliases resolve through the SSM tunnel — no public IP or open port 22 is 
 **Troubleshooting SSM Access**
 
 | Problem | Diagnostics | Solution |
-|---------|-------------|----------|
+| --------- | ------------- | ---------- |
 | `Unable to locate credentials` | `aws sts get-caller-identity` returns error | Run `aws sso login --profile $AWS_PROFILE` to refresh session |
 | `SessionManagerPlugin not found` | `command -v session-manager-plugin` returns nothing | Install plugin: `brew install session-manager-plugin` (macOS) or see prerequisites above |
 | `[ERROR] SessionManagerPlugin is not installed` | Session manager plugin is missing or outdated | Upgrade plugin: `brew upgrade session-manager-plugin` or download latest version |
 | `InvalidInstanceID.NotFound` | SSH attempts to connect but fails | Verify instance exists: `terraform output Ec2InstanceId` and `terraform output TrustEc2InstanceId` |
 | `AccessDeniedException` | `aws ssm start-session` returns access denied | Check EC2 instance IAM role has `ssm:StartSession` and `ec2messages:*` permissions (Terraform should have created this) |
-| `Connection timeout` (hanging) | SSM tunnel hangs without error | Check security group allows NLB ingress from NAT Gateway (port 8000-8005); verify instances are running: `aws ec2 describe-instances` |
+| `Connection timeout` (hanging) | SSM tunnel hangs without error | Check `aws ssm describe-instance-information` reports the instance as `Online`, verify the instance is running, and confirm its private subnet has NAT/VPC-endpoint egress. No inbound SSH rule is required. |
 | `Unable to connect to SSM endpoint` | Connection fails immediately | Verify AWS_REGION matches deployment region: `echo $AWS_REGION` should match `eu-west-2` (or your region) |
 | `Bad ProxyCommand` in ~/.ssh/config | SSH config syntax error | Re-generate config: `make ssh-config` and verify it looks like the example above |
 
@@ -636,7 +919,8 @@ deploy/providers/AWS/
 │       └── flip-xnat-credentials.txt        # Plain-text fallback
 ├── services.tf                              # Cognito config - loads cognito/ templates via file()
 ├── main.tf                                  # SES config - loads ses/ templates via file()
-├── test_email_templates.py                  # Test utility for all templates
+└── tests/
+    └── test_email_templates.py              # Test utility for all templates
 ```
 
 ### How Templates Are Loaded
@@ -686,14 +970,14 @@ Changes to template files are automatically picked up on next `terraform apply` 
 cd deploy/providers/AWS
 
 # Test all templates and generate HTML previews
-python3 test_email_templates.py
+python3 tests/test_email_templates.py
 
 # View in browser with local HTTP server
-python3 test_email_templates.py --serve
+python3 tests/test_email_templates.py --serve
 # Open http://localhost:8000/flip_email_invite.html
 
 # Test with custom data
-python3 test_email_templates.py \
+python3 tests/test_email_templates.py \
   --username "user@health.org" \
   --subdomain "flip-stag.example.com"
 ```
@@ -713,7 +997,7 @@ After deploying, test that emails are delivered correctly by using the **Registe
 ### Email Client Compatibility
 
 | Client | Support | Notes |
-|--------|---------|-------|
+| -------- | --------- | ------- |
 | Gmail Web | Full | CSS gradients supported |
 | Outlook Web | Full | CSS gradients with fallback |
 | Apple Mail | Full | Dark mode compatible |
@@ -734,7 +1018,7 @@ Before testing emails:
 ### Troubleshooting Email Issues
 
 | Issue | Solution |
-|-------|----------|
+| ------- | ---------- |
 | Email gradients don't render | Most clients support gradients; solid color fallback in template |
 | Button not clickable | Some clients disable links for security; check email client settings |
 | Text wraps awkwardly | Tables use responsive max-width: 600px (standard) |
@@ -745,6 +1029,6 @@ Before testing emails:
 ### Making Template Changes
 
 1. **Edit template file** in `templates/cognito/` or `templates/ses/`
-2. **Test locally**: `python3 test_email_templates.py` (verify all 5 pass)
+2. **Test locally**: `python3 tests/test_email_templates.py` (verify all 5 pass)
 3. **Review**: Check generated `email_previews/*.html` files in browser
 4. **Deploy**: Changes are picked up on next `terraform apply`

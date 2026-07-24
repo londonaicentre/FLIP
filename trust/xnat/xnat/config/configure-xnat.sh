@@ -19,6 +19,8 @@
 # - trust/xnat/.env
 #
 
+set -euo pipefail
+
 # The below are fixed values for now
 XNAT_URL="http://xnat-web:8080" # internal to Docker network
 ORTHANC_HOST="orthanc" # name of the service (container) in docker-compose

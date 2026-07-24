@@ -77,22 +77,25 @@ class TestIProjectSchema:
 class TestIProjectQuerySchema:
     def test_valid_iproject_query(self):
         query_id = str(uuid4())
+        trust_ids = [uuid4() for _ in range(5)]
         query = IProjectQuery(
             id=query_id,
             name="Age Query",
-            query="SELECT * FROM table WHERE age > 50",  # Renamed from query
-            trusts_queried=5,
+            query="SELECT * FROM table WHERE age > 50",
+            queried_trust_ids=trust_ids,
             total_cohort=100,
         )
         assert query.id == UUID(query_id)
         assert query.name == "Age Query"
         assert query.query == "SELECT * FROM table WHERE age > 50"
-        assert query.trusts_queried == 5
+        assert query.queried_trust_ids == trust_ids
         assert query.total_cohort == 100
 
     def test_iproject_query_optional_fields(self):
-        query = IProjectQuery(id=str(uuid4()), name="Q", query="Q_TEXT", trusts_queried=None, total_cohort=None)
-        assert query.trusts_queried is None
+        query = IProjectQuery(id=str(uuid4()), name="Q", query="Q_TEXT", total_cohort=None)
+        # queried_trust_ids defaults to an empty list (used by both the
+        # staging gate and as a count source via len()).
+        assert query.queried_trust_ids == []
         assert query.total_cohort is None
 
 
@@ -198,11 +201,11 @@ class TestIModelsInfoResponseSchema:
             id=model_id,
             name="Clinical Model",
             description="Predicts outcomes",
-            status=ModelStatus.TRAINING_STARTED,
+            status=ModelStatus.RUNNING,
             owner_id=owner_id,  # Renamed from owner_id
         )
         assert info.id == UUID(model_id)
-        assert info.status == ModelStatus.TRAINING_STARTED
+        assert info.status == ModelStatus.RUNNING
         assert info.owner_id == UUID(owner_id)
 
 

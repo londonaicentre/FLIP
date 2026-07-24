@@ -80,7 +80,7 @@ def unstage_project_endpoint(
         )
 
     # Check if project is in STAGED status
-    if project_data.status != ProjectStatus.STAGED.value:
+    if project_data.status != ProjectStatus.STAGED:
         logger.error(f"Project with ID: {project_id} is not currently staged.")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

@@ -12,7 +12,7 @@
 -->
 
 <template>
-    <div class="flex items-center justify-center rounded-full w-7 h-7 text-primary-500 dark:text-primary-200 bg-primary-100 dark:bg-gray-700 shrink-0 dark:ring dark:ring-primary-400 dark:ring-offset-2 dark:ring-offset-gray-900">
+    <div class="flex items-center justify-center rounded-full w-7 h-7 text-primary-500 dark:text-primary-200 bg-primary-100 dark:bg-dark-raised shrink-0 dark:ring dark:ring-primary-400 dark:ring-offset-2 dark:ring-offset-dark-canvas">
         <slot class="w-4 h-4" />
     </div>
 </template>

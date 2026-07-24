@@ -1,0 +1,247 @@
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+{{- if .Values.omopDb.enabled }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "flip-trust.fullname" . }}-omop-db
+  namespace: {{ include "flip-trust.namespace" . }}
+  labels:
+    {{- include "flip-trust.labels" . | nindent 4 }}
+    app.kubernetes.io/component: omop-db
+data:
+  POSTGRES_USER: {{ .Values.omopDb.credentials.user | quote }}
+  POSTGRES_DB: {{ .Values.dataAccessApi.env.OMOP_POSTGRES_DB | quote }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: omop-db
+  namespace: {{ include "flip-trust.namespace" . }}
+  labels:
+    {{- include "flip-trust.labels" . | nindent 4 }}
+    app.kubernetes.io/component: omop-db
+spec:
+  type: ClusterIP
+  ports:
+    - port: 5432
+      targetPort: postgres
+      protocol: TCP
+      name: postgres
+  selector:
+    {{- include "flip-trust.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: omop-db
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "flip-trust.fullname" . }}-omop-db
+  namespace: {{ include "flip-trust.namespace" . }}
+  labels:
+    {{- include "flip-trust.labels" . | nindent 4 }}
+    app.kubernetes.io/component: omop-db
+spec:
+  serviceName: omop-db
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "flip-trust.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: omop-db
+  template:
+    metadata:
+      labels:
+        {{- include "flip-trust.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: omop-db
+    spec:
+      enableServiceLinks: false
+      {{- if .Values.imagePullSecrets }}
+      imagePullSecrets:
+{{ include "flip-trust.imagePullSecrets" . | nindent 8 }}
+      {{- end }}
+      {{- if .Values.omopDb.initJob.enabled }}
+      initContainers:
+        - name: seed-data
+          image: amazon/aws-cli:2.22.0
+          securityContext:
+            runAsUser: 0
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -euo pipefail
+              if [ -f /var/lib/postgresql/data/PG_VERSION ]; then
+                echo "OMOP data directory already populated. Skipping seed."
+                exit 0
+              fi
+              microdnf install -y tar gzip curl 2>/dev/null || yum install -y tar gzip curl 2>/dev/null
+              TRUST_NUM="{{ .Values.trustNumber }}"
+              DATA_VERSION="{{ .Values.omopDb.initJob.dataVersion }}"
+              S3_BUCKET="{{ .Values.omopDb.initJob.s3Bucket }}"
+              mkdir -p /var/lib/postgresql/data
+              if [ -n "$S3_BUCKET" ]; then
+                ARCHIVE_NAME="{{ .Values.omopDb.initJob.archiveName }}"
+                if [ -z "$ARCHIVE_NAME" ]; then
+                  TRUST_NAME="{{ .Values.trustName }}"
+                  ARCHIVE_NAME="${TRUST_NAME}_pgdata_${DATA_VERSION}.tar.gz"
+                fi
+                ARCHIVE_URL="s3://${S3_BUCKET}/omop/${ARCHIVE_NAME}"
+                echo "Downloading OMOP data from S3: ${ARCHIVE_URL}..."
+                aws s3 cp "${ARCHIVE_URL}" /tmp/omop-data.tar
+                tar xf /tmp/omop-data.tar -C /var/lib/postgresql/data
+              else
+                HF_REPO="aicentreflip/trust-data"
+                HF_REVISION="main"
+                ARCHIVE="trust${TRUST_NUM}_pgdata_${DATA_VERSION}.tar"
+                ARCHIVE_URL="https://huggingface.co/datasets/${HF_REPO}/resolve/${HF_REVISION}/trust${TRUST_NUM}/${ARCHIVE}"
+                echo "Downloading OMOP data from HuggingFace (trust${TRUST_NUM}): ${ARCHIVE_URL}..."
+                curl -fSL "${ARCHIVE_URL}" -o /tmp/omop-data.tar
+                tar xf /tmp/omop-data.tar -C /var/lib/postgresql/data
+              fi
+              chown -R 999:999 /var/lib/postgresql/data
+              chmod 700 /var/lib/postgresql/data
+              echo "OMOP data seed complete."
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+          {{- if .Values.omopDb.initJob.hostAwsMount.enabled }}
+          env:
+            - name: AWS_DEFAULT_REGION
+              value: {{ default "eu-west-2" .Values.awsRegion | quote }}
+            - name: AWS_PROFILE
+              value: {{ .Values.omopDb.initJob.awsProfile | quote }}
+          {{- end }}
+      {{- end }}
+      containers:
+        - name: postgres
+          image: "{{ .Values.omopDb.image.repository }}:{{ .Values.omopDb.image.tag }}"
+          imagePullPolicy: {{ .Values.omopDb.image.pullPolicy }}
+          ports:
+            - name: postgres
+              containerPort: 5432
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: {{ include "flip-trust.fullname" . }}-omop-db
+          env:
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ if .Values.secrets.create }}{{ include "flip-trust.fullname" . }}-secrets{{ else }}{{ .Values.secrets.existingName }}{{ end }}
+                  key: omop-postgres-password
+            - name: DATA_ACCESS_POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ if .Values.secrets.create }}{{ include "flip-trust.fullname" . }}-secrets{{ else }}{{ .Values.secrets.existingName }}{{ end }}
+                  key: data-access-postgres-password
+          lifecycle:
+            postStart:
+              exec:
+                command:
+                  - /bin/sh
+                  - -c
+                  - |
+                    # Wait for PostgreSQL to be ready
+                    until pg_isready -U {{ .Values.omopDb.credentials.user | quote }} -d {{ .Values.dataAccessApi.env.OMOP_POSTGRES_DB | quote }} 2>/dev/null; do
+                      sleep 1
+                    done
+                    # Create or update the data_analyst_reader role.
+                    # ALTER ROLE runs unconditionally so a restored OMOP backup
+                    # (which carries the role with its original password) always
+                    # ends up with the password from DATA_ACCESS_POSTGRES_PASSWORD.
+                    psql -U {{ .Values.omopDb.credentials.user | quote }} -d {{ .Values.dataAccessApi.env.OMOP_POSTGRES_DB | quote }} <<-EOSQL
+                      DO \$\$
+                      BEGIN
+                        IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'data_analyst_reader') THEN
+                          CREATE ROLE data_analyst_reader WITH LOGIN PASSWORD '${DATA_ACCESS_POSTGRES_PASSWORD}';
+                        ELSE
+                          ALTER ROLE data_analyst_reader WITH PASSWORD '${DATA_ACCESS_POSTGRES_PASSWORD}';
+                        END IF;
+                      END
+                      \$\$;
+                      GRANT CONNECT ON DATABASE {{ .Values.dataAccessApi.env.OMOP_POSTGRES_DB | quote }} TO data_analyst_reader;
+                      GRANT pg_read_all_data TO data_analyst_reader;
+                      -- Ensure unqualified table refs resolve to omop schema.
+                      ALTER DATABASE {{ .Values.dataAccessApi.env.OMOP_POSTGRES_DB | quote }} SET search_path = omop, public;
+                    EOSQL
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+          resources:
+            {{- toYaml .Values.omopDb.resources | nindent 12 }}
+          livenessProbe:
+            exec:
+              command:
+                - pg_isready
+                - -U
+                - {{ .Values.omopDb.credentials.user | quote }}
+                - -d
+                - {{ .Values.dataAccessApi.env.OMOP_POSTGRES_DB | quote }}
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            exec:
+              command:
+                - pg_isready
+                - -U
+                - {{ .Values.omopDb.credentials.user | quote }}
+                - -d
+                - {{ .Values.dataAccessApi.env.OMOP_POSTGRES_DB | quote }}
+            initialDelaySeconds: 5
+            periodSeconds: 5
+  {{- if .Values.omopDb.persistence.enabled }}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+        labels:
+          {{- include "flip-trust.labels" . | nindent 10 }}
+          app.kubernetes.io/component: omop-db
+      spec:
+        accessModes:
+          - {{ .Values.omopDb.persistence.accessMode }}
+        {{- if .Values.omopDb.persistence.storageClassName }}
+        storageClassName: {{ .Values.omopDb.persistence.storageClassName }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.omopDb.persistence.size }}
+  {{- else }}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: 1Gi
+  {{- end }}
+{{- else }}
+# External omop-db: create a minimal Service to point at the external host
+apiVersion: v1
+kind: Service
+metadata:
+  name: omop-db
+  namespace: {{ include "flip-trust.namespace" . }}
+  labels:
+    {{- include "flip-trust.labels" . | nindent 4 }}
+    app.kubernetes.io/component: omop-db
+    flip/external: "true"
+spec:
+  type: ExternalName
+  externalName: {{ .Values.omopDb.external.host | quote }}
+  ports:
+    - port: {{ .Values.omopDb.external.port }}
+      targetPort: {{ .Values.omopDb.external.port }}
+      protocol: TCP
+      name: postgres
+{{- end }}

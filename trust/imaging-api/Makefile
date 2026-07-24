@@ -10,24 +10,18 @@
 # limitations under the License.
 #
 
-# if tag PROD=true is passed, set PROD=true
-ifeq ($(PROD),true)
-MAIN_ENV_FILE=../../.env.production
-else ifeq ($(PROD),stag)
-MAIN_ENV_FILE=../../.env.stag
-else
-MAIN_ENV_FILE=../../.env.development
-endif
-
-ifneq ("$(wildcard $(MAIN_ENV_FILE))","")
-include $(MAIN_ENV_FILE)
-export $(shell sed 's/=.*//' $(MAIN_ENV_FILE))
+# Pull defaults from the per-trust kit example (the only tracked env source —
+# the real kit file is gitignored and may not exist on a dev box).
+KIT_ENV_FILE=../.env.GSTT.development.example
+ifneq ("$(wildcard $(KIT_ENV_FILE))","")
+include $(KIT_ENV_FILE)
+export $(shell sed 's/=.*//' $(KIT_ENV_FILE))
 endif
 
 service_name = imaging-api
 lint_command = uv run ruff check . --fix
 test_coverage_html_command = uv run pytest --tb=short --disable-warnings --cov=imaging_api/ --cov-report=html --cov-report=term-missing --cov-report=xml:coverage.xml
-docker_command = docker compose -f ../compose_trust.development.yml
+docker_command = docker compose --project-directory .. -f ../deploy/compose_trust.development.yml
 run_clean = run --rm --remove-orphans
 mypy_command = uv run mypy . --ignore-missing-imports
 

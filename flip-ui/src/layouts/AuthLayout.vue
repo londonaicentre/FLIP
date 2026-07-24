@@ -13,22 +13,58 @@
 
 <template>
     <AiErrorAlert v-if="errorStore.hasError" class="absolute z-10" />
-    <div class="bg-body dark:bg-gray-900">
-        <div class="flex items-center justify-center h-screen">
+    <div class="bg-body dark:bg-dark-canvas">
+        <div class="flex items-center justify-center h-screen supports-[height:100dvh]:h-dvh">
+            <div class="absolute top-6 left-8 z-10 flex items-center gap-4">
+                <a
+                    href="https://www.aicentre.co.uk/"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    aria-label="AI Centre for Value Based Healthcare"
+                >
+                    <img
+                        v-if="!isDark"
+                        src="/images/aicentre-logo-transparent.webp"
+                        alt="AI Centre for Value Based Healthcare"
+                        class="h-12 w-auto"
+                    >
+                    <img
+                        v-else
+                        src="/images/aicentre-logo-transparent-dark.webp"
+                        alt="AI Centre for Value Based Healthcare"
+                        class="h-12 w-auto"
+                    >
+                </a>
+                <a
+                    href="https://londonaicentreflip.readthedocs.io/en/latest/"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    aria-label="FLIP documentation"
+                >
+                    <img
+                        v-if="!isDark"
+                        src="/images/flip-logo-text.webp"
+                        alt="FLIP"
+                        class="h-12 w-auto"
+                    >
+                    <img
+                        v-else
+                        src="/images/flip-logo-text-dark.webp"
+                        alt="FLIP"
+                        class="h-12 w-auto"
+                    >
+                </a>
+            </div>
             <div class="absolute top-0 right-0">
-                <img src="@/assets/login/top-right.svg?url">
+                <img src="@/assets/login/top-right.svg?url" alt="" class="corner-art-fade-top">
             </div>
             <div class="absolute bottom-0 left-0">
-                <img src="@/assets/login/bottom-left.svg?url">
+                <img src="@/assets/login/bottom-left.svg?url" alt="" class="corner-art-fade-bottom">
             </div>
             <div
-                class="p-2 flex flex-row bg-white dark:bg-gray-800 w-full md:min-w-[760px] md:max-w-[800px] min-h-[417px] shadow-xl rounded-md relative m-4"
+                class="flex flex-row w-full md:max-w-md min-h-[417px] relative m-4"
             >
-                <div class="flex-shrink-0 hidden max-w-sm md:flex items-center bg-white justify-center grow rounded-lg">
-                    <LoginBranding />
-                </div>
-
-                <div class="flex flex-grow p-2 md:pl-4">
+                <div class="flex flex-grow bg-white dark:bg-dark-surface py-4 px-8 border border-gray-200 dark:border-dark-border rounded-lg">
                     <div class="flex flex-col flex-grow">
                         <div class="flex pb-1">
                             <button
@@ -42,26 +78,43 @@
                                 Back to log in
                             </button>
                             <div class="flex-grow" />
-                            <img src="/images/nhs-logo.png" alt="NHS logo" class="h-[40px] rounded">
                         </div>
-                        <router-view />
+                        <main class="flex flex-col flex-grow">
+                            <router-view />
+                        </main>
                     </div>
                 </div>
             </div>
+            <footer
+                data-test="auth-footer-links"
+                class="absolute bottom-4 left-1/2 -translate-x-1/2 flex flex-row items-center justify-center gap-6 text-xs text-center font-heading text-gray-500 dark:text-gray-300 z-10"
+            >
+                <a
+                    v-for="link in footerLinks"
+                    :key="link.href"
+                    :href="link.href"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    class="hover:text-gray-700 dark:hover:text-gray-200 hover:underline"
+                >
+                    {{ link.label }}
+                </a>
+            </footer>
         </div>
     </div>
 </template>
 
 <script setup lang="ts">
+import { useDark } from "@vueuse/core";
 import { signOut as amplifySignOut } from "aws-amplify/auth";
 import { computed } from "vue";
 import { useRoute } from "vue-router";
 
 import AiErrorAlert from "@/components/AiAlert/AiErrorAlert.vue";
-import LoginBranding from "@/partials/auth/LoginBranding.vue";
 import { useAuthStore } from "@/store/auth";
 import { useErrorStore } from "@/store/error";
 
+const isDark = useDark();
 const errorStore = useErrorStore();
 const authStore = useAuthStore();
 const route = useRoute();
@@ -69,6 +122,21 @@ const route = useRoute();
 const routeName = computed(() => route?.name);
 
 const showBackToLogin = computed(() => routeName.value !== "auth-Login");
+
+const footerLinks = [
+    {
+        label: "AI CENTRE FOR VALUE-BASED HEALTHCARE",
+        href: "https://www.aicentre.co.uk/"
+    },
+    {
+        label: "KING'S COLLEGE LONDON",
+        href: "https://www.kcl.ac.uk/"
+    },
+    {
+        label: "GUY'S & ST THOMAS' NHS FOUNDATION TRUST",
+        href: "https://www.guysandstthomas.nhs.uk/"
+    }
+];
 
 // Leave the current auth flow and land on /auth/login, whatever the
 // current state is. A soft Vue Router push is not safe here: after a

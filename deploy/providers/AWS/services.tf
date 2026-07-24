@@ -13,82 +13,74 @@
 # limitations under the License.
 
 ############################
-# S3
+# FLIP application S3 buckets
 ############################
+#
+# The previous single `aws_s3_bucket.flip_bucket` held three tenants with
+# materially different access patterns:
+#
+#   - model file uploads (researcher → browser POST → AV-scan → flip-api reads)
+#   - FL results (fl-server writes; researcher downloads via browser GET)
+#   - FL app bundles (server-only — flip-api copies base → destination)
+#
+# CORS is bucket-wide in S3, so colocating these three tenants forced any
+# CORS change to widen across every consumer. Splitting into three buckets
+# gives each tenant the minimum CORS surface it needs:
+#
+#   - flip-model-files-uploads: CORS POST + GET (presigned POST policy enforces
+#     a content-length-range cap and optional Content-Type at the S3 edge —
+#     see flip-api/src/flip_api/utils/s3_client.py::get_put_presigned_post;
+#     GET is for the presigned-URL model-file download, FLIP#784)
+#   - flip-fl-results: CORS GET (browser presigned download)
+#   - flip-app-bundles: no CORS resource (server-only, never browser-direct)
+#
+# State migration: the old `aws_s3_bucket.flip_bucket` resource and its
+# sub-resources are dropped from this stack via `removed` blocks at the
+# bottom of this file. The underlying AWS bucket is left in place so its
+# contents can be migrated and verified out-of-band (`make migrate-flip-bucket`)
+# before manual decommission.
 
-resource "aws_s3_bucket" "flip_bucket" {
-  bucket = var.FLIP_BUCKET_NAME
-  lifecycle {
-    prevent_destroy = true
-  }
+module "flip_model_files_uploads_bucket" {
+  source      = "./modules/flip_s3_bucket"
+  bucket_name = var.FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME
+  # Researcher uploads use a presigned POST policy minted by
+  # `get_put_presigned_post` in
+  # flip-api/src/flip_api/file_services/presigned_url_for_upload.py. The
+  # policy bakes in `["content-length-range", 0, MAX_MODEL_FILE_BYTES]`
+  # (and locks Content-Type when the caller supplies one), so S3 rejects
+  # oversized or wrong-type uploads at the edge — the hub never sees them.
+  # GET is for model-file downloads: `download_file.py` hands the browser a
+  # presigned GET URL (FLIP#784) instead of proxying bytes through flip-api,
+  # so the bucket needs to accept a direct browser GET.
+  cors_methods          = ["POST", "GET"]
+  cors_allowed_origins  = ["https://${var.flip_alb_subdomain}"]
+  kms_key_arn           = aws_kms_key.flip_app_key.arn
+  logging_target_bucket = local.access_logs_bucket_name
+  mfa_delete_protection = true
+  # The module enables server access logging to flip_access_logs; force it
+  # to wait for the LogDelivery ACL grant on that destination bucket so the
+  # first-apply order is `ACL → bucket_logging`.
+  depends_on = [aws_s3_bucket_acl.flip_access_logs]
 }
 
-resource "aws_s3_bucket_public_access_block" "flip_bucket" {
-  bucket                  = aws_s3_bucket.flip_bucket.id
-  block_public_acls       = true
-  block_public_policy     = true
-  ignore_public_acls      = true
-  restrict_public_buckets = true
+module "flip_fl_results_bucket" {
+  source                = "./modules/flip_s3_bucket"
+  bucket_name           = var.FLIP_FL_RESULTS_BUCKET_NAME
+  cors_methods          = ["GET"]
+  cors_allowed_origins  = ["https://${var.flip_alb_subdomain}"]
+  kms_key_arn           = aws_kms_key.flip_app_key.arn
+  logging_target_bucket = local.access_logs_bucket_name
+  mfa_delete_protection = true
+  depends_on            = [aws_s3_bucket_acl.flip_access_logs]
 }
 
-resource "aws_s3_bucket_server_side_encryption_configuration" "flip_bucket" {
-  bucket = aws_s3_bucket.flip_bucket.id
-
-  rule {
-    apply_server_side_encryption_by_default {
-      sse_algorithm = "aws:kms"
-    }
-    bucket_key_enabled = true
-  }
-}
-
-resource "aws_s3_bucket_versioning" "flip_bucket" {
-  bucket = aws_s3_bucket.flip_bucket.id
-
-  versioning_configuration {
-    status = "Enabled"
-  }
-}
-
-resource "aws_s3_bucket_cors_configuration" "flip_bucket_cors" {
-  bucket = aws_s3_bucket.flip_bucket.id
-
-  cors_rule {
-    allowed_headers = ["*"]
-    allowed_methods = ["PUT"]
-    allowed_origins = ["https://${var.flip_alb_subdomain}"]
-    expose_headers  = []
-  }
-}
-
-# Model files uploaded by researchers will be combined with the base app here
-resource "aws_s3_object" "app_destination_bucket" {
-  bucket  = aws_s3_bucket.flip_bucket.id
-  key     = "app_destination_bucket/"
-  content = ""
-  lifecycle {
-    prevent_destroy = true
-  }
-}
-
-# Model files uploaded by researchers will be stored here
-resource "aws_s3_object" "model_files" {
-  bucket  = aws_s3_bucket.flip_bucket.id
-  key     = "model_files/"
-  content = ""
-  lifecycle {
-    prevent_destroy = true
-  }
-}
-
-# FL results will be stored here
-resource "aws_s3_object" "uploaded_federated_data" {
-  bucket  = aws_s3_bucket.flip_bucket.id
-  key     = "uploaded_federated_data/"
-  content = ""
-  lifecycle {
-    prevent_destroy = true
-  }
+module "flip_app_bundles_bucket" {
+  source      = "./modules/flip_s3_bucket"
+  bucket_name = var.FLIP_APP_BUNDLES_BUCKET_NAME
+  # No CORS: flip-api is the only consumer and reaches the bucket via boto3.
+  logging_target_bucket = local.access_logs_bucket_name
+  kms_key_arn           = aws_kms_key.flip_app_key.arn
+  depends_on            = [aws_s3_bucket_acl.flip_access_logs]
 }
 
 ############################
@@ -115,7 +107,8 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "aicentre_bucket" 
 
   rule {
     apply_server_side_encryption_by_default {
-      sse_algorithm = "aws:kms"
+      sse_algorithm     = "aws:kms"
+      kms_master_key_id = aws_kms_key.flip_app_key.arn
     }
     bucket_key_enabled = true
   }
@@ -140,6 +133,45 @@ resource "aws_s3_bucket_cors_configuration" "aicentre_bucket_cors" {
   }
 }
 
+# Enforce HTTPS-only access to the AI Centre bucket. Denies any S3
+# action over plain HTTP — covers reads, writes, deletes, and bucket-
+# level operations like ListBucket. Matches the defense-in-depth
+# pattern used by the module-managed buckets in modules/flip_s3_bucket.
+resource "aws_s3_bucket_policy" "aicentre_bucket_https_only" {
+  bucket = aws_s3_bucket.aicentre_bucket.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Sid       = "DenyHTTP"
+      Effect    = "Deny"
+      Principal = "*"
+      Action    = "s3:*"
+      Resource = [
+        aws_s3_bucket.aicentre_bucket.arn,
+        "${aws_s3_bucket.aicentre_bucket.arn}/*",
+      ]
+      Condition = {
+        Bool = {
+          "aws:SecureTransport" = "false"
+        }
+      }
+    }]
+  })
+}
+
+# Server access logging for the AI Centre bucket. Depends on the
+# LogDelivery ACL grant so AWS doesn't reject the logging-enable call
+# on first apply.
+resource "aws_s3_bucket_logging" "aicentre_bucket" {
+  bucket = aws_s3_bucket.aicentre_bucket.id
+
+  target_bucket = aws_s3_bucket.flip_access_logs.id
+  target_prefix = "${aws_s3_bucket.aicentre_bucket.bucket}/"
+
+  depends_on = [aws_s3_bucket_acl.flip_access_logs]
+}
+
 ############################
 # Cognito
 ############################
@@ -159,8 +191,9 @@ module "cognito" {
   researcher_email   = var.flip_cognito_researcher_email
   seed_user_password = var.ADMIN_USER_PASSWORD
   templates_dir      = "${path.module}/templates/cognito"
-  # The UI uses USER_PASSWORD_AUTH (not OAuth redirect), so callback_urls are
-  # hygiene only — keep the canonical subdomain + localhost for dev.
+  # The UI uses USER_SRP_AUTH (Cognito's native auth flow, not OAuth2 redirect),
+  # so callback_urls are hygiene only — keep the canonical subdomain + localhost
+  # for dev.
   callback_urls = ["https://${var.flip_alb_subdomain}", "https://localhost:443"]
   logout_urls   = ["https://${var.flip_alb_subdomain}", "https://localhost:443"]
 }
@@ -201,4 +234,76 @@ moved {
 moved {
   from = aws_cognito_user.researcher_user
   to   = module.cognito.aws_cognito_user.researcher_user[0]
+}
+
+############################
+# Decommission of the old single-bucket layout
+############################
+#
+# The previous design colocated three tenants under `aws_s3_bucket.flip_bucket`
+# (see the head of this file for the rationale). These `removed` blocks tell
+# Terraform to forget those resources from state without destroying the
+# underlying AWS bucket — the bucket holds production data that is migrated
+# out-of-band via `make migrate-flip-bucket` and then manually decommissioned
+# (`aws s3 rb`) after a cooldown.
+#
+# `lifecycle { destroy = false }` is what makes this safe: without it,
+# `removed` would attempt to delete the AWS resource on the next apply and
+# the original `prevent_destroy = true` on `aws_s3_bucket.flip_bucket` would
+# block the plan. Safe to drop these blocks once every live state file has
+# been applied and the old bucket has been decommissioned in every env.
+removed {
+  from = aws_s3_bucket.flip_bucket
+  lifecycle {
+    destroy = false
+  }
+}
+
+removed {
+  from = aws_s3_bucket_public_access_block.flip_bucket
+  lifecycle {
+    destroy = false
+  }
+}
+
+removed {
+  from = aws_s3_bucket_server_side_encryption_configuration.flip_bucket
+  lifecycle {
+    destroy = false
+  }
+}
+
+removed {
+  from = aws_s3_bucket_versioning.flip_bucket
+  lifecycle {
+    destroy = false
+  }
+}
+
+removed {
+  from = aws_s3_bucket_cors_configuration.flip_bucket_cors
+  lifecycle {
+    destroy = false
+  }
+}
+
+removed {
+  from = aws_s3_object.app_destination_bucket
+  lifecycle {
+    destroy = false
+  }
+}
+
+removed {
+  from = aws_s3_object.model_files
+  lifecycle {
+    destroy = false
+  }
+}
+
+removed {
+  from = aws_s3_object.uploaded_federated_data
+  lifecycle {
+    destroy = false
+  }
 }

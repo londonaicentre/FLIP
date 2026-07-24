@@ -17,7 +17,7 @@
 # tasks lose local state on every restart, so the cert/admin/transfer
 # directories must persist on EFS and be mounted via access points.
 #
-# Access points use posix_user uid/gid 1001 — never root. The flip-fl-base
+# Access points use posix_user uid/gid 1001 — never root. The FL service
 # Dockerfiles run as a non-root user that must match this uid.
 
 ############################
@@ -44,8 +44,7 @@ resource "aws_efs_file_system" "flip_fl" {
 #
 # Empty-by-design in PR 1. PR 2 adds standalone aws_security_group_rule
 # resources allowing ingress 2049 from the ecs_fl_api and ecs_fl_server SGs
-# (which PR 2 also creates). Until then, the file system is unreachable —
-# which is the intended state during PR 1.
+# (which PR 2 also creates).
 #
 # No egress rule by design: EFS mount targets terminate NFS traffic at the
 # ENI and never initiate outbound connections, so denying egress costs
@@ -57,6 +56,10 @@ resource "aws_security_group" "efs_mount_target" {
   name        = "efs-mount-target"
   description = "NFS 2049 from ECS fl-api and fl-server tasks (rules added in PR 2); no egress by design"
   vpc_id      = module.flip_vpc.vpc_id
+
+  tags = {
+    FlipSG = "true"
+  }
 }
 
 ############################
@@ -96,6 +99,20 @@ locals {
       path  = "/fl-server-net-1/transfer"
       perms = "0755"
     }
+    # Shared checkpoint-staging volume. The fl-api de-bundles large evaluation
+    # checkpoints (e.g. the ~759 MiB Ark+ weights) out of the client app and
+    # writes them to SERVER_CHECKPOINT_ROOT/<model_id>/ (see FLIP#695); the
+    # fl-server's EvaluationModelLocator reads them back from the same path.
+    # This ONE access point is mounted at /app/server-checkpoints on BOTH the
+    # fl-api-net-1 (writer) and fl-server-net-1 (reader) tasks — mirroring the
+    # single `${FL_JOBS_DIR}/net-1:/app/server-checkpoints` bind shared between
+    # the two services in compose.production.nvflare.yml. Both containers run as
+    # uid/gid 1001, which the access point pins, so writer and reader agree on
+    # ownership. 0775 lets the group write the per-model subdirs fl-api mkdirs.
+    fl_checkpoints = {
+      path  = "/fl-server-net-1/server-checkpoints"
+      perms = "0775"
+    }
     fl_server_certs = {
       path  = "/fl-server-net-1/certificates"
       perms = "0750"
@@ -128,4 +145,30 @@ resource "aws_efs_access_point" "flip_fl" {
   tags = {
     Name = "flip-fl-${each.key}"
   }
+}
+
+############################
+# SG ingress: NFS from ECS tasks
+############################
+
+resource "aws_security_group_rule" "efs_ingress_ecs_fl_api" {
+  count                    = var.enable_efs ? 1 : 0
+  type                     = "ingress"
+  description              = "NFS from ecs_fl_api tasks"
+  from_port                = 2049
+  to_port                  = 2049
+  protocol                 = "tcp"
+  security_group_id        = aws_security_group.efs_mount_target.id
+  source_security_group_id = aws_security_group.ecs_fl_api.id
+}
+
+resource "aws_security_group_rule" "efs_ingress_ecs_fl_server" {
+  count                    = var.enable_efs ? 1 : 0
+  type                     = "ingress"
+  description              = "NFS from ecs_fl_server tasks"
+  from_port                = 2049
+  to_port                  = 2049
+  protocol                 = "tcp"
+  security_group_id        = aws_security_group.efs_mount_target.id
+  source_security_group_id = aws_security_group.ecs_fl_server.id
 }

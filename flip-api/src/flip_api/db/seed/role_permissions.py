@@ -14,9 +14,9 @@ from uuid import UUID
 
 from sqlmodel import Session, select
 
-from flip_api.db.database import engine
+from flip_api.db.database import get_engine
 from flip_api.db.models.user_models import Permission, PermissionRef, Role, RolePermission
-from flip_api.utils.logger import logger
+from flip_api.db.seed.seed_logger import logger
 
 
 def _grant_permissions(session: Session, role_id: UUID, permission_ids: list[UUID]) -> None:
@@ -56,7 +56,7 @@ def seed_role_permissions(session: Session) -> None:
     - Admin: every permission defined in ``PermissionRef``.
     - Researcher: ``CAN_CREATE_PROJECTS`` only. ``CAN_MANAGE_PROJECTS`` is
       reserved for Admin — it bypasses per-project access checks (see issue #358).
-    - Observer: none — read-only access is enforced at the route layer by
+    - Viewer: none — read-only access is enforced at the route layer by
       the absence of ``CAN_MANAGE_PROJECTS``.
 
     Args:
@@ -82,7 +82,7 @@ def seed_role_permissions(session: Session) -> None:
 
 
 if __name__ == "__main__":
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         seed_role_permissions(session)
         logger.info("Role permissions seeding completed.")
         session.close()

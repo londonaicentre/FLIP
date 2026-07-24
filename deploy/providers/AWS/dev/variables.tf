@@ -75,3 +75,24 @@ variable "cognito_mfa_configuration" {
   description = "Pool-level MFA mode for the dev pool. Defaults to OFF so local devs aren't challenged by stale per-user TOTP enrolments at sign-in; the stag/prod roots leave this unset and inherit the module default of OPTIONAL."
   default     = "OFF"
 }
+
+variable "FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME" {
+  type        = string
+  description = "Globally-unique S3 bucket name for researcher-uploaded model files in the dev account. Required, no default."
+}
+
+variable "FLIP_FL_RESULTS_BUCKET_NAME" {
+  type        = string
+  description = "Globally-unique S3 bucket name for FL training results in the dev account. Required, no default."
+}
+
+variable "FLIP_APP_BUNDLES_BUCKET_NAME" {
+  type        = string
+  description = "Globally-unique S3 bucket name for FL app bundles in the dev account. Required, no default."
+}
+
+variable "s3_cors_allowed_origins" {
+  type        = list(string)
+  description = "Browser origins permitted to CORS-call the dev S3 buckets. Must include every UI origin that calls the API in dev — typically https://localhost:443, the Vite dev-server http://localhost:44357, and the flip-api origin http://localhost:8080 (Swagger UI exercising the presigned flows)."
+  default     = ["https://localhost:443", "http://localhost:44357", "http://localhost:8080"]
+}

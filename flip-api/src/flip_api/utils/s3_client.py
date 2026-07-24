@@ -10,15 +10,39 @@
 # limitations under the License.
 #
 
+import hashlib
 from collections import defaultdict
 from typing import Any
 from urllib.parse import urlparse
 
 import boto3
+from boto3.exceptions import S3UploadFailedError
 from botocore.exceptions import ClientError, EndpointConnectionError
 
 from flip_api.config import get_settings
 from flip_api.utils.logger import logger
+
+# S3's ``content-length-range`` policy condition caps the **total HTTP body**
+# size (file bytes + multipart framing: boundary strings, the key /
+# Content-Type / policy / x-amz-signature form fields, and the file part's
+# own Content-Disposition header — typically ~500B to a few KB). Without
+# this buffer, a file at exactly the size cap would be rejected at the S3
+# edge because the encoded request is unavoidably larger. 16 KB is well
+# above any realistic multipart overhead and is 0.015% of the 100 MB
+# default cap — negligible storage-cost slack in exchange for a clean
+# "file bytes <= MAX_MODEL_FILE_BYTES" semantic the UI guard mirrors.
+_MULTIPART_OVERHEAD_BUFFER_BYTES = 16 * 1024
+
+# Upper bound on pre-signed URL lifetime, for both PUT (upload) and GET
+# (download) URLs. A leaked URL is a capability against the bucket in
+# either direction — writable for PUT, readable for GET — so the leak
+# window must stay tight regardless of method. 1800s (30 min) is the
+# security ceiling — callers may pass less. It was raised from 600s to
+# accommodate larger model-file uploads (up to the MAX_MODEL_FILE_BYTES
+# cap): an upload can't reliably finish inside a 10-minute window on a
+# typical link, and an expired policy aborts the transfer at the S3 edge.
+# Moving this value requires a security review.
+MAX_PRESIGNED_URL_TTL_SECONDS = 1800
 
 
 def parse_s3_path(s3_path: str) -> tuple[str, str]:
@@ -37,20 +61,41 @@ def parse_s3_path(s3_path: str) -> tuple[str, str]:
     return bucket, key
 
 
+def hash_s3_key(key: str) -> str:
+    """SHA-256 prefix of an S3 key, suitable for log correlation without leaking the key itself."""
+    return hashlib.sha256(key.encode("utf-8")).hexdigest()[:16]
+
+
 class S3Client:
     """S3 client wrapper for S3 operations."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize S3 client with AWS credentials."""
         self.client = boto3.client("s3", region_name=get_settings().AWS_REGION)
 
-    def get_presigned_url(self, s3_path: str, expiration: int = 3600) -> str:
+    def get_presigned_url(
+        self,
+        s3_path: str,
+        expiration: int = MAX_PRESIGNED_URL_TTL_SECONDS,
+        response_content_disposition: str | None = None,
+    ) -> str:
         """
         Generate a pre-signed URL for downloading a file from S3.
 
         Args:
             s3_path: Full S3 path (e.g., s3://bucket-name/key)
-            expiration: URL expiration time in seconds (default: 1 hour)
+            expiration: URL expiration time in seconds (default: the 1800s
+                security ceiling, so default callers never trip the clamp
+                warning below). Values
+                above ``MAX_PRESIGNED_URL_TTL_SECONDS`` are silently clamped to
+                the ceiling — a warning is logged so an over-limit caller
+                leaves an audit trail. Silent clamping is deliberate: the
+                ceiling is a hard security policy, never an error condition.
+            response_content_disposition: If provided, overrides the
+                ``Content-Disposition`` response header S3 sends back for
+                this GET — lets the browser save the file under the right
+                name even though the client never touches flip-api's own
+                response headers for the transfer itself.
 
         Returns:
             str: Pre-signed URL string
@@ -59,40 +104,107 @@ class S3Client:
             Exception: If URL generation fails
         """
         bucket, key = parse_s3_path(s3_path)
+        ttl = min(expiration, MAX_PRESIGNED_URL_TTL_SECONDS)
+        if expiration > MAX_PRESIGNED_URL_TTL_SECONDS:
+            logger.warning(
+                f"Requested GET pre-signed URL TTL {expiration}s exceeds the "
+                f"{MAX_PRESIGNED_URL_TTL_SECONDS}s security ceiling; clamped to {ttl}s."
+            )
+
+        params: dict[str, Any] = {"Bucket": bucket, "Key": key}
+        if response_content_disposition is not None:
+            params["ResponseContentDisposition"] = response_content_disposition
 
         url = self.client.generate_presigned_url(
             "get_object",
-            Params={"Bucket": bucket, "Key": key},
-            ExpiresIn=expiration,
+            Params=params,
+            ExpiresIn=ttl,
         )
         return url
 
-    def get_put_presigned_url(self, s3_path: str, expiration: int = 3600) -> str:
+    def get_put_presigned_post(
+        self,
+        s3_path: str,
+        max_bytes: int,
+        content_type: str | None = None,
+        expiration: int = MAX_PRESIGNED_URL_TTL_SECONDS,
+    ) -> dict[str, Any]:
         """
-        Generate a pre-signed URL for uploading a file to S3.
+        Generate a pre-signed POST policy for uploading a file to S3 with
+        explicit size and (optional) content-type constraints baked in.
+
+        S3 enforces the policy at the edge: multipart/form-data POSTs whose
+        body exceeds ``max_bytes`` or whose Content-Type form field doesn't
+        match the policy are rejected before any bytes land in the bucket.
+        The single-PUT URL produced by ``generate_presigned_url("put_object",
+        ...)`` carries no such constraints, which is the whole point of
+        using POST here instead.
 
         Args:
-            s3_path: Full S3 path (e.g., s3://bucket-name/key)
-            expiration: URL expiration time in seconds (default: 1 hour)
+            s3_path (str): Full S3 path (e.g., ``s3://bucket-name/key``).
+            max_bytes (int): Hard cap on the **file** size in bytes. The
+                condition actually sent to S3 is
+                ``max_bytes + _MULTIPART_OVERHEAD_BUFFER_BYTES`` because S3
+                measures the whole encoded request body, not just the file
+                part — see the module-level comment for why.
+            content_type (str | None): If provided, the policy locks
+                Content-Type to this exact value. If ``None``, any
+                Content-Type is accepted but the size cap still applies.
+            expiration (int): URL/policy expiration (seconds). Values above
+                ``MAX_PRESIGNED_URL_TTL_SECONDS`` are silently clamped to
+                the ceiling — a warning is logged so an over-limit caller
+                leaves an audit trail. Silent clamping is deliberate: the
+                ceiling is a hard security policy, never an error condition.
 
         Returns:
-            str: Pre-signed URL string
+            dict[str, Any]: ``{"url": ..., "fields": {...}}`` — pass through
+            to the client as multipart/form-data POST.
 
         Raises:
-            Exception: If URL generation fails
+            Exception: If policy generation fails.
         """
-        try:
-            bucket, key = parse_s3_path(s3_path)
-
-            url = self.client.generate_presigned_url(
-                "put_object",
-                Params={"Bucket": bucket, "Key": key},
-                ExpiresIn=expiration,
+        bucket, key = parse_s3_path(s3_path)
+        ttl = min(expiration, MAX_PRESIGNED_URL_TTL_SECONDS)
+        if expiration > MAX_PRESIGNED_URL_TTL_SECONDS:
+            logger.warning(
+                f"Requested PUT pre-signed POST TTL {expiration}s exceeds the "
+                f"{MAX_PRESIGNED_URL_TTL_SECONDS}s security ceiling; clamped to {ttl}s."
             )
-            return url
+        try:
+            request_body_cap = max_bytes + _MULTIPART_OVERHEAD_BUFFER_BYTES
+            conditions: list[Any] = [["content-length-range", 0, request_body_cap]]
+            fields: dict[str, str] = {}
+            if content_type is not None:
+                conditions.append({"Content-Type": content_type})
+                fields["Content-Type"] = content_type
+
+            response = self.client.generate_presigned_post(
+                Bucket=bucket,
+                Key=key,
+                Fields=fields,
+                Conditions=conditions,
+                ExpiresIn=ttl,
+            )
+            # Never log the policy ``url`` itself: it carries
+            # X-Amz-Signature / X-Amz-Credential, and writable capability
+            # leaks chain into FL supply-chain attacks.
+            logger.info(
+                "Generated pre-signed POST policy "
+                f"bucket={bucket} key_hash={hash_s3_key(key)} expires_in={ttl}"
+            )
+            return response
         except ClientError as e:
-            logger.error(f"Error generating pre-signed URL: {e}")
-            raise Exception("Unable to create a pre-signed URL")
+            # Log a structured line without the traceback. ``logger.exception``
+            # would emit ``str(e)`` via the formatter, and a future boto error
+            # shape that embeds a URL fragment in ``Error.Message`` would then
+            # leak through ``exc_info``. Keep only the AWS error code, which
+            # is an enum-like string (``AccessDenied``, ``NoSuchBucket``, …).
+            error_code = e.response.get("Error", {}).get("Code", "Unknown")
+            logger.error(
+                f"Error generating pre-signed POST policy bucket={bucket} "
+                f"key_hash={hash_s3_key(key)} error_code={error_code}"
+            )
+            raise Exception("Unable to create a pre-signed POST policy") from e
 
     def delete_object(self, s3_path: str) -> None:
         """
@@ -233,6 +345,33 @@ class S3Client:
                 return False
             logger.error(f"Error checking if object {key} exists in bucket {bucket}: {e}")
             raise
+
+    def upload_file(self, local_path: str, s3_path: str) -> None:
+        """
+        Upload a local file to S3.
+
+        Used by the FL app bundler to copy repository-owned base application
+        templates (read from the local ``FL_APP_BASE_DIR`` tree) into the
+        destination bundle bucket, replacing the former S3-to-S3 copy from the
+        base bucket (FLIP#724).
+
+        Args:
+            local_path (str): Absolute path of the local file to upload.
+            s3_path (str): Full destination S3 path (e.g., ``s3://bucket-name/key``).
+
+        Raises:
+            Exception: If the upload fails.
+        """
+        try:
+            bucket, key = parse_s3_path(s3_path)
+            # boto3's managed upload wraps S3-side failures (AccessDenied, NoSuchBucket, …) in
+            # S3UploadFailedError — a boto3.exceptions type, not a botocore ClientError — so it must
+            # be caught explicitly alongside ClientError; OSError covers a local-file read failure.
+            self.client.upload_file(local_path, bucket, key)
+            logger.info(f"Successfully uploaded {local_path} to {s3_path}")
+        except (S3UploadFailedError, ClientError, OSError) as e:
+            logger.error(f"Error uploading {local_path} to {s3_path}: {e}")
+            raise Exception(f"Unable to upload file {local_path} to {s3_path}: {e}") from e
 
     def copy_object(self, source_s3_path: str, dest_s3_path: str) -> None:
         """

@@ -15,28 +15,141 @@
 
 import { createTestingPinia } from "@pinia/testing";
 import { mount } from "@vue/test-utils";
-import { vi } from "vitest";
+import { describe, expect, it, test, vi } from "vitest";
 
 import AiHeader from "../AiHeader.vue";
 
-const HeaderTestIds = { Title: "[data-test='header-title']" };
+// Local stubs override the global `router-link: true` in test/setup.ts so the
+// slot children (logos, nav labels, active indicator, mobile menu items) get
+// rendered and we can assert on them.
+const stubs = {
+    "router-link": {
+        props: ["to"],
+        template: "<a :data-to='to'><slot /></a>"
+    },
+    Popover: { template: "<header><slot :open='true' :close='() => undefined' /></header>" },
+    PopoverButton: { template: "<button data-test='popover-btn'><slot /></button>" },
+    PopoverPanel: { template: "<div data-test='popover-panel'><slot /></div>" },
+    TransitionRoot: { template: "<div><slot /></div>" },
+    TransitionChild: { template: "<div><slot /></div>" },
+    AiPopoverOverlay: { template: "<div data-test='popover-overlay' />" }
+};
+
+function mountHeader(options: {
+    currentPage?: string;
+    permissions?: string[];
+    deploymentMode?: boolean;
+    isDark?: boolean;
+} = {}) {
+    const { currentPage = "/projects", permissions = [], deploymentMode = false, isDark = false } = options;
+
+    return mount(AiHeader, {
+        props: {
+            title: "Projects",
+            currentPage,
+            isDark
+        },
+        global: {
+            stubs,
+            plugins: [createTestingPinia({
+                createSpy: vi.fn,
+                stubActions: false,
+                initialState: {
+                    auth: { user: { permissions } },
+                    siteDetails: { deploymentMode }
+                }
+            })],
+            directives: { tippy: () => {} }
+        }
+    });
+}
 
 describe("AiHeader", () => {
-    test("Renders Component with correct props", () => {
-        const title = "Test Title";
+    test("Renders the top nav with required props", () => {
+        const component = mountHeader();
 
-        const component = mount(AiHeader, {
-            props: { title },
-            global: {
-                stubs: ["router-link"],
-                plugins: [createTestingPinia({
-                    createSpy: vi.fn,
-                    stubActions: false
-                })]
-            }
+        // The page now owns its own H1, so the header renders only the top nav
+        // (no visible title element).
+        expect(component.find("[data-test='top-nav']").exists()).toBe(true);
+    });
+
+    it("renders the brand logos inside the home link", () => {
+        const component = mountHeader();
+        const logos = component.findAll("img");
+
+        expect(logos.map(i => i.attributes("alt"))).toEqual(
+            expect.arrayContaining(["London AI Centre", "FLIP"])
+        );
+    });
+
+    it("uses the light AI Centre logo in light mode", () => {
+        const component = mountHeader({ isDark: false });
+
+        expect(component.find("img[src=\"/images/aicentre-logo-transparent.webp\"]").exists()).toBe(true);
+        expect(component.find("img[src=\"/images/aicentre-logo-transparent-dark.webp\"]").exists()).toBe(false);
+    });
+
+    it("uses the dark AI Centre logo in dark mode", () => {
+        const component = mountHeader({ isDark: true });
+
+        expect(component.find("img[src=\"/images/aicentre-logo-transparent-dark.webp\"]").exists()).toBe(true);
+        expect(component.find("img[src=\"/images/aicentre-logo-transparent.webp\"]").exists()).toBe(false);
+    });
+
+    it("names the icon-only mobile menu button for assistive tech", () => {
+        const component = mountHeader();
+
+        expect(component.find("[data-test='mobile-menu-btn']").attributes("aria-label")).toBe("Open menu");
+    });
+
+    it("uses the light FLIP text logo in light mode", () => {
+        const component = mountHeader({ isDark: false });
+
+        expect(component.find("img[src=\"/images/flip-logo-text.webp\"]").exists()).toBe(true);
+        expect(component.find("img[src=\"/images/flip-logo-text-dark.webp\"]").exists()).toBe(false);
+    });
+
+    it("uses the dark FLIP text logo in dark mode", () => {
+        const component = mountHeader({ isDark: true });
+
+        expect(component.find("img[src=\"/images/flip-logo-text-dark.webp\"]").exists()).toBe(true);
+        expect(component.find("img[src=\"/images/flip-logo-text.webp\"]").exists()).toBe(false);
+    });
+
+    it("renders an entry per navigation item with the matching item marked current", () => {
+        const component = mountHeader({
+            currentPage: "/connectionstatus",
+            permissions: ["CanAccessAdminPanel"]
         });
+        const navLinks = component.find("[data-test='top-nav']").findAll("a");
 
-        const titleElement = component.find(HeaderTestIds.Title);
-        expect(titleElement.text()).toEqual(title);
+        expect(navLinks.map(l => l.text())).toEqual([
+            "Projects",
+            "Models",
+            "Connection Status",
+            "Admin"
+        ]);
+        // Active item gets the underline indicator span; siblings don't.
+        const currentLink = navLinks.find(l => l.text() === "Connection Status")!;
+        expect(currentLink.find("span[aria-hidden='true']").exists()).toBe(true);
+    });
+
+    it("hides the Admin nav item when the user lacks CanAccessAdminPanel", () => {
+        const component = mountHeader({ permissions: [] });
+        const navLinks = component.find("[data-test='top-nav']").findAll("a");
+
+        expect(navLinks.map(l => l.text())).not.toContain("Admin");
+    });
+
+    it("renders the deployment-mode pulse badge when the site is in deployment mode", () => {
+        const component = mountHeader({ deploymentMode: true });
+
+        expect(component.find("[data-test='deployment-mode-status']").exists()).toBe(true);
+    });
+
+    it("omits the deployment-mode badge when not in deployment mode", () => {
+        const component = mountHeader({ deploymentMode: false });
+
+        expect(component.find("[data-test='deployment-mode-status']").exists()).toBe(false);
     });
 });

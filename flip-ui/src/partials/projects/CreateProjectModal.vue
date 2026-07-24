@@ -44,13 +44,13 @@
                         leave-to="translate-x-full"
                     >
                         <div class="w-screen max-w-4xl">
-                            <DialogPanel class="flex flex-col h-full bg-white dark:bg-gray-800 divide-y divide-gray-100 dark:divide-gray-700 shadow-xl dark:ring-white/20 dark:ring-1">
-                                <div class="p-4 bg-primary-500 dark:bg-gray-900 sm:px-6">
+                            <DialogPanel class="flex flex-col h-full bg-white dark:bg-dark-surface divide-y divide-gray-100 dark:divide-dark-border shadow-xl dark:ring-white/20 dark:ring-1">
+                                <div class="p-4 bg-primary-500 dark:bg-dark-canvas sm:px-6">
                                     <div class="flex items-center justify-between">
                                         <DialogTitle class="text-xl font-bold font-heading text-primary-100 dark:text-gray-300">
                                             Create Project
                                         </DialogTitle>
-                                        <div class="flex items-start ml-3 h-7 text-primary-300 dark:text-gray-400">
+                                        <div class="flex items-start ml-3 h-7 text-primary-300 dark:text-gray-300">
                                             <button
                                                 type="button"
                                                 class="cursor-pointer hover:text-primary-100 transition focus:outline-none focus:ring-1 rounded focus:ring-primary-400"
@@ -63,7 +63,7 @@
                                         </div>
                                     </div>
                                     <div class="mt-1">
-                                        <p class="text-sm text-primary-200 dark:text-gray-500">
+                                        <p class="text-sm text-primary-200 dark:text-gray-300">
                                             Enter your projects details below.
                                         </p>
                                     </div>
@@ -90,13 +90,15 @@
                                                 <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                                                     Convert DICOMs to NIfTI
                                                 </label>
-                                                <p class="text-xs text-gray-500 dark:text-gray-400 mb-1">
-                                                    Automatically convert DICOM scans to NIfTI format when images are imported from PACS into XNAT.
+                                                <p class="text-xs text-gray-500 dark:text-gray-300 mb-1">
+                                                    Automatically convert DICOM scans to NIfTI format when images are
+                                                    imported from PACS into XNAT.
                                                 </p>
-                                                <p class="text-xs text-gray-500 dark:text-gray-400 mb-1">
-                                                    When enabled, NIfTI files can be requested using the ResourceType parameter.
+                                                <p class="text-xs text-gray-500 dark:text-gray-300 mb-1">
+                                                    When enabled, NIfTI files can be requested using the ResourceType
+                                                    parameter.
                                                 </p>
-                                                <p class="text-xs text-gray-500 dark:text-gray-400 mb-2">
+                                                <p class="text-xs text-gray-500 dark:text-gray-300 mb-2">
                                                     Disable this if you will be working with DICOM files directly.
                                                 </p>
                                                 <AiSwitch
@@ -113,7 +115,7 @@
                                         </div>
                                     </div>
                                 </div>
-                                <div class="flex justify-end flex-shrink-0 p-4 space-x-4 bg-gray-50 dark:bg-gray-900">
+                                <div class="flex justify-end flex-shrink-0 p-4 space-x-4 bg-gray-50 dark:bg-dark-canvas">
                                     <AiButton :data-test="'close-create-project-btn'" @click="closeModal">
                                         Cancel
                                     </AiButton>
@@ -190,7 +192,7 @@ const submitForm = async(v: unknown) => {
             return u.id;
         });
 
-        values.dicom_to_nifti = !!(values as Record<string, unknown>).dicom_to_nifti;
+        values.dicom_to_nifti = !!values.dicom_to_nifti;
 
         const { id: projectId } = await createProject("/projects", values as IProjectCreate);
 
@@ -203,7 +205,7 @@ const submitForm = async(v: unknown) => {
         });
 
         routeChange.viewProject(projectId);
-    } catch (e) {
+    } catch {
         modalStore.toggleCreateProject();
 
         Snackbar.show({

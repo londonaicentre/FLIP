@@ -18,6 +18,7 @@ from fastapi import HTTPException, status
 from fastapi.testclient import TestClient
 
 from flip_api.auth.dependencies import verify_token
+from flip_api.db.database import get_session
 from flip_api.domain.schemas.users import CognitoUser
 from flip_api.main import app
 from flip_api.user_services.get_user import get_user
@@ -34,6 +35,7 @@ client = TestClient(app)
 def override_deps():
     """Override auth dependency for all tests using TestClient."""
     app.dependency_overrides[verify_token] = lambda: uuid4()
+    app.dependency_overrides[get_session] = lambda: None
     yield
     app.dependency_overrides.clear()
 

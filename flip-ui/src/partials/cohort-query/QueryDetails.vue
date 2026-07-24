@@ -20,58 +20,57 @@
                         Cohort Query
                     </h2>
                     <div
-                        class="flex flex-col items-center justify-center w-full h-full gap-4 p-4 mt-4 border-2 border-gray-300 dark:border-gray-700 border-dashed rounded-lg"
+                        class="flex flex-col items-center justify-center w-full h-full gap-4 p-4 mt-4 border-2 border-gray-300 dark:border-dark-border border-dashed rounded-lg"
                     >
                         <div class="relative block w-full text-center">
                             <icon-ph-chart-bar-duotone class="w-12 h-12 mx-auto text-primary-500 dark:text-primary-400" />
-                            <div class="mt-2 text-sm">
+                            <div class="mt-2 text-xs leading-snug">
                                 There is no cohort query assigned to this project.
                             </div>
                         </div>
-                        <AiButton v-if="!isObserver" primary data-test="create-query-btn" @click="addCohortQuery">
+                        <AiButton v-if="!isViewer" primary data-test="create-query-btn" @click="addCohortQuery">
                             Create Cohort Query
                         </AiButton>
                     </div>
                 </div>
             </div>
             <div v-else data-test="cohort-query-exists">
-                <h2 class="text-lg font-semibold font-heading p-4 leading-loose">
-                    Cohort Query
-                </h2>
+                <div class="flex items-center justify-between p-4">
+                    <h2 class="text-lg font-semibold font-heading leading-loose">
+                        Cohort Query
+                    </h2>
+                    <AiButton
+                        light
+                        data-test="view-results-btn"
+                        aria-label="View Query"
+                        tooltip="View Query"
+                        @click="viewCohortQueryResults"
+                    >
+                        <icon-ph-eye class="lg:mr-2" />
+                        <span class="hidden lg:inline">View Query</span>
+                    </AiButton>
+                </div>
                 <div class="flow-root">
                     <div>
-                        <dl class="border-t border-b border-gray-200 divide-y divide-gray-200 dark:divide-gray-700 dark:border-gray-700">
-                            <div class="flex justify-between px-4 py-3 text-sm font-medium">
-                                <dt class="text-gray-500 dark:text-gray-300">
-                                    Name
-                                </dt>
-                                <dd class="font-semibold dark:text-gray-400" data-test="model-dashboard-cohort-query-name">
-                                    {{ queryDetails.name }}
-                                </dd>
-                            </div>
-                            <div class="flex justify-between px-4 py-3 text-sm font-medium">
+                        <dl class="border-t border-b border-gray-200 divide-y divide-gray-200 dark:divide-dark-border dark:border-dark-border">
+                            <div class="flex justify-between px-4 py-3 text-xs font-medium">
                                 <dt class="text-gray-500 dark:text-gray-300">
                                     Estimated Cohort Size
                                 </dt>
-                                <dd class="pl-8 font-semibold truncate dark:text-gray-400" data-test="model-dashboard-cohort-size">
+                                <dd class="pl-8 font-semibold truncate dark:text-gray-300" data-test="model-dashboard-cohort-size">
                                     {{ totalCount }}
                                 </dd>
                             </div>
-                            <div class="flex justify-between px-4 py-3 text-sm font-medium">
+                            <div class="flex justify-between px-4 py-3 text-xs font-medium">
                                 <dt class="text-gray-500 dark:text-gray-300">
                                     Trusts Queried
                                 </dt>
-                                <dd class="pl-8 font-semibold truncate dark:text-gray-400" data-test="model-dashboard-cohort-trusts-queried">
-                                    {{ queryDetails?.trustsQueried }}
+                                <dd class="pl-8 font-semibold truncate dark:text-gray-300" data-test="model-dashboard-cohort-trusts-queried">
+                                    {{ queryDetails?.queriedTrustIds?.length ?? 0 }}
                                 </dd>
                             </div>
                         </dl>
                     </div>
-                </div>
-                <div class="inline-flex justify-end w-full px-4 my-4 space-x-2">
-                    <AiButton light data-test="view-results-btn" @click="viewCohortQueryResults">
-                        View Query
-                    </AiButton>
                 </div>
             </div>
         </AiCard>
@@ -84,8 +83,8 @@ import { useRouter } from "vue-router";
 
 import AiButton from "@/components/AiButton/AiButton.vue";
 import AiCard from "@/components/AiCard/AiCard.vue";
+import { usePermissions } from "@/composables/usePermissions";
 import { IProjectQuery } from "@/services/project-service";
-import { useAuthStore } from "@/store/auth";
 import { useProjectStore } from "@/store/project";
 
 
@@ -94,10 +93,9 @@ interface IQueryDetails {
 }
 
 const router = useRouter();
-const authStore = useAuthStore();
 const project = useProjectStore().project;
 
-const isObserver = computed(() => !authStore.hasPermissions(["CanManageProjects"]));
+const { isViewer } = usePermissions();
 
 const props = defineProps<IQueryDetails>();
 

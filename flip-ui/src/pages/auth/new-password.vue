@@ -31,7 +31,7 @@ meta:
             <div class="absolute right-0 mt-4 mr-4">
                 <icon-mdi-information-outline
                     v-tippy="{ content: passwordRequirements }"
-                    class="text-gray-500"
+                    class="text-gray-500 dark:text-gray-300"
                 />
             </div>
             <AiInput
@@ -39,6 +39,7 @@ meta:
                 type="password"
                 data-test="new-password"
                 label="Enter a new password"
+                autocomplete="new-password"
                 :pre-icon="LockOutline"
             />
             <AiInput
@@ -46,6 +47,7 @@ meta:
                 type="password"
                 data-test="confirm-new-password"
                 label="Confirm new password"
+                autocomplete="new-password"
                 :pre-icon="LockOutline"
             />
             <div class="flex-grow" />
@@ -144,7 +146,7 @@ const submit = async (v: unknown): Promise<void> => {
 
     try {
         await authStore.changePassword(values.password);
-    } catch (e) {
+    } catch {
         Snackbar.show({
             type: "error",
             title: "Error",
@@ -171,6 +173,7 @@ const submit = async (v: unknown): Promise<void> => {
     ) {
         buttonLoader.value = false;
         routeChange.mfaSetup();
+
         return;
     }
 

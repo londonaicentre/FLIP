@@ -10,6 +10,7 @@
 # limitations under the License.
 #
 
+from datetime import datetime
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
@@ -19,9 +20,57 @@ from flip_api.domain.schemas.users import CognitoUser
 # Interfaces
 
 
-class IBasicTrust(BaseModel):
+class ITrustStatus(BaseModel):
+    """Trust list item with connection status, readable by any authenticated user.
+
+    Backs ``GET /trust`` — the single list-of-trusts endpoint — powering both the
+    trust pickers (project staging, cohort query, charts) and the Connection
+    Status page (trust table + topology). Every field is benign trust metadata —
+    no secrets — so the endpoint is intentionally not admin-gated. Creating a
+    trust (``POST /admin/trusts``) stays admin-only.
+    """
+
     id: UUID
     name: str
+    code: str | None = None
+    region: str | None = None
+    # last_heartbeat is surfaced as a string with an explicit UTC marker (Z) so
+    # the browser doesn't reinterpret a naive datetime as local time and skew the
+    # staleness calc. The DB column is `timestamp without time zone` but the
+    # values are written via datetime.now(timezone.utc), so they're already UTC —
+    # we just need to tag it on the wire.
+    last_heartbeat: str | None = None
+    project_count: int = 0
+
+
+class ICreateTrust(BaseModel):
+    name: str
+    code: str = Field(min_length=1, description="Short trust code, e.g. GSTT. Required.")
+    region: str | None = None
+
+
+class ICreatedTrust(BaseModel):
+    """Response for POST /admin/trusts.
+
+    `trust_api_key` and `trust_internal_service_key` are plaintext and are returned
+    exactly once. The hub only stores the SHA-256 of the api key; the internal
+    service key is not persisted (only used by trust-internal services).
+
+    `fl_kit_slot` is the pre-provisioned FL participant identity assigned to this
+    trust from the shared pool. The operator's containers mount the matching
+    ``workspace/net-N/services/<fl_kit_slot>/`` provisioned kit dirs; this is the
+    name the FL server sees on registration (independent of `name`).
+    """
+
+    id: UUID
+    name: str
+    code: str | None = None
+    region: str | None = None
+    created_at: datetime | None = None
+    trust_api_key: str
+    trust_internal_service_key: str
+    fl_kit_slot: str
+    fl_kit_slot_number: int
 
 
 class ITrustHealth(BaseModel):
@@ -37,6 +86,7 @@ class ITrustHealth(BaseModel):
 class ITrust(BaseModel):
     id: UUID
     name: str
+    code: str | None = Field(default=None, description="Short trust code, e.g. GSTT")
     fl_client_endpoint: str | None = Field(default=None, description="FL Client Endpoint URL")
 
 

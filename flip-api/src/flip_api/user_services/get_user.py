@@ -14,10 +14,12 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import ValidationError
+from sqlmodel import Session
 
 from flip_api.auth.dependencies import verify_token
+from flip_api.db.database import get_session
 from flip_api.domain.schemas.users import CognitoUser, GetUserByEmail, GetUserById
-from flip_api.utils.cognito_helpers import get_user_by_email_or_id, get_user_pool_id
+from flip_api.utils.cognito_helpers import apply_user_profile, get_user_by_email_or_id, get_user_pool_id
 from flip_api.utils.logger import logger
 
 router = APIRouter(prefix="/users", tags=["user_services"])
@@ -28,14 +30,16 @@ router = APIRouter(prefix="/users", tags=["user_services"])
 def get_user(
     user_id: str,
     request: Request,
+    db: Session = Depends(get_session),
     token_id: UUID = Depends(verify_token),
-):
+) -> CognitoUser:
     """
     Get user details by ID or email.
 
     Args:
         user_id (str): User ID or email.
         request (Request): FastAPI request object for headers.
+        db (Session): Database session.
         token_id (UUID): User ID from authentication token.
 
     Returns:
@@ -73,7 +77,7 @@ def get_user(
         if not user:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"User '{user_id}' cannot be found.")
 
-        return user
+        return apply_user_profile(user, db)
 
     except HTTPException:
         raise

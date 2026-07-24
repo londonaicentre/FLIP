@@ -36,7 +36,7 @@ def cohort_query_step_function_endpoint(
     cohort_query: CohortQueryInput,
     db: Session = Depends(get_session),
     user_id: UUID = Depends(verify_token),
-):
+) -> SubmitCohortQueryOutput:
     """
     Process a cohort query by orchestrating the workflow:
     1. Validate the project exists.
@@ -47,9 +47,9 @@ def cohort_query_step_function_endpoint(
 
     Args:
         request (Request): The FastAPI request object.
-        cohort_query (flip.domain.schemas.cohort.CohortQueryInput): The input data for the cohort query.
+        cohort_query (flip_api.domain.schemas.cohort.CohortQueryInput): The input data for the cohort query.
         db (Session): The database session.
-        user_id (str): The ID of the current user.
+        user_id (UUID): The ID of the current user.
 
     Returns:
         SubmitCohortQueryOutput: A dictionary containing the result of the cohort query submission.

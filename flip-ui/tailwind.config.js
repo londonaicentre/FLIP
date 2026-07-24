@@ -30,7 +30,17 @@ module.exports = {
             },
             colors: {
                 // Add new colours here
-                body: colors.gray[100],
+                // `body` is the application-wide page background. Matches the
+                // design handoff's `--paper` token (#FAF7F5), a warm off-white
+                // with a pink undertone that complements the primary palette.
+                body: "#FAF7F5",
+                // Design-handoff ink tokens (04·A ProjectChrome): `ink` is the
+                // warm near-black text ink, `ink-3` its muted step. Ghost tab
+                // navs use them for text and (at low alpha) the active fill.
+                ink: {
+                    DEFAULT: "#1A1320",
+                    3: "#7A727F",
+                },
                 primary: {
                     100: "#F7F3F9",
                     200: "#DBC4E2",
@@ -47,7 +57,29 @@ module.exports = {
                     900: "#33691E",
                 },
                 deeporange: { 900: "#BF360C" },
-                green: colors.emerald
+                green: colors.emerald,
+                // FLIP dark-mode palette (warm plum-charcoal). Single source of
+                // truth for dark surfaces/borders — reference via `dark:bg-dark-*`
+                // and `dark:border-dark-*`. Dark-mode text maps onto the standard
+                // gray ramp (fg-1 gray-100, fg-2 gray-300, fg-3 gray-400, disabled
+                // gray-500) and links onto primary-300/200, so those need no new
+                // tokens. See the palette reference for usage rules.
+                dark: {
+                    canvas: "#0B1018", // app background / page (deep cool charcoal)
+                    surface: "#0E0B13", // cards, panels, sidebar
+                    raised: "#201A29", // modals, popovers, sticky header, hover
+                    inset: "#070509", // input wells, code blocks, table headers (darker than surface so wells read)
+                    border: "#2A2336", // default dividers + card borders
+                    "border-strong": "#3A3147", // input borders / separators with presence
+                },
+                // Status colours, lightened to read on dark surfaces. Render as
+                // the solid colour for text + dot over a low-opacity tint.
+                status: {
+                    approved: "#4ADE80", // success / APPROVED
+                    staged: "#F4BE1D", // warn / STAGED (brand gold)
+                    unstaged: "#F87171", // danger / UNSTAGED
+                    info: "#A9C5DC", // info / data
+                }
             },
             screens: {
                 "3xl": "1920px",

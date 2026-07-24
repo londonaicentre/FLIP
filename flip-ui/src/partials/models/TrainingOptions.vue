@@ -12,17 +12,17 @@
 -->
 
 <template>
-    <div class="px-4 pb-4 space-y-8 divide-y divide-gray-200 dark:divide-gray-700 sm:space-y-5">
+    <div class="px-6 pb-4 space-y-8 divide-y divide-gray-200 dark:divide-dark-border sm:space-y-5">
         <div>
             <p class="max-w-2xl mt-1 text-sm text-gray-500 dark:text-gray-300">
                 Complete the following fields to initiate training.
             </p>
         </div>
-        <div class="mt-6 space-y-6 divide-y sm:mt-5 sm:space-y-5 divide dark:divide-gray-700">
+        <div class="mt-6 space-y-6 divide-y sm:mt-5 sm:space-y-5 divide dark:divide-dark-border">
             <div class="sm:grid sm:grid-cols-3 sm:gap-4 sm:items-center sm:pt-5">
                 <label for="enriched" class="block text-sm font-medium text-gray-700 dark:text-gray-300 sm:mt-px sm:pt-2">
                     Dataset enriched
-                    <div class="mr-2 text-sm text-gray-400">
+                    <div class="mr-2 text-sm text-gray-400 dark:text-gray-300">
                         Confirm your dataset has been enriched as required before training
                     </div>
                 </label>
@@ -31,6 +31,7 @@
                         name="enriched"
                         value="true"
                         data-test="data-enrichment-btn"
+                        :disabled="disabled"
                         :label="{ enabled: 'Dataset Enriched', disabled: 'Dataset Not Enriched' }"
                     />
                 </div>
@@ -38,42 +39,42 @@
             <div class="sm:grid sm:grid-cols-3 sm:gap-4 sm:items-start sm:pt-5">
                 <label class="block space-y-2 text-sm font-medium text-gray-700 dark:text-gray-300 sm:mt-px sm:pt-2">
                     Participating trusts
-                    <div class="mr-2 text-sm text-gray-400">
+                    <div class="mr-2 text-sm text-gray-400 dark:text-gray-300">
                         A minimum of 1 trust must be selected for training
                     </div>
                 </label>
                 <div class="sm:col-span-2">
-                    <AiButton light block class="mb-4" @click="toggleConnectionStatus">
-                        <icon-ph-plug-duotone class="mr-2" />
-                        View connection status
-                    </AiButton>
                     <div class="flow-root">
                         <div>
-                            <dl class="divide-y divide-gray-200 dark:divide-gray-700">
+                            <dl class="divide-y divide-gray-200 dark:divide-dark-border">
                                 <div
                                     v-for="(trust, i) in trustsToSelect"
-                                    :key="trust.trustName"
+                                    :key="trust.trustId"
                                     class="flex items-center justify-between py-2 text-sm font-medium"
                                 >
                                     <dt class="flex items-center font-semibold text-gray-500 dark:text-primary-200">
                                         <div class="flex items-center">
                                             <span class="px-2 py-1">
-                                                {{ trust.trustName }}
+                                                {{ trust.trustLabel }}
                                             </span>
                                         </div>
                                     </dt>
                                     <dd class="font-semibold">
                                         <AiSwitch
-                                            name="trusts"
+                                            name="trust_ids"
                                             :data-test="`trust-selection-${i}`"
-                                            :value="trust.trustName"
+                                            :value="trust.trustId"
+                                            :disabled="disabled"
                                             hide-error
                                             :label="{ enabled: 'Trust Included', disabled: 'Trust Excluded' }"
                                         />
                                     </dd>
                                 </div>
-                                <div v-if="errors.trusts" class="py-2 text-sm text-right text-red-600 dark:text-red-400">
-                                    {{ errors.trusts }}
+                                <div
+                                    v-if="errors.trust_ids"
+                                    class="py-2 text-sm text-right text-red-600 dark:text-red-400"
+                                >
+                                    {{ errors.trust_ids }}
                                 </div>
                             </dl>
                         </div>
@@ -82,44 +83,47 @@
             </div>
         </div>
     </div>
-    <AiModal :dialog="showConnectionStatus" @close-modal="toggleConnectionStatus">
-        <ConnectionStatus />
-    </AiModal>
 </template>
 
 <script setup lang="ts">
-import { computed, ComputedRef, ref } from "vue";
+import { computed, ComputedRef } from "vue";
 
-import AiButton from "@/components/AiButton/AiButton.vue";
-import AiModal from "@/components/AiModal/AiModal.vue";
 import AiSwitch from "@/components/AiSwitch/AiSwitch.vue";
-import ConnectionStatus from "@/pages/ConnectionStatus.vue";
 import { useProjectStore } from "@/store/project";
 
 interface ITrainingOptionsProps {
     errors: Record<string, string | undefined>
+    // A dispatched run's configuration is a record, not a form: the controls stay
+    // on screen so you can see which trusts took part, but nothing is editable.
+    disabled?: boolean
 }
 
 interface ITrustsToTrain {
+    // Sort key. Names are admin-chosen and non-unique, so they order the list
+    // but never identify a trust on their own.
     trustName: string;
+    // What the user reads: the name with its code appended to disambiguate two
+    // trusts sharing a name. Falls back to the bare name when there is no code.
+    trustLabel: string;
+    // Stable identity sent to the training-init endpoint.
+    trustId: string;
 }
 
-defineProps<ITrainingOptionsProps>();
+withDefaults(defineProps<ITrainingOptionsProps>(), { disabled: false });
 
 const projectStore = useProjectStore();
 
-const showConnectionStatus = ref(false);
-
 const approvedTrusts = projectStore.project?.approvedTrusts;
-
-const toggleConnectionStatus = () => {
-    showConnectionStatus.value = !showConnectionStatus.value;
-};
 
 const trustsToSelect: ComputedRef<ITrustsToTrain[] | undefined> = computed(() =>
     approvedTrusts?.filter(t => t.approved)
         .map(t =>
-            ({ trustName: t.name })
+            ({
+                trustName: t.name,
+                trustLabel: t.code ? `${t.name} (${t.code})` : t.name,
+                trustId: t.id
+            })
         )
+        .sort((a, b) => a.trustName.localeCompare(b.trustName))
 );
 </script>

@@ -10,6 +10,7 @@
 # limitations under the License.
 #
 
+from datetime import datetime
 from typing import Any
 from uuid import UUID
 
@@ -18,6 +19,7 @@ from pydantic.alias_generators import to_camel
 from sqlalchemy.orm import declarative_base
 
 from flip_api.domain.schemas.status import (
+    AccessRequestStatus,
     BucketAction,
     BucketStatus,
     FileUploadStatus,
@@ -87,6 +89,39 @@ class IAccessRequest(BaseModel):
     email: EmailStr = Field(..., description="Requester's email address")
     full_name: str = Field(..., description="Requester's full name")
     reason_for_access: str = Field(..., description="Reason for requesting access")
+
+    model_config = {
+        "alias_generator": to_camel,
+        "populate_by_name": True,
+    }
+
+
+class IAccessRequestRecord(BaseModel):
+    """A persisted access request, as returned to administrators for triage."""
+
+    id: UUID
+    email: str = Field(..., description="Requester's email address")
+    full_name: str = Field(..., description="Requester's full name")
+    reason_for_access: str = Field(..., description="Reason for requesting access")
+    status: AccessRequestStatus = Field(..., description="Lifecycle state of the request")
+    email_notified: bool = Field(..., description="Whether the admin-notification email was dispatched")
+    handled_by_user_id: UUID | None = Field(
+        default=None, description="Cognito sub of the admin who last enrolled/dismissed the request"
+    )
+    created_at: datetime = Field(..., description="When the request was submitted")
+    updated_at: datetime = Field(..., description="When the request was last modified")
+
+    model_config = {
+        "alias_generator": to_camel,
+        "populate_by_name": True,
+        "from_attributes": True,
+    }
+
+
+class IUpdateAccessRequestStatus(BaseModel):
+    """Administrator update to an access request's lifecycle status."""
+
+    status: AccessRequestStatus = Field(..., description="New lifecycle state for the request")
 
     model_config = {
         "alias_generator": to_camel,

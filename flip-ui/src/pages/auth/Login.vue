@@ -14,61 +14,65 @@
 <!-- eslint-disable vue/multi-word-component-names -->
 <template>
     <section class="flex flex-col h-full">
-        <h1
-            class="mb-5 text-xl font-heading md:text-2xl"
-        >
-            Log into your account
+        <p class="mb-2 text-xs font-heading text-gray-500 dark:text-gray-300">
+            FEDERATED LEARNING & INTEROPERABILITY PLATFORM
+        </p>
+        <h1 class="mb-5 text-xl font-heading md:text-3xl dark:text-gray-100">
+            Sign in to <span class="text-primary-500 dark:text-primary-300 underline underline-offset-4">FLIP</span>
         </h1>
         <Form
             :validation-schema="schema"
             class="flex flex-col flex-grow p-0 space-y-4"
             @submit="submit"
         >
+            <div class="grow" />
             <AiInput
                 name="email"
                 type="email"
                 data-test="username"
                 label="Email"
+                autocomplete="username"
                 :pre-icon="AccountOutline"
-                :input-props="{tabindex: 1}"
             />
             <AiInput
                 name="password"
                 type="password"
                 data-test="password"
                 label="Password"
+                autocomplete="current-password"
                 :pre-icon="LockOutline"
-                :input-props="{tabindex: 2}"
             >
                 <template #labelRight>
-                    <router-link to="/auth/change-password" class="text-sm text-right" tabindex="3">
+                    <router-link
+                        to="/auth/change-password"
+                        class="text-sm text-right text-primary-500 hover:text-primary-700 dark:text-primary-300 dark:hover:text-primary-200 hover:underline"
+                    >
                         Forgot password?
                     </router-link>
                 </template>
             </AiInput>
-            <div class="flex-grow" />
-            <div class="flex flex-row items-center gap-2">
-                <AiButton
-                    block
-                    clear
-                    class="w-full"
+            <div class="grow" />
+            <AiButton
+                primary
+                data-test="login-btn"
+                :loading="loginLoader"
+                type="submit"
+                block
+                class="w-full [&_button]:py-3 [&_button]:rounded-lg"
+            >
+                Log In
+            </AiButton>
+            <p class="text-sm text-center text-gray-600 dark:text-gray-300">
+                Don't have an account?
+                <button
+                    type="button"
                     data-test="request-access-btn"
+                    class="font-medium text-primary-500 hover:text-primary-700 dark:text-primary-300 dark:hover:text-primary-200 hover:underline"
                     @click="routeChange.accessRequest()"
                 >
                     Request access
-                </AiButton>
-                <AiButton
-                    primary
-                    data-test="login-btn"
-                    :loading="loginLoader"
-                    type="submit"
-                    block
-                    class="w-full"
-                    :input-props="{tabindex: 4}"
-                >
-                    Log In
-                </AiButton>
-            </div>
+                </button>
+            </p>
         </Form>
     </section>
 </template>
@@ -154,7 +158,7 @@ const submit = async (v: unknown): Promise<void> => {
                     routeChange.viewProjects();
                 }
         }
-    } catch (e) {
+    } catch {
         Snackbar.show({
             type: "error",
             title: "Error",

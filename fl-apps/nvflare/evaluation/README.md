@@ -1,0 +1,71 @@
+<!--
+    Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+    Licensed under the Apache License, Version 2.0 (the "License");
+    you may not use this file except in compliance with the License.
+    You may obtain a copy of the License at
+        http://www.apache.org/licenses/LICENSE-2.0
+    Unless required by applicable law or agreed to in writing, software
+    distributed under the License is distributed on an "AS IS" BASIS,
+    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+    See the License for the specific language governing permissions and
+    limitations under the License.
+-->
+
+# Evaluation of a model with FLIP
+
+This job type is to test one or more models on different sites.
+
+## What's the logic?
+
+The evaluation pipeline loads the model weights in the server side, and then sends the models to every site.
+The custom-code `evaluator.py` is used to then obtain the metrics, which are saved under `evaluation_results.json`
+file in the server evaluation folder.
+
+## Execution sequence
+
+**Server — `config_fed_server.json` `workflows` (run in order):**
+
+1. `init_evaluation` — `flip.nvflare.controllers.InitEvaluation`
+2. `site_validate` — `flip.nvflare.controllers.ModelEval`
+
+**Client — `config_fed_client.json` `executors` (by task):**
+
+- `init_task`, `post_task` → `flip.nvflare.components.CleanupImages`
+- `evaluation` → `flip.nvflare.executors.RUN_EVALUATOR`
+
+## What does the user upload?
+
+The user uploads:
+
+- `evaluator.py`: this contains the testing pipeline. The method `execute` is called by the parent of this class,
+and retrieves a DXO with the metrics.
+- `models.py`: this contains the code to instance the model(s) that are to be tested.
+- [checkpoints]: any model has to have its checkpoint uploaded under `pt` format.
+- `transforms.py`: support file to define data transforms and other data related thing.
+- `config.json`: configuration for the model. The following field is required in this pipeline:
+  - `models`. For each element of this class, `checkpoint` and `path` are mandatory. Checkpoint is the name of the
+    pt file for this specific model. 'path' is the key to the function that defines this model in `models.py`
+    (in dictionary `model_paths`).
+
+  `evaluator.py` may return any JSON-serialisable metrics (for example a dict of floats and/or lists of floats);
+  they are saved verbatim into `evaluation_results.json`, keyed by data site (then by the model name your
+  evaluator returns), so there is no output schema to declare.
+
+  Every `validate` task that does not return metrics is recorded alongside it in
+  `evaluation_failures.json` as `{"model": ..., "client": ..., "return_code": ...}` (`model` is `null`
+  here — this job type sends all models in one task, so failures are per client). The file is always
+  written, so an empty list `[]` positively means no task failed. If **every** task fails, the model
+  ends in `ERROR` rather than `RESULTS_UPLOADED`; the results are still uploaded so the zip can carry
+  `evaluation_failures.json` and `error_log.txt`.
+
+## Test it with the spleen MSD dataset
+
+The evaluation tutorial (`evaluation` job type) runs on the local NVFLARE simulator via:
+
+```bash
+make -C fl-tutorials run-tutorial TUTORIAL=3d_spleen_segmentation_evaluation
+```
+
+Download the spleen MSD dataset first (see
+`fl-tutorials/nvflare/image_evaluation/3d_spleen_segmentation_evaluation/README.md`). This runs
+the code with a pre-trained U-Net network on the MSD dataset.

@@ -32,11 +32,12 @@ import { DataZoomComponent,
     TooltipComponent } from "echarts/components";
 import * as echarts from "echarts/core";
 import { CanvasRenderer } from "echarts/renderers";
-import _ from "underscore";
 import { computed, ComputedRef, onMounted, ref, watch } from "vue";
 
+import { CHART_SERIES_COLORS, chartChrome, chartToolbox } from "@/components/AiChart/chartTheme";
 import { IResults } from "@/services/cohort-query-service";
 import { useSiteSettings } from "@/store/siteSettingsStore";
+import { useTrustStore } from "@/store/trusts";
 import { capatilizeString } from "@/utils/helpers";
 
 interface IAiCohortChartProps {
@@ -46,8 +47,23 @@ interface IAiCohortChartProps {
 const props = defineProps<IAiCohortChartProps>();
 
 const siteSettings = useSiteSettings();
+const trustStore = useTrustStore();
+
+// Prefer the trust's short code (e.g. "GSTT") in legend/series labels so the
+// chart legend stays compact; fall back to the name from the cohort result if
+// the trust store hasn't loaded yet or the trust has no code set.
+const trustLabel = (trustId: string, trustName: string): string => {
+    const trust = trustStore.getTrusts.find(t => t.id === trustId);
+
+    return trust?.code || trustName;
+};
 
 const containerRef = ref<HTMLDivElement | HTMLCanvasElement>();
+
+// The toolbox magicType toggle only flips echarts' internal state; option
+// re-pushes (data updates, theme switch, resize) would revert it unless the
+// user's choice is replayed into the rebuilt series.
+const seriesType = ref<"bar" | "line">("bar");
 
 type ECOption = echarts.ComposeOption<
 BarSeriesOption
@@ -83,141 +99,164 @@ onMounted(() => {
         const xAxisValues = [...new Set(xAxisData)].sort();
 
         const chart = echarts.init(containerRef.value);
-        const colorPalette = ["#a55eea", "#4b7bec", "#2bcbba", "#fd9644", "#fc5c65", "#4b6584", "#2d98da", "#cc7e63", "#724e58", "#4b565b"];
+
+        chart.on("magictypechanged", (event) => {
+            seriesType.value = (event as { currentType: "bar" | "line" }).currentType;
+        });
 
         const chartTitle = capatilizeString(props.data.name);
 
-        const chartOptions: ComputedRef<ECOption> = computed(() => ({
-            color: colorPalette,
-            colorBy: "series",
-            darkMode: siteSettings.getSettings.darkMode,
-            backgroundColor: siteSettings.getSettings.darkMode ? "#111827" : "#F9FAFB",
-            title: {
-                text: chartTitle,
-                textStyle: {
-                    fontSize: 16,
-                    fontWeight: 700,
-                    fontFamily: "Inter",
-                    color: siteSettings.getSettings.darkMode ? "#ccc": "#282A36"
-                }
-            },
-            textStyle: {
-                fontFamily: "JetBrainsMono",
-                fontWeight: 700
-            },
-            dataZoom: {
-                minSpan: 10,
-                bottom: 30
-            },
-            calculable: true,
-            toolbox: {
-                showTitle: false,
-                feature: {
-                    dataView: {
-                        show: true,
-                        title: "View Data",
-                        readOnly: true
-                    },
-                    magicType: {
-                        show: true,
-                        type: ["line", "bar"]
-                    },
-                    restore: { title: "Reset View" }
-                }
-            },
-            grid: {
-                backgroundColor: siteSettings.getSettings.darkMode ? "#282A36": "#4A5462",
-                left: "5%",
-                right: "5%",
-                bottom: "25%",
-                containLabel: true
-            },
-            tooltip: {
-                trigger: "axis",
-                axisPointer: {
-                    type: "cross",
-                    snap: true,
-                    crossStyle: { color: "#888" }
-                }
-            },
-            legend: {
-                data: props.data.results.map(d => d.trustName),
-                left: "center",
-                textStyle: { color: siteSettings.getSettings.darkMode ? "#ccc": "#282A36" }
-            },
-            xAxis: {
-                type: "category",
-                minorTick: {
-                    show: true,
-                    lineStyle: { color: siteSettings.getSettings.darkMode ? "#ccc": "#282A36" }
-                },
-                name: chartTitle,
-                nameLocation: "middle",
-                nameGap: 40,
-                data: xAxisValues,
-                nameTextStyle: {
-                    fontWeight: 700,
-                    fontSize: 16,
-                    fontFamily: "Inter"
-                },
-                axisLabel: {
-                    fontWeight: 700,
-                    fontFamily: "Inter"
-                },
-                axisTick: {
-                    show: true,
-                    inside: true,
-                    lineStyle: { color: siteSettings.getSettings.darkMode ? "#ccc": "#282A36" }
-                },
-                axisLine: { lineStyle: { color: siteSettings.getSettings.darkMode ? "#ccc": "#282A36" } },
-                minorSplitLine: {
-                    show: false,
-                    lineStyle: { color: siteSettings.getSettings.darkMode ? "#ccc": "#4A5462" }
-                },
-                splitLine: { lineStyle: { color: siteSettings.getSettings.darkMode ? "#ccc": "#111827" } }
-            },
-            yAxis: {
-                type: "value",
-                minorTick: {
-                    show: true,
-                    lineStyle: { color: siteSettings.getSettings.darkMode ? "#ccc": "#282A36" }
-                },
-                axisTick: {
-                    show: true,
-                    inside: true,
-                    lineStyle: { color: siteSettings.getSettings.darkMode ? "#ccc": "#282A36" }
-                },
-                axisLabel: {
-                    show: true,
-                    fontWeight: 900,
-                    fontFamily: "JetBrainsMono"
-                },
-                axisLine: {
-                    show: false,
-                    lineStyle: {
-                        color: siteSettings.getSettings.darkMode ? "#ccc": "#111827",
-                        width: 1,
-                        type: "solid"
+        const chartOptions: ComputedRef<ECOption> = computed(() => {
+            const darkMode = siteSettings.getSettings.darkMode;
+            const chrome = chartChrome(darkMode);
+
+            return {
+                color: [...CHART_SERIES_COLORS[darkMode ? "dark" : "light"]],
+                colorBy: "series",
+                darkMode,
+                backgroundColor: chrome.background,
+                title: {
+                    text: chartTitle,
+                    textStyle: {
+                        fontSize: 16,
+                        fontWeight: 700,
+                        fontFamily: "Inter",
+                        color: chrome.ink
                     }
                 },
-                show: true,
-                splitLine: { lineStyle: { color: siteSettings.getSettings.darkMode ? "#ccc": "#111827" } },
-                minorSplitLine: { show: false }
-            },
-            series:
-                props.data.results.map(element => {
-                    return {
-                        name: element.trustName,
-                        type: "bar",
-                        data: _.sortBy(element.data, "value").map(data => {
+                textStyle: {
+                    fontFamily: "JetBrainsMono",
+                    fontWeight: 700
+                },
+                calculable: true,
+                // No standing dataZoom slider — zoom is on-demand via the toolbox
+                // magnifier below, matching the training metrics chart.
+                toolbox: {
+                    ...chartToolbox(darkMode),
+                    // Floats inside the plot below the title band (metrics-chart idiom).
+                    top: 36,
+                    right: 12,
+                    feature: {
+                        ...chartToolbox(darkMode).feature,
+                        dataZoom: {
+                            show: true,
+                            // "none" keeps the drawn box as the exact view instead of
+                            // filtering points outside it.
+                            filterMode: "none" as const,
+                            title: {
+                                zoom: "Zoom",
+                                back: "Undo Zoom"
+                            }
+                        }
+                    }
+                },
+                grid: {
+                    left: "5%",
+                    // Full-width plot — the legend and toolbox overlay the grid
+                    // instead of reserving header rows or a side column.
+                    right: 24,
+                    // Clears only the title band.
+                    top: 32,
+                    // The old "25%" reserved room for the removed slider bar and the
+                    // removed duplicate x-axis title.
+                    bottom: 24,
+                    containLabel: true
+                },
+                tooltip: {
+                    trigger: "axis",
+                    axisPointer: {
+                        type: "cross",
+                        snap: true,
+                        crossStyle: { color: "#888" }
+                    }
+                },
+                legend: {
+                    data: props.data.results.map(d => trustLabel(d.trustId, d.trustName)),
+                    orient: "vertical",
+                    // Floats inside the plot, vertically centred on the right edge; the
+                    // translucent card backing keeps it legible where bars pass beneath.
+                    right: 12,
+                    top: "middle",
+                    align: "left",
+                    itemGap: 10,
+                    padding: 8,
+                    backgroundColor: darkMode ? "rgba(14, 11, 19, 0.78)" : "rgba(255, 255, 255, 0.82)",
+                    borderColor: chrome.gridLine,
+                    borderWidth: 1,
+                    borderRadius: 6,
+                    textStyle: { color: chrome.ink }
+                },
+                xAxis: {
+                    type: "category",
+                    minorTick: {
+                        show: true,
+                        lineStyle: { color: chrome.axisLine }
+                    },
+                    // No axis name — it repeated the chart title under the plot.
+                    data: xAxisValues,
+                    axisLabel: {
+                        fontWeight: 700,
+                        fontFamily: "Inter",
+                        color: chrome.axisLabel
+                    },
+                    axisTick: {
+                        show: true,
+                        inside: true,
+                        lineStyle: { color: chrome.axisLine }
+                    },
+                    axisLine: { lineStyle: { color: chrome.axisLine } },
+                    minorSplitLine: {
+                        show: false,
+                        lineStyle: { color: chrome.gridLine }
+                    },
+                    splitLine: { lineStyle: { color: chrome.gridLine } }
+                },
+                yAxis: {
+                    type: "value",
+                    minorTick: {
+                        show: true,
+                        lineStyle: { color: chrome.axisLine }
+                    },
+                    axisTick: {
+                        show: true,
+                        inside: true,
+                        lineStyle: { color: chrome.axisLine }
+                    },
+                    axisLabel: {
+                        show: true,
+                        fontWeight: 900,
+                        fontFamily: "JetBrainsMono",
+                        color: chrome.axisLabel
+                    },
+                    axisLine: {
+                        show: false,
+                        lineStyle: {
+                            color: chrome.axisLine,
+                            width: 1,
+                            type: "solid"
+                        }
+                    },
+                    show: true,
+                    splitLine: { lineStyle: { color: chrome.gridLine } },
+                    minorSplitLine: { show: false }
+                },
+                series:
+                    props.data.results.map(element => {
+                        return {
+                            name: trustLabel(element.trustId, element.trustName),
+                            type: seriesType.value,
+                            // Plain code-unit sort — same ordering _.sortBy gave the string categories.
+                            data: [...element.data].sort((a, b) => (a.value < b.value ? -1 : a.value > b.value ? 1 : 0))
+                                .map(data => {
 
-                            return [data.value, data.count];
-                        }),
-                        showBackground: true,
-                        itemStyle: { borderRadius: [5, 5, 0, 0] }
-                    };
-                })
-        }));
+                                    return [data.value, data.count];
+                                }),
+                            showBackground: true,
+                            itemStyle: { borderRadius: [5, 5, 0, 0] }
+                        };
+                    })
+            };
+        });
 
         chart.setOption(chartOptions.value);
 

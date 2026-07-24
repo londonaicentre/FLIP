@@ -27,9 +27,16 @@ resource "aws_instance" "trust_host" {
   iam_instance_profile = var.iam_instance_profile_name
 
   root_block_device {
-    volume_size           = 50
+    # 50 GB was too small once we added flare-fl-client (multi-GB torch
+    # dependencies) on top of XNAT (~4 GB), Orthanc, OMOP, and the
+    # trust-side application stack. Image extracts kept hitting "no
+    # space left on device" mid-pull. 100 GB leaves headroom for image
+    # archive growth on /opt/flip/xnat/xnat-data/archive too. Grows in
+    # place; no instance replacement.
+    volume_size           = 100
     volume_type           = "gp3"
     delete_on_termination = true
+    encrypted             = true
   }
 
   tags = {
