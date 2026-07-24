@@ -12,9 +12,9 @@
  */
 
 /**
- * A single step in an AiSteps lifecycle tracker (e.g. the model or project page).
+ * A single step in a lifecycle tracker (e.g. LifecycleTrack on the model or project page).
  *
- * Lives here rather than in AiSteps.vue so non-presentation modules (such as
+ * Lives here rather than in a component so non-presentation modules (such as
  * model-service) can build IStep[] without depending on a Vue component.
  */
 export interface IStep {

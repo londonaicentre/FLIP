@@ -14,14 +14,16 @@
 <!-- eslint-disable vue/multi-word-component-names -->
 <template>
     <Form
+        v-if="view === 'prepare'"
         ref="formRef"
         v-slot="{ errors }"
         class="flex flex-col w-full h-full"
         :validation-schema="schema"
+        :initial-values="initialValues"
         @submit="initTraining"
     >
-        <AiCard v-if="getStatus === ModelStatusEnum.PENDING" class="flex flex-col flex-1 min-h-0 overflow-hidden">
-            <template v-if="!allFilesUploaded">
+        <AiCard class="flex flex-col flex-1 min-h-0 overflow-hidden">
+            <template v-if="pending && !allFilesUploaded">
                 <AiAlert
                     variant="info"
                     :close="false"
@@ -59,39 +61,48 @@
             </template>
 
             <div class="flex flex-col flex-1 pt-4 overflow-y-auto">
-                <TrainingOptions :errors="errors" />
+                <TrainingOptions :errors="errors" :disabled="!pending" />
             </div>
         </AiCard>
-
-        <div v-else class="flex flex-row flex-1 min-h-0 gap-4 items-start">
-            <AiCard class="flex flex-col flex-1 min-w-0 p-4">
-                <TrainingMetrics :in-progress="!finished" />
-            </AiCard>
-
-            <AiCard class="2xl:w-[28rem] w-96 shrink-0 self-stretch max-h-[70vh] flex flex-col py-4 pl-4 pr-1">
-                <div class="flex items-center gap-2 shrink-0 mb-3">
-                    <span class="relative flex items-center justify-center w-2 h-2">
-                        <span
-                            v-if="!finished"
-                            data-test="live-activity-ping"
-                            class="absolute inline-flex w-full h-full rounded-full opacity-60 bg-primary-500 animate-ping"
-                        />
-                        <span
-                            data-test="live-activity-dot"
-                            class="relative inline-flex w-2 h-2 rounded-full"
-                            :class="liveActivityDotClass"
-                        />
-                    </span>
-                    <h2 class="text-base font-heading font-semibold text-gray-900 dark:text-gray-100">
-                        Live activity
-                    </h2>
-                </div>
-                <div class="flex-1 min-h-0 overflow-y-auto overflow-x-hidden">
-                    <Timeline data-test="training-timeline" :complete="finished ?? false" />
-                </div>
-            </AiCard>
-        </div>
     </Form>
+
+    <!-- The row is bounded by the page, so both cards stretch to fill the window
+         rather than being pinned to a fixed height. Stacked, they split it between
+         them; the min-heights are floors for a short phone, past which the page
+         scrolls. -->
+    <div v-else-if="view === 'run'" class="flex flex-col xl:flex-row flex-1 min-h-0 gap-4">
+        <AiCard class="flex flex-col flex-1 min-w-0 min-h-[24rem] xl:min-h-0 p-4">
+            <TrainingMetrics :in-progress="!finished" />
+        </AiCard>
+
+        <!-- flex-1 while stacked so it takes an equal share of the height; at xl it
+             stops growing and becomes a fixed-width column beside the metrics. -->
+        <AiCard
+            class="flex flex-col flex-1 xl:flex-none w-full xl:w-96 2xl:w-[28rem] xl:shrink-0
+                   min-h-[20rem] xl:min-h-0 py-4 pl-4 pr-1"
+        >
+            <div class="flex items-center gap-2 shrink-0 mb-3">
+                <span class="relative flex items-center justify-center w-2 h-2">
+                    <span
+                        v-if="!finished"
+                        data-test="live-activity-ping"
+                        class="absolute inline-flex w-full h-full rounded-full opacity-60 bg-primary-500 animate-ping"
+                    />
+                    <span
+                        data-test="live-activity-dot"
+                        class="relative inline-flex w-2 h-2 rounded-full"
+                        :class="liveActivityDotClass"
+                    />
+                </span>
+                <h2 class="text-base font-heading font-semibold text-gray-900 dark:text-gray-100">
+                    Live activity
+                </h2>
+            </div>
+            <div class="flex-1 min-h-0 overflow-y-auto overflow-x-hidden pr-3">
+                <Timeline data-test="training-timeline" :complete="finished ?? false" />
+            </div>
+        </AiCard>
+    </div>
 </template>
 
 <script lang="ts" setup>
@@ -108,6 +119,7 @@ import { getStatusEnumValue, IInitTraining, initialiseTraining,
     ModelStatusEnum } from "@/services/model-service";
 import { Snackbar } from "@/utils/snackbar";
 
+import type { ModelTab } from "./ModelTabs.vue";
 import Timeline from "./Timeline.vue";
 import TrainingMetrics from "./TrainingMetrics.vue";
 import TrainingOptions from "./TrainingOptions.vue";
@@ -120,9 +132,17 @@ interface ITrainingProps {
     uploadedFileNames: string[];
     jobType: JobType;
     flBackendLabel?: string;
+    // Ids of the trusts a dispatched run went to; empty before dispatch.
+    runTrusts?: string[];
+    // Which stage tab is showing: "prepare" owns the run options (locked once the
+    // model is dispatched); "run" owns the metrics and the activity feed.
+    view: ModelTab;
 }
 
-const props = defineProps<ITrainingProps>();
+const props = withDefaults(defineProps<ITrainingProps>(), {
+    flBackendLabel: undefined,
+    runTrusts: () => []
+});
 
 const emits = defineEmits(["started"]);
 
@@ -154,7 +174,19 @@ const formSubmitting = ref(false);
 // fields, but the submit trigger lives in the page header. Page calls
 // initiateTraining() via a ref to fire the native form submit, which lets
 // vee-validate validate and route into the existing @submit handler.
-const formRef = ref<{ $el?: HTMLFormElement } | null>(null);
+const formRef = ref<{ $el?: HTMLFormElement; values?: Record<string, unknown> } | null>(null);
+
+// Dispatching a run without a trust, or without confirming the dataset, is a
+// submit that can only fail validation. The page disables its Initiate Training
+// button on this rather than letting the click bounce off the schema.
+// `trust_ids` holds an array of ids, or a bare id when a single trust is picked.
+const optionsComplete = computed(() => {
+    const values = formRef.value?.values ?? {};
+    const trustIds = values["trust_ids"];
+    const trustCount = Array.isArray(trustIds) ? trustIds.filter(Boolean).length : Number(Boolean(trustIds));
+
+    return Boolean(values["enriched"]) && trustCount > 0;
+});
 
 defineExpose({
     initiateTraining() {
@@ -163,12 +195,17 @@ defineExpose({
             el.requestSubmit();
         }
     },
-    isSubmitting: formSubmitting
+    isSubmitting: formSubmitting,
+    optionsComplete
 });
 
 const getStatus = computed(() => {
     return getStatusEnumValue(props.status);
 });
+
+// Only a pending model can still be configured. Past that the options are a record
+// of how the run was launched, so they stay on screen but stop being a form.
+const pending = computed(() => getStatus.value === ModelStatusEnum.PENDING);
 
 const finished = computed(() => {
     return [
@@ -181,12 +218,25 @@ const finished = computed(() => {
 
 const isError = computed(() => getStatus.value === ModelStatusEnum.ERROR);
 
+// Emerald matches the RESULTS_UPLOADED status pill: a delivered run reads as a
+// success, not as a greyed-out non-event. Grey is for a run that simply stopped.
 const liveActivityDotClass = computed(() => {
     if (isError.value) return "bg-red-600";
+    if (getStatus.value === ModelStatusEnum.RESULTS_UPLOADED) return "bg-emerald-500";
     if (finished.value) return "bg-gray-400";
 
     return "bg-primary-600";
 });
+
+// Once dispatched the form is a record of the run, so it has to show the run's own
+// values rather than an empty form. Enrichment is not stored: it is a gate on
+// dispatch, so a model that started was necessarily confirmed enriched.
+const initialValues = computed(() => (pending.value
+    ? undefined
+    : {
+        enriched: "true",
+        trust_ids: props.runTrusts
+    }));
 
 const initTraining = async (formData: unknown): Promise<void> => {
     if (formSubmitting.value) {

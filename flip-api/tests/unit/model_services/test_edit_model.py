@@ -76,7 +76,7 @@ def mock_model_status_none():
 
 @pytest.fixture
 def mock_model_status_uneditable():
-    mock_status = MagicMock(deleted=False, status=ModelStatus.TRAINING_STARTED)
+    mock_status = MagicMock(deleted=False, status=ModelStatus.RUNNING)
     with patch("flip_api.model_services.edit_model.get_model_status", return_value=mock_status):
         yield
 

@@ -14,7 +14,7 @@
 <!-- Design ref: design_handoff_full/04_lifecycle/lifecycle.jsx — variant
      "B · Horizontal track" (LifecycleB, lines 139-171). Self-contained: the
      "current" stage is derived as the first non-completed step so callers can
-     keep passing the same IStep[] they pass to AiSteps elsewhere. -->
+     keep passing the shared IStep[] shape. -->
 
 <template>
     <div class="shrink-0">
@@ -46,19 +46,19 @@
                         class="grid w-5 h-5 place-items-center rounded-full transition-all mb-1"
                         :class="circleClass(idx)"
                     >
-                        <icon-heroicons-outline-x
+                        <icon-ph-x-bold
                             v-if="step.error && !step.completed"
-                            class="w-3 h-3 text-white stroke-[2.5]"
+                            class="w-3 h-3 text-white"
                             aria-hidden="true"
                         />
-                        <icon-heroicons-outline-minus
+                        <icon-ph-stop-fill
                             v-else-if="step.stopped && !step.completed"
-                            class="w-3 h-3 text-white stroke-[2.5]"
+                            class="w-3 h-3 text-white"
                             aria-hidden="true"
                         />
-                        <icon-heroicons-outline-check
+                        <icon-ph-check-bold
                             v-else-if="step.completed"
-                            class="w-3 h-3 text-white stroke-[2.5]"
+                            class="w-3 h-3 text-white"
                             aria-hidden="true"
                         />
                         <span
@@ -100,7 +100,7 @@ const completedCount = computed(() => props.steps.filter(s => s.completed).lengt
 
 // Current stage = first non-completed step. Caller doesn't have to set
 // `inProgress` explicitly — matches the implicit "next thing to do" the
-// existing AiSteps consumers rely on.
+// existing IStep consumers rely on.
 const currentIndex = computed(() => props.steps.findIndex(s => !s.completed));
 
 const isCurrent = (idx: number) => idx === currentIndex.value;

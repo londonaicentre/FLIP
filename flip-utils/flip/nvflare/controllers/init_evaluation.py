@@ -78,14 +78,14 @@ class InitEvaluation(Controller):
             self._model_id = get_flip_model_id(fl_ctx, fallback=self._model_id_fallback)
         return self._model_id
 
-    def start_controller(self, fl_ctx: FLContext):
+    def start_controller(self, fl_ctx: FLContext) -> None:
         self.log_info(fl_ctx, "Initializing InitTraining workflow.")
         engine = fl_ctx.get_engine()
         if not engine:
             self.system_panic("Engine not found. InitTraining exiting.", fl_ctx)
             return
 
-    def control_flow(self, abort_signal: Signal, fl_ctx: FLContext):
+    def control_flow(self, abort_signal: Signal, fl_ctx: FLContext) -> None:
         try:
             self.log_info(fl_ctx, "Beginning InitEvaluation control flow phase...")
             self._set_init_evaluation_status(fl_ctx)
@@ -149,11 +149,11 @@ class InitEvaluation(Controller):
         self.cancel_all_tasks()
 
     def process_result_of_unknown_task(
-        self, client: Client, task_name, client_task_id, result: Shareable, fl_ctx: FLContext
+        self, client: Client, task_name: str, client_task_id: str, result: Shareable, fl_ctx: FLContext
     ) -> None:
         self.log_error(fl_ctx, "Ignoring result from unknown task.")
 
-    def _set_init_evaluation_status(self, fl_ctx: FLContext):
+    def _set_init_evaluation_status(self, fl_ctx: FLContext) -> None:
         try:
             self.log_info(fl_ctx, "Attempting to start the step to initialise evaluation...")
             self.fire_event(FlipEvents.TASK_INITIATED, fl_ctx)
@@ -162,7 +162,7 @@ class InitEvaluation(Controller):
             self.log_error(fl_ctx, str(e))
             self.system_panic(str(e), fl_ctx)
 
-    def _check_abort_signal(self, fl_ctx, abort_signal: Signal):
+    def _check_abort_signal(self, fl_ctx: FLContext, abort_signal: Signal) -> bool:
         if abort_signal.triggered:
             self._phase = AppConstants.PHASE_FINISHED
             self.log_info(fl_ctx, "Abort signal received.")
@@ -170,7 +170,7 @@ class InitEvaluation(Controller):
             return True
         return False
 
-    def _process_cleanup_result(self, client_task: ClientTask, fl_ctx: FLContext):
+    def _process_cleanup_result(self, client_task: ClientTask, fl_ctx: FLContext) -> None:
         result = client_task.result
         client_name = client_task.client.name
 
@@ -178,7 +178,7 @@ class InitEvaluation(Controller):
 
         client_task.result = None
 
-    def _accept_cleanup_result(self, client_name: str, result: Shareable, fl_ctx: FLContext):
+    def _accept_cleanup_result(self, client_name: str, result: Shareable, fl_ctx: FLContext) -> bool | None:
         rc = result.get_return_code()
 
         if rc and rc == ReturnCode.OK:

@@ -87,6 +87,41 @@ class TestTrainingMetricsModel:
         with pytest.raises(ValidationError):
             TrainingMetrics(fl_client_name=fl_client_name, globalRound=1, label="accuracy", result=0.9)
 
+    def test_payload_defaults_x_label_to_global_round(self, sample_metrics_payload_dict):
+        # A client that doesn't send x_label falls back to the default axis label (back-compat).
+        metrics = TrainingMetrics(**sample_metrics_payload_dict)
+        assert metrics.x_label == "Global Rounds"
+
+    def test_payload_accepts_custom_x_label(self, sample_metrics_payload_dict):
+        metrics = TrainingMetrics(**sample_metrics_payload_dict, x_label="epoch")
+        assert metrics.x_label == "epoch"
+
+    def test_payload_defaults_x_value_to_global_round(self, sample_metrics_payload_dict):
+        # Payloads from pre-x_value FL images carry no x_value; the point plots at its global round.
+        metrics = TrainingMetrics(**sample_metrics_payload_dict)
+        assert metrics.x_value == 5.0
+
+    def test_payload_backfills_explicit_null_x_value(self, sample_metrics_payload_dict):
+        metrics = TrainingMetrics(**sample_metrics_payload_dict, x_value=None)
+        assert metrics.x_value == 5.0
+
+    def test_payload_accepts_custom_float_x_value(self, sample_metrics_payload_dict):
+        # The plot coordinate is arbitrary; global_round is untouched provenance (FLIP#148).
+        metrics = TrainingMetrics(**sample_metrics_payload_dict, x_value=7.5)
+        assert metrics.x_value == 7.5
+        assert metrics.global_round == 5
+
+    def test_payload_rejects_non_finite_x_value(self, sample_metrics_payload_dict):
+        # nan/inf would break JSON-encoding the metrics response for the whole model.
+        with pytest.raises(ValidationError):
+            TrainingMetrics(**sample_metrics_payload_dict, x_value=float("nan"))
+
+    def test_payload_rejects_non_finite_result(self, sample_metrics_payload_dict):
+        # result carries the same JSON-encoding hazard as x_value: a persisted NaN/Inf would
+        # break the metrics response for the whole model, so reject it at the edge too.
+        with pytest.raises(ValidationError):
+            TrainingMetrics(**{**sample_metrics_payload_dict, "result": float("nan")})
+
 
 class TestServiceFunctions:
     def test_save_training_metrics_success(
@@ -102,6 +137,8 @@ class TestServiceFunctions:
         assert added_object.global_round == sample_metrics_payload_obj.global_round
         assert added_object.label == sample_metrics_payload_obj.label
         assert added_object.result == sample_metrics_payload_obj.result
+        assert added_object.x_value == sample_metrics_payload_obj.x_value
+        assert added_object.x_label == sample_metrics_payload_obj.x_label
 
         mock_db_session_fixture.commit.assert_called_once()
         mock_db_session_fixture.rollback.assert_not_called()
@@ -114,6 +151,33 @@ class TestServiceFunctions:
             save_training_metrics(model_id, trust, sample_metrics_payload_obj, mock_db_session_fixture)
         mock_db_session_fixture.commit.assert_not_called()
         mock_db_session_fixture.rollback.assert_called_once()  # Assuming rollback in actual implementation
+
+    def test_save_training_metrics_maps_custom_x_label(
+        self, mock_db_session_fixture: MagicMock, sample_metrics_payload_dict, trust, model_id
+    ):
+        # A client-supplied x-axis label is persisted onto the FLMetrics row (FLIP#148).
+        payload = TrainingMetrics(**sample_metrics_payload_dict, x_label="epoch")
+        save_training_metrics(model_id, trust, payload, mock_db_session_fixture)
+        added_object = mock_db_session_fixture.add.call_args[0][0]
+        assert added_object.x_label == "epoch"
+
+    def test_save_training_metrics_maps_custom_x_value_and_keeps_global_round(
+        self, mock_db_session_fixture: MagicMock, sample_metrics_payload_dict, trust, model_id
+    ):
+        # The plot coordinate is persisted separately from the provenance global round (FLIP#148).
+        payload = TrainingMetrics(**sample_metrics_payload_dict, x_value=7.5, x_label="epoch")
+        save_training_metrics(model_id, trust, payload, mock_db_session_fixture)
+        added_object = mock_db_session_fixture.add.call_args[0][0]
+        assert added_object.x_value == 7.5
+        assert added_object.global_round == 5
+
+    def test_save_training_metrics_backfills_x_value_for_legacy_payload(
+        self, mock_db_session_fixture: MagicMock, sample_metrics_payload_obj: TrainingMetrics, trust, model_id
+    ):
+        # sample_metrics_payload_obj carries no explicit x_value — the old-image wire shape.
+        save_training_metrics(model_id, trust, sample_metrics_payload_obj, mock_db_session_fixture)
+        added_object = mock_db_session_fixture.add.call_args[0][0]
+        assert added_object.x_value == 5.0
 
 
 class TestSaveTrainingMetricsEndpoint:

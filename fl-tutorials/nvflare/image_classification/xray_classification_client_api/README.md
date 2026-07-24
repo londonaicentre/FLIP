@@ -79,10 +79,30 @@ make sim
 FLIP-specific values (`FLIP_PROJECT_ID`, `FLIP_QUERY`) are injected via the environment or
 by setting them in `.env.app` before running `make sim`.
 
-### Submitting to a running FL cluster
+### Overriding rounds and clients
 
-After `make export`, submit the produced job directory to the FLIP stack:
+`NUM_ROUNDS` (default `3`) and `N_CLIENTS` (default `2`) parameterise both `make export` and
+`make sim`/`make run`, and propagate through the tutorial harness:
 
 ```bash
-make -C fl-services/nvflare submit APP=./fl_job/flip_fedavg
+make sim NUM_ROUNDS=10                                                        # 10-round local simulation
+make export NUM_ROUNDS=10 N_CLIENTS=3
+make -C fl-tutorials run-tutorial TUTORIAL=xray_classification_client_api NUM_ROUNDS=10
 ```
+
+or pass the flags directly using the recipe syntax:
+
+```bash
+uv run --project ../../../../flip-utils --extra full python job.py --n_clients 3 --num_rounds 10
+```
+
+> **Local knob only.** `--num_rounds` governs local simulation and export. In production the FL API
+> reads `GLOBAL_ROUNDS` from `config.json` at submit time and overrides whatever `job.py` baked into
+> the exported config — deployed round counts come from `config.json`, never from these flags.
+
+### Running against the FLIP stack
+
+The standalone NVFLARE submit path (`make -C fl-services/nvflare submit`) is **not wired** (it is
+admin-API based, unlike Flower's HTTP submit) — run locally via the simulator instead. To exercise
+the full platform path, upload the app files through the FLIP UI (or `make e2e_smoke`), where the
+FL API bundles the template and applies `config.json`'s `GLOBAL_ROUNDS` at submit time.

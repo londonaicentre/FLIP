@@ -72,7 +72,12 @@ class Settings(BaseSettings):
     # weights, ~1.5 GiB for the multimodel variant) can be uploaded; the FL API
     # stages such checkpoints server-side rather than bundling them into the app.
     MAX_MODEL_FILE_BYTES: int = 5 * 1024 * 1024 * 1024
-    PRE_SIGNED_URL_EXPIRATION_SECONDS: int = 3600
+    # Default equals the MAX_PRESIGNED_URL_TTL_SECONDS security ceiling in
+    # utils/s3_client.py: anything higher would be silently clamped anyway,
+    # with a per-call warning — so a default-configured deployment would log
+    # that warning on every presigned upload/download. Operators may set a
+    # lower value; higher values are clamped (with the warning as audit trail).
+    PRE_SIGNED_URL_EXPIRATION_SECONDS: int = 1800
 
     # Reimport imaging project studies
     PROJECT_REIMPORT_RATE: int = 60  # How often to reimport studies for a given project (in minutes)
@@ -158,26 +163,28 @@ class Settings(BaseSettings):
     @field_validator("MAX_MODEL_FILE_BYTES", mode="before")
     @classmethod
     def coerce_empty_max_model_file_bytes(cls, v: object) -> object:
-        """Treat empty-string MAX_MODEL_FILE_BYTES as the default 100 MiB.
+        """Treat empty-string MAX_MODEL_FILE_BYTES as the field default 5 GiB.
 
         GitHub Actions environments inject empty-string env vars for every
         var that isn't explicitly set in the environment scope; Pydantic
         treats that as a real override and rejects it against ``int``.
-        Same shape as ``coerce_empty_env`` / ``coerce_empty_mfa``.
+        Same shape as ``coerce_empty_env`` / ``coerce_empty_mfa``. Must stay
+        in sync with the ``MAX_MODEL_FILE_BYTES`` field default above.
         """
         if v is None or v == "":
-            return 100 * 1024 * 1024
+            return 5 * 1024 * 1024 * 1024
         return v
 
     @field_validator("PRE_SIGNED_URL_EXPIRATION_SECONDS", mode="before")
     @classmethod
     def coerce_empty_pre_signed_url_expiration(cls, v: object) -> object:
-        """Treat empty-string PRE_SIGNED_URL_EXPIRATION_SECONDS as the default 3600s.
+        """Treat empty-string PRE_SIGNED_URL_EXPIRATION_SECONDS as the default 1800s.
 
-        Same rationale as ``coerce_empty_max_model_file_bytes``.
+        Same rationale as ``coerce_empty_max_model_file_bytes``. Must stay in
+        sync with the field default above (== the presigned-URL TTL ceiling).
         """
         if v is None or v == "":
-            return 3600
+            return 1800
         return v
 
     # Trust task queue settings

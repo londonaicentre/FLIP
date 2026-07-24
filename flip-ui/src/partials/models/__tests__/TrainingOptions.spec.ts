@@ -20,11 +20,15 @@ import TrainingOptions from "@/partials/models/TrainingOptions.vue";
 // AiSwitch is the vee-validate field; we stub it to expose the `name` and `value`
 // it is bound to, so we can assert the trust is selected by its UUID id (not name).
 const aiSwitchStub = {
-    props: ["name", "value", "dataTest", "label", "hideError"],
-    template: "<button :data-test=\"dataTest\" :data-name=\"name\" :data-value=\"value\" />"
+    props: ["name", "value", "dataTest", "label", "hideError", "disabled"],
+    template: "<button :data-test=\"dataTest\" :data-name=\"name\" :data-value=\"value\" " +
+        ":disabled=\"disabled\" />"
 };
 
-function mountTrainingOptions(approvedTrusts: { name: string; id: string; approved: boolean }[]) {
+function mountTrainingOptions(
+    approvedTrusts: { name: string; id: string; approved: boolean; code?: string | null }[],
+    disabled = false
+) {
     return mount(TrainingOptions, {
         global: {
             plugins: [
@@ -36,7 +40,10 @@ function mountTrainingOptions(approvedTrusts: { name: string; id: string; approv
             ],
             stubs: { AiSwitch: aiSwitchStub }
         },
-        props: { errors: {} }
+        props: {
+            errors: {},
+            disabled
+        }
     });
 }
 
@@ -45,16 +52,19 @@ describe("TrainingOptions trust selection", () => {
         {
             name: "Beta Trust",
             id: "id-beta",
+            code: "BETA",
             approved: true
         },
         {
             name: "Alpha Trust",
             id: "id-alpha",
+            code: "ALPHA",
             approved: true
         },
         {
             name: "Gamma Trust",
             id: "id-gamma",
+            code: "GAMMA",
             approved: false
         }
     ];
@@ -80,14 +90,57 @@ describe("TrainingOptions trust selection", () => {
         }
     });
 
-    it("shows the trust display name as the label and excludes un-approved trusts", () => {
+    it("labels each trust with its code, and excludes un-approved trusts", () => {
         const wrapper = mountTrainingOptions(trusts);
+        const text = wrapper.text();
+
+        // Names are admin-chosen and non-unique, so the code disambiguates them.
+        expect(text).toContain("Alpha Trust (ALPHA)");
+        expect(text).toContain("Beta Trust (BETA)");
+        // Gamma is not approved, so it must not be offered for training.
+        expect(text).not.toContain("Gamma Trust");
+    });
+
+    it("falls back to the bare name when a trust carries no code", () => {
+        const wrapper = mountTrainingOptions([
+            {
+                name: "Alpha Trust",
+                id: "id-alpha",
+                code: null,
+                approved: true
+            },
+            {
+                name: "Beta Trust",
+                id: "id-beta",
+                approved: true
+            }
+        ]);
         const text = wrapper.text();
 
         expect(text).toContain("Alpha Trust");
         expect(text).toContain("Beta Trust");
-        // Gamma is not approved, so it must not be offered for training.
-        expect(text).not.toContain("Gamma Trust");
+        // An absent code must never render as empty parentheses.
+        expect(text).not.toContain("(");
+    });
+
+    it("orders the trusts by name, not by the code appended to it", () => {
+        const wrapper = mountTrainingOptions([
+            {
+                name: "Beta Trust",
+                id: "id-beta",
+                code: "AAA",
+                approved: true
+            },
+            {
+                name: "Alpha Trust",
+                id: "id-alpha",
+                code: "ZZZ",
+                approved: true
+            }
+        ]);
+        const labels = wrapper.findAll("dt").map(dt => dt.text());
+
+        expect(labels).toEqual(["Alpha Trust (ZZZ)", "Beta Trust (AAA)"]);
     });
 
     it("surfaces the trust_ids validation error when present", () => {
@@ -106,5 +159,27 @@ describe("TrainingOptions trust selection", () => {
         });
 
         expect(wrapper.text()).toContain("You must select a minimum of one trust for training.");
+    });
+});
+
+describe("TrainingOptions disabled", () => {
+    const trust = [{
+        name: "Alpha Trust",
+        id: "id-alpha",
+        approved: true
+    }];
+
+    it("locks every control once the run is under way, so the choices stay readable", () => {
+        const comp = mountTrainingOptions(trust, true);
+
+        const switches = comp.findAll("button");
+        expect(switches.length).toBeGreaterThan(0);
+        expect(switches.every((s) => s.attributes("disabled") !== undefined)).toBe(true);
+    });
+
+    it("leaves the controls live while the model is still being prepared", () => {
+        const comp = mountTrainingOptions(trust);
+
+        expect(comp.findAll("button").every((s) => s.attributes("disabled") === undefined)).toBe(true);
     });
 });

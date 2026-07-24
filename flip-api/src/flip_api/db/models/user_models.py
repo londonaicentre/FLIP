@@ -28,7 +28,7 @@ class Permission(SQLModel, table=True):
     permission_name: str = Field()
     permission_description: str = Field()
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return self.permission_name
 
 

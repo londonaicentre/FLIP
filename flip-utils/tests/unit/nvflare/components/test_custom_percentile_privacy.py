@@ -107,3 +107,41 @@ class TestPercentilePrivacy:
         dxo = self._weight_diff_dxo({"layer1": np.array([1.0, 2.0, 3.0])})
 
         assert f.process_dxo(dxo, self.shareable, self.fl_ctx) is None
+
+    def test_recipe_default_config_preserves_headonly_update(self):
+        """Regression: the production DP config must not gut a head-only (KeepOnlyVars-trimmed) update.
+
+        Stock semantics zero every component whose per-step magnitude falls BELOW the
+        ``percentile``-th percentile — with the old recipe/template values (percentile=95,
+        gamma=2.0) that discarded 95% of a dense head diff every round, so the aggregated global
+        head barely moved and FedAvg reset to scratch at each round boundary. This pins the fixed
+        contract: with the recipe-default config, the bulk of a realistic head-only diff survives
+        the KeepOnlyVars -> PercentilePrivacy chain, with realistic magnitudes left unclipped.
+        """
+        from flip.nvflare.components.keep_vars_filter import KeepOnlyVars
+        from flip.nvflare.recipes.flip_fedavg_recipe import PercentilePrivacy as RecipePPConfig
+
+        cfg = RecipePPConfig()
+        pp = PercentilePrivacy(percentile=cfg.percentile, gamma=cfg.gamma, off=cfg.off)
+
+        # A frozen-backbone fine-tune diff: exact-zero backbone vars plus a dense head with
+        # per-step magnitudes as observed in the Ark+ fine-tuning sims (~1e-7 .. 1.5e-3).
+        head_w = np.linspace(-1.5e-3, 1.5e-3, 6885)
+        head_w[head_w == 0.0] = 1e-7  # dense: no exact zeros in the head
+        data = {
+            "patch_embed.proj.weight": np.zeros(1000),
+            "omni_heads.0.weight": head_w,
+            "omni_heads.0.bias": np.linspace(1e-5, 1e-3, 5),
+        }
+        dxo = self._weight_diff_dxo(data, total_steps=5)
+
+        trimmed = KeepOnlyVars(include_vars="omni_heads").process_dxo(dxo, self.shareable, self.fl_ctx)
+        assert set(trimmed.data.keys()) == {"omni_heads.0.weight", "omni_heads.0.bias"}
+        filtered = pp.process_dxo(trimmed, self.shareable, self.fl_ctx)
+
+        assert filtered is not None
+        kept = np.concatenate([np.ravel(filtered.data[k]) for k in filtered.data])
+        # The percentile filter may zero at most ~percentile% of components; the bulk must survive.
+        assert np.count_nonzero(kept) >= 0.85 * kept.size
+        # gamma must not clip realistic head-diff magnitudes (clip bound is per-step, ±gamma).
+        np.testing.assert_allclose(np.max(np.abs(kept)), 1.5e-3)

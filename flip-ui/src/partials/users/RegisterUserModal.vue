@@ -14,7 +14,7 @@
 <template>
     <TransitionRoot as="template" :show="dialog">
         <Dialog as="div" class="fixed inset-0 z-10" @close.capture="close">
-            <div class="flex items-end justify-center h-screen min-h-screen px-4 pt-4 text-center sm:block sm:p-0">
+            <div class="flex items-center justify-center h-screen min-h-screen p-4 text-center sm:block sm:p-0">
                 <TransitionChild
                     as="template"
                     enter="ease-out duration-300"
@@ -161,18 +161,17 @@
                                     </div>
                                 </div>
                             </div>
-                            <div class="px-4 py-3 bg-gray-100 rounded-b-lg dark:bg-dark-canvas sm:px-6 sm:flex sm:flex-row-reverse sm:flex-shrink-0">
+                            <div class="flex flex-row-reverse px-4 py-3 bg-gray-100 rounded-b-lg dark:bg-dark-canvas sm:px-6 shrink-0">
                                 <AiButton
                                     data-test="register-user-confirm-btn"
                                     primary
-                                    class="w-full ml-2 sm:w-auto"
+                                    class="ml-2"
                                     :loading="isSubmitting"
                                     @click="submitAction"
                                 >
                                     Register User
                                 </AiButton>
                                 <AiButton
-                                    class="w-full sm:w-auto"
                                     data-test="close-modal-btn"
                                     @click="close"
                                 >

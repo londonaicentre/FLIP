@@ -12,7 +12,7 @@
 -->
 
 <template>
-    <div class="px-4 pb-4 space-y-8 divide-y divide-gray-200 dark:divide-dark-border sm:space-y-5">
+    <div class="px-6 pb-4 space-y-8 divide-y divide-gray-200 dark:divide-dark-border sm:space-y-5">
         <div>
             <p class="max-w-2xl mt-1 text-sm text-gray-500 dark:text-gray-300">
                 Complete the following fields to initiate training.
@@ -31,6 +31,7 @@
                         name="enriched"
                         value="true"
                         data-test="data-enrichment-btn"
+                        :disabled="disabled"
                         :label="{ enabled: 'Dataset Enriched', disabled: 'Dataset Not Enriched' }"
                     />
                 </div>
@@ -54,7 +55,7 @@
                                     <dt class="flex items-center font-semibold text-gray-500 dark:text-primary-200">
                                         <div class="flex items-center">
                                             <span class="px-2 py-1">
-                                                {{ trust.trustName }}
+                                                {{ trust.trustLabel }}
                                             </span>
                                         </div>
                                     </dt>
@@ -63,6 +64,7 @@
                                             name="trust_ids"
                                             :data-test="`trust-selection-${i}`"
                                             :value="trust.trustId"
+                                            :disabled="disabled"
                                             hide-error
                                             :label="{ enabled: 'Trust Included', disabled: 'Trust Excluded' }"
                                         />
@@ -91,16 +93,23 @@ import { useProjectStore } from "@/store/project";
 
 interface ITrainingOptionsProps {
     errors: Record<string, string | undefined>
+    // A dispatched run's configuration is a record, not a form: the controls stay
+    // on screen so you can see which trusts took part, but nothing is editable.
+    disabled?: boolean
 }
 
 interface ITrustsToTrain {
-    // Display label only — names are admin-chosen and non-unique.
+    // Sort key. Names are admin-chosen and non-unique, so they order the list
+    // but never identify a trust on their own.
     trustName: string;
+    // What the user reads: the name with its code appended to disambiguate two
+    // trusts sharing a name. Falls back to the bare name when there is no code.
+    trustLabel: string;
     // Stable identity sent to the training-init endpoint.
     trustId: string;
 }
 
-defineProps<ITrainingOptionsProps>();
+withDefaults(defineProps<ITrainingOptionsProps>(), { disabled: false });
 
 const projectStore = useProjectStore();
 
@@ -111,6 +120,7 @@ const trustsToSelect: ComputedRef<ITrustsToTrain[] | undefined> = computed(() =>
         .map(t =>
             ({
                 trustName: t.name,
+                trustLabel: t.code ? `${t.name} (${t.code})` : t.name,
                 trustId: t.id
             })
         )

@@ -75,12 +75,11 @@ module "ses" {
 module "flip_model_files_uploads_bucket" {
   source      = "../modules/flip_s3_bucket"
   bucket_name = var.FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME
-  # CORS mirrors the stag/prod root: `["PUT"]` today because flip-api currently
-  # mints presigned PUT URLs (see flip-api/src/flip_api/file_services/
-  # presigned_url_for_upload.py). When PR #438 lands and the upload flow
-  # switches to presigned POST, narrow this to `["POST"]` in lockstep with
-  # the stag/prod root — that's the dev-drift point this PR is closing.
-  cors_methods         = ["PUT"]
+  # CORS mirrors the stag/prod root (services.tf): POST for the presigned-POST
+  # upload policy (see flip-api/src/flip_api/file_services/
+  # presigned_url_for_upload.py), GET for the presigned-URL model-file
+  # download (FLIP#784) — the browser fetches bytes directly from the bucket.
+  cors_methods         = ["POST", "GET"]
   cors_allowed_origins = var.s3_cors_allowed_origins
 }
 

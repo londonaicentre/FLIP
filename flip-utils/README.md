@@ -22,13 +22,13 @@ pip-installable `flip` Python package (published as `flip-utils` on PyPI) that s
 image and is imported as `from flip import ...` by user-uploaded training code. Sibling FL trees in the same mono-repo:
 
 - **[`flip-utils/flip/`](./flip/)** — pip-installable Python package with platform logic, NVFLARE components, Flower helpers and utilities (this directory)
-- **[`../fl-apps/`](../fl-apps/)** — FL job-type implementations / app templates (`standard`, `evaluation`, `diffusion_model`, `fed_opt`)
-- **[`../fl-tutorials/`](../fl-tutorials/)** — runnable end-to-end tutorial examples
-- **[`../fl-services/`](../fl-services/)** — Docker images for FL networks (server, clients, admin API)
+- **[`../fl-apps/`](../fl-apps/)** — FL job-type implementations / app templates per backend (`nvflare/{standard,standard_client_api,evaluation,evaluation_client_api,diffusion_model,fed_opt}`, `flower/{standard,evaluation}`)
+- **[`../fl-tutorials/`](../fl-tutorials/)** — runnable end-to-end tutorial examples per backend (`nvflare/`, `flower/`)
+- **[`../fl-services/`](../fl-services/)** — Docker images and network provisioning for FL networks per backend (`nvflare/`, `flower/`); each backend's `Makefile` owns build / provision / up / down / submit
 
-The rest of this README is still being reconciled with the mono-repo layout — paths like `tutorials/` and `fl-services/` referred to here are
-the now-sibling top-level `fl-tutorials/` and `fl-services/` trees, and Make targets called out below run from the
-`flip-utils/` directory.
+Paths like `tutorials/` referenced in older sections of this README refer to the now-sibling top-level
+[`../fl-tutorials/`](../fl-tutorials/) tree, and Make targets called out below run from the `flip-utils/` directory
+unless otherwise noted.
 
 ## Table of Contents
 
@@ -117,6 +117,8 @@ Set via the `JOB_TYPE` environment variable:
 | `evaluation` | Distributed model evaluation without training |
 | `diffusion_model` | Two-stage training (VAE encoder + diffusion) |
 | `fed_opt` | Custom federated optimization |
+| `standard_client_api` | Federated averaging via the modern NVFLARE Client API (script-driven, uses `nvflare.client`) |
+| `evaluation_client_api` | Distributed model evaluation via the modern NVFLARE Client API |
 
 The corresponding configs live in `fl-apps/nvflare/<job_type>/app/config/`.
 
@@ -168,6 +170,8 @@ The [`../fl-tutorials/`](../fl-tutorials/) directory contains ready-to-use examp
 | `diffusion_model` | `image_synthesis/latent_diffusion_model` |
 | `fed_opt` | `image_segmentation/3d_spleen_segmentation` |
 | `evaluation` | `image_evaluation/3d_spleen_segmentation_evaluation` |
+| `standard_client_api` | `image_classification/xray_classification_client_api` |
+| `evaluation_client_api` | `image_evaluation/3d_spleen_segmentation_evaluation_client_api` |
 
 ---
 

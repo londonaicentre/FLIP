@@ -91,9 +91,9 @@ full = [
     "timm>=1.0.0",
     # Pin torch>=2.11,<2.12 (was 2.9.1 via MONAI transitive) so the NVFlare
     # supernode runs the same torch as the flower one (which pins the same
-    # range). PyPI's torch 2.11.x ships the cu128 build by
-    # default, which matches host NVIDIA driver 575.x. 2.12 ships cu130
-    # which needs driver >=580.
+    # range). PyPI's torch 2.11.x ships the cu130 build by default, which
+    # needs NVIDIA driver >=580; the [tool.uv] index pin below routes it to
+    # the cu128 build, which matches host driver 575.x.
     "torch>=2.11.0,<2.12",
     # torchvision MUST be a direct dep, kept in lock-step with torch (0.26 <-> 2.11).
     # timm pulls it in transitively, but [tool.uv.sources] index pins only apply to

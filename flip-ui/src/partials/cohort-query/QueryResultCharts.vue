@@ -12,7 +12,7 @@
 -->
 
 <template>
-    <div class="p-4">
+    <div>
         <Transition
             name="fade"
             mode="out-in"
@@ -20,15 +20,17 @@
             <AiLoader v-if="!results || submitting" class="py-8" />
             <div v-else-if="results.trustsResults.length">
                 <div class="h-full gap-4 space-y-4 columns-1 lg:columns-2">
-                    <AiCard
+                    <div
                         v-for="chartResults in results.trustsResults"
                         :key="chartResults.name"
-                        class="relative grow h-[500px]"
+                        data-test="chart-card"
+                        class="relative grow aspect-[4/3] max-h-[500px] overflow-hidden bg-white
+                        border border-gray-200 rounded-xl dark:bg-dark-canvas dark:border-dark-border"
                     >
                         <div class="h-full p-4">
                             <AiChart :data="chartResults" class="" />
                         </div>
-                    </AiCard>
+                    </div>
                 </div>
             </div>
             <div v-else-if="!results.trustsResults.length" data-test="no-results-message">
@@ -50,7 +52,6 @@ import { whenever } from "@vueuse/core";
 import useSWRV from "swrv";
 import { ref, watch } from "vue";
 
-import AiCard from "@/components/AiCard/AiCard.vue";
 import AiChart from "@/components/AiChart/AiCohortChart.vue";
 import AiLoader from "@/components/AiLoader/AiLoader.vue";
 import { getOMOPResults } from "@/services/cohort-query-service";

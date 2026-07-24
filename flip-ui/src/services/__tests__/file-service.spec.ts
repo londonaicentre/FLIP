@@ -11,7 +11,7 @@
  * limitations under the License.
  */
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const httpGet = vi.fn();
 const httpDelete = vi.fn();
@@ -42,19 +42,48 @@ import { deleteModelFile,
     downloadModelFile,
     getJobTypeFromConfig,
     getModelConfig,
+    getModelFileDownloadUrl,
     processScannedFile,
     resolveModelConfigState } from "@/services/file-service";
 import { DEFAULT_JOB_TYPE } from "@/services/model-service";
+
+const originalFetch = global.fetch;
+const fetchMock = vi.fn();
+
+beforeEach(() => {
+    fetchMock.mockReset();
+    global.fetch = fetchMock as unknown as typeof fetch;
+});
+
+afterEach(() => {
+    global.fetch = originalFetch;
+});
 
 const jobTypes = {
     standard: ["trainer.py", "config.json"],
     diffusion: ["trainer.py", "config.json", "diffusion.py"]
 };
 
-const configBlob = (payload: unknown): { data: Blob } => {
-    const data = new Blob([JSON.stringify(payload)], { type: "application/json" });
+// downloadModelFile (and everything built on it: getJobTypeFromConfig,
+// resolveModelConfigState, getModelConfig) now fetches in two stages: an
+// axios call to flip-api for a presigned URL, then a `fetch` for the actual
+// bytes. These helpers mock both stages together so call sites read like the
+// old single-mock setup.
+const mockPresignedDownload = (blob: Blob) => {
+    httpGet.mockResolvedValueOnce({
+        data: {
+            url: "https://s3.example.com/signed",
+            fileName: "config.json"
+        }
+    });
+    fetchMock.mockResolvedValueOnce({
+        ok: true,
+        blob: () => Promise.resolve(blob)
+    });
+};
 
-    return { data };
+const mockConfigJson = (payload: unknown) => {
+    mockPresignedDownload(new Blob([JSON.stringify(payload)], { type: "application/json" }));
 };
 
 describe("getJobTypeFromConfig", () => {
@@ -64,26 +93,26 @@ describe("getJobTypeFromConfig", () => {
     });
 
     it("returns the job_type from config.json when it is valid", async () => {
-        httpGet.mockResolvedValueOnce(configBlob({ job_type: "diffusion" }));
+        mockConfigJson({ job_type: "diffusion" });
         const result = await getJobTypeFromConfig("model-1", jobTypes);
         expect(result).toBe("diffusion");
         expect(fetchJobTypesMock).not.toHaveBeenCalled();
     });
 
     it("falls back to DEFAULT_JOB_TYPE when job_type is not in the job types map", async () => {
-        httpGet.mockResolvedValueOnce(configBlob({ job_type: "unknown" }));
+        mockConfigJson({ job_type: "unknown" });
         const result = await getJobTypeFromConfig("model-2", jobTypes);
         expect(result).toBe(DEFAULT_JOB_TYPE);
     });
 
     it("falls back to DEFAULT_JOB_TYPE when config.json has no job_type field", async () => {
-        httpGet.mockResolvedValueOnce(configBlob({ something_else: true }));
+        mockConfigJson({ something_else: true });
         const result = await getJobTypeFromConfig("model-3", jobTypes);
         expect(result).toBe(DEFAULT_JOB_TYPE);
     });
 
     it("falls back to DEFAULT_JOB_TYPE when config.json cannot be parsed", async () => {
-        httpGet.mockResolvedValueOnce({ data: new Blob(["not-json"], { type: "application/json" }) });
+        mockPresignedDownload(new Blob(["not-json"], { type: "application/json" }));
         const result = await getJobTypeFromConfig("model-4", jobTypes);
         expect(result).toBe(DEFAULT_JOB_TYPE);
     });
@@ -107,7 +136,7 @@ describe("getJobTypeFromConfig", () => {
 
     it("fetches job types from the API when none are provided", async () => {
         fetchJobTypesMock.mockResolvedValueOnce(jobTypes);
-        httpGet.mockResolvedValueOnce(configBlob({ job_type: "diffusion" }));
+        mockConfigJson({ job_type: "diffusion" });
         const result = await getJobTypeFromConfig("model-6");
         expect(fetchJobTypesMock).toHaveBeenCalledTimes(1);
         expect(result).toBe("diffusion");
@@ -178,7 +207,7 @@ describe("resolveModelConfigState", () => {
     });
 
     it("downloads config.json and resolves the job type once status becomes COMPLETED", async () => {
-        httpGet.mockResolvedValueOnce(configBlob({ job_type: "diffusion" }));
+        mockConfigJson({ job_type: "diffusion" });
         const files = [{
             name: "config.json",
             status: FileUploadStatus.COMPLETED
@@ -220,20 +249,67 @@ describe("downloadModelFile", () => {
         httpGet.mockReset();
     });
 
-    it("GETs the URL with responseType=blob and returns the body", async () => {
-        // The blob responseType is the load-bearing detail: without it
-        // axios would JSON-parse a presigned-url body and throw on
-        // anything non-JSON (e.g. trainer.py). Test pins it.
+    it("fetches a presigned URL, downloads the bytes from it, and returns the blob", async () => {
         const blob = new Blob(["payload"]);
-        httpGet.mockResolvedValueOnce({ data: blob });
+        httpGet.mockResolvedValueOnce({
+            data: {
+                url: "https://s3.example.com/signed",
+                fileName: "trainer.py"
+            }
+        });
+        fetchMock.mockResolvedValueOnce({
+            ok: true,
+            blob: () => Promise.resolve(blob)
+        });
 
         const result = await downloadModelFile("/files/model/m-1/trainer.py");
 
-        expect(httpGet).toHaveBeenCalledWith(
-            "/files/model/m-1/trainer.py",
-            { responseType: "blob" }
-        );
+        expect(httpGet).toHaveBeenCalledWith("/files/model/m-1/trainer.py");
+        expect(fetchMock).toHaveBeenCalledWith("https://s3.example.com/signed");
         expect(result).toBe(blob);
+    });
+
+    it("does not touch fetch when only the presigned URL is requested", async () => {
+        // getModelFileDownloadUrl exists so callers (per-file download button)
+        // can hand the URL straight to the browser — streamed download, no
+        // in-memory Blob. It must not trigger the byte fetch itself.
+        httpGet.mockResolvedValueOnce({
+            data: {
+                url: "https://s3.example.com/signed",
+                fileName: "weights.bin"
+            }
+        });
+
+        const result = await getModelFileDownloadUrl("/files/model/m-1/weights.bin");
+
+        expect(httpGet).toHaveBeenCalledWith("/files/model/m-1/weights.bin");
+        expect(result).toEqual({
+            url: "https://s3.example.com/signed",
+            fileName: "weights.bin"
+        });
+        expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("throws instead of returning S3's error body as a blob when the presigned URL fetch fails", async () => {
+        // Unlike axios, fetch() resolves normally on a non-2xx — without an
+        // explicit response.ok check, an expired/malformed presigned URL
+        // would silently hand back the XML error body as if it were the
+        // real file.
+        httpGet.mockResolvedValueOnce({
+            data: {
+                url: "https://s3.example.com/signed",
+                fileName: "trainer.py"
+            }
+        });
+        fetchMock.mockResolvedValueOnce({
+            ok: false,
+            status: 403,
+            blob: () => Promise.resolve(new Blob(["<Error>AccessDenied</Error>"]))
+        });
+
+        await expect(downloadModelFile("/files/model/m-1/trainer.py")).rejects.toThrow(
+            "Download rejected by storage (status 403)"
+        );
     });
 });
 
@@ -243,7 +319,7 @@ describe("getModelConfig", () => {
     });
 
     it("returns the parsed config when the blob is valid JSON", async () => {
-        httpGet.mockResolvedValueOnce({ data: new Blob([JSON.stringify({ job_type: "diffusion" })]) });
+        mockConfigJson({ job_type: "diffusion" });
 
         const result = await getModelConfig("m-1");
 
@@ -251,14 +327,11 @@ describe("getModelConfig", () => {
     });
 
     it("URL-encodes the literal config.json filename", async () => {
-        httpGet.mockResolvedValueOnce({ data: new Blob([JSON.stringify({})]) });
+        mockConfigJson({});
 
         await getModelConfig("m-1");
 
-        expect(httpGet).toHaveBeenCalledWith(
-            "/files/model/m-1/config.json",
-            { responseType: "blob" }
-        );
+        expect(httpGet).toHaveBeenCalledWith("/files/model/m-1/config.json");
     });
 
     it("returns null when config.json is not yet uploaded (404)", async () => {
@@ -277,7 +350,7 @@ describe("getModelConfig", () => {
         // that's not yet valid JSON; treating that as "missing" lets the
         // poller retry on the next tick instead of crashing.
         const consoleWarn = vi.spyOn(console, "warn").mockImplementation(() => {});
-        httpGet.mockResolvedValueOnce({ data: new Blob(["not-json"]) });
+        mockPresignedDownload(new Blob(["not-json"]));
 
         const result = await getModelConfig("m-1");
 
