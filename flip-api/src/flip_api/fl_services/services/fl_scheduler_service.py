@@ -18,10 +18,10 @@ from sqlalchemy import Column
 from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import Session, col, select
 
-from flip_api.config import get_settings
 from flip_api.db.models.main_models import (
     FLJob,
     FLKitSlot,
+    FLLogs,
     FLNets,
     FLScheduler,
     Model,
@@ -38,6 +38,7 @@ from flip_api.domain.schemas.status import (
     ModelStatus,
     NetStatus,
 )
+from flip_api.domain.schemas.types import FLBackend, FLLogEvent
 from flip_api.fl_services.services.fl_service import (
     bundle_flower_application,
     bundle_nvflare_application,
@@ -115,10 +116,122 @@ def remove_job_from_queue(model_id: UUID, session: Session) -> None:
         session.commit()
         logger.info("Set job(s) as deleted")
 
+        # Deleting a queued job re-ranks everything behind it.
+        log_queue_positions(session)
+
     except SQLAlchemyError as e:
         session.rollback()
         logger.error(f"Error removing job from queue: {e}")
         raise DatabaseError("Error removing job from queue") from e
+
+
+def log_queue_positions(session: Session) -> None:
+    """Emit one typed activity row per queued job whose queue position changed.
+
+    The FL queue is ``FLJob`` rows in ``QUEUED`` status, ordered by ``created``
+    ascending — exactly the order ``check_for_queued_jobs`` picks from, so
+    position 1 is the next model to start when a net frees up. For each queued
+    job the last logged ``QUEUE_POSITION`` row is compared (keyed by job id, so
+    a re-initiated model always re-logs its first position); a row is written
+    only when the position is new or changed, making the function idempotent —
+    callers invoke it after any queue mutation without worrying about noise.
+    Rows are batched into a single commit so a deep queue never costs O(N)
+    commits per mutation.
+
+    Idempotence holds for serialized callers only: emit-on-change is a
+    read-then-write with nothing locked, so concurrent calls (the scheduler
+    tick on its ``BackgroundScheduler`` thread vs a request thread, or a
+    second flip-api replica) can both read the same prior rows and both
+    write, leaving duplicate — or transiently contradictory — feed rows.
+    That is tolerated: positions are a display nicety and the next mutation
+    self-heals. The hub currently runs one flip-api replica with a single
+    Uvicorn worker (ECS ``desired_count = 1``, no autoscaling; ``fastapi
+    run`` without ``--workers``), so only in-process thread interleaving can
+    race. Scaling flip-api out multiplies the emission sites per tick — close
+    the race then with ``SELECT ... FOR UPDATE`` on the queued jobs or a
+    partial unique index over the ``details`` (job_id, position) pair.
+
+    Positions are a display nicety: any failure is logged, the batch is rolled
+    back, and nothing is raised — an emission problem can never wedge the
+    scheduler tick or the caller's queue mutation. **Precondition:** call this
+    only after the caller has committed its own mutation; the failure-path
+    rollback would otherwise discard the caller's uncommitted state.
+
+    Args:
+        session (Session): The database session.
+
+    Returns:
+        None
+    """
+    try:
+        # id is the tiebreak on identical created timestamps so this ranking,
+        # queued_positions_by_model and check_for_queued_jobs can never disagree.
+        queued_jobs = session.exec(
+            select(FLJob)
+            .where(FLJob.status == JobStatus.QUEUED)
+            .order_by(cast(Column, FLJob.created).asc(), cast(Column, FLJob.id).asc())
+        ).all()
+        if not queued_jobs:
+            return
+
+        # DISTINCT ON collapses each job's history to its newest row inside
+        # Postgres, and only the compared details payload is fetched — a
+        # model's QUEUE_POSITION rows accumulate for life (each drain of a
+        # depth-N queue writes O(N^2) rows in total), so materialising every
+        # historical row as a full ORM object would grow monotonically with
+        # usage. If this scan ever shows up in slow-query logs regardless, the
+        # next lever is an index on (model_id, event_type) in a future
+        # Alembic revision.
+        prior_job_id = col(FLLogs.details)["job_id"].astext
+        prior_details = session.exec(
+            select(cast(Column, FLLogs.details))
+            .where(
+                col(FLLogs.model_id).in_([job.model_id for job in queued_jobs]),
+                FLLogs.event_type == FLLogEvent.QUEUE_POSITION.value,
+            )
+            .distinct(prior_job_id)
+            .order_by(prior_job_id, cast(Column, FLLogs.log_date).desc())
+        ).all()
+        # Keyed by job id (not model id): a model can hold two QUEUED jobs (no
+        # uniqueness on FLJob.model_id), and a model-keyed lookup would let the
+        # newest row suppress one job while forcing the other to re-emit forever.
+        # setdefault keeps first-seen-newest as defense in depth should the
+        # query ever hand back more than one row per job.
+        last_details_by_job: dict[str, dict] = {}
+        for row_details in prior_details:
+            row_job_id = (row_details or {}).get("job_id")
+            if isinstance(row_job_id, str):
+                last_details_by_job.setdefault(row_job_id, row_details or {})
+
+        emitted = False
+        for position, job in enumerate(queued_jobs, start=1):
+            if last_details_by_job.get(str(job.id), {}).get("position") == position:
+                continue
+            # A non-None transaction makes add_log skip its per-row commit; the
+            # whole batch lands in the single commit below.
+            add_log(
+                job.model_id,
+                None,
+                session,
+                event_type=FLLogEvent.QUEUE_POSITION.value,
+                details={"position": position, "job_id": str(job.id)},
+                transaction=session,
+            )
+            emitted = True
+        if emitted:
+            session.commit()
+    except Exception:
+        logger.exception("Failed to emit queue-position logs")
+        try:
+            session.rollback()
+        except Exception:
+            # A session whose rollback failed raises PendingRollbackError on
+            # every subsequent use — handed back to run_jobs_core it would fail
+            # the training start and wedge the net. invalidate() discards the
+            # broken connection without running ROLLBACK on it, leaving the
+            # session reusable on a fresh connection.
+            logger.exception("Failed to roll back queue-position emission; invalidating session")
+            session.invalidate()
 
 
 def revert_scheduler_pickup(scheduler_id: UUID, session: Session) -> None:
@@ -174,7 +287,7 @@ def get_net_by_model_id(model_id: UUID, session: Session) -> INetDetails:
     logger.info("Getting the net endpoint via its model ID...")
     try:
         statement = (
-            select(FLNets.endpoint, FLNets.name)
+            select(FLNets.endpoint, FLNets.name, FLNets.fl_backend)
             .join(FLScheduler)
             .join(FLJob)
             .where(FLJob.model_id == model_id)
@@ -186,8 +299,10 @@ def get_net_by_model_id(model_id: UUID, session: Session) -> INetDetails:
             logger.error(f"Net not found for model ID: {model_id}")
             raise NotFoundError(f"Net not found for model ID: {model_id}")
 
-        endpoint, name = result
-        return INetDetails(endpoint=endpoint, name=name)
+        endpoint, name, fl_backend = result
+        # The auto-mapped Enum column yields a real FLBackend at runtime; sqlmodel just types a
+        # single-column select as str, so assert the type back.
+        return INetDetails(endpoint=endpoint, name=name, fl_backend=cast("FLBackend", fl_backend))
 
     except SQLAlchemyError as e:
         logger.error(f"Error getting net by model ID: {e}")
@@ -211,7 +326,7 @@ def get_net_by_name(name: str, session: Session) -> INetDetails | None:
     logger.info(f"Getting {name} info from db...")
 
     try:
-        statement = select(FLNets.endpoint, FLNets.name).where(FLNets.name == name)
+        statement = select(FLNets.endpoint, FLNets.name, FLNets.fl_backend).where(FLNets.name == name)
         result = session.exec(statement).first()
 
         logger.info(f"Query result: {result}")
@@ -220,8 +335,8 @@ def get_net_by_name(name: str, session: Session) -> INetDetails | None:
             logger.error(f"{name} could not be found")
             return None
 
-        endpoint, net_name = result
-        return INetDetails(endpoint=endpoint, name=net_name)
+        endpoint, net_name, fl_backend = result
+        return INetDetails(endpoint=endpoint, name=net_name, fl_backend=cast("FLBackend", fl_backend))
 
     except SQLAlchemyError as e:
         logger.error(f"Database error while getting net by name: {e}")
@@ -271,7 +386,7 @@ def get_nets(session: Session) -> list[INetDetails]:
     """
     logger.info("Getting net info from db...")
     try:
-        statement = select(FLNets.endpoint, FLNets.name)
+        statement = select(FLNets.endpoint, FLNets.name, FLNets.fl_backend)
         results = session.exec(statement).all()
 
         if not results:
@@ -279,11 +394,46 @@ def get_nets(session: Session) -> list[INetDetails]:
             logger.error(error_message)
             raise NotFoundError(error_message)
 
-        return [INetDetails(endpoint=endpoint, name=name) for endpoint, name in results]
+        return [
+            INetDetails(endpoint=endpoint, name=name, fl_backend=cast("FLBackend", fl_backend))
+            for endpoint, name, fl_backend in results
+        ]
 
     except SQLAlchemyError as e:
         logger.error(f"Error getting nets: {e}")
         raise DatabaseError("Error getting nets") from e
+
+
+def resolve_backend(session: Session, net: INetDetails | None = None) -> FLBackend:
+    """Resolve the active FL backend at runtime from the nets (never from a static env var).
+
+    Every net carries a non-null ``fl_backend`` set at seed time from FL_BACKEND. That seeded
+    value is canonical — there is no runtime reconciliation — so resolution always reads the DB.
+
+    Args:
+        session (Session): SQLModel session (used when no net is given).
+        net (INetDetails | None): When given, use this net's backend (the job is already pinned
+            to it). When ``None`` (e.g. at model creation, before scheduling), use any net's
+            backend — all nets run the same backend in single-backend mode.
+
+    Returns:
+        FLBackend: The resolved backend (``nvflare`` or ``flower``).
+
+    Raises:
+        ValueError: If no FL nets are registered at all (empty NET_ENDPOINTS / misconfig).
+    """
+    if net is not None:
+        return net.fl_backend
+
+    backend = session.exec(select(FLNets.fl_backend)).first()
+    if backend is not None:
+        # Auto-mapped Enum column; sqlmodel types the single-column select as str, assert it back.
+        return cast("FLBackend", backend)
+
+    raise ValueError(
+        "Cannot determine the active FL backend: no FL nets are registered. "
+        "Check NET_ENDPOINTS and that seeding ran."
+    )
 
 
 def check_for_available_net(session: Session) -> ISchedulerResponse | None:
@@ -345,11 +495,13 @@ def check_for_queued_jobs(scheduler_id: UUID, session: Session) -> IJobResponse 
     logger.info("Checking for any queued jobs...")
 
     try:
-        # Find the earliest queued job
+        # Find the earliest queued job. The id tiebreak on identical created
+        # timestamps keeps the pickup order in exact agreement with the ranks
+        # shown by log_queue_positions / queued_positions_by_model.
         job_stmt = (
             select(FLJob)
             .where(FLJob.status == JobStatus.QUEUED)
-            .order_by(cast(Column, FLJob.created).asc())
+            .order_by(cast(Column, FLJob.created).asc(), cast(Column, FLJob.id).asc())
             .limit(1)
             .with_for_update(skip_locked=True)
         )
@@ -412,28 +564,29 @@ def prepare_and_start_training(model_id: UUID, fl_job_id: UUID, trust_ids: list[
     try:
         logger.debug("Attempting to prepare and start training...")
 
-        # NOTE folder structure of the bundle will be different depending on whether it's a FLARE / Flower app
-        fl_backend = get_settings().FL_BACKEND
+        # Resolve the backend from the net this job is pinned to. The value is the net's
+        # canonical seeded backend (FLNets.fl_backend), read from the DB, never a boot-time env var.
+        net_details = get_net_by_model_id(model_id, session)
+        if not net_details.endpoint:
+            raise Exception("Failed to get the net endpoint")
 
-        if fl_backend == "nvflare":
+        fl_backend = resolve_backend(session, net_details)
+
+        # NOTE folder structure of the bundle will be different depending on whether it's a FLARE / Flower app
+        if fl_backend == FLBackend.NVFLARE:
             # Copies base application + user-uploaded model files into a destination bucket on S3
             dest_bucket_s3_path = bundle_nvflare_application(model_id)
             logger.info(f"Bundled the app for [nvflare] to '{dest_bucket_s3_path}'.")
 
-        elif fl_backend == "flower":
+        elif fl_backend == FLBackend.FLOWER:
             # Copies base application + user-uploaded model files into a destination bucket on S3
             dest_bucket_s3_path = bundle_flower_application(model_id)
             logger.info(f"Bundled the app for [flower] to '{dest_bucket_s3_path}'.")
 
         else:
-            # If the FL_BACKEND setting is typed/ constrained correctly, this should never be hit
             error_msg = f"Unsupported FL backend: {fl_backend}"
             logger.error(error_msg)
             raise Exception(error_msg)
-
-        net_details = get_net_by_model_id(model_id, session)
-        if not net_details.endpoint:
-            raise Exception("Failed to get the net endpoint")
 
         # Resolve FL kit slot names at the FL boundary. The FL protocol (NVFlare/Flower)
         # identifies participants by the CN baked into the kit's cert at provisioning
@@ -446,7 +599,7 @@ def prepare_and_start_training(model_id: UUID, fl_job_id: UUID, trust_ids: list[
             ).all()
         )
 
-        validate_client_availability(slot_names, net_details.endpoint)
+        validate_client_availability(slot_names, net_details.endpoint, fl_backend)
 
         # Get presigned URLs from the files in the destination bucket on S3
         bundle_urls = get_bundle_urls(dest_bucket_s3_path)
@@ -534,8 +687,15 @@ def update_fl_scheduler(model_id: UUID, session: Session) -> None:
     try:
         logger.debug(f"Attempting to update the FL job to {JobStatus.COMPLETED} for model: {model_id}")
 
-        # Get and update the job
-        job_stmt = select(FLJob).where(FLJob.model_id == model_id)
+        # Get the latest non-deleted job for this model. Use created DESC so a
+        # model that has been retried (multiple jobs) always releases the
+        # scheduler pinned to the most recent job, not a stale earlier one.
+        job_stmt = (
+            select(FLJob)
+            .where(FLJob.model_id == model_id, FLJob.status != JobStatus.DELETED)
+            .order_by(cast(Column, FLJob.created).desc())
+            .limit(1)
+        )
         job = session.exec(job_stmt).first()
         if job:
             job.status = JobStatus.COMPLETED
@@ -550,7 +710,29 @@ def update_fl_scheduler(model_id: UUID, session: Session) -> None:
                 session.add(scheduler)
 
         session.commit()
-        logger.info("The FL job status and FL scheduler status have been updated successfully.")
+
+        if job:
+            # Completing a still-QUEUED job (e.g. a queued model stopped or
+            # errored) re-ranks everything behind it; for a job already picked
+            # up this normally emits nothing (emit-on-change), though it also
+            # self-heals rows a previously failed emission rolled back.
+            log_queue_positions(session)
+
+        if job and scheduler:
+            logger.info(
+                "FL job %s set to COMPLETED, scheduler %s released to AVAILABLE.",
+                job.id,
+                scheduler.id,
+            )
+        elif job:
+            logger.warning(
+                "FL job %s set to COMPLETED, but no scheduler found for job_id=%s "
+                "(scheduler may have already been reassigned).",
+                job.id,
+                job.id,
+            )
+        else:
+            logger.info("No active FL job found for model; scheduler status unchanged.")
 
     except SQLAlchemyError as e:
         session.rollback()

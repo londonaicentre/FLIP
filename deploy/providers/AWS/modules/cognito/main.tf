@@ -27,7 +27,7 @@ resource "aws_cognito_user_pool" "flip_user_pool" {
 
   # Cognito email templates for admin-created users and password reset flows.
   # Templates live at the caller's path (typically templates/cognito/) so the
-  # Python testing script in deploy/providers/AWS/test_email_templates.py can
+  # Python testing script in deploy/providers/AWS/tests/test_email_templates.py can
   # load the same files without chasing them into every module that needs them.
   # See: https://docs.aws.amazon.com/cognito-user-identity-pools/latest/userguide/user-pool-email.html
   # Color scheme matches flip-ui: https://github.com/londonaicentre/FLIP/blob/develop/flip-ui/tailwind.config.js

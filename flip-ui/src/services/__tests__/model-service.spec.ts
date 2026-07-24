@@ -14,24 +14,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { _http } from "@/services/api";
-import { clearJobTypesCache,
-    createModel,
-    DEFAULT_JOB_TYPE,
-    deleteModel,
-    editModel,
-    fetchJobTypes,
-    getDownloadUrlForResults,
-    getLogsForModel,
-    getModel,
-    getModelFileStatus,
-    getModelMetrics,
-    getModels,
-    getPreSignedUrl,
-    getRequiredFilesForJobType,
-    initialiseTraining,
-    isValidJobType,
-    stopTraining,
-    uploadModelFile } from "@/services/model-service";
+import { buildModelSteps, clearJobTypesCache, createModel, DEFAULT_JOB_TYPE, deleteModel, editModel, fetchJobTypes, getAllModels, getDownloadUrlForResults, getLogsForModel, getModel, getModelFileStatus, getModelMetrics, getModels, getPreSignedUrl, getRequiredFilesForJobType, getStatusEnumValue, initialiseTraining, isValidJobType, type ModelStatus, ModelStatusEnum, modelStatusLabelWithQueue, stopTraining, uploadModelFile } from "@/services/model-service";
 
 vi.mock("@/services/api", () => ({
     _http: {
@@ -52,6 +35,32 @@ describe("model-service", () => {
         // a single failing test would poison every subsequent test in the
         // suite via the module-level `_jobTypesCache`.
         clearJobTypesCache();
+    });
+
+    describe("getAllModels", () => {
+        it("GETs the given URL and returns the paged models response with statusCounts", async () => {
+            const page = {
+                data: [{
+                    id: "m1",
+                    name: "stroke-v1",
+                    projectId: "p1",
+                    projectName: "Stroke triage",
+                    ownerId: "u1",
+                    trusts: []
+                }],
+                page: 1,
+                pageSize: 20,
+                totalPages: 1,
+                totalRecords: 1,
+                statusCounts: { PENDING: 1 }
+            };
+            vi.mocked(_http.get).mockResolvedValue({ data: page } as never);
+
+            const result = await getAllModels("/models?pageNumber=1&pageSize=20&status=INITIATED,PENDING");
+
+            expect(_http.get).toHaveBeenCalledWith("/models?pageNumber=1&pageSize=20&status=INITIATED,PENDING");
+            expect(result).toEqual(page);
+        });
     });
 
     describe("fetchJobTypes", () => {
@@ -434,6 +443,119 @@ describe("model-service", () => {
             const result = await getModelMetrics("/metrics/m-1");
 
             expect(result).toEqual(metrics);
+        });
+    });
+
+    describe("buildModelSteps", () => {
+        const stepByName = (status: ModelStatus | undefined, name: string) => {
+            const step = buildModelSteps(status).find(s => s.name === name);
+            if (!step) throw new Error(`step "${name}" not found`);
+
+            return step;
+        };
+
+        it("returns the four model lifecycle steps in order", () => {
+            expect(buildModelSteps("PENDING").map(s => s.name)).toEqual([
+                "Model Created",
+                "Model Prepared",
+                "Running",
+                "Results Uploaded"
+            ]);
+        });
+
+        it("RESULTS_UPLOADED marks every step completed", () => {
+            expect(buildModelSteps("RESULTS_UPLOADED").every(s => s.completed)).toBe(true);
+        });
+
+        it("ERROR flags Running as an error", () => {
+            // A genuine job failure should still surface on the Running milestone.
+            const step = stepByName("ERROR", "Running");
+            expect(step.error).toBe(true);
+            expect(step.completed).toBeFalsy();
+        });
+
+        it("RESULTS_UPLOAD_FAILED keeps Running completed (the job did finish)", () => {
+            // The bug this fixes: an upload failure must not paint the Running
+            // milestone as failed, because the job itself completed successfully.
+            const step = stepByName("RESULTS_UPLOAD_FAILED", "Running");
+            expect(step.completed).toBe(true);
+            expect(step.error).toBeFalsy();
+            expect(step.inProgress).toBeFalsy();
+        });
+
+        it("RESULTS_UPLOAD_FAILED flags Results Uploaded as the failed step", () => {
+            const step = stepByName("RESULTS_UPLOAD_FAILED", "Results Uploaded");
+            expect(step.error).toBe(true);
+            expect(step.completed).toBeFalsy();
+        });
+
+        it("RESULTS_UPLOAD_FAILED keeps Model Prepared completed", () => {
+            expect(stepByName("RESULTS_UPLOAD_FAILED", "Model Prepared").completed).toBe(true);
+        });
+
+        it("PREPARED shows Running as Starting — the job is staged but not yet executing", () => {
+            const step = stepByName("PREPARED", "Running");
+            expect(step.description).toBe("Starting");
+            expect(step.inProgress).toBe(true);
+        });
+
+        it("RUNNING shows Running as In Progress", () => {
+            const step = stepByName("RUNNING", "Running");
+            expect(step.description).toBe("In Progress");
+            expect(step.inProgress).toBe(true);
+        });
+
+        it("RESULTS_UPLOADED clears the Running description", () => {
+            expect(stepByName("RESULTS_UPLOADED", "Running").description).toBeUndefined();
+        });
+
+        it("an unrecognised status degrades to error handling without throwing", () => {
+            // getStatusEnumValue maps anything unknown to ERROR so a stale UI bundle
+            // receiving a newer status degrades gracefully rather than crashing.
+            expect(() => buildModelSteps("NONSENSE" as ModelStatus)).not.toThrow();
+            expect(stepByName("NONSENSE" as ModelStatus, "Running").error).toBe(true);
+        });
+
+        it("INITIATED with a queue position describes step 02 as Model Queued (n)", () => {
+            const step = buildModelSteps("INITIATED", 2).find(s => s.name === "Model Prepared");
+            expect(step?.description).toBe("Model Queued (2)");
+        });
+
+        it("INITIATED without a queue position keeps the plain Model Queued description", () => {
+            expect(stepByName("INITIATED", "Model Prepared").description).toBe("Model Queued");
+        });
+    });
+
+    describe("modelStatusLabelWithQueue", () => {
+        it("appends the queue position when present", () => {
+            expect(modelStatusLabelWithQueue("INITIATED", 2)).toBe("Model Queued (2)");
+        });
+
+        it.each([[undefined], [null], [0], [-1]])("omits the suffix for %s", (position) => {
+            expect(modelStatusLabelWithQueue("INITIATED", position as number | null | undefined)).toBe("Model Queued");
+        });
+
+        it("appends to whatever label the status maps to", () => {
+            expect(modelStatusLabelWithQueue("PENDING", 3)).toBe("Model Created (3)");
+        });
+    });
+
+    describe("getStatusEnumValue", () => {
+        it("maps a known status name to its ordinal", () => {
+            expect(getStatusEnumValue("RESULTS_UPLOAD_FAILED")).toBe(ModelStatusEnum.RESULTS_UPLOAD_FAILED);
+        });
+
+        it("falls back to ERROR for undefined or unrecognised status", () => {
+            expect(getStatusEnumValue(undefined)).toBe(ModelStatusEnum.ERROR);
+            expect(getStatusEnumValue("NONSENSE")).toBe(ModelStatusEnum.ERROR);
+        });
+
+        it("falls back to ERROR for a numeric-string key (numeric-enum reverse mapping)", () => {
+            // ModelStatusEnum["0"] reverse-maps to the member NAME ("PENDING"), a string —
+            // not an ordinal. The guard must reject it and still return a number.
+            const result = getStatusEnumValue("0");
+            expect(typeof result).toBe("number");
+            expect(result).toBe(ModelStatusEnum.ERROR);
         });
     });
 });

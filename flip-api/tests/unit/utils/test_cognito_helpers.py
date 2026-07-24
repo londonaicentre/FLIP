@@ -11,7 +11,7 @@
 #
 
 from unittest.mock import Mock, call, patch
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import factory
 import pytest
@@ -226,8 +226,9 @@ class TestCreateCognitoUser:
         # Execute
         result = create_cognito_user(email, user_pool_id)
 
-        # Verify
-        assert result == expected_user_id
+        # Verify — helper materialises the Cognito `sub` string into a UUID
+        # so the caller matches the SQLModel `UserProfile.user_id` field type.
+        assert result == UUID(expected_user_id)
 
         # Verify boto3 client creation
         mock_boto3_client.assert_called_once_with("cognito-idp", region_name="eu-west-2")
@@ -384,8 +385,8 @@ class TestCreateCognitoUser:
             # Execute
             result = create_cognito_user(email, user_pool_id)
 
-            # Verify
-            assert isinstance(result, str)
+            # Verify — helper returns a UUID materialised from the `sub` string.
+            assert isinstance(result, UUID)
 
             # Verify correct parameters passed
             mock_client_instance.admin_create_user.assert_called_once_with(
@@ -466,8 +467,8 @@ class TestCreateCognitoUser:
         # Execute
         result = create_cognito_user(email, user_pool_id)
 
-        # Verify correct user ID extracted
-        assert result == expected_user_id
+        # Verify correct user ID extracted (helper wraps `sub` into a UUID)
+        assert result == UUID(expected_user_id)
 
 
 class TestGetPoolId:

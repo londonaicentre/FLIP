@@ -26,9 +26,9 @@
             @submit="stageProject"
         >
             <div v-if="hasQuery" class="w-full gap-3 text-sm">
-                <ul role="list" class="border-gray-200 divide-y divide-gray-200 border-y dark:border-gray-700 dark:divide-gray-700">
+                <ul role="list" class="border-gray-200 divide-y divide-gray-200 border-y dark:border-dark-border dark:divide-dark-border">
                     <li v-for="trust in trustsToStage" :key="trust.id">
-                        <div class="flex items-center py-4 transition hover:bg-gray-50 dark:hover:bg-gray-800 group">
+                        <div class="flex items-center py-4 transition hover:bg-gray-50 dark:hover:bg-dark-surface group">
                             <div class="flex items-center flex-1 px-4 grow">
                                 <div class="flex-1 min-w-0">
                                     <div>
@@ -60,7 +60,7 @@
                 <div class="p-4">
                     <div class="inline-flex justify-end w-full space-x-4">
                         <AiButton
-                            v-if="!isObserver"
+                            v-if="!isViewer"
                             class="ml-2"
                             primary
                             small
@@ -136,11 +136,11 @@ import { filterByQueriedTrustIds } from "@/utils/cohort/query";
 interface IProjectStagingProps {
     staging: boolean;
     hasQuery: boolean;
-    // Trust IDs that posted a successful (non-errored) QueryResult. Stage
+    // Trust IDs that posted a successful, non-empty QueryResult. Stage
     // selector is intersected with this — late-joiners, never-responded,
-    // and errored trusts are all excluded because we have no usable cohort
-    // count for them. Computed by the parent as
-    // `respondedTrustIds − erroredTrustIds`.
+    // errored, and empty (0-record/privacy-suppressed) trusts are all
+    // excluded because we have no usable cohort count for them. Computed by
+    // the parent as `respondedTrustIds − erroredTrustIds − emptyTrustIds`.
     stageableTrustIds?: string[];
 }
 
@@ -156,7 +156,7 @@ const props = defineProps<IProjectStagingProps>();
 
 const emits = defineEmits(["staged"]);
 
-const { isObserver } = usePermissions();
+const { isViewer } = usePermissions();
 
 const loadingTrusts = ref<boolean>(true);
 const trustsToStage = ref<ITrustToStage[]>();

@@ -31,7 +31,11 @@ encrypted tunnel for all outbound polling and FL client traffic in addition to t
 
    FLIP network architecture.
 
-The following is the list of ports required to be opened for the Secure Enclave communication:
+The following is the list of ports required to be opened for trust-host communication. No inbound
+ports are required on trust hosts; everything trust-side is outbound HTTPS to the Central Hub or
+to the FL server NLB. Operator access is via AWS Systems Manager Session Manager — port 22 (SSH)
+is never opened. Internal trust services (Orthanc, XNAT, trust-api Swagger) are accessible only
+via SSM port forwarding (``make forward-trust``).
 
 .. list-table:: Firewall Rules
    :header-rows: 1
@@ -41,42 +45,21 @@ The following is the list of ports required to be opened for the Secure Enclave 
    * - Description
      - Inbound
      - Outbound
-   * - SSH traffic for installation and updates
-     - 22
+   * - DICOM ingestion from local PACS into the trust XNAT
      -
-   * - DICOM ingestion from PACS / modality
-     - 8081
+     - local PACS DICOM ports
+   * - Trust → Central Hub task polling (HTTPS)
      -
-   * - Grafana access
-     - 2632
+     - 443
+   * - FL client → FL server (via NLB)
      -
-   * - Kibana access
-     - 32010 / 15601
+     - configured ``FL_SERVER_PORT``
+   * - FL client per-run dependency install, Flower backend (HTTPS)
      -
-   * - Orthanc system access
-     - 4242 / 8042
+     - 443 to PyPI (``pypi.org``, ``files.pythonhosted.org``) and ``download.pytorch.org``
+   * - Operator access to trust host
+     - none (SSM Session Manager)
      -
-   * - Orthanc debugging access
-     - 4245 / 8045
-     -
-   * - FLIP API
-     - 8000-8003
-     -
-   * - Kubernetes ingress ports
-     - 32472 / 32473
-     -
-   * - Kubernetes control port
-     - 6443
-     -
-   * - FLIP communication ports
-     -
-     - 30001 - 30100
-   * - Connection from XNAT to local PACS systems
-     -
-     - local PACS ports
-   * - VPN traffic
-     -
-     - 500 / 4500
 
 *****************
 Backup / Restore
@@ -111,4 +94,4 @@ Access to FLIP is granted by a FLIP administrator.
 
 Access to FLIP will be reviewed annually, with dormant accounts being removed.
 
-FLIP employs role based access control to permit functionality for accounts, managed through the FLIP API and UI. FLIP currently has three access profiles: **Admin**, **Researcher** and **Observer**. For full details of permissions assigned to each role, see :ref:`rbac-roles`.
+FLIP employs role based access control to permit functionality for accounts, managed through the FLIP API and UI. FLIP currently has three access profiles: **Admin**, **Researcher** and **Viewer**. For full details of permissions assigned to each role, see :ref:`rbac-roles`.

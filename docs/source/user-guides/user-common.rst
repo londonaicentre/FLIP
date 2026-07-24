@@ -4,7 +4,7 @@ Common user functions
 
 .. warning:: Must have a valid FLIP account. If you do not have one, please liaise with your local FLIP system administrator and/or information asset owner (IAO), and provide your email address and confirmation of which role you require.
 
-Although this page covers functions common to all FLIP users regardless of :ref:`rbac-roles` throughout the various stages involved in preparing an AI model for federated learning, actions related to project process flow are described from the perspective of users with the ``researcher`` role. Users with the ``observer`` role have read-only access to projects they are assigned to; actions such as creating projects, running queries and uploading files are not available to observers.
+Although this page covers functions common to all FLIP users regardless of :ref:`rbac-roles` throughout the various stages involved in preparing an AI model for federated learning, actions related to project process flow are described from the perspective of users with the ``researcher`` role. Users with the ``viewer`` role have read-only access to projects they are assigned to; actions such as creating projects, running queries and uploading files are not available to viewers.
 
 Users with the ``admin`` role may perform all the functions of those with the ``researcher`` role, and are additionally solely responsible for approving and un-staging a project. Each user holds exactly one role (see :ref:`rbac-roles`). For more information, please refer to the :ref:`admin-project-and-user-management` subsection or the broader :ref:`sys-admin` section.
 
@@ -32,6 +32,16 @@ Initial Login
 
    Logging into FLIP for the first time.
 
+.. _flip-login:
+
+On subsequent visits, sign in with your email address and password to reach the Projects page.
+
+.. figure:: ../assets/flip/flip-login.gif
+   :width: 600
+   :align: center
+
+   Signing in to FLIP.
+
 .. _forgot-password:
 
 ***************
@@ -55,6 +65,43 @@ Forgot Password
    You may also speak to your local FLIP system administrator and ask them to perform the reset for you, in which case you will receive an email including the confirmation code required to change your password.
 
    In this case, you will select the 'I have a code' button rather than the 'Request Code' button in the above process.
+
+.. _change-password:
+
+***************
+Change Password
+***************
+
+While signed in, you can change your password at any time from the account menu.
+
+1. Open the account menu in the top right-hand corner
+2. Click 'Change Password'
+3. Click the 'Request Code' button to have a confirmation code emailed to you
+4. Enter the confirmation code and a new password
+5. Click the 'Change Password' button
+
+.. figure:: ../assets/flip/change-password-user.gif
+   :width: 600
+   :align: center
+
+   Changing your password while signed in.
+
+.. _dark-mode:
+
+*********
+Dark Mode
+*********
+
+FLIP supports light and dark display modes. Your choice is remembered across sessions.
+
+1. Open the account menu in the top right-hand corner
+2. Click 'Dark Mode' to toggle between the light and dark themes
+
+.. figure:: ../assets/flip/dark-mode.gif
+   :width: 600
+   :align: center
+
+   Switching between light and dark mode.
 
 ********
 Projects
@@ -83,6 +130,13 @@ Edit Project
 
 1. Click the 'Edit Project' button
 2. Update the project details, such as project name, description and added users
+3. Click the 'Update Project' button
+
+.. figure:: ../assets/flip/edit-project.gif
+   :width: 600
+   :align: center
+
+   Editing a project.
 
 .. warning::
 
@@ -214,7 +268,7 @@ Following project approval, a corresponding XNAT project will be generated at ea
 
 To view the progress of the imaging data import at each participating Trust, users can refer to the Imaging Project Status section on the project page.
 
-.. figure:: ../assets/flip/imaging-status.png
+.. figure:: ../assets/flip/imaging-status.gif
    :width: 600
    :align: center
 
@@ -225,19 +279,11 @@ To view the progress of the imaging data import at each participating Trust, use
    Importing large sets of studies from PACS systems can take a very long time and individual imports may fail if the system is under too much strain. Overtime, FLIP will automatically reimport failed studies as indicated by the reimport count.
    Once the reimport cap is reached, failed studies will no longe be reimported. If there are still failures present, please contact an XNAT administrator. Manual intervention may be needed.
 
-.. figure:: ../assets/flip/study-reimport-max.png
+.. figure:: ../assets/flip/study-reimport-max.gif
    :width: 600
    :align: center
 
    Reimport cap has been reached
-
-Trust sites can be filtered using the search bar at the top of the imaging project status section.
-
-.. figure:: ../assets/flip/imaging-status-filter.gif
-   :width: 600
-   :align: center
-
-   Filter imaging status trust locations
 
 
 *******
@@ -314,7 +360,7 @@ Additional files may be uploaded, especially if these are referenced by the vali
 
 **For Flower apps**, the required files differ (e.g. ``client_app.py``, ``pyproject.toml``). See the :ref:`FL nodes documentation <flip-fl-nodes>` for Flower-specific file requirements and job types.
 
-For more information on model training and model files, please see the `FLIP tutorials <https://github.com/londonaicentre/flip-fl-base/tree/main/tutorials>`_.
+For more information on model training and model files, please see the `FLIP tutorials <https://github.com/londonaicentre/FLIP/tree/develop/fl-tutorials>`_.
 
 .. warning::
 
@@ -442,6 +488,8 @@ FLIP uses the concept of *nets* that are deployed on the Central Hub and remote 
 
 This scheduling capability means model developers can submit their model for training via the UI and need not be concerned with matters such as GPU capacity or existing jobs that are running/queued. When initiating training the platform will check for available nets and assign the model training to an available net.
 
+While a model is waiting for a net, its place in the queue is shown alongside its status — e.g. ``Model Queued (2)``, where position 1 is the next model to start — both on the Models page and on the model's page, and the model's Live activity feed logs a new line each time the model moves up the queue.
+
 Initiate Training
 -----------------
 
@@ -512,3 +560,19 @@ Hovering over the graphs at various points will display the values.
    :align: center
 
    Viewing model training metrics.
+
+.. _connection-status:
+
+*****************
+Connection Status
+*****************
+
+The Connection Status page shows the live state of the federation. Each participating Trust is shown as online, degraded or offline based on its most recent heartbeat, and can be viewed as a list or as a radial topology.
+
+The FL nets card reports the FL client-to-server connectivity for each net — that is, whether each Trust's FL client is connected. No training requests can be sent to a Trust whose FL client is offline.
+
+.. figure:: ../assets/flip/fl-status.gif
+   :width: 600
+   :align: center
+
+   Viewing the federation connection status.

@@ -13,16 +13,6 @@
 
 import { _http } from "./api";
 
-export interface IAdminTrust {
-    id: string;
-    name: string;
-    code: string | null;
-    region: string | null;
-    created_at: string | null;
-    last_heartbeat: string | null;
-    project_count: number;
-}
-
 export interface ICreatedTrust {
     id: string;
     name: string;
@@ -35,7 +25,7 @@ export interface ICreatedTrust {
     trust_internal_service_key: string;
     // FL kit slot the hub claimed for this trust from the pre-provisioned pool.
     // The operator's fl-clients mount the matching workspace/net-N/services/<slot>
-    // dirs from flip-fl-base; fl_kit_slot_number picks the Flower supernode key.
+    // provisioned kit dirs; fl_kit_slot_number picks the Flower supernode key.
     fl_kit_slot: string;
     fl_kit_slot_number: number;
 }
@@ -44,12 +34,6 @@ export interface ICreateTrustPayload {
     name: string;
     code: string;
     region?: string;
-}
-
-export async function getAdminTrusts(): Promise<IAdminTrust[]> {
-    const response = await _http.get<IAdminTrust[]>("/admin/trusts");
-
-    return Array.isArray(response.data) ? response.data : [];
 }
 
 export async function createAdminTrust(payload: ICreateTrustPayload): Promise<ICreatedTrust> {

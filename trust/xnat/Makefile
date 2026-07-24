@@ -91,7 +91,8 @@ PACS_UI_PORT_EFFECTIVE := $(or $(PACS_UI_PORT),8042)
 # Host path that backs this trust's XNAT bind mounts (parent of xnat-data/
 # and xnat-db-data/). Sourced from the kit file's Host-local profile;
 # falls back to a per-trust default when the kit omits it:
-#   stag/prod → /opt/flip/xnat   (what the Ansible provisioner creates)
+#   stag/prod → /opt/flip/xnat-trust$(TRUST_NUM)   (per-slot dir; isolates
+#               xnat1 / xnat2 when multiple trusts share one EC2 host)
 #   dev       → ./xnat-data-trust$(TRUST_NUM)   (per-stack local dir; isolates
 #               concurrent Trust_1 / Trust_2 stacks on the same host)
 # Override per-host (e.g. on a box where /opt is small and the XNAT archive
@@ -101,7 +102,7 @@ PACS_UI_PORT_EFFECTIVE := $(or $(PACS_UI_PORT),8042)
 # bind-mount it directly without a separate `${XNAT_PATH}/` prefix. Both
 # this recipe and the compose stacks read the same exported var so the
 # dirs Make creates and the dirs compose mounts stay in lockstep.
-XNAT_DATA_DIR ?= $(if $(filter true stag,$(PROD)),/opt/flip/xnat,./xnat-data-trust$(TRUST_NUM))
+XNAT_DATA_DIR ?= $(if $(filter true stag,$(PROD)),/opt/flip/xnat-trust$(TRUST_NUM),./xnat-data-trust$(TRUST_NUM))
 XNAT_DATA_DIR := $(abspath $(XNAT_DATA_DIR))
 export XNAT_DATA_DIR
 
@@ -121,6 +122,30 @@ endif
 define require_kit
 	@if [ -z "$(KIT)" ]; then \
 	    echo "❌ KIT is required. Usage: make $@ KIT=<name>  (e.g. KIT=Trust_1)"; exit 1; \
+	fi
+endef
+
+# Deploy-time guard: every XNAT password the compose stacks substitute is a
+# bare ${VAR} with no default (docker-compose-stack.yml), so an empty value
+# silently brings up a broken/insecure XNAT — admin auth 401s ("Site has not
+# yet been configured" forever, see the export note above) and Postgres comes
+# up with a blank superuser password — instead of failing. Refuse to deploy if
+# any are empty. Covers both sources: XNAT_DATASOURCE_* (trust/xnat/.env) and
+# XNAT_ADMIN_*/XNAT_SERVICE_* (the kit file). Checks the exported process env
+# (the same values `docker stack deploy` substitutes), not just Make vars.
+XNAT_REQUIRED_PASSWORDS := XNAT_ADMIN_INITIAL_PASSWORD XNAT_ADMIN_PASSWORD \
+	XNAT_SERVICE_PASSWORD XNAT_DATASOURCE_PASSWORD XNAT_DATASOURCE_ADMIN_PASSWORD
+define require_xnat_passwords
+	@missing=""; \
+	for v in $(XNAT_REQUIRED_PASSWORDS); do \
+		if [ -z "$$(printenv $$v 2>/dev/null)" ]; then missing="$$missing $$v"; fi; \
+	done; \
+	if [ -n "$$missing" ]; then \
+		echo "❌ Refusing to deploy XNAT for KIT=$(KIT): empty password(s):$$missing"; \
+		echo "   These are substituted into the compose stack with no default, so an empty"; \
+		echo "   value yields a broken/insecure XNAT. Set XNAT_DATASOURCE_* in trust/xnat/.env"; \
+		echo "   and XNAT_ADMIN_*/XNAT_SERVICE_* in the kit file ($(KIT_FILE)), then retry."; \
+		exit 1; \
 	fi
 endef
 
@@ -176,6 +201,7 @@ up:
 # trust/Makefile's up-trust calls this so a trust comes up complete.
 up-xnat: create-xnat-network
 	$(require_kit)
+	$(require_xnat_passwords)
 	$(MAKE) down-xnat KIT=$(KIT)
 	$(MAKE) xnat-reset KIT=$(KIT)
 	XNAT_PATH=${XNAT_PATH} \
@@ -294,7 +320,8 @@ xnat-configure:
 		echo "  Waiting for container..."; sleep 5; elapsed=$$((elapsed + 5)); \
 	done
 	CONTAINER=$$(docker ps --filter "name=$(XNAT_PROJECT)_xnat-web" -q); \
-	docker exec $$CONTAINER bash -c 'set -o pipefail; cd /data/xnat/config && LOG_FILE="configure-xnat-$(XNAT_PROJECT).log" && bash configure-xnat.sh 2>&1 | tee "$$LOG_FILE"'; \
+	[ -n "$$CONTAINER" ] || { echo "❌ ERROR: $(XNAT_PROJECT)_xnat-web container not found at configure time"; exit 1; }; \
+	docker exec $$CONTAINER bash -c 'set -o pipefail; cd /data/xnat/config && LOG_FILE="configure-xnat-$(XNAT_PROJECT).log" && bash configure-xnat.sh 2>&1 | tee "$$LOG_FILE"' && \
 	docker exec $$CONTAINER bash -c 'set -o pipefail; cd /data/xnat/config && LOG_FILE="configure-dcm2niix-$(XNAT_PROJECT).log" && bash configure-dcm2niix.sh 2>&1 | tee "$$LOG_FILE"'
 
 create-xnat-network:

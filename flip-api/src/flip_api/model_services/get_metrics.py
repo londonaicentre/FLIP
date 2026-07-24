@@ -32,7 +32,7 @@ def get_metrics_endpoint(
     model_id: UUID = Path(..., title="Model ID"),
     db: Session = Depends(get_session),
     user_id: UUID = Depends(verify_token),
-):
+) -> list[IModelMetrics]:
     """
     Retrieve metrics for a specific model.
 

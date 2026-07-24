@@ -20,23 +20,25 @@ from flip_api.domain.schemas.users import CognitoUser
 # Interfaces
 
 
-class IBasicTrust(BaseModel):
-    id: UUID
-    name: str
-    code: str | None = None
+class ITrustStatus(BaseModel):
+    """Trust list item with connection status, readable by any authenticated user.
 
+    Backs ``GET /trust`` — the single list-of-trusts endpoint — powering both the
+    trust pickers (project staging, cohort query, charts) and the Connection
+    Status page (trust table + topology). Every field is benign trust metadata —
+    no secrets — so the endpoint is intentionally not admin-gated. Creating a
+    trust (``POST /admin/trusts``) stays admin-only.
+    """
 
-class IAdminTrust(BaseModel):
     id: UUID
     name: str
     code: str | None = None
     region: str | None = None
-    # Timestamps surfaced as strings with an explicit UTC marker (Z) so the
-    # browser doesn't reinterpret a naive datetime as local time and skew the
+    # last_heartbeat is surfaced as a string with an explicit UTC marker (Z) so
+    # the browser doesn't reinterpret a naive datetime as local time and skew the
     # staleness calc. The DB column is `timestamp without time zone` but the
-    # values are written via datetime.now(timezone.utc), so they're already
-    # UTC — we just need to tag them on the wire.
-    created_at: str | None = None
+    # values are written via datetime.now(timezone.utc), so they're already UTC —
+    # we just need to tag it on the wire.
     last_heartbeat: str | None = None
     project_count: int = 0
 
@@ -56,7 +58,7 @@ class ICreatedTrust(BaseModel):
 
     `fl_kit_slot` is the pre-provisioned FL participant identity assigned to this
     trust from the shared pool. The operator's containers mount the matching
-    ``workspace/net-N/services/<fl_kit_slot>/`` dirs from flip-fl-base; this is the
+    ``workspace/net-N/services/<fl_kit_slot>/`` provisioned kit dirs; this is the
     name the FL server sees on registration (independent of `name`).
     """
 

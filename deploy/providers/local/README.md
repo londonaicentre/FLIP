@@ -184,13 +184,20 @@ uv run ansible-galaxy install -r deploy/providers/local/requirements.yml
 
 **No inbound port forwarding is needed.** Trusts poll the hub outbound for tasks, and FL clients connect outbound to the FL server via the NLB. All communication is trust-initiated.
 
+The host/network firewall must allow outbound to **two separate Central Hub hosts** (different load balancers — both must be allowlisted):
+
+- **`app.flip.aicentre.co.uk`** — the ALB (HTTPS API, port 443).
+- **`fl.app.flip.aicentre.co.uk`** — the NLB (FL gRPC, default port 8002).
+
 ### Dynamic Public IP
 
-The NLB security group allowlists the trust's public IP for FL traffic. If the public IP changes (common with residential broadband), update it:
+The NLB security group allowlists the trust's public IP for FL traffic. If the public IP changes (common with residential broadband), update it. Set `LOCAL_TRUST_PUBLIC_IPS` (an HCL list of every allowlisted IP) in the env file and reconcile with `allow-local-trust-nlb`:
 
 ```bash
-TF_VAR_local_trust_public_ip=<new-ip> make -C deploy/providers/AWS plan apply
+LOCAL_TRUST_PUBLIC_IPS='["<new-ip>"]' make -C deploy/providers/AWS allow-local-trust-nlb LOCAL_TRUST_IP=<new-ip>
 ```
+
+Re-running with an already-listed IP is a no-op (idempotent).
 
 ## Troubleshooting
 
@@ -204,5 +211,6 @@ TF_VAR_local_trust_public_ip=<new-ip> make -C deploy/providers/AWS plan apply
 ## Related Documentation
 
 - [AWS Provider README](../AWS/README.md) — Central Hub and cloud Trust deployment
+- [Kubernetes Provider README](../kubernetes/README.md) — K8s-based trust deployment via Helm
 - [Trust README](../../../trust/README.md) — Trust service stack details
 - [Deploy README](../../README.md) — General deployment prerequisites (AWS CLI, SSH keys, GHCR login)

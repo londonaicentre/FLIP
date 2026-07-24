@@ -41,30 +41,33 @@ When creating issues, please use the appropriate issue template:
 
 FLIP is developed by the [London AI Centre](https://www.aicentre.co.uk/) in collaboration with Guy's and St Thomas' NHS Foundation Trust and King's College London. It is an open-source platform for federated training and evaluation of medical imaging AI models across healthcare institutions, while ensuring data privacy and security.
 
-The project spans three repositories:
-
-| Repository | Description |
-| --- | --- |
-| [FLIP](https://github.com/londonaicentre/FLIP) | Main mono-repo: Central Hub API, Trust APIs, UI, and Docker deployment |
-| [flip-fl-base](https://github.com/londonaicentre/flip-fl-base) | NVIDIA FLARE federated learning base application library, workflows, and tutorials |
-| [flip-fl-base-flower](https://github.com/londonaicentre/flip-fl-base-flower) | Flower federated learning base application library, workflows, and tutorials |
-
-The main FLIP repository follows a mono-repo structure with these key services:
+The FLIP repository is a mono-repo: it consolidates the Central Hub API, Trust APIs, UI, Docker deployment, **and**
+the federated learning code (base library, FL services, and tutorials) for both NVFLARE and Flower. Both backends
+are also provisioned in-tree (gitignored) under `fl-services/<backend>/provision/` (see
+[`README.md#federated-learning-setup`](README.md#federated-learning-setup)).
 
 ```bash
 FLIP/
 ├── deploy/             # Docker deployment files
+│   └── providers/
+│       ├── AWS/            # Terraform for Central Hub + cloud trust (EC2)
+│       ├── kubernetes/     # Helm chart for K8s trust deployment
+│       └── local/          # Ansible for on-premises trust deployment
 ├── docs/               # Sphinx documentation
 ├── flip-api/           # Central Hub API service
 ├── flip-ui/            # UI service
-└── trust/              # Services deployed in individual trust environments
-    ├── data-access-api/    # Data access API
-    ├── imaging-api/        # Imaging API
-    ├── observability/      # Observability stack (Grafana, Loki, Alloy)
-    ├── omop-db/            # Mocked OMOP database
-    ├── orthanc/            # Mocked PACS service (Orthanc)
-    ├── trust-api/          # Trust API
-    └── xnat/               # Mocked XNAT service
+├── trust/              # Services deployed in individual trust environments
+│   ├── data-access-api/    # Data access API
+│   ├── imaging-api/        # Imaging API
+│   ├── observability/      # Observability stack (Grafana, Loki, Alloy)
+│   ├── omop-db/            # Mocked OMOP database
+│   ├── orthanc/            # Mocked PACS service (Orthanc)
+│   ├── trust-api/          # Trust API
+│   └── xnat/               # Mocked XNAT service
+├── flip-utils/         # `flip` Python package — platform logic, NVFLARE components, Flower helpers
+├── fl-services/        # Docker images for FL networks, per backend: fl-services/nvflare/{fl-server,fl-client,fl-api-base,fl-base}, fl-services/flower/{superlink,supernode,fl-api-flower,fl-base}
+├── fl-apps/            # FL app templates per backend: fl-apps/nvflare/{standard,standard_client_api,evaluation,evaluation_client_api,diffusion_model,fed_opt}, fl-apps/flower/{standard,evaluation} (+ check_required_files.sh)
+└── fl-tutorials/       # End-to-end tutorial examples per backend: fl-tutorials/nvflare/ (xray classification, spleen seg/eval, diffusion), fl-tutorials/flower/ (xray classification, 3D spleen seg, numpy)
 ```
 
 ## Setting up the development environment
@@ -101,6 +104,18 @@ Other useful tools:
 
 - [Postman](https://www.postman.com/) — API testing
 - [Homebrew](https://brew.sh/) — package manager for macOS/Linux
+
+#### Open the multi-root workspace (not the folder)
+
+FLIP is a monorepo of independent Python sub-projects, each with its own `.venv` and `pyproject.toml`. Open it via the
+checked-in [`flip.code-workspace`](flip.code-workspace) — **File → Open Workspace from File…** — rather than opening the
+repo root as a plain folder. The multi-root workspace lets Pylance use each folder's own interpreter and Ruff its own
+config; for example, `nvflare` imports resolve only when `fl-services/nvflare/fl-api-base` is using its own `.venv`.
+Opening the repo root as a single folder applies one interpreter (flip-api) to every file, so cross-project imports such
+as `nvflare` show up as unresolved.
+
+After opening, confirm the per-folder interpreter with **Python: Select Interpreter** (it prompts for the folder first,
+then the `.venv`), and run **Developer: Reload Window** if an import is still flagged.
 
 ### Python environment management
 
@@ -218,7 +233,7 @@ Hub) communicates with flip-api. FL clients relay metrics and exceptions to the 
 
 **FL-specific environment variables:**
 
-- `FL_PROVISIONED_DIR` — path to the NVFLARE or Flower provisioned workspace. The Makefile automatically converts this to an absolute path (Docker requires absolute paths for volume mounts). This directory contains certificates, keys, `fed_client.json`, and other files generated during provisioning for each network. For the NVFLARE implementation, this is typically `../flip-fl-base/workspace`. For the Flower implementation, this is typically `../flip-fl-base-flower/certs`.
+- `FL_PROVISIONED_DIR` — path to the NVFLARE or Flower provisioned workspace, derived per-backend by `deploy/fl_backend.mk` from `FL_BACKEND`. The Makefile automatically converts this to an absolute path (Docker requires absolute paths for volume mounts). This directory contains certificates, keys, `fed_client.json`, and other files generated during provisioning for each network. Both are now provisioned in-tree (gitignored): NVFLARE at `fl-services/nvflare/provision/workspace-dev`, Flower at `fl-services/flower/provision/creds`.
 - `FL_API_PORT` — port for FL API services (default: `8000`).
 
 ### Setting up AWS access
@@ -263,6 +278,23 @@ make ci
 ```
 
 This runs all jobs defined in `.github/workflows/` locally.
+
+### CI checks on forks
+
+Contributors work from a [fork](#the-contribution-process), and a fork's CI runs with the fork's own `GITHUB_TOKEN`
+and **without** the upstream repository secrets. Workflows that **publish or deploy** therefore cannot run on a fork —
+they would only ever fail trying to reach `londonaicentre`-owned resources — so each is guarded with
+`if: github.repository == 'londonaicentre/FLIP'` and shows up as **skipped** (neutral, not a red failure) on fork
+pushes. These are:
+
+- **Image publishing** — `Build and Push NVFLARE/Flower FL Docker Images`, and the `orthanc`, `xnat-*`, `flip-api`,
+  and `trust-*` GHCR build-and-push workflows.
+- **Releases** — `release.yml` and `release-pypi.yml` (git tags, GitHub releases, PyPI publishing).
+
+Everything that **validates** your change still runs on your fork, and a red result there is a real failure to fix:
+lint, type-checking, unit and integration tests, docs, Terraform validation, Helm tests, and secret scanning.
+Coverage upload to Codecov is non-blocking (`fail_ci_if_error: false`), so a missing `CODECOV_TOKEN` on your fork
+never fails an otherwise-green job.
 
 ### Running the stack (pull vs. build)
 
@@ -316,7 +348,7 @@ target-version = "py312"
 
 [tool.ruff.lint]
 preview = true
-select = ['I', 'F', 'E', 'W', 'PT', 'UP006', 'UP007', 'UP035', 'UP045']
+select = ['I', 'F', 'E', 'W', 'PT', 'UP006', 'UP007', 'UP035', 'UP042', 'UP045']
 ```
 
 We also use [mypy](https://github.com/python/mypy) for static type checking.
@@ -374,13 +406,32 @@ make unit_test
 `make tests` is a narrower target that runs `flip-ui` unit and Cypress e2e tests followed by the full `flip-api`
 test suite (ruff, mypy, and pytest).
 
-For the `flip-fl-base` repository, unit tests can be run with:
+For the FL base library in `flip-utils/`, unit tests can be run either directly with pytest or via the shipped
+Makefile target:
 
 ```bash
-make unit-test
+cd flip-utils && uv run pytest tests/unit -s -vv
+# or:
+make -C flip-utils unit-test   # ruff --fix + pytest with coverage
 ```
 
-Integration tests for the FL base application are also available (see the [flip-fl-base README](https://github.com/londonaicentre/flip-fl-base#testing) for details).
+See [`flip-utils/README.md`](flip-utils/README.md) for the FL package's tests, and
+[`fl-services/nvflare/README.md`](fl-services/nvflare/README.md) for provisioning FL networks.
+
+**Kubernetes chart testing**: The K8s Helm chart at `deploy/providers/kubernetes/` can be tested with:
+
+```bash
+# Lint + render + schema validation
+make -C deploy/providers/kubernetes test
+
+# Render all FL backend variants
+make -C deploy/providers/kubernetes template-all-backends
+
+# Validate rendered templates against K8s schema (requires kubeconform)
+make -C deploy/providers/kubernetes validate
+```
+
+The chart has a `check_status.py` smoke test script and a `register_k8s_trust.py` registration script. See the [K8s README](deploy/providers/kubernetes/README.md) for details.
 
 **Testing fixtures**: For testing APIs and integration tests, we use [pytest fixtures](https://docs.pytest.org/en/latest/how-to/fixtures.html). Shared fixtures are defined in `conftest.py` files. In some cases, [`factory_boy`](https://factoryboy.readthedocs.io/) is used to create test data following production data structures.
 
@@ -416,9 +467,13 @@ This rule applies across all services: `flip-api/tests/`, `trust/trust-api/tests
 
 ##### flip-api: real-Postgres integration tests via Testcontainers
 
-`flip-api/tests/integration/` boots a throwaway `postgres:16-alpine` container per pytest session via [testcontainers-python](https://github.com/testcontainers/testcontainers-python) (`tests/integration/conftest.py`). The fixture builds the schema from `SQLModel.metadata`, seeds permissions / roles / role-permissions once, and truncates per-test tables between tests. Both the existing `session` fixture and FastAPI's `Depends(get_session)` are rewired at the throwaway DB, so a new test only needs to request `session` (raw SQL access) and/or `client` (`TestClient` against the same DB) — no per-test setup required.
+`flip-api/tests/integration/` boots a throwaway `postgres:16-alpine` container per pytest session via [testcontainers-python](https://github.com/testcontainers/testcontainers-python) (`tests/integration/conftest.py`). The fixture builds the schema by running the **Alembic migrations** (`alembic upgrade head`) — the same DDL dev/prod apply at boot — then seeds permissions / roles / role-permissions once, and truncates per-test tables between tests. Both the existing `session` fixture and FastAPI's `Depends(get_session)` are rewired at the throwaway DB, so a new test only needs to request `session` (raw SQL access) and/or `client` (`TestClient` against the same DB) — no per-test setup required.
 
 CI runs these via `make integration_test` from `flip-api/`. Docker is preinstalled on `ubuntu-latest`, so no `services:` block is needed in the workflow. AWS-backed integration tests (Cognito, S3, SES) are out of scope for this fixture and are skip-marked at the file level until ticket B2 lands.
+
+##### flip-api: database migrations (Alembic)
+
+flip-api's PostgreSQL schema is owned by Alembic, not `SQLModel.metadata.create_all`. **Any schema-affecting change to `db/models/*.py` must ship a migration revision** in the same PR — run `make migration MESSAGE="..."` from `flip-api/` (flip-db must be up), review the autogenerated file (native PG enums + the `ARRAY(UUID)` column), and apply it with `make migrate`. The integration suite builds its schema from these migrations, and `tests/integration/test_migrations.py` is a **drift guard**: a model change without a matching revision makes the suite fail. See [`flip-api/README.md`](flip-api/README.md#database-migrations) for the full workflow and the enum gotchas.
 
 #### Signing your work
 

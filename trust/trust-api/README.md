@@ -14,7 +14,7 @@
 # trust-api
 
 [![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)](https://www.python.org/downloads/)
-[![FLIP Trust API CI](https://github.com/londonaicentre/FLIP/actions/workflows/trust_api.yml/badge.svg)](https://github.com/londonaicentre/FLIP/actions/workflows/trust_api.yml)
+[![FLIP Trust API CI](https://github.com/londonaicentre/FLIP/actions/workflows/test_trust_trust_api.yml/badge.svg)](https://github.com/londonaicentre/FLIP/actions/workflows/test_trust_trust_api.yml)
 [![trust-api](https://ghcr-badge.egpl.dev/londonaicentre/trust-api/latest_tag?trim=major&label=trust-api)](https://github.com/londonaicentre/FLIP/pkgs/container/trust-api)
 [![Coverage](https://codecov.io/gh/londonaicentre/FLIP/branch/main/graph/badge.svg?flag=trust-api)](https://codecov.io/gh/londonaicentre/FLIP)
 
@@ -46,8 +46,9 @@ or the full stack:
 make up
 ```
 
-API documentation (Swagger UI) is available at the port defined by `TRUST_API_PORT` in
-[`.env.development.example`](../../.env.development.example):
+API documentation (Swagger UI) is available at the port defined by `TRUST_API_PORT` in this
+trust's kit file (`trust/.env.<CODE>.<env>`; templates: `trust/.env.GSTT.development.example`,
+`trust/.env.KCH.development.example`, default `8020`):
 
 ```
 http://localhost:<TRUST_API_PORT>/docs
@@ -55,7 +56,10 @@ http://localhost:<TRUST_API_PORT>/docs
 
 ## Configuration
 
-Key environment variables (set in [`.env.development.example`](../../.env.development.example)):
+Key environment variables. Per-trust values (ports, keys, expected trust id) live in this
+trust's kit file (`trust/.env.<CODE>.<env>`); hub-shared values (`AES_KEY_BASE64`,
+`CENTRAL_HUB_API_URL`) are synced into the kit's Hub-shared block by
+`make register-trust KIT=<CODE>` (live in prod, inherited from the hub `.env.<env>` in dev):
 
 | Variable | Description |
 | --- | --- |
@@ -63,11 +67,11 @@ Key environment variables (set in [`.env.development.example`](../../.env.develo
 | `DATA_ACCESS_API_URL` | Internal URL of the data-access-api |
 | `IMAGING_API_URL` | Internal URL of the imaging-api |
 | `CENTRAL_HUB_API_URL` | URL of the Central Hub API (for task polling) |
-| `TRUST_API_KEY` | Per-trust API key for authenticating with the Central Hub. Lives in this trust's kit file (`trust/.env.<CODE>.<env>`), written by `make register-trusts` |
+| `TRUST_API_KEY` | Per-trust API key for authenticating with the Central Hub. Lives in this trust's kit file (`trust/.env.<CODE>.<env>`), written by `make register-trust KIT=<CODE>` |
 | `AES_KEY_BASE64` | Base64-encoded AES-256 key shared with the hub, used to decrypt encrypted task payloads |
 | `POLL_INTERVAL_SECONDS` | Polling frequency in seconds (default: 5) |
 | `TRUST_INTERNAL_SERVICE_KEY_HEADER` | Header name for trust-internal service auth (default `X-Trust-Internal-Service-Key`) |
-| `TRUST_INTERNAL_SERVICE_KEY` | Per-trust plaintext key. Forwarded outbound on every call to imaging-api and data-access-api so those services can authenticate the caller. Minted by `register_trust` (`make register-trusts`) into this trust's kit file (`trust/.env.<CODE>.<env>`). |
+| `TRUST_INTERNAL_SERVICE_KEY` | Per-trust plaintext key. Forwarded outbound on every call to imaging-api and data-access-api so those services can authenticate the caller. Minted by `register_trust` (`make register-trust KIT=<CODE>`) into this trust's kit file (`trust/.env.<CODE>.<env>`). |
 
 ## Authentication
 
@@ -90,7 +94,7 @@ one replica.
 
 ## Testing
 
-Tests are split into `tests/unit/` (no real backing services) and `tests/integration/` (real OMOP database via the shared `trust/deploy/compose.test.yml` stack). See [Where does my test go?](../../CONTRIBUTING.md#where-does-my-test-go) in `CONTRIBUTING.md` for the placement rule, and [`trust/README.md`](../README.md#integration-tests-cohort-query-end-to-end) for how the cohort-query end-to-end suite is wired.
+Tests are split into `tests/` (unit-level, no real backing services — `tests/routers/`, `tests/services/`, etc.) and `tests/integration/` (real OMOP database via the shared `trust/deploy/compose.test.yml` stack). See [Where does my test go?](../../CONTRIBUTING.md#where-does-my-test-go) in `CONTRIBUTING.md` for the placement rule, and [`trust/README.md`](../README.md#integration-tests-cohort-query-end-to-end) for how the cohort-query end-to-end suite is wired.
 
 ```bash
 make local_test         # ruff + mypy + unit suite (no Docker required)

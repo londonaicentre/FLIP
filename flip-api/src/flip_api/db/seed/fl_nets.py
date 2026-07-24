@@ -14,13 +14,13 @@
 from sqlmodel import Session, select
 
 from flip_api.config import get_settings
-from flip_api.db.database import engine
+from flip_api.db.database import get_engine
 from flip_api.db.models.main_models import FLNets
 from flip_api.db.seed.seed_logger import logger
 
 
 def seed_fl_nets(session: Session) -> list[FLNets]:
-    """Upsert FL nets in the database from ``NET_ENDPOINTS``.
+    """Upsert FL nets in the database from ``NET_ENDPOINTS`` and ``FL_BACKEND``.
 
     Rows are matched by ``name`` and their ``endpoint`` reconciled to the value
     in ``NET_ENDPOINTS`` on every startup. The previous behaviour was
@@ -33,6 +33,11 @@ def seed_fl_nets(session: Session) -> list[FLNets]:
     the row's endpoint via SQL would also be overwritten on the next start,
     which is the intended behaviour.
 
+    ``fl_backend`` is likewise canonical: every row is set to the current
+    ``FL_BACKEND`` on every startup. There is no runtime reconciliation — the
+    way to switch frameworks is ``make restart-fl FL_BACKEND=...``, which
+    recreates flip-api so this seeding re-runs and overwrites the backend.
+
     Args:
         session (Session): The SQLModel session used to read existing FL nets and upsert
             entries from ``NET_ENDPOINTS``.
@@ -40,27 +45,43 @@ def seed_fl_nets(session: Session) -> list[FLNets]:
     Returns:
         list[FLNets]: All FL net rows present after seeding.
     """
-    nets = get_settings().NET_ENDPOINTS
+    settings = get_settings()
+    nets = settings.NET_ENDPOINTS
+    backend = settings.FL_BACKEND
     existing_by_name = {net.name: net for net in session.exec(select(FLNets)).all()}
 
     for name, endpoint in nets.items():
         existing = existing_by_name.get(name)
         if existing is None:
-            session.add(FLNets(name=name, endpoint=endpoint))
-            logger.info(f"FL Net '{name}' created with endpoint '{endpoint}'.")
-        elif existing.endpoint != endpoint:
-            logger.info(
-                f"FL Net '{name}' endpoint changed from '{existing.endpoint}' to '{endpoint}'; reconciling."
-            )
-            existing.endpoint = endpoint
-            session.add(existing)
+            # Seed fl_backend from the declared FL_BACKEND. This value is canonical and never
+            # reconciled at runtime; re-seeding (make restart-fl) is the only way it changes.
+            session.add(FLNets(name=name, endpoint=endpoint, fl_backend=backend))
+            logger.info(f"FL Net '{name}' created with endpoint '{endpoint}' and backend '{backend}'.")
         else:
-            logger.info(f"FL Net '{name}' already matches NET_ENDPOINTS. Skipping.")
+            changed = False
+            if existing.endpoint != endpoint:
+                logger.info(
+                    f"FL Net '{name}' endpoint changed from '{existing.endpoint}' to '{endpoint}'; reconciling."
+                )
+                existing.endpoint = endpoint
+                changed = True
+            # FL_BACKEND is authoritative: always overwrite so `make restart-fl FL_BACKEND=...`
+            # (which recreates flip-api) re-applies the declared backend onto every net.
+            if existing.fl_backend != backend:
+                logger.info(f"FL Net '{name}' backend changed from '{existing.fl_backend}' to '{backend}'.")
+                existing.fl_backend = backend
+                changed = True
+            if changed:
+                session.add(existing)
+            else:
+                logger.info(f"FL Net '{name}' already matches NET_ENDPOINTS and FL_BACKEND. Skipping.")
     session.commit()
 
-    return list(session.exec(select(FLNets)).all())
+    result = list(session.exec(select(FLNets)).all())
+    logger.info(f"Seeded {len(result)} FL net(s); declared backend = '{backend}'.")
+    return result
 
 
 if __name__ == "__main__":
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         nets = seed_fl_nets(session)

@@ -76,7 +76,7 @@ Register User
 ^^^^^^^^^^^^^
 
 1. Click the 'Register User' button
-2. Enter the new user's email address and select a single role (``admin``, ``researcher`` or ``observer``)
+2. Enter the new user's email address and select a single role (``admin``, ``researcher`` or ``viewer``)
 3. Click the 'Register User' button
 4. The user will be emailed a one-time password to use on their :ref:`initial-login`
 
@@ -111,7 +111,7 @@ Manage Role
    A user's role may be re-assigned at any time. Each user holds exactly one role.
 
 1. Select the user from the user list
-2. Choose the new role from the radio list (``admin``, ``researcher`` or ``observer``)
+2. Choose the new role from the radio list (``admin``, ``researcher`` or ``viewer``)
 3. Click the 'Save User' button
 
 .. figure:: ../assets/admin/role-assignment.gif
@@ -181,6 +181,14 @@ Deployment Mode
    Deployment Mode can be enabled and disabled at any time, and the Site and User Management functions are still available while Deployment Mode is enabled.
 
 Deployment Mode will disable all core functions of the FLIP Platform, and is intended for use while deployment or maintenance is occurring.
+
+Deployment Mode also quiesces federated training so the Central Hub can be redeployed without killing an in-flight run:
+
+- The FL scheduler stops picking up queued jobs. Queued jobs are not lost — they stay queued and resume, oldest first, once Deployment Mode is disabled.
+- A training run already in flight is allowed to finish normally (its results upload and final status are unaffected); it is only the start of *new* jobs that is paused.
+- Requests to initiate training are rejected with ``503 Service Unavailable`` while the mode is enabled.
+
+This means Deployment Mode can be enabled at any time — even mid-training — ahead of a planned redeploy: enable it, wait for the current run (if any) to reach a terminal status, redeploy, then disable it. The Central Hub deploy command prints a reminder of this workflow (see ``deploy-centralhub`` in the AWS deployment README), and the ``GET /fl/quiesce`` endpoint reports whether the platform is quiesced (``deployment_mode`` plus ``fl_quiesced``, which is true when no net's scheduler is busy).
 
 .. figure:: ../assets/admin/deployment-mode.gif
    :align: center

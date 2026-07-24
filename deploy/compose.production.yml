@@ -48,7 +48,7 @@ services:
       - AWS_COGNITO_USER_POOL_ID=${AWS_COGNITO_USER_POOL_ID}
       - AWS_COGNITO_APP_CLIENT_ID=${AWS_COGNITO_APP_CLIENT_ID}
       - POSTGRES_USER=${POSTGRES_USER}
-      - POSTGRES_SECRET_ARN=${POSTGRES_SECRET_ARN} # in production, password is retrieved from AWS Secrets Manager
+      - POSTGRES_SECRET_ARN=${POSTGRES_SECRET_ARN} # unused since FLIP#556 (ECS prod uses RDS Proxy IAM); legacy EC2/compose path only — retirement tracked in #505
       - DB_HOST=${DB_HOST}
       - DB_PORT=${DB_PORT}
       - POSTGRES_DB=${POSTGRES_DB}
@@ -61,9 +61,20 @@ services:
       - UPLOADED_MODEL_FILES_BUCKET=${UPLOADED_MODEL_FILES_BUCKET}
       - SCANNED_MODEL_FILES_BUCKET=${SCANNED_MODEL_FILES_BUCKET}
       - UPLOADED_FEDERATED_DATA_BUCKET=${UPLOADED_FEDERATED_DATA_BUCKET}
-      - FL_APP_BASE_BUCKET=${FL_APP_BASE_BUCKET}
       - FL_APP_DESTINATION_BUCKET=${FL_APP_DESTINATION_BUCKET}
       - NET_ENDPOINTS=${NET_ENDPOINTS}
       - FL_BACKEND=${FL_BACKEND}
+      # Seeds the fl_kit_slot pool that register_trust claims from. Empty ⇒
+      # NoFreeKitSlotError on every registration. Mirrored into the ECS task
+      # env via TF_VAR_FL_KIT_SLOT_NAMES (locals.tf).
+      - FL_KIT_SLOT_NAMES=${FL_KIT_SLOT_NAMES}
+      # Bridge for images built before FL_KIT_SLOT_NAMES rename (pre-tag-225):
+      - TRUST_NAMES=${FL_KIT_SLOT_NAMES}
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
     restart: unless-stopped
     container_name: flip-api

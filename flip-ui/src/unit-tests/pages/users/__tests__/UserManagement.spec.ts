@@ -119,7 +119,6 @@ function mountUserManagement(): VueWrapper {
                 // Transitions / popovers get in the way of synchronous
                 // DOM assertions — flatten them so the action buttons
                 // inside the panel are rendered immediately.
-                AiCard: { template: "<div><slot /></div>" },
                 AiSkeleton: true,
                 AiPagination: true,
                 AiLabel: true,
@@ -403,8 +402,8 @@ describe("User Management", () => {
                 organisation: "King's College Hospital",
                 roles: [{
                     id: "role-3",
-                    rolename: "Observer",
-                    roledescription: "Observer"
+                    rolename: "Viewer",
+                    roledescription: "Viewer"
                 }],
                 isDisabled: true
             }

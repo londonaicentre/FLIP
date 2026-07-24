@@ -43,11 +43,15 @@ export interface IProjectQuery {
     // approved without them). UI shows a "skipped" chip.
     cancelledTrustIds: string[];
     // Subset of `queriedTrustIds` that posted any QueryResult row (success
-    // or error). Stageable = `respondedTrustIds − erroredTrustIds`.
+    // or error). Stageable = `respondedTrustIds − erroredTrustIds − emptyTrustIds`.
     respondedTrustIds: string[];
     // Subset of `respondedTrustIds` whose response carried an error.
     // Staging additionally excludes these — we have no usable cohort count.
     erroredTrustIds: string[];
+    // Subset of `respondedTrustIds` that returned 0 records — genuine zero
+    // match or privacy-suppressed below-threshold count (#519). Staging
+    // excludes these: there's no cohort to build an imaging project against.
+    emptyTrustIds: string[];
     totalCohort: number;
     created?: string | null;
     createdBy?: string | null;
@@ -75,6 +79,10 @@ export type IProject = {
     approvedTrusts?: IProjectTrust[];
     users: IProjectUser[]
     status: ProjectStatus
+    // Whether DICOMs are converted to NIfTI on import. Set at creation and
+    // immutable thereafter. Only the project-detail endpoint surfaces it, so
+    // it's optional (the list endpoint omits it).
+    dicom_to_nifti?: boolean;
 }
 
 export interface IProjectCreate {

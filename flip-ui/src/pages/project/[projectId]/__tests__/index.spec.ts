@@ -75,7 +75,12 @@ const stubs = {
         props: ["steps"]
     },
     ProjectApproval: { template: "<div data-test=\"stub-project-approval\" />" },
-    ProjectStaging: { template: "<div data-test=\"stub-project-staging\" />" },
+    ProjectStaging: {
+        // Expose the computed stageable set so tests can assert the parent's
+        // exclusion logic (errored / never-responded / empty trusts).
+        template: "<div data-test=\"stub-project-staging\" :data-stageable=\"(stageableTrustIds || []).join(',')\" />",
+        props: ["stageableTrustIds", "hasQuery", "projectStaged", "staging"]
+    },
     ProjectStatus: { template: "<div data-test=\"stub-project-status\" />" },
     Transition: { template: "<div><slot /></div>" },
     // Render the slot so breadcrumb copy is exercised (the real RouterLink is
@@ -147,6 +152,20 @@ describe("Project page (/project/[id]/index.vue)", () => {
         expect(wrapper.text()).toContain("Projects");
     });
 
+    test("pins the Latest Models card to the row height the imaging-status card defines", () => {
+        const wrapper = mountProjectPage();
+
+        // The card is absolutely positioned inside a stretched grid cell at lg, so
+        // its model list can't inflate the row past the imaging project status card.
+        const card = wrapper.find("[data-test=stub-latest-models]");
+        expect(card.classes()).toContain("lg:absolute");
+        expect(card.classes()).toContain("lg:inset-0");
+        const cell = card.element.parentElement;
+        expect(cell?.className).toContain("relative");
+        expect(cell?.className).toContain("lg:self-stretch");
+        expect(cell?.className).not.toContain("sticky");
+    });
+
     test("renders 4 lifecycle steps and marks only step 01 complete on a fresh UNSTAGED project", () => {
         const wrapper = mountProjectPage();
         const steps = wrapper.findAll("[data-test^=step-]");
@@ -172,6 +191,25 @@ describe("Project page (/project/[id]/index.vue)", () => {
         const wrapper = mountProjectPage({ project });
         const step02 = wrapper.find("[data-test=step-02]");
         expect(step02.attributes("data-completed")).toBe("true");
+    });
+
+    test("excludes errored and empty (0-record/suppressed) trusts from the stageable set", async () => {
+        const project = baseProject();
+        project.query = {
+            id: "q1",
+            name: "q",
+            query: "SELECT 1",
+            queriedTrustIds: ["t1", "t2", "t3", "t4"],
+            respondedTrustIds: ["t1", "t2", "t3"],
+            erroredTrustIds: ["t2"],
+            emptyTrustIds: ["t3"]
+        } as unknown as IProject["query"];
+        const wrapper = mountProjectPage({ project });
+        await flushPromises();
+
+        // t1 only: t2 errored, t3 returned 0/suppressed, t4 never responded (#519).
+        const staging = wrapper.find("[data-test=stub-project-staging]");
+        expect(staging.attributes("data-stageable")).toBe("t1");
     });
 
     test("marks Project Staged when status moves off UNSTAGED, and Project Approved when status is APPROVED", () => {
@@ -265,6 +303,87 @@ describe("Project page (/project/[id]/index.vue)", () => {
         expect(wrapper2.text()).toContain("3 Users");
     });
 
+    describe("header actions align with the title and collapse to icons on narrow screens", () => {
+        // Mirrors the model page header: one vertically-centred row (title
+        // left, actions right) whose labels hide below lg so they stop
+        // squashing the truncating project name.
+        const labelSelector = "span.hidden.lg\\:inline";
+
+        test("title and actions sit in one items-center row with a shrink-0 actions cluster", () => {
+            const wrapper = mountProjectPage();
+
+            const h1 = wrapper.find("h1");
+            expect(h1.exists()).toBe(true);
+            const row = h1.element.parentElement;
+            expect(row?.className).toContain("items-center");
+            expect(row?.className).not.toContain("flex-wrap");
+
+            const actions = h1.element.nextElementSibling;
+            expect(actions?.className).toContain("items-center");
+            expect(actions?.className).toContain("shrink-0");
+            expect(actions?.className).not.toContain("flex-col");
+        });
+
+        test("hides the Edit Project label below lg and keeps an aria-label", () => {
+            const wrapper = mountProjectPage();
+
+            const btn = wrapper.find("[data-test=edit-project-btn]");
+            expect(btn.exists()).toBe(true);
+            expect(btn.attributes("aria-label")).toBe("Edit Project");
+            const label = btn.find(labelSelector);
+            expect(label.exists()).toBe(true);
+            expect(label.text()).toBe("Edit Project");
+        });
+
+        test("hides the Unstage Project label and the Awaiting Approval text below lg when STAGED", () => {
+            const staged = baseProject();
+            staged.status = "STAGED";
+            const wrapper = mountProjectPage({ project: staged });
+
+            const unstage = wrapper.find("[data-test=unstage-project-btn]");
+            expect(unstage.exists()).toBe(true);
+            expect(unstage.attributes("aria-label")).toBe("Unstage Project");
+            expect(unstage.find(labelSelector).text()).toBe("Unstage Project");
+
+            const badge = wrapper.find("[data-test=awaiting-approval-badge]");
+            expect(badge.exists()).toBe(true);
+            expect(badge.attributes("title")).toBe("Awaiting Approval");
+            expect(badge.find(labelSelector).text()).toBe("Awaiting Approval");
+        });
+
+        test("hides the word 'Users' below lg but keeps the count visible with a full-title tooltip", () => {
+            const project = baseProject();
+            project.users = [
+                {
+                    id: "u1",
+                    email: "a@x",
+                    isDisabled: false
+                },
+                {
+                    id: "u2",
+                    email: "b@x",
+                    isDisabled: false
+                }
+            ];
+            const wrapper = mountProjectPage({ project });
+
+            const pill = wrapper.find("[data-test=user-count-pill]");
+            expect(pill.exists()).toBe(true);
+            expect(pill.attributes("title")).toBe("3 Users");
+            const word = pill.find(labelSelector);
+            expect(word.exists()).toBe(true);
+            // Only the noun hides; the count stays visible at every width.
+            expect(word.text()).toBe("Users");
+            expect(pill.text()).toContain("3");
+            // The count lives inside the icon chip itself: one rounded pill
+            // carrying both the user icon and the number (no separate disc).
+            expect(pill.classes()).toContain("rounded-full");
+            expect(pill.classes()).toContain("bg-primary-100");
+            expect(pill.find("svg").exists()).toBe(true);
+            expect(pill.find("i").exists()).toBe(false);
+        });
+    });
+
     test("the Unstage button only renders when the project is STAGED", () => {
         const wrapper = mountProjectPage();
         expect(wrapper.find("[data-test=unstage-project-btn]").exists()).toBe(false);
@@ -289,8 +408,8 @@ describe("Project page (/project/[id]/index.vue)", () => {
         expect(snackbarSuccess).toHaveBeenCalled();
     });
 
-    test("Edit Project button label flips to 'View Project' for observers", () => {
-        // Observer = no CanCreateProjects. canCreateProjects=false → isObserver=true.
+    test("Edit Project button label flips to 'View Project' for viewers", () => {
+        // Viewer = no CanCreateProjects. canCreateProjects=false → isViewer=true.
         const wrapper = mountProjectPage({ permissions: [] });
         const editBtn = wrapper.find("[data-test=edit-project-btn]");
         expect(editBtn.text()).toContain("View Project");

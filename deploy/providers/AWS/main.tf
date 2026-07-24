@@ -61,26 +61,15 @@ module "flip_vpc" {
 # Security Groups
 ############################
 
-# Central Hub Security Group for EC2 instance
+# Central Hub SSM bastion security group. Session Manager is outbound-only;
+# the group is retained as the source for the RDS PostgreSQL ingress rule.
 
 module "ec2_security_group" {
-  source      = "./modules/secgroup"
-  name        = "ec2-security-group"
-  vpc_id      = module.flip_vpc.vpc_id
-  description = "Security group for FLIP Central Hub EC2 instance"
-  # UI is served from CloudFront/S3 — nothing on EC2 listens on var.UI_PORT (443).
-  ingress_rules = [
-    {
-      port                     = var.API_PORT
-      description              = "FLIP API from ALB"
-      source_security_group_id = module.alb_security_group.security_group.id
-    },
-    {
-      port                     = var.FL_API_PORT
-      description              = "FLIP FL API from ALB"
-      source_security_group_id = module.alb_security_group.security_group.id
-    }
-  ]
+  source        = "./modules/secgroup"
+  name          = "ec2-security-group"
+  vpc_id        = module.flip_vpc.vpc_id
+  description   = "Security group for the FLIP Central Hub SSM bastion (no inbound access)"
+  ingress_rules = []
 }
 
 # Tag the secgroup module SGs for drift detection.
@@ -111,17 +100,6 @@ resource "aws_ec2_tag" "trust_security_group_flip_sg" {
   value       = "true"
 }
 
-# Only allow FL server traffic that arrives through the NLB, not direct client or VPC access.
-resource "aws_security_group_rule" "fl_server_ingress_from_nlb" {
-  type                     = "ingress"
-  from_port                = var.FL_SERVER_PORT
-  to_port                  = var.FL_SERVER_PORT
-  protocol                 = "tcp"
-  source_security_group_id = module.fl_server_nlb.security_group_id
-  security_group_id        = module.ec2_security_group.security_group.id
-  description              = "FL Server from NLB security group"
-}
-
 # RDS
 # TODO: In Production we need to activate delete protection to the RDS instances
 module "rds_security_group" {
@@ -145,15 +123,9 @@ resource "aws_ec2_tag" "rds_security_group_flip_sg" {
   value       = "true"
 }
 
-resource "aws_security_group_rule" "rds_ingress_ecs_flip_api" {
-  type                     = "ingress"
-  from_port                = 5432
-  to_port                  = 5432
-  protocol                 = "tcp"
-  description              = "PostgreSQL from ECS flip-api"
-  source_security_group_id = aws_security_group.ecs_flip_api.id
-  security_group_id        = module.rds_security_group.security_group.id
-}
+# flip-api reaches Postgres only through RDS Proxy (rds_proxy.tf), never
+# directly — so RDS ingress comes from the proxy SG (rds_proxy.tf), not the
+# flip-api task SG.
 
 ############################
 # RDS PostgreSQL Database
@@ -210,13 +182,9 @@ module "flip_api_secret" {
 # EC2
 ############################
 
-# IAM Role for the Central Hub EC2.
-#
-# Scoped to exactly what flip-api / fl-server need at runtime, plus the SSM
-# and CloudWatch managed policies required by Session Manager and the agent.
-# The Trust EC2 uses a separate, narrower role (`trust_ec2_role` below) so
-# that Cognito / SES / flip-bucket access is not granted on a host that has
-# no business calling those APIs.
+# IAM role for the Central Hub SSM bastion. Application workloads run on ECS
+# Fargate and use the task roles in iam_ecs.tf; the bastion needs no access to
+# application secrets, buckets, Cognito, SES, or CloudWatch Logs.
 module "ec2_role" {
   source                = "terraform-aws-modules/iam/aws//modules/iam-assumable-role"
   version               = "~> 5.0"
@@ -225,7 +193,6 @@ module "ec2_role" {
   trusted_role_services = ["ec2.amazonaws.com"]
   custom_role_policy_arns = [
     "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore",
-    "arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy",
   ]
   role_requires_mfa = "false"
 }
@@ -233,117 +200,6 @@ module "ec2_role" {
 resource "aws_iam_instance_profile" "ec2_profile" {
   name = "ec2-role-profile"
   role = module.ec2_role.iam_role_name
-}
-
-# Add permissions to access secrets
-resource "aws_iam_role_policy" "ec2_secret" {
-  name = "secret-read"
-  role = module.ec2_role.iam_role_name
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Effect = "Allow"
-      Action = ["secretsmanager:GetSecretValue"]
-      Resource = [
-        module.flip_db.db_instance_master_user_secret_arn,
-        module.flip_api_secret.secret_arn
-      ]
-    }]
-  })
-}
-
-# Scoped S3 access — limited to FLIP application buckets only.
-# - flip-model-files-uploads / flip-fl-results / flip-app-bundles: the three
-#   buckets that replaced the previous single flip_bucket (model file uploads,
-#   FL results,
-#   FL app bundles). flip-api on EC2 uses the instance role for boto3 creds
-#   (see compose.production.yml — AWS_PROFILE is commented out in prod with
-#   the explicit note "credentials are retrieved from the instance role"), so
-#   this grant must cover every application bucket flip-api touches.
-# - aicentre_bucket: FL participant kits, fetched via `aws s3 cp` during
-#   Ansible provisioning on the Central Hub host.
-#
-# Once flip-api is migrated to an ECS Fargate task (PR 2), its IAM identity
-# becomes the task role in iam_ecs.tf and these three new-bucket grants can
-# be dropped from the EC2 role, leaving only the aicentre_bucket grant
-# (consumed by Ansible) here.
-resource "aws_iam_role_policy" "s3_access" {
-  name = "flip-s3-scoped"
-  role = module.ec2_role.iam_role_name
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Effect = "Allow"
-      # See iam_ecs.tf for the rationale on dropping `s3:CopyObject` — it's
-      # not a real IAM action and AWS server-side copy already rolls up under
-      # the GetObject (source) + PutObject (destination) grants below.
-      Action = [
-        "s3:DeleteObject",
-        "s3:GetBucketLocation",
-        "s3:GetObject",
-        "s3:HeadObject",
-        "s3:ListBucket",
-        "s3:PutObject",
-      ]
-      Resource = [
-        module.flip_model_files_uploads_bucket.bucket_arn,
-        "${module.flip_model_files_uploads_bucket.bucket_arn}/*",
-        module.flip_fl_results_bucket.bucket_arn,
-        "${module.flip_fl_results_bucket.bucket_arn}/*",
-        module.flip_app_bundles_bucket.bucket_arn,
-        "${module.flip_app_bundles_bucket.bucket_arn}/*",
-        aws_s3_bucket.aicentre_bucket.arn,
-        "${aws_s3_bucket.aicentre_bucket.arn}/*",
-      ]
-    }]
-  })
-}
-
-# Scoped Cognito access — limited to FLIP user pool operations used by
-# flip-api (see flip_api/utils/cognito_helpers.py and the auth/MFA flows).
-resource "aws_iam_role_policy" "cognito_access" {
-  name = "flip-cognito-scoped"
-  role = module.ec2_role.iam_role_name
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Effect = "Allow"
-      Action = [
-        "cognito-idp:AdminCreateUser",
-        "cognito-idp:AdminDeleteUser",
-        "cognito-idp:AdminDisableUser",
-        "cognito-idp:AdminEnableUser",
-        "cognito-idp:AdminGetUser",
-        "cognito-idp:AdminInitiateAuth",
-        "cognito-idp:AdminRespondToAuthChallenge",
-        "cognito-idp:AdminSetUserPassword",
-        "cognito-idp:AdminUserGlobalSignOut",
-        "cognito-idp:DescribeUserPool",
-        "cognito-idp:DescribeUserPoolClient",
-        "cognito-idp:ListUsers",
-        "cognito-idp:RevokeToken",
-      ]
-      Resource = [module.cognito.user_pool_arn]
-    }]
-  })
-}
-
-# Scoped SES access — send-only from the verified sender identity
-resource "aws_iam_role_policy" "ses_access" {
-  name = "flip-ses-scoped"
-  role = module.ec2_role.iam_role_name
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Effect   = "Allow"
-      Action   = ["ses:SendEmail", "ses:SendRawEmail", "ses:SendTemplatedEmail"]
-      Resource = [module.ses.sender_identity_arn]
-    }]
-  })
 }
 
 # IAM Role for the Trust EC2.
@@ -415,22 +271,15 @@ resource "aws_iam_role_policy" "trust_ec2_s3" {
   })
 }
 
-# CloudWatch Log Groups for EC2 hosts. The CloudWatch agent on each host
-# (configured via Ansible — see deploy/providers/AWS/site.yml and the
-# templates/cloudwatch-agent*.json.j2 files) ships system + Docker logs
-# here. Defining the groups in Terraform pins retention deliberately rather
-# than relying on the agent's auto-create default (which never expires).
-resource "aws_cloudwatch_log_group" "flip_log_group" {
-  name              = "/aws/ec2/flip"
-  retention_in_days = 7
-}
-
+# The Trust EC2 still runs application containers and ships system + Docker
+# logs through its CloudWatch agent. The Central Hub bastion has no app logs.
 resource "aws_cloudwatch_log_group" "flip_trust_log_group" {
   name              = "/aws/ec2/flip-trust"
   retention_in_days = 7
 }
 
-# Key Pair for SSH access
+# Retain the keypair for SSH-over-SSM (`ssh flip`) and Ansible. No inbound SSH
+# rule is required: the Session Manager ProxyCommand carries the SSH stream.
 resource "aws_key_pair" "flip_keypair" {
   key_name   = "flip-keypair"
   public_key = file(pathexpand("${var.flip_keypair}.pub"))
@@ -447,15 +296,25 @@ resource "aws_instance" "ec2_instance" {
   }
   subnet_id                   = module.flip_vpc.private_subnets[0]
   associate_public_ip_address = false
-  instance_type               = "t3.medium"
+  instance_type               = "t3.micro"
   ami                         = data.aws_ssm_parameter.ubuntu.value
+  # Changing the generation marker replaces the bastion. Generation 1 forces
+  # the legacy 30 GB application host to be recreated because EBS volumes
+  # cannot be shrunk in place to the minimal 10 GB root volume.
+  user_data                   = <<-EOT
+    #!/bin/bash
+    set -eu
+    echo "1" > /etc/flip-bastion-generation
+  EOT
+  user_data_replace_on_change = true
   vpc_security_group_ids      = [module.ec2_security_group.security_group.id]
   iam_instance_profile        = aws_iam_instance_profile.ec2_profile.name
   key_name                    = aws_key_pair.flip_keypair.key_name
   root_block_device {
-    volume_size           = 30
+    volume_size           = 10
     volume_type           = "gp3"
     delete_on_termination = true
+    encrypted             = true
   }
 }
 
@@ -713,19 +572,36 @@ resource "aws_security_group_rule" "local_trust_fl_server_nlb" {
   description       = "FL Server/Admin NLB from on-prem Trust (${each.value})"
 }
 
-# Outputs
-output "Keypair" {
-  value = var.flip_keypair
+############################
+# K8s Trust (optional)
+# Driven by var.k8s_trust_public_ips — set via K8S_TRUST_PUBLIC_IPS in the env
+# file. One ingress rule per IP, keyed by the IP itself (for_each), so the set
+# is reconciled by a normal `terraform apply` and re-adding an existing IP is a
+# no-op — fixing the InvalidPermission.Duplicate from the old -target/count path
+# (#596). The legacy scalar K8S_TRUST_IP is merged in for back-compat.
+############################
+
+# Allow K8s-deployed trust FL clients to reach the FL server via the NLB.
+# Same pattern as the on-prem trust rule above.
+resource "aws_security_group_rule" "k8s_trust_fl_server_nlb" {
+  # The deprecated scalar is marked sensitive for backwards compatibility,
+  # but an address used as a resource key is necessarily disclosed in state.
+  for_each = toset(concat(
+    var.k8s_trust_public_ips,
+    nonsensitive(var.K8S_TRUST_IP) != "" ? [nonsensitive(var.K8S_TRUST_IP)] : []
+  ))
+  type              = "ingress"
+  from_port         = var.FL_SERVER_PORT
+  to_port           = var.FL_SERVER_PORT
+  protocol          = "tcp"
+  cidr_blocks       = ["${each.value}/32"]
+  security_group_id = module.fl_server_nlb.security_group_id
+  description       = "FL Server/Admin NLB from K8s Trust (${each.value})"
 }
 
 output "Ec2InstanceId" {
-  description = "EC2 Instance ID"
+  description = "Central Hub SSM bastion instance ID"
   value       = aws_instance.ec2_instance.id
-}
-
-output "Ec2PrivateIp" {
-  description = "Central Hub EC2 Private IP (private subnet)"
-  value       = aws_instance.ec2_instance.private_ip
 }
 
 output "SsmCommand" {
@@ -739,13 +615,13 @@ output "NatGatewayPublicIp" {
 }
 
 output "TrustEc2InstanceId" {
-  description = "Trust EC2 Instance ID"
-  value       = module.trust_ec2.instance_id
+  description = "Trust EC2 Instance ID (empty string on a hub-only deployment, deploy_trust_ec2=false)"
+  value       = try(module.trust_ec2[0].instance_id, "")
 }
 
 output "TrustSsmCommand" {
-  description = "SSM Session Manager command to connect to the Trust EC2"
-  value       = "aws ssm start-session --target ${module.trust_ec2.instance_id}"
+  description = "SSM Session Manager command to connect to the Trust EC2 (empty on a hub-only deployment)"
+  value       = var.deploy_trust_ec2 ? "aws ssm start-session --target ${try(module.trust_ec2[0].instance_id, "")}" : ""
 }
 
 output "DbEndpoint" {
@@ -756,6 +632,11 @@ output "DbEndpoint" {
 output "DbSecretArn" {
   description = "RDS Database Secret ARN"
   value       = module.flip_db.db_instance_master_user_secret_arn
+}
+
+output "DbProxyEndpoint" {
+  description = "RDS Proxy endpoint (flip-api connects here with IAM auth)"
+  value       = aws_db_proxy.flip_db.endpoint
 }
 
 output "CognitoUserPoolId" {
@@ -823,6 +704,10 @@ moved {
 # Trust
 ###################
 module "trust_ec2" {
+  # Optional: a hub-only deployment (var.deploy_trust_ec2=false, `make
+  # full-deploy-hub-only`) provisions no cloud trust host — every trust then
+  # runs on-prem and joins via register-trusts + allow-local-trust-nlb.
+  count  = var.deploy_trust_ec2 ? 1 : 0
   source = "./modules/trust_ec2"
 
   name_prefix   = "trust"

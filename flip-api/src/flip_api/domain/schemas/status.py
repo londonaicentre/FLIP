@@ -33,13 +33,13 @@ class BucketAction(Enum):
     NO = "no"
 
 
-class ClientDeployResponse(str, Enum):
+class ClientDeployResponse(StrEnum):
     """Response for client deployment."""
 
     OK = "OK"
 
 
-class ClientStatus(str, Enum):
+class ClientStatus(StrEnum):
     """Status of the client."""
 
     # TODO we might want to reconcile these with the FL API responses
@@ -68,8 +68,26 @@ class ModelStatus(Enum):
     PENDING = "PENDING"
     INITIATED = "INITIATED"
     PREPARED = "PREPARED"
-    TRAINING_STARTED = "TRAINING_STARTED"
+    # Job-type-neutral "the FL job is executing" status (renamed from TRAINING_STARTED
+    # so evaluation jobs can report it honestly, #782). Keeps TRAINING_STARTED's slot in
+    # the native Postgres enum — the migration is ALTER TYPE ... RENAME VALUE.
+    RUNNING = "RUNNING"
     RESULTS_UPLOADED = "RESULTS_UPLOADED"
+    # Training finished but the post-training results upload to S3 failed. Distinct
+    # from ERROR so the UI keeps "Running" complete and only flags the
+    # upload step. Appended last to keep the native Postgres enum order consistent
+    # between fresh databases and ones migrated via ALTER TYPE ... ADD VALUE.
+    RESULTS_UPLOAD_FAILED = "RESULTS_UPLOAD_FAILED"
+
+    @classmethod
+    def _missing_(cls, value: object) -> "ModelStatus | None":
+        # Back-compat alias: fl-server images deploy separately from flip-api, so a
+        # pre-rename fl-server may still report "TRAINING_STARTED" (#782). Accept it
+        # as RUNNING until every deployed FL image is post-rename — removal is
+        # tracked in #803.
+        if value == "TRAINING_STARTED":
+            return cls.RUNNING
+        return None
 
 
 class NetStatus(Enum):
@@ -79,7 +97,7 @@ class NetStatus(Enum):
     BUSY = "BUSY"
 
 
-class FLTargets(str, Enum):
+class FLTargets(StrEnum):
     """Targets for FL backend."""
 
     SERVER = "server"
@@ -103,7 +121,7 @@ class FileUploadTag(Enum):
     OBJECTIVE_TARGET = "OBJECTIVE_TARGET"
 
 
-class FLStatus(str, Enum):
+class FLStatus(StrEnum):
     """Status of the FL."""
 
     SUCCESS = "SUCCESS"
@@ -113,7 +131,7 @@ class FLStatus(str, Enum):
     ERROR_AUTHENTICATION = "ERROR_AUTHENTICATION"
 
 
-class ProjectStatus(str, Enum):
+class ProjectStatus(StrEnum):
     """Status of the project."""
 
     UNSTAGED = "UNSTAGED"
@@ -121,7 +139,20 @@ class ProjectStatus(str, Enum):
     APPROVED = "APPROVED"
 
 
-class ServerEngineStatus(str, Enum):
+class AccessRequestStatus(StrEnum):
+    """Lifecycle state of a platform access request.
+
+    ``PENDING`` — awaiting an administrator's decision.
+    ``ENROLLED`` — an administrator registered the requester as a platform user.
+    ``DISMISSED`` — an administrator declined the request.
+    """
+
+    PENDING = "PENDING"
+    ENROLLED = "ENROLLED"
+    DISMISSED = "DISMISSED"
+
+
+class ServerEngineStatus(StrEnum):
     """Status of the server engine."""
 
     STARTED = "started"
@@ -131,7 +162,7 @@ class ServerEngineStatus(str, Enum):
     SHUTDOWN = "shutdown"
 
 
-class TrustIntersectStatus(str, Enum):
+class TrustIntersectStatus(StrEnum):
     """Status of the trust intersect."""
 
     PENDING = "PENDING"
@@ -139,7 +170,7 @@ class TrustIntersectStatus(str, Enum):
     INITIALISED = "INITIALISED"
 
 
-class TaskStatus(str, Enum):
+class TaskStatus(StrEnum):
     """Status of a trust task in the task queue."""
 
     PENDING = "PENDING"
@@ -153,7 +184,7 @@ class TaskStatus(str, Enum):
     CANCELLED = "CANCELLED"
 
 
-class TaskType(str, Enum):
+class TaskType(StrEnum):
     """Type of task dispatched to a trust."""
 
     COHORT_QUERY = "cohort_query"
@@ -164,7 +195,7 @@ class TaskType(str, Enum):
     UPDATE_USER_PROFILE = "update_user_profile"
 
 
-class XNATImageStatus(str, Enum):
+class XNATImageStatus(StrEnum):
     """Status of the XNAT imaging project."""
 
     RETRIEVE_STARTED = "RETRIEVE_STARTED"

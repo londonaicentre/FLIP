@@ -30,6 +30,9 @@ sys.path.insert(0, os.path.abspath("../../flip-api/src"))
 sys.path.insert(0, os.path.abspath("../../trust/data-access-api"))
 sys.path.insert(0, os.path.abspath("../../trust/imaging-api"))
 sys.path.insert(0, os.path.abspath("../../trust/trust-api"))
+# Include flip-utils package.
+# Insert the package *parent* dir so `import flip` resolves to flip-utils/flip/__init__.py.
+sys.path.insert(0, os.path.abspath("../../flip-utils"))
 
 # sys.path.insert(0, os.path.abspath('.'))
 
@@ -72,16 +75,25 @@ autoapi_dirs = [
     "../../trust/data-access-api",
     "../../trust/imaging-api",
     "../../trust/trust-api",
+    # include flip-utils package for API docs
+    "../../flip-utils/flip",
 ]
 autoapi_ignore = [
     "*/.venv/*",
     "*/tests/*",
     "*/conftest.py",
+    # Alembic scripts are one-shot upgrade/downgrade pairs, not public API. They also carry no
+    # __init__.py, so AutoAPI would emit each as a revision-hash-named top-level module.
+    "*/migrations/*",
 ]
 
 # Optional:
 autoapi_keep_files = True  # useful for debugging
 autoapi_add_toctree_entry = False
+
+# Constants re-exported from flip.constants.flip_constants are reachable by two dotted paths, so
+# every reference to them is ambiguous. Nothing is unresolved; the duplicates are the re-exports.
+suppress_warnings = ["ref.python"]
 
 
 # autosummary_generate = True

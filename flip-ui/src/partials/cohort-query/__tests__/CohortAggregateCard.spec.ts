@@ -45,8 +45,8 @@ const TRUSTS = [
     }
 ];
 
-function mountCard(options: { data?: unknown; submitting?: boolean } = {}) {
-    const { data = null, submitting = false } = options;
+function mountCard(options: { data?: unknown; submitting?: boolean; queriedTrustIds?: string[] } = {}) {
+    const { data = null, submitting = false, queriedTrustIds } = options;
     swrvMock.value = data;
 
     return mount(CohortAggregateCard, {
@@ -61,7 +61,10 @@ function mountCard(options: { data?: unknown; submitting?: boolean } = {}) {
                         project: {
                             id: "p-1",
                             status: "UNSTAGED",
-                            query: { id: "q-1" }
+                            query: {
+                                id: "q-1",
+                                ...(queriedTrustIds ? { queriedTrustIds } : {})
+                            }
                         }
                     }
                 }
@@ -74,6 +77,14 @@ function mountCard(options: { data?: unknown; submitting?: boolean } = {}) {
 describe("CohortAggregateCard", () => {
     beforeEach(() => {
         swrvMock.value = null;
+    });
+
+    it("frames itself as a flat border box, not a shadowed card", () => {
+        const wrapper = mountCard();
+
+        expect(wrapper.classes()).toContain("border");
+        expect(wrapper.classes()).toContain("rounded-xl");
+        expect(wrapper.find("[data-test='ai-card']").exists()).toBe(false);
     });
 
     it("shows total 0 and all trusts running before any results arrive", () => {
@@ -119,6 +130,28 @@ describe("CohortAggregateCard", () => {
         expect(wrapper.text()).toContain("1 errored");
     });
 
+    it("includes a suppressed segment when any trust privacy-suppressed its count", async () => {
+        // trust-2's cohort fell below the privacy threshold and was suppressed (its
+        // count may be 1-9 or zero); the subtitle calls it out so a suppressed trust
+        // isn't silently dropped from the picture (#519).
+        const data = {
+            recordCount: 5,
+            trustsResults: [],
+            trustRecordCounts: {
+                "trust-1": 5,
+                "trust-2": 0
+            },
+            trustSuppressed: ["trust-2"]
+        };
+        const wrapper = mountCard({ data });
+        await nextTick();
+        await flushPromises();
+
+        expect(wrapper.text()).toContain("2 trusts complete");
+        expect(wrapper.text()).toContain("1 running");
+        expect(wrapper.text()).toContain("1 suppressed");
+    });
+
     it("drops the '(live)' marker and patients-so-far suffix once all trusts have responded", async () => {
         const data = {
             recordCount: 12,
@@ -160,6 +193,32 @@ describe("CohortAggregateCard", () => {
 
         expect(wrapper.text()).toContain("0 trusts complete");
         expect(wrapper.text()).toContain("3 running");
+    });
+
+    it("restricts the subtitle counts to the queried trust set when queriedTrustIds is present", async () => {
+        // trust-3 is in the store but was not queried for this project. With
+        // queriedTrustIds = [trust-1, trust-2] it must not inflate the running count:
+        // denominator is 2 (trust-1 complete, trust-2 suppressed → both complete), 0 running.
+        const data = {
+            recordCount: 5,
+            trustsResults: [],
+            trustRecordCounts: {
+                "trust-1": 5,
+                "trust-2": 0
+            },
+            trustSuppressed: ["trust-2"]
+        };
+        const wrapper = mountCard({
+            data,
+            queriedTrustIds: ["trust-1", "trust-2"]
+        });
+        await nextTick();
+        await flushPromises();
+
+        expect(wrapper.text()).toContain("2 trusts complete");
+        expect(wrapper.text()).toContain("1 suppressed");
+        // trust-3 (un-queried) is excluded, so nothing is counted as running.
+        expect(wrapper.text()).not.toContain("running");
     });
 
     it("falls back to the legacy trustsResults shape when trustRecordCounts is absent", async () => {

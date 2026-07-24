@@ -16,7 +16,6 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session
 
 from flip_api.auth.dependencies import verify_token
-from flip_api.config import get_settings
 from flip_api.db.database import get_session
 from flip_api.domain.interfaces.fl import IClientStatus, INetStatus
 from flip_api.domain.schemas.status import ClientStatus
@@ -34,7 +33,7 @@ def get_net_status(
     net_name: str,
     db: Session = Depends(get_session),
     user_id: UUID = Depends(verify_token),
-):
+) -> INetStatus:
     """
     Get the status of a net and its clients. A net consists of a central controller with a worker at each of the Trusts.
 
@@ -81,7 +80,7 @@ def get_net_status(
                 logger.warning(f"Trust {trust.name} (slot={slot_name}) not found in client statuses")
                 trust_client_statuses.append(
                     IClientStatus(
-                        name=trust.name, code=trust.code, status=ClientStatus.NO_REPLY.value, fl_kit_slot=slot_name
+                        name=trust.name, code=trust.code, status=ClientStatus.NO_REPLY, fl_kit_slot=slot_name
                     )
                 )
                 continue
@@ -93,7 +92,7 @@ def get_net_status(
         # Create net status response
         net_status = INetStatus(
             name=net_name,
-            fl_backend=get_settings().FL_BACKEND,
+            fl_backend=net_info.fl_backend,
             online=True,  # Assuming the net is online if we reach this point
             registered_clients=len(trust_client_statuses),
             clients=trust_client_statuses,

@@ -12,8 +12,10 @@
  */
 
 import { mount } from "@vue/test-utils";
+import { nextTick } from "vue";
 
 import AiSnackbar from "../AiSnackbar.vue";
+import { notify } from "../notify";
 
 describe("Ai Snackbar", () => {
 
@@ -29,6 +31,105 @@ describe("Ai Snackbar", () => {
         // Check basic structure exists
         expect(wrapper.find(".fixed.inset-0.z-10")).toBeTruthy();
         expect(wrapper.find(".w-full.max-w-md")).toBeTruthy();
+    });
+
+    test("renders an active notification with its action button", async () => {
+        const wrapper = mount(AiSnackbar);
+
+        // A long timeout keeps the toast on screen for the duration of the assertion.
+        notify({
+            title: "Heads up",
+            text: "Something happened",
+            actionText: "Undo",
+            action: () => {}
+        }, 100_000);
+        await nextTick();
+
+        const snackbar = wrapper.find("[data-test=\"snackbar\"]");
+        expect(snackbar.exists()).toBe(true);
+        expect(snackbar.text()).toContain("Something happened");
+        expect(snackbar.text()).toContain("Undo");
+
+        wrapper.unmount();
+    });
+
+    test.each(["success", "error", "warning", "info"] as const)(
+        "renders the %s severity icon",
+        async (type) => {
+            const wrapper = mount(AiSnackbar);
+
+            notify({
+                title: "Heads up",
+                text: "typed toast",
+                type
+            }, 100_000);
+            await nextTick();
+
+            expect(wrapper.find("[data-test='snackbar']").find("svg").exists()).toBe(true);
+            wrapper.unmount();
+        }
+    );
+
+    test("runs the action and closes the toast from the action button", async () => {
+        const wrapper = mount(AiSnackbar);
+        const action = vi.fn();
+
+        notify({
+            title: "Heads up",
+            text: "Something happened",
+            actionText: "Undo",
+            action
+        }, 100_000);
+        await nextTick();
+
+        await wrapper.find("[data-test='snackbar-action-button']").trigger("click");
+
+        // The toast lingers in the DOM through its leave transition, so assert
+        // the behaviour (action ran, close emitted) rather than removal.
+        expect(action).toHaveBeenCalledTimes(1);
+        expect(wrapper.emitted("close")).toHaveLength(1);
+
+        wrapper.unmount();
+    });
+
+    test("auto-dismisses after its timeout without emitting close", async () => {
+        vi.useFakeTimers();
+        try {
+            const wrapper = mount(AiSnackbar);
+
+            notify({
+                title: "Heads up",
+                text: "brief"
+            }, 1_000);
+            await nextTick();
+            expect(wrapper.text()).toContain("brief");
+
+            vi.advanceTimersByTime(1_100);
+            await nextTick();
+
+            expect(wrapper.emitted("close")).toBeUndefined();
+            wrapper.unmount();
+        }
+        finally {
+            vi.useRealTimers();
+        }
+    });
+
+    test("dismiss removes the toast without emitting close", async () => {
+        const wrapper = mount(AiSnackbar);
+
+        notify({
+            title: "Heads up",
+            text: "soon gone"
+        }, 100_000);
+        await nextTick();
+
+        await wrapper.find("[data-test='snackbar-dismiss-button']").trigger("click");
+
+        // Dismiss removes without the close event (unlike the action path).
+        expect(wrapper.emitted("close")).toBeUndefined();
+
+        wrapper.unmount();
     });
 
 });

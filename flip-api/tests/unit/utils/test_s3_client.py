@@ -12,14 +12,17 @@
 
 """Unit tests for ``flip_api.utils.s3_client``.
 
-Pins two contracts on ``S3Client.get_put_presigned_post``:
+Pins two contracts on both ``S3Client.get_put_presigned_post`` (upload) and
+``S3Client.get_presigned_url`` (download):
 
-* the policy URL the method returns must never appear in a log line; and
-* the TTL it requests from boto3 must satisfy the 600 s ceiling that
-  ``MAX_PUT_PRESIGNED_URL_TTL_SECONDS`` encodes.
+* the policy/URL the method returns must never appear in a log line; and
+* the TTL it requests from boto3 must satisfy the 1800 s ceiling that
+  ``MAX_PRESIGNED_URL_TTL_SECONDS`` encodes — shared by both directions
+  since a leaked URL is a capability against the bucket either way.
 
 Together with the tests in
-``tests/unit/file_services/test_presigned_url_for_upload.py`` and
+``tests/unit/file_services/test_presigned_url_for_upload.py``,
+``tests/unit/file_services/test_download_file.py``, and
 ``tests/unit/file_services/test_retrieve_federated_results.py``, this
 module forms the policy retest required by the FLIP-PT review brief:
 no log line may contain ``X-Amz-Signature=``, ``X-Amz-Credential=``,
@@ -32,9 +35,10 @@ from unittest.mock import MagicMock, patch
 import pytest
 from botocore.exceptions import ClientError
 
+from flip_api.config import Settings
 from flip_api.utils.s3_client import (
     _MULTIPART_OVERHEAD_BUFFER_BYTES,
-    MAX_PUT_PRESIGNED_URL_TTL_SECONDS,
+    MAX_PRESIGNED_URL_TTL_SECONDS,
     S3Client,
 )
 from tests.unit._log_policy import _FAKE_SIGNED_URL, _assert_logs_have_no_presigned_url
@@ -159,19 +163,18 @@ def test_get_put_presigned_post_caps_ttl_at_security_ceiling(s3_client_with_mock
     )
 
     kwargs = boto_instance.generate_presigned_post.call_args.kwargs
-    assert kwargs["ExpiresIn"] == MAX_PUT_PRESIGNED_URL_TTL_SECONDS
-    assert kwargs["ExpiresIn"] <= 600
+    assert kwargs["ExpiresIn"] == MAX_PRESIGNED_URL_TTL_SECONDS
 
 
-def test_get_put_presigned_post_default_ttl_is_at_most_600s(s3_client_with_mock_boto):
-    """Default TTL must satisfy the 'TTL <= 600 s' policy requirement."""
+def test_get_put_presigned_post_default_ttl_is_at_most_ceiling(s3_client_with_mock_boto):
+    """Default TTL must satisfy the 'TTL <= ceiling' policy requirement."""
     s3, boto_instance = s3_client_with_mock_boto
     boto_instance.generate_presigned_post.return_value = {"url": "https://example/", "fields": {}}
 
     s3.get_put_presigned_post("s3://test-bucket/key", max_bytes=1024)
 
     kwargs = boto_instance.generate_presigned_post.call_args.kwargs
-    assert kwargs["ExpiresIn"] <= 600
+    assert kwargs["ExpiresIn"] <= MAX_PRESIGNED_URL_TTL_SECONDS
 
 
 def test_get_put_presigned_post_logs_warning_when_clamped(caplog, s3_client_with_mock_boto):
@@ -183,8 +186,8 @@ def test_get_put_presigned_post_logs_warning_when_clamped(caplog, s3_client_with
     s3.get_put_presigned_post("s3://test-bucket/key", max_bytes=1024, expiration=3600)
 
     warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
-    assert any("3600" in r.getMessage() and "600" in r.getMessage() for r in warnings), (
-        f"Expected a clamp warning citing both 3600s and 600s; got: {[r.getMessage() for r in warnings]}"
+    assert any("3600" in r.getMessage() and "1800" in r.getMessage() for r in warnings), (
+        f"Expected a clamp warning citing both 3600s and 1800s; got: {[r.getMessage() for r in warnings]}"
     )
 
 
@@ -206,16 +209,28 @@ def test_get_put_presigned_post_at_ceiling_passes_through(s3_client_with_mock_bo
     boto_instance.generate_presigned_post.return_value = {"url": "https://example/", "fields": {}}
 
     s3.get_put_presigned_post(
-        "s3://test-bucket/key", max_bytes=1024, expiration=MAX_PUT_PRESIGNED_URL_TTL_SECONDS
+        "s3://test-bucket/key", max_bytes=1024, expiration=MAX_PRESIGNED_URL_TTL_SECONDS
     )
 
     kwargs = boto_instance.generate_presigned_post.call_args.kwargs
-    assert kwargs["ExpiresIn"] == MAX_PUT_PRESIGNED_URL_TTL_SECONDS
+    assert kwargs["ExpiresIn"] == MAX_PRESIGNED_URL_TTL_SECONDS
 
 
-def test_max_put_presigned_url_ttl_is_600s():
-    """Pin the ceiling value itself — moving it requires a security review."""
-    assert MAX_PUT_PRESIGNED_URL_TTL_SECONDS == 600
+def test_max_presigned_url_ttl_is_1800s():
+    """Pin the ceiling value itself — moving it requires a security review.
+
+    Shared by both ``get_put_presigned_post`` (upload) and ``get_presigned_url``
+    (download): a leaked URL is a capability against the bucket either way.
+    """
+    assert MAX_PRESIGNED_URL_TTL_SECONDS == 1800
+
+
+def test_settings_default_ttl_equals_ceiling():
+    """Pin PRE_SIGNED_URL_EXPIRATION_SECONDS' default to the ceiling: a higher
+    default would be clamped anyway and make every default-configured
+    deployment log the clamp warning on each presigned upload/download.
+    """
+    assert Settings.model_fields["PRE_SIGNED_URL_EXPIRATION_SECONDS"].default == MAX_PRESIGNED_URL_TTL_SECONDS
 
 
 def test_get_put_presigned_post_does_not_log_url_on_client_error(caplog, s3_client_with_mock_boto):
@@ -240,3 +255,128 @@ def test_get_put_presigned_post_does_not_log_url_on_client_error(caplog, s3_clie
     # contains ``_FAKE_SIGNED_URL``) would land in the formatted traceback
     # and trip this assertion.
     _assert_logs_have_no_presigned_url(caplog.records)
+
+
+def test_get_presigned_url_passes_response_content_disposition(s3_client_with_mock_boto):
+    """The Content-Disposition override must reach S3 as ResponseContentDisposition
+    so the browser saves the file under the right name from a presigned GET.
+    """
+    s3, boto_instance = s3_client_with_mock_boto
+    boto_instance.generate_presigned_url.return_value = "https://example.s3.amazonaws.com/signed"
+
+    s3.get_presigned_url(
+        "s3://example/models/123/weights.bin",
+        expiration=600,
+        response_content_disposition="attachment; filename=\"weights.bin\"",
+    )
+
+    kwargs = boto_instance.generate_presigned_url.call_args.kwargs
+    assert kwargs["Params"]["ResponseContentDisposition"] == "attachment; filename=\"weights.bin\""
+    assert kwargs["Params"]["Bucket"] == "example"
+    assert kwargs["Params"]["Key"] == "models/123/weights.bin"
+    assert kwargs["ExpiresIn"] == 600
+
+
+def test_get_presigned_url_omits_response_content_disposition_when_not_given(s3_client_with_mock_boto):
+    """A caller that doesn't need a filename override (e.g. federated results) must not
+    have the param injected at all.
+    """
+    s3, boto_instance = s3_client_with_mock_boto
+    boto_instance.generate_presigned_url.return_value = "https://example.s3.amazonaws.com/signed"
+
+    s3.get_presigned_url("s3://example/results/123/metrics.json")
+
+    kwargs = boto_instance.generate_presigned_url.call_args.kwargs
+    assert "ResponseContentDisposition" not in kwargs["Params"]
+
+
+def test_get_presigned_url_caps_ttl_at_security_ceiling(s3_client_with_mock_boto):
+    """A caller passing a permissive TTL must still get the security ceiling."""
+    s3, boto_instance = s3_client_with_mock_boto
+    boto_instance.generate_presigned_url.return_value = "https://example.s3.amazonaws.com/signed"
+
+    s3.get_presigned_url("s3://test-bucket/key", expiration=3600)
+
+    kwargs = boto_instance.generate_presigned_url.call_args.kwargs
+    assert kwargs["ExpiresIn"] == MAX_PRESIGNED_URL_TTL_SECONDS
+
+
+def test_get_presigned_url_default_ttl_is_ceiling_without_warning(caplog, s3_client_with_mock_boto):
+    """The function's default TTL must equal the ceiling AND not trip the clamp
+    warning — a default-behaving caller is within policy, so warning on it would
+    turn the clamp's audit trail into per-call noise.
+    """
+    caplog.set_level(logging.WARNING, logger="uvicorn")
+    s3, boto_instance = s3_client_with_mock_boto
+    boto_instance.generate_presigned_url.return_value = "https://example.s3.amazonaws.com/signed"
+
+    s3.get_presigned_url("s3://test-bucket/key")
+
+    kwargs = boto_instance.generate_presigned_url.call_args.kwargs
+    assert kwargs["ExpiresIn"] == MAX_PRESIGNED_URL_TTL_SECONDS
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert not warnings, f"Default TTL must not warn: {[r.getMessage() for r in warnings]}"
+
+
+def test_get_presigned_url_at_ceiling_passes_through(s3_client_with_mock_boto):
+    """Boundary case: an ``expiration`` exactly at the ceiling must round-trip unchanged."""
+    s3, boto_instance = s3_client_with_mock_boto
+    boto_instance.generate_presigned_url.return_value = "https://example.s3.amazonaws.com/signed"
+
+    s3.get_presigned_url("s3://test-bucket/key", expiration=MAX_PRESIGNED_URL_TTL_SECONDS)
+
+    kwargs = boto_instance.generate_presigned_url.call_args.kwargs
+    assert kwargs["ExpiresIn"] == MAX_PRESIGNED_URL_TTL_SECONDS
+
+
+def test_get_presigned_url_logs_warning_when_clamped(caplog, s3_client_with_mock_boto):
+    """Over-ceiling callers must leave a warning trail so the silent clamp is auditable."""
+    caplog.set_level(logging.WARNING, logger="uvicorn")
+    s3, boto_instance = s3_client_with_mock_boto
+    boto_instance.generate_presigned_url.return_value = "https://example.s3.amazonaws.com/signed"
+
+    s3.get_presigned_url("s3://test-bucket/key", expiration=3600)
+
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert any("3600" in r.getMessage() and "1800" in r.getMessage() for r in warnings), (
+        f"Expected a clamp warning citing both 3600s and 1800s; got: {[r.getMessage() for r in warnings]}"
+    )
+
+
+def test_get_presigned_url_does_not_warn_at_or_below_ceiling(caplog, s3_client_with_mock_boto):
+    """A within-policy caller must not trip the warning."""
+    caplog.set_level(logging.WARNING, logger="uvicorn")
+    s3, boto_instance = s3_client_with_mock_boto
+    boto_instance.generate_presigned_url.return_value = "https://example.s3.amazonaws.com/signed"
+
+    s3.get_presigned_url("s3://test-bucket/key", expiration=300)
+
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert not warnings, f"Did not expect a warning for in-policy TTL: {[r.getMessage() for r in warnings]}"
+
+
+def test_upload_file_parses_path_and_uploads(s3_client_with_mock_boto):
+    """upload_file parses the s3:// path and delegates to boto3's managed upload."""
+    s3, boto_instance = s3_client_with_mock_boto
+
+    s3.upload_file("/local/base/app/file1.py", "s3://dest-bucket/models/abc/app/file1.py")
+
+    boto_instance.upload_file.assert_called_once_with(
+        "/local/base/app/file1.py", "dest-bucket", "models/abc/app/file1.py"
+    )
+
+
+def test_upload_file_wraps_s3_upload_failed_error(s3_client_with_mock_boto):
+    """A boto3 S3UploadFailedError (managed-transfer failure) is caught and re-raised wrapped.
+
+    boto3's ``client.upload_file`` raises ``boto3.exceptions.S3UploadFailedError`` (not a botocore
+    ClientError) on an S3-side failure such as AccessDenied on the destination bucket; the wrapper
+    must still surface it as the tailored "Unable to upload file" error.
+    """
+    from boto3.exceptions import S3UploadFailedError
+
+    s3, boto_instance = s3_client_with_mock_boto
+    boto_instance.upload_file.side_effect = S3UploadFailedError("Failed to upload: AccessDenied")
+
+    with pytest.raises(Exception, match="Unable to upload file /local/f.py to s3://dest-bucket/k"):
+        s3.upload_file("/local/f.py", "s3://dest-bucket/k")

@@ -27,8 +27,6 @@ for _key, _value in _TEST_ENV_DEFAULTS.items():
     if not _current or (_current.startswith("<") and _current.endswith(">")):
         os.environ[_key] = _value
 
-from unittest.mock import patch  # noqa: E402
-
 import pytest  # noqa: E402
 import requests  # noqa: E402
 from pytest_factoryboy import register  # noqa: E402
@@ -66,24 +64,6 @@ def real_client() -> requests.Session:
     real_client = requests.Session()
     real_client.headers.update({"Content-Type": "application/json"})
     return real_client
-
-
-@pytest.fixture(autouse=True)
-def mock_pull_required_files(request):
-    """
-    Automatically mock pull_required_files_json_to_assets across all tests to prevent modifications to the file during
-    test runs.
-
-    This fixture is skipped for tests in test_pull_required_files.py which test
-    the function directly.
-    """
-    # Skip mocking for tests that are testing the pull_required_files function itself
-    if "test_pull_required_files" in request.node.nodeid:
-        yield
-    else:
-        with patch("flip_api.fl_services.services.pull_required_files.pull_required_files_json_to_assets"):
-            with patch("flip_api.model_services.save_model.pull_required_files_json_to_assets"):
-                yield
 
 
 def pytest_addoption(parser):

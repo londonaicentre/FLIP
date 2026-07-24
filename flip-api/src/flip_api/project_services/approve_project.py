@@ -45,7 +45,7 @@ def approve_project_endpoint(
     ),
     user_id: UUID = Depends(verify_token),
     db: Session = Depends(get_session),
-):
+) -> list[ITrust]:
     """
     Approves a project that is currently in the 'STAGED' status.
     The approval is specific to the list of trust IDs provided in the request body.

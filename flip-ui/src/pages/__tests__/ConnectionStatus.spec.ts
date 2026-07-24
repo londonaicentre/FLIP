@@ -16,18 +16,27 @@ import { mount } from "@vue/test-utils";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ref } from "vue";
 
-import { IAdminTrust } from "@/services/admin-trusts-service";
+import { ITrustResponse } from "@/services/trust-service";
 
 import ConnectionStatus from "../ConnectionStatus.vue";
 
-const mockSwrvData = ref<IAdminTrust[] | undefined>(undefined);
+// Capture the (key, fetcher, options) the page wires SWRV with, so a test can
+// assert it polls the authenticated, consolidated /trust endpoint (under its own
+// SWRV cache key) rather than the admin-only /admin/trusts (regression for #557).
+const { swrvCalls } = vi.hoisted(() => ({ swrvCalls: [] as unknown[][] }));
+
+const mockSwrvData = ref<ITrustResponse[] | undefined>(undefined);
 
 vi.mock("swrv", () => ({
-    default: () => ({
-        data: mockSwrvData,
-        mutate: vi.fn(),
-        error: ref(null)
-    })
+    default: (...args: unknown[]) => {
+        swrvCalls.push(args);
+
+        return {
+            data: mockSwrvData,
+            mutate: vi.fn(),
+            error: ref(null)
+        };
+    }
 }));
 
 const stubs = {
@@ -60,13 +69,12 @@ const stubs = {
 const now = Date.now();
 const seconds = (n: number) => new Date(now - n * 1000).toISOString();
 
-const fixture: IAdminTrust[] = [
+const fixture: ITrustResponse[] = [
     {
         id: "t1",
         name: "Zebra NHS Trust",
         code: "ZNT",
         region: "London",
-        created_at: null,
         last_heartbeat: seconds(10),
         project_count: 1
     },
@@ -75,7 +83,6 @@ const fixture: IAdminTrust[] = [
         name: "Acme NHS Trust",
         code: "ANT",
         region: "South West",
-        created_at: null,
         last_heartbeat: null,
         project_count: 7
     },
@@ -84,7 +91,6 @@ const fixture: IAdminTrust[] = [
         name: "Maple NHS Trust",
         code: "MNT",
         region: "North East",
-        created_at: null,
         last_heartbeat: seconds(120),
         project_count: 3
     }
@@ -119,6 +125,7 @@ const codesInOrder = (wrapper: ReturnType<typeof mountPage>): string[] =>
 
 beforeEach(() => {
     mockSwrvData.value = undefined;
+    swrvCalls.length = 0;
 });
 
 describe("ConnectionStatus", () => {
@@ -187,11 +194,47 @@ describe("ConnectionStatus", () => {
         expect(wrapper.find("[data-test='add-trust-btn']").exists()).toBe(false);
     });
 
+    it("sources statuses from the authenticated /trust endpoint, not admin-only /admin/trusts", () => {
+        // #557: a non-admin polling /admin/trusts gets a 403 → perpetual spinner.
+        // The page must use the non-admin endpoint instead — post-#609 the
+        // consolidated GET /trust, fetched here under a distinct SWRV cache key
+        // so its 15s poll stays independent of the app-wide /trust bootstrap.
+        mockSwrvData.value = fixture;
+        mountPage({ permissions: [] });
+        expect(swrvCalls[0][0]).toBe("trust-connection-status");
+    });
+
+    it("lets a non-admin (Researcher / Viewer) load trust statuses with no Add Trust control", async () => {
+        // Acceptance criteria for #557: a non-admin sees the statuses populate
+        // (no perpetual loader) while the admin-only Add Trust control stays hidden.
+        mockSwrvData.value = fixture;
+        const wrapper = mountPage({ permissions: [] });
+        await wrapper.vm.$nextTick();
+        expect(wrapper.find("[data-test='ai-loader']").exists()).toBe(false);
+        expect(wrapper.findAll("[data-test='trust-row']").length).toBe(fixture.length);
+        expect(wrapper.find("[data-test='add-trust-btn']").exists()).toBe(false);
+    });
+
     it("shows the Add Trust button for admins", async () => {
         mockSwrvData.value = fixture;
         const wrapper = mountPage();
         await wrapper.vm.$nextTick();
         expect(wrapper.find("[data-test='add-trust-btn']").exists()).toBe(true);
+    });
+
+    it("puts Add Trust on the title row and collapses it to a plus below lg", async () => {
+        mockSwrvData.value = fixture;
+        const wrapper = mountPage();
+        await wrapper.vm.$nextTick();
+
+        const btn = wrapper.find("[data-test='add-trust-btn']");
+        // Same row as the h1 — not a separate bottom-aligned block.
+        expect(btn.element.parentElement?.querySelector("h1")).toBeTruthy();
+        // Icon-collapse idiom: plus icon always, label only at lg+.
+        expect(btn.find("svg").exists()).toBe(true);
+        const label = btn.find("span.hidden");
+        expect(label.text()).toBe("Add Trust");
+        expect(label.classes()).toContain("lg:inline");
     });
 
     it("renders the trust name prominently with the code beneath it (code hidden when absent)", async () => {
@@ -224,6 +267,80 @@ describe("ConnectionStatus", () => {
         // is implementation-defined; the contract is: it does NOT show a relative
         // time like "ago"). We assert the negative.
         expect(wrapper.find("[data-test='trust-heartbeat']").text()).not.toContain("ago");
+    });
+
+    it("leaves non-offline trust rows on the card surface, matching the mobile rows", async () => {
+        // Zebra (first fixture entry) is online — no red tint applies, and no
+        // dark-surface either: rows sit transparent on the card's dark canvas
+        // exactly like the stacked mobile rows.
+        mockSwrvData.value = [fixture[0]];
+        const wrapper = mountPage();
+        await wrapper.vm.$nextTick();
+        const row = wrapper.find("[data-test='trust-row']");
+        expect(row.classes().some(c => c.startsWith("bg-red"))).toBe(false);
+        expect(row.classes()).not.toContain("dark:bg-dark-surface");
+
+        // main.css paints every table's tbody dark:bg-gray-800 with its own
+        // ring/shadow and gray-700 dividers — this table must override those
+        // so dark mode shows the card canvas through, like the mobile list.
+        const tbody = wrapper.find("tbody");
+        expect(tbody.classes()).toContain("dark:bg-transparent");
+        expect(tbody.classes()).toContain("dark:divide-dark-border");
+        const table = wrapper.find("table");
+        expect(table.classes()).toContain("ring-0");
+        expect(table.classes()).toContain("shadow-none");
+    });
+
+    it("stacks the topology legend vertically", async () => {
+        mockSwrvData.value = fixture;
+        const wrapper = mountPage();
+        await wrapper.vm.$nextTick();
+        await wrapper.find("[data-test='view-toggle-radial']").trigger("click");
+
+        const legend = wrapper.find("[data-test='radial-legend']");
+        expect(legend.classes()).toContain("flex-col");
+        expect(legend.findAll("span.rounded-full")).toHaveLength(3);
+    });
+
+    it("lightens the offline dashed spoke in dark mode so it reads on the dark card", async () => {
+        mockSwrvData.value = fixture;
+        const wrapper = mountPage();
+        await wrapper.vm.$nextTick();
+        await wrapper.find("[data-test='view-toggle-radial']").trigger("click");
+
+        // Offline spokes are the dashed ones (Acme has a null heartbeat).
+        const offlineSpokes = wrapper.findAll("line").filter(l => l.attributes("stroke-dasharray") === "3 4");
+        expect(offlineSpokes.length).toBeGreaterThan(0);
+        for (const spoke of offlineSpokes) {
+            // CSS wins over the SVG stroke attribute, so these utilities recolour
+            // and brighten the line in dark mode only.
+            expect(spoke.classes()).toContain("dark:stroke-red-400");
+            expect(spoke.classes()).toContain("dark:[stroke-opacity:0.7]");
+        }
+    });
+
+    it("renders the radial topology on the plain card surface with dark-visible labels", async () => {
+        mockSwrvData.value = fixture;
+        const wrapper = mountPage();
+        await wrapper.vm.$nextTick();
+        await wrapper.find("[data-test='view-toggle-radial']").trigger("click");
+
+        // The bespoke gradient panel (off-token blue-grey in dark mode) is gone —
+        // the topology sits directly on the card surface like every other card.
+        expect(wrapper.find(".connection-topology-card").exists()).toBe(false);
+
+        // SVG labels swap fills per mode instead of hard-coded light-mode hexes.
+        const svg = wrapper.find("[data-test='connection-radial-svg']");
+        const names = svg.findAll("text.fill-gray-700");
+        expect(names.length).toBeGreaterThan(0);
+        for (const name of names) {
+            expect(name.classes()).toContain("dark:fill-gray-100");
+        }
+        const counts = svg.findAll("text.fill-gray-500");
+        expect(counts.length).toBeGreaterThan(0);
+        for (const count of counts) {
+            expect(count.classes()).toContain("dark:fill-gray-300");
+        }
     });
 
     it("toggles to the radial topology view when its tab is clicked", async () => {
@@ -361,5 +478,151 @@ describe("ConnectionStatus", () => {
 
         await nodes[0].trigger("mouseleave");
         expect(detail().exists()).toBe(false);
+    });
+
+    it("lets the Trust column squash and truncate instead of locking at 18rem", async () => {
+        mockSwrvData.value = fixture;
+        const wrapper = mountPage();
+        await wrapper.vm.$nextTick();
+
+        // The column absorbs the leftover width instead of pinning a 288px floor…
+        const th = wrapper.find("[data-test='sort-header-name']");
+        expect(th.classes()).toContain("w-full");
+        expect(th.classes()).not.toContain("min-w-[18rem]");
+        // …and max-w-0 gives the cell zero min-content, so the truncate spans
+        // actually clip when the table is squashed rather than forcing overflow.
+        const nameCell = wrapper.find("[data-test='trust-name']").element.closest("td");
+        expect(nameCell?.className).toContain("max-w-0");
+    });
+
+    it("renders exactly six columns — no empty trailing action column", async () => {
+        mockSwrvData.value = fixture;
+        const wrapper = mountPage();
+        await wrapper.vm.$nextTick();
+
+        expect(wrapper.findAll("th")).toHaveLength(6);
+        expect(wrapper.find("[data-test='trust-row']").findAll("td")).toHaveLength(6);
+    });
+
+    describe("mobile stacked trust rows (design 3a)", () => {
+        const mobileCodes = (wrapper: ReturnType<typeof mountPage>): string[] =>
+            wrapper.findAll("[data-test='trust-row-mobile']").map(r => {
+                const code = r.find("[data-test='trust-code-mobile']");
+
+                return code.exists() ? code.text() : "";
+            });
+
+        it("renders a stacked row per trust below sm and hides the table there", async () => {
+            mockSwrvData.value = fixture;
+            const wrapper = mountPage();
+            await wrapper.vm.$nextTick();
+
+            const list = wrapper.find("[data-test='trusts-stacked-list']");
+            expect(list.classes()).toContain("sm:hidden");
+            expect(wrapper.findAll("[data-test='trust-row-mobile']")).toHaveLength(fixture.length);
+
+            const tableWrap = wrapper.find("table").element.parentElement;
+            expect(tableWrap?.className).toContain("hidden");
+            expect(tableWrap?.className).toContain("sm:block");
+        });
+
+        it("stacks name, code, pill, meta line and sparkline into two lines", async () => {
+            mockSwrvData.value = [fixture[0]]; // Zebra: online, London, 1 project
+            const wrapper = mountPage();
+            await wrapper.vm.$nextTick();
+
+            const row = wrapper.find("[data-test='trust-row-mobile']");
+            expect(row.text()).toContain("Zebra NHS Trust");
+            expect(row.find("[data-test='trust-code-mobile']").text()).toBe("ZNT");
+            expect(row.text()).toContain("Online");
+            expect(row.text()).toContain("London");
+            expect(row.text()).toContain("ago");
+            expect(row.text()).toContain("1 project");
+            expect(row.find("svg polyline").exists()).toBe(true);
+        });
+
+        it("tints the offline stacked row and its heartbeat red", async () => {
+            mockSwrvData.value = [fixture[1]]; // Acme: null heartbeat → offline
+            const wrapper = mountPage();
+            await wrapper.vm.$nextTick();
+
+            const row = wrapper.find("[data-test='trust-row-mobile']");
+            expect(row.classes().some(c => c.startsWith("bg-red"))).toBe(true);
+            expect(row.find("[data-test='trust-heartbeat-mobile']").classes().join(" ")).toContain("text-red-600");
+        });
+
+        it("sorts from the mobile sort menu and toggles direction on repeat", async () => {
+            mockSwrvData.value = fixture;
+            const wrapper = mountPage();
+            await wrapper.vm.$nextTick();
+
+            expect(wrapper.find("[data-test='mobile-sort-btn']").text()).toContain("Sort: Name ↑");
+
+            // Fixture project counts: Zebra=1, Maple=3, Acme=7.
+            await wrapper.find("[data-test='mobile-sort-btn']").trigger("click");
+            await wrapper.find("[data-test='mobile-sort-projects']").trigger("click");
+            expect(mobileCodes(wrapper)).toEqual(["ZNT", "MNT", "ANT"]);
+            expect(wrapper.find("[data-test='mobile-sort-btn']").text()).toContain("Sort: Projects ↑");
+
+            await wrapper.find("[data-test='mobile-sort-btn']").trigger("click");
+            await wrapper.find("[data-test='mobile-sort-projects']").trigger("click");
+            expect(mobileCodes(wrapper)).toEqual(["ANT", "MNT", "ZNT"]);
+            expect(wrapper.find("[data-test='mobile-sort-btn']").text()).toContain("Sort: Projects ↓");
+        });
+
+        it("applies the active filter tile to the stacked rows too", async () => {
+            mockSwrvData.value = fixture;
+            const wrapper = mountPage();
+
+            await wrapper.find("[data-test='filter-tile-offline']").trigger("click");
+            expect(mobileCodes(wrapper)).toEqual(["ANT"]);
+        });
+    });
+
+    describe("summary filter tiles", () => {
+        // Fixture states: Zebra (ZNT) online, Maple (MNT) degraded, Acme (ANT) offline.
+        it("renders one tile per connection state with its count", async () => {
+            mockSwrvData.value = fixture;
+            const wrapper = mountPage();
+            await wrapper.vm.$nextTick();
+
+            expect(wrapper.find("[data-test='filter-tile-count-online']").text()).toBe("1");
+            expect(wrapper.find("[data-test='filter-tile-count-degraded']").text()).toBe("1");
+            expect(wrapper.find("[data-test='filter-tile-count-offline']").text()).toBe("1");
+        });
+
+        it("filters the table to a state on click and resets on a second click", async () => {
+            mockSwrvData.value = fixture;
+            const wrapper = mountPage();
+            const tile = wrapper.find("[data-test='filter-tile-offline']");
+
+            await tile.trigger("click");
+            expect(tile.attributes("aria-pressed")).toBe("true");
+            expect(codesInOrder(wrapper)).toEqual(["ANT"]);
+
+            await tile.trigger("click");
+            expect(tile.attributes("aria-pressed")).toBe("false");
+            expect(codesInOrder(wrapper)).toEqual(["ANT", "MNT", "ZNT"]);
+        });
+
+        it("switches the filter when a different tile is clicked", async () => {
+            mockSwrvData.value = fixture;
+            const wrapper = mountPage();
+
+            await wrapper.find("[data-test='filter-tile-offline']").trigger("click");
+            await wrapper.find("[data-test='filter-tile-degraded']").trigger("click");
+            expect(codesInOrder(wrapper)).toEqual(["MNT"]);
+        });
+
+        it("explains an empty filtered table instead of claiming no trusts exist", async () => {
+            // All fixture trusts online → the offline filter empties the table.
+            mockSwrvData.value = [fixture[0]];
+            const wrapper = mountPage();
+
+            await wrapper.find("[data-test='filter-tile-offline']").trigger("click");
+            expect(wrapper.findAll("[data-test='trust-row']")).toHaveLength(0);
+            expect(wrapper.text()).toContain("No trusts match this filter.");
+            expect(wrapper.text()).not.toContain("No trusts registered yet.");
+        });
     });
 });

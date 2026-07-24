@@ -17,7 +17,7 @@ import pytest
 from sqlmodel import Session
 
 from flip_api.db.models.main_models import FLKitSlot
-from flip_api.db.seed.fl_kit_slots import _slot_number, seed_fl_kit_slots
+from flip_api.db.seed.fl_kit_slots import _NON_NUMERIC_SLOT_NUMBER, _slot_number, seed_fl_kit_slots
 
 
 @pytest.fixture
@@ -31,8 +31,10 @@ class TestSlotNumberDerivation:
         assert _slot_number("Trust_1") == 1
         assert _slot_number("Site_42") == 42
 
-    def test_no_trailing_integer_falls_back_to_zero(self):
-        assert _slot_number("GSTT") == 0
+    def test_no_trailing_integer_returns_sentinel(self):
+        assert _slot_number("GSTT") == _NON_NUMERIC_SLOT_NUMBER
+        assert _slot_number("Trust_K8s") == _NON_NUMERIC_SLOT_NUMBER
+        assert _NON_NUMERIC_SLOT_NUMBER > 0
 
 
 @patch("flip_api.db.seed.fl_kit_slots.get_settings")

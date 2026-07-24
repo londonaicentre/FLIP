@@ -50,7 +50,14 @@ vi.mock("swrv", () => ({
     })
 }));
 
-vi.mock("@/services/model-service", () => ({ getModels: vi.fn(async () => undefined) }));
+vi.mock("@/services/model-service", async (importOriginal) => {
+    const actual = await importOriginal<typeof import("@/services/model-service")>();
+
+    return {
+        ...actual,
+        getModels: vi.fn(async () => undefined)
+    };
+});
 
 vi.mock("@/composables/useErrorHandler", () => ({ default: vi.fn() }));
 
@@ -59,12 +66,12 @@ function setData(v: unknown) {
 }
 
 interface MountOptions {
-    isObserver?: boolean;
+    isViewer?: boolean;
     projectStatus?: string;
 }
 
 function mountLatestModels({
-    isObserver = false,
+    isViewer = false,
     projectStatus = "APPROVED"
 }: MountOptions = {}) {
     return mount(LatestModels, {
@@ -75,7 +82,7 @@ function mountLatestModels({
                     // stubActions: false runs the real action implementations
                     // against the initialState — needed so authStore.hasPermissions
                     // reflects the seeded `user.permissions` array instead of a
-                    // spy that returns undefined and makes isObserver always true.
+                    // spy that returns undefined and makes isViewer always true.
                     stubActions: false,
                     initialState: {
                         auth: {
@@ -86,7 +93,7 @@ function mountLatestModels({
                                     sub: "s",
                                     email: "u@e.com"
                                 },
-                                permissions: isObserver ? [] : ["CanCreateProjects"]
+                                permissions: isViewer ? [] : ["CanCreateProjects"]
                             },
                             signInStep: "DONE",
                             mfaEnabled: true,
@@ -107,8 +114,9 @@ function mountLatestModels({
                 AiButton: {
                     // Forward DOM clicks as Vue `click` emits so the parent's
                     // `@click="addModel"` listener fires when the test
-                    // triggers `.trigger("click")` on this stub.
-                    template: "<button :data-test=$attrs['data-test'] @click=\"$emit('click', $event)\"><slot /></button>",
+                    // triggers `.trigger("click")` on this stub. All attrs
+                    // (data-test, aria-label) are forwarded onto the button.
+                    template: "<button v-bind=\"$attrs\" @click=\"$emit('click', $event)\"><slot /></button>",
                     inheritAttrs: false,
                     emits: ["click"]
                 },
@@ -156,7 +164,52 @@ describe("LatestModels — defensive data access", () => {
         const wrapper = mountLatestModels();
         await flushPromises();
 
-        expect(wrapper.text()).toContain("There are no models assigned to this project.");
+        expect(wrapper.text()).toContain("No models have been created for this project yet.");
+    });
+
+    test("keeps the approval-required alert under the title instead of vertically centring it", async () => {
+        const wrapper = mountLatestModels({ projectStatus: "UNSTAGED" });
+        await flushPromises();
+
+        const alert = wrapper.find("[data-test=approval-required-alert]");
+        expect(alert.exists()).toBe(true);
+        // m-auto would centre the alert in the pinned-height flex-column card.
+        expect(alert.classes()).not.toContain("m-auto");
+        expect(alert.classes()).toContain("shrink-0");
+    });
+
+    test("centres the borderless empty state vertically in the card", async () => {
+        setData({ data: [] });
+        const wrapper = mountLatestModels();
+        await flushPromises();
+
+        const empty = wrapper.find("[data-test=models-empty-state]");
+        for (const cls of ["flex-1", "items-center", "justify-center"]) {
+            expect(empty.classes()).toContain(cls);
+        }
+        // No framed box around the icon + copy any more.
+        expect(empty.html()).not.toContain("border-2");
+    });
+
+    test("shows the status chip on the same row as the model name", async () => {
+        setData({
+            data: [{
+                id: "m1",
+                name: "Alpha",
+                description: "",
+                status: "RUNNING"
+            }]
+        });
+        const wrapper = mountLatestModels();
+        await flushPromises();
+
+        const chip = wrapper.find("[data-test='latest-model-status-chip']");
+        expect(chip.classes()).toContain("rounded-full");
+        expect(chip.classes().join(" ")).toContain("bg-fuchsia-100");
+        expect(chip.text()).toBe("Running");
+        // Same row as the name: they share a flex parent.
+        const nameRow = chip.element.parentElement;
+        expect(nameRow?.textContent).toContain("Alpha");
     });
 
     test("lists models and shows the View All button when data.data is populated", async () => {
@@ -183,7 +236,7 @@ describe("LatestModels — defensive data access", () => {
         expect(wrapper.text()).toContain("View All Models");
     });
 
-    test("shows the header Create-Model button when not an observer", async () => {
+    test("lays out as a flex column whose list region scrolls when the card height is pinned", async () => {
         setData({
             data: [{
                 id: "m1",
@@ -191,7 +244,28 @@ describe("LatestModels — defensive data access", () => {
                 description: ""
             }]
         });
-        const wrapper = mountLatestModels({ isObserver: false });
+        const wrapper = mountLatestModels();
+        await flushPromises();
+
+        // The project page pins this card to the imaging-status row height; the
+        // root must be a flex column so the list flexes and scrolls internally.
+        expect(wrapper.classes()).toContain("flex");
+        expect(wrapper.classes()).toContain("flex-col");
+        const list = wrapper.find("[data-test=models-approved-status]");
+        for (const cls of ["flex-1", "min-h-0", "overflow-y-auto"]) {
+            expect(list.classes()).toContain(cls);
+        }
+    });
+
+    test("shows the header Create-Model button when not a viewer", async () => {
+        setData({
+            data: [{
+                id: "m1",
+                name: "Alpha",
+                description: ""
+            }]
+        });
+        const wrapper = mountLatestModels({ isViewer: false });
         await flushPromises();
 
         expect(wrapper.find("[data-test=add-model-btn]").exists()).toBe(true);
@@ -212,13 +286,13 @@ describe("LatestModels — defensive data access", () => {
                 description: ""
             }]
         });
-        const wrapper = mountLatestModels({ isObserver: false });
+        const wrapper = mountLatestModels({ isViewer: false });
         await flushPromises();
 
         expect(wrapper.find("[data-test=add-model-btn]").exists()).toBe(true);
     });
 
-    test("hides the header Create-Model button for observers", async () => {
+    test("hides the header Create-Model button for viewers", async () => {
         setData({
             data: [{
                 id: "m1",
@@ -226,29 +300,43 @@ describe("LatestModels — defensive data access", () => {
                 description: ""
             }]
         });
-        const wrapper = mountLatestModels({ isObserver: true });
+        const wrapper = mountLatestModels({ isViewer: true });
         await flushPromises();
 
         expect(wrapper.find("[data-test=add-model-btn]").exists()).toBe(false);
     });
 
-    test("hides the header Create-Model button for observers in the empty state", async () => {
+    test("hides the header Create-Model button for viewers in the empty state", async () => {
         setData({ data: [] });
-        const wrapper = mountLatestModels({ isObserver: true });
+        const wrapper = mountLatestModels({ isViewer: true });
         await flushPromises();
 
         expect(wrapper.find("[data-test=add-model-btn]").exists()).toBe(false);
     });
 
-    test("non-observer empty state renders the create-model CTA in the header", async () => {
+    test("non-viewer empty state renders the create-model CTA in the header", async () => {
         setData({ data: [] });
-        const wrapper = mountLatestModels({ isObserver: false });
+        const wrapper = mountLatestModels({ isViewer: false });
         await flushPromises();
 
         expect(wrapper.find("[data-test=add-model-btn]").exists()).toBe(true);
 
         await wrapper.find("[data-test=add-model-btn]").trigger("click");
         expect(wrapper.exists()).toBe(true);
+    });
+
+    test("Create-Model button collapses its label below lg with an aria-label and an icon", async () => {
+        setData({ data: [] });
+        const wrapper = mountLatestModels({ isViewer: false });
+        await flushPromises();
+
+        const btn = wrapper.find("[data-test=add-model-btn]");
+        expect(btn.exists()).toBe(true);
+        expect(btn.attributes("aria-label")).toBe("Create Model");
+        expect(btn.find("svg").exists()).toBe(true);
+        const label = btn.find("span.hidden.lg\\:inline");
+        expect(label.exists()).toBe(true);
+        expect(label.text()).toBe("Create Model");
     });
 
     test("does not throw when project status is non-APPROVED and data.data is undefined", async () => {

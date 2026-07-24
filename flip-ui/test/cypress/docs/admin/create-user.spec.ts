@@ -29,11 +29,17 @@ describe("docs: create user", () => {
         cy.getBySel("register-user-btn").demoClick();
         cy.demoPause();
 
+        cy.getBySel("name-field").demoType("Sam Researcher");
+        cy.demoPause();
+
+        cy.getBySel("organisation-field").demoType("King's College London");
+        cy.demoPause();
+
         cy.getBySel("email-field").demoType("new.researcher@kcl.ac.uk");
         cy.demoPause();
 
-        cy.getBySel("chip-select").demoClick();
-        cy.getBySel("chip-select-option").contains("Researcher").demoClick();
+        cy.getBySel("role-select").demoClick();
+        cy.getBySel("role-select-option").contains("Researcher").demoClick();
         cy.demoPause();
 
         cy.getBySel("register-user-confirm-btn").demoClick();

@@ -14,6 +14,20 @@ repos:
         files: ^\.env\.development(\.example)?$
         always_run: false
 
+      # Regenerate each backend's fl-apps/<backend>/required_files.json from its per-template
+      # required_files.json arrays (the manifest flip-api pulls from S3). Like prettier/
+      # end-of-file-fixer, it rewrites the file and fails the commit when it changed, so you
+      # re-stage and commit again — no need to remember to run the script. The
+      # check-required-files CI workflow re-runs the same script + `git diff --exit-code` as the
+      # backstop for commits made without pre-commit installed. (#356)
+      - id: fl-apps-required-files
+        name: Generate fl-apps per-backend required_files.json
+        entry: bash fl-apps/check_required_files.sh
+        language: system
+        pass_filenames: false
+        files: '^fl-apps/(check_required_files\.sh|.*required_files\.json)$'
+        always_run: false
+
   - repo: https://github.com/trufflesecurity/trufflehog
     rev: v3.93.3
     hooks:
@@ -34,7 +48,7 @@ repos:
         args: ['--maxkb=1000']
       - id: check-merge-conflict
       - id: check-yaml
-        exclude: '^\.github/workflows/'
+        exclude: '^\.github/workflows/|^deploy/providers/kubernetes/templates/'
       - id: end-of-file-fixer
       - id: detect-private-key
 

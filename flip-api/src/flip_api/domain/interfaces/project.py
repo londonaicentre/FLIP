@@ -66,6 +66,11 @@ class IProjectQuery(BaseModel):
     # non-null ``error``. Excluded from staging — even though we got a
     # reply, we have no usable cohort count.
     errored_trust_ids: list[UUID] = Field(default_factory=list, alias="erroredTrustIds")
+    # Subset of ``responded_trust_ids`` (disjoint from ``errored_trust_ids``) whose
+    # cohort count is 0 — either a genuine zero match or a privacy-suppressed
+    # below-threshold count (see issue #519). Excluded from staging: there is no
+    # cohort to build an imaging project against.
+    empty_trust_ids: list[UUID] = Field(default_factory=list, alias="emptyTrustIds")
     total_cohort: int | None = Field(default=None, alias="totalCohort")
     created: str | None = Field(default=None)
     created_by: str | None = Field(default=None, alias="createdBy")
@@ -143,6 +148,10 @@ class IProject(BaseModel):  # Base for IProject to avoid repetition
 class IReturnedProject(IProject):  # Extends IProject
     owner_email: EmailStr = Field(..., alias="ownerEmail")
     users: list[CognitoUser]
+    # Surfaced read-only so the edit form can display the project's
+    # DICOM->NIfTI setting. Fixed at creation and immutable afterwards (the
+    # edit endpoint ignores it), so the UI renders the toggle disabled.
+    dicom_to_nifti: bool = Field(default=True)
     model_config = ConfigDict(populate_by_name=True)
 
 

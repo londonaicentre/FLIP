@@ -96,12 +96,3 @@ class IUpdateRetrieveImageStatus(TypedDict):
 
     trust_id: str
     xnat_project_id: str
-
-
-class ITrainingMetrics(TypedDict):
-    """Training metrics."""
-
-    fl_client_name: str
-    global_round: int
-    label: str
-    result: float

@@ -16,6 +16,7 @@
 
 import { TrustsResults } from "@/interfaces/cohort-query/types";
 import { FileInfo, FileTableRow } from "@/interfaces/model/types";
+import type { IStep } from "@/interfaces/steps";
 import { _http, IPaginatedResponse } from "@/services/api";
 
 export interface IModelMetricData {
@@ -43,6 +44,10 @@ export interface IModel {
     // Optional only because cached payloads from before the backend exposed
     // it on the project-models list may still be in flight on first paint.
     status?: ModelStatus;
+    // Participating trusts for the mobile list's chips (design 5a). Optional:
+    // the project-models endpoint doesn't send it yet — the chips line renders
+    // only once the backend does.
+    trusts?: IModelSummaryTrust[];
 }
 
 export interface ILog {
@@ -51,6 +56,11 @@ export interface ILog {
     logDate: string;
     success: boolean;
     trustName: string | null;
+    // Trust short code (GSTT/KCH) for compact display — null on hub rows and for
+    // trusts without a code. globalRound is the 1-based federated round the row
+    // belongs to — hub event rows carry it too; null only on legacy/free-text rows.
+    trustCode?: string | null;
+    globalRound?: number | null;
     log: string;
 }
 
@@ -70,8 +80,13 @@ export interface IModelDashboard {
     files: FileInfo[];
     creationTimestamp?: string | null;
     preparedAt?: string | null;
-    trainingStartedAt?: string | null;
+    runningAt?: string | null;
     resultsUploadedAt?: string | null;
+    // The trusts the run was dispatched to. Empty before dispatch.
+    trusts?: IModelSummaryTrust[];
+    // The model's 1-based place in the FL training queue (1 = next to be picked
+    // up); null/absent unless the model has a queued job waiting for a net.
+    queuePosition?: number | null;
 }
 
 export interface IModelCreate {
@@ -114,8 +129,9 @@ export type ModelStatus =
     "PENDING" |
     "INITIATED" |
     "PREPARED" |
-    "TRAINING_STARTED" |
+    "RUNNING" |
     "RESULTS_UPLOADED" |
+    "RESULTS_UPLOAD_FAILED" |
     "ERROR" |
     "STOPPED"
 
@@ -125,16 +141,20 @@ export enum ModelStatusEnum {
     "PENDING",
     "INITIATED",
     "PREPARED",
-    "TRAINING_STARTED",
+    "RUNNING",
     "RESULTS_UPLOADED",
+    // Appended last so the existing ordinal comparisons keep working: training
+    // finished but the results upload failed, so it sorts after RESULTS_UPLOADED.
+    "RESULTS_UPLOAD_FAILED",
 }
 
 const MODEL_STATUS_LABELS: Record<ModelStatus, string> = {
     PENDING: "Model Created",
     INITIATED: "Model Queued",
     PREPARED: "Model Prepared",
-    TRAINING_STARTED: "Training Started",
+    RUNNING: "Running",
     RESULTS_UPLOADED: "Results Uploaded",
+    RESULTS_UPLOAD_FAILED: "Results Upload Failed",
     ERROR: "Error",
     STOPPED: "Stopped"
 };
@@ -144,9 +164,136 @@ export function modelStatusLabel(status: ModelStatus | undefined): string {
     return status ? MODEL_STATUS_LABELS[status] ?? "—" : "—";
 }
 
+/**
+ * Label for a model status with the FL queue position appended whenever a usable
+ * (>= 1) position is supplied, e.g. "Model Queued (2)" — position 1 is the next
+ * model to start when a net frees up. The helper itself is status-agnostic; the
+ * backend only supplies a position while the model has a queued job waiting for
+ * a net, so in practice the suffix appears on queued models. Absent or unusable
+ * positions render the plain label.
+ */
+export function modelStatusLabelWithQueue(status: ModelStatus | undefined, queuePosition?: number | null): string {
+    const label = modelStatusLabel(status);
+
+    return queuePosition != null && queuePosition >= 1 ? `${label} (${queuePosition})` : label;
+}
+
 /** True for terminal failure / cancellation states (drives the red-cross icon). */
 export function isModelStatusError(status: ModelStatus | undefined): boolean {
-    return status === "ERROR" || status === "STOPPED";
+    return status === "ERROR" || status === "STOPPED" || status === "RESULTS_UPLOAD_FAILED";
+}
+
+/**
+ * Pill classes for the model status chip (the /models-page idiom: coloured
+ * pill with a status dot inside). Whole literal Tailwind classes so the JIT
+ * compiler emits them.
+ */
+export function modelStatusPillClass(status: ModelStatus | undefined): string {
+    if (isModelStatusError(status)) {
+        return "bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-200";
+    }
+    if (status === "RESULTS_UPLOADED") {
+        return "bg-emerald-100 text-emerald-900 dark:bg-emerald-900/40 dark:text-emerald-100";
+    }
+    if (status === "RUNNING") {
+        return "bg-fuchsia-100 text-fuchsia-800 dark:bg-fuchsia-900/40 dark:text-fuchsia-200";
+    }
+    if (status === "PREPARED") {
+        return "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200";
+    }
+
+    return "bg-gray-200 text-gray-700 dark:bg-dark-raised dark:text-gray-300";
+}
+
+/** Dot classes for the model status chip — matches modelStatusPillClass tones. */
+export function modelStatusDotClass(status: ModelStatus | undefined): string {
+    if (isModelStatusError(status)) return "bg-red-500";
+    if (status === "RESULTS_UPLOADED") return "bg-emerald-500";
+    if (status === "RUNNING") return "bg-fuchsia-500";
+    if (status === "PREPARED") return "bg-amber-500";
+
+    return "bg-gray-400";
+}
+
+/**
+ * Maps a string model status (e.g. "PENDING") to its ModelStatusEnum ordinal.
+ * Unknown or undefined statuses fall back to ERROR, so a stale UI bundle that
+ * receives a newer status degrades gracefully instead of crashing.
+ */
+export function getStatusEnumValue(status: string | undefined): number {
+    if (status && status in ModelStatusEnum) {
+        const value = ModelStatusEnum[status as keyof typeof ModelStatusEnum];
+        // Numeric enums carry a reverse mapping, so a numeric-string key like "0"
+        // resolves to the member NAME (a string), not an ordinal. Only return real
+        // numeric ordinals; anything else degrades to ERROR below.
+        if (typeof value === "number") {
+            return value;
+        }
+    }
+
+    return ModelStatusEnum.ERROR;
+}
+
+/**
+ * Builds the four-step lifecycle tracker (Created → Prepared → Running → Uploaded)
+ * shown on the model page, derived from the model's status plus the optional queue
+ * position, which only feeds step 02's description while the model is INITIATED.
+ *
+ * When the job is stopped or errors, prior completed steps stay completed (✅)
+ * rather than showing 🚫. RESULTS_UPLOAD_FAILED means the job finished but the
+ * post-run results upload failed, so "Running" stays completed and only
+ * "Results Uploaded" shows the error. See issue #29.
+ *
+ * Per-step dates (creation/prepared/training/results timestamps) are layered on
+ * by the caller, which holds the model record.
+ */
+export function buildModelSteps(status: ModelStatus | undefined, queuePosition?: number | null): IStep[] {
+    const statusValue = getStatusEnumValue(status);
+    const isStopped = statusValue === ModelStatusEnum.STOPPED;
+    const isError = statusValue === ModelStatusEnum.ERROR;
+    const isUploadFailed = statusValue === ModelStatusEnum.RESULTS_UPLOAD_FAILED;
+    // RESULTS_UPLOAD_FAILED (ordinal 7) already satisfies the >= PREPARED / > RUNNING
+    // comparisons in the "completed" flags below, so isUploadFailed is technically redundant
+    // there today. It is kept explicit so the steps stay correct if the enum is reordered, and
+    // to mirror its load-bearing use in the inProgress / error flags.
+
+    return [
+        {
+            id: "01",
+            name: "Model Created",
+            completed: true
+        },
+        {
+            id: "02",
+            name: "Model Prepared",
+            description: statusValue === ModelStatusEnum.INITIATED
+                ? modelStatusLabelWithQueue("INITIATED", queuePosition)
+                : undefined,
+            inProgress: statusValue === ModelStatusEnum.INITIATED,
+            completed: statusValue >= ModelStatusEnum.PREPARED || isStopped || isError || isUploadFailed
+        },
+        {
+            id: "03",
+            name: "Running",
+            // PREPARED means the job is staged but not yet executing (the fl-server flips it to
+            // RUNNING once the run is live), so the step reads "Starting" until then — mirroring
+            // the "Model Queued" sub-state on the Model Prepared step.
+            description:
+                statusValue === ModelStatusEnum.PREPARED ? "Starting"
+                    : statusValue === ModelStatusEnum.RUNNING ? "In Progress" : undefined,
+            inProgress: statusValue >= ModelStatusEnum.PREPARED && !isStopped && !isError && !isUploadFailed,
+            completed: statusValue > ModelStatusEnum.RUNNING || isUploadFailed,
+            error: isError,
+            stopped: isStopped
+        },
+        {
+            id: "04",
+            name: "Results Uploaded",
+            completed: statusValue === ModelStatusEnum.RESULTS_UPLOADED,
+            error: isError || isUploadFailed,
+            stopped: isStopped
+        }
+    ];
 }
 
 /**
@@ -225,6 +372,54 @@ export function isValidJobType(jobTypes: JobTypesResponse, jobType: string): boo
 
 export async function getModels(url: string): Promise<IPaginatedResponse<IModel>> {
     const response = await _http.get<IPaginatedResponse<IModel>>(url);
+
+    return response.data;
+}
+
+/** A trust participating in a model's federated run, for the Models-list chips. */
+export interface IModelSummaryTrust {
+    id: string;
+    name: string;
+    code?: string | null;
+}
+
+/**
+ * One row of the estate-wide Models list (issue #726): a model joined with its
+ * owning project, the owner's display name and the model's run trusts. `trusts`
+ * is empty until training is initiated (no trusts are assigned before dispatch).
+ */
+export interface IModelSummary {
+    id: string;
+    name: string;
+    // Optional only until the deployed API ships the field (design 6a): the
+    // mobile rows render the description line when it is present.
+    description?: string;
+    // Required: the /models endpoint returns a status for every row (unlike the
+    // per-project IModel list, whose cached payloads predate the status column).
+    status: ModelStatus;
+    projectId: string;
+    projectName: string;
+    ownerId: string;
+    ownerName?: string | null;
+    trusts: IModelSummaryTrust[];
+    // The model's 1-based place in the FL training queue (1 = next to be picked
+    // up); null/absent unless the model has a queued job waiting for a net.
+    queuePosition?: number | null;
+}
+
+/**
+ * A page of the estate-wide Models list plus per-status totals for the filter tiles.
+ * ``statusCounts`` maps each ``ModelStatus`` to its count across the caller's
+ * access-scoped set (honouring search, ignoring the active status filter). Statuses
+ * with no models are omitted, so the map is partial.
+ */
+export interface IModelsPage extends IPaginatedResponse<IModelSummary> {
+    statusCounts: Partial<Record<ModelStatus, number>>;
+}
+
+/** Fetch the paginated, access-scoped list of models across every project the user can see. */
+export async function getAllModels(url: string): Promise<IModelsPage> {
+    const response = await _http.get<IModelsPage>(url);
 
     return response.data;
 }
@@ -318,3 +513,4 @@ export async function getModelMetrics(url: string): Promise<IModelMetricData[]> 
 
     return response.data ?? [];
 }
+

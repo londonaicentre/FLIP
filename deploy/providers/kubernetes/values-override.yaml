@@ -1,0 +1,22 @@
+# Hand-maintained example override for a staging K8s trust deployment.
+#
+# Prefer the generated per-kit override: `make sync-kit KIT=<CODE> PROD=stag`
+# reads the registered kit (trust/.env.<CODE>.stag) and writes
+# k8s-trust-<CODE>.yaml with these same settings plus the slot-aware fl-client
+# kit path. This file is kept as a worked example / manual fallback.
+#
+# TRUST_API_KEY_HEADER is no longer set here: the chart default (values.yaml) is
+# now "Authorization", matching the hub. Override it only for a custom-header hub.
+trustApi:
+  env:
+    CENTRAL_HUB_API_URL: "https://stag.flip.aicentre.co.uk/api"
+awsRegion: eu-west-2
+flBackend: nvflare
+uploadedFederatedDataBucket: "s3://${FLIP_BUCKET_NAME}/uploaded_federated_data"
+omopDb:
+  initJob:
+    s3Bucket: flipstag-aicentre
+flClient:
+  nvflare:
+    kitFromS3:
+      bucket: flipstag-aicentre

@@ -14,14 +14,16 @@ from fastapi import HTTPException, status
 from sqlalchemy import text
 from sqlmodel import Session
 
-from flip_api.db.database import engine
+from flip_api.db.database import get_engine
 from flip_api.domain.schemas.status import NetStatus
 from flip_api.fl_services.services.fl_scheduler_service import (
     check_for_available_net,
     check_for_queued_jobs,
+    log_queue_positions,
     prepare_and_start_training,
 )
 from flip_api.utils.logger import logger
+from flip_api.utils.site_manager import is_deployment_mode_enabled
 
 
 def _recover_stale_busy_schedulers(db: Session) -> int:
@@ -43,12 +45,19 @@ def _recover_stale_busy_schedulers(db: Session) -> int:
         UPDATE fl_scheduler
         SET status = :available, job_id = NULL
         WHERE status = :busy
-          AND (job_id IS NULL OR job_id NOT IN (SELECT id FROM fl_job))
+          AND (job_id IS NULL
+               OR job_id NOT IN (SELECT id FROM fl_job
+                                 WHERE status NOT IN (:completed, :deleted)))
         """
     )
     result = db.execute(
         stmt,
-        {"available": NetStatus.AVAILABLE.value, "busy": NetStatus.BUSY.value},
+        {
+            "available": NetStatus.AVAILABLE.value,
+            "busy": NetStatus.BUSY.value,
+            "completed": "COMPLETED",
+            "deleted": "DELETED",
+        },
     )
     recovered = result.rowcount  # type: ignore[attr-defined]
     if recovered:
@@ -66,6 +75,12 @@ def run_jobs_core(db: Session) -> None:
     try:
         _recover_stale_busy_schedulers(db)
 
+        # Deployment mode is the operator's quiesce gate: in-flight jobs finish and
+        # free their nets, but nothing new is picked up until the mode is disabled.
+        if is_deployment_mode_enabled(db):
+            logger.info("Deployment mode enabled — pausing FL job pickup. 🚧")
+            return
+
         # Step 1: Find an available net
         scheduler = check_for_available_net(db)
 
@@ -82,6 +97,9 @@ def run_jobs_core(db: Session) -> None:
                 "net": scheduler.netId,
             })
             return
+
+        # The pickup just advanced every remaining queued model one place.
+        log_queue_positions(db)
 
         # Step 3: Prepare and start training
         logger.info({
@@ -117,7 +135,7 @@ def run_jobs_scheduled_task() -> None:
     """
     logger.info("Running scheduled run_jobs execution... ⏰")
     try:
-        with Session(engine) as db:
+        with Session(get_engine()) as db:
             run_jobs_core(db)
     except Exception as e:
         error_message = f"Error in scheduled run_jobs execution: {str(e)}"

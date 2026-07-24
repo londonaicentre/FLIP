@@ -14,7 +14,7 @@ FastAPI gateway running on each trust. Polls the Central Hub for tasks (FL train
 ## Commands
 
 ```bash
-make test        # ruff + mypy + pytest (unit + integration)
+make test        # ruff + mypy + pytest (unit only; integration runs via make integration_test)
 make unit_test   # Unit tests only (alias for local_test)
 make up/down     # Docker compose start/stop
 ```

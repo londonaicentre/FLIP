@@ -12,19 +12,22 @@
 -->
 
 <template>
-    <AiCard class="flex flex-col h-full">
-        <div class="flex items-center justify-between px-4 py-3 border-b border-gray-200 dark:border-gray-700">
-            <span class="text-xs font-semibold tracking-wider uppercase font-mono text-gray-500 dark:text-gray-400">
+    <div
+        class="flex flex-col h-full overflow-hidden bg-white border border-gray-200 rounded-xl
+        dark:bg-dark-canvas dark:border-dark-border"
+    >
+        <div class="flex items-center justify-between px-4 py-3 border-b border-gray-200 dark:border-dark-border">
+            <span class="text-xs font-semibold tracking-wider uppercase font-mono text-gray-500 dark:text-gray-300">
                 Per-trust response
             </span>
-            <span v-if="anyRunning" class="text-xs text-gray-500 dark:text-gray-400">
+            <span v-if="anyRunning" class="text-xs text-gray-500 dark:text-gray-300">
                 {{ completedCount }} / {{ rows.length }} returned
             </span>
         </div>
-        <div class="flex-1 overflow-y-auto divide-y divide-gray-200 dark:divide-gray-700">
+        <div class="flex-1 overflow-y-auto divide-y divide-gray-200 dark:divide-dark-border">
             <div
                 v-if="!rows.length"
-                class="px-4 py-6 text-sm text-center text-gray-500 dark:text-gray-400"
+                class="px-4 py-6 text-sm text-center text-gray-500 dark:text-gray-300"
             >
                 {{ emptyMessage }}
             </div>
@@ -39,7 +42,7 @@
                         :class="row.errored
                             ? 'bg-red-600'
                             : row.cancelled
-                                ? 'bg-gray-300 dark:bg-gray-600'
+                                ? 'bg-gray-300 dark:bg-dark-raised'
                                 : row.pending
                                     ? 'bg-gray-400'
                                     : row.running
@@ -73,7 +76,7 @@
                     </span>
                     <span
                         v-else-if="row.cancelled"
-                        class="inline-flex items-center gap-1.5 px-2 py-0.5 text-[11px] font-semibold tracking-wide text-gray-500 dark:text-gray-400 rounded-full bg-gray-100 dark:bg-gray-800"
+                        class="inline-flex items-center gap-1.5 px-2 py-0.5 text-[11px] font-semibold tracking-wide text-gray-500 dark:text-gray-300 rounded-full bg-gray-100 dark:bg-dark-surface"
                         title="Project was approved without this trust; query task cancelled"
                     >
                         <span class="inline-block w-1.5 h-1.5 bg-gray-400 rounded-full" />
@@ -81,7 +84,7 @@
                     </span>
                     <span
                         v-else-if="row.pending"
-                        class="inline-flex items-center gap-1.5 px-2 py-0.5 text-[11px] font-semibold tracking-wide text-gray-700 dark:text-gray-200 rounded-full bg-gray-200 dark:bg-gray-700"
+                        class="inline-flex items-center gap-1.5 px-2 py-0.5 text-[11px] font-semibold tracking-wide text-gray-700 dark:text-gray-200 rounded-full bg-gray-200 dark:bg-dark-raised"
                         title="Queued at the hub; trust hasn't polled for it yet"
                     >
                         <span class="inline-block w-1.5 h-1.5 bg-gray-500 rounded-full" />
@@ -96,6 +99,14 @@
                         running
                     </span>
                     <span
+                        v-else-if="row.suppressed"
+                        class="inline-flex items-center gap-1.5 px-2 py-0.5 text-[11px] font-semibold tracking-wide text-amber-700 dark:text-amber-300 rounded-full bg-amber-100 dark:bg-amber-900/40"
+                        title="The matching cohort is below the privacy threshold, so the trust suppressed the exact count (which may be zero)"
+                    >
+                        <span class="inline-block w-1.5 h-1.5 bg-amber-500 rounded-full" />
+                        suppressed
+                    </span>
+                    <span
                         v-else
                         class="text-lg font-semibold tabular-nums text-gray-900 dark:text-gray-100"
                     >
@@ -104,14 +115,13 @@
                 </div>
             </div>
         </div>
-    </AiCard>
+    </div>
 </template>
 
 <script lang="ts" setup>
 import useSWRV from "swrv";
 import { computed, ref, watch } from "vue";
 
-import AiCard from "@/components/AiCard/AiCard.vue";
 import { getOMOPResults, IResults } from "@/services/cohort-query-service";
 import { useProjectStore } from "@/store/project";
 import { useTrustStore } from "@/store/trusts";
@@ -153,6 +163,7 @@ interface IResultsShape {
     trustsResults?: IFieldShape[];
     trustRecordCounts?: Record<string, number>;
     trustErrors?: Record<string, string>;
+    trustSuppressed?: string[];
 }
 
 const perTrustCounts = computed<Record<string, number>>(() => {
@@ -177,6 +188,15 @@ const perTrustErrors = computed<Record<string, string>>(() => {
     return r?.trustErrors ?? {};
 });
 
+// Set of trust ids whose count was privacy-suppressed (below threshold). These
+// trusts responded successfully but render a "suppressed" chip instead of a
+// literal 0 that would read as "no data available". See issue #519.
+const perTrustSuppressed = computed<Set<string>>(() => {
+    const r = results.value as unknown as IResultsShape | null;
+
+    return new Set(r?.trustSuppressed ?? []);
+});
+
 interface IRow {
     id: string;
     code: string;
@@ -187,12 +207,14 @@ interface IRow {
     running: boolean;
     errored: boolean;
     error: string | null;
+    suppressed: boolean;
 }
 
 const rows = computed<IRow[]>(() => {
     const trusts = Array.isArray(trustStore.getTrusts) ? trustStore.getTrusts : [];
     const counts = perTrustCounts.value;
     const errors = perTrustErrors.value;
+    const suppressed = perTrustSuppressed.value;
 
     // Three cases:
     // 1. Mid-submit: fan-out targets the live trust list — render every
@@ -246,7 +268,9 @@ const rows = computed<IRow[]>(() => {
                 cancelled,
                 running,
                 errored,
-                error: errored ? (errors[t.id] || null) : null
+                error: errored ? (errors[t.id] || null) : null,
+                // Only meaningful once the trust has responded (not errored/in-flight).
+                suppressed: responded && suppressed.has(t.id)
             };
         })
         .sort((a, b) => a.code.localeCompare(b.code));

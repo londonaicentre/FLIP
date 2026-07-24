@@ -16,6 +16,8 @@ from uuid import UUID, uuid4
 
 from sqlmodel import Field, SQLModel
 
+from flip_api.domain.schemas.status import AccessRequestStatus
+
 
 class Permission(SQLModel, table=True):
     """Permission table."""
@@ -26,7 +28,7 @@ class Permission(SQLModel, table=True):
     permission_name: str = Field()
     permission_description: str = Field()
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return self.permission_name
 
 
@@ -58,7 +60,7 @@ class RoleRef(Enum):
 
     ADMIN = UUID("64d3145b-034c-4328-b637-8eb54313b7c5")
     RESEARCHER = UUID("10b64ed0-bc90-4c01-9cc3-933c704905c1")
-    OBSERVER = UUID("cdee79c9-a5e1-4b9e-a315-1ec2f3d29efe")
+    VIEWER = UUID("cdee79c9-a5e1-4b9e-a315-1ec2f3d29efe")
 
 
 class UserRole(SQLModel, table=True):
@@ -127,3 +129,32 @@ class UsersAudit(SQLModel, table=True):
     user_id: UUID
     modified_by_user_id: UUID
     timestamp: datetime = Field(default_factory=datetime.utcnow)
+
+
+class AccessRequest(SQLModel, table=True):
+    """A platform access request from the unauthenticated `/auth/access-request` page.
+
+    Persisted so a request is never lost when the best-effort admin-notification
+    email cannot be sent (the email backend must not gate submission — see #699),
+    and so administrators can triage requests in-app (enroll / dismiss).
+
+    `email`, `full_name` and `reason_for_access` are operator-supplied and
+    UNTRUSTED — treat them like `UserProfile.name` (re-escape at any `v-html`,
+    email-template or export boundary; the length caps are bounds, not filters).
+    """
+
+    __tablename__ = "access_request"
+
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    email: str = Field(max_length=255)
+    full_name: str = Field(max_length=255)
+    reason_for_access: str = Field()
+    status: AccessRequestStatus = Field(default=AccessRequestStatus.PENDING)
+    # Whether the best-effort admin-notification email was dispatched. Lets
+    # operators find requests still needing a manual follow-up when SES is down
+    # (`WHERE email_notified IS false`).
+    email_notified: bool = Field(default=False)
+    # Cognito sub of the administrator who last enrolled/dismissed the request.
+    handled_by_user_id: UUID | None = Field(default=None)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)

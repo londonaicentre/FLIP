@@ -15,7 +15,7 @@ from typing import Annotated, Optional
 from uuid import UUID, uuid4
 
 from sqlalchemy import Column
-from sqlalchemy.dialects.postgresql import ARRAY
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlmodel import Field, Relationship, SQLModel
 
@@ -31,6 +31,8 @@ from flip_api.domain.schemas.status import (
     TrustIntersectStatus,
     XNATImageStatus,
 )
+from flip_api.domain.schemas.types import FLBackend
+from flip_api.utils.constants import DEFAULT_X_AXIS_LABEL
 
 
 # Tables
@@ -39,6 +41,14 @@ class FLNets(SQLModel, table=True):
     id: UUID = Field(default_factory=uuid4, primary_key=True)
     name: str = Field(unique=True)
     endpoint: str = Field(unique=True)
+    # FL backend ("nvflare"/"flower") this net runs. Set at seed time from FL_BACKEND
+    # (seed_fl_nets) and canonical — never reconciled at runtime. A framework switch happens by
+    # re-seeding (make restart-fl recreates flip-api). Non-null: every net has a declared backend
+    # from creation. Mapped like the other enum columns (status, task_type, ...): SQLModel infers a
+    # SQLAlchemy Enum column from FLBackend, so the DB persists the member name and reads return a
+    # real FLBackend member. FLBackend is the one column whose member name (NVFLARE) differs from its
+    # lowercase value (nvflare), so the DB stores the uppercase name while env/JSON/S3 use the value.
+    fl_backend: FLBackend = Field(nullable=False)
 
     schedulers: list["FLScheduler"] = Relationship(back_populates="net")
 
@@ -70,6 +80,10 @@ class FLJob(SQLModel, table=True):
     created: Annotated[datetime, Field(default_factory=datetime.utcnow)]
     started: datetime | None = Field(default=None)
     completed: datetime | None = Field(default=None)
+    # FL-backend-assigned job identifier, treated as an opaque string the hub never parses (it only persists
+    # and equality-matches it). Format varies by backend: a UUID-like string for NVFLARE, a stringified
+    # integer run-id for Flower. NULL until the job is submitted to the backend (see fl_service.submit_job).
+    # Distinct from `id` above, which is the hub's own UUID primary key for the job record.
     fl_backend_job_id: str | None = None
 
     scheduler: Optional["FLScheduler"] = Relationship(back_populates="job")
@@ -85,7 +99,16 @@ class FLMetrics(SQLModel, table=True):
     trust: UUID = Field(foreign_key="trust.id")
     fl_client_name: str = Field()
     model_id: UUID = Field(foreign_key="model.id")
+    # Provenance: the FL global round the metric was reported in — always the true round, never
+    # overridden. The plot coordinate is the (x_label, x_value) pair below — see FLIP#148.
     global_round: int = Field()
+    # The x-coordinate this metric is plotted at; defaults to the global round (backfilled by the
+    # ingest schema when the sender omits it).
+    x_value: float = Field()
+    # Label naming the x-axis this metric is plotted against (e.g. "epoch"). Defaults to the FL global
+    # round axis. A plot's identity is the pair (label, x_label), so the same metric logged against
+    # different x-labels renders as separate plots — see FLIP#148.
+    x_label: str = Field(default=DEFAULT_X_AXIS_LABEL)
     timestamp: datetime | None = Field(default_factory=datetime.utcnow)
     label: str = Field()
     result: float = Field()
@@ -100,7 +123,23 @@ class FLLogs(SQLModel, table=True):
     # Set only for logs reported by an FL client; None for model-level (hub) logs.
     trust: UUID | None = Field(default=None, foreign_key="trust.id")
     fl_client_name: str | None = Field(default=None)
-    log: str = Field()
+    # Free display/exception text. Null for typed event rows, whose text is
+    # composed at serve time by log_rendering.render_log so wording changes
+    # never require an FL-image rebuild. The log-XOR-event shape is enforced at
+    # the Pydantic ingest boundary only — a DB CHECK constraint was considered
+    # and deliberately deferred — so internal add_log callers must supply
+    # exactly one of log/event_type (an all-NULL row renders as an empty line).
+    log: str | None = Field(default=None)
+    # Typed events (FLLogEvent values): round progress reported by the FL layer,
+    # plus hub-emitted rows (QUEUE_POSITION). Stored as plain text — not a native
+    # PG enum — so extending the vocabulary never needs an ALTER TYPE migration.
+    # Event-specific facts (total_rounds, size_bytes, returned/expected) live in
+    # the JSONB details column; global_round is first-class so round-scoped
+    # queries can filter and order on it without reaching into the JSONB. All
+    # three are null on legacy free-text rows.
+    event_type: str | None = Field(default=None)
+    global_round: int | None = Field(default=None)
+    details: dict | None = Field(default=None, sa_column=Column("details", JSONB, nullable=True))
 
 
 class Model(SQLModel, table=True):
@@ -207,7 +246,14 @@ class QueryStats(SQLModel, table=True):
     id: UUID = Field(default_factory=uuid4, primary_key=True)
     stats: str = Field()
     stats_received: Annotated[datetime, Field(default_factory=datetime.utcnow)]
-    query_id: UUID | None = Field(default=None, foreign_key="queries.id")
+    # One aggregate row per query. The serialization lock in _aggregate_and_save_results
+    # already prevents concurrent inserts; the UNIQUE constraint is a DB-level backstop so a
+    # duplicate can never be created silently (a duplicate would let the read path pick an
+    # arbitrary row). Non-nullable on purpose: every aggregate belongs to a query (the only
+    # writer always sets it), and Postgres treats NULLs as distinct under UNIQUE — a nullable
+    # FK would let multiple NULL-query_id rows slip past the constraint, so the invariant is
+    # only fully encoded when the column is NOT NULL. See issue #579.
+    query_id: UUID = Field(foreign_key="queries.id", unique=True)
 
 
 class SiteBanner(SQLModel, table=True):
@@ -280,8 +326,8 @@ class FLKitSlot(SQLModel, table=True):
     Operators get matching ``services/<slot_name>/`` dirs on every net's workspace —
     one global slot row covers all nets, so the assignment doesn't need a net_id column.
 
-    Lifecycle: rows are seeded from ``FL_KIT_SLOT_NAMES`` (one per pre-provisioned slot
-    in flip-fl-base). ``POST /admin/trusts`` claims the next ``assigned_to_trust_id IS
+    Lifecycle: rows are seeded from ``FL_KIT_SLOT_NAMES`` (one per pre-provisioned FL
+    kit slot). ``POST /admin/trusts`` claims the next ``assigned_to_trust_id IS
     NULL`` row in the same transaction as the trust insert.
     """
 

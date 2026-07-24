@@ -227,6 +227,157 @@ This runbook is for the case where **you** have lost access to your TOTP device 
 >
 > **Warning:** This path is an AWS-level escape hatch and is **not** audit-logged inside FLIP. Use it only for administrator self-recovery. For any user who is not currently locked out of FLIP itself, prefer the Admin UI flow so the reset is captured in the application logs.
 
+## Deployment Models
+
+FLIP supports three trust deployment models:
+
+| Model | Location | Documentation |
+| ------- | ---------- | --------------- |
+| **Cloud (EC2)** | AWS EC2 (same account as Central Hub) | [`deploy/providers/AWS/README.md`](providers/AWS/README.md) |
+| **Hybrid / On-Premises** | Any Ubuntu host (home lab, hospital server) | [`deploy/providers/local/README.md`](providers/local/README.md) |
+| **Kubernetes** | Any K8s cluster 1.28+ (EKS, AKS, on-prem) | [`deploy/providers/kubernetes/README.md`](providers/kubernetes/README.md) |
+
+In all models, trusts poll the Central Hub for tasks over HTTPS — all communication is **outbound** from the trust. The hub never makes inbound requests to trusts.
+
+## Container Security Hardening
+
+All Docker containers in FLIP are hardened with the following measures:
+
+### Non-Root Users
+
+Each Dockerfile explicitly drops root privileges by running the application as a non-root user:
+
+| Service | User | Notes |
+|---------|------|-------|
+| flip-api | `app` (UID 49999) | Set in the flip-api Dockerfile |
+| flip-ui | `root` | Intentionally runs as root in dev (Vite dev server with bind-mounted source); not present in production where the UI ships as static files served by CloudFront. |
+| orthanc | `orthanc` (UID 999) | Set via `USER orthanc` in the orthanc Dockerfile; the user pre-exists in the `orthancteam/orthanc` base image |
+| xnat-web | `xnat` | Created in the XNAT Dockerfile (UID 1001) |
+| xnat-nginx | `nginx` | Pre-existing in the base image (`nginx`) |
+| xnat-db | `postgres` | Pre-existing in the base image (`postgres`) |
+| xnat-socket-proxy | `root` | Upstream `tecnativa/docker-socket-proxy` image — HAProxy connects to the root-owned Docker socket as its owner. Runs under `cap_drop: ALL` with no capabilities added back. |
+| flip-db / omop-db | `postgres` | Pre-existing in the base image (`postgres`) |
+
+**Bind-mount ownership.** Because XNAT (`xnat`, UID 1001) and Orthanc (`orthanc`, UID 999) no
+longer run as root, the host-side bind-mount source directories must be owned by the matching
+UID. The Ansible playbooks `deploy/providers/AWS/site.yml` and
+`deploy/providers/local/site_local_trust.yml` provision `/opt/flip/xnat/**` as UID 1001 and
+`/opt/flip/orthanc/**` as UID 999 — including a recursive `chown` after extracting the Orthanc
+storage archive (which `tar` writes as root). If you provision a trust host outside Ansible, you
+must replicate this ownership or first-boot writes (archive ingest, SQLite index, log rotation)
+will fail with EACCES. In dev, `trust/orthanc/update_orthanc_data.sh` instead `chmod`s the mock
+storage world-writable so a developer needs no `sudo` to re-seed it.
+
+### Linux Capability Restrictions
+
+Every container drops **all** Linux capabilities (`cap_drop: [ALL]`) and only adds back what the
+service strictly requires. A few dev-only services (pgadmin, register-supernode-keys, fl-clients)
+are deliberately exempted because their entrypoints depend on root capabilities that would
+crash-loop under `cap_drop: ALL`. The per-service grants in the compose files are:
+
+| Service(s) | Granted capabilities | Reason |
+|------------|----------------------|--------|
+| flip-api, fl-api (Flower), trust-api, imaging-api, data-access-api, xnat-web, loki, alloy, grafana | `CHOWN` | In-container init/entrypoint fixes ownership on volume paths it owns. |
+| fl-api (NVFLARE) | `CHOWN` | The `flare-fl-api` image runs as user `flip` (UID 1001, non-root), so only the `CHOWN` baseline is needed; `DAC_OVERRIDE` and `FOWNER` are inert for non-root processes. |
+| fl-server (NVFLARE) | `CHOWN`, `DAC_OVERRIDE`, `FOWNER` | The container runs as root, but the provisioned NVFLARE kits are bind-mounted owned by the provisioning uid with 0600 keys. `cap_drop: ALL` strips root's implicit DAC bypass, so without `DAC_OVERRIDE` the fl-server crash-loops on `/app/startup/server.key`; the entrypoint also `chmod`s kit scripts it does not own (`FOWNER`). In dev, the same grant lets the root fl-server read the operator's 0600 AWS SSO token cache for the S3 results upload. |
+| fl-server (Flower, development only) | `CHOWN`, `DAC_OVERRIDE` | The dev compose runs the SuperLink as root (see the `user: "0:0"` comment in `compose.development.flower.yml`) to read the host-provisioned 0640 TLS keys and the operator's 0600 SSO token cache; `cap_drop: ALL` strips root's implicit DAC bypass, so `DAC_OVERRIDE` is granted back. Production runs the image's non-root user with instance-role AWS credentials and keeps the `CHOWN` baseline. |
+| flip-db, omop-db, xnat-db | `CHOWN`, `DAC_OVERRIDE`, `FOWNER`, `SETUID`, `SETGID` | The official postgres entrypoint runs as root and `gosu`-drops to the `postgres` user (`SETUID`/`SETGID`). On every start it re-runs `chmod 00700 $PGDATA` and a `chown` sweep over the persisted data dir, which on subsequent boots is already owned by `postgres` with mode `0700` — `chmod` on a dir owned by another uid needs `FOWNER` and traversing it needs `DAC_OVERRIDE`. Without them the container exits 1 on a persisted volume (see commit history, FLIP#485). |
+| orthanc | `CHOWN` | Runs non-root (UID 999) from PID 1, so no capabilities survive into the process anyway; the storage bind mount is made 999-writable at the provisioning layer rather than fixed up with in-container caps. `CHOWN` is kept only as the shared baseline. |
+| xnat-nginx | `CHOWN`, `NET_BIND_SERVICE` | `NET_BIND_SERVICE` lets the non-root `nginx` user bind port 80 (Docker sets `net.ipv4.ip_unprivileged_port_start=0`, but capabilities are still checked). |
+| xnat-socket-proxy | *(none)* | HAProxy runs as root, which owns the mounted Docker socket, so it connects with an empty capability set — nothing needs adding back on top of `cap_drop: ALL`. See [Docker Socket Isolation](#docker-socket-isolation-xnat-container-service). |
+| flip-ui (development only) | `CHOWN`, `DAC_OVERRIDE`, `SETUID`, `SETGID`, `NET_BIND_SERVICE` | Vite dev server with bind-mounted source; not present in production where the UI ships as static files served by CloudFront. |
+
+Notably **not** granted anywhere: `SYS_ADMIN`, `SYS_PTRACE`, `SYS_MODULE`, `MAC_*`, `AUDIT_*`,
+`DAC_READ_SEARCH`. Combined with `no-new-privileges` (below), this defeats the standard
+`setuid`-binary and `LD_PRELOAD` escalation paths even if an attacker achieves RCE inside a
+container.
+
+> **Hardened images and hardened compose must ship together.** The minimal-caps compose files
+> assume the rebuilt **non-root** `orthanc` and `xnat-web` images. Until CI publishes those (on
+> merge to `develop`/`main`), the previously published root-running GHCR images break under the
+> new caps: orthanc crash-loops writing its `orthanc`-owned `/etc/hostid` (root without
+> `DAC_OVERRIDE`), and xnat-web — still root — cannot write its UID-1001 bind mounts
+> (config/archive/build/cache/plugins), so `make up`'s XNAT configure step fails on both trusts
+> (swarm enforces `cap_drop` even though it ignores `security_opt`). When running this hardening
+> from a branch whose images are not yet published, build the hardened images locally:
+> `make up BUILD=true` covers the compose-built services (including orthanc), and the XNAT stack
+> needs `make -C trust/xnat build DOCKER_REGISTRY= DOCKER_TAG=dev` followed by redeploying the
+> stack with the same `DOCKER_REGISTRY=`/`XNAT_TAG=dev` overrides so `docker stack deploy`
+> resolves the locally built image instead of the GHCR one.
+
+### Docker Socket Isolation (XNAT Container Service)
+
+XNAT's Container Service plugin launches processing containers — currently `xnat/dcm2niix`,
+which every project created with DICOM→NIfTI conversion enabled triggers automatically on scan
+archive. It used to do this through `/var/run/docker.sock` mounted straight into `xnat-web`,
+which is a root-equivalent capability: anything that compromises XNAT can exec into any container
+on the host, start privileged containers, or mount arbitrary host paths.
+
+`xnat-web` no longer mounts the socket. The XNAT stack instead runs a
+[`tecnativa/docker-socket-proxy`](https://github.com/Tecnativa/docker-socket-proxy) sidecar
+(`xnat-socket-proxy` in `trust/xnat/docker-compose-stack.yml`) that holds the socket read-only
+and serves a filtered Docker API (`tcp://xnat-socket-proxy:2375`) on a dedicated stack-scoped
+overlay network (`<stack>_socket-proxy`, `internal: true`, no published host port). Only
+`xnat-web` is dual-homed onto that network — the other containers on the shared trust overlay
+(`trust-api`, `imaging-api`, `data-access-api`, `orthanc`, the fl-client) have no route to the
+proxy at all. The Container Service is pointed at that endpoint by
+`trust/xnat/xnat/config/container-service-backend-configuration.json`, which
+`configure-dcm2niix.sh` POSTs to `/xapi/docker/server` — and the configure run now hard-fails if
+`/xapi/docker/server/ping` cannot reach Docker through the proxy, instead of leaving a
+registered-but-unlaunchable dcm2niix command behind.
+
+The proxy allowlists only what a swarm-mode Container Service launch needs — `SERVICES`
+(+ `POST` for the mutating calls), `TASKS`, `NODES`, `IMAGES` (pull-on-init), `INFO`, `SWARM`
+(the plugin's swarm-mode connection test is a `GET /swarm` inspect), plus the proxy's default
+`PING`/`VERSION`/`EVENTS`. Everything else is refused with a 403: `exec`, the container API,
+volumes, networks, secrets, configs, plugins, and build.
+
+**Multiple trusts on one host.** Each trust's XNAT is a separate swarm stack (`xnat<N>`), so each
+gets its **own** proxy on its **own** `xnat<N>_socket-proxy` network — they are not shared, which
+keeps the trust boundary intact. The identical `xnat-socket-proxy` service name in both stacks
+does not collide: swarm resolves it per-network, so each `xnat-web` reaches only its own proxy
+(cross-stack access is refused), and the proxy publishes no host port. Both proxies holding the
+same host socket is fine — it serves concurrent clients, exactly as it did when each `xnat-web`
+mounted it directly.
+
+This is a choke point, not a sandbox. Two residual powers are worth stating plainly: the services
+API the Container Service depends on can itself create a service with an arbitrary host bind
+mount, and because the proxy's `POST` switch is global, granting `SWARM` also exposes
+`POST /swarm/*`. So a fully compromised `xnat-web` is not contained — but it loses direct
+container/exec access entirely, and every remaining call now crosses one auditable gateway
+(`docker service logs <stack>_xnat-socket-proxy` shows the full request log) instead of speaking
+to the raw socket.
+
+### No New Privileges
+
+Nearly every container declares `security_opt: [no-new-privileges:true]` to prevent privilege escalation
+via `setuid` binaries or `LD_PRELOAD` injection. The same dev-only services exempted from `cap_drop`
+(pgadmin, register-supernode-keys, fl-clients) also omit `no-new-privileges`, and the XNAT swarm
+stack ignores the `security_opt` key (see caveat below).
+
+> **XNAT swarm caveat.** The XNAT stack (`xnat-web`, `xnat-db`, `xnat-nginx`, `xnat-socket-proxy`)
+> is deployed with
+> `docker stack deploy` (see `trust/xnat/Makefile`), and swarm **ignores** the `security_opt` key —
+> so `no-new-privileges` is *not* applied to those four services from the compose file. The
+> `cap_drop`/`cap_add` hardening still takes effect (swarm honours those). To enforce
+> no-new-privileges on XNAT hosts, set it as the Docker daemon default in `/etc/docker/daemon.json`:
+> `{ "no-new-privileges": true }`. Verify with the `docker inspect` command below.
+
+### Verification
+
+To verify hardening on a running container:
+
+```bash
+# Check the running user (should NOT be root)
+docker exec <container> whoami
+
+# Check effective capabilities
+docker exec <container> cat /proc/1/status | grep CapEff
+
+# Confirm no-new-privileges is active
+docker inspect <container> --format '{{.HostConfig.SecurityOpt}}'
+```
+
 ## Service Authentication
 
 FLIP uses three separate authentication mechanisms for service-to-service communication. The single
@@ -277,7 +428,7 @@ public `CENTRAL_HUB_API_URL` is reserved for flip-ui and trust-side (trust-api) 
 outside the hub's Docker network.
 
 | Variable | Where used | Purpose |
-|---|---|---|
+| --- | --- | --- |
 | `TRUST_API_KEY_HEADER` | flip-api, trust-api | Header name for trust auth |
 | `TRUST_API_KEY` | trust-side kit file | Per-trust plaintext key (hub stores its SHA-256 in the `trust` table's `api_key_hash`) |
 | `INTERNAL_SERVICE_KEY_HEADER` | flip-api, fl-server | Header name for internal service auth |
@@ -297,7 +448,7 @@ but task definitions and services are still being rolled out. `FLIP_API_INTERNAL
 migrating, point it at whichever in-VPC, header-preserving endpoint flip-api exposes:
 
 | ECS layout | `FLIP_API_INTERNAL_URL` |
-|---|---|
+| --- | --- |
 | Sidecar (both containers in one task, awsvpc) | `http://localhost:8000/api` |
 | Separate services + ECS Service Connect | `http://flip-api:8000/api` |
 | Separate services + Cloud Map private DNS | `http://flip-api.<namespace>.local:8000/api` |

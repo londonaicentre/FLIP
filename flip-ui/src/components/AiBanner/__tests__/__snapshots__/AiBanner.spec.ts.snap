@@ -1,0 +1,51 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`AiBanner > Renders Component 1`] = `
+<div
+  class="w-full"
+  data-test="site-banner"
+>
+  <div
+    class="mx-auto"
+  >
+    <div
+      class="p-2 transition bg-primary-500 sm:p-3"
+    >
+      <div
+        class="flex flex-wrap items-center justify-between"
+      >
+        <!-- Mirrored so the megaphone points right, into the message. -->
+        <svg
+          aria-hidden="true"
+          class="w-6 h-6 text-white -scale-x-100 shrink-0"
+          data-icon="ph:megaphone"
+        />
+        <div
+          class="flex items-center flex-1"
+        >
+          <p
+            class="ml-3 font-medium text-white"
+            data-test="banner-message"
+          >
+            Some cool message
+          </p>
+        </div>
+        <div
+          class="flex items-center flex-shrink-0 order-3 w-full mt-2 sm:order-2 sm:mt-0 sm:w-auto"
+        >
+          <!--v-if-->
+          <div
+            class="w-6 h-5 cursor-pointer"
+            content="Close for this session"
+          >
+            <svg
+              class="w-5 h-5 text-white transition rounded hover:text-primary-200"
+              data-icon="mdi:close"
+            />
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+`;

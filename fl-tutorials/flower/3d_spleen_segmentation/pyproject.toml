@@ -1,0 +1,81 @@
+# Copyright (c) 2026 Flower Labs GmbH
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+# =====================================================================
+# For a full TOML configuration guide, check the Flower docs:
+# https://flower.ai/docs/framework/how-to-configure-pyproject-toml.html
+# =====================================================================
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "standard-app"
+version = "1.0.0"
+description = "Tutorial for medical image segmentation of spleen images using MONAI and Flower."
+license = "Apache-2.0"
+# Dependencies for your Flower App
+dependencies = [
+    "flip-utils>=0.1.8",
+    "flwr[simulation]>=1.32.0",
+    "monai>=1.5.2",
+    "nibabel>=5.3.3",
+    "numpy>=2.4.2",
+    "pandas>=3.0.0",
+    "pydicom>=3.0.1",
+    "torch>=2.10.0,<2.12",
+]
+
+[dependency-groups]
+dev = [
+    "mypy>=1.19.1",
+    "ruff>=0.15.7",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["."]
+
+[tool.flwr.app]
+publisher = "flwrlabs"
+
+# Point to your ServerApp and ClientApp objects
+# Format: "<module>:<object>"
+[tool.flwr.app.components]
+serverapp = "app.server_app:app"
+clientapp = "app.client_app:app"
+
+# Custom config values accessible via `context.run_config`
+[tool.flwr.app.config]
+num-server-rounds = 3 # Equivalent to global_rounds
+local-epochs = 1      # Equivalent to local_rounds
+learning-rate = 1e-4
+val-split = 0.3
+test-split = 0.3
+batch-size = 2
+# Model configuration
+spatial-dims = 3 # This is currently unused but can be passed to get_model()
+# FLIP configuration - needs to be set here so it can be overridden by flwr run command
+# See https://flower.ai/docs/framework/ref-api-cli.html#flwr-run for more details
+flip-model-id = "uuid"
+flip-project-id = "uuid"
+flip-cohort-query = "*"
+flip-job-dir = "job-dir"
+
+# Linter
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint]
+preview = true
+select = ['I', 'F', 'E', 'W', 'PT', 'UP006', 'UP007', 'UP035', 'UP042', 'UP045']

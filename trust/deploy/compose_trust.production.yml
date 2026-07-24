@@ -23,6 +23,16 @@ services:
     restart: always
     ports:
       - "${OMOP_DB_PORT}:5432"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETUID
+      - SETGID
     environment:
       POSTGRES_USER: ${OMOP_POSTGRES_USER}
       POSTGRES_PASSWORD: ${OMOP_POSTGRES_PASSWORD}
@@ -36,6 +46,12 @@ services:
     ports:
       # - "${PACS_DICOM_PORT}:4242"
       - "${PACS_UI_PORT}:8042"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
     volumes:
       - ${ORTHANC_STORAGE_DIR:-/opt/flip/orthanc/orthanc-storage}:/var/lib/orthanc/db
     environment:
@@ -53,6 +69,12 @@ services:
     command: ["uv", "run", "python", "-m", "uvicorn", "imaging_api.main:app", "--host", "0.0.0.0", "--port", "8000"]
     ports:
       - "${IMAGING_API_PORT}:8000"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
     environment:
       # XNAT_URL, PACS_ID, XNAT_DATABASE_URL, DATA_ACCESS_API_URL and
       # TRUST_INTERNAL_SERVICE_KEY_HEADER are internal-topology constants and now
@@ -68,12 +90,22 @@ services:
       TRUST_INTERNAL_SERVICE_KEY: ${TRUST_INTERNAL_SERVICE_KEY}
     # NOTE the volume BASE_IMAGES_DOWNLOAD_DIR is mounted to share images downloaded from XNAT with FL clients
     volumes:
-      - ${BASE_IMAGES_DOWNLOAD_DIR}:/app/data/images
+      # Unset in the prod kit → fall through to the Ansible-pre-created, uid-1000-owned
+      # /opt/flip/data/trust-${FL_KIT_SLOT_NUMBER} (see site.yml). A relative kit value resolves to
+      # the admin workstation over the ssh docker context, gets auto-created as root, and makes
+      # imaging-api 500 every image download with EACCES → num_samples=0. Mirrors ORTHANC_STORAGE_DIR.
+      - ${BASE_IMAGES_DOWNLOAD_DIR:-/opt/flip/data/trust-${FL_KIT_SLOT_NUMBER}}:/app/data/images
 
   data-access-api:
     image: ghcr.io/londonaicentre/data-access-api:${DOCKER_TAG}
     ports:
       - "${DATA_ACCESS_API_PORT}:8000"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
     environment:
       # OMOP_DB_SERVICE_NAME and TRUST_INTERNAL_SERVICE_KEY_HEADER default in
       # data_access_api/config.py — not injected (see imaging-api note above).
@@ -91,6 +123,12 @@ services:
     # Security group blocks all inbound — only reachable via SSM tunnel.
     ports:
       - "${TRUST_API_PORT}:8000"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
     environment:
       CENTRAL_HUB_API_URL: ${CENTRAL_HUB_API_URL}
       # DATA_ACCESS_API_URL, IMAGING_API_URL and TRUST_INTERNAL_SERVICE_KEY_HEADER
@@ -112,6 +150,12 @@ services:
     command: -config.file=/etc/loki/loki-config.yml
     ports:
       - "${LOKI_PORT}:3100"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
     volumes:
       - ${OBSERVABILITY_CONFIG_DIR:-/opt/flip/config/observability}/loki/loki-config.yml:/etc/loki/loki-config.yml:ro
       - ${LOKI_DATA_VOLUME:-trust-local-loki-data}:/loki
@@ -123,6 +167,12 @@ services:
       - run
       - --server.http.listen-addr=0.0.0.0:12345
       - /etc/alloy/config.alloy
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
     volumes:
       - ${OBSERVABILITY_CONFIG_DIR:-/opt/flip/config/observability}/alloy/config.alloy:/etc/alloy/config.alloy:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
@@ -134,6 +184,12 @@ services:
     restart: always
     ports:
       - "${GRAFANA_PORT}:3000"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
     environment:
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD}
     volumes:

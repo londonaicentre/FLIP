@@ -1,0 +1,151 @@
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+name: Release flip to PyPI on merge to main
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write # required to create git tags and GitHub releases
+  id-token: write # required for OIDC
+
+jobs:
+  release:
+    # Skip on forks: they cannot publish to PyPI (OIDC trusted publishing), push
+    # tags, or create releases in the upstream repo, so this job would otherwise
+    # show a spurious CI failure on a fork's main push. Upstream is unchanged.
+    if: github.repository == 'londonaicentre/FLIP'
+    runs-on: ubuntu-latest
+    environment: flip
+    defaults:
+      run:
+        working-directory: ./flip-utils
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0 # full history + all tags required for tag existence check
+
+      - name: Extract version from flip/__init__.py
+        id: version
+        run: |
+          VERSION=$(grep -m1 '__version__' flip/__init__.py | sed 's/.*= *"\(.*\)"/\1/')
+
+          if [[ -z "$VERSION" ]]; then
+            echo "ERROR: Could not extract __version__ from flip/__init__.py."
+            exit 1
+          fi
+
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tag=v${VERSION}"    >> "$GITHUB_OUTPUT"
+          echo "Detected version: ${VERSION}"
+
+      - name: Check if tag already exists
+        id: check_tag
+        run: |
+          TAG="${{ steps.version.outputs.tag }}"
+          if git rev-parse "$TAG" >/dev/null 2>&1; then
+            echo "Tag ${TAG} already exists — this version has already been released. Skipping."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Tag ${TAG} not found — proceeding with release."
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set up Python
+        if: steps.check_tag.outputs.skip == 'false'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        if: steps.check_tag.outputs.skip == 'false'
+        run: pip install uv
+
+      - name: Install dependencies
+        if: steps.check_tag.outputs.skip == 'false'
+        run: uv sync --all-extras
+
+      - name: Run linter
+        if: steps.check_tag.outputs.skip == 'false'
+        run: uv run ruff check .
+
+      - name: Run unit tests
+        if: steps.check_tag.outputs.skip == 'false'
+        run: uv run pytest -s -vv
+
+      - name: Build package
+        if: steps.check_tag.outputs.skip == 'false'
+        run: uv build
+
+      - name: Publish to PyPI
+        if: steps.check_tag.outputs.skip == 'false'
+        run: |
+          uv publish \
+            --publish-url https://upload.pypi.org/legacy/ \
+            --check-url   https://pypi.org/simple/ \
+            --trusted-publishing always
+
+      - name: Create and push git tag
+        if: steps.check_tag.outputs.skip == 'false'
+        run: |
+          TAG="${{ steps.version.outputs.tag }}"
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "$TAG" -m "Release $TAG"
+          git push origin "$TAG"
+
+      - name: Prepare release notes
+        if: steps.check_tag.outputs.skip == 'false'
+        id: notes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.version.outputs.version }}"
+          TAG="${{ steps.version.outputs.tag }}"
+          PREV_TAG=$(git tag --list 'v*.*.*' | sort -V | grep -v "^${TAG}$" | tail -n1)
+
+          # Strip the license comment block and substitute placeholders
+          HEADER=$(sed '/^<!--/,/-->/d' "$GITHUB_WORKSPACE/.github/RELEASE_NOTES_TEMPLATE.md" \
+            | sed "s/{{VERSION}}/${VERSION}/g" \
+            | sed "s/{{TAG}}/${TAG}/g" \
+            | sed "s/{{PREV_TAG}}/${PREV_TAG:-initial release}/g")
+
+          # Generate changelog from GitHub API (respects .github/release.yml categories)
+          API_ARGS=(-X POST
+            -f "tag_name=${TAG}"
+            -f "target_commitish=${{ github.sha }}")
+          if [[ -n "$PREV_TAG" ]]; then
+            API_ARGS+=(-f "previous_tag_name=${PREV_TAG}")
+          fi
+          GENERATED=$(gh api "repos/${{ github.repository }}/releases/generate-notes" \
+            "${API_ARGS[@]}" --jq '.body' 2>/dev/null || echo "")
+
+          # Combine header + generated changelog into a single notes file
+          printf '%s\n\n%s\n' "$HEADER" "$GENERATED" > /tmp/release_notes.md
+
+          echo "notes_file=/tmp/release_notes.md" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release
+        if: steps.check_tag.outputs.skip == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${{ steps.version.outputs.tag }}" \
+            --title "flip ${{ steps.version.outputs.tag }}" \
+            --notes-file "${{ steps.notes.outputs.notes_file }}" \
+            dist/*

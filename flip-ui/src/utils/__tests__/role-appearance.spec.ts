@@ -28,7 +28,7 @@ describe("roleToneName", () => {
     it("maps FLIP's three real roles to their handoff tones", () => {
         expect(roleToneName("Admin")).toBe("magenta");
         expect(roleToneName("Researcher")).toBe("steel");
-        expect(roleToneName("Observer")).toBe("gray");
+        expect(roleToneName("Viewer")).toBe("gray");
     });
 
     it("is case-insensitive and tolerant of surrounding whitespace", () => {

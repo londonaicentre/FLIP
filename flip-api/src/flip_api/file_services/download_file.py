@@ -14,7 +14,6 @@ from urllib.parse import quote
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.responses import StreamingResponse
 from sqlmodel import Session, select
 
 from flip_api.auth.access_manager import can_modify_model
@@ -22,7 +21,7 @@ from flip_api.auth.dependencies import verify_token
 from flip_api.config import get_settings
 from flip_api.db.database import get_session
 from flip_api.db.models.main_models import UploadedFiles
-from flip_api.domain.schemas.file import SafeFileName
+from flip_api.domain.schemas.file import PresignedDownloadResponse, SafeFileName
 from flip_api.utils.logger import logger
 from flip_api.utils.s3_client import S3Client
 
@@ -30,18 +29,22 @@ router = APIRouter(prefix="/files", tags=["file_services"])
 
 
 # [#114] ✅
-@router.get("/model/{model_id}/{file_name}", response_class=StreamingResponse, response_model=None)
+@router.get("/model/{model_id}/{file_name}", response_model=PresignedDownloadResponse)
 def download_file(
     model_id: UUID,
     file_name: SafeFileName,
     db: Session = Depends(get_session),
     user_id: UUID = Depends(verify_token),
-) -> StreamingResponse:
+) -> PresignedDownloadResponse:
     """
-    Download a 'model file' (file uploaded by a user to train/evaluate a model).
+    Get a pre-signed download URL for a 'model file' (file uploaded by a user to train/evaluate a model).
+
+    The file bytes are never proxied through flip-api: the caller fetches them directly from the returned
+    S3 URL. This keeps large model-file downloads off a client-side request timeout (FLIP#784) and off the
+    Fargate task's egress bandwidth.
 
     Important: Do not confuse with the 'retrieve_federated_results' endpoint which is for downloading 'model results'
-    generated as a result of a training/evaluation job and are stored in a different S3 bucket. While 'observer' users
+    generated as a result of a training/evaluation job and are stored in a different S3 bucket. While 'viewer' users
     can download 'model results' using the 'retrieve_federated_results' endpoint, only users with 'modify' access to a
     model can download 'model files' using this 'download_file' endpoint.
 
@@ -52,11 +55,11 @@ def download_file(
         user_id (UUID): User ID from authentication.
 
     Returns:
-        StreamingResponse: A streaming response containing the file content.
+        PresignedDownloadResponse: A short-lived pre-signed S3 GET URL plus the file name.
 
     Raises:
         HTTPException: If the user is not allowed, if the file does not exist, or there is an error
-                       during the download process.
+                       generating the pre-signed URL.
     """
     try:
         # Check user access
@@ -79,32 +82,25 @@ def download_file(
                 detail=f"File {file_name} not found for Model ID: {model_id}",
             )
 
-        # Get file from S3
+        # Generate a pre-signed URL for the file in S3
         s3_path = f"{get_settings().SCANNED_MODEL_FILES_BUCKET}/{model_id}/{file_name}"
-        logger.debug(f"Downloading file {file_name} from {s3_path}")
+        logger.debug(f"Generating pre-signed download URL for {file_name} at {s3_path}")
 
         s3 = S3Client()
         try:
-            s3_response = s3.get_object(s3_path)
-            body = s3_response["Body"]
-            content_type = s3_response.get("ContentType", "application/octet-stream")
-            logger.debug(f"s3_response {s3_response.keys()}")
-            logger.debug(f"File {file_name} downloaded successfully from S3.")
-
-            # Return file as response
             disposition = f"attachment; filename=\"{file_name}\"; filename*=UTF-8''{quote(file_name)}"
-
-            return StreamingResponse(
-                body,
-                media_type=content_type,
-                headers={
-                    "Content-Disposition": disposition,
-                    # Optional but often helpful:
-                    # "Cache-Control": "no-store",
-                },
+            url = s3.get_presigned_url(
+                s3_path,
+                expiration=get_settings().PRE_SIGNED_URL_EXPIRATION_SECONDS,
+                response_content_disposition=disposition,
             )
+            logger.debug(f"Pre-signed download URL generated successfully for {file_name}.")
+
+            # Never log the URL itself: it carries X-Amz-Signature /
+            # X-Amz-Credential, a readable capability against the bucket.
+            return PresignedDownloadResponse(url=url, fileName=file_name)
         except Exception:
-            logger.exception(f"Error downloading file from S3 for model_id={model_id}")
+            logger.exception(f"Error generating pre-signed download URL for model_id={model_id}")
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Error downloading file",

@@ -1,0 +1,111 @@
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+name: Unit Tests & Coverage
+
+on:
+  push:
+    paths:
+      - "flip-utils/**"
+      - "fl-services/nvflare/fl-api-base/**"
+      - ".github/workflows/unit-tests.yml"
+
+permissions:
+    contents: read
+
+jobs:
+    flip-tests:
+        name: flip package tests
+        runs-on: ubuntu-latest
+        environment: flip
+        defaults:
+          run:
+            working-directory: ./flip-utils
+
+        steps:
+            - name: Checkout repository
+              uses: actions/checkout@v5
+
+            - name: Set up Python 3.12
+              uses: actions/setup-python@v5
+              with:
+                  python-version: "3.12"
+
+            - name: Install uv
+              run: pip install uv
+
+            - name: Install dependencies
+              run: uv sync --all-groups --extra full
+
+            - name: Run linter
+              run: uv run ruff check .
+
+            - name: Run tests with coverage (skip heavy NVFLARE tests)
+              # NVFLARE tests import torch transitively; skip them in default job to keep CI fast.
+              run: |
+                uv run pytest --cov=flip --cov-report=xml -k "not nvflare"
+
+            - name: Upload coverage to Codecov
+              uses: codecov/codecov-action@v5
+              with:
+                  files: ./coverage.xml
+                  flags: flip
+                  # Non-blocking: forks have no CODECOV_TOKEN (upstream secrets are
+                  # not shared), so a failed upload must not fail otherwise-green CI.
+                  # Matches every other test workflow in this repo.
+                  fail_ci_if_error: false
+              env:
+                  CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+
+    api-tests:
+        name: fl-api-base tests
+        runs-on: ubuntu-latest
+        environment: flip
+        defaults:
+            run:
+                working-directory: ./fl-services/nvflare/fl-api-base
+
+        steps:
+            - name: Checkout repository
+              uses: actions/checkout@v5
+
+            - name: Set up Python 3.12
+              uses: actions/setup-python@v5
+              with:
+                  python-version: "3.12"
+
+            - name: Install uv
+              run: pip install uv
+
+            - name: Install dependencies
+              run: uv sync --all-groups
+
+            - name: Run linter
+              run: uv run ruff check .
+
+            - name: Run mypy
+              run: uv run mypy . --ignore-missing-imports
+
+            - name: Run tests with coverage
+              run: uv run pytest --cov=fl_api --cov-report=xml
+
+            - name: Upload coverage to Codecov
+              uses: codecov/codecov-action@v5
+              with:
+                  files: ./coverage.xml
+                  flags: api
+                  # Non-blocking: forks have no CODECOV_TOKEN (upstream secrets are
+                  # not shared), so a failed upload must not fail otherwise-green CI.
+                  # Matches every other test workflow in this repo.
+                  fail_ci_if_error: false
+              env:
+                  CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}

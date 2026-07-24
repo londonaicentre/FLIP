@@ -37,6 +37,20 @@ vi.mock("vue-router", async (importOriginal) => {
     };
 });
 
+// Mock @/router at the module level: the real module builds the app router from
+// the generated page routes, whose lazy page imports (e.g. Login.vue and its
+// ~icons import) can resolve AFTER this suite's environment is torn down and
+// fail the run with an EnvironmentTeardownError (flaky in CI).
+vi.mock("@/router", () => ({
+    routeChange: {
+        gotoLogin: vi.fn(),
+        viewProjects: vi.fn(),
+        changePassword: vi.fn(),
+        notAllowed: vi.fn()
+    },
+    default: { push: vi.fn() }
+}));
+
 vi.mock("swrv", () => ({
     // Invoke the key function like real swrv does, so the page's key builders
     // (e.g. the `/users/${email}` lookup) are exercised rather than skipped.
@@ -185,11 +199,11 @@ describe("MainLayout", () => {
             expect((dropdown.props() as Record<string, unknown>).role).toBe("Researcher");
         });
 
-        it("returns Observer when user has no management permissions", () => {
+        it("returns Viewer when user has no management permissions", () => {
             const wrapper = mountMainLayout({ permissions: [] });
             const dropdown = wrapper.findComponent("[data-test='user-dropdown']") as VueWrapper;
 
-            expect((dropdown.props() as Record<string, unknown>).role).toBe("Observer");
+            expect((dropdown.props() as Record<string, unknown>).role).toBe("Viewer");
         });
 
         it("prioritises Admin over Researcher when user has both permissions", () => {

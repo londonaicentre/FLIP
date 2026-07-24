@@ -5,13 +5,13 @@
 Trust services run at each healthcare institution (cloud EC2 or on-prem). All trust communication is outbound — trusts poll the Central Hub; no inbound ports needed.
 
 | Service | Port | Purpose |
-|---------|------|---------|
+| --------- | ------ | --------- |
 | trust-api | 8020 | API gateway, polls hub for tasks, orchestrates trust |
 | imaging-api | 8001 | DICOM image retrieval from PACS |
 | data-access-api | 8010 | OMOP database queries for cohort analysis |
 | fl-client | — | FL participant (connects outbound to FL server via NLB) |
 | omop-db | 5432 | Mocked OMOP patient database (PostgreSQL) |
-| orthanc | 4242 | Mocked DICOM PACS server |
+| orthanc | 8042 | Mocked DICOM PACS server (UI/REST; DICOM port 4242 is internal to the trust network and not bound to the host) |
 | xnat | 8104 | Mocked neuroimaging platform |
 | observability | 3000/3100 | Grafana + Loki monitoring stack |
 
@@ -42,7 +42,7 @@ the commented dev form):
 
 The Hub-shared block is delimited by a sentinel comment
 (`# ── Hub-shared (managed by register-trust / sync-trust-kits — do not edit) ──`)
-that `scripts/distribute-trust-kits.sh` and `scripts/sync_trust_kit.py`
+that `scripts/distribute_trust_kits.py` and `scripts/sync_trust_kit.py`
 match byte-for-byte. The exact key set is the `HUB_SHARED_ENV_KEYS` tuple in
 `flip_api/scripts/register_trust.py` (`AES_KEY_BASE64`,
 `CENTRAL_HUB_API_URL`, `TRUST_API_KEY_HEADER`, `FL_BACKEND`,
@@ -116,6 +116,10 @@ make debug-data-access-api     # Debug data-access-api only
 make tests                     # Run tests on all 3 API services
 make build                     # Build all trust Docker images
 make create-networks           # Create Docker overlay networks
+make update-omop-data          # Download/extract mock OMOP data (both trusts)
+make update-omop-data TRUST=1  # Trust_1 only
+make update-orthanc-data       # Download/extract mock DICOM data (both trusts)
+make update-orthanc-data TRUST=1  # Trust_1 only
 ```
 
 ## Environment

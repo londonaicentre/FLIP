@@ -14,13 +14,25 @@ import os
 
 SERVICE_UNAVAILABLE_MESSAGE = "The server is unable to process any requests at the moment, please try again later."
 
+# Default label naming the x-axis of an FL training-metric plot. Used when a metric is logged without
+# an explicit x-axis label — the historical behaviour, where the x-axis is the FL global round. Single
+# source of truth for the FLMetrics column default, the ingest-schema default, and the plot's x-axis
+# title (FLIP#148).
+DEFAULT_X_AXIS_LABEL = "Global Rounds"
+
 # AWS SES email templates
 ACCESS_REQUEST_TEMPLATE_NAME = "flip-access-request"
 IMAGING_CREDENTIALS_TEMPLATE_NAME = "flip-xnat-credentials"
 IMAGING_PROJECT_ACCESS_TEMPLATE_NAME = "flip-xnat-added-to-project"
 
-# File containing job types and their required files
-JOB_TYPES_REQUIRED_FILES_FILE = "job_types_and_required_files.json"
+
+# Filename of the per-backend job-types/required-files manifest. It lives in each backend's
+# folder on the local base-application tree (e.g. ``<FL_APP_BASE_DIR>/nvflare/required_files.json``),
+# generated from the per-template arrays by ``fl-apps/check_required_files.sh``, committed to the
+# repo, and baked into the flip-api image. flip-api reads it directly from disk (FLIP#724) — the
+# two backends live in separate folders so they never clobber each other's manifest.
+REQUIRED_FILES_MANIFEST_NAME = "required_files.json"
+
 
 # Testing constants. BASE_URL defaults to the local dev stack; override with
 # FLIP_E2E_BASE_URL to run the e2e smoke against a remote hub (stag/prod).
@@ -31,4 +43,4 @@ ADMIN_EMAIL_1 = "aicentreflip@gmail.com"
 ADMIN_EMAIL_2 = "alexandre.triay_bagur@kcl.ac.uk"
 ADMIN_EMAIL_3 = "rafael.dias@kcl.ac.uk"
 RESEARCHER_EMAIL = "rafaelagd@gmail.com"
-OBSERVER_EMAIL = "triayalex@gmail.com"
+VIEWER_EMAIL = "triayalex@gmail.com"
