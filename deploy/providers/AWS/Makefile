@@ -641,7 +641,7 @@ deploy-ui: ## Build flip-ui from the working tree and deploy it to S3 + invalida
 	AWS_PROFILE=$(AWS_PROFILE) aws s3 sync ../../../flip-ui/dist/ s3://$$UI_BUCKET/ \
 		--delete \
 		--cache-control "public, max-age=31536000, immutable" \
-		--exclude "index.html" --exclude "js/window.js"; \
+		--exclude "index.html" --exclude "js/window.js" --exclude "ark_demo/*"; \
 	AWS_PROFILE=$(AWS_PROFILE) aws s3 cp ../../../flip-ui/dist/index.html s3://$$UI_BUCKET/index.html \
 		--cache-control "no-cache, no-store, must-revalidate" \
 		--content-type "text/html; charset=utf-8"; \
@@ -653,6 +653,41 @@ deploy-ui: ## Build flip-ui from the working tree and deploy it to S3 + invalida
 		--distribution-id $$(AWS_PROFILE=$(AWS_PROFILE) terraform output -raw CloudfrontDistributionId) \
 		--paths "/*" >/dev/null
 	@echo "✅ deploy-ui complete."
+
+.PHONY: deploy-ark-demo
+deploy-ark-demo: ## Build the public Ark+ demo SPA from the working tree and deploy it to S3 (ark_demo/ prefix) + invalidate CloudFront
+	@echo "🖼️  Building flip-ui Ark+ demo bundle from working tree..."
+	@# npm run build:demo's postbuild hook regenerates dist/js/window.js itself
+	@# (scripts/generate-demo-window-js.sh) — no separate window.js step needed,
+	@# unlike deploy-ui.
+	@cd ../../../flip-ui && npm ci && npm run build:demo
+	@echo "📦 Syncing demo assets to the deployed UI bucket (ark_demo/ prefix)..."
+	@# Same cache-control discipline as deploy-ui: hashed assetsDir chunks
+	@# (dist/static/... for the demo build — see the Vite assetsDir note in
+	@# ../README.md) are content-addressed and safe to cache forever; index.html
+	@# and window.js must never be cached long since they reference the hashed
+	@# bundle. --delete is scoped to this sync's destination (the ark_demo/
+	@# prefix), so it never touches the real app's objects at the bucket root —
+	@# see deploy-ui's own --exclude "ark_demo/*" for the other half of that
+	@# separation.
+	@UI_BUCKET=$$(AWS_PROFILE=$(AWS_PROFILE) terraform output -raw FlipUiBucketName); \
+	[ -n "$$UI_BUCKET" ] || { echo "❌ Terraform output FlipUiBucketName is empty"; exit 1; }; \
+	echo "   s3://$$UI_BUCKET/ark_demo/"; \
+	AWS_PROFILE=$(AWS_PROFILE) aws s3 sync ../../../flip-ui/dist/ s3://$$UI_BUCKET/ark_demo/ \
+		--delete \
+		--cache-control "public, max-age=31536000, immutable" \
+		--exclude "index.html" --exclude "js/window.js"; \
+	AWS_PROFILE=$(AWS_PROFILE) aws s3 cp ../../../flip-ui/dist/index.html s3://$$UI_BUCKET/ark_demo/index.html \
+		--cache-control "no-cache, no-store, must-revalidate" \
+		--content-type "text/html; charset=utf-8"; \
+	AWS_PROFILE=$(AWS_PROFILE) aws s3 cp ../../../flip-ui/dist/js/window.js s3://$$UI_BUCKET/ark_demo/js/window.js \
+		--cache-control "no-cache, no-store, must-revalidate" \
+		--content-type "application/javascript; charset=utf-8"
+	@echo "🧹 Invalidating CloudFront (/ark_demo/*)..."
+	@AWS_PROFILE=$(AWS_PROFILE) aws cloudfront create-invalidation \
+		--distribution-id $$(AWS_PROFILE=$(AWS_PROFILE) terraform output -raw CloudfrontDistributionId) \
+		--paths "/ark_demo/*" >/dev/null
+	@echo "✅ deploy-ark-demo complete."
 
 # Identity of the trust kit being deployed/provisioned — a trust CODE that
 # selects its kit file trust/.env.<KIT>.<env> and its trust-local data dirs.

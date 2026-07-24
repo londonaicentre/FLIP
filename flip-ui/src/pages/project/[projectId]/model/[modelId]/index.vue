@@ -74,7 +74,13 @@
                              real page shows the actions menu to the model owner — surface it so
                              the recorded run's results stay downloadable (Stop Training renders
                              disabled at RESULTS_UPLOADED). Vite inlines IS_DEMO; normal builds
-                             keep the viewer gate unchanged. -->
+                             keep the viewer gate unchanged.
+                             This menu is safe to expose in the demo only because every item in
+                             it today is also status-gated, not just permission-gated — the
+                             invariant to preserve as this menu grows: any future item that is
+                             clickable purely on `!isViewer` (with no status guard) would become
+                             a live, clickable control in the public demo, harmlessly answered by
+                             Mirage but a confusing dead control in a public exhibit. -->
                         <TrainingActionsMenu v-if="(!isViewer || IS_DEMO) && !isTrainingPending()" :status="getStatusEnumValue(modelData?.status)" />
                     </div>
                 </div>

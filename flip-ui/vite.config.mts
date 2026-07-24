@@ -180,7 +180,7 @@ export default defineConfig(({ mode, command, isPreview }) => {
             globals: true,
             environment: "jsdom",
             setupFiles: ["./test/setup.ts"],
-            include: ["src/**/*.spec.ts", "scripts/**/*.spec.ts"],
+            include: ["src/**/*.spec.ts", "scripts/**/*.spec.ts", "mocks/**/*.spec.ts"],
             coverage: { reporter: ["text", "json", "cobertura"] },
             server: {
                 deps: {

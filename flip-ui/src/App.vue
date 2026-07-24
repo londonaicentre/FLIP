@@ -12,6 +12,7 @@
 -->
 
 <template>
+    <DemoBanner v-if="IS_DEMO" />
     <AiRouteProgress />
     <router-view />
     <AiSnackbar />
@@ -25,6 +26,8 @@ import { watch } from "vue";
 import AiRouteProgress from "@/components/AiRouteProgress/AiRouteProgress.vue";
 import AiSnackbar from "@/components/AiSnackbar/AiSnackbar.vue";
 
+import { IS_DEMO } from "./demo/bootstrap";
+import DemoBanner from "./demo/DemoBanner.vue";
 import { getHealth } from "./services/health-service";
 import { getSiteDetails } from "./services/site-service";
 import { getTrusts } from "./services/trust-service";

@@ -38,6 +38,18 @@ export const DEMO_PROJECT_ID = "f48850b7-3101-46d1-8fa7-a00bf01d2597";
 export const DEMO_MODEL_ID = "24985ec3-3349-435b-afcd-f38972d8695d";
 
 /**
+ * The date the register was captured from the production API (see the
+ * provenance note above) — the single source of truth for the demo's
+ * "snapshot of …, captured …" labelling. Consumed by:
+ *   1. src/demo/DemoBanner.vue, rendered on every page of the demo build; and
+ *   2. scripts/generate-demo-window-js.sh, which greps this file for the
+ *      value so window.RELEASE_VERSION can't drift from it independently.
+ * Update this constant (and the prose above) together when the register is
+ * re-captured.
+ */
+export const DEMO_CAPTURE_DATE = "2026-07-17";
+
+/**
  * Read-only viewer identity seeded by src/demo/bootstrap.ts and served from
  * GET /users/:email. Empty permissions => `isViewer` everywhere, so every
  * mutating control in the UI hides itself.

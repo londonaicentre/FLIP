@@ -34,8 +34,16 @@ export const IS_DEMO = import.meta.env.VITE_DEMO === "true";
  * (/ark_demo/assets/* behaviour → OAC-locked S3 origin, WAF in path), never
  * from a public S3 URL — see deploy/providers/AWS/cloudfront.tf
  * ("Public Ark+ demo download assets").
+ *
+ * Deliberately relative, not "https://app.flip.aicentre.co.uk/ark_demo/assets":
+ * the demo SPA is always served same-origin under /ark_demo/, so a relative
+ * path resolves through CloudFront identically wherever the bundle is
+ * hosted — and survives a domain change, whereas an absolute URL would
+ * silently point a stag-hosted or locally-previewed build's downloads at
+ * prod. Downloads stay anchor-click navigations, so this has no effect on
+ * the demo CSP (connect-src 'none').
  */
-const DEMO_ASSETS = "https://app.flip.aicentre.co.uk/ark_demo/assets";
+const DEMO_ASSETS = "/ark_demo/assets";
 export const DEMO_MODEL_FILES_ZIP_URLS: Record<string, string> = {
     // Fine-tuning run
     "24985ec3-3349-435b-afcd-f38972d8695d": `${DEMO_ASSETS}/model-24985ec3-3349-435b-afcd-f38972d8695d-files.zip`,

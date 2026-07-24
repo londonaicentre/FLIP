@@ -154,7 +154,26 @@ two-trust port allocation).
 
 The UI is served from S3 behind CloudFront at the canonical user-facing subdomain (`stag.flip.aicentre.co.uk` / `app.flip.aicentre.co.uk`). CloudFront also forwards `/api/*` to the ALB, using a backend-only `api.<subdomain>` DNS name that only CloudFront uses — trusts and users never see it. CloudFront is the only supported UI-hosting path; there is no legacy EC2 UI container or ALB UI target group to fall back to.
 
-**Subsequent UI deploys**: just `make deploy-ui PROD=stag|true` — builds the UI from the working tree, regenerates `window.js`, syncs to S3, invalidates CloudFront. No Terraform involved.
+**Subsequent UI deploys**: just `make deploy-ui PROD=stag|true` — builds the UI from the working tree, regenerates `window.js`, syncs to S3, invalidates CloudFront. No Terraform involved. `deploy-ui` syncs `dist/` to the bucket **root** with `--delete`, so it always excludes the `ark_demo/*` prefix — the real build's `dist/` has no `ark_demo/` output, and without the exclude a routine UI (or `deploy-centralhub`, which calls `deploy-ui` as its last step) deploy would delete the demo SPA on every run. Publishing the demo bundle itself is a separate target — see below.
+
+### Ark+ demo SPA bundle (`/ark_demo/*`)
+
+`make deploy-ark-demo PROD=stag|true` builds the demo bundle (`npm run build:demo`, which also
+regenerates `dist/js/window.js` via `generate-demo-window-js.sh`) and syncs it to the **same**
+`FLIP_UI_BUCKET_NAME` bucket, under the `ark_demo/` prefix, then invalidates `/ark_demo/*` only.
+It mirrors `deploy-ui`'s cache-control discipline — immutable, far-future `Cache-Control` for the
+hashed `static/` chunks (the demo build's `assetsDir`, see the Vite `assetsDir` note below),
+`no-cache` for `index.html` and `js/window.js` — because the `/ark_demo/*` CloudFront behaviour
+uses the `CachingOptimized` policy, which **honours** origin cache-control headers: a hand-upload
+without them would serve a stale `index.html` referencing already-deleted hashed chunks after the
+next demo redeploy. This is a separate command from `deploy-ui` deliberately — the demo (a
+point-in-time snapshot — see "`/ark_demo/*` origin isolation" below) is republished far less often
+than the real app, typically only when the register is re-captured.
+
+```bash
+cd deploy/providers/AWS
+make deploy-ark-demo PROD=stag|true
+```
 
 ### Ark+ demo download assets (`/ark_demo/assets/*`)
 
@@ -189,8 +208,11 @@ curl -sI https://flipprod-demo-assets.s3.eu-west-2.amazonaws.com/ark_demo/<bundl
 ```
 
 The demo UI's download URLs live in `flip-ui/src/demo/bootstrap.ts` (model-files zips) and
-`flip-ui/mocks/demo/data/*flres*.json` / `fl_results.json` (results zips); keep them pointing at
-`https://app.flip.aicentre.co.uk/ark_demo/assets/…`.
+`flip-ui/mocks/demo/data/*flres*.json` / `fl_results.json` (results zips); keep them **relative**
+(`/ark_demo/assets/…`), not absolute to `app.flip.aicentre.co.uk` — the demo SPA is always served
+same-origin under `/ark_demo/`, so a relative path resolves through CloudFront identically
+wherever the bundle is hosted (prod, stag, or a local preview), and it survives a domain change.
+An absolute form would silently point a stag-hosted or locally-previewed demo's downloads at prod.
 
 #### `/ark_demo/*` origin isolation (same-origin hosting)
 
@@ -217,6 +239,15 @@ The shared `spa_rewrite` CloudFront Function (attached to both the default behav
 `/ark_demo/*`) is prefix-aware: a deep link under `/ark_demo/` falls back to `/ark_demo/index.html`,
 never the real app's `/index.html` — the earlier version would have silently served the real
 (Cognito-gated) app for a demo URL.
+
+This CSP is the origin-isolation control end-to-end — if `ark_demo_spa` ever gets detached from the
+`/ark_demo/*` behaviour (Terraform drift, a future refactor), the isolation vanishes with **no
+functional symptom**, since the demo works identically without it. Add this check alongside the
+200/403 verification pair above whenever the demo is (re)deployed:
+
+```bash
+curl -sI https://app.flip.aicentre.co.uk/ark_demo/ | grep -i content-security-policy   # expect: connect-src 'none' present
+```
 
 **Vite `assetsDir` collision (already fixed, worth knowing about):** Vite's default `assetsDir`
 (`"assets"`) would put the demo bundle's own JS/CSS/font chunks at `/ark_demo/assets/*.js`, which
