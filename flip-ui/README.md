@@ -78,6 +78,13 @@ The build regenerates `dist/js/window.js` from
 environment and points at no real backend. Host the bundle as a CloudFront behaviour (or any
 static prefix) at `/ark_demo/` next to the real app.
 
+The demo is a point-in-time capture, not a live system, and says so twice: `window.RELEASE_VERSION`
+is stamped `ark-demo/<capture-date>+<git-short-sha>` (the date is grepped out of
+`DEMO_CAPTURE_DATE` in `ark-plus-register.ts` so it can't drift from the provenance note there),
+and every page renders a small, non-dismissible banner
+([`src/demo/DemoBanner.vue`](src/demo/DemoBanner.vue), mounted in `App.vue` outside
+`<router-view>` so it survives every route) reading the same capture date in human form.
+
 The large download bundles (results + model files, several hundred MB each) are not part of the
 bundle: they are served by the production CloudFront distribution at `/ark_demo/assets/*` from a
 private, OAC-locked S3 bucket with the WAF in the request path (Terraform:
