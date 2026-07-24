@@ -235,6 +235,14 @@ run_case "numeric spare ordering (N=2)" 2 '["Trust_1", "Trust_2"]' "net-1 net-2"
     "net-1=Trust_1 Trust_2 Trust_3 Trust_9 Trust_10" "net-2=Trust_1 Trust_2 Trust_3 Trust_9 Trust_10"
 check "activate Trust_3 Trust_9 (numeric lowest two), no mint" "Trust_3 Trust_9" "(none — spares cover N)"
 
+# 6b. Zero-padded suffixes parse as decimal: bash arithmetic reads leading-zero
+#     numerals as octal, so Trust_008 crashed the max_num comparison ("value too
+#     great for base") and Trust_010 would compute max as 8. flip-api accepts
+#     such names (Python int() is decimal), so they can reach this script.
+run_case "zero-padded suffixes parse as decimal (N=1)" 1 '["Trust_008", "Trust_010"]' "net-1 net-2" \
+    "net-1=Trust_008 Trust_010 fl-server-net-1" "net-2=Trust_008 Trust_010 fl-server-net-2"
+check "mint Trust_11 (max is decimal 10, not octal 8)" "(none — no spare kits)" "Trust_11  (existing max: Trust_10)"
+
 # 7. COMPLETENESS GUARD: a spare whose kit is complete on every net activates cleanly.
 run_case "complete spare activates (N=1)" 1 '["Trust_1", "Trust_2"]' "net-1 net-2" \
     "net-1=Trust_1 Trust_2 Trust_3" "net-2=Trust_1 Trust_2 Trust_3"

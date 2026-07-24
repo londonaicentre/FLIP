@@ -150,10 +150,16 @@ register_one_kit() {
     # via --out-ssm-parameter, so the logger never carries credentials.
     failure_log=""
     if [ -z "$kit" ] || [ "$kit" = "None" ] || [ "$(echo "$kit" | jq 'length')" = "0" ]; then
-        failure_log="$(aws_cmd logs get-log-events --log-group-name "$LOG_GROUP" \
+        raw_log="$(aws_cmd logs get-log-events --log-group-name "$LOG_GROUP" \
             --log-stream-name "flip-api/flip-api/$task_id" --start-from-head \
-            --query 'events[].message' --output text 2>/dev/null |
-            tr '\t' '\n' | grep -E "ERROR|WARNING" || true)"
+            --query 'events[].message' --output text 2>/dev/null | tr '\t' '\n')"
+        failure_log="$(printf '%s\n' "$raw_log" | grep -E "ERROR|WARNING" || true)"
+        # A raw unhandled traceback has no log-level prefix, so the grep above
+        # comes back empty; fall back to the tail of the raw log — the stream
+        # is deleted just below, so this is the only evidence that survives.
+        if [ -z "$failure_log" ] && [ -n "$raw_log" ]; then
+            failure_log="$(printf '%s\n' "$raw_log" | tail -n 40)"
+        fi
     fi
 
     aws_cmd logs delete-log-stream --log-group-name "$LOG_GROUP" \

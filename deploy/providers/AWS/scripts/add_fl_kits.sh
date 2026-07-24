@@ -202,8 +202,14 @@ mint_count=$((N - ${#ACTIVATE_NAMES[@]}))
 
 max_num=0
 for name in "${existing_names[@]}"; do
-    if [[ "${name}" =~ ^Trust_([0-9]+)$ ]] && [[ "${BASH_REMATCH[1]}" -gt "${max_num}" ]]; then
-        max_num="${BASH_REMATCH[1]}"
+    # 10# forces base 10: bash arithmetic reads a leading-zero numeral as octal,
+    # so a zero-padded suffix (Trust_008) would crash with "value too great for
+    # base" and Trust_010–Trust_017 would silently compute the wrong number.
+    # flip-api's _slot_number parses the same names as decimal, so such names
+    # do reach this script. max_num is stored normalized (no leading zeros),
+    # keeping the mint loop's $((max_num + i)) safe.
+    if [[ "${name}" =~ ^Trust_([0-9]+)$ ]] && (( 10#${BASH_REMATCH[1]} > max_num )); then
+        max_num=$((10#${BASH_REMATCH[1]}))
     fi
 done
 
