@@ -432,8 +432,9 @@ class FLIP_TRAINER(Executor):
             if has_nan:
                 self.logger.info(nan_summary)
                 self.log_info(fl_ctx, nan_summary)
-            # Send metrics over to FLIP
-            round = global_round * (self._epochs) + epoch + 1
+            # Send metrics over to FLIP. These are per-epoch points, so plot them on an "epoch" axis at
+            # the cumulative epoch count; the FL global round is recorded alongside as provenance.
+            cumulative_epoch = global_round * (self._epochs) + epoch + 1
 
             # Send loss metrics - convert NaN to 0.0
             train_loss = training_metrics["loss"]["train"][-1]
@@ -449,14 +450,16 @@ class FLIP_TRAINER(Executor):
 
             send_metrics_value(
                 label="TRAIN_LOSS",
-                round=round,
+                x_value=cumulative_epoch,
+                x_label="epoch",
                 value=train_loss,
                 fl_ctx=fl_ctx,
                 flip=self.flip,
             )
             send_metrics_value(
                 label="VAL_LOSS",
-                round=round,
+                x_value=cumulative_epoch,
+                x_label="epoch",
                 value=val_loss,
                 fl_ctx=fl_ctx,
                 flip=self.flip,
@@ -482,14 +485,16 @@ class FLIP_TRAINER(Executor):
 
                     send_metrics_value(
                         label=f"{'train'.upper()}-{metric.upper()}-{lesion_name}",
-                        round=round,
+                        x_value=cumulative_epoch,
+                        x_label="epoch",
                         value=train_value,
                         fl_ctx=fl_ctx,
                         flip=self.flip,
                     )
                     send_metrics_value(
                         label=f"{'val'.upper()}-{metric.upper()}-{lesion_name}",
-                        round=round,
+                        x_value=cumulative_epoch,
+                        x_label="epoch",
                         value=val_value,
                         fl_ctx=fl_ctx,
                         flip=self.flip,

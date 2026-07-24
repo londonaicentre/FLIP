@@ -113,6 +113,35 @@ describe("AiModelMetricsChart", () => {
         expect(setOption).toHaveBeenCalled();
     });
 
+    it("titles the x-axis with props.data.xLabel instead of a hardcoded label", async () => {
+        mount(AiModelMetricsChart, {
+            props: {
+                data: {
+                    yLabel: "Loss",
+                    xLabel: "epoch",
+                    metrics: [{
+                        seriesLabel: "A",
+                        data: [{
+                            xValue: 1,
+                            yValue: 0.5
+                        }]
+                    }]
+                }
+            },
+            global: {
+                plugins: [createTestingPinia({
+                    createSpy: vi.fn,
+                    stubActions: false
+                })]
+            }
+        });
+        await nextTick();
+        await flushPromises();
+
+        const opts = setOption.mock.calls[0][0];
+        expect(opts.xAxis.name).toBe("epoch");
+    });
+
     it("floats the legend over the plot and lifts the toolbox above it, reserving no side column", async () => {
         mountChart();
         await nextTick();
@@ -198,6 +227,86 @@ describe("AiModelMetricsChart", () => {
 
         const opts = setOption.mock.calls[0][0];
         expect(opts.series[0].data).toEqual([[1, 0.1], [2, 0.2], [3, 0.3]]);
+    });
+
+    it("plots fractional x-values without forcing integer ticks", async () => {
+        mount(AiModelMetricsChart, {
+            props: {
+                data: {
+                    yLabel: "VAL_LOSS",
+                    xLabel: "epoch",
+                    metrics: [{
+                        seriesLabel: "A",
+                        data: [
+                            {
+                                xValue: 0.75,
+                                yValue: 0.3
+                            },
+                            {
+                                xValue: 0.25,
+                                yValue: 0.1
+                            }
+                        ]
+                    }]
+                }
+            },
+            global: {
+                plugins: [createTestingPinia({
+                    createSpy: vi.fn,
+                    stubActions: false
+                })]
+            }
+        });
+        await nextTick();
+        await flushPromises();
+
+        const opts = setOption.mock.calls[0][0];
+        // Arbitrary float coordinates flow straight through, sorted (FLIP#148)...
+        expect(opts.series[0].data).toEqual([[0.25, 0.1], [0.75, 0.3]]);
+        // ...and the axis must not force integer tick spacing, or a 0–1 range
+        // would collapse onto a single tick.
+        expect(opts.xAxis.minInterval).toBeUndefined();
+    });
+
+    it("keeps whole-number ticks when every x-value is an integer", async () => {
+        mount(AiModelMetricsChart, {
+            props: {
+                data: {
+                    yLabel: "VAL_LOSS",
+                    xLabel: "Global Rounds",
+                    metrics: [{
+                        seriesLabel: "A",
+                        data: [
+                            {
+                                xValue: 1,
+                                yValue: 0.1
+                            },
+                            {
+                                xValue: 2,
+                                yValue: 0.2
+                            },
+                            {
+                                xValue: 3,
+                                yValue: 0.3
+                            }
+                        ]
+                    }]
+                }
+            },
+            global: {
+                plugins: [createTestingPinia({
+                    createSpy: vi.fn,
+                    stubActions: false
+                })]
+            }
+        });
+        await nextTick();
+        await flushPromises();
+
+        // A short round-based run (splitNumber 10 over 3 rounds) must not show
+        // fractional ticks — rounds are whole numbers.
+        const opts = setOption.mock.calls[0][0];
+        expect(opts.xAxis.minInterval).toBe(1);
     });
 
     it("themes chrome and series from the shared chart theme", async () => {

@@ -231,18 +231,20 @@ def aggregate_and_publish(
     lesions: LesionDict,
     step: int,
 ) -> None:
-    _publish(writer, "TRAIN_LOSS", _safe_mean(train_metrics["loss"]), step)
+    # These are per-epoch scalars: the "@epoch" tag suffix names the x-axis (the FLIP analytics bridge
+    # parses "<label>[@<x_label>]" — see FLIP#148) and `step` (cumulative epoch) is the coordinate.
+    _publish(writer, "TRAIN_LOSS@epoch", _safe_mean(train_metrics["loss"]), step)
     # Only publish VAL_* scalars when validation actually ran this epoch (per VALIDATE_EVERY) —
     # emitting a 0.0 placeholder would inject spurious zeros into the validation series.
     if val_metrics is not None:
-        _publish(writer, "VAL_LOSS", _safe_mean(val_metrics["loss"]), step)
+        _publish(writer, "VAL_LOSS@epoch", _safe_mean(val_metrics["loss"]), step)
 
     for metric in ["f1-score", "precision", "recall"]:
         for name in lesions.get_lesion_list():
             # Include the lesion name in the tag so each lesion writes to a distinct series.
-            _publish(writer, f"TRAIN-{metric.upper()}-{name}", _safe_mean(train_metrics[metric][name]), step)
+            _publish(writer, f"TRAIN-{metric.upper()}-{name}@epoch", _safe_mean(train_metrics[metric][name]), step)
             if val_metrics is not None:
-                _publish(writer, f"VAL-{metric.upper()}-{name}", _safe_mean(val_metrics[metric][name]), step)
+                _publish(writer, f"VAL-{metric.upper()}-{name}@epoch", _safe_mean(val_metrics[metric][name]), step)
 
 
 def local_train(
