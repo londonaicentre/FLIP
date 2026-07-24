@@ -191,12 +191,31 @@ def epoch_loop(
                     batch_info += f"{lesion.lesion}: all masked; "
             logger.info(batch_info)
 
+            # A fully-masked batch (every label -1) carries no supervision signal: the clamped loss
+            # would be a flat 0.0 that trains nothing and drags the epoch mean down (pre-clamp, the
+            # NaN it produced was excluded from the mean by np.nanmean). Skip it loudly so a
+            # systematic label degeneracy (e.g. a broken label join) stays visible (FLIP#764).
+            if (labels == -1).all():
+                logger.warning(f"{phase} batch {i + 1}/{len(dataloader)}: all labels masked (-1), skipping batch")
+                continue
+
             if is_train:
                 optimizer.zero_grad()
             output = model(images)
             loss = get_bce_loss(output, labels)
+
+            # Skip a non-finite batch instead of letting it poison the model: a single NaN/Inf loss
+            # backpropagates into every weight via optimizer.step(), after which every subsequent
+            # batch is NaN and the whole pass reports loss=nan (see FLIP#764).
+            if not torch.isfinite(loss):
+                logger.warning(f"Skipping {phase} batch {i + 1}/{len(dataloader)}: non-finite loss ({loss.item()})")
+                continue
+
             if is_train:
                 loss.backward()
+                # Gradient clipping bounds the update so an exploding gradient on one batch can't
+                # diverge the model to NaN within a single optimizer step.
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
                 optimizer.step()
 
             metrics["loss"].append(loss.item())
@@ -294,11 +313,26 @@ def cross_site_validate(
         metrics["f1-score"][name] = []
 
     with torch.no_grad():
-        for batch in test_loader:
+        for i, batch in enumerate(test_loader):
             images = batch["image"].to(device)
             labels = get_lesion_label(batch, lesions).to(device)
+
+            # Skip fully-masked batches: with the clamped loss they would contribute a spurious 0.0
+            # to the test mean, where the pre-clamp NaN was excluded by np.nanmean in _safe_mean.
+            if (labels == -1).all():
+                logger.warning(f"Test batch {i + 1}/{len(test_loader)}: all labels masked (-1), skipping batch")
+                continue
+
             output = model(images)
-            metrics["loss"].append(get_bce_loss(output, labels).item())
+            loss = get_bce_loss(output, labels)
+
+            # Mirror epoch_loop's guard: np.nanmean already excludes a NaN from the test mean, but
+            # skipping silently would hide the degeneracy behind it — keep it visible (FLIP#764).
+            if not torch.isfinite(loss):
+                logger.warning(f"Skipping test batch {i + 1}/{len(test_loader)}: non-finite loss ({loss.item()})")
+                continue
+
+            metrics["loss"].append(loss.item())
             probs = torch.sigmoid(output)
             for name in lesions.get_lesion_list():
                 precision, recall, f1 = compute_precision_recall_f1(probs, labels, name, lesions=lesions)
