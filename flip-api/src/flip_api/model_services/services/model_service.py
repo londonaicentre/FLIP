@@ -390,6 +390,9 @@ def get_metrics(model_id: UUID, session: Session) -> list[IModelMetrics]:
     """
     logger.debug("Attempting to retrieve the metrics results for the model...")
 
+    # Deliberately unordered: the stable in-memory sort below fully determines each series' order,
+    # and an ORDER BY x_value here would return equal-x rows in unspecified order — weakening the
+    # ties-keep-insertion-order guarantee rather than helping it.
     results = session.exec(select(FLMetrics).where(FLMetrics.model_id == model_id)).all()
 
     if not results:
@@ -402,16 +405,19 @@ def get_metrics(model_id: UUID, session: Session) -> list[IModelMetrics]:
     for trust_id, code, name in session.exec(select(Trust.id, Trust.code, Trust.name)).all():
         trust_label[trust_id] = code or name
 
-    # metrics_map: label -> IModelMetrics
-    metrics_map: dict[str, IModelMetrics] = {}
+    # metrics_map: (label, x_label) -> IModelMetrics. A plot's identity is the pair, so the same
+    # metric logged against different x-axis labels renders as separate plots rather than being
+    # overlaid on one axis (FLIP#148). x_label defaults to "Global Rounds" for legacy rows.
+    metrics_map: dict[tuple[str, str], IModelMetrics] = {}
 
     for row in results:
-        # Create or get the IModelMetrics for the label
-        if row.label not in metrics_map:
-            metrics_map[row.label] = IModelMetrics(y_label=row.label, x_label="global_round", metrics=[])
+        # Create or get the IModelMetrics for this (label, x_label) plot
+        key = (row.label, row.x_label)
+        if key not in metrics_map:
+            metrics_map[key] = IModelMetrics(y_label=row.label, x_label=row.x_label, metrics=[])
 
-        # Get the list of series for this label
-        metric = metrics_map[row.label]
+        # Get the list of series for this plot
+        metric = metrics_map[key]
 
         series_label = trust_label.get(row.trust, str(row.trust))
 
@@ -421,12 +427,12 @@ def get_metrics(model_id: UUID, session: Session) -> list[IModelMetrics]:
             series = IModelMetricsData(series_label=series_label, data=[])
             metric.metrics.append(series)
 
-        # Add the data point
-        series.data.append(IModelMetricsValue(x_value=row.global_round, y_value=row.result))
+        # Add the data point at its plot coordinate (global_round is provenance, not the x)
+        series.data.append(IModelMetricsValue(x_value=row.x_value, y_value=row.result))
 
     # The query has no inherent ordering, so points arrive interleaved and a chart
-    # drawn in array order zig-zags. Sort each series by round; ties (a label
-    # reported both per-epoch and per-round) keep their insertion order.
+    # drawn in array order zig-zags. Sort each series by its x coordinate; ties
+    # keep their insertion order.
     for metric in metrics_map.values():
         for series in metric.metrics:
             series.data.sort(key=lambda point: point.x_value)

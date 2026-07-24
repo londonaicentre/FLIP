@@ -39,15 +39,15 @@
                  then sit adrift of the card's right edge. -->
             <select
                 v-if="view === 'single'"
-                v-model="activeChartLabel"
+                v-model="activeChartId"
                 data-test="metrics-plot-select"
                 aria-label="Training plot"
                 class="flex-1 min-w-0 px-2 py-1.5 sm:hidden rounded-lg border text-[13px] font-semibold
                        bg-white dark:bg-dark-canvas border-gray-200 dark:border-dark-border
                        text-gray-700 dark:text-gray-300"
             >
-                <option v-for="chart in charts" :key="chart.yLabel" :value="chart.yLabel">
-                    {{ chart.yLabel }}
+                <option v-for="chart in charts" :key="chartId(chart)" :value="chartId(chart)">
+                    {{ tabLabel(chart) }}
                 </option>
             </select>
 
@@ -59,18 +59,18 @@
             >
                 <button
                     v-for="chart in charts"
-                    :key="chart.yLabel"
+                    :key="chartId(chart)"
                     type="button"
                     role="tab"
-                    :aria-selected="activeChartLabel === chart.yLabel"
-                    :data-test="`training-plot-tab-${chart.yLabel}`"
+                    :aria-selected="activeChartId === chartId(chart)"
+                    :data-test="`training-plot-tab-${chart.yLabel}-${chart.xLabel}`"
                     class="inline-flex items-center px-3 py-1.5 rounded-full text-[13px] font-semibold whitespace-nowrap transition-all"
-                    :class="activeChartLabel === chart.yLabel
+                    :class="activeChartId === chartId(chart)
                         ? 'bg-primary-500 text-white shadow-sm'
                         : 'text-gray-500 hover:text-gray-800 dark:text-gray-300 dark:hover:text-gray-200'"
-                    @click="activeChartLabel = chart.yLabel"
+                    @click="activeChartId = chartId(chart)"
                 >
-                    {{ chart.yLabel }}
+                    {{ tabLabel(chart) }}
                 </button>
             </div>
             <p v-else class="flex-1 min-w-0 text-[13px] text-gray-500 dark:text-gray-300">
@@ -134,12 +134,12 @@
                      debounce — from painting over the cell below. -->
                 <figure
                     v-for="chart in charts"
-                    :key="chart.yLabel"
-                    :data-test="`metrics-grid-cell-${chart.yLabel}`"
+                    :key="chartId(chart)"
+                    :data-test="`metrics-grid-cell-${chart.yLabel}-${chart.xLabel}`"
                     class="flex flex-col p-2 overflow-hidden rounded-lg ring-1 ring-gray-100 dark:ring-white/25"
                 >
                     <figcaption class="px-1 pb-0.5 text-xs font-semibold truncate shrink-0 text-gray-600 dark:text-gray-300">
-                        {{ chart.yLabel }}
+                        {{ tabLabel(chart) }}
                     </figcaption>
                     <!-- The ratio goes on the plot, not the cell: the caption and padding
                          would eat into a cell-wide ratio and leave the plot itself flatter
@@ -149,7 +149,7 @@
                          plot the full width of the card and it reads long and flat — 3:2
                          gives those the height back. -->
                     <div
-                        :data-test="`metrics-grid-plot-${chart.yLabel}`"
+                        :data-test="`metrics-grid-plot-${chart.yLabel}-${chart.xLabel}`"
                         class="w-full aspect-[3/2] md:aspect-video min-h-[13rem] max-h-[24rem]"
                     >
                         <AiMetricsChart :data="chart" />
@@ -167,7 +167,7 @@ import { computed, ref, watch } from "vue";
 import { useRoute } from "vue-router";
 
 import AiMetricsChart from "@/components/AiChart/AiModelMetricsChart.vue";
-import { getModelMetrics } from "@/services/model-service";
+import { getModelMetrics, type IModelMetricData } from "@/services/model-service";
 import { useProjectStore } from "@/store/project";
 
 interface ITrainingMetricsProps {
@@ -191,7 +191,12 @@ const { data } = useSWRV(
     }
 );
 
-const activeChartLabel = ref<string | null>(null);
+// A plot is identified by the (yLabel, xLabel) pair, not the metric name alone: the same metric
+// logged against different x-axis labels is a separate plot (FLIP#148). JSON-encoding the pair keeps
+// the composite key unambiguous for any label text.
+const chartId = (chart: IModelMetricData) => JSON.stringify([chart.yLabel, chart.xLabel]);
+
+const activeChartId = ref<string | null>(null);
 
 // Default to the first chart whenever the data first loads or the active tab
 // disappears from the response (e.g. backend dropped a metric).
@@ -199,16 +204,35 @@ watch(
     data,
     next => {
         if (!next?.length) {
-            activeChartLabel.value = null;
+            activeChartId.value = null;
 
             return;
         }
-        if (!activeChartLabel.value || !next.some(c => c.yLabel === activeChartLabel.value)) {
-            activeChartLabel.value = next[0].yLabel;
+        if (!activeChartId.value || !next.some(c => chartId(c) === activeChartId.value)) {
+            activeChartId.value = chartId(next[0]);
         }
     },
     { immediate: true }
 );
+
+// Distinct x-axis labels per metric name. A metric plotted against a single x-axis shows just its
+// name; only when the same metric appears under more than one x-label do we disambiguate the tabs.
+const xLabelsByMetric = computed(() => {
+    const map = new Map<string, Set<string>>();
+    for (const chart of data.value ?? []) {
+        const labels = map.get(chart.yLabel) ?? new Set<string>();
+        labels.add(chart.xLabel);
+        map.set(chart.yLabel, labels);
+    }
+
+    return map;
+});
+
+const tabLabel = (chart: IModelMetricData): string => {
+    const distinct = xLabelsByMetric.value.get(chart.yLabel)?.size ?? 1;
+
+    return distinct > 1 ? `${chart.yLabel} · ${chart.xLabel}` : chart.yLabel;
+};
 
 // Trust display name → short code, for legend brevity. Defends against the
 // backend metrics endpoint falling back to the long trust name when its
@@ -236,7 +260,7 @@ const charts = computed(() => {
     }));
 });
 
-const activeChart = computed(() => charts.value.find(c => c.yLabel === activeChartLabel.value) ?? null);
+const activeChart = computed(() => charts.value.find(c => chartId(c) === activeChartId.value) ?? null);
 
 // A run reports dozens of metrics, so "one at a time" and "all at once" are both
 // reasonable defaults; single is the initial one because it is the readable one.
