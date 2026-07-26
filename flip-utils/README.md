@@ -157,11 +157,13 @@ uv run pytest -s -vv
 
 ## Tutorials
 
-The [`../fl-tutorials/`](../fl-tutorials/) directory contains ready-to-use example applications that can be uploaded to the FLIP platform UI. Each tutorial is designed to work with a specific app template from `../fl-apps/`, and runs on the local NVFLARE simulator via `make -C fl-tutorials run-tutorial TUTORIAL=<name>`.
+The [`../fl-tutorials/`](../fl-tutorials/) directory contains ready-to-use example applications that can be uploaded to the FLIP platform UI. Each tutorial is designed to work with a specific app template from `../fl-apps/<backend>/`, and runs on the local FL simulator via `make -C fl-tutorials run-tutorial TUTORIAL=<name>` (defaults to `FL_BACKEND=nvflare`; pass `FL_BACKEND=flower` for Flower).
 
 ![FL app structure](./assets/fl_app_structure.png)
 
 ### App / Tutorial Compatibility
+
+Paths below are relative to `../fl-tutorials/nvflare/` (the NVFLARE tutorials tree):
 
 | App | Tutorial |
 |-----|----------|

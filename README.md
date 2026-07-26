@@ -59,7 +59,7 @@ for FL server/client/API), and [`fl-apps/`](fl-apps/) (job-type implementations 
 | [`docs/`](docs/) | Sphinx documentation source (ReadTheDocs) |
 | [`flip-utils/`](flip-utils/) | `flip` Python package — platform logic, NVFLARE components, Flower helpers |
 | [`fl-services/`](fl-services/) | Docker images for FL networks, nested per backend ([`fl-services/nvflare/`](fl-services/nvflare/): `fl-server`, `fl-client`, `fl-api-base`, `fl-base`; [`fl-services/flower/`](fl-services/flower/): `superlink`, `supernode`, `fl-api-flower`, `fl-base`) |
-| [`fl-apps/`](fl-apps/) | FL job-type implementations / app templates, nested per backend ([`fl-apps/nvflare/`](fl-apps/nvflare/): `standard`, `evaluation`, `diffusion_model`, `fed_opt`; [`fl-apps/flower/`](fl-apps/flower/): `standard`, `evaluation`) |
+| [`fl-apps/`](fl-apps/) | FL job-type implementations / app templates, nested per backend ([`fl-apps/nvflare/`](fl-apps/nvflare/): `standard`, `standard_client_api`, `evaluation`, `evaluation_client_api`, `diffusion_model`, `fed_opt`; [`fl-apps/flower/`](fl-apps/flower/): `standard`, `evaluation`) |
 | [`fl-tutorials/`](fl-tutorials/) | End-to-end tutorial examples, nested per backend ([`fl-tutorials/nvflare/`](fl-tutorials/nvflare/): xray classification, spleen seg/eval, diffusion; [`fl-tutorials/flower/`](fl-tutorials/flower/): xray classification, spleen seg/eval, numpy) |
 
 Both backends are now provisioned in-tree (gitignored): the NVFLARE workspace at
@@ -439,7 +439,7 @@ The repository is organised as follows:
 - `flip-utils`: The `flip` Python package (pip-installable `flip-utils`) — platform logic, NVFLARE components, Flower helpers
 - `fl-services`: Docker images for FL networks, per backend: `fl-services/nvflare/{fl-server,fl-client,fl-api-base,fl-base}` and `fl-services/flower/{superlink,supernode,fl-api-flower,fl-base}`. Each backend's `Makefile` also owns its network provisioning under `provision/`.
 - `fl-apps`: FL app templates per backend: `fl-apps/nvflare/{standard,standard_client_api,evaluation,evaluation_client_api,diffusion_model,fed_opt}`, `fl-apps/flower/{standard,evaluation}` (plus `check_required_files.sh`)
-- `fl-tutorials`: End-to-end tutorial examples per backend: `fl-tutorials/nvflare/` (xray classification, spleen seg/eval, diffusion) and `fl-tutorials/flower/` (xray classification, 3D spleen seg, numpy)
+- `fl-tutorials`: End-to-end tutorial examples per backend: `fl-tutorials/nvflare/` (xray classification, spleen seg/eval, diffusion) and `fl-tutorials/flower/` (xray classification, spleen seg/eval, numpy)
 - `trust`: Services deployed inside each trust environment
   - `data-access-api`: Data-access API (OMOP queries)
   - `imaging-api`: DICOM image retrieval API

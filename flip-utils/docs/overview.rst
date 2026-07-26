@@ -75,12 +75,16 @@ The ``flip`` package is organized into logical modules:
    - ``executors/`` — RUN_TRAINER, RUN_VALIDATOR, RUN_EVALUATOR wrappers
    - ``controllers/`` — Workflow controllers (ScatterAndGather, CrossSiteModelEval, etc.)
    - ``components/`` — Event handlers, persistors, privacy filters, model locators, etc.
+   - ``recipes/`` — High-level NVFLARE job recipes
+   - ``runtime.py`` — Runtime helpers for NVFLARE apps
    - ``metrics.py`` — Metrics collection and reporting
 
 ``flip.flower``
    Flower-specific helpers:
 
+   - ``strategy.py`` — Flower ``Strategy`` implementations (e.g. ``FedAvgWithClientMetrics``)
    - ``metrics.py`` — Server-side metrics collection and reporting for Flower runs
+   - ``progress.py`` — Progress/status reporting helpers for Flower runs
 
 
 Using the FLIP Factory
@@ -103,21 +107,25 @@ See the API reference for detailed method documentation.
 Job Types
 ---------
 
-Set the job type via the ``JOB_TYPE`` environment variable:
+Pass the job type to the ``FLIP()`` factory (``FLIP(job_type=...)``). The
+``JobType`` enum (``flip.constants.job_types``) defines the values recognised by
+``FLIP()``:
 
 ===========================  ====================================================================================
 Type                         Description
 ===========================  ====================================================================================
-``standard``                 Federated training with FedAvg aggregation (default; NVFLARE Executor API)
-``standard_client_api``      Federated training via the NVFLARE Client API (Client-API path used for Ark+ etc.)
-``evaluation``               Distributed model evaluation without training (NVFLARE Executor API)
-``evaluation_client_api``    Distributed model evaluation via the NVFLARE Client API (head-only eval path)
+``standard``                 Federated training with FedAvg aggregation (default)
+``evaluation``               Distributed model evaluation without training
 ``diffusion_model``          Two-stage training: VAE encoder followed by diffusion model training
 ``fed_opt``                  Custom federated optimization with flexible aggregation strategies
 ===========================  ====================================================================================
 
-The Flower backend ships its own ``standard`` and ``evaluation`` templates under
-``fl-apps/flower/`` — selected at the deploy layer by ``FL_BACKEND=flower``.
+The NVFLARE backend additionally ships template directories under
+``fl-apps/nvflare/`` for the Client-API variants (``standard_client_api``,
+``evaluation_client_api``); these are selected as app templates and are not
+``JobType`` enum values. The Flower backend ships its own ``standard`` and
+``evaluation`` templates under ``fl-apps/flower/`` — selected at the deploy
+layer by ``FL_BACKEND=flower``.
 
 
 User Application Requirements
@@ -149,9 +157,11 @@ To test FL applications locally before deploying to production:
       LOCAL_DEV=true
       DEV_IMAGES_DIR=../data/accession-resources
       DEV_DATAFRAME=../data/sample_get_dataframe.csv
-      JOB_TYPE=standard
 
-2. Place your application files in ``fl-apps/nvflare/<JOB_TYPE>/app/custom/`` (e.g. fl-apps/nvflare/standard/app/custom/).
+2. Place your application files under the corresponding template's ``app/`` directory
+   (e.g. ``fl-apps/nvflare/standard/app/``). Tutorial-local overrides live in a
+   sibling ``app_files/`` directory (e.g. ``fl-tutorials/nvflare/image_classification/xray_classification/app_files/``)
+   which the tutorial harness merges onto the template at run-time.
 
 3. Run one of the shipped tutorials against the NVFLARE simulator from the repository root:
 
