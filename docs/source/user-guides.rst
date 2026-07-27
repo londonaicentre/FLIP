@@ -6,4 +6,4 @@ User guides
    :glob:
    :maxdepth: 2
 
-   ./*/*
+   ./user-guides/*

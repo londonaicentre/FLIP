@@ -58,9 +58,14 @@ Key training characteristics:
 * **50 global rounds × 5 local epochs**, batch size 4
 * **Head-only parameter exchange** (~6,885 parameters ≈ 27 KB per round) — the backbone is
   broadcast once at round 0, then cached locally
-* **Percentile privacy filter** (95th percentile, gamma 2.0) applied to head updates
+* **Percentile privacy filter** (10th percentile, gamma 0.01) applied to head updates
 * **Teacher–student EMA** available as an optional consistency regularisation
-* **Cross-site evaluation** runs at each round via the trainer's ``flare.is_evaluate()`` branch
+* **In-training validation** — every ``validate_every`` steps within each round, inside the
+  trainer's ``flare.is_train()`` branch
+* **Cross-site evaluation** — after training, the server's ``CrossSiteModelEval`` workflow
+  dispatches a one-off validate task to each client (the trainer's ``flare.is_evaluate()``
+  branch) so every site's final model is scored against every other site's data — a separate,
+  post-training workflow, not something that runs every round
 
 The full source lives under ``fl-tutorials/nvflare/image_classification/arkplus_fine_tuning/``
 in the FLIP repository. For detailed technical reference (model architecture, finetuning
@@ -110,9 +115,9 @@ defines the cohort.
 
 .. _arkplus-local-testing:
 
-************************
+*************************
 Local testing (simulator)
-************************
+*************************
 
 Before deploying to FLIP, test the app locally with NVFLARE's simulator. This runs both clients
 on one GPU, so it's useful for smoke-testing code changes and hyperparameter sweeps.
@@ -139,9 +144,9 @@ already exists). On a multi-GPU host pick a device with ``CUDA_VISIBLE_DEVICES=<
 
 .. _arkplus-submit-to-flip:
 
-*****************
+*******************
 Submitting to FLIP
-*****************
+*******************
 
 Once the app works locally, deploy it to the FLIP platform. The steps below mirror the
 :doc:`common FLIP workflow </flip-workflow>` — follow along with the Ark+ app as the concrete
@@ -207,8 +212,9 @@ completes.
 
 Navigate to the project's **Models** tab and create a new model. Upload the application files —
 the minimum set the FLIP platform expects is listed in
-``fl-apps/nvflare/standard/required_files.json`` in the repository. For the Ark+ app the key
-files are:
+``fl-apps/nvflare/standard_client_api/required_files.json`` in the repository (this app is a
+``standard_client_api`` job type — the plain ``standard`` manifest also requires a
+``validator.py`` this app doesn't have). For the Ark+ app the key files are:
 
 * ``config.json`` — model configuration (lesion labels, training hyperparameters, Ark+
   architecture settings, finetuning controls)
@@ -248,7 +254,7 @@ Once all files are uploaded:
 #. In the model page, click **Start Training**
 #. The platform packages your app, deploys it to each selected trust, and begins the FL rounds
 #. Monitor progress in the FLIP UI — the model status transitions through ``INITIATED`` →
-   ``PREPARED`` → ``TRAINING_STARTED`` → ``RESULTS_UPLOADED``
+   ``PREPARED`` → ``RUNNING`` → ``RESULTS_UPLOADED``
 #. Per-round metrics (loss, per-lesion AUC) appear in the UI as training progresses
 
 A 50-round run with two sites on the Ark+ app takes approximately **11–12 hours** wall-clock,
@@ -282,10 +288,11 @@ The Ark+ app is a worked example of the general FLIP workflow. To run your own m
    repository are the platform's entry points — copy the one matching your job type and replace
    the model, trainer, and data-loading code with your own.
 
-#. **Keep the FLIP SDK calls.** Your trainer must call ``flip.update_status(...)`` to report
-   lifecycle transitions, ``flip.get_dataframe(...)`` to retrieve the cohort, and
-   ``flip.get_by_accession_number(...)`` to pull DICOM images. The Ark+ ``trainer.py``
-   exercises all three — use it as a reference.
+#. **Keep the FLIP SDK calls.** Your data-loading code must call ``flip.get_dataframe(...)`` to
+   retrieve the cohort and ``flip.get_by_accession_number(...)`` to pull DICOM images (model
+   status transitions are handled platform-side for Client-API apps — your trainer does not
+   call ``flip.update_status`` itself). The Ark+ app's ``data_utils.py`` exercises both calls —
+   use it as a reference.
 
 #. **Use ``AGGREGATE_ONLY_REGEX`` for large frozen backbones.** If your model has a frozen
    backbone you want to broadcast once and then exclude from every round, set this key in

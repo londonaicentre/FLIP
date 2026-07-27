@@ -38,7 +38,8 @@
 #    flip-utils/flip/nvflare/controllers/scatter_and_gather.py and the fl-api app.py files in
 #    both backends) — a net trains one job at a time (the scheduler marks it BUSY), so this
 #    script correlates fl-api/fl-server events to the model purely by TIME WINDOW: it first
-#    finds the model's TRAINING_STARTED -> terminal-status window from flip-api logs, pads
+#    finds the model's RUNNING -> terminal-status window from flip-api logs (RUNNING is the
+#    post-#782 rename of TRAINING_STARTED; both tokens are matched — see Step 4), pads
 #    it, and treats everything in that window on the relevant net as belonging to this run.
 #    If two nets are ever trained concurrently for genuinely different jobs, an operator
 #    would need to add a per-net filter here (e.g. restrict to a specific net's log group
@@ -139,6 +140,9 @@ Options:
       --ecs-cluster NAME     ECS cluster name for the best-effort stopped-task check
                              (default: flip-cluster)
       --skip-ecs-check       Skip the best-effort ECS stopped-task lookup
+      --allow-partial        Do not abort when a CloudWatch page fetch fails or a log group hits
+                             MAX_PAGES; continue with whatever was fetched and mark summary.md
+                             with a prominent PARTIAL DATA warning instead (default: abort)
   -h, --help                 Show this help and exit
 
 Examples:
@@ -157,6 +161,7 @@ SEARCH_DAYS=7
 PAD_MINUTES=10
 ECS_CLUSTER="flip-cluster"
 SKIP_ECS_CHECK=false
+ALLOW_PARTIAL=false
 URL=""
 
 # --------------------------------------------------------------------------------------
@@ -183,6 +188,8 @@ while [[ $# -gt 0 ]]; do
             ECS_CLUSTER="$2"; shift 2 ;;
         --skip-ecs-check)
             SKIP_ECS_CHECK=true; shift ;;
+        --allow-partial)
+            ALLOW_PARTIAL=true; shift ;;
         -h|--help)
             usage; exit 0 ;;
         -*)
@@ -264,6 +271,12 @@ mkdir -p "$LOGS_DIR"
 WORK_DIR="$(mktemp -d)"
 trap 'rm -rf "$WORK_DIR"' EXIT
 
+# Populated by fetch_log_events() whenever --allow-partial let a failed/truncated fetch through;
+# read back in Step 11 to render a prominent PARTIAL DATA warning in summary.md instead of letting
+# an incomplete dump look identical to a complete one.
+PARTIAL_FETCHES_FILE="${WORK_DIR}/partial_fetches.txt"
+: > "$PARTIAL_FETCHES_FILE"
+
 log "Output directory: ${MODEL_OUT_DIR}"
 
 # --------------------------------------------------------------------------------------
@@ -337,8 +350,13 @@ fetch_log_events() {
     while :; do
         page=$((page + 1))
         if [[ $page -gt $MAX_PAGES ]]; then
-            warn "fetch_log_events: hit MAX_PAGES=${MAX_PAGES} for ${log_group}; results may be truncated. Narrow the window with --start/--end/--pad-minutes."
-            break
+            local cap_msg="hit MAX_PAGES=${MAX_PAGES} for ${log_group}; results are truncated. Narrow the window with --start/--end/--pad-minutes."
+            if [[ "$ALLOW_PARTIAL" == true ]]; then
+                warn "fetch_log_events: ${cap_msg}"
+                echo "PARTIAL DATA (fetch for ${log_group} aborted at page ${page}): ${cap_msg}" >> "$PARTIAL_FETCHES_FILE"
+                break
+            fi
+            die "fetch_log_events: ${cap_msg} (pass --allow-partial to continue anyway and get a marked-partial summary.md)"
         fi
 
         local args=(logs filter-log-events --log-group-name "$log_group" \
@@ -348,8 +366,13 @@ fetch_log_events() {
 
         local resp
         if ! resp="$(awscli "${args[@]}" 2>&1)"; then
-            warn "fetch_log_events failed for ${log_group} (page ${page}): ${resp}"
-            break
+            local fail_msg="fetch failed for ${log_group} (page ${page}): ${resp}"
+            if [[ "$ALLOW_PARTIAL" == true ]]; then
+                warn "fetch_log_events: ${fail_msg}"
+                echo "PARTIAL DATA (fetch for ${log_group} aborted at page ${page}): ${resp}" >> "$PARTIAL_FETCHES_FILE"
+                break
+            fi
+            die "fetch_log_events: ${fail_msg} (pass --allow-partial to continue anyway and get a marked-partial summary.md)"
         fi
 
         jq -c '.events[] | {timestamp, logStreamName, message}' <<<"$resp" >> "$raw_file"
@@ -358,7 +381,7 @@ fetch_log_events() {
         [[ -z "$next_token" ]] && break
     done
 
-    jq -c -s 'sort_by(.timestamp) | .[]' "$raw_file" > "$out_file" 2>/dev/null || : > "$out_file"
+    jq -c -s 'sort_by(.timestamp) | .[]' "$raw_file" > "$out_file" || die "fetch_log_events: jq failed sorting ${raw_file} for ${log_group}."
     wc -l < "$out_file" | tr -d ' '
 }
 
@@ -496,17 +519,26 @@ sort -n -k1,1 "$STATUS_TIMELINE_FILE" \
 log "Status transitions found: $(wc -l < "$STATUS_TIMELINE_DEDUP" | tr -d ' ')"
 
 # --------------------------------------------------------------------------------------
-# Step 4: identify TRAINING_STARTED -> terminal-status "attempts" (handles retries: a model
+# Step 4: identify training-started -> terminal-status "attempts" (handles retries: a model
 # can be started, error out, and be requeued/restarted).
+#
+# The "training started" token is `ModelStatus.RUNNING` post-#782 (develop renamed
+# TRAINING_STARTED -> RUNNING so evaluation jobs can report it honestly — see ModelStatus in
+# flip-api/src/flip_api/domain/schemas/status.py). The legacy `ModelStatus.TRAINING_STARTED`
+# is matched too for logs from a pre-rename hub/fl-server. If a future flip-api rename (e.g.
+# the pending StrEnum migration, ruff UP042, which drops the "ModelStatus." prefix from logged
+# values) breaks this match again, ATTEMPTS_FILE silently comes out empty — the check right
+# below turns that into a loud summary.md warning instead of a silent full-window fallback.
 # --------------------------------------------------------------------------------------
 
+TRAINING_STARTED_RE='^ModelStatus\.(RUNNING|TRAINING_STARTED)$'
 TERMINAL_STATUSES_RE='ModelStatus\.(ERROR|STOPPED|RESULTS_UPLOADED|RESULTS_UPLOAD_FAILED)$'
 ATTEMPTS_FILE="${WORK_DIR}/attempts.tsv"   # start_ms \t end_ms \t terminal_status (end_ms may be empty = still running/unknown)
 : > "$ATTEMPTS_FILE"
 
 pending_start=""
 while IFS=$'\t' read -r ts status; do
-    if [[ "$status" == "ModelStatus.TRAINING_STARTED" ]]; then
+    if [[ "$status" =~ $TRAINING_STARTED_RE ]]; then
         pending_start="$ts"
     elif [[ -n "$pending_start" ]] && [[ "$status" =~ $TERMINAL_STATUSES_RE ]]; then
         printf '%s\t%s\t%s\n' "$pending_start" "$ts" "$status" >> "$ATTEMPTS_FILE"
@@ -522,6 +554,26 @@ fi
 
 n_attempts="$(wc -l < "$ATTEMPTS_FILE" | tr -d ' ')"
 log "Identified ${n_attempts} training attempt(s) for this model"
+
+ATTEMPTS_PARSE_WARNING=""
+if [[ "$n_attempts" -eq 0 && -s "$STATUS_TIMELINE_DEDUP" ]]; then
+    ATTEMPTS_PARSE_WARNING="Model status lines were found (see the wall-clock timeline below) but none matched a recognised \"training started\" token (\`ModelStatus.RUNNING\` or the legacy \`ModelStatus.TRAINING_STARTED\`). This usually means flip-api renamed the status again since this script was last updated — extend \$TRAINING_STARTED_RE accordingly. Falling back to the full model activity window for fl-api/fl-server correlation, which may pull in log lines from another job trained on the same net in that window."
+    warn "$ATTEMPTS_PARSE_WARNING"
+fi
+
+# A retried model produces >1 attempt in the same window; the round table below (Step 7)
+# assumes exactly one attempt (round numbers restart at 0 each retry, so a second attempt's
+# round 0 would otherwise collide with the first attempt's). Rather than silently mispairing
+# rounds across attempts, stop here and ask the operator to isolate one attempt.
+if [[ "$n_attempts" -gt 1 ]]; then
+    warn "Detected ${n_attempts} training attempts for this model in the queried window (a retried run). Attempt boundaries:"
+    i=0
+    while IFS=$'\t' read -r a_start a_end a_status; do
+        i=$((i+1))
+        warn "  attempt ${i}: $(ms_to_iso "$a_start") -> $(ms_to_iso "$a_end")  (${a_status})"
+    done < "$ATTEMPTS_FILE"
+    die "Round-table extraction assumes a single attempt per invocation — re-run with --start/--end narrowed to one of the attempt windows logged above."
+fi
 
 # --------------------------------------------------------------------------------------
 # Step 5: dump fl-api-net-*/fl-server-net-* logs across the union of all attempt windows
@@ -623,10 +675,11 @@ if [[ "$BACKEND" == "nvflare" ]]; then
     grep -oP '^\d+ .*Start aggregation\.' "$FL_SERVER_TEXT" | awk '{print $1}' > "$AGG_STARTS" || true
     grep -oP '^\d+ .*End aggregation\.' "$FL_SERVER_TEXT" | awk '{print $1}' > "$AGG_ENDS" || true
 
-    # Per-contribution lines. NVFLARE's IntimeModelSelector logs
+    # Per-contribution lines. Stock NVFLARE's ScatterAndGather controller itself logs
     #   "Contribution from <client> ACCEPTED|REJECTED by the aggregator at round <N>."
-    # (older builds omit " at round <N>", hence the optional group). The round tag lets us
-    # break contributions out per-round in the table below.
+    # (nvflare/app_common/workflows/scatter_and_gather.py; older builds omit " at round <N>",
+    # hence the optional group). The round tag lets us break contributions out per-round in
+    # the table below.
     # NB: the `|| true` on these is load-bearing — with `set -o pipefail`, a zero-match grep
     # fails the whole pipeline and set -e would abort the script (wc still prints 0 first).
     CONTRIB_FILE="${WORK_DIR}/contributions.tsv"   # verdict \t round ('-' if untagged)
@@ -651,7 +704,10 @@ elif [[ "$BACKEND" == "flower" ]]; then
     # Flower: no round-boundary or aggregation-timing log lines exist in the platform code
     # (see flip-utils/flip/flower/metrics.py) — approximate each round's window from the
     # spread of "Forwarded metric ... (round N)" timestamps for that round.
-    grep -oP '^\d+ .*\(round \d+\)' "$FL_SERVER_TEXT" "$FL_API_TEXT" 2>/dev/null \
+    # -h suppresses grep's per-match filename prefix — with two file arguments grep prints
+    # "path:match" by default, and WORK_DIR's mktemp-random suffix frequently contains a digit,
+    # which the sed below can't tell apart from the real leading timestamp digits.
+    grep -hoP '^\d+ .*\(round \d+\)' "$FL_SERVER_TEXT" "$FL_API_TEXT" 2>/dev/null \
         | sed -E 's/^[^0-9]*([0-9]+) .*\(round ([0-9]+)\).*/\2\t\1/' \
         | sort -n -k1,1 -k2,2 > "${WORK_DIR}/flower_rounds.tsv" || true
     if [[ -s "${WORK_DIR}/flower_rounds.tsv" ]]; then
@@ -682,7 +738,11 @@ ROUNDS_TSV="${MODEL_OUT_DIR}/rounds.tsv"
 maybe_iso() { [[ -n "${1:-}" && "${1:-}" != "-" ]] && ms_to_iso "$1" || echo "-"; }
 maybe_dur() {
     if [[ -n "${1:-}" && "${1:-}" != "-" && -n "${2:-}" && "${2:-}" != "-" ]]; then
-        awk -v a="$1" -v b="$2" 'BEGIN{printf "%.3f", (b - a) / 1000}'
+        # Guard against a negative duration (out-of-order/overlapping timestamps — e.g. two
+        # retried attempts' events interleaved despite the single-attempt check in Step 4):
+        # awk exits 1 without printing anything on a negative result, so the caller (a plain
+        # assignment, never inlined directly into another command) reliably fails under set -e.
+        awk -v a="$1" -v b="$2" 'BEGIN{d=(b-a)/1000; if (d<0) exit 1; printf "%.3f", d}'
     else
         echo "-"
     fi
@@ -691,10 +751,16 @@ maybe_dur() {
 {
     printf 'round\tstarted_utc\tfinished_utc\tduration_s\tagg_started_utc\tagg_finished_utc\tagg_duration_s\taccepted\trejected\tstart_ms\tend_ms\tagg_start_ms\tagg_end_ms\n'
     while IFS=$'\t' read -r round start_ms end_ms agg_start agg_end acc rej; do
+        start_iso="$(maybe_iso "$start_ms")"
+        end_iso="$(maybe_iso "$end_ms")"
+        dur="$(maybe_dur "$start_ms" "$end_ms")" || die "Computed a negative round duration for round ${round} (start=${start_ms} end=${end_ms}) — indicates out-of-order/overlapping log events. Inspect ${FL_SERVER_TEXT} or narrow --start/--end."
+        agg_start_iso="$(maybe_iso "$agg_start")"
+        agg_end_iso="$(maybe_iso "$agg_end")"
+        agg_dur="$(maybe_dur "$agg_start" "$agg_end")" || die "Computed a negative aggregation duration for round ${round} (agg_start=${agg_start} agg_end=${agg_end}) — indicates out-of-order/overlapping log events. Inspect ${FL_SERVER_TEXT} or narrow --start/--end."
         printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
             "$round" \
-            "$(maybe_iso "$start_ms")" "$(maybe_iso "$end_ms")" "$(maybe_dur "$start_ms" "$end_ms")" \
-            "$(maybe_iso "$agg_start")" "$(maybe_iso "$agg_end")" "$(maybe_dur "$agg_start" "$agg_end")" \
+            "$start_iso" "$end_iso" "$dur" \
+            "$agg_start_iso" "$agg_end_iso" "$agg_dur" \
             "${acc:--}" "${rej:--}" \
             "${start_ms:--}" "${end_ms:--}" "${agg_start:--}" "${agg_end:--}"
     done < "$ROUND_TABLE_FILE"
@@ -871,10 +937,26 @@ SUMMARY_FILE="${MODEL_OUT_DIR}/summary.md"
     echo "> Correlation caveat: fl-api-net-*/fl-server-net-* log lines carry no model_id or"
     echo "> project_id (confirmed by source inspection — see the script header). Everything"
     echo "> below from those two log groups is attributed to this model purely by falling"
-    echo "> inside its TRAINING_STARTED -> terminal-status window(s), padded by"
+    echo "> inside its RUNNING -> terminal-status window(s), padded by"
     echo "> ${PAD_MINUTES} minutes. If another job trained concurrently on the same net in that"
     echo "> window, its log lines would be indistinguishable from this model's."
     echo
+
+    if [[ -s "$PARTIAL_FETCHES_FILE" ]]; then
+        echo "> **WARNING: PARTIAL DATA.** One or more CloudWatch fetches in this run were cut short"
+        echo "> (\`--allow-partial\` was set). Every metric below may be under-counting — treat this"
+        echo "> extraction as incomplete, not as a clean zero/negative result:"
+        echo ">"
+        while IFS= read -r line; do
+            echo "> - ${line}"
+        done < "$PARTIAL_FETCHES_FILE"
+        echo
+    fi
+
+    if [[ -n "$ATTEMPTS_PARSE_WARNING" ]]; then
+        echo "> **WARNING**: ${ATTEMPTS_PARSE_WARNING}"
+        echo
+    fi
 
     echo "## 1. Communication rounds"
     echo
@@ -971,7 +1053,7 @@ SUMMARY_FILE="${MODEL_OUT_DIR}/summary.md"
     echo "Total observed span (first to last model-related flip-api log line): **${total_s}s** ($(ms_to_iso "$TRUE_START_MS") to $(ms_to_iso "$TRUE_END_MS"))."
     echo
     if [[ -s "$ATTEMPTS_FILE" ]]; then
-        echo "Training attempt(s) (TRAINING_STARTED -> terminal status; more than one row means the model was retried):"
+        echo "Training attempt (RUNNING -> terminal status; Step 4 aborts the run rather than reaching this point if more than one attempt is detected in-window, see the note above if it fired):"
         echo
         echo "| Attempt | Training started | Ended | Terminal status | Duration (s) |"
         echo "|---|---|---|---|---|"

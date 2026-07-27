@@ -79,7 +79,12 @@ download-raw-checkpoint:
 	fi
 	@echo "Downloading Ark+ foundation model checkpoint..."
 	@mkdir -p "$(dir $(RAW_CHECKPOINT))"
-	@curl -L -o "$(RAW_CHECKPOINT)" "https://www.dropbox.com/scl/fo/joycn8m93nvlrc8yjme40/ABBtPc5oaalYZ7kzmERpjhU/Ark%2B_Nature/Ark6_swinLarge768_ep50.pth.tar?rlkey=p3lphqvtgmiphw1n0u039jpjn&dl=1"
+	@# --fail makes curl exit non-zero on an HTTP error instead of saving the error page as the
+	@# checkpoint; downloading to a temp name and moving only on success means a failed/partial
+	@# download never leaves a file at RAW_CHECKPOINT for prepare-checkpoint's -f guard to treat
+	@# as valid forever.
+	@curl -fL -o "$(RAW_CHECKPOINT).tmp" "https://www.dropbox.com/scl/fo/joycn8m93nvlrc8yjme40/ABBtPc5oaalYZ7kzmERpjhU/Ark%2B_Nature/Ark6_swinLarge768_ep50.pth.tar?rlkey=p3lphqvtgmiphw1n0u039jpjn&dl=1"
+	@mv "$(RAW_CHECKPOINT).tmp" "$(RAW_CHECKPOINT)"
 	@echo "✅ Downloaded Ark+ foundation model checkpoint to $(RAW_CHECKPOINT)"
 
 # --- Checkpoint preprocessing ---
@@ -165,7 +170,10 @@ metrics:
 # and pack metrics + simulator logs + host/provenance info into a single archive in this
 # directory. Requires Linux, uv, and an NVIDIA GPU (pick one with CUDA_VISIBLE_DEVICES).
 experiment:
-	@if [ -d "$(SITE1_IMAGES_DIR)" ] && [ -d "$(SITE2_IMAGES_DIR)" ]; then \
+	@# Directory existence alone doesn't mean the download finished (an interrupted `snapshot_download`
+	@# or Ctrl+C mid-copy leaves the directories present but partial) — check for the
+	@# .download-complete marker download-arkplus-finetuning-data writes only on success.
+	@if [ -f "$(dir $(SITE1_IMAGES_DIR)).download-complete" ] && [ -f "$(dir $(SITE2_IMAGES_DIR)).download-complete" ]; then \
 		echo "✅ Ark+ tutorial data present."; \
 	else \
 		$(MAKE) --no-print-directory -C "$(REPO_ROOT)/fl-tutorials" download-arkplus-finetuning-data; \
@@ -187,17 +195,25 @@ package:
 	run_name="simulator-arkplus-$${host}-$${stamp}"; \
 	$(MAKE) --no-print-directory metrics RUN_NAME="$$run_name"; \
 	out="$(METRICS_OUT)/$$run_name"; \
+	observed_rounds="$$(tail -n +2 "$$out/rounds.tsv" 2>/dev/null | wc -l | tr -d ' ')"; \
 	mkdir -p "$$out/logs" "$$out/provenance"; \
 	( cd "$(WORKSPACE)" && find . -type f \
 		\( -name 'log*.txt' -o -name '*.log' -o -name 'log.json' -o -name 'error_log.txt' \) \
-		-size -64M -exec cp --parents {} "$$out/logs/" \; ); \
+		-print0 | while IFS= read -r -d '' f; do \
+			sz=$$(stat -c%s "$$f" 2>/dev/null || stat -f%z "$$f" 2>/dev/null || echo 0); \
+			if [ "$$sz" -ge 67108864 ]; then \
+				echo "⚠️  Excluding $$f from bundle logs/ (size $${sz} bytes, >= 64 MiB cap) — the fl-server log is the most important file here, so check this isn't it"; \
+			else \
+				cp --parents "$$f" "$$out/logs/" || { echo "❌ Failed to copy $$f into bundle logs/" >&2; exit 1; }; \
+			fi; \
+		done ); \
 	cp "$(APP_DIR)/app_files/config.json" "$$out/provenance/config.json"; \
 	cp "$(APP_DIR)/.env.app" "$$out/provenance/env.app.txt" 2>/dev/null || true; \
 	{ echo "generated: $$(date -Is)"; \
 	  echo "host: $$(hostname)"; \
 	  echo "git_commit: $$(git -C "$(REPO_ROOT)" rev-parse HEAD 2>/dev/null || echo unknown)"; \
 	  echo "git_branch: $$(git -C "$(REPO_ROOT)" rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)"; \
-	  echo "experiment_rounds: $(EXPERIMENT_ROUNDS)"; \
+	  echo "experiment_rounds: $${observed_rounds:-$(EXPERIMENT_ROUNDS)} (observed in rounds.tsv; requested EXPERIMENT_ROUNDS=$(EXPERIMENT_ROUNDS))"; \
 	  echo "workspace: $(WORKSPACE)"; \
 	  echo; uname -a; \
 	  echo; nvidia-smi 2>/dev/null || echo "nvidia-smi unavailable"; \

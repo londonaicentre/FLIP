@@ -38,14 +38,14 @@ Background
 The experiment compares two runs of the **identical** federated-learning application
 (:ref:`Ark+ fine-tuning <arkplus-fine-tuning>`) under two execution regimes:
 
-=============  ========================================================  ======================================================
-               **Platform run**                                          **Local simulator replica**
-=============  ========================================================  ======================================================
-Where           FLIP production, cross-continental (UK + Thailand)       Single machine, NVIDIA RTX 5090, both clients on one GPU
-Rounds          50 global rounds × 5 local epochs                        50 global rounds × 5 local epochs
-Round payload   Head-only after round 0 (~27 KB)                        Head-only after round 0 (~27 KB)
-Source          CloudWatch logs from the production ECS fl-server         NVFLARE SimEnv server log
-=============  ========================================================  ======================================================
+=============  ==================================================  ========================================================
+               **Platform run**                                    **Local simulator replica**
+=============  ==================================================  ========================================================
+Where          FLIP production, cross-continental (UK + Thailand)  Single machine, NVIDIA RTX 5090, both clients on one GPU
+Rounds         50 global rounds × 5 local epochs                   50 global rounds × 5 local epochs
+Round payload  Head-only after round 0 (~27 KB)                    Head-only after round 0 (~27 KB)
+Source         CloudWatch logs from the production ECS fl-server   NVFLARE SimEnv server log
+=============  ==================================================  ========================================================
 
 Three host-independent metrics isolate the platform's contribution from site compute and WAN
 transfer:
@@ -68,16 +68,16 @@ Prerequisites
 To reproduce the full experiment you need access to both the live FLIP platform and a local
 GPU machine:
 
-===========================  =====================================================================
-Requirement                  Purpose
-===========================  =====================================================================
-FLIP account (``researcher``) Submit and monitor the platform run
-AWS prod credentials         Extract round metrics from CloudWatch (``extract_model_metrics.sh``)
-Linux + NVIDIA GPU + ``uv``  Run the local simulator replica
-~15 GB free disk             Tutorial dataset (~6.3 GB) plus simulator output
-Ark+ backbone checkpoint      Request via `this form <https://forms.gle/qkoDGXNiKRPTDdCe8>`_
-Internet access              Hugging Face dataset download, AWS API calls
-===========================  =====================================================================
+=============================  ====================================================================
+Requirement                    Purpose
+=============================  ====================================================================
+FLIP account (``researcher``)  Submit and monitor the platform run
+AWS prod credentials           Extract round metrics from CloudWatch (``extract_model_metrics.sh``)
+Linux + NVIDIA GPU + ``uv``    Run the local simulator replica
+~15 GB free disk               Tutorial dataset (~6.3 GB) plus simulator output
+Ark+ backbone checkpoint       Request via `this form <https://forms.gle/qkoDGXNiKRPTDdCe8>`_
+Internet access                Hugging Face dataset download, AWS API calls
+=============================  ====================================================================
 
 If you only want to contribute a **simulator data point** (e.g., your site's GPU baseline for
 the multi-site comparison), you only need the GPU, ``uv``, and internet — skip the platform and
@@ -110,9 +110,10 @@ The bundle contains:
 * ``rounds.tsv`` — per-round timing table (round number, duration, aggregation time, gap)
 * ``summary.md`` — human-readable statistics (mean ± std, totals)
 * ``round_timings_boxplot.png`` — visual overview of per-round timing
-* ``experiment.log`` — the full simulator server log (model files excluded; metrics-only)
+* ``logs/`` — the simulator's log files under their original names, size-capped at 64 MiB each
+  (model files excluded; metrics-only)
 * ``provenance/config.json`` — the app configuration used
-* ``provenance/.env.app`` — per-site data paths and environment
+* ``provenance/env.app.txt`` — per-site data paths and environment (copy of ``.env.app``)
 * ``provenance/host_info.txt`` — GPU model, driver version, OS, git commit
 
 If you already ran the simulator and only need to re-bundle (e.g., the simulation completed but
@@ -146,7 +147,7 @@ cohort query, upload the app files, and start training on the live platform. In 
    ``arkplus_flat_models.py``, ``data_utils.py``, ``query.sql``, ``requirements.txt``, and the
    backbone checkpoint as a separate file
 #. **Start training** — the model transitions through ``INITIATED`` → ``PREPARED`` →
-   ``TRAINING_STARTED`` → ``RESULTS_UPLOADED``
+   ``RUNNING`` → ``RESULTS_UPLOADED``
 
 .. note::
 
@@ -170,25 +171,31 @@ same artefacts the simulator produces (``rounds.tsv``, ``summary.md``, boxplot):
    # One-time: authenticate with the AWS production account
    aws sso login --profile prod
 
-   # Extract metrics for a specific model ID (from the FLIP UI model page)
-   ./scripts/extract_model_metrics.sh <model-id> <output-directory>
+   # Extract metrics for a specific model — pass the FLIP UI model page URL, not a bare ID
+   ./scripts/extract_model_metrics.sh '<flip-ui-model-url>' -o <output-directory>
 
    # Example
-   ./scripts/extract_model_metrics.sh 24985ec3-3349-435b-afcd-f38972d8695d model_metrics/24985ec3-3349-435b-afcd-f38972d8695d
+   ./scripts/extract_model_metrics.sh \
+       'https://app.flip.aicentre.co.uk/project/f48850b7-3101-46d1-8fa7-a00bf01d2597/model/24985ec3-3349-435b-afcd-f38972d8695d' \
+       -o model_metrics
 
-The script queries CloudWatch Logs for the time window covering the model's lifecycle (it reads
-the model's ``created_at`` timestamp from the FLIP API to bound the search), extracts
-``ScatterAndGather`` controller events from the ``fl-server`` log group, and writes:
+The script parses the ``project_id``/``model_id`` pair out of that URL, then discovers the model's
+activity window itself: it searches the ``/ecs/flip-api`` CloudWatch log group for log lines
+mentioning the ``model_id`` over the last ``--search-days`` (default 7, matching CloudWatch
+retention) and derives the window from the earliest/latest hit — there is no FLIP API call
+involved, and no ``FLIP_API_BASE`` setting to configure. Pass ``--start``/``--end`` (ISO 8601) to
+skip auto-discovery and supply the window yourself. It then extracts ``ScatterAndGather``
+controller events from the ``fl-server-net-*``/``fl-api-net-*`` log groups and writes, under
+``<output-directory>/<model_id>/``:
 
 * ``rounds.tsv`` — per-round timing (round number, duration in seconds, aggregation time, gap)
-* ``summary.md`` — statistics (mean, std, min, max, total span) and a timeline table
+* ``summary.md`` — statistics (mean, std, n) and a status/timeline table
 * ``round_timings_boxplot.png`` — side-by-side boxplots of round duration, aggregation, and gap
-* ``failures.tsv`` — any error, retry, or warning lines found in the time window (useful for
-  diagnosing runs that didn't complete)
+* ``failures.tsv`` / ``infra_constraints.tsv`` — any error, retry, warning, or infrastructure-limit
+  lines found in the time window (useful for diagnosing runs that didn't complete)
 
-The script requires ``aws`` CLI with the ``prod`` profile and ``jq``. It also calls the FLIP
-API to look up the model — set ``FLIP_API_BASE`` to the production URL if not already in your
-environment.
+The script requires the ``aws`` CLI (authenticated with the ``prod`` profile) and ``jq``; run
+``./scripts/extract_model_metrics.sh --help`` for the full option list.
 
 .. _overhead-compare:
 
@@ -287,17 +294,29 @@ the simulator baseline on their own GPU with a single command:
    cd FLIP/fl-tutorials/nvflare/image_classification/arkplus_fine_tuning
    make experiment
 
-They send back the ``arkplus_sim_experiment_<host>_<timestamp>.zip`` bundle. To fold it into the
-comparison, extract the zip and pass its ``rounds.tsv`` as a second comparison point:
+They send back the ``arkplus_sim_experiment_<host>_<timestamp>.zip`` bundle. Extract it — the
+bundle already contains that site's own ``rounds.tsv``/``summary.md``, produced by their
+``make experiment`` run, so there is nothing left to (re-)compute:
 
 .. code-block:: bash
 
    unzip arkplus_sim_experiment_bdms-gpu-1_20260714T120000.zip -d /tmp/bdms-sim
-   make metrics COMPARE=/path/to/platform/rounds.tsv \
-                 COMPARE_2=/tmp/bdms-sim/model_metrics/simulator-*/rounds.tsv
 
-The provenance folder in each bundle (GPU model, driver, OS, git commit) ensures you can
-attribute per-site deltas to hardware rather than software differences.
+``make metrics`` (and ``extract_simulator_metrics.sh`` underneath it) takes a single
+``COMPARE``/``--compare`` baseline at a time — there is no ``COMPARE_2`` for a combined
+multi-column table. To line a third site's numbers up against the platform baseline, either read
+its extracted ``summary.md``/``rounds.tsv`` alongside the platform run's, or re-run the comparison
+against that site's own log directory (bundled under ``logs/`` inside the zip) to get a dedicated
+platform-vs-that-site ``summary.md``:
+
+.. code-block:: bash
+
+   bash scripts/extract_simulator_metrics.sh /tmp/bdms-sim/simulator-arkplus-*/logs \
+       --compare /path/to/platform/rounds.tsv -o /tmp/bdms-sim-compare
+
+Repeat once per collaborating site's bundle. The provenance folder in each bundle (GPU model,
+driver, OS, git commit) lets you attribute per-site deltas to hardware rather than software
+differences.
 
 .. seealso::
 
