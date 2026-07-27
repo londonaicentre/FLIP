@@ -69,6 +69,14 @@ services:
       # Shared with fl-api: uploaded app bundles (sources + model checkpoints) live
       # under /app/src/<model_id>; the evaluation ServerApp reads checkpoints from there.
       - ../../fl-tutorials/flower:/app/src
+    # Runtime dependency installation is enabled by default on the SuperLink
+    # (ServerApp side); the SuperNodes below opt in explicitly. Apps whose
+    # pyproject pins `[tool.uv.sources] flip-utils = { path = "/opt/flip-utils" }`
+    # (the fl-apps templates do; FLIP#767) build flip-utils from the copy baked
+    # into the image — rebuild the images to pick up flip-utils changes. The
+    # fl-tutorials apps submitted to this standalone stack don't carry the pin
+    # and runtime-install their declared flip-utils from PyPI (see the README's
+    # runtime-dependency section).
     command:
       - --insecure
       - --health-server-address
@@ -105,6 +113,10 @@ services:
       - superlink:9092
       - --health-server-address
       - ${SUPERNODE_HEALTH_SERVER_BIND_ADDRESS:-0.0.0.0:9098}
+      # ClientApp-side runtime dependency install (default-off on SuperNodes in
+      # flwr 1.32): resolves the app's declared deps per run (the fl-apps
+      # templates pin flip-utils to /opt/flip-utils via [tool.uv.sources]; FLIP#767).
+      - --allow-runtime-dependency-installation
     deploy:
       resources:
         limits:
@@ -139,6 +151,10 @@ services:
       - superlink:9092
       - --health-server-address
       - ${SUPERNODE_HEALTH_SERVER_BIND_ADDRESS:-0.0.0.0:9098}
+      # ClientApp-side runtime dependency install (default-off on SuperNodes in
+      # flwr 1.32): resolves the app's declared deps per run (the fl-apps
+      # templates pin flip-utils to /opt/flip-utils via [tool.uv.sources]; FLIP#767).
+      - --allow-runtime-dependency-installation
     deploy:
       resources:
         limits:

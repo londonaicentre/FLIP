@@ -16,18 +16,16 @@
 from collections.abc import Iterable
 from logging import INFO
 
-from flip import FLIP
-from flip.flower.metrics import handle_client_exception, handle_client_metrics
+from flip.flower.strategy import FlipFedAvg
 from flwr.common import MetricRecord, log
 from flwr.common.message import Message
-from flwr.serverapp.strategy import FedAvg
 
 # MetricRecord key that FedAvg uses as the aggregation weight; it is bookkeeping,
 # not a reportable metric, so it is excluded from the per-client JSON breakdown.
 _WEIGHT_KEY = "num-examples"
 
 
-class EvaluationStrategy(FedAvg):
+class EvaluationStrategy(FlipFedAvg):
     """Evaluation-only strategy: native metric aggregation plus FLIP forwarding.
 
     The aggregation itself — a weighted average (by ``num-examples``) of every
@@ -35,32 +33,15 @@ class EvaluationStrategy(FedAvg):
     ``FedAvg``. Whatever metrics ``client_app`` chooses to compute and return
     flow through unchanged; there is no metric declaration or validation here.
 
-    This subclass only adds the two things the base strategy cannot know about:
-
-    * forwarding each client's metrics and exceptions to the FLIP Central Hub
-      (``handle_client_metrics`` / ``handle_client_exception``). These need the
-      full reply ``Message``, so they must run in an ``aggregate_*`` override
-      rather than via the ``evaluate_metrics_aggr_fn`` callback (which only
-      receives ``RecordDict``s). This mirrors the pattern documented in
-      ``flip.flower.metrics``.
-    * capturing a per-client metric breakdown for the ``evaluation_results.json``
-      artifact the ServerApp uploads to S3.
-
-    Args:
-        flip: FLIP instance used by the fl-server to forward metrics to the Central Hub.
-        model_id: FLIP model ID (UUID) for the current run.
+    All Central Hub telemetry (status, per-client metric/exception forwarding,
+    round events) is inherited from ``FlipFedAvg`` — with ``fraction_train=0.0``
+    no round trains, so the round events attach to the evaluate phase. This
+    subclass only adds the per-client metric breakdown captured for the
+    ``evaluation_results.json`` artifact the ServerApp uploads to S3.
     """
 
-    def __init__(
-        self,
-        flip: FLIP,
-        model_id: str,
-        *args,
-        **kwargs,
-    ):
+    def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.flip = flip
-        self.model_id = model_id
         # Per-client results for the JSON artifact: {client_name: {metric_name: value}}
         self.per_client_results: dict[str, dict[str, float]] = {}
 
@@ -69,15 +50,13 @@ class EvaluationStrategy(FedAvg):
         server_round: int,
         replies: Iterable[Message],
     ) -> MetricRecord | None:
-        """Forward client results to FLIP, then aggregate natively via FedAvg."""
+        """Capture the per-client breakdown, then aggregate (and forward) via FlipFedAvg."""
         replies = list(replies)
 
         for msg in replies:
-            # fl-clients never reach the Central Hub directly — forward server-side.
-            handle_client_metrics(msg, server_round, self.model_id, self.flip)
-            handle_client_exception(msg, self.model_id, self.flip)
             self._record_client_metrics(msg)
 
+        # FlipFedAvg forwards each client's metrics/exceptions to the hub and
         # FedAvg weighted-averages every metric in the replies, weighting by
         # _WEIGHT_KEY and excluding it from the aggregated record.
         aggregated = super().aggregate_evaluate(server_round, replies)

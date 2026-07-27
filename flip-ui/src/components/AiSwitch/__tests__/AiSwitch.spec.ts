@@ -43,7 +43,7 @@ describe("AiSwitch", () => {
         expect(comp.find("button[role=\"switch\"]").exists()).toBe(true);
     });
 
-    it("toggles on click, showing the check mark once on", async () => {
+    it("toggles on click, sliding the knob across — no tick, the position says it", async () => {
         const comp = mount(AiSwitch, {
             props: {
                 name: "flag",
@@ -57,12 +57,121 @@ describe("AiSwitch", () => {
             }
         });
 
-        // Off: knob carries no check icon.
+        expect(comp.get("[data-test=switch-knob]").classes()).toContain("translate-x-1");
         expect(comp.find("svg").exists()).toBe(false);
 
         await comp.find("button[role=\"switch\"]").trigger("click");
 
-        expect(comp.find("svg").exists()).toBe(true);
+        expect(comp.get("[data-test=switch-knob]").classes()).toContain("translate-x-6");
+        // On, and still no tick: the knob has moved, which is the whole signal.
+        expect(comp.find("svg").exists()).toBe(false);
+    });
+
+    it("drops its label on a narrow window — the knob's position already says it", () => {
+        const comp = mount(AiSwitch, {
+            props: {
+                name: "flag",
+                value: "true",
+                label: {
+                    enabled: "Trust Included",
+                    disabled: "Trust Excluded"
+                }
+            },
+            global: {
+                plugins: [createTestingPinia({
+                    createSpy: vi.fn,
+                    stubActions: false
+                })]
+            }
+        });
+
+        const switchLabel = comp.get("label");
+        expect(switchLabel.classes()).toContain("hidden");
+        expect(switchLabel.classes()).toContain("sm:inline");
+    });
+
+    it("stays on screen when disabled, greyed out, so its position still reads", async () => {
+        const comp = mount(AiSwitch, {
+            props: {
+                name: "flag",
+                value: true,
+                disabled: true
+            },
+            global: {
+                plugins: [createTestingPinia({
+                    createSpy: vi.fn,
+                    stubActions: false
+                })]
+            }
+        });
+
+        const control = comp.find("button[role=\"switch\"]");
+        expect(control.exists()).toBe(true);
+        expect(control.attributes("aria-disabled")).toBe("true");
+        expect(control.classes()).toContain("opacity-60");
+        expect(control.classes()).toContain("cursor-not-allowed");
+    });
+
+    it("a disabled switch cannot be toggled", async () => {
+        const comp = mount(AiSwitch, {
+            props: {
+                name: "flag",
+                value: true,
+                disabled: true
+            },
+            global: {
+                plugins: [createTestingPinia({
+                    createSpy: vi.fn,
+                    stubActions: false
+                })]
+            }
+        });
+
+        // Off, and it must stay off: the knob does not move.
+        await comp.find("button[role=\"switch\"]").trigger("click");
+
+        expect(comp.get("[data-test=switch-knob]").classes()).toContain("translate-x-1");
+    });
+
+    it("a disabled switch is natively disabled, not just aria-disabled", async () => {
+        // aria-disabled alone leaves the button focusable and Headless UI's internal
+        // handlers reachable (they never check the prop, and would flip aria-checked
+        // for screen readers even with the knob and form value guarded). The native
+        // attribute makes the browser deliver no events at all and drops the dead
+        // control from the tab order — jsdom dispatches events regardless, so this
+        // pins the attribute rather than the resulting behaviour.
+        const comp = mount(AiSwitch, {
+            props: {
+                name: "flag",
+                value: true,
+                disabled: true
+            },
+            global: {
+                plugins: [createTestingPinia({
+                    createSpy: vi.fn,
+                    stubActions: false
+                })]
+            }
+        });
+
+        expect(comp.find("button[role=\"switch\"]").attributes("disabled")).toBeDefined();
+    });
+
+    it("an enabled switch carries no native disabled attribute", async () => {
+        const comp = mount(AiSwitch, {
+            props: {
+                name: "flag",
+                value: true
+            },
+            global: {
+                plugins: [createTestingPinia({
+                    createSpy: vi.fn,
+                    stubActions: false
+                })]
+            }
+        });
+
+        expect(comp.find("button[role=\"switch\"]").attributes("disabled")).toBeUndefined();
     });
 
 });

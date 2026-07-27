@@ -59,6 +59,12 @@ services:
       - /keys/supernode_credentials_${FL_KIT_SLOT_NUMBER}
       - --clientappio-api-address
       - ${SUPERNODE_1_CLIENTAPPIO_API_ADDRESS:-127.0.0.1:9094}
+      # ClientApp-side runtime dependency install (default-off on SuperNodes in
+      # flwr 1.32): resolves the app's declared deps per run via `uv sync`, with
+      # flip-utils pinned to the copy baked at /opt/flip-utils by the template's
+      # [tool.uv.sources] (FLIP#767). NOTE: this requires outbound HTTPS from the
+      # trust host to PyPI + download.pytorch.org for the remaining deps.
+      - --allow-runtime-dependency-installation
     shm_size: '8gb'
     # GPU passthrough via compose_trust.production.gpu.yml overlay (gated on NUM_AVAILABLE_GPUS)
 

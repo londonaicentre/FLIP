@@ -51,6 +51,13 @@ and retrieves a DXO with the metrics.
   they are saved verbatim into `evaluation_results.json`, keyed by data site (then by the model name your
   evaluator returns), so there is no output schema to declare.
 
+  Every `validate` task that does not return metrics is recorded alongside it in
+  `evaluation_failures.json` as `{"model": ..., "client": ..., "return_code": ...}` (`model` is `null`
+  here — this job type sends all models in one task, so failures are per client). The file is always
+  written, so an empty list `[]` positively means no task failed. If **every** task fails, the model
+  ends in `ERROR` rather than `RESULTS_UPLOADED`; the results are still uploaded so the zip can carry
+  `evaluation_failures.json` and `error_log.txt`.
+
 ## Test it with the spleen MSD dataset
 
 The evaluation tutorial (`evaluation` job type) runs on the local NVFLARE simulator via:

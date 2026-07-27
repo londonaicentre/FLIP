@@ -17,15 +17,18 @@
 
 from unittest.mock import MagicMock, patch
 
+import numpy as np
 from nvflare.apis.dxo import DXO, DataKind, from_shareable
 from nvflare.apis.fl_constant import FLContextKey, ReturnCode
 from nvflare.apis.shareable import Shareable
 from nvflare.app_common.abstract.aggregator import Aggregator
 from nvflare.app_common.app_constant import AppConstants
+from nvflare.app_common.workflows.scatter_and_gather import ScatterAndGather as NVFlareScatterAndGather
 from nvflare.app_opt.pt.fedopt import PTFedOptModelShareableGenerator
 
-from flip.constants import FlipEvents
+from flip.constants import FlipEvents, FlipProps
 from flip.nvflare.controllers.scatter_and_gather import ScatterAndGather
+from flip.schemas import FLLogEvent
 
 _VALID_MODEL_ID = "123e4567-e89b-12d3-a456-426614174000"
 
@@ -295,3 +298,123 @@ class TestCheckAbortSignal:
 
         assert controller._check_abort_signal(_ctx(), abort_signal) is False
         controller.fire_event.assert_not_called()
+
+
+class TestClientResultTelemetry:
+    """Accepted client results are relayed to the hub as CLIENT_RESULT_RECEIVED facts."""
+
+    def _controller(self):
+        controller = ScatterAndGather(model_id=_VALID_MODEL_ID)
+        controller.aggregator = MagicMock(spec=Aggregator)
+        controller.aggregator.accept.return_value = True
+        controller.fire_event = MagicMock()
+        controller.log_info = MagicMock()
+        controller.log_error = MagicMock()
+        controller.flip = MagicMock()
+        controller._current_round = 2
+        controller._current_num_targets = 3
+        controller._global_weights = {"weights": {"w1": np.zeros(4, dtype=np.float32)}}
+        return controller
+
+    def _ok_result(self, round_no=2):
+        result = DXO(data_kind=DataKind.WEIGHT_DIFF, data={"w1": np.zeros(4, dtype=np.float32)}).to_shareable()
+        result.add_cookie(AppConstants.CONTRIBUTION_ROUND, round_no)
+        return result
+
+    def test_accepted_result_emits_client_result_event(self):
+        controller = self._controller()
+
+        controller._accept_train_result(client_name="Trust_1", result=self._ok_result(), fl_ctx=_ctx())
+
+        controller.flip.send_event.assert_called_once_with(
+            model_id=_VALID_MODEL_ID,
+            event_type=FLLogEvent.CLIENT_RESULT_RECEIVED,
+            global_round=3,  # _current_round is 0-based; the wire contract is 1-based
+            client_name="Trust_1",
+            details={"size_bytes": 16},  # 4 x float32
+        )
+
+    def test_acceptance_counts_are_shared_as_sticky_props(self):
+        controller = self._controller()
+        fl_ctx = _ctx()
+
+        controller._accept_train_result(client_name="Trust_1", result=self._ok_result(), fl_ctx=fl_ctx)
+        controller._accept_train_result(client_name="Trust_2", result=self._ok_result(), fl_ctx=fl_ctx)
+
+        prop_calls = {call.args[0]: call.args[1] for call in fl_ctx.set_prop.call_args_list}
+        assert prop_calls[FlipProps.ROUND_RETURNED] == 2
+        assert prop_calls[FlipProps.ROUND_EXPECTED] == 3
+
+    def test_same_client_twice_counts_once(self):
+        controller = self._controller()
+        fl_ctx = _ctx()
+
+        controller._accept_train_result(client_name="Trust_1", result=self._ok_result(), fl_ctx=fl_ctx)
+        controller._accept_train_result(client_name="Trust_1", result=self._ok_result(), fl_ctx=fl_ctx)
+
+        prop_calls = {call.args[0]: call.args[1] for call in fl_ctx.set_prop.call_args_list}
+        assert prop_calls[FlipProps.ROUND_RETURNED] == 1
+
+    def test_aggregator_rejected_result_emits_no_event_and_no_counts(self):
+        """A rejected contribution (e.g. a stale contribution_round cookie) is not an
+        accepted upload: no CLIENT_RESULT_RECEIVED, no bump of the sticky counts."""
+        controller = self._controller()
+        controller.aggregator.accept.return_value = False
+        fl_ctx = _ctx()
+
+        accepted = controller._accept_train_result(client_name="Trust_1", result=self._ok_result(), fl_ctx=fl_ctx)
+
+        assert accepted is False
+        controller.flip.send_event.assert_not_called()
+        assert FlipProps.ROUND_RETURNED not in {call.args[0] for call in fl_ctx.set_prop.call_args_list}
+
+    def test_unknown_task_result_emits_no_event_and_no_counts(self):
+        """A late result routed via process_result_of_unknown_task carries an earlier
+        round's weights — it must not be reported against the current round."""
+        controller = self._controller()
+        fl_ctx = _ctx()
+
+        accepted = controller._accept_train_result(
+            client_name="Trust_1", result=self._ok_result(), fl_ctx=fl_ctx, is_unknown_task=True
+        )
+
+        assert accepted is True  # stock still forwards it to the aggregator
+        controller.flip.send_event.assert_not_called()
+        assert FlipProps.ROUND_RETURNED not in {call.args[0] for call in fl_ctx.set_prop.call_args_list}
+
+    def test_reported_size_is_the_original_diff_not_the_reconstruction(self):
+        """A head-only partial diff must report its own size, not the full model's —
+        the size is probed before _diff_to_weights rewrites the shareable."""
+        controller = self._controller()
+        controller._global_weights = {
+            "weights": {"w1": np.zeros(4, dtype=np.float32), "w2": np.zeros(4, dtype=np.float32)}
+        }
+        result = DXO(data_kind=DataKind.WEIGHT_DIFF, data={"w1": np.zeros(4, dtype=np.float32)}).to_shareable()
+        result.add_cookie(AppConstants.CONTRIBUTION_ROUND, 2)
+
+        controller._accept_train_result(client_name="Trust_1", result=result, fl_ctx=_ctx())
+
+        assert controller.flip.send_event.call_args.kwargs["details"] == {"size_bytes": 16}
+
+    def test_telemetry_failure_never_blocks_acceptance(self):
+        """The result must be accepted even if the hub relay explodes."""
+        controller = self._controller()
+        controller.flip.send_event.side_effect = Exception("hub down")
+
+        accepted = controller._accept_train_result(client_name="Trust_1", result=self._ok_result(), fl_ctx=_ctx())
+
+        assert accepted is True
+
+    def test_exception_result_does_not_emit_client_result(self):
+        controller = self._controller()
+        result = Shareable()
+        result.set_return_code(ReturnCode.EXECUTION_EXCEPTION)
+        result.set_header("exception", "boom")
+
+        with patch.object(
+            NVFlareScatterAndGather, "_accept_train_result", return_value=False
+        ):
+            controller._accept_train_result(client_name="Trust_1", result=result, fl_ctx=_ctx())
+
+        controller.flip.send_event.assert_not_called()
+        controller.flip.send_handled_exception.assert_called_once()

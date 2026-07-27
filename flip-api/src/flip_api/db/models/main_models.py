@@ -15,7 +15,7 @@ from typing import Annotated, Optional
 from uuid import UUID, uuid4
 
 from sqlalchemy import Column
-from sqlalchemy.dialects.postgresql import ARRAY
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlmodel import Field, Relationship, SQLModel
 
@@ -32,6 +32,7 @@ from flip_api.domain.schemas.status import (
     XNATImageStatus,
 )
 from flip_api.domain.schemas.types import FLBackend
+from flip_api.utils.constants import DEFAULT_X_AXIS_LABEL
 
 
 # Tables
@@ -98,7 +99,16 @@ class FLMetrics(SQLModel, table=True):
     trust: UUID = Field(foreign_key="trust.id")
     fl_client_name: str = Field()
     model_id: UUID = Field(foreign_key="model.id")
+    # Provenance: the FL global round the metric was reported in — always the true round, never
+    # overridden. The plot coordinate is the (x_label, x_value) pair below — see FLIP#148.
     global_round: int = Field()
+    # The x-coordinate this metric is plotted at; defaults to the global round (backfilled by the
+    # ingest schema when the sender omits it).
+    x_value: float = Field()
+    # Label naming the x-axis this metric is plotted against (e.g. "epoch"). Defaults to the FL global
+    # round axis. A plot's identity is the pair (label, x_label), so the same metric logged against
+    # different x-labels renders as separate plots — see FLIP#148.
+    x_label: str = Field(default=DEFAULT_X_AXIS_LABEL)
     timestamp: datetime | None = Field(default_factory=datetime.utcnow)
     label: str = Field()
     result: float = Field()
@@ -113,7 +123,23 @@ class FLLogs(SQLModel, table=True):
     # Set only for logs reported by an FL client; None for model-level (hub) logs.
     trust: UUID | None = Field(default=None, foreign_key="trust.id")
     fl_client_name: str | None = Field(default=None)
-    log: str = Field()
+    # Free display/exception text. Null for typed event rows, whose text is
+    # composed at serve time by log_rendering.render_log so wording changes
+    # never require an FL-image rebuild. The log-XOR-event shape is enforced at
+    # the Pydantic ingest boundary only — a DB CHECK constraint was considered
+    # and deliberately deferred — so internal add_log callers must supply
+    # exactly one of log/event_type (an all-NULL row renders as an empty line).
+    log: str | None = Field(default=None)
+    # Typed events (FLLogEvent values): round progress reported by the FL layer,
+    # plus hub-emitted rows (QUEUE_POSITION). Stored as plain text — not a native
+    # PG enum — so extending the vocabulary never needs an ALTER TYPE migration.
+    # Event-specific facts (total_rounds, size_bytes, returned/expected) live in
+    # the JSONB details column; global_round is first-class so round-scoped
+    # queries can filter and order on it without reaching into the JSONB. All
+    # three are null on legacy free-text rows.
+    event_type: str | None = Field(default=None)
+    global_round: int | None = Field(default=None)
+    details: dict | None = Field(default=None, sa_column=Column("details", JSONB, nullable=True))
 
 
 class Model(SQLModel, table=True):

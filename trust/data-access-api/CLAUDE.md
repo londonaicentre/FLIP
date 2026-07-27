@@ -7,7 +7,8 @@ FastAPI service for querying the OMOP Common Data Model database. Receives cohor
 ## Key Patterns
 
 - Connects to omop-db (PostgreSQL port 5432) on the trust network
-- Only receives internal requests from trust-api (not directly exposed)
+- Receives internal requests from trust-api (all `/cohort` endpoints) and from imaging-api (`/cohort/accession-ids`); not directly exposed
+- Every internal caller authenticates with the per-trust `TRUST_INTERNAL_SERVICE_KEY` header (see the root `CLAUDE.md` "Trust-internal Service Authentication" section). `/health` stays unauthenticated
 - OMOP CDM query translation layer
 
 ## Commands

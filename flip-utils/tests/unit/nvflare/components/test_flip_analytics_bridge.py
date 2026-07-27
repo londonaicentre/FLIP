@@ -57,7 +57,7 @@ class TestFlipAnalyticsBridge:
         bridge.handle_event(ANALYTIC_EVENT_TYPE, ctx)
         engine.fire_event.assert_not_called()
 
-    def test_fires_send_result_with_round_when_step_set(self):
+    def test_fires_send_result_with_x_value_when_step_set(self):
         bridge = FlipAnalyticsBridge()
         shareable = _make_analytic_shareable("TRAIN_LOSS", 0.42, step=5)
         ctx, engine, props = _ctx_with_event_data(shareable)
@@ -73,9 +73,9 @@ class TestFlipAnalyticsBridge:
 
         forwarded = from_shareable(props[FLContextKey.EVENT_DATA])
         assert forwarded.data_kind == DataKind.METRICS
-        assert forwarded.data == {"label": "TRAIN_LOSS", "value": 0.42, "round": 5}
+        assert forwarded.data == {"label": "TRAIN_LOSS", "value": 0.42, "x_value": 5}
 
-    def test_fires_send_result_without_round_when_no_step(self):
+    def test_fires_send_result_without_x_value_when_no_step(self):
         bridge = FlipAnalyticsBridge()
         shareable = _make_analytic_shareable("TEST_LOSS", 1.5)
         ctx, engine, props = _ctx_with_event_data(shareable)
@@ -84,6 +84,17 @@ class TestFlipAnalyticsBridge:
 
         forwarded = from_shareable(props[FLContextKey.EVENT_DATA])
         assert forwarded.data == {"label": "TEST_LOSS", "value": 1.5}
+
+    def test_parses_x_label_from_tag(self):
+        """An "@<x_label>" tag suffix names the x-axis, mirroring the Flower key grammar (FLIP#148)."""
+        bridge = FlipAnalyticsBridge()
+        shareable = _make_analytic_shareable("TRAIN_LOSS@epoch", 0.42, step=5)
+        ctx, engine, props = _ctx_with_event_data(shareable)
+
+        bridge.handle_event(ANALYTIC_EVENT_TYPE, ctx)
+
+        forwarded = from_shareable(props[FLContextKey.EVENT_DATA])
+        assert forwarded.data == {"label": "TRAIN_LOSS", "value": 0.42, "x_value": 5, "x_label": "epoch"}
 
     def test_skips_when_dxo_has_no_value(self):
         """A DXO whose AnalyticsData parses but has value=None should be ignored, not crash."""

@@ -25,6 +25,7 @@ import { watch } from "vue";
 
 import AiRouteProgress from "@/components/AiRouteProgress/AiRouteProgress.vue";
 import AiSnackbar from "@/components/AiSnackbar/AiSnackbar.vue";
+import useThemeColorMeta from "@/composables/useThemeColorMeta";
 
 import { IS_DEMO } from "./demo/bootstrap";
 import DemoBanner from "./demo/DemoBanner.vue";
@@ -38,7 +39,7 @@ import { useTrustStore } from "./store/trusts";
 const healthStore = useHealthcheckStore();
 const trustStore = useTrustStore();
 const detailsStore = useSiteDetailsStore();
-useDark();
+useThemeColorMeta(useDark());
 
 const { data: health } = useSWRV(
     "/trust/health",
