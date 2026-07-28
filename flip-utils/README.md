@@ -82,9 +82,14 @@ flip/
 ├── nvflare/      # NVFLARE-specific logic and components
 │   ├── executors/    # RUN_TRAINER, RUN_VALIDATOR, RUN_EVALUATOR wrappers
 │   ├── controllers/  # FLIP workflows (ScatterAndGather, BroadcastTask, …)
-│   └── components/   # Event handlers, persistors, privacy filters, locators, …
+│   ├── components/   # Event handlers, persistors, privacy filters, locators, …
+│   ├── recipes/      # High-level NVFLARE job recipes
+│   ├── runtime.py    # Runtime helpers for NVFLARE apps
+│   └── metrics.py    # Metrics collection and reporting
 └── flower/       # Flower-specific server-side helpers
-    └── metrics.py    # handle_client_metrics / handle_client_exception
+    ├── strategy.py   # Flower Strategy implementations (FedAvgWithClientMetrics)
+    ├── metrics.py    # handle_client_metrics / handle_client_exception
+    └── progress.py   # Progress / status reporting helpers
 ```
 
 The `FLIP()` factory selects `FLIPStandardDev` (local CSV/filesystem) or `FLIPStandardProd` (FLIP platform APIs) based
@@ -97,7 +102,10 @@ crashed-reply exceptions — extracted from Flower reply Messages in `Strategy.a
 
 ### User Application Requirements
 
-User-provided files go in the job's `custom/` directory and are dynamically imported by the executor wrappers:
+User-provided files are dynamically imported by the executor wrappers at run time. In each
+tutorial they live under `fl-tutorials/nvflare/**/<tutorial>/app_files/`; the tutorial
+harness merges them onto the matching `fl-apps/nvflare/<template>/app/` template when the
+job is submitted (there is no static `custom/` directory to place them in):
 
 | File | Description |
 | ------ | ------------- |
@@ -109,7 +117,8 @@ User-provided files go in the job's `custom/` directory and are dynamically impo
 
 ### Job Types
 
-Set via the `JOB_TYPE` environment variable:
+Pass the job type to the `FLIP()` factory (`FLIP(job_type=...)`). The `JobType` enum
+(`flip.constants.job_types`) defines the values recognised by `FLIP()`:
 
 | Type | Description |
 | ------ | ------------- |
@@ -117,10 +126,11 @@ Set via the `JOB_TYPE` environment variable:
 | `evaluation` | Distributed model evaluation without training |
 | `diffusion_model` | Two-stage training (VAE encoder + diffusion) |
 | `fed_opt` | Custom federated optimization |
-| `standard_client_api` | Federated averaging via the modern NVFLARE Client API (script-driven, uses `nvflare.client`) |
-| `evaluation_client_api` | Distributed model evaluation via the modern NVFLARE Client API |
 
-The corresponding configs live in `fl-apps/nvflare/<job_type>/app/config/`.
+The NVFLARE backend additionally ships template directories under `fl-apps/nvflare/` for
+the Client-API variants (`standard_client_api`, `evaluation_client_api`); these are
+selected as app templates and are not `JobType` enum members. The corresponding configs
+live in `fl-apps/nvflare/<template>/app/config/`.
 
 ### Development Mode
 
