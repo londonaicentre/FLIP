@@ -29,6 +29,13 @@ Usage (root Makefile wraps this per kit; runs automatically in register-trust):
     make generate-xnat-credentials                 # every local kit file
     make generate-xnat-credentials KIT=GSTT        # one kit
     make generate-xnat-credentials FORCE=1         # rotate existing values
+
+Rotation caveat: Postgres applies ``XNAT_DATASOURCE_*`` only on the very first
+initdb of the xnat-db data volume. Rotating after that volume exists changes what
+xnat-web sends but not what Postgres expects, so the stack fails auth on the next
+deploy (the entrypoint fails fast with a credential-mismatch error). Update the
+live database to match the kit (``ALTER ROLE``) — the script prints the exact
+commands whenever it overwrites a previously-real value.
 """
 
 import argparse
@@ -108,15 +115,25 @@ def main() -> None:
             continue
         new_value = secrets.token_urlsafe(32)
         lines = update_or_append(lines, var, new_value)
-        actions[var] = "generated"
+        actions[var] = "generated" if _is_placeholder(existing) else "rotated"
 
     env_file.write_text("\n".join(lines) + "\n")
 
-    generated = sum(1 for a in actions.values() if a == "generated")
+    generated = sum(1 for a in actions.values() if a in {"generated", "rotated"})
     skipped = sum(1 for a in actions.values() if a == "skipped")
     print(f"Updated {env_file.name}: {generated} XNAT credentials generated, {skipped} skipped.")
     for var, action in actions.items():
         print(f"  {var}: {action}")
+
+    if any(action == "rotated" for action in actions.values()):
+        print(
+            "WARNING: existing credentials were rotated, but Postgres applies XNAT_DATASOURCE_* only on the\n"
+            "         very first initdb of the xnat-db data volume. If this trust's xnat-db has already been\n"
+            "         deployed, the database still holds the OLD passwords and xnat-web will refuse to start\n"
+            "         until the live database is updated to match the kit file (inside the xnat-db container):\n"
+            '           psql -U postgres -c "ALTER ROLE <XNAT_DATASOURCE_USERNAME> WITH PASSWORD \'<new value>\'"\n'
+            '           psql -U postgres -c "ALTER ROLE postgres WITH PASSWORD \'<new admin value>\'"'
+        )
 
 
 if __name__ == "__main__":

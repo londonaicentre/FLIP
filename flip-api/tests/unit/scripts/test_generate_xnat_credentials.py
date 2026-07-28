@@ -105,6 +105,45 @@ class TestGenerateXnatCredentials:
         env = _parse_env(env_file.read_text())
         assert env["XNAT_DATASOURCE_PASSWORD"] != existing
 
+    def test_force_rotation_warns_about_initialised_db(self, tmp_path, capsys):
+        """Rotating a previously-real value must warn that an initialised xnat-db keeps the old password."""
+        existing = "EkdK8x_strongRandomPassword_already_present_xyz123"
+        env_file = tmp_path / ".env.test"
+        env_file.write_text(ENV_TEMPLATE + f"XNAT_DATASOURCE_PASSWORD={existing}\n")
+
+        with patch("sys.argv", ["generate_xnat_credentials", "--env-file", str(env_file), "--force"]):
+            main()
+
+        out = capsys.readouterr().out
+        assert "XNAT_DATASOURCE_PASSWORD: rotated" in out
+        assert "WARNING" in out
+        assert "ALTER ROLE" in out
+
+    def test_fresh_generation_does_not_warn(self, tmp_path, capsys):
+        """Filling placeholders (even with --force) is not a rotation — no warning expected."""
+        env_file = tmp_path / ".env.test"
+        env_file.write_text(ENV_TEMPLATE + "XNAT_DATASOURCE_PASSWORD=<run-make-generate-xnat-credentials>\n")
+
+        with patch("sys.argv", ["generate_xnat_credentials", "--env-file", str(env_file), "--force"]):
+            main()
+
+        out = capsys.readouterr().out
+        assert "XNAT_DATASOURCE_PASSWORD: generated" in out
+        assert "WARNING" not in out
+
+    def test_skip_does_not_warn(self, tmp_path, capsys):
+        """Preserving an existing value without --force must not emit the rotation warning."""
+        existing = "EkdK8x_strongRandomPassword_already_present_xyz123"
+        env_file = tmp_path / ".env.test"
+        env_file.write_text(ENV_TEMPLATE + f"XNAT_DATASOURCE_PASSWORD={existing}\n")
+
+        with patch("sys.argv", ["generate_xnat_credentials", "--env-file", str(env_file)]):
+            main()
+
+        out = capsys.readouterr().out
+        assert "XNAT_DATASOURCE_PASSWORD: skipped" in out
+        assert "WARNING" not in out
+
     def test_exits_when_env_file_missing(self, tmp_path):
         """main() should exit non-zero when the env file does not exist."""
         env_file = tmp_path / ".env.nonexistent"
