@@ -406,7 +406,7 @@ provision-bastion: ssh-config ## Install the minimal operator tooling on the Cen
 # a pointer to the on-prem flow instead of an obscure SSH/inventory error.
 .PHONY: check-trust-ec2-enabled
 check-trust-ec2-enabled:
-	@[ "$(DEPLOY_TRUST_EC2)" != "false" ] || (echo "❌  DEPLOY_TRUST_EC2=false (hub-only deployment) — there is no cloud Trust EC2. On-prem trusts join via register-trusts + allow-local-trust-nlb and run 'make -C trust up-trust' on their own host."; exit 1)
+	@[ "$(DEPLOY_TRUST_EC2)" != "false" ] || (echo "❌  DEPLOY_TRUST_EC2=false (hub-only deployment) — there is no cloud Trust EC2. On-prem trusts join via register-trusts + allow-local-trust-nlb and run 'sudo -E make -C trust up-trust' on their own host."; exit 1)
 
 .PHONY: seed-trust-data
 seed-trust-data: check-trust-ec2-enabled ssh-config ## Load trust-specific OMOP + Orthanc mock data onto the Trust EC2 (re-run after data version bump; requires KIT=)
@@ -790,7 +790,8 @@ endif
 	@echo ""
 	@echo "⚠️  REMAINING MANUAL STEPS:"
 	@echo "   1. Deploy the staged FL kit into /opt/flip (run the commands printed above)."
-	@echo "   2. Start the trust stack: cd ../../.. && env PROD=$(PROD) make -C trust up-trust KIT=$(KIT)"
+	@echo "   2. Start the trust stack (sudo: the login user is deliberately not in the docker group):"
+	@echo "      cd ../../.. && sudo -E env PROD=$(PROD) make -C trust up-trust KIT=$(KIT)"
 	@echo "   3. Report this host's public IP to the FLIP admin — they run:"
 	@echo "      make allow-local-trust-nlb LOCAL_TRUST_IP=<this-host-public-ip>"
 
@@ -966,7 +967,8 @@ full-deploy-hub-only: ## Hub-only deployment: no cloud Trust EC2 — every trust
 	##      make allow-local-trust-nlb PROD=$(PROD)
 	##   2. make new-trust TRUST_CODE=<CODE> ... PROD=<env> && make register-trusts KIT=<CODE> PROD=$(PROD)
 	##      (register-trusts in this chain already registers every kit present)
-	##   3. on the trust host: env PROD=<env> make -C trust up-trust KIT=<CODE>
+	##   3. on the trust host: sudo -E env PROD=<env> make -C trust up-trust KIT=<CODE>
+##      (sudo: the provisioned login user is deliberately not in the docker group)
 	## Remember `make deploy-ui PROD=$(PROD)` — the UI ships separately, same as full-deploy.
 full-deploy-hub-only: DEPLOY_TRUST_EC2 := false
 full-deploy-hub-only: github-login aws-login init import-persistent generate-internal-service-key plan apply update-env ssh-config ansible-init deploy-centralhub register-trusts status
@@ -985,7 +987,8 @@ full-deploy-with-local-trust: ## Full AWS deployment (honours PROD) plus on-prem
 	## 7. register-trusts: register every live trust/.env.*.<env> kit on the hub and write kit files
 	## 8. deploy-trust + provision-local-trust + status: bring up cloud + on-prem trust hosts and verify
 	## NOTE: After this completes you must manually:
-	##   - Start the on-prem trust stack: cd ../../.. && env PROD=$(PROD) make -C trust up-trust KIT=$(KIT)
+	##   - Start the on-prem trust stack (sudo: the provisioned login user is deliberately not in
+##     the docker group): cd ../../.. && sudo -E env PROD=$(PROD) make -C trust up-trust KIT=$(KIT)
 	@[ -n "$(LOCAL_TRUST_IP)" ] || (echo ""; echo "❌  ERROR: LOCAL_TRUST_IP is required."; echo "   Usage: make full-deploy-with-local-trust LOCAL_TRUST_IP=<public-ip>"; echo ""; exit 1)
 # The one on-prem trust IP this all-in-one run opens the NLB to — the chain's `apply`
 # step creates the SG rule. For multiple trusts use the async flow instead: set
@@ -1011,8 +1014,9 @@ full-deploy-hybrid: ## Full hybrid deployment including on-prem trust provisioni
 	$(MAKE) deploy-centralhub PROD=$(PROD) && \
 	echo "" && \
 	echo "✅ Hybrid deployment complete (PROD=$(PROD))." && \
-	echo "➡️  Final manual step: start the on-prem trust stack on the trust host:" && \
-	echo "   cd ../../.. && env PROD=$(PROD) make -C trust up-trust KIT=$(KIT)"
+	echo "➡️  Final manual step: start the on-prem trust stack on the trust host" && \
+	echo "   (sudo: the provisioned login user is deliberately not in the docker group):" && \
+	echo "   cd ../../.. && sudo -E env PROD=$(PROD) make -C trust up-trust KIT=$(KIT)"
 
 .PHONY: preflight-k8s-deploy
 preflight-k8s-deploy: ## Pre-flight checks for full-deploy-with-k8s (Trust_K8s slot, kubectl context, helm)

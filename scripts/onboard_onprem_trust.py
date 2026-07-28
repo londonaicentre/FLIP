@@ -653,7 +653,9 @@ def main() -> None:
         heading(f"Status: READY {Status.PASS.glyph}  ({n_pass}/{len(checks)} pass{suffix})")
         print()
         print(f"  Bring the stack up:")
-        print(f"      {BOLD}make up-onprem-trust KIT={kit}{RESET}")
+        # sudo -E: the provisioned on-prem login user is deliberately not in the
+        # docker group (root-equivalent), so the stack comes up via sudo.
+        print(f"      {BOLD}sudo -E make up-onprem-trust KIT={kit}{RESET}")
         if n_warn:
             print(f"  {YELLOW}Heads-up:{RESET} review the {YELLOW}⚠️{RESET}  warning(s) above before running in production.")
         print()

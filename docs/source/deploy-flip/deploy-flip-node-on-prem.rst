@@ -98,15 +98,18 @@ from the environment and supports both staging (``stag``) and production
 (``true``).
 
 After the wrapper exits, you still need to start the trust stack on the host
-itself:
+itself. ``sudo`` is required: the provisioning playbook deliberately does
+**not** add the login user to the ``docker`` group (docker group membership is
+root-equivalent — any member can mount ``/`` into a container and chroot in),
+so all docker-touching commands on the trust host run via ``sudo``:
 
 .. code-block:: shell
 
    cd ../../..
-   env PROD=<stag|true> make -C trust up-trust KIT=<CODE>   # the trust code you scaffolded
+   sudo -E env PROD=<stag|true> make -C trust up-trust KIT=<CODE>   # the trust code you scaffolded
 
-Then verify the trust is polling: ``docker logs -f trust-api`` should show
-successful task polls against the Central Hub.
+Then verify the trust is polling: ``sudo docker logs -f trust-api`` should
+show successful task polls against the Central Hub.
 
 ******************************************
 Onboarding an on-prem trust (step by step)
@@ -171,8 +174,12 @@ bring the stack up:
    #   - FL_KIT_DIR=<path to extracted fl-kit>
    #   - adjust ports / bind-mount dirs to match your host
    #   - rotate the Trust-local passwords
-   make onboard-onprem-trust KIT=<CODE> PROD=true   # readiness checklist
-   make up-onprem-trust KIT=<CODE> PROD=true         # comes up after all checks pass
+   sudo -E make onboard-onprem-trust KIT=<CODE> PROD=true   # readiness checklist
+   sudo -E make up-onprem-trust KIT=<CODE> PROD=true         # comes up after all checks pass
+
+Both run via ``sudo``: the provisioning playbook deliberately does not add the
+login user to the ``docker`` group (membership is root-equivalent), and the
+checklist's docker-swarm row needs the docker socket.
 
 ``make onboard-onprem-trust`` prints a ✅/❌ checklist (your public IP, docker
 swarm state, Hub-shared / Kit credentials populated, FL_KIT_DIR set and on
@@ -194,8 +201,8 @@ host's public IP, open the FL-server NLB to it:
 ``allow-local-trust-nlb`` runs a normal ``terraform plan``/``apply`` — the IPs
 are real config, so later full applies stay idempotent (no drift).
 
-Then verify the trust is polling: ``docker logs -f trust-api`` should show
-successful task polls against the Central Hub.
+Then verify the trust is polling: ``sudo docker logs -f trust-api`` should
+show successful task polls against the Central Hub.
 
 **Rotation (later, no re-mint).** When the admin rotates a Hub-shared value
 (``AES_KEY_BASE64``, image tags, ``FL_BACKEND``), refresh only the Hub-shared
@@ -280,7 +287,7 @@ Troubleshooting
 +----------------------------------+------------------------------------------------------------+
 | Symptom                          | Check                                                      |
 +==================================+============================================================+
-| Trust not polling hub            | Trust stack running? ``docker ps`` on the trust host.      |
+| Trust not polling hub            | Trust stack running? ``sudo docker ps`` on the trust host. |
 |                                  | Check ``trust-api`` logs for polling errors.               |
 +----------------------------------+------------------------------------------------------------+
 | ``Connection timed out`` (FL)    | Trust's public IP changed? Update the NLB security group.  |

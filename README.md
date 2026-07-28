@@ -326,10 +326,13 @@ To connect a local Ubuntu host as a trust against the AWS staging hub:
 cd deploy/providers/AWS
 make full-deploy-hybrid PROD=stag [LOCAL_TRUST_IP=<public-ip>]
 
-# Then on the trust host: provision it, then start the stack
+# Then on the trust host: provision it, then start the stack.
+# sudo is required: the provisioned login user is deliberately not in the
+# docker group (docker group membership is root-equivalent) — see
+# deploy/providers/local/README.md.
 make provision-local-trust          # run ON the trust host
 cd ../../..
-env PROD=stag make -C trust up-trust KIT=<CODE>
+sudo -E env PROD=stag make -C trust up-trust KIT=<CODE>
 ```
 
 No inbound firewall rules or NAT port-forwarding are needed on the trust host — all communication is outbound from the trust to the hub. See [deploy/providers/local/README.md](deploy/providers/local/README.md) for full details.
