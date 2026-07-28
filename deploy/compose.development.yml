@@ -42,6 +42,16 @@ services:
       - AWS_COGNITO_APP_CLIENT_ID=${AWS_COGNITO_APP_CLIENT_ID}
       - AWS_REGION=${AWS_REGION}
       - BLACKLISTED_MODEL_FILES=${BLACKLISTED_MODEL_FILES}
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - SETUID
+      - SETGID
+      - NET_BIND_SERVICE
     restart: unless-stopped
     networks:
       - default
@@ -174,6 +184,12 @@ services:
       # submit (tags + config.json params) over central-hub-network. Empty => the
       # integration is a no-op.
       - MLFLOW_TRACKING_URI=${MLFLOW_TRACKING_URI:-}
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
     restart: unless-stopped
     container_name: flip-api
 
@@ -185,6 +201,16 @@ services:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETUID
+      - SETGID
     networks:
       - default
     container_name: flip-db
@@ -244,6 +270,11 @@ services:
     environment:
       PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL}
       PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD}
+    # pgadmin (dev-only; not in the production compose) starts as root and drops
+    # to the pgadmin user via sudo in its entrypoint. That is incompatible with
+    # no-new-privileges + cap_drop:ALL (sudo can't run, the setuid drop fails and
+    # the container crash-loops with exit 126). Left unhardened intentionally — it
+    # is never deployed to stag/prod.
     volumes:
       - pgadmin_data:/var/lib/pgadmin
     networks:

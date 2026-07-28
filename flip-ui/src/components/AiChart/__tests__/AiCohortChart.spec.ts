@@ -127,6 +127,48 @@ describe("AiCohortChart", () => {
         expect(setOption).toHaveBeenCalled();
     });
 
+    it("overlays the legend and toolbox inside the plot like the metrics chart", async () => {
+        mountChart();
+        await nextTick();
+        await flushPromises();
+
+        const opts = setOption.mock.calls[0][0];
+        // The grid takes the full width; only the title keeps a band above it.
+        expect(opts.grid.right).toBeLessThanOrEqual(24);
+        // Toolbox floats inside the plot below the title band; the legend floats
+        // vertically centred on the right edge with a translucent backing.
+        expect(opts.toolbox.right).toBe(12);
+        expect(opts.toolbox.top).toBe(36);
+        expect(opts.legend.right).toBe(12);
+        expect(opts.legend.top).toBe("middle");
+        expect(opts.legend.orient).toBe("vertical");
+        expect(opts.legend.backgroundColor).toBeTruthy();
+    });
+
+    it("titles the chart above the plot only, not again under the x axis", async () => {
+        mountChart();
+        await nextTick();
+        await flushPromises();
+
+        const opts = setOption.mock.calls[0][0];
+        expect(opts.title.text).toBeTruthy();
+        // The same string used to repeat as the x-axis name below the plot.
+        expect(opts.xAxis.name).toBeUndefined();
+    });
+
+    it("ships no persistent zoom UI, only the on-demand toolbox box-zoom", async () => {
+        mountChart();
+        await nextTick();
+        await flushPromises();
+
+        const opts = setOption.mock.calls[0][0];
+        // No dataZoom components: no slider bar under the plot. Zoom lives behind
+        // the toolbox magnifier instead, matching the training metrics chart.
+        expect(opts.dataZoom).toBeUndefined();
+        expect(opts.toolbox.feature.dataZoom.show).toBe(true);
+        expect(opts.toolbox.feature.dataZoom.filterMode).toBe("none");
+    });
+
     it("emits a series per trust and uses the trust code as the legend label when available", async () => {
         mountChart();
         await nextTick();
@@ -188,7 +230,9 @@ describe("AiCohortChart", () => {
 
         const opts = setOption.mock.calls[0][0];
         expect(opts.color).toEqual([...CHART_SERIES_COLORS.light]);
-        expect(opts.toolbox).toEqual(chartToolbox(false));
+        // The shared toolbox theme applies as-is; this chart adds its own
+        // on-demand box-zoom feature on top (covered by the zoom test above).
+        expect(opts.toolbox).toMatchObject(chartToolbox(false));
 
         // The off-token fills/inks flagged in the dark-mode review must not resurface.
         const flattened = JSON.stringify(opts);

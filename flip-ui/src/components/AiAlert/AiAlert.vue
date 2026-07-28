@@ -27,10 +27,10 @@
     >
         <div class="flex">
             <div v-if="showIcon" class="flex-shrink-0 mr-3">
-                <icon-ic-twotone-info v-if="variant === 'info'" class="w-5 h-5 text-blue-500 dark:text-blue-200" />
-                <icon-ic-twotone-warning v-if="variant === 'warning'" class="w-5 h-5 text-yellow-600 dark:text-yellow-300" />
-                <icon-ic-twotone-check-circle v-if="variant === 'success'" class="w-5 h-5 text-lightgreen-900 dark:text-green-200" />
-                <icon-ic-twotone-cancel v-if="variant === 'error'" class="w-5 h-5 text-red-500 dark:text-red-200" />
+                <icon-ph-info-fill v-if="variant === 'info'" class="w-5 h-5 text-blue-500 dark:text-blue-200" />
+                <icon-ph-warning-fill v-if="variant === 'warning'" class="w-5 h-5 text-yellow-600 dark:text-yellow-300" />
+                <icon-ph-check-circle-fill v-if="variant === 'success'" class="w-5 h-5 text-lightgreen-900 dark:text-green-200" />
+                <icon-ph-x-circle-fill v-if="variant === 'error'" class="w-5 h-5 text-red-500 dark:text-red-200" />
             </div>
             <div class="items-center justify-center flex-1 md:flex md:justify-between">
                 <p

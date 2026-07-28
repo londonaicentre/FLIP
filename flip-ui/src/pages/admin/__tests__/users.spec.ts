@@ -95,7 +95,6 @@ vi.mock("@/router", () => ({
 vi.mock("@/utils/route-validator", () => ({ canAccessRoute: vi.fn().mockResolvedValue(true) }));
 
 const stubs = {
-    AiCard: { template: "<div><slot /></div>" },
     AiButton: {
         inheritAttrs: false,
         template: "<button v-bind=\"$attrs\" :disabled='disabled' @click=\"$emit('click', $event)\"><slot /></button>",
@@ -481,5 +480,175 @@ describe("admin/users", () => {
         await modal.vm.$emit("on-success");
         await flushPromises();
         expect(mutateUsers).toHaveBeenCalled();
+    });
+});
+
+describe("shared-squash layout and icon collapse", () => {
+    // On lg+ the rail sits beside the editor at 384px, shrinking down to a
+    // 240px floor when squashed; below lg it goes full-width because only one
+    // pane renders at a time (see the mobile drill-in describe).
+    it("lets the user-list rail shrink with the viewport down to a fixed floor", async () => {
+        const wrapper = mountPage();
+        await nextTick();
+
+        const rail = wrapper.find("[data-test='user-list-rail']");
+        expect(rail.exists()).toBe(true);
+        expect(rail.classes()).toContain("w-full");
+        expect(rail.classes()).toContain("lg:w-96");
+        expect(rail.classes()).toContain("shrink");
+        expect(rail.classes()).toContain("min-w-[15rem]");
+        expect(rail.classes()).toContain("lg:border-r");
+        expect(rail.classes()).not.toContain("border-r");
+        expect(rail.classes()).not.toContain("flex-shrink-0");
+    });
+
+    it("keeps the Save User button labelled with a save icon in the desktop header", async () => {
+        const wrapper = mountPage();
+        await nextTick();
+        await wrapper.findAll("[data-test='user']")[0].trigger("click");
+
+        const btn = wrapper.find("[data-test='save-user-btn']");
+        expect(btn.attributes("aria-label")).toBe("Save User");
+        expect(btn.find("svg").exists()).toBe(true);
+        expect(btn.text()).toContain("Save User");
+    });
+
+    it("collapses the Register User label below lg with an aria-label", async () => {
+        const wrapper = mountPage();
+        await nextTick();
+
+        const btn = wrapper.find("[data-test='register-user-btn']");
+        expect(btn.attributes("aria-label")).toBe("Register User");
+        expect(btn.find("svg").exists()).toBe(true);
+        const label = btn.find("span.hidden.lg\\:inline");
+        expect(label.exists()).toBe(true);
+        expect(label.text()).toBe("Register User");
+    });
+});
+
+describe("mobile drill-in (below lg)", () => {
+    // Below lg only one pane shows at a time: the full-width list, or — after
+    // tapping a row — the full-screen detail with a back header and a sticky
+    // Save bar. Visibility is class-driven (hidden/lg:flex) so at lg+ both
+    // panes always render side-by-side exactly as before.
+    it("shows the list and hides the detail pane before drilling in", async () => {
+        const wrapper = mountPage();
+        await nextTick();
+
+        const rail = wrapper.find("[data-test='user-list-rail']");
+        const detail = wrapper.find("[data-test='user-detail-pane']");
+        expect(rail.classes()).toContain("flex");
+        expect(rail.classes()).not.toContain("hidden");
+        expect(detail.classes()).toContain("hidden");
+        expect(detail.classes()).toContain("lg:flex");
+    });
+
+    it("drills into the detail pane when a row is tapped", async () => {
+        const wrapper = mountPage();
+        await nextTick();
+        await wrapper.findAll("[data-test='user']")[0].trigger("click");
+
+        const rail = wrapper.find("[data-test='user-list-rail']");
+        const detail = wrapper.find("[data-test='user-detail-pane']");
+        expect(rail.classes()).toContain("hidden");
+        expect(rail.classes()).toContain("lg:flex");
+        expect(detail.classes()).toContain("flex");
+        expect(detail.classes()).not.toContain("hidden");
+    });
+
+    it("returns to the list on back while keeping the selection for desktop", async () => {
+        const wrapper = mountPage();
+        await nextTick();
+        await wrapper.findAll("[data-test='user']")[0].trigger("click");
+
+        const backHeader = wrapper.find("[data-test='detail-back-header']");
+        expect(backHeader.classes()).toContain("lg:hidden");
+        const back = wrapper.find("[data-test='back-to-users-btn']");
+        expect(back.attributes("aria-label")).toBe("Back to user list");
+        await back.trigger("click");
+
+        const rail = wrapper.find("[data-test='user-list-rail']");
+        expect(rail.classes()).toContain("flex");
+        expect(rail.classes()).not.toContain("hidden");
+        // Selection survives back so a resize to desktop still shows the editor.
+        expect(wrapper.find("[data-test='selected-user-name-field']").exists()).toBe(true);
+    });
+
+    it("slides the sticky Save bar in only when the record is dirty and saves from it", async () => {
+        mockUpdateUserProfile.mockResolvedValue(undefined);
+        mutateUsers.mockResolvedValue(undefined);
+        const wrapper = mountPage();
+        await nextTick();
+        await wrapper.findAll("[data-test='user']")[0].trigger("click");
+
+        const bar = wrapper.find("[data-test='mobile-save-bar']");
+        expect(bar.classes()).toContain("fixed");
+        expect(bar.classes()).toContain("bottom-0");
+        expect(bar.classes()).toContain("lg:hidden");
+        expect(bar.classes()).toContain("translate-y-[130%]");
+
+        await wrapper.find("[data-test='selected-user-name-field']").setValue("New Name");
+        expect(bar.classes()).toContain("translate-y-0");
+
+        await wrapper.find("[data-test='mobile-save-user-btn']").trigger("click");
+        await flushPromises();
+        expect(mockUpdateUserProfile).toHaveBeenCalledWith("u1", {
+            name: "New Name",
+            organisation: "Org A"
+        });
+        expect(bar.classes()).toContain("translate-y-[130%]");
+    });
+
+    it("keeps the header Save button desktop-only and stacks the status pill on mobile", async () => {
+        const wrapper = mountPage();
+        await nextTick();
+        await wrapper.findAll("[data-test='user']")[0].trigger("click");
+
+        const headerSave = wrapper.find("[data-test='save-user-btn']");
+        expect(headerSave.classes()).toContain("hidden");
+        expect(headerSave.classes()).toContain("lg:block");
+
+        const mobilePill = wrapper.find("[data-test='user-status-mobile']");
+        expect(mobilePill.exists()).toBe(true);
+        expect(mobilePill.classes()).toContain("lg:hidden");
+
+        const desktopPill = wrapper.find("[data-test='user-status']");
+        expect(desktopPill.classes()).toContain("hidden");
+        expect(desktopPill.classes()).toContain("lg:inline-flex");
+    });
+
+    it("gives list rows a touch-friendly height and a mobile drill-in chevron", async () => {
+        const wrapper = mountPage();
+        await nextTick();
+
+        const row = wrapper.findAll("[data-test='user']")[0];
+        expect(row.classes()).toContain("min-h-[60px]");
+        expect(row.find("svg.lg\\:hidden").exists()).toBe(true);
+    });
+});
+
+describe("de-carded shell", () => {
+    // The AiCard chrome (shadow/ring) is gone, but the master–detail keeps the
+    // same page margins as the Projects/Models views: a gutter wrapper frames a
+    // bordered rounded box that owns the overflow clipping and white canvas.
+    it("frames the master–detail in page gutters as a bordered box", async () => {
+        const wrapper = mountPage();
+        await nextTick();
+
+        const gutter = wrapper.find("[data-test='admin-page-gutter']");
+        expect(gutter.exists()).toBe(true);
+        for (const cls of ["w-full", "h-full", "p-4", "md:p-8", "pt-3", "md:pt-5"]) {
+            expect(gutter.classes()).toContain(cls);
+        }
+
+        const shell = wrapper.find("[data-test='users-shell']");
+        expect(shell.exists()).toBe(true);
+        for (const cls of ["flex", "w-full", "h-full", "overflow-hidden", "bg-white", "dark:bg-dark-canvas",
+            "border", "border-gray-200", "rounded-xl", "dark:border-dark-border"]) {
+            expect(shell.classes()).toContain(cls);
+        }
+        for (const cls of ["shadow", "ring-1"]) {
+            expect(shell.classes()).not.toContain(cls);
+        }
     });
 });

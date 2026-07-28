@@ -36,6 +36,7 @@ resource "aws_instance" "trust_host" {
     volume_size           = 100
     volume_type           = "gp3"
     delete_on_termination = true
+    encrypted             = true
   }
 
   tags = {

@@ -32,6 +32,12 @@ services:
     ports:
       - "${FL_API_PORT}:8000"
       - "5679:5679"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
     volumes:
       # Provisioned NVFLARE admin secrets (certificates, fed_admin.json)
       - ${FL_PROVISIONED_DIR}/net-1/services/flip-fl-api-net-1/local:/app/admin/local
@@ -58,6 +64,12 @@ services:
       # Per-job GPU request (see fl-api-net-1). Default 0 => CPU; set >0 to train on the GPU.
       - JOB_RESOURCE_SPEC_NUM_GPUS=${JOB_RESOURCE_SPEC_NUM_GPUS:-0}
       - JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB=${JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB:-0}
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
     volumes:
       # Provisioned NVFLARE admin secrets (certificates, fed_admin.json)
       - ${FL_PROVISIONED_DIR}/net-2/services/flip-fl-api-net-2/local:/app/admin/local
@@ -104,6 +116,19 @@ services:
       # MLflow dual-write (FLIP#745): the flip package mirrors metrics/status to
       # MLflow over the hub-only mlflow-network below. Empty => sink disabled.
       - MLFLOW_TRACKING_URI=${MLFLOW_TRACKING_URI:-}
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      # The container runs as root, but its bind mounts (the provisioned NVFLARE kit
+      # with 0600 keys; on fl-server also the operator's 0600 AWS SSO token cache) are
+      # owned by the host uid. cap_drop: ALL strips root's implicit DAC bypass, so
+      # DAC_OVERRIDE is needed to read them; the entrypoint also chmods kit scripts it
+      # does not own (FOWNER). Without these the container crash-loops (FLIP#485).
+      - DAC_OVERRIDE
+      - FOWNER
     networks:
       - shared-net-1
       # Hub-only bridge to the mlflow container — NOT shared with trust fl-clients.
@@ -141,6 +166,19 @@ services:
       - SERVER_CHECKPOINT_ROOT=/app/server-checkpoints
       # MLflow dual-write (FLIP#745): see fl-server-net-1.
       - MLFLOW_TRACKING_URI=${MLFLOW_TRACKING_URI:-}
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      # The container runs as root, but its bind mounts (the provisioned NVFLARE kit
+      # with 0600 keys; on fl-server also the operator's 0600 AWS SSO token cache) are
+      # owned by the host uid. cap_drop: ALL strips root's implicit DAC bypass, so
+      # DAC_OVERRIDE is needed to read them; the entrypoint also chmods kit scripts it
+      # does not own (FOWNER). Without these the container crash-loops (FLIP#485).
+      - DAC_OVERRIDE
+      - FOWNER
     networks:
       - shared-net-2
       # Hub-only bridge to the mlflow container — NOT shared with trust fl-clients.

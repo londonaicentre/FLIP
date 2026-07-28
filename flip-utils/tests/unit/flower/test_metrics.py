@@ -96,14 +96,18 @@ class TestHandleClientMetrics:
             model_id=VALID_MODEL_ID,
             label="TRAIN_LOSS",
             value=0.5,
-            round=3,
+            global_round=3,
+            x_value=None,
+            x_label=None,
         )
         flip.send_metrics.assert_any_call(
             client_name="Trust_1",
             model_id=VALID_MODEL_ID,
             label="VAL_DICE",
             value=0.8,
-            round=3,
+            global_round=3,
+            x_value=None,
+            x_label=None,
         )
 
     def test_skips_bookkeeping_keys(self):
@@ -129,8 +133,8 @@ class TestHandleClientMetrics:
         (_, kwargs), = flip.send_metrics.call_args_list
         assert kwargs["label"] == "LOSS"
 
-    def test_parses_per_epoch_round_suffix(self):
-        msg = _build_message(metrics={"train_loss.round_5": 0.42}, site="Trust_1")
+    def test_parses_per_epoch_x_suffix(self):
+        msg = _build_message(metrics={"train_loss.x_5": 0.42}, site="Trust_1")
         flip = Mock()
 
         handle_client_metrics(msg, server_round=99, model_id=VALID_MODEL_ID, flip=flip)
@@ -140,11 +144,36 @@ class TestHandleClientMetrics:
             model_id=VALID_MODEL_ID,
             label="TRAIN_LOSS",
             value=0.42,
-            round=5,
+            global_round=99,  # provenance: the server round, regardless of the plot coordinate
+            x_value=5.0,
+            x_label=None,
         )
 
-    def test_malformed_round_suffix_falls_back_to_server_round(self):
-        msg = _build_message(metrics={"train_loss.round_notanint": 0.42}, site="Trust_1")
+    def test_parses_fractional_and_scientific_x_values(self):
+        """The .x_<V> suffix is a float literal — dots in the value don't confuse the rsplit."""
+        msg = _build_message(metrics={"train_loss.x_1.5": 0.42, "lr.x_1e-3": 0.9}, site="Trust_1")
+        flip = Mock()
+
+        handle_client_metrics(msg, server_round=1, model_id=VALID_MODEL_ID, flip=flip)
+
+        by_label = {c.kwargs["label"]: c.kwargs for c in flip.send_metrics.call_args_list}
+        assert by_label["TRAIN_LOSS"]["x_value"] == 1.5
+        assert by_label["LR"]["x_value"] == 0.001
+
+    def test_legacy_round_suffix_still_parses(self):
+        """.round_<N> is the deprecated pre-x_value spelling and must keep working."""
+        msg = _build_message(metrics={"train_loss.round_5": 0.42}, site="Trust_1")
+        flip = Mock()
+
+        handle_client_metrics(msg, server_round=99, model_id=VALID_MODEL_ID, flip=flip)
+
+        (_, kwargs), = flip.send_metrics.call_args_list
+        assert kwargs["label"] == "TRAIN_LOSS"
+        assert kwargs["x_value"] == 5.0
+        assert kwargs["global_round"] == 99
+
+    def test_malformed_x_suffix_leaves_key_intact(self):
+        msg = _build_message(metrics={"train_loss.x_notanumber": 0.42}, site="Trust_1")
         flip = Mock()
 
         handle_client_metrics(msg, server_round=7, model_id=VALID_MODEL_ID, flip=flip)
@@ -152,19 +181,53 @@ class TestHandleClientMetrics:
         flip.send_metrics.assert_called_once_with(
             client_name="Trust_1",
             model_id=VALID_MODEL_ID,
-            label="TRAIN_LOSS.ROUND_NOTANINT",
+            label="TRAIN_LOSS.X_NOTANUMBER",
             value=0.42,
-            round=7,
+            global_round=7,
+            x_value=None,
+            x_label=None,
         )
 
-    def test_falls_back_to_src_node_id_when_site_missing(self):
+    def test_non_finite_x_suffix_is_not_honoured(self):
+        """nan/inf coordinates would break the hub's metrics JSON — the key is left intact instead."""
+        msg = _build_message(metrics={"train_loss.x_nan": 0.42}, site="Trust_1")
+        flip = Mock()
+
+        handle_client_metrics(msg, server_round=7, model_id=VALID_MODEL_ID, flip=flip)
+
+        (_, kwargs), = flip.send_metrics.call_args_list
+        assert kwargs["label"] == "TRAIN_LOSS.X_NAN"
+        assert kwargs["x_value"] is None
+
+    def test_parses_x_label_segment(self):
+        """A metric key with an @<x_label> segment sets the x-axis label (FLIP#148)."""
+        msg = _build_message(metrics={"train_loss@epoch.x_2.5": 0.42}, site="Trust_1")
+        flip = Mock()
+
+        handle_client_metrics(msg, server_round=99, model_id=VALID_MODEL_ID, flip=flip)
+
+        flip.send_metrics.assert_called_once_with(
+            client_name="Trust_1",
+            model_id=VALID_MODEL_ID,
+            label="TRAIN_LOSS",
+            value=0.42,
+            global_round=99,
+            x_value=2.5,
+            x_label="epoch",
+        )
+
+    def test_metrics_without_a_site_are_dropped(self):
+        """The hub cannot attribute a metric to a trust without a site name.
+
+        Previously these were sent under a fabricated ``unknown_<node_id>``, which
+        the hub rejected with a 400 on every metric of every round.
+        """
         msg = _build_message(metrics={"loss": 0.1}, site=None, src_node_id=7)
         flip = Mock()
 
         handle_client_metrics(msg, server_round=1, model_id=VALID_MODEL_ID, flip=flip)
 
-        (_, kwargs), = flip.send_metrics.call_args_list
-        assert kwargs["client_name"] == "unknown_7"
+        flip.send_metrics.assert_not_called()
 
     def test_accepts_client_name_config_key_as_site_fallback(self):
         msg = _build_message(metrics={"loss": 0.1}, client_name="Trust_5")
@@ -238,14 +301,15 @@ class TestHandleClientException:
         )
         flip.update_status.assert_called_once_with(VALID_MODEL_ID, ModelStatus.ERROR)
 
-    def test_falls_back_to_src_node_id_when_site_missing(self):
+    def test_unattributable_exception_goes_model_level(self):
+        """No site => report the traceback against the model, not a fake client name."""
         msg = _build_message(has_error=True, error=RuntimeError("x"), site=None, src_node_id=11)
         flip = Mock()
 
         handle_client_exception(msg, model_id=VALID_MODEL_ID, flip=flip)
 
         (_, kwargs), = flip.send_handled_exception.call_args_list
-        assert kwargs["client_name"] == "unknown_11"
+        assert kwargs["client_name"] is None
 
     def test_hub_exception_is_swallowed(self):
         msg = _build_message(has_error=True, error=RuntimeError("x"), site="Trust_1")
@@ -272,7 +336,8 @@ class TestHandleClientException:
 
     def test_content_access_value_error_on_errored_reply(self):
         # Flower raises ValueError on msg.content when a reply carries only an error;
-        # the handler must still resolve a site name and transition status.
+        # with no cached site the exception is reported model-level, and the run
+        # still transitions to ERROR.
         msg = Mock()
         msg.has_error.return_value = True
         msg.error = RuntimeError("boom")
@@ -283,5 +348,38 @@ class TestHandleClientException:
         handle_client_exception(msg, model_id=VALID_MODEL_ID, flip=flip)
 
         (_, kwargs), = flip.send_handled_exception.call_args_list
-        assert kwargs["client_name"] == "unknown_99"
+        assert kwargs["client_name"] is None
         flip.update_status.assert_called_once_with(VALID_MODEL_ID, ModelStatus.ERROR)
+
+    def test_caller_supplied_site_attributes_a_content_less_reply(self):
+        """The strategy names the absent client by elimination and passes it in."""
+        msg = Mock()
+        msg.has_error.return_value = True
+        msg.error = RuntimeError("boom")
+        type(msg).content = property(lambda self: (_ for _ in ()).throw(ValueError("no content")))
+        msg.metadata.src_node_id = 1  # Flower's placeholder id on a synthesised error reply
+        flip = Mock()
+
+        handle_client_exception(msg, model_id=VALID_MODEL_ID, flip=flip, site_name="Trust_2")
+
+        (_, kwargs), = flip.send_handled_exception.call_args_list
+        assert kwargs["client_name"] == "Trust_2"
+
+
+class TestSiteAttributionForErroredReplies:
+    """A crashed client's reply identifies nothing, so its site must come from elsewhere.
+
+    Flower raises on ``msg.content`` for an errored reply and stamps a placeholder
+    ``src_node_id`` on the error it synthesises for an unreachable node. Without help
+    the old code sent ``unknown_<node_id>``, which the hub cannot map to a trust — the
+    exception was rejected (400) and its traceback lost. The strategy now names the
+    absent client by elimination and hands the site in.
+    """
+
+    def test_caller_supplied_site_wins_when_the_reply_has_none(self):
+        msg = _build_message(has_error=True, error="boom", site=None, src_node_id=1)
+        flip = Mock()
+
+        handle_client_exception(msg, VALID_MODEL_ID, flip, site_name="Trust_2")
+
+        assert flip.send_handled_exception.call_args.kwargs["client_name"] == "Trust_2"

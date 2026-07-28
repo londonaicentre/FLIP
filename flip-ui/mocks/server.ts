@@ -29,23 +29,19 @@ import { ISiteDetails } from "@/store/siteDetailsStore";
 import OMOPResults from "./cohort-query/omop-results.json";
 import healthcheckResponse from "./data/healthcheck.json";
 import { connectedNets, detailedNetResponse } from "./fl/status";
-import {
-    exampleLogs,
+import { exampleLogs,
     latestModelData1,
     mockModelDashboard,
     ModelMetrics,
     modelsDataPage1,
     modelsDataPage2,
     paginatedModelData1,
-    paginatedModelData2
-} from "./models/seed-data";
-import {
-    imagingProjectStatus,
+    paginatedModelData2 } from "./models/seed-data";
+import { imagingProjectStatus,
     paginatedProjectData1,
     paginatedProjectData2,
     projectDataPage1,
-    projectDataPage2
-} from "./projects/seed-data";
+    projectDataPage2 } from "./projects/seed-data";
 import { allRoles } from "./roles/seed-data";
 import { siteDetails } from "./site/details";
 import userPermissions from "./user/permissions.json";

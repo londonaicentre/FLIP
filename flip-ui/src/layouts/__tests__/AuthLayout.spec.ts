@@ -64,6 +64,26 @@ describe("Auth Layout", () => {
         expect(component.find("img[alt=\"NHS logo\"]").exists()).toBe(false);
     });
 
+    it("sizes the page to the dynamic viewport (dvh) with a 100vh fallback for browsers without dvh", () => {
+        const sizer = mountLayout().find(".h-screen");
+
+        expect(sizer.exists()).toBe(true);
+        expect(sizer.classes()).toContain("supports-[height:100dvh]:h-dvh");
+    });
+
+    it("centres the footer links' text when the labels wrap on narrow screens", () => {
+        const footer = mountLayout().find("[data-test=\"auth-footer-links\"]");
+
+        expect(footer.classes()).toContain("text-center");
+    });
+
+    it("fades the corner artwork's letterbox-facing cut edges (iOS-scoped via main.css)", () => {
+        const component = mountLayout();
+
+        expect(component.find(".absolute.top-0.right-0 img.corner-art-fade-top").exists()).toBe(true);
+        expect(component.find(".absolute.bottom-0.left-0 img.corner-art-fade-bottom").exists()).toBe(true);
+    });
+
     it("shows the light AI Centre logo in light mode", () => {
         darkState.ref!.value = false;
         const component = mountLayout();

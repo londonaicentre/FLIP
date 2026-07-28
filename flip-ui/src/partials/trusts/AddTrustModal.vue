@@ -14,7 +14,7 @@
 <template>
     <TransitionRoot as="template" :show="dialog">
         <Dialog as="div" class="fixed inset-0 z-10" @close.capture="close">
-            <div class="flex items-end justify-center h-screen min-h-screen px-4 pt-4 text-center sm:block sm:p-0">
+            <div class="flex items-center justify-center h-screen min-h-screen p-4 text-center sm:block sm:p-0">
                 <TransitionChild
                     as="template"
                     enter="ease-out duration-300"
@@ -38,12 +38,25 @@
                 >
                     <div class="inline-flex flex-col w-full max-w-lg max-h-screen p-4 text-left align-middle rounded-lg">
                         <div class="inline-flex flex-col w-full transition-all transform bg-white rounded-lg shadow-xl dark:bg-dark-surface">
-                            <DialogTitle
-                                as="h3"
-                                class="px-8 py-4 text-lg font-bold leading-6 text-left text-gray-700 dark:text-gray-300"
-                            >
-                                Add Trust
-                            </DialogTitle>
+                            <div class="flex items-center justify-between px-8 py-4">
+                                <DialogTitle
+                                    as="h3"
+                                    class="text-lg font-bold leading-6 text-left text-gray-700 dark:text-gray-300"
+                                >
+                                    Add Trust
+                                </DialogTitle>
+                                <button
+                                    type="button"
+                                    data-test="add-trust-close-x-btn"
+                                    class="text-gray-400 dark:text-gray-300 hover:text-gray-600 dark:hover:text-gray-100
+                                    transition cursor-pointer rounded focus:outline-none focus:ring-1
+                                    focus:ring-primary-400"
+                                    @click="close"
+                                >
+                                    <span class="sr-only">Close</span>
+                                    <icon-mdi-close class="w-5 h-5" />
+                                </button>
+                            </div>
                             <div class="px-8 py-4 space-y-4 text-sm font-normal leading-5 dark:text-gray-300">
                                 <p>
                                     Registers a trust with the Central Hub. An API key and an internal service key
@@ -77,18 +90,17 @@
                                     placeholder="e.g. London"
                                 />
                             </div>
-                            <div class="px-4 py-3 bg-gray-100 rounded-b-lg dark:bg-dark-canvas sm:px-6 sm:flex sm:flex-row-reverse sm:flex-shrink-0">
+                            <div class="flex flex-row-reverse px-4 py-3 bg-gray-100 rounded-b-lg dark:bg-dark-canvas sm:px-6 shrink-0">
                                 <AiButton
                                     data-test="confirm-create-trust-btn"
                                     primary
-                                    class="w-full ml-2 sm:w-auto"
+                                    class="ml-2"
                                     :loading="isSubmitting"
                                     @click="submitAction"
                                 >
                                     Create Trust
                                 </AiButton>
                                 <AiButton
-                                    class="w-full sm:w-auto"
                                     data-test="close-add-trust-modal-btn"
                                     @click="close"
                                 >
@@ -166,6 +178,9 @@ const submitAction = async () => {
             text: extractErrorDetail(e, "There was an error creating the trust. Please try again.")
         });
         errorStore.setError();
+        // The dialog overlay would sit on top of the snackbar — close it so the
+        // error is actually readable.
+        close();
     } finally {
         isSubmitting.value = false;
     }

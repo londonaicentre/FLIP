@@ -12,6 +12,7 @@
 
 from nvflare.apis.dxo import DataKind
 from nvflare.apis.dxo_filter import DXO, DXOFilter
+from nvflare.apis.fl_constant import FLContextKey
 from nvflare.apis.fl_context import FLContext
 from nvflare.apis.shareable import Shareable
 from nvflare.app_common.app_constant import AppConstants
@@ -77,4 +78,77 @@ class ReconstructFullModel(DXOFilter):
             f"({len(self._full_weights)} vars) at round {current_round}.",
         )
         dxo.data = dict(self._full_weights)
+        return dxo
+
+
+class ReconstructFullModelForEval(ReconstructFullModel):
+    """Client-side ``task_data_filter`` for BOTH ``train`` and ``validate``: rebuild the full model.
+
+    Extends :class:`ReconstructFullModel` to also reconstruct the full model for post-training
+    cross-site validation (``GlobalModelEval``), whose head-only broadcast is produced by the
+    server-side :class:`~flip.nvflare.components.broadcast_trim_filter.TrimEvalBroadcastVars`.
+
+    Why one component on two tasks. The frozen backbone the client needs to reconstruct against is
+    the one it received at training round 0 — in production the pretrained checkpoint is de-bundled
+    server-side and never shipped to clients (see ``InitialCheckpointPTModelPersistor``), so the
+    client's ONLY copy of the backbone is the round-0 broadcast cached during training. NVFLARE builds
+    a fresh filter instance per filter-chain occurrence, so the training cache is shared with the
+    evaluation phase ONLY when the same component instance handles both tasks — i.e. one filter chain
+    whose ``tasks`` are ``["train", "validate"]``. This class is therefore wired onto both.
+
+    Behaviour is dispatched by the current task name (set in ``fl_ctx`` before client task-data
+    filters run):
+
+    * **train** (or any non-evaluation task): delegate to :class:`ReconstructFullModel` — the proven
+      round-gated cache-at-round-0 / merge-thereafter logic is unchanged.
+    * **validate**: merge the broadcast (head-only, or a full model if the server fell back) onto the
+      retained full model from training and hand the validator a full state dict. Fails loudly if the
+      client never cached a full model (it never trained → no backbone) or if the broadcast carries
+      keys absent from the retained model (a mismatch that would otherwise validate wrong weights).
+    """
+
+    def __init__(self, data_kinds: list[str] | None = None, evaluate_task_name: str = AppConstants.TASK_VALIDATION):
+        """
+        Args:
+            data_kinds: DXO kinds to filter; defaults to WEIGHTS and WEIGHT_DIFF.
+            evaluate_task_name: the task name under which cross-site validation broadcasts the model.
+                Defaults to NVFLARE's ``AppConstants.TASK_VALIDATION`` ("validate").
+        """
+        super().__init__(data_kinds=data_kinds)
+        self._evaluate_task_name = evaluate_task_name
+
+    def process_dxo(self, dxo: DXO, shareable: Shareable, fl_ctx: FLContext) -> DXO | None:
+        task_name = fl_ctx.get_prop(FLContextKey.TASK_NAME)
+        if task_name != self._evaluate_task_name:
+            # Training (or any non-eval task): unchanged round-gated reconstruction.
+            return super().process_dxo(dxo, shareable, fl_ctx)
+
+        if self._full_weights is None:
+            # Validation broadcast arrived but no full model was ever cached → this client never
+            # trained (so never received the round-0 backbone). Fail loudly rather than validate an
+            # incomplete model.
+            raise RuntimeError(
+                "ReconstructFullModelForEval: received a validation broadcast but no full model was "
+                "cached during training (client likely did not participate in training); cannot "
+                "reconstruct the frozen backbone for evaluation."
+            )
+
+        broadcast = dxo.data
+        unexpected = set(broadcast) - set(self._full_weights)
+        if unexpected:
+            # The broadcast carries keys the retained model doesn't have — a structural mismatch.
+            # Refuse rather than silently validate against a wrong/partial model.
+            raise RuntimeError(
+                f"ReconstructFullModelForEval: validation broadcast has {len(unexpected)} key(s) absent "
+                f"from the retained full model (e.g. {sorted(unexpected)[:3]}); refusing to reconstruct."
+            )
+
+        merged = dict(self._full_weights)
+        merged.update(broadcast)
+        self.log_info(
+            fl_ctx,
+            f"ReconstructFullModelForEval: merged {len(broadcast)} validation broadcast var(s) into the "
+            f"retained full model ({len(merged)} vars) for task {task_name!r}.",
+        )
+        dxo.data = merged
         return dxo

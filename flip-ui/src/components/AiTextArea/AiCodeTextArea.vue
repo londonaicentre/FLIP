@@ -20,7 +20,7 @@
         >
             {{ label }}
         </label>
-        <div class="mt-1">
+        <div class="relative mt-1">
             <div
                 class="block"
                 :class="{
@@ -43,6 +43,20 @@
                     @blur="handleBlur"
                 />
             </div>
+            <button
+                v-if="copyable"
+                type="button"
+                data-test="copy-code-btn"
+                :aria-label="copied ? 'Copied' : 'Copy to clipboard'"
+                :title="copied ? 'Copied' : 'Copy to clipboard'"
+                class="absolute z-10 top-2 right-2 p-1.5 rounded-md transition-colors
+                text-gray-500 dark:text-gray-300 hover:text-gray-700 dark:hover:text-gray-100
+                bg-white/80 hover:bg-white dark:bg-white/10 dark:hover:bg-white/20"
+                @click="copyToClipboard"
+            >
+                <icon-ph-check v-if="copied" class="w-4 h-4 text-emerald-500" aria-hidden="true" />
+                <icon-ph-copy v-else class="w-4 h-4" aria-hidden="true" />
+            </button>
         </div>
         <div v-if="hint && !errorMessage" class="m-1 text-sm text-gray-500 dark:text-gray-300">
             {{ hint }}
@@ -55,12 +69,16 @@
 
 <script lang="ts" setup>
 import "codemirror/mode/sql/sql.js";
+// The dark theme ships with this chunk too — the old app-wide @import in
+// main.css was dropped by #716, which left dark mode on an unstyled white
+// editor. The palette follows the cohort-query design handoff's CQEditor.
+import "@/assets/styles/codemirror-flip-dark.css";
 
 // Imported here rather than registered app-wide in main.ts so CodeMirror
 // ships with this component's chunk instead of the entry bundle (#716).
 import Codemirror from "codemirror-editor-vue3";
 import { useField } from "vee-validate";
-import { computed, TextareaHTMLAttributes } from "vue";
+import { computed, ref, TextareaHTMLAttributes } from "vue";
 
 import { useSiteSettings } from "@/store/siteSettingsStore";
 import { getRandomId } from "@/utils/helpers";
@@ -78,6 +96,8 @@ interface ICodeTextAreaProps {
     initialValue?: string;
     mode?: string;
     height?: number;
+    /** Overlay a copy-to-clipboard button in the editor's top-right corner. */
+    copyable?: boolean;
 }
 
 const siteSettings = useSiteSettings();
@@ -94,7 +114,8 @@ const props = withDefaults(
         initialValue: "",
         mode: "text/x-pgsql",
         height: 200,
-        inputProps: undefined
+        inputProps: undefined,
+        copyable: false
     }
 );
 
@@ -107,16 +128,33 @@ const {
 
 const cmOptions = computed(() => ({
     mode: props.mode,
-    theme: siteSettings.darkMode ? "dracula": "default",
+    theme: siteSettings.darkMode ? "flip-dark" : "default",
     lineNumbers: true,
     smartIndent: true,
     indentUnit: 4,
     foldGutter: true,
     lineWrapping: true,
     styleActiveLine: true,
-    readOnly: props.inputProps?.readonly ?? false,
+    // "nocursor" (rather than true) also refuses focus, so tapping the locked
+    // query on mobile can't summon a flickering caret or the soft keyboard.
+    readOnly: props.inputProps?.readonly ? ("nocursor" as const) : false,
     cursorBlinkRate: props.inputProps?.readonly ? -1 : 530 //blink rate of 530ms is the default, -1 will make it hidden
 }));
 
 const uuid = getRandomId();
+
+// Copy feedback: the overlay icon flips to a check for a moment after copying.
+const copied = ref(false);
+
+const copyToClipboard = async () => {
+    // Clipboard access can be denied/unavailable (permissions, insecure context);
+    // swallow the failure rather than surfacing an unhandled rejection from a click.
+    try {
+        await navigator.clipboard.writeText(String(inputValue.value ?? ""));
+    } catch {
+        return;
+    }
+    copied.value = true;
+    setTimeout(() => (copied.value = false), 2_000);
+};
 </script>

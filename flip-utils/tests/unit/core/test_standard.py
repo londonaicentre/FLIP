@@ -24,6 +24,7 @@ from requests import HTTPError
 from flip.constants import ModelStatus, ResourceType
 from flip.core.standard import FLIPStandardDev, FLIPStandardProd
 from flip.exceptions import ResultsUploadError
+from flip.schemas import FLLogEvent
 
 
 class TestFLIPStandardDevGetDataframe:
@@ -137,7 +138,7 @@ class TestFLIPStandardDevUpdateStatus:
     def test_update_status_runs_without_error_in_dev_mode(self, flip_dev):
         """update_status should run without error in dev mode (no-op)."""
         # Should not raise any exception - it's a no-op in dev mode
-        flip_dev.update_status(model_id="model-123", new_model_status=ModelStatus.TRAINING_STARTED)
+        flip_dev.update_status(model_id="model-123", new_model_status=ModelStatus.RUNNING)
 
 
 class TestFLIPStandardDevSendHandledException:
@@ -154,6 +155,197 @@ class TestFLIPStandardDevSendHandledException:
         flip_dev.send_handled_exception(
             formatted_exception="Test exception", client_name="client-1", model_id="model-123"
         )
+
+
+class TestFLIPStandardDevSendEvent:
+    """Test FLIPStandardDev send_event method."""
+
+    @pytest.fixture
+    def flip_dev(self):
+        """Create a FLIPStandardDev instance."""
+        return FLIPStandardDev()
+
+    def test_send_event_runs_without_error_in_dev_mode(self, flip_dev):
+        """send_event should run without error in dev mode (local log only)."""
+        flip_dev.send_event(
+            model_id="model-123",
+            event_type=FLLogEvent.ROUND_STARTED,
+            global_round=1,
+            details={"total_rounds": 3},
+        )
+
+
+class TestFLIPStandardProdSendEvent:
+    """Test FLIPStandardProd send_event method."""
+
+    @pytest.fixture
+    def flip_prod(self):
+        """Create a FLIPStandardProd instance."""
+        return FLIPStandardProd()
+
+    def test_hub_event_posts_facts_with_null_client(self, flip_prod):
+        """A hub-attributed event posts the typed payload with no client name and no text."""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.text = "OK"
+        valid_model_id = "550e8400-e29b-41d4-a716-446655440000"
+
+        with (
+            patch("flip.core.standard.FlipConstants") as mock_constants,
+            patch("flip.core.standard.requests.post", return_value=mock_response) as mock_post,
+        ):
+            mock_constants.FLIP_API_INTERNAL_URL = "https://hub.example.com"
+            mock_constants.INTERNAL_SERVICE_KEY_HEADER = "x-internal-service-key"
+            mock_constants.INTERNAL_SERVICE_KEY = "test-internal-key"
+
+            flip_prod.send_event(
+                model_id=valid_model_id,
+                event_type=FLLogEvent.ROUND_STARTED,
+                global_round=7,
+                details={"total_rounds": 15},
+            )
+
+            mock_post.assert_called_once()
+            call_args = mock_post.call_args
+            assert valid_model_id in call_args[0][0]
+            assert "logs" in call_args[0][0]
+            payload = call_args.kwargs["json"]
+            assert payload["event_type"] == "ROUND_STARTED"
+            assert payload["global_round"] == 7
+            assert payload["details"] == {"total_rounds": 15}
+            assert payload["fl_client_name"] is None
+            assert payload["log"] is None
+
+    def test_trust_event_carries_client_name(self, flip_prod):
+        """A trust-attributed event forwards the FL client identity for hub-side resolution."""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.text = "OK"
+        valid_model_id = "550e8400-e29b-41d4-a716-446655440000"
+
+        with (
+            patch("flip.core.standard.FlipConstants") as mock_constants,
+            patch("flip.core.standard.requests.post", return_value=mock_response) as mock_post,
+        ):
+            mock_constants.FLIP_API_INTERNAL_URL = "https://hub.example.com"
+            mock_constants.INTERNAL_SERVICE_KEY_HEADER = "x-internal-service-key"
+            mock_constants.INTERNAL_SERVICE_KEY = "test-internal-key"
+
+            flip_prod.send_event(
+                model_id=valid_model_id,
+                event_type=FLLogEvent.CLIENT_RESULT_RECEIVED,
+                global_round=7,
+                client_name="Trust_2",
+                details={"size_bytes": 2411725},
+            )
+
+            payload = mock_post.call_args.kwargs["json"]
+            assert payload["fl_client_name"] == "Trust_2"
+            assert payload["event_type"] == "CLIENT_RESULT_RECEIVED"
+
+    def test_send_event_rejects_invalid_uuid(self, flip_prod):
+        """send_event should reject invalid model IDs."""
+        with pytest.raises(ValueError, match="Invalid model ID"):
+            flip_prod.send_event(model_id="model-123", event_type=FLLogEvent.ROUND_STARTED, global_round=1)
+
+    def test_send_event_swallows_http_errors(self, flip_prod):
+        """Telemetry is best-effort: an unreachable hub must never break training."""
+        valid_model_id = "550e8400-e29b-41d4-a716-446655440000"
+
+        with (
+            patch("flip.core.standard.FlipConstants") as mock_constants,
+            patch("flip.core.standard.requests.post", side_effect=ConnectionError("down")),
+        ):
+            mock_constants.FLIP_API_INTERNAL_URL = "https://hub.example.com"
+            mock_constants.INTERNAL_SERVICE_KEY_HEADER = "x-internal-service-key"
+            mock_constants.INTERNAL_SERVICE_KEY = "test-internal-key"
+
+            flip_prod.send_event(model_id=valid_model_id, event_type=FLLogEvent.ROUND_STARTED, global_round=1)
+
+    def test_send_event_swallows_payload_validation_errors(self, flip_prod):
+        """A malformed fact (e.g. an un-normalised 0-based round) must be logged and
+        dropped, not raised — send_event runs inside result acceptance."""
+        valid_model_id = "550e8400-e29b-41d4-a716-446655440000"
+
+        with (
+            patch("flip.core.standard.FlipConstants") as mock_constants,
+            patch("flip.core.standard.requests.post") as mock_post,
+        ):
+            mock_constants.FLIP_API_INTERNAL_URL = "https://hub.example.com"
+            mock_constants.INTERNAL_SERVICE_KEY_HEADER = "x-internal-service-key"
+            mock_constants.INTERNAL_SERVICE_KEY = "test-internal-key"
+
+            flip_prod.send_event(model_id=valid_model_id, event_type=FLLogEvent.ROUND_STARTED, global_round=0)
+
+            mock_post.assert_not_called()
+
+    @pytest.mark.parametrize(
+        ("verb", "call"),
+        [
+            ("put", lambda flip: flip.update_status("550e8400-e29b-41d4-a716-446655440000", ModelStatus.ERROR)),
+            ("post", lambda flip: flip.send_metrics("Trust_1", "550e8400-e29b-41d4-a716-446655440000", "loss", 0.5, 1)),
+            (
+                "post",
+                lambda flip: flip.send_handled_exception("boom", "Trust_1", "550e8400-e29b-41d4-a716-446655440000"),
+            ),
+            (
+                "post",
+                lambda flip: flip.send_event(
+                    model_id="550e8400-e29b-41d4-a716-446655440000",
+                    event_type=FLLogEvent.ROUND_STARTED,
+                    global_round=1,
+                ),
+            ),
+        ],
+        ids=["update_status", "send_metrics", "send_handled_exception", "send_event"],
+    )
+    def test_every_hub_call_is_bounded_by_a_timeout(self, flip_prod, verb, call):
+        """The try/except around a hub call cannot catch a hang: a hub that accepts
+        TCP and stalls would otherwise freeze the FL loop (send_event/send_metrics
+        run inside result acceptance)."""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.text = "OK"
+
+        with (
+            patch("flip.core.standard.FlipConstants") as mock_constants,
+            patch(f"flip.core.standard.requests.{verb}", return_value=mock_response) as mock_request,
+        ):
+            mock_constants.FLIP_API_INTERNAL_URL = "https://hub.example.com"
+            mock_constants.INTERNAL_SERVICE_KEY_HEADER = "x-internal-service-key"
+            mock_constants.INTERNAL_SERVICE_KEY = "test-internal-key"
+
+            call(flip_prod)
+
+            assert mock_request.call_args.kwargs.get("timeout") is not None, "hub call must carry a timeout"
+
+
+class TestFLIPStandardProdSendHandledExceptionSuccessFlag:
+    """The exception path must persist as a failure row (red dot), not the success default."""
+
+    @pytest.fixture
+    def flip_prod(self):
+        """Create a FLIPStandardProd instance."""
+        return FLIPStandardProd()
+
+    def test_exception_payload_carries_success_false(self, flip_prod):
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.text = "OK"
+        valid_model_id = "550e8400-e29b-41d4-a716-446655440000"
+
+        with (
+            patch("flip.core.standard.FlipConstants") as mock_constants,
+            patch("flip.core.standard.requests.post", return_value=mock_response) as mock_post,
+        ):
+            mock_constants.FLIP_API_INTERNAL_URL = "https://hub.example.com"
+            mock_constants.INTERNAL_SERVICE_KEY_HEADER = "x-internal-service-key"
+            mock_constants.INTERNAL_SERVICE_KEY = "test-internal-key"
+
+            flip_prod.send_handled_exception("Error message", "client-1", valid_model_id)
+
+            payload = mock_post.call_args.kwargs["json"]
+            assert payload["success"] is False
 
 
 class TestFLIPStandardProdGetDataframe:
@@ -363,7 +555,7 @@ class TestFLIPStandardProdUpdateStatus:
             mock_constants.INTERNAL_SERVICE_KEY_HEADER = "x-internal-service-key"
             mock_constants.INTERNAL_SERVICE_KEY = "test-internal-key"
 
-            flip_prod.update_status(valid_model_id, ModelStatus.TRAINING_STARTED)
+            flip_prod.update_status(valid_model_id, ModelStatus.RUNNING)
 
             # Verify API was called
             mock_put.assert_called_once()
@@ -374,7 +566,7 @@ class TestFLIPStandardProdUpdateStatus:
     def test_update_status_rejects_invalid_uuid(self, flip_prod):
         """update_status should reject invalid model IDs."""
         with pytest.raises(ValueError, match="Invalid model ID"):
-            flip_prod.update_status("model-123", ModelStatus.TRAINING_STARTED)
+            flip_prod.update_status("model-123", ModelStatus.RUNNING)
 
 
 class TestFLIPStandardProdSendHandledException:
@@ -446,7 +638,7 @@ class TestFLIPStandardProdSendMetrics:
                 model_id=model_id,
                 label="LOSS_FUNCTION",
                 value=0.42,
-                round=3,
+                global_round=3,
             )
 
             mock_post.assert_called_once()
@@ -457,10 +649,69 @@ class TestFLIPStandardProdSendMetrics:
                 "global_round": 3,
                 "label": "LOSS_FUNCTION",
                 "result": 0.42,
+                "x_value": 3.0,
+                "x_label": "Global Rounds",
             }
             assert mock_post.call_args.kwargs["headers"] == {
                 "x-internal-service-key": "test-internal-key",
             }
+
+    def test_send_metrics_includes_custom_x_label_in_payload(self, flip_prod):
+        """A custom x_label is sent in the payload; omitting it defaults to "Global Rounds" (FLIP#148)."""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.text = "OK"
+
+        model_id = "550e8400-e29b-41d4-a716-446655440000"
+
+        with (
+            patch("flip.core.standard.FlipConstants") as mock_constants,
+            patch("flip.core.standard.requests.post", return_value=mock_response) as mock_post,
+        ):
+            mock_constants.FLIP_API_INTERNAL_URL = "https://hub.example.com"
+            mock_constants.INTERNAL_SERVICE_KEY_HEADER = "x-internal-service-key"
+            mock_constants.INTERNAL_SERVICE_KEY = "test-internal-key"
+
+            flip_prod.send_metrics(
+                client_name="client-1",
+                model_id=model_id,
+                label="LOSS_FUNCTION",
+                value=0.42,
+                global_round=3,
+                x_label="epoch",
+            )
+
+            assert mock_post.call_args.kwargs["json"]["x_label"] == "epoch"
+
+    def test_send_metrics_carries_custom_x_value_and_true_global_round(self, flip_prod):
+        """A custom x_value is the plot coordinate; global_round stays as provenance (FLIP#148)."""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.text = "OK"
+
+        model_id = "550e8400-e29b-41d4-a716-446655440000"
+
+        with (
+            patch("flip.core.standard.FlipConstants") as mock_constants,
+            patch("flip.core.standard.requests.post", return_value=mock_response) as mock_post,
+        ):
+            mock_constants.FLIP_API_INTERNAL_URL = "https://hub.example.com"
+            mock_constants.INTERNAL_SERVICE_KEY_HEADER = "x-internal-service-key"
+            mock_constants.INTERNAL_SERVICE_KEY = "test-internal-key"
+
+            flip_prod.send_metrics(
+                client_name="client-1",
+                model_id=model_id,
+                label="VAL_LOSS",
+                value=0.42,
+                global_round=2,
+                x_value=7.5,
+                x_label="epoch",
+            )
+
+            payload = mock_post.call_args.kwargs["json"]
+            assert payload["x_value"] == 7.5
+            assert payload["global_round"] == 2
 
 
 class TestFLIPStandardProdUploadResultsToS3:
@@ -647,9 +898,9 @@ class TestMlflowDualWriteHooks:
 
     def test_prod_update_status_mirrors_to_sink(self, flip_prod, sink, prod_constants):
         with patch("flip.core.standard.requests.put", return_value=Mock(status_code=200, text="OK")):
-            flip_prod.update_status(self.VALID_MODEL_ID, ModelStatus.TRAINING_STARTED)
+            flip_prod.update_status(self.VALID_MODEL_ID, ModelStatus.RUNNING)
 
-        sink.on_status.assert_called_once_with(self.VALID_MODEL_ID, ModelStatus.TRAINING_STARTED)
+        sink.on_status.assert_called_once_with(self.VALID_MODEL_ID, ModelStatus.RUNNING)
 
     def test_prod_update_status_mirrors_even_when_hub_call_fails(self, flip_prod, sink, prod_constants):
         """Dual-write independence: a failed canonical call must not drop the mirror."""
@@ -702,9 +953,9 @@ class TestMlflowDualWriteHooks:
         sink.register_results.assert_not_called()
 
     def test_dev_update_status_mirrors_to_sink(self, flip_dev, sink):
-        flip_dev.update_status("tutorial-model", ModelStatus.TRAINING_STARTED)
+        flip_dev.update_status("tutorial-model", ModelStatus.RUNNING)
 
-        sink.on_status.assert_called_once_with("tutorial-model", ModelStatus.TRAINING_STARTED)
+        sink.on_status.assert_called_once_with("tutorial-model", ModelStatus.RUNNING)
 
     def test_dev_send_metrics_mirrors_to_sink(self, flip_dev, sink):
         flip_dev.send_metrics("site-1", "tutorial-model", "ACCURACY", 0.9, 1)
@@ -724,9 +975,9 @@ class TestMlflowDualWriteHooks:
             patch("flip.core.standard.requests.post", return_value=Mock(status_code=200, text="OK")),
             patch("flip.core.standard.boto3.client", return_value=Mock()),
         ):
-            flip_prod.update_status(self.VALID_MODEL_ID, ModelStatus.TRAINING_STARTED)
+            flip_prod.update_status(self.VALID_MODEL_ID, ModelStatus.RUNNING)
             flip_prod.send_metrics("Trust_1", self.VALID_MODEL_ID, "LOSS_FUNCTION", 0.5, 2)
             flip_prod.send_handled_exception("boom", "Trust_1", self.VALID_MODEL_ID)
             flip_prod.upload_results_to_s3(results_folder, "model-123")
-            flip_dev.update_status("tutorial-model", ModelStatus.TRAINING_STARTED)
+            flip_dev.update_status("tutorial-model", ModelStatus.RUNNING)
             flip_dev.send_metrics("site-1", "tutorial-model", "ACCURACY", 0.9, 1)

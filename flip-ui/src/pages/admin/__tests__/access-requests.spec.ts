@@ -335,3 +335,17 @@ describe("Access Requests page", () => {
         expect(wrapper.findComponent({ name: "AiConfirmModal" }).props("dialog")).toBe(false);
     });
 });
+
+describe("admin subpage gutters", () => {
+    // admin.vue no longer pads the content wrapper (Users runs edge-to-edge),
+    // so carded subpages own their gutters via this wrapper.
+    it("wraps the card in a gutter that owns the page padding", () => {
+        const wrapper = mountPage();
+
+        const gutter = wrapper.find("[data-test='admin-page-gutter']");
+        expect(gutter.exists()).toBe(true);
+        for (const cls of ["w-full", "h-full", "p-4", "md:p-8", "pt-3", "md:pt-5"]) {
+            expect(gutter.classes()).toContain(cls);
+        }
+    });
+});

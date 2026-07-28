@@ -36,6 +36,14 @@ PRESERVE_VPC ?= true
 # Export PROD so child processes (e.g. check_status.py) can determine the environment
 export PROD
 
+# Terraform and AWS CLI prefixes: unset static credential env vars that
+# can leak from the parent shell (.env.stag may carry empty/literal-quoted
+# AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY for the omop-db init job).
+# These env vars take priority over the AWS_PROFILE / SSO credential chain
+# in the AWS Go SDK (Terraform) and cause InvalidClientTokenId errors.
+_TF := unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_SECURITY_TOKEN; terraform
+_AWS_ENV := unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_SECURITY_TOKEN; AWS_PROFILE=$(AWS_PROFILE)
+
 # Resolve FL_KIT_DATE from the backend-specific kit date: FLARE_KIT_DATE or FLOWER_KIT_DATE
 FL_KIT_DATE := $(if $(filter nvflare,$(FL_BACKEND)),$(FLARE_KIT_DATE),$(FLOWER_KIT_DATE))
 $(if $(FL_KIT_DATE),,$(error 🧠 $(if $(filter nvflare,$(FL_BACKEND)),FLARE_KIT_DATE,FLOWER_KIT_DATE) must be set in the environment file for FL_BACKEND=$(FL_BACKEND)))
@@ -169,6 +177,14 @@ export TF_VAR_MLFLOW_TRACKING_URI=${MLFLOW_TRACKING_URI}
 ECS_CLUSTER ?= flip-cluster
 CENTRALHUB_ECS_SERVICES = flip-api fl-api-net-1 fl-server-net-1
 
+# Immutable Central Hub deploys (FLIP#751): CI publishes a `sha-<short7>` tag for every
+# image; deploy-centralhub resolves that tag from the tip of the env's branch and
+# registers new task-definition revisions pointing at it, so what is live is always a
+# recorded commit and rollback-centralhub can repoint at the previous revision. The
+# env-file tags (DOCKER_TAG / DOCKER_FL_TAG) remain the bootstrap-only defaults Terraform
+# bakes into a (re)created task-definition family — day-to-day deploys never touch them.
+DEPLOY_GIT_REF := $(if $(filter true,$(PROD)),origin/main,origin/develop)
+
 TRUST_IMAGES = \
 	$(DOCKER_REGISTRY)trust-api:$(DOCKER_TAG) \
 	$(DOCKER_REGISTRY)imaging-api:$(DOCKER_TAG) \
@@ -223,7 +239,7 @@ init: ## Initialize Terraform configuration
 	@echo "Using AWS profile: $(AWS_PROFILE)"
 	@echo "Using backend bucket: $(FLIP_TFSTATE_BUCKET_NAME)"
 	@echo "Using AWS region: $(AWS_REGION)"
-	@terraform init \
+	@$(_TF) init \
 		-backend-config="bucket=$(FLIP_TFSTATE_BUCKET_NAME)" \
 		-backend-config="region=$(AWS_REGION)" \
 		-reconfigure
@@ -231,7 +247,7 @@ init: ## Initialize Terraform configuration
 
 .PHONY: import-persistent
 import-persistent: ## Import persistent resources (S3, Secrets, Cognito) to prevent replacement
-	@bash scripts/import-resources.sh
+	@unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_SECURITY_TOKEN; bash scripts/import-resources.sh
 
 
 .PHONY: migrate-flip-bucket
@@ -256,17 +272,17 @@ migrate-flip-bucket: ## One-time: sync legacy flip_bucket prefixes into the thre
 	fi
 	@echo "📦 Migrating contents of s3://$(FLIP_BUCKET_NAME) into the three split buckets ..."
 	@echo "  • model file uploads → s3://$(FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME)/uploaded/"
-	@aws s3 sync \
+	@$(_AWS_ENV) aws s3 sync \
 		s3://$(FLIP_BUCKET_NAME)/model_files/uploaded/ \
 		s3://$(FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME)/uploaded/
 	@echo "  • FL results     → s3://$(FLIP_FL_RESULTS_BUCKET_NAME)/"
-	@aws s3 sync \
+	@$(_AWS_ENV) aws s3 sync \
 		s3://$(FLIP_BUCKET_NAME)/uploaded_federated_data/ \
 		s3://$(FLIP_FL_RESULTS_BUCKET_NAME)/
 	# The legacy base-application/ prefix is intentionally NOT migrated: the base FL
 	# application templates now ship in the flip-api image, not S3 (FLIP#724).
 	@echo "  • FL app dests   → s3://$(FLIP_APP_BUNDLES_BUCKET_NAME)/app_destinations/"
-	@aws s3 sync \
+	@$(_AWS_ENV) aws s3 sync \
 		s3://$(FLIP_BUCKET_NAME)/app_destination_bucket/ \
 		s3://$(FLIP_APP_BUNDLES_BUCKET_NAME)/app_destinations/
 	@echo "📦 Sync calls complete. Run \`make verify-flip-bucket-migration\` to confirm parity before decommissioning."
@@ -289,59 +305,120 @@ force-unlock: ## Force unlock Terraform state - provide LOCK_ID=<id> as argument
 		echo "❌ LOCK_ID not provided. Usage: make force-unlock LOCK_ID=<lock-id>"; \
 		exit 1; \
 	fi
-	@bash scripts/force-unlock.sh $(LOCK_ID)
+	@unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_SECURITY_TOKEN; bash scripts/force-unlock.sh $(LOCK_ID)
 
 .PHONY: plan
 plan: ## Plan Terraform changes (with environment file loaded)
 	@echo "📋 Planning Terraform changes..."
-	@terraform plan -out=plan.tfplan -lock=${LOCK}
+	@$(_TF) plan -out=plan.tfplan -lock=${LOCK}
 
 .PHONY: plan-cert
 plan-cert: ## Plan only the ACM certificate (step 1 of 2 for HTTPS)
 	@echo "📋 Planning ACM certificate..."
-	@terraform plan -target=aws_acm_certificate.flip -out=plan-cert.tfplan
+	@$(_TF) plan -target=aws_acm_certificate.flip -out=plan-cert.tfplan
 
 .PHONY: apply-cert
 apply-cert: ## Apply only the ACM certificate (step 1 of 2 for HTTPS)
 	@echo "🔒 Applying ACM certificate (Step 1/2)..."
-	@terraform apply -target=aws_acm_certificate.flip -auto-approve
+	@$(_TF) apply -target=aws_acm_certificate.flip -auto-approve
 	@echo "✅ Certificate created! Now run 'make plan' and 'make apply' to deploy DNS validation."
+
+.PHONY: plan-fl-kit-slots
+plan-fl-kit-slots: ## Plan only the /flip/fl_kit_slot_names SSM parameter (+ flip-api task-role read)
+	@echo "📋 Planning FL kit-slot parameter..."
+	@$(_TF) plan -target=aws_ssm_parameter.fl_kit_slot_names \
+		-target=aws_iam_role_policy.ecs_flip_api_task -out=plan-fl-kit-slots.tfplan
+
+.PHONY: apply-fl-kit-slots
+apply-fl-kit-slots: ## Apply only the FL kit-slot SSM parameter — the slot activation path
+	## Re-renders /flip/fl_kit_slot_names from the env file's FL_KIT_SLOT_NAMES.
+	## flip-api re-reads the parameter when the slot pool runs dry (register_trust
+	## reconcile), so new kit slots become claimable with no task-definition change
+	## and no restart. The plan diff is plain-text (the list is not a secret) —
+	## review it before it applies. Also targets the flip-api task-role policy so
+	## the first rollout (which adds the ssm:GetParameter read) is self-contained;
+	## a no-op on every later run. Targeted on purpose: never run a full prod
+	## `make apply` for this (AMI drift can force-replace trust EC2s).
+	##
+	## NOT literally one resource: -target applies the target's whole dependency
+	## closure, and the task-role policy references the bucket modules, whose
+	## server-access logging targets aws_s3_bucket.flip_access_logs. So on an env whose
+	## state predates that S3-logging hardening the first run ALSO creates
+	## flip-access-logs-<subdomain> + its ACL/ownership (additive, 0 destroys). Seen on
+	## stag 2026-07-14: 4 to add, 1 to change, 0 to destroy. Prod has no access-logs
+	## bucket either — expect the same there. The plan prints and pauses for
+	## confirmation before it applies (YES=1 skips the pause, matching add_fl_kits.sh).
+	@echo "🎛️  Planning FL kit-slot parameter..."
+	@$(_TF) plan -target=aws_ssm_parameter.fl_kit_slot_names \
+		-target=aws_iam_role_policy.ecs_flip_api_task -out=plan-fl-kit-slots.tfplan
+	@if [ "$(YES)" != "1" ]; then \
+	  printf "   Apply this plan? [y/N] "; \
+	  read -r answer; \
+	  case "$$answer" in \
+	    [Yy]|[Yy][Ee][Ss]) ;; \
+	    *) echo "❌ Aborted — nothing applied (plan saved at plan-fl-kit-slots.tfplan)."; exit 1;; \
+	  esac; \
+	fi
+	@$(_TF) apply plan-fl-kit-slots.tfplan
+	@echo "✅ FL kit-slot parameter applied — new slots (if any) are claimable on the next trust registration."
+
+.PHONY: add-fl-kits
+add-fl-kits: ## Ensure N more claimable FL kit slots exist, end to end (NVFLARE; PROD=stag|true)
+	## Wraps scripts/add_fl_kits.sh: discover nets from S3 → ACTIVATE up to N spares
+	## (kits already minted on every net but not yet in FL_KIT_SLOT_NAMES — no certs, no
+	## upload) → MINT only the shortfall on every net (restore/fingerprint-verify each
+	## net's CA workspace, additive S3 upload, never sync --delete) → append the activated
+	## + minted names to FL_KIT_SLOT_NAMES in the env file. Then re-invokes make for
+	## apply-fl-kit-slots so the sub-make re-reads the just-edited env file (this parse's
+	## TF_VAR_FL_KIT_SLOT_NAMES predates the edit). N is a target ("N more live slots"),
+	## not a mint count — spares are reused before any fresh mint, so a good kit is never
+	## stranded and, when spares cover N, nothing is minted at all.
+	@[ -n "$(N)" ] || { echo "❌ N is required, e.g. make add-fl-kits N=2 PROD=true"; exit 1; }
+	@$(_AWS_ENV) MAIN_ENV_FILE=$(MAIN_ENV_FILE) N=$(N) YES=$(YES) \
+		FL_BACKEND=$(FL_BACKEND) ./scripts/add_fl_kits.sh
+	@$(MAKE) apply-fl-kit-slots PROD=$(PROD) YES=$(YES) || { \
+	  echo "❌ Parameter apply failed AFTER the new slot names were appended to the env file"; \
+	  echo "   (and any shortfall minted + uploaded)."; \
+	  echo "   Recover with just: make apply-fl-kit-slots PROD=$(PROD)"; \
+	  echo "   Do NOT re-run add-fl-kits — it would grow the pool by another N slots (activating"; \
+	  echo "   more spares or minting higher-numbered kits)."; \
+	  exit 1; }
 
 .PHONY: destroy-cert
 destroy-cert: ## Destroy only the ACM certificate (use with caution - will break HTTPS)
 	@echo "💥 Destroying ACM certificate (Step 1/2)..."
-	@terraform destroy -target=aws_acm_certificate.flip -target=aws_acm_certificate_validation.flip -target=aws_route53_record.cert_validation
+	@$(_TF) destroy -target=aws_acm_certificate.flip -target=aws_acm_certificate_validation.flip -target=aws_route53_record.cert_validation
 	@echo "✅ Certificate destroyed! Now run 'make plan' and 'make apply' to remove DNS validation."
 
 .PHONY: plan-cloudfront-certs
 plan-cloudfront-certs: ## Plan the CloudFront viewer cert (us-east-1)
 	@echo "📋 Planning CloudFront viewer certificate..."
-	@terraform plan \
+	@$(_TF) plan \
 		-target=aws_acm_certificate.flip_cloudfront \
 		-out=plan-cloudfront-certs.tfplan
 
 .PHONY: apply-cloudfront-certs
 apply-cloudfront-certs: ## Apply the CloudFront viewer cert (us-east-1)
 	@echo "🔒 Applying CloudFront viewer certificate (Step 1/2 for CloudFront)..."
-	@terraform apply -target=aws_acm_certificate.flip_cloudfront -auto-approve
+	@$(_TF) apply -target=aws_acm_certificate.flip_cloudfront -auto-approve
 	@echo "✅ Certificate created. Run 'make plan' and 'make apply' to deploy DNS validation + CloudFront."
 
 .PHONY: refresh
 refresh: ## Refresh Terraform state to sync with actual AWS resources
 	@echo "🔄 Refreshing Terraform state..."
-	@terraform refresh
+	@$(_TF) refresh
 	@echo "✅ State refreshed!"
 
 
 .PHONY: apply
 apply: ## Apply Terraform configuration to update AWS infrastructure (with environment file loaded)
 	@echo "🛠️ Applying Terraform configuration..."
-	@terraform apply plan.tfplan
+	@$(_TF) apply plan.tfplan
 
 .PHONY: import-cloudfront
 import-cloudfront: ## Import existing CloudFront distribution into terraform state
 	@echo "🔗 Importing existing CloudFront distribution..."
-	@terraform import aws_cloudfront_distribution.flip_ui E31HHLGOWBDENB
+	@$(_TF) import aws_cloudfront_distribution.flip_ui E31HHLGOWBDENB
 
 .PHONY: forward-trust
 forward-trust: ## SSM port-forward all Trust web UIs and API swagger docs (Ctrl+C to stop)
@@ -350,14 +427,14 @@ forward-trust: ## SSM port-forward all Trust web UIs and API swagger docs (Ctrl+
 .PHONY: ssh-config
 ssh-config: check-ssm-ready ## Update local .ssh/config for flip contexts (requires SSM plugin)
 	@echo "⚙️  Configure .ssh/config for flip context..."
-	@AWS_PROFILE=${AWS_PROFILE} terraform output
-	@AWS_PROFILE=${AWS_PROFILE} uv run ./update_ssm_ssh_config.py --aws-profile ${AWS_PROFILE}
+	@unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_SECURITY_TOKEN; AWS_PROFILE=${AWS_PROFILE} terraform output
+	@unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_SECURITY_TOKEN; AWS_PROFILE=${AWS_PROFILE} uv run ./update_ssm_ssh_config.py --aws-profile ${AWS_PROFILE}
 	@echo "✅ .ssh/config updated!"
 
 .PHONY: update-env
 update-env: ## Update environment file with Terraform outputs
 	@echo "🔄 Updating environment file with infrastructure values..."
-	@uv run ./update_env.py $(MAIN_ENV_FILE)
+	@unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_SECURITY_TOKEN; uv run ./update_env.py $(MAIN_ENV_FILE)
 
 .PHONY: ansible-init
 ansible-init: ## Initialize Ansible configuration on EC2 instances (if failed try again for 3 times)
@@ -366,7 +443,7 @@ ansible-init: ## Initialize Ansible configuration on EC2 instances (if failed tr
 	@[ -n "$(ORTHANC_DATA_VERSION)" ] || (echo "❌  trust/orthanc/.data_version not found"; exit 1)
 	@uv sync
 	@uv run ansible-galaxy install -r requirements.yml
-	@uv run ansible-playbook site.yml \
+	@unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_SECURITY_TOKEN; uv run ansible-playbook site.yml \
 		-e flip_aicentre_bucket=$(AICENTRE_BUCKET_NAME) \
 		-e fl_backend=$(FL_BACKEND) \
 		-e fl_kit_date=$(FL_KIT_DATE) \
@@ -412,24 +489,228 @@ seed-trust-data: check-trust-ec2-enabled ssh-config ## Load trust-specific OMOP 
 	@echo "✅ Trust data seeding complete."
 
 .PHONY: deploy-centralhub
-deploy-centralhub: ## Force-redeploy Central Hub ECS services and publish the UI
-	@echo "🚀 Force-redeploying Central Hub ECS services in $(ECS_CLUSTER)..."
+deploy-centralhub: ## Deploy Central Hub ECS services at the env branch tip (new task-def revisions) and publish the UI
+	## Immutable deploy (FLIP#751). The tag is resolved INSIDE the recipe (not a Make-level
+	## shell function) so the git fetch only runs when this target does; `cut -c1-7` pins the
+	## abbreviation to exactly 7 chars to match CI's sha-tag truncation — `git rev-parse --short=7`
+	## can grow beyond 7 when abbreviations become ambiguous, and the GHCR guard below
+	## catches any residual mismatch loudly. Two phases: EVERY service's target image is
+	## resolved and its GHCR manifest verified before ANY service is mutated, so a missing
+	## tag (builds are path-filtered — a merge that didn't touch a service publishes no new
+	## tag for it) aborts with nothing deployed. Non-ghcr.io registries skip the manifest
+	## check (LZA ECR pull-through cache, FLIP#749). The app container is selected BY NAME —
+	## never by index — matching the describe-tasks convention in TROUBLESHOOTING.md §1.9
+	## and staying robust to sidecar/ordering changes; only its image tag is swapped before
+	## registering the new revision. Task-def tags are carried over only when non-empty
+	## (register-task-definition rejects an empty tags array). Pass TAG=sha-<short7> to
+	## deploy a hotfix / feature-branch image (build it first via workflow_dispatch — see
+	## CLAUDE.md); revert with `make rollback-centralhub`.
+	## FL quiesce warning (FLIP#770): an ECS replacement kills any in-flight training run
+	## (fl-server run state is ephemeral) and strands its model/net BUSY. For now this is a
+	## printed reminder only, not an enforced gate — enable Deployment Mode first (it pauses
+	## FL job pickup) and wait for any running job to finish; GET /fl/quiesce reports both.
+	## On prod (PROD=true) the reminder also asks for interactive confirmation; stag proceeds
+	## without prompting so scripted staging deploys stay non-interactive.
 	@set -e; \
+	export AWS_PROFILE=$(AWS_PROFILE) AWS_REGION=$(AWS_REGION); \
+	echo "⚠️  FL quiesce reminder (FLIP#770): replacing fl-server-net-1 kills any in-flight"; \
+	echo "   training run and strands its model at TRAINING_STARTED with its net stuck BUSY."; \
+	echo "   Before deploying: enable Deployment Mode (Admin → Deployments) — it pauses FL job"; \
+	echo "   pickup, so queued jobs hold — and wait for any running job to finish."; \
+	echo "   GET $(CENTRAL_HUB_API_URL)/fl/quiesce reports both (deployment_mode + fl_quiesced)."; \
+	if [ "$(PROD)" = "true" ]; then \
+	  printf "   Are you sure you want to continue? [y/N] "; \
+	  read -r answer; \
+	  case "$$answer" in \
+	    [Yy]|[Yy][Ee][Ss]) ;; \
+	    *) echo "❌ Aborted — nothing has been deployed."; exit 1;; \
+	  esac; \
+	fi; \
+	TAG="$(TAG)"; \
+	if [ -z "$$TAG" ]; then \
+	  echo "🔎 Resolving deploy tag from the tip of $(DEPLOY_GIT_REF)..."; \
+	  git fetch -q origin; \
+	  sha=$$(git rev-parse $(DEPLOY_GIT_REF)) || { echo "❌ Cannot resolve $(DEPLOY_GIT_REF)"; exit 1; }; \
+	  TAG="sha-$$(printf '%s' "$$sha" | cut -c1-7)"; \
+	fi; \
+	printf '%s' "$$TAG" | grep -Eq '^sha-[0-9a-f]{7}$$' || { \
+	  echo "❌ TAG '$$TAG' is not an immutable sha-<short7> tag (sha- followed by 7 hex chars)."; \
+	  echo "   deploy-centralhub only deploys CI-published sha tags — a mutable tag here would"; \
+	  echo "   defeat the revision audit trail. Omit TAG= to deploy the tip of $(DEPLOY_GIT_REF)."; \
+	  exit 1; }; \
+	echo "🚀 Deploying Central Hub ECS services in $(ECS_CLUSTER) at $$TAG..."; \
 	for service in $(CENTRALHUB_ECS_SERVICES); do \
-	  echo "   ↻ $$service"; \
-	  AWS_PROFILE=$(AWS_PROFILE) AWS_REGION=$(AWS_REGION) aws ecs update-service \
-	    --cluster $(ECS_CLUSTER) \
-	    --service $$service \
-	    --force-new-deployment \
-	    --query 'service.serviceName' \
-	    --output text >/dev/null; \
+	  current_td=$$($(_AWS_ENV) aws ecs describe-services --cluster $(ECS_CLUSTER) --services $$service \
+	    --query 'services[0].taskDefinition' --output text); \
+	  if [ -z "$$current_td" ] || [ "$$current_td" = "None" ]; then \
+	    echo "❌ $$service not found in cluster $(ECS_CLUSTER)"; exit 1; \
+	  fi; \
+	  td_json=$$($(_AWS_ENV) aws ecs describe-task-definition --task-definition "$$current_td"); \
+	  image=$$(printf '%s' "$$td_json" | jq -r --arg name "$$service" \
+	    '.taskDefinition.containerDefinitions[] | select(.name == $$name).image'); \
+	  [ -n "$$image" ] || { echo "❌ $$service: no container named '$$service' in $$current_td"; exit 1; }; \
+	  case "$$image" in \
+	  *@*) echo "❌ $$service: digest-pinned image '$$image' — cannot swap a tag onto it"; exit 1;; \
+	  esac; \
+	  new_image="$${image%:*}:$$TAG"; \
+	  case "$$new_image" in \
+	  ghcr.io/*) \
+	    repo=$${new_image#ghcr.io/}; repo=$${repo%:*}; \
+	    token=$$(curl -fsSL "https://ghcr.io/token?scope=repository:$$repo:pull" | jq -r '.token // empty'); \
+	    [ -n "$$token" ] || { \
+	      echo "❌ GHCR token fetch failed (network/registry problem) — cannot verify $$new_image."; \
+	      echo "   This is NOT a missing build; retry once GHCR is reachable. Nothing has been deployed."; \
+	      exit 1; }; \
+	    accept='application/vnd.oci.image.index.v1+json, application/vnd.oci.image.manifest.v1+json'; \
+	    accept="$$accept, application/vnd.docker.distribution.manifest.list.v2+json"; \
+	    accept="$$accept, application/vnd.docker.distribution.manifest.v2+json"; \
+	    status=$$(curl -sSI -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $$token" \
+	      -H "Accept: $$accept" "https://ghcr.io/v2/$$repo/manifests/$$TAG") || status=000; \
+	    case "$$status" in \
+	    200) echo "   ✓ $$service: $$new_image verified in GHCR";; \
+	    404) \
+	      case "$$service" in \
+	        flip-api) wf=docker_build_flip_api.yml; is_fl=false;; \
+	        *) wf=fl-docker-build-$(FL_BACKEND).yml; is_fl=true;; \
+	      esac; \
+	      echo "❌ $$new_image not found in GHCR."; \
+	      echo "   Builds are path-filtered (a merge that didn't touch this service publishes no new"; \
+	      echo "   tag for it), and flip-api's is additionally test-gated so it may still be running:"; \
+	      echo "     gh run list --workflow=$$wf"; \
+	      if [ "$$is_fl" = true ]; then \
+	        echo "   $$wf builds fl-server, fl-api, fl-client and fl-base together, so their sha-<short7>"; \
+	        echo "   tags publish as one set — a 404 here means that whole backend build did not run for"; \
+	        echo "   this commit, not that a single image within the multi-image build is missing."; \
+	      fi; \
+	      echo "   To build a missing / branch / hotfix image: gh workflow run $$wf --ref <branch>"; \
+	      echo "   Nothing has been deployed."; \
+	      exit 1;; \
+	    *) \
+	      echo "❌ GHCR manifest check for $$new_image returned HTTP $$status — a registry/auth/"; \
+	      echo "   network problem, not a missing build. Do not dispatch rebuilds; retry the deploy."; \
+	      echo "   Nothing has been deployed."; \
+	      exit 1;; \
+	    esac;; \
+	  *) echo "   ⚠️  $$new_image is not on ghcr.io — skipping the registry existence check (FLIP#749)";; \
+	  esac; \
+	done; \
+	deployed=""; tmp_td=""; \
+	trap 'rm -f $$tmp_td' EXIT; \
+	warn_mixed() { \
+	  [ -n "$$deployed" ] || return 0; \
+	  echo ""; \
+	  echo "   ============================== MIXED STATE =============================="; \
+	  echo "   ⚠️  PARTIAL DEPLOY — some services were already repointed this run before"; \
+	  echo "       this failure; the Central Hub now runs a mix of old and new revisions."; \
+	  echo "       Already repointed:$$deployed"; \
+	  echo "       → Fix the error above and re-run 'make deploy-centralhub' to converge."; \
+	  echo "       → Do NOT 'make rollback-centralhub' blindly: it would also downgrade the"; \
+	  echo "         services that deployed cleanly this run."; \
+	  echo "   ========================================================================="; \
+	  echo ""; \
+	}; \
+	for service in $(CENTRALHUB_ECS_SERVICES); do \
+	  current_td=$$($(_AWS_ENV) aws ecs describe-services --cluster $(ECS_CLUSTER) --services $$service \
+	    --query 'services[0].taskDefinition' --output text); \
+	  td_json=$$($(_AWS_ENV) aws ecs describe-task-definition --task-definition "$$current_td" --include TAGS); \
+	  image=$$(printf '%s' "$$td_json" | jq -r --arg name "$$service" \
+	    '.taskDefinition.containerDefinitions[] | select(.name == $$name).image'); \
+	  [ -n "$$image" ] || { echo "❌ $$service: no container named '$$service' in $$current_td"; exit 1; }; \
+	  new_image="$${image%:*}:$$TAG"; \
+	  jq_prog='.taskDefinition.containerDefinitions |= map(if .name == $$name then .image = $$image else . end)'; \
+	  jq_prog="$$jq_prog | (.taskDefinition | del(.taskDefinitionArn, .revision, .status, .requiresAttributes,"; \
+	  jq_prog="$$jq_prog .compatibilities, .registeredAt, .registeredBy, .deregisteredAt))"; \
+	  jq_prog="$$jq_prog + (if ((.tags // []) | length) > 0 then {tags: .tags} else {} end)"; \
+	  tmp_td=$$(mktemp); \
+	  printf '%s' "$$td_json" | jq --arg name "$$service" --arg image "$$new_image" "$$jq_prog" > $$tmp_td; \
+	  if ! new_td_arn=$$($(_AWS_ENV) aws ecs register-task-definition --cli-input-json file://$$tmp_td \
+	      --query 'taskDefinition.taskDefinitionArn' --output text); then \
+	    echo "❌ $$service: register-task-definition failed."; \
+	    warn_mixed; \
+	    exit 1; \
+	  fi; \
+	  rm -f $$tmp_td; tmp_td=""; \
+	  echo "   ↻ $$service: $${current_td##*/} → $${new_td_arn##*/} ($$new_image)"; \
+	  if ! ( $(_AWS_ENV) aws ecs update-service --cluster $(ECS_CLUSTER) --service $$service \
+	      --task-definition "$$new_td_arn" \
+	      --query 'service.serviceName' --output text >/dev/null ); then \
+	    echo "❌ $$service: update-service failed — deregistering the just-registered $${new_td_arn##*/}"; \
+	    echo "   so the latest-ACTIVE lookups in ecs_services.tf keep tracking the running revision."; \
+	    $(_AWS_ENV) aws ecs deregister-task-definition --task-definition "$$new_td_arn" >/dev/null \
+	      || echo "   ⚠️  deregister failed too — deregister $${new_td_arn##*/} manually, or the next terraform apply will adopt it."; \
+	    warn_mixed; \
+	    exit 1; \
+	  fi; \
+	  deployed="$$deployed $$service"; \
 	done
 	@echo "⏳ Waiting for Central Hub ECS services to stabilise..."
-	@AWS_PROFILE=$(AWS_PROFILE) AWS_REGION=$(AWS_REGION) aws ecs wait services-stable \
+	@$(_AWS_ENV) AWS_REGION=$(AWS_REGION) aws ecs wait services-stable \
 	  --cluster $(ECS_CLUSTER) \
-	  --services $(CENTRALHUB_ECS_SERVICES)
+	  --services $(CENTRALHUB_ECS_SERVICES) || { \
+	  echo "❌ Services did not stabilise — ECS keeps retrying the new deployment in the background"; \
+	  echo "   (no circuit breaker). Inspect:"; \
+	  echo "     aws ecs describe-services --cluster $(ECS_CLUSTER) --services $(CENTRALHUB_ECS_SERVICES) --query 'services[].events[:5]'"; \
+	  echo "   Revert with: make rollback-centralhub PROD=$(PROD)"; \
+	  exit 1; }
 	@$(MAKE) deploy-ui PROD=$(PROD)
 	@echo "✅ Central Hub ECS services and UI deployed."
+
+.PHONY: rollback-centralhub
+rollback-centralhub: ## Repoint each Central Hub ECS service at its previous ACTIVE task-definition revision
+	## Reverts the last deploy-centralhub in seconds — no rebuild, no env-file edit. Each
+	## service moves to the highest ACTIVE revision below its current one (CLI- and
+	## Terraform-registered revisions both count), then the rolled-away revision is
+	## DEREGISTERED so the latest-ACTIVE lookups in ecs_services.tf converge back to the
+	## running revision — without this, the next `terraform apply` would re-adopt the very
+	## revision just rolled back from (its max() tracks latest ACTIVE, not what runs).
+	## Deregistered revisions stay describable for forensics. If the rolled-away revision
+	## is Terraform's own (a rollback straight after an apply), the next apply re-registers
+	## the family — that is the documented bootstrap-tag path; re-run deploy-centralhub
+	## after it. The UI is NOT rolled back — re-run `make deploy-ui` from the matching
+	## commit if the UI must move too.
+	@set -e; \
+	unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_SECURITY_TOKEN; export AWS_PROFILE=$(AWS_PROFILE) AWS_REGION=$(AWS_REGION); \
+	echo "⏪ Rolling back Central Hub ECS services in $(ECS_CLUSTER)..."; \
+	for service in $(CENTRALHUB_ECS_SERVICES); do \
+	  current_td=$$($(_AWS_ENV) aws ecs describe-services --cluster $(ECS_CLUSTER) --services $$service \
+	    --query 'services[0].taskDefinition' --output text); \
+	  if [ -z "$$current_td" ] || [ "$$current_td" = "None" ]; then \
+	    echo "❌ $$service not found in cluster $(ECS_CLUSTER)"; exit 1; \
+	  fi; \
+	  family=$${current_td##*/}; family=$${family%%:*}; rev=$${current_td##*:}; \
+	  arns=$$($(_AWS_ENV) aws ecs list-task-definitions --family-prefix $$family --status ACTIVE --sort DESC \
+	    --query 'taskDefinitionArns' --output json); \
+	  jq_prev='map(select(contains("/" + $$family + ":")))'; \
+	  jq_prev="$$jq_prev"' | map(select((split(":") | last | tonumber) < $$rev)) | first // empty'; \
+	  previous=$$(printf '%s' "$$arns" | jq -r --arg family "$$family" --argjson rev "$$rev" "$$jq_prev"); \
+	  if [ -z "$$previous" ]; then \
+	    echo "❌ $$service: no ACTIVE revision below $${current_td##*/} to roll back to"; exit 1; \
+	  fi; \
+	  echo "   ⏪ $$service: $${current_td##*/} → $${previous##*/}"; \
+	  $(_AWS_ENV) aws ecs update-service --cluster $(ECS_CLUSTER) --service $$service \
+	    --task-definition "$$previous" \
+	    --query 'service.serviceName' --output text >/dev/null; \
+	  if ! ( $(_AWS_ENV) aws ecs deregister-task-definition --task-definition "$$current_td" \
+	      --query 'taskDefinition.status' --output text >/dev/null ); then \
+	    echo "❌ $$service rolled back to $${previous##*/}, but deregistering $${current_td##*/} failed —"; \
+	    echo "   it is still the latest ACTIVE revision, so the next terraform apply would re-adopt"; \
+	    echo "   it. Deregister manually:"; \
+	    echo "     aws ecs deregister-task-definition --task-definition $$current_td"; \
+	    exit 1; \
+	  fi; \
+	  echo "   🗑  $$service: deregistered $${current_td##*/} (stays describable, no longer ACTIVE)"; \
+	done
+	@echo "⏳ Waiting for Central Hub ECS services to stabilise..."
+	@$(_AWS_ENV) AWS_REGION=$(AWS_REGION) aws ecs wait services-stable \
+	  --cluster $(ECS_CLUSTER) \
+	  --services $(CENTRALHUB_ECS_SERVICES) || { \
+	  echo "❌ Services did not stabilise after the rollback — inspect:"; \
+	  echo "     aws ecs describe-services --cluster $(ECS_CLUSTER) --services $(CENTRALHUB_ECS_SERVICES) --query 'services[].events[:5]'"; \
+	  exit 1; }
+	@echo "✅ Central Hub ECS services rolled back."
+	@echo "⚠️  The flip-ui bundle was NOT rolled back — if the reverted release also changed the"
+	@echo "   UI, re-run 'make deploy-ui PROD=$(PROD)' from the matching commit to avoid a"
+	@echo "   frontend/backend mismatch."
 
 .PHONY: deploy-ui
 deploy-ui: ## Build flip-ui from the working tree and deploy it to S3 + invalidate CloudFront
@@ -442,22 +723,24 @@ deploy-ui: ## Build flip-ui from the working tree and deploy it to S3 + invalida
 	@echo "📦 Syncing static assets to the deployed UI bucket..."
 	@# Hashed bundles are content-addressed and safe to cache forever.
 	@# index.html and window.js must never be cached long — they reference the hashed bundles.
-	@UI_BUCKET=$$(AWS_PROFILE=$(AWS_PROFILE) terraform output -raw FlipUiBucketName); \
+	@UI_BUCKET=$$($(_AWS_ENV) terraform output -raw FlipUiBucketName); \
 	[ -n "$$UI_BUCKET" ] || { echo "❌ Terraform output FlipUiBucketName is empty"; exit 1; }; \
 	echo "   s3://$$UI_BUCKET/"; \
-	AWS_PROFILE=$(AWS_PROFILE) aws s3 sync ../../../flip-ui/dist/ s3://$$UI_BUCKET/ \
+	$(_AWS_ENV) aws s3 sync ../../../flip-ui/dist/ s3://$$UI_BUCKET/ \
 		--delete \
 		--cache-control "public, max-age=31536000, immutable" \
 		--exclude "index.html" --exclude "js/window.js"; \
-	AWS_PROFILE=$(AWS_PROFILE) aws s3 cp ../../../flip-ui/dist/index.html s3://$$UI_BUCKET/index.html \
+	$(_AWS_ENV) aws s3 cp ../../../flip-ui/dist/index.html s3://$$UI_BUCKET/index.html \
 		--cache-control "no-cache, no-store, must-revalidate" \
 		--content-type "text/html; charset=utf-8"; \
-	AWS_PROFILE=$(AWS_PROFILE) aws s3 cp ../../../flip-ui/dist/js/window.js s3://$$UI_BUCKET/js/window.js \
+	$(_AWS_ENV) aws s3 cp ../../../flip-ui/dist/js/window.js s3://$$UI_BUCKET/js/window.js \
 		--cache-control "no-cache, no-store, must-revalidate" \
 		--content-type "application/javascript; charset=utf-8"
 	@echo "🧹 Invalidating CloudFront..."
-	@AWS_PROFILE=$(AWS_PROFILE) aws cloudfront create-invalidation \
-		--distribution-id $$(AWS_PROFILE=$(AWS_PROFILE) terraform output -raw CloudfrontDistributionId) \
+	@DIST_ID=$$($(_AWS_ENV) terraform output -raw CloudfrontDistributionId); \
+	[ -n "$$DIST_ID" ] || { echo "❌ Terraform output CloudfrontDistributionId is empty"; exit 1; }; \
+	$(_AWS_ENV) aws cloudfront create-invalidation \
+		--distribution-id "$$DIST_ID" \
 		--paths "/*" >/dev/null
 	@echo "✅ deploy-ui complete."
 
@@ -545,7 +828,7 @@ ifeq ($(FL_BACKEND),nvflare)
 	@[ -n "$(FL_KIT_SLOT)" ] || (echo ""; echo "❌  FL_KIT_SLOT not found — is trust/.env.$(KIT).$(KIT_ENV_SUFFIX) present with FL_KIT_SLOT set?"; echo ""; exit 1)
 	@TRUST_KIT_DIR=/tmp/$(FL_KIT_SLOT)_kit && \
 	  rm -rf $$TRUST_KIT_DIR && mkdir -p $$TRUST_KIT_DIR && \
-	  AWS_PROFILE=$(AWS_PROFILE) aws s3 sync \
+	  $(_AWS_ENV) aws s3 sync \
 	    s3://$(AICENTRE_BUCKET_NAME)/fl-flare-participant-kits/$(FL_KIT_DATE)/net-1/services/$(FL_KIT_SLOT)/ \
 	    $$TRUST_KIT_DIR && \
 	  echo "" && \
@@ -557,7 +840,7 @@ ifeq ($(FL_BACKEND),nvflare)
 else
 	@TRUST_KIT_DIR=/tmp/$(KIT)_kit && \
 	  rm -rf $$TRUST_KIT_DIR && mkdir -p $$TRUST_KIT_DIR/net-1 && \
-	  AWS_PROFILE=$(AWS_PROFILE) aws s3 sync \
+	  $(_AWS_ENV) aws s3 sync \
 	    s3://$(AICENTRE_BUCKET_NAME)/fl-flower-participant-kits/$(FL_KIT_DATE)/net-1/ \
 	    $$TRUST_KIT_DIR/net-1/ && \
 	  echo "" && \
@@ -631,14 +914,14 @@ down:
 
 .PHONY: status
 status: ## Check deployment status
-	@uv run ./check_status.py
+	@unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_SECURITY_TOKEN; uv run ./check_status.py
 
 check:
 	@echo "🔍 Checking Terraform state..."
-	@terraform state list
+	@$(_TF) state list
 	@echo ""
-	@terraform output
-	@uv run ./check_status.py || true
+	@$(_TF) output
+	@unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_SECURITY_TOKEN; uv run ./check_status.py || true
 
 
 .PHONY: destroy
@@ -666,7 +949,7 @@ endif
 	@echo ""
 	@bash -c 'read -p "Type '\''yes'\'' to confirm destruction: " confirm && [ "$$confirm" = "yes" ] || { echo "Aborted."; exit 1; }'
 	@echo ""
-	@PRESERVE_VPC=$(PRESERVE_VPC) bash scripts/destroy-selective.sh
+	@unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_SECURITY_TOKEN; PRESERVE_VPC=$(PRESERVE_VPC) bash scripts/destroy-selective.sh
 
 
 .PHONY: help
@@ -734,7 +1017,7 @@ full-deploy: ## Full AWS deployment: provision infrastructure, deploy cloud Trus
 	## 4. update-env: refresh .env with Terraform outputs (EC2 IPs, DB endpoint, Cognito IDs)
 	## 5. ssh-config + ansible-init: configure the SSM bastion and provision the Trust EC2
 	##    (ansible-init uses trust_num=1 by default; re-run with KIT=<CODE> after register-trusts for slot-specific data)
-	## 6. deploy-centralhub: force-redeploy Central Hub ECS services and publish the UI
+	## 6. deploy-centralhub: deploy Central Hub ECS services at the env branch tip (new task-def revisions) + publish the UI
 	## 7. register-trusts: register every live trust/.env.*.<env> kit on the hub and write kit files
 	## 8. deploy-trust + status: bring up cloud Trust container stack and verify
 	## Prerequisite: create stub kit files first: make new-trust TRUST_CODE=<CODE> TRUST_NAME="..." TRUST_REGION=London PROD=$(PROD)
@@ -770,7 +1053,7 @@ full-deploy-with-local-trust: ## Full AWS deployment (honours PROD) plus on-prem
 	## 4. update-env: refresh .env.{PROD} with Terraform outputs (EC2 IPs, DB endpoint, Cognito IDs)
 	## 5. ssh-config + ansible-init: configure the SSM bastion and provision the Trust EC2
 	##    (ansible-init uses trust_num=1 by default; re-run with KIT=<CODE> after register-trusts for slot-specific data)
-	## 6. deploy-centralhub: force-redeploy Central Hub ECS services and publish the UI
+	## 6. deploy-centralhub: deploy Central Hub ECS services at the env branch tip (new task-def revisions) + publish the UI
 	## 7. register-trusts: register every live trust/.env.*.<env> kit on the hub and write kit files
 	## 8. deploy-trust + provision-local-trust + status: bring up cloud + on-prem trust hosts and verify
 	## NOTE: After this completes you must manually:

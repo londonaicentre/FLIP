@@ -51,10 +51,10 @@ vi.mock("swrv", () => ({
 vi.mock("@/composables/useErrorHandler", () => ({ default: vi.fn() }));
 
 const stubs = {
-    "icon-heroicons-solid-check": { template: "<span data-test-icon='check' />" },
-    "icon-heroicons-outline-clock": { template: "<span data-test-icon='clock' />" },
-    ExclamationCircleIcon: { template: "<span data-test-icon='exclamation' />" },
-    RefreshIcon: { template: "<span data-test-icon='refresh' />" },
+    "icon-ph-check-bold": { template: "<span data-test-icon='check' />" },
+    "icon-ph-clock": { template: "<span data-test-icon='clock' />" },
+    "icon-ph-warning-circle-fill": { template: "<span data-test-icon='exclamation' />" },
+    "icon-ph-arrows-clockwise": { template: "<span data-test-icon='refresh' />" },
     Transition: { template: "<div><slot /></div>" }
 };
 

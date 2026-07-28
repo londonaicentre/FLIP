@@ -57,7 +57,7 @@
                                         :data-test="`trust-approved-chip-${idx}`"
                                         :title="approvedAtTitle(trust)"
                                     >
-                                        <icon-heroicons-outline-check class="w-3.5 h-3.5 stroke-2" />
+                                        <icon-ph-check-bold class="w-3.5 h-3.5" />
                                         {{ approvedAtLabel(trust) }}
                                     </span>
                                     <span

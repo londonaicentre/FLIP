@@ -40,11 +40,41 @@ regenerate via `recipe.py` after any recipe change and commit the result.
 3. Each site runs the user's `evaluator.py` via `InProcessClientAPIExecutor`, using the NVFLARE Client
    API `is_evaluate()` path (`flare.receive()` / `flare.send()`) to receive the model and return
    **aggregate-only** metrics (`DataKind.METRICS`).
-4. `EvaluationJsonGenerator` collects the metrics into `evaluation_results.json`, and
-   `PersistToS3AndCleanup` zips + uploads the run directory to S3.
+4. `EvaluationJsonGenerator` collects the metrics into `evaluation_results.json` and every failed
+   `validate` task into `evaluation_failures.json`, and `PersistToS3AndCleanup` zips + uploads the
+   run directory to S3.
 
 There is **no `validator.py`** and no client model submission — the evaluator only scores the
 server-provided model.
+
+## Outputs
+
+Both files land in `evaluation_results/` inside the results zip.
+
+`evaluation_results.json` is keyed by data site, then by the validated model's name (`GlobalModelEval`
+sends one `validate` task per (model, client), so each model gets its own entry):
+
+```json
+{
+  "Trust_1": {
+    "SRV_arkplus_pretrained": { "auroc": 0.839 },
+    "SRV_arkplus_finetuned": { "auroc": 0.871 }
+  }
+}
+```
+
+`evaluation_failures.json` lists every `validate` task that did not return metrics. It is always
+written, so an empty list `[]` positively means "no task failed" rather than "this FLIP version
+didn't record them":
+
+```json
+[{ "model": "SRV_arkplus_pretrained", "client": "Trust_1", "return_code": "TASK_ABORTED" }]
+```
+
+When **every** `validate` task fails the model ends in `ERROR`, not `RESULTS_UPLOADED`. The results
+are still uploaded either way — the zip is what carries `evaluation_failures.json` and `error_log.txt`.
+A partial failure (some tasks succeeded) uploads the successful metrics and reports `RESULTS_UPLOADED`,
+with the failed tasks recorded in `evaluation_failures.json`.
 
 ## Execution sequence
 

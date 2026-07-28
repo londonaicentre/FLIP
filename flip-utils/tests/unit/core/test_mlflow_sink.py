@@ -145,9 +145,9 @@ class TestOnStatus:
         client.get_experiment_by_name.return_value = _experiment()
         client.search_runs.return_value = [_run("run-2")]
 
-        sink.on_status(MODEL_ID, ModelStatus.TRAINING_STARTED)
+        sink.on_status(MODEL_ID, ModelStatus.RUNNING)
 
-        client.set_tag.assert_called_once_with("run-2", TAG_STATUS, "TRAINING_STARTED")
+        client.set_tag.assert_called_once_with("run-2", TAG_STATUS, "RUNNING")
         client.set_terminated.assert_not_called()
 
     @pytest.mark.parametrize(

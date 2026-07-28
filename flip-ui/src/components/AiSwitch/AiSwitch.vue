@@ -14,20 +14,29 @@
 <template>
     <div class="flex items-center justify-end">
         <SwitchGroup>
-            <SwitchLabel v-if="label" class="mr-4 text-sm">
+            <!-- On a narrow window the label is the first thing to squash the row, and
+                 it is redundant: the knob's position already carries the state. -->
+            <SwitchLabel v-if="label" class="hidden mr-4 text-sm sm:inline">
                 {{ checked ? label.enabled : label.disabled }}
             </SwitchLabel>
+            <!-- A disabled switch stays on screen, greyed out: its position is the
+                 clearest statement of the setting it records. Natively disabled (not
+                 just aria-disabled): Headless UI's internal handlers never check the
+                 prop, so only the browser refusing to deliver events keeps them — and
+                 the aria-checked flip they'd announce — unreachable. -->
             <Switch
-                v-if="!disabled"
                 :id="uuid"
                 :name="name"
                 :model="checked"
                 :data-test="dataTest"
+                :disabled="disabled"
+                :aria-disabled="disabled || undefined"
                 class="relative inline-flex items-center h-6 transition-colors rounded-full w-11 focus:outline-none focus:ring-2 focus:ring-primary-500 dark:focus:ring-primary-400 focus:ring-offset-2 dark:ring-offset-dark-canvas"
                 :class="[
                     !!errorMessage && 'ring-2 ring-offset-2 ring-red-500 focus:ring-red-500 text-red-500 dark:ring-red-400 dark:text-red-400',
                     !!errorMessage && 'focus:border-red-500 border-red-500',
-                    checked ? 'bg-primary-600 dark:bg-primary-400' : 'bg-gray-300 dark:bg-dark-raised'
+                    checked ? 'bg-primary-600 dark:bg-primary-400' : 'bg-gray-300 dark:bg-dark-raised',
+                    disabled && 'opacity-60 cursor-not-allowed'
                 ]"
                 @click.capture="() => {
                     if (disabled) { return; }
@@ -35,12 +44,10 @@
                 }"
             >
                 <span
-                    v-if="!disabled"
+                    data-test="switch-knob"
                     :class="[checked ? 'translate-x-6' : 'translate-x-1']"
                     class="inline-flex items-center justify-center w-4 h-4 transition-transform transform bg-white dark:bg-gray-200 rounded-full"
-                >
-                    <icon-heroicons-outline-check v-if="checked" class="w-3 h-3 text-green-600 dark:text-green-600" />
-                </span>
+                />
             </Switch>
         </SwitchGroup>
     </div>
