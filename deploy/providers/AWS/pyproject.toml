@@ -20,7 +20,7 @@ authors = [
 ]
 requires-python = ">=3.12"
 dependencies = [
-    "ansible-core>=2.19.2",
+    "ansible-core>=2.19.11",
     "click>=8.0.0",
     "cryptography>=46.0.5",
     "idna>=3.15",

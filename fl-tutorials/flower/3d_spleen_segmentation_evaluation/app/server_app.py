@@ -85,14 +85,19 @@ def main(grid: Grid, context: Context, flip: FLIP = FLIP()) -> None:
     arrays = ArrayRecord(model.state_dict())
 
     # Federated evaluation strategy. FedAvg aggregates whatever metrics the
-    # clients return in their MetricRecord (weighted by num-examples);
-    # EvaluationStrategy adds only the FLIP Central Hub forwarding.
+    # clients return in their MetricRecord (weighted by num-examples); the hub
+    # forwarding lives in FlipFedAvg, and EvaluationStrategy adds only the
+    # per-client metric breakdown.
     strategy = EvaluationStrategy(
         flip=flip,
         model_id=model_id,
         fraction_train=0.0,  # No training
         fraction_evaluate=1.0,  # All clients evaluate
     )
+
+    # The evaluation rounds start here — mirrors the standard template's strategy,
+    # which reports RUNNING when its rounds start (#782).
+    flip.update_status(model_id, ModelStatus.RUNNING)
 
     _ = strategy.start(
         grid=grid,

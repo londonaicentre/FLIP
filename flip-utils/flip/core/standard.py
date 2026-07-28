@@ -24,7 +24,7 @@ import shutil
 import tempfile
 from datetime import datetime
 from pathlib import Path
-from typing import override
+from typing import Any, override
 from urllib.parse import urlparse
 
 import boto3
@@ -35,8 +35,15 @@ from requests import HTTPError
 from flip.constants.flip_constants import FlipConstants, ModelStatus, ResourceType
 from flip.core.base import FLIPBase
 from flip.exceptions import ResultsUploadError
-from flip.schemas import TrainingLog, TrainingMetrics
+from flip.schemas import DEFAULT_X_AXIS_LABEL, FLLogEvent, TrainingLog, TrainingMetrics
 from flip.utils.utils import Utils
+
+# (connect, read) bound on every hub call (update_status, send_metrics,
+# send_handled_exception, send_event). The surrounding try/except arms cannot
+# catch a hang — a hub that accepts TCP and then stalls would otherwise freeze
+# the FL loop at the call site; send_event and send_metrics run inside result
+# acceptance, the worst place to block.
+_HUB_POST_TIMEOUT_SECONDS: tuple[int, int] = (5, 30)
 
 
 def _trust_internal_headers() -> dict[str, str]:
@@ -298,6 +305,7 @@ class FLIPStandardProd(FLIPBase):
             response = requests.put(
                 endpoint,
                 headers=_hub_internal_headers(),
+                timeout=_HUB_POST_TIMEOUT_SECONDS,
             )
             self.logger.info(f"Received response status code: {response.status_code}, response text: {response.text}")
             response.raise_for_status()
@@ -314,7 +322,16 @@ class FLIPStandardProd(FLIPBase):
             self.logger.exception(e)
 
     @override
-    def send_metrics(self, client_name: str, model_id: str, label: str, value: float, round: int) -> None:
+    def send_metrics(
+        self,
+        client_name: str,
+        model_id: str,
+        label: str,
+        value: float,
+        global_round: int,
+        x_value: float | None = None,
+        x_label: str | None = None,
+    ) -> None:
         """
         Sends a metric value to the Central Hub.
 
@@ -323,13 +340,26 @@ class FLIPStandardProd(FLIPBase):
             model_id (str): The ID of the model.
             label (str): The label of the metric.
             value (float): The value of the metric.
-            round (int): The round number.
+            global_round (int): Provenance — the FL global round the metric is reported in (never the
+                plot coordinate).
+            x_value (float | None): The x-coordinate the metric is plotted at; ``None`` plots it at
+                ``global_round`` (the schema backfills it).
+            x_label (str | None): Label naming the x-axis; falls back to "Global Rounds" when not given.
         """
-        payload = TrainingMetrics(
-            fl_client_name=client_name,
-            global_round=round,
-            label=label,
-            result=value,
+        # model_validate (not kwargs) so a None x_value reaches the schema's backfill validator,
+        # which resolves it to the global round — the schema owns that default, not this call site.
+        # `or` (not an explicit None check) is deliberate for x_label: "" is not a meaningful axis
+        # name and the hub rejects it (min_length=1), so a falsy label coalesces to the default
+        # rather than shipping a guaranteed-reject payload.
+        payload = TrainingMetrics.model_validate(
+            {
+                "fl_client_name": client_name,
+                "global_round": global_round,
+                "label": label,
+                "result": value,
+                "x_value": x_value,
+                "x_label": x_label or DEFAULT_X_AXIS_LABEL,
+            }
         ).model_dump()
 
         endpoint = _join_url(FlipConstants.FLIP_API_INTERNAL_URL, f"model/{model_id}/metrics")
@@ -341,6 +371,7 @@ class FLIPStandardProd(FLIPBase):
                 endpoint,
                 json=payload,
                 headers=_hub_internal_headers(),
+                timeout=_HUB_POST_TIMEOUT_SECONDS,
             )
             self.logger.info(f"Received response status code: {response.status_code}, response text: {response.text}")
             response.raise_for_status()
@@ -357,27 +388,33 @@ class FLIPStandardProd(FLIPBase):
             self.logger.exception(e)
 
     @override
-    def send_handled_exception(self, formatted_exception: str, client_name: str, model_id: str) -> None:
+    def send_handled_exception(self, formatted_exception: str, client_name: str | None, model_id: str) -> None:
         """
         Sends a handled exception to the Central Hub.
 
         Args:
             formatted_exception (str): The formatted exception message.
-            client_name (str): The name of the client that raised the exception.
+            client_name (str | None): The name of the client that raised the exception.
+                None when the client cannot be identified (e.g. a Flower reply that
+                crashed before its first healthy response), in which case the hub
+                records the exception model-level rather than rejecting it.
             model_id (str): The ID of the model associated with the exception.
         """
         if not isinstance(formatted_exception, str):
             raise TypeError(f"formatted_exception must be type str but got {type(formatted_exception)}")
 
-        if not isinstance(client_name, str):
-            raise TypeError(f"client_name must be type str but got {type(client_name)}")
+        if client_name is not None and not isinstance(client_name, str):
+            raise TypeError(f"client_name must be type str or None but got {type(client_name)}")
 
         if Utils.is_valid_uuid(model_id) is False:
             raise ValueError(f"Invalid model ID: {model_id}, unable to send exception")
 
+        # success=False so the hub persists (and the UI shows) a failure row —
+        # the ingest default is success=True.
         payload = TrainingLog(
             fl_client_name=client_name,
             log=formatted_exception,
+            success=False,
         ).model_dump()
 
         endpoint = _join_url(FlipConstants.FLIP_API_INTERNAL_URL, f"model/{model_id}/logs")
@@ -389,6 +426,7 @@ class FLIPStandardProd(FLIPBase):
                 endpoint,
                 json=payload,
                 headers=_hub_internal_headers(),
+                timeout=_HUB_POST_TIMEOUT_SECONDS,
             )
             self.logger.info(f"Received response status code: {response.status_code}, response text: {response.text}")
             response.raise_for_status()
@@ -402,6 +440,73 @@ class FLIPStandardProd(FLIPBase):
             self.logger.exception(http_err)
         except Exception as e:
             self.logger.error("Something went wrong when sending the exception to the Central Hub, see exception below")
+            self.logger.exception(e)
+
+    @override
+    def send_event(
+        self,
+        model_id: str,
+        event_type: FLLogEvent,
+        global_round: int,
+        client_name: str | None = None,
+        details: dict[str, Any] | None = None,
+        success: bool = True,
+    ) -> None:
+        """
+        Sends a typed round-progress event to the Central Hub.
+
+        Facts only — the hub composes display text at serve time. Best-effort:
+        a failed post and a payload that fails validation are logged and never
+        break training. Only an invalid ``model_id`` raises — a deliberate
+        precondition, matching ``send_handled_exception``.
+
+        Args:
+            model_id (str): The ID of the model the event belongs to.
+            event_type (FLLogEvent): Which round event this is.
+            global_round (int): The 1-based federated round.
+            client_name (str | None): FL client identity for trust-attributed
+                events; None for hub-attributed ones.
+            details (dict[str, Any] | None): Event-specific facts.
+            success (bool): Whether the event marks a healthy step.
+        """
+        if Utils.is_valid_uuid(model_id) is False:
+            raise ValueError(f"Invalid model ID: {model_id}, unable to send event")
+
+        endpoint = _join_url(FlipConstants.FLIP_API_INTERNAL_URL, f"model/{model_id}/logs")
+
+        self.logger.info(f"Attempting to send {event_type} (round {global_round}) to the Central Hub...")
+
+        try:
+            # Constructed inside the guard: send_event runs inside result
+            # acceptance, so a malformed fact must be dropped, not raised.
+            payload = TrainingLog(
+                fl_client_name=client_name,
+                event_type=event_type,
+                global_round=global_round,
+                details=details,
+                success=success,
+            ).model_dump(mode="json")
+
+            response = requests.post(
+                endpoint,
+                json=payload,
+                headers=_hub_internal_headers(),
+                # The except arms cannot catch a hang: a hub that accepts TCP
+                # and then stalls would freeze result acceptance mid-round.
+                timeout=_HUB_POST_TIMEOUT_SECONDS,
+            )
+            self.logger.info(f"Received response status code: {response.status_code}, response text: {response.text}")
+            response.raise_for_status()
+
+            self.logger.info(f"Successfully sent {event_type} for round {global_round}")
+        except HTTPError as http_err:
+            self.logger.error(
+                f"An http error occurred when sending a round event to the Central Hub, "
+                f"see exception below | status code {http_err.response.status_code}"
+            )
+            self.logger.exception(http_err)
+        except Exception as e:
+            self.logger.error("Something went wrong when sending a round event to the Central Hub, see exception below")
             self.logger.exception(e)
 
     @override
@@ -559,20 +664,44 @@ class FLIPStandardDev(FLIPBase):
         self.logger.info("[DEV] Status → %s", new_model_status)
 
     @override
-    def send_metrics(self, client_name: str, model_id: str, label: str, value: float, round: int) -> None:
+    def send_metrics(
+        self,
+        client_name: str,
+        model_id: str,
+        label: str,
+        value: float,
+        global_round: int,
+        x_value: float | None = None,
+        x_label: str | None = None,
+    ) -> None:
         """Log only in dev mode - no actual metrics sending."""
         self.logger.info(
-            "[DEV] Metric → %s=%0.4f (%s, round=%s)",
+            "[DEV] Metric → %s=%0.4f (%s, global_round=%s, x_value=%s, x_label=%s)",
             label,
             value,
             client_name,
-            round,
+            global_round,
+            x_value,
+            x_label,
         )
 
     @override
-    def send_handled_exception(self, formatted_exception: str, client_name: str, model_id: str) -> None:
+    def send_handled_exception(self, formatted_exception: str, client_name: str | None, model_id: str) -> None:
         """Log only in dev mode - no actual exception sending."""
         self.logger.info("[DEV] Exception → reported from %s", client_name)
+
+    @override
+    def send_event(
+        self,
+        model_id: str,
+        event_type: FLLogEvent,
+        global_round: int,
+        client_name: str | None = None,
+        details: dict[str, Any] | None = None,
+        success: bool = True,
+    ) -> None:
+        """Log only in dev mode - no actual event sending."""
+        self.logger.info("[DEV] Event → %s (round %d) from %s", event_type, global_round, client_name or "hub")
 
     @override
     def upload_results_to_s3(self, results_folder: Path, model_id: str) -> None:

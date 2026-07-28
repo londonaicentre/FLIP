@@ -106,9 +106,13 @@ onMounted(() => {
                     // on-demand via the toolbox magnifier below, reset via "Reset View".
                     toolbox: {
                         ...chartToolbox(darkMode),
-                        // Pinned inside the plot's top-right corner (the legend floats below).
-                        right: 12,
-                        top: 8,
+                        // Above the plot rather than inside it, so the icons never sit over
+                        // the lines. echarts pads the toolbox box by 5 on every side by
+                        // default, which pushed the icons 8px down into the plot rect even
+                        // at top: 0 — measured, not guessed. grid.top clears them below.
+                        right: 8,
+                        top: 0,
+                        padding: 0,
                         feature: {
                             ...chartToolbox(darkMode).feature,
                             dataZoom: {
@@ -129,10 +133,14 @@ onMounted(() => {
                         // Full-width plot — the legend overlays the grid instead of
                         // reserving a 160px column on the right.
                         right: 24,
-                        top: 24,
-                        // The x-axis name (nameGap 40) needs ~64px; the old "25%" also
-                        // reserved room for the now-removed slider bar.
-                        bottom: 64,
+                        // Clears the toolbox's 15px icons sitting above the plot, and no more.
+                        top: 28,
+                        // Just enough for the x-axis name at nameGap 20. Every pixel here
+                        // is taken off the plotted area, which is fixed overhead the box's
+                        // aspect ratio never sees: at a phone's 208px-tall box, the old
+                        // 24/64 pair left barely half of it for the lines themselves.
+                        // Below this pair the name rides up over the tick labels.
+                        bottom: 36,
                         containLabel: true
                     },
                     tooltip: {
@@ -164,14 +172,24 @@ onMounted(() => {
                     },
                     xAxis: {
                         type: "value",
-                        minInterval: 1,
+                        // x-values are arbitrary floats (FLIP#148), so integer ticks can't be forced
+                        // unconditionally — they'd collapse a sub-unit range (e.g. 0–1) onto a single
+                        // tick. But an all-integer axis (the common "Global Rounds" case) keeps them:
+                        // splitNumber 10 over a 3-round run would otherwise show meaningless 0.25/0.5
+                        // fractional round ticks.
+                        ...(props.data.metrics.every(s => s.data.every(p => Number.isInteger(p.xValue)))
+                            ? { minInterval: 1 }
+                            : {}),
                         splitNumber: 10, // <— try to show 10 ticks (only)
-                        name: "Global Rounds",
+                        name: props.data.xLabel,
                         nameLocation: "middle",
-                        nameGap: 40,
+                        // Sits just under the tick labels rather than floating halfway
+                        // down a reserved strip, which read as a wide empty card margin.
+                        // At 16 it overlaps them.
+                        nameGap: 20,
                         nameTextStyle: {
                             fontWeight: 700,
-                            fontSize: 16,
+                            fontSize: 14,
                             fontFamily: "Inter",
                             color: chrome.ink
                         },

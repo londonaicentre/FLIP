@@ -19,9 +19,10 @@ from nvflare.app_common.workflows.scatter_and_gather import ScatterAndGather as 
 from nvflare.app_opt.pt.fedopt import PTFedOptModelShareableGenerator
 
 from flip import FLIP
-from flip.constants import FlipEvents
+from flip.constants import FlipEvents, FlipProps
 from flip.nvflare.metrics import handle_metrics_event
 from flip.nvflare.runtime import get_flip_model_id
+from flip.schemas import FLLogEvent
 
 
 class ScatterAndGather(NVFlareScatterAndGather):
@@ -38,9 +39,10 @@ class ScatterAndGather(NVFlareScatterAndGather):
         re-serialises the full global model every round; for a ~759 MiB model that re-introduces the
         very per-round memory churn ``memory_gc_rounds`` exists to bound. FLIP never snapshotted, so
         ``0`` also preserves prior behaviour. It stays configurable for callers that want resilience.
-      * :meth:`_accept_train_result` — reports a client-side execution exception to the hub, and
+      * :meth:`_accept_train_result` — reports a client-side execution exception to the hub,
         converts a (possibly partial, frozen-backbone) ``WEIGHT_DIFF`` head update into full
-        ``WEIGHTS`` before aggregation, since FLIP's aggregator expects ``WEIGHTS`` (FLIP#684).
+        ``WEIGHTS`` before aggregation, since FLIP's aggregator expects ``WEIGHTS`` (FLIP#684),
+        and relays each genuinely accepted result to the hub as a ``CLIENT_RESULT_RECEIVED`` fact.
       * :meth:`handle_event` — relays FLIP metrics on ``FlipEvents.SEND_RESULT``.
       * :meth:`_check_abort_signal` — fires ``FlipEvents.ABORTED`` so downstream components (e.g.
         ``PersistToS3AndCleanup``) can persist results on an aborted run.
@@ -62,6 +64,9 @@ class ScatterAndGather(NVFlareScatterAndGather):
         self._model_id_fallback = model_id
         self._model_id: str | None = None
         self.flip = FLIP()
+        # Accepted client names per 0-based round, feeding the "k of m returned"
+        # counts relayed on ROUND_DONE (see _report_client_result).
+        self._round_acceptances: dict[int, set[str]] = {}
 
     def _resolve_model_id(self, fl_ctx: FLContext) -> str:
         if self._model_id is None:
@@ -116,9 +121,63 @@ class ScatterAndGather(NVFlareScatterAndGather):
                     )
             return bool(super()._accept_train_result(client_name, result, fl_ctx, is_unknown_task))
 
+        # Size the client's actual (possibly partial, head-only) update now — reconstruction
+        # below rewrites the shareable into the full model.
+        size_bytes = self._client_update_size(result, fl_ctx)
+
         # OK result: reconstruct full WEIGHTS from the (partial) WEIGHT_DIFF before the base aggregates.
         result = self._diff_to_weights(result, fl_ctx)
-        return bool(super()._accept_train_result(client_name, result, fl_ctx, is_unknown_task))
+        accepted = bool(super()._accept_train_result(client_name, result, fl_ctx, is_unknown_task))
+
+        # Relay only what the base class genuinely accepted: an aggregator-rejected result
+        # (e.g. a stale contribution_round cookie) or a late unknown-task reply (whose weights
+        # belong to an earlier round) must not surface as an accepted upload of the current
+        # round or inflate the "k of m" in ROUND_AGGREGATED.
+        if accepted and not is_unknown_task:
+            self._report_client_result(client_name, size_bytes, fl_ctx)
+        return accepted
+
+    def _client_update_size(self, result: Shareable, fl_ctx: FLContext) -> int | None:
+        """Best-effort byte size of the client's update; ``None`` when it cannot be sized."""
+        try:
+            dxo = from_shareable(result)
+            return int(sum(getattr(arr, "nbytes", 0) for arr in dxo.data.values()))
+        except Exception as e:
+            # Distinguishes "my probe broke" (e.g. an NVFLARE shareable-shape
+            # change) from a genuinely sizeless result — otherwise sizes
+            # vanish silently forever after an upgrade.
+            self.log_debug(fl_ctx, f"Could not size the client update: {e}")
+            return None
+
+    def _report_client_result(self, client_name: str, size_bytes: int | None, fl_ctx: FLContext) -> None:
+        """Emit a CLIENT_RESULT_RECEIVED fact and refresh the per-round acceptance counts.
+
+        Called only after the base class (and its aggregator) accepted the result — the
+        event's contract is "per accepted result". Best-effort telemetry: any failure here
+        is logged and must never block result acceptance. The counts are shared as sticky
+        fl_ctx props so ServerEventHandler can attach them to the ROUND_AGGREGATED event on
+        ROUND_DONE. NVFLARE's ``_current_round`` is 0-based; the wire contract is 1-based.
+        """
+        try:
+            if self._current_round is None:
+                return
+
+            accepted = self._round_acceptances.setdefault(self._current_round, set())
+            accepted.add(client_name)
+            fl_ctx.set_prop(FlipProps.ROUND_RETURNED, len(accepted), private=True, sticky=True)
+            fl_ctx.set_prop(
+                FlipProps.ROUND_EXPECTED, getattr(self, "_current_num_targets", None), private=True, sticky=True
+            )
+
+            self.flip.send_event(
+                model_id=self._resolve_model_id(fl_ctx),
+                event_type=FLLogEvent.CLIENT_RESULT_RECEIVED,
+                global_round=self._current_round + 1,
+                client_name=client_name,
+                details={"size_bytes": size_bytes} if size_bytes is not None else None,
+            )
+        except Exception as e:
+            self.log_error(fl_ctx, f"Failed to relay accepted result from {client_name} to the hub: {e}")
 
     def handle_event(self, event_type: str, fl_ctx: FLContext) -> None:
         super().handle_event(event_type, fl_ctx)

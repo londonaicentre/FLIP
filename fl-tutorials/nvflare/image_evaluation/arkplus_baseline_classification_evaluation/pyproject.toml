@@ -1,0 +1,19 @@
+[project]
+name = "arkplus-baseline-evaluation-client-api-tutorial"
+version = "0.1.0"
+description = "Local uv environment for the Ark+ baseline evaluation (Client API) tutorial preprocessing utilities."
+requires-python = ">=3.12"
+
+# See the original requirements at https://github.com/jlianglab/Ark/blob/main/Ark_Plus/Finetuning/requirements.txt
+dependencies = [
+    "numpy>=2.2.5",
+    "Pillow>=11.2.1",
+    "pyyaml>=6.0.2",
+    "scikit-learn>=1.6.1",
+    "scipy>=1.15.2",
+    "timm>=1.0.15",
+    "torch>=2.6.0",
+]
+
+[tool.uv]
+package = false
