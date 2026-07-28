@@ -323,16 +323,40 @@ def test_validate_config_aggregate_only_regex_defaults_none():
 
 
 def test_validate_config_accepts_best_model_metric():
-    config = validate_config({"BEST_MODEL_METRIC": "VAL_DICE"})
+    config = validate_config({"BEST_MODEL_METRIC": "VAL_DICE", "GLOBAL_ROUNDS": 3})
     assert config.BEST_MODEL_METRIC == "VAL_DICE"
     # Minimize defaults False (higher-is-better) when only the metric is given.
     assert config.BEST_MODEL_METRIC_MINIMIZE is False
 
 
 def test_validate_config_best_model_metric_minimize():
-    config = validate_config({"BEST_MODEL_METRIC": "VAL_LOSS", "BEST_MODEL_METRIC_MINIMIZE": True})
+    config = validate_config({"BEST_MODEL_METRIC": "VAL_LOSS", "BEST_MODEL_METRIC_MINIMIZE": True, "GLOBAL_ROUNDS": 3})
     assert config.BEST_MODEL_METRIC == "VAL_LOSS"
     assert config.BEST_MODEL_METRIC_MINIMIZE is True
+
+
+def test_validate_config_strips_best_model_metric():
+    # A stray space in the JSON must not survive into the stored label, where it would silently
+    # never match the metric the trainer reports.
+    config = validate_config({"BEST_MODEL_METRIC": " VAL-F1-SCORE ", "GLOBAL_ROUNDS": 3})
+    assert config.BEST_MODEL_METRIC == "VAL-F1-SCORE"
+
+
+def test_validate_config_rejects_best_model_metric_without_global_rounds():
+    # GLOBAL_ROUNDS unset resolves to the platform default of 1, where the selector can never fire.
+    with pytest.raises(ValueError, match="BEST_MODEL_METRIC requires GLOBAL_ROUNDS >= 2"):
+        validate_config({"BEST_MODEL_METRIC": "VAL_DICE"})
+
+
+def test_validate_config_rejects_best_model_metric_with_single_round():
+    with pytest.raises(ValueError, match="BEST_MODEL_METRIC requires GLOBAL_ROUNDS >= 2"):
+        validate_config({"BEST_MODEL_METRIC": "VAL_DICE", "GLOBAL_ROUNDS": 1})
+
+
+def test_validate_config_rejects_best_model_metric_with_invalid_rounds():
+    # An out-of-range GLOBAL_ROUNDS is silently dropped and also resolves to the 1-round default.
+    with pytest.raises(ValueError, match="BEST_MODEL_METRIC requires GLOBAL_ROUNDS >= 2"):
+        validate_config({"BEST_MODEL_METRIC": "VAL_DICE", "GLOBAL_ROUNDS": 0})
 
 
 def test_validate_config_rejects_non_string_best_model_metric():

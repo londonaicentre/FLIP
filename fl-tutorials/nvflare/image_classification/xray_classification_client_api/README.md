@@ -43,7 +43,8 @@ trainer evaluates the *received* global model on its validation split before tra
 `VAL-<METRIC>-<lesion>` and macro `VAL-<METRIC>` (mean across lesions) for
 `F1-SCORE`/`PRECISION`/`RECALL` — the default is macro `VAL-F1-SCORE`. Remove both keys to skip
 selection (and the extra per-round validation pass); the results zip then contains only the final
-model. Round 0 is never selected (no aggregated model exists yet).
+model. Round 0 is never selected (no aggregated model exists yet), so `BEST_MODEL_METRIC` requires
+`GLOBAL_ROUNDS >= 2` in `config.json` — platform uploads reject the combination otherwise.
 
 ## FLIP-specific values
 

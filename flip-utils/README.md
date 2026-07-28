@@ -118,7 +118,8 @@ loss-like metrics, `BEST_MODEL_METRIC_MINIMIZE: true`) wires NVFLARE's stock
   measures exactly the checkpoint being considered.
 - The selector averages the chosen metric across clients and, on improvement, has the persistor
   save `best_FL_global_model.pt` next to `FL_global_model.pt` — same file format as the final
-  model. Round 0 is skipped (no aggregated model exists yet).
+  model. Round 0 is skipped (no aggregated model exists yet), so selection needs
+  `GLOBAL_ROUNDS >= 2` — a single-round job can never save a best model.
 - The results zip contains the best model only when selection ran and saved one; no best file is
   fabricated from the final model otherwise.
 
@@ -127,7 +128,9 @@ The metric label must be one the trainer reports (e.g. the client-API x-ray tuto
 supported paths: the `standard_client_api` recipe (`FlipFedAvgRecipe(best_model_metric=...)`) and
 platform-submitted jobs, where fl-api-base's job-assembly step (`prepare_config.validate_config` /
 `configure_server`) reads `BEST_MODEL_METRIC` / `BEST_MODEL_METRIC_MINIMIZE` straight from the
-uploaded `config.json` and injects the same selector.
+uploaded `config.json` and injects the same selector. On the platform path, a `config.json` that
+sets `BEST_MODEL_METRIC` without an explicit `GLOBAL_ROUNDS >= 2` is rejected at upload (the
+platform defaults to a single round, where selection could never fire).
 
 ### Job Types
 

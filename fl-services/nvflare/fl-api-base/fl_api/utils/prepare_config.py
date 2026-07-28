@@ -664,7 +664,9 @@ def validate_config(config: dict) -> IOverridableConfig:
     if best_model_metric is not None:
         if not isinstance(best_model_metric, str) or not best_model_metric.strip():
             raise ValueError("BEST_MODEL_METRIC must be a non-empty string metric label")
-        validated.BEST_MODEL_METRIC = best_model_metric
+        # Store stripped: a stray space in the JSON would otherwise survive validation and never
+        # match the metric label the trainer reports.
+        validated.BEST_MODEL_METRIC = best_model_metric.strip()
 
         minimize = config.get("BEST_MODEL_METRIC_MINIMIZE", False)
         # Guard bool before int: in Python ``isinstance(True, int)`` is True, but we want to reject
@@ -672,6 +674,15 @@ def validate_config(config: dict) -> IOverridableConfig:
         if not isinstance(minimize, bool):
             raise ValueError("BEST_MODEL_METRIC_MINIMIZE must be a boolean")
         validated.BEST_MODEL_METRIC_MINIMIZE = minimize
+
+        # IntimeModelSelector always skips round 0, so a job whose effective GLOBAL_ROUNDS is 1 —
+        # the platform default when the key is unset or invalid (see upload.py) — can never fire
+        # the selector: the job would run fine but the results zip silently lacks the best model.
+        if (validated.GLOBAL_ROUNDS or TrainingRound.MIN) <= 1:
+            raise ValueError(
+                "BEST_MODEL_METRIC requires GLOBAL_ROUNDS >= 2: the best-model selector skips "
+                "round 0, so a single-round job can never save a best model"
+            )
     elif "BEST_MODEL_METRIC_MINIMIZE" in config:
         # BEST_MODEL_METRIC_MINIMIZE only has meaning alongside a selector metric — silently
         # accepting it without BEST_MODEL_METRIC would let a user believe it took effect.
