@@ -403,6 +403,10 @@ answering. flip-api re-reads the parameter when its slot pool runs dry
 > destroy**) and neither prod nor stag had the bucket, so expect it on the first prod
 > activation too. Nothing is replaced or destroyed — but read the plan before confirming.
 
+The script has a black-box test harness (`scripts/tests/test_add_fl_kits.sh`, `aws`/`make`/`openssl`
+stubbed — no credentials or network) that CI runs via `validate_terraform.yml` on any
+`deploy/providers/AWS/**` change; it also runs standalone with plain `bash`.
+
 Kit-minting details and the manual fallback:
 [`fl-services/nvflare/README.md`](../../../fl-services/nvflare/README.md#onboarding-a-new-client-onto-an-existing-network).
 

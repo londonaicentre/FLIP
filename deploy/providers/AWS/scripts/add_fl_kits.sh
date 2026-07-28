@@ -288,6 +288,11 @@ fi
 # touches no CA state and needs none of the provisioning toolchain.
 
 if [[ "${#MINT_NAMES[@]}" -gt 0 ]]; then
+# One temp path, reused for every net's root-CA download and cleaned by a single
+# EXIT trap. Bash keeps only one EXIT trap, so a per-net `trap ... EXIT` inside
+# the loop would silently replace the previous net's and could leak its file.
+s3_root_ca="$(mktemp -t rootCA.XXXXXX.pem)"
+trap 'rm -f "${s3_root_ca}"' EXIT
 for net in "${NETS[@]}"; do
     net_number="${net#net-}"
     workspace="${WORKSPACE_PARENT}/${net}"
@@ -310,8 +315,6 @@ for net in "${NETS[@]}"; do
 
     # The local CA must be the one that signed the live kits: compare root-CA
     # fingerprints (bucket ETags are SSE-KMS, not MD5s, so hash the cert itself).
-    s3_root_ca="$(mktemp -t rootCA.XXXXXX.pem)"
-    trap 'rm -f "${s3_root_ca}"' EXIT
     aws s3 cp "${BASE_S3}/${net}/${server_kit}/startup/rootCA.pem" "${s3_root_ca}" --only-show-errors
     local_fp="$(openssl x509 -in "${workspace}/${server_kit}/startup/rootCA.pem" -noout -fingerprint -sha256)"
     s3_fp="$(openssl x509 -in "${s3_root_ca}" -noout -fingerprint -sha256)"
@@ -321,7 +324,6 @@ for net in "${NETS[@]}"; do
             "   s3:    ${s3_fp}" \
             "   The workspace at ${workspace} is not the one that provisioned this net."
     fi
-    rm -f "${s3_root_ca}"
 
     for name in "${MINT_NAMES[@]}"; do
         # Refuse to touch a non-empty S3 prefix — an existing kit may belong to a
