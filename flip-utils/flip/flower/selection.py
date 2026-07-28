@@ -27,6 +27,7 @@ are held as an opaque object — so it stays unit-testable outside the FL images
 from __future__ import annotations
 
 import logging
+import math
 import numbers
 from collections.abc import Mapping
 
@@ -82,9 +83,12 @@ class BestModelSelector:
                 sorted(metrics),
             )
             return False
-        if isinstance(value, bool) or not isinstance(value, numbers.Real):
+        # NaN is excluded deliberately, not incidentally: it compares False against every
+        # candidate in both directions, so accepting one would pin the best model to that
+        # round for the rest of the run and write a bare NaN into cross_val_results.json.
+        if isinstance(value, bool) or not isinstance(value, numbers.Real) or not math.isfinite(value):
             logger.warning(
-                "Best-model metric %r in round %d is not a number (got %r) — ignoring this round",
+                "Best-model metric %r in round %d is not a finite number (got %r) — ignoring this round",
                 self.metric,
                 server_round,
                 value,

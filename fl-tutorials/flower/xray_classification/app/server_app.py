@@ -52,9 +52,22 @@ def main(grid: Grid, context: Context, flip: FLIP = FLIP()) -> None:
     # Best-model selection is opt-in: an empty metric key leaves behaviour unchanged
     # (final-round-only evaluation, no best checkpoint).
     best_model_metric = str(run_config.get("best-model-metric", "")) or None
-    best_model_metric_minimize = bool(run_config.get("best-model-metric-minimize", False))
+    # Read raw rather than coercing: bool("false") is True, and Flower's run config accepts
+    # strings, so a quoted TOML value would silently invert the selection direction and ship
+    # the worst-scoring checkpoint as the best one. Validated below.
+    best_model_metric_minimize = run_config.get("best-model-metric-minimize", False)
 
     flip.update_status(model_id, ModelStatus.INITIATED)
+
+    if not isinstance(best_model_metric_minimize, bool):
+        # Fail the run rather than mislabel a model. ERROR is the only channel the researcher
+        # can actually see — the ServerApp log stream is not surfaced through the platform.
+        log(INFO, "✗ best-model-metric-minimize must be an unquoted TOML boolean")
+        flip.update_status(model_id, ModelStatus.ERROR)
+        raise ValueError(
+            "best-model-metric-minimize must be a TOML boolean (unquoted true/false), got "
+            f"{best_model_metric_minimize!r} — a quoted value silently inverts best-model selection"
+        )
 
     model = get_model()
     flip.update_status(model_id, ModelStatus.PREPARED)
@@ -92,10 +105,20 @@ def main(grid: Grid, context: Context, flip: FLIP = FLIP()) -> None:
         state_dict = result.arrays.to_torch_state_dict()
         torch.save(state_dict, output_dir / FinalModelFilename)
         log(INFO, "✓ Final model saved to %s", output_dir / FinalModelFilename)
-        # Save the best model alongside it when a selection actually happened —
-        # nothing is fabricated from the final model otherwise.
-        if strategy.best_model_arrays is not None:
+    except Exception as e:
+        log(INFO, "Failed to save final model: %s", str(e))
+        flip.update_status(model_id, ModelStatus.ERROR)
+        return
+
+    # Save the best model alongside it when a selection actually happened — nothing is
+    # fabricated from the final model otherwise. Deliberately outside the try above: the
+    # best checkpoint is optional and is a second full-size write (the one likely to hit
+    # ENOSPC), so failing it must not discard an intact final model and its results.
+    best_model_saved = False
+    if strategy.best_model_arrays is not None:
+        try:
             torch.save(strategy.best_model_arrays.to_torch_state_dict(), output_dir / BestModelFilename)
+            best_model_saved = True
             log(
                 INFO,
                 "✓ Best model (round %s, %s=%s) saved to %s",
@@ -104,10 +127,8 @@ def main(grid: Grid, context: Context, flip: FLIP = FLIP()) -> None:
                 strategy.best_model_metric_value,
                 output_dir / BestModelFilename,
             )
-    except Exception as e:
-        log(INFO, "Failed to save final model: %s", str(e))
-        flip.update_status(model_id, ModelStatus.ERROR)
-        return
+        except Exception as e:
+            log(INFO, "⚠ Failed to save best model — the final model is unaffected: %s", str(e))
 
     # Save cross-validation results JSON with aggregated and per-client metrics
     eval_metrics_aggregated = {}
@@ -142,7 +163,9 @@ def main(grid: Grid, context: Context, flip: FLIP = FLIP()) -> None:
         "train_metrics": train_metrics,
         "evaluation_metrics": evaluation_metrics,
     }
-    if strategy.best_model_arrays is not None:
+    # Keyed on the write succeeding, not on a selection happening, so the JSON never names
+    # a checkpoint that is missing from the results bundle.
+    if best_model_saved:
         cross_val_results["best_model"] = BestModelFilename
         cross_val_results["best_round"] = strategy.best_model_round
         cross_val_results["best_metric"] = {

@@ -137,6 +137,17 @@ class TestBestModelSelectorIgnoredInputs:
         assert improved is False
         assert selector.best_round is None
 
+    def test_boolean_metric_value_is_ignored(self):
+        # bool subclasses int, so isinstance(True, numbers.Real) is True: without
+        # the explicit bool guard, True would score as 1.0 and beat every real
+        # metric below it.
+        selector = BestModelSelector("val_f1")
+
+        improved = selector.consider(1, {"val_f1": True}, ARRAYS_R1)
+
+        assert improved is False
+        assert selector.best_round is None
+
     def test_missing_arrays_are_ignored_with_warning(self, caplog):
         selector = BestModelSelector("val_f1")
 
@@ -156,3 +167,46 @@ class TestBestModelSelectorIgnoredInputs:
         assert selector.best_round == 1
         assert selector.best_metric == 0.5
         assert selector.best_arrays is ARRAYS_R1
+
+
+class TestBestModelSelectorNonFiniteValues:
+    """Non-finite metrics must never win.
+
+    NaN compares ``False`` against everything in both directions, so accepting one
+    would pin the best model to that round for the rest of the run. NaN losses are
+    a live Flower failure mode here — see FLIP#764, whose guard landed in this same
+    xray tutorial — and the tutorial's own metric reduction yields ``nan`` for an
+    empty metric list.
+    """
+
+    def test_nan_metric_value_is_ignored_with_warning(self, caplog):
+        selector = BestModelSelector("val_loss", minimize=True)
+
+        with caplog.at_level(logging.WARNING, logger="flip.flower.selection"):
+            improved = selector.consider(1, {"val_loss": float("nan")}, ARRAYS_R1)
+
+        assert improved is False
+        assert selector.best_round is None
+        assert selector.best_metric is None
+        assert selector.best_arrays is None
+        assert "val_loss" in caplog.text
+
+    def test_nan_does_not_pin_the_best_model_against_later_rounds(self):
+        selector = BestModelSelector("val_loss", minimize=True)
+        selector.consider(1, {"val_loss": float("nan")}, ARRAYS_R1)
+
+        improved = selector.consider(2, {"val_loss": 0.3}, ARRAYS_R2)
+
+        assert improved is True
+        assert selector.best_round == 2
+        assert selector.best_metric == 0.3
+        assert selector.best_arrays is ARRAYS_R2
+
+    def test_infinite_metric_value_is_ignored(self):
+        selector = BestModelSelector("val_f1")
+
+        improved = selector.consider(1, {"val_f1": float("inf")}, ARRAYS_R1)
+
+        assert improved is False
+        assert selector.best_round is None
+        assert selector.best_arrays is None
