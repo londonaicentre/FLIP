@@ -219,36 +219,42 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def resolve_ui_credentials() -> tuple[tuple[str, str], tuple[str, str]]:
+def resolve_ui_credentials() -> tuple[tuple[str, str], tuple[str, str], list[str]]:
     """Resolve the (researcher, admin) UI login credentials for the segments.
 
     Prefers the dedicated demo users (DEMO_RESEARCHER_* / DEMO_ADMIN_* env
     vars, provisioned by `make demo-users`); falls back to the well-known
     admin so the video can still be recorded on a stack without demo users —
-    the same person then plays both parts.
+    the same person then plays both parts. Roles that fell back are returned
+    so the segments can disclose it on camera (the CLI warning alone is
+    invisible in the assembled mp4).
 
     Returns:
-        tuple[tuple[str, str], tuple[str, str]]: ((researcher_email,
-        researcher_password), (admin_email, admin_password)).
+        tuple[tuple[str, str], tuple[str, str], list[str]]: ((researcher_email,
+        researcher_password), (admin_email, admin_password), roles that fell
+        back to the well-known admin — subset of ["researcher", "admin"]).
     """
     admin_password = os.environ.get("ADMIN_USER_PASSWORD", "")
     fallback = (constants.ADMIN_EMAIL_1, admin_password)
+    fallback_roles: list[str] = []
 
     researcher = (os.environ.get("DEMO_RESEARCHER_EMAIL", ""), os.environ.get("DEMO_RESEARCHER_PASSWORD", ""))
     if not (researcher[0] and researcher[1]):
         _log("⚠️  DEMO_RESEARCHER_EMAIL/PASSWORD not set — falling back to the admin user for researcher parts")
         researcher = fallback
+        fallback_roles.append("researcher")
 
     admin = (os.environ.get("DEMO_ADMIN_EMAIL", ""), os.environ.get("DEMO_ADMIN_PASSWORD", ""))
     if not (admin[0] and admin[1]):
         _log("⚠️  DEMO_ADMIN_EMAIL/PASSWORD not set — falling back to the well-known admin user")
         admin = fallback
+        fallback_roles.append("admin")
 
     if not (researcher[1] and admin[1]):
         raise SmokeFailure(
             "No usable UI credentials: set DEMO_RESEARCHER_*/DEMO_ADMIN_* or ADMIN_USER_PASSWORD in the environment"
         )
-    return researcher, admin
+    return researcher, admin, fallback_roles
 
 
 def read_state() -> dict[str, str]:
@@ -472,7 +478,7 @@ def main(argv: list[str] | None = None) -> int:
         if not required.exists():
             raise SmokeFailure(f"Tutorial path missing: {required}")
 
-    researcher, admin = resolve_ui_credentials()
+    researcher, admin, fallback_roles = resolve_ui_credentials()
     _log(f"🎭 Researcher part: {researcher[0]} | Admin part: {admin[0]}")
 
     # Hub session for the off-camera waits (same auth as e2e_smoke).
@@ -509,7 +515,11 @@ def main(argv: list[str] | None = None) -> int:
     query_rel = os.path.relpath(query_file, FLIP_UI_DIR)
     app_dir_rel = os.path.relpath(app_dir, FLIP_UI_DIR)
 
+    # The specs surface a fallback persona as an on-screen caption during the
+    # sign-in, so the assembled mp4 itself discloses it (see demoFlow.ts).
     researcher_env = {"DEMO_RESEARCHER_EMAIL": researcher[0], "DEMO_RESEARCHER_PASSWORD": researcher[1]}
+    if "researcher" in fallback_roles:
+        researcher_env["DEMO_CREDENTIALS_FALLBACK"] = "researcher"
 
     # ── Segment 1: researcher creates project + cohort query ──────────────
     if args.from_segment <= 1:
@@ -542,6 +552,7 @@ def main(argv: list[str] | None = None) -> int:
                 "DEMO_ADMIN_EMAIL": admin[0],
                 "DEMO_ADMIN_PASSWORD": admin[1],
                 "DEMO_PROJECT_ID": project_id,
+                **({"DEMO_CREDENTIALS_FALLBACK": "admin"} if "admin" in fallback_roles else {}),
             },
             video_scale=args.video_scale,
         )

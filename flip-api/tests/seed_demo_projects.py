@@ -47,6 +47,7 @@ import json
 import sys
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 import requests
 
@@ -142,6 +143,54 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         ),
     )
     return parser.parse_args(argv)
+
+
+def select_entries(catalogue: list[dict[str, Any]], states_arg: str | None) -> list[dict[str, Any]]:
+    """Filter the catalogue down to the --states subset (the full catalogue when unset).
+
+    Args:
+        catalogue (list[dict[str, Any]]): The full catalogue of seed entries.
+        states_arg (str | None): Comma-separated target states, as passed to --states.
+
+    Returns:
+        list[dict[str, Any]]: The entries whose target state was requested.
+
+    Raises:
+        SmokeFailure: If a requested state is not on the ladder.
+    """
+    if not states_arg:
+        return catalogue
+    wanted = {s.strip() for s in states_arg.split(",") if s.strip()}
+    unknown = wanted - set(STATE_LADDER)
+    if unknown:
+        raise SmokeFailure(f"Unknown --states value(s): {sorted(unknown)}. Known: {STATE_LADDER}")
+    entries = [e for e in catalogue if e["state"] in wanted]
+    _log(f"🎯 --states selection: seeding {len(entries)} of {len(catalogue)} catalogue entries")
+    return entries
+
+
+def existing_project_names(client: requests.Session, headers: dict[str, str], names: set[str]) -> set[str]:
+    """Return the subset of catalogue names that already exist as projects on the hub.
+
+    /projects is paginated and its `search` matches substrings of name AND
+    description, so query per name and keep exact name matches only.
+
+    Args:
+        client (requests.Session): HTTP session for hub calls.
+        headers (dict[str, str]): Auth headers.
+        names (set[str]): Candidate catalogue project names.
+
+    Returns:
+        set[str]: The names already present on the hub.
+    """
+    found: set[str] = set()
+    for name in sorted(names):
+        resp = _ensure_ok(
+            _get(client, f"/projects/?search={quote(name)}&pageSize=50", headers), f"look up project {name!r}"
+        )
+        if any(row.get("name") == name for row in resp.json().get("data", [])):
+            found.add(name)
+    return found
 
 
 def submit_query(client: requests.Session, headers: dict[str, str], project_id: str, query_file: Path) -> None:
@@ -275,18 +324,18 @@ def main(argv: list[str] | None = None) -> int:
         raise SmokeFailure("No trusts registered on the hub — register trusts before seeding")
     _log(f"🏥 Using trusts: {[t.get('code') or t['name'] for t in trusts]}")
 
-    entries = CATALOGUE
-    if args.states:
-        wanted = {s.strip() for s in args.states.split(",") if s.strip()}
-        unknown = wanted - set(STATE_LADDER)
-        if unknown:
-            raise SmokeFailure(f"Unknown --states value(s): {sorted(unknown)}. Known: {STATE_LADDER}")
-        entries = [e for e in CATALOGUE if e["state"] in wanted]
-        _log(f"🎯 --states selection: seeding {len(entries)} of {len(CATALOGUE)} catalogue entries")
+    entries = select_entries(CATALOGUE, args.states)
+
+    # Idempotency: a re-run (or a lost record file) must not duplicate the
+    # catalogue — approved entries kick off real imaging imports at the trusts.
+    already = existing_project_names(client, headers, {e["name"] for e in entries})
 
     created: list[dict[str, Any]] = []
     try:
         for entry in entries:
+            if entry["name"] in already:
+                _log(f"⏭️  {entry['name']} already exists on the hub — skipping")
+                continue
             created.append(build_project(client, headers, entry, trusts))
     finally:
         if created:

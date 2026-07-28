@@ -22,6 +22,11 @@ DEMO_ADMIN_PASSWORD) and are never stored anywhere else; they must satisfy
 the user pool's password policy. Requires live AWS credentials with Cognito
 admin permissions on the pool (aws sso login --sso-session FLIP).
 
+Before touching Cognito the script resolves the target pool's name, region,
+and AWS account and asks for an explicit interactive "yes" — a stale
+AWS_COGNITO_USER_POOL_ID or a wrong SSO account must not silently plant a
+known-password admin account in an unintended (e.g. production) pool.
+
 Usage:
     make demo-users            # from the repo root
     make -C flip-api create_demo_users
@@ -34,6 +39,41 @@ import boto3
 from botocore.exceptions import BotoCoreError, ClientError
 
 from flip_api.utils.constants import DEMO_ADMIN_EMAIL, DEMO_RESEARCHER_EMAIL
+
+
+def confirm_target_pool(client, user_pool_id: str, region: str) -> bool:
+    """Show exactly which pool/account is about to be written to and require explicit confirmation.
+
+    AdminCreateUser + a permanent password (with the ADMIN role granted at next flip-api boot) is
+    a dangerous thing to point at the wrong pool, and the pool id comes straight from the
+    environment — so make the operator confirm the resolved target before any write.
+
+    Args:
+        client: boto3 cognito-idp client.
+        user_pool_id (str): Pool id resolved from the environment.
+        region (str): AWS region the client targets.
+
+    Returns:
+        bool: True when the operator typed "yes"; False to abort.
+    """
+    pool_name = client.describe_user_pool(UserPoolId=user_pool_id)["UserPool"]["Name"]
+    account = boto3.client("sts", region_name=region).get_caller_identity()["Account"]
+    print(
+        "🎯 About to create/reset demo users with PERMANENT passwords in:\n"
+        f"   pool:    {pool_name} ({user_pool_id})\n"
+        f"   region:  {region}\n"
+        f"   account: {account}\n"
+        "   The demo admin is granted the ADMIN role by flip-api boot seeding — make sure this is a dev pool."
+    )
+    try:
+        answer = input("   Type 'yes' to confirm this target: ")
+    except EOFError:
+        print("❌ No interactive confirmation possible (stdin closed) — aborting.", file=sys.stderr)
+        return False
+    if answer.strip().lower() != "yes":
+        print("❌ Aborted — nothing was created or changed.", file=sys.stderr)
+        return False
+    return True
 
 
 def ensure_user(client, user_pool_id: str, email: str, password: str) -> None:
@@ -89,8 +129,11 @@ def main() -> int:
         )
         return 1
 
-    client = boto3.client("cognito-idp", region_name=os.environ.get("AWS_REGION", "eu-west-2"))
+    region = os.environ.get("AWS_REGION", "eu-west-2")
+    client = boto3.client("cognito-idp", region_name=region)
     try:
+        if not confirm_target_pool(client, user_pool_id, region):
+            return 1
         for email, password in wanted:
             ensure_user(client, user_pool_id, email, password)
     except (ClientError, BotoCoreError) as exc:

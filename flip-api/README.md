@@ -183,10 +183,13 @@ Three developer utilities drive the **running dev stack** end to end (none run i
   `--from-segment`; `--video-scale` controls capture resolution (default 3 → 3840x2400).
 - `tests/seed_demo_projects.py` (`make seed_demo_projects`) — seeds a curated catalogue of radiology projects in
   honest lifecycle states through the real API; `--states` phases the pull-heavy approved entries, `--cleanup`
-  removes everything it recorded in `tests/seed_demo_projects.json`.
+  removes everything it recorded in `tests/seed_demo_projects.json`. Idempotent: a re-run skips catalogue
+  entries whose project name already exists on the hub, so it never duplicates the real imaging imports.
 - `flip_api/scripts/create_demo_users.py` (`make create_demo_users`) — provisions the demo Cognito users the
   recorder signs in as (`DEMO_RESEARCHER_PASSWORD` / `DEMO_ADMIN_PASSWORD` from env, never committed); restart
-  flip-api afterwards so boot seeding grants their roles.
+  flip-api afterwards so boot seeding grants their roles. Before any write it resolves the target pool's
+  name/region/AWS account and requires an interactive `yes`, so a stale `AWS_COGNITO_USER_POOL_ID` or wrong
+  SSO account can't plant a known-password admin in an unintended pool.
 
 `aws_mock` also pins `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` / `AWS_SESSION_TOKEN` / `AWS_DEFAULT_REGION` to test-only stub values in the environment for the duration of the session, and clobbers any `AWS_PROFILE` from the developer's shell. Real-AWS credentials are never reachable while the fixture is active.
 

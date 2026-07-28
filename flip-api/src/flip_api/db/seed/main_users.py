@@ -177,6 +177,10 @@ def seed_main_users(session: Session) -> None:
 
     # Demo-video identities — no-ops (with a warning) until the users are
     # provisioned in Cognito via flip_api/scripts/create_demo_users.py.
+    # Deliberately on the same universal every-boot path as the grants above
+    # (no env gate needed): the grant only materialises if the demo user
+    # exists in that environment's Cognito pool, which only the dev-stack
+    # provisioning script creates.
     _ensure_user_and_role_resilient(
         DEMO_RESEARCHER_EMAIL, RoleRef.RESEARCHER, session, *MAIN_USER_PROFILES[DEMO_RESEARCHER_EMAIL]
     )
