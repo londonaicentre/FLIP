@@ -23,10 +23,21 @@
 # Unlike the web leg's ALB, an NLB is single-AZ-capable, so this leg applies
 # against today's single-AZ LZA prod VPC with no gate.
 
+# Per-subnet detail for the static IP assignment below. Read at plan time
+# (the subnets pre-exist), unlike an ENI-discovery data source, which would
+# defer to apply and break for_each on the first plan.
+data "aws_subnet" "app" {
+  for_each = toset(data.aws_subnets.app.ids)
+  id       = each.value
+}
+
 locals {
-  # Also used to locate the NLB's ENIs by description below — keep in sync
-  # with module.fl_nlb's name.
-  fl_nlb_name = "${local.name_prefix}-fl-nlb"
+  # The FL NLB's private IPs are ASSIGNED via subnet_mapping rather than
+  # discovered from its ENIs afterwards: known at plan time, stable by
+  # construction, and publishable to the networking account before apply.
+  fl_nlb_private_ips = [
+    for id in local.app_subnet_ids : cidrhost(data.aws_subnet.app[id].cidr_block, var.fl_nlb_host_num)
+  ]
 }
 
 module "fl_nlb_security_group" {
@@ -53,12 +64,20 @@ resource "aws_ec2_tag" "fl_nlb_security_group_flip_sg" {
 }
 
 module "fl_nlb" {
-  source                     = "terraform-aws-modules/alb/aws"
-  name                       = local.fl_nlb_name
-  load_balancer_type         = "network"
-  vpc_id                     = data.aws_vpc.lza_prod.id
-  internal                   = true
-  subnets                    = local.app_subnet_ids
+  source             = "terraform-aws-modules/alb/aws"
+  name               = "${local.name_prefix}-fl-nlb"
+  load_balancer_type = "network"
+  vpc_id             = data.aws_vpc.lza_prod.id
+  internal           = true
+
+  # Static private IP per subnet (see local.fl_nlb_private_ips above).
+  subnet_mapping = [
+    for id in local.app_subnet_ids : {
+      subnet_id            = id
+      private_ipv4_address = cidrhost(data.aws_subnet.app[id].cidr_block, var.fl_nlb_host_num)
+    }
+  ]
+
   create_security_group      = false
   security_groups            = [module.fl_nlb_security_group.security_group.id]
   enable_deletion_protection = false
@@ -99,35 +118,4 @@ resource "aws_lb_target_group" "fl" {
   }
 
   deregistration_delay = 30
-}
-
-############################
-# NLB static private IPs — the FL-leg handoff value
-############################
-# The networking account registers these as IP targets on its internet-facing
-# edge NLB's :8002 listener. NLB ENI addresses are stable for the load
-# balancer's lifetime, which is why the FL leg needs no DNS-sync machinery —
-# unlike the ALB, whose IPs rotate (see parameter_store.tf).
-
-data "aws_network_interfaces" "fl_nlb" {
-  filter {
-    name = "description"
-    # Wildcard-safe form: ENI descriptions are "ELB net/<name>/<lb-id>" and
-    # the lb-id part is only known after creation.
-    values = ["ELB net/${local.fl_nlb_name}/*"]
-  }
-
-  # No attribute reference ties this read to the NLB (the filter is a static
-  # string), so without an explicit depends_on it would be read at plan time
-  # and find nothing on the first apply.
-  depends_on = [module.fl_nlb]
-}
-
-data "aws_network_interface" "fl_nlb" {
-  for_each = toset(data.aws_network_interfaces.fl_nlb.ids)
-  id       = each.value
-}
-
-locals {
-  fl_nlb_private_ips = sort([for eni in data.aws_network_interface.fl_nlb : eni.private_ip])
 }

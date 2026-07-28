@@ -93,7 +93,7 @@ ghcr/ecr-public; irrelevant for the Docker-Hub-hosted echo image).
 | ECR | `e2e-lza-echo` private repo (operator-pushed `hashicorp/http-echo`) |
 | ECS | Fargate cluster + two 0.25 vCPU / 512 MB services: `e2e-web` (`:5678`, replies `e2e-web ok`; gated with the web leg) and `e2e-fl` (`:8002`, replies `e2e-fl ok`) |
 | Web leg (gated) | Internal ALB, HTTP:80 → `e2e-web` target group (HTTP health check on `/`) — `enable_web_leg=true` once multi-AZ lands |
-| FL leg | Internal NLB, TCP:8002 → `e2e-fl` target group (TCP health check); static ENI private IPs published for the edge |
+| FL leg | Internal NLB, TCP:8002 → `e2e-fl` target group (TCP health check); static private IPs **assigned** via `subnet_mapping` (`fl_nlb_host_num`, default `.250` per app subnet) and published for the edge |
 | Handoff | SSM params under `/flip-e2e/networking/`: `vpc_id` + `private_subnet_ids` (informational — TGW attachment pre-exists), `alb_dns_name` (once web leg enabled), `nlb_private_ips`, `web_port` (80), `fl_port` (8002) |
 | Probe | t3.micro, app subnet, SSM-only (no key pair, no ingress) for in-VPC verification |
 

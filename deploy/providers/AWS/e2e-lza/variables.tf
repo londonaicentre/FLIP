@@ -42,6 +42,19 @@ variable "enable_web_leg" {
   default     = false
 }
 
+variable "fl_nlb_host_num" {
+  type        = number
+  description = <<-EOT
+    Host number (cidrhost index) assigned to the FL NLB's static private IP
+    in each app subnet via subnet_mapping — e.g. 250 in 10.12.0.0/24 gives
+    10.12.0.250. Assigned (not discovered) so the IPs are known at plan
+    time and stable by construction; keep it high and clear of the subnet's
+    organically-allocated low range. App subnets are /24 in the LZA prod
+    template, so any value 4..254 is addressable.
+  EOT
+  default     = 250
+}
+
 variable "networking_ingress_cidrs" {
   type        = list(string)
   description = <<-EOT
