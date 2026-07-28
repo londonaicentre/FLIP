@@ -227,7 +227,7 @@ the minimum set the FLIP platform expects is listed in
   simulator testing)
 * ``requirements.txt`` — any extra Python dependencies (the Ark+ model imports ``timm``)
 
-The backbone checkpoint (``pretrained_weights.pt``, ~795 MB) is uploaded separately — the
+The backbone checkpoint (``pretrained_weights.pt``, ~759 MiB) is uploaded separately — the
 platform stages it server-side and broadcasts it to clients at round 0, so it never travels
 in the client app bundle. Set ``SERVER_CHECKPOINT`` in ``config.json`` to the filename:
 

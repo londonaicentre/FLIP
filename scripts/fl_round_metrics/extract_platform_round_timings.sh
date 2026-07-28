@@ -215,6 +215,20 @@ if [[ -n "$USER_START" && -z "$USER_END" ]] || [[ -z "$USER_START" && -n "$USER_
     exit 1
 fi
 
+# Ordering is checked here rather than left to CloudWatch: an inverted window makes
+# filter-log-events return zero events, which is indistinguishable downstream from
+# "the model never ran" and sends you hunting the wrong problem.
+if [[ -n "$USER_START" && -n "$USER_END" ]]; then
+    _start_epoch="$(date -u -d "$USER_START" +%s 2>/dev/null)" \
+        || { echo "Error: could not parse --start: ${USER_START}" >&2; exit 1; }
+    _end_epoch="$(date -u -d "$USER_END" +%s 2>/dev/null)" \
+        || { echo "Error: could not parse --end: ${USER_END}" >&2; exit 1; }
+    if [[ "$_start_epoch" -ge "$_end_epoch" ]]; then
+        echo "Error: --start (${USER_START}) must be strictly before --end (${USER_END})" >&2
+        exit 1
+    fi
+fi
+
 # --------------------------------------------------------------------------------------
 # Logging helpers
 # --------------------------------------------------------------------------------------
@@ -285,23 +299,46 @@ log "Output directory: ${MODEL_OUT_DIR}"
 
 FLIP_API_LOG_GROUP="/ecs/flip-api"
 
-log_group_exists() {
-    local name="$1"
-    awscli logs describe-log-groups --log-group-name-prefix "$name" \
-        --query "logGroups[?logGroupName=='${name}'] | length(@)" --output text 2>/dev/null | grep -qv '^0$'
-}
-
-log_group_exists "$FLIP_API_LOG_GROUP" || die "Log group ${FLIP_API_LOG_GROUP} not found — check --profile/--region."
-
+# Discovery deliberately does NOT swallow stderr. With `2>/dev/null`, an AccessDenied on
+# logs:DescribeLogGroups is indistinguishable from "that log group doesn't exist": the
+# flip-api check dies telling you to check --profile/--region, and the fl-api/fl-server
+# prefixes warn "none discovered" and carry on to produce an empty-but-confident summary.
+# The AWS exit status is checked explicitly and its stderr surfaced in the message.
+#
+# Results land in the DISCOVERED_LOG_GROUPS global rather than on stdout because `die`
+# inside a `$( )` or a pipeline segment only exits that subshell — the caller would sail
+# on past a failure. Callers copy the array out before the next call overwrites it.
+AWS_LAST_ERROR=""
+DISCOVERED_LOG_GROUPS=()
 discover_log_groups() {
-    # Prints one log group name per line matching the given prefix.
-    local prefix="$1"
-    awscli logs describe-log-groups --log-group-name-prefix "$prefix" \
-        --query 'logGroups[].logGroupName' --output text 2>/dev/null | tr '\t' '\n' | sed '/^$/d'
+    local prefix="$1" out rc=0 err_file="${WORK_DIR}/describe_log_groups.err"
+    out="$(awscli logs describe-log-groups --log-group-name-prefix "$prefix" \
+        --query 'logGroups[].logGroupName' --output text 2>"$err_file")" || rc=$?
+    AWS_LAST_ERROR="$(tr '\n\t' '  ' < "$err_file" | sed 's/  */ /g; s/^ *//; s/ *$//')"
+    rm -f "$err_file"
+    DISCOVERED_LOG_GROUPS=()
+    [[ $rc -eq 0 ]] || return "$rc"
+    local name
+    while IFS= read -r name; do
+        [[ -n "$name" ]] && DISCOVERED_LOG_GROUPS+=("$name")
+    done < <(tr '\t' '\n' <<<"$out")
+    return 0
 }
 
-mapfile -t FL_API_LOG_GROUPS < <(discover_log_groups "/ecs/fl-api-net-")
-mapfile -t FL_SERVER_LOG_GROUPS < <(discover_log_groups "/ecs/fl-server-net-")
+discover_log_groups "$FLIP_API_LOG_GROUP" \
+    || die "aws logs describe-log-groups failed for ${FLIP_API_LOG_GROUP}: ${AWS_LAST_ERROR:-exit status only}"
+[[ " ${DISCOVERED_LOG_GROUPS[*]:-} " == *" ${FLIP_API_LOG_GROUP} "* ]] \
+    || die "Log group ${FLIP_API_LOG_GROUP} not found — check --profile/--region."
+
+FL_API_LOG_GROUPS=()
+discover_log_groups "/ecs/fl-api-net-" \
+    || die "aws logs describe-log-groups failed for /ecs/fl-api-net-*: ${AWS_LAST_ERROR:-exit status only}"
+[[ ${#DISCOVERED_LOG_GROUPS[@]} -eq 0 ]] || FL_API_LOG_GROUPS=("${DISCOVERED_LOG_GROUPS[@]}")
+
+FL_SERVER_LOG_GROUPS=()
+discover_log_groups "/ecs/fl-server-net-" \
+    || die "aws logs describe-log-groups failed for /ecs/fl-server-net-*: ${AWS_LAST_ERROR:-exit status only}"
+[[ ${#DISCOVERED_LOG_GROUPS[@]} -eq 0 ]] || FL_SERVER_LOG_GROUPS=("${DISCOVERED_LOG_GROUPS[@]}")
 
 if [[ ${#FL_API_LOG_GROUPS[@]} -eq 0 ]]; then
     warn "No /ecs/fl-api-net-* log groups discovered — fl-api-side metrics will be unavailable."
@@ -498,11 +535,8 @@ TRUE_END_MS="$(awk 'NR==1||$1+0>max{max=$1+0} END{printf "%.0f\n", max}' "$MODEL
 # --------------------------------------------------------------------------------------
 
 STATUS_TIMELINE_FILE="${WORK_DIR}/status_timeline.tsv"
-grep -F "Attempting to set the model's status" "$MODEL_LINES_FILE" \
-    | grep -oP "^\S+ \S+ .*ID: ${MODEL_ID}, Status: \K.*" \
-    > "${WORK_DIR}/status_raw.txt" || true
 
-# Re-pair timestamps (first field of the matching line) with the extracted status token.
+# Pair timestamps (first field of the matching line) with the extracted status token.
 : > "$STATUS_TIMELINE_FILE"
 while IFS= read -r line; do
     ts="$(awk '{print $1}' <<<"$line")"
@@ -783,7 +817,11 @@ DUR_STATS="$(col_stats 4)"    # duration_s
 AGG_STATS="$(col_stats 7)"    # agg_duration_s
 # Inter-round gap: this round's start_ms (col 10) minus the previous round's end_ms
 # (col 11); rows are in round order, and the first round has no predecessor.
-GAP_STATS="$(awk -F'\t' 'NR > 1 && $10 != "-" && $11 != "-" {
+# A round with a missing start or end breaks the chain, so reset prev_end rather than
+# skipping the row: skipping would measure the next round's gap from two rounds back,
+# folding the whole incomplete round into the gap and inflating the mean.
+GAP_STATS="$(awk -F'\t' 'NR > 1 {
+        if ($10 == "-" || $11 == "-") { prev_end = ""; next }
         if (prev_end != "") {g = ($10 - prev_end) / 1000; s += g; ss += g*g; n++}
         prev_end = $11
     }
