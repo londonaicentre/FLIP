@@ -57,15 +57,13 @@ this root **data-sources** it rather than creating it:
 > These are **not** resolved by this stack. Each has a stated default
 > implemented here; do not treat the defaults as decisions.
 
-1. **Which account runs this test?** Default assumption: **FLIPProduction
-   (`893493035022`)** — it is empty apart from the migration scaffolding,
-   the stack is fully disposable (`make destroy`), and it exercises the
-   exact subnets/TGW/firewall path real FLIP will use. The alternative is a
-   fresh test account: one `accounts-config.yaml` entry under
-   `Workloads/Prod` auto-provisions an identical VPC + TGW attachment, at
-   the cost of an account-provisioning cycle. Martin's call.
-2. **Multi-AZ subnets.** The prod VPC template is single-AZ; the multi-AZ
-   change (requested 2026-07-09) blocks this stack's web-leg ALB and,
+1. **Which account runs this test?** ~~Resolved 2026-07-28~~: the
+   networking-account owner confirmed **FLIPProduction (`893493035022`)** —
+   it is empty apart from the migration scaffolding, the stack is fully
+   disposable (`make destroy`), and it exercises the exact
+   subnets/TGW/firewall path real FLIP will use.
+2. **Multi-AZ subnets** — tracked as **londonaicentre/lza#37**. The prod
+   VPC template is single-AZ; that blocks this stack's web-leg ALB and,
    later, prod's ALB + RDS. Once `prod-app-b` exists, set
    `TF_VAR_enable_web_leg=true` and re-apply — the subnet data source picks
    the new subnet up automatically.
