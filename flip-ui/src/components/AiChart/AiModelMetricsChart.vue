@@ -172,9 +172,16 @@ onMounted(() => {
                     },
                     xAxis: {
                         type: "value",
-                        minInterval: 1,
+                        // x-values are arbitrary floats (FLIP#148), so integer ticks can't be forced
+                        // unconditionally — they'd collapse a sub-unit range (e.g. 0–1) onto a single
+                        // tick. But an all-integer axis (the common "Global Rounds" case) keeps them:
+                        // splitNumber 10 over a 3-round run would otherwise show meaningless 0.25/0.5
+                        // fractional round ticks.
+                        ...(props.data.metrics.every(s => s.data.every(p => Number.isInteger(p.xValue)))
+                            ? { minInterval: 1 }
+                            : {}),
                         splitNumber: 10, // <— try to show 10 ticks (only)
-                        name: "Global Rounds",
+                        name: props.data.xLabel,
                         nameLocation: "middle",
                         // Sits just under the tick labels rather than floating halfway
                         // down a reserved strip, which read as a wide empty card margin.
