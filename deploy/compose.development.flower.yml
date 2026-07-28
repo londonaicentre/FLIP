@@ -114,12 +114,6 @@ services:
       - INTERNAL_SERVICE_KEY_HEADER=${INTERNAL_SERVICE_KEY_HEADER}
       - INTERNAL_SERVICE_KEY=${INTERNAL_SERVICE_KEY}
       - AWS_PROFILE=${AWS_PROFILE}
-      # Run ServerApps against the image-baked environment: Flower's SuperLink
-      # defaults to installing the app bundle's declared dependencies from PyPI
-      # into a per-run venv, which silently SHADOWS the in-tree flip package
-      # (PyPI flip-utils carries the same version number) and bypasses the
-      # platform's supply-chain controls. See FLIP#745.
-      - FLWR_DISABLE_RUNTIME_DEPENDENCY_INSTALLATION=1
       # MLflow dual-write (FLIP#745): the flip package mirrors metrics/status to
       # MLflow over the hub-only mlflow-network below. Empty => sink disabled.
       - MLFLOW_TRACKING_URI=${MLFLOW_TRACKING_URI:-}
@@ -214,8 +208,6 @@ services:
       - INTERNAL_SERVICE_KEY_HEADER=${INTERNAL_SERVICE_KEY_HEADER}
       - INTERNAL_SERVICE_KEY=${INTERNAL_SERVICE_KEY}
       - AWS_PROFILE=${AWS_PROFILE}
-      # Run ServerApps against the image-baked environment — see fl-server-net-1.
-      - FLWR_DISABLE_RUNTIME_DEPENDENCY_INSTALLATION=1
       # MLflow dual-write (FLIP#745): see fl-server-net-1.
       - MLFLOW_TRACKING_URI=${MLFLOW_TRACKING_URI:-}
     command:

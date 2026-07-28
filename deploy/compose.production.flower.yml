@@ -69,12 +69,6 @@ services:
       # default) disables the integration. Mirrors the ECS task env (locals.tf).
       - MLFLOW_TRACKING_URI=${MLFLOW_TRACKING_URI:-}
       # - AWS_PROFILE=${AWS_PROFILE} # in production, AWS credentials are retrieved from the instance role
-      # Run ServerApps against the image-baked environment: Flower's SuperLink
-      # defaults to installing the app bundle's declared dependencies from PyPI
-      # into a per-run venv, which silently SHADOWS the in-tree flip package
-      # (PyPI flip-utils carries the same version number) and bypasses the
-      # platform's supply-chain controls. See FLIP#745.
-      - FLWR_DISABLE_RUNTIME_DEPENDENCY_INSTALLATION=1
     command:
       - --ssl-ca-certfile
       - /certs/ca.crt

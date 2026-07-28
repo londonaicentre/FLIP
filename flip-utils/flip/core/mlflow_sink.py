@@ -174,19 +174,19 @@ class MlflowSink:
         except Exception as e:
             logger.warning(f"MLflow dual-write dropped status {status} for model {model_id}: {e}")
 
-    def note_exception(self, model_id: str, client_name: str, formatted_exception: str) -> None:
+    def note_exception(self, model_id: str, client_name: str | None, formatted_exception: str) -> None:
         """Record the latest handled client exception as a run tag.
 
         Args:
             model_id (str): The FLIP model identifier.
-            client_name (str): The FL client that raised the exception.
+            client_name (str | None): The FL client that raised the exception; ``None`` means the hub.
             formatted_exception (str): The formatted exception text (truncated to 500 chars).
         """
         try:
             run_id = self._resolve_run_id(model_id)
             if run_id is None:
                 return
-            self._client.set_tag(run_id, TAG_LAST_ERROR, f"{client_name}: {formatted_exception}"[:500])
+            self._client.set_tag(run_id, TAG_LAST_ERROR, f"{client_name or 'hub'}: {formatted_exception}"[:500])
         except Exception as e:
             logger.warning(f"MLflow dual-write dropped exception note for model {model_id}: {e}")
 
