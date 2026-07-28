@@ -12,11 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# The contract with the networking account. Its LZA-side stack consumes
-# these parameters to attach this VPC to the TGW and wire the edge listeners
-# at the workload half of the chain — mirroring the /flip/networking/*
+# The contract with the networking account, mirroring the /flip/networking/*
 # pattern the prod root publishes for aicentre-iac (../parameter_store.tf).
-# Names are surfaced in outputs.tf (SsmParameterNames).
+# In the LZA the TGW attachment already exists (provisioned with the VPC by
+# the "prod" VPC template), so vpc_id/private_subnet_ids are informational —
+# the load-bearing values are alb_dns_name (web tier DNS-sync) and
+# nlb_private_ips (FL edge targets). Names are surfaced in outputs.tf
+# (SsmParameterNames).
 
 locals {
   ssm_prefix = "/flip-e2e/networking"
@@ -24,23 +26,24 @@ locals {
 
 resource "aws_ssm_parameter" "vpc_id" {
   name        = "${local.ssm_prefix}/vpc_id"
-  description = "e2e LZA workload VPC ID — consumed cross-account by the networking account's TGW VPC attachment"
+  description = "e2e LZA workload VPC ID (LZA-provisioned, TGW attachment pre-exists) — informational for the networking account's edge configuration"
   type        = "String"
-  value       = module.vpc.vpc_id
+  value       = data.aws_vpc.lza_prod.id
 }
 
 resource "aws_ssm_parameter" "private_subnet_ids" {
   name        = "${local.ssm_prefix}/private_subnet_ids"
-  description = "e2e LZA workload private subnet IDs (comma-separated) — consumed cross-account by the networking account's TGW VPC attachment"
+  description = "e2e LZA workload app subnet IDs (comma-separated, LZA-provisioned) — informational for the networking account's edge configuration"
   type        = "StringList"
-  value       = join(",", module.vpc.private_subnets)
+  value       = join(",", local.app_subnet_ids)
 }
 
 resource "aws_ssm_parameter" "alb_dns_name" {
+  count       = var.enable_web_leg ? 1 : 0
   name        = "${local.ssm_prefix}/alb_dns_name"
   description = "Internal web ALB DNS name — the networking account's DNS-sync Lambda must resolve this on a cadence to keep the web-tier edge NLB targets current (ALB IPs rotate; README open question 3)"
   type        = "String"
-  value       = module.web_alb.dns_name
+  value       = module.web_alb[0].dns_name
 }
 
 resource "aws_ssm_parameter" "nlb_private_ips" {

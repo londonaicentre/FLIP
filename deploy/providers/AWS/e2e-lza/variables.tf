@@ -14,18 +14,32 @@
 
 variable "AWS_REGION" {
   type        = string
-  description = "AWS region for the e2e LZA workload account."
+  description = "AWS region of the LZA workload account (the LZA home region)."
   default     = "eu-west-2"
 }
 
-variable "vpc_cidr" {
+variable "lza_vpc_name" {
   type        = string
   description = <<-EOT
-    CIDR for the sealed workload VPC. No default on purpose: the value must be
-    allocated from the LZA IPAM and must not overlap the TGW route domain —
-    it needs sign-off from the networking-account owner BEFORE apply (README
-    open question 1). Set via TF_VAR_vpc_cidr in .env.e2e.
+    Name tag of the LZA-provisioned workload VPC to deploy into. The LZA
+    "prod" VPC template names it "<AcceleratorPrefix>-<HomeRegion>-prod",
+    identically in every Workloads/Prod OU account — so the default holds
+    for both FLIPProduction and any future test account cut from the same
+    template.
   EOT
+  default     = "AWSAccelerator-eu-west-2-prod"
+}
+
+variable "enable_web_leg" {
+  type        = bool
+  description = <<-EOT
+    Create the web leg (internal ALB + e2e-web service + alb_dns_name SSM
+    parameter). Default false because an ALB requires subnets in >= 2 AZs
+    and the LZA prod VPC template is single-AZ today — flip to true once the
+    multi-AZ template change lands in londonaicentre/lza (README open
+    question 2). The FL leg is unaffected and applies regardless.
+  EOT
+  default     = false
 }
 
 variable "networking_ingress_cidrs" {
@@ -38,10 +52,4 @@ variable "networking_ingress_cidrs" {
     cross-account SG references do not work over a TGW attachment.
   EOT
   default     = []
-}
-
-variable "max_azs" {
-  type        = number
-  description = "Number of availability zones to spread the private subnets across."
-  default     = 2
 }

@@ -12,8 +12,8 @@
 # e2e-lza Terraform root: LZA ingress end-to-end test stack (see README.md).
 #
 # Unlike dev/ (which shares .env.development with the compose stack), this
-# stack has its own env file — the sealed workload account is new and shares
-# no credentials or buckets with any existing FLIP environment.
+# stack has its own env file — the LZA workload account shares no
+# credentials or buckets with any legacy FLIP environment.
 
 ENV_FILE := .env.e2e
 
@@ -28,29 +28,32 @@ ifndef AWS_PROFILE
 $(error AWS_PROFILE is not set. Add it to $(ENV_FILE))
 endif
 
-# Logical AWS profile names for the EXISTING FLIP accounts (same defaults as
-# dev/Makefile). This stack must only ever run against the new sealed LZA
-# workload account, so all three are refused outright.
+# Logical AWS profile names for the LEGACY FLIP accounts (same defaults as
+# dev/Makefile). This stack must only ever run against the LZA workload
+# account, so all three are refused outright.
 DEV_AWS_PROFILE  ?= dev
 STAG_AWS_PROFILE ?= stag
 PROD_AWS_PROFILE ?= prod
 
+# Expected LZA workload-account profile (Identity Center). Override
+# E2E_AWS_PROFILE in $(ENV_FILE) if your local profile name differs.
+E2E_AWS_PROFILE ?= FLIPAdminAccess-893493035022
+
 ifeq ($(AWS_PROFILE),$(PROD_AWS_PROFILE))
-$(error AWS_PROFILE is the PROD account — the e2e-lza stack targets the sealed LZA workload account only)
+$(error AWS_PROFILE is the legacy PROD account — the e2e-lza stack targets the LZA workload account only)
 endif
 ifeq ($(AWS_PROFILE),$(STAG_AWS_PROFILE))
-$(error AWS_PROFILE is the STAG account — the e2e-lza stack targets the sealed LZA workload account only)
+$(error AWS_PROFILE is the legacy STAG account — the e2e-lza stack targets the LZA workload account only)
 endif
 ifeq ($(AWS_PROFILE),$(DEV_AWS_PROFILE))
-$(error AWS_PROFILE is the DEV account — the e2e-lza stack targets the sealed LZA workload account only)
+$(error AWS_PROFILE is the legacy DEV account — the e2e-lza stack targets the LZA workload account only)
+endif
+ifneq ($(AWS_PROFILE),$(E2E_AWS_PROFILE))
+$(error AWS_PROFILE='$(AWS_PROFILE)' is not the expected LZA profile '$(E2E_AWS_PROFILE)' (override via E2E_AWS_PROFILE))
 endif
 
 ifeq ($(strip $(FLIP_TFSTATE_BUCKET_NAME)),)
 $(error Set FLIP_TFSTATE_BUCKET_NAME in $(ENV_FILE))
-endif
-
-ifeq ($(strip $(TF_VAR_vpc_cidr)),)
-$(error Set TF_VAR_vpc_cidr in $(ENV_FILE) — the CIDR needs LZA IPAM sign-off, see README open question 1)
 endif
 
 export TF_VAR_AWS_REGION ?= $(AWS_REGION)

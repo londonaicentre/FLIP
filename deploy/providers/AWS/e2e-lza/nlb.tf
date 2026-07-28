@@ -19,6 +19,9 @@
 # TCP passthrough only — the dummy target speaks HTTP, but the proof is TCP
 # reachability on :8002, not gRPC semantics. In the real design the stream
 # is mTLS gRPC end-to-end from the trust FL client to fl-server.
+#
+# Unlike the web leg's ALB, an NLB is single-AZ-capable, so this leg applies
+# against today's single-AZ LZA prod VPC with no gate.
 
 locals {
   # Also used to locate the NLB's ENIs by description below — keep in sync
@@ -29,7 +32,7 @@ locals {
 module "fl_nlb_security_group" {
   source      = "../modules/secgroup"
   name        = "${local.name_prefix}-fl-nlb-sg"
-  vpc_id      = module.vpc.vpc_id
+  vpc_id      = data.aws_vpc.lza_prod.id
   description = "e2e LZA internal FL NLB - TCP 8002 from the networking-account ingress subnets and the in-VPC probe"
   ingress_rules = [
     {
@@ -38,7 +41,7 @@ module "fl_nlb_security_group" {
       # scope for the ingress test.
       port        = local.fl_port
       description = "FL TCP from networking-account edge NLB path (Phase B) and VPC-internal probe (Phase A)"
-      cidr_blocks = concat([var.vpc_cidr], var.networking_ingress_cidrs)
+      cidr_blocks = concat([data.aws_vpc.lza_prod.cidr_block], var.networking_ingress_cidrs)
     }
   ]
 }
@@ -53,9 +56,9 @@ module "fl_nlb" {
   source                     = "terraform-aws-modules/alb/aws"
   name                       = local.fl_nlb_name
   load_balancer_type         = "network"
-  vpc_id                     = module.vpc.vpc_id
+  vpc_id                     = data.aws_vpc.lza_prod.id
   internal                   = true
-  subnets                    = module.vpc.private_subnets
+  subnets                    = local.app_subnet_ids
   create_security_group      = false
   security_groups            = [module.fl_nlb_security_group.security_group.id]
   enable_deletion_protection = false
@@ -84,7 +87,7 @@ resource "aws_lb_target_group" "fl" {
   port        = local.fl_port
   protocol    = "TCP"
   target_type = "ip"
-  vpc_id      = module.vpc.vpc_id
+  vpc_id      = data.aws_vpc.lza_prod.id
 
   health_check {
     enabled             = true

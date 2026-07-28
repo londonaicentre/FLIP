@@ -15,9 +15,9 @@
 # In-VPC probe: run the Phase A curls before the networking side exists, and
 # later verify TGW return-path routing from inside (README runbook). SSM-only
 # access, mirroring the Central Hub bastion in ../main.tf: no key pair, no
-# ingress rules, reachable exclusively through the ssm/ssmmessages/
-# ec2messages endpoints (vpc_endpoints.tf). It doubles as the seal check —
-# from here, nothing outbound should resolve to anything but the endpoints.
+# ingress rules, reachable exclusively through the LZA central ssm/
+# ssmmessages/ec2messages endpoints. It doubles as the seal check — from
+# here, nothing outbound should resolve to anything but the endpoints.
 
 module "probe_role" {
   source                = "terraform-aws-modules/iam/aws//modules/iam-assumable-role"
@@ -39,7 +39,7 @@ resource "aws_iam_instance_profile" "probe_profile" {
 module "probe_security_group" {
   source        = "../modules/secgroup"
   name          = "${local.name_prefix}-probe-sg"
-  vpc_id        = module.vpc.vpc_id
+  vpc_id        = data.aws_vpc.lza_prod.id
   description   = "e2e LZA probe instance (no inbound - access via SSM Session Manager)"
   ingress_rules = []
 }
@@ -58,7 +58,7 @@ resource "aws_instance" "probe" {
   tags = {
     Name = "${local.name_prefix}-probe"
   }
-  subnet_id                   = module.vpc.private_subnets[0]
+  subnet_id                   = local.app_subnet_ids[0]
   associate_public_ip_address = false
   instance_type               = "t3.micro"
   ami                         = data.aws_ssm_parameter.ubuntu.value

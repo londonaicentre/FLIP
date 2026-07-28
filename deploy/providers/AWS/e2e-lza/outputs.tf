@@ -13,18 +13,18 @@
 # limitations under the License.
 
 output "VpcId" {
-  description = "Sealed workload VPC ID"
-  value       = module.vpc.vpc_id
+  description = "LZA-provisioned workload VPC ID this stack deployed into"
+  value       = data.aws_vpc.lza_prod.id
 }
 
-output "PrivateSubnetIds" {
-  description = "Private subnet IDs (the VPC's only subnets)"
-  value       = module.vpc.private_subnets
+output "AppSubnetIds" {
+  description = "LZA-provisioned app subnet IDs in use (single-AZ until the multi-AZ template change lands)"
+  value       = local.app_subnet_ids
 }
 
 output "AlbDnsName" {
-  description = "Internal web ALB DNS name (Phase A: curl this from the probe)"
-  value       = module.web_alb.dns_name
+  description = "Internal web ALB DNS name (empty until var.enable_web_leg; Phase A: curl this from the probe)"
+  value       = try(module.web_alb[0].dns_name, "")
 }
 
 output "NlbDnsName" {
@@ -53,13 +53,13 @@ output "EcrRepositoryUrl" {
 }
 
 output "SsmParameterNames" {
-  description = "SSM handoff parameter names published for the networking account"
-  value = [
+  description = "SSM handoff parameter names published for the networking account (alb_dns_name joins once the web leg is enabled)"
+  value = compact([
     aws_ssm_parameter.vpc_id.name,
     aws_ssm_parameter.private_subnet_ids.name,
-    aws_ssm_parameter.alb_dns_name.name,
+    try(aws_ssm_parameter.alb_dns_name[0].name, ""),
     aws_ssm_parameter.nlb_private_ips.name,
     aws_ssm_parameter.web_port.name,
     aws_ssm_parameter.fl_port.name,
-  ]
+  ])
 }

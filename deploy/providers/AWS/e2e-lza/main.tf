@@ -15,8 +15,8 @@
 # e2e-lza Terraform root: LZA ingress end-to-end test stack.
 #
 # Proves the WORKLOAD-ACCOUNT half of the LZA two-tier ingress design with
-# dummy ECS services, in a fresh, sealed workload account (no IGW, no NAT,
-# no public subnets):
+# dummy ECS services, inside an LZA-provisioned sealed workload VPC (no IGW,
+# no NAT, no public subnets):
 #
 #   Web: user → CloudFront + WAF (networking acct) → internal NLB (networking
 #        acct, TCP:443 passthrough) → firewall → TGW → THIS internal ALB
@@ -26,12 +26,30 @@
 #        (networking acct, TCP:8002 passthrough) → firewall → TGW → THIS
 #        internal NLB → ECS e2e-fl
 #
+# LZA-estate reality (differs from a self-managed account — see README):
+#   - The VPC, subnets, TGW attachment, S3/DynamoDB gateway endpoints and
+#     central interface endpoints are ALL provisioned by the LZA pipeline
+#     (londonaicentre/lza network-config.yaml "prod" VPC template, applied to
+#     every account in the Workloads/Prod OU). The GRNETSEC2 SCP denies
+#     VPC/subnet/NAT/IGW/EIP/endpoint creation to this stack's role, so this
+#     root DATA-SOURCES the network layer and creates only app-layer
+#     resources: security groups, load balancers, ECS, ECR, the probe, and
+#     the SSM handoff parameters.
+#   - The web leg's internal ALB needs subnets in ≥ 2 AZs; the LZA prod VPC
+#     template is single-AZ today, so the web leg is gated behind
+#     var.enable_web_leg (default false) until the multi-AZ template change
+#     lands. The FL leg (NLB) is single-AZ-capable and applies now.
+#   - CloudFront VPC origins are SCP-denied for workload roles (lza PR #36,
+#     GRCLOUDFRONTVPCORIGIN) — the two-tier chain tested here is the only
+#     sanctioned web ingress path.
+#
 # The networking-account half (CloudFront, edge NLBs, TGW, firewall) lives in
-# the private aicentre-iac / LZA repo; the contract with it is the SSM
-# parameters in parameter_store.tf. This stack must never be folded into the
-# prod/stag root (../) — it targets a different account and has its own state
-# key (backend.tf). See README.md for the verification runbook and the open
-# questions that need the networking-account owner's sign-off.
+# the private londonaicentre/lza + aicentre-lza-iac repos; the contract with
+# it is the SSM parameters in parameter_store.tf. This stack must never be
+# folded into the prod/stag root (../) — it targets the LZA workload account
+# and has its own state key (backend.tf). See README.md for the verification
+# runbook and the open questions that need the networking-account owner's
+# sign-off.
 
 terraform {
   required_version = ">= 1.13.1"
@@ -65,31 +83,43 @@ locals {
   # service listens on fl_port directly so the TCP leg is port-faithful
   # end to end.
   web_container_port = 5678
-
-  # One private subnet per AZ, carved from the IPAM-allocated CIDR.
-  # newbits=4 keeps the subnets comfortably sized from any parent the IPAM
-  # is likely to hand out (/16 parent → /20 subnets, /21 → /25).
-  private_subnets = [for i in range(var.max_azs) : cidrsubnet(var.vpc_cidr, 4, i)]
 }
 
 ############################
-# Sealed VPC
+# LZA-provisioned network layer (data-sourced, never created here)
 ############################
-# Private subnets only: no IGW, no NAT, no public subnets. Every AWS API
-# dependency is served by the endpoints in vpc_endpoints.tf; the only ways
-# in or out are the (networking-account-owned) TGW attachment and SSM.
-# The acceptance criterion in README.md is that this stays true — no
-# NAT/IGW may ever appear in `terraform state list`.
+# The sealed VPC comes from the LZA "prod" VPC template: IPAM-allocated
+# CIDR, internetGateway=false, TGW attachment to the Network account,
+# S3+DynamoDB gateway endpoints, useCentralEndpoints=true (interface
+# endpoints for ec2/ecr/kms/logs/monitoring/ssm* + more live centrally in
+# the Network account's endpoints VPC and resolve here via shared private
+# hosted zones). The acceptance criterion in README.md is that the account
+# STAYS sealed — this stack must never grow a NAT/IGW workaround.
 
-data "aws_availability_zones" "available" {}
+data "aws_vpc" "lza_prod" {
+  filter {
+    name   = "tag:Name"
+    values = [var.lza_vpc_name]
+  }
+}
 
-module "vpc" {
-  source               = "terraform-aws-modules/vpc/aws"
-  version              = "~> 6.0"
-  name                 = "${local.name_prefix}-vpc"
-  azs                  = slice(data.aws_availability_zones.available.names, 0, var.max_azs)
-  cidr                 = var.vpc_cidr
-  private_subnets      = local.private_subnets
-  enable_nat_gateway   = false
-  enable_dns_hostnames = true
+# App-tier subnets ("<prefix>-prod-app-<az>"). Today this matches a single
+# eu-west-2a subnet; when the multi-AZ template change lands, the new -b
+# subnet is picked up automatically on the next plan (which is what unblocks
+# var.enable_web_leg).
+data "aws_subnets" "app" {
+  filter {
+    name   = "vpc-id"
+    values = [data.aws_vpc.lza_prod.id]
+  }
+  filter {
+    name   = "tag:Name"
+    values = ["*-prod-app-*"]
+  }
+}
+
+locals {
+  # Sorted for stable ordering across plans (subnet discovery order is not
+  # guaranteed; an unsorted list would replan the probe's subnet).
+  app_subnet_ids = sort(data.aws_subnets.app.ids)
 }

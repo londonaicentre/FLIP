@@ -16,9 +16,13 @@
 #
 #   e2e-web — http-echo on :5678 behind the internal ALB (alb.tf), replying
 #             "e2e-web ok". Stands in for flip-api behind the web tier.
+#             Gated with the rest of the web leg (var.enable_web_leg).
 #   e2e-fl  — http-echo on :8002 behind the internal NLB (nlb.tf), replying
 #             "e2e-fl ok". Stands in for the FL gRPC server; only TCP
 #             reachability is under test.
+#
+# Image pulls (ECR) and log delivery ride the LZA central endpoints + the
+# VPC's S3 gateway endpoint — no internet path exists or is needed.
 
 resource "aws_ecs_cluster" "e2e" {
   name = "${local.name_prefix}-cluster"
@@ -69,21 +73,23 @@ resource "aws_cloudwatch_log_group" "e2e_fl" {
 ############################
 
 module "web_service_security_group" {
+  count       = var.enable_web_leg ? 1 : 0
   source      = "../modules/secgroup"
   name        = "${local.name_prefix}-web-svc-sg"
-  vpc_id      = module.vpc.vpc_id
+  vpc_id      = data.aws_vpc.lza_prod.id
   description = "e2e-web Fargate tasks - echo port from the internal ALB only"
   ingress_rules = [
     {
       port                     = local.web_container_port
       description              = "http-echo from the internal web ALB"
-      source_security_group_id = module.web_alb_security_group.security_group.id
+      source_security_group_id = module.web_alb_security_group[0].security_group.id
     }
   ]
 }
 
 resource "aws_ec2_tag" "web_service_security_group_flip_sg" {
-  resource_id = module.web_service_security_group.security_group.id
+  count       = var.enable_web_leg ? 1 : 0
+  resource_id = module.web_service_security_group[0].security_group.id
   key         = "FlipSG"
   value       = "true"
 }
@@ -94,13 +100,13 @@ resource "aws_ec2_tag" "web_service_security_group_flip_sg" {
 module "fl_service_security_group" {
   source      = "../modules/secgroup"
   name        = "${local.name_prefix}-fl-svc-sg"
-  vpc_id      = module.vpc.vpc_id
+  vpc_id      = data.aws_vpc.lza_prod.id
   description = "e2e-fl Fargate tasks - FL port from the internal NLB nodes"
   ingress_rules = [
     {
       port        = local.fl_port
       description = "FL TCP from the internal NLB nodes (forwarded traffic + health checks)"
-      cidr_blocks = [var.vpc_cidr]
+      cidr_blocks = [data.aws_vpc.lza_prod.cidr_block]
     }
   ]
 }
@@ -117,7 +123,9 @@ resource "aws_ec2_tag" "fl_service_security_group_flip_sg" {
 # Minimal Fargate size (0.25 vCPU / 512 MB), same image, different port and
 # reply text. The image is the operator-pushed copy of hashicorp/http-echo
 # (ecr.tf, push commands in README.md); `command` overrides its CMD, the
-# entrypoint stays /http-echo.
+# entrypoint stays /http-echo. Both task definitions are unconditional —
+# only the web SERVICE is gated — so enabling the web leg later is a pure
+# additive apply.
 
 resource "aws_ecs_task_definition" "e2e_web" {
   family                   = "e2e-web"
@@ -190,6 +198,7 @@ resource "aws_ecs_task_definition" "e2e_fl" {
 ############################
 
 resource "aws_ecs_service" "e2e_web" {
+  count           = var.enable_web_leg ? 1 : 0
   name            = "e2e-web"
   cluster         = aws_ecs_cluster.e2e.id
   task_definition = aws_ecs_task_definition.e2e_web.arn
@@ -197,15 +206,15 @@ resource "aws_ecs_service" "e2e_web" {
   launch_type     = "FARGATE"
 
   network_configuration {
-    subnets          = module.vpc.private_subnets
-    security_groups  = [module.web_service_security_group.security_group.id]
+    subnets          = local.app_subnet_ids
+    security_groups  = [module.web_service_security_group[0].security_group.id]
     assign_public_ip = false
   }
 
   # Register each running task's ENI IP with the ALB target group — without
   # this block the service stays invisible to the ALB.
   load_balancer {
-    target_group_arn = aws_lb_target_group.web.arn
+    target_group_arn = aws_lb_target_group.web[0].arn
     container_name   = "e2e-web"
     container_port   = local.web_container_port
   }
@@ -224,7 +233,7 @@ resource "aws_ecs_service" "e2e_fl" {
   launch_type     = "FARGATE"
 
   network_configuration {
-    subnets          = module.vpc.private_subnets
+    subnets          = local.app_subnet_ids
     security_groups  = [module.fl_service_security_group.security_group.id]
     assign_public_ip = false
   }
