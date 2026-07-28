@@ -38,6 +38,7 @@ jobs:
         root:
           - ./deploy/providers/AWS
           - ./deploy/providers/AWS/dev
+          - ./deploy/providers/AWS/e2e-lza
     defaults:
       run:
         working-directory: ${{ matrix.root }}
