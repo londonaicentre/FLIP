@@ -37,15 +37,15 @@ NUM_ROUNDS ?= 3
 N_CLIENTS ?= 2
 
 # Simulator workspace + metrics output. WORKSPACE matches job.py's default and is deliberately NOT
-# the shared harness dir (../../testing/runs/workspace): `make metrics` auto-discovers the log with
+# the shared harness dir (../../testing/runs/workspace): `make round-metrics` auto-discovers the log with
 # the most round events under the workspace tree, and the shared dir accumulates round logs from
 # other tutorials' runs, so a stale log could be picked up instead of this tutorial's.
 WORKSPACE ?= /tmp/nvflare/arkplus_finetuning_client_api
-METRICS_OUT ?= $(REPO_ROOT)/model_metrics
+METRICS_OUT ?= $(APP_DIR)/round_metrics
 
-# Round count for the one-shot `make experiment` replica — matches the deployed run's
+# Round count for the one-shot `make reproduce-overhead` replica — matches the deployed run's
 # GLOBAL_ROUNDS (config.json), unlike the quick-smoke NUM_ROUNDS default of 3.
-EXPERIMENT_ROUNDS ?= 50
+OVERHEAD_ROUNDS ?= 50
 
 # The backbone checkpoint the server loads (config.json SERVER_CHECKPOINT). Staged into app_files/ so
 # stage_app_files() bundles it into the server custom dir; clients receive the backbone at round 0.
@@ -67,7 +67,7 @@ override SITE2_IMAGES_DIR := $(call abspath_app,$(SITE2_IMAGES_DIR))
 override SITE2_DATAFRAME  := $(call abspath_app,$(SITE2_DATAFRAME))
 override DATA_ROOT        := $(call abspath_app,$(DATA_ROOT))
 
-.PHONY: run export sim metrics experiment package download-raw-checkpoint prepare-checkpoint dataset-figure clean
+.PHONY: run export sim round-metrics reproduce-overhead package-overhead-bundle download-raw-checkpoint prepare-checkpoint dataset-figure clean
 
 # --- Raw checkpoint download ---
 download-raw-checkpoint:
@@ -156,20 +156,20 @@ sim:
 
 # --- Extract round metrics from the simulator logs (run after `make sim`/`make run`) ---
 # Parses the FLIP ScatterAndGather controller events in the simulator server log and writes the same
-# rounds.tsv / summary.md / boxplot artefacts as scripts/extract_model_metrics.sh produces for a
+# rounds.tsv / summary.md / boxplot artefacts as scripts/fl_round_metrics/extract_platform_round_timings.sh produces for a
 # platform run, so the two are directly comparable. Optional:
 # COMPARE=/path/to/platform/rounds.tsv adds a side-by-side steady-state overhead table.
-metrics:
-	bash "$(REPO_ROOT)/scripts/extract_simulator_metrics.sh" "$(WORKSPACE)" \
+round-metrics:
+	bash "$(REPO_ROOT)/scripts/fl_round_metrics/extract_simulator_round_timings.sh" "$(WORKSPACE)" \
 		-o "$(METRICS_OUT)" $(if $(COMPARE),--compare "$(COMPARE)") $(if $(RUN_NAME),--run-name "$(RUN_NAME)")
 
-# --- One-shot cross-site experiment (no hub / AWS access needed) ---
+# --- One-shot cross-site overhead reproduction (no hub / AWS access needed) ---
 # Everything a collaborating site needs to reproduce the simulator baseline and send the results
 # back: fetch the HF tutorial data (~6.3 GB) and the Ark+ checkpoint when missing, run the
-# full-length simulator replica (EXPERIMENT_ROUNDS, default 50), then extract the round metrics
+# full-length simulator replica (OVERHEAD_ROUNDS, default 50), then extract the round metrics
 # and pack metrics + simulator logs + host/provenance info into a single archive in this
 # directory. Requires Linux, uv, and an NVIDIA GPU (pick one with CUDA_VISIBLE_DEVICES).
-experiment:
+reproduce-overhead:
 	@# Directory existence alone doesn't mean the download finished (an interrupted `snapshot_download`
 	@# or Ctrl+C mid-copy leaves the directories present but partial) — check for the
 	@# .download-complete marker download-arkplus-finetuning-data writes only on success.
@@ -182,18 +182,18 @@ experiment:
 		$(MAKE) --no-print-directory download-raw-checkpoint; \
 	fi
 	@$(MAKE) --no-print-directory prepare-checkpoint
-	@$(MAKE) --no-print-directory sim NUM_ROUNDS="$(EXPERIMENT_ROUNDS)"
-	@$(MAKE) --no-print-directory package
+	@$(MAKE) --no-print-directory sim NUM_ROUNDS="$(OVERHEAD_ROUNDS)"
+	@$(MAKE) --no-print-directory package-overhead-bundle
 
 # Extract metrics from the last simulator run and bundle them with the workspace logs (model
 # files excluded), config.json, .env.app, and host info (GPU, OS, git commit) into
 # arkplus_sim_experiment_<host>_<stamp>.zip (.tar.gz when zip is not installed). Split out from
-# `experiment` so a finished run can be re-packaged without re-simulating.
-package:
+# `reproduce-overhead` so a finished run can be re-packaged without re-simulating.
+package-overhead-bundle:
 	@set -e; \
 	stamp="$$(date +%Y%m%dT%H%M%S)"; host="$$(hostname -s)"; \
 	run_name="simulator-arkplus-$${host}-$${stamp}"; \
-	$(MAKE) --no-print-directory metrics RUN_NAME="$$run_name"; \
+	$(MAKE) --no-print-directory round-metrics RUN_NAME="$$run_name"; \
 	out="$(METRICS_OUT)/$$run_name"; \
 	observed_rounds="$$(tail -n +2 "$$out/rounds.tsv" 2>/dev/null | wc -l | tr -d ' ')"; \
 	mkdir -p "$$out/logs" "$$out/provenance"; \
@@ -213,7 +213,7 @@ package:
 	  echo "host: $$(hostname)"; \
 	  echo "git_commit: $$(git -C "$(REPO_ROOT)" rev-parse HEAD 2>/dev/null || echo unknown)"; \
 	  echo "git_branch: $$(git -C "$(REPO_ROOT)" rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)"; \
-	  echo "experiment_rounds: $${observed_rounds:-$(EXPERIMENT_ROUNDS)} (observed in rounds.tsv; requested EXPERIMENT_ROUNDS=$(EXPERIMENT_ROUNDS))"; \
+	  echo "overhead_rounds: $${observed_rounds:-$(OVERHEAD_ROUNDS)} (observed in rounds.tsv; requested OVERHEAD_ROUNDS=$(OVERHEAD_ROUNDS))"; \
 	  echo "workspace: $(WORKSPACE)"; \
 	  echo; uname -a; \
 	  echo; nvidia-smi 2>/dev/null || echo "nvidia-smi unavailable"; \

@@ -72,7 +72,7 @@ GPU machine:
 Requirement                    Purpose
 =============================  ====================================================================
 FLIP account (``researcher``)  Submit and monitor the platform run
-AWS prod credentials           Extract round metrics from CloudWatch (``extract_model_metrics.sh``)
+AWS prod credentials           Extract round metrics from CloudWatch (``extract_platform_round_timings.sh``)
 Linux + NVIDIA GPU + ``uv``    Run the local simulator replica
 ~15 GB free disk               Tutorial dataset (~6.3 GB) plus simulator output
 Ark+ backbone checkpoint       Request via `this form <https://forms.gle/qkoDGXNiKRPTDdCe8>`_
@@ -97,7 +97,7 @@ preparation, 50-round simulation, metric extraction, and bundling:
 
    git clone https://github.com/londonaicentre/FLIP.git
    cd FLIP/fl-tutorials/nvflare/image_classification/arkplus_fine_tuning
-   make experiment
+   make reproduce-overhead
 
 This produces a timestamped bundle in the tutorial directory:
 
@@ -117,19 +117,19 @@ The bundle contains:
 * ``provenance/host_info.txt`` — GPU model, driver version, OS, git commit
 
 If you already ran the simulator and only need to re-bundle (e.g., the simulation completed but
-packing failed), use ``make package`` instead — it re-packs the last run without re-simulating.
+packing failed), use ``make package-overhead-bundle`` instead — it re-packs the last run without re-simulating.
 
-On a multi-GPU host pick a device with ``CUDA_VISIBLE_DEVICES=<n> make experiment``. You can
-change the round count from the default 50 with ``EXPERIMENT_ROUNDS=<n>`` if you are testing.
+On a multi-GPU host pick a device with ``CUDA_VISIBLE_DEVICES=<n> make reproduce-overhead``. You can
+change the round count from the default 50 with ``OVERHEAD_ROUNDS=<n>`` if you are testing.
 
 .. _overhead-metrics:
 
-The extracted metrics are also available standalone under ``model_metrics/`` at the repo root:
+The extracted metrics are also available standalone under the tutorial directory's ``round_metrics/``:
 
 .. code-block:: bash
 
    make run NUM_ROUNDS=50            # just simulate (skip bundling)
-   make metrics                      # extract rounds.tsv + summary from the server log
+   make round-metrics                # extract rounds.tsv + summary from the server log
 
 .. _overhead-platform-run:
 
@@ -161,7 +161,7 @@ Step 3: Extract platform metrics from CloudWatch
 **************************************************
 
 The platform run's round-level timing is logged by the FL server (``fl-server``) to CloudWatch.
-The extraction script ``scripts/extract_model_metrics.sh`` pulls these log lines and writes the
+The extraction script ``scripts/fl_round_metrics/extract_platform_round_timings.sh`` pulls these log lines and writes the
 same artefacts the simulator produces (``rounds.tsv``, ``summary.md``, boxplot):
 
 .. code-block:: bash
@@ -172,12 +172,12 @@ same artefacts the simulator produces (``rounds.tsv``, ``summary.md``, boxplot):
    aws sso login --profile prod
 
    # Extract metrics for a specific model — pass the FLIP UI model page URL, not a bare ID
-   ./scripts/extract_model_metrics.sh '<flip-ui-model-url>' -o <output-directory>
+   ./scripts/fl_round_metrics/extract_platform_round_timings.sh '<flip-ui-model-url>' -o <output-directory>
 
    # Example
-   ./scripts/extract_model_metrics.sh \
+   ./scripts/fl_round_metrics/extract_platform_round_timings.sh \
        'https://app.flip.aicentre.co.uk/project/f48850b7-3101-46d1-8fa7-a00bf01d2597/model/24985ec3-3349-435b-afcd-f38972d8695d' \
-       -o model_metrics
+       -o round_metrics
 
 The script parses the ``project_id``/``model_id`` pair out of that URL, then discovers the model's
 activity window itself: it searches the ``/ecs/flip-api`` CloudWatch log group for log lines
@@ -195,7 +195,7 @@ controller events from the ``fl-server-net-*``/``fl-api-net-*`` log groups and w
   lines found in the time window (useful for diagnosing runs that didn't complete)
 
 The script requires the ``aws`` CLI (authenticated with the ``prod`` profile) and ``jq``; run
-``./scripts/extract_model_metrics.sh --help`` for the full option list.
+``./scripts/fl_round_metrics/extract_platform_round_timings.sh --help`` for the full option list.
 
 .. _overhead-compare:
 
@@ -209,9 +209,9 @@ metrics`` target:
 .. code-block:: bash
 
    cd fl-tutorials/nvflare/image_classification/arkplus_fine_tuning
-   make metrics COMPARE=../../../../model_metrics/24985ec3-3349-435b-afcd-f38972d8695d/rounds.tsv
+   make round-metrics COMPARE=../../../../round_metrics/24985ec3-3349-435b-afcd-f38972d8695d/rounds.tsv
 
-The output ``summary.md`` in ``model_metrics/simulator-<workspace>-<timestamp>/`` now includes a
+The output ``summary.md`` in ``round_metrics/simulator-<workspace>-<timestamp>/`` now includes a
 side-by-side comparison table with platform − simulator deltas for every metric, plus an
 interpretation section.
 
@@ -265,8 +265,8 @@ The same extraction-and-compare workflow works for any FLIP run — not just the
 #. **Run your model on FLIP** as usual through the UI
 #. **Run the same model in the local simulator** — use the tutorial harness or NVFLARE's
    ``SimulatorRunner`` directly, matching the deployed ``config.json`` round count
-#. **Extract platform metrics** with ``extract_model_metrics.sh <your-model-id>``
-#. **Compare** with ``make metrics COMPARE=/path/to/platform/rounds.tsv``
+#. **Extract platform metrics** with ``extract_platform_round_timings.sh <your-model-id>``
+#. **Compare** with ``make round-metrics COMPARE=/path/to/platform/rounds.tsv``
 
 The comparison will show your model's platform overhead profile:
 
@@ -292,17 +292,17 @@ the simulator baseline on their own GPU with a single command:
 
    git clone https://github.com/londonaicentre/FLIP.git
    cd FLIP/fl-tutorials/nvflare/image_classification/arkplus_fine_tuning
-   make experiment
+   make reproduce-overhead
 
 They send back the ``arkplus_sim_experiment_<host>_<timestamp>.zip`` bundle. Extract it — the
 bundle already contains that site's own ``rounds.tsv``/``summary.md``, produced by their
-``make experiment`` run, so there is nothing left to (re-)compute:
+``make reproduce-overhead`` run, so there is nothing left to (re-)compute:
 
 .. code-block:: bash
 
    unzip arkplus_sim_experiment_bdms-gpu-1_20260714T120000.zip -d /tmp/bdms-sim
 
-``make metrics`` (and ``extract_simulator_metrics.sh`` underneath it) takes a single
+``make round-metrics`` (and ``extract_simulator_round_timings.sh`` underneath it) takes a single
 ``COMPARE``/``--compare`` baseline at a time — there is no ``COMPARE_2`` for a combined
 multi-column table. To line a third site's numbers up against the platform baseline, either read
 its extracted ``summary.md``/``rounds.tsv`` alongside the platform run's, or re-run the comparison
@@ -311,7 +311,7 @@ platform-vs-that-site ``summary.md``:
 
 .. code-block:: bash
 
-   bash scripts/extract_simulator_metrics.sh /tmp/bdms-sim/simulator-arkplus-*/logs \
+   bash scripts/fl_round_metrics/extract_simulator_round_timings.sh /tmp/bdms-sim/simulator-arkplus-*/logs \
        --compare /path/to/platform/rounds.tsv -o /tmp/bdms-sim-compare
 
 Repeat once per collaborating site's bundle. The provenance folder in each bundle (GPU model,
@@ -326,5 +326,5 @@ differences.
    `arkplus_fine_tuning README <https://github.com/londonaicentre/FLIP/blob/develop/fl-tutorials/nvflare/image_classification/arkplus_fine_tuning/README.md>`_
       Technical reference for the app internals (model architecture, finetuning mechanisms, ``job.py``).
 
-   `scripts/extract_model_metrics.sh <https://github.com/londonaicentre/FLIP/blob/develop/scripts/extract_model_metrics.sh>`_
+   `scripts/fl_round_metrics/extract_platform_round_timings.sh <https://github.com/londonaicentre/FLIP/blob/develop/scripts/fl_round_metrics/extract_platform_round_timings.sh>`_
       The CloudWatch extraction script used in Step 3.
