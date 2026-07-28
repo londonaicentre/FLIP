@@ -129,7 +129,7 @@ The extracted metrics are also available standalone under the tutorial directory
 .. code-block:: bash
 
    make run NUM_ROUNDS=50            # just simulate (skip bundling)
-   make round-metrics                      # extract rounds.tsv + summary from the server log
+   make round-metrics                # extract rounds.tsv + summary from the server log
 
 .. _overhead-platform-run:
 

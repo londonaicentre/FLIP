@@ -42,5 +42,7 @@ gaps) and a timing boxplot via the plotter.
 
 ## Tests
 
-`tests/` is the home for the extractor fixture tests (synthetic log in, golden
-`rounds.tsv` diff out) — run them with `bash`, no AWS or GPU required.
+**None yet — nothing to run today.** `tests/` is the reserved home for the
+extractor fixture tests proposed in #778's review (synthetic log in, golden
+`rounds.tsv` diff out); when they land they will need only `bash`, no AWS or
+GPU.

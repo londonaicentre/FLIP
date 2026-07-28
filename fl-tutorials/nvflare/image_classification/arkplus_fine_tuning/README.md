@@ -185,7 +185,7 @@ a deployed run — and writes the same artefacts (`rounds.tsv`, `summary.md`, a 
 
 ```bash
 make run NUM_ROUNDS=50            # full-length local replica (GPU, hours; smoke-test with the default 3 first)
-make round-metrics                      # -> round_metrics/simulator-<workspace>-<timestamp>/
+make round-metrics                # -> round_metrics/simulator-<workspace>-<timestamp>/
 make round-metrics COMPARE=/path/to/platform/rounds.tsv   # adds a platform − simulator overhead table
 ```
 
