@@ -13,6 +13,9 @@
 
 # Latent diffusion model
 
+> **Note:** this is the legacy Executor-based job type. The NVFLARE **Client API**
+> counterpart is [`diffusion_model_client_api`](../diffusion_model_client_api/README.md).
+
 This app allows to train a two-stage diffusion model from a single validator and trainer file.
 The `scatter_and_gather` function has been modified to persist the first stage (autoenocder-like network) to train the second stage (diffusion model).
 
