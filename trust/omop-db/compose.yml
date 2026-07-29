@@ -1,0 +1,61 @@
+services:
+  omop-db-trust1:
+    image: ghcr.io/londonaicentre/omop-db:latest
+    build:
+      context: ../
+      dockerfile: deploy/Dockerfile
+      args:
+        POSTGRES_USER: ${OMOP_POSTGRES_USER}
+        POSTGRES_PASSWORD: ${OMOP_POSTGRES_PASSWORD}
+        POSTGRES_DB: ${OMOP_POSTGRES_DB}
+    ports:
+      - "${OMOP_DB_PORT_TRUST_1}:5432"
+    environment:
+      POSTGRES_USER: ${OMOP_POSTGRES_USER}
+      POSTGRES_PASSWORD: ${OMOP_POSTGRES_PASSWORD}
+      POSTGRES_DB: ${OMOP_POSTGRES_DB}
+      DATA_ACCESS_POSTGRES_PASSWORD: ${DATA_ACCESS_POSTGRES_PASSWORD}
+    volumes:
+      - ./volumes/trust1/db_data:/var/lib/postgresql/data
+    networks:
+      - omop-network
+
+  omop-db-trust2:
+    image: ghcr.io/londonaicentre/omop-db:latest
+    build:
+      context: ../
+      dockerfile: deploy/Dockerfile
+      args:
+        POSTGRES_USER: ${OMOP_POSTGRES_USER}
+        POSTGRES_PASSWORD: ${OMOP_POSTGRES_PASSWORD}
+        POSTGRES_DB: ${OMOP_POSTGRES_DB}
+    ports:
+      - "${OMOP_DB_PORT_TRUST_2}:5432"
+    environment:
+      POSTGRES_USER: ${OMOP_POSTGRES_USER}
+      POSTGRES_PASSWORD: ${OMOP_POSTGRES_PASSWORD}
+      POSTGRES_DB: ${OMOP_POSTGRES_DB}
+      DATA_ACCESS_POSTGRES_PASSWORD: ${DATA_ACCESS_POSTGRES_PASSWORD}
+    volumes:
+      - ./volumes/trust2/db_data:/var/lib/postgresql/data
+    networks:
+      - omop-network
+
+  pgadmin:
+    image: dpage/pgadmin4:9
+    ports:
+      - "${PG_ADMIN_PORT}:80"
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD}
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+    networks:
+      - omop-network
+
+volumes:
+  pgadmin_data:
+
+networks:
+  omop-network:
+    driver: bridge
