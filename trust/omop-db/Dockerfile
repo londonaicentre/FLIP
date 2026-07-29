@@ -15,6 +15,12 @@
 # first container start, not at build, so nothing credential-shaped is baked in.
 FROM postgres:17
 
+# Links the GHCR package to this repo (GitHub re-associates the package with
+# the labelled source on the next push, replacing the retired flip-omop-db link).
+LABEL org.opencontainers.image.source="https://github.com/londonaicentre/FLIP" \
+      org.opencontainers.image.description="FLIP trust OMOP database (OMOP CDM 5.4 + MI-CDM, schema and roles baked; see trust/omop-db/)" \
+      org.opencontainers.image.licenses="Apache-2.0"
+
 # Copy initialization scripts (Schema DDL, Keys, Indices, Users)
 COPY ./files/init.sql /docker-entrypoint-initdb.d/00_init.sql
 COPY ./files/OMOPCDM_postgresql_5.4_ddl.sql /docker-entrypoint-initdb.d/10_ddl.sql
