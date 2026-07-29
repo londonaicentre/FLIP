@@ -318,7 +318,7 @@ def _load_latest_audit_at_per_project(
         if pid is None or audit_date is None or pid in latest:
             continue
         # `Z` suffix so the browser parses the naive UTC value as UTC, matching
-        # creation_timestamp / query.created above (audit_date defaults to datetime.utcnow).
+        # creation_timestamp / query.created above (audit_date defaults to utc_now).
         latest[pid] = audit_date.isoformat(timespec="milliseconds") + "Z"
 
     return latest

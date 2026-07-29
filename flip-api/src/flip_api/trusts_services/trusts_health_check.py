@@ -10,7 +10,7 @@
 # limitations under the License.
 #
 
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlmodel import Session, select
@@ -19,6 +19,7 @@ from flip_api.config import get_settings
 from flip_api.db.database import get_session
 from flip_api.db.models.main_models import Trust
 from flip_api.domain.interfaces.trust import ITrustHealth
+from flip_api.utils.datetime_utils import utc_now
 from flip_api.utils.logger import logger
 
 router = APIRouter(prefix="/trust", tags=["trusts_services"])
@@ -56,19 +57,14 @@ async def check_trusts_health(
             logger.warning("No trusts found in the database")
             raise HTTPException(status_code=404, detail="No trusts found")
 
-        now = datetime.now(timezone.utc)
-        cutoff = now - timedelta(seconds=get_settings().HEARTBEAT_TIMEOUT_SECONDS)
+        cutoff = utc_now() - timedelta(seconds=get_settings().HEARTBEAT_TIMEOUT_SECONDS)
 
         response: list[ITrustHealth] = []
         for trust in result:
-            # Trust is online if it has sent a heartbeat within the timeout window
-            if trust.last_heartbeat is not None:
-                last_hb = trust.last_heartbeat
-                if last_hb.tzinfo is None:
-                    last_hb = last_hb.replace(tzinfo=timezone.utc)
-                online = last_hb >= cutoff
-            else:
-                online = False
+            # Trust is online if it has sent a heartbeat within the timeout window.
+            # `last_heartbeat` is a TIMESTAMPTZ column so it reads back timezone-aware
+            # (FLIP-PT-054) — no tzinfo normalisation needed before comparing.
+            online = trust.last_heartbeat is not None and trust.last_heartbeat >= cutoff
 
             response.append(
                 ITrustHealth(trust_id=trust.id, trust_name=trust.name, online=online)  # type: ignore[call-arg]

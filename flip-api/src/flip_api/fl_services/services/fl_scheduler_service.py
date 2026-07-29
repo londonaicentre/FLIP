@@ -10,7 +10,6 @@
 # limitations under the License.
 #
 
-from datetime import datetime
 from typing import cast
 from uuid import UUID
 
@@ -47,6 +46,7 @@ from flip_api.fl_services.services.fl_service import (
     validate_client_availability,
 )
 from flip_api.model_services.services.model_service import add_log, update_model_status, validate_trust_ids
+from flip_api.utils.datetime_utils import utc_now
 from flip_api.utils.exceptions import DatabaseError, NotFoundError
 from flip_api.utils.logger import logger
 
@@ -111,7 +111,7 @@ def remove_job_from_queue(model_id: UUID, session: Session) -> None:
 
         for job in jobs:
             job.status = JobStatus.DELETED
-            job.completed = datetime.utcnow()
+            job.completed = utc_now()
 
         session.commit()
         logger.info("Set job(s) as deleted")
@@ -515,7 +515,7 @@ def check_for_queued_jobs(scheduler_id: UUID, session: Session) -> IJobResponse 
 
         # Update job status and start time
         job.status = JobStatus.IN_PROGRESS
-        job.started = datetime.utcnow()
+        job.started = utc_now()
 
         job_trust_ids = [t.id for t in job.trusts]
         # Validate trusts
@@ -699,7 +699,7 @@ def update_fl_scheduler(model_id: UUID, session: Session) -> None:
         job = session.exec(job_stmt).first()
         if job:
             job.status = JobStatus.COMPLETED
-            job.completed = datetime.utcnow()
+            job.completed = utc_now()
             session.add(job)
 
             # Only query for the scheduler if job is present

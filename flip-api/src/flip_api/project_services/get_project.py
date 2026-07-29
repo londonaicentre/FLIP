@@ -167,7 +167,7 @@ def get_project_details_endpoint(
         query=get_project_query(project_db),
         users=unique_users,
         # Append `Z` so the browser parses the naive UTC value as UTC rather
-        # than local time (the column default is `datetime.utcnow`, so the
+        # than local time (the column default is `utc_now`, so the
         # value is already UTC — just untagged). See trust.last_heartbeat for
         # the same fix.
         creation_timestamp=project_db.creation_timestamp.isoformat(timespec="milliseconds") + "Z",

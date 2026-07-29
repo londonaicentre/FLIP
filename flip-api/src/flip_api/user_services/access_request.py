@@ -11,7 +11,6 @@
 #
 
 import json
-from datetime import datetime
 from uuid import UUID
 
 import boto3
@@ -31,6 +30,7 @@ from flip_api.domain.interfaces.shared import (
 )
 from flip_api.domain.schemas.status import AccessRequestStatus
 from flip_api.utils.constants import ACCESS_REQUEST_TEMPLATE_NAME
+from flip_api.utils.datetime_utils import utc_now
 from flip_api.utils.logger import logger
 from flip_api.utils.paging_utils import IPagedData, get_paging_details, get_total_pages
 
@@ -72,7 +72,7 @@ def _notify_admins_of_access_request(request: IAccessRequest, access_request: Ac
             },
         )
         access_request.email_notified = True
-        access_request.updated_at = datetime.utcnow()
+        access_request.updated_at = utc_now()
         db.add(access_request)
         db.commit()
         logger.info("Access request notification email dispatched to admin")
@@ -232,7 +232,7 @@ def update_access_request_status(
 
         access_request.status = update.status
         access_request.handled_by_user_id = token_id
-        access_request.updated_at = datetime.utcnow()
+        access_request.updated_at = utc_now()
         db.add(access_request)
         db.commit()
         db.refresh(access_request)

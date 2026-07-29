@@ -10,7 +10,7 @@
 # limitations under the License.
 #
 
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Annotated, Optional
 from uuid import UUID, uuid4
 
@@ -33,6 +33,7 @@ from flip_api.domain.schemas.status import (
 )
 from flip_api.domain.schemas.types import FLBackend
 from flip_api.utils.constants import DEFAULT_X_AXIS_LABEL
+from flip_api.utils.datetime_utils import UTC_DATETIME, utc_now
 
 
 # Tables
@@ -77,9 +78,9 @@ class FLJob(SQLModel, table=True):
     id: UUID = Field(default_factory=uuid4, primary_key=True)
     model_id: UUID = Field(foreign_key="model.id")
     status: JobStatus = Field(default=JobStatus.QUEUED)
-    created: Annotated[datetime, Field(default_factory=datetime.utcnow)]
-    started: datetime | None = Field(default=None)
-    completed: datetime | None = Field(default=None)
+    created: Annotated[datetime, Field(default_factory=utc_now, sa_type=UTC_DATETIME)]
+    started: datetime | None = Field(default=None, sa_type=UTC_DATETIME)
+    completed: datetime | None = Field(default=None, sa_type=UTC_DATETIME)
     # FL-backend-assigned job identifier, treated as an opaque string the hub never parses (it only persists
     # and equality-matches it). Format varies by backend: a UUID-like string for NVFLARE, a stringified
     # integer run-id for Flower. NULL until the job is submitted to the backend (see fl_service.submit_job).
@@ -109,7 +110,7 @@ class FLMetrics(SQLModel, table=True):
     # round axis. A plot's identity is the pair (label, x_label), so the same metric logged against
     # different x-labels renders as separate plots — see FLIP#148.
     x_label: str = Field(default=DEFAULT_X_AXIS_LABEL)
-    timestamp: datetime | None = Field(default_factory=datetime.utcnow)
+    timestamp: datetime | None = Field(default_factory=utc_now, sa_type=UTC_DATETIME)
     label: str = Field()
     result: float = Field()
 
@@ -118,7 +119,7 @@ class FLLogs(SQLModel, table=True):
     __tablename__ = "fl_logs"  # type: ignore
     id: UUID = Field(default_factory=uuid4, primary_key=True)
     model_id: UUID = Field(foreign_key="model.id")
-    log_date: Annotated[datetime | None, Field(default_factory=datetime.utcnow)]
+    log_date: Annotated[datetime | None, Field(default_factory=utc_now, sa_type=UTC_DATETIME)]
     success: bool = Field()
     # Set only for logs reported by an FL client; None for model-level (hub) logs.
     trust: UUID | None = Field(default=None, foreign_key="trust.id")
@@ -151,7 +152,7 @@ class Model(SQLModel, table=True):
     deleted: bool = Field(default=False)
     project_id: UUID | None = Field(default=None, foreign_key="projects.id")
     owner_id: UUID = Field()
-    creation_timestamp: Annotated[datetime, Field(default_factory=datetime.utcnow)]
+    creation_timestamp: Annotated[datetime, Field(default_factory=utc_now, sa_type=UTC_DATETIME)]
 
 
 class ModelTrustIntersect(SQLModel, table=True):
@@ -172,7 +173,7 @@ class ModelsAudit(SQLModel, table=True):
     model_id: UUID | None = Field(default=None, foreign_key="model.id", index=True)
     action: ModelAuditAction = Field()
     user_id: UUID | None = Field(default=None)
-    audit_date: Annotated[datetime, Field(default_factory=lambda: datetime.now(timezone.utc))]
+    audit_date: Annotated[datetime, Field(default_factory=utc_now, sa_type=UTC_DATETIME)]
 
 
 class ProjectTrustIntersect(SQLModel, table=True):
@@ -181,7 +182,7 @@ class ProjectTrustIntersect(SQLModel, table=True):
     project_id: UUID | None = Field(default=None, foreign_key="projects.id", index=True)
     trust_id: UUID | None = Field(default=None, foreign_key="trust.id", index=True)
     approved: bool = Field()
-    approved_at: datetime | None = Field(default=None)
+    approved_at: datetime | None = Field(default=None, sa_type=UTC_DATETIME)
 
 
 class Projects(SQLModel, table=True):
@@ -191,7 +192,7 @@ class Projects(SQLModel, table=True):
     description: str = Field()
     owner_id: UUID = Field()
     deleted: bool = Field(default=False)
-    creation_timestamp: Annotated[datetime, Field(default_factory=datetime.utcnow)]
+    creation_timestamp: Annotated[datetime, Field(default_factory=utc_now, sa_type=UTC_DATETIME)]
     status: ProjectStatus = Field(default=ProjectStatus.UNSTAGED)
     dicom_to_nifti: bool = Field(default=True)
 
@@ -202,7 +203,7 @@ class ProjectsAudit(SQLModel, table=True):
     project_id: UUID | None = Field(default=None, foreign_key="projects.id", index=True)
     action: ProjectAuditAction = Field()
     user_id: UUID = Field()
-    audit_date: Annotated[datetime, Field(default_factory=lambda: datetime.now(timezone.utc))]
+    audit_date: Annotated[datetime, Field(default_factory=utc_now, sa_type=UTC_DATETIME)]
 
 
 class ProjectUserAccess(SQLModel, table=True):
@@ -217,7 +218,7 @@ class Queries(SQLModel, table=True):
     id: UUID = Field(default_factory=uuid4, primary_key=True)
     name: str = Field()
     query: str = Field()
-    created: Annotated[datetime, Field(default_factory=datetime.utcnow)]
+    created: Annotated[datetime, Field(default_factory=utc_now, sa_type=UTC_DATETIME)]
     # Logical FK to user_profile.user_id (not a DB-level FK). Set from the
     # authenticated caller on every cohort-query insert.
     created_by: UUID = Field(index=True)
@@ -245,7 +246,7 @@ class QueryStats(SQLModel, table=True):
     __tablename__ = "query_stats"  # type: ignore
     id: UUID = Field(default_factory=uuid4, primary_key=True)
     stats: str = Field()
-    stats_received: Annotated[datetime, Field(default_factory=datetime.utcnow)]
+    stats_received: Annotated[datetime, Field(default_factory=utc_now, sa_type=UTC_DATETIME)]
     # One aggregate row per query. The serialization lock in _aggregate_and_save_results
     # already prevents concurrent inserts; the UNIQUE constraint is a DB-level backstop so a
     # duplicate can never be created silently (a duplicate would let the read path pick an
@@ -274,7 +275,7 @@ class Trust(SQLModel, table=True):
     __tablename__ = "trust"  # type: ignore
     id: UUID = Field(default_factory=uuid4, primary_key=True)
     name: str = Field()
-    last_heartbeat: datetime | None = Field(default=None)
+    last_heartbeat: datetime | None = Field(default=None, sa_type=UTC_DATETIME)
     # Added for issue #506 — the `trust` table is the sole trust registry.
     # `code` is the short display label (e.g. "GSTT"); `region` is the NHS
     # region/geography (e.g. "London"). Both stay nullable because they are
@@ -286,7 +287,7 @@ class Trust(SQLModel, table=True):
     code: str | None = Field(default=None)
     region: str | None = Field(default=None)
     api_key_hash: str | None = Field(default=None)
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = Field(default_factory=utc_now, sa_type=UTC_DATETIME)
 
 
 class TrustsAudit(SQLModel, table=True):
@@ -315,7 +316,7 @@ class TrustsAudit(SQLModel, table=True):
     trust_name: str = Field()
     action: TrustAuditAction = Field()
     modified_by_user_id: UUID | None = Field(default=None)
-    audit_date: Annotated[datetime, Field(default_factory=lambda: datetime.now(timezone.utc))]
+    audit_date: Annotated[datetime, Field(default_factory=utc_now, sa_type=UTC_DATETIME)]
 
 
 class FLKitSlot(SQLModel, table=True):
@@ -338,7 +339,7 @@ class FLKitSlot(SQLModel, table=True):
     slot_name: str = Field(primary_key=True)
     slot_number: int = Field()
     assigned_to_trust_id: UUID | None = Field(default=None, foreign_key="trust.id", index=True)
-    assigned_at: datetime | None = Field(default=None)
+    assigned_at: datetime | None = Field(default=None, sa_type=UTC_DATETIME)
 
 
 class TrustTask(SQLModel, table=True):
@@ -357,8 +358,8 @@ class TrustTask(SQLModel, table=True):
     result: str | None = Field(default=None)  # JSON-serialized result data
     needs_post_processing: bool = Field(default=False)
     retry_count: int = Field(default=0)  # Number of times this task has been retried via stale recovery
-    created_at: Annotated[datetime, Field(default_factory=lambda: datetime.now(timezone.utc))]
-    updated_at: datetime | None = Field(default=None)
+    created_at: Annotated[datetime, Field(default_factory=utc_now, sa_type=UTC_DATETIME)]
+    updated_at: datetime | None = Field(default=None, sa_type=UTC_DATETIME)
 
 
 class UploadedFiles(SQLModel, table=True):
@@ -380,5 +381,5 @@ class XNATProjectStatus(SQLModel, table=True):
     trust_id: UUID | None = Field(default=None, foreign_key="trust.id")
     retrieve_image_status: XNATImageStatus = Field()
     query_at_creation: UUID | None = Field(default=None)
-    last_reimport: Annotated[datetime, Field(default_factory=lambda: datetime.now(timezone.utc))]
+    last_reimport: Annotated[datetime, Field(default_factory=utc_now, sa_type=UTC_DATETIME)]
     reimport_count: int = Field(default=0)

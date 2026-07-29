@@ -10,7 +10,6 @@
 # limitations under the License.
 #
 
-from datetime import datetime
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -24,6 +23,7 @@ from flip_api.domain.interfaces.project import IUpdateXnatProfile
 from flip_api.domain.schemas.users import UpdateUser, UpdateUserResponse
 from flip_api.project_services.services.image_service import update_xnat_user_profile
 from flip_api.utils.cognito_helpers import get_user_pool_id, get_username, update_user
+from flip_api.utils.datetime_utils import utc_now
 from flip_api.utils.logger import logger
 
 router = APIRouter(prefix="/users", tags=["user_services"])
@@ -142,7 +142,7 @@ def update_user_endpoint(
                     profile.name = user_update.name
                 if user_update.organisation is not None:
                     profile.organisation = user_update.organisation
-                profile.updated_at = datetime.utcnow()
+                profile.updated_at = utc_now()
                 db.add(profile)
 
             db.add(

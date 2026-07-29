@@ -11,13 +11,13 @@
 #
 
 
-from datetime import datetime
 from typing import TypedDict
 from uuid import UUID
 
 from sqlmodel import Session, select
 
 from flip_api.db.models.user_models import Role, RoleRef
+from flip_api.utils.datetime_utils import utc_now
 
 
 class RoleSeed(TypedDict):
@@ -73,7 +73,7 @@ def seed_roles(session: Session) -> list[str]:
             if existing_role.name != role_data["name"] or existing_role.description != role_data["description"]:
                 existing_role.name = role_data["name"]
                 existing_role.description = role_data["description"]
-                existing_role.updated_at = datetime.utcnow()
+                existing_role.updated_at = utc_now()
         else:
             session.add(Role(**role_data))
 

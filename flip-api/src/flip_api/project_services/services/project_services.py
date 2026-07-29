@@ -20,7 +20,6 @@ from psycopg2 import DatabaseError
 from sqlalchemy import delete, desc, func
 from sqlmodel import Session, col, or_, select
 
-# Assume these models and schemas are defined in your project
 from flip_api.db.models.main_models import (
     Model,
     Projects,
@@ -54,6 +53,9 @@ from flip_api.domain.schemas.status import (
 )
 from flip_api.model_services.services.model_service import delete_models
 from flip_api.project_services.utils.audit_helper import audit_project_action
+
+# Assume these models and schemas are defined in your project
+from flip_api.utils.datetime_utils import utc_now
 from flip_api.utils.logger import logger
 from flip_api.utils.paging_utils import IPagedResponse, PagingInfo, get_paging_details
 
@@ -227,7 +229,7 @@ def create_project(
             description=payload.description,
             owner_id=current_user_id,
             status=ProjectStatus.UNSTAGED,  # Default status
-            creation_timestamp=datetime.utcnow(),
+            creation_timestamp=utc_now(),
             dicom_to_nifti=payload.dicom_to_nifti,
         )
         session.add(new_project)

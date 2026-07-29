@@ -18,6 +18,7 @@ from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, va
 
 from flip_api.domain.schemas.status import ModelStatus, ProjectStatus
 from flip_api.domain.schemas.users import CognitoUser
+from flip_api.utils.datetime_utils import utc_now
 
 # Blocks the three characters most likely to enable structural XML injection
 # downstream in the imaging-api projectData payload. This is not exhaustive —
@@ -86,7 +87,7 @@ class IProjectResponse(BaseModel):
     description: str = Field(default="")
     query: IProjectQuery | None = None
     owner_id: UUID = Field(..., alias="ownerId")
-    creation_timestamp: Annotated[datetime, Field(default_factory=datetime.utcnow)]
+    creation_timestamp: Annotated[datetime, Field(default_factory=utc_now)]
     status: ProjectStatus = Field(default=ProjectStatus.UNSTAGED)
     query_id: UUID | None = Field(default=None)
     dicom_to_nifti: bool = Field(default=True)
@@ -264,7 +265,7 @@ class IReimportQuery(BaseModel):
     query_id: UUID = Field()
     query: str = Field()
     xnat_project_id: UUID = Field()
-    last_reimport: Annotated[datetime | None, Field(default_factory=datetime.utcnow)]
+    last_reimport: Annotated[datetime | None, Field(default_factory=utc_now)]
     trust_id: UUID = Field()
     trust_name: str = Field()
 
