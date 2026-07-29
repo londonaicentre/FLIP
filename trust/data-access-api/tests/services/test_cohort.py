@@ -74,7 +74,7 @@ def test_get_statistics(mock_read_sql, mock_df):
         encrypted_project_id="my_project",
         query_id="1",
         query_name="query_1",
-        query="SELECT * FROM omop.radiology_occurrence",
+        query="SELECT * FROM omop.image_occurrence",
         trust_id="mock_trust",
     )
 
@@ -100,7 +100,7 @@ def test_get_statistics_below_threshold(mock_read_sql, mock_df_below_threshold):
         encrypted_project_id="my_project",
         query_id="2",
         query_name="query_2",
-        query="SELECT * FROM omop.radiology_occurrence WHERE omop.radiology_occurrence.manufacturer = 'Discovery'",
+        query="SELECT * FROM omop.image_occurrence WHERE omop.image_occurrence.manufacturer = 'Discovery'",
         trust_id="mock_trust",
     )
     stats = get_statistics(mock_df_below_threshold, query_input, threshold=10)
@@ -130,7 +130,7 @@ def test_get_statistics_fails_global_threshold(mock_read_sql):
         encrypted_project_id="my_project",
         query_id="3",
         query_name="query_3",
-        query="SELECT * FROM omop.radiology_occurrence",
+        query="SELECT * FROM omop.image_occurrence",
         trust_id="mock_trust",
     )
 
@@ -155,7 +155,7 @@ def test_get_statistics_genuine_zero_is_suppressed(mock_read_sql):
         encrypted_project_id="my_project",
         query_id="4",
         query_name="query_4",
-        query="SELECT * FROM omop.radiology_occurrence WHERE 1 = 0",
+        query="SELECT * FROM omop.image_occurrence WHERE 1 = 0",
         trust_id="mock_trust",
     )
 
@@ -1052,7 +1052,7 @@ def test_get_statistics_no_person_id_column(mock_read_sql):
         encrypted_project_id="my_project",
         query_id="1",
         query_name="no_person_id_test",
-        query="SELECT modality, manufacturer, accession_id FROM omop.radiology_occurrence",
+        query="SELECT modality, manufacturer, accession_id FROM omop.image_occurrence",
         trust_id="mock_trust",
     )
 
@@ -1116,7 +1116,7 @@ def test_get_statistics_with_person_id_column(mock_read_sql):
         encrypted_project_id="my_project",
         query_id="1",
         query_name="with_person_id_test",
-        query="SELECT person_id, modality, accession_id FROM omop.radiology_occurrence",
+        query="SELECT person_id, modality, accession_id FROM omop.image_occurrence",
         trust_id="mock_trust",
     )
 
@@ -1194,7 +1194,7 @@ def test_get_statistics_with_person_id_and_low_count_categories(mock_read_sql):
         encrypted_project_id="my_project",
         query_id="1",
         query_name="low_count_test",
-        query="SELECT person_id, modality, accession_id FROM omop.radiology_occurrence",
+        query="SELECT person_id, modality, accession_id FROM omop.image_occurrence",
         trust_id="mock_trust",
     )
 

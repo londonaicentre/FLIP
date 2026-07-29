@@ -15,6 +15,7 @@ from functools import lru_cache
 
 from pydantic import SecretStr
 from pydantic_settings import BaseSettings
+from sqlalchemy import URL
 
 
 class Settings(BaseSettings):
@@ -32,9 +33,16 @@ class Settings(BaseSettings):
 
     @property
     def OMOP_DATABASE_URL(self) -> SecretStr:
+        # URL.create escapes special characters (@, /, :) in the credentials.
         return SecretStr(
-            f"postgresql://{self.OMOP_POSTGRES_USER}:{self.OMOP_POSTGRES_PASSWORD.get_secret_value()}"
-            f"@{self.OMOP_DB_HOST}:{self.OMOP_DB_PORT}/{self.OMOP_POSTGRES_DB}"
+            URL.create(
+                "postgresql",
+                username=self.OMOP_POSTGRES_USER,
+                password=self.OMOP_POSTGRES_PASSWORD.get_secret_value(),
+                host=self.OMOP_DB_HOST,
+                port=self.OMOP_DB_PORT,
+                database=self.OMOP_POSTGRES_DB,
+            ).render_as_string(hide_password=False)
         )
 
 

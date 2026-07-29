@@ -18,15 +18,21 @@ profile; config from gitignored `.env.build`), NOT the runtime trust stack.
 
 ## Load-bearing facts
 
-- **`.data_version` must not move**: read by `deploy/providers/AWS/Makefile`, Ansible `site.yml`, and
-  the Helm chart's `generate_values.py`.
+- **`.data_version` must not move**: its path is hardcoded in `deploy/providers/AWS/Makefile`, which
+  passes the value on to Ansible (`-e omop_data_version=`); the Helm chart consumes it via the
+  `OMOP_DATA_VERSION` env var in `generate_values.py`.
 - **Vocabulary licensing**: the core vocab bundle (SNOMED CT, LOINC, Read, ...) is licensed material —
   `data/` is gitignored and must never be committed; there is **no CI image build** for this service.
-  `make fetch-vocab-core` extracts the bundle from the already-published public image. The DICOM vocab
-  (NEMA PS3 via DICOM2OMOP, Apache 2.0) is freely redistributable and lives on the HF dataset.
+  `make fetch-vocab-core` extracts the bundle from the already-published public image (which already
+  redistributes it — a pre-existing exposure recorded in FLIP#834; this repo must not add a second
+  redistribution channel). The DICOM vocab (NEMA PS3 via DICOM2OMOP, Apache 2.0) is freely
+  redistributable and lives on the HF dataset.
 - **Read-only roles are a security boundary**: `files/create_readonly_users.sql` creates
   `omop_readonly_base` + `data_analyst_reader` (SELECT-only, explicit REVOKEs) — the database half of
-  data-access-api's SQL-injection defence-in-depth (`data_access_api/services/cohort.py`).
+  data-access-api's SQL-injection defence-in-depth (`data_access_api/services/cohort.py`). The analyst
+  password is NOT in the image — it is set at first init from `DATA_ACCESS_POSTGRES_PASSWORD` and lives
+  in the pgdata volume; rotate via `ALTER ROLE` + kit update, or rebuild volumes with a new `.env.build`
+  value (see CONTRIBUTING.md).
 - **Canonical dataset + N-trust split** (`src/omop_db_tools/dataset.py`): mock rows are ONE dataset on
   HF (`omop-csv/<version>/`), each row tagged `source_trust`. Partition modes: `legacy` (default —
   reproduces the original two-trust membership; REQUIRED for data consistent with the published mock
@@ -43,7 +49,8 @@ make update-omop-data [TRUST=1|2]   # consumer path: sync pgdata volumes from HF
 cp .env.build.example .env.build    # once, before any build-pipeline target
 make build                          # fetch-vocab-core + docker build
 make up-build / down-build          # the standalone per-trust build DBs
-make populate [NUM_TRUSTS=N PARTITION=modulo]  # fetch dataset + load every trust slice
+make populate [NUM_TRUSTS=N PARTITION=modulo]  # fetch dataset + load N trust slices (shipped stack is
+                                               # two-trust; N>2 needs a compose service + port first)
 make apply-constraints              # AFTER populate
 make push [OMOP_DB_TAG=...]         # publish to GHCR (manual — no CI build)
 make local_test                     # ruff + mypy + pytest tests/unit (no DB needed)

@@ -22,6 +22,20 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    # Same hardening as the runtime service in trust/deploy/compose_trust.*.yml:
+    # the retained caps are exactly what the postgres entrypoint needs (chown of
+    # PGDATA to uid 999 + the gosu privilege drop). In normal operation initdb
+    # runs only here — runtime stacks mount pre-populated volumes.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETUID
+      - SETGID
     ports:
       - "${OMOP_DB_PORT_TRUST_1:-5434}:5432"
     environment:
@@ -39,6 +53,16 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETUID
+      - SETGID
     ports:
       - "${OMOP_DB_PORT_TRUST_2:-5436}:5432"
     environment:
@@ -51,10 +75,13 @@ services:
     networks:
       - omop-build-network
 
-  # Optional DB browser; opt in with `docker compose --profile pgadmin up`.
+  # Optional DB browser; opt in with
+  # `docker compose -f compose.yml --env-file .env.build --profile pgadmin up -d`.
   pgadmin:
     image: dpage/pgadmin4:9
     profiles: ["pgadmin"]
+    security_opt:
+      - no-new-privileges:true
     ports:
       - "${PG_ADMIN_PORT:-5050}:80"
     environment:

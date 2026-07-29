@@ -49,8 +49,30 @@ def validate_identifier(name: str) -> str:
     return name
 
 
+def validate_data_dir(data_dir: Path, projects: list[str]) -> None:
+    """Fail before any destructive step when a required table CSV is missing.
+
+    Args:
+        data_dir (Path): Directory holding the canonical <project>/<table>.csv files.
+        projects (list[str]): Project names that will be loaded.
+
+    Raises:
+        FileNotFoundError: If any required table CSV is absent — checked up
+            front so clean_tables never wipes a database that cannot be refilled.
+    """
+    for project in projects:
+        for table_name in CANONICAL_TABLES:
+            csv_file_path = data_dir / project / f"{table_name}.csv"
+            if not csv_file_path.is_file() and table_name not in OPTIONAL_TABLES:
+                raise FileNotFoundError(f"Required table CSV not found: {csv_file_path}")
+
+
 def clean_tables(engine: Engine) -> None:
-    """Delete all rows from the mock-data tables (children before parents)."""
+    """Delete all rows from the mock-data tables.
+
+    Order is the reverse of the insert order by convention only — populate
+    targets constraint-free databases, so deletion order is not load-bearing.
+    """
     with engine.begin() as conn:
         for table_name in reversed(CANONICAL_TABLES):
             print(f"🧹 Cleaning table: {table_name}")
@@ -76,7 +98,10 @@ def load_project(
                 continue
             raise FileNotFoundError(f"Required table CSV not found: {csv_file_path}")
 
-        df = split_for_trust(pd.read_csv(csv_file_path), num_trusts, trust_index, partition)
+        full = pd.read_csv(csv_file_path)
+        if full.empty and table_name not in OPTIONAL_TABLES:
+            raise ValueError(f"{csv_file_path} contains headers but no rows — refusing to load a truncated table")
+        df = split_for_trust(full, num_trusts, trust_index, partition)
         df.to_sql(table_name, engine, if_exists="append", index=False, schema="omop")
         print(f"✅ Inserted {len(df)} rows into omop.{table_name}")
     print(" ")
@@ -108,6 +133,7 @@ def main(argv: list[str] | None = None) -> None:
     )
     args = parser.parse_args(argv)
 
+    validate_data_dir(args.data_dir, args.projects)
     engine = create_engine(get_settings().OMOP_DATABASE_URL.get_secret_value(), echo=False)
 
     clean_tables(engine)

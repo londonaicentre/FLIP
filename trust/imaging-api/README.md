@@ -107,7 +107,7 @@ Get import status or count for a project (queries the XNAT PostgreSQL database d
 
 ```
 project_id: 8ba38209-97f5-41b9-976e-dfe3c5c8dd94
-query: SELECT * FROM omop.radiology_occurrence
+query: SELECT * FROM omop.image_occurrence
 ```
 
 ### Upload

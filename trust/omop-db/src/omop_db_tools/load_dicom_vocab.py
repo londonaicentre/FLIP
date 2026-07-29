@@ -32,9 +32,22 @@ from omop_db_tools.import_tables import validate_identifier
 
 DEFAULT_VOCAB_DIR = Path("data/vocab_dicom_paulnagy_20260109")
 
+REQUIRED_VOCAB_FILES = (
+    "omop_table_staging_v5.csv",
+    "cs_values_maps_to.csv",
+    "cs_values_maps_to_value.csv",
+    "part3_to_part16_relationship_via_CID.csv",
+)
+
 
 def safe_insert(table: str, df: pd.DataFrame, engine: Engine) -> None:
-    """Insert rows with ON CONFLICT DO NOTHING (OMOP vocab tables always have primary keys).
+    """Insert rows with ON CONFLICT DO NOTHING, reporting inserted vs skipped.
+
+    Duplicate-skipping relies on a primary key or unique constraint on the
+    target table (true for CONCEPT, VOCABULARY and CONCEPT_CLASS in this
+    schema). CONCEPT_RELATIONSHIP carries no unique constraint, so re-running
+    against an already-loaded database duplicates relationship rows — the
+    populate pipeline only ever targets freshly initialised databases.
 
     Args:
         table (str): Target table name in the omop schema.
@@ -46,25 +59,38 @@ def safe_insert(table: str, df: pd.DataFrame, engine: Engine) -> None:
     cols = ", ".join(columns)
     placeholders = ", ".join([f":{column}" for column in columns])
     insert_sql = text(f"INSERT INTO omop.{table} ({cols}) VALUES ({placeholders}) ON CONFLICT DO NOTHING")
+    inserted = 0
     with engine.begin() as conn:
         for _, row in df.iterrows():
-            conn.execute(insert_sql, row.to_dict())
+            inserted += conn.execute(insert_sql, row.to_dict()).rowcount
+    print(f"   omop.{table}: inserted={inserted} skipped={len(df) - inserted}")
 
 
 def ensure_vocab_dir(vocab_dir: Path) -> None:
-    """Ensure the DICOM vocabulary directory exists, extracting its sibling zip if needed."""
-    if vocab_dir.exists() and any(vocab_dir.iterdir()):
+    """Ensure the DICOM vocabulary directory exists and is complete, extracting its sibling zip if needed.
+
+    Raises:
+        FileNotFoundError: When neither the directory nor its zip exists, or the
+            directory (pre-existing or freshly extracted) is missing expected
+            CSVs — e.g. after an interrupted extraction or a repacked bundle
+            whose top-level directory name doesn't match.
+    """
+    if not (vocab_dir.exists() and any(vocab_dir.iterdir())):
+        vocab_zip = Path(f"{vocab_dir}.zip")
+        if not vocab_zip.is_file():
+            raise FileNotFoundError(f"Neither {vocab_dir} nor {vocab_zip} exists — run `make fetch-vocab-dicom` first.")
+        print(f"Extracting {vocab_zip} → {vocab_dir} ...")
+        with zipfile.ZipFile(vocab_zip, "r") as zip_ref:
+            zip_ref.extractall(vocab_dir.parent)
+        print("Extraction complete!")
+    else:
         print(f"Using existing directory: {vocab_dir}")
-        return
-    vocab_zip = Path(f"{vocab_dir}.zip")
-    if not vocab_zip.is_file():
+    missing = [name for name in REQUIRED_VOCAB_FILES if not (vocab_dir / name).is_file()]
+    if missing:
         raise FileNotFoundError(
-            f"Neither {vocab_dir} nor {vocab_zip} exists — run `make fetch-vocab-dicom` first."
+            f"{vocab_dir} is missing {missing} — delete the directory and its .zip, "
+            "then re-run `make fetch-vocab-dicom`"
         )
-    print(f"Extracting {vocab_zip} → {vocab_dir} ...")
-    with zipfile.ZipFile(vocab_zip, "r") as zip_ref:
-        zip_ref.extractall(vocab_dir.parent)
-    print("Extraction complete!")
 
 
 def load_vocabulary_metadata(engine: Engine) -> None:
@@ -143,11 +169,13 @@ def load_concepts(engine: Engine, vocab_dir: Path) -> None:
     print("Loading DICOM CONCEPT definitions...")
     omop_table_staging = pd.read_csv(vocab_dir / "omop_table_staging_v5.csv")
 
+    # errors="raise": a malformed date should name the offending value here, not
+    # surface later as an opaque NOT NULL / adaptation failure inside the insert.
     omop_table_staging["valid_start_date"] = pd.to_datetime(
-        omop_table_staging["valid_start_date"].astype(str), format="%Y%m%d", errors="coerce"
+        omop_table_staging["valid_start_date"].astype(str), format="%Y%m%d", errors="raise"
     )
     omop_table_staging["valid_end_date"] = pd.to_datetime(
-        omop_table_staging["valid_end_date"].astype(str), format="%Y%m%d", errors="coerce"
+        omop_table_staging["valid_end_date"].astype(str), format="%Y%m%d", errors="raise"
     )
 
     # FIX: OMOP VARCHAR(1) fields should be NULL for DICOM

@@ -127,7 +127,8 @@ ORDER BY r.rolname;
 -- =============================================================================
 -- Security Notes:
 -- =============================================================================
--- 1. Change all default passwords immediately after running this script
+-- 1. Passwords are injected from the environment (no defaults in this script);
+--    rotate with ALTER ROLE + update the consuming service's env
 -- 2. Consider using certificate-based authentication for production
 -- 3. Set up connection pooling to limit resource usage
 -- 4. Monitor query performance and adjust timeouts as needed

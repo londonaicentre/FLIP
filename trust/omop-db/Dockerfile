@@ -15,8 +15,7 @@
 # first container start, not at build, so nothing credential-shaped is baked in.
 FROM postgres:17
 
-# Links the GHCR package to this repo (GitHub re-associates the package with
-# the labelled source on the next push, replacing the retired flip-omop-db link).
+# The source label associates the GHCR package with this repo.
 LABEL org.opencontainers.image.source="https://github.com/londonaicentre/FLIP" \
       org.opencontainers.image.description="FLIP trust OMOP database (OMOP CDM 5.4 + MI-CDM, schema and roles baked; see trust/omop-db/)" \
       org.opencontainers.image.licenses="Apache-2.0"

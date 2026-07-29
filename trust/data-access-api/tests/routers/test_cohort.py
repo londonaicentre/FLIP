@@ -29,7 +29,7 @@ sample_query_input = {
     "encrypted_project_id": "my_project",
     "query_id": "1",
     "query_name": "query_1",
-    "query": "SELECT * FROM omop.radiology_occurrence",
+    "query": "SELECT * FROM omop.image_occurrence",
     "trust_id": "mock_trust",
 }
 
@@ -432,8 +432,8 @@ def test_parse_and_emit_strips_trailing_semicolon():
 
 
 def test_parse_and_emit_valid_select():
-    result = _parse_and_emit("SELECT * FROM omop.radiology_occurrence")
-    assert "omop.radiology_occurrence" in result
+    result = _parse_and_emit("SELECT * FROM omop.image_occurrence")
+    assert "omop.image_occurrence" in result
 
 
 def test_parse_and_emit_cte_roundtrip():

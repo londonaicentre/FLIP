@@ -35,7 +35,9 @@ from pathlib import Path
 
 import pandas as pd
 
-# Insert order: person first (FK-safe once constraints are applied).
+# Insert order: person first. Populate targets constraint-free databases
+# (constraints are applied only after the load), so order is convention, not FK
+# correctness.
 CANONICAL_TABLES = [
     "person",
     "procedure_occurrence",
@@ -86,17 +88,23 @@ def split_for_trust(df: pd.DataFrame, num_trusts: int, trust_index: int, mode: s
     if df.empty:
         return df.drop(columns=[SOURCE_TRUST_COLUMN], errors="ignore")
 
+    if "person_id" in df.columns and df["person_id"].isna().any():
+        raise ValueError(
+            "person_id contains missing values — such rows would silently belong to no partition; "
+            "the canonical CSV is malformed"
+        )
+
     if mode == "legacy":
         if SOURCE_TRUST_COLUMN not in df.columns:
             raise ValueError(
                 f"Legacy partitioning needs the {SOURCE_TRUST_COLUMN!r} column; "
                 "this frame does not carry it — use mode='modulo' instead"
             )
-        num_sources = df[SOURCE_TRUST_COLUMN].nunique()
-        if num_trusts != num_sources:
+        sources = set(df[SOURCE_TRUST_COLUMN].unique())
+        if sources != set(range(1, num_trusts + 1)):
             raise ValueError(
-                f"Legacy partitioning reproduces the original {num_sources}-trust membership; "
-                f"got num_trusts={num_trusts} — use mode='modulo' for other trust counts"
+                f"Legacy partitioning needs {SOURCE_TRUST_COLUMN} values to be exactly 1..{num_trusts}; "
+                f"this frame carries {sorted(sources)} — rebuild the canonical dataset or use mode='modulo'"
             )
         part = df[df[SOURCE_TRUST_COLUMN] == trust_index]
     else:
@@ -114,20 +122,36 @@ def build_canonical(trust_dirs: list[Path], dest_dir: Path, projects: list[str] 
         trust_dirs (list[Path]): Per-trust source directories, in trust order
             (index i holds source_trust = i + 1); each contains <project>/<table>.csv.
         dest_dir (Path): Output directory for the canonical <project>/<table>.csv files.
-        projects (list[Path] | None): Projects to merge; defaults to DEFAULT_PROJECTS.
+        projects (list[str] | None): Projects to merge; defaults to DEFAULT_PROJECTS.
+
+    Raises:
+        FileNotFoundError: When a trust directory does not exist, a required
+            table is absent from every source, or a table is present in some
+            sources but missing from others (optionality is per-project by
+            design — per-trust asymmetry means a broken or mistyped export).
     """
+    for trust_dir in trust_dirs:
+        if not trust_dir.is_dir():
+            raise FileNotFoundError(f"Trust source directory does not exist: {trust_dir}")
     for project in projects or DEFAULT_PROJECTS:
         out_dir = dest_dir / project
         out_dir.mkdir(parents=True, exist_ok=True)
         for table in CANONICAL_TABLES:
             frames = []
+            missing_from = []
             for trust_number, trust_dir in enumerate(trust_dirs, start=1):
                 csv_path = trust_dir / project / f"{table}.csv"
                 if not csv_path.is_file():
+                    missing_from.append(str(trust_dir))
                     continue
                 frame = pd.read_csv(csv_path)
                 frame[SOURCE_TRUST_COLUMN] = trust_number
                 frames.append(frame)
+            if frames and missing_from:
+                raise FileNotFoundError(
+                    f"{project}/{table}.csv is present in some sources but missing from {missing_from} — "
+                    "rows from those trusts would be silently dropped"
+                )
             if not frames:
                 if table not in OPTIONAL_TABLES:
                     raise FileNotFoundError(f"No source CSV found for required table {project}/{table}")
@@ -164,7 +188,13 @@ def fetch_canonical(
                 if error.code == 404 and table in OPTIONAL_TABLES:
                     print(f"⚠️  Optional table not in dataset, skipping: {project}/{table}")
                     continue
-                raise RuntimeError(f"Failed to fetch {url}: HTTP {error.code}") from error
+                raise RuntimeError(
+                    f"Failed to fetch {url}: HTTP {error.code} (is version {version!r} published?)"
+                ) from error
+            if content.lstrip()[:1] == b"<":
+                raise RuntimeError(
+                    f"{url} returned HTML, not CSV — check base_url (Hugging Face needs /resolve/, not /blob/)"
+                )
             (out_dir / f"{table}.csv").write_bytes(content)
             print(f"⬇️  {project}/{table}.csv ({len(content)} bytes)")
 

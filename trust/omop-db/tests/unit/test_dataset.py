@@ -9,15 +9,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-"""Unit tests for canonical dataset building and per-trust splitting."""
+"""Unit tests for canonical dataset building, fetching, and per-trust splitting."""
 
+import io
+import urllib.error
+import urllib.request
+from contextlib import contextmanager
 from pathlib import Path
 
 import pandas as pd
 import pytest
 
-from omop_db_tools.dataset import SOURCE_TRUST_COLUMN, build_canonical, split_for_trust
-from omop_db_tools.import_tables import validate_identifier
+from omop_db_tools.dataset import SOURCE_TRUST_COLUMN, build_canonical, fetch_canonical, split_for_trust
 
 
 def _canonical_frame() -> pd.DataFrame:
@@ -100,6 +103,19 @@ class TestSplitForTrust:
         with pytest.raises(ValueError, match="use mode='modulo'"):
             split_for_trust(_canonical_frame(), num_trusts=3, trust_index=1, mode="legacy")
 
+    def test_legacy_with_gapped_source_values_rejected(self):
+        df = _canonical_frame()
+        df[SOURCE_TRUST_COLUMN] = [1, 1, 1, 3, 3, 3]
+        with pytest.raises(ValueError, match=r"exactly 1\.\.2"):
+            split_for_trust(df, num_trusts=2, trust_index=1, mode="legacy")
+
+    def test_nan_person_id_rejected(self):
+        df = _canonical_frame()
+        df.loc[0, "person_id"] = None
+        for mode in ["legacy", "modulo"]:
+            with pytest.raises(ValueError, match="missing values"):
+                split_for_trust(df, 2, 1, mode=mode)
+
     def test_modulo_without_person_id_rejected(self):
         df = pd.DataFrame({"concept_id": [1, 2]})
         with pytest.raises(ValueError, match="person_id"):
@@ -167,13 +183,71 @@ class TestBuildCanonical:
         with pytest.raises(FileNotFoundError, match="person"):
             build_canonical(trust_dirs, tmp_path / "canonical", projects=["cxr_project"])
 
+    def test_nonexistent_trust_dir_rejected(self, tmp_path):
+        trust_dirs = self._write_trust_dirs(tmp_path)
+        with pytest.raises(FileNotFoundError, match="does not exist"):
+            build_canonical([trust_dirs[0], tmp_path / "trsut_2"], tmp_path / "canonical")
 
-class TestValidateIdentifier:
-    @pytest.mark.parametrize("name", ["person", "image_occurrence", "CONCEPT", "_private"])
-    def test_plain_identifiers_accepted(self, name):
-        assert validate_identifier(name) == name
+    def test_table_missing_from_one_source_rejected(self, tmp_path):
+        trust_dirs = self._write_trust_dirs(tmp_path)
+        (trust_dirs[1] / "cxr_project" / "person.csv").unlink()
 
-    @pytest.mark.parametrize("name", ["person; DROP TABLE x", "Unnamed: 0", "a-b", "1st", ""])
-    def test_unsafe_identifiers_rejected(self, name):
-        with pytest.raises(ValueError, match="Unsafe SQL identifier"):
-            validate_identifier(name)
+        with pytest.raises(FileNotFoundError, match="silently dropped"):
+            build_canonical(trust_dirs, tmp_path / "canonical", projects=["cxr_project"])
+
+
+@contextmanager
+def _fake_response(body: bytes):
+    yield io.BytesIO(body)
+
+
+def _fake_urlopen(responses: dict[str, bytes]):
+    """Build an urlopen stub serving canned bodies; unknown URLs get a 404."""
+
+    def opener(url, timeout=0):
+        for fragment, body in responses.items():
+            if fragment in url:
+                return _fake_response(body)
+        raise urllib.error.HTTPError(url, 404, "Not Found", None, None)
+
+    return opener
+
+
+class TestFetchCanonical:
+    CSV = b"person_id,source_trust\n1,1\n"
+
+    def test_optional_404_skipped_required_fetched(self, tmp_path, monkeypatch):
+        required = ["person", "procedure_occurrence", "visit_occurrence", "image_occurrence", "image_feature"]
+        served = {f"/{table}.csv": self.CSV for table in required}
+        monkeypatch.setattr(urllib.request, "urlopen", _fake_urlopen(served))
+
+        fetch_canonical("v1", tmp_path, projects=["cxr_project"])
+
+        assert (tmp_path / "cxr_project" / "person.csv").read_bytes() == self.CSV
+        assert not (tmp_path / "cxr_project" / "measurement.csv").exists()
+        assert not (tmp_path / "cxr_project" / "observation.csv").exists()
+
+    def test_required_404_raises_with_version_hint(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(urllib.request, "urlopen", _fake_urlopen({}))
+
+        with pytest.raises(RuntimeError, match="version 'v9'"):
+            fetch_canonical("v9", tmp_path, projects=["cxr_project"])
+
+    def test_non_404_error_on_optional_table_raises(self, tmp_path, monkeypatch):
+        def opener(url, timeout=0):
+            if "/measurement.csv" in url:
+                raise urllib.error.HTTPError(url, 500, "Server Error", None, None)
+            return _fake_response(self.CSV)
+
+        monkeypatch.setattr(urllib.request, "urlopen", opener)
+
+        with pytest.raises(RuntimeError, match="HTTP 500"):
+            fetch_canonical("v1", tmp_path, projects=["cxr_project"])
+
+    def test_html_response_rejected(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(
+            urllib.request, "urlopen", lambda url, timeout=0: _fake_response(b"<!doctype html><html></html>")
+        )
+
+        with pytest.raises(RuntimeError, match="HTML, not CSV"):
+            fetch_canonical("v1", tmp_path, projects=["cxr_project"])

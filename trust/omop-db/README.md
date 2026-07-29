@@ -79,19 +79,28 @@ provenance column, and standing up N trusts is a deterministic split
 
 ```sh
 uv sync
-make up-build                        # empty schema-only DBs (one per trust) from the image
+make up-build                        # builds if needed, then starts the two build DBs
 make populate                        # fetch DICOM vocab + dataset, load each trust's slice
 make apply-constraints               # FK constraints go on AFTER the load
-make populate NUM_TRUSTS=3 PARTITION=modulo   # example: three-way split
 ```
+
+Populating runs from the host and needs `pg_isready` (postgresql-client). The
+shipped build stack is **two-trust**: `NUM_TRUSTS` / `PARTITION` thread through
+to the split tooling, but standing up more than two trusts additionally needs
+an `omop-db-trust<N>` service in `compose.yml` and an `OMOP_DB_PORT_TRUST_<N>`
+in `.env.build` — `make populate NUM_TRUSTS=3 PARTITION=modulo` fails fast
+until they exist (and `modulo` implies regenerating the matching imaging data).
 
 The populated volumes land in `volumes/Trust_<N>/db_data` — the same trees the
 dev trust stack mounts. To publish a new pgdata version to Hugging Face, tar
-each populated volume as `trust<N>_pgdata_<version>.tar` (gzip) and upload it
-under `trust<N>/` in the dataset, then bump `.data_version`.
+the *contents* of each populated volume
+(`tar -czf trust<N>_pgdata_<version>.tar -C volumes/Trust_<N>/db_data .` — the
+archive root must be the db_data contents, not a wrapping directory) and upload
+it under `trust<N>/` in the dataset, then bump `.data_version`.
 
 To publish the image itself: `make push` (GHCR write access required;
-`OMOP_DB_TAG` overrides the tag).
+`OMOP_DB_TAG` overrides the tag, and the target asks for confirmation — the
+trust stacks resolve `:latest` by default).
 
 The canonical dataset is regenerated from per-trust CSV exports with
 `uv run python -m omop_db_tools.dataset build --trust-dirs <dir1> <dir2> --dest <out>`.

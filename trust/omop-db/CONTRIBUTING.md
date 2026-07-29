@@ -32,15 +32,16 @@ databases is described in the [README](README.md) ("Building the image").
 ## Connecting pgAdmin to the OMOP database
 
 pgAdmin ships as an opt-in profile of the build compose stack
-(`docker compose -f compose.yml --profile pgadmin up -d`). If it is running on
-a remote machine, tunnel the port first:
+(`docker compose -f compose.yml --env-file .env.build --profile pgadmin up -d`
+— the `--env-file` matters: compose does not auto-load `.env.build`). If it is
+running on a remote machine, tunnel the port first:
 
 ```bash
 ssh -L 5050:localhost:5050 <your-server>
 ```
 
 1. Open pgAdmin at <http://localhost:5050> and log in. Credentials are `PGADMIN_EMAIL` and `PGADMIN_PASSWORD` from
-   [`.env.build.example`](.env.build.example).
+   your `.env.build` (template: [`.env.build.example`](.env.build.example)).
 2. Click **Register Server** and configure:
    - **General > Name**: `trust` (or any label)
    - **Connection > Host**: `omop-db-trust1` (or `omop-db-trust2`)
@@ -64,8 +65,25 @@ its SELECT-only grants are the database half of that API's SQL-injection
 defence-in-depth (see
 `trust/data-access-api/data_access_api/services/cohort.py`).
 
+### Rotating the data analyst password
+
+The `data_analyst_reader` password is **not baked into the image**: the init
+hook reads `DATA_ACCESS_POSTGRES_PASSWORD` from the container environment at
+*first* init and stores it in the database cluster — i.e. it lives in the
+pgdata volume (and therefore in the published pgdata tarballs, which carry
+whatever value they were initialised with). Two rotation paths:
+
+- **Live database** (no rebuild):
+  ``ALTER ROLE data_analyst_reader WITH PASSWORD '<new>';`` then update
+  `DATA_ACCESS_POSTGRES_PASSWORD` in the trust kit file so data-access-api
+  matches.
+- **Fresh volumes**: set the new value in `.env.build` and re-run the build →
+  populate pipeline (see the README). If the resulting volumes are published as
+  new pgdata tarballs, consuming kit files must be updated to the matching
+  password.
+
 ### Accession ID encryption
 
 Accession IDs are currently stored unencrypted in the OMOP database (the mock
 data uses synthetic `FAK`-prefixed IDs). Encrypting them at rest is a known
-limitation being tracked.
+limitation.

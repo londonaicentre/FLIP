@@ -375,6 +375,7 @@ unit_test:
 	$(MAKE) -C flip-ui unit_test
 	$(MAKE) -C trust/data-access-api unit_test
 	$(MAKE) -C trust/imaging-api unit_test
+	$(MAKE) -C trust/omop-db unit_test
 	$(MAKE) -C trust/trust-api unit_test
 	$(MAKE) -C trust/xnat unit_test
 

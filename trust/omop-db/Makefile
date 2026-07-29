@@ -27,11 +27,9 @@ export $(shell sed 's/=.*//' $(BUILD_ENV_FILE))
 endif
 
 network1 = deploy_trust-network-1
-# network2 = deploy_trust-network-2
 
 service_name = omop-db
 docker_command = docker compose --project-directory .. -f ../deploy/compose_trust.development.yml
-run_clean = run --rm --remove-orphans
 
 lint_command = uv run ruff check . --fix
 mypy_command = uv run mypy src/ tests/ --ignore-missing-imports
@@ -41,7 +39,6 @@ test_coverage_command = uv run pytest tests/unit --tb=short --disable-warnings -
 # Runtime-stack helpers (the omop-db service inside a trust stack)
 # ─────────────────────────────────────────────────────────────────────────────
 
-# Using the run command ignores the port mapping
 up-test-omop-trust1:
 # 	This will just be used for testing
 	BASE_IMAGES_DOWNLOAD_DIR=${BASE_IMAGES_DOWNLOAD_DIR} \
@@ -74,15 +71,24 @@ update-omop-data:
 build_compose = docker compose -f compose.yml
 GHCR_IMAGE = ghcr.io/londonaicentre/omop-db
 OMOP_DB_TAG ?= latest
+# Where fetch-vocab-core extracts the licensed vocab bundle from — a published
+# tag, deliberately decoupled from OMOP_DB_TAG (which may not exist yet when
+# building a new tag).
+VOCAB_SOURCE_TAG ?= latest
 
 # Fetched inputs (all gitignored under data/). The core vocab bundle contains
 # licensed OMOP vocabularies (SNOMED CT, LOINC, Read, ...) and must never be
 # committed; the DICOM bundle and the canonical CSV dataset are public.
+# NOTE the Dockerfile's `COPY ./data/vocab_aicentre_core_20240916` must match
+# VOCAB_CORE_BUNDLE when bumping the bundle version.
 VOCAB_CORE_BUNDLE = vocab_aicentre_core_20240916
 VOCAB_DICOM_BUNDLE = vocab_dicom_paulnagy_20260109
 OMOP_CSV_DATA_VERSION = 20260729
 HF_TRUST_DATA_BASE = https://huggingface.co/datasets/aicentreflip/trust-data/resolve/main
 
+# The shipped build stack is two-trust: compose.yml defines omop-db-trust1/2 and
+# .env.build carries their ports. For NUM_TRUSTS>2, add an omop-db-trust<N>
+# service and an OMOP_DB_PORT_TRUST_<N> — populate-trust-<N> fails fast otherwise.
 NUM_TRUSTS = 2
 PARTITION = legacy
 
@@ -95,7 +101,7 @@ check-build-env:
 build: fetch-vocab-core
 	$(build_compose) build
 
-up-build: check-build-env
+up-build: check-build-env build
 	$(build_compose) up -d omop-db-trust1 omop-db-trust2
 
 down-build:
@@ -103,25 +109,41 @@ down-build:
 
 # Default source for the core vocab is the already-published image — it avoids
 # any credentialed download and adds no new exposure (the image is public).
+# Copies into a temp dir and renames on success, so a failed/interrupted copy
+# is never mistaken for a present bundle on the next run.
 fetch-vocab-core:
 	@if [ -d "data/$(VOCAB_CORE_BUNDLE)" ]; then \
 		echo "data/$(VOCAB_CORE_BUNDLE) already present — skipping."; \
 	else \
-		echo "⬇️  Extracting core vocab from $(GHCR_IMAGE):$(OMOP_DB_TAG) ..."; \
+		echo "⬇️  Extracting core vocab from $(GHCR_IMAGE):$(VOCAB_SOURCE_TAG) ..."; \
 		mkdir -p data; \
-		cid=$$(docker create $(GHCR_IMAGE):$(OMOP_DB_TAG)); \
-		docker cp $$cid:/flip/omop/vocab data/$(VOCAB_CORE_BUNDLE); \
-		docker rm $$cid > /dev/null; \
+		rm -rf "data/.$(VOCAB_CORE_BUNDLE).tmp"; \
+		cid=$$(docker create $(GHCR_IMAGE):$(VOCAB_SOURCE_TAG)) || exit 1; \
+		if ! docker cp "$$cid:/flip/omop/vocab" "data/.$(VOCAB_CORE_BUNDLE).tmp"; then \
+			docker rm "$$cid" > /dev/null; \
+			rm -rf "data/.$(VOCAB_CORE_BUNDLE).tmp"; \
+			echo "❌ docker cp failed — no vocab bundle extracted"; \
+			exit 1; \
+		fi; \
+		docker rm "$$cid" > /dev/null; \
+		mv "data/.$(VOCAB_CORE_BUNDLE).tmp" "data/$(VOCAB_CORE_BUNDLE)"; \
 	fi
 
 # The DICOM vocab (NEMA PS3, via DICOM2OMOP — Apache 2.0) is freely
 # redistributable and fetched anonymously from the public HF dataset.
+# Downloaded to a temp file and renamed on success, so a partial download is
+# never mistaken for a present bundle on the next run.
 fetch-vocab-dicom:
 	@if [ -d "data/$(VOCAB_DICOM_BUNDLE)" ] || [ -f "data/$(VOCAB_DICOM_BUNDLE).zip" ]; then \
 		echo "data/$(VOCAB_DICOM_BUNDLE) already present — skipping."; \
 	else \
 		mkdir -p data; \
-		curl -fSL -o "data/$(VOCAB_DICOM_BUNDLE).zip" "$(HF_TRUST_DATA_BASE)/omop-vocab/$(VOCAB_DICOM_BUNDLE).zip"; \
+		if ! curl -fSL -o "data/$(VOCAB_DICOM_BUNDLE).zip.tmp" "$(HF_TRUST_DATA_BASE)/omop-vocab/$(VOCAB_DICOM_BUNDLE).zip"; then \
+			rm -f "data/$(VOCAB_DICOM_BUNDLE).zip.tmp"; \
+			echo "❌ download failed — no DICOM vocab bundle fetched"; \
+			exit 1; \
+		fi; \
+		mv "data/$(VOCAB_DICOM_BUNDLE).zip.tmp" "data/$(VOCAB_DICOM_BUNDLE).zip"; \
 	fi
 
 fetch-dataset:
@@ -130,22 +152,32 @@ fetch-dataset:
 # Populate every build database with its slice of the canonical dataset, then
 # `make apply-constraints`. Constraints are deliberately NOT part of image init:
 # loading data after applying them fails.
-populate: fetch-vocab-dicom fetch-dataset populate-trust-1 populate-trust-2
+populate: fetch-vocab-dicom fetch-dataset $(addprefix populate-trust-,$(shell seq 1 $(NUM_TRUSTS)))
 
 populate-trust-%: check-build-env
+	@if [ -z "$(OMOP_DB_PORT_TRUST_$*)" ]; then \
+		echo "❌ OMOP_DB_PORT_TRUST_$* is not set — add it to $(BUILD_ENV_FILE) (and an omop-db-trust$* service to compose.yml)"; \
+		exit 1; \
+	fi
 	./wait-for-postgres.sh $(OMOP_DB_PORT_TRUST_$*)
 	OMOP_DB_PORT=$(OMOP_DB_PORT_TRUST_$*) uv run python -m omop_db_tools.load_dicom_vocab \
 		--vocab-dir data/$(VOCAB_DICOM_BUNDLE)
 	OMOP_DB_PORT=$(OMOP_DB_PORT_TRUST_$*) uv run python -m omop_db_tools.import_tables \
 		--trust-index $* --num-trusts $(NUM_TRUSTS) --partition $(PARTITION) --data-dir data/canonical
 
-apply-constraints: check-build-env
-	@echo "🔗 Applying OMOP CDM constraints..."
-	$(build_compose) exec -T omop-db-trust1 psql -U $(OMOP_POSTGRES_USER) -d $(OMOP_POSTGRES_DB) -f /flip/omop/constraints.sql
-	$(build_compose) exec -T omop-db-trust2 psql -U $(OMOP_POSTGRES_USER) -d $(OMOP_POSTGRES_DB) -f /flip/omop/constraints.sql
+apply-constraints: check-build-env $(addprefix apply-constraints-trust-,$(shell seq 1 $(NUM_TRUSTS)))
 
-# Push the already-built image to GHCR. Do `docker login ghcr.io` first if needed.
+apply-constraints-trust-%:
+	@echo "🔗 Applying OMOP CDM constraints (trust $*)..."
+	$(build_compose) exec -T omop-db-trust$* psql -v ON_ERROR_STOP=1 -U $(OMOP_POSTGRES_USER) -d $(OMOP_POSTGRES_DB) -f /flip/omop/constraints.sql
+
+# Push the already-built image to GHCR. Do `docker login ghcr.io` first if
+# needed. Interactive confirmation: the trust stacks resolve :latest by default,
+# so a push to the default tag repoints every default-configured deployment.
 push:
+	@printf "About to push %s — continue? [y/N] " "$(GHCR_IMAGE):$(OMOP_DB_TAG)"; \
+	read ans; \
+	if [ "$$ans" != "y" ] && [ "$$ans" != "Y" ]; then echo "aborted"; exit 1; fi
 	docker push $(GHCR_IMAGE):$(OMOP_DB_TAG)
 
 # ─────────────────────────────────────────────────────────────────────────────
