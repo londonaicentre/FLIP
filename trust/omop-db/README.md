@@ -109,7 +109,10 @@ running the trust stacks):
 1. **FLIP developers (org AWS access)** — `make fetch-vocab-core`: downloads
    `s3://flipdev-aicentre/vocab/vocab_aicentre_core_20240916.zip` (override
    the bucket with `VOCAB_S3_BUCKET=`) and unpacks it into `data/` — the same
-   source and technique the private repo used.
+   source and technique the private repo used. Each deploy environment reads
+   from its **own** bucket (`AICENTRE_BUCKET_NAME`; no cross-account access) —
+   when staging the zip in an env bucket, upload it with `--sse AES256`: the
+   trust EC2 role has no `kms:Decrypt` on the buckets' default KMS keys.
 2. **Anyone, under their own licences** — build an equivalent bundle from
    [OHDSI Athena](https://athena.ohdsi.org/): request an export containing the
    vocabularies in the roster above (SNOMED CT and LOINC require accepting
