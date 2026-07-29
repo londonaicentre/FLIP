@@ -37,6 +37,8 @@ def _kit(name: str, slot_name: str = "Trust_007", slot_number: int = 7) -> Regis
         fl_kit_slot=FLKitSlot(slot_name=slot_name, slot_number=slot_number),
         trust_api_key=f"plain-api-{name}",
         trust_internal_service_key=f"plain-internal-{name}",
+        trust_aes_key=f"plain-aes-{name}",
+        trust_aes_kid=f"trust-{name}",
     )
 
 
@@ -66,11 +68,15 @@ def test_registers_new_trust_and_returns_one_kit(monkeypatch, session):
     assert kit["trust_internal_service_key"] == "plain-internal-Open Trust (EC2)"
     assert kit["fl_kit_slot"] == "Trust_007"
     assert kit["fl_kit_slot_number"] == 7
+    assert kit["trust_aes_key"] == "plain-aes-Open Trust (EC2)"
+    assert kit["trust_aes_kid"] == "trust-Open Trust (EC2)"
     assert set(kit) == {
         "trust_id",
         "trust_name",
         "trust_api_key",
         "trust_internal_service_key",
+        "trust_aes_key",
+        "trust_aes_kid",
         "fl_kit_slot",
         "fl_kit_slot_number",
         "hub_shared",

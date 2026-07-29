@@ -10,94 +10,121 @@
 # limitations under the License.
 #
 
-"""Tests for AES-CBC decryption utility."""
-
 import base64
-import os
-from unittest.mock import patch
+import json
 
-from cryptography.hazmat.backends import default_backend
-from cryptography.hazmat.primitives import padding
-from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+import pytest
+from cryptography.exceptions import InvalidTag
 
-import trust_api.utils.encryption as encryption_module
-from trust_api.utils.encryption import decrypt, get_aes_key
+from trust_api.utils import encryption
+from trust_api.utils.encryption import SHARED_KID, _reset_caches, decrypt, encrypt
+
+RAW_KEY_BYTES = b"ThisIsExactly32BytesLongKey!!!!1"
+ENCODED_KEY = base64.b64encode(RAW_KEY_BYTES).decode()
+TRUST_KEY_B64 = base64.b64encode(b"AnotherExactly32ByteAESKey!!!!!2").decode()
 
 
-def _encrypt(plaintext: str, key: bytes) -> str:
-    """Encrypt plaintext using AES-CBC with PKCS7 padding (test helper)."""
+@pytest.fixture(autouse=True)
+def _shared_key_settings(monkeypatch):
+    monkeypatch.setattr(encryption, "get_settings", lambda: type("S", (), {"AES_KEY_BASE64": ENCODED_KEY})())
+    for var in ("AES_TRUST_KEYS", "TRUST_AES_KID", "TRUST_AES_KEY_BASE64"):
+        monkeypatch.delenv(var, raising=False)
+    _reset_caches()
+    yield
+    _reset_caches()
+
+
+def _envelope(payload: str) -> dict:
+    return json.loads(base64.b64decode(payload))
+
+
+def _reseal(envelope: dict) -> str:
+    return base64.b64encode(json.dumps(envelope).encode()).decode()
+
+
+def test_roundtrip_via_keyring():
+    assert decrypt(encrypt("hello")) == "hello"
+
+
+def test_roundtrip_explicit_key():
+    assert decrypt(encrypt("secret", key=RAW_KEY_BYTES), key=RAW_KEY_BYTES) == "secret"
+
+
+def test_default_kid_is_shared():
+    assert _envelope(encrypt("x"))["kid"] == SHARED_KID
+
+
+def test_tampered_ciphertext_fails_closed():
+    envelope = _envelope(encrypt("do not tamper"))
+    raw = bytearray(base64.b64decode(envelope["ct"]))
+    raw[0] ^= 0x01
+    envelope["ct"] = base64.b64encode(bytes(raw)).decode()
+    with pytest.raises(InvalidTag):
+        decrypt(_reseal(envelope))
+
+
+def test_kid_swap_fails_closed():
+    envelope = _envelope(encrypt("bound", key=RAW_KEY_BYTES, kid="kid-a"))
+    envelope["kid"] = "kid-b"
+    with pytest.raises(InvalidTag):
+        decrypt(_reseal(envelope), key=RAW_KEY_BYTES)
+
+
+def test_unsupported_version_raises():
+    envelope = _envelope(encrypt("x"))
+    envelope["v"] = 99
+    with pytest.raises(ValueError, match="Unsupported payload version"):
+        decrypt(_reseal(envelope))
+
+
+def test_own_trust_key_is_used_by_default(monkeypatch):
+    monkeypatch.setenv("TRUST_AES_KID", "trust-GSTT")
+    monkeypatch.setenv("TRUST_AES_KEY_BASE64", TRUST_KEY_B64)
+    _reset_caches()
+    payload = encrypt("per-trust")
+    assert _envelope(payload)["kid"] == "trust-GSTT"
+    assert decrypt(payload) == "per-trust"
+
+
+def test_decrypts_payload_addressed_to_this_trust(monkeypatch):
+    """Hub encrypts to this trust's kid; the trust decrypts it with its own key."""
+    monkeypatch.setenv("TRUST_AES_KID", "trust-GSTT")
+    monkeypatch.setenv("TRUST_AES_KEY_BASE64", TRUST_KEY_B64)
+    _reset_caches()
+    from_hub = encrypt("task payload", key=base64.b64decode(TRUST_KEY_B64), kid="trust-GSTT")
+    assert decrypt(from_hub) == "task payload"
+
+
+# --- temporary AES-CBC compatibility shim (delete with the shim) ---------------
+
+
+def _legacy_cbc_payload(plaintext: str, key: bytes = RAW_KEY_BYTES) -> str:
+    """Produce a payload in the pre-GCM format, exactly as an un-upgraded peer would."""
+    import os
+
+    from cryptography.hazmat.primitives import padding
+    from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+
     iv = os.urandom(16)
     padder = padding.PKCS7(128).padder()
     padded = padder.update(plaintext.encode()) + padder.finalize()
-    cipher = Cipher(algorithms.AES(key), modes.CBC(iv), backend=default_backend())
-    encryptor = cipher.encryptor()
-    ciphertext = encryptor.update(padded) + encryptor.finalize()
-    return base64.b64encode(iv + ciphertext).decode()
+    encryptor = Cipher(algorithms.AES(key), modes.CBC(iv)).encryptor()
+    return base64.b64encode(iv + encryptor.update(padded) + encryptor.finalize()).decode()
 
 
-class TestGetAesKey:
-    def setup_method(self):
-        encryption_module._aes_key_cache = None
-
-    def test_returns_decoded_bytes(self):
-        raw_key = os.urandom(32)
-        b64_key = base64.b64encode(raw_key).decode()
-        mock_settings = type("S", (), {"AES_KEY_BASE64": b64_key})()
-
-        with patch("trust_api.utils.encryption.get_settings", return_value=mock_settings):
-            result = get_aes_key()
-
-        assert result == raw_key
-
-    def test_caches_after_first_call(self):
-        raw_key = os.urandom(32)
-        b64_key = base64.b64encode(raw_key).decode()
-        mock_settings = type("S", (), {"AES_KEY_BASE64": b64_key})()
-
-        with patch("trust_api.utils.encryption.get_settings", return_value=mock_settings) as mock_get:
-            first = get_aes_key()
-            second = get_aes_key()
-
-        assert first is second
-        mock_get.assert_called_once()
+def test_legacy_cbc_from_unupgraded_hub_still_decrypts():
+    assert decrypt(_legacy_cbc_payload("task payload")) == "task payload"
 
 
-class TestDecrypt:
-    def test_decrypts_valid_payload(self):
-        key = os.urandom(32)
-        plaintext = "hello, trust!"
-        encrypted = _encrypt(plaintext, key)
+def test_legacy_cbc_rejected_once_disabled(monkeypatch):
+    monkeypatch.setenv("AES_ACCEPT_LEGACY_CBC", "false")
+    _reset_caches()
+    with pytest.raises(ValueError, match="Legacy AES-CBC payload rejected"):
+        decrypt(_legacy_cbc_payload("x"))
 
-        result = decrypt(encrypted, key=key)
 
-        assert result == plaintext
-
-    def test_decrypts_empty_string(self):
-        key = os.urandom(32)
-        encrypted = _encrypt("", key)
-
-        assert decrypt(encrypted, key=key) == ""
-
-    def test_decrypts_unicode_content(self):
-        key = os.urandom(32)
-        plaintext = '{"patient_id": 42, "name": "Test"}'
-        encrypted = _encrypt(plaintext, key)
-
-        assert decrypt(encrypted, key=key) == plaintext
-
-    def test_uses_get_aes_key_when_no_key_provided(self):
-        key = os.urandom(32)
-        plaintext = "auto-key test"
-        encrypted = _encrypt(plaintext, key)
-
-        with patch("trust_api.utils.encryption.get_aes_key", return_value=key):
-            result = decrypt(encrypted)
-
-        assert result == plaintext
-
-    def test_decrypts_long_payload(self):
-        key = os.urandom(32)
-        plaintext = "x" * 10000
-        encrypted = _encrypt(plaintext, key)
-
-        assert decrypt(encrypted, key=key) == plaintext
+def test_gcm_still_works_when_legacy_disabled(monkeypatch):
+    """Turning the shim off must not affect the real format."""
+    monkeypatch.setenv("AES_ACCEPT_LEGACY_CBC", "false")
+    _reset_caches()
+    assert decrypt(encrypt("still fine")) == "still fine"

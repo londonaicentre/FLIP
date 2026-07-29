@@ -17,6 +17,7 @@ internal-service key at registration time. There is no standalone CLI — keys
 are never added by hand; ``register_trust`` is the sole writer of the registry.
 """
 
+import base64
 import hashlib
 import secrets
 
@@ -30,3 +31,17 @@ def generate_trust_key() -> tuple[str, str]:
     key = secrets.token_urlsafe(32)
     key_hash = hashlib.sha256(key.encode()).hexdigest()
     return key, key_hash
+
+
+def generate_aes_key() -> str:
+    """Generate a fresh 256-bit AES key, base64-encoded.
+
+    Used by ``register_trust`` to mint a per-trust payload-encryption key
+    (FLIP-PT-004 step 2). Unlike the API key, this is a symmetric key the hub
+    must also hold to encrypt to / decrypt from the trust, so — like
+    ``AES_KEY_BASE64`` — only the plaintext is meaningful (there is no hash form).
+
+    Returns:
+        str: Base64-encoded 32-byte (AES-256) key.
+    """
+    return base64.b64encode(secrets.token_bytes(32)).decode()

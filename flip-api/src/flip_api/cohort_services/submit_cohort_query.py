@@ -31,7 +31,7 @@ from flip_api.domain.schemas.cohort import (
     TrustDetails,
 )
 from flip_api.domain.schemas.status import TaskType
-from flip_api.utils.encryption import encrypt
+from flip_api.utils.encryption import encrypt, kid_for_trust
 from flip_api.utils.logger import logger
 
 router = APIRouter(prefix="/cohort", tags=["cohort_services"])
@@ -146,13 +146,17 @@ def submit_cohort_query(
         result: list[TrustDetails] = []
         queried_trust_ids: list[UUID] = []
 
-        # Encrypt project_id before sending to trusts
-        encrypted_project_id = encrypt(str(cohort_query.project_id))
-        logger.debug("Checking if project_id is encrypted: %s", encrypted_project_id)
-
-        # Queue a task for each trust (instead of direct HTTP calls)
+        # Queue a task for each trust (instead of direct HTTP calls). The
+        # project_id is encrypted per trust under that trust's key-id — a single
+        # ciphertext reused across trusts could not be bound to a per-trust key
+        # (FLIP-PT-004, docs/aes-payload-keys.md). Trusts without their own key
+        # fall back to the shared kid.
         for trust in trusts:
             try:
+                encrypted_project_id = encrypt(
+                    str(cohort_query.project_id),
+                    kid=kid_for_trust(trust_id=str(trust.id), trust_code=getattr(trust, "code", None)),
+                )
                 task_payload = SubmitCohortQueryBody(
                     query_name=cohort_query.name,
                     query=cohort_query.query,

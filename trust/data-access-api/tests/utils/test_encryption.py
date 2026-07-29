@@ -11,56 +11,120 @@
 #
 
 import base64
-from unittest.mock import patch
+import json
 
 import pytest
+from cryptography.exceptions import InvalidTag
 
-from data_access_api.utils.encryption import decrypt, encrypt, get_aes_key
+from data_access_api.utils import encryption
+from data_access_api.utils.encryption import SHARED_KID, _reset_caches, decrypt, encrypt
 
-# Helper: generate valid 32-byte key (256-bit AES)
-VALID_KEY = b"thisisaverysecurekey123456789012"  # 32 bytes
-VALID_KEY_B64 = base64.b64encode(VALID_KEY).decode()
-
-
-@patch("data_access_api.utils.encryption.get_settings")
-def test_get_aes_key_valid(mock_get_settings):
-    mock_get_settings.return_value.AES_KEY_BASE64 = VALID_KEY_B64
-    key = get_aes_key()
-    assert key == VALID_KEY
+RAW_KEY_BYTES = b"ThisIsExactly32BytesLongKey!!!!1"
+ENCODED_KEY = base64.b64encode(RAW_KEY_BYTES).decode()
+TRUST_KEY_B64 = base64.b64encode(b"AnotherExactly32ByteAESKey!!!!!2").decode()
 
 
-@patch("data_access_api.utils.encryption.get_settings")
-def test_get_aes_key_missing(mock_get_settings):
-    mock_get_settings.return_value.AES_KEY_BASE64 = None
-    with pytest.raises(ValueError, match="AES key not found in environment file"):
-        get_aes_key()
+@pytest.fixture(autouse=True)
+def _shared_key_settings(monkeypatch):
+    monkeypatch.setattr(encryption, "get_settings", lambda: type("S", (), {"AES_KEY_BASE64": ENCODED_KEY})())
+    for var in ("AES_TRUST_KEYS", "TRUST_AES_KID", "TRUST_AES_KEY_BASE64"):
+        monkeypatch.delenv(var, raising=False)
+    _reset_caches()
+    yield
+    _reset_caches()
 
 
-@patch("data_access_api.utils.encryption.get_settings")
-def test_get_aes_key_invalid_length(mock_get_settings):
-    short_key = base64.b64encode(b"shortkey").decode()
-    mock_get_settings.return_value.AES_KEY_BASE64 = short_key
-    with pytest.raises(ValueError, match="Invalid AES key length"):
-        get_aes_key()
+def _envelope(payload: str) -> dict:
+    return json.loads(base64.b64decode(payload))
 
 
-def test_encrypt_decrypt_roundtrip():
-    plaintext = "Sensitive data payload"
-    encrypted = encrypt(plaintext, key=VALID_KEY)
-    decrypted = decrypt(encrypted, key=VALID_KEY)
-    assert decrypted == plaintext
+def _reseal(envelope: dict) -> str:
+    return base64.b64encode(json.dumps(envelope).encode()).decode()
 
 
-def test_encrypt_decrypt_roundtrip_with_None():
-    plaintext = "Sensitive data payload"
-    encrypted = encrypt(plaintext, key=None)
-    decrypted = decrypt(encrypted, key=None)
-    assert decrypted == plaintext
+def test_roundtrip_via_keyring():
+    assert decrypt(encrypt("hello")) == "hello"
 
 
-def test_encrypt_output_is_base64():
-    encrypted = encrypt("some text", key=VALID_KEY)
-    # This will raise if it's not valid base64
-    decoded = base64.b64decode(encrypted)
-    assert isinstance(decoded, bytes)
-    assert len(decoded) > 16  # IV + ciphertext
+def test_roundtrip_explicit_key():
+    assert decrypt(encrypt("secret", key=RAW_KEY_BYTES), key=RAW_KEY_BYTES) == "secret"
+
+
+def test_default_kid_is_shared():
+    assert _envelope(encrypt("x"))["kid"] == SHARED_KID
+
+
+def test_tampered_ciphertext_fails_closed():
+    envelope = _envelope(encrypt("do not tamper"))
+    raw = bytearray(base64.b64decode(envelope["ct"]))
+    raw[0] ^= 0x01
+    envelope["ct"] = base64.b64encode(bytes(raw)).decode()
+    with pytest.raises(InvalidTag):
+        decrypt(_reseal(envelope))
+
+
+def test_kid_swap_fails_closed():
+    envelope = _envelope(encrypt("bound", key=RAW_KEY_BYTES, kid="kid-a"))
+    envelope["kid"] = "kid-b"
+    with pytest.raises(InvalidTag):
+        decrypt(_reseal(envelope), key=RAW_KEY_BYTES)
+
+
+def test_unsupported_version_raises():
+    envelope = _envelope(encrypt("x"))
+    envelope["v"] = 99
+    with pytest.raises(ValueError, match="Unsupported payload version"):
+        decrypt(_reseal(envelope))
+
+
+def test_own_trust_key_is_used_by_default(monkeypatch):
+    monkeypatch.setenv("TRUST_AES_KID", "trust-GSTT")
+    monkeypatch.setenv("TRUST_AES_KEY_BASE64", TRUST_KEY_B64)
+    _reset_caches()
+    payload = encrypt("per-trust")
+    assert _envelope(payload)["kid"] == "trust-GSTT"
+    assert decrypt(payload) == "per-trust"
+
+
+def test_decrypts_payload_addressed_to_this_trust(monkeypatch):
+    """Hub encrypts to this trust's kid; the trust decrypts it with its own key."""
+    monkeypatch.setenv("TRUST_AES_KID", "trust-GSTT")
+    monkeypatch.setenv("TRUST_AES_KEY_BASE64", TRUST_KEY_B64)
+    _reset_caches()
+    from_hub = encrypt("task payload", key=base64.b64decode(TRUST_KEY_B64), kid="trust-GSTT")
+    assert decrypt(from_hub) == "task payload"
+
+
+# --- temporary AES-CBC compatibility shim (delete with the shim) ---------------
+
+
+def _legacy_cbc_payload(plaintext: str, key: bytes = RAW_KEY_BYTES) -> str:
+    """Produce a payload in the pre-GCM format, exactly as an un-upgraded peer would."""
+    import os
+
+    from cryptography.hazmat.primitives import padding
+    from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+
+    iv = os.urandom(16)
+    padder = padding.PKCS7(128).padder()
+    padded = padder.update(plaintext.encode()) + padder.finalize()
+    encryptor = Cipher(algorithms.AES(key), modes.CBC(iv)).encryptor()
+    return base64.b64encode(iv + encryptor.update(padded) + encryptor.finalize()).decode()
+
+
+def test_legacy_cbc_from_unupgraded_hub_still_decrypts():
+    assert decrypt(_legacy_cbc_payload("task payload")) == "task payload"
+
+
+def test_legacy_cbc_rejected_once_disabled(monkeypatch):
+    monkeypatch.setenv("AES_ACCEPT_LEGACY_CBC", "false")
+    _reset_caches()
+    with pytest.raises(ValueError, match="Legacy AES-CBC payload rejected"):
+        decrypt(_legacy_cbc_payload("x"))
+
+
+def test_gcm_still_works_when_legacy_disabled(monkeypatch):
+    """Turning the shim off must not affect the real format."""
+    monkeypatch.setenv("AES_ACCEPT_LEGACY_CBC", "false")
+    _reset_caches()
+    assert decrypt(encrypt("still fine")) == "still fine"

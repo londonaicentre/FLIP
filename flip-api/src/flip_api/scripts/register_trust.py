@@ -175,6 +175,12 @@ def register_one_trust(
             "trust_name": kit.trust.name,
             "trust_api_key": kit.trust_api_key,
             "trust_internal_service_key": kit.trust_internal_service_key,
+            # Per-trust payload-encryption key + kid (FLIP-PT-004). Belongs in the
+            # trust's kit as TRUST_AES_KEY_BASE64 / TRUST_AES_KID; inert until the
+            # hub also holds it (docs/aes-payload-keys.md), so until then payloads
+            # keep using the shared key.
+            "trust_aes_key": kit.trust_aes_key,
+            "trust_aes_kid": kit.trust_aes_kid,
             "fl_kit_slot": kit.fl_kit_slot.slot_name,
             "fl_kit_slot_number": kit.fl_kit_slot.slot_number,
             "hub_shared": _hub_shared_from_env(),
