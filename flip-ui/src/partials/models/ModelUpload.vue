@@ -86,14 +86,17 @@
                                 <div class="relative flex items-center justify-center w-full h-full text-gray-700 bg-gray-100 border border-gray-300 rounded-full shadow dark:bg-dark-surface dark:text-gray-300 dark:border-dark-border-strong text-[10px]">
                                     <Transition name="fade" mode="out-in">
                                         <AiLoader v-if="file.status === FileUploadStatus.UPLOADING" small data-test="file-upload-status-uploading" aria-label="Uploading" />
-                                        <!-- Scanning gets its own mark, not the upload spinner: the bytes
-                                             are safely stored, what's pending is the malware scan (#52). -->
+                                        <!-- Its own mark, not the upload spinner: the bytes are safely
+                                             stored, what's pending is the release check (#52). Worded as
+                                             "checked" rather than "scanned for malware" because only
+                                             pickle-bearing files are content-scanned — Python source is
+                                             released uninspected, so a malware claim here would be false. -->
                                         <icon-ph-magnifying-glass-duotone
                                             v-else-if="file.status === FileUploadStatus.SCANNING"
                                             class="text-amber-600 dark:text-amber-400 animate-pulse"
                                             data-test="file-upload-status-scanning"
-                                            aria-label="Scanning for unsafe content"
-                                            title="Scanning for unsafe content — this file can't be used for training yet."
+                                            aria-label="Checking file"
+                                            title="Being checked before it can be used for training. Model checkpoints and other pickle files are also scanned for unsafe content."
                                         />
                                         <icon-ph-file-duotone v-else-if="file.status === FileUploadStatus.COMPLETED" data-test="file-upload-status-completed" aria-label="Ready" />
                                         <icon-ph-virus-duotone

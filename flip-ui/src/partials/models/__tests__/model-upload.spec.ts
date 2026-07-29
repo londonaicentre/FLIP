@@ -284,13 +284,17 @@ describe("ModelUpload", () => {
             expect(scanning.find(ModelUploadModal.uploadingStatusLabel).exists()).toBe(false);
         });
 
-        test("labels the SCANNING state so the user knows a scan is in progress", async () => {
+        test("labels the SCANNING state without overstating what was inspected", async () => {
+            // The state covers every file type, but only pickle-bearing files
+            // are actually content-scanned — Python source is released
+            // uninspected. The label must not imply otherwise (#52).
             const wrapper = mountModelUpload({ files: [fileWith(FileUploadStatus.SCANNING)] });
             await flushPromises();
             const icon = wrapper.find(ModelUploadModal.scanningStatusLabel);
 
             expect(icon.exists()).toBe(true);
-            expect(icon.attributes("aria-label")?.toLowerCase()).toContain("scan");
+            expect(icon.attributes("aria-label")?.toLowerCase()).toContain("check");
+            expect(icon.attributes("aria-label")?.toLowerCase()).not.toContain("unsafe");
         });
 
         test("renders a dedicated INFECTED icon, distinct from ERROR", async () => {
