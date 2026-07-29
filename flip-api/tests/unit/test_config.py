@@ -18,6 +18,9 @@ comma-separated, empty -> default) plus the lowercase/leading-dot
 normalisation the suffix matching relies on.
 """
 
+import pytest
+from pydantic import ValidationError
+
 from flip_api.config import Settings
 
 
@@ -70,3 +73,16 @@ def test_scan_int_settings_empty_string_falls_back_to_default():
     assert Settings(PICKLESCAN_TIMEOUT_SECONDS="").PICKLESCAN_TIMEOUT_SECONDS == 120
     assert Settings(SCHEDULER_MALWARE_SCAN_RECONCILE_RATE="").SCHEDULER_MALWARE_SCAN_RECONCILE_RATE == 1
     assert Settings(PICKLESCAN_TIMEOUT_SECONDS="45").PICKLESCAN_TIMEOUT_SECONDS == 45
+
+
+def test_suffix_list_passes_through_unexpected_types_for_pydantic_to_reject():
+    """A non-string, non-list value must reach Pydantic's own validation.
+
+    The parser only knows how to normalise strings and lists; anything else is
+    returned untouched so the field's ``list[str]`` validator rejects it
+    loudly, rather than the parser silently coercing nonsense into a config
+    that would then decide what may be uploaded. Same shape as the
+    non-string branch of ``coerce_log_level``.
+    """
+    with pytest.raises(ValidationError):
+        Settings(ALLOWED_MODEL_FILE_EXTENSIONS=123)
