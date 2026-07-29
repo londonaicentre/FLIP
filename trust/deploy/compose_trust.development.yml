@@ -17,9 +17,10 @@ services:
 
   # --- Application services ---
 
-  # Image built from https://github.com/londonaicentre/flip-omop-db
+  # Image built from trust/omop-db in this repo (see trust/omop-db/README.md —
+  # the build is manual because the baked vocabulary cannot be fetched in CI)
   omop-db:
-    image: ghcr.io/londonaicentre/omop-db:latest
+    image: ghcr.io/londonaicentre/omop-db:${OMOP_DB_TAG:-latest}
     restart: always
     ports:
       - "${OMOP_DB_PORT}:5432"

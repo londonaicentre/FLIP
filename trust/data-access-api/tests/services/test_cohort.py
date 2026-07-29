@@ -392,7 +392,7 @@ def test_get_records_pandas_error_without_dbapi_cause(mock_read_sql):
 # Tests for validate_query
 #
 # DDL/DML keyword filtering is intentionally not asserted here: data-access-api
-# connects as data_analyst_reader (see flip-omop-db/files/create_readonly_users.sql),
+# connects as data_analyst_reader (see trust/omop-db/files/create_readonly_users.sql),
 # a Postgres role that has INSERT/UPDATE/DELETE/TRUNCATE/CREATE explicitly
 # REVOKEd. Writes are rejected at the database layer; validate_query only
 # enforces structural rules that the DB role cannot enforce on its own.

@@ -21,7 +21,7 @@ FLIP/
 │   ├── trust-api/      # Trust API gateway (Python/FastAPI)
 │   ├── data-access-api/# OMOP database queries (Python/FastAPI)
 │   ├── imaging-api/    # DICOM image retrieval (Python/FastAPI)
-│   ├── omop-db/        # Mocked OMOP database (PostgreSQL)
+│   ├── omop-db/        # Mocked OMOP database (PostgreSQL) + omop-db image build source & populate tooling (#834)
 │   ├── orthanc/        # Mocked PACS server
 │   └── xnat/           # Mocked XNAT neuroimaging service
 ├── deploy/             # Docker Compose files (dev/prod, flower/nvflare); FL network provisioning now lives under fl-services/<backend>/, not here
