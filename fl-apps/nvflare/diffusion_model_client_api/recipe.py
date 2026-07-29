@@ -27,6 +27,7 @@ import argparse
 import os
 import sys
 import tempfile
+import types
 from pathlib import Path
 
 # Pin the hash seed before importing NVFLARE (via flip): export_job serialises some task lists via
@@ -36,6 +37,16 @@ from pathlib import Path
 if os.environ.get("PYTHONHASHSEED") != "0":
     os.environ["PYTHONHASHSEED"] = "0"
     os.execv(sys.executable, [sys.executable, *sys.argv])
+
+import torch  # noqa: E402  (imported after the hash-seed pin)
+
+# The base template ships no models.py (each app supplies its own), but constructing the recipe
+# imports ``models`` via the persistor/locator ``model={"path": "models.get_model"}`` wiring — stub
+# it so this script runs standalone. Only the import path lands in the generated JSON, never the
+# stub itself (mirrors the recipe unit tests).
+_stub_models = types.ModuleType("models")
+_stub_models.get_model = lambda: torch.nn.Linear(1, 1)
+sys.modules.setdefault("models", _stub_models)
 
 from flip.nvflare.recipes import FlipDiffusionRecipe  # noqa: E402  (imported after the hash-seed pin)
 
