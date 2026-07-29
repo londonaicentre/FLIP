@@ -1,0 +1,8 @@
+.venv/
+volumes/
+data/canonical/
+data/*.zip
+data/vocab_dicom_paulnagy_*/
+tests/
+htmlcov-unit/
+.env.build
