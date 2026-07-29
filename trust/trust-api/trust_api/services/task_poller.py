@@ -222,9 +222,14 @@ async def _process_task(task: dict) -> dict:
 
     try:
         payload = json.loads(decrypt(payload_str))
-    except (ValueError, json.JSONDecodeError) as e:
+    except Exception as e:
+        # The error string is posted back to the hub as the task result, so it stays a
+        # bare category: decrypt/parse failures otherwise echo cipher internals, byte
+        # offsets, or fragments of the payload upstream. Detail is logged trust-side.
+        # Broad except is deliberate — any failure here means the payload is unusable,
+        # and the set of exception types depends on the cipher in use.
         logger.error(f"Failed to decrypt or parse payload for task {task_id}: {e}")
-        return {"success": False, "error": f"Invalid payload: {e}"}
+        return {"success": False, "error": "Invalid payload"}
 
     logger.info(f"Processing task {task_id} (type={task_type})")
     return await handler(payload)

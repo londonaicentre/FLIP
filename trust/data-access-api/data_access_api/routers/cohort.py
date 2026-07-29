@@ -108,6 +108,16 @@ def receive_cohort_query(query_input: CohortQueryInput) -> StatisticsResponse:
     """
     logger.info("Received cohort query")
 
+    # Decrypted only to scope the cache to this project (see get_records' cache_scope);
+    # the query itself is unchanged. A project we cannot identify simply goes
+    # uncached rather than failing the request — caching is an optimisation, and
+    # get_records bypasses the cache entirely when the scope is unknown.
+    try:
+        project_id = decrypt(query_input.encrypted_project_id)
+    except Exception:
+        logger.warning("Could not decrypt project id; running this cohort query uncached")
+        project_id = None
+
     minimum_cohort_size = get_settings().COHORT_QUERY_THRESHOLD
     logger.info(f"Minimum cohort size needed to return statistics: {minimum_cohort_size}")
 
@@ -120,7 +130,7 @@ def receive_cohort_query(query_input: CohortQueryInput) -> StatisticsResponse:
     try:
         logger.info("Executing cohort query")
 
-        df = get_records(safe_query)
+        df = get_records(safe_query, cache_scope=project_id)
         df = df.dropna(axis=1, how="all")  # Ignore entirely empty columns
         # drop duplicate columns
         df = df.loc[:, ~df.columns.duplicated()]
@@ -129,7 +139,9 @@ def receive_cohort_query(query_input: CohortQueryInput) -> StatisticsResponse:
         raise e
 
     try:
-        results = get_statistics(df, query_input=query_input, threshold=minimum_cohort_size)
+        results = get_statistics(
+            df, query_input=query_input, threshold=minimum_cohort_size, cache_scope=project_id
+        )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -165,7 +177,7 @@ def get_dataframe(query_input: DataframeQuery) -> dict[str, list[Any]]:
     safe_query = _parse_and_emit(query_input.query)
 
     try:
-        df = get_records(safe_query)
+        df = get_records(safe_query, cache_scope=project_id)
     except SQLAlchemyError as e:
         raise HTTPException(status_code=500, detail=str(e))
     except Exception as e:
@@ -207,7 +219,7 @@ def get_accession_ids(query_input: DataframeQuery) -> AccessionIdsResponse:
     wrapped_query = f"SELECT accession_id FROM ({safe_inner}) AS cohort_subquery"
 
     try:
-        df = get_records(wrapped_query)
+        df = get_records(wrapped_query, cache_scope=project_id)
     except HTTPException:
         raise
     except SQLAlchemyError as e:

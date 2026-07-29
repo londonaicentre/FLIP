@@ -59,13 +59,13 @@ class TestMakeCacheKey:
 class TestGetCachedResult:
     @patch("data_access_api.services.query_cache.get_settings")
     def test_returns_none_on_miss(self, mock_settings):
-        mock_settings.return_value.CACHE_TTL_DAYS = 60
+        mock_settings.return_value.CACHE_TTL_MINUTES = 15
         result = get_cached_result("SELECT 1")
         assert result is None
 
     @patch("data_access_api.services.query_cache.get_settings")
     def test_returns_cached_dataframe(self, mock_settings):
-        mock_settings.return_value.CACHE_TTL_DAYS = 60
+        mock_settings.return_value.CACHE_TTL_MINUTES = 15
         mock_settings.return_value.CACHE_MAX_RESULT_ROWS = 50_000
         mock_settings.return_value.CACHE_MAX_ENTRIES = 64
         df = pd.DataFrame({"col": [1, 2, 3]})
@@ -77,7 +77,7 @@ class TestGetCachedResult:
 
     @patch("data_access_api.services.query_cache.get_settings")
     def test_returns_copy_not_reference(self, mock_settings):
-        mock_settings.return_value.CACHE_TTL_DAYS = 60
+        mock_settings.return_value.CACHE_TTL_MINUTES = 15
         mock_settings.return_value.CACHE_MAX_RESULT_ROWS = 50_000
         mock_settings.return_value.CACHE_MAX_ENTRIES = 64
         df = pd.DataFrame({"col": [1, 2, 3]})
@@ -92,7 +92,7 @@ class TestGetCachedResult:
 
     @patch("data_access_api.services.query_cache.get_settings")
     def test_expired_entry_returns_none(self, mock_settings):
-        mock_settings.return_value.CACHE_TTL_DAYS = 60
+        mock_settings.return_value.CACHE_TTL_MINUTES = 15
         query = "SELECT 1"
         df = pd.DataFrame({"col": [1]})
         key = _make_cache_key(query)
@@ -108,7 +108,7 @@ class TestGetCachedResult:
 class TestSetCachedResult:
     @patch("data_access_api.services.query_cache.get_settings")
     def test_stores_entry(self, mock_settings):
-        mock_settings.return_value.CACHE_TTL_DAYS = 60
+        mock_settings.return_value.CACHE_TTL_MINUTES = 15
         mock_settings.return_value.CACHE_MAX_RESULT_ROWS = 50_000
         mock_settings.return_value.CACHE_MAX_ENTRIES = 64
         df = pd.DataFrame({"col": [1, 2]})
@@ -117,7 +117,7 @@ class TestSetCachedResult:
 
     @patch("data_access_api.services.query_cache.get_settings")
     def test_stores_copy(self, mock_settings):
-        mock_settings.return_value.CACHE_TTL_DAYS = 60
+        mock_settings.return_value.CACHE_TTL_MINUTES = 15
         mock_settings.return_value.CACHE_MAX_RESULT_ROWS = 50_000
         mock_settings.return_value.CACHE_MAX_ENTRIES = 64
         df = pd.DataFrame({"col": [1, 2]})
@@ -130,7 +130,7 @@ class TestSetCachedResult:
 
     @patch("data_access_api.services.query_cache.get_settings")
     def test_skips_caching_when_exceeding_max_rows(self, mock_settings):
-        mock_settings.return_value.CACHE_TTL_DAYS = 60
+        mock_settings.return_value.CACHE_TTL_MINUTES = 15
         mock_settings.return_value.CACHE_MAX_RESULT_ROWS = 5
         mock_settings.return_value.CACHE_MAX_ENTRIES = 64
         df = pd.DataFrame({"col": range(10)})  # 10 rows > limit of 5
@@ -139,7 +139,7 @@ class TestSetCachedResult:
 
     @patch("data_access_api.services.query_cache.get_settings")
     def test_caches_dataframe_within_row_limit(self, mock_settings):
-        mock_settings.return_value.CACHE_TTL_DAYS = 60
+        mock_settings.return_value.CACHE_TTL_MINUTES = 15
         mock_settings.return_value.CACHE_MAX_RESULT_ROWS = 10
         mock_settings.return_value.CACHE_MAX_ENTRIES = 64
         df = pd.DataFrame({"col": range(5)})  # 5 rows <= limit of 10
@@ -148,7 +148,7 @@ class TestSetCachedResult:
 
     @patch("data_access_api.services.query_cache.get_settings")
     def test_evicts_oldest_when_max_entries_reached(self, mock_settings):
-        mock_settings.return_value.CACHE_TTL_DAYS = 60
+        mock_settings.return_value.CACHE_TTL_MINUTES = 15
         mock_settings.return_value.CACHE_MAX_RESULT_ROWS = 50_000
         mock_settings.return_value.CACHE_MAX_ENTRIES = 2
 
@@ -167,7 +167,7 @@ class TestSetCachedResult:
 
     @patch("data_access_api.services.query_cache.get_settings")
     def test_max_entries_config_value_read_from_settings(self, mock_settings):
-        mock_settings.return_value.CACHE_TTL_DAYS = 60
+        mock_settings.return_value.CACHE_TTL_MINUTES = 15
         mock_settings.return_value.CACHE_MAX_RESULT_ROWS = 50_000
         mock_settings.return_value.CACHE_MAX_ENTRIES = 3  # Not the old hardcoded 256
 
@@ -186,3 +186,52 @@ class TestClearCache:
 
         clear_cache()
         assert len(_cache) == 0
+
+
+# --- per-project scoping and TTL bounds -------------------------------------
+
+
+def test_cache_is_scoped_per_project():
+    """One project must never be served another project's cached rows."""
+    from data_access_api.services.query_cache import clear_cache, get_cached_result, set_cached_result
+
+    clear_cache()
+    df_a = pd.DataFrame({"person_id": [1, 2, 3]})
+    set_cached_result("SELECT * FROM omop.person", df_a, scope="project-a")
+
+    assert get_cached_result("SELECT * FROM omop.person", scope="project-a") is not None
+    assert get_cached_result("SELECT * FROM omop.person", scope="project-b") is None
+    assert get_cached_result("SELECT * FROM omop.person") is None
+
+
+def test_same_project_still_hits_cache():
+    from data_access_api.services.query_cache import clear_cache, get_cached_result, set_cached_result
+
+    clear_cache()
+    df = pd.DataFrame({"person_id": [1]})
+    set_cached_result("SELECT 1", df, scope="project-a")
+    hit = get_cached_result("SELECT 1", scope="project-a")
+    assert hit is not None
+    assert len(hit) == 1
+
+
+def test_entries_expire_after_ttl_minutes(monkeypatch):
+    """Cohort rows are patient-derived — a stale entry must not outlive the TTL."""
+    from datetime import UTC, datetime, timedelta
+
+    from data_access_api.services import query_cache
+
+    query_cache.clear_cache()
+    query_cache.set_cached_result("SELECT 1", pd.DataFrame({"a": [1]}), scope="p")
+    ttl = query_cache.get_settings().CACHE_TTL_MINUTES
+
+    key = next(iter(query_cache._cache))
+    query_cache._cache[key].created_at = datetime.now(UTC) - timedelta(minutes=ttl + 1)
+    assert query_cache.get_cached_result("SELECT 1", scope="p") is None
+
+
+def test_ttl_is_bounded_to_minutes_not_days():
+    """Guard the governance property: the window is minutes, not months."""
+    from data_access_api.config import get_settings
+
+    assert get_settings().CACHE_TTL_MINUTES <= 60

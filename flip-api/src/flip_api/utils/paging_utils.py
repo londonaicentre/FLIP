@@ -16,6 +16,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from flip_api.config import get_settings
 from flip_api.utils.logger import logger
 
 # Define TypeVars for Generic Models
@@ -90,11 +91,18 @@ def get_paging_details(query_string_parameters: dict[str, str | int | float] | N
         logger.error(f"Could not parse pageNumber '{page_number_str}', setting default value 1.")
         page_number_int = 1
 
+    max_page_size = get_settings().MAX_PAGE_SIZE
     try:
         page_size_int = int(page_size_str)
         if page_size_int <= 0:
             logger.warning(f"Invalid pageSize '{page_size_str}', defaulting to 20.")
             page_size_int = 20
+        elif page_size_int > max_page_size:
+            # Clamp rather than reject: an oversized page is a client bug, not an
+            # attack worth failing the request over, but serving it unbounded lets a
+            # single call pull the whole table into memory.
+            logger.warning(f"pageSize '{page_size_int}' exceeds maximum {max_page_size}, clamping.")
+            page_size_int = max_page_size
     except ValueError:
         logger.error(f"Could not parse pageSize '{page_size_str}', setting default value 20.")
         page_size_int = 20

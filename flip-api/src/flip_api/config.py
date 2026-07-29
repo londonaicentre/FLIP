@@ -180,6 +180,9 @@ class Settings(BaseSettings):
     TASK_STALE_TIMEOUT_MINUTES: int = 30  # Tasks older than this in IN_PROGRESS are considered stale
     TASK_MAX_RETRIES: int = 3  # Max times a stale task can be retried before being marked FAILED
     SCHEDULER_STALE_TASK_RECOVERY_RATE: int = 10  # How often to check for stale tasks (in minutes)
+    # Upper bound on a caller-supplied ``pageSize``. Without a cap, a single request
+    # can ask the database for an unbounded number of rows and materialise them all.
+    MAX_PAGE_SIZE: int = 200
     MAX_TASK_RESULT_LENGTH: int = 10_000_000  # Max size (in characters) for task result payloads
 
     # Variables only used in testing

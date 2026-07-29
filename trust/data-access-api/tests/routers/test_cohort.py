@@ -71,7 +71,9 @@ def test_receive_cohort_query_success(mock_get_statistics, mock_validate_query, 
     assert response.status_code == 200
     assert response.json() == sample_statistics_response
     mock_validate_query.assert_called_once_with(sample_query_input["query"])
-    mock_get_records.assert_called_once_with(sample_query_input["query"])
+    # An undecryptable project id degrades to an unscoped (uncached) run rather than
+    # failing the request; get_records skips the cache when the scope is None.
+    mock_get_records.assert_called_once_with(sample_query_input["query"], cache_scope=None)
     mock_get_statistics.assert_called_once()
 
 
@@ -202,7 +204,8 @@ def test_get_dataframe_success(mock_get_records, mock_decrypt):
     assert response.status_code == 200
     assert response.json() == sample_df_dict
     mock_decrypt.assert_called_once_with("encrypted-id")
-    mock_get_records.assert_called_once_with(sample_dataframe_query["query"])
+    # Cached results are partitioned by project, so the decrypted id is the scope.
+    mock_get_records.assert_called_once_with(sample_dataframe_query["query"], cache_scope="decrypted-id")
 
 
 @patch("data_access_api.routers.cohort.decrypt")

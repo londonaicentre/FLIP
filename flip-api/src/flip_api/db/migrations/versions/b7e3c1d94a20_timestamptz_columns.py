@@ -10,7 +10,7 @@
 # limitations under the License.
 #
 
-"""Make all timestamp columns timezone-aware (FLIP-PT-054)
+"""Make all timestamp columns timezone-aware
 
 Every ``TIMESTAMP WITHOUT TIME ZONE`` column becomes ``TIMESTAMP WITH TIME ZONE``
 so values are aware end to end — written aware by ``utc_now()``, read back aware —

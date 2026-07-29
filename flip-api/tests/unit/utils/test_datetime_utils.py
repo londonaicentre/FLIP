@@ -10,7 +10,7 @@
 # limitations under the License.
 #
 
-"""Tests for the timestamp helpers (FLIP-PT-054)."""
+"""Tests for the timestamp helpers."""
 
 from datetime import datetime, timedelta, timezone
 

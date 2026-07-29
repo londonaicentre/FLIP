@@ -46,7 +46,10 @@ class Settings(BaseSettings):
 
     #
     COHORT_QUERY_THRESHOLD: int = 10  # Minimum number of records required to return statistics
-    CACHE_TTL_DAYS: int = 60  # Number of days before cached query results expire
+    # Cached cohort results are patient-derived: a stale entry can keep returning rows for
+    # a patient whose consent was withdrawn, or hide a correction to the source record.
+    # Minutes, not days — long enough to absorb repeat calls within one workflow.
+    CACHE_TTL_MINUTES: int = 15
     CACHE_MAX_RESULT_ROWS: PositiveInt = 50_000  # Max rows per cached result; larger results skip caching
     CACHE_MAX_ENTRIES: PositiveInt = 64  # Max number of cached query results
 

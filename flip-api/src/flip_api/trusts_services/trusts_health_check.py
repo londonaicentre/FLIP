@@ -63,7 +63,7 @@ async def check_trusts_health(
         for trust in result:
             # Trust is online if it has sent a heartbeat within the timeout window.
             # `last_heartbeat` is a TIMESTAMPTZ column so it reads back timezone-aware
-            # (FLIP-PT-054) — no tzinfo normalisation needed before comparing.
+            # — no tzinfo normalisation needed before comparing.
             online = trust.last_heartbeat is not None and trust.last_heartbeat >= cutoff
 
             response.append(

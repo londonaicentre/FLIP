@@ -10,7 +10,7 @@
 # limitations under the License.
 #
 
-"""Timestamp helpers (FLIP-PT-054).
+"""Timestamp helpers.
 
 ``datetime.utcnow()`` is deprecated from Python 3.12 and — the reason it matters
 here — returns a **naive** datetime. Naive and aware datetimes cannot be compared

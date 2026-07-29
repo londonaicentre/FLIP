@@ -31,7 +31,13 @@ class CacheEntry:
 _cache: dict[str, CacheEntry] = {}
 
 
-def _make_cache_key(query: Any, params: Mapping[str, Any] | None = None) -> str:
+def _make_cache_key(query: Any, params: Mapping[str, Any] | None = None, scope: str | None = None) -> str:
+    """Build the cache key.
+
+    ``scope`` (the calling project) is part of the key so one project can never be
+    served another project's cached rows, even for a byte-identical query. Entries
+    are therefore per-project, and an unscoped call cannot collide with a scoped one.
+    """
     query_str = query if isinstance(query, str) else str(query)
     normalized = " ".join(query_str.strip().lower().split())
     if params:
@@ -40,17 +46,20 @@ def _make_cache_key(query: Any, params: Mapping[str, Any] | None = None) -> str:
             for k, v in sorted(params.items())
         }
         normalized += "|" + repr(normalized_params)
+    normalized = f"{scope or '-'}|{normalized}"
     return hashlib.sha256(normalized.encode()).hexdigest()
 
 
-def get_cached_result(query: Any, params: Mapping[str, Any] | None = None) -> pd.DataFrame | None:
-    key = _make_cache_key(query, params)
+def get_cached_result(
+    query: Any, params: Mapping[str, Any] | None = None, scope: str | None = None
+) -> pd.DataFrame | None:
+    key = _make_cache_key(query, params, scope)
     entry = _cache.get(key)
     if entry is None:
         return None
 
-    ttl_days = get_settings().CACHE_TTL_DAYS
-    if datetime.now(UTC) - entry.created_at > timedelta(days=ttl_days):
+    ttl_minutes = get_settings().CACHE_TTL_MINUTES
+    if datetime.now(UTC) - entry.created_at > timedelta(minutes=ttl_minutes):
         logger.info(f"Cache entry expired for query hash {key[:12]}...")
         del _cache[key]
         return None
@@ -59,11 +68,13 @@ def get_cached_result(query: Any, params: Mapping[str, Any] | None = None) -> pd
     return entry.df.copy()
 
 
-def set_cached_result(query: Any, df: pd.DataFrame, params: Mapping[str, Any] | None = None) -> None:
+def set_cached_result(
+    query: Any, df: pd.DataFrame, params: Mapping[str, Any] | None = None, scope: str | None = None
+) -> None:
     max_rows = get_settings().CACHE_MAX_RESULT_ROWS
     max_entries = get_settings().CACHE_MAX_ENTRIES
 
-    key = _make_cache_key(query, params)
+    key = _make_cache_key(query, params, scope)
 
     # Skip caching results that are too large to keep memory usage bounded
     if len(df) > max_rows:

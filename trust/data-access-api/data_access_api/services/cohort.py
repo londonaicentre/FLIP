@@ -150,6 +150,7 @@ def validate_query(query: str) -> bool:
 def get_records(
     query: str | TextClause,
     params: Mapping[str, Any] | None = None,
+    cache_scope: str | None = None,
 ) -> pd.DataFrame:
     """
     Executes a SQL query and returns results.
@@ -159,6 +160,8 @@ def get_records(
             parameters when the query is parameterized.
         params (Mapping[str, Any] | None): Optional mapping of bind parameter names to values
             for parameterized queries.
+        cache_scope (str | None): Project the query is run for. Keeps cached results
+            partitioned per project so one project is never served another's rows.
 
     Returns:
         pd.DataFrame: The results of the query as a DataFrame.
@@ -168,9 +171,13 @@ def get_records(
     """
     logger.info("Executing SQL query")
 
-    cached = get_cached_result(query, params)
-    if cached is not None:
-        return cached
+    # Only cache for an identified project: an unscoped entry could otherwise be
+    # read back by a different caller, which is exactly what scoping prevents.
+    use_cache = cache_scope is not None
+    if use_cache:
+        cached = get_cached_result(query, params, cache_scope)
+        if cached is not None:
+            return cached
 
     try:
         # TODO: Trace the query filtering to understand what the final user can see.
@@ -180,7 +187,8 @@ def get_records(
         # data.
         # TODO check if we can check column types -- could be used to exclude primary keys, foreign keys, etc.
         df = pd.read_sql(query, engine, params=params)
-        set_cached_result(query, df, params)
+        if use_cache:
+            set_cached_result(query, df, params, cache_scope)
         return df
 
     # Error responses are deliberately category-only (S-8): the trust forwards
@@ -273,7 +281,7 @@ def get_null_counts(df: pd.DataFrame) -> dict:
     }
 
 
-def get_sex_distribution(df: pd.DataFrame) -> dict:
+def get_sex_distribution(df: pd.DataFrame, cache_scope: str | None = None) -> dict:
     """
     Returns the distribution of sexes in the DataFrame.
 
@@ -302,6 +310,7 @@ def get_sex_distribution(df: pd.DataFrame) -> dict:
     sex_counts = get_records(
         query=sex_counts_database_query,
         params={"person_ids": person_ids},
+        cache_scope=cache_scope,
     )
     return {
         "name": "Sex Distribution",
@@ -311,7 +320,7 @@ def get_sex_distribution(df: pd.DataFrame) -> dict:
     }
 
 
-def get_age_distribution(df: pd.DataFrame) -> dict:
+def get_age_distribution(df: pd.DataFrame, cache_scope: str | None = None) -> dict:
     """
     Returns the distribution of ages in the DataFrame.
 
@@ -342,6 +351,7 @@ def get_age_distribution(df: pd.DataFrame) -> dict:
     age_distribution = get_records(
         query=age_distribution_database_query,
         params={"person_ids": person_ids},
+        cache_scope=cache_scope,
     )
     return {
         "name": "Age Distribution",
@@ -401,7 +411,9 @@ def make_other_category(results: list[dict], min_count: int = COHORT_QUERY_THRES
     return filtered_results
 
 
-def get_statistics(df: pd.DataFrame, query_input: CohortQueryInput, threshold: int) -> StatisticsResponse:
+def get_statistics(
+    df: pd.DataFrame, query_input: CohortQueryInput, threshold: int, cache_scope: str | None = None
+) -> StatisticsResponse:
     """Returns aggregated statistics from the query results.
 
     - Counts the number of records.
@@ -458,10 +470,10 @@ def get_statistics(df: pd.DataFrame, query_input: CohortQueryInput, threshold: i
 
     if "person_id" in df.columns:
         logger.info("person_id column found in the query results; including age and sex distribution calculations.")
-        age = get_age_distribution(df)
+        age = get_age_distribution(df, cache_scope)
         age["results"] = make_other_category(age["results"], min_count=COHORT_QUERY_THRESHOLD)
 
-        sex = get_sex_distribution(df)
+        sex = get_sex_distribution(df, cache_scope)
         sex["results"] = make_other_category(sex["results"], min_count=COHORT_QUERY_THRESHOLD)
 
         stats.data += [age, sex]
