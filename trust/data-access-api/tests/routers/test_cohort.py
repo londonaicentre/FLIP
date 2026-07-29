@@ -106,7 +106,9 @@ def test_receive_cohort_query_statistics_error(
     response = client.post("/cohort", json=sample_query_input, headers=AUTH_HEADERS)
 
     assert response.status_code == 500
-    assert response.json()["detail"] == "Statistics computation failed"
+    # Category only — the upstream exception text must not reach the caller.
+    assert response.json()["detail"] == "Internal server error"
+    assert "Statistics computation failed" not in response.text
 
 
 @patch("data_access_api.routers.cohort.get_records")
@@ -230,7 +232,8 @@ def test_get_dataframe_sqlalchemy_error(mock_get_records, mock_decrypt):
 
     # SQLAlchemyError is caught as a general Exception if not explicitly imported and matched
     assert response.status_code == 500
-    assert response.json()["detail"] == "SQLAlchemy error"
+    assert response.json()["detail"] == "Internal server error"
+    assert "SQLAlchemy error" not in response.text
 
 
 @patch("data_access_api.routers.cohort.decrypt")
@@ -242,7 +245,8 @@ def test_get_dataframe_generic_error(mock_get_records, mock_decrypt):
     response = client.post("/cohort/dataframe", json=sample_dataframe_query, headers=AUTH_HEADERS)
 
     assert response.status_code == 500
-    assert response.json()["detail"] == "Unexpected failure"
+    assert response.json()["detail"] == "Internal server error"
+    assert "Unexpected failure" not in response.text
 
 
 # ---------------------------------------------------------------------------
@@ -335,7 +339,8 @@ def test_get_accession_ids_sqlalchemy_error(mock_get_records, mock_decrypt):
     response = client.post("/cohort/accession-ids", json=sample_dataframe_query, headers=AUTH_HEADERS)
 
     assert response.status_code == 500
-    assert response.json()["detail"] == "SQLAlchemy error"
+    assert response.json()["detail"] == "Internal server error"
+    assert "SQLAlchemy error" not in response.text
 
 
 @patch("data_access_api.routers.cohort.decrypt")
@@ -347,7 +352,8 @@ def test_get_accession_ids_generic_error(mock_get_records, mock_decrypt):
     response = client.post("/cohort/accession-ids", json=sample_dataframe_query, headers=AUTH_HEADERS)
 
     assert response.status_code == 500
-    assert response.json()["detail"] == "Unexpected failure"
+    assert response.json()["detail"] == "Internal server error"
+    assert "Unexpected failure" not in response.text
 
 
 # ---------------------------------------------------------------------------

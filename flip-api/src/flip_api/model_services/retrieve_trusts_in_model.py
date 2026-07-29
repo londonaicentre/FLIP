@@ -85,13 +85,17 @@ def retrieve_trusts_in_model_endpoint(
 
     except SQLAlchemyError:
         error_message = "Database error occurred while retrieving trusts."
-        logger.error(error_message)
+        logger.exception(error_message)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=error_message)
 
-    except Exception as e:
-        error_message = f"Unexpected error occurred while retrieving trusts: {str(e)}"
-        logger.error(error_message)
+    except HTTPException:
+        # Author-written 4xx messages (403/404/400) are intentional and safe;
+        # only genuinely unexpected exceptions get a generic message below.
+        raise
+    except Exception:
+        error_message = "Unexpected error occurred while retrieving trusts"
+        logger.exception(error_message)
         raise HTTPException(
-            status_code=e.status_code if hasattr(e, "status_code") else status.HTTP_500_INTERNAL_SERVER_ERROR,
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=error_message,
         )

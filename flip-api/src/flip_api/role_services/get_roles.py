@@ -53,6 +53,10 @@ def get_roles(
     query = select(Role.id, Role.name, Role.description).order_by(Role.name)
     try:
         result = session.exec(query)
+    except HTTPException:
+        # Author-written 4xx messages (403/404/400) are intentional and safe;
+        # only genuinely unexpected exceptions get a generic message below.
+        raise
     except Exception as e:
         logger.error(f"Unhandled error: {e}", exc_info=True)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error")

@@ -248,7 +248,7 @@ class TestAggregateAndSaveResults:
             _aggregate_and_save_results(mock_db_session, query_id_for_agg)
 
         assert exc_info.value.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
-        assert "Failed to save aggregated stats" in exc_info.value.detail
+        assert "Error during aggregation" in exc_info.value.detail
         mock_db_session.commit.assert_called_once()
         mock_db_session.rollback.assert_called_once()
 
@@ -259,7 +259,7 @@ class TestAggregateAndSaveResults:
             _aggregate_and_save_results(mock_db_session, query_id_for_agg)
 
         assert exc_info.value.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
-        assert "DB error on SELECT" in exc_info.value.detail
+        assert "Error during aggregation" in exc_info.value.detail
         mock_db_session.rollback.assert_called_once()
 
     def test_aggregate_includes_per_trust_record_counts(

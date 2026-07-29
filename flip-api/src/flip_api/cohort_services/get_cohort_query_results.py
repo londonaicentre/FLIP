@@ -103,4 +103,4 @@ def get_cohort_query_results(
         raise
     except Exception as e:
         logger.error(f"Error retrieving cohort query results: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")

@@ -93,5 +93,5 @@ def cohort_query_step_function_endpoint(
     except Exception as e:
         logger.exception(f"Unhandled error in cohort_query: {str(e)}")
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to process cohort query: {str(e)}"
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to process cohort query"
         )

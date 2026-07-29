@@ -189,7 +189,8 @@ def test_approve_project_endpoint_commit_status_fails(
         )
 
     assert exc_info.value.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
-    assert exc_info.value.detail == "DB Commit Error"
+    # Raw exception text must not reach the client.
+    assert exc_info.value.detail == "Internal server error"
 
 
 @patch("flip_api.project_services.approve_project.logger")
@@ -224,7 +225,9 @@ def test_approve_project_endpoint_fetch_trusts_exec_fails(
         )
 
     assert exc_info.value.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
-    assert str(trust_exec_error) in str(exc_info.value.detail)
+    # The upstream exception text must not reach the caller.
+    assert exc_info.value.detail == "Internal server error"
+    assert str(trust_exec_error) not in str(exc_info.value.detail)
 
     mock_logger.error.assert_called_with(
         f"Unhandled error during project approval for {TEST_PROJECT_ID}: {trust_exec_error!s}", exc_info=True

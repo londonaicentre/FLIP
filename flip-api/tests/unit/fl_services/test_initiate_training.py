@@ -162,7 +162,7 @@ def test_initiate_training_failure(model_id, fake_request, mock_db, client1, moc
         with pytest.raises(HTTPException) as exc_info:
             initiate_training(model_id, payload, fake_request, mock_db, user_id="user123")
         assert exc_info.value.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
-        assert "Unexpected error" in exc_info.value.detail
+        assert "An error occurred during training initiation" in exc_info.value.detail
 
 
 def test_initiate_training_unavailable_in_deployment_mode(

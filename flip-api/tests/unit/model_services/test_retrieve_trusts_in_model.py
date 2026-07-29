@@ -180,4 +180,4 @@ def test_get_trusts_unexpected_error(
 
     response = client.get(f"/api/model/{test_model_id}/trusts")
     assert response.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
-    assert "Something went wrong" in response.json()["detail"]
+    assert "Unexpected error occurred while retrieving trusts" in response.json()["detail"]

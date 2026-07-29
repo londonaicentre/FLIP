@@ -84,6 +84,10 @@ def create_project_endpoint(
         logger.info(f"Project created successfully: {project_id}")
         return IId(id=project_id)
 
+    except HTTPException:
+        # Author-written 4xx messages (403/404/400) are intentional and safe;
+        # only genuinely unexpected exceptions get a generic message below.
+        raise
     except Exception as e:
         logger.error(f"Error creating project: {e}")
         raise HTTPException(

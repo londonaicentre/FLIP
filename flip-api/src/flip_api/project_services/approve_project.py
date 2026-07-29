@@ -119,5 +119,5 @@ def approve_project_endpoint(
         logger.error(f"Unhandled error during project approval for {project_id}: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e),
+            detail="Internal server error",
         )

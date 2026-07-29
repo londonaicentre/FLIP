@@ -168,7 +168,7 @@ class TestInvokeModelStatusUpdateEndpoint:
         response = client.put(f"/api/model/{model_id}/status/{ModelStatus.INITIATED.value}")
 
         assert response.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
-        assert "Unexpected error" in response.json()["detail"]
+        assert "Unexpected error while updating model status" in response.json()["detail"]
 
     def test_invoke_update_unauthorized(self, model_id: UUID, mock_db_session: MagicMock):
         def mock_auth():

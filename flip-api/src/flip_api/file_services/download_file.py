@@ -99,6 +99,10 @@ def download_file(
             # Never log the URL itself: it carries X-Amz-Signature /
             # X-Amz-Credential, a readable capability against the bucket.
             return PresignedDownloadResponse(url=url, fileName=file_name)
+        except HTTPException:
+            # Author-written 4xx messages (403/404/400) are intentional and safe;
+            # only genuinely unexpected exceptions get a generic message below.
+            raise
         except Exception:
             logger.exception(f"Error generating pre-signed download URL for model_id={model_id}")
             raise HTTPException(

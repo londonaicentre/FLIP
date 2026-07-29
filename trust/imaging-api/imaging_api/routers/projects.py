@@ -62,8 +62,12 @@ def get_projects(headers: XNATAuthHeaders) -> list[Project]:
     """
     try:
         return get_all_projects(headers)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    except HTTPException:
+        # Author-written 4xx messages are intentional; only unexpected
+        # exceptions fall through to the generic message below.
+        raise
+    except Exception:
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.post("/", summary="Create XNAT Project")
@@ -94,9 +98,14 @@ def create_project_endpoint(
     try:
         return create_project(project_id, project_secondary_id, project_name, project_description, headers)
     except AlreadyExistsError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        # safe-detail: domain error, message is author-written and user-facing
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except HTTPException:
+        # Author-written 4xx messages are intentional; only unexpected
+        # exceptions fall through to the generic message below.
+        raise
+    except Exception:
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.post(
@@ -139,10 +148,15 @@ async def create_project_from_central_hub_project(
             headers,
         )
     except AlreadyExistsError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        # safe-detail: domain error, message is author-written and user-facing
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except HTTPException:
+        # Author-written 4xx messages are intentional; only unexpected
+        # exceptions fall through to the generic message below.
+        raise
     except Exception as e:
         logger.error(f"Failed to create project from central hub project: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
     # Set the project pre-archive settings
     set_project_prearchive_settings(project.ID, headers)
@@ -192,10 +206,15 @@ async def delete_project_endpoint(project_id: str, headers: XNATAuthHeaders) -> 
     try:
         return await delete_project(project_id, headers)
     except NotFoundError as e:
-        raise HTTPException(status_code=404, detail=str(e))
+        # safe-detail: domain error, message is author-written and user-facing
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    except HTTPException:
+        # Author-written 4xx messages are intentional; only unexpected
+        # exceptions fall through to the generic message below.
+        raise
     except Exception as e:
         logger.error(f"Failed to delete project {project_id}: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 # get project details endpoint
@@ -250,9 +269,14 @@ def get_project_endpoint(project_id: str, headers: XNATAuthHeaders) -> Project:
     try:
         return get_project(project_id, headers)
     except NotFoundError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        # safe-detail: domain error, message is author-written and user-facing
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    except HTTPException:
+        # Author-written 4xx messages are intentional; only unexpected
+        # exceptions fall through to the generic message below.
+        raise
+    except Exception:
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.get("/{project_id}/subjects", summary="Get XNAT Project Subjects")
@@ -273,10 +297,15 @@ def get_project_subjects_endpoint(project_id: str, headers: XNATAuthHeaders) -> 
     try:
         return get_subjects(project_id, headers)
     except NotFoundError as e:
-        raise HTTPException(status_code=404, detail=str(e))
+        # safe-detail: domain error, message is author-written and user-facing
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    except HTTPException:
+        # Author-written 4xx messages are intentional; only unexpected
+        # exceptions fall through to the generic message below.
+        raise
     except Exception as e:
         logger.error(f"Failed to retrieve subjects for project {project_id}: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.get("/{project_id}/experiments", summary="Get XNAT Project Experiments")
@@ -297,10 +326,15 @@ def get_project_experiments_endpoint(project_id: str, headers: XNATAuthHeaders) 
     try:
         return get_experiments(project_id, headers)
     except NotFoundError as e:
-        raise HTTPException(status_code=404, detail=str(e))
+        # safe-detail: domain error, message is author-written and user-facing
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    except HTTPException:
+        # Author-written 4xx messages are intentional; only unexpected
+        # exceptions fall through to the generic message below.
+        raise
     except Exception as e:
         logger.error(f"Failed to retrieve experiments for project {project_id}: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 # get project experiment (Get experiment data for a given experiment id and project id)
@@ -328,7 +362,12 @@ def get_project_experiment_endpoint(project_id: str, experiment_id_or_label: str
     try:
         return get_experiment(project_id, experiment_id_or_label, headers)
     except NotFoundError as e:
-        raise HTTPException(status_code=404, detail=str(e))
+        # safe-detail: domain error, message is author-written and user-facing
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    except HTTPException:
+        # Author-written 4xx messages are intentional; only unexpected
+        # exceptions fall through to the generic message below.
+        raise
     except Exception as e:
         logger.error(f"Failed to retrieve experiment {experiment_id_or_label} for project {project_id}: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")

@@ -82,6 +82,10 @@ def reset_mfa_for_user(
         try:
             db.add(UsersAudit(action="Reset user MFA", user_id=user_id, modified_by_user_id=token_id))
             db.commit()
+        except HTTPException:
+            # Author-written 4xx messages (403/404/400) are intentional and safe;
+            # only genuinely unexpected exceptions get a generic message below.
+            raise
         except Exception as audit_err:
             db.rollback()
             logger.exception(

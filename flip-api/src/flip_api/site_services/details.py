@@ -44,9 +44,13 @@ def get_details(db: Session = Depends(get_session), user_id: UUID = Depends(veri
     """
     try:
         return get_site_details(db)
-    except Exception as e:
-        error_message = f"Error fetching site details: {str(e)}"
-        logger.error(error_message)
+    except HTTPException:
+        # Author-written 4xx messages (403/404/400) are intentional and safe;
+        # only genuinely unexpected exceptions get a generic message below.
+        raise
+    except Exception:
+        error_message = "Error fetching site details"
+        logger.exception(error_message)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=error_message)
 
 
@@ -80,7 +84,11 @@ def update_details(
     try:
         update_site_details(site_details, db)
         return get_site_details(db)
-    except Exception as e:
-        error_message = f"Error updating site details: {str(e)}"
-        logger.error(error_message)
+    except HTTPException:
+        # Author-written 4xx messages (403/404/400) are intentional and safe;
+        # only genuinely unexpected exceptions get a generic message below.
+        raise
+    except Exception:
+        error_message = "Error updating site details"
+        logger.exception(error_message)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=error_message)

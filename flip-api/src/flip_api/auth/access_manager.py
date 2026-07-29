@@ -73,6 +73,10 @@ def can_access_project(user_id: UUID, project_id: UUID, db: Session) -> bool:
         logger.debug(f"User: {user_id} is either the project owner or an approved user and is granted access.")
         return True
 
+    except HTTPException:
+        # Author-written 4xx messages (403/404/400) are intentional and safe;
+        # only genuinely unexpected exceptions get a generic message below.
+        raise
     except Exception as e:
         logger.error(f"Error checking project access for user {user_id}, project {project_id}: {str(e)}")
         return False
@@ -109,6 +113,10 @@ def can_modify_project(user_id: UUID, project_id: UUID, db: Session) -> bool:
         project = db.exec(select(Projects).where(Projects.id == project_id)).first()
         if project and project.owner_id == user_id:
             return True
+    except HTTPException:
+        # Author-written 4xx messages (403/404/400) are intentional and safe;
+        # only genuinely unexpected exceptions get a generic message below.
+        raise
     except Exception as e:
         logger.error(f"Error checking project modify access for user {user_id}, project {project_id}: {str(e)}")
 
@@ -159,6 +167,10 @@ def can_contribute_to_project(user_id: UUID, project_id: UUID, db: Session) -> b
             .where(ProjectUserAccess.user_id == user_id)
         ).first()
         return membership is not None
+    except HTTPException:
+        # Author-written 4xx messages (403/404/400) are intentional and safe;
+        # only genuinely unexpected exceptions get a generic message below.
+        raise
     except Exception as e:
         logger.error(f"Error checking project contribute access for user {user_id}, project {project_id}: {str(e)}")
         return False
@@ -200,6 +212,10 @@ def can_modify_model(user_id: UUID, model_id: UUID, db: Session) -> bool:
             return False
 
         return can_contribute_to_project(user_id, model.project_id, db)
+    except HTTPException:
+        # Author-written 4xx messages (403/404/400) are intentional and safe;
+        # only genuinely unexpected exceptions get a generic message below.
+        raise
     except Exception as e:
         logger.error(f"Error checking model modify access for user {user_id}, model {model_id}: {str(e)}")
         return False
@@ -259,6 +275,10 @@ def can_access_model(user_id: UUID, model_id: UUID, db: Session) -> bool:
         logger.debug(f"User: {user_id} is either the project owner or an approved user and is granted access.")
         return True
 
+    except HTTPException:
+        # Author-written 4xx messages (403/404/400) are intentional and safe;
+        # only genuinely unexpected exceptions get a generic message below.
+        raise
     except Exception as e:
         logger.error(f"Error checking model access for user {user_id}, model {model_id}: {str(e)}")
         return False
@@ -314,6 +334,10 @@ def can_access_cohort_query(user_id: UUID, query_id: UUID, db: Session) -> bool:
         logger.debug(f"User: {user_id} is either the project owner or an approved user and is granted access.")
         return True
 
+    except HTTPException:
+        # Author-written 4xx messages (403/404/400) are intentional and safe;
+        # only genuinely unexpected exceptions get a generic message below.
+        raise
     except Exception as e:
         logger.error(f"Error checking cohort query access for user {user_id}, query {query_id}: {str(e)}")
         return False

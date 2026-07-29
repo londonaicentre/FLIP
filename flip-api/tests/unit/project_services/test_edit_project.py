@@ -171,7 +171,7 @@ def test_edit_project_db_commit_value_error(
         )
 
     assert response.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
-    assert "DB commit failed" in response.json()["detail"]
+    assert "Failed to edit project" in response.json()["detail"]
     mock_can_access.assert_called_once()
     mock_db_session.rollback.assert_called_once()
     app_fixture.dependency_overrides = {}
@@ -195,7 +195,7 @@ def test_edit_project_db_commit_generic_exception(
         )
 
     assert response.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
-    assert "Unexpected DB error" in response.json()["detail"]
+    assert "Failed to edit project" in response.json()["detail"]
     mock_can_access.assert_called_once()
     mock_db_session.rollback.assert_called_once()
     app_fixture.dependency_overrides = {}

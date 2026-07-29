@@ -49,8 +49,12 @@ async def upload_data(net_id: str, request_data: UploadDataRequest, headers: XNA
     logger.info("Trying to decrypt Central Hub Project ID")
     try:
         central_hub_project_id = decrypt(request_data.encrypted_central_hub_project_id)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to decrypt IDs: {str(e)}")
+    except HTTPException:
+        # Author-written 4xx messages are intentional; only unexpected
+        # exceptions fall through to the generic message below.
+        raise
+    except Exception:
+        raise HTTPException(status_code=500, detail="Failed to decrypt IDs")
 
     try:
         uploaded_files = await upload_data_to_xnat(
@@ -64,9 +68,13 @@ async def upload_data(net_id: str, request_data: UploadDataRequest, headers: XNA
             headers=headers,
         )
         return uploaded_files
-    except NotFoundError as e:
-        raise HTTPException(status_code=404, detail=f"Resource not found: {str(e)}")
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=f"Invalid upload request: {str(e)}")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to upload files: {str(e)}")
+    except NotFoundError:
+        raise HTTPException(status_code=404, detail="Resource not found")
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid upload request")
+    except HTTPException:
+        # Author-written 4xx messages are intentional; only unexpected
+        # exceptions fall through to the generic message below.
+        raise
+    except Exception:
+        raise HTTPException(status_code=500, detail="Failed to upload files")

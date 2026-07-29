@@ -159,4 +159,4 @@ def test_edit_model_unexpected_error(
     with patch("flip_api.model_services.edit_model.edit_model", side_effect=Exception("Unexpected error")):
         response = client.put(f"/api/model/{test_model_id}", json=test_model_details)
         assert response.status_code == HTTPStatus.INTERNAL_SERVER_ERROR
-        assert "Unexpected error" in response.json()["detail"]
+        assert "Unexpected error occurred during model edit" in response.json()["detail"]

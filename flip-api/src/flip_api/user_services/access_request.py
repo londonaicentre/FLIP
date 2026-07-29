@@ -76,6 +76,10 @@ def _notify_admins_of_access_request(request: IAccessRequest, access_request: Ac
         db.add(access_request)
         db.commit()
         logger.info("Access request notification email dispatched to admin")
+    except HTTPException:
+        # Author-written 4xx messages (403/404/400) are intentional and safe;
+        # only genuinely unexpected exceptions get a generic message below.
+        raise
     except Exception:
         # Swallow: the request is already persisted. Covers SES ``ClientError``
         # (unverified sender, sandbox, throttling) and any credential/config
@@ -116,6 +120,10 @@ def request_access(request: IAccessRequest, db: Session = Depends(get_session)) 
     try:
         db.add(access_request)
         db.commit()
+    except HTTPException:
+        # Author-written 4xx messages (403/404/400) are intentional and safe;
+        # only genuinely unexpected exceptions get a generic message below.
+        raise
     except Exception as e:
         db.rollback()
         logger.exception("Failed to persist access request")

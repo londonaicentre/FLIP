@@ -79,4 +79,4 @@ def retrieve_model_step_function_endpoint(
         raise
     except Exception as e:
         logger.exception(f"Unhandled error in retrieve_model_endpoint: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Failed to retrieve model: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to retrieve model")

@@ -107,7 +107,7 @@ def test_update_site_details_failure(mock_db):
     mock_db.rollback.assert_called_once()
     assert exc_info.value.status_code == 500
     assert "Error updating site details" in exc_info.value.detail
-    assert "DB error" in exc_info.value.detail
+    assert "Error updating site details" in exc_info.value.detail
 
 
 def test_get_site_details_no_deployment_config():

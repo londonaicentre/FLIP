@@ -149,7 +149,7 @@ def test_get_metrics_database_error(
     with patch("flip_api.model_services.get_metrics.get_metrics", side_effect=SQLAlchemyError):
         response = client.get(f"/api/model/{test_model_id}/metrics")
         assert response.status_code == HTTPStatus.INTERNAL_SERVER_ERROR
-        assert "Database error" in response.json()["detail"] or "Unexpected error" in response.json()["detail"]
+        assert "Database error occurred while fetching metrics." == response.json()["detail"]
 
 
 def test_get_metrics_unexpected_error(
@@ -159,4 +159,4 @@ def test_get_metrics_unexpected_error(
     with patch("flip_api.model_services.get_metrics.get_metrics", side_effect=RuntimeError("Boom")):
         response = client.get(f"/api/model/{test_model_id}/metrics")
         assert response.status_code == HTTPStatus.INTERNAL_SERVER_ERROR
-        assert "Boom" in response.json()["detail"]
+        assert "Unexpected error occurred while fetching metrics" in response.json()["detail"]

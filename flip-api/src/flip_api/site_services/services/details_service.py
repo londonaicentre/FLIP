@@ -118,9 +118,13 @@ def update_site_details(site_details: ISiteDetails, db: Session) -> None:
 
         return
 
+    except HTTPException:
+        # Author-written 4xx messages (403/404/400) are intentional and safe;
+        # only genuinely unexpected exceptions get a generic message below.
+        raise
     except Exception as e:
         db.rollback()
         logger.exception(f"Error updating site details: {str(e)}")
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Error updating site details: {str(e)}"
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Error updating site details"
         )

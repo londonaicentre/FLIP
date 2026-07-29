@@ -86,4 +86,4 @@ async def make_request(
         )
         logger.error(msg)
         # Map transport layer failures to 502 for upstream callers.
-        raise HTTPException(status_code=502, detail=f"Failed to connect to remote service: {e}")
+        raise HTTPException(status_code=502, detail="Failed to connect to remote service")

@@ -84,5 +84,5 @@ def get_user(
     except Exception as e:
         logger.error(f"Error getting user: {str(e)}")
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Internal server error: {str(e)}"
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error"
         )

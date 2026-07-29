@@ -83,7 +83,7 @@ def test_prepare_and_start_training_failure(fake_session, model_id, fl_job_id):
     with (
         patch(
             "flip_api.fl_services.services.fl_scheduler_service.bundle_nvflare_application",
-            side_effect=Exception("bundle failed"),
+            side_effect=Exception("Failed to start training"),
         ),
         patch("flip_api.fl_services.services.fl_scheduler_service.get_net_by_model_id") as mock_get_net,
         patch("flip_api.fl_services.services.fl_scheduler_service.remove_job") as mock_remove,
@@ -92,7 +92,7 @@ def test_prepare_and_start_training_failure(fake_session, model_id, fl_job_id):
     ):
         # Net reports nvflare so the nvflare bundler (patched to raise) is the path taken.
         mock_get_net.return_value = INetDetails(endpoint="endpoint", name="net-name", fl_backend=FLBackend.NVFLARE)
-        with pytest.raises(Exception, match="bundle failed"):
+        with pytest.raises(Exception, match="Failed to start training"):
             fl_scheduler_service.prepare_and_start_training(
                 model_id=model_id,
                 fl_job_id=fl_job_id,
@@ -102,7 +102,7 @@ def test_prepare_and_start_training_failure(fake_session, model_id, fl_job_id):
 
         mock_remove.assert_called_once_with(fl_job_id, fake_session)
         mock_status.assert_called_once_with(model_id, ModelStatus.ERROR, fake_session)
-        mock_log.assert_called_once_with(model_id, "bundle failed", fake_session, success=False)
+        mock_log.assert_called_once_with(model_id, "Failed to start training", fake_session, success=False)
 
 
 def test_update_fl_scheduler_success(fake_session, model_id, fl_job_id):

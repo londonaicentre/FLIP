@@ -114,6 +114,10 @@ def receive_cohort_query(query_input: CohortQueryInput) -> StatisticsResponse:
     # get_records bypasses the cache entirely when the scope is unknown.
     try:
         project_id = decrypt(query_input.encrypted_project_id)
+    except HTTPException:
+        # Author-written 4xx messages are intentional; only unexpected
+        # exceptions fall through to the generic message below.
+        raise
     except Exception:
         logger.warning("Could not decrypt project id; running this cohort query uncached")
         project_id = None
@@ -134,6 +138,10 @@ def receive_cohort_query(query_input: CohortQueryInput) -> StatisticsResponse:
         df = df.dropna(axis=1, how="all")  # Ignore entirely empty columns
         # drop duplicate columns
         df = df.loc[:, ~df.columns.duplicated()]
+    except HTTPException:
+        # Author-written 4xx messages are intentional; only unexpected
+        # exceptions fall through to the generic message below.
+        raise
     except Exception as e:
         logger.error(f"Error executing query: {str(e)}")
         raise e
@@ -142,8 +150,12 @@ def receive_cohort_query(query_input: CohortQueryInput) -> StatisticsResponse:
         results = get_statistics(
             df, query_input=query_input, threshold=minimum_cohort_size, cache_scope=project_id
         )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    except HTTPException:
+        # Author-written 4xx messages are intentional; only unexpected
+        # exceptions fall through to the generic message below.
+        raise
+    except Exception:
+        raise HTTPException(status_code=500, detail="Internal server error")
 
     logger.info("Cohort query returned results")
     return results
@@ -178,10 +190,14 @@ def get_dataframe(query_input: DataframeQuery) -> dict[str, list[Any]]:
 
     try:
         df = get_records(safe_query, cache_scope=project_id)
-    except SQLAlchemyError as e:
-        raise HTTPException(status_code=500, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    except SQLAlchemyError:
+        raise HTTPException(status_code=500, detail="Internal server error")
+    except HTTPException:
+        # Author-written 4xx messages are intentional; only unexpected
+        # exceptions fall through to the generic message below.
+        raise
+    except Exception:
+        raise HTTPException(status_code=500, detail="Internal server error")
 
     return df.to_dict(orient="list")
 
@@ -222,10 +238,10 @@ def get_accession_ids(query_input: DataframeQuery) -> AccessionIdsResponse:
         df = get_records(wrapped_query, cache_scope=project_id)
     except HTTPException:
         raise
-    except SQLAlchemyError as e:
-        raise HTTPException(status_code=500, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    except SQLAlchemyError:
+        raise HTTPException(status_code=500, detail="Internal server error")
+    except Exception:
+        raise HTTPException(status_code=500, detail="Internal server error")
 
     if "accession_id" not in df.columns:
         raise HTTPException(

@@ -73,9 +73,14 @@ async def retrieve_images_for_project(project_id: str, query: str, headers: XNAT
     try:
         get_project(project_id, headers)
     except NotFoundError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        # safe-detail: domain error, message is author-written and user-facing
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    except HTTPException:
+        # Author-written 4xx messages are intentional; only unexpected
+        # exceptions fall through to the generic message below.
+        raise
+    except Exception:
+        raise HTTPException(status_code=500, detail="Internal server error")
 
     # Get accession IDs from data access API. The endpoint projects the cohort
     # query to the accession_id column server-side, so no other columns are
@@ -94,6 +99,10 @@ async def retrieve_images_for_project(project_id: str, query: str, headers: XNAT
 
         try:
             studies_found = query_by_accession_number(accession_number, headers)
+        except HTTPException:
+            # Author-written 4xx messages are intentional; only unexpected
+            # exceptions fall through to the generic message below.
+            raise
         except Exception as e:
             logger.error(f"Unexpected error querying PACS for accession number {idx}/{total_accessions}: {e}")
             continue
@@ -285,10 +294,14 @@ async def retry_retrieve_images_for_project(project_id: str, query: str, headers
     # Check if project exists
     try:
         get_project(project_id, headers)
-    except NotFoundError as e:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+    except NotFoundError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Internal server error")
+    except HTTPException:
+        # Author-written 4xx messages are intentional; only unexpected
+        # exceptions fall through to the generic message below.
+        raise
+    except Exception:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error")
 
     # Get import status
     import_status = await get_import_status(project_id, query, headers)
@@ -314,6 +327,10 @@ async def retry_retrieve_images_for_project(project_id: str, query: str, headers
 
         try:
             studies_found = query_by_accession_number(accession_number, headers)
+        except HTTPException:
+            # Author-written 4xx messages are intentional; only unexpected
+            # exceptions fall through to the generic message below.
+            raise
         except Exception as e:
             logger.error(f"Unexpected error querying PACS for accession number {idx}/{total_retries}: {e}")
             continue

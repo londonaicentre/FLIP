@@ -86,6 +86,10 @@ def validate_query(query: str) -> None:
             raise ValueError("Empty or invalid SQL")
 
         logger.info("Query is valid SQL")
+    except HTTPException:
+        # Author-written 4xx messages (403/404/400) are intentional and safe;
+        # only genuinely unexpected exceptions get a generic message below.
+        raise
     except Exception as e:
         logger.error({"message": "Query is not valid SQL.", "error": str(e)})
         raise ValueError("Invalid SQL Query")
@@ -130,8 +134,10 @@ def submit_cohort_query(
         # Validate SQL syntax
         try:
             validate_query(cohort_query.query)
-        except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e))
+        except ValueError:
+            # Client error: the submitted SQL did not parse. The message is fixed rather
+            # than echoed so a future parser change cannot start leaking internals here.
+            raise HTTPException(status_code=400, detail="Invalid SQL query")
 
         # Query database for trusts
         statement = select(Trust)
@@ -178,15 +184,17 @@ def submit_cohort_query(
                     )
                 )
 
-            except Exception as e:
+            except HTTPException:
+                # Author-written 4xx messages (403/404/400) are intentional and safe;
+                # only genuinely unexpected exceptions get a generic message below.
+                raise
+            except Exception:
                 # Per-trust failures are isolated: the bad trust is reported with a 500 in its
                 # own result entry and the batch keeps queuing the rest. db.add is in-memory, so
                 # there is nothing to roll back here; a failure at db.commit() below is handled by
                 # the outer except (which rolls back the whole submit).
-                logger.error(
-                    f"Unable to queue cohort query task for trust {trust.name}: {str(e)}"
-                )
-                result.append(TrustDetails(name=trust.name, statusCode=500, message=str(e)))
+                logger.exception(f"Unable to queue cohort query task for trust {trust.name}")
+                result.append(TrustDetails(name=trust.name, statusCode=500, message="Failed to queue task"))
 
             logger.info(f"Trust: {trust.name} processed")
 
@@ -221,4 +229,4 @@ def submit_cohort_query(
     except Exception as e:
         db.rollback()
         logger.error(f"Error submitting cohort query: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")

@@ -115,6 +115,10 @@ def _save_individual_result(db: Session, cohort_results: OmopCohortResults) -> N
 
         db.commit()
 
+    except HTTPException:
+        # Author-written 4xx messages (403/404/400) are intentional and safe;
+        # only genuinely unexpected exceptions get a generic message below.
+        raise
     except Exception as e:
         db.rollback()
         logger.error(
@@ -126,7 +130,7 @@ def _save_individual_result(db: Session, cohort_results: OmopCohortResults) -> N
         )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
+            detail="Internal server error"
             if isinstance(e, HTTPException)
             else f"Error saving cohort results: {cohort_results.query_id}",
         ) from e
@@ -298,10 +302,11 @@ def _aggregate_and_save_results(db: Session, query_id: UUID) -> None:
         db.rollback()
         raise
 
-    except Exception as e:
+    except Exception:
         db.rollback()
-        error_message = f"Error during aggregation for query_id {query_id}: {e}"
-        logger.error(error_message)
+        error_message = "Error during aggregation"
+        logger.error(f"Error during aggregation for query_id {query_id}")
+        logger.exception(error_message)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=error_message,

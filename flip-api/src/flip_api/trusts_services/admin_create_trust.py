@@ -78,9 +78,11 @@ def admin_create_trust(
         )
     except (EmptyTrustNameError, EmptyTrustCodeError) as e:
         db.rollback()
+        # safe-detail: domain error, message is author-written and user-facing
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
     except (DuplicateTrustError, NoFreeKitSlotError) as e:
         db.rollback()
+        # safe-detail: domain error, message is author-written and user-facing
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e)) from e
     except SQLAlchemyError as e:
         db.rollback()

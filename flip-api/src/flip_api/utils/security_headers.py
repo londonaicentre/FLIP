@@ -24,7 +24,9 @@ import logging
 
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
-from starlette.responses import PlainTextResponse, Response
+from starlette.responses import JSONResponse, Response
+
+from flip_api.utils.request_context import get_request_id
 
 logger = logging.getLogger(__name__)
 
@@ -97,8 +99,15 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         try:
             response = await call_next(request)
         except Exception:
-            logger.exception("Unhandled exception processing request")
-            response = PlainTextResponse("Internal Server Error", status_code=500)
+            # Generic body on purpose: exception text leaks schema names, internal
+            # hostnames, and query fragments. The correlation id is what makes the
+            # real error findable in the logs.
+            request_id = get_request_id()
+            logger.exception(f"Unhandled exception processing request (request_id={request_id})")
+            response = JSONResponse(
+                {"detail": "Internal server error", "request_id": request_id},
+                status_code=500,
+            )
         for header, value in self.SECURITY_HEADERS.items():
             response.headers[header] = value
         # CSP only applies to HTML responses — no-op for API JSON. Skip

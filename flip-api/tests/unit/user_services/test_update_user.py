@@ -154,7 +154,7 @@ class TestUpdateUser:
         assert response.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
         assert response.json()["detail"] == "Failed to update user"
         # Sanity: the exception text didn't leak into the response.
-        assert "Unexpected error" not in response.json()["detail"]
+        assert "An error occurred during training initiation" not in response.json()["detail"]
 
     @patch("flip_api.user_services.update_user.update_xnat_user_profile")
     @patch("flip_api.user_services.update_user.update_user")

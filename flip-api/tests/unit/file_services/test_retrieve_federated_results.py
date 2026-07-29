@@ -285,7 +285,8 @@ class TestS3Client:
             with pytest.raises(Exception, match="Error listing objects") as exc_info:
                 s3_client.list_objects(test_bucket)
 
-            assert f"Error listing objects under '{test_bucket}'" in str(exc_info.value)
+            # The bucket path stays in the server log, not in the raised message.
+            assert str(exc_info.value) == "Error listing objects"
 
     def test_get_presigned_url_success(self):
         """Test successful generation of presigned URL."""

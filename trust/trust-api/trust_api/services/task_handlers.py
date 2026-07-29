@@ -108,9 +108,13 @@ async def handle_cohort_query(payload: dict[str, Any]) -> dict[str, Any]:
         return {"success": True}
 
     except Exception as e:
-        logger.error(f"Error processing cohort query: {e}")
+        logger.exception(f"Error processing cohort query: {e}")
+        # The hub-report intentionally still carries str(e): receive_cohort_results
+        # redacts it against a fixed category allowlist, and the string is how
+        # data-access-api's category ("query_failed", ...) reaches the hub at all.
         await _report_cohort_error_to_hub(payload, str(e))
-        return {"success": False, "error": str(e)}
+        # The task result is not redacted anywhere, so it stays a bare category.
+        return {"success": False, "error": "Cohort query failed"}
 
 
 async def _report_cohort_error_to_hub(payload: dict[str, Any], error: str) -> None:
@@ -174,8 +178,10 @@ async def handle_create_imaging(payload: dict[str, Any]) -> dict[str, Any]:
         return {"success": True, "result": json.dumps(response)}
 
     except Exception as e:
-        logger.error(f"Error creating imaging project: {e}")
-        return {"success": False, "error": str(e)}
+        # Category only: this string is posted to the hub as the task result, so raw
+        # exception text would carry internal detail upstream. Full error stays local.
+        logger.exception(f"Error creating imaging project: {e}")
+        return {"success": False, "error": "Imaging project creation failed"}
 
 
 async def handle_delete_imaging(payload: dict[str, Any]) -> dict[str, Any]:
@@ -204,8 +210,10 @@ async def handle_delete_imaging(payload: dict[str, Any]) -> dict[str, Any]:
         return {"success": True}
 
     except Exception as e:
-        logger.error(f"Error deleting imaging project: {e}")
-        return {"success": False, "error": str(e)}
+        # Category only: this string is posted to the hub as the task result, so raw
+        # exception text would carry internal detail upstream. Full error stays local.
+        logger.exception(f"Error deleting imaging project: {e}")
+        return {"success": False, "error": "Imaging project deletion failed"}
 
 
 async def handle_get_imaging_status(payload: dict[str, Any]) -> dict[str, Any]:
@@ -237,8 +245,10 @@ async def handle_get_imaging_status(payload: dict[str, Any]) -> dict[str, Any]:
         return {"success": True, "result": json.dumps(response)}
 
     except Exception as e:
-        logger.error(f"Error getting imaging status: {e}")
-        return {"success": False, "error": str(e)}
+        # Category only: this string is posted to the hub as the task result, so raw
+        # exception text would carry internal detail upstream. Full error stays local.
+        logger.exception(f"Error getting imaging status: {e}")
+        return {"success": False, "error": "Imaging status lookup failed"}
 
 
 async def handle_reimport_studies(payload: dict[str, Any]) -> dict[str, Any]:
@@ -268,8 +278,10 @@ async def handle_reimport_studies(payload: dict[str, Any]) -> dict[str, Any]:
         return {"success": True}
 
     except Exception as e:
-        logger.error(f"Error reimporting studies: {e}")
-        return {"success": False, "error": str(e)}
+        # Category only: this string is posted to the hub as the task result, so raw
+        # exception text would carry internal detail upstream. Full error stays local.
+        logger.exception(f"Error reimporting studies: {e}")
+        return {"success": False, "error": "Study reimport failed"}
 
 
 async def handle_update_user_profile(payload: dict[str, Any]) -> dict[str, Any]:
@@ -297,8 +309,8 @@ async def handle_update_user_profile(payload: dict[str, Any]) -> dict[str, Any]:
         return {"success": True}
 
     except Exception as e:
-        logger.error(f"Error updating user profile: {e}")
-        return {"success": False, "error": str(e)}
+        logger.exception(f"Error updating user profile: {e}")
+        return {"success": False, "error": "User profile update failed"}
 
 
 # Registry mapping task types to their handlers

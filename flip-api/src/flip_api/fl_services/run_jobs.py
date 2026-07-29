@@ -119,9 +119,13 @@ def run_jobs_core(db: Session) -> None:
         })
         return
 
-    except Exception as e:
+    except HTTPException:
+        # Author-written 4xx messages (403/404/400) are intentional and safe;
+        # only genuinely unexpected exceptions get a generic message below.
+        raise
+    except Exception:
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"An error occurred while running jobs: {str(e)}"
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="An error occurred while running jobs"
         )
 
 
@@ -137,7 +141,11 @@ def run_jobs_scheduled_task() -> None:
     try:
         with Session(get_engine()) as db:
             run_jobs_core(db)
-    except Exception as e:
-        error_message = f"Error in scheduled run_jobs execution: {str(e)}"
-        logger.error(error_message)
+    except HTTPException:
+        # Author-written 4xx messages (403/404/400) are intentional and safe;
+        # only genuinely unexpected exceptions get a generic message below.
+        raise
+    except Exception:
+        error_message = "Error in scheduled run_jobs execution"
+        logger.exception(error_message)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=error_message)

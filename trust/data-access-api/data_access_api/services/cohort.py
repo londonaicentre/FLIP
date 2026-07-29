@@ -244,6 +244,10 @@ def get_records(
     except SQLAlchemyError as e:
         logger.error(f"SQLAlchemy error: {str(e)}")
         raise HTTPException(status_code=500, detail="internal_error") from e
+    except HTTPException:
+        # Author-written 4xx messages are intentional; only unexpected
+        # exceptions fall through to the generic message below.
+        raise
     except Exception as e:
         logger.error(f"Unexpected error executing query: {str(e)}")
         raise HTTPException(status_code=500, detail="internal_error") from e

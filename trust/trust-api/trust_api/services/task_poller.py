@@ -261,9 +261,9 @@ async def run_poller() -> None:
                         result = await _process_task(task)
                         await _report_task_result(client, task_id, result)
                     except Exception as e:
-                        logger.error(f"Unhandled error processing task {task_id}: {e}")
+                        logger.exception(f"Unhandled error processing task {task_id}: {e}")
                         await _report_task_result(
-                            client, task_id, {"success": False, "error": str(e)}
+                            client, task_id, {"success": False, "error": "Task processing failed"}
                         )
 
             except Exception as e:

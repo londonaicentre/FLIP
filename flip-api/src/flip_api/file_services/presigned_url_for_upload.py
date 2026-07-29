@@ -105,6 +105,10 @@ def get_presigned_url_for_upload(
                 fields=policy.get("fields", {}),
                 maxBytes=settings.MAX_MODEL_FILE_BYTES,
             )
+        except HTTPException:
+            # Author-written 4xx messages (403/404/400) are intentional and safe;
+            # only genuinely unexpected exceptions get a generic message below.
+            raise
         except Exception as e:
             # Drop ``exc_info`` entirely: the formatter would otherwise emit
             # ``str(e)`` via the traceback, and a future exception type that

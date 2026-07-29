@@ -81,5 +81,5 @@ def get_model_files_list(
         logger.error(f"Unhandled error: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Internal server error: {e}",
+            detail="Internal server error",
         )

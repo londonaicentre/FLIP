@@ -139,8 +139,12 @@ def get_status_endpoint(
 
         return net_statuses
 
+    except HTTPException:
+        # Author-written 4xx messages (403/404/400) are intentional and safe;
+        # only genuinely unexpected exceptions get a generic message below.
+        raise
     except Exception as e:
         logger.error(f"Error while retrieving net statuses: {str(e)}")
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Error while retrieving net statuses: {str(e)}"
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Error while retrieving net statuses"
         )

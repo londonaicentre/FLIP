@@ -91,6 +91,10 @@ def retrieve_logs_for_model_endpoint(
             # a permanent 500 for the whole feed. Degrade that row alone.
             try:
                 return render_log(log)
+            except HTTPException:
+                # Author-written 4xx messages (403/404/400) are intentional and safe;
+                # only genuinely unexpected exceptions get a generic message below.
+                raise
             except Exception:
                 logger.exception(f"Failed to render log row {log.id}; serving degraded text")
                 return render_fallback(log)
@@ -111,13 +115,17 @@ def retrieve_logs_for_model_endpoint(
 
     except SQLAlchemyError:
         error_message = "Database error while retrieving logs."
-        logger.error(error_message)
+        logger.exception(error_message)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=error_message)
 
-    except Exception as e:
-        error_message = f"Unexpected error while retrieving logs: {str(e)}"
-        logger.error(error_message)
+    except HTTPException:
+        # Author-written 4xx messages (403/404/400) are intentional and safe;
+        # only genuinely unexpected exceptions get a generic message below.
+        raise
+    except Exception:
+        error_message = "Unexpected error while retrieving logs"
+        logger.exception(error_message)
         raise HTTPException(
-            status_code=e.status_code if hasattr(e, "status_code") else status.HTTP_500_INTERNAL_SERVER_ERROR,
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=error_message,
         )

@@ -84,13 +84,13 @@ def invoke_model_status_update_endpoint(
 
     except SQLAlchemyError:
         error_message = "Database error while updating model status."
-        logger.error(error_message)
+        logger.exception(error_message)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=error_message)
 
     except HTTPException:
         raise
 
-    except Exception as e:
-        error_message = f"Unexpected error while updating model status: {str(e)}"
+    except Exception:
+        error_message = "Unexpected error while updating model status"
         logger.error(error_message, exc_info=True)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=error_message)

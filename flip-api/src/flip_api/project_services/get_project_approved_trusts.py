@@ -112,6 +112,10 @@ def get_project_approved_trusts_endpoint(
         # This behavior should be consistent with how get_approved_trusts_for_project is implemented.
         # If it can return an empty list, then no error here.
         return []  # Or handle specific errors from the service call
+    except HTTPException:
+        # Author-written 4xx messages (403/404/400) are intentional and safe;
+        # only genuinely unexpected exceptions get a generic message below.
+        raise
     except Exception as e:
         logger.error(f"Unhandled error fetching approved trusts for project {project_id}: {e}", exc_info=True)
         raise HTTPException(

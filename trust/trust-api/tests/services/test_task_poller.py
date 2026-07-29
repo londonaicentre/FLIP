@@ -369,7 +369,9 @@ async def test_run_poller_reports_error_on_task_exception():
         mock_report.assert_called_once()
         result_arg = mock_report.call_args[0][2]
         assert result_arg["success"] is False
-        assert "handler crashed" in result_arg["error"]
+        # Category only — the handler's exception text must not reach the hub.
+        assert result_arg["error"] == "Task processing failed"
+        assert "handler crashed" not in result_arg["error"]
 
 
 @pytest.mark.asyncio

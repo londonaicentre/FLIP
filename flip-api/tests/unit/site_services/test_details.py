@@ -80,8 +80,9 @@ def test_get_details_not_found(client, mock_db):
 
     response = client.get("/api/site/details")
 
-    assert response.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
-    assert "Error fetching site details" in response.json()["detail"]
+    # The 404 raised for a missing row now propagates instead of being swallowed
+    # into a 500 by the generic handler.
+    assert response.status_code == status.HTTP_404_NOT_FOUND
 
 
 @patch("flip_api.site_services.details.has_permissions", return_value=True)
@@ -138,7 +139,7 @@ def test_put_details_failure(mock_perms, client, mock_db):
 
     assert response.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
     assert "Error updating site details" in response.json()["detail"]
-    assert "DB failure" in response.json()["detail"]
+    assert "Error updating site details" in response.json()["detail"]
 
 
 @patch("flip_api.site_services.details.has_permissions", return_value=False)

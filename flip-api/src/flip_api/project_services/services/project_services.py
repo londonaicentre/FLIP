@@ -60,6 +60,16 @@ from flip_api.utils.logger import logger
 from flip_api.utils.paging_utils import IPagedResponse, PagingInfo, get_paging_details
 
 
+class ProjectValidationError(ValueError):
+    """A project-level precondition failed (missing, deleted, wrong state).
+
+    Distinct from a bare ``ValueError`` so error handlers can safely surface the
+    message to the caller: instances are only ever raised by this module, with text
+    written for the user. A ``ValueError`` bubbling out of SQLAlchemy is not one of
+    these and must stay generic.
+    """
+
+
 def _classify_responded_trust_ids(
     rows: Sequence[tuple[UUID | None, str | None]],
     *,
@@ -255,10 +265,10 @@ def create_project(
 
     except DatabaseError as e:
         session.rollback()
-        logger.error(f"Error creating project: {e}")
+        logger.exception(f"Error creating project: {e}")
         raise HTTPException(
             status_code=500,
-            detail=f"Failed to create project: {e}",
+            detail="Failed to create project",
         )
 
 
@@ -284,7 +294,7 @@ def delete_project(project_id: UUID, current_user_id: UUID, session: Session) ->
 
         if not project:
             logger.warn(f"Project {project_id} not found for deletion.")
-            raise ValueError(f"Project with ID {project_id} not found.")
+            raise ProjectValidationError(f"Project with ID {project_id} not found.")
 
         if project.deleted:
             logger.info(f"Project {project_id} is already marked as deleted.")
@@ -321,12 +331,21 @@ def delete_project(project_id: UUID, current_user_id: UUID, session: Session) ->
 
         session.commit()
 
-    except Exception as e:
+    except HTTPException:
+        # Author-written 4xx messages (403/404/400) are intentional and safe;
+        # only genuinely unexpected exceptions get a generic message below.
+        raise
+    except ProjectValidationError as e:
         session.rollback()
-        logger.error(f"Error deleting project {project_id}: {e}")
+        logger.warning(f"Cannot delete project {project_id}: {e}")
+        # safe-detail: raised by this module with a message written for the user
+        raise HTTPException(status_code=500, detail=str(e)) from e
+    except Exception:
+        session.rollback()
+        logger.exception(f"Error deleting project {project_id}")
         raise HTTPException(
             status_code=500,
-            detail=f"Failed to delete project: {e}",
+            detail="Failed to delete project",
         )
 
 
@@ -356,7 +375,7 @@ def edit_project_service(
         # Check if project exists and is not deleted
         project = session.get(Projects, project_id)
         if not project or project.deleted:
-            raise ValueError(f"Project {project_id} does not exist or is deleted, cannot edit.")
+            raise ProjectValidationError(f"Project {project_id} does not exist or is deleted, cannot edit.")
 
         project.name = payload.name
         project.description = payload.description
@@ -387,12 +406,21 @@ def edit_project_service(
         session.commit()
         return
 
-    except Exception as e:
-        logger.error(f"Error editing project {project_id}: {e}")
+    except HTTPException:
+        # Author-written 4xx messages (403/404/400) are intentional and safe;
+        # only genuinely unexpected exceptions get a generic message below.
+        raise
+    except ProjectValidationError as e:
+        session.rollback()
+        logger.warning(f"Cannot edit project {project_id}: {e}")
+        # safe-detail: raised by this module with a message written for the user
+        raise HTTPException(status_code=500, detail=str(e)) from e
+    except Exception:
+        logger.exception(f"Error editing project {project_id}")
         session.rollback()
         raise HTTPException(
             status_code=500,
-            detail=f"Failed to edit project: {e}",
+            detail="Failed to edit project",
         )
 
 
@@ -611,11 +639,15 @@ def update_project_status(
         project.status = new_status
         session.flush()
         logger.info(f"Project {project_id} status updated to {new_status.value}.")
+    except HTTPException:
+        # Author-written 4xx messages (403/404/400) are intentional and safe;
+        # only genuinely unexpected exceptions get a generic message below.
+        raise
     except Exception as e:
         logger.error(f"Error updating status of project {project_id}: {e}")
         raise HTTPException(
             status_code=500,
-            detail=f"Failed to update status of project {project_id}: {e}",
+            detail="Failed to update project status",
         )
 
 
@@ -842,9 +874,13 @@ def get_reimport_queries_service(max_reimport_count: int, session: Session) -> l
             for (q, xps, t) in rows
         ]
 
-    except Exception as e:
-        error_message = f"Error fetching reimport queries: {e}"
-        logger.error(error_message)
+    except HTTPException:
+        # Author-written 4xx messages (403/404/400) are intentional and safe;
+        # only genuinely unexpected exceptions get a generic message below.
+        raise
+    except Exception:
+        error_message = "Error fetching reimport queries"
+        logger.exception(error_message)
         raise ValueError(error_message)
 
 

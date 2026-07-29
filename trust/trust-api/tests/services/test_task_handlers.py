@@ -99,7 +99,9 @@ async def test_handle_cohort_query_invalid_payload():
     result = await handle_cohort_query({"query": "SELECT 1"})
 
     assert result["success"] is False
-    assert "validation error" in result["error"].lower()
+    # Category only — the upstream validation text must not travel to the hub.
+    assert result["error"] == "Cohort query failed"
+    assert "validation error" not in result["error"].lower()
 
 
 @pytest.mark.asyncio
@@ -122,7 +124,8 @@ async def test_handle_cohort_query_error(mock_make_request):
     result = await handle_cohort_query(payload)
 
     assert result["success"] is False
-    assert "Connection refused" in result["error"]
+    assert result["error"] == "Cohort query failed"
+    assert "Connection refused" not in result["error"]
 
     # An error report must have been posted to the hub.
     assert mock_make_request.call_count == 2
@@ -155,7 +158,8 @@ async def test_handle_cohort_query_error_swallows_hub_post_failure(mock_make_req
     result = await handle_cohort_query(payload)
 
     assert result["success"] is False
-    assert "Database connection failed" in result["error"]
+    assert result["error"] == "Cohort query failed"
+    assert "Database connection failed" not in result["error"]
 
 
 # ---- Create imaging handler ----
@@ -262,7 +266,8 @@ async def test_handle_create_imaging_error(mock_make_request):
     result = await handle_create_imaging(payload)
 
     assert result["success"] is False
-    assert "Service unavailable" in result["error"]
+    assert result["error"] == "Imaging project creation failed"
+    assert "Service unavailable" not in result["error"]
 
 
 @pytest.mark.asyncio
@@ -273,7 +278,8 @@ async def test_handle_delete_imaging_error(mock_make_request):
     result = await handle_delete_imaging({"imaging_project_id": "img-123"})
 
     assert result["success"] is False
-    assert "Service unavailable" in result["error"]
+    assert result["error"] == "Imaging project deletion failed"
+    assert "Service unavailable" not in result["error"]
 
 
 @pytest.mark.asyncio
@@ -287,7 +293,8 @@ async def test_handle_get_imaging_status_error(mock_make_request):
     })
 
     assert result["success"] is False
-    assert "Service unavailable" in result["error"]
+    assert result["error"] == "Imaging status lookup failed"
+    assert "Service unavailable" not in result["error"]
 
 
 @pytest.mark.asyncio
@@ -301,7 +308,8 @@ async def test_handle_reimport_studies_error(mock_make_request):
     })
 
     assert result["success"] is False
-    assert "Service unavailable" in result["error"]
+    assert result["error"] == "Study reimport failed"
+    assert "Service unavailable" not in result["error"]
 
 
 @pytest.mark.asyncio
@@ -312,4 +320,5 @@ async def test_handle_update_user_profile_error(mock_make_request):
     result = await handle_update_user_profile({"email": "user@test.com", "enabled": True})
 
     assert result["success"] is False
-    assert "Service unavailable" in result["error"]
+    assert result["error"] == "User profile update failed"
+    assert "Service unavailable" not in result["error"]

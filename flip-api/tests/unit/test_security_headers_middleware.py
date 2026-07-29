@@ -56,7 +56,10 @@ def test_security_headers_on_unhandled_exception():
     response = client.get("/error")
 
     assert response.status_code == 500
-    assert response.text == "Internal Server Error"
+    body = response.json()
+    assert body["detail"] == "Internal server error"
+    # A correlation id replaces the exception text as the way to find the real error.
+    assert "request_id" in body
     assert response.headers["strict-transport-security"] == "max-age=31536000; includeSubDomains"
     assert response.headers["x-frame-options"] == "DENY"
     assert response.headers["x-content-type-options"] == "nosniff"

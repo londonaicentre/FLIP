@@ -83,6 +83,10 @@ def retrieve_federated_results(
         # List objects in bucket with model_id prefix
         try:
             list_objects = s3.list_objects(s3_path)
+        except HTTPException:
+            # Author-written 4xx messages (403/404/400) are intentional and safe;
+            # only genuinely unexpected exceptions get a generic message below.
+            raise
         except Exception as e:
             # Drop ``exc_info``: the formatter would otherwise emit ``str(e)``
             # via the traceback. A future boto error shape that embeds a URL
@@ -106,6 +110,10 @@ def retrieve_federated_results(
         # Get presigned URLs for each file
         try:
             result = [s3.get_presigned_url(f) for f in list_objects]
+        except HTTPException:
+            # Author-written 4xx messages (403/404/400) are intentional and safe;
+            # only genuinely unexpected exceptions get a generic message below.
+            raise
         except Exception as e:
             logger.error(
                 f"Error generating pre-signed URLs for model {model_id} "

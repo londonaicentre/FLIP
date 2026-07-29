@@ -58,6 +58,10 @@ def _rollback_cognito_on_audit_failure(email: str, user_pool_id: str, original_e
     """
     try:
         delete_cognito_user(email, user_pool_id)
+    except HTTPException:
+        # Author-written 4xx messages (403/404/400) are intentional and safe;
+        # only genuinely unexpected exceptions get a generic message below.
+        raise
     except Exception:
         logger.exception(
             f"Failed to roll back Cognito user {email} after audit-write failure; "
@@ -132,6 +136,10 @@ def register_user(
             )
             db.add(UsersAudit(action="Registered user", user_id=user_id, modified_by_user_id=token_id))
             db.commit()
+        except HTTPException:
+            # Author-written 4xx messages (403/404/400) are intentional and safe;
+            # only genuinely unexpected exceptions get a generic message below.
+            raise
         except Exception as audit_err:
             db.rollback()
             logger.exception(f"Error writing audit row for new user {user_data.email}")

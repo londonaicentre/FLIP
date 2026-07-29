@@ -144,7 +144,7 @@ def get_uploaded_files_info(
         logger.error(f"Invalid UUID format: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid UUID format: {str(e)}",
+            detail="Invalid UUID format",
         )
     except HTTPException:
         raise
@@ -152,7 +152,7 @@ def get_uploaded_files_info(
         logger.error(f"Unhandled error: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Internal server error: {e}",
+            detail="Internal server error",
         )
 
 
@@ -213,5 +213,5 @@ def get_uploaded_files_info_post(
         logger.error(f"Unhandled error: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Internal server error: {e}",
+            detail="Internal server error",
         )

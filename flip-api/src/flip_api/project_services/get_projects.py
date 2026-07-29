@@ -387,6 +387,10 @@ def get_projects_endpoint(
             paging_details=paging_details,
             filter_details=filter_details,
         )
+    except HTTPException:
+        # Author-written 4xx messages (403/404/400) are intentional and safe;
+        # only genuinely unexpected exceptions get a generic message below.
+        raise
     except Exception as exc:
         logger.error(f"Error fetching projects: {exc}")
         raise HTTPException(

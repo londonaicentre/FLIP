@@ -45,7 +45,7 @@ async def test_make_request_request_error(mock_client):
         await make_request("GET", "http://example.com")
 
     assert exc_info.value.status_code == 502
-    assert "Failed to connect to remote service:" in exc_info.value.detail
+    assert "Failed to connect to remote service" in exc_info.value.detail
 
 
 @pytest.mark.asyncio

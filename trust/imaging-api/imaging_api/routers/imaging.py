@@ -47,9 +47,14 @@ def ping_pacs_endpoint(pacs_id: int, headers: XNATAuthHeaders) -> PacsStatus:
     try:
         return ping_pacs(pacs_id, headers)
     except NotFoundError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        # safe-detail: domain error, message is author-written and user-facing
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    except HTTPException:
+        # Author-written 4xx messages are intentional; only unexpected
+        # exceptions fall through to the generic message below.
+        raise
+    except Exception:
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.get(
@@ -73,9 +78,14 @@ def query_by_accession_number_endpoint(accession_number: str, headers: XNATAuthH
     try:
         return query_by_accession_number(accession_number, headers)
     except NotFoundError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        # safe-detail: domain error, message is author-written and user-facing
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    except HTTPException:
+        # Author-written 4xx messages are intentional; only unexpected
+        # exceptions fall through to the generic message below.
+        raise
+    except Exception:
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.post(
@@ -102,6 +112,11 @@ def queue_image_import_request_endpoint(
     try:
         return queue_image_import_request(import_request, headers)
     except NotFoundError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        # safe-detail: domain error, message is author-written and user-facing
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    except HTTPException:
+        # Author-written 4xx messages are intentional; only unexpected
+        # exceptions fall through to the generic message below.
+        raise
+    except Exception:
+        raise HTTPException(status_code=500, detail="Internal server error")

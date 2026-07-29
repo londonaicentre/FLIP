@@ -157,11 +157,13 @@ def test_create_project_endpoint_db_commit_fails(
         )
 
     assert exc_info.value.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
-    assert exc_info.value.detail == "An error occurred while creating the project."
+    assert exc_info.value.detail == "Failed to create project"
 
     mock_logger.debug.assert_called_once_with(f"Attempting to create project by user: {TEST_USER_ID}")
     mock_has_permissions.assert_called_once_with(TEST_USER_ID, [PermissionRef.CAN_CREATE_PROJECTS], mock_db_session)
     mock_db_session.commit.assert_called_once()
     mock_db_session.rollback.assert_called_once()
-    mock_logger.error.assert_called_once_with(f"Error creating project: 500: Failed to create project: {commit_error}")
+    # The service already raised a well-formed HTTPException, so the endpoint
+    # re-raises it untouched rather than logging and re-wrapping it.
+    mock_logger.exception.assert_not_called()
     mock_db_session.refresh.assert_not_called()

@@ -92,6 +92,10 @@ def process_scanned_file(
                 f"Successfully retrieved the file size and type. "
                 f"Size: {head_object.get('ContentLength')}, type: {head_object.get('ContentType')}"
             )
+        except HTTPException:
+            # Author-written 4xx messages (403/404/400) are intentional and safe;
+            # only genuinely unexpected exceptions get a generic message below.
+            raise
         except Exception:
             logger.error(f"File {file} does not exist in the uploaded model files bucket.")
 
@@ -222,5 +226,5 @@ def process_scanned_file(
         logger.error(f"Unhandled error: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Internal server error: {e}",
+            detail="Internal server error",
         )

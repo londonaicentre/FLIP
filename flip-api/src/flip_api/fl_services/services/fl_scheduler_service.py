@@ -616,9 +616,10 @@ def prepare_and_start_training(model_id: UUID, fl_job_id: UUID, trust_ids: list[
         add_log(model_id, f"Model training assigned to '{net_details.name}'", session)
 
     except Exception as e:
-        logger.error(f"Failed to start training: {e}")
-        error_message = str(e)
-        logger.info(f"Error message: {error_message}")
+        # add_log writes to the model's FL log, which the UI shows to project members,
+        # so it carries a fixed message; the exception stays in the service log.
+        logger.exception(f"Failed to start training: {e}")
+        error_message = "Failed to start training"
         remove_job(fl_job_id, session)
         add_log(model_id, error_message, session, success=False)
         update_model_status(model_id, ModelStatus.ERROR, session)

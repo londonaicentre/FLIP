@@ -120,7 +120,7 @@ class TestCreateProject:
 
         mock_db_session.flush.side_effect = DatabaseError("Database error")
 
-        with pytest.raises(HTTPException, match="Failed to create project: Database error"):
+        with pytest.raises(HTTPException, match="Failed to create project"):
             create_project(payload, current_user_id, mock_db_session)
 
         mock_db_session.rollback.assert_called_once()
@@ -158,7 +158,7 @@ class TestDeleteProject:
 
         mock_db_session.get.return_value = None
 
-        with pytest.raises(HTTPException, match=f"Failed to delete project: Project with ID {project_id} not found."):
+        with pytest.raises(HTTPException, match=f"Project with ID {project_id} not found."):
             delete_project(project_id, current_user_id, mock_db_session)
 
     def test_delete_project_already_deleted(self, mock_db_session: MagicMock, sample_project: Projects):
@@ -179,7 +179,7 @@ class TestDeleteProject:
 
         mock_db_session.get.side_effect = DatabaseError("Database error")
 
-        with pytest.raises(HTTPException, match="Failed to delete project: Database error"):
+        with pytest.raises(HTTPException, match="Failed to delete project"):
             delete_project(project_id, current_user_id, mock_db_session)
 
         mock_db_session.rollback.assert_called_once()
@@ -222,7 +222,7 @@ class TestEditProjectService:
 
         with pytest.raises(
             HTTPException,
-            match=f"Failed to edit project: Project {project_id} does not exist or is deleted, cannot edit.",
+            match=f"Project {project_id} does not exist or is deleted, cannot edit.",
         ):
             edit_project_service(project_id, payload, current_user_id, mock_db_session)
 
@@ -236,7 +236,7 @@ class TestEditProjectService:
 
         with pytest.raises(
             HTTPException,
-            match=f"Failed to edit project: Project {project_id} does not exist or is deleted, cannot edit.",
+            match=f"Project {project_id} does not exist or is deleted, cannot edit.",
         ):
             edit_project_service(project_id, payload, current_user_id, mock_db_session)
 
@@ -247,7 +247,7 @@ class TestEditProjectService:
 
         mock_db_session.get.side_effect = DatabaseError("Database error")
 
-        with pytest.raises(HTTPException, match="Failed to edit project: Database error"):
+        with pytest.raises(HTTPException, match="Failed to edit project"):
             edit_project_service(project_id, payload, current_user_id, mock_db_session)
 
         mock_db_session.rollback.assert_called_once()
@@ -629,10 +629,11 @@ class TestGetReimportQueries:
         mock_session = MagicMock()
         mock_session.exec.side_effect = Exception("DB error")
 
-        with pytest.raises(ValueError, match="DB error") as exc_info:
+        with pytest.raises(ValueError, match="Error fetching reimport queries") as exc_info:
             get_reimport_queries_service(max_reimport_count=5, session=mock_session)
 
-        assert "Error fetching reimport queries: DB error" in str(exc_info.value)
+        # The underlying "DB error" stays in the log, not in the raised message.
+        assert str(exc_info.value) == "Error fetching reimport queries"
 
 
 class TestGetProject:

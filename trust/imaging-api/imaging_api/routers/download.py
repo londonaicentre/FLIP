@@ -64,6 +64,10 @@ async def download_images_by_accession_number(
     logger.info("Trying to decrypt Central Hub Project ID")
     try:
         central_hub_project_id = decrypt(request_data.encrypted_central_hub_project_id)
+    except HTTPException:
+        # Author-written 4xx messages are intentional; only unexpected
+        # exceptions fall through to the generic message below.
+        raise
     except Exception as e:
         error_msg = f"Failed to decrypt Central Hub Project ID: {str(e)}"
         logger.error(error_msg)
@@ -95,6 +99,10 @@ async def download_images_by_accession_number(
         error_msg = f"Invalid download request: {str(e)}"
         logger.error(error_msg)
         raise HTTPException(status_code=400, detail=error_msg)
+    except HTTPException:
+        # Author-written 4xx messages are intentional; only unexpected
+        # exceptions fall through to the generic message below.
+        raise
     except Exception as e:
         error_msg = f"Failed to download and unzip images: {str(e)}"
         logger.error(error_msg)

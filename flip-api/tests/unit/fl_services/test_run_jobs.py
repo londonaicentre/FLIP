@@ -96,7 +96,7 @@ def test_run_jobs_failure(mock_db, mock_check_for_available_net, mock_check_for_
         with pytest.raises(HTTPException) as exc_info:
             run_jobs_core(mock_db)
         assert exc_info.value.status_code == 500
-        assert "start error" in exc_info.value.detail
+        assert "An error occurred while running jobs" in exc_info.value.detail
 
 
 # ── deployment-mode gate tests ──────────────────────────────────────────────

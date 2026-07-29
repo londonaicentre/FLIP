@@ -96,6 +96,10 @@ def update_user_endpoint(
 
             try:
                 update_xnat_user_profile(set_user_enabled_data, db)
+            except HTTPException:
+                # Author-written 4xx messages (403/404/400) are intentional and safe;
+                # only genuinely unexpected exceptions get a generic message below.
+                raise
             except Exception as xnat_err:
                 # Despite the name, ``update_xnat_user_profile`` does not call
                 # XNAT directly — it enqueues one ``TrustTask`` per trust
@@ -153,6 +157,10 @@ def update_user_endpoint(
                 )
             )
             db.commit()
+        except HTTPException:
+            # Author-written 4xx messages (403/404/400) are intentional and safe;
+            # only genuinely unexpected exceptions get a generic message below.
+            raise
         except Exception as audit_err:
             db.rollback()
             logger.exception(

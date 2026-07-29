@@ -162,4 +162,4 @@ def test_save_model_unexpected_error(
 
     response = client.post("/api/model", json=test_payload)
     assert response.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
-    assert "Unexpected error" in response.json()["detail"]
+    assert "Unexpected error occurred while saving model" in response.json()["detail"]

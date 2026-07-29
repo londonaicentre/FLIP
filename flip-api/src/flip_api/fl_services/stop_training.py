@@ -60,8 +60,12 @@ def stop_training(
         abort_model_training(request, model_id, db)
         update_model_status(model_id, ModelStatus.STOPPED, db)
 
-    except Exception as e:
+    except HTTPException:
+        # Author-written 4xx messages (403/404/400) are intentional and safe;
+        # only genuinely unexpected exceptions get a generic message below.
+        raise
+    except Exception:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"An error occurred while stopping model training: {str(e)}",
+            detail="An error occurred while stopping model training",
         )

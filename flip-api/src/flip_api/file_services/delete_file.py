@@ -76,6 +76,10 @@ def delete_model_file(
         s3 = S3Client()
         try:
             s3.delete_object(s3_path)
+        except HTTPException:
+            # Author-written 4xx messages (403/404/400) are intentional and safe;
+            # only genuinely unexpected exceptions get a generic message below.
+            raise
         except Exception:
             logger.exception(f"Error deleting file from S3 for model_id={model_id}")
             raise HTTPException(

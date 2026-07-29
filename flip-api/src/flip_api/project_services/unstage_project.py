@@ -102,6 +102,10 @@ def unstage_project_endpoint(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(ve),
         )
+    except HTTPException:
+        # Author-written 4xx messages (403/404/400) are intentional and safe;
+        # only genuinely unexpected exceptions get a generic message below.
+        raise
     except Exception as e:
         logger.error(f"Unhandled error during unstaging project {project_id}: {e}", exc_info=True)
         session.rollback()
