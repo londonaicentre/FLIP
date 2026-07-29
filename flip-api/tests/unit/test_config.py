@@ -56,3 +56,17 @@ def test_picklescan_suffixes_default_and_parsing():
     assert Settings().PICKLESCAN_FILE_SUFFIXES == [".pt", ".pth", ".pkl", ".pickle"]
     assert Settings(PICKLESCAN_FILE_SUFFIXES="pt,PKL").PICKLESCAN_FILE_SUFFIXES == [".pt", ".pkl"]
     assert Settings(PICKLESCAN_FILE_SUFFIXES="").PICKLESCAN_FILE_SUFFIXES == Settings().PICKLESCAN_FILE_SUFFIXES
+
+
+def test_scan_int_settings_empty_string_falls_back_to_default():
+    """Empty-string ints must fall back, not blow up at import time.
+
+    The Makefile exports env-file keys with ``sed 's/=.*//'``, which strips the
+    value from *every* line — including commented-out ones — so a setting that
+    merely appears in `.env.development.example` as a comment arrives as an
+    empty string. Pydantic treats that as a real override, which took down the
+    whole app at import (CI, 2026-07-29).
+    """
+    assert Settings(PICKLESCAN_TIMEOUT_SECONDS="").PICKLESCAN_TIMEOUT_SECONDS == 120
+    assert Settings(SCHEDULER_MALWARE_SCAN_RECONCILE_RATE="").SCHEDULER_MALWARE_SCAN_RECONCILE_RATE == 1
+    assert Settings(PICKLESCAN_TIMEOUT_SECONDS="45").PICKLESCAN_TIMEOUT_SECONDS == 45

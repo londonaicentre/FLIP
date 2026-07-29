@@ -203,6 +203,22 @@ class Settings(BaseSettings):
             return 1800
         return v
 
+    @field_validator("PICKLESCAN_TIMEOUT_SECONDS", "SCHEDULER_MALWARE_SCAN_RECONCILE_RATE", mode="before")
+    @classmethod
+    def coerce_empty_scan_int(cls, v: object, info: ValidationInfo) -> object:
+        """Treat an empty-string scan-timing setting as the field default.
+
+        Same rationale as ``coerce_empty_max_model_file_bytes``: these arrive
+        as empty strings whenever the name appears in an env file at all —
+        including *commented out*, since the Makefile's
+        ``export $(shell sed 's/=.*//' ../.env.development)`` strips the value
+        from every line and exports the bare name. Pydantic treats that as a
+        real override and rejects it against ``int``.
+        """
+        if v is None or v == "":
+            return cls.model_fields[info.field_name].default  # type: ignore[index]
+        return v
+
     @field_validator("ALLOWED_MODEL_FILE_EXTENSIONS", "PICKLESCAN_FILE_SUFFIXES", mode="before")
     @classmethod
     def parse_suffix_list(cls, v: object, info: ValidationInfo) -> object:
