@@ -21,12 +21,15 @@ profile; config from gitignored `.env.build`), NOT the runtime trust stack.
 - **`.data_version` must not move**: its path is hardcoded in `deploy/providers/AWS/Makefile`, which
   passes the value on to Ansible (`-e omop_data_version=`); the Helm chart consumes it via the
   `OMOP_DATA_VERSION` env var in `generate_values.py`.
-- **Vocabulary licensing**: the core vocab bundle (SNOMED CT, LOINC, Read, ...) is licensed material —
-  `data/` is gitignored and must never be committed; there is **no CI image build** for this service.
-  `make fetch-vocab-core` extracts the bundle from the already-published public image (which already
-  redistributes it — a pre-existing exposure recorded in FLIP#834; this repo must not add a second
-  redistribution channel). The DICOM vocab (NEMA PS3 via DICOM2OMOP, Apache 2.0) is freely
-  redistributable and lives on the HF dataset.
+- **Vocabulary licensing**: the core vocab bundle — an OHDSI Athena export, 59 vocabularies incl.
+  SNOMED CT, LOINC, Read, dm+d (roster + versions in README "The core vocabulary bundle") — is licensed
+  material: `data/` is gitignored and must never be committed; there is **no CI image build** for this
+  service. `make fetch-vocab-core` downloads it from `s3://$(VOCAB_S3_BUCKET)/vocab/` (default
+  `flipdev-aicentre`, org AWS needed); `make fetch-vocab-core-from-image` is the credential-free fallback
+  extracting from the already-published public image (which already redistributes it — a pre-existing
+  exposure recorded in FLIP#834; this repo must not add a second redistribution channel). The DICOM vocab
+  (byte-identical to DICOM2OMOP `files/OMOP CDM Staging/` @ upstream `1ef3354`, Apache 2.0, pickle
+  converted to CSV) is freely redistributable and lives on the HF dataset.
 - **Read-only roles are a security boundary**: `files/create_readonly_users.sql` creates
   `omop_readonly_base` + `data_analyst_reader` (SELECT-only, explicit REVOKEs) — the database half of
   data-access-api's SQL-injection defence-in-depth (`data_access_api/services/cohort.py`). The analyst

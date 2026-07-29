@@ -52,16 +52,53 @@ data must load first (see `apply-constraints` below).
 
 ```sh
 cp .env.build.example .env.build   # local build credentials (gitignored)
-make build                         # fetches the core vocab, then builds the image
+make build                         # fetches the core vocab (S3), then builds the image
 ```
 
-> **Vocabulary licensing.** The core vocab bundle contains licensed OMOP
-> vocabularies (SNOMED CT, LOINC, Read, ...) and is therefore **never tracked
-> in git** and not fetchable in CI. `make fetch-vocab-core` extracts it from
-> the already-published public image (no credentialed download, no new
-> exposure). The DICOM vocabulary (NEMA PS3, converted via
-> [DICOM2OMOP](https://github.com/paulnagy/DICOM2OMOP), Apache 2.0) is freely
-> redistributable and fetched anonymously from the Hugging Face dataset.
+### The core vocabulary bundle
+
+`vocab_aicentre_core_20240916` is an [OHDSI Athena](https://athena.ohdsi.org/)
+vocabulary export (snapshot `v5.0 30-AUG-24`): nine tab-separated files
+(~3.6 GB unpacked — `CONCEPT.csv` 819 MB, `CONCEPT_RELATIONSHIP.csv` 2.0 GB,
+`CONCEPT_ANCESTOR.csv` 704 MB, `CONCEPT_SYNONYM.csv` 139 MB,
+`DRUG_STRENGTH.csv` 159 MB, plus the small `CONCEPT_CLASS` / `DOMAIN` /
+`RELATIONSHIP` / `VOCABULARY` tables) that
+`60_populate_vocabulary_tables.sql` COPYs into the `omop` schema at first
+container init. It carries **59 vocabularies** — the load-bearing ones for
+FLIP's cohort queries and the licensing-relevant ones are:
+
+| Vocabulary | Version in bundle | Licensing |
+|---|---|---|
+| SNOMED CT | 2024-02 Int / 2024-03 US / 2024-04 UK editions | Affiliate licence (SNOMED International / NHS) |
+| LOINC | 2.77 | Regenstrief terms of use |
+| Read v2 | NHS READV2 21.0.0 | NHS TRUD licence |
+| dm+d | 2023-05-22 | NHS |
+| ICD-10 | WHO 2021 release | WHO |
+| ICD-9-CM / ICD-10-CM / ICD-10-PCS | v32 / FY2025 / 2024 | Public domain (US) |
+| RxNorm / RxNorm Ext / NDC | 20240506 / 20240701 / 20240825 | UMLS terms (RxNorm) |
+| OMOP structural vocabularies (Domain, Concept Class, Type Concept, Visit, ...) | — | Apache 2.0 (OHDSI) |
+
+Because of the licensed entries the bundle is **never tracked in git** and not
+fetchable in CI. `make fetch-vocab-core` downloads it from the org S3 bucket
+(`s3://flipdev-aicentre/vocab/`, override with `VOCAB_S3_BUCKET=`; needs AWS
+credentials for that account — the same source and technique the private repo
+used). Without bucket access, `make fetch-vocab-core-from-image` extracts the
+identical bundle from the already-published public image instead (no
+credentials, no new exposure).
+
+### The DICOM vocabulary bundle
+
+`vocab_dicom_paulnagy_20260109` (loaded at populate time by
+`load_dicom_vocab.py`) is an exact, byte-for-byte copy of four files from the
+Apache-2.0 [DICOM2OMOP](https://github.com/paulnagy/DICOM2OMOP) project's
+`files/OMOP CDM Staging/` directory as of upstream commit `1ef3354`
+(2026-01-08, "Update notebook with new numbering and regenerate tables"):
+`omop_table_staging_v5.csv`, `cs_values_maps_to.csv`,
+`cs_values_maps_to_value.csv`, and `part3_to_part16_relationship_via_CID` —
+the last converted from the upstream pickle to CSV when the bundle was
+published to the Hugging Face dataset, so the loader deserialises no pickles.
+It is NEMA PS3-derived and freely redistributable; `make fetch-vocab-dicom`
+fetches it anonymously.
 
 ## Populating (the canonical dataset and N-trust splitting)
 

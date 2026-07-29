@@ -71,9 +71,12 @@ update-omop-data:
 build_compose = docker compose -f compose.yml
 GHCR_IMAGE = ghcr.io/londonaicentre/omop-db
 OMOP_DB_TAG ?= latest
-# Where fetch-vocab-core extracts the licensed vocab bundle from — a published
-# tag, deliberately decoupled from OMOP_DB_TAG (which may not exist yet when
-# building a new tag).
+# S3 bucket holding the vocab bundle zips under vocab/ (the AI Centre's dev
+# bucket by default; needs AWS credentials for that account). Contributors
+# without bucket access: see fetch-vocab-core-from-image.
+VOCAB_S3_BUCKET ?= flipdev-aicentre
+# Published tag fetch-vocab-core-from-image extracts from — deliberately
+# decoupled from OMOP_DB_TAG (which may not exist yet when building a new tag).
 VOCAB_SOURCE_TAG ?= latest
 
 # Fetched inputs (all gitignored under data/). The core vocab bundle contains
@@ -107,11 +110,39 @@ up-build: check-build-env build
 down-build:
 	$(build_compose) down --remove-orphans
 
-# Default source for the core vocab is the already-published image — it avoids
-# any credentialed download and adds no new exposure (the image is public).
-# Copies into a temp dir and renames on success, so a failed/interrupted copy
-# is never mistaken for a present bundle on the next run.
+# Primary source for the core vocab: the org S3 bucket (same bundle the private
+# repo used; see README "The core vocabulary bundle" for its contents). All
+# stages land in temp paths and rename on success, so a failed/interrupted
+# download or extraction is never mistaken for a present bundle on the next run.
 fetch-vocab-core:
+	@if [ -d "data/$(VOCAB_CORE_BUNDLE)" ]; then \
+		echo "data/$(VOCAB_CORE_BUNDLE) already present — skipping."; \
+	else \
+		if ! command -v aws > /dev/null 2>&1 || ! aws sts get-caller-identity > /dev/null 2>&1; then \
+			echo "❌ AWS CLI access unavailable (needed for s3://$(VOCAB_S3_BUCKET)/vocab/)."; \
+			echo "   Without bucket access, run: make fetch-vocab-core-from-image"; \
+			exit 1; \
+		fi; \
+		mkdir -p data; \
+		echo "⬇️  Downloading s3://$(VOCAB_S3_BUCKET)/vocab/$(VOCAB_CORE_BUNDLE).zip ..."; \
+		if ! aws s3 cp "s3://$(VOCAB_S3_BUCKET)/vocab/$(VOCAB_CORE_BUNDLE).zip" "data/$(VOCAB_CORE_BUNDLE).zip.tmp"; then \
+			rm -f "data/$(VOCAB_CORE_BUNDLE).zip.tmp"; \
+			echo "❌ download failed — no core vocab bundle fetched"; \
+			exit 1; \
+		fi; \
+		mv "data/$(VOCAB_CORE_BUNDLE).zip.tmp" "data/$(VOCAB_CORE_BUNDLE).zip"; \
+		rm -rf "data/.$(VOCAB_CORE_BUNDLE).tmp"; \
+		if ! unzip -q "data/$(VOCAB_CORE_BUNDLE).zip" -d "data/.$(VOCAB_CORE_BUNDLE).tmp"; then \
+			rm -rf "data/.$(VOCAB_CORE_BUNDLE).tmp"; \
+			echo "❌ unzip failed — delete data/$(VOCAB_CORE_BUNDLE).zip and re-run"; \
+			exit 1; \
+		fi; \
+		mv "data/.$(VOCAB_CORE_BUNDLE).tmp" "data/$(VOCAB_CORE_BUNDLE)"; \
+	fi
+
+# Fallback for environments without org bucket access: extract the bundle from
+# the already-published public image — no credentials, no new exposure.
+fetch-vocab-core-from-image:
 	@if [ -d "data/$(VOCAB_CORE_BUNDLE)" ]; then \
 		echo "data/$(VOCAB_CORE_BUNDLE) already present — skipping."; \
 	else \
