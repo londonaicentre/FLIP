@@ -91,6 +91,105 @@ Each trust has a distinct key. A trust's `TRUST_INTERNAL_SERVICE_KEY` is minted 
 For the threat model, see the **Trust-internal Service Authentication** section in
 [`CLAUDE.md`](../../CLAUDE.md).
 
+## Cohort query validation
+
+A cohort query passes three layers before it runs, and they do **different jobs**. They are not
+copies of each other and must not be made into copies:
+
+| Layer | Job | Authority? |
+| --- | --- | --- |
+| flip-ui cohort form | Required-field validation only — "you typed something" | No |
+| flip-api `submit_cohort_query.validate_query` | Fast-feedback validity pre-check before fan-out | No |
+| data-access-api `services/cohort.validate_query` | Decides what may actually run against OMOP | **Yes** |
+
+### This service is the authority
+
+`validate_query` in [`services/cohort.py`](data_access_api/services/cohort.py) is the security
+boundary, and it is deliberately self-sufficient. A trust holds patient data and the central hub
+is a separate administrative domain; the trust must stay safe regardless of what the hub did or
+did not check, because a compromised, misconfigured, or simply out-of-date hub must not be able to
+widen what a trust will execute. Nothing here may be relaxed on the assumption that the hub
+filtered first.
+
+It performs a single parse-validate-emit pass and enforces:
+
+1. A maximum query length (cheap DoS guard, before the parser allocates an AST).
+2. Exactly one non-empty statement (defeats query stacking and stray semicolons).
+3. A SELECT-shaped top-level statement (`SELECT`/`UNION`/`INTERSECT`/`EXCEPT`).
+4. Schema-qualified tables limited to `omop` (blocks `information_schema` / `pg_catalog`
+   enumeration, which Postgres exposes to role `public` by default).
+5. Literal-integer `LIMIT`/`OFFSET` (defeats blind extraction that makes the row count a function
+   of a character value and reads it back through the cohort-size response).
+
+It then returns the query **re-emitted from the AST it just checked**. Callers pass that string to
+the engine, never the caller's original — so what reaches Postgres is generated from a validated
+tree. Underneath all of this the service connects as `data_analyst_reader`, a role with `SELECT`
+only and `INSERT`/`UPDATE`/`DELETE`/`TRUNCATE`/`CREATE` revoked, so DDL and DML are refused by
+Postgres itself. That is why `validate_query` does not keyword-filter for `DROP` and friends.
+
+Emitting from `validate_query` rather than from a second helper is deliberate: it keeps one parse
+and one policy, so there is no second copy of the single-statement and SELECT-shape rules to drift
+out of step.
+
+### The hub check is fast feedback, not security
+
+`validate_query` in `flip_api/cohort_services/submit_cohort_query.py` runs before the hub fans a
+query out. Because this service is self-sufficient, anything the hub enforced for safety would
+have to be enforced here anyway — so duplicating these rules on the hub would buy no security,
+only two copies of one policy to keep in sync.
+
+What it buys instead is **fast feedback**. Submitting a cohort query fans it out to every
+registered trust as an encrypted task, each validating asynchronously and reporting back. Without
+a pre-check, a researcher who typos their SQL waits for that entire round-trip, across N trusts,
+to find out. Catching "this cannot succeed anywhere" while the request is still in hand turns a
+multi-minute fan-out into an immediate 400.
+
+So the hub check is deliberately *weaker*, and only rejects what every trust would reject too:
+unparseable input, multiple statements, non-SELECT statements, and over-length queries. It
+intentionally does **not** enforce trust-local policy — the `omop` schema pin, the literal-`LIMIT`
+rule, the read-only role, or the cohort-size threshold — because those depend on facts the hub has
+no authority over and which may legitimately differ per trust.
+
+That asymmetry makes drift harmless in the direction that matters. A hub lagging behind a trust
+merely wastes a fan-out on a query the trust then refuses; it is never a bypass. A hub that got
+*ahead* would reject something a trust would have allowed, which surfaces immediately as a usability
+regression. Neither is a security failure — which is a far cheaper invariant to maintain than
+"these two must match".
+
+### No keyword denylists anywhere
+
+The hub check does not use a keyword denylist, and neither does the UI. Both previously carried
+the same regex banning substrings including `substring` — which blocked every legitimate use of
+the standard `SUBSTRING()` function while stopping nothing an attacker would actually do. The
+blind-extraction technique it was aimed at is defeated properly here by rule 5 above, and DDL/DML
+is refused by the read-only database role.
+
+Two copies of one denylist across two services was also exactly the drift hazard this layering
+exists to avoid: a rule that is not authoritative anywhere still had to be maintained in both
+places. The UI now validates only that a query was entered, and reports SQL problems from the
+hub's response.
+
+### Row-level data and the disclosure threshold
+
+`/cohort` returns aggregate statistics and suppresses any count below `COHORT_QUERY_THRESHOLD`,
+including a genuine zero, so the response cannot reveal that at least one patient matched.
+
+`/cohort/dataframe` is the training-data path — user FL code reaches it through
+`flip.get_dataframe(...)` — so it necessarily returns row-level records; a model trains on rows.
+The data stays inside the trust and only model updates leave it. It applies the same
+`COHORT_QUERY_THRESHOLD`: a cohort below the threshold is refused with a 403 whose message is
+identical for zero rows and for threshold-minus-one, so the refusal cannot be used as an oracle.
+Such a cohort has no training value anyway.
+
+There is deliberately no column allowlist on `/cohort/dataframe`. `accession_id` is load-bearing —
+it is how returned rows join to the imaging studies pulled into XNAT — and shipped tutorials
+legitimately select `*`, so a column filter would break every FL app while a caller could trivially
+alias around it. Column-level minimisation belongs in the cohort query a project submits and in
+project approval, not at this layer.
+
+`/cohort/accession-ids` is the minimal-disclosure endpoint: it wraps the caller's validated query
+so only the `accession_id` column can cross the boundary.
+
 ## Testing
 
 Tests are split into `tests/` (unit-level, no real backing services — `tests/routers/`, `tests/services/`, `tests/db/`, etc.) and `tests/integration/` (real OMOP database via the shared `trust/deploy/compose.test.yml` stack). See [Where does my test go?](../../CONTRIBUTING.md#where-does-my-test-go) in `CONTRIBUTING.md` for the placement rule, and [`trust/README.md`](../README.md#integration-tests-cohort-query-end-to-end) for how the cohort-query end-to-end suite is wired.

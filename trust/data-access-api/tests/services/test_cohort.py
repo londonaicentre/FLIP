@@ -414,7 +414,7 @@ def test_get_records_pandas_error_without_dbapi_cause(mock_read_sql):
 )
 def test_validate_query_accepts_well_formed_select(query: str):
     """Plain SELECT (with or without omop qualification, CTE, or UNION) is accepted."""
-    assert validate_query(query) is True
+    assert validate_query(query)
 
 
 @pytest.mark.parametrize(

@@ -9,7 +9,7 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "0001-01-01T00:00:00Z" # This has no effect and is included for backwards compatibility when using relative exclude-newer values.
+exclude-newer = "2026-07-26T16:43:29.350284708Z"
 exclude-newer-span = "P3D"
 
 [[package]]
@@ -817,8 +817,8 @@ dependencies = [
     { name = "python-multipart" },
     { name = "slowapi" },
     { name = "sqlalchemy" },
+    { name = "sqlglot" },
     { name = "sqlmodel" },
-    { name = "sqlparse" },
     { name = "starlette" },
     { name = "tornado" },
     { name = "urllib3" },
@@ -865,8 +865,8 @@ requires-dist = [
     { name = "python-multipart", specifier = ">=0.0.26" },
     { name = "slowapi", specifier = ">=0.1.9" },
     { name = "sqlalchemy", specifier = ">=2.0.27" },
+    { name = "sqlglot", specifier = ">=26.33.0" },
     { name = "sqlmodel", specifier = ">=0.0.24" },
-    { name = "sqlparse", specifier = ">=0.5.4" },
     { name = "starlette", specifier = ">=0.49.1" },
     { name = "tornado", specifier = ">=6.5.2" },
     { name = "urllib3", specifier = ">=2.7.0" },
@@ -2373,6 +2373,15 @@ wheels = [
 ]
 
 [[package]]
+name = "sqlglot"
+version = "30.13.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/bf/62/6d5bd3169478b7f09e08ab3e50175d486a9e7f3a419b88fc9280ba564ab1/sqlglot-30.13.0.tar.gz", hash = "sha256:f0a6eb79de2fd6efe2689f8cf197caa4f08bfe77c7880315616fa4420b8ba2bf", size = 5932385, upload-time = "2026-07-20T20:16:54.873Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/f2/2f/2076eca54f6a8ed1c86301bdb4bb2ae4181b0c1c4dbc041062ca997dc1b2/sqlglot-30.13.0-py3-none-any.whl", hash = "sha256:08f87ff7b052246d61b731628c8c2db0bc91f2c9e69f5ba68a1d160a9f5b49b1", size = 719120, upload-time = "2026-07-20T20:16:53.248Z" },
+]
+
+[[package]]
 name = "sqlmodel"
 version = "0.0.38"
 source = { registry = "https://pypi.org/simple" }
@@ -2384,15 +2393,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/64/0d/26ec1329960ea9430131fe63f63a95ea4cb8971d49c891ff7e1f3255421c/sqlmodel-0.0.38.tar.gz", hash = "sha256:d583ec237b14103809f74e8630032bc40ab68cd6b754a610f0813c56911a547b", size = 86710, upload-time = "2026-04-02T21:03:55.571Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/72/c7/10c60af0607ab6fa136264f7f39d205932218516226d38585324ffda705d/sqlmodel-0.0.38-py3-none-any.whl", hash = "sha256:84e3fa990a77395461ded72a6c73173438ce8449d5c1c4d97fbff1b1df692649", size = 27294, upload-time = "2026-04-02T21:03:56.406Z" },
-]
-
-[[package]]
-name = "sqlparse"
-version = "0.5.5"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/90/76/437d71068094df0726366574cf3432a4ed754217b436eb7429415cf2d480/sqlparse-0.5.5.tar.gz", hash = "sha256:e20d4a9b0b8585fdf63b10d30066c7c94c5d7a7ec47c889a2d83a3caa93ff28e", size = 120815, upload-time = "2025-12-19T07:17:45.073Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/49/4b/359f28a903c13438ef59ebeee215fb25da53066db67b305c125f1c6d2a25/sqlparse-0.5.5-py3-none-any.whl", hash = "sha256:12a08b3bf3eec877c519589833aed092e2444e68240a3577e8e26148acc7b1ba", size = 46138, upload-time = "2025-12-19T07:17:46.573Z" },
 ]
 
 [[package]]
