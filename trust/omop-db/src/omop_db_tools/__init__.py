@@ -1,4 +1,3 @@
-#!/bin/sh
 # Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -10,15 +9,4 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-
-# wait-for-postgres.sh <port> — block until Postgres answers on localhost:<port>.
-
-set -e
-
->&2 echo "⏳ Waiting for Postgres to be available on port $1..."
-until pg_isready -h localhost -p "$1"; do
-  >&2 echo "."
-  sleep 1
-done
-
->&2 echo "✅ Postgres is up"
+"""Build and populate tooling for the FLIP trust OMOP database image."""

@@ -18,12 +18,28 @@ include $(KIT_ENV_FILE)
 export $(shell sed 's/=.*//' $(KIT_ENV_FILE))
 endif
 
+# Build-pipeline config (gitignored; cp .env.build.example .env.build). Included
+# after the kit example so build values win inside the build pipeline.
+BUILD_ENV_FILE=.env.build
+ifneq ("$(wildcard $(BUILD_ENV_FILE))","")
+include $(BUILD_ENV_FILE)
+export $(shell sed 's/=.*//' $(BUILD_ENV_FILE))
+endif
+
 network1 = deploy_trust-network-1
 # network2 = deploy_trust-network-2
 
 service_name = omop-db
 docker_command = docker compose --project-directory .. -f ../deploy/compose_trust.development.yml
 run_clean = run --rm --remove-orphans
+
+lint_command = uv run ruff check . --fix
+mypy_command = uv run mypy src/ tests/ --ignore-missing-imports
+test_coverage_command = uv run pytest tests/unit --tb=short --disable-warnings --cov=src/omop_db_tools --cov-report=html:htmlcov-unit --cov-report=term-missing --cov-report=xml:coverage-unit.xml
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Runtime-stack helpers (the omop-db service inside a trust stack)
+# ─────────────────────────────────────────────────────────────────────────────
 
 # Using the run command ignores the port mapping
 up-test-omop-trust1:
@@ -50,3 +66,99 @@ shell:
 # Pass TRUST=1 or TRUST=2 to update only a single trust; defaults to all.
 update-omop-data:
 	TRUST=$(TRUST) CLEAN_AFTER_UPDATE=True ./update_omop_data.sh
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Image build + populate pipeline (standalone; see README "Building the image")
+# ─────────────────────────────────────────────────────────────────────────────
+
+build_compose = docker compose -f compose.yml
+GHCR_IMAGE = ghcr.io/londonaicentre/omop-db
+OMOP_DB_TAG ?= latest
+
+# Fetched inputs (all gitignored under data/). The core vocab bundle contains
+# licensed OMOP vocabularies (SNOMED CT, LOINC, Read, ...) and must never be
+# committed; the DICOM bundle and the canonical CSV dataset are public.
+VOCAB_CORE_BUNDLE = vocab_aicentre_core_20240916
+VOCAB_DICOM_BUNDLE = vocab_dicom_paulnagy_20260109
+OMOP_CSV_DATA_VERSION = 20260729
+HF_TRUST_DATA_BASE = https://huggingface.co/datasets/aicentreflip/trust-data/resolve/main
+
+NUM_TRUSTS = 2
+PARTITION = legacy
+
+check-build-env:
+	@if [ ! -f "$(BUILD_ENV_FILE)" ]; then \
+		echo "❌ $(BUILD_ENV_FILE) not found — run: cp .env.build.example .env.build"; \
+		exit 1; \
+	fi
+
+build: fetch-vocab-core
+	$(build_compose) build
+
+up-build: check-build-env
+	$(build_compose) up -d omop-db-trust1 omop-db-trust2
+
+down-build:
+	$(build_compose) down --remove-orphans
+
+# Default source for the core vocab is the already-published image — it avoids
+# any credentialed download and adds no new exposure (the image is public).
+fetch-vocab-core:
+	@if [ -d "data/$(VOCAB_CORE_BUNDLE)" ]; then \
+		echo "data/$(VOCAB_CORE_BUNDLE) already present — skipping."; \
+	else \
+		echo "⬇️  Extracting core vocab from $(GHCR_IMAGE):$(OMOP_DB_TAG) ..."; \
+		mkdir -p data; \
+		cid=$$(docker create $(GHCR_IMAGE):$(OMOP_DB_TAG)); \
+		docker cp $$cid:/flip/omop/vocab data/$(VOCAB_CORE_BUNDLE); \
+		docker rm $$cid > /dev/null; \
+	fi
+
+# The DICOM vocab (NEMA PS3, via DICOM2OMOP — Apache 2.0) is freely
+# redistributable and fetched anonymously from the public HF dataset.
+fetch-vocab-dicom:
+	@if [ -d "data/$(VOCAB_DICOM_BUNDLE)" ] || [ -f "data/$(VOCAB_DICOM_BUNDLE).zip" ]; then \
+		echo "data/$(VOCAB_DICOM_BUNDLE) already present — skipping."; \
+	else \
+		mkdir -p data; \
+		curl -fSL -o "data/$(VOCAB_DICOM_BUNDLE).zip" "$(HF_TRUST_DATA_BASE)/omop-vocab/$(VOCAB_DICOM_BUNDLE).zip"; \
+	fi
+
+fetch-dataset:
+	uv run python -m omop_db_tools.dataset fetch --version $(OMOP_CSV_DATA_VERSION) --dest data/canonical
+
+# Populate every build database with its slice of the canonical dataset, then
+# `make apply-constraints`. Constraints are deliberately NOT part of image init:
+# loading data after applying them fails.
+populate: fetch-vocab-dicom fetch-dataset populate-trust-1 populate-trust-2
+
+populate-trust-%: check-build-env
+	./wait-for-postgres.sh $(OMOP_DB_PORT_TRUST_$*)
+	OMOP_DB_PORT=$(OMOP_DB_PORT_TRUST_$*) uv run python -m omop_db_tools.load_dicom_vocab \
+		--vocab-dir data/$(VOCAB_DICOM_BUNDLE)
+	OMOP_DB_PORT=$(OMOP_DB_PORT_TRUST_$*) uv run python -m omop_db_tools.import_tables \
+		--trust-index $* --num-trusts $(NUM_TRUSTS) --partition $(PARTITION) --data-dir data/canonical
+
+apply-constraints: check-build-env
+	@echo "🔗 Applying OMOP CDM constraints..."
+	$(build_compose) exec -T omop-db-trust1 psql -U $(OMOP_POSTGRES_USER) -d $(OMOP_POSTGRES_DB) -f /flip/omop/constraints.sql
+	$(build_compose) exec -T omop-db-trust2 psql -U $(OMOP_POSTGRES_USER) -d $(OMOP_POSTGRES_DB) -f /flip/omop/constraints.sql
+
+# Push the already-built image to GHCR. Do `docker login ghcr.io` first if needed.
+push:
+	docker push $(GHCR_IMAGE):$(OMOP_DB_TAG)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Lint & tests (the populate tooling has no service container — all local uv)
+# ─────────────────────────────────────────────────────────────────────────────
+
+lint: local_lint
+mypy: local_mypy
+local_lint:
+	$(lint_command)
+local_mypy:
+	$(mypy_command)
+local_test:
+	$(lint_command) && $(mypy_command) && $(test_coverage_command)
+unit_test: local_test
+test: local_test

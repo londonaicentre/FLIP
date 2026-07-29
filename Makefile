@@ -383,7 +383,7 @@ integration_test:
 	$(MAKE) -C trust integration_test
 
 # Python projects managed by uv; each has its own pyproject.toml + uv.lock.
-UV_PROJECTS := . flip-api docs trust/trust-api trust/imaging-api trust/data-access-api trust/xnat/tests deploy/providers/AWS
+UV_PROJECTS := . flip-api docs trust/trust-api trust/imaging-api trust/data-access-api trust/omop-db trust/xnat/tests deploy/providers/AWS
 
 # Regenerate every uv.lock so it matches its pyproject.toml. Run after changing
 # dependencies in any service, or to refresh all lockfiles in one pass.

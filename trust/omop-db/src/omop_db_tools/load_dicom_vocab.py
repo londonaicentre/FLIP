@@ -1,199 +1,214 @@
-# Adapted from https://github.com/paulnagy/DICOM2OMOP/blob/main/dicom_standard_to_omop/load_dicom_to_omop.ipynb
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+"""Load the DICOM vocabulary (NEMA PS3, freely redistributable) into OMOP.
 
+Adapted from https://github.com/paulnagy/DICOM2OMOP (Apache 2.0), specifically
+dicom_standard_to_omop/load_dicom_to_omop.ipynb — see THIRD_PARTY_NOTICES.md.
+
+The vocab bundle (see ``make fetch-vocab-dicom``) ships plain CSVs only; the
+upstream notebook's pickled relationship frame is converted to CSV when the
+bundle is published, so nothing here deserialises pickles.
+"""
+
+import argparse
 import zipfile
 from datetime import date, datetime
 from pathlib import Path
 
 import pandas as pd
-from config import get_settings
-from sqlalchemy import create_engine, text
+from sqlalchemy import Engine, create_engine, text
 
-VOCAB_ZIP_PATH = Path("data/vocab_dicom_paulnagy_20260109.zip")
-VOCAB_FILES_PATH = Path("data/vocab_dicom_paulnagy_20260109")
+from omop_db_tools.config import get_settings
+from omop_db_tools.import_tables import validate_identifier
 
-print("🩻 Loading DICOM vocabulary tables...")
-
-# ----------------------------------------------------------------------
-# Ensure DICOM vocabulary directory exists (unzip if needed)
-# ----------------------------------------------------------------------
-if not VOCAB_FILES_PATH.exists() or not any(VOCAB_FILES_PATH.iterdir()):
-    print(f"Extracting {VOCAB_ZIP_PATH} → {VOCAB_FILES_PATH} ...")
-
-    with zipfile.ZipFile(VOCAB_ZIP_PATH, "r") as zip_ref:
-        zip_ref.extractall((VOCAB_FILES_PATH.parent))
-
-    print("Extraction complete!")
-else:
-    print(f"Using existing directory: {VOCAB_FILES_PATH}")
-
-# ----------------------------------------------------------------------
-# Database connection
-# ----------------------------------------------------------------------
-# Create sync engine for pandas
-engine = create_engine(get_settings().OMOP_DATABASE_URL.get_secret_value(), echo=False)
+DEFAULT_VOCAB_DIR = Path("data/vocab_dicom_paulnagy_20260109")
 
 
-# ----------------------------------------------------------------------
-# Helper: idempotent insert (avoids duplicates)
-# ----------------------------------------------------------------------
-def safe_insert(table, df, engine):
+def safe_insert(table: str, df: pd.DataFrame, engine: Engine) -> None:
+    """Insert rows with ON CONFLICT DO NOTHING (OMOP vocab tables always have primary keys).
+
+    Args:
+        table (str): Target table name in the omop schema.
+        df (pd.DataFrame): Rows to insert; column names must be plain SQL identifiers.
+        engine (Engine): Target database engine.
     """
-    Inserts rows with ON CONFLICT DO NOTHING.
-    Works for OMOP vocab tables that always have primary keys.
-    """
+    table = validate_identifier(table)
+    columns = [validate_identifier(column) for column in df.columns]
+    cols = ", ".join(columns)
+    placeholders = ", ".join([f":{column}" for column in columns])
+    insert_sql = text(f"INSERT INTO omop.{table} ({cols}) VALUES ({placeholders}) ON CONFLICT DO NOTHING")
     with engine.begin() as conn:
         for _, row in df.iterrows():
-            cols = ", ".join(row.index)
-            placeholders = ", ".join([f":{col}" for col in row.index])
-            update_sql = text(f"INSERT INTO omop.{table} ({cols}) VALUES ({placeholders}) ON CONFLICT DO NOTHING")
-            conn.execute(update_sql, row.to_dict())
+            conn.execute(insert_sql, row.to_dict())
 
 
-# --------------------------------------------------------------------------
-# 0. Insert the missing VOCABULARY and CONCEPT CLASS CONCEPTS (2128000000-2)
-# --------------------------------------------------------------------------
-print("Ensuring DICOM vocabulary and concept class concepts exist (2128000000-2)...")
-
-df_vocab_concept = pd.DataFrame([
-    {
-        "concept_id": 2128000000,
-        "concept_name": "Digital Imaging and Communications in Medicine (DICOM)",
-        "domain_id": "Metadata",
-        "vocabulary_id": "Vocabulary",
-        "concept_class_id": "Vocabulary",
-        "standard_concept": None,
-        "concept_code": "DICOM",
-        "valid_start_date": date(1970, 1, 1),
-        "valid_end_date": date(2099, 12, 31),
-        "invalid_reason": None,
-    },
-    {
-        "concept_id": 2128000001,
-        "concept_name": "DICOM Attributes",
-        "domain_id": "Metadata",
-        "vocabulary_id": "Concept Class",
-        "concept_class_id": "Concept Class",
-        "standard_concept": None,
-        "concept_code": "DICOM",
-        "valid_start_date": date(1970, 1, 1),
-        "valid_end_date": date(2099, 12, 31),
-        "invalid_reason": None,
-    },
-    {
-        "concept_id": 2128000002,
-        "concept_name": "DICOM Value Sets",
-        "domain_id": "Metadata",
-        "vocabulary_id": "Concept Class",
-        "concept_class_id": "Concept Class",
-        "standard_concept": None,
-        "concept_code": "DICOM",
-        "valid_start_date": date(1970, 1, 1),
-        "valid_end_date": date(2099, 12, 31),
-        "invalid_reason": None,
-    },
-])
-
-safe_insert("CONCEPT", df_vocab_concept, engine)
-
-# ----------------------------------------------------------------------
-# 1. Load VOCABULARY
-# ----------------------------------------------------------------------
-print("Loading DICOM VOCABULARY...")
-
-df_vocab = pd.DataFrame([
-    {
-        "vocabulary_id": "DICOM",
-        "vocabulary_name": "Digital Imaging and Communications in Medicine (NEMA)",
-        "vocabulary_reference": "https://www.dicomstandard.org/current",
-        "vocabulary_version": "NEMA Standard PS3",
-        "vocabulary_concept_id": 2128000000,
-    }
-])
-
-safe_insert("VOCABULARY", df_vocab, engine)
-
-# ----------------------------------------------------------------------
-# 2. Load CONCEPT_CLASS
-# ----------------------------------------------------------------------
-print("Loading DICOM CONCEPT_CLASS...")
-
-df_classes = pd.DataFrame([
-    {
-        "concept_class_id": "DICOM Attributes",
-        "concept_class_name": "DICOM Attributes",
-        "concept_class_concept_id": 2128000001,
-    },
-    {
-        "concept_class_id": "DICOM Value Sets",
-        "concept_class_name": "DICOM Value Sets",
-        "concept_class_concept_id": 2128000002,
-    },
-])
-
-safe_insert("CONCEPT_CLASS", df_classes, engine)
-
-# ----------------------------------------------------------------------
-# 3. Load DICOM CONCEPT definitions
-# ----------------------------------------------------------------------
-print("Loading DICOM CONCEPT definitions...")
-
-concepts_path = f"{VOCAB_FILES_PATH}/omop_table_staging_v5.csv"
-omop_table_staging = pd.read_csv(concepts_path)
-
-# Convert dates
-omop_table_staging["valid_start_date"] = pd.to_datetime(
-    omop_table_staging["valid_start_date"].astype(str), format="%Y%m%d", errors="coerce"
-)
-omop_table_staging["valid_end_date"] = pd.to_datetime(
-    omop_table_staging["valid_end_date"].astype(str), format="%Y%m%d", errors="coerce"
-)
-
-# FIX: OMOP VARCHAR(1) fields should be NULL for DICOM
-omop_table_staging["standard_concept"] = None
-omop_table_staging["invalid_reason"] = None
-
-safe_insert("CONCEPT", omop_table_staging, engine)
-
-# ----------------------------------------------------------------------
-# 4. Load CONCEPT_RELATIONSHIP (3 files merged)
-# ----------------------------------------------------------------------
-print("Loading DICOM relationships...")
-
-# 1. Attributes-CID-ValueSets
-concept_relationship_staging = pd.read_pickle(f"{VOCAB_FILES_PATH}/part3_to_part16_relationship_via_CID.pkl")
-
-# 2. Attributes-Code String values
-cs_values_maps_to_value = pd.read_csv(f"{VOCAB_FILES_PATH}/cs_values_maps_to_value.csv")
-
-# 3. DICOM Code String to OMOP Standard coding systems
-cs_values_maps_to = pd.read_csv(f"{VOCAB_FILES_PATH}/cs_values_maps_to.csv")
+def ensure_vocab_dir(vocab_dir: Path) -> None:
+    """Ensure the DICOM vocabulary directory exists, extracting its sibling zip if needed."""
+    if vocab_dir.exists() and any(vocab_dir.iterdir()):
+        print(f"Using existing directory: {vocab_dir}")
+        return
+    vocab_zip = Path(f"{vocab_dir}.zip")
+    if not vocab_zip.is_file():
+        raise FileNotFoundError(
+            f"Neither {vocab_dir} nor {vocab_zip} exists — run `make fetch-vocab-dicom` first."
+        )
+    print(f"Extracting {vocab_zip} → {vocab_dir} ...")
+    with zipfile.ZipFile(vocab_zip, "r") as zip_ref:
+        zip_ref.extractall(vocab_dir.parent)
+    print("Extraction complete!")
 
 
-# Remove auto-generated index columns
-def clean(df):
+def load_vocabulary_metadata(engine: Engine) -> None:
+    """Insert the DICOM VOCABULARY / CONCEPT_CLASS scaffolding concepts (2128000000-2)."""
+    print("Ensuring DICOM vocabulary and concept class concepts exist (2128000000-2)...")
+    df_vocab_concept = pd.DataFrame([
+        {
+            "concept_id": 2128000000,
+            "concept_name": "Digital Imaging and Communications in Medicine (DICOM)",
+            "domain_id": "Metadata",
+            "vocabulary_id": "Vocabulary",
+            "concept_class_id": "Vocabulary",
+            "standard_concept": None,
+            "concept_code": "DICOM",
+            "valid_start_date": date(1970, 1, 1),
+            "valid_end_date": date(2099, 12, 31),
+            "invalid_reason": None,
+        },
+        {
+            "concept_id": 2128000001,
+            "concept_name": "DICOM Attributes",
+            "domain_id": "Metadata",
+            "vocabulary_id": "Concept Class",
+            "concept_class_id": "Concept Class",
+            "standard_concept": None,
+            "concept_code": "DICOM",
+            "valid_start_date": date(1970, 1, 1),
+            "valid_end_date": date(2099, 12, 31),
+            "invalid_reason": None,
+        },
+        {
+            "concept_id": 2128000002,
+            "concept_name": "DICOM Value Sets",
+            "domain_id": "Metadata",
+            "vocabulary_id": "Concept Class",
+            "concept_class_id": "Concept Class",
+            "standard_concept": None,
+            "concept_code": "DICOM",
+            "valid_start_date": date(1970, 1, 1),
+            "valid_end_date": date(2099, 12, 31),
+            "invalid_reason": None,
+        },
+    ])
+    safe_insert("CONCEPT", df_vocab_concept, engine)
+
+    print("Loading DICOM VOCABULARY...")
+    df_vocab = pd.DataFrame([
+        {
+            "vocabulary_id": "DICOM",
+            "vocabulary_name": "Digital Imaging and Communications in Medicine (NEMA)",
+            "vocabulary_reference": "https://www.dicomstandard.org/current",
+            "vocabulary_version": "NEMA Standard PS3",
+            "vocabulary_concept_id": 2128000000,
+        }
+    ])
+    safe_insert("VOCABULARY", df_vocab, engine)
+
+    print("Loading DICOM CONCEPT_CLASS...")
+    df_classes = pd.DataFrame([
+        {
+            "concept_class_id": "DICOM Attributes",
+            "concept_class_name": "DICOM Attributes",
+            "concept_class_concept_id": 2128000001,
+        },
+        {
+            "concept_class_id": "DICOM Value Sets",
+            "concept_class_name": "DICOM Value Sets",
+            "concept_class_concept_id": 2128000002,
+        },
+    ])
+    safe_insert("CONCEPT_CLASS", df_classes, engine)
+
+
+def load_concepts(engine: Engine, vocab_dir: Path) -> None:
+    """Load the DICOM CONCEPT definitions from the staging CSV."""
+    print("Loading DICOM CONCEPT definitions...")
+    omop_table_staging = pd.read_csv(vocab_dir / "omop_table_staging_v5.csv")
+
+    omop_table_staging["valid_start_date"] = pd.to_datetime(
+        omop_table_staging["valid_start_date"].astype(str), format="%Y%m%d", errors="coerce"
+    )
+    omop_table_staging["valid_end_date"] = pd.to_datetime(
+        omop_table_staging["valid_end_date"].astype(str), format="%Y%m%d", errors="coerce"
+    )
+
+    # FIX: OMOP VARCHAR(1) fields should be NULL for DICOM
+    omop_table_staging["standard_concept"] = None
+    omop_table_staging["invalid_reason"] = None
+
+    safe_insert("CONCEPT", omop_table_staging, engine)
+
+
+def _drop_index_columns(df: pd.DataFrame) -> pd.DataFrame:
     return df.loc[:, ~df.columns.str.contains("^Unnamed")]
 
 
-concept_relationship_staging = clean(concept_relationship_staging)
-# cs_values_maps_to_value = clean(cs_values_maps_to_value)
-cs_values_maps_to = clean(cs_values_maps_to)
-
-
-# Normalise into unified structure
-def convert_dates(df):
+def _fix_relationship_dates(df: pd.DataFrame) -> pd.DataFrame:
     df["valid_start_date"] = datetime.strptime("19930101", "%Y%m%d").date()
     df["valid_end_date"] = datetime.strptime("20991231", "%Y%m%d").date()
     return df
 
 
-concept_relationship_staging = convert_dates(concept_relationship_staging)
-cs_values_maps_to_value = convert_dates(cs_values_maps_to_value)
-cs_values_maps_to = convert_dates(cs_values_maps_to)
+def load_relationships(engine: Engine, vocab_dir: Path) -> None:
+    """Load CONCEPT_RELATIONSHIP rows from the three relationship CSVs."""
+    print("Loading DICOM relationships...")
 
-df_relationships = pd.concat(
-    [concept_relationship_staging, cs_values_maps_to_value, cs_values_maps_to], ignore_index=True
-)
+    # 1. Attributes-CID-ValueSets
+    concept_relationship_staging = pd.read_csv(vocab_dir / "part3_to_part16_relationship_via_CID.csv")
+    # 2. Attributes-Code String values
+    cs_values_maps_to_value = pd.read_csv(vocab_dir / "cs_values_maps_to_value.csv")
+    # 3. DICOM Code String to OMOP Standard coding systems
+    cs_values_maps_to = pd.read_csv(vocab_dir / "cs_values_maps_to.csv")
 
-safe_insert("CONCEPT_RELATIONSHIP", df_relationships, engine)
+    df_relationships = pd.concat(
+        [
+            _fix_relationship_dates(_drop_index_columns(concept_relationship_staging)),
+            _fix_relationship_dates(cs_values_maps_to_value),
+            _fix_relationship_dates(_drop_index_columns(cs_values_maps_to)),
+        ],
+        ignore_index=True,
+    )
+    safe_insert("CONCEPT_RELATIONSHIP", df_relationships, engine)
 
-print("DICOM vocabulary load complete!")
+
+def main(argv: list[str] | None = None) -> None:
+    """CLI entry point: load the full DICOM vocabulary into the OMOP database."""
+    parser = argparse.ArgumentParser(description="Load the DICOM vocabulary tables into OMOP.")
+    parser.add_argument(
+        "--vocab-dir",
+        type=Path,
+        default=DEFAULT_VOCAB_DIR,
+        help="Directory holding the DICOM vocab CSVs (a sibling <dir>.zip is auto-extracted).",
+    )
+    args = parser.parse_args(argv)
+
+    print("🩻 Loading DICOM vocabulary tables...")
+    ensure_vocab_dir(args.vocab_dir)
+    engine = create_engine(get_settings().OMOP_DATABASE_URL.get_secret_value(), echo=False)
+
+    load_vocabulary_metadata(engine)
+    load_concepts(engine, args.vocab_dir)
+    load_relationships(engine, args.vocab_dir)
+    print("DICOM vocabulary load complete!")
+
+
+if __name__ == "__main__":
+    main()

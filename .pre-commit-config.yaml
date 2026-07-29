@@ -92,6 +92,10 @@ repos:
         args: ['--check', '--project', 'trust/data-access-api']
         files: '^trust/data-access-api/(pyproject\.toml|uv\.lock|uv\.toml)$'
       - id: uv-lock
+        name: uv-lock (omop-db)
+        args: ['--check', '--project', 'trust/omop-db']
+        files: '^trust/omop-db/(pyproject\.toml|uv\.lock|uv\.toml)$'
+      - id: uv-lock
         name: uv-lock (xnat-tests)
         args: ['--check', '--project', 'trust/xnat/tests']
         files: '^trust/xnat/tests/(pyproject\.toml|uv\.lock|uv\.toml)$'

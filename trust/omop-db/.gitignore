@@ -12,3 +12,8 @@
 
 volumes/*/db_data
 volumes/.local_data_version*
+
+# Build-pipeline inputs — fetched, never tracked (the vocab bundles contain
+# licensed OMOP vocabularies; the canonical CSVs live on Hugging Face).
+data/
+.env.build

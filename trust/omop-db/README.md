@@ -13,9 +13,14 @@
 
 # Trust OMOP database
 
-Postgres database containing OMOP-ified data.
+Postgres database containing OMOP-ified data. This directory is both the
+**build source** for the `ghcr.io/londonaicentre/omop-db` image (OMOP CDM 5.4
+schema with the MI-CDM imaging extension — `image_occurrence`,
+`image_feature` — plus read-only role setup and vocabulary init; imported from
+the retired private `flip-omop-db` repo, FLIP#834) and the **consumer harness**
+that downloads ready-populated data volumes for the dev trust stacks.
 
-## Set up
+## Using the database (dev trust stacks)
 
 We have prepared mock data for each of the 2 dev trusts (GSTT and KCH) as postgres data volumes, published to the public Hugging Face dataset [`aicentreflip/trust-data`](https://huggingface.co/datasets/aicentreflip/trust-data). In order to set up the database locally, these data volumes need to be downloaded/extracted. They are fetched anonymously over HTTPS — no AWS CLI or credentials required. This will be handled automatically when
 creating the trust containers, and similarly they will be updated locally when the desired version changes (note for devs: this is controlled by the `.data_version` file in this directory).
@@ -37,6 +42,59 @@ make -C trust up-trust KIT=KCH     # KCH only
 For database-only debugging (without the rest of the trust stack), `make -C trust/omop-db up-test-omop-trust1` will start just the first dev trust's OMOP container.
 
 Bringing the container up should not run any initialization scripts — the data volume already contains a populated database.
+
+## Building the image
+
+The image bakes the schema init chain (`files/`: schema DDL → primary keys →
+indices → read-only users → vocabulary tables) and the core OMOP vocabulary
+into `postgres:17`. FK constraints are deliberately **not** applied at init —
+data must load first (see `apply-constraints` below).
+
+```sh
+cp .env.build.example .env.build   # local build credentials (gitignored)
+make build                         # fetches the core vocab, then builds the image
+```
+
+> **Vocabulary licensing.** The core vocab bundle contains licensed OMOP
+> vocabularies (SNOMED CT, LOINC, Read, ...) and is therefore **never tracked
+> in git** and not fetchable in CI. `make fetch-vocab-core` extracts it from
+> the already-published public image (no credentialed download, no new
+> exposure). The DICOM vocabulary (NEMA PS3, converted via
+> [DICOM2OMOP](https://github.com/paulnagy/DICOM2OMOP), Apache 2.0) is freely
+> redistributable and fetched anonymously from the Hugging Face dataset.
+
+## Populating (the canonical dataset and N-trust splitting)
+
+The synthetic mock rows live as **one canonical CSV dataset** on the public
+Hugging Face dataset under `omop-csv/<version>/` (version pinned by
+`OMOP_CSV_DATA_VERSION` in the Makefile). Every row carries a `source_trust`
+provenance column, and standing up N trusts is a deterministic split
+(`src/omop_db_tools/dataset.py`):
+
+- `legacy` (default): partition by `source_trust` — reproduces the original
+  two-trust membership exactly, keeping each trust's OMOP accession IDs
+  consistent with that trust's published mock PACS (Orthanc) data.
+- `modulo`: partition by `person_id % NUM_TRUSTS` — any trust count, for fresh
+  stand-ups where the imaging data is regenerated to match.
+
+```sh
+uv sync
+make up-build                        # empty schema-only DBs (one per trust) from the image
+make populate                        # fetch DICOM vocab + dataset, load each trust's slice
+make apply-constraints               # FK constraints go on AFTER the load
+make populate NUM_TRUSTS=3 PARTITION=modulo   # example: three-way split
+```
+
+The populated volumes land in `volumes/Trust_<N>/db_data` — the same trees the
+dev trust stack mounts. To publish a new pgdata version to Hugging Face, tar
+each populated volume as `trust<N>_pgdata_<version>.tar` (gzip) and upload it
+under `trust<N>/` in the dataset, then bump `.data_version`.
+
+To publish the image itself: `make push` (GHCR write access required;
+`OMOP_DB_TAG` overrides the tag).
+
+The canonical dataset is regenerated from per-trust CSV exports with
+`uv run python -m omop_db_tools.dataset build --trust-dirs <dir1> <dir2> --dest <out>`.
 
 ## Further Reading
 

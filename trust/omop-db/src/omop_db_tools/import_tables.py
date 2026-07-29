@@ -1,68 +1,125 @@
-"""
-Add tabular data from csv files to the tables in the OMOP database.
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+"""Populate one trust's OMOP database from the canonical mock dataset.
+
+Reads the canonical <data-dir>/<project>/<table>.csv files (see dataset.py for
+how they are built/fetched), extracts this trust's deterministic slice, and
+appends it into the ``omop`` schema.
+
+Run against a freshly-initialised database: FK constraints are intentionally
+absent until ``make apply-constraints`` runs after the data load.
 """
 
 import argparse
-import os
+import re
+from pathlib import Path
 
 import pandas as pd
-from config import get_settings
-from sqlalchemy import create_engine, text
+from sqlalchemy import Engine, create_engine, text
 
-# Parse command-line argument
-parser = argparse.ArgumentParser(description="Load CSV data into OMOP database.")
-parser.add_argument("trust", choices=["trust_1", "trust_2"], help="Specify the trust source.")
-parser.add_argument("projects", nargs="+", help="List of project names to load (e.g., spleen_project cxr_project).")
-args = parser.parse_args()
+from omop_db_tools.config import get_settings
+from omop_db_tools.dataset import CANONICAL_TABLES, DEFAULT_PROJECTS, OPTIONAL_TABLES, PARTITION_MODES, split_for_trust
 
-# Create sync engine for pandas
-engine = create_engine(get_settings().OMOP_DATABASE_URL.get_secret_value(), echo=False)
+_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
-# Define tables and clean them first
-tables = [
-    "person",
-    "procedure_occurrence",
-    "visit_occurrence",
-    "image_occurrence",
-    "image_feature",
-    "measurement",
-    "observation",
-]
 
-optional_tables = [
-    "measurement",
-    "observation",
-]
+def validate_identifier(name: str) -> str:
+    """Allow a string into SQL as an identifier only if it is a plain SQL name.
 
-with engine.begin() as conn:
-    for table_name in tables:
-        print(f"🧹 Cleaning table: {table_name}")
-        conn.execute(text(f"DELETE FROM omop.{table_name};"))
-print("✅ All target tables cleaned.\n")
+    Args:
+        name (str): Candidate table/column name.
 
-# Load CSV data for each project
-for project in args.projects:
-    data_path = os.path.join("data", args.trust, project)
-    print(f"📦 Loading data for {args.trust} / {project}")
-    for table_name in tables:
-        # Load CSV file into a Pandas DataFrame
-        csv_file_path = os.path.join(data_path, f"{table_name}.csv")
-        if not os.path.isfile(csv_file_path) and table_name in optional_tables:
-            print(f"⚠️  Optional table CSV not found, skipping: {csv_file_path}")
-            continue
+    Returns:
+        str: The validated name, unchanged.
 
-        print(f"Loading data from: {csv_file_path}")
-        df = pd.read_csv(csv_file_path)
+    Raises:
+        ValueError: If the name is not a bare [A-Za-z_][A-Za-z0-9_]* identifier.
+    """
+    if not _IDENTIFIER_RE.match(name):
+        raise ValueError(f"Unsafe SQL identifier: {name!r}")
+    return name
 
-        # Write DataFrame to SQL database
+
+def clean_tables(engine: Engine) -> None:
+    """Delete all rows from the mock-data tables (children before parents)."""
+    with engine.begin() as conn:
+        for table_name in reversed(CANONICAL_TABLES):
+            print(f"🧹 Cleaning table: {table_name}")
+            conn.execute(text(f"DELETE FROM omop.{validate_identifier(table_name)};"))
+    print("✅ All target tables cleaned.\n")
+
+
+def load_project(
+    engine: Engine,
+    data_dir: Path,
+    project: str,
+    num_trusts: int,
+    trust_index: int,
+    partition: str,
+) -> None:
+    """Load one project's tables, filtered to this trust's slice of the canonical dataset."""
+    print(f"📦 Loading data for trust {trust_index}/{num_trusts} / {project} (partition: {partition})")
+    for table_name in CANONICAL_TABLES:
+        csv_file_path = data_dir / project / f"{table_name}.csv"
+        if not csv_file_path.is_file():
+            if table_name in OPTIONAL_TABLES:
+                print(f"⚠️  Optional table CSV not found, skipping: {csv_file_path}")
+                continue
+            raise FileNotFoundError(f"Required table CSV not found: {csv_file_path}")
+
+        df = split_for_trust(pd.read_csv(csv_file_path), num_trusts, trust_index, partition)
         df.to_sql(table_name, engine, if_exists="append", index=False, schema="omop")
         print(f"✅ Inserted {len(df)} rows into omop.{table_name}")
     print(" ")
 
-# Print total number of rows in the first table as a sanity check
-with engine.begin() as conn:
-    result = conn.execute(text(f"SELECT COUNT(*) FROM omop.{tables[0]};"))
-    total_rows = result.scalar()
-    print(f"\nTotal rows in omop.{tables[0]} (sanity check): {total_rows}")
 
-print("\n🎉 Finished populating OMOP database for", args.trust)
+def main(argv: list[str] | None = None) -> None:
+    """CLI entry point: clean the mock-data tables, then load this trust's slice."""
+    parser = argparse.ArgumentParser(description="Load this trust's slice of the canonical CSV dataset into OMOP.")
+    parser.add_argument("--trust-index", type=int, required=True, help="1-based index of this trust.")
+    parser.add_argument("--num-trusts", type=int, default=2, help="Total number of trusts being stood up.")
+    parser.add_argument(
+        "--partition",
+        choices=PARTITION_MODES,
+        default="legacy",
+        help="Split mode: 'legacy' reproduces the original two-trust membership (consistent with the published "
+        "mock PACS data); 'modulo' partitions person_id %% num-trusts for any trust count.",
+    )
+    parser.add_argument(
+        "--data-dir",
+        type=Path,
+        default=Path("data/canonical"),
+        help="Directory holding the canonical <project>/<table>.csv files.",
+    )
+    parser.add_argument(
+        "--projects",
+        nargs="+",
+        default=DEFAULT_PROJECTS,
+        help="Project names to load (default: %(default)s).",
+    )
+    args = parser.parse_args(argv)
+
+    engine = create_engine(get_settings().OMOP_DATABASE_URL.get_secret_value(), echo=False)
+
+    clean_tables(engine)
+    for project in args.projects:
+        load_project(engine, args.data_dir, project, args.num_trusts, args.trust_index, args.partition)
+
+    with engine.begin() as conn:
+        result = conn.execute(text(f"SELECT COUNT(*) FROM omop.{validate_identifier(CANONICAL_TABLES[0])};"))
+        print(f"\nTotal rows in omop.{CANONICAL_TABLES[0]} (sanity check): {result.scalar()}")
+
+    print(f"\n🎉 Finished populating OMOP database for trust {args.trust_index}/{args.num_trusts}")
+
+
+if __name__ == "__main__":
+    main()
