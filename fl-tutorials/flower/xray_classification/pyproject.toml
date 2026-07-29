@@ -26,8 +26,17 @@ name = "standard-app"
 version = "1.0.0"
 description = "Tutorial for chest-X-ray multi-lesion classification using MONAI / DenseNet and Flower."
 license = "Apache-2.0"
+# flip-utils is deliberately NOT declared here. Flower runtime-installs an app's declared
+# dependencies (`uv sync`) into a per-run environment that it PREPENDS to sys.path, so declaring
+# flip-utils resolves it from PyPI and shadows the in-repo copy baked into the FL images at
+# /opt/flip-utils — the tutorial-side half of FLIP#767. PyPI currently serves 0.1.8 against the
+# repo's 0.4.0, and 0.1.8 has no flip/flower/strategy.py, so a declared dependency breaks
+# `from flip.flower.strategy import FlipFedAvg` outright. Undeclared, `import flip` falls through
+# to the image's copy, which is what the platform runs. The fl-apps templates solve the same
+# problem with `[tool.uv.sources] flip-utils = { path = "/opt/flip-utils" }`; that pin cannot be
+# used here because it makes `uv sync` unresolvable on a workstation, where the path does not
+# exist. Pick up flip-utils changes with `make build-fl FL_BACKEND=flower`.
 dependencies = [
-    "flip-utils>=0.1.8",
     "flwr[simulation]>=1.32.0",
     "monai>=1.5.2",
     "numpy>=2.4.2",
@@ -54,6 +63,13 @@ clientapp = "app.client_app:app"
 
 [tool.flwr.app.config]
 num-server-rounds = 1
+# Client-side differential privacy (flip.flower.privacy). On by default; set dp-enabled = false
+# to run the same app with the mechanism off. See the README's "Differential privacy" section.
+dp-enabled = true
+dp-clipping-norm = 1.0
+dp-sensitivity = 1e-4
+dp-epsilon = 10.0
+dp-delta = 1e-5
 flip-model-id = "uuid"
 flip-project-id = "uuid"
 flip-cohort-query = "*"

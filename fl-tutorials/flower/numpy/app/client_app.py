@@ -13,6 +13,7 @@
 """quickstart-numpy: A Flower / NumPy app."""
 
 import numpy as np
+from flip.flower.privacy import flip_local_dp_mod
 from flwr.app import ArrayRecord, Context, Message, MetricRecord, RecordDict
 from flwr.clientapp import ClientApp
 
@@ -20,7 +21,10 @@ from flwr.clientapp import ClientApp
 app = ClientApp()
 
 
-@app.train()
+# The DP mod clips this update to `dp-clipping-norm` and adds Gaussian noise calibrated to
+# (dp-epsilon, dp-delta) before the reply leaves the SuperNode — see pyproject.toml's
+# [tool.flwr.app.config]. It is applied to @app.train only; @app.evaluate below is untouched.
+@app.train(mods=[flip_local_dp_mod])
 def train(msg: Message, context: Context):
     """Train the model on local data."""
 

@@ -150,6 +150,7 @@ exclude = [
 
 [dependency-groups]
 dev = [
+    "flwr>=1.32.0",
     "huggingface-hub>=1.6.0",
     "matplotlib>=3.10.7",
     "mypy>=1.18.2,<2.0",
