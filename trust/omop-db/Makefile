@@ -90,8 +90,10 @@ VOCAB_S3_BUCKET ?= flipdev-aicentre
 # Fetched inputs (all gitignored under data/). The core vocab bundle contains
 # licensed OMOP vocabularies (SNOMED CT, LOINC, Read, ...) and must never be
 # committed; the DICOM bundle and the canonical CSV dataset are public.
-# NOTE the Dockerfile's `COPY ./data/vocab_aicentre_core_20240916` must match
-# VOCAB_CORE_BUNDLE when bumping the bundle version.
+# NOTE when bumping VOCAB_CORE_BUNDLE, update the same bundle name pinned in
+# the Ansible vocab-load play (deploy/providers/AWS/site.yml) and the Helm
+# omopDb.vocabLoad.bundleName default — the Dockerfile needs no change (the
+# image is vocab-free).
 VOCAB_CORE_BUNDLE = vocab_aicentre_core_20240916
 VOCAB_DICOM_BUNDLE = vocab_dicom_paulnagy_20260109
 OMOP_CSV_DATA_VERSION = 20260729

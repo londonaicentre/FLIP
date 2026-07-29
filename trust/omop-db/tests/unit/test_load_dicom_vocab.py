@@ -85,3 +85,12 @@ class TestEnsureVocabDir:
     def test_neither_dir_nor_zip_rejected(self, tmp_path):
         with pytest.raises(FileNotFoundError, match="fetch-vocab-dicom"):
             ensure_vocab_dir(tmp_path / "bundle")
+
+    def test_zip_with_traversal_member_rejected(self, tmp_path):
+        with zipfile.ZipFile(tmp_path / "bundle.zip", "w") as zip_ref:
+            zip_ref.writestr("../evil.csv", "concept_id\n1\n")
+
+        with pytest.raises(ValueError, match="Unsafe member path"):
+            ensure_vocab_dir(tmp_path / "bundle")
+
+        assert not (tmp_path.parent / "evil.csv").exists()

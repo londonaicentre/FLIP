@@ -81,6 +81,13 @@ def ensure_vocab_dir(vocab_dir: Path) -> None:
             raise FileNotFoundError(f"Neither {vocab_dir} nor {vocab_zip} exists — run `make fetch-vocab-dicom` first.")
         print(f"Extracting {vocab_zip} → {vocab_dir} ...")
         with zipfile.ZipFile(vocab_zip, "r") as zip_ref:
+            # zipfile.extractall does not sanitise ../ members — refuse any
+            # entry that would escape the extraction root (the zip is fetched,
+            # not repo-controlled).
+            for member in zip_ref.namelist():
+                member_path = Path(member)
+                if member_path.is_absolute() or ".." in member_path.parts:
+                    raise ValueError(f"Unsafe member path in {vocab_zip}: {member!r}")
             zip_ref.extractall(vocab_dir.parent)
         print("Extraction complete!")
     else:
