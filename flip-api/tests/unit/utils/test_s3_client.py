@@ -380,3 +380,56 @@ def test_upload_file_wraps_s3_upload_failed_error(s3_client_with_mock_boto):
 
     with pytest.raises(Exception, match="Unable to upload file /local/f.py to s3://dest-bucket/k"):
         s3.upload_file("/local/f.py", "s3://dest-bucket/k")
+
+
+# ---------- download_file / copy_object_if_match (#52 scan pipeline) ----------
+
+
+def test_download_file_uses_managed_transfer(s3_client_with_mock_boto):
+    s3, boto_instance = s3_client_with_mock_boto
+    s3.download_file("s3://bucket/prefix/weights.pt", "/tmp/weights.pt")
+    boto_instance.download_file.assert_called_once_with("bucket", "prefix/weights.pt", "/tmp/weights.pt")
+
+
+def test_download_file_wraps_failures(s3_client_with_mock_boto):
+    s3, boto_instance = s3_client_with_mock_boto
+    boto_instance.download_file.side_effect = ClientError(
+        {"Error": {"Code": "AccessDenied", "Message": "denied"}}, "GetObject"
+    )
+    with pytest.raises(Exception, match="Unable to download file"):
+        s3.download_file("s3://bucket/prefix/weights.pt", "/tmp/weights.pt")
+
+
+def test_copy_object_if_match_pins_the_etag(s3_client_with_mock_boto):
+    """The scan pipeline's promote step depends on the ETag reaching S3 as a
+    ``CopySourceIfMatch`` condition — without it, a re-uploaded (unscanned)
+    object could be promoted on the previous object's verdict."""
+    s3, boto_instance = s3_client_with_mock_boto
+    s3.copy_object_if_match("s3://bucket/uploaded/k", "s3://bucket/scanned/k", '"etag"')
+    boto_instance.copy.assert_called_once_with(
+        {"Bucket": "bucket", "Key": "uploaded/k"},
+        "bucket",
+        "scanned/k",
+        ExtraArgs={"CopySourceIfMatch": '"etag"'},
+    )
+
+
+def test_copy_object_if_match_raises_precondition_error(s3_client_with_mock_boto):
+    from flip_api.utils.s3_client import S3PreconditionFailedError
+
+    s3, boto_instance = s3_client_with_mock_boto
+    boto_instance.copy.side_effect = ClientError(
+        {"Error": {"Code": "PreconditionFailed", "Message": "At least one of the pre-conditions..."}},
+        "CopyObject",
+    )
+    with pytest.raises(S3PreconditionFailedError):
+        s3.copy_object_if_match("s3://bucket/uploaded/k", "s3://bucket/scanned/k", '"etag"')
+
+
+def test_copy_object_if_match_wraps_other_failures(s3_client_with_mock_boto):
+    s3, boto_instance = s3_client_with_mock_boto
+    boto_instance.copy.side_effect = ClientError(
+        {"Error": {"Code": "AccessDenied", "Message": "denied"}}, "CopyObject"
+    )
+    with pytest.raises(Exception, match="Unable to copy object"):
+        s3.copy_object_if_match("s3://bucket/uploaded/k", "s3://bucket/scanned/k", '"etag"')

@@ -9,7 +9,7 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "0001-01-01T00:00:00Z" # This has no effect and is included for backwards compatibility when using relative exclude-newer values.
+exclude-newer = "2026-07-26T16:49:01.419455055Z"
 exclude-newer-span = "P3D"
 
 [[package]]
@@ -809,6 +809,7 @@ dependencies = [
     { name = "cryptography" },
     { name = "fastapi", extra = ["standard"] },
     { name = "idna" },
+    { name = "picklescan" },
     { name = "psycopg2-binary" },
     { name = "pydantic" },
     { name = "pydantic-settings" },
@@ -857,6 +858,7 @@ requires-dist = [
     { name = "cryptography", specifier = ">=46.0.7" },
     { name = "fastapi", extras = ["standard"], specifier = ">=0.115.11" },
     { name = "idna", specifier = ">=3.15" },
+    { name = "picklescan", specifier = ">=1.0.5" },
     { name = "psycopg2-binary", specifier = ">=2.9.10" },
     { name = "pydantic", specifier = ">=2.6.1" },
     { name = "pydantic-settings", specifier = ">=2.9.1" },
@@ -1555,6 +1557,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/42/92/cc564bf6381ff43ce1f4d06852fc19a2f11d180f23dc32d9588bee2f149d/pexpect-4.9.0.tar.gz", hash = "sha256:ee7d41123f3c9911050ea2c2dac107568dc43b2d3b0c7557a33212c398ead30f", size = 166450, upload-time = "2023-11-25T09:07:26.339Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/9e/c3/059298687310d527a58bb01f3b1965787ee3b40dce76752eda8b44e9a2c5/pexpect-4.9.0-py2.py3-none-any.whl", hash = "sha256:7236d1e080e4936be2dc3e326cec0af72acf9212a7e1d060210e70a47e253523", size = 63772, upload-time = "2023-11-25T06:56:14.81Z" },
+]
+
+[[package]]
+name = "picklescan"
+version = "1.0.5"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/7c/19/992abcb598424f3d37f3f50783625755c6f49af884cb0fe1365f34c619bf/picklescan-1.0.5.tar.gz", hash = "sha256:1e220fc0e7eb2021eeb59ee71ce22d6a889ffb9f4d86d6f8272b8defe83ab9dd", size = 31336, upload-time = "2026-07-01T13:12:13.307Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/43/71/3035a2ca54845ab1990635ce4ffb115ddd7ed3529dd5afec4e22846d546e/picklescan-1.0.5-py3-none-any.whl", hash = "sha256:2abb3d4959a7ee9ccb1e1296db7c56f624bf6d345b93a0a9cf4185bc650dc2fd", size = 24059, upload-time = "2026-07-01T13:12:12.27Z" },
 ]
 
 [[package]]

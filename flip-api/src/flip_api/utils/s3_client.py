@@ -45,6 +45,16 @@ _MULTIPART_OVERHEAD_BUFFER_BYTES = 16 * 1024
 MAX_PRESIGNED_URL_TTL_SECONDS = 1800
 
 
+class S3PreconditionFailedError(Exception):
+    """A conditional S3 operation failed because the object changed under the caller.
+
+    Raised by ``copy_object_if_match`` when the source object's ETag no longer
+    matches — i.e. the object was replaced between being scanned and being
+    promoted. Callers treat this as "abort quietly and let the next reconcile
+    pass handle the new object", distinct from a genuine copy failure.
+    """
+
+
 def parse_s3_path(s3_path: str) -> tuple[str, str]:
     """
     Parse an S3 path into bucket and key components.
@@ -394,6 +404,71 @@ class S3Client:
         except ClientError as e:
             logger.error(f"Error copying {source_s3_path} to {dest_s3_path}: {e}")
             raise Exception(f"Unable to copy object: {e}")
+
+    def copy_object_if_match(self, source_s3_path: str, dest_s3_path: str, etag: str) -> None:
+        """
+        Copy an object only if the source still carries the given ETag.
+
+        Used by the malware-scan promote step so a file re-uploaded mid-scan
+        can never be promoted on the strength of the *previous* object's scan
+        verdict: the copy is pinned to the exact bytes that were scanned.
+        Uses boto3's managed ``copy`` (not ``copy_object``) so objects above
+        the single-request 5 GB CopyObject limit still transfer.
+
+        Args:
+            source_s3_path (str): Full S3 path of the source object.
+            dest_s3_path (str): Full S3 path of the destination object.
+            etag (str): ETag the source object must still have.
+
+        Raises:
+            S3PreconditionFailedError: If the source object's ETag no longer
+                matches (it was replaced since the caller captured ``etag``).
+            Exception: If copying fails for any other reason.
+        """
+        source_bucket, source_key = parse_s3_path(source_s3_path)
+        dest_bucket, dest_key = parse_s3_path(dest_s3_path)
+        copy_source = {"Bucket": source_bucket, "Key": source_key}
+        try:
+            self.client.copy(
+                copy_source,
+                dest_bucket,
+                dest_key,
+                ExtraArgs={"CopySourceIfMatch": etag},
+            )
+            logger.info(f"Successfully copied {source_s3_path} to {dest_s3_path} (ETag-pinned)")
+        except ClientError as e:
+            error_code = e.response.get("Error", {}).get("Code", "Unknown")
+            if error_code in ("PreconditionFailed", "412"):
+                logger.warning(
+                    f"ETag precondition failed copying {source_s3_path} to {dest_s3_path}: "
+                    "source object changed since it was scanned"
+                )
+                raise S3PreconditionFailedError(f"Source object changed: {source_s3_path}") from e
+            logger.error(f"Error copying {source_s3_path} to {dest_s3_path}: {e}")
+            raise Exception(f"Unable to copy object: {e}") from e
+
+    def download_file(self, s3_path: str, local_path: str) -> None:
+        """
+        Download an S3 object to a local file via boto3's managed transfer.
+
+        Streams to disk (never buffers the whole object in memory) — used by
+        the malware-scan step to fetch pickle-bearing uploads into a temp
+        directory for structural scanning.
+
+        Args:
+            s3_path (str): Full S3 path of the object (e.g., ``s3://bucket-name/key``).
+            local_path (str): Absolute local destination path.
+
+        Raises:
+            Exception: If the download fails.
+        """
+        try:
+            bucket, key = parse_s3_path(s3_path)
+            self.client.download_file(bucket, key, local_path)
+            logger.info(f"Successfully downloaded {s3_path} to local disk")
+        except (ClientError, OSError) as e:
+            logger.error(f"Error downloading {s3_path}: {e}")
+            raise Exception(f"Unable to download file {s3_path}: {e}") from e
 
     def list_objects(self, s3_path: str, delimiter: str = "") -> list[str]:
         """

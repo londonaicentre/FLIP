@@ -375,10 +375,27 @@ Upload Files
 2. Navigate to the Model Files section on the left-hand side of the model page
 3. Either browse to the files on your local file system or drag and drop them into the box on screen
 4. You will receive confirmation once your files have successfully uploaded
+5. Each file is then scanned. A magnifying-glass icon marks a file as being scanned; it becomes a
+   document icon once the scan passes and the file is ready to use
 
 .. note::
 
-   As files are uploaded, they are scanned for vulnerabilities and viruses.
+   **Every uploaded file is scanned before it can be used for training.** Files that carry Python
+   pickle data (``.pt``, ``.pth``, ``.pkl``, ``.pickle``) — including model checkpoints — are
+   additionally inspected for unsafe content, because loading such a file executes whatever it
+   contains.
+
+   A file that fails the scan is marked with a red virus icon and is deleted from storage; it is
+   never distributed to any trust. Delete the entry and upload a corrected file to continue.
+   Training cannot start until every file has passed scanning.
+
+   Only recognised file types may be uploaded (by default ``.py``, ``.json``, ``.pt``, ``.pth``,
+   ``.pkl``, ``.txt``, ``.yaml``, ``.yml`` and ``.safetensors``). Anything else — including archives
+   such as ``.zip`` — is refused at upload time with a message listing the accepted types.
+
+Scanning starts as soon as a file is uploaded and usually finishes within seconds, though large
+checkpoints take longer. You can leave the page while it runs — the scan continues on the server and
+the status updates when you return.
 
 If model files need to be managed further after uploading, the uploader function allows files to be downloaded, removed and re-uploaded.
 

@@ -67,7 +67,7 @@ def mock_s3_client():
         instance.get_put_presigned_post.return_value = {
             "url": "https://test-uploaded-bucket.s3.amazonaws.com/",
             "fields": {
-                "key": f"uploads/{_MODEL_ID}/weights.bin",
+                "key": f"uploads/{_MODEL_ID}/weights.pt",
                 "Content-Type": "application/octet-stream",
                 "policy": "POLICY",
                 "x-amz-signature": "SIG",
@@ -91,7 +91,7 @@ def test_endpoint_returns_403_when_user_cannot_modify_model(
     ):
         response = client.post(
             f"/api/files/preSignedUrl/model/{_MODEL_ID}",
-            json={"fileName": "weights.bin"},
+            json={"fileName": "weights.pt"},
         )
 
     assert response.status_code == status.HTTP_403_FORBIDDEN
@@ -111,7 +111,7 @@ def test_endpoint_returns_404_when_model_missing(
     ):
         response = client.post(
             f"/api/files/preSignedUrl/model/{_MODEL_ID}",
-            json={"fileName": "weights.bin"},
+            json={"fileName": "weights.pt"},
         )
 
     assert response.status_code == status.HTTP_404_NOT_FOUND
@@ -135,7 +135,7 @@ def test_endpoint_passes_size_cap_and_content_type_into_policy(
         response = client.post(
             f"/api/files/preSignedUrl/model/{_MODEL_ID}",
             json={
-                "fileName": "weights.bin",
+                "fileName": "weights.pt",
                 "contentType": "application/octet-stream",
             },
         )
@@ -147,7 +147,7 @@ def test_endpoint_passes_size_cap_and_content_type_into_policy(
     assert body["maxBytes"] == mocked_settings.MAX_MODEL_FILE_BYTES
 
     mock_s3_client.get_put_presigned_post.assert_called_once_with(
-        f"{mocked_settings.UPLOADED_MODEL_FILES_BUCKET}/{_MODEL_ID}/weights.bin",
+        f"{mocked_settings.UPLOADED_MODEL_FILES_BUCKET}/{_MODEL_ID}/weights.pt",
         max_bytes=mocked_settings.MAX_MODEL_FILE_BYTES,
         content_type="application/octet-stream",
         expiration=mocked_settings.PRE_SIGNED_URL_EXPIRATION_SECONDS,
@@ -170,12 +170,12 @@ def test_endpoint_omits_content_type_when_client_does_not_supply_one(
     ):
         response = client.post(
             f"/api/files/preSignedUrl/model/{_MODEL_ID}",
-            json={"fileName": "weights.bin"},
+            json={"fileName": "weights.pt"},
         )
 
     assert response.status_code == status.HTTP_200_OK, response.text
     mock_s3_client.get_put_presigned_post.assert_called_once_with(
-        f"{mocked_settings.UPLOADED_MODEL_FILES_BUCKET}/{_MODEL_ID}/weights.bin",
+        f"{mocked_settings.UPLOADED_MODEL_FILES_BUCKET}/{_MODEL_ID}/weights.pt",
         max_bytes=mocked_settings.MAX_MODEL_FILE_BYTES,
         content_type=None,
         expiration=mocked_settings.PRE_SIGNED_URL_EXPIRATION_SECONDS,
@@ -195,7 +195,7 @@ def test_endpoint_returns_500_when_s3_client_raises(
     ):
         response = client.post(
             f"/api/files/preSignedUrl/model/{_MODEL_ID}",
-            json={"fileName": "weights.bin"},
+            json={"fileName": "weights.pt"},
         )
 
     assert response.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
@@ -206,7 +206,7 @@ def test_endpoint_returns_422_for_non_uuid_model_id(
 ):
     response = client.post(
         "/api/files/preSignedUrl/model/not-a-uuid",
-        json={"fileName": "weights.bin"},
+        json={"fileName": "weights.pt"},
     )
 
     assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
@@ -219,7 +219,7 @@ def test_endpoint_rejects_path_traversal_filename(
     """The ``fileName`` validator must short-circuit before any S3 call."""
     response = client.post(
         f"/api/files/preSignedUrl/model/{_MODEL_ID}",
-        json={"fileName": "../escape.bin"},
+        json={"fileName": "../escape.pt"},
     )
 
     assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY, response.text
@@ -247,7 +247,7 @@ def test_endpoint_success_path_does_not_log_signed_url(
     ):
         response = client.post(
             f"/api/files/preSignedUrl/model/{_MODEL_ID}",
-            json={"fileName": "weights.bin"},
+            json={"fileName": "weights.pt"},
         )
 
     assert response.status_code == status.HTTP_200_OK, response.text
@@ -274,7 +274,7 @@ def test_endpoint_redacts_url_when_s3_raises(
     ):
         response = client.post(
             f"/api/files/preSignedUrl/model/{_MODEL_ID}",
-            json={"fileName": "weights.bin"},
+            json={"fileName": "weights.pt"},
         )
 
     assert response.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR, response.text
@@ -298,9 +298,66 @@ def test_endpoint_redacts_url_when_unhandled_error(
     ):
         response = client.post(
             f"/api/files/preSignedUrl/model/{_MODEL_ID}",
-            json={"fileName": "weights.bin"},
+            json={"fileName": "weights.pt"},
         )
 
     assert response.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR, response.text
     assert _FAKE_SIGNED_URL not in response.text
     _assert_logs_have_no_presigned_url(caplog.records)
+
+
+@pytest.mark.parametrize(
+    "file_name",
+    ["trainer.py", "config.json", "weights.pt", "WEIGHTS.PTH", "aux.pkl", "notes.txt", "conf.yaml", "w.safetensors"],
+)
+def test_endpoint_accepts_whitelisted_extensions(
+    override_auth_dependencies, mocked_settings, mock_s3_client, file_name
+):
+    """Every default-whitelisted extension must mint a policy, case-insensitively."""
+    mock_session = override_auth_dependencies
+    _existing_model(mock_session)
+
+    with patch(
+        "flip_api.file_services.presigned_url_for_upload.can_modify_model",
+        return_value=True,
+    ):
+        response = client.post(
+            f"/api/files/preSignedUrl/model/{_MODEL_ID}",
+            json={"fileName": file_name},
+        )
+
+    assert response.status_code == status.HTTP_200_OK, response.text
+
+
+@pytest.mark.parametrize(
+    ("file_name", "reported_suffix"),
+    [
+        ("payload.exe", ".exe"),
+        ("archive.zip", ".zip"),
+        ("bundle.tar.gz", ".gz"),
+        ("dropper.sh", ".sh"),
+        ("no_extension", "<none>"),
+    ],
+)
+def test_endpoint_rejects_non_whitelisted_extensions(
+    override_auth_dependencies, mocked_settings, mock_s3_client, file_name, reported_suffix
+):
+    """Disallowed file types must be refused before any policy is minted, with
+    a detail message naming the offending suffix and the allowed set."""
+    mock_session = override_auth_dependencies
+    _existing_model(mock_session)
+
+    with patch(
+        "flip_api.file_services.presigned_url_for_upload.can_modify_model",
+        return_value=True,
+    ):
+        response = client.post(
+            f"/api/files/preSignedUrl/model/{_MODEL_ID}",
+            json={"fileName": file_name},
+        )
+
+    assert response.status_code == status.HTTP_400_BAD_REQUEST, response.text
+    detail = response.json()["detail"]
+    assert f"File type '{reported_suffix}' is not allowed" in detail
+    assert ".py" in detail  # the allowed set is spelled out for the UI to surface
+    mock_s3_client.get_put_presigned_post.assert_not_called()
