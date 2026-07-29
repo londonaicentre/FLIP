@@ -79,12 +79,23 @@ FLIP's cohort queries and the licensing-relevant ones are:
 | OMOP structural vocabularies (Domain, Concept Class, Type Concept, Visit, ...) | — | Apache 2.0 (OHDSI) |
 
 Because of the licensed entries the bundle is **never tracked in git** and not
-fetchable in CI. `make fetch-vocab-core` downloads it from the org S3 bucket
-(`s3://flipdev-aicentre/vocab/`, override with `VOCAB_S3_BUCKET=`; needs AWS
-credentials for that account — the same source and technique the private repo
-used). Without bucket access, `make fetch-vocab-core-from-image` extracts the
-identical bundle from the already-published public image instead (no
-credentials, no new exposure).
+fetchable in CI. Three ways to obtain it, in order of preference:
+
+1. **FLIP developers (org AWS access)** — `make fetch-vocab-core`: downloads
+   `s3://flipdev-aicentre/vocab/vocab_aicentre_core_20240916.zip` (override
+   the bucket with `VOCAB_S3_BUCKET=`) and unpacks it into `data/` — the same
+   source and technique the private repo used.
+2. **Anyone, under their own licences** — build an equivalent bundle from
+   [OHDSI Athena](https://athena.ohdsi.org/): request an export containing the
+   vocabularies in the roster above (SNOMED CT and LOINC require accepting
+   their licences on Athena; the UK SNOMED / Read / dm+d editions come via
+   [NHS TRUD](https://isd.digital.nhs.uk/)), then place the export's CSV files
+   at `data/vocab_aicentre_core_20240916/`. Concept coverage may differ
+   slightly from the org snapshot depending on release dates.
+3. **Credential-free fallback** — `make fetch-vocab-core-from-image` extracts
+   the identical bundle from the already-published public image. This only
+   works while published tags still bake the vocab; it goes away when the
+   image is rebuilt vocab-free (FLIP#842).
 
 ### The DICOM vocabulary bundle
 
