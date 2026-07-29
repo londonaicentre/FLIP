@@ -234,6 +234,35 @@ class S3Client:
             logger.error(f"Error deleting object {key} from bucket {bucket}: {e}")
             raise Exception(f"Unable to delete object {key} from bucket {bucket}")
 
+    def delete_object_if_match(self, s3_path: str, etag: str) -> None:
+        """
+        Delete an object only if it still carries the given ETag.
+
+        Used by the malware-scan quarantine step so a file re-uploaded between
+        the scan and the delete is never destroyed on the strength of the
+        *previous* object's verdict. S3 evaluates the precondition atomically,
+        closing the gap a read-then-delete would leave open.
+
+        Args:
+            s3_path (str): Full S3 path of the object to delete.
+            etag (str): ETag the object must still have.
+
+        Raises:
+            S3PreconditionFailedError: If the object's ETag no longer matches.
+            Exception: If deletion fails for any other reason.
+        """
+        bucket, key = parse_s3_path(s3_path)
+        try:
+            self.client.delete_object(Bucket=bucket, Key=key, IfMatch=etag)
+            logger.info(f"Deleted object {key} from bucket {bucket} (ETag-pinned)")
+        except ClientError as e:
+            error_code = e.response.get("Error", {}).get("Code", "Unknown")
+            if error_code in ("PreconditionFailed", "412"):
+                logger.warning(f"ETag precondition failed deleting {s3_path}: object changed since it was scanned")
+                raise S3PreconditionFailedError(f"Object changed: {s3_path}") from e
+            logger.error(f"Error deleting object {key} from bucket {bucket}: {error_code}")
+            raise Exception(f"Unable to delete object {key} from bucket {bucket}") from e
+
     def delete_objects(self, s3_paths: list[str]) -> dict[str, Any]:
         """
         Delete multiple objects from one or more S3 buckets in grouped batch requests.

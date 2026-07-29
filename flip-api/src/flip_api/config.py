@@ -11,6 +11,7 @@
 #
 
 import json
+import logging
 from typing import Annotated, Literal
 
 from pydantic import EmailStr, SecretStr, ValidationInfo, field_validator
@@ -89,6 +90,11 @@ class Settings(BaseSettings):
     ALLOWED_MODEL_FILE_EXTENSIONS: Annotated[list[str], NoDecode] = [
         ".py",
         ".json",
+        # Flower's per-app run config. `config.toml` sits beside the app code in
+        # every Flower template and tutorial; fl-api-flower feeds it to
+        # `flwr run --run-config` to override the bundle pyproject's
+        # [tool.flwr.app.config]. Omitting it would reject every Flower upload.
+        ".toml",
         ".pt",
         ".pth",
         ".pkl",
@@ -230,6 +236,14 @@ class Settings(BaseSettings):
         field default. Entries are lowercased and given a leading dot so
         matching stays purely suffix-based regardless of how the operator
         wrote them.
+
+        A value that contains only separators or whitespace (``",,,"``,
+        ``" , "``) normalises to nothing, and is treated exactly like the
+        empty case — it falls back to the default rather than yielding an
+        empty list. An empty list would fail *open* in the worst way for
+        ``PICKLESCAN_FILE_SUFFIXES``: no suffix would ever match, so every
+        upload would skip scanning silently. Never let a malformed value
+        disable the gate.
         """
         if v is None or v == "" or v == []:
             v = cls.model_fields[info.field_name].default  # type: ignore[index]
@@ -237,12 +251,20 @@ class Settings(BaseSettings):
             stripped = v.strip()
             v = json.loads(stripped) if stripped.startswith("[") else stripped.split(",")
         if isinstance(v, list):
-            normalised = []
-            for entry in v:
-                entry = str(entry).strip().lower()
-                if not entry:
-                    continue
-                normalised.append(entry if entry.startswith(".") else f".{entry}")
+            normalised = [
+                entry if entry.startswith(".") else f".{entry}"
+                for entry in (str(raw).strip().lower() for raw in v)
+                if entry
+            ]
+            if not normalised:
+                default = cls.model_fields[info.field_name].default  # type: ignore[index]
+                # flip_api.utils.logger imports get_settings(), so it cannot be
+                # imported here without a cycle — use the same underlying logger.
+                logging.getLogger("uvicorn").warning(
+                    f"{info.field_name} resolved to an empty list from {v!r}; "
+                    f"falling back to the default {default}"
+                )
+                return default
             return normalised
         return v
 

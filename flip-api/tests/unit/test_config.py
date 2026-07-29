@@ -29,6 +29,9 @@ def test_allowed_extensions_default():
     assert ".py" in settings.ALLOWED_MODEL_FILE_EXTENSIONS
     assert ".pt" in settings.ALLOWED_MODEL_FILE_EXTENSIONS
     assert ".safetensors" in settings.ALLOWED_MODEL_FILE_EXTENSIONS
+    # Flower ships a config.toml in every app; without this the backend's
+    # uploads would all be refused.
+    assert ".toml" in settings.ALLOWED_MODEL_FILE_EXTENSIONS
     # Opaque archives are deliberately not allowed by default.
     assert ".zip" not in settings.ALLOWED_MODEL_FILE_EXTENSIONS
 
@@ -86,3 +89,18 @@ def test_suffix_list_passes_through_unexpected_types_for_pydantic_to_reject():
     """
     with pytest.raises(ValidationError):
         Settings(ALLOWED_MODEL_FILE_EXTENSIONS=123)
+
+
+@pytest.mark.parametrize("blank", [",,,", " , ", " ", ",", "[]"])
+def test_suffix_list_separator_only_values_fall_back_to_default(blank):
+    """A value that normalises to nothing must not yield an empty list.
+
+    An empty ``PICKLESCAN_FILE_SUFFIXES`` fails open in the worst way: no
+    suffix matches, so every upload silently skips scanning. An empty
+    ``ALLOWED_MODEL_FILE_EXTENSIONS`` fails the other way, rejecting every
+    upload. Both fall back to the documented defaults instead.
+    """
+    settings = Settings(ALLOWED_MODEL_FILE_EXTENSIONS=blank, PICKLESCAN_FILE_SUFFIXES=blank)
+
+    assert settings.ALLOWED_MODEL_FILE_EXTENSIONS == Settings().ALLOWED_MODEL_FILE_EXTENSIONS
+    assert settings.PICKLESCAN_FILE_SUFFIXES == Settings().PICKLESCAN_FILE_SUFFIXES

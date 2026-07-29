@@ -308,7 +308,19 @@ def test_endpoint_redacts_url_when_unhandled_error(
 
 @pytest.mark.parametrize(
     "file_name",
-    ["trainer.py", "config.json", "weights.pt", "WEIGHTS.PTH", "aux.pkl", "notes.txt", "conf.yaml", "w.safetensors"],
+    [
+        "trainer.py",
+        "config.json",
+        # Flower's per-app run config — every Flower template ships one, so
+        # rejecting .toml would block every Flower upload.
+        "config.toml",
+        "weights.pt",
+        "WEIGHTS.PTH",
+        "aux.pkl",
+        "notes.txt",
+        "conf.yaml",
+        "w.safetensors",
+    ],
 )
 def test_endpoint_accepts_whitelisted_extensions(
     override_auth_dependencies, mocked_settings, mock_s3_client, file_name

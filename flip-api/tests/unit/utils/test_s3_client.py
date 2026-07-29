@@ -433,3 +433,34 @@ def test_copy_object_if_match_wraps_other_failures(s3_client_with_mock_boto):
     )
     with pytest.raises(Exception, match="Unable to copy object"):
         s3.copy_object_if_match("s3://bucket/uploaded/k", "s3://bucket/scanned/k", '"etag"')
+
+
+def test_delete_object_if_match_sends_the_precondition(s3_client_with_mock_boto):
+    """The quarantine delete must carry IfMatch so S3 evaluates it atomically —
+    a read-then-delete would let a re-upload slip in between and be destroyed
+    on the previous object's scan verdict."""
+    s3, boto_instance = s3_client_with_mock_boto
+    s3.delete_object_if_match("s3://bucket/uploaded/k", '"etag"')
+    boto_instance.delete_object.assert_called_once_with(
+        Bucket="bucket", Key="uploaded/k", IfMatch='"etag"'
+    )
+
+
+def test_delete_object_if_match_raises_precondition_error(s3_client_with_mock_boto):
+    from flip_api.utils.s3_client import S3PreconditionFailedError
+
+    s3, boto_instance = s3_client_with_mock_boto
+    boto_instance.delete_object.side_effect = ClientError(
+        {"Error": {"Code": "PreconditionFailed", "Message": "..."}}, "DeleteObject"
+    )
+    with pytest.raises(S3PreconditionFailedError):
+        s3.delete_object_if_match("s3://bucket/uploaded/k", '"etag"')
+
+
+def test_delete_object_if_match_wraps_other_failures(s3_client_with_mock_boto):
+    s3, boto_instance = s3_client_with_mock_boto
+    boto_instance.delete_object.side_effect = ClientError(
+        {"Error": {"Code": "AccessDenied", "Message": "denied"}}, "DeleteObject"
+    )
+    with pytest.raises(Exception, match="Unable to delete object"):
+        s3.delete_object_if_match("s3://bucket/uploaded/k", '"etag"')

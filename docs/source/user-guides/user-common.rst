@@ -394,9 +394,9 @@ Upload Files
       and released like any other file, then executed as-is on every participating trust. Only upload
       code you have written or reviewed yourself, and treat code from third parties as untrusted.
 
-   Only recognised file types may be uploaded (by default ``.py``, ``.json``, ``.pt``, ``.pth``,
-   ``.pkl``, ``.txt``, ``.yaml``, ``.yml`` and ``.safetensors``). Anything else — including archives
-   such as ``.zip`` — is refused at upload time with a message listing the accepted types.
+   Only recognised file types may be uploaded (by default ``.py``, ``.json``, ``.toml``, ``.pt``,
+   ``.pth``, ``.pkl``, ``.txt``, ``.yaml``, ``.yml`` and ``.safetensors``). Anything else — including
+   archives such as ``.zip`` — is refused at upload time with a message listing the accepted types.
 
    Training cannot start until every file has been released.
 
