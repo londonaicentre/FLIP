@@ -86,8 +86,8 @@ vocabulary export (snapshot `v5.0 30-AUG-24`): nine tab-separated files
 `CONCEPT_ANCESTOR.csv` 704 MB, `CONCEPT_SYNONYM.csv` 139 MB,
 `DRUG_STRENGTH.csv` 159 MB, plus the small `CONCEPT_CLASS` / `DOMAIN` /
 `RELATIONSHIP` / `VOCABULARY` tables) that
-`60_populate_vocabulary_tables.sql` COPYs into the `omop` schema at first
-container init. It carries **59 vocabularies** — the load-bearing ones for
+`load_core_vocab.sh` streams into the `omop` schema at seed time. It carries
+**59 vocabularies** — the load-bearing ones for
 FLIP's cohort queries and the licensing-relevant ones are:
 
 | Vocabulary | Version in bundle | Licensing |
