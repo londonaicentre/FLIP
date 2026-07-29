@@ -491,12 +491,19 @@ def upload_files(
         raise SmokeFailure(f"--model-files-dir does not exist: {files_dir}")
     blacklist = _blacklisted_filenames()
     all_paths = sorted(p for p in files_dir.iterdir() if p.is_file())
-    skipped = [p.name for p in all_paths if p.name in blacklist]
-    paths = [p for p in all_paths if p.name not in blacklist]
+    # Dotfiles are repo housekeeping (.gitignore in the Flower spleen-evaluation
+    # app, editor droppings), never model content. The hub refuses them anyway —
+    # they carry no whitelisted extension — so uploading them would fail the run
+    # on a file the researcher never meant to send.
+    dotfiles = [p.name for p in all_paths if p.name.startswith(".")]
+    blacklisted = [p.name for p in all_paths if p.name in blacklist]
+    paths = [p for p in all_paths if p.name not in blacklist and not p.name.startswith(".")]
     if not paths:
         raise SmokeFailure(f"No files found under {files_dir}")
-    if skipped:
-        _log(f"⏭️  Skipping {len(skipped)} blacklisted file(s): {', '.join(skipped)}")
+    if dotfiles:
+        _log(f"⏭️  Skipping {len(dotfiles)} dotfile(s): {', '.join(dotfiles)}")
+    if blacklisted:
+        _log(f"⏭️  Skipping {len(blacklisted)} blacklisted file(s): {', '.join(blacklisted)}")
     _log(f"📤 Uploading {len(paths)} file(s) from {files_dir}")
     uploaded: list[str] = []
     for path in paths:
