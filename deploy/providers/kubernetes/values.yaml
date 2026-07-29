@@ -362,6 +362,14 @@ omopDb:
   credentials:
     user: postgres
     # password is supplied via secrets.data.omop-postgres-password
+  # Streams the licensed core vocabulary into the running database after
+  # install/upgrade (the published image and pgdata tarballs are vocab-free —
+  # FLIP#842/843). Bundle comes from the org S3 bucket; same AWS auth options
+  # as initJob. Disable when using an external OMOP database.
+  vocabLoad:
+    enabled: true
+    s3Bucket: "flipdev-aicentre"
+    bundleName: "vocab_aicentre_core_20240916"
   initJob:
     enabled: true
     s3Bucket: ""

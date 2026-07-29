@@ -17,3 +17,6 @@ volumes/.local_data_version*
 # licensed OMOP vocabularies; the canonical CSVs live on Hugging Face).
 data/
 .env.build
+
+# Exported pgdata tarballs (publish artefacts)
+dist/

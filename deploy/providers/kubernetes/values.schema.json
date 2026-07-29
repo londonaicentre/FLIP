@@ -286,6 +286,14 @@
       "additionalProperties": true,
       "properties": {
         "enabled": { "type": "boolean" },
+        "vocabLoad": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "s3Bucket": { "type": "string" },
+            "bundleName": { "type": "string" }
+          }
+        },
         "resources": {
           "type": "object",
           "properties": {

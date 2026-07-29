@@ -16,9 +16,15 @@
 Postgres database containing OMOP-ified data. This directory is both the
 **build source** for the `ghcr.io/londonaicentre/omop-db` image (OMOP CDM 5.4
 schema with the MI-CDM imaging extension — `image_occurrence`,
-`image_feature` — plus read-only role setup and vocabulary init; imported from
-the retired private `flip-omop-db` repo, FLIP#834) and the **consumer harness**
-that downloads ready-populated data volumes for the dev trust stacks.
+`image_feature` — plus read-only role setup; imported from the retired private
+`flip-omop-db` repo, FLIP#834) and the **consumer harness** that downloads
+ready-populated data volumes for the dev trust stacks.
+
+**Every published artifact is licence-clean (FLIP#842/#843)**: the image and
+the pgdata tarballs are *vocab-free* — the licensed core vocabulary is
+streamed into each running database as a one-time seeding step
+(`files/load_core_vocab.sh`), from a source each environment is licensed to
+use.
 
 ## Using the database (dev trust stacks)
 
@@ -39,6 +45,20 @@ make -C trust up-trust KIT=GSTT    # GSTT only
 make -C trust up-trust KIT=KCH     # KCH only
 ```
 
+The downloaded volumes are **vocab-free** (~11 MB each): after the stack is
+up, load the core vocabulary into each trust database once (idempotent — safe
+to re-run; needs the bundle, see "The core vocabulary bundle" below, and
+`psql` on the host):
+
+```sh
+make load-omop-vocab                    # Trust_1 (GSTT, port 5434)
+make load-omop-vocab OMOP_DB_PORT=5436  # Trust_2 (KCH)
+```
+
+Cohort queries that join `omop.concept` return nothing until this step has
+run. On EC2 trusts the equivalent load is part of `seed-trust-data` (Ansible);
+on Kubernetes it is the chart's `omop-vocab-load` post-install job.
+
 For database-only debugging (without the rest of the trust stack), `make -C trust/omop-db up-test-omop-trust1` will start just the first dev trust's OMOP container.
 
 Bringing the container up should not run any initialization scripts — the data volume already contains a populated database.
@@ -46,13 +66,16 @@ Bringing the container up should not run any initialization scripts — the data
 ## Building the image
 
 The image bakes the schema init chain (`files/`: schema DDL → primary keys →
-indices → read-only users → vocabulary tables) and the core OMOP vocabulary
-into `postgres:17`. FK constraints are deliberately **not** applied at init —
-data must load first (see `apply-constraints` below).
+indices → read-only users) plus the seed-time helpers
+(`load_core_vocab.sh`, `constraints.sql`) into `postgres:17` — **no
+vocabulary, no data**, so the build needs no credentials and is published by
+CI (`docker_build_omop_db.yml`, test-gated like the other services). FK
+constraints are deliberately **not** applied at init — data must load first
+(see `apply-constraints` below).
 
 ```sh
 cp .env.build.example .env.build   # local build credentials (gitignored)
-make build                         # fetches the core vocab (S3), then builds the image
+make build                         # plain docker build — no data inputs
 ```
 
 ### The core vocabulary bundle
@@ -78,8 +101,10 @@ FLIP's cohort queries and the licensing-relevant ones are:
 | RxNorm / RxNorm Ext / NDC | 20240506 / 20240701 / 20240825 | UMLS terms (RxNorm) |
 | OMOP structural vocabularies (Domain, Concept Class, Type Concept, Visit, ...) | — | Apache 2.0 (OHDSI) |
 
-Because of the licensed entries the bundle is **never tracked in git** and not
-fetchable in CI. Three ways to obtain it, in order of preference:
+Because of the licensed entries the bundle is **never tracked in git**, never
+part of the published image, and not fetchable in CI. Two ways to obtain it
+(needed only for populating fresh datasets — not for building the image or
+running the trust stacks):
 
 1. **FLIP developers (org AWS access)** — `make fetch-vocab-core`: downloads
    `s3://flipdev-aicentre/vocab/vocab_aicentre_core_20240916.zip` (override
@@ -92,10 +117,6 @@ fetchable in CI. Three ways to obtain it, in order of preference:
    [NHS TRUD](https://isd.digital.nhs.uk/)), then place the export's CSV files
    at `data/vocab_aicentre_core_20240916/`. Concept coverage may differ
    slightly from the org snapshot depending on release dates.
-3. **Credential-free fallback** — `make fetch-vocab-core-from-image` extracts
-   the identical bundle from the already-published public image. This only
-   works while published tags still bake the vocab; it goes away when the
-   image is rebuilt vocab-free (FLIP#842).
 
 ### The DICOM vocabulary bundle
 
@@ -128,27 +149,37 @@ provenance column, and standing up N trusts is a deterministic split
 ```sh
 uv sync
 make up-build                        # builds if needed, then starts the two build DBs
-make populate                        # fetch DICOM vocab + dataset, load each trust's slice
+make populate                        # core vocab + DICOM vocab + each trust's dataset slice
 make apply-constraints               # FK constraints go on AFTER the load
 ```
 
-Populating runs from the host and needs `pg_isready` (postgresql-client). The
-shipped build stack is **two-trust**: `NUM_TRUSTS` / `PARTITION` thread through
-to the split tooling, but standing up more than two trusts additionally needs
-an `omop-db-trust<N>` service in `compose.yml` and an `OMOP_DB_PORT_TRUST_<N>`
-in `.env.build` — `make populate NUM_TRUSTS=3 PARTITION=modulo` fails fast
-until they exist (and `modulo` implies regenerating the matching imaging data).
+Populating runs from the host and needs `psql`/`pg_isready`
+(postgresql-client). The shipped build stack is **two-trust**: `NUM_TRUSTS` /
+`PARTITION` thread through to the split tooling, but standing up more than two
+trusts additionally needs an `omop-db-trust<N>` service in `compose.yml` and
+an `OMOP_DB_PORT_TRUST_<N>` in `.env.build` — `make populate NUM_TRUSTS=3
+PARTITION=modulo` fails fast until they exist (and `modulo` implies
+regenerating the matching imaging data).
 
-The populated volumes land in `volumes/Trust_<N>/db_data` — the same trees the
-dev trust stack mounts. To publish a new pgdata version to Hugging Face, tar
-the *contents* of each populated volume
-(`tar -czf trust<N>_pgdata_<version>.tar -C volumes/Trust_<N>/db_data .` — the
-archive root must be the db_data contents, not a wrapping directory) and upload
-it under `trust<N>/` in the dataset, then bump `.data_version`.
+### Publishing new pgdata tarballs
 
-To publish the image itself: `make push` (GHCR write access required;
-`OMOP_DB_TAG` overrides the tag, and the target asks for confirmation — the
-trust stacks resolve `:latest` by default).
+The published tarballs must be **vocab-free** (they are public): run the
+pipeline with the core-vocabulary step skipped and WITHOUT `apply-constraints`
+(the FKs reference the absent vocab tables — they are applied at seed time by
+the vocab load instead):
+
+```sh
+make up-build && make populate CORE_VOCAB=0
+make export-pgdata                   # dist/trust<N>_pgdata_<.data_version>.tar
+```
+
+Upload each archive under `trust<N>/` in the Hugging Face dataset and bump
+`.data_version`. The DICOM vocabulary and the synthetic cohort stay in the
+tarball (both freely redistributable); the archives are ~11 MB.
+
+To publish the image manually (CI normally does this): `make push`
+(GHCR write access required; `OMOP_DB_TAG` overrides the tag, and the target
+asks for confirmation — the trust stacks resolve `:latest` by default).
 
 The canonical dataset is regenerated from per-trust CSV exports with
 `uv run python -m omop_db_tools.dataset build --trust-dirs <dir1> <dir2> --dest <out>`.

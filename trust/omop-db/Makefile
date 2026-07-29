@@ -64,6 +64,16 @@ shell:
 update-omop-data:
 	TRUST=$(TRUST) CLEAN_AFTER_UPDATE=True ./update_omop_data.sh
 
+# Load the licensed core vocabulary into a RUNNING trust omop-db and apply the
+# FK constraints. The published pgdata tarballs are vocab-free, so after
+# `make update-omop-data` + starting the stack this runs once per trust — the
+# one credentialed seeding step (see README "The core vocabulary bundle").
+# Port defaults to the GSTT kit's OMOP_DB_PORT; override for other trusts,
+# e.g. `make load-omop-vocab OMOP_DB_PORT=5436` (KCH).
+load-omop-vocab: fetch-vocab-core
+	OMOP_DB_PORT=$(OMOP_DB_PORT) ./files/load_core_vocab.sh \
+		data/$(VOCAB_CORE_BUNDLE) files/OMOPCDM_postgresql_5.4_constraints.sql
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Image build + populate pipeline (standalone; see README "Building the image")
 # ─────────────────────────────────────────────────────────────────────────────
@@ -73,11 +83,9 @@ GHCR_IMAGE = ghcr.io/londonaicentre/omop-db
 OMOP_DB_TAG ?= latest
 # S3 bucket holding the vocab bundle zips under vocab/ (the AI Centre's dev
 # bucket by default; needs AWS credentials for that account). Contributors
-# without bucket access: see fetch-vocab-core-from-image.
+# without bucket access self-serve from OHDSI Athena — see README
+# "The core vocabulary bundle".
 VOCAB_S3_BUCKET ?= flipdev-aicentre
-# Published tag fetch-vocab-core-from-image extracts from — deliberately
-# decoupled from OMOP_DB_TAG (which may not exist yet when building a new tag).
-VOCAB_SOURCE_TAG ?= latest
 
 # Fetched inputs (all gitignored under data/). The core vocab bundle contains
 # licensed OMOP vocabularies (SNOMED CT, LOINC, Read, ...) and must never be
@@ -94,6 +102,10 @@ HF_TRUST_DATA_BASE = https://huggingface.co/datasets/aicentreflip/trust-data/res
 # service and an OMOP_DB_PORT_TRUST_<N> — populate-trust-<N> fails fast otherwise.
 NUM_TRUSTS = 2
 PARTITION = legacy
+# CORE_VOCAB=0 skips the licensed core-vocabulary load during populate — used
+# when producing the vocab-free pgdata tarballs published to Hugging Face
+# (constraints must then also be skipped: they reference the vocab tables).
+CORE_VOCAB = 1
 
 check-build-env:
 	@if [ ! -f "$(BUILD_ENV_FILE)" ]; then \
@@ -101,7 +113,8 @@ check-build-env:
 		exit 1; \
 	fi
 
-build: fetch-vocab-core
+# The image is vocab-free — building needs no data/ inputs at all.
+build:
 	$(build_compose) build
 
 up-build: check-build-env build
@@ -120,7 +133,7 @@ fetch-vocab-core:
 	else \
 		if ! command -v aws > /dev/null 2>&1 || ! aws sts get-caller-identity > /dev/null 2>&1; then \
 			echo "❌ AWS CLI access unavailable (needed for s3://$(VOCAB_S3_BUCKET)/vocab/)."; \
-			echo "   Without bucket access, run: make fetch-vocab-core-from-image"; \
+			echo "   Without bucket access, self-serve the bundle from OHDSI Athena — see README."; \
 			exit 1; \
 		fi; \
 		mkdir -p data; \
@@ -137,26 +150,6 @@ fetch-vocab-core:
 			echo "❌ unzip failed — delete data/$(VOCAB_CORE_BUNDLE).zip and re-run"; \
 			exit 1; \
 		fi; \
-		mv "data/.$(VOCAB_CORE_BUNDLE).tmp" "data/$(VOCAB_CORE_BUNDLE)"; \
-	fi
-
-# Fallback for environments without org bucket access: extract the bundle from
-# the already-published public image — no credentials, no new exposure.
-fetch-vocab-core-from-image:
-	@if [ -d "data/$(VOCAB_CORE_BUNDLE)" ]; then \
-		echo "data/$(VOCAB_CORE_BUNDLE) already present — skipping."; \
-	else \
-		echo "⬇️  Extracting core vocab from $(GHCR_IMAGE):$(VOCAB_SOURCE_TAG) ..."; \
-		mkdir -p data; \
-		rm -rf "data/.$(VOCAB_CORE_BUNDLE).tmp"; \
-		cid=$$(docker create $(GHCR_IMAGE):$(VOCAB_SOURCE_TAG)) || exit 1; \
-		if ! docker cp "$$cid:/flip/omop/vocab" "data/.$(VOCAB_CORE_BUNDLE).tmp"; then \
-			docker rm "$$cid" > /dev/null; \
-			rm -rf "data/.$(VOCAB_CORE_BUNDLE).tmp"; \
-			echo "❌ docker cp failed — no vocab bundle extracted"; \
-			exit 1; \
-		fi; \
-		docker rm "$$cid" > /dev/null; \
 		mv "data/.$(VOCAB_CORE_BUNDLE).tmp" "data/$(VOCAB_CORE_BUNDLE)"; \
 	fi
 
@@ -191,6 +184,12 @@ populate-trust-%: check-build-env
 		exit 1; \
 	fi
 	./wait-for-postgres.sh $(OMOP_DB_PORT_TRUST_$*)
+	@if [ "$(CORE_VOCAB)" = "1" ]; then \
+		$(MAKE) fetch-vocab-core && \
+		OMOP_DB_PORT=$(OMOP_DB_PORT_TRUST_$*) ./files/load_core_vocab.sh data/$(VOCAB_CORE_BUNDLE); \
+	else \
+		echo "⏭️  CORE_VOCAB=0 — skipping licensed core-vocabulary load (vocab-free export flavour)."; \
+	fi
 	OMOP_DB_PORT=$(OMOP_DB_PORT_TRUST_$*) uv run python -m omop_db_tools.load_dicom_vocab \
 		--vocab-dir data/$(VOCAB_DICOM_BUNDLE)
 	OMOP_DB_PORT=$(OMOP_DB_PORT_TRUST_$*) uv run python -m omop_db_tools.import_tables \
@@ -201,6 +200,22 @@ apply-constraints: check-build-env $(addprefix apply-constraints-trust-,$(shell 
 apply-constraints-trust-%:
 	@echo "🔗 Applying OMOP CDM constraints (trust $*)..."
 	$(build_compose) exec -T omop-db-trust$* psql -v ON_ERROR_STOP=1 -U $(OMOP_POSTGRES_USER) -d $(OMOP_POSTGRES_DB) -f /flip/omop/constraints.sql
+
+# Produce the publishable vocab-free pgdata tarballs (README "Populating"):
+# run the pipeline with `make populate CORE_VOCAB=0` (and WITHOUT
+# apply-constraints — the FKs reference the absent vocab), then export each
+# populated volume. Tar runs in a root container because the pgdata trees are
+# uid-999-owned; the archive root is the db_data CONTENTS, matching what
+# update_omop_data.sh extracts.
+PGDATA_VERSION = $(shell tr -d ' \n\r\t' < .data_version)
+
+export-pgdata: $(addprefix export-pgdata-trust-,$(shell seq 1 $(NUM_TRUSTS)))
+
+export-pgdata-trust-%:
+	@mkdir -p dist
+	docker run --rm -v "$$(pwd)/volumes/Trust_$*/db_data:/d:ro" -v "$$(pwd)/dist:/out" alpine \
+		tar -czf "/out/trust$*_pgdata_$(PGDATA_VERSION).tar" -C /d .
+	@echo "📦 dist/trust$*_pgdata_$(PGDATA_VERSION).tar"
 
 # Push the already-built image to GHCR. Do `docker login ghcr.io` first if
 # needed. Interactive confirmation: the trust stacks resolve :latest by default,

@@ -10,11 +10,11 @@
 # limitations under the License.
 #
 
+# The image is vocab-free: no data/ content ever enters the build context.
 .venv/
 volumes/
-data/canonical/
-data/*.zip
-data/vocab_dicom_paulnagy_*/
+data/
+dist/
 tests/
 htmlcov-unit/
 .env.build

@@ -1,0 +1,112 @@
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# The published omop-db image and pgdata tarballs are vocab-free (FLIP#842/843):
+# this Job streams the licensed core vocabulary bundle into the running database
+# after install/upgrade, using the image's own loader (which skips tables that
+# already hold the core vocabulary, so re-runs are cheap no-ops). Not applicable
+# when the trust brings an external OMOP database.
+{{- if and .Values.omopDb.enabled .Values.omopDb.vocabLoad.enabled }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "flip-trust.fullname" . }}-omop-vocab-load
+  namespace: {{ include "flip-trust.namespace" . }}
+  labels:
+    {{- include "flip-trust.labels" . | nindent 4 }}
+    app.kubernetes.io/component: omop-vocab-load
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "5"
+    "helm.sh/hook-delete-policy": before-hook-creation
+spec:
+  backoffLimit: 2
+  template:
+    metadata:
+      labels:
+        {{- include "flip-trust.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: omop-vocab-load
+    spec:
+      restartPolicy: Never
+      enableServiceLinks: false
+      {{- if .Values.imagePullSecrets }}
+      imagePullSecrets:
+{{ include "flip-trust.imagePullSecrets" . | nindent 8 }}
+      {{- end }}
+      initContainers:
+        - name: fetch-bundle
+          image: amazon/aws-cli:2.22.0
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -euo pipefail
+              BUNDLE="{{ .Values.omopDb.vocabLoad.bundleName }}"
+              if [ -d "/vocab-work/${BUNDLE}" ]; then
+                echo "Bundle already fetched. Skipping."
+                exit 0
+              fi
+              microdnf install -y unzip 2>/dev/null || yum install -y unzip 2>/dev/null
+              aws s3 cp "s3://{{ .Values.omopDb.vocabLoad.s3Bucket }}/vocab/${BUNDLE}.zip" /vocab-work/bundle.zip
+              unzip -q /vocab-work/bundle.zip -d "/vocab-work/${BUNDLE}"
+              rm -f /vocab-work/bundle.zip
+          {{- if .Values.omopDb.initJob.hostAwsMount.enabled }}
+          env:
+            - name: AWS_DEFAULT_REGION
+              value: {{ default "eu-west-2" .Values.awsRegion | quote }}
+            - name: AWS_PROFILE
+              value: {{ .Values.omopDb.initJob.awsProfile | quote }}
+          {{- end }}
+          volumeMounts:
+            - name: vocab-work
+              mountPath: /vocab-work
+      containers:
+        - name: load-vocab
+          image: "{{ .Values.omopDb.image.repository }}:{{ .Values.omopDb.image.tag }}"
+          imagePullPolicy: {{ .Values.omopDb.image.pullPolicy }}
+          command:
+            - /bin/bash
+            - -c
+            - |
+              set -euo pipefail
+              attempts=0
+              until pg_isready -h "${OMOP_DB_HOST}" -p "${OMOP_DB_PORT}" > /dev/null 2>&1; do
+                attempts=$((attempts + 1))
+                if [ "${attempts}" -ge 60 ]; then
+                  echo "omop-db not reachable after ${attempts} attempts" >&2
+                  exit 1
+                fi
+                sleep 5
+              done
+              /flip/omop/load_core_vocab.sh "/vocab-work/{{ .Values.omopDb.vocabLoad.bundleName }}" /flip/omop/constraints.sql
+          env:
+            - name: OMOP_DB_HOST
+              value: "omop-db"
+            - name: OMOP_DB_PORT
+              value: "5432"
+            - name: OMOP_POSTGRES_USER
+              value: {{ .Values.omopDb.credentials.user | quote }}
+            - name: OMOP_POSTGRES_DB
+              value: {{ .Values.dataAccessApi.env.OMOP_POSTGRES_DB | quote }}
+            - name: OMOP_POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ if .Values.secrets.create }}{{ include "flip-trust.fullname" . }}-secrets{{ else }}{{ .Values.secrets.existingName }}{{ end }}
+                  key: omop-postgres-password
+          volumeMounts:
+            - name: vocab-work
+              mountPath: /vocab-work
+      volumes:
+        - name: vocab-work
+          emptyDir:
+            sizeLimit: 10Gi
+{{- end }}

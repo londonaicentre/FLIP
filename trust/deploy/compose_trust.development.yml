@@ -17,8 +17,8 @@ services:
 
   # --- Application services ---
 
-  # Image built from trust/omop-db in this repo (see trust/omop-db/README.md —
-  # the build is manual because the baked vocabulary cannot be fetched in CI)
+  # Image built from trust/omop-db in this repo (CI-published, vocab-free —
+  # the licensed vocabulary is loaded at seed time; see trust/omop-db/README.md)
   omop-db:
     image: ghcr.io/londonaicentre/omop-db:${OMOP_DB_TAG:-latest}
     restart: always

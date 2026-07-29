@@ -40,6 +40,8 @@ dataset on the public Hugging Face dataset
 `aicentreflip/trust-data <https://huggingface.co/datasets/aicentreflip/trust-data>`_,
 deterministically split across however many mock Trusts are stood up; dev
 stacks download ready-populated database volumes from the same dataset. The
-bundled OMOP vocabularies (SNOMED CT, LOINC, ...) are licensed material and are
-therefore not tracked in the repository — see ``trust/omop-db/README.md`` for
-the build and populate workflow.
+OMOP vocabularies (SNOMED CT, LOINC, ...) are licensed material and are kept
+out of every published artifact — the image and data volumes ship vocab-free,
+and each environment streams the vocabulary bundle it is licensed to use into
+its running database as a one-time seeding step — see
+``trust/omop-db/README.md`` for the build, populate and seeding workflow.

@@ -6,15 +6,32 @@ Two halves of one pipeline (merged from the retired private `flip-omop-db` repo,
 
 1. **Image build source** for `ghcr.io/londonaicentre/omop-db`: `Dockerfile` on `postgres:17` bakes the
    `files/` init chain (create `omop` schema → OMOP CDM 5.4 DDL → primary keys → indices → read-only
-   roles → vocabulary tables) plus the core OMOP vocabulary. FK **constraints are deliberately absent
-   from init** (`files/OMOPCDM_postgresql_5.4_constraints.sql` is copied to `/flip/omop/constraints.sql`
-   and applied via `make apply-constraints` only AFTER data load — loading after constraints fails).
-2. **Consumer harness** for the dev trust stacks: `update_omop_data.sh` downloads ready-populated pgdata
-   volumes (versioned by `.data_version`) from the public HF dataset `aicentreflip/trust-data` into
-   `volumes/Trust_<N>/db_data`, which `trust/deploy/compose_trust.<env>.yml` mounts.
+   roles) plus the seed-time helpers (`load_core_vocab.sh`, `constraints.sql`). The image is
+   **vocab-free** (FLIP#842) — nothing licensed in any layer — so it is published by CI
+   (`docker_build_omop_db.yml`, gated on the "Trust - OMOP DB CI" test workflow like the other
+   services). FK **constraints are deliberately absent from init** — they are applied only AFTER data
+   load (loading after constraints fails).
+2. **Consumer harness** for the dev trust stacks: `update_omop_data.sh` downloads ready-populated,
+   **vocab-free** pgdata volumes (~11 MB each, versioned by `.data_version`) from the public HF dataset
+   `aicentreflip/trust-data` into `volumes/Trust_<N>/db_data`, which
+   `trust/deploy/compose_trust.<env>.yml` mounts.
 
 `compose.yml` here is the **standalone build/populate stack** (one empty DB per trust + opt-in pgadmin
 profile; config from gitignored `.env.build`), NOT the runtime trust stack.
+
+## The vocabulary seeding model (FLIP#842/#843)
+
+No published artifact (image, pgdata tarball, HF dataset) carries the licensed core vocabulary. Every
+environment loads it ONCE into the running database via `files/load_core_vocab.sh` (client-side
+`COPY FROM STDIN` over TCP — no mounts, no server-side files; idempotent via core-aware guards that
+tolerate the DICOM vocab already present in the tarballs):
+
+- **Dev**: `make load-omop-vocab [OMOP_DB_PORT=5436]` (after `update-omop-data` + stack up). Cohort
+  queries joining `omop.concept` return nothing until this runs.
+- **EC2**: the "load OMOP core vocabulary on Trust EC2" Ansible play (part of `seed-trust-data`;
+  throwaway container on loopback port 15499; kit credentials passed by the AWS Makefile).
+- **Kubernetes**: the chart's `omop-vocab-load` post-install/post-upgrade hook Job
+  (`omopDb.vocabLoad` values; bundle from S3, loader + constraints from the image).
 
 ## Load-bearing facts
 
@@ -23,16 +40,12 @@ profile; config from gitignored `.env.build`), NOT the runtime trust stack.
   `OMOP_DATA_VERSION` env var in `generate_values.py`.
 - **Vocabulary licensing**: the core vocab bundle — an OHDSI Athena export, 59 vocabularies incl.
   SNOMED CT, LOINC, Read, dm+d (roster + versions in README "The core vocabulary bundle") — is licensed
-  material: `data/` is gitignored and must never be committed; there is **no CI image build** for this
-  service. Acquisition paths (README "The core vocabulary bundle"): org members via
+  material: `data/` is gitignored and must never be committed or published. Acquisition: org members via
   `make fetch-vocab-core` from `s3://$(VOCAB_S3_BUCKET)/vocab/` (default `flipdev-aicentre`, org AWS
-  needed); external users self-serve an equivalent export from OHDSI Athena under their own licences;
-  `make fetch-vocab-core-from-image` is a transitional credential-free fallback extracting from the
-  already-published public image (which already redistributes it — a pre-existing exposure recorded in
-  FLIP#834; vocab-free image rebuild tracked in FLIP#842, pgdata-tarball posture in FLIP#843; this repo
-  must not add a second redistribution channel). The DICOM vocab
-  (byte-identical to DICOM2OMOP `files/OMOP CDM Staging/` @ upstream `1ef3354`, Apache 2.0, pickle
-  converted to CSV) is freely redistributable and lives on the HF dataset.
+  needed); external users self-serve an equivalent export from OHDSI Athena under their own licences.
+  The DICOM vocab (byte-identical to DICOM2OMOP `files/OMOP CDM Staging/` @ upstream `1ef3354`, Apache
+  2.0, pickle converted to CSV) is freely redistributable: it lives on the HF dataset and stays inside
+  the published tarballs.
 - **Read-only roles are a security boundary**: `files/create_readonly_users.sql` creates
   `omop_readonly_base` + `data_analyst_reader` (SELECT-only, explicit REVOKEs) — the database half of
   data-access-api's SQL-injection defence-in-depth (`data_access_api/services/cohort.py`). The analyst
@@ -46,19 +59,22 @@ profile; config from gitignored `.env.build`), NOT the runtime trust stack.
   (`person_id % N`, any trust count, needs regenerated imaging data). All tables carry `person_id`, so
   person-level partitioning preserves referential integrity.
 - The populate scripts run on the **host** against published ports (`OMOP_DB_HOST` defaults to
-  localhost); `populate` must run against freshly-initialised, constraint-free databases.
+  localhost) and need postgresql-client (`psql`/`pg_isready`).
 
 ## Commands
 
 ```bash
-make update-omop-data [TRUST=1|2]   # consumer path: sync pgdata volumes from HF
+make update-omop-data [TRUST=1|2]   # consumer path: sync vocab-free pgdata volumes from HF
+make load-omop-vocab [OMOP_DB_PORT=5436]  # seed the licensed vocab + constraints into a running trust DB
 cp .env.build.example .env.build    # once, before any build-pipeline target
-make build                          # fetch-vocab-core + docker build
+make build                          # plain docker build — no data inputs, no credentials
 make up-build / down-build          # the standalone per-trust build DBs
-make populate [NUM_TRUSTS=N PARTITION=modulo]  # fetch dataset + load N trust slices (shipped stack is
-                                               # two-trust; N>2 needs a compose service + port first)
-make apply-constraints              # AFTER populate
-make push [OMOP_DB_TAG=...]         # publish to GHCR (manual — no CI build)
+make populate [NUM_TRUSTS=N PARTITION=modulo]  # core vocab + DICOM vocab + N trust slices (shipped
+                                               # stack is two-trust; N>2 needs a compose service + port)
+make populate CORE_VOCAB=0          # vocab-free flavour for publishable tarballs (skip apply-constraints!)
+make export-pgdata                  # tar each volume -> dist/trust<N>_pgdata_<.data_version>.tar
+make apply-constraints              # AFTER a full populate
+make push [OMOP_DB_TAG=...]         # manual publish escape hatch (CI publishes normally); confirms first
 make local_test                     # ruff + mypy + pytest tests/unit (no DB needed)
 ```
 
@@ -68,5 +84,5 @@ make local_test                     # ruff + mypy + pytest tests/unit (no DB nee
   and the `uv-lock` pre-commit hooks. Tests live in `tests/unit/` only — anything touching a real
   Postgres belongs in `tests/integration/` (none yet).
 - SQL identifiers interpolated into statements must pass `import_tables.validate_identifier`.
-- The vocab/dataset bundles under `data/` and the build env (`.env.build`) are gitignored — keep it
-  that way.
+- The vocab/dataset bundles under `data/`, exported tarballs under `dist/`, and the build env
+  (`.env.build`) are gitignored — keep it that way.

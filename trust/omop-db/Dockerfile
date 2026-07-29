@@ -10,14 +10,19 @@
 # limitations under the License.
 #
 
-# Builds the base omop postgres image. POSTGRES_USER / POSTGRES_PASSWORD /
-# POSTGRES_DB are runtime environment (set by the compose file) — initdb runs at
-# first container start, not at build, so nothing credential-shaped is baked in.
+# Builds the base omop postgres image: OMOP CDM 5.4 schema, indices and
+# read-only roles only. The image is deliberately vocab-free — the licensed
+# vocabulary bundle is streamed into a running database by
+# /flip/omop/load_core_vocab.sh (one seeding step per environment; see
+# README "Populating"), so every published artifact stays licence-clean and
+# the image is CI-buildable. POSTGRES_* are runtime environment (set by the
+# compose file) — initdb runs at first container start, not at build, so
+# nothing credential-shaped is baked in.
 FROM postgres:17
 
 # The source label associates the GHCR package with this repo.
 LABEL org.opencontainers.image.source="https://github.com/londonaicentre/FLIP" \
-      org.opencontainers.image.description="FLIP trust OMOP database (OMOP CDM 5.4 + MI-CDM, schema and roles baked; see trust/omop-db/)" \
+      org.opencontainers.image.description="FLIP trust OMOP database (OMOP CDM 5.4 + MI-CDM, schema and roles baked, vocabulary loaded at seed time; see trust/omop-db/)" \
       org.opencontainers.image.licenses="Apache-2.0"
 
 # Copy initialization scripts (Schema DDL, Keys, Indices, Users)
@@ -30,16 +35,14 @@ COPY ./files/OMOPCDM_postgresql_5.4_indices.sql /docker-entrypoint-initdb.d/30_i
 COPY ./files/create_readonly_users.sql /flip/omop/create_readonly_users.sql
 COPY ./files/create_readonly_users.sh /docker-entrypoint-initdb.d/50_create_readonly_users.sh
 RUN chmod +x /docker-entrypoint-initdb.d/50_create_readonly_users.sh
-COPY ./files/populate_vocabulary_tables.sql /docker-entrypoint-initdb.d/60_populate_vocabulary_tables.sql
 
-# Copy vocabulary data. The bundle is not tracked in git (it contains licensed
-# OMOP vocabularies — SNOMED CT, LOINC, etc. — that cannot be redistributed in
-# this repository); fetch it with `make fetch-vocab-core` before building.
-COPY ./data/vocab_aicentre_core_20240916 /flip/omop/vocab
-
-# Copy constraints
-# NOTE This needs to be applied after running the image and importing data -- if we import data after applying constraints, it will fail.
-# See Makefile 'apply-constraints' command
+# Seed-time helpers, shipped in the image so any environment (dev host, EC2,
+# k8s job) can run them with the image's own psql:
+# - load_core_vocab.sh streams a vocabulary bundle into a RUNNING database
+# - constraints.sql is applied AFTER data load (importing after constraints
+#   fails), by the loader or `make apply-constraints`
+COPY ./files/load_core_vocab.sh /flip/omop/load_core_vocab.sh
+RUN chmod +x /flip/omop/load_core_vocab.sh
 COPY ./files/OMOPCDM_postgresql_5.4_constraints.sql /flip/omop/constraints.sql
 
 EXPOSE 5432
