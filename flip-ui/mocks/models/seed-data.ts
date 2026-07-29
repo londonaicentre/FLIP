@@ -481,7 +481,7 @@ export const latestModelData1: IPaginatedResponse<IModel> = {
 export const ModelMetrics: IModelMetricData[] = [
     {
         "yLabel": "LOSS_FUNCTION",
-        "xLabel": "global_round",
+        "xLabel": "Global Rounds",
         "metrics": [
             {
                 "data": [
@@ -554,7 +554,7 @@ export const ModelMetrics: IModelMetricData[] = [
     },
     {
         "yLabel": "AVERAGE_SCORE",
-        "xLabel": "global_round",
+        "xLabel": "Global Rounds",
         "metrics": [
             {
                 "data": [

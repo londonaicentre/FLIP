@@ -150,7 +150,10 @@ import AiLoader from "@/components/AiLoader/AiLoader.vue";
 import AiConfirmModal from "@/components/AiModal/AiConfirmModal.vue";
 import { usePermissions } from "@/composables/usePermissions";
 import { FileInfo, FileUploadStatus } from "@/interfaces/model/types";
-import { deleteModelFile, downloadModelFile, processScannedFile } from "@/services/file-service";
+import { deleteModelFile,
+    downloadModelFile,
+    getModelFileDownloadUrl,
+    processScannedFile } from "@/services/file-service";
 import { JobType } from "@/services/model-service";
 import { createPreSignedUrl, FileTooLargeError, uploadFile as uploadFileService } from "@/utils/file";
 import { formatBytes, getRandomId } from "@/utils/helpers";
@@ -347,19 +350,29 @@ const closeFileDeletion = () => {
     fileToDelete.value = undefined;
 };
 
+// Caps how many files download-all fetches at once so one huge file doesn't
+// starve/timeout the rest. Simple sequential batching (no worker-pool): a
+// batch waits for its slowest member before the next starts, which is an
+// acceptable tradeoff for the simplicity of no new dependency.
+// Note the zip is assembled in memory (every blob + the archive), so
+// download-all is not suitable for multi-GiB files — the per-file button
+// streams via the browser instead and has no such bound.
+const DOWNLOAD_ALL_CONCURRENCY = 3;
+
 const downloadAllAsZip = async () => {
     if (downloadingAll.value) return;
     downloadingAll.value = true;
     try {
         const all = internalFiles.value.concat(uploadingFiles.value);
         const zip = new JSZip();
-        // Fetch in parallel so the user isn't waiting on serial round-trips.
-        // JSZip handles ordering inside the archive itself.
-        await Promise.all(all.map(async file => {
-            const path = `/files/model/${props.modelId}/${encodeURIComponent(file.name)}`;
-            const blob = await downloadModelFile(path);
-            zip.file(file.name, blob);
-        }));
+        for (let i = 0; i < all.length; i += DOWNLOAD_ALL_CONCURRENCY) {
+            const batch = all.slice(i, i + DOWNLOAD_ALL_CONCURRENCY);
+            await Promise.all(batch.map(async file => {
+                const path = `/files/model/${props.modelId}/${encodeURIComponent(file.name)}`;
+                const blob = await downloadModelFile(path);
+                zip.file(file.name, blob);
+            }));
+        }
         const archive = await zip.generateAsync({ type: "blob" });
         const url = URL.createObjectURL(archive);
         const a = document.createElement("a");
@@ -384,18 +397,26 @@ const downloadFile = async (fileName: string) => {
 
     try {
         const path = `/files/model/${props.modelId}/${encodeURIComponent(fileName)}`;
-        const blob = await downloadModelFile(path);
+        const { url } = await getModelFileDownloadUrl(path);
 
-        const blobUrl = URL.createObjectURL(blob);
-
+        // Navigate straight to the presigned URL rather than fetching into a
+        // Blob: S3 serves it with `Content-Disposition: attachment` (set
+        // server-side), so the browser's download manager streams it to disk.
+        // No in-memory copy — files up to MAX_MODEL_FILE_BYTES (5 GiB) stay
+        // downloadable where a Blob would exhaust the tab. The catch below
+        // still covers the likely failures (auth/404/500 from flip-api); an
+        // S3-side rejection after a fresh URL is rare enough to accept the
+        // browser's own error surface for it.
         const a = document.createElement("a");
-        a.href = blobUrl;
-        a.download = fileName;
+        a.href = url;
         document.body.appendChild(a);
         a.click();
         a.remove();
-
-        URL.revokeObjectURL(blobUrl);
+    } catch {
+        Snackbar.error({
+            title: "Download failed",
+            text: `Could not download ${fileName}. Please try again.`
+        });
     } finally {
         downloadingFile.value = undefined;
     }

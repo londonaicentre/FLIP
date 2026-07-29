@@ -17,8 +17,16 @@ import { describe, expect, it, vi } from "vitest";
 
 import AddTrustModal from "@/partials/trusts/AddTrustModal.vue";
 import { addTrustSchema } from "@/partials/trusts/addTrustSchema";
+import { createAdminTrust } from "@/services/admin-trusts-service";
+import { Snackbar } from "@/utils/snackbar";
 
 vi.mock("@/services/admin-trusts-service", () => ({ createAdminTrust: vi.fn() }));
+vi.mock("@/utils/snackbar", () => ({
+    Snackbar: {
+        success: vi.fn(),
+        error: vi.fn()
+    }
+}));
 
 // Pass-through stubs for the headless-ui dialog chrome so the form fields render inline.
 const passthrough = (tag = "div") => ({ template: `<${tag}><slot /></${tag}>` });
@@ -105,6 +113,22 @@ describe("AddTrustModal rendering", () => {
         await wrapper.find("[data-test=add-trust-close-x-btn]").trigger("click");
 
         expect(wrapper.emitted("closeModal")).toHaveLength(1);
+    });
+
+    it("closes the dialog when creation fails, so the error snackbar isn't hidden behind it", async () => {
+        // e.g. the kit-slot pool is exhausted: the API 409s with a user-facing detail.
+        vi.mocked(createAdminTrust).mockRejectedValueOnce({ response: { data: { detail: "No FL kit slots available. Pre-provision more FL kits and try again." } } });
+        const wrapper = mountModal();
+
+        await wrapper.find("[data-test=trust-name-field]").setValue("Guy's Trust");
+        await wrapper.find("[data-test=trust-code-field]").setValue("GSTT");
+        await wrapper.find("[data-test=confirm-create-trust-btn]").trigger("click");
+
+        // Async validation + the rejected request resolve over macrotasks.
+        await vi.waitFor(() => {
+            expect(Snackbar.error).toHaveBeenCalled();
+            expect(wrapper.emitted("closeModal")).toHaveLength(1);
+        });
     });
 
     it("keeps the footer buttons on one row at every width", () => {

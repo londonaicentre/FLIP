@@ -202,15 +202,15 @@ class FLIP_VALIDATOR(Executor):
         print(message)
         self.log_info(fl_ctx, message)
 
-        # Send metrics over to FLIP
-        send_metrics_value(label="TEST_LOSS", value=metrics["loss"][-1], fl_ctx=fl_ctx, round=0, flip=self.flip)
+        # Send metrics over to FLIP. Test metrics are a single point, plotted at x=0 by convention.
+        send_metrics_value(label="TEST_LOSS", value=metrics["loss"][-1], fl_ctx=fl_ctx, x_value=0, flip=self.flip)
         for metric in ["f1-score", "precision", "recall"]:
             for lesion_name in self._lesions.get_lesion_list():
                 send_metrics_value(
                     label=f"{'test'.upper()}-{metric.upper()}-{lesion_name}",
                     value=metrics[metric][lesion_name][-1],
                     fl_ctx=fl_ctx,
-                    round=0,
+                    x_value=0,
                     flip=self.flip,
                 )
 

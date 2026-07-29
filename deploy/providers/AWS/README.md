@@ -357,6 +357,59 @@ the image back — re-run `make plan` after any `make deploy-centralhub`.
 > **Prod rollout note:** switch *production* deploys to this flow only after the 24 Jul 2026 DECAF
 > deadline (BDMS is live on legacy prod until then). Staging can adopt it immediately.
 
+### Growing the FL kit-slot pool (`add-fl-kits`)
+
+When trust registration fails with `NoFreeKitSlotError` ("No FL kit slots available…"),
+the deployment has run out of *claimable* FL kit slots. One command mints, uploads,
+and activates `N` more (NVFLARE only):
+
+```bash
+make add-fl-kits N=2 PROD=stag|true   # YES=1 to skip both confirmation prompts (kit plan + Terraform plan)
+```
+
+**Activation vs minting is automatic.** A slot is claimable only when its name is in
+`FL_KIT_SLOT_NAMES` *and* its kit exists in S3, and those two can drift — a deployment
+provisioned with a batch of spare kits has kits nobody can claim. `add-fl-kits N=<n>`
+treats `N` as *"ensure N more live slots"*, not a mint count: it **activates** up to `N`
+such spares first (lowest-numbered first — just an env-file edit, no certs, no upload,
+no restart) and only **mints** the shortfall. When spares cover the request it mints
+nothing and skips the CA workspace entirely, so growing the pool past over-provisioned
+kits needs none of the provisioning toolchain. (Stag on 2026-07-14 held 48 spare kits:
+`add-fl-kits N=1` now just activates the idle `Trust_3` in seconds instead of minting
+`Trust_51`.)
+
+It runs `scripts/add_fl_kits.sh`: discovers the deployment's nets from S3, activates any
+spares toward `N`, and for the remaining shortfall restores + fingerprint-verifies each
+net's CA workspace (`fl-services/nvflare/provision/workspace-<env>/`) and mints the next
+`Trust_<n>` names on **every** net via `nvflare provision --add_client` (existing kits
+untouched — no CA rotation), uploads **only** the new kits additively (never
+`aws s3 sync --delete`) plus a refresh of each net's mirrored `state/cert.json`, and
+appends the activated + minted names to `FL_KIT_SLOT_NAMES` in the env file; the make target then
+finishes with `make apply-fl-kit-slots` — a targeted plan/apply of only the
+`/flip/fl_kit_slot_names` SSM parameter (plus the flip-api task-role policy that grants
+its read, so the first rollout is self-contained), re-rendered from the env file. The
+kit-slot list is plain configuration, so the plan diff is human-readable — the target
+pauses for a confirmation after the plan prints (`YES=1` skips it), so read it before
+answering. flip-api re-reads the parameter when its slot pool runs dry
+(reconcile-on-miss), so the new slots are claimable by the next
+`make register-trust KIT=<CODE>` with **no restart and no task-definition change**.
+
+> **The targeted apply is not literally one resource.** `-target` applies the target's
+> whole dependency closure, and the flip-api task-role policy references the bucket
+> modules, whose server-access logging points at `aws_s3_bucket.flip_access_logs`. On an
+> environment whose state predates that S3-logging hardening, the first
+> `apply-fl-kit-slots` therefore *also* creates `flip-access-logs-<subdomain>` and its
+> ACL/ownership controls. It is additive (stag, 2026-07-14: **4 to add, 1 to change, 0 to
+> destroy**) and neither prod nor stag had the bucket, so expect it on the first prod
+> activation too. Nothing is replaced or destroyed — but read the plan before confirming.
+
+The script has a black-box test harness (`scripts/tests/test_add_fl_kits.sh`, `aws`/`make`/`openssl`
+stubbed — no credentials or network) that CI runs via `validate_terraform.yml` on any
+`deploy/providers/AWS/**` change; it also runs standalone with plain `bash`.
+
+Kit-minting details and the manual fallback:
+[`fl-services/nvflare/README.md`](../../../fl-services/nvflare/README.md#onboarding-a-new-client-onto-an-existing-network).
+
 ### Deployment to Different Environments
 
 **Staging:**

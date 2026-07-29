@@ -287,10 +287,35 @@ class FLIP_TRAINER(Executor):
                         batch_info += f"{lesion.lesion}: all masked; "
                 self.logger.info(batch_info)
 
+                # A fully-masked batch (every label -1) carries no supervision signal: the clamped
+                # loss would be a flat 0.0 that trains nothing and drags the epoch mean down. Skip
+                # it loudly so a systematic label degeneracy (e.g. a broken label join) stays
+                # visible in the logs instead of vanishing into the clamp (FLIP#764).
+                if (labels == -1).all():
+                    self.logger.warning(
+                        "Train batch %d/%d: all labels masked (-1), skipping batch",
+                        i + 1,
+                        len(self.training_dataloader),
+                    )
+                    continue
+
                 self.optimizer.zero_grad()
                 output = self.model(images)
                 loss = get_bce_loss(output, labels)
+
+                # Skip a non-finite batch instead of letting it poison the model: a single NaN/Inf
+                # loss backpropagates into every weight via optimizer.step(), after which every
+                # subsequent batch is NaN and the whole pass reports loss=nan (see FLIP#764).
+                if not torch.isfinite(loss):
+                    self.logger.warning(
+                        "Skipping batch %d/%d: non-finite loss (%s)", i + 1, len(self.training_dataloader), loss.item()
+                    )
+                    continue
+
                 loss.backward()
+                # Gradient clipping bounds the update so an exploding gradient on one batch can't
+                # diverge the model to NaN within a single optimizer step.
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
                 self.optimizer.step()
                 training_metrics_["loss"]["train"].append(loss.item())
                 output = torch.sigmoid(output)
@@ -331,9 +356,34 @@ class FLIP_TRAINER(Executor):
                             batch_info += f"{lesion.lesion}: all masked; "
                     self.logger.info(batch_info)
 
+                    # Skip fully-masked batches here too: with the clamped loss they would
+                    # contribute a spurious 0.0 to the epoch mean, where the pre-clamp NaN was
+                    # excluded by np.nanmean below. Skipping keeps the epoch average over
+                    # supervised batches only, and keeps the degeneracy visible.
+                    if (labels == -1).all():
+                        self.logger.warning(
+                            "Val batch %d/%d: all labels masked (-1), skipping batch",
+                            i + 1,
+                            len(self.validation_dataloader),
+                        )
+                        continue
+
                     output = self.model(images)
-                    loss = get_bce_loss(output, labels).item()
-                    training_metrics_["loss"]["val"].append(loss)
+                    loss = get_bce_loss(output, labels)
+
+                    # Mirror the train loop's guard: np.nanmean below already excludes a NaN from
+                    # the epoch mean, but skipping silently would hide the degeneracy behind it
+                    # (see FLIP#764).
+                    if not torch.isfinite(loss):
+                        self.logger.warning(
+                            "Skipping val batch %d/%d: non-finite loss (%s)",
+                            i + 1,
+                            len(self.validation_dataloader),
+                            loss.item(),
+                        )
+                        continue
+
+                    training_metrics_["loss"]["val"].append(loss.item())
                     output = torch.sigmoid(output)
                     for pathology in self._lesions.get_lesion_list():
                         precision, recall, f1_score = compute_precision_recall_f1(
@@ -433,8 +483,9 @@ class FLIP_TRAINER(Executor):
             if has_nan:
                 self.logger.info(nan_summary)
                 self.log_info(fl_ctx, nan_summary)
-            # Send metrics over to FLIP
-            round = global_round * (self._epochs) + epoch + 1
+            # Send metrics over to FLIP. These are per-epoch points, so plot them on an "epoch" axis at
+            # the cumulative epoch count; the FL global round is recorded alongside as provenance.
+            cumulative_epoch = global_round * (self._epochs) + epoch + 1
 
             # Send loss metrics - convert NaN to 0.0
             train_loss = training_metrics["loss"]["train"][-1]
@@ -450,14 +501,16 @@ class FLIP_TRAINER(Executor):
 
             send_metrics_value(
                 label="TRAIN_LOSS",
-                round=round,
+                x_value=cumulative_epoch,
+                x_label="epoch",
                 value=train_loss,
                 fl_ctx=fl_ctx,
                 flip=self.flip,
             )
             send_metrics_value(
                 label="VAL_LOSS",
-                round=round,
+                x_value=cumulative_epoch,
+                x_label="epoch",
                 value=val_loss,
                 fl_ctx=fl_ctx,
                 flip=self.flip,
@@ -483,14 +536,16 @@ class FLIP_TRAINER(Executor):
 
                     send_metrics_value(
                         label=f"{'train'.upper()}-{metric.upper()}-{lesion_name}",
-                        round=round,
+                        x_value=cumulative_epoch,
+                        x_label="epoch",
                         value=train_value,
                         fl_ctx=fl_ctx,
                         flip=self.flip,
                     )
                     send_metrics_value(
                         label=f"{'val'.upper()}-{metric.upper()}-{lesion_name}",
-                        round=round,
+                        x_value=cumulative_epoch,
+                        x_label="epoch",
                         value=val_value,
                         fl_ctx=fl_ctx,
                         flip=self.flip,
