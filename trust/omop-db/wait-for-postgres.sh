@@ -12,10 +12,15 @@
 #
 
 # wait-for-postgres.sh <port> — block until Postgres answers on localhost:<port>.
-# Bounded, and strict about its argument: an empty port would make pg_isready
-# fall back to 5432 and report readiness of an unrelated server.
+# Bounded (default 180 x 5s = 15 min: a FIRST container boot runs the whole
+# init chain including the multi-GB vocabulary load before the server accepts
+# TCP connections; override via WAIT_FOR_POSTGRES_ATTEMPTS). Strict about its
+# argument: an empty port would make pg_isready fall back to 5432 and report
+# readiness of an unrelated server.
 
 set -e
+
+max_attempts="${WAIT_FOR_POSTGRES_ATTEMPTS:-180}"
 
 if [ -z "${1:-}" ]; then
   >&2 echo "❌ wait-for-postgres.sh: no port given (is OMOP_DB_PORT_TRUST_<N> set in .env.build?)"
@@ -27,15 +32,15 @@ if ! command -v pg_isready >/dev/null 2>&1; then
 fi
 
 attempts=0
->&2 echo "⏳ Waiting for Postgres to be available on port $1..."
+>&2 echo "⏳ Waiting for Postgres to be available on port $1 (first init loads the vocabulary — can take minutes)..."
 until pg_isready -h localhost -p "$1" >/dev/null 2>&1; do
   attempts=$((attempts + 1))
-  if [ "$attempts" -ge 120 ]; then
+  if [ "$attempts" -ge "$max_attempts" ]; then
     >&2 echo "❌ Postgres not ready on port $1 after $attempts attempts — giving up"
     exit 1
   fi
-  >&2 echo "."
-  sleep 1
+  >&2 echo "  ... still waiting on port $1 (attempt $attempts/$max_attempts)"
+  sleep 5
 done
 
 >&2 echo "✅ Postgres is up"
