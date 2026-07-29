@@ -486,7 +486,8 @@ seed-trust-data: check-trust-ec2-enabled ssh-config ## Load trust-specific OMOP 
 		-e orthanc_data_version=$(ORTHANC_DATA_VERSION) \
 		-e omop_postgres_user=$(OMOP_POSTGRES_USER_KIT) \
 		-e omop_postgres_password=$(OMOP_POSTGRES_PASSWORD_KIT) \
-		-e omop_postgres_db=$(OMOP_POSTGRES_DB_KIT)
+		-e omop_postgres_db=$(OMOP_POSTGRES_DB_KIT) \
+		-e vocab_s3_bucket=$(AICENTRE_BUCKET_NAME)
 	@echo "✅ Trust data seeding complete."
 
 .PHONY: deploy-centralhub

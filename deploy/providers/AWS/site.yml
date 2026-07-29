@@ -487,7 +487,9 @@
   tags: [data, omop, omop-vocab]
   vars:
     omop_dir: "/opt/flip/omop"
-    vocab_s3_bucket: "{{ vocab_s3_bucket | default('flipdev-aicentre') }}"
+    # The env's own bucket (passed by the Makefile as AICENTRE_BUCKET_NAME) —
+    # the instance role has no cross-account read on other envs' buckets.
+    vocab_s3_bucket: "{{ vocab_s3_bucket | default('flipdev-aicentre', true) }}"
     vocab_core_bundle: "vocab_aicentre_core_20240916"
     omop_db_image: "ghcr.io/londonaicentre/omop-db:{{ omop_db_tag | default('latest') }}"
     vocab_load_port: "15499"
