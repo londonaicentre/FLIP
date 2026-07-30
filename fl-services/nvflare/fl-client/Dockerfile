@@ -40,13 +40,9 @@ ENTRYPOINT ["/app/entrypoint.sh"]
 
 FROM development AS production
 
-# Build args must be re-declared in each stage
-ARG UID
-ARG GID
-ARG UNAME
-
-# Switch to the non-root user created in fl-base (GHSA-8465)
-USER ${UNAME}
+# No USER/ARG re-declaration needed here: production is FROM development, which
+# already switched to the non-root user (GHSA-8465) — re-asserting USER ${UNAME}
+# would be a no-op inherited from that stage.
 
 # Override entrypoint and command for production
 # Use CMD instead of ENTRYPOINT for production to allow better orchestration
