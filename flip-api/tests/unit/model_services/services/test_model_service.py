@@ -237,13 +237,16 @@ def test_get_metrics():
     trust_b = uuid4()
 
     m1 = FLMetrics(
-        model_id=model_id, trust=trust_a, fl_client_name="Trust_1", label="accuracy", global_round=1, result=0.9
+        model_id=model_id, trust=trust_a, fl_client_name="Trust_1", label="accuracy",
+        global_round=1, x_value=1.0, result=0.9,
     )
     m2 = FLMetrics(
-        model_id=model_id, trust=trust_a, fl_client_name="Trust_1", label="accuracy", global_round=2, result=0.92
+        model_id=model_id, trust=trust_a, fl_client_name="Trust_1", label="accuracy",
+        global_round=2, x_value=2.0, result=0.92,
     )
     m3 = FLMetrics(
-        model_id=model_id, trust=trust_b, fl_client_name="Trust_2", label="accuracy", global_round=1, result=0.88
+        model_id=model_id, trust=trust_b, fl_client_name="Trust_2", label="accuracy",
+        global_round=1, x_value=1.0, result=0.88,
     )
 
     # First exec = FLMetrics rows; second exec = trust id -> (code, name) lookup.
@@ -256,7 +259,7 @@ def test_get_metrics():
 
     assert len(result) == 1
     assert result[0].y_label == "accuracy"
-    assert result[0].x_label == "global_round"
+    assert result[0].x_label == "Global Rounds"
     assert len(result[0].metrics) == 2  # trust_a and trust_b
 
     labels = sorted(m.series_label for m in result[0].metrics)
@@ -268,6 +271,66 @@ def test_get_metrics():
     assert trust_a_data[1].x_value == 2
     assert trust_a_data[1].y_value == 0.92
 
+    # The rows query is deliberately unordered: the stable in-memory sort owns the series order
+    # (asserted above), and a DB ORDER BY x_value would return equal-x rows in unspecified order,
+    # weakening the ties-keep-insertion-order guarantee.
+    rows_stmt_sql = str(session.exec.call_args_list[0][0][0]).lower()
+    assert "order by" not in rows_stmt_sql
+    assert "x_value" in rows_stmt_sql
+
+
+def test_get_metrics_plots_at_x_value_not_global_round():
+    """xValue is the stored plot coordinate; global_round is provenance only (FLIP#148)."""
+    session = MagicMock()
+    model_id = uuid4()
+    trust_a = uuid4()
+
+    m = FLMetrics(
+        model_id=model_id, trust=trust_a, fl_client_name="Trust_1", label="VAL_LOSS",
+        global_round=1, x_value=7.5, x_label="epoch", result=0.42,
+    )
+
+    session.exec.side_effect = [
+        MagicMock(all=MagicMock(return_value=[m])),
+        MagicMock(all=MagicMock(return_value=[(trust_a, "GSTT", "Trust A")])),
+    ]
+
+    result = get_metrics(model_id, session)
+
+    assert result[0].x_label == "epoch"
+    assert result[0].metrics[0].data[0].x_value == 7.5
+
+
+def test_get_metrics_separates_plots_by_x_label():
+    """Same metric label under different x-axis labels -> separate plots, not one merged chart (FLIP#148)."""
+    session = MagicMock()
+    model_id = uuid4()
+    trust_a = uuid4()
+
+    # Identical yLabel ("loss"), two different x-axis labels -> must not collapse into one plot.
+    m_epoch = FLMetrics(
+        model_id=model_id, trust=trust_a, fl_client_name="Trust_1", label="loss",
+        x_label="epoch", global_round=1, x_value=1.0, result=0.9,
+    )
+    m_round = FLMetrics(
+        model_id=model_id, trust=trust_a, fl_client_name="Trust_1", label="loss",
+        x_label="Global Rounds", global_round=1, x_value=1.0, result=0.8,
+    )
+
+    session.exec.side_effect = [
+        MagicMock(all=MagicMock(return_value=[m_epoch, m_round])),
+        MagicMock(all=MagicMock(return_value=[(trust_a, "GSTT", "Trust A")])),
+    ]
+
+    result = get_metrics(model_id, session)
+
+    assert len(result) == 2
+    assert {(m.y_label, m.x_label) for m in result} == {("loss", "epoch"), ("loss", "Global Rounds")}
+    # Each plot holds only its own point.
+    for plot in result:
+        assert len(plot.metrics) == 1
+        assert len(plot.metrics[0].data) == 1
+
 
 def test_get_metrics_resolves_trust_to_code():
     """seriesLabel uses the trust's `code` when one is set."""
@@ -277,10 +340,12 @@ def test_get_metrics_resolves_trust_to_code():
     trust_2 = uuid4()
 
     m1 = FLMetrics(
-        model_id=model_id, trust=trust_1, fl_client_name="Trust_1", label="accuracy", global_round=1, result=0.9
+        model_id=model_id, trust=trust_1, fl_client_name="Trust_1", label="accuracy",
+        global_round=1, x_value=1.0, result=0.9,
     )
     m2 = FLMetrics(
-        model_id=model_id, trust=trust_2, fl_client_name="Trust_2", label="accuracy", global_round=1, result=0.85
+        model_id=model_id, trust=trust_2, fl_client_name="Trust_2", label="accuracy",
+        global_round=1, x_value=1.0, result=0.85,
     )
 
     session.exec.side_effect = [
@@ -301,7 +366,8 @@ def test_get_metrics_falls_back_to_trust_name_when_no_code():
     trust_3 = uuid4()
 
     m = FLMetrics(
-        model_id=model_id, trust=trust_3, fl_client_name="Trust_3", label="accuracy", global_round=1, result=0.8
+        model_id=model_id, trust=trust_3, fl_client_name="Trust_3", label="accuracy",
+        global_round=1, x_value=1.0, result=0.8,
     )
 
     session.exec.side_effect = [
@@ -460,7 +526,10 @@ def test_get_metrics_orders_points_by_round():
     trust_a = uuid4()
 
     rows = [
-        FLMetrics(model_id=model_id, trust=trust_a, fl_client_name="T1", label="LOSS", global_round=r, result=y)
+        FLMetrics(
+            model_id=model_id, trust=trust_a, fl_client_name="T1", label="LOSS",
+            global_round=r, x_value=float(r), result=y,
+        )
         for r, y in [(3, 0.3), (1, 0.9), (2, 0.5)]
     ]
     session.exec.side_effect = [

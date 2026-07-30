@@ -96,14 +96,18 @@ class TestHandleClientMetrics:
             model_id=VALID_MODEL_ID,
             label="TRAIN_LOSS",
             value=0.5,
-            round=3,
+            global_round=3,
+            x_value=None,
+            x_label=None,
         )
         flip.send_metrics.assert_any_call(
             client_name="Trust_1",
             model_id=VALID_MODEL_ID,
             label="VAL_DICE",
             value=0.8,
-            round=3,
+            global_round=3,
+            x_value=None,
+            x_label=None,
         )
 
     def test_skips_bookkeeping_keys(self):
@@ -129,8 +133,8 @@ class TestHandleClientMetrics:
         (_, kwargs), = flip.send_metrics.call_args_list
         assert kwargs["label"] == "LOSS"
 
-    def test_parses_per_epoch_round_suffix(self):
-        msg = _build_message(metrics={"train_loss.round_5": 0.42}, site="Trust_1")
+    def test_parses_per_epoch_x_suffix(self):
+        msg = _build_message(metrics={"train_loss.x_5": 0.42}, site="Trust_1")
         flip = Mock()
 
         handle_client_metrics(msg, server_round=99, model_id=VALID_MODEL_ID, flip=flip)
@@ -140,11 +144,36 @@ class TestHandleClientMetrics:
             model_id=VALID_MODEL_ID,
             label="TRAIN_LOSS",
             value=0.42,
-            round=5,
+            global_round=99,  # provenance: the server round, regardless of the plot coordinate
+            x_value=5.0,
+            x_label=None,
         )
 
-    def test_malformed_round_suffix_falls_back_to_server_round(self):
-        msg = _build_message(metrics={"train_loss.round_notanint": 0.42}, site="Trust_1")
+    def test_parses_fractional_and_scientific_x_values(self):
+        """The .x_<V> suffix is a float literal — dots in the value don't confuse the rsplit."""
+        msg = _build_message(metrics={"train_loss.x_1.5": 0.42, "lr.x_1e-3": 0.9}, site="Trust_1")
+        flip = Mock()
+
+        handle_client_metrics(msg, server_round=1, model_id=VALID_MODEL_ID, flip=flip)
+
+        by_label = {c.kwargs["label"]: c.kwargs for c in flip.send_metrics.call_args_list}
+        assert by_label["TRAIN_LOSS"]["x_value"] == 1.5
+        assert by_label["LR"]["x_value"] == 0.001
+
+    def test_legacy_round_suffix_still_parses(self):
+        """.round_<N> is the deprecated pre-x_value spelling and must keep working."""
+        msg = _build_message(metrics={"train_loss.round_5": 0.42}, site="Trust_1")
+        flip = Mock()
+
+        handle_client_metrics(msg, server_round=99, model_id=VALID_MODEL_ID, flip=flip)
+
+        (_, kwargs), = flip.send_metrics.call_args_list
+        assert kwargs["label"] == "TRAIN_LOSS"
+        assert kwargs["x_value"] == 5.0
+        assert kwargs["global_round"] == 99
+
+    def test_malformed_x_suffix_leaves_key_intact(self):
+        msg = _build_message(metrics={"train_loss.x_notanumber": 0.42}, site="Trust_1")
         flip = Mock()
 
         handle_client_metrics(msg, server_round=7, model_id=VALID_MODEL_ID, flip=flip)
@@ -152,9 +181,39 @@ class TestHandleClientMetrics:
         flip.send_metrics.assert_called_once_with(
             client_name="Trust_1",
             model_id=VALID_MODEL_ID,
-            label="TRAIN_LOSS.ROUND_NOTANINT",
+            label="TRAIN_LOSS.X_NOTANUMBER",
             value=0.42,
-            round=7,
+            global_round=7,
+            x_value=None,
+            x_label=None,
+        )
+
+    def test_non_finite_x_suffix_is_not_honoured(self):
+        """nan/inf coordinates would break the hub's metrics JSON — the key is left intact instead."""
+        msg = _build_message(metrics={"train_loss.x_nan": 0.42}, site="Trust_1")
+        flip = Mock()
+
+        handle_client_metrics(msg, server_round=7, model_id=VALID_MODEL_ID, flip=flip)
+
+        (_, kwargs), = flip.send_metrics.call_args_list
+        assert kwargs["label"] == "TRAIN_LOSS.X_NAN"
+        assert kwargs["x_value"] is None
+
+    def test_parses_x_label_segment(self):
+        """A metric key with an @<x_label> segment sets the x-axis label (FLIP#148)."""
+        msg = _build_message(metrics={"train_loss@epoch.x_2.5": 0.42}, site="Trust_1")
+        flip = Mock()
+
+        handle_client_metrics(msg, server_round=99, model_id=VALID_MODEL_ID, flip=flip)
+
+        flip.send_metrics.assert_called_once_with(
+            client_name="Trust_1",
+            model_id=VALID_MODEL_ID,
+            label="TRAIN_LOSS",
+            value=0.42,
+            global_round=99,
+            x_value=2.5,
+            x_label="epoch",
         )
 
     def test_metrics_without_a_site_are_dropped(self):

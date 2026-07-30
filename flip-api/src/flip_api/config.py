@@ -72,7 +72,12 @@ class Settings(BaseSettings):
     # weights, ~1.5 GiB for the multimodel variant) can be uploaded; the FL API
     # stages such checkpoints server-side rather than bundling them into the app.
     MAX_MODEL_FILE_BYTES: int = 5 * 1024 * 1024 * 1024
-    PRE_SIGNED_URL_EXPIRATION_SECONDS: int = 3600
+    # Default equals the MAX_PRESIGNED_URL_TTL_SECONDS security ceiling in
+    # utils/s3_client.py: anything higher would be silently clamped anyway,
+    # with a per-call warning — so a default-configured deployment would log
+    # that warning on every presigned upload/download. Operators may set a
+    # lower value; higher values are clamped (with the warning as audit trail).
+    PRE_SIGNED_URL_EXPIRATION_SECONDS: int = 1800
 
     # Reimport imaging project studies
     PROJECT_REIMPORT_RATE: int = 60  # How often to reimport studies for a given project (in minutes)
@@ -94,12 +99,6 @@ class Settings(BaseSettings):
 
     # Variables used during database seeding
     NET_ENDPOINTS: dict[str, str]
-    # FL kit slot pool names — one per pre-provisioned FL kit (workspace/net-N/services/<slot>).
-    # Seeded into `fl_kit_slot` so POST /admin/trusts can hand each joining trust the next
-    # free slot regardless of the trust's friendly name. Defaults to [] so existing dev
-    # envs aren't required to set it; in that case the pool is empty until the admin
-    # provisions kits and adds them here.
-    FL_KIT_SLOT_NAMES: list[str] = []
 
     # FL backend written onto the FLNets.fl_backend column at seed time (seed_fl_nets). This is
     # canonical: flip-api reads it only at seeding, and the seeded value is never reconciled at
@@ -167,12 +166,13 @@ class Settings(BaseSettings):
     @field_validator("PRE_SIGNED_URL_EXPIRATION_SECONDS", mode="before")
     @classmethod
     def coerce_empty_pre_signed_url_expiration(cls, v: object) -> object:
-        """Treat empty-string PRE_SIGNED_URL_EXPIRATION_SECONDS as the default 3600s.
+        """Treat empty-string PRE_SIGNED_URL_EXPIRATION_SECONDS as the default 1800s.
 
-        Same rationale as ``coerce_empty_max_model_file_bytes``.
+        Same rationale as ``coerce_empty_max_model_file_bytes``. Must stay in
+        sync with the field default above (== the presigned-URL TTL ceiling).
         """
         if v is None or v == "":
-            return 3600
+            return 1800
         return v
 
     # Trust task queue settings
@@ -196,6 +196,16 @@ class DevSettings(Settings):
     AES_KEY_BASE64: str  # in dev, get AES key from env variable
 
     INTERNAL_SERVICE_KEY_HASH: str  # in dev, get internal service auth key hash from env variable
+
+    # FL kit slot pool names — one per pre-provisioned FL kit (workspace/net-N/services/<slot>).
+    # Seeded into `fl_kit_slot` so POST /admin/trusts can hand each joining trust the next
+    # free slot regardless of the trust's friendly name. Dev-only on purpose: in production
+    # the pool's single source is the /flip/fl_kit_slot_names SSM parameter (see
+    # db/seed/fl_kit_slots.resolve_fl_kit_slot_names) — there is no env-var fallback, so a
+    # broken parameter can't be silently masked by stale task-definition env. Defaults to []
+    # so existing dev envs aren't required to set it; in that case the pool is empty until
+    # the admin provisions kits and adds them here.
+    FL_KIT_SLOT_NAMES: list[str] = []
 
 
 class ProdSettings(Settings):
