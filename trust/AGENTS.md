@@ -38,7 +38,7 @@ the commented dev form):
 | Host-local profile | Operator | hand-edit (ports, bind dirs) |
 | Trust-local credentials | Operator | hand-edit (passwords, service URLs) |
 | Hub-shared (managed) | Hub admin | `register-trust KIT=<CODE>` (live in prod, commented in dev) / `sync-trust-kit KIT=<CODE>` (prod refresh) |
-| Kit credentials (managed) | Hub | `register-trust` only — write-once; hub keeps only the hash |
+| Kit credentials (managed) | Hub | `register-trust` or the Add-Trust admin UI — write-once. The hub keeps only the api key's hash, and keeps nothing at all for `TRUST_AES_KEY_BASE64`, so a lost value means re-registering |
 
 The Hub-shared block is delimited by a sentinel comment
 (`# ── Hub-shared (managed by register-trust / sync-trust-kits — do not edit) ──`)
@@ -65,14 +65,31 @@ etc., then re-transmit the refreshed kit file to the remote operator
 encrypted channel for on-prem).
 
 For the on-prem flow, the admin scaffolds and fills the kit on their
-workstation in two commands (prod AWS creds required):
+workstation in three commands (prod AWS creds required):
 
 1. `make new-trust TRUST_CODE=<CODE> TRUST_NAME="..." PROD=true`
    — scaffolds `trust/.env.<CODE>.production` from the base template
    (`trust/.env.example`).
 2. `make register-trust KIT=<CODE> PROD=true` — registers on the prod hub and
-   fills BOTH the Kit credentials AND the Hub-shared block in one step
-   (replaces the old "paste 5 UI lines + separate `sync-trust-kit`").
+   fills the Kit credentials plus the part of the Hub-shared block that the hub
+   itself knows.
+3. `make sync-trust-kit KIT=<CODE> PROD=true` — **required on prod.** `register_trust`
+   runs inside the flip-api container, so it can only emit the `HUB_SHARED_ENV_KEYS`
+   present in that task's environment (`AES_KEY_BASE64`, `TRUST_API_KEY_HEADER`,
+   `FL_BACKEND`). The deploy-side rest — `DOCKER_TAG`, `DOCKER_REGISTRY`,
+   `DOCKER_FL_*`, `NLB_SUBDOMAIN`, `FL_SERVER_PORT`, the kit dates — comes from the
+   admin's local `$(MAIN_ENV_FILE)` here. Skip it and the operator's kit ships with
+   no image tags and no NLB subdomain.
+
+**Registering from the admin UI instead.** `POST /admin/trusts` (the Add-Trust
+flow) is a supported alternative to step 2, not a legacy path. Its one-time kit
+modal renders the same Kit-credentials block as paste-ready lines —
+`TRUST_API_KEY`, `TRUST_INTERNAL_SERVICE_KEY`, `TRUST_AES_KEY_BASE64`,
+`TRUST_AES_KID`, `FL_KIT_SLOT`, `FL_KIT_SLOT_NUMBER`, `EXPECTED_TRUST_ID` — which
+the admin pastes into a kit scaffolded by step 1. Step 3 still applies, and on the
+UI path it supplies the *whole* Hub-shared block rather than just the deploy-side
+remainder, since nothing hub-side was written into the kit. The modal is the only
+place the AES key ever appears, so it has to be recorded before the modal closes.
 
 Then `make -C deploy/providers/AWS package-onprem-trust-kit KIT=<CODE> PROD=true`
 tarballs the populated kit file as-is + the operator's slice of the FL
