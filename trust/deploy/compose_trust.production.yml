@@ -52,6 +52,11 @@ services:
       - ALL
     cap_add:
       - CHOWN
+      # Legacy root-image compat: a pre-hardening orthanc image runs its
+      # entrypoint as root, and cap_drop: ALL strips root's implicit DAC bypass
+      # (hostid write) and FOWNER (plugin symlink fixup). Inert for the current
+      # image, which runs USER orthanc (uid 999) from PID 1 — see
+      # deploy/README.md ("Linux Capability Restrictions").
       - DAC_OVERRIDE
       - FOWNER
     volumes:
