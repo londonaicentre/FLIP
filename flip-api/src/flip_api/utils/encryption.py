@@ -102,6 +102,21 @@ def _keyring() -> dict[str, bytes]:
     return ring
 
 
+def registered_kids() -> dict[str, int]:
+    """Return ``kid -> key length in bytes`` for every key in the keyring.
+
+    Exposes the *shape* of the keyring without handing out key material, so a
+    configuration audit can report what is loaded and check key lengths without
+    ever holding a key. Calling this also forces the lazy parse of
+    ``AES_TRUST_KEYS``, which is why startup calls it: a malformed value then
+    fails at boot rather than midway through a request.
+
+    Returns:
+        dict[str, int]: Each registered kid mapped to its key length in bytes.
+    """
+    return {kid: len(key) for kid, key in _keyring().items()}
+
+
 def _default_kid() -> str:
     """Return the kid used when the caller does not name one.
 

@@ -119,6 +119,33 @@ def test_get_pending_tasks_returns_tasks_with_identity(mock_pending_tasks, mock_
     app.dependency_overrides.pop(get_session, None)
 
 
+def test_pending_tasks_are_encrypted_under_the_trusts_own_key(mock_pending_tasks, mock_auth, mock_trust):
+    """The batch must be encrypted with the polling trust's kid, not the shared one.
+
+    Every task in a batch belongs to one trust, so this is the one hub->trust path that
+    can be narrowed to a per-trust key. Falling back to the shared kid is correct only
+    when that trust has no key of its own; if this regresses to an unconditional
+    ``encrypt(...)`` nothing fails, the payloads just quietly lose their isolation.
+    """
+    mock_db = MagicMock()
+    mock_db.exec.return_value.all.return_value = mock_pending_tasks
+    app.dependency_overrides[get_session] = lambda: mock_db
+
+    with patch("flip_api.private_services.trust_tasks.encrypt", return_value="ct") as mock_encrypt:
+        with patch(
+            "flip_api.private_services.trust_tasks.kid_for_trust", return_value="trust-abc"
+        ) as mock_kid:
+            response = client.get("/api/tasks/pending")
+
+    assert response.status_code == 200
+    mock_kid.assert_called_once_with(trust_id=str(mock_trust.id), trust_code=mock_trust.code)
+    assert mock_encrypt.call_count == len(mock_pending_tasks)
+    for call in mock_encrypt.call_args_list:
+        assert call.kwargs["kid"] == "trust-abc"
+
+    app.dependency_overrides.pop(get_session, None)
+
+
 def test_get_pending_tasks_empty(mock_auth, mock_trust):
     """No queued tasks — handler still returns the identity block."""
     mock_db = MagicMock()

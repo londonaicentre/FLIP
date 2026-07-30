@@ -357,6 +357,10 @@ def start_training(
     from flip_api.fl_services.services import fl_scheduler_service
 
     required_info = fl_scheduler_service.get_required_training_details(model_id, session)
+    # Deliberately the shared key, not a per-trust one: this single ciphertext is handed
+    # to the FL server, which fans it out to every participating client. Encrypting it
+    # under one trust's key would make it undecryptable for all the others. Narrowing
+    # this needs the FL server to carry a per-client payload, not a different kid here.
     encrypted_project_id = encrypt(required_info.project_id)
 
     training_details = IStartTrainingBody(

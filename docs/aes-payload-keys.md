@@ -42,6 +42,43 @@ compromised trust yields the key for the whole federation.
 `kid_for_trust()` then selects that key automatically; trusts without one keep
 using the shared key, so trusts can be moved over one at a time.
 
+### What a per-trust key does and does not cover
+
+Hub → trust payloads are per-trust keyed only where one ciphertext has exactly one
+reader. That is the task-dispatch path (`GET /tasks/pending`, whose whole batch
+belongs to the polling trust) and the cohort-query submission, which encrypts the
+project id once per trust.
+
+The FL training payload is **deliberately left on the shared key**:
+`fl_service.start_training` hands a single ciphertext to the FL server, which fans it
+out to every participating client. Encrypting under one trust's key would make it
+undecryptable for the rest. Narrowing it needs the FL server to carry a per-client
+payload — a protocol change, not a different `kid` at the call site.
+
+Trust-internal encryption (imaging-api → data-access-api) needs nothing special: on a
+trust, `_default_kid()` already resolves to that trust's own `TRUST_AES_KID`.
+
+### Getting only half of it configured
+
+The two halves are provisioned separately and nothing joins them up, so a partial
+rollout fails asymmetrically:
+
+* **hub → trust degrades silently.** `kid_for_trust()` does not find the trust's kid
+  in the hub's keyring and falls back to the shared key. The trust decrypts it fine.
+  Everything works, without the isolation you configured, and nothing says so.
+* **trust → hub fails loudly**, with `KeyError: No key registered for kid
+  'trust-<uuid>'`.
+
+Because the quiet direction is the dangerous one, flip-api audits the keyring at
+startup (`trusts_services/services/trust_key_config.py`) and logs per-trust key
+coverage. Two operator errors are logged at error level: a kid in `AES_TRUST_KEYS`
+matching no registered trust (a typo or a deleted trust — the key is loaded but never
+selected, which is indistinguishable at runtime from "no key yet"), and a key that is
+not a valid AES length. A malformed `AES_TRUST_KEYS` now fails at boot rather than on
+the first request that encrypts.
+
+`_keyring()` is memoised for the process lifetime, so adding a key needs a restart.
+
 Both registration paths now deliver step 2 automatically: `register-trust
 KIT=<CODE>` writes the two variables into the kit file (they are credential keys
 in `scripts/trust_kit_lib.py`, so they are written once on a new registration and

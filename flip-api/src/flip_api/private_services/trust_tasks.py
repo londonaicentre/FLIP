@@ -31,7 +31,7 @@ from flip_api.db.models.main_models import Trust, TrustTask
 from flip_api.domain.schemas.private import TaskResultInput, TrustTaskResponse
 from flip_api.domain.schemas.status import TaskStatus, TaskType
 from flip_api.private_services.imaging_notifications import handle_imaging_task_completed
-from flip_api.utils.encryption import encrypt
+from flip_api.utils.encryption import encrypt, kid_for_trust
 from flip_api.utils.logger import logger
 from flip_api.utils.rate_limiter import limiter
 
@@ -87,6 +87,10 @@ def _get_pending_tasks(trust: Trust, db: Session) -> dict[str, object]:
             return {**_trust_identity(trust), "tasks": []}
 
         now = datetime.now(timezone.utc)
+        # Every task in this batch goes to one trust, so the whole batch is encrypted
+        # under that trust's key when it has one. Resolved once rather than per task:
+        # the lookup is keyring-only, and the answer cannot change within a batch.
+        kid = kid_for_trust(trust_id=str(trust.id), trust_code=trust.code)
         response: list[TrustTaskResponse] = []
         for task in tasks:
             task.status = TaskStatus.IN_PROGRESS
@@ -95,7 +99,7 @@ def _get_pending_tasks(trust: Trust, db: Session) -> dict[str, object]:
                 TrustTaskResponse(
                     id=task.id,
                     task_type=task.task_type,
-                    payload=encrypt(task.payload),
+                    payload=encrypt(task.payload, kid=kid),
                     created_at=task.created_at,
                 )
             )

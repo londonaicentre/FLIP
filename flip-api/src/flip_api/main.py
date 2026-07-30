@@ -18,6 +18,7 @@ from fastapi import APIRouter, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from slowapi.errors import RateLimitExceeded
+from sqlmodel import Session
 
 from flip_api.cohort_services import (
     get_cohort_query_results,
@@ -25,6 +26,7 @@ from flip_api.cohort_services import (
     submit_cohort_query,
 )
 from flip_api.config import get_settings
+from flip_api.db.database import get_engine
 from flip_api.file_services import (
     delete_file,
     download_file,
@@ -88,6 +90,7 @@ from flip_api.trusts_services import (
     trusts_health_check,
     update_trust_status,
 )
+from flip_api.trusts_services.services.trust_key_config import log_trust_key_config
 from flip_api.user_services import (
     access_request,
     delete_user,
@@ -101,6 +104,7 @@ from flip_api.user_services import (
     update_user,
 )
 from flip_api.utils.cognito_helpers import get_cors_allowed_origins
+from flip_api.utils.logger import logger
 from flip_api.utils.rate_limiter import limiter
 from flip_api.utils.security_headers import SecurityHeadersMiddleware
 
@@ -120,6 +124,14 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         app (FastAPI): The FastAPI application instance being started.
     """
     _cors_allowed_origins.extend(get_cors_allowed_origins())
+    # Report per-trust payload-key coverage, and fail fast on a malformed
+    # AES_TRUST_KEYS rather than midway through the first request that encrypts.
+    # A DB outage must not stop the app booting — the audit is diagnostics.
+    try:
+        with Session(get_engine()) as session:
+            log_trust_key_config(session)
+    except Exception:
+        logger.exception("Could not audit the per-trust payload-key configuration at startup")
     start_scheduler()
     print("Starting up the app...")
     yield
