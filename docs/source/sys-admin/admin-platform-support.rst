@@ -19,8 +19,9 @@ The hub never makes inbound connections to trusts. FL clients connect outbound t
 No inbound firewall rules or port forwarding are required on trust hosts.
 
 Both the Central Hub and Trust EC2 instances run in private subnets with no open inbound ports. 
-Operator access is via AWS Systems Manager Session Manager (SSH-over-SSM). 
+Operator access is via AWS Systems Manager Session Manager (SSH-over-SSM).
 XNAT, Orthanc, and the Trust API swagger docs are accessible via SSM port forwarding only (``make forward-trust``).
+Orthanc additionally requires HTTP basic auth — log in with the trust kit file's ``ORTHANC_USERNAME``/``ORTHANC_PASSWORD``.
 
 In production, trust-to-hub communication will be carried over a site-to-site VPN between each Trust's network and the Central Hub VPC, providing an
 encrypted tunnel for all outbound polling and FL client traffic in addition to the application-layer protections described above. This is not yet implemented
