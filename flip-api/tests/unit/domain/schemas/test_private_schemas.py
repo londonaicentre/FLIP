@@ -13,8 +13,24 @@
 import pytest
 from pydantic import ValidationError
 
-from flip_api.domain.schemas.private import TrainingLog
+from flip_api.domain.schemas.private import TrainingLog, TrainingMetrics
 from flip_api.domain.schemas.types import FLLogEvent
+
+
+class TestTrainingMetrics:
+    """Ingest bounds on the hub's TrainingMetrics mirror (the full contract is pinned
+    behaviourally in flip-utils, and the definitions by its AST mirror guard)."""
+
+    @pytest.mark.parametrize("bad_label", ["", "x" * 65])
+    def test_out_of_bounds_x_label_rejected(self, bad_label):
+        """x_label is plot identity and the rendered axis title: empty or oversized labels are refused."""
+        with pytest.raises(ValidationError):
+            TrainingMetrics(fl_client_name="site-1", global_round=1, label="loss", result=1.0, x_label=bad_label)
+
+    def test_x_label_at_the_length_bound_is_accepted(self):
+        """A 64-char x_label sits exactly on the bound and must validate."""
+        metrics = TrainingMetrics(fl_client_name="site-1", global_round=1, label="loss", result=1.0, x_label="x" * 64)
+        assert metrics.x_label == "x" * 64
 
 
 class TestTrainingLog:

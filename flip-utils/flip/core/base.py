@@ -114,7 +114,16 @@ class FLIPBase(ABC):
         """
 
     @abstractmethod
-    def send_metrics(self, client_name: str, model_id: str, label: str, value: float, round: int) -> None:
+    def send_metrics(
+        self,
+        client_name: str,
+        model_id: str,
+        label: str,
+        value: float,
+        global_round: int,
+        x_value: float | None = None,
+        x_label: str | None = None,
+    ) -> None:
         """
         Sends a metric value to the Central Hub.
 
@@ -123,7 +132,12 @@ class FLIPBase(ABC):
             model_id (str): The model UUID
             label (str): The label of the metric
             value (float): The value of the metric
-            round (int): The local round number
+            global_round (int): Provenance — the FL global round the metric is reported in. Always the
+                true round; it is NOT the plot coordinate (that's ``x_value``).
+            x_value (float | None): The x-coordinate the metric is plotted at (e.g. an epoch counter).
+                ``None`` plots it at ``global_round``.
+            x_label (str | None): Label naming the x-axis the metric is plotted against. ``None`` lets the
+                hub default it to "Global Rounds". A plot's identity is (label, x_label) — see FLIP#148.
         """
 
     @abstractmethod

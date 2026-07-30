@@ -99,12 +99,6 @@ class Settings(BaseSettings):
 
     # Variables used during database seeding
     NET_ENDPOINTS: dict[str, str]
-    # FL kit slot pool names — one per pre-provisioned FL kit (workspace/net-N/services/<slot>).
-    # Seeded into `fl_kit_slot` so POST /admin/trusts can hand each joining trust the next
-    # free slot regardless of the trust's friendly name. Defaults to [] so existing dev
-    # envs aren't required to set it; in that case the pool is empty until the admin
-    # provisions kits and adds them here.
-    FL_KIT_SLOT_NAMES: list[str] = []
 
     # FL backend written onto the FLNets.fl_backend column at seed time (seed_fl_nets). This is
     # canonical: flip-api reads it only at seeding, and the seeded value is never reconciled at
@@ -202,6 +196,16 @@ class DevSettings(Settings):
     AES_KEY_BASE64: str  # in dev, get AES key from env variable
 
     INTERNAL_SERVICE_KEY_HASH: str  # in dev, get internal service auth key hash from env variable
+
+    # FL kit slot pool names — one per pre-provisioned FL kit (workspace/net-N/services/<slot>).
+    # Seeded into `fl_kit_slot` so POST /admin/trusts can hand each joining trust the next
+    # free slot regardless of the trust's friendly name. Dev-only on purpose: in production
+    # the pool's single source is the /flip/fl_kit_slot_names SSM parameter (see
+    # db/seed/fl_kit_slots.resolve_fl_kit_slot_names) — there is no env-var fallback, so a
+    # broken parameter can't be silently masked by stale task-definition env. Defaults to []
+    # so existing dev envs aren't required to set it; in that case the pool is empty until
+    # the admin provisions kits and adds them here.
+    FL_KIT_SLOT_NAMES: list[str] = []
 
 
 class ProdSettings(Settings):

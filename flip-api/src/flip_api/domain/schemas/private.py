@@ -20,6 +20,7 @@ from pydantic import BaseModel, Field, model_validator, validator
 from flip_api.config import get_settings
 from flip_api.domain.schemas.status import TaskType
 from flip_api.domain.schemas.types import FLLogEvent
+from flip_api.utils.constants import DEFAULT_X_AXIS_LABEL
 
 
 class Results(BaseModel):
@@ -57,10 +58,38 @@ class OmopCohortResults(BaseModel):
 
 
 class TrainingMetrics(BaseModel):
+    """One FL training/evaluation metric point. Mirrors flip-utils' ``flip/schemas.py`` (the sender).
+
+    ``global_round`` is provenance — always the FL global round the metric was reported in, never
+    overridden. The plot coordinate is the (``x_label``, ``x_value``) pair, defaulting to the global
+    round on the "Global Rounds" axis — see FLIP#148.
+    """
+
     fl_client_name: str
     global_round: int = Field(ge=0)
     label: str
-    result: float
+    # nan/inf are rejected here and on x_value below: a non-finite value would survive to the DB and
+    # then break JSON-encoding the metrics response for the whole model.
+    result: float = Field(allow_inf_nan=False)
+    # The x-coordinate this metric is plotted at. Defaults to the global round (see the validator
+    # below), which also keeps payloads from pre-x_value FL images valid.
+    x_value: float = Field(allow_inf_nan=False)
+    # Label naming the x-axis this metric is plotted against; defaults to the FL global round axis when
+    # the client doesn't send one. A plot's identity is the (label, x_label) pair — see FLIP#148.
+    # Bounded like event_type: the label originates in uploaded training code, is persisted, mints a
+    # new plot per distinct value, and is rendered as the axis title — unbounded or empty values would
+    # mint unbounded or blank-titled plots.
+    x_label: str = Field(default=DEFAULT_X_AXIS_LABEL, min_length=1, max_length=64)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _default_x_value_to_global_round(cls, data: Any) -> Any:
+        """Backfill a missing/None ``x_value`` from ``global_round`` (back-compat with old senders)."""
+        if isinstance(data, dict) and data.get("x_value") is None:
+            global_round = data.get("global_round")
+            if global_round is not None:  # absent global_round -> let the field-required error surface
+                data = {**data, "x_value": global_round}
+        return data
 
 
 class TrainingLog(BaseModel):
