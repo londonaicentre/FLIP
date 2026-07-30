@@ -76,14 +76,33 @@ Plugins and the XNAT WAR are stored in S3 at `s3://<FLIP_ARTIFACTS_BUCKET_NAME>/
 
 Make sure to always use the correct version of the plugins that are compatible with the XNAT version specified. Check the plugin's compatibility matrix for more information (for example, see [DQR Plugin Compatibility Matrix](https://wiki.xnat.org/xnat-tools/dqr-plugin-compatibility-matrix)).
 
-The following table lists the compatible versions of the plugins for the XNAT version `1.9.3` used in this environment.
+The following table lists the plugin versions for the XNAT version `1.10.0` used in this environment.
 
-| Plugin                          | Version for XNAT 1.9.3  |
-| ------------------------------- | ----------------------- |
-| Container Service Plugin        | 3.7.3                   |
-| Batch Launch Plugin             | 0.9.0                   |
-| DICOM Query-Retrieve Plugin     | 2.2.0                   |
-| OHIF Viewer Plugin              | 3.7.1                   |
+| Plugin                          | Version for XNAT 1.10.0        | Installed |
+| ------------------------------- | ------------------------------ | --------- |
+| Container Service Plugin        | TBD — no 1.10 release yet      | Yes       |
+| Batch Launch Plugin             | TBD — no public 1.10 release   | Yes       |
+| DICOM Query-Retrieve Plugin     | TBD — no public 1.10 release   | Yes       |
+| OHIF Viewer Plugin              | n/a — deliberately not installed (FLIP#662) | No |
+
+> **Blocker — the 1.9-era plugin JARs will not load under XNAT 1.10.**
+> XNAT 1.10 runs on JDK 21; the JARs currently in S3 (`container-service 3.7.3`,
+> `batch-launch 0.9.0`, `dicom-query-retrieve 2.2.0`) are compiled against JDK 8 for
+> XNAT 1.9.3. They must be replaced before this image is usable. As of July 2026 no
+> upstream 1.10-targeting plugin release has been published:
+>
+> - **Container Service** — work is in progress but unreleased. The `dev` branch of
+>   [`NrgXnat/container-service`](https://github.com/NrgXnat/container-service) builds
+>   `3.9.0-SNAPSHOT` against `vXnat = "1.10.1-SNAPSHOT"` with `sourceCompatibility = 21`;
+>   `master` and the newest tag (`3.8.1`) still pin XNAT 1.9.3 / Java 8.
+> - **Batch Launch** and **DICOM Query-Retrieve** — Bitbucket-hosted and private; no
+>   public release information is reachable.
+> - The XNAT wiki compatibility matrices and `xnat.org/download` are auth-gated (403 to
+>   anonymous fetches) and remain the canonical source once 1.10 plugins ship.
+>
+> Until then, the JARs must be sourced from the XNAT 1.10 alpha bundle on the (account-gated)
+> XNAT download portal, or built from the plugin `dev` branches. Fill in the concrete
+> versions above when they are uploaded to S3.
 
 ### Adding or updating a plugin
 

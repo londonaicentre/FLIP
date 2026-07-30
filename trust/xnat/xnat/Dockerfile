@@ -6,7 +6,10 @@
 # Modifications Copyright (c) 2026,
 # Guy's and St Thomas' NHS Foundation Trust & King's College London
 
-FROM tomcat:9.0.108-jdk8-temurin-noble AS development
+# XNAT 1.10.0 is the first release compiled against JDK 21 (it will not run on JDK 8).
+# Tomcat stays on the 9.x line — 1.10 still targets Tomcat 9, matching upstream's
+# reference stack (NrgXnat/xnat-docker-compose, branch 1.10.0-update).
+FROM tomcat:9.0.108-jdk21-temurin-noble AS development
 
 ARG XNAT_VERSION=${XNAT_VERSION}
 ARG XNAT_ROOT=${XNAT_ROOT}
