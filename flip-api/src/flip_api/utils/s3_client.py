@@ -432,8 +432,7 @@ class S3Client:
 
         except ClientError:
             error_message = "Error listing objects"
-            logger.error(f"Error listing objects under {s3_path!r}")
-            logger.error(error_message, exc_info=True)
+            logger.error(f"Error listing objects under {s3_path!r}", exc_info=True)
             raise Exception(error_message)
         except ValueError as ve:
             logger.error(str(ve))

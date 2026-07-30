@@ -169,10 +169,8 @@ def _submit_task_result(
                 handle_imaging_task_completed(task, db)
                 task.needs_post_processing = False
                 db.commit()
-            except HTTPException:
-                # Author-written 4xx messages (403/404/400) are intentional and safe;
-                # only genuinely unexpected exceptions get a generic message below.
-                raise
+            # No HTTPException re-raise: post-processing is best-effort and must not
+            # turn a successfully-recorded task result into a failure for the trust.
             except Exception as post_err:
                 logger.error(
                     f"Failed post-processing for imaging task {task_id}: {post_err}. "

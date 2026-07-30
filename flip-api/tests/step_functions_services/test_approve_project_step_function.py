@@ -14,6 +14,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from flip_api.domain.interfaces.trust import ITrust
@@ -112,6 +113,47 @@ def test_approve_project_with_failure_in_trust(
         trust = kwargs["trust"]
         if trust.name == "Trust 2":
             raise Exception("Imaging failed")
+        return None
+
+    mock_approve_project.return_value = mock_trusts
+    mock_start_imaging.side_effect = failing_start
+
+    response = client.post(f"/api/step/project/{project_id}/approve", json=request_body)
+
+    assert response.status_code == 200
+    data = response.json()
+
+    assert data["successful"] is False
+    assert data["trusts"]["processed"] == 2
+    assert data["trusts"]["failed"] == 1
+    assert data["trusts"]["succeeded"] == 1
+
+
+@patch("flip_api.step_functions_services.approve_project_step_function.approve_project_endpoint")
+@patch(
+    "flip_api.step_functions_services.approve_project_step_function.start_project_imaging_creation",
+    new_callable=AsyncMock,
+)
+def test_approve_project_isolates_http_exception_from_one_trust(
+    mock_start_imaging,
+    mock_approve_project,
+    project_id,
+    request_body,
+    mock_trusts,
+):
+    """One trust raising HTTPException must not abort the approval for the others.
+
+    ``start_project_imaging_creation`` raises ``HTTPException`` on its own error paths
+    (404 when the trust has no imaging project, 500 otherwise). ``process_trust`` is the
+    per-trust isolation boundary and the results are collected with ``asyncio.gather``
+    without ``return_exceptions``, so an escaping ``HTTPException`` would cancel every
+    sibling coroutine and surface as that one trust's status code for the whole request.
+    """
+
+    async def failing_start(*args, **kwargs):
+        trust = kwargs["trust"]
+        if trust.name == "Trust 2":
+            raise HTTPException(status_code=404, detail="Project not found")
         return None
 
     mock_approve_project.return_value = mock_trusts

@@ -76,10 +76,8 @@ def _notify_admins_of_access_request(request: IAccessRequest, access_request: Ac
         db.add(access_request)
         db.commit()
         logger.info("Access request notification email dispatched to admin")
-    except HTTPException:
-        # Author-written 4xx messages (403/404/400) are intentional and safe;
-        # only genuinely unexpected exceptions get a generic message below.
-        raise
+    # No HTTPException re-raise: the notification is best-effort and must never fail
+    # the already-persisted access request.
     except Exception:
         # Swallow: the request is already persisted. Covers SES ``ClientError``
         # (unverified sender, sandbox, throttling) and any credential/config

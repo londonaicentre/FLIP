@@ -67,10 +67,8 @@ def _rollback_after_role_failure(
     logger.exception(f"Failed to set user roles for user {user_id}; rolling back")
     try:
         delete_user(user_id=user_id, request=request, db=db, token_id=token_id)
-    except HTTPException:
-        # Author-written 4xx messages (403/404/400) are intentional and safe;
-        # only genuinely unexpected exceptions get a generic message below.
-        raise
+    # No HTTPException re-raise: a rollback failure must be reported together with the
+    # role-assignment failure that triggered it, not replace it.
     except Exception as rollback_err:
         # For HTTPException, prefer `.detail` (the operator-facing message);
         # for any other exception, str() is the closest equivalent. Catching
@@ -144,10 +142,9 @@ def register_user_step_function_endpoint(
             set_roles_response = set_user_roles(user_id=user_id, roles_data=roles, db=db, token_id=token_id)
             logger.info(f"Roles set successfully for user {user_id}: {set_roles_response}")
 
-        except HTTPException:
-            # Author-written 4xx messages (403/404/400) are intentional and safe;
-            # only genuinely unexpected exceptions get a generic message below.
-            raise
+        # No HTTPException re-raise: the handler below deliberately catches it, so that
+        # a definitive 4xx from set_user_roles still rolls the new Cognito user back
+        # instead of leaving an orphaned account behind.
         except Exception as role_err:
             # Transient Cognito read failures (HTTP 404/503 from set_user_roles)
             # must NOT trigger the rollback — the user definitely exists, we

@@ -99,10 +99,8 @@ async def retrieve_images_for_project(project_id: str, query: str, headers: XNAT
 
         try:
             studies_found = query_by_accession_number(accession_number, headers)
-        except HTTPException:
-            # Author-written 4xx messages are intentional; only unexpected
-            # exceptions fall through to the generic message below.
-            raise
+        # No HTTPException re-raise: one unreadable accession number must not abort the
+        # import of every other study in the cohort.
         except Exception as e:
             logger.error(f"Unexpected error querying PACS for accession number {idx}/{total_accessions}: {e}")
             continue
@@ -327,10 +325,8 @@ async def retry_retrieve_images_for_project(project_id: str, query: str, headers
 
         try:
             studies_found = query_by_accession_number(accession_number, headers)
-        except HTTPException:
-            # Author-written 4xx messages are intentional; only unexpected
-            # exceptions fall through to the generic message below.
-            raise
+        # No HTTPException re-raise: one unreadable accession number must not abort the
+        # retry pass over every other study in the cohort.
         except Exception as e:
             logger.error(f"Unexpected error querying PACS for accession number {idx}/{total_retries}: {e}")
             continue

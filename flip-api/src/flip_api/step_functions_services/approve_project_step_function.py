@@ -50,10 +50,10 @@ async def process_trust(request: Request, project_id: UUID, trust: Any, db: Sess
 
         return {"trust": trust.name, "success": True, "message": "Imaging started successfully"}
 
-    except HTTPException:
-        # Author-written 4xx messages (403/404/400) are intentional and safe;
-        # only genuinely unexpected exceptions get a generic message below.
-        raise
+    # No HTTPException re-raise here on purpose: this is a per-trust isolation boundary.
+    # The results are collected by `asyncio.gather` without `return_exceptions`, so letting
+    # one trust's 404/500 escape would cancel every sibling and abort the whole approval
+    # instead of recording that trust as failed in `details`.
     except Exception as e:
         logger.exception(f"Error processing trust {trust.name}: {str(e)}")
         return {"trust": trust.name, "success": False, "message": "Failed to start imaging"}

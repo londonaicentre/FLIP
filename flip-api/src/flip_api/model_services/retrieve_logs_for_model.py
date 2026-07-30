@@ -91,10 +91,8 @@ def retrieve_logs_for_model_endpoint(
             # a permanent 500 for the whole feed. Degrade that row alone.
             try:
                 return render_log(log)
-            except HTTPException:
-                # Author-written 4xx messages (403/404/400) are intentional and safe;
-                # only genuinely unexpected exceptions get a generic message below.
-                raise
+            # No HTTPException re-raise: this is a per-row isolation boundary, so a
+            # failure here degrades one log line rather than the whole feed.
             except Exception:
                 logger.exception(f"Failed to render log row {log.id}; serving degraded text")
                 return render_fallback(log)

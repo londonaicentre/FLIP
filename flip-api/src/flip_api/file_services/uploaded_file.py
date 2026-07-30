@@ -92,10 +92,8 @@ def process_scanned_file(
                 f"Successfully retrieved the file size and type. "
                 f"Size: {head_object.get('ContentLength')}, type: {head_object.get('ContentType')}"
             )
-        except HTTPException:
-            # Author-written 4xx messages (403/404/400) are intentional and safe;
-            # only genuinely unexpected exceptions get a generic message below.
-            raise
+        # No HTTPException re-raise: a missing object is the normal "not uploaded yet"
+        # case and must leave the status as-is rather than fail the whole listing.
         except Exception:
             logger.error(f"File {file} does not exist in the uploaded model files bucket.")
 

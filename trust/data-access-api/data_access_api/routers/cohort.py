@@ -114,10 +114,8 @@ def receive_cohort_query(query_input: CohortQueryInput) -> StatisticsResponse:
     # get_records bypasses the cache entirely when the scope is unknown.
     try:
         project_id = decrypt(query_input.encrypted_project_id)
-    except HTTPException:
-        # Author-written 4xx messages are intentional; only unexpected
-        # exceptions fall through to the generic message below.
-        raise
+    # No HTTPException re-raise: an unreadable project id must only cost this query its
+    # cache, never turn a working request into an error.
     except Exception:
         logger.warning("Could not decrypt project id; running this cohort query uncached")
         project_id = None
