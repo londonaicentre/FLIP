@@ -51,8 +51,6 @@ def _registered(name: str = "GSTT", slot_name: str = "Trust_007", slot_number: i
         fl_kit_slot=FLKitSlot(slot_name=slot_name, slot_number=slot_number),
         trust_api_key="plain-api",
         trust_internal_service_key="plain-internal",
-        # Minted by register_trust alongside the other keys. Not surfaced by this
-        # endpoint's response model — see the note in test_admin_create_trust_returns_registered_kit.
         trust_aes_key="plain-aes",  # pragma: allowlist secret
         trust_aes_kid="trust-gstt-1",
     )
@@ -78,13 +76,11 @@ def test_admin_create_trust_returns_registered_kit(mock_register, mock_perms, ad
     assert result.fl_kit_slot_number == 7
     assert result.trust_api_key == "plain-api"
     assert result.trust_internal_service_key == "plain-internal"
-    # register_trust mints a per-trust AES key, but ICreatedTrust deliberately does not
-    # carry it: this endpoint backs the admin UI, which has no kit file to write it into.
-    # A trust registered here therefore keeps encrypting under the shared kid until an
-    # operator provisions its own key on both sides (docs/aes-payload-keys.md). Pinned so
-    # the key cannot start leaking into an HTTP response without this assertion failing.
-    assert not hasattr(result, "trust_aes_key")
-    assert not hasattr(result, "trust_aes_kid")
+    # The AES key is minted per trust and stored nowhere hub-side, so this response is
+    # the only place it ever exists. Dropping it here would mint a key and discard it,
+    # leaving a UI-registered trust unable to use one without re-registering.
+    assert result.trust_aes_key == "plain-aes"
+    assert result.trust_aes_kid == "trust-gstt-1"
     db.rollback.assert_not_called()
     mock_perms.assert_called_once()
 

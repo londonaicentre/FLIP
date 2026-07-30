@@ -42,9 +42,16 @@ compromised trust yields the key for the whole federation.
 `kid_for_trust()` then selects that key automatically; trusts without one keep
 using the shared key, so trusts can be moved over one at a time.
 
-> The kit distributor (`scripts/distribute_trust_kits.py` / `trust_kit_lib.py`)
-> does not yet write these two variables into the kit file — that wiring is the
-> remaining task before per-trust keys can be switched on.
+Both registration paths now deliver step 2 automatically: `register-trust
+KIT=<CODE>` writes the two variables into the kit file (they are credential keys
+in `scripts/trust_kit_lib.py`, so they are written once on a new registration and
+never clobbered on the idempotent skip path), and the admin UI's kit modal
+includes them in its copy-all block.
+
+> Step 1 is still manual. The hub does not persist the AES key anywhere — a
+> symmetric key cannot be reduced to a hash the way the api key can — so the value
+> shown at registration is the only copy. Record it into `AES_TRUST_KEYS` at the
+> same time, or the trust has to be re-registered to obtain another.
 
 ## Rolling this out to an existing deployment
 

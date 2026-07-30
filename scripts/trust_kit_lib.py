@@ -15,10 +15,11 @@ dev distributor, the prod distributor, and the hub-shared sync. Merges a kit
 dict (as emitted by ``flip_api.scripts.register_trust``) into a kit file while
 preserving the operator's host-local edits:
 
-- Credentials (``TRUST_API_KEY`` / ``TRUST_INTERNAL_SERVICE_KEY``) are written
-  only when present in the kit (a new registration). The idempotent skip path
-  omits them, so an existing kit's credentials are never clobbered (the hub
-  stores only hashes and cannot re-emit plaintext).
+- Credentials (``TRUST_API_KEY`` / ``TRUST_INTERNAL_SERVICE_KEY`` /
+  ``TRUST_AES_KEY_BASE64`` / ``TRUST_AES_KID``) are written only when present in
+  the kit (a new registration). The idempotent skip path omits them, so an
+  existing kit's credentials are never clobbered (the hub stores only hashes,
+  and does not retain the AES key at all, so neither can be re-emitted).
 - Metadata (``EXPECTED_TRUST_ID`` / ``FL_KIT_SLOT`` / ``FL_KIT_SLOT_NUMBER``)
   is present on both paths and upserted unconditionally.
 - The hub-shared block is upserted under a sentinel header; the header is added
@@ -66,7 +67,12 @@ HUB_SHARED_KEYS: tuple[str, ...] = (
 )
 
 # Plaintext credentials — written once on a new registration, never on skip.
-CREDENTIAL_KEYS: tuple[str, ...] = ("TRUST_API_KEY", "TRUST_INTERNAL_SERVICE_KEY")
+CREDENTIAL_KEYS: tuple[str, ...] = (
+    "TRUST_API_KEY",
+    "TRUST_INTERNAL_SERVICE_KEY",
+    "TRUST_AES_KEY_BASE64",
+    "TRUST_AES_KID",
+)
 
 # Metadata — present on both the new-registration and idempotent-skip paths.
 METADATA_KEYS: tuple[str, ...] = ("EXPECTED_TRUST_ID", "FL_KIT_SLOT", "FL_KIT_SLOT_NUMBER")
@@ -75,6 +81,8 @@ METADATA_KEYS: tuple[str, ...] = ("EXPECTED_TRUST_ID", "FL_KIT_SLOT", "FL_KIT_SL
 _FIELD_BY_ENV_KEY: dict[str, str] = {
     "TRUST_API_KEY": "trust_api_key",
     "TRUST_INTERNAL_SERVICE_KEY": "trust_internal_service_key",
+    "TRUST_AES_KEY_BASE64": "trust_aes_key",
+    "TRUST_AES_KID": "trust_aes_kid",
     "EXPECTED_TRUST_ID": "trust_id",
     "FL_KIT_SLOT": "fl_kit_slot",
     "FL_KIT_SLOT_NUMBER": "fl_kit_slot_number",

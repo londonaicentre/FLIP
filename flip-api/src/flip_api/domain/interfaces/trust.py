@@ -56,6 +56,15 @@ class ICreatedTrust(BaseModel):
     exactly once. The hub only stores the SHA-256 of the api key; the internal
     service key is not persisted (only used by trust-internal services).
 
+    `trust_aes_key` / `trust_aes_kid` are the trust's payload-encryption key and its
+    key-id. Returned exactly once and stored nowhere hub-side — unlike the api key a
+    symmetric key cannot be reduced to a hash, so an admin who does not record it here
+    has to re-register the trust to get another. Carried for the same reason as the
+    other credentials: this response is the source for the Kit-credentials block of
+    ``trust/.env.<CODE>.<env>``, and the key is one of those credentials. It stays
+    inert until an operator also adds it to the hub's ``AES_TRUST_KEYS`` map
+    (``docs/aes-payload-keys.md``); until then payloads use the shared key.
+
     `fl_kit_slot` is the pre-provisioned FL participant identity assigned to this
     trust from the shared pool. The operator's containers mount the matching
     ``workspace/net-N/services/<fl_kit_slot>/`` provisioned kit dirs; this is the
@@ -69,6 +78,8 @@ class ICreatedTrust(BaseModel):
     created_at: datetime | None = None
     trust_api_key: str
     trust_internal_service_key: str
+    trust_aes_key: str
+    trust_aes_kid: str
     fl_kit_slot: str
     fl_kit_slot_number: int
 

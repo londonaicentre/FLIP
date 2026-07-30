@@ -31,6 +31,8 @@ const trust = {
     created_at: null,
     trust_api_key: "api-key-abc",
     trust_internal_service_key: "internal-key-def",
+    trust_aes_key: "aes-key-ghi",
+    trust_aes_kid: "trust-uuid-123",
     fl_kit_slot: "Trust_1",
     fl_kit_slot_number: 1
 };
@@ -69,6 +71,8 @@ describe("TrustKitModal — copy all credentials", () => {
         const text = block.text();
         expect(text).toContain("TRUST_API_KEY=api-key-abc");
         expect(text).toContain("TRUST_INTERNAL_SERVICE_KEY=internal-key-def");
+        expect(text).toContain("TRUST_AES_KEY_BASE64=aes-key-ghi");
+        expect(text).toContain("TRUST_AES_KID=trust-uuid-123");
         expect(text).toContain("FL_KIT_SLOT=Trust_1");
         expect(text).toContain("FL_KIT_SLOT_NUMBER=1");
         expect(text).toContain("EXPECTED_TRUST_ID=trust-uuid-123");
@@ -88,7 +92,7 @@ describe("TrustKitModal — copy all credentials", () => {
         expect(wrapper.find("[data-test='copy-all-credentials-btn']").exists()).toBe(true);
     });
 
-    it("copies all five credential lines with a single button click", async () => {
+    it("copies every credential line with a single button click", async () => {
         const wrapper = mountModal();
         const btn = wrapper.find("[data-test='copy-all-credentials-btn']");
         expect(btn.exists()).toBe(true);
@@ -97,6 +101,10 @@ describe("TrustKitModal — copy all credentials", () => {
         const copied = writeText.mock.calls[0][0] as string;
         expect(copied).toContain("TRUST_API_KEY=api-key-abc");
         expect(copied).toContain("TRUST_INTERNAL_SERVICE_KEY=internal-key-def");
+        // The AES key exists only in this response — if the modal stops rendering it,
+        // the key is minted and lost, and the trust can never use a per-trust key.
+        expect(copied).toContain("TRUST_AES_KEY_BASE64=aes-key-ghi");
+        expect(copied).toContain("TRUST_AES_KID=trust-uuid-123");
         expect(copied).toContain("FL_KIT_SLOT=Trust_1");
         expect(copied).toContain("FL_KIT_SLOT_NUMBER=1");
         expect(copied).toContain("EXPECTED_TRUST_ID=trust-uuid-123");
