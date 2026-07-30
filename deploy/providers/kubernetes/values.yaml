@@ -83,6 +83,11 @@ secrets:
     trust-internal-service-key: ""
     omop-postgres-password: ""
     data-access-postgres-password: ""
+    # REQUIRED when orthanc.enabled — JSON user map, e.g. {"admin": "<password>"}.
+    # Left empty, templates/secrets.yaml omits the key and the orthanc pod fails
+    # with CreateContainerConfigError (fail-loud by design, FLIP-PT-091) — never
+    # weaken this with a dummy default. Populated from the ORTHANC_REGISTERED_USERS
+    # env var by scripts/generate_values.py.
     orthanc-registered-users: ""
     xnat-admin-user: ""
     xnat-admin-password: ""
