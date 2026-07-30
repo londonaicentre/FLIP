@@ -490,11 +490,16 @@ describe("Models Page", () => {
         const wrapper = mountPage();
         await wrapper.vm.$nextTick();
 
-        expect(wrapper.find("[data-test='models-list-item-0']").text()).toContain("—");
+        // Exact match: the created half also falls back to an em-dash here, so
+        // a bare toContain("—") could no longer catch an ownerLabel regression.
+        expect(wrapper.find("[data-test='model-owner-meta']").text()).toBe("— · —");
     });
 
     test("the owner sub-line shows the relative created time next to the owner (as on Projects)", async () => {
-        setModels([makeModel({ creationTimestamp: new Date(Date.now() - 2 * 3_600_000).toISOString() })]);
+        // Offset-less naive-UTC string — the wire format the API actually sends
+        // (see test_all_models_endpoint.py) — so local-time parsing regressions
+        // fail here on any non-UTC machine.
+        setModels([makeModel({ creationTimestamp: new Date(Date.now() - 2 * 3_600_000).toISOString().slice(0, 19) })]);
         const wrapper = mountPage();
         await wrapper.vm.$nextTick();
 
@@ -526,6 +531,26 @@ describe("Models Page", () => {
         await wrapper.vm.$nextTick();
 
         expect(wrapper.findAll("[data-test='model-name']").map(n => n.text())).toEqual(["newer", "older"]);
+    });
+
+    test("rows from an older API without timestamps keep the backend order under the default sort", async () => {
+        // The rollout-skew case: a UI deployed ahead of the API gets no
+        // creationTimestamp on ANY row — all tie at 0 and the stable sort must
+        // preserve the backend's newest-first order.
+        setModels([
+            makeModel({
+                id: "m1",
+                name: "backend-first"
+            }),
+            makeModel({
+                id: "m2",
+                name: "backend-second"
+            })
+        ]);
+        const wrapper = mountPage();
+        await wrapper.vm.$nextTick();
+
+        expect(wrapper.findAll("[data-test='model-name']").map(n => n.text())).toEqual(["backend-first", "backend-second"]);
     });
 
     test("an error/terminal status renders a red pill and a red rail", async () => {
