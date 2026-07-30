@@ -493,6 +493,41 @@ describe("Models Page", () => {
         expect(wrapper.find("[data-test='models-list-item-0']").text()).toContain("—");
     });
 
+    test("the owner sub-line shows the relative created time next to the owner (as on Projects)", async () => {
+        setModels([makeModel({ creationTimestamp: new Date(Date.now() - 2 * 3_600_000).toISOString() })]);
+        const wrapper = mountPage();
+        await wrapper.vm.$nextTick();
+
+        expect(wrapper.find("[data-test='model-owner-meta']").text()).toBe("Dr Ada · created 2h ago");
+    });
+
+    test("the created time falls back to an em-dash when the API omits the timestamp", async () => {
+        setModels([makeModel()]);
+        const wrapper = mountPage();
+        await wrapper.vm.$nextTick();
+
+        expect(wrapper.find("[data-test='model-owner-meta']").text()).toBe("Dr Ada · —");
+    });
+
+    test("rows default-sort by creation date, most recent first", async () => {
+        setModels([
+            makeModel({
+                id: "m1",
+                name: "older",
+                creationTimestamp: "2026-01-01T00:00:00"
+            }),
+            makeModel({
+                id: "m2",
+                name: "newer",
+                creationTimestamp: "2026-06-01T00:00:00"
+            })
+        ]);
+        const wrapper = mountPage();
+        await wrapper.vm.$nextTick();
+
+        expect(wrapper.findAll("[data-test='model-name']").map(n => n.text())).toEqual(["newer", "older"]);
+    });
+
     test("an error/terminal status renders a red pill and a red rail", async () => {
         setModels([makeModel({ status: "STOPPED" })]);
         const wrapper = mountPage();

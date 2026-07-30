@@ -131,8 +131,8 @@
                                     >
                                         {{ model.name }}
                                     </router-link>
-                                    <p class="mt-1 text-xs text-gray-500 dark:text-gray-300">
-                                        {{ ownerLabel(model) }}
+                                    <p data-test="model-owner-meta" class="mt-1 text-xs text-gray-500 dark:text-gray-300">
+                                        {{ ownerLabel(model) }} · {{ relativeCreated(model) }}
                                     </p>
                                 </div>
                                 <!-- Project -->
@@ -396,7 +396,7 @@ const toggleTile = (key: GroupKey): void => {
     syncStatusFilter();
 };
 
-type SortKey = "name" | "project" | "trusts" | "status";
+type SortKey = "created" | "name" | "project" | "trusts" | "status";
 type SortDir = "asc" | "desc";
 
 interface IColumn {
@@ -433,9 +433,11 @@ const columns: IColumn[] = [
     }
 ];
 
-// Null sortKey keeps the backend order (newest-first) until a header is clicked.
-const sortKey = ref<SortKey | null>(null);
-const sortDir = ref<SortDir>("asc");
+// Default: newest first ("created" desc, no column header of its own — the
+// created time sits in the Model column's sub-line). Rows without a timestamp
+// tie at 0, so the stable sort keeps the backend order (also newest-first).
+const sortKey = ref<SortKey>("created");
+const sortDir = ref<SortDir>("desc");
 
 // First click on a column sorts ascending; subsequent clicks toggle direction.
 const toggleSort = (key: SortKey): void => {
@@ -461,7 +463,13 @@ const STATUS_RANK: Record<ModelStatus, number> = {
 };
 const statusRank = (s: ModelStatus | undefined): number => (s ? STATUS_RANK[s] ?? 99 : 99);
 
+const createdMs = (model: IModelSummary): number =>
+    model.creationTimestamp ? new Date(model.creationTimestamp).getTime() : 0;
+
+// "created" deliberately has no tie-break: equal (or absent) timestamps keep
+// the backend order under the stable sort.
 const SORT_COMPARATORS: Record<SortKey, (a: IModelSummary, b: IModelSummary) => number> = {
+    created: (a, b) => createdMs(a) - createdMs(b),
     name: (a, b) => a.name.localeCompare(b.name),
     project: (a, b) => a.projectName.localeCompare(b.projectName) || a.name.localeCompare(b.name),
     trusts: (a, b) => a.trusts.length - b.trusts.length || a.name.localeCompare(b.name),
@@ -470,7 +478,6 @@ const SORT_COMPARATORS: Record<SortKey, (a: IModelSummary, b: IModelSummary) => 
 
 // Client-side sort of the current page (mirrors the Connection Status trusts table).
 const sortedModels = computed<IModelSummary[]>(() => {
-    if (!sortKey.value) return models.value;
     const cmp = SORT_COMPARATORS[sortKey.value];
 
     return [...models.value].sort(sortDir.value === "asc" ? cmp : (a, b) => cmp(b, a));
@@ -522,6 +529,19 @@ const trustChipLabel = (trust: IModelSummaryTrust): string => {
 // Owner display name (UserProfile.name from the backend). Falls back to an
 // em-dash when the owner has no profile row — the endpoint carries no email.
 const ownerLabel = (model: IModelSummary): string => model.ownerName || "—";
+
+// "created 2h ago" next to the owner — mirrors the Projects list meta line.
+// Em-dash when a deployed API predates the creationTimestamp field.
+const relativeCreated = (model: IModelSummary): string => {
+    if (!model.creationTimestamp) return "—";
+    const created = new Date(model.creationTimestamp).getTime();
+    const sec = (Date.now() - created) / 1000;
+    if (sec < 60) return `created ${Math.max(0, Math.floor(sec))}s ago`;
+    if (sec < 3_600) return `created ${Math.floor(sec / 60)}m ago`;
+    if (sec < 86_400) return `created ${Math.floor(sec / 3_600)}h ago`;
+
+    return `created ${Math.floor(sec / 86_400)}d ago`;
+};
 
 // Status pill/dot classes come from model-service (shared with the mobile
 // project-models list), imported under their historical local names.
