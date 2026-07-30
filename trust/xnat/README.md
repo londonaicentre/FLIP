@@ -113,16 +113,19 @@ Make sure to always use the correct version of the plugins that are compatible w
 
 **A JDK 8-compiled plugin is not automatically broken on 1.10.** Per the XNAT 1.10.0 release
 announcement, 1.10.0 runs most JDK 8-era plugins as-is; only plugins that depend on components XNAT
-itself updated (notably the `dcm4che2` → `dcm4che5` DICOM library swap) need a new build. So this
-upgrade requires exactly **one** plugin change for FLIP: DQR.
+itself updated (notably the `dcm4che2` → `dcm4che5` DICOM library swap) need a new build. This
+upgrade changes two plugins for FLIP: DQR (forced by `dcm4che5`) and Container Service (the
+[CS compatibility matrix](https://wiki.xnat.org/container-service/container-service-compatibility-matrix)
+ticks **only 3.8.x** for XNAT 1.10.0 — 3.7.x support stops at 1.9.3.x, even though 3.7.3 happened to
+pass a basic conversion smoke on 1.10.0).
 
 The following table lists the plugin versions for the XNAT version `1.10.0` used in this environment.
 
 | Plugin                          | Version for XNAT 1.10.0     | Installed | Action for the 1.10 upgrade |
 | ------------------------------- | --------------------------- | --------- | --------------------------- |
 | DICOM Query-Retrieve Plugin     | 3.0.0                       | Yes       | **Must upgrade** from 2.2.0 — rebuilt on JDK 21 + `dcm4che5`, plus a thread-leakage fix |
-| Container Service Plugin        | 3.7.3 (JDK 8 build)         | Yes       | None — no 1.10-targeting release; runs as a JDK 8 plugin |
-| Batch Launch Plugin             | 0.9.0 (JDK 8 build)         | Yes       | None — not in the 1.10 plugin-update list |
+| Container Service Plugin        | 3.8.1 (JDK 8 build)         | Yes       | **Must upgrade** from 3.7.3 — 3.8.x is the only column the compatibility matrix ticks for 1.10.0 |
+| Batch Launch Plugin             | 0.9.0 (JDK 8 build)         | Yes       | None — the matrix keeps BLP 0.9.0 for 1.10.0 |
 | OHIF Viewer Plugin              | 3.8.0 available; n/a here   | No        | None — deliberately not installed (FLIP#662) |
 
 Not applicable to FLIP, but released alongside 1.10.0: **Distributed Events 2.0.0** (only needed for
@@ -148,14 +151,16 @@ use XNAT-side MFA; hub auth is Cognito and imaging-api authenticates as a servic
 deployments) and **DQR 2.3.2** (the thread-leak fix alone, JDK 8). That is the lower-risk path to the
 DQR fix if this 1.10 upgrade stalls.
 
-Still required before the CI image builds: upload `xnat-web-1.10.0.war` and the DQR 3.0.0 JAR to
-`s3://<FLIP_ARTIFACTS_BUCKET_NAME>/xnat/` and `.../xnat/plugins/` (removing `dicom-query-retrieve-2.2.0`),
-then trigger `docker_build_xnat_web.yml`. Both artifacts are public downloads, no account needed:
-the WAR from `https://api.bitbucket.org/2.0/repositories/xnatdev/xnat-web/downloads/xnat-web-1.10.0.war`
-and the plugin from
+Still required before the CI image builds: upload `xnat-web-1.10.0.war`, the DQR 3.0.0 JAR, and the
+Container Service 3.8.1 JAR to `s3://<FLIP_ARTIFACTS_BUCKET_NAME>/xnat/` and `.../xnat/plugins/`
+(removing `dicom-query-retrieve-2.2.0` and `container-service-3.7.3`), then trigger
+`docker_build_xnat_web.yml`. All three artifacts are public downloads, no account needed:
+the WAR from `https://api.bitbucket.org/2.0/repositories/xnatdev/xnat-web/downloads/xnat-web-1.10.0.war`,
+DQR from
 `https://api.bitbucket.org/2.0/repositories/xnatdev/dicom-query-retrieve/downloads/dicom-query-retrieve-3.0.0-xpl.jar`
-(the same repo also carries `2.3.2`/`2.4.0` for the JDK 8 fallback). Local builds skip S3 when the
-files already sit in `xnat/build-artifacts/` and `xnat/plugins/`.
+(the same repo also carries `2.3.2`/`2.4.0` for the JDK 8 fallback), and CS from
+`https://github.com/NrgXnat/container-service/releases/download/3.8.1/container-service-3.8.1-fat.jar`.
+Local builds skip S3 when the files already sit in `xnat/build-artifacts/` and `xnat/plugins/`.
 
 ### Adding or updating a plugin
 
