@@ -72,7 +72,7 @@ describe("TrustKitModal — copy all credentials", () => {
         expect(text).toContain("TRUST_API_KEY=api-key-abc");
         expect(text).toContain("TRUST_INTERNAL_SERVICE_KEY=internal-key-def");
         expect(text).toContain("TRUST_AES_KEY_BASE64=aes-key-ghi");
-        expect(text).toContain("TRUST_AES_KID=trust-uuid-123");
+        expect(text).toContain("# TRUST_AES_KID=trust-uuid-123");
         expect(text).toContain("FL_KIT_SLOT=Trust_1");
         expect(text).toContain("FL_KIT_SLOT_NUMBER=1");
         expect(text).toContain("EXPECTED_TRUST_ID=trust-uuid-123");
@@ -104,7 +104,9 @@ describe("TrustKitModal — copy all credentials", () => {
         // The AES key exists only in this response — if the modal stops rendering it,
         // the key is minted and lost, and the trust can never use a per-trust key.
         expect(copied).toContain("TRUST_AES_KEY_BASE64=aes-key-ghi");
-        expect(copied).toContain("TRUST_AES_KID=trust-uuid-123");
+        // Commented on purpose: enabling it before the hub holds the key breaks
+        // decryption in both directions.
+        expect(copied).toContain("# TRUST_AES_KID=trust-uuid-123");
         expect(copied).toContain("FL_KIT_SLOT=Trust_1");
         expect(copied).toContain("FL_KIT_SLOT_NUMBER=1");
         expect(copied).toContain("EXPECTED_TRUST_ID=trust-uuid-123");

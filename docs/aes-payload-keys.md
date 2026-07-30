@@ -32,12 +32,34 @@ registration, returned in the kit as `trust_aes_key` / `trust_aes_kid`.
 Per-trust keys contain the blast radius: with one shared key, a single
 compromised trust yields the key for the whole federation.
 
+Registration delivers the key to the trust but leaves it **inert**: the kit gets
+`TRUST_AES_KEY_BASE64` live and `TRUST_AES_KID` commented out. Nothing is stored
+hub-side — the hub has no column for it and cannot re-emit it — so the value shown
+at registration is the only copy, and `AES_TRUST_KEYS` is populated by hand.
+
+**The order matters, and there is no safe partial state.** `TRUST_AES_KID` is the
+switch: setting it live makes the trust encrypt under its own key *and* is what lets
+the trust decrypt anything the hub encrypts to it. Enable the two halves out of step
+and one direction breaks:
+
+* **Trust first, hub not yet:** imaging-api encrypts the new XNAT user's password
+  under the trust's kid, the hub cannot resolve it, and the credentials email is
+  never sent. The failure is swallowed by a broad handler in
+  `private_services/imaging_notifications.py`, so the only symptom is a log line.
+* **Hub first, trust not yet:** `kid_for_trust()` starts selecting the trust's kid
+  for task payloads, but the trust has not loaded that kid, so its poller cannot
+  decrypt them.
+
+So enable both sides and restart both, in one window:
+
 1. Put the trust's key in the hub's `AES_TRUST_KEYS` under `trust-<trust_id>`
    (source it from a secret store — **not** the application database, or a DB
-   compromise becomes a federation-wide key compromise).
-2. Set `TRUST_AES_KID` / `TRUST_AES_KEY_BASE64` in that trust's kit
-   (`trust/.env.<CODE>.<env>`), distributed out-of-band like
-   `TRUST_INTERNAL_SERVICE_KEY`.
+   compromise becomes a federation-wide key compromise), and restart the hub:
+   `_keyring()` is memoised for the process lifetime.
+2. Uncomment `TRUST_AES_KID` in that trust's kit (`trust/.env.<CODE>.<env>`) and
+   restart the trust stack.
+
+Re-registering a trust never re-comments a kid an operator has enabled.
 
 `kid_for_trust()` then selects that key automatically; trusts without one keep
 using the shared key, so trusts can be moved over one at a time.

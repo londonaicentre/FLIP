@@ -90,8 +90,9 @@
                                     <p class="mt-1 text-xs text-gray-500 dark:text-gray-300">
                                         <code>FL_KIT_SLOT</code> is the FL identity clients register under;
                                         <code>EXPECTED_TRUST_ID</code> is an optional startup self-check.
-                                        <code>TRUST_AES_KID</code> stays inert until the same key is added to
-                                        the hub's <code>AES_TRUST_KEYS</code> map.
+                                        <code>TRUST_AES_KID</code> is commented on purpose — uncomment it only
+                                        after the same key is in the hub's <code>AES_TRUST_KEYS</code> map,
+                                        or payloads stop decrypting in both directions.
                                     </p>
                                 </div>
 
@@ -168,7 +169,7 @@ const allCredentialsBlock = computed(() => [
     `TRUST_API_KEY=${props.trust?.trust_api_key ?? ""}`,
     `TRUST_INTERNAL_SERVICE_KEY=${props.trust?.trust_internal_service_key ?? ""}`,
     `TRUST_AES_KEY_BASE64=${props.trust?.trust_aes_key ?? ""}`,
-    `TRUST_AES_KID=${props.trust?.trust_aes_kid ?? ""}`,
+    `# TRUST_AES_KID=${props.trust?.trust_aes_kid ?? ""}`,
     `FL_KIT_SLOT=${props.trust?.fl_kit_slot ?? ""}`,
     `FL_KIT_SLOT_NUMBER=${props.trust?.fl_kit_slot_number ?? ""}`,
     `EXPECTED_TRUST_ID=${props.trust?.id ?? ""}`

@@ -98,10 +98,13 @@ def test_new_kit_writes_creds_meta_and_hub_shared() -> None:
         _assert("TRUST_INTERNAL_SERVICE_KEY=plain-internal-key" in content, "internal key written")
         # The hub keeps no copy of the AES key, so if it is not written here it is lost.
         _assert("TRUST_AES_KEY_BASE64=plain-aes-key==" in content, "AES key written (trailing == preserved)")
+        # The kid ships commented: setting it live before the hub holds the same key
+        # breaks decryption in both directions, so enabling it must stay deliberate.
         _assert(
-            "TRUST_AES_KID=trust-11111111-1111-1111-1111-111111111111" in content,
-            "AES kid written",
+            "# TRUST_AES_KID=trust-11111111-1111-1111-1111-111111111111" in content,
+            "AES kid written commented (inert until enabled)",
         )
+        _assert(_count_key(content, "TRUST_AES_KID") == 0, "AES kid has no live line")
         _assert("EXPECTED_TRUST_ID=11111111-1111-1111-1111-111111111111" in content, "EXPECTED_TRUST_ID written")
         _assert("FL_KIT_SLOT=Trust_1" in content, "FL_KIT_SLOT written")
         _assert("FL_KIT_SLOT_NUMBER=1" in content, "FL_KIT_SLOT_NUMBER written")
@@ -220,6 +223,22 @@ def test_dev_commented_hub_shared() -> None:
         _assert(content2.count("# AES_KEY_BASE64=") == 1, "no duplicate commented key on re-run")
 
 
+def test_enabled_aes_kid_is_not_switched_off_by_re_registration() -> None:
+    print("▶ a live TRUST_AES_KID set by the operator survives a re-run")
+    with tempfile.TemporaryDirectory() as td:
+        target = Path(td) / ".env.GSTT.development"
+        target.write_text("TRUST_AES_KID=trust-enabled-by-operator\n")
+
+        tkl.write_kit(target, _full_kit())
+
+        content = target.read_text()
+        _assert(
+            "TRUST_AES_KID=trust-enabled-by-operator" in content,
+            "operator's live kid preserved",
+        )
+        _assert(_count_key(content, "TRUST_AES_KID") == 1, "no second kid line added")
+
+
 def main() -> None:
     test_new_kit_writes_creds_meta_and_hub_shared()
     test_dev_commented_hub_shared()
@@ -227,6 +246,7 @@ def main() -> None:
     test_idempotent_rotation_no_dupes()
     test_absent_target_no_example_creates_file()
     test_ec2_rerun_preserves_host_local_profile()
+    test_enabled_aes_kid_is_not_switched_off_by_re_registration()
     print("—")
     print(f"PASS={PASS}  FAIL={FAIL}")
     sys.exit(0 if FAIL == 0 else 1)
