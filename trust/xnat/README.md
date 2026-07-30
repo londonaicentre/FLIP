@@ -15,6 +15,25 @@
 
 XNAT is the medical imaging archive used by each FLIP trust site. It stores DICOM data imported from the trust's PACS (Orthanc) and makes it available to federated learning pipelines via the Imaging API. This directory contains the Docker configuration for running XNAT locally and on EC2, along with the plugins and setup scripts needed to integrate it with the rest of the FLIP Trust Services layer.
 
+## Version notes (XNAT 1.10.0)
+
+FLIP runs XNAT `1.10.0` (see `XNAT_VERSION` in `.env`). Two things matter for us:
+
+- **JDK 21.** 1.10.0 is the first XNAT release compiled against JDK 21, so the image's Tomcat base
+  moved to a `jdk21` variant. Tomcat itself stays on the 9.x line. Consequence: the plugin JARs must
+  also be JDK 21 builds — see [Plugin compatibility](#plugin-compatibility) below.
+- **Dynamic Data Types.** 1.10.0 adds the ability to extend the XSD with new data types at runtime,
+  without writing a plugin and without a Tomcat restart (per the 1.10.0 release notes, which are
+  auth-gated on the XNAT wiki — not independently verified here).
+
+> **This does not supersede the FLIP#612 fix.** Cohort imports of chest X-rays once reported a
+> permanent "0 imported" because `xnat:dxSessionData` is not in XNAT's default *secure element* set
+> (`cr/ct/mr/pet/petmr`), and the project-scoped experiment listing filters on element-access rows.
+> That data type already exists in the XSD — the gap was **element-security registration**, not a
+> missing type — so Dynamic Data Types does not address it. imaging-api reads the unfiltered global
+> listing (`GET /data/experiments?project={id}`) instead, which is modality-agnostic and needs no
+> registration; keep it that way. See `imaging_api/services/projects.py::get_experiments`.
+
 ## Docker Swarm
 
 XNAT is deployed using Docker Swarm (both locally and on EC2). This is because Swarm provides overlay networking, resource constraints, and restart policies needed for XNAT services.
