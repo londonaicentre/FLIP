@@ -3,15 +3,19 @@
 # Script to ensure required XNAT plugins are present in the local plugin directory.
 # If any required plugin families are missing, it attempts to sync them from the specified S3 bucket.
 # If they are already present, it skips the S3 sync command, so it does not rely on S3 access if the plugins are already available locally.
-# Usage: ./ensure_plugins.sh <plugin_dir> <s3_bucket>
+# Usage: ./ensure_plugins.sh <plugin_dir> <s3_bucket> [s3_prefix]
+# s3_prefix defaults to the legacy flat layout (xnat/plugins); callers pass the version-keyed
+# prefix (xnat-<version>/plugins) so each XNAT version keeps its own plugin roster in S3 and
+# branches on different XNAT versions can coexist.
 
 set -euo pipefail
 
 PLUGIN_DIR="${1:-}"
 S3_BUCKET="${2:-}"
+S3_PREFIX="${3:-xnat/plugins}"
 
 if [[ -z "${PLUGIN_DIR}" || -z "${S3_BUCKET}" ]]; then
-  echo "Usage: $0 <plugin_dir> <s3_bucket>"
+  echo "Usage: $0 <plugin_dir> <s3_bucket> [s3_prefix]"
   exit 1
 fi
 
@@ -59,7 +63,7 @@ else
   # Exclude ohif-viewer: the trailing --exclude wins over --include for matching
   # keys, so it is neither downloaded nor (with --delete) kept locally. See the
   # required_prefixes note above (FLIP#662).
-  aws s3 sync "s3://${S3_BUCKET}/xnat/plugins/" "${PLUGIN_DIR}/" --delete \
+  aws s3 sync "s3://${S3_BUCKET}/${S3_PREFIX}/" "${PLUGIN_DIR}/" --delete \
     --exclude "*" --include "*.jar" --exclude "ohif-viewer-*"
 fi
 

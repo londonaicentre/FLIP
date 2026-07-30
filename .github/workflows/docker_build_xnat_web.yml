@@ -125,14 +125,17 @@ jobs:
           GH_ACTOR: ${{ github.actor }}
         run: echo "$GH_TOKEN" | docker login $REGISTRY -u "$GH_ACTOR" --password-stdin
 
+      # The S3 artifact set is keyed by XNAT version — s3://<bucket>/xnat-<version>/{war, plugins/} —
+      # so branches on different XNAT versions (e.g. main vs develop across an upgrade) each build
+      # against their own WAR + plugin roster. Keep the version here in sync with trust/xnat/.env.
       - name: Download XNAT WAR
-        run: aws s3 cp s3://${{ env.FLIP_ARTIFACTS_BUCKET_NAME }}/xnat/xnat-web-1.10.0.war build-artifacts/xnat-web-1.10.0.war
+        run: aws s3 cp s3://${{ env.FLIP_ARTIFACTS_BUCKET_NAME }}/xnat-1.10.0/xnat-web-1.10.0.war build-artifacts/xnat-web-1.10.0.war
 
       - name: Download XNAT plugins
         # Exclude ohif-viewer: FLIP never opens the viewer, and its per-session
         # metadata-rebuild listener is the dominant load on XNAT's Reactor
         # EventBus (FLIP#662). Keep this in sync with scripts/ensure_plugins.sh.
-        run: aws s3 sync s3://${{ env.FLIP_ARTIFACTS_BUCKET_NAME }}/xnat/plugins/ plugins/ --exclude "ohif-viewer-*"
+        run: aws s3 sync s3://${{ env.FLIP_ARTIFACTS_BUCKET_NAME }}/xnat-1.10.0/plugins/ plugins/ --exclude "ohif-viewer-*"
 
       - name: Build Docker image
         env:

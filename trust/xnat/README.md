@@ -105,7 +105,15 @@ If successful, you will be able to log in to XNAT with the service account crede
 
 ## Plugins
 
-Plugins and the XNAT WAR are stored in S3 at `s3://<FLIP_ARTIFACTS_BUCKET_NAME>/xnat/plugins/` and `s3://<FLIP_ARTIFACTS_BUCKET_NAME>/xnat/xnat-web-<version>.war`. The CI workflows download them and bake them into the Docker image during the build.
+Plugins and the XNAT WAR are stored in S3 as a **version-keyed artifact set**:
+`s3://<FLIP_ARTIFACTS_BUCKET_NAME>/xnat-<version>/xnat-web-<version>.war` plus
+`.../xnat-<version>/plugins/*.jar` (e.g. `xnat-1.10.0/`). Each XNAT version needs a matching plugin
+roster, and keying the whole set by version lets branches on different XNAT versions (e.g. `main` vs
+`develop` across an upgrade) build without clobbering each other. The CI workflows and
+`make build` download the set for the `XNAT_VERSION` in `.env` and bake it into the Docker image.
+
+> The pre-1.10 flat layout (`xnat/xnat-web-1.9.3.war` + `xnat/plugins/`) is kept as-is while `main`
+> still builds 1.9.3; delete it once this upgrade reaches `main`.
 
 ### Plugin compatibility
 
@@ -151,10 +159,8 @@ use XNAT-side MFA; hub auth is Cognito and imaging-api authenticates as a servic
 deployments) and **DQR 2.3.2** (the thread-leak fix alone, JDK 8). That is the lower-risk path to the
 DQR fix if this 1.10 upgrade stalls.
 
-Still required before the CI image builds: upload `xnat-web-1.10.0.war`, the DQR 3.0.0 JAR, and the
-Container Service 3.8.1 JAR to `s3://<FLIP_ARTIFACTS_BUCKET_NAME>/xnat/` and `.../xnat/plugins/`
-(removing `dicom-query-retrieve-2.2.0` and `container-service-3.7.3`), then trigger
-`docker_build_xnat_web.yml`. All three artifacts are public downloads, no account needed:
+The `xnat-1.10.0/` artifact set (WAR + DQR 3.0.0 + Container Service 3.8.1 + Batch Launch 0.9.0) is
+uploaded and CI-verified. All three upgraded artifacts are public downloads, no account needed:
 the WAR from `https://api.bitbucket.org/2.0/repositories/xnatdev/xnat-web/downloads/xnat-web-1.10.0.war`,
 DQR from
 `https://api.bitbucket.org/2.0/repositories/xnatdev/dicom-query-retrieve/downloads/dicom-query-retrieve-3.0.0-xpl.jar`
@@ -164,7 +170,8 @@ Local builds skip S3 when the files already sit in `xnat/build-artifacts/` and `
 
 ### Adding or updating a plugin
 
-1. Upload the new `.jar` file to `s3://<FLIP_ARTIFACTS_BUCKET_NAME>/xnat/plugins/`.
+1. Upload the new `.jar` file to `s3://<FLIP_ARTIFACTS_BUCKET_NAME>/xnat-<version>/plugins/` for the
+   XNAT version it targets (removing the JAR it replaces — the sync bakes every JAR in the prefix).
 2. Update the plugin compatibility table above.
 3. Trigger the CI workflows (push or `gh workflow run`) to rebuild the image with the new plugin.
 
