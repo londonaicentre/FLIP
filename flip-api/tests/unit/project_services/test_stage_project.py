@@ -22,6 +22,7 @@ from flip_api.auth.dependencies import verify_token
 from flip_api.db.database import get_session
 from flip_api.domain.interfaces.project import ProjectStatus
 from flip_api.domain.schemas.projects import StageProjectRequest
+from flip_api.project_services.services.project_services import ProjectValidationError
 from flip_api.project_services.stage_project import router as stage_project_router
 
 # Global test data
@@ -363,7 +364,7 @@ def test_stage_project_value_error_from_service(
         patch("flip_api.project_services.stage_project.get_project", return_value=mock_project_data),
         patch(
             "flip_api.project_services.stage_project.stage_project_service",
-            side_effect=ValueError("Invalid trust configuration"),
+            side_effect=ProjectValidationError("Invalid trust configuration"),
         ),
     ):
         # Act

@@ -80,7 +80,9 @@ def retrieve_model_status_from_logs(
         if exc.response.status_code == 404:
             logger.debug("Could not find model status from logs.")
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Logs not found.")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to retrieve model status"
+        ) from exc
 
     logs = response.json().get("hits", {}).get("hits", [])
     if not logs:

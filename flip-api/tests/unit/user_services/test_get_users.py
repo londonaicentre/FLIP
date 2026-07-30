@@ -99,8 +99,9 @@ class TestGetUsers:
     @patch("flip_api.user_services.get_users.has_permissions", return_value=True)
     def test_get_users_invalid_pool(self, mock_has_permissions, mock_get_user_pool_id):
         response = client.get("/api/users")
-        assert response.status_code == status.HTTP_400_BAD_REQUEST
-        assert "Internal server error" in response.json()["detail"]
+        # Failing to resolve the pool is a server-side fault, not a client error.
+        assert response.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
+        assert response.json()["detail"] == "Internal server error"
 
     @patch("flip_api.user_services.get_users.get_pool_id", side_effect=Exception("server crash"))
     @patch("flip_api.user_services.get_users.has_permissions", side_effect=Exception("deep error"))

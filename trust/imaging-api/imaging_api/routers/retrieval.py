@@ -68,7 +68,7 @@ async def get_import_status_count(project_id: str, encoded_query: str, headers: 
         get_project(project_id, headers)
     except NotFoundError as e:
         logger.error(f"Project not found: {str(e)}")
-        raise HTTPException(status_code=404, detail="Internal server error")
+        raise HTTPException(status_code=404, detail="Project not found") from e
     except HTTPException:
         # Author-written 4xx messages are intentional; only unexpected
         # exceptions fall through to the generic message below.

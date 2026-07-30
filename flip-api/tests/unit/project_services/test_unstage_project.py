@@ -21,6 +21,7 @@ from flip_api.auth.dependencies import verify_token
 from flip_api.db.database import get_session
 from flip_api.db.models.user_models import PermissionRef
 from flip_api.domain.interfaces.project import ProjectStatus
+from flip_api.project_services.services.project_services import ProjectValidationError
 from flip_api.project_services.unstage_project import router as unstage_project_router
 
 
@@ -166,7 +167,7 @@ def test_unstage_project_value_error_from_service(
         patch("flip_api.project_services.unstage_project.get_project", return_value=mock_project_data),
         patch(
             "flip_api.project_services.unstage_project.unstage_project_service",
-            side_effect=ValueError("Invalid project state for unstaging"),
+            side_effect=ProjectValidationError("Invalid project state for unstaging"),
         ),
     ):
         # Act

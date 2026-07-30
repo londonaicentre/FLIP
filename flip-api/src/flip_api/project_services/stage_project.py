@@ -21,6 +21,7 @@ from flip_api.db.database import get_session
 from flip_api.domain.interfaces.project import ProjectStatus
 from flip_api.domain.schemas.projects import StageProjectRequest
 from flip_api.project_services.services.project_services import (
+    ProjectValidationError,
     get_project,
     stage_project_service,
 )
@@ -178,13 +179,14 @@ def stage_project_endpoint(
         )
         logger.info(f"Project {project_id} successfully staged by user {current_user_id}.")
 
-    except ValueError as ve:  # Catch specific business logic errors from services
+    except ProjectValidationError as ve:  # Catch specific business logic errors from services
         logger.error(f"ValueError during staging project {project_id}: {ve}", exc_info=True)
         session.rollback()
+        # safe-detail: domain error, message is author-written and user-facing
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(ve),
-        )
+        ) from ve
     except HTTPException:
         # Author-written 4xx messages (403/404/400) are intentional and safe;
         # only genuinely unexpected exceptions get a generic message below.

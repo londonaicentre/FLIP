@@ -20,7 +20,11 @@ from flip_api.auth.dependencies import verify_token
 from flip_api.db.database import get_session
 from flip_api.db.models.user_models import PermissionRef
 from flip_api.domain.interfaces.project import ProjectStatus
-from flip_api.project_services.services.project_services import get_project, unstage_project_service
+from flip_api.project_services.services.project_services import (
+    ProjectValidationError,
+    get_project,
+    unstage_project_service,
+)
 from flip_api.utils.logger import logger
 
 router = APIRouter(prefix="/projects", tags=["project_services"])
@@ -95,13 +99,14 @@ def unstage_project_endpoint(
         )
         logger.info(f"Project ({project_id}) status set to unstaged, audit entry added and transaction committed.")
 
-    except ValueError as ve:  # Catch specific business logic errors from services
+    except ProjectValidationError as ve:  # Catch specific business logic errors from services
         logger.error(f"ValueError during unstaging project {project_id}: {ve}", exc_info=True)
         session.rollback()
+        # safe-detail: domain error, message is author-written and user-facing
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(ve),
-        )
+        ) from ve
     except HTTPException:
         # Author-written 4xx messages (403/404/400) are intentional and safe;
         # only genuinely unexpected exceptions get a generic message below.

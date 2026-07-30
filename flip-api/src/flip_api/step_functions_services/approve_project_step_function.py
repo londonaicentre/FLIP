@@ -56,7 +56,7 @@ async def process_trust(request: Request, project_id: UUID, trust: Any, db: Sess
         raise
     except Exception as e:
         logger.exception(f"Error processing trust {trust.name}: {str(e)}")
-        return {"trust": trust.name, "success": False, "message": str(e)}
+        return {"trust": trust.name, "success": False, "message": "Failed to start imaging"}
 
 
 @router.post("/project/{project_id}/approve", response_model=dict[str, Any])

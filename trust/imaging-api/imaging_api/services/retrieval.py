@@ -295,7 +295,7 @@ async def retry_retrieve_images_for_project(project_id: str, query: str, headers
     try:
         get_project(project_id, headers)
     except NotFoundError:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Internal server error")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found")
     except HTTPException:
         # Author-written 4xx messages are intentional; only unexpected
         # exceptions fall through to the generic message below.

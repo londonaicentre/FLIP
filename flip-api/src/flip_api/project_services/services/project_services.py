@@ -631,7 +631,7 @@ def update_project_status(
     """
     project = session.get(Projects, project_id)
     if not project:
-        raise ValueError(f"Project {project_id} not found for status update.")
+        raise ProjectValidationError(f"Project {project_id} not found for status update.")
 
     # Try to update the status value of the project in the database
     try:
