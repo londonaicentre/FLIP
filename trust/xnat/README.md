@@ -19,12 +19,16 @@ XNAT is the medical imaging archive used by each FLIP trust site. It stores DICO
 
 FLIP runs XNAT `1.10.0` (see `XNAT_VERSION` in `.env`). Two things matter for us:
 
-- **JDK 21.** 1.10.0 is the first XNAT release compiled against JDK 21, so the image's Tomcat base
-  moved to a `jdk21` variant. Tomcat itself stays on the 9.x line. Consequence: the plugin JARs must
-  also be JDK 21 builds — see [Plugin compatibility](#plugin-compatibility) below.
-- **Dynamic Data Types.** 1.10.0 adds the ability to extend the XSD with new data types at runtime,
-  without writing a plugin and without a Tomcat restart (per the 1.10.0 release notes, which are
-  auth-gated on the XNAT wiki — not independently verified here).
+- **JDK 21.** 1.10.0 moves from JDK 8 to JDK 21 (for long-term support), so the image's Tomcat base
+  moved to a `jdk21` variant. Upstream states there is **no change in the Tomcat or PostgreSQL
+  version requirements**, which is why Tomcat stays on 9.x and `PG_VERSION` stays at `12.2-alpine`.
+  Most JDK 8-compiled plugins still run — see [Plugin compatibility](#plugin-compatibility) below.
+- **dcm4che2 → dcm4che5.** XNAT's core DICOM processing library was replaced. This is what forces the
+  DQR plugin upgrade, and it is the change most likely to alter DICOM import behaviour, so the import
+  path (Orthanc → DQR → directArchive → NIfTI conversion) deserves a full re-test on 1.10. The
+  release also notes mitigations for imports of very large (>2 GB) uncompressed DICOM files.
+- **Dynamic Data Types.** 1.10.0 adds real-time creation of data types and management of display
+  fields — XSD additions without plugin development and without a Tomcat restart.
 
 > **This does not supersede the FLIP#612 fix.** Cohort imports of chest X-rays once reported a
 > permanent "0 imported" because `xnat:dxSessionData` is not in XNAT's default *secure element* set
@@ -95,33 +99,44 @@ Plugins and the XNAT WAR are stored in S3 at `s3://<FLIP_ARTIFACTS_BUCKET_NAME>/
 
 Make sure to always use the correct version of the plugins that are compatible with the XNAT version specified. Check the plugin's compatibility matrix for more information (for example, see [DQR Plugin Compatibility Matrix](https://wiki.xnat.org/xnat-tools/dqr-plugin-compatibility-matrix)).
 
+**A JDK 8-compiled plugin is not automatically broken on 1.10.** Per the XNAT 1.10.0 release
+announcement, 1.10.0 runs most JDK 8-era plugins as-is; only plugins that depend on components XNAT
+itself updated (notably the `dcm4che2` → `dcm4che5` DICOM library swap) need a new build. So this
+upgrade requires exactly **one** plugin change for FLIP: DQR.
+
 The following table lists the plugin versions for the XNAT version `1.10.0` used in this environment.
 
-| Plugin                          | Version for XNAT 1.10.0        | Installed |
-| ------------------------------- | ------------------------------ | --------- |
-| Container Service Plugin        | TBD — no 1.10 release yet      | Yes       |
-| Batch Launch Plugin             | TBD — no public 1.10 release   | Yes       |
-| DICOM Query-Retrieve Plugin     | TBD — no public 1.10 release   | Yes       |
-| OHIF Viewer Plugin              | n/a — deliberately not installed (FLIP#662) | No |
+| Plugin                          | Version for XNAT 1.10.0     | Installed | Action for the 1.10 upgrade |
+| ------------------------------- | --------------------------- | --------- | --------------------------- |
+| DICOM Query-Retrieve Plugin     | 3.0.0                       | Yes       | **Must upgrade** from 2.2.0 — rebuilt on JDK 21 + `dcm4che5`, plus a thread-leakage fix |
+| Container Service Plugin        | 3.7.3 (JDK 8 build)         | Yes       | None — no 1.10-targeting release; runs as a JDK 8 plugin |
+| Batch Launch Plugin             | 0.9.0 (JDK 8 build)         | Yes       | None — not in the 1.10 plugin-update list |
+| OHIF Viewer Plugin              | 3.8.0 available; n/a here   | No        | None — deliberately not installed (FLIP#662) |
 
-> **Blocker — the 1.9-era plugin JARs will not load under XNAT 1.10.**
-> XNAT 1.10 runs on JDK 21; the JARs currently in S3 (`container-service 3.7.3`,
-> `batch-launch 0.9.0`, `dicom-query-retrieve 2.2.0`) are compiled against JDK 8 for
-> XNAT 1.9.3. They must be replaced before this image is usable. As of July 2026 no
-> upstream 1.10-targeting plugin release has been published:
+Not applicable to FLIP, but released alongside 1.10.0: **Distributed Events 2.0.0** (only needed for
+load-balanced multi-node XNAT — each FLIP trust runs a single node) and **MFA 1.6.0** (FLIP does not
+use XNAT-side MFA; hub auth is Cognito and imaging-api authenticates as a service account).
+
+> **DQR 3.0.0 is a major version bump and imaging-api reads DQR's tables directly.**
+> `imaging_api/db/get_{queued,executed}_pacs_request_by_project.py` query DQR's Hibernate tables
+> (`xhbm_queued_pacs_request`, `xhbm_executed_pacs_request`) and `services/retrieval.py` compares
+> against the literal status `"FAILED"`. A major bump carrying a `dcm4che5` rewrite could change
+> table columns or status vocabulary, which would silently misreport in-flight and failed imports.
+> Verify both against the 3.0.0 JAR before trusting import status on 1.10.
 >
-> - **Container Service** — work is in progress but unreleased. The `dev` branch of
->   [`NrgXnat/container-service`](https://github.com/NrgXnat/container-service) builds
->   `3.9.0-SNAPSHOT` against `vXnat = "1.10.1-SNAPSHOT"` with `sourceCompatibility = 21`;
->   `master` and the newest tag (`3.8.1`) still pin XNAT 1.9.3 / Java 8.
-> - **Batch Launch** and **DICOM Query-Retrieve** — Bitbucket-hosted and private; no
->   public release information is reachable.
-> - The XNAT wiki compatibility matrices and `xnat.org/download` are auth-gated (403 to
->   anonymous fetches) and remain the canonical source once 1.10 plugins ship.
->
-> Until then, the JARs must be sourced from the XNAT 1.10 alpha bundle on the (account-gated)
-> XNAT download portal, or built from the plugin `dev` branches. Fill in the concrete
-> versions above when they are uploaded to S3.
+> The DQR thread-leakage fix is also worth attention: it is plausibly related to the bulk-import
+> wedging investigated in FLIP#662 (worked around here with the raised heap in `.env` and by
+> excluding the OHIF viewer). Re-test a large cohort pull on 1.10 + DQR 3.0.0 before assuming those
+> workarounds are still needed.
+
+**Staying on 1.9 instead?** Upstream also shipped **XNAT 1.9.3.4** (urgent fixes for JDK 8
+deployments) and **DQR 2.3.2** (the thread-leak fix alone, JDK 8). That is the lower-risk path to the
+DQR fix if this 1.10 upgrade stalls.
+
+Still required before the image builds: upload `xnat-web-1.10.0.war` and the DQR 3.0.0 JAR to
+`s3://<FLIP_ARTIFACTS_BUCKET_NAME>/xnat/` and `.../xnat/plugins/` (removing `dicom-query-retrieve-2.2.0`),
+then trigger `docker_build_xnat_web.yml`. The wiki compatibility matrices and `xnat.org/download` are
+auth-gated, so the JARs come from the XNAT download portal with an account.
 
 ### Adding or updating a plugin
 
