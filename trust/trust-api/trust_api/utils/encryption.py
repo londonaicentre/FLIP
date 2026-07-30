@@ -10,7 +10,7 @@
 # limitations under the License.
 #
 
-"""Authenticated encryption for cross-trust payloads (FLIP-PT-004).
+"""Authenticated encryption for cross-trust payloads.
 
 AES-256-GCM (AEAD) in a small key-id'd envelope. Replaces the previous AES-CBC
 scheme, which had no authentication: CBC ciphertexts were malleable, so a

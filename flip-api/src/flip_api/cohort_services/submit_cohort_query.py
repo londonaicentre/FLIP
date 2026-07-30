@@ -149,7 +149,7 @@ def submit_cohort_query(
         # Queue a task for each trust (instead of direct HTTP calls). The
         # project_id is encrypted per trust under that trust's key-id — a single
         # ciphertext reused across trusts could not be bound to a per-trust key
-        # (FLIP-PT-004, docs/aes-payload-keys.md). Trusts without their own key
+        # (see docs/aes-payload-keys.md). Trusts without their own key
         # fall back to the shared kid.
         for trust in trusts:
             try:

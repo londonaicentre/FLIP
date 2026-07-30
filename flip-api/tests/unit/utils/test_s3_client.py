@@ -24,7 +24,7 @@ Together with the tests in
 ``tests/unit/file_services/test_presigned_url_for_upload.py``,
 ``tests/unit/file_services/test_download_file.py``, and
 ``tests/unit/file_services/test_retrieve_federated_results.py``, this
-module forms the policy retest required by the FLIP-PT review brief:
+module forms the policy retest required by the external security review:
 no log line may contain ``X-Amz-Signature=``, ``X-Amz-Credential=``,
 or any ``s3.amazonaws.com/...?...`` URL.
 """

@@ -70,7 +70,7 @@ class RegisteredTrust:
     internal-service key is never persisted hub-side.
 
     ``trust_aes_key`` / ``trust_aes_kid`` are the per-trust payload-encryption key
-    and its key-id (FLIP-PT-004). This is a symmetric key the hub must also hold to
+    and its key-id. This is a symmetric key the hub must also hold to
     encrypt to / decrypt from this trust, so — unlike the api key — it cannot be
     reduced to a hash. Until it is provisioned on both sides
     (``docs/aes-payload-keys.md``) payloads keep using the shared key.

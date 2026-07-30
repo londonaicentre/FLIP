@@ -36,10 +36,10 @@ def generate_trust_key() -> tuple[str, str]:
 def generate_aes_key() -> str:
     """Generate a fresh 256-bit AES key, base64-encoded.
 
-    Used by ``register_trust`` to mint a per-trust payload-encryption key
-    (FLIP-PT-004 step 2). Unlike the API key, this is a symmetric key the hub
-    must also hold to encrypt to / decrypt from the trust, so — like
-    ``AES_KEY_BASE64`` — only the plaintext is meaningful (there is no hash form).
+    Used by ``register_trust`` to mint a per-trust payload-encryption key.
+    Unlike the API key, this is a symmetric key the hub must also hold to
+    encrypt to / decrypt from the trust, so — like ``AES_KEY_BASE64`` — only
+    the plaintext is meaningful (there is no hash form).
 
     Returns:
         str: Base64-encoded 32-byte (AES-256) key.
