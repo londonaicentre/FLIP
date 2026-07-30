@@ -125,7 +125,10 @@ echo "Disabling guest account..."
 curl -s -X PUT "$XNAT_URL/xapi/users/guest/enabled/false" \
   -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_PASSWORD}"
 
-# Configure DQR plugin
+# Configure DQR plugin. allowAllUsersToUseDqr stays FALSE (FLIP#846): PACS query/retrieve is
+# restricted to site admins and holders of the DQR plugin's "Dqr" role — the service account is
+# granted both above, and it is the only account that legitimately drives imports (via imaging-api).
+# With the flag true, ANY XNAT account could pull arbitrary studies from the trust PACS.
 echo "Configuring DQR plugin..."
 curl -s -X POST "$XNAT_URL/xapi/dqr/settings" \
   -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_PASSWORD}" \
@@ -134,7 +137,7 @@ curl -s -X POST "$XNAT_URL/xapi/dqr/settings" \
     "pacsAvailabilityCheckFrequency": "1 minute",
     "dqrWaitToRetryRequestInSeconds": "300",
     "assumeSameSessionIfArrivedWithin": "30 minutes",
-    "allowAllUsersToUseDqr": true,
+    "allowAllUsersToUseDqr": false,
     "dqrCallingAe": "XNAT",
     "notifyAdminOnImport": false,
     "allowAllProjectsToUseDqr": true,
