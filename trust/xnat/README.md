@@ -27,6 +27,18 @@ FLIP runs XNAT `1.10.0` (see `XNAT_VERSION` in `.env`). Two things matter for us
   DQR plugin upgrade, and it is the change most likely to alter DICOM import behaviour, so the import
   path (Orthanc → DQR → directArchive → NIfTI conversion) deserves a full re-test on 1.10. The
   release also notes mitigations for imports of very large (>2 GB) uncompressed DICOM files.
+  *Re-tested live on the dev stack (2026-07-30, both trusts): imaging-api project create → DQR 3.0.0
+  query + import → C-MOVE from Orthanc → directArchive → Container Service dcm2niix → NIfTI resource,
+  with `import_status_count` reporting the queued → processing → successful lifecycle correctly.*
+- **`siteUrl` must be set (1.10.0 regression for headless installs).** The Restlet create paths
+  (e.g. `POST /data/projects`, used by imaging-api) resolve response references through the `siteUrl`
+  site preference via `URI.create()`, which throws an uncaught NPE when the preference is null — the
+  entity is created but the request returns 500 (`SecureResource -
+  NullPointerException ... "this.input" is null` in `restlet.log`), so imaging-api treats every
+  project create as failed while orphan projects accumulate in XNAT. The UI setup wizard always sets
+  `siteUrl`; our headless `configure-xnat.sh` (and the K8s init job) now set it explicitly during
+  activation. On 1.9.3 a null `siteUrl` fell into a caught `MalformedURLException` path, which is why
+  this never bit before.
 - **Dynamic Data Types.** 1.10.0 adds real-time creation of data types and management of display
   fields — XSD additions without plugin development and without a Tomcat restart.
 
@@ -122,7 +134,10 @@ use XNAT-side MFA; hub auth is Cognito and imaging-api authenticates as a servic
 > (`xhbm_queued_pacs_request`, `xhbm_executed_pacs_request`) and `services/retrieval.py` compares
 > against the literal status `"FAILED"`. A major bump carrying a `dcm4che5` rewrite could change
 > table columns or status vocabulary, which would silently misreport in-flight and failed imports.
-> Verify both against the 3.0.0 JAR before trusting import status on 1.10.
+> **Verified compatible (2026-07-30):** the released 3.0.0 JAR keeps
+> `PacsRequest.FAILED_STATUS_TEXT == "FAILED"` (full vocabulary
+> QUEUED/PROCESSING/ISSUED/RECEIVED/FAILED), and the `xhbm_*_pacs_request` columns imaging-api reads
+> were confirmed unchanged on a live 3.0.0 instance during the dev-stack smoke test.
 >
 > The DQR thread-leakage fix is also worth attention: it is plausibly related to the bulk-import
 > wedging investigated in FLIP#662 (worked around here with the raised heap in `.env` and by
@@ -133,10 +148,14 @@ use XNAT-side MFA; hub auth is Cognito and imaging-api authenticates as a servic
 deployments) and **DQR 2.3.2** (the thread-leak fix alone, JDK 8). That is the lower-risk path to the
 DQR fix if this 1.10 upgrade stalls.
 
-Still required before the image builds: upload `xnat-web-1.10.0.war` and the DQR 3.0.0 JAR to
+Still required before the CI image builds: upload `xnat-web-1.10.0.war` and the DQR 3.0.0 JAR to
 `s3://<FLIP_ARTIFACTS_BUCKET_NAME>/xnat/` and `.../xnat/plugins/` (removing `dicom-query-retrieve-2.2.0`),
-then trigger `docker_build_xnat_web.yml`. The wiki compatibility matrices and `xnat.org/download` are
-auth-gated, so the JARs come from the XNAT download portal with an account.
+then trigger `docker_build_xnat_web.yml`. Both artifacts are public downloads, no account needed:
+the WAR from `https://api.bitbucket.org/2.0/repositories/xnatdev/xnat-web/downloads/xnat-web-1.10.0.war`
+and the plugin from
+`https://api.bitbucket.org/2.0/repositories/xnatdev/dicom-query-retrieve/downloads/dicom-query-retrieve-3.0.0-xpl.jar`
+(the same repo also carries `2.3.2`/`2.4.0` for the JDK 8 fallback). Local builds skip S3 when the
+files already sit in `xnat/build-artifacts/` and `xnat/plugins/`.
 
 ### Adding or updating a plugin
 

@@ -54,12 +54,18 @@ fi
 echo "Configuring XNAT instance..."
 sleep 10 # Additional wait to ensure XNAT is fully up before proceeding
 
-# Activate XNAT instance
+# Activate XNAT instance. siteUrl must be non-empty on XNAT >= 1.10.0: the Restlet create
+# paths (e.g. POST /data/projects) resolve response references through the siteUrl preference
+# via URI.create(), which throws an uncaught NPE on null — the entity is created but the
+# request returns 500, so imaging-api treats every create as failed. The UI setup wizard
+# normally sets this; our headless configure must set it explicitly. Nothing in FLIP consumes
+# the rewritten references, so the Docker-internal base URL is the honest default; override
+# with XNAT_SITE_URL if an externally reachable URL is ever needed (e.g. for SMTP links).
 echo "Activating XNAT instance..."
 curl -s -X POST "$XNAT_URL/xapi/siteConfig" \
   -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_INITIAL_PASSWORD}" \
   -H "Content-Type: application/json" \
-  -d '{"initialized": true}'
+  -d "{\"initialized\": true, \"siteUrl\": \"${XNAT_SITE_URL:-$XNAT_URL}\"}"
 
 # Change admin password
 echo "Changing admin password..."

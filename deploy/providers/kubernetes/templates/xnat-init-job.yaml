@@ -128,12 +128,15 @@ spec:
                 exit 1
               fi
 
-              # Activate XNAT site (idempotent — safe to call even if already initialized)
+              # Activate XNAT site (idempotent — safe to call even if already initialized).
+              # siteUrl must be non-empty on XNAT >= 1.10.0: the Restlet create paths NPE on a
+              # null siteUrl while building the response (entity created, request 500s) — see
+              # trust/xnat/xnat/config/configure-xnat.sh for the full explanation.
               echo "Activating XNAT site..."
               curl -s -X POST "${XNAT_URL}/xapi/siteConfig" \
                 -H "Cookie: JSESSIONID=${JSESSION}" \
                 -H "Content-Type: application/json" \
-                -d '{"initialized": true}' -o /dev/null -w "siteConfig HTTP:%{http_code}\n" || true
+                -d "{\"initialized\": true, \"siteUrl\": \"${XNAT_URL}\"}" -o /dev/null -w "siteConfig HTTP:%{http_code}\n" || true
 
               # Set admin password to configured value if it differs from default
               echo "Setting admin password..."
@@ -671,10 +674,11 @@ data:
 
     COOKIE="Cookie: JSESSIONID=${JSESSION}"
 
-    # Activate XNAT site
+    # Activate XNAT site. siteUrl must be non-empty on XNAT >= 1.10.0 (Restlet create paths
+    # NPE on null siteUrl while building the response) — see configure-xnat.sh.
     echo "Activating XNAT site..."
     wget -q -O /dev/null --header="${COOKIE}" --header="Content-Type: application/json" \
-      --post-data='{"initialized": true}' "${XNAT_URL}/xapi/siteConfig"
+      --post-data="{\"initialized\": true, \"siteUrl\": \"${XNAT_URL}\"}" "${XNAT_URL}/xapi/siteConfig"
 
     # Register PACS (Orthanc)
     echo "Registering PACS..."
