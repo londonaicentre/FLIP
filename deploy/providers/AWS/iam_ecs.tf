@@ -192,6 +192,16 @@ data "aws_iam_policy_document" "ecs_flip_api_task" {
     ]
     resources = ["arn:aws:ssm:${var.AWS_REGION}:${data.aws_caller_identity.current.account_id}:parameter/flip/trust-kits/ephemeral/*"]
   }
+
+  # Runtime read of the FL kit-slot pool names (resolve_fl_kit_slot_names): read at
+  # boot seeding and re-read when a registration finds the pool exhausted, so the
+  # pool grows on `make apply-fl-kit-slots` with no restart. Scoped to the single
+  # parameter — flip-api needs no other /flip/* reads at runtime.
+  statement {
+    sid       = "SsmFlKitSlotNamesRead"
+    actions   = ["ssm:GetParameter"]
+    resources = [aws_ssm_parameter.fl_kit_slot_names.arn]
+  }
 }
 
 resource "aws_iam_role_policy" "ecs_flip_api_task" {

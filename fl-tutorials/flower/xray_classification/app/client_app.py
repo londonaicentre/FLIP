@@ -132,12 +132,15 @@ def train(msg: Message, context: Context) -> Message:
         last_val = validate_func(model, val_loader, device, lesions)
         scheduler.step()
 
-        round_id = global_round * local_rounds + epoch + 1
-        per_epoch_metrics[f"train_loss.round_{round_id}"] = last_train["loss"]
-        per_epoch_metrics[f"val_loss.round_{round_id}"] = last_val["loss"]
+        # Per-epoch points: "@epoch" names the x-axis and ".x_<N>" is the coordinate (the cumulative
+        # epoch count) — see the "<label>[@<x_label>][.x_<V>]" key grammar in flip.flower.metrics
+        # (FLIP#148). The FL global round is recorded server-side as each point's provenance.
+        cumulative_epoch = global_round * local_rounds + epoch + 1
+        per_epoch_metrics[f"train_loss@epoch.x_{cumulative_epoch}"] = last_train["loss"]
+        per_epoch_metrics[f"val_loss@epoch.x_{cumulative_epoch}"] = last_val["loss"]
         for name in lesions.get_lesion_list():
-            per_epoch_metrics[f"train_f1-{name}.round_{round_id}"] = last_train[f"f1-score-{name}"]
-            per_epoch_metrics[f"val_f1-{name}.round_{round_id}"] = last_val[f"f1-score-{name}"]
+            per_epoch_metrics[f"train_f1-{name}@epoch.x_{cumulative_epoch}"] = last_train[f"f1-score-{name}"]
+            per_epoch_metrics[f"val_f1-{name}@epoch.x_{cumulative_epoch}"] = last_val[f"f1-score-{name}"]
 
     metrics: dict[str, float] = {
         **_flatten_per_lesion(last_train, "train"),
@@ -192,15 +195,15 @@ def evaluate(msg: Message, context: Context) -> Message:
 
     test_metrics = validate_func(model, test_loader, device, lesions)
 
-    # Preserve the "send at round=0" convention via the .round_N suffix
+    # Test metrics are a single point, plotted at x=0 by convention via the ".x_0" suffix
     # so handle_client_metrics forwards one Hub point per metric.
     metrics: dict[str, float] = {
         **_flatten_per_lesion(test_metrics, "test"),
         "num-examples": len(test_loader.dataset),
-        "test_loss.round_0": float(test_metrics["loss"]),
+        "test_loss.x_0": float(test_metrics["loss"]),
     }
     for name in lesions.get_lesion_list():
-        metrics[f"test_f1-{name}.round_0"] = float(test_metrics[f"f1-score-{name}"])
+        metrics[f"test_f1-{name}.x_0"] = float(test_metrics[f"f1-score-{name}"])
 
     site_config = ConfigRecord({"site": client_name})
     return Message(

@@ -30,6 +30,12 @@ services:
       - JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB=${JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB:-0}
     ports:
       - "${FL_API_PORT}:8000"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
     volumes:
       # Provisioned NVFLARE admin secrets (certificates, fed_admin.json)
       - /opt/flip/services/flip-fl-api-net-1/local:/app/admin/local
@@ -71,6 +77,19 @@ services:
       - ${FL_JOBS_DIR}/net-1:/app/server-checkpoints
     ports:
       - "${FL_SERVER_PORT}:8002"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      # The container runs as root, but the provisioned NVFLARE kit under
+      # /opt/flip/services is bind-mounted with 0600 keys owned by the provisioning
+      # uid. cap_drop: ALL strips root's implicit DAC bypass, so DAC_OVERRIDE is
+      # needed to read keys it does not own; the entrypoint also chmods kit scripts
+      # it does not own (FOWNER). Without these the container crash-loops (FLIP#485).
+      - DAC_OVERRIDE
+      - FOWNER
     environment:
       - NET_ID=net-1
       - LOCAL_DEV=false

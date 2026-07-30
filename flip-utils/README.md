@@ -117,6 +117,8 @@ Set via the `JOB_TYPE` environment variable:
 | `evaluation` | Distributed model evaluation without training |
 | `diffusion_model` | Two-stage training (VAE encoder + diffusion) |
 | `fed_opt` | Custom federated optimization |
+| `standard_client_api` | Federated averaging via the modern NVFLARE Client API (script-driven, uses `nvflare.client`) |
+| `evaluation_client_api` | Distributed model evaluation via the modern NVFLARE Client API |
 
 The corresponding configs live in `fl-apps/nvflare/<job_type>/app/config/`.
 
@@ -168,6 +170,8 @@ The [`../fl-tutorials/`](../fl-tutorials/) directory contains ready-to-use examp
 | `diffusion_model` | `image_synthesis/latent_diffusion_model` |
 | `fed_opt` | `image_segmentation/3d_spleen_segmentation` |
 | `evaluation` | `image_evaluation/3d_spleen_segmentation_evaluation` |
+| `standard_client_api` | `image_classification/xray_classification_client_api` |
+| `evaluation_client_api` | `image_evaluation/3d_spleen_segmentation_evaluation_client_api` |
 
 ---
 

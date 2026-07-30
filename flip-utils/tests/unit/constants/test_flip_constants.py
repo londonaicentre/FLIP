@@ -237,7 +237,7 @@ class TestModelStatus:
         assert ModelStatus.PENDING.value == "PENDING"
         assert ModelStatus.INITIATED.value == "INITIATED"
         assert ModelStatus.PREPARED.value == "PREPARED"
-        assert ModelStatus.TRAINING_STARTED.value == "TRAINING_STARTED"
+        assert ModelStatus.RUNNING.value == "RUNNING"
         assert ModelStatus.RESULTS_UPLOADED.value == "RESULTS_UPLOADED"
         assert ModelStatus.ERROR.value == "ERROR"
         assert ModelStatus.STOPPED.value == "STOPPED"

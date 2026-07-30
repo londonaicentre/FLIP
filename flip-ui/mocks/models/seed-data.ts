@@ -182,6 +182,48 @@ export const exampleLogs: ILog[] = [
         "success": true,
         "trustName": "trust2",
         "log": "sending the stop message..."
+    },
+    // Typed round events as flip-api serves them: rendered hub-side into
+    // display text, with trustCode + globalRound for round-aware consumers.
+    {
+        "id": "b58f3c02-91f4-4a6f-9a76-6f3f5f4a1201",
+        "modelId": "6e35c21b-a6f6-4fba-8228-8d260becb212",
+        "logDate": "2021-11-10T16:48:00.000Z",
+        "success": true,
+        "trustName": null,
+        "trustCode": null,
+        "globalRound": 2,
+        "log": "Round 2 initiated · global model dispatched"
+    },
+    {
+        "id": "0a4be7a3-56cf-49e5-8f0e-2f0b6f2f1301",
+        "modelId": "6e35c21b-a6f6-4fba-8228-8d260becb212",
+        "logDate": "2021-11-10T16:52:08.000Z",
+        "success": true,
+        "trustName": "trust1",
+        "trustCode": "GSTT",
+        "globalRound": 2,
+        "log": "Round 2 weights uploaded · 2.3 MB"
+    },
+    {
+        "id": "5f4a2b7e-0d3c-4f5a-9b7e-8c2d1e0f1402",
+        "modelId": "6e35c21b-a6f6-4fba-8228-8d260becb212",
+        "logDate": "2021-11-10T16:53:41.000Z",
+        "success": true,
+        "trustName": "trust2",
+        "trustCode": "KCH",
+        "globalRound": 2,
+        "log": "Round 2 weights uploaded · 2.4 MB"
+    },
+    {
+        "id": "77d0c9a1-3e5b-4c8d-8f1a-9b0c2d3e1503",
+        "modelId": "6e35c21b-a6f6-4fba-8228-8d260becb212",
+        "logDate": "2021-11-10T16:53:52.000Z",
+        "success": true,
+        "trustName": null,
+        "trustCode": null,
+        "globalRound": 2,
+        "log": "Round 2 aggregated · 2 of 2 trusts returned"
     }
 ];
 
@@ -439,7 +481,7 @@ export const latestModelData1: IPaginatedResponse<IModel> = {
 export const ModelMetrics: IModelMetricData[] = [
     {
         "yLabel": "LOSS_FUNCTION",
-        "xLabel": "Global Round",
+        "xLabel": "Global Rounds",
         "metrics": [
             {
                 "data": [
@@ -512,7 +554,7 @@ export const ModelMetrics: IModelMetricData[] = [
     },
     {
         "yLabel": "AVERAGE_SCORE",
-        "xLabel": "Global Round",
+        "xLabel": "Global Rounds",
         "metrics": [
             {
                 "data": [
