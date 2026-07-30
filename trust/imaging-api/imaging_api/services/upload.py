@@ -24,6 +24,7 @@ from imaging_api.services.projects import (
 )
 from imaging_api.utils.exceptions import AlreadyExistsError
 from imaging_api.utils.logger import logger
+from imaging_api.utils.xnat_url import seg
 
 XNAT_URL = get_settings().XNAT_URL
 BASE_IMAGES_DOWNLOAD_DIR = get_settings().BASE_IMAGES_DOWNLOAD_DIR
@@ -174,8 +175,8 @@ def create_xnat_scan(
         Exception: If there is an error during the creation of the scan.
     """
     scan_url = (
-        f"{XNAT_URL}/data/projects/{project_id}/subjects/{subject_id}/"
-        f"experiments/{experiment_id_or_label}/scans/{scan_id}"
+        f"{XNAT_URL}/data/projects/{seg(project_id)}/subjects/{seg(subject_id)}/"
+        f"experiments/{seg(experiment_id_or_label)}/scans/{seg(scan_id)}"
         f"?xsiType=xnat:mrScanData"
     )
 
@@ -213,9 +214,9 @@ def create_xnat_resource(
         Exception: If there is an error during the creation of the resource.
     """
     resource_url = (
-        f"{XNAT_URL}/data/projects/{project_id}/subjects/{subject_id}/"
-        f"experiments/{experiment_id_or_label}/scans/{scan_id}/"
-        f"resources/{resource_id}"
+        f"{XNAT_URL}/data/projects/{seg(project_id)}/subjects/{seg(subject_id)}/"
+        f"experiments/{seg(experiment_id_or_label)}/scans/{seg(scan_id)}/"
+        f"resources/{seg(resource_id)}"
     )
 
     response = requests.put(resource_url, headers=headers)
@@ -275,9 +276,9 @@ def upload_file_to_xnat(
     file_name = Path(file_path).name
 
     url = (
-        f"{XNAT_URL}/data/projects/{project_id}/subjects/{subject_id}/"
-        f"experiments/{experiment_id_or_label}/scans/{scan_id}/"
-        f"resources/{resource_id}/files/{file_name}?inbody=true"
+        f"{XNAT_URL}/data/projects/{seg(project_id)}/subjects/{seg(subject_id)}/"
+        f"experiments/{seg(experiment_id_or_label)}/scans/{seg(scan_id)}/"
+        f"resources/{seg(resource_id)}/files/{seg(file_name)}?inbody=true"
     )
 
     # Check if the file already exists if exist_ok is False

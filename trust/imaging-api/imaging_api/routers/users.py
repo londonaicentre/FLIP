@@ -27,6 +27,7 @@ from imaging_api.utils.auth import get_xnat_auth_headers
 from imaging_api.utils.exceptions import NotFoundError
 from imaging_api.utils.internal_auth import authenticate_internal_service
 from imaging_api.utils.logger import logger
+from imaging_api.utils.xnat_url import seg
 
 XNAT_URL = get_settings().XNAT_URL
 
@@ -103,7 +104,7 @@ def update_user_profile(update_profile_request: UpdateUser, headers: XNATAuthHea
         raise HTTPException(status_code=500, detail="Internal server error")
 
     response = requests.put(
-        f"{XNAT_URL}/xapi/users/{username}",
+        f"{XNAT_URL}/xapi/users/{seg(username)}",
         headers=headers,
         json=update_profile_request.model_dump(mode="json"),
     )

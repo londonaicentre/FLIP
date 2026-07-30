@@ -25,6 +25,7 @@ from imaging_api.routers.schemas import (
 from imaging_api.services.projects import get_project
 from imaging_api.utils.exceptions import NotFoundError
 from imaging_api.utils.logger import logger
+from imaging_api.utils.xnat_url import seg
 
 PACS_ID = get_settings().PACS_ID
 XNAT_URL = get_settings().XNAT_URL
@@ -46,7 +47,7 @@ def ping_pacs(pacs_id: int, headers: dict[str, str]) -> PacsStatus:
         Exception: If there is an error during the ping request.
     """
     response = requests.get(
-        f"{XNAT_URL}/xapi/pacs/{pacs_id}/status",
+        f"{XNAT_URL}/xapi/pacs/{seg(pacs_id)}/status",
         headers=headers,
     )
     if response.status_code == 200:

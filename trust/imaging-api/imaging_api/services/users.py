@@ -20,6 +20,7 @@ from imaging_api.utils.encryption import encrypt
 from imaging_api.utils.exceptions import AlreadyExistsError, NotFoundError
 from imaging_api.utils.logger import logger
 from imaging_api.utils.passwords import generate_complex_password
+from imaging_api.utils.xnat_url import seg
 
 XNAT_URL = get_settings().XNAT_URL
 
@@ -226,7 +227,7 @@ def add_user_to_project(user: User, project_id: str, headers: dict[str, str]) ->
     logger.info(f"Adding user '{user.username}' to project '{project_id}'")
 
     response = requests.put(
-        f"{XNAT_URL}/data/projects/{project_id}/users/Members/{user.username}",
+        f"{XNAT_URL}/data/projects/{seg(project_id)}/users/Members/{seg(user.username)}",
         headers=headers,
     )
 

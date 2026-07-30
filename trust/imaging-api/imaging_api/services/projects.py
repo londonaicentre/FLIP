@@ -10,7 +10,6 @@
 # limitations under the License.
 #
 
-import urllib.parse
 import uuid
 import xml.etree.ElementTree as ET
 from typing import Any
@@ -34,6 +33,7 @@ from imaging_api.services.users import create_user_from_central_hub_user, get_us
 from imaging_api.utils.enums import ProjectPreArchiveSettings
 from imaging_api.utils.exceptions import AlreadyExistsError, NotFoundError, XnatFetchError
 from imaging_api.utils.logger import logger
+from imaging_api.utils.xnat_url import seg
 
 XNAT_URL = get_settings().XNAT_URL
 
@@ -251,8 +251,9 @@ def set_project_prearchive_settings(project_id: str, headers: dict[str, str]) ->
     Raises:
         Exception: If there is an error during the process of setting the project prearchive settings.
     """
+    prearchive_code = ProjectPreArchiveSettings.SEND_ALL_TO_ARCHIVE_AND_IGNORE_EXISTING
     response = requests.put(
-        f"{XNAT_URL}/data/projects/{project_id}/prearchive_code/{ProjectPreArchiveSettings.SEND_ALL_TO_ARCHIVE_AND_IGNORE_EXISTING}",
+        f"{XNAT_URL}/data/projects/{seg(project_id)}/prearchive_code/{seg(prearchive_code)}",
         headers=headers,
     )
     if response.status_code == 200:
@@ -277,8 +278,7 @@ def get_command_info(container: str, headers: dict[str, str]) -> tuple[int, str]
     Raises:
         Exception: If the command cannot be fetched from XNAT.
     """
-    container_name_formatted = urllib.parse.quote(container)
-    response = requests.get(f"{XNAT_URL}/xapi/commands?image={container_name_formatted}", headers=headers)
+    response = requests.get(f"{XNAT_URL}/xapi/commands?image={seg(container)}", headers=headers)
     if response.status_code != 200:
         raise Exception(f"Error: XNAT command fetch failed: {response.status_code} - {response.text}")
 
@@ -314,7 +314,7 @@ def create_project_event_subscription(project_id: str, container: str, active: b
     # Enable the command at the project level — required by XNAT to validate the action key
     # in project-scoped event subscriptions
     response = requests.put(
-        f"{XNAT_URL}/xapi/projects/{project_id}/commands/{command_id}/wrappers/{wrapper_name}/enabled",
+        f"{XNAT_URL}/xapi/projects/{seg(project_id)}/commands/{seg(command_id)}/wrappers/{seg(wrapper_name)}/enabled",
         headers=headers,
     )
     if response.status_code != 200:
@@ -339,7 +339,7 @@ def create_project_event_subscription(project_id: str, container: str, active: b
     }
 
     response = requests.post(
-        f"{XNAT_URL}/xapi/projects/{project_id}/events/subscription",
+        f"{XNAT_URL}/xapi/projects/{seg(project_id)}/events/subscription",
         headers=headers,
         json=subscription_payload,
     )
@@ -479,7 +479,7 @@ async def delete_project(project_id: str, headers: dict[str, str]) -> Project:
     # Check if project exists
     project = get_project(project_id, headers)
 
-    response = requests.delete(f"{XNAT_URL}/data/projects/{project_id}?removeFiles=true", headers=headers)
+    response = requests.delete(f"{XNAT_URL}/data/projects/{seg(project_id)}?removeFiles=true", headers=headers)
 
     # Check status code and log response
     if response.status_code != 200:
@@ -509,7 +509,7 @@ def get_subjects(project_id: str, headers: dict[str, str]) -> list[Subject]:
     """
     get_project(project_id, headers)
 
-    response = requests.get(f"{XNAT_URL}/data/projects/{project_id}/subjects", headers=headers)
+    response = requests.get(f"{XNAT_URL}/data/projects/{seg(project_id)}/subjects", headers=headers)
     subjects = [Subject(**subject) for subject in response.json()["ResultSet"]["Result"]]
 
     if response.status_code == 200:
@@ -573,7 +573,7 @@ def get_experiment(project_id: str, experiment_id_or_label: str, headers: dict[s
     get_project(project_id, headers)
 
     response = requests.get(
-        f"{XNAT_URL}/data/projects/{project_id}/experiments/{experiment_id_or_label}?format=json",
+        f"{XNAT_URL}/data/projects/{seg(project_id)}/experiments/{seg(experiment_id_or_label)}?format=json",
         headers=headers,
     )
 

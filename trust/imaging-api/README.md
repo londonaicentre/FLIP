@@ -163,6 +163,29 @@ Each trust has a distinct key. A trust's `TRUST_INTERNAL_SERVICE_KEY` is minted 
 
 For more on the threat model, see the **Trust-internal Service Authentication** section in [`CLAUDE.md`](../../CLAUDE.md).
 
+### URL construction
+
+Because that service account is privileged, steering one of imaging-api's XNAT URLs is a way to make a
+privileged XNAT call the caller could not make directly. Every value interpolated into an XNAT URL —
+project ids, subject ids, experiment labels, scan and resource ids, usernames, filenames — must therefore
+be wrapped in `seg()` from [`utils/xnat_url.py`](imaging_api/utils/xnat_url.py):
+
+```python
+f"{XNAT_URL}/data/projects/{seg(project_id)}/experiments/{seg(experiment_id_or_label)}?format=json"
+```
+
+`seg()` is `urllib.parse.quote(..., safe="")`. The empty `safe` is the point: the default is `safe="/"`,
+which leaves through the one character most able to change which resource a URL addresses. A raw `?`
+starts a query string, `#` truncates the rest, and a stray `%` corrupts the encoding.
+
+FastAPI blocks the `/` case for path parameters only (ASGI percent-decodes the path before routing and
+the default converter is `[^/]+`, so `%2F` fails to match the route). Nothing protects the other
+characters, and nothing protects values that arrive in a request body or are read back out of another
+system — `subject_id` is parsed from an XNAT response and accession numbers come from OMOP.
+
+`tests/utils/test_xnat_url.py` walks the AST of `imaging_api/` and fails if any XNAT URL is built with an
+un-encoded value, so this cannot silently regress.
+
 ## Further Reading
 
 - [XNAT setup](../xnat/README.md)
