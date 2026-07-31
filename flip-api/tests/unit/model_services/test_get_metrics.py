@@ -29,30 +29,30 @@ test_model_id = str(uuid4())
 test_user_id = uuid4()
 test_metrics = [
     IModelMetrics(
-        yLabel="Accuracy",
-        xLabel="Epochs",
+        y_label="Accuracy",
+        x_label="Epochs",
         metrics=[
             IModelMetricsData(
                 data=[
-                    IModelMetricsValue(xValue=1, yValue=0.85),
-                    IModelMetricsValue(xValue=2, yValue=0.90),
-                    IModelMetricsValue(xValue=3, yValue=0.95),
+                    IModelMetricsValue(x_value=1, y_value=0.85),
+                    IModelMetricsValue(x_value=2, y_value=0.90),
+                    IModelMetricsValue(x_value=3, y_value=0.95),
                 ],
-                seriesLabel="Training Accuracy",
+                series_label="Training Accuracy",
             )
         ],
     ),
     IModelMetrics(
-        yLabel="Loss",
-        xLabel="Epochs",
+        y_label="Loss",
+        x_label="Epochs",
         metrics=[
             IModelMetricsData(
                 data=[
-                    IModelMetricsValue(xValue=1, yValue=0.85),
-                    IModelMetricsValue(xValue=2, yValue=0.90),
-                    IModelMetricsValue(xValue=3, yValue=0.95),
+                    IModelMetricsValue(x_value=1, y_value=0.85),
+                    IModelMetricsValue(x_value=2, y_value=0.90),
+                    IModelMetricsValue(x_value=3, y_value=0.95),
                 ],
-                seriesLabel="Training Loss",
+                series_label="Training Loss",
             )
         ],
     ),
@@ -114,8 +114,14 @@ def test_get_metrics_success(
 ):
     response = client.get(f"/api/model/{test_model_id}/metrics")
     assert response.status_code == HTTPStatus.OK
-    assert response.json()[0] == test_metrics[0].model_dump()
-    assert response.json()[1] == test_metrics[1].model_dump()
+    # The wire format is camelCase (FastAPI serialises response_model by alias);
+    # Python attribute names are snake_case. The UI reads these exact keys.
+    assert response.json()[0] == test_metrics[0].model_dump(by_alias=True)
+    assert response.json()[1] == test_metrics[1].model_dump(by_alias=True)
+    first_series = response.json()[0]["metrics"][0]
+    assert set(response.json()[0]) == {"yLabel", "xLabel", "metrics"}
+    assert first_series["seriesLabel"] == "Training Accuracy"
+    assert set(first_series["data"][0]) == {"xValue", "yValue"}
     mock_get_metrics.assert_called_once()
 
 

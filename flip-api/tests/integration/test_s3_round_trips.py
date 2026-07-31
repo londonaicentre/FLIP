@@ -27,8 +27,8 @@ Coverage:
   S3 object's metadata makes its way into the ``uploaded_files`` row.
 * ``GET /files/model/{model_id}/files/list`` — listing reflects the keys
   actually present in the scanned bucket.
-* ``GET /files/model/{model_id}/{file_name}`` — download streams the bytes
-  byte-for-byte.
+* ``GET /files/model/{model_id}/{file_name}`` — download returns a presigned URL
+  that itself serves the object's bytes byte-for-byte.
 * ``DELETE /files/model/{model_id}/{file_name}`` — endpoint removes the S3
   object and the DB row.
 * ``GET /files/model/{model_id}/fl/results`` — federated-results endpoint
@@ -334,8 +334,13 @@ def test_retrieve_model_files_list_404_when_no_objects(client: TestClient, sessi
 # ---------------------------------------------------------------------------
 
 
-def test_download_file_streams_bytes_byte_for_byte(client: TestClient, session, s3_buckets):
-    """The streamed response body must be byte-identical to the S3 object."""
+def test_download_file_returns_working_presigned_url(client: TestClient, session, s3_buckets):
+    """Endpoint returns a presigned GET URL, and that URL actually serves the exact bytes.
+
+    FLIP#784: the endpoint used to stream the object through flip-api (bounded by a
+    client-side timeout for large files); it now hands back a short-lived presigned
+    URL and the caller fetches bytes directly from S3.
+    """
     user_id = admin_user(session)
     _, model_id = _seed_project_and_model(session, user_id)
     override_verify_token_as(user_id)
@@ -361,7 +366,19 @@ def test_download_file_streams_bytes_byte_for_byte(client: TestClient, session, 
 
     response = client.get(f"/api/files/model/{model_id}/{file_name}")
     assert response.status_code == 200, response.text
-    assert response.content == payload
+    body = response.json()
+    assert body["fileName"] == file_name
+    # Presigned URLs carry a ``Signature=`` query param (SigV2) or an
+    # ``X-Amz-Signature=`` query param (SigV4); either confirms it was signed.
+    assert "Signature=" in body["url"] or "X-Amz-Signature=" in body["url"], f"not a presigned URL: {body['url']}"
+
+    # Note: the Content-Disposition override (see test_s3_client.py's
+    # get_presigned_url tests for that contract) isn't asserted here — moto's
+    # GetObject simulation doesn't echo back ResponseContentDisposition,
+    # unlike real S3.
+    download = requests.get(body["url"], timeout=10)
+    assert download.status_code == 200, download.text
+    assert download.content == payload
 
 
 def test_download_file_404_when_db_row_missing(client: TestClient, session, s3_buckets):

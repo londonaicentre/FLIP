@@ -93,6 +93,6 @@ variable "FLIP_APP_BUNDLES_BUCKET_NAME" {
 
 variable "s3_cors_allowed_origins" {
   type        = list(string)
-  description = "Browser origins permitted to CORS-call the dev S3 buckets. Must include every UI origin that calls the API in dev — typically https://localhost:443 and the Vite dev-server http://localhost:44357."
-  default     = ["https://localhost:443", "http://localhost:44357"]
+  description = "Browser origins permitted to CORS-call the dev S3 buckets. Must include every UI origin that calls the API in dev — typically https://localhost:443, the Vite dev-server http://localhost:44357, and the flip-api origin http://localhost:8080 (Swagger UI exercising the presigned flows)."
+  default     = ["https://localhost:443", "http://localhost:44357", "http://localhost:8080"]
 }
