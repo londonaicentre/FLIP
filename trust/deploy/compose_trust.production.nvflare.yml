@@ -52,6 +52,17 @@ services:
       # This key is per-trust and never leaves the trust environment.
       - TRUST_INTERNAL_SERVICE_KEY_HEADER=${TRUST_INTERNAL_SERVICE_KEY_HEADER}
       - TRUST_INTERNAL_SERVICE_KEY=${TRUST_INTERNAL_SERVICE_KEY}
+      # Site-enforced NVFLARE privacy policy (FLIP#851) — set in the trust's kit file
+      # (Host-local profile) and rendered into /app/local/privacy.json by the fl-client
+      # entrypoint at container start. Unset/empty = no site policy (previous behavior).
+      - FL_SITE_PRIVACY_POLICY=${FL_SITE_PRIVACY_POLICY:-}
+      - FL_SITE_PRIVACY_PERCENTILE=${FL_SITE_PRIVACY_PERCENTILE:-}
+      - FL_SITE_PRIVACY_GAMMA=${FL_SITE_PRIVACY_GAMMA:-}
+      - FL_SITE_PRIVACY_SVT_FRACTION=${FL_SITE_PRIVACY_SVT_FRACTION:-}
+      - FL_SITE_PRIVACY_SVT_EPSILON=${FL_SITE_PRIVACY_SVT_EPSILON:-}
+      - FL_SITE_PRIVACY_SVT_NOISE_VAR=${FL_SITE_PRIVACY_SVT_NOISE_VAR:-}
+      - FL_SITE_PRIVACY_SVT_GAMMA=${FL_SITE_PRIVACY_SVT_GAMMA:-}
+      - FL_SITE_PRIVACY_SVT_TAU=${FL_SITE_PRIVACY_SVT_TAU:-}
     shm_size: '8gb'
     # GPU passthrough via compose_trust.production.gpu.yml overlay (gated on NUM_AVAILABLE_GPUS)
 
@@ -76,6 +87,15 @@ services:
   #     # Only the fl-server (on the Central Hub) communicates with flip-api via INTERNAL_SERVICE_KEY.
   #     - DATA_ACCESS_API_URL=${DATA_ACCESS_API_URL}
   #     - IMAGING_API_URL=${IMAGING_API_URL}
+  #     # Site-enforced NVFLARE privacy policy (FLIP#851) — see the fl-client-net-1 note.
+  #     - FL_SITE_PRIVACY_POLICY=${FL_SITE_PRIVACY_POLICY:-}
+  #     - FL_SITE_PRIVACY_PERCENTILE=${FL_SITE_PRIVACY_PERCENTILE:-}
+  #     - FL_SITE_PRIVACY_GAMMA=${FL_SITE_PRIVACY_GAMMA:-}
+  #     - FL_SITE_PRIVACY_SVT_FRACTION=${FL_SITE_PRIVACY_SVT_FRACTION:-}
+  #     - FL_SITE_PRIVACY_SVT_EPSILON=${FL_SITE_PRIVACY_SVT_EPSILON:-}
+  #     - FL_SITE_PRIVACY_SVT_NOISE_VAR=${FL_SITE_PRIVACY_SVT_NOISE_VAR:-}
+  #     - FL_SITE_PRIVACY_SVT_GAMMA=${FL_SITE_PRIVACY_SVT_GAMMA:-}
+  #     - FL_SITE_PRIVACY_SVT_TAU=${FL_SITE_PRIVACY_SVT_TAU:-}
   #   shm_size: '8gb'
   #   # GPU passthrough: add fl-client-net-2 to compose_trust.production.gpu.yml when enabling this net
 

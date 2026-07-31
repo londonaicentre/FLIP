@@ -44,6 +44,18 @@ data:
 {{- if eq .Values.flBackend "flower" }}
   SUPERNODE_NAME: {{ .Values.trustName | quote }}
 {{- end }}
+{{- if eq .Values.flBackend "nvflare" }}
+  # Site-enforced privacy policy (FLIP#851) — read by `python -m flip.nvflare.site_policy`
+  # in the container command below. Empty string == unset == no site policy.
+  FL_SITE_PRIVACY_POLICY: {{ .Values.flClient.nvflare.sitePrivacy.policy | quote }}
+  FL_SITE_PRIVACY_PERCENTILE: {{ .Values.flClient.nvflare.sitePrivacy.percentile | quote }}
+  FL_SITE_PRIVACY_GAMMA: {{ .Values.flClient.nvflare.sitePrivacy.gamma | quote }}
+  FL_SITE_PRIVACY_SVT_FRACTION: {{ .Values.flClient.nvflare.sitePrivacy.svtFraction | quote }}
+  FL_SITE_PRIVACY_SVT_EPSILON: {{ .Values.flClient.nvflare.sitePrivacy.svtEpsilon | quote }}
+  FL_SITE_PRIVACY_SVT_NOISE_VAR: {{ .Values.flClient.nvflare.sitePrivacy.svtNoiseVar | quote }}
+  FL_SITE_PRIVACY_SVT_GAMMA: {{ .Values.flClient.nvflare.sitePrivacy.svtGamma | quote }}
+  FL_SITE_PRIVACY_SVT_TAU: {{ .Values.flClient.nvflare.sitePrivacy.svtTau | quote }}
+{{- end }}
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -182,6 +194,10 @@ spec:
               # envsubst needed: the values are already correct for this deployment).
               cp /app/local/resources.json.default /app/local/resources.json 2>/dev/null || true
               cp /app/local/log_config.json.default /app/local/log_config.json 2>/dev/null || true
+              # Site privacy policy (FLIP#851): render or remove /app/local/privacy.json from
+              # FL_SITE_PRIVACY_*. `set -euo pipefail` above makes an invalid configuration
+              # fail the pod (fail closed) rather than run an unfiltered client.
+              python -m flip.nvflare.site_policy /app/local/privacy.json
               pkill -f nvflare 2>/dev/null || true
               rm -f /app/pid.fl /app/daemon_pid.fl
               cd /app/startup

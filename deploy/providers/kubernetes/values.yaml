@@ -297,6 +297,20 @@ flClient:
       # pins it to the slot in the generated override. The trustName default below
       # only works when trustName == the slot.
       pathTemplate: "fl-flare-participant-kits/{{ .Values.flClient.nvflare.kitFromS3.kitDate }}/net-1/services/{{ .Values.trustName }}"
+    # Site-enforced privacy policy (FLIP#851): rendered into /app/local/privacy.json
+    # at container start by `python -m flip.nvflare.site_policy`. Empty string = unset
+    # = no site policy (previous behavior). policy: "percentile" | "svt"; the params
+    # mirror the FL_SITE_PRIVACY_* env vars documented in trust/README.md. An invalid
+    # combination fails the pod (fail closed) rather than running unfiltered.
+    sitePrivacy:
+      policy: ""
+      percentile: ""
+      gamma: ""
+      svtFraction: ""
+      svtEpsilon: ""
+      svtNoiseVar: ""
+      svtGamma: ""
+      svtTau: ""
   flower:
     kitFromS3:
       enabled: true

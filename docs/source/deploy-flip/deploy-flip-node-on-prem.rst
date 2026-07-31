@@ -184,6 +184,19 @@ at any point — including before the kit is fully staged — just to read off t
 The prod trust compose mounts the extracted ``net-1/`` hierarchy into the
 fl-client container, so preserve it as extracted.
 
+**Optional — set your site privacy policy (NVFLARE backend).** As the data
+holder you can enforce your own update-privacy filter on everything the
+fl-client sends to the FL server, independently of the researcher's app
+configuration: uncomment ``FL_SITE_PRIVACY_POLICY`` (and optionally its
+parameters) in the Host-local profile of ``trust/.env.<CODE>.production``.
+``make onboard-onprem-trust`` validates the values (an invalid combination
+stops the fl-client at startup, by design), and after ``up-onprem-trust`` the
+fl-client log shows a ``[site-privacy] site privacy policy ACTIVE: ...`` line.
+To change or drop the policy later, edit the kit file and restart the
+fl-clients (``make -C trust up-fl-clients-kit KIT=<CODE> PROD=true``). See
+:doc:`../components/component-fl-nodes` ("Site-enforced privacy policy") for
+the parameter reference and enforcement semantics.
+
 **5. Open the AWS firewall (FLIP admin).** Once the operator reports their
 host's public IP, open the FL-server NLB to it:
 

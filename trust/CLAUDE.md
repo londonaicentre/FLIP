@@ -35,7 +35,7 @@ the commented dev form):
 
 | Section | Owner | Touched by |
 |---------|-------|-----------|
-| Host-local profile | Operator | hand-edit (ports, bind dirs) |
+| Host-local profile | Operator | hand-edit (ports, bind dirs, optional `FL_SITE_PRIVACY_*` site privacy policy) |
 | Trust-local credentials | Operator | hand-edit (passwords, service URLs) |
 | Hub-shared (managed) | Hub admin | `register-trust KIT=<CODE>` (live in prod, commented in dev) / `sync-trust-kit KIT=<CODE>` (prod refresh) |
 | Kit credentials (managed) | Hub | `register-trust` only — write-once; hub keeps only the hash |
@@ -128,5 +128,6 @@ make update-orthanc-data TRUST=1  # Trust_1 only
 - Trust identity: `TRUST_API_KEY` (per-trust, from the kit file `trust/.env.<CODE>.<env>`); optional `EXPECTED_TRUST_ID` self-check. The hub identifies the trust by API key alone.
 - Encryption: `AES_KEY_BASE64` for trust-to-hub payload encryption (hub-shared; synced into the kit file).
 - `DEBUG` is no longer inherited from a hub env file. `make debug` / `make debug-off` set it explicitly; `make up-trust` without an explicit `DEBUG=true` runs services in non-debug mode.
+- Site-enforced FL privacy policy (NVFLARE only, FLIP#851): `FL_SITE_PRIVACY_POLICY=percentile|svt` (+ optional `FL_SITE_PRIVACY_*` params, see `trust/.env.example`) in the kit's Host-local profile. Rendered into the fl-client's NVFLARE `local/privacy.json` at container start by `python -m flip.nvflare.site_policy` — composes on top of (runs before) any app-level filter, jobs can't opt out, invalid values fail the fl-client closed. Unset = no site policy (previous behavior). Apply with `make -C trust up-fl-clients-kit KIT=<CODE>`.
 - The two shipped dev trusts (GSTT, KCH) have separate ports, networks, and data dirs. Their FL kit *slots* are still named `Trust_1` / `Trust_2` — those are the pre-provisioned FL participant-kit identities (cert CN for NVFLARE, supernode number for Flower), assigned to a trust by the hub at registration. A trust (GSTT) claims a slot (Trust_1); they are different things.
 - Local trust uses `trust-local` project name to avoid port collisions

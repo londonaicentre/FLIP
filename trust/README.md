@@ -72,6 +72,18 @@ EXPECTED_TRUST_ID=<from kit>
 
 plus the trust's identity (`TRUST_NAME` / `TRUST_CODE` / `TRUST_REGION`, read by `register-trust`) and its host-local ports and data directories. The optional `EXPECTED_TRUST_ID` lets trust-api self-check the hub-resolved id at startup. The same schema serves dev trusts (GSTT/KCH against a local hub), on-prem trusts (against a prod hub), and laptop-against-prod testing — operator picks the kit code (`trust/.env.<CODE>.<env>`) and `make -C trust up-trust KIT=<CODE> PROD=<env>` handles the rest.
 
+#### Site-enforced FL privacy policy (optional, NVFLARE only)
+
+The kit file's Host-local profile can set `FL_SITE_PRIVACY_POLICY=percentile|svt` (plus optional
+`FL_SITE_PRIVACY_*` parameters — see the commented block in `trust/.env.example`). The fl-client entrypoint
+renders these into the client's NVFLARE `local/privacy.json` at container start, so THIS trust's
+update-privacy filter is applied to every outgoing model update regardless of the researcher's app config
+(site filters run before app filters and jobs cannot opt out). Unset = no site policy (app-level filters
+only, the previous behavior). Invalid values stop the fl-client at startup — fail closed. Apply changes with
+`make -C trust up-fl-clients-kit KIT=<CODE>`; the fl-client log then shows
+`[site-privacy] site privacy policy ACTIVE: ...`. Details: `docs/source/components/component-fl-nodes.rst`
+("Site-enforced privacy policy").
+
 ### 3. Start the trust against the hub
 
 ```sh

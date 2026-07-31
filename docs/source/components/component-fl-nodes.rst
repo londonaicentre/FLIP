@@ -131,6 +131,70 @@ run with ``off: true``. Two caveats for anyone changing them:
   ``(epsilon, delta)`` guarantee. It complements — rather than replaces — FLIP's primary output controls
   (review of the uploaded app code and aggregate-only results).
 
+Site-enforced privacy policy (per trust)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The filter above is part of the **app**: it is configured in the job's ``config_fed_client.json``, so its
+parameters — including ``off: true`` — are chosen on the researcher's side. Since FLIP#851 each trust can
+additionally enforce its **own** update-privacy filter through NVFLARE's site privacy policy
+(``local/privacy.json`` in the client's workspace), configured entirely on the trust's side:
+
+- The trust sets ``FL_SITE_PRIVACY_*`` variables in its kit file (``trust/.env.<CODE>.<env>``, Host-local
+  profile section) and restarts its fl-clients (``make -C trust up-fl-clients-kit KIT=<CODE>``). No hub
+  redeploy, and no coordination with other trusts — different trusts can run different policies in the same
+  federation.
+- The fl-client entrypoint renders the policy into ``/app/local/privacy.json`` at container start
+  (``python -m flip.nvflare.site_policy``). With the variables unset, no policy file is written and behaviour
+  is exactly as before (app-level filters only). An **invalid** combination stops the fl-client at startup
+  (fail closed) rather than running unfiltered.
+
+Two presets are available, both using **stock** NVFLARE filter classes — which, unlike the FLIP app-level
+subclass, have no ``off`` switch:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 30 40 30
+
+   * - Variable
+     - Meaning
+     - Default
+   * - ``FL_SITE_PRIVACY_POLICY``
+     - ``percentile`` (deterministic clip + sparsify) or ``svt`` (Sparse Vector Technique, differentially
+       private). Unset = no site policy.
+     - unset
+   * - ``FL_SITE_PRIVACY_PERCENTILE`` / ``FL_SITE_PRIVACY_GAMMA``
+     - ``percentile`` preset parameters (same maths as the app-level filter above).
+     - ``10`` / ``0.01``
+   * - ``FL_SITE_PRIVACY_SVT_FRACTION`` / ``_EPSILON`` / ``_NOISE_VAR`` / ``_GAMMA`` / ``_TAU``
+     - ``svt`` preset parameters (stock ``SVTPrivacy`` args).
+     - ``0.1`` / ``0.1`` / ``0.1`` / ``1e-5`` / ``1e-6``
+
+Semantics — verified against NVFLARE 2.8.0:
+
+- **The site policy composes with, and cannot be bypassed by, the app config.** NVFLARE applies site scope
+  filters *before* the job's ``task_result_filters`` in one chain (``nvflare/apis/utils/task_utils.py``);
+  job filters are appended, never substituted. An app that sets ``off: true`` (or ships no filter at all —
+  the evaluation templates) disables only its own filter instance; the site filter still runs.
+- **Jobs cannot opt out or pick a weaker scope.** The rendered policy defines exactly one scope
+  (``site_default``) set as ``default_scope``. FLIP's fl-api writes each job's ``meta.json`` itself and never
+  sets a ``scope`` key, so every job lands in the default scope; a job carrying an unknown scope name is
+  rejected at deploy time on that site with ``privacy scope 'X' is not allowed``.
+- **Ordering changes the percentile maths slightly.** The site filter runs before the job's ``KeepOnlyVars``,
+  so it computes its percentile over the *full* result dict — on a frozen-backbone (head-only) finetune that
+  vector is dominated by the backbone's all-zero diffs, unlike the app-level filter which deliberately runs
+  after ``KeepOnlyVars``. Prefer modest site percentiles (the default ``10``); the convergence caveat above
+  applies doubly here.
+- **Evaluation results are unaffected.** Both filter classes only transform ``WEIGHTS`` / ``WEIGHT_DIFF``
+  payloads, so metrics and validation results pass through untouched.
+- **Failures are loud.** A filter error surfaces as ``TASK_RESULT_FILTER_ERROR`` in the FL logs and the
+  client's audit trail — never a silent unfiltered send.
+- ``svt`` is a genuine differential-privacy mechanism (Laplace noise, explicit ``epsilon``); however FLIP does
+  not account the privacy budget across rounds — agreeing an ``epsilon`` and a round budget is a governance
+  decision between the trust and the project team.
+- **NVFLARE only.** Flower has no site-side filter hook, so this enforcement point does not exist on the
+  Flower backend; the app-level review of uploaded training code remains the control there (Flower parity is
+  tracked in FLIP#852).
+
 
 Disclaimer: some things are still under construction!
 -----------------------------------------------------

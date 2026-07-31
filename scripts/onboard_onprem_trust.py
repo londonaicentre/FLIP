@@ -44,6 +44,7 @@ import subprocess
 import sys
 import urllib.error
 import urllib.request
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -450,6 +451,77 @@ def check_gpu_capacity(kit_vars: dict[str, str], kit_present: bool, kit: str) ->
     )
 
 
+def check_site_privacy_policy(kit_vars: dict[str, str], kit_present: bool, kit: str) -> Check:
+    """Validate the FL_SITE_PRIVACY_* vars exactly as the fl-client's renderer will.
+
+    An invalid combination stops the fl-client at container start (fail closed, by
+    design — a mis-set policy must not run unfiltered), so surface it here before
+    launch. Validation rules are duplicated because this script is deliberately
+    stdlib-only and runs on hosts without flip-utils installed — keep them in
+    lockstep with flip-utils/flip/nvflare/site_policy.py.
+    """
+    presets: dict[str, list[tuple[str, str]]] = {
+        "percentile": [
+            ("FL_SITE_PRIVACY_PERCENTILE", "a number in [0, 100]"),
+            ("FL_SITE_PRIVACY_GAMMA", "a number > 0"),
+        ],
+        "svt": [
+            ("FL_SITE_PRIVACY_SVT_FRACTION", "a number in (0, 1]"),
+            ("FL_SITE_PRIVACY_SVT_EPSILON", "a number > 0"),
+            ("FL_SITE_PRIVACY_SVT_NOISE_VAR", "a number > 0"),
+            ("FL_SITE_PRIVACY_SVT_GAMMA", "a number > 0"),
+            ("FL_SITE_PRIVACY_SVT_TAU", "a number > 0"),
+        ],
+    }
+    bounds_ok: dict[str, Callable[[float], bool]] = {
+        "FL_SITE_PRIVACY_PERCENTILE": lambda v: 0 <= v <= 100,
+        "FL_SITE_PRIVACY_SVT_FRACTION": lambda v: 0 < v <= 1,
+    }
+    label = "Site privacy policy"
+    if not kit_present:
+        return Check(label, Status.PENDING, "pending — needs kit file")
+    hints = [f"Edit trust/.env.{kit} → Host-local profile; the fl-client fails closed on an invalid policy."]
+
+    def value_of(var: str) -> str:
+        return (kit_vars.get(var) or "").strip()
+
+    policy = value_of("FL_SITE_PRIVACY_POLICY").lower()
+    set_params = [v for params in presets.values() for v, _ in params if value_of(v)]
+    if not policy:
+        if set_params:
+            return Check(
+                label, Status.FAIL,
+                f"{', '.join(set_params)} set but FL_SITE_PRIVACY_POLICY is not", hints=hints,
+            )
+        return Check(label, Status.PASS, "no site privacy policy (default — app-level filters only)")
+    if policy not in presets:
+        return Check(
+            label, Status.FAIL,
+            f"FL_SITE_PRIVACY_POLICY='{policy}' is not a known preset (expected: percentile, svt)", hints=hints,
+        )
+    foreign = [v for other, params in presets.items() if other != policy for v, _ in params if value_of(v)]
+    if foreign:
+        return Check(
+            label, Status.FAIL,
+            f"{', '.join(foreign)} set but FL_SITE_PRIVACY_POLICY='{policy}' — parameters of a different preset",
+            hints=hints,
+        )
+    shown: list[str] = []
+    for var, expected in presets[policy]:
+        raw = value_of(var)
+        if not raw:
+            continue
+        try:
+            value = float(raw)
+        except ValueError:
+            return Check(label, Status.FAIL, f"{var}='{raw}' is not a number (expected {expected})", hints=hints)
+        if not bounds_ok.get(var, lambda v: v > 0)(value):
+            return Check(label, Status.FAIL, f"{var}='{raw}' is out of bounds (expected {expected})", hints=hints)
+        shown.append(f"{var.removeprefix('FL_SITE_PRIVACY_').lower()}={raw}")
+    detail = f"{policy} ({', '.join(shown)})" if shown else f"{policy} (preset defaults)"
+    return Check(label, Status.PASS, detail)
+
+
 def check_unrotated_passwords(
     kit_vars: dict[str, str], kit_present: bool, repo_root: Path, kit: str,
 ) -> Check:
@@ -588,6 +660,7 @@ def run_checks(kit: str, repo_root: Path) -> list[Check]:
         check_fl_kit_dir_exists(fl_kit_dir, kit_present),
         check_fl_kit_contents(kit_vars, kit_present),
         check_gpu_capacity(kit_vars, kit_present, kit),
+        check_site_privacy_policy(kit_vars, kit_present, kit),
         check_unrotated_passwords(kit_vars, kit_present, repo_root, kit),
         check_data_dir(
             "OMOP data dir", "OMOP_DATA_DIR", "update-omop-data",

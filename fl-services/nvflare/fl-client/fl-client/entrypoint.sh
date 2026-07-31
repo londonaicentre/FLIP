@@ -50,6 +50,19 @@ envsubst < "$LOG_TEMPLATE" > "$LOG_CFG"
 echo "✅ log_config.json written to ${LOG_CFG}"
 #################################################################
 
+#################################################################
+###### Site privacy policy #####################################
+#################################################################
+# Renders /app/local/privacy.json from FL_SITE_PRIVACY_* (or removes a stale
+# render when unset). An invalid configuration must NOT fall through to an
+# unfiltered client: fail closed and stop the container.
+echo "🔧 Rendering site privacy policy..."
+if ! python -m flip.nvflare.site_policy /app/local/privacy.json; then
+    echo "❌ [entrypoint] invalid FL_SITE_PRIVACY_* configuration — refusing to start fl-client (fail closed)" >&2
+    exit 1
+fi
+#################################################################
+
 # Cleanup any existing processes
 echo "[entrypoint] Cleaning up stale processes and files..."
 pkill -f "nvflare" || true
