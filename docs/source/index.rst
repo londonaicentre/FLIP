@@ -17,6 +17,7 @@ Federated Learning Interoperability Platform
    user-guides
    working-with-flip-apps
    security
+   governance-and-compliance
 
 .. toctree::
    :maxdepth: 2
