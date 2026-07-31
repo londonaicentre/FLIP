@@ -1,0 +1,86 @@
+# Copyright (c) 2026 Flower Labs GmbH
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+# SuperGrid x MLflow spike (FLIP#744 x FLIP#745). Deliberately NO
+# [tool.uv.sources] pins: on SuperGrid both apps runtime-install from PyPI
+# (there is no /opt/flip-utils on a Flower-managed pod), so flip-utils resolves
+# to the released 0.1.8 — everything imported here must exist in that release.
+# mlflow-skinny + sagemaker-mlflow give the ServerApp the SigV4 client for the
+# SageMaker managed-MLflow App configured via [tool.flwr.app.config] below.
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "supergrid-xray-mlflow-app"
+version = "1.0.0"
+description = "SuperGrid spike: chest-X-ray FL with metrics + model weights shipped out via MLflow."
+license = "Apache-2.0"
+dependencies = [
+    "flip-utils>=0.1.8",
+    "flwr[simulation]>=1.32.0",
+    "mlflow-skinny>=3.14.0,<4",
+    "monai>=1.5.2",
+    "numpy>=2.4.2",
+    "pandas>=3.0.0",
+    "pydicom>=3.0.1",
+    "sagemaker-mlflow>=0.5.0",
+    "torch>=2.10.0,<2.12",
+]
+
+[dependency-groups]
+dev = [
+    "mypy>=1.19.1",
+    "ruff>=0.15.7",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["."]
+
+[tool.flwr.app]
+publisher = "flwrlabs"
+
+[tool.flwr.app.components]
+serverapp = "app.server_app:app"
+clientapp = "app.client_app:app"
+
+[tool.flwr.app.config]
+num-server-rounds = 3
+flip-model-id = "uuid"
+flip-project-id = "uuid"
+flip-cohort-query = "*"
+flip-job-dir = "job-dir"
+# MLflow plumbing travels in run-config, not env: a Flower-managed ServerApp
+# pod has no FLIP environment. Empty tracking URI = MLflow disabled. The AWS
+# keys are short-lived spike credentials scoped to sagemaker:CallMlflowAppApi
+# on one App ARN + Put/Get on its artifact prefix, injected at submit via
+# `flwr run --run-config` and revoked after the run.
+mlflow-tracking-uri = ""
+mlflow-experiment = "supergrid-xray-mlflow"
+mlflow-aws-access-key-id = ""
+mlflow-aws-secret-access-key = ""
+mlflow-aws-session-token = ""
+mlflow-aws-region = "eu-west-2"
+
+# flwr >=1.32 keeps SuperLink connections in the Flower config file, not here.
+# For the local simulation rehearsal: `flwr run . local-sim` after defining a
+# local-sim connection (options.num-supernodes = 2) — the CLI migrates/creates
+# it on first use. See https://flower.ai/docs/framework/ref-flower-configuration.html
+
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint]
+preview = true
+select = ['I', 'F', 'E', 'W', 'PT', 'UP006', 'UP007', 'UP035', 'UP042', 'UP045']

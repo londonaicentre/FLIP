@@ -103,7 +103,7 @@ echo "==> MLflow App"
 # The AWS CLI only grew the mlflow-app commands recently; a stale CLI fails here
 # with "Invalid choice: create-mlflow-app" — upgrade rather than work around it.
 if ! aws sagemaker list-mlflow-apps --region "${REGION}" \
-      --query "MlflowApps[?Name=='${NAME}'].Arn" --output text | grep -q .; then
+      --query "Summaries[?Name=='${NAME}'].Arn" --output text | grep -q .; then
   aws sagemaker create-mlflow-app \
     --region "${REGION}" \
     --name "${NAME}" \
@@ -112,7 +112,7 @@ if ! aws sagemaker list-mlflow-apps --region "${REGION}" \
     --tags "Key=flip:component,Value=${TAG_COMPONENT}" "Key=flip:issue,Value=${TAG_ISSUE}" >/dev/null
 fi
 APP_ARN="$(aws sagemaker list-mlflow-apps --region "${REGION}" \
-  --query "MlflowApps[?Name=='${NAME}'].Arn" --output text)"
+  --query "Summaries[?Name=='${NAME}'].Arn" --output text)"
 
 echo "==> waiting for the App to reach Created (~2 min)"
 for _ in $(seq 1 40); do
