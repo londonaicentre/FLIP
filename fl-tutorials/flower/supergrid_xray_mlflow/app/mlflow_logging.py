@@ -31,15 +31,6 @@ from logging import INFO, WARNING
 
 from flwr.common import log
 
-RUN_CONFIG_KEYS = (
-    "mlflow-tracking-uri",
-    "mlflow-experiment",
-    "mlflow-aws-access-key-id",
-    "mlflow-aws-secret-access-key",
-    "mlflow-aws-session-token",
-    "mlflow-aws-region",
-)
-
 
 class MlflowSpikeLogger:
     """Run-config-driven MLflow writer for the SuperGrid ServerApp."""
@@ -115,6 +106,10 @@ def setup_mlflow(run_config, model_id: str) -> MlflowSpikeLogger | None:
         ("mlflow-aws-secret-access-key", "AWS_SECRET_ACCESS_KEY"),
         ("mlflow-aws-session-token", "AWS_SESSION_TOKEN"),
         ("mlflow-aws-region", "AWS_DEFAULT_REGION"),
+        # HTTP tracking servers behind basic auth (the tunnel fallback when the
+        # pod's egress proxy blocks the SageMaker MLflow domain — observed 403).
+        ("mlflow-tracking-username", "MLFLOW_TRACKING_USERNAME"),
+        ("mlflow-tracking-password", "MLFLOW_TRACKING_PASSWORD"),
     ):
         value = str(run_config.get(cfg_key, "") or "")
         if value:
@@ -127,17 +122,18 @@ def setup_mlflow(run_config, model_id: str) -> MlflowSpikeLogger | None:
         log(WARNING, "MLFLOW PROBE FAILED: tracking server unreachable from this pod — %s: %s", type(e).__name__, e)
         return None
 
-    # Egress sanity for the artifact plane: SageMaker MLflow clients upload
-    # artifacts DIRECTLY to S3 (the App hands out the location, it does not
-    # proxy bytes), so probe S3 too — a pod can have the tracking API open
-    # while S3 is egress-blocked, which would silently strand the weights.
+    # Egress sanity for the artifact plane. With a SageMaker App URI clients
+    # upload artifacts DIRECTLY to S3 (the App hands out the location, it does
+    # not proxy bytes) — the tracking API can be open while S3 is blocked,
+    # silently stranding the weights. With an HTTP server the artifacts are
+    # proxied over the same connection, so this probe validates that too.
     try:
         with tempfile.TemporaryDirectory() as td:
             probe = os.path.join(td, "egress_probe.txt")
             with open(probe, "w") as f:
                 f.write("supergrid egress probe\n")
             logger._client.log_artifact(logger._run_id, probe, artifact_path="probe")
-        log(INFO, "MLFLOW S3 ARTIFACT PROBE OK: direct-to-S3 artifact upload works from this pod")
+        log(INFO, "MLFLOW S3 ARTIFACT PROBE OK: artifact upload works from this pod")
     except Exception as e:  # noqa: BLE001
         log(WARNING, "MLFLOW S3 ARTIFACT PROBE FAILED: metrics will flow but weights will NOT — %s: %s",
             type(e).__name__, e)

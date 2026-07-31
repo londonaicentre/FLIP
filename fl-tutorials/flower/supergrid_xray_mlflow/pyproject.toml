@@ -72,6 +72,8 @@ mlflow-aws-access-key-id = ""
 mlflow-aws-secret-access-key = ""
 mlflow-aws-session-token = ""
 mlflow-aws-region = "eu-west-2"
+mlflow-tracking-username = ""
+mlflow-tracking-password = ""
 
 # flwr >=1.32 keeps SuperLink connections in the Flower config file, not here.
 # For the local simulation rehearsal: `flwr run . local-sim` after defining a
