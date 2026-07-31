@@ -108,6 +108,12 @@ variable "FL_KIT_SLOT_NAMES" {
   default     = "[]"
 }
 
+variable "MLFLOW_TRACKING_URI" {
+  description = "MLflow tracking URI for the best-effort dual-write (FLIP#745), passed into the flip-api and fl-server task env. Empty (the default) disables the integration entirely — flip-api stays the canonical store either way. Accepts a self-hosted HTTP URI or a SageMaker managed-MLflow ARN (arn:aws:sagemaker:...): when an ARN is set, the gated sagemaker-mlflow IAM policies in iam_ecs.tf attach automatically so the task roles may call the MLflow data-plane APIs (SigV4 via the sagemaker-mlflow client plugin). Set via the env file (TF_VAR_MLFLOW_TRACKING_URI)."
+  type        = string
+  default     = ""
+}
+
 variable "docker_image_tag" {
   description = "Docker image tag for flip-api and flip-ui"
   type        = string

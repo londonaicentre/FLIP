@@ -303,3 +303,109 @@ resource "aws_iam_role_policy" "ecs_fl_server_task" {
   role   = aws_iam_role.ecs_fl_server_task.id
   policy = data.aws_iam_policy_document.ecs_fl_server_task.json
 }
+
+# ── MLflow dual-write via SageMaker managed MLflow (FLIP#745) ────────────────
+# Attached only when MLFLOW_TRACKING_URI is a SageMaker MLflow ARN — a
+# self-hosted HTTP URI needs no IAM, and an empty URI means the integration is
+# disabled. Callers authenticate with their task role via the sagemaker-mlflow
+# client plugin (SigV4) — no static credentials involved.
+#
+# MLflow Apps gate the data plane on the sagemaker:CallMlflowAppApi action —
+# NOT on the sagemaker-mlflow:* actions that AWS's tracking-server docs (and its
+# example client policy) prescribe. Without it every REST call returns 403
+# "Request is not authorized", whatever the sagemaker-mlflow grant says.
+# See "Data Plane IAM actions supported for MLflow Apps" in the SageMaker docs;
+# diagnosed on stag 2026-07-09.
+#
+# CallMlflowAppApi *is* resource-scopable, so it is pinned to this deployment's
+# App ARN. The sagemaker-mlflow:* actions remain the granular per-API control
+# layer (they cannot be resource-scoped for Apps — only "*" is accepted), and an
+# explicit Deny — which is context-independent and beats any Allow — removes the
+# destructive verbs neither role calls. flip-api keeps DeleteExperiment for its
+# model soft-delete mirror; the fl-server does not.
+#
+# Callers authenticate with their task role via the sagemaker-mlflow client
+# plugin (SigV4) — no static credentials. Every data-plane call is CloudTrail-logged.
+locals {
+  # Destructive verbs neither task role calls.
+  mlflow_denied_actions = [
+    "sagemaker-mlflow:DeleteRun",
+    "sagemaker-mlflow:DeleteRegisteredModel",
+    "sagemaker-mlflow:DeleteModelVersion",
+    "sagemaker-mlflow:DeleteRegisteredModelTag",
+    "sagemaker-mlflow:DeleteModelVersionTag",
+    "sagemaker-mlflow:DeleteRegisteredModelAlias",
+    "sagemaker-mlflow:DeleteTag",
+    "sagemaker-mlflow:DeleteLoggedModel",
+    "sagemaker-mlflow:DeleteLoggedModelTag",
+    "sagemaker-mlflow:TransitionModelVersionStage",
+    "sagemaker-mlflow:RenameRegisteredModel",
+    "sagemaker-mlflow:AccessUI",
+  ]
+}
+
+resource "aws_iam_role_policy" "ecs_flip_api_task_sagemaker_mlflow" {
+  count = startswith(var.MLFLOW_TRACKING_URI, "arn:") ? 1 : 0
+
+  name = "sagemaker-mlflow-access"
+  role = aws_iam_role.ecs_flip_api_task.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        # The actual gate for MLflow Apps — scoped to this deployment's App.
+        Sid      = "MlflowCallApp"
+        Effect   = "Allow"
+        Action   = ["sagemaker:CallMlflowAppApi"]
+        Resource = var.MLFLOW_TRACKING_URI
+      },
+      {
+        # Granular per-API layer; Apps accept only "*" as the resource here.
+        Sid      = "MlflowDataPlane"
+        Effect   = "Allow"
+        Action   = ["sagemaker-mlflow:*"]
+        Resource = "*"
+      },
+      {
+        # flip-api keeps DeleteExperiment (model soft-delete mirror).
+        Sid      = "MlflowDenyDestructive"
+        Effect   = "Deny"
+        Action   = local.mlflow_denied_actions
+        Resource = "*"
+      },
+    ]
+  })
+}
+
+resource "aws_iam_role_policy" "ecs_fl_server_task_sagemaker_mlflow" {
+  count = startswith(var.MLFLOW_TRACKING_URI, "arn:") ? 1 : 0
+
+  name = "sagemaker-mlflow-access"
+  role = aws_iam_role.ecs_fl_server_task.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        # The actual gate for MLflow Apps — scoped to this deployment's App.
+        Sid      = "MlflowCallApp"
+        Effect   = "Allow"
+        Action   = ["sagemaker:CallMlflowAppApi"]
+        Resource = var.MLFLOW_TRACKING_URI
+      },
+      {
+        # Granular per-API layer; Apps accept only "*" as the resource here.
+        Sid      = "MlflowDataPlane"
+        Effect   = "Allow"
+        Action   = ["sagemaker-mlflow:*"]
+        Resource = "*"
+      },
+      {
+        # The fl-server never deletes experiments — only flip-api mirrors soft-deletes.
+        Sid      = "MlflowDenyDestructive"
+        Effect   = "Deny"
+        Action   = concat(local.mlflow_denied_actions, ["sagemaker-mlflow:DeleteExperiment"])
+        Resource = "*"
+      },
+    ]
+  })
+}

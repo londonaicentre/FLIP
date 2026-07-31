@@ -10,6 +10,7 @@ FLIP components
    components/component-omop-database
    components/component-xnat
    components/component-logging-stack
+   components/component-mlflow
 
 .. note::
 

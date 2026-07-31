@@ -32,6 +32,7 @@ from flip_api.domain.interfaces.fl import (
 )
 from flip_api.domain.schemas.status import FLJobStatus, FLTargets
 from flip_api.domain.schemas.types import FLBackend
+from flip_api.fl_services.services import mlflow_run_service
 from flip_api.utils.encryption import encrypt
 from flip_api.utils.http import http_delete, http_get, http_post
 from flip_api.utils.logger import logger
@@ -933,6 +934,10 @@ def abort_model_training(request: Request, model_id: UUID, session: Session) -> 
 
     except Exception as e:
         logger.info(f"Model {model_id} not currently running training; removed from queue. Reason: {e}")
+        # Best-effort MLflow mirror (FLIP#745): every non-exceptional exit of this
+        # abort guarantees no RUNNING run remains for the model (a hard-killed
+        # Flower ServerApp reports no terminal status of its own).
+        mlflow_run_service.stop_run(model_id)
         return
 
     server_status = fetch_server_status(net_endpoint)
@@ -950,6 +955,7 @@ def abort_model_training(request: Request, model_id: UUID, session: Session) -> 
             f"No running FL job for model {model_id} (job ID {fl_backend_job_id}); "
             f"already stopped — nothing to abort."
         )
+        mlflow_run_service.stop_run(model_id)
         return
 
     # Extracting target and clients from the request path parameters
@@ -967,6 +973,8 @@ def abort_model_training(request: Request, model_id: UUID, session: Session) -> 
     response = abort_job(net_endpoint, fl_backend_job_id)
 
     logger.info(f"Abort job response ({target=}, {clients=}): {response}")
+
+    mlflow_run_service.stop_run(model_id)
 
 
 def add_fl_job(model_id: UUID, trusts: list[Trust], session: Session) -> None:

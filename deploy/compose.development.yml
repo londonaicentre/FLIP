@@ -180,6 +180,10 @@ services:
       - DOCKER_FL_CLIENT_NAME=${DOCKER_FL_CLIENT_NAME}
       - NLB_SUBDOMAIN=${NLB_SUBDOMAIN}
       - FL_SERVER_PORT=${FL_SERVER_PORT}
+      # MLflow dual-write (FLIP#745): flip-api pre-creates the tracking run at job
+      # submit (tags + config.json params) over central-hub-network. Empty => the
+      # integration is a no-op.
+      - MLFLOW_TRACKING_URI=${MLFLOW_TRACKING_URI:-}
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -211,6 +215,51 @@ services:
       - default
     container_name: flip-db
 
+  #################### MLFLOW ####################
+
+  # Experiment tracking + model registry (FLIP#745). Additive dual-write: flip-api
+  # stays canonical for status + the metrics the UI shows; the fl-servers and
+  # flip-api mirror runs/metrics/params here best-effort (never in the training
+  # critical path — an absent or dead MLflow only costs warning logs).
+  # Model weights are NOT stored here: registered model versions reference the
+  # results zip in UPLOADED_FEDERATED_DATA_BUCKET by S3 URI (metadata only).
+  mlflow:
+    # Pin the server to the same minor as the mlflow-skinny client in
+    # flip-utils/ and flip-api/ (keep them in lockstep when bumping).
+    image: ghcr.io/mlflow/mlflow:v3.14.0
+    # sqlite-on-volume backend store + local artifact volume: zero-touch dev spike
+    # (the official image ships no postgres driver). Upgrade path before any
+    # multi-writer/prod use: a `mlflow` database on flip-db (needs psycopg2, so a
+    # small custom image) — see docs/source/sys-admin.rst.
+    # --allowed-hosts: MLflow >=3.x rejects Host headers outside its allowlist
+    # (DNS-rebinding protection, default = localhost + private IPs) with a 403.
+    # Container-to-container calls carry Host "mlflow:5000", so the Docker DNS
+    # name must be allowed explicitly alongside the host-browser loopback forms.
+    command: >
+      mlflow server --host 0.0.0.0 --port 5000
+      --backend-store-uri sqlite:////mlflow/data/mlflow.db
+      --artifacts-destination /mlflow/artifacts
+      --allowed-hosts mlflow:5000,localhost:5000,127.0.0.1:5000
+    ports:
+      # Loopback-only binding IS the dev access-control story: MLflow OSS ships no
+      # real auth, so only hub admins on this host may reach the UI. The explicit
+      # 127.0.0.1 is load-bearing — create-networks-centralhub creates the network
+      # without a host_binding_ipv4 driver_opt, so an unqualified mapping would
+      # publish on 0.0.0.0.
+      - "127.0.0.1:${MLFLOW_PORT:-5000}:5000"
+    volumes:
+      - mlflow_data:/mlflow/data
+      - mlflow_artifacts:/mlflow/artifacts
+    networks:
+      # default (central-hub-network): flip-api + the admin browser reach it here.
+      # mlflow-network: hub-only bridge shared with the fl-servers. NEVER attach
+      # mlflow to shared-net-1/2 — trust fl-clients live there and MLflow has no
+      # auth of its own; network placement is the security boundary.
+      - default
+      - mlflow-network
+    restart: unless-stopped
+    container_name: flip-mlflow
+
   #################### PGADMIN ####################
 
   pgadmin:
@@ -236,6 +285,8 @@ services:
 
 volumes:
   pgadmin_data:
+  mlflow_data:
+  mlflow_artifacts:
 
 networks:
   default:
@@ -287,3 +338,14 @@ networks:
     driver_opts:
       com.docker.network.bridge.name: "deploy_shared-net-2"
       com.docker.network.bridge.host_binding_ipv4: "127.50.0.1"
+
+  # Hub-only bridge for the fl-server → MLflow dual-write. Deliberately distinct
+  # from shared-net-1/2 (which the trust fl-clients join): MLflow OSS has no auth,
+  # so keeping trust-side containers off this network is the security boundary.
+  mlflow-network:
+    external: true
+    name: central-hub-mlflow-network
+    driver: bridge
+    driver_opts:
+      com.docker.network.bridge.name: "central-hub-mlflow-network"
+      com.docker.network.bridge.host_binding_ipv4: "127.60.0.1"

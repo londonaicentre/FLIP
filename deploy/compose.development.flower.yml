@@ -114,6 +114,9 @@ services:
       - INTERNAL_SERVICE_KEY_HEADER=${INTERNAL_SERVICE_KEY_HEADER}
       - INTERNAL_SERVICE_KEY=${INTERNAL_SERVICE_KEY}
       - AWS_PROFILE=${AWS_PROFILE}
+      # MLflow dual-write (FLIP#745): the flip package mirrors metrics/status to
+      # MLflow over the hub-only mlflow-network below. Empty => sink disabled.
+      - MLFLOW_TRACKING_URI=${MLFLOW_TRACKING_URI:-}
     command:
       - --ssl-ca-certfile
       - /certs/ca.crt
@@ -138,6 +141,8 @@ services:
       - DAC_OVERRIDE
     networks:
       - shared-net-1
+      # Hub-only bridge to the mlflow container — NOT shared with trust fl-clients.
+      - mlflow-network
     restart: unless-stopped
     init: true
 
@@ -203,6 +208,8 @@ services:
       - INTERNAL_SERVICE_KEY_HEADER=${INTERNAL_SERVICE_KEY_HEADER}
       - INTERNAL_SERVICE_KEY=${INTERNAL_SERVICE_KEY}
       - AWS_PROFILE=${AWS_PROFILE}
+      # MLflow dual-write (FLIP#745): see fl-server-net-1.
+      - MLFLOW_TRACKING_URI=${MLFLOW_TRACKING_URI:-}
     command:
       - --ssl-ca-certfile
       - /certs/ca.crt
@@ -227,6 +234,8 @@ services:
       - DAC_OVERRIDE
     networks:
       - shared-net-2
+      # Hub-only bridge to the mlflow container — NOT shared with trust fl-clients.
+      - mlflow-network
     restart: unless-stopped
     init: true
 

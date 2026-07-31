@@ -129,6 +129,9 @@ locals {
       # kit-slot pool's single source is the /flip/fl_kit_slot_names SSM parameter
       # (parameter_store.tf), read at runtime by resolve_fl_kit_slot_names — an env
       # copy here would be dead config that apply-fl-kit-slots never updates.
+      # MLflow dual-write (FLIP#745): flip-api pre-creates the tracking run at
+      # job submit. Empty (the default) => integration disabled.
+      MLFLOW_TRACKING_URI = var.MLFLOW_TRACKING_URI
     })
     fl_server = {
       LOCAL_DEV                      = "false"
@@ -144,6 +147,10 @@ locals {
       # <root>/<model_id>/ here (FLIP#695). Matches the default in
       # flip-utils FlipConstants + compose.production.nvflare.yml.
       SERVER_CHECKPOINT_ROOT = "/app/server-checkpoints"
+      # MLflow dual-write (FLIP#745): the flip package's MlflowSink mirrors
+      # metrics/status and registers result-zip model versions by S3 reference.
+      # Empty (the default) => sink disabled.
+      MLFLOW_TRACKING_URI = var.MLFLOW_TRACKING_URI
       # INTERNAL_SERVICE_KEY is injected via the `secrets` block in
       # ecs_tasks.tf (sourced from the FLIP_API Secrets Manager secret),
       # never exposed as plain env in the task definition.

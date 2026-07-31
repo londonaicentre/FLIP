@@ -49,11 +49,20 @@ classifiers = [
 ]
 dependencies = [
     "boto3>=1.38.31",
+    # MLflow dual-write client (FLIP#745). Skinny, not full mlflow: nvflare==2.8.0
+    # hard-pins flask==3.0.2 which conflicts with the full package's server extras,
+    # and only the tracking/registry client is needed here. Keep the minor in
+    # lockstep with the ghcr.io/mlflow/mlflow server tag in deploy/compose.development.yml.
+    "mlflow-skinny>=3.14.0",
     "nvflare==2.8.0",
     "pandas>=2.3.0",
     "pydantic>=2.11.7",
     "pydantic-settings>=2.10.1",
     "requests>=2.33.0",
+    # SigV4 auth plugin for SageMaker managed MLflow (FLIP#745 WP6): registers
+    # tracking/registry stores for arn: URIs so MLFLOW_TRACKING_URI can carry the
+    # prod MLflow App ARN. Dormant when the URI is HTTP (dev) or unset.
+    "sagemaker-mlflow>=0.5.0",
     "tqdm>=4.67.1",
 ]
 

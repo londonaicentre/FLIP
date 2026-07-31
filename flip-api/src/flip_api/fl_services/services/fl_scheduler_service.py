@@ -39,6 +39,7 @@ from flip_api.domain.schemas.status import (
     NetStatus,
 )
 from flip_api.domain.schemas.types import FLBackend, FLLogEvent
+from flip_api.fl_services.services import mlflow_run_service
 from flip_api.fl_services.services.fl_service import (
     bundle_flower_application,
     bundle_nvflare_application,
@@ -604,6 +605,11 @@ def prepare_and_start_training(model_id: UUID, fl_job_id: UUID, trust_ids: list[
         # Get presigned URLs from the files in the destination bucket on S3
         bundle_urls = get_bundle_urls(dest_bucket_s3_path)
 
+        # Best-effort MLflow mirror (FLIP#745): pre-create the tracking run BEFORE the
+        # job reaches the FL backend so the fl-server's sink adopts it by tag instead
+        # of racing to create its own. Never raises — MLflow is not in this path.
+        mlflow_run_service.start_run_for_job(model_id, fl_job_id, slot_names, fl_backend, session)
+
         start_training(
             model_id=model_id,
             fl_job_id=fl_job_id,
@@ -612,6 +618,9 @@ def prepare_and_start_training(model_id: UUID, fl_job_id: UUID, trust_ids: list[
             bundle_urls=bundle_urls,
             session=session,
         )
+
+        # The backend job id only exists post-submit; tag it onto the run just created.
+        mlflow_run_service.record_backend_job_id(model_id, fl_job_id, session)
 
         add_log(model_id, f"Model training assigned to '{net_details.name}'", session)
 
@@ -622,6 +631,9 @@ def prepare_and_start_training(model_id: UUID, fl_job_id: UUID, trust_ids: list[
         remove_job(fl_job_id, session)
         add_log(model_id, error_message, session, success=False)
         update_model_status(model_id, ModelStatus.ERROR, session)
+        # The fl-server never saw this job, so no terminal status will reach MLflow
+        # through the dual-write sink — close the pre-created run here (best-effort).
+        mlflow_run_service.fail_run(model_id)
 
         logger.debug("Reverted job and scheduler pickup")
         raise e

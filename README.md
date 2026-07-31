@@ -270,6 +270,20 @@ make -C fl-tutorials run-all-tutorials
 NVFLARE tutorials need a GPU + the `flare-fl-base` image. Build the FL images locally first (tagged `:dev`) with
 `make build-fl`. See each tutorial's README for backend-specific details.
 
+To see a tutorial's metrics plotted (loss/accuracy curves per simulated client and round), start the dev-stack
+MLflow server and enable the mirror before running:
+
+```bash
+make mlflow                                                      # MLflow UI on http://localhost:5000 (loopback only)
+# uncomment MLFLOW_TRACKING_URI=http://mlflow:5000 in fl-tutorials/nvflare/testing/.env.testing
+make -C fl-tutorials run-tutorial TUTORIAL=xray_classification
+```
+
+Each run appears as an MLflow experiment (`flip/<project id>`) with one metric series per simulated client. The
+mirror is best-effort and off by default — with `MLFLOW_TRACKING_URI` unset the simulator behaves exactly as before.
+The same MLflow server collects the real dev-stack training runs (see `docs/source/sys-admin.rst`), so simulator
+and federated runs are comparable side by side.
+
 ## AWS Deployment
 
 ### Staging environment

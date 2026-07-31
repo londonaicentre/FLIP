@@ -1085,3 +1085,76 @@ Before testing emails:
 2. **Test locally**: `python3 tests/test_email_templates.py` (verify all 5 pass)
 3. **Review**: Check generated `email_previews/*.html` files in browser
 4. **Deploy**: Changes are picked up on next `terraform apply`
+
+## MLflow: setup and cost monitoring
+
+FLIP mirrors federated-training telemetry to a **SageMaker serverless MLflow App**
+(FLIP#745). The App is created by an operator, not by Terraform — the AWS provider
+has no resource for it yet, and the resource it *does* have
+(`aws_sagemaker_mlflow_tracking_server`) is the older sized variant costing
+~$470/month, which FLIP deliberately does not use.
+
+### Creating the App
+
+```bash
+cd deploy/providers/AWS
+AWS_PROFILE=stag make create-mlflow-app     # or AWS_PROFILE=prod
+```
+
+That creates the artifact bucket, the artifact-store role, and the App — all
+tagged `flip:component=mlflow` — and prints the ARN. Then:
+
+1. `MLFLOW_TRACKING_URI=<arn>` in the environment file for that account.
+2. `make plan && make apply`. The ARN gates two things: the hub task definitions
+   pick up the env var, and the IAM policies in `iam_ecs.tf` attach.
+3. Redeploy the hub services.
+
+Two IAM subtleties, both learned the hard way on stag:
+
+- MLflow **Apps** authorize the data plane on **`sagemaker:CallMlflowAppApi`**, not
+  on the `sagemaker-mlflow:*` actions that AWS's *tracking-server* docs prescribe.
+  Grant only the latter and every call returns `403 Request is not authorized`.
+- `CallMlflowAppApi` supports resource scoping (pinned to the App ARN);
+  `sagemaker-mlflow:*` does not, and no `Condition` key is populated for it. An
+  explicit `Deny` does work, and is used to remove the destructive verbs.
+
+Leaving `MLFLOW_TRACKING_URI` empty disables the integration entirely — flip-api
+remains the canonical store for model status and the metrics the UI charts.
+
+### Cost monitoring
+
+Expected steady-state spend is **~$0/month**: MLflow Apps carry no compute charge,
+result zips are registered by S3 *reference* rather than copied, and metadata is
+scalar metrics and tags (tens of MB/year). Data-plane calls are logged to CloudTrail
+automatically, at no extra charge.
+
+Guards therefore exist to catch the two ways this could cost real money, not to track
+an expected bill:
+
+| Guard | What it catches |
+|---|---|
+| A $5/month budget on the SageMaker service, alerting at 80%, 100% and 100%-forecast | Someone creates a *classic* sized MLflow tracking server (~$470/month). Visible within a day, not at invoice time. |
+| A Cost Explorer anomaly monitor on the SageMaker service (≥ $1 impact) | AWS begins metering something free today. Apps have no published rate card, so the risk is a *new charge shape* — which a threshold alone would not describe. |
+
+**These live in the Organization's management account** ([`aicentre-iac`](https://github.com/londonaicentre/aicentre-iac)),
+not in this stack. Budgets and anomaly monitors are billing controls: an application
+deploy role must not be able to create, edit or delete the alarms that watch its own
+spend. Keeping them in the payer account also means one monitor covers every linked
+FLIP account rather than one per environment.
+
+The expensive mistake is additionally blocked structurally for developers: the
+`FlipDeveloperAccess` permission set grants `sagemaker:*MlflowApp*`, which does not
+match `CreateMlflowTrackingServer`. Verified with the IAM policy simulator —
+`CreateMlflowTrackingServer` and `StartMlflowTrackingServer` evaluate to
+`implicitDeny`, while `CreateMlflowApp` and `CallMlflowAppApi` are `allowed`.
+
+**Cost allocation tags (do this before creating the App).** Spend appears under the
+SageMaker service; to break it out by `flip:component=mlflow` the tag must be
+activated as a *cost allocation tag* in the management account (Billing → Cost
+allocation tags). Activation takes ~24h to show up in Cost Explorer and is **not
+retroactive**, so the order matters: activate, then create.
+
+**First 30 days after go-live.** Check Cost Explorer at daily granularity, filtered to
+the SageMaker service, against a pre-go-live baseline. Record the real figure on
+FLIP#745 — that turns "AWS says it's free" into a measured number. After that the
+budget and anomaly monitor are sufficient; no dashboard required.
