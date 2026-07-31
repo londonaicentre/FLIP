@@ -89,13 +89,13 @@ session cannot outlive the requirement. A user who has not enrolled cannot reach
 protected function, and an administrative MFA reset takes effect immediately.
 
 **Access is role-based and default-deny.** Users hold one of three defined roles —
-**Admin**, **Researcher**, or **Viewer** — each carrying an explicit permission set.
-Permission is granted rather than assumed: a request with no matching grant is refused.
-Role membership alone is not sufficient for project data, which additionally requires
-membership of that specific project, re-checked on every access. Credential comparisons
-are constant-time, so response timing cannot be used to guess a secret. Access is
-reviewed annually and dormant accounts are removed. For the full permission matrix, see
-:ref:`rbac-roles`.
+**Admin**, **Researcher**, or **Viewer** — each carrying an explicit permission set (see
+:ref:`User Roles <rbac-roles>` for the full permission matrix). Permission is granted
+rather than assumed: a request with no matching grant is refused. Role membership alone
+is not sufficient for project data, which additionally requires membership of that
+specific project, re-checked on every access. Credential comparisons are constant-time,
+so response timing cannot be used to guess a secret. Access is reviewed annually and
+dormant accounts are removed.
 
 **Role separation continues inside the trust.** Access control is not only a hub
 concern. XNAT enforces its own roles, and the ability to query and retrieve from the
