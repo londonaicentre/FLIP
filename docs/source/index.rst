@@ -16,6 +16,7 @@ Federated Learning Interoperability Platform
    sys-admin
    user-guides
    working-with-flip-apps
+   security
 
 .. toctree::
    :maxdepth: 2
