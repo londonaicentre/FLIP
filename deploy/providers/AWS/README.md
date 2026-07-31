@@ -1121,6 +1121,25 @@ Two IAM subtleties, both learned the hard way on stag:
 Leaving `MLFLOW_TRACKING_URI` empty disables the integration entirely — flip-api
 remains the canonical store for model status and the metrics the UI charts.
 
+### Opening the MLflow UI
+
+A SageMaker MLflow App has **no stable browser URL** and does not appear in the
+AWS console unless your console role carries the `sagemaker:*MlflowApp*` actions.
+Access is via short-lived presigned URLs:
+
+```bash
+aws sagemaker create-presigned-mlflow-app-url --region eu-west-2 \
+  --profile <profile> --arn <app-arn> --query AuthorizedUrl --output text
+```
+
+Open the printed URL within ~5 minutes; after the first open the browser holds a
+session, so you only re-mint when it expires. Look up the App ARN with
+`aws sagemaker list-mlflow-apps --region eu-west-2`.
+
+The `sagemaker mlflow-app` subcommands are recent — an older AWS CLI v2 fails
+with `Invalid choice: create-presigned-mlflow-app-url`; upgrade with the
+official installer (`./aws/install --update`) rather than working around it.
+
 ### Cost monitoring
 
 Expected steady-state spend is **~$0/month**: MLflow Apps carry no compute charge,

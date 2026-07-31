@@ -121,4 +121,17 @@ prod hosting option evaluated in FLIP#745 (WP6):
   additionally need the small ``sagemaker-mlflow`` pip package (SigV4 plugin);
   the sink itself is unchanged. Every data-plane call is CloudTrail-logged.
 
+With the SageMaker option the UI has no stable URL and is opened through
+short-lived presigned URLs instead (valid ~5 minutes to first use, then the
+browser holds a session):
+
+.. code-block:: bash
+
+   aws sagemaker create-presigned-mlflow-app-url --region eu-west-2 \
+     --profile <profile> --arn <app-arn> --query AuthorizedUrl --output text
+
+This needs a recent AWS CLI v2 — the ``sagemaker mlflow-app`` subcommands are
+new, and older CLIs fail with ``Invalid choice``. See "MLflow: setup and cost
+monitoring" in ``deploy/providers/AWS/README.md`` for the full runbook.
+
 See the WP6 decision record on FLIP#745 for the cost/ops comparison.
