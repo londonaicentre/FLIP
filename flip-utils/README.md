@@ -102,10 +102,11 @@ crashed-reply exceptions — extracted from Flower reply Messages in `Strategy.a
 
 ### User Application Requirements
 
-User-provided files are dynamically imported by the executor wrappers at run time. In each
-tutorial they live under `fl-tutorials/nvflare/**/<tutorial>/app_files/`; the tutorial
-harness merges them onto the matching `fl-apps/nvflare/<template>/app/` template when the
-job is submitted (there is no static `custom/` directory to place them in):
+The executor wrappers dynamically import user-provided files from the job's `custom/`
+directory. For most templates that directory is materialised at run time by the tutorial
+harness (`fl-tutorials/nvflare/testing/app_organiser.sh`), which copies each file from
+the tutorial's `app_files/` into `./tmp/app/custom/`; the `diffusion_model` template
+already carries a git-tracked `custom/` with baseline files that the same overlay extends.
 
 | File | Description |
 | ------ | ------------- |

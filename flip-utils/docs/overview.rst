@@ -131,8 +131,13 @@ layer by ``FL_BACKEND=flower``.
 User Application Requirements
 -----------------------------
 
-User-provided application code goes in the job's ``custom/`` directory. The
-executor wrappers dynamically import these files:
+The executor wrappers dynamically import user-provided code from the job's
+``custom/`` directory. For most templates that directory is materialised at
+run time by the tutorial harness
+(``fl-tutorials/nvflare/testing/app_organiser.sh``), which copies each file
+from the tutorial's ``app_files/`` into ``./tmp/app/custom/``; the
+``diffusion_model`` template already carries a git-tracked ``custom/`` with
+baseline files that the same overlay extends.
 
 ====================  ================================================================
 File                  Description
@@ -158,10 +163,10 @@ To test FL applications locally before deploying to production:
       DEV_IMAGES_DIR=../data/accession-resources
       DEV_DATAFRAME=../data/sample_get_dataframe.csv
 
-2. Place your application files under the corresponding template's ``app/`` directory
-   (e.g. ``fl-apps/nvflare/standard/app/``). Tutorial-local overrides live in a
-   sibling ``app_files/`` directory (e.g. ``fl-tutorials/nvflare/image_classification/xray_classification/app_files/``)
-   which the tutorial harness merges onto the template at run-time.
+2. Place your application files in the tutorial's ``app_files/`` directory
+   (e.g. ``fl-tutorials/nvflare/image_classification/xray_classification/app_files/``).
+   At run time the harness copies them into ``./tmp/app/custom/`` on top of the
+   matching ``fl-apps/nvflare/<template>/app/`` template.
 
 3. Run one of the shipped tutorials against the NVFLARE simulator from the repository root:
 
