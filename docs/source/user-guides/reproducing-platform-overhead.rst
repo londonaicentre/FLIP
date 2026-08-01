@@ -249,7 +249,7 @@ Three findings to read from the table:
    49 cross-continental rounds).
 
 3. **Round 0 is a one-off communication cost.** The platform round 0 (+3,535 s) covers staging
-   the 795 MB backbone checkpoint to S3 and broadcasting the full model to every client over
+   the ~759 MiB backbone checkpoint to S3 and broadcasting the full model to every client over
    the WAN. After round 0, ``TrimBroadcastVars`` / ``ReconstructFullModel`` shrink every
    subsequent broadcast to the classifier head. This cost is paid once per training run,
    regardless of the number of rounds.

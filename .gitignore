@@ -355,7 +355,7 @@ trust/fl-kit-*/
 
 # NVFLARE provisioning workspace left on a host by legacy in-deploy provisioning
 # (deploy/workspace/net-*/ with state/cert.json + startup kits). Provisioning now
-# lives under fl-services/<backend>/provision/ (already ignored above) — never commit.
+# lives under fl-services/<backend>/provision/ (ignored further down this file) — never commit.
 deploy/workspace/
 
 # Local Python env some AWS tooling installs in-tree
@@ -473,3 +473,8 @@ fl-tutorials/flower/data/
 # tutorials' `make round-metrics` write
 # rounds.tsv + summary.md + boxplots here) — data artifacts, not source.
 round_metrics/
+
+# ...but the extractors' test fixtures are hand-written synthetic logs, i.e. source, and
+# the blanket `*.log` rule above would otherwise silently drop them from the commit and
+# leave CI with nothing to test against.
+!scripts/fl_round_metrics/tests/fixtures/*.log
