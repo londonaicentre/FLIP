@@ -26,7 +26,12 @@ from flip.constants import PTConstants
 class RUN_EVALUATOR(Executor):
     """Executes the uploaded evaluator and handles any errors."""
 
-    def __init__(self, evaluate_task_name: str = PTConstants.EvalTaskName, project_id: str = "", query: str = "") -> None:
+    def __init__(
+        self,
+        evaluate_task_name: str = PTConstants.EvalTaskName,
+        project_id: str = "",
+        query: str = "",
+    ) -> None:
         super(RUN_EVALUATOR, self).__init__()
 
         self._evaluate_task_name = evaluate_task_name
