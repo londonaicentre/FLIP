@@ -64,8 +64,8 @@ variant). Several defaults sized for small models **must be raised**, or jobs OO
 | `fl-server-net-1` | 1 vCPU / 2 GiB | **2 vCPU / 8 GiB** | `torch.load`s the 759 MiB checkpoint as the initial/eval model; OOM-kills at 2 GiB (surfaces as `Server disconnected without sending a response` + a model `ERROR`) |
 
 Also on the hub:
-- **`MAX_MODEL_FILE_BYTES = 5 GiB`** (stock default 100 MiB) — the presigned-POST upload cap must
-  admit the ~759 MiB / ~1.5 GiB checkpoints.
+- **`MAX_MODEL_FILE_BYTES = 5 GiB`** (the current Settings default) — the presigned-POST upload
+  cap must admit the ~759 MiB / ~1.5 GiB checkpoints.
 - **Shared checkpoint-staging EFS volume** (`fl_checkpoints` access point) mounted at
   `/app/server-checkpoints` on **both** fl-api (writer) and fl-server (reader), with
   `SERVER_CHECKPOINT_ROOT` set — large checkpoints are staged server-side, never bundled into the
