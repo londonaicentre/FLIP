@@ -116,6 +116,10 @@ services:
       ENV: production
       LOG_LEVEL: ${TRUST_LOG_LEVEL}
       TRUST_INTERNAL_SERVICE_KEY: ${TRUST_INTERNAL_SERVICE_KEY}
+      # The trust's own minimum-cohort disclosure floor. Operator-owned: raise it in the
+      # kit file to release less. The `:-10` keeps an unset variable from arriving as an
+      # empty string, which pydantic would reject against `int`.
+      COHORT_QUERY_THRESHOLD: ${COHORT_QUERY_THRESHOLD:-10}
 
   trust-api:
     image: ghcr.io/londonaicentre/trust-api:${DOCKER_TAG}

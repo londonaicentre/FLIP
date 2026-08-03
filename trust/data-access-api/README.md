@@ -116,9 +116,13 @@ It performs a single parse-validate-emit pass and enforces:
 1. A maximum query length (cheap DoS guard, before the parser allocates an AST).
 2. Exactly one non-empty statement (defeats query stacking and stray semicolons).
 3. A SELECT-shaped top-level statement (`SELECT`/`UNION`/`INTERSECT`/`EXCEPT`).
-4. Schema-qualified tables limited to `omop` (blocks `information_schema` / `pg_catalog`
+4. No `INSERT`/`UPDATE`/`DELETE`/`MERGE` node anywhere in the tree. Rule 3 only inspects the
+   top-level node, and Postgres allows a writable CTE — `WITH x AS (DELETE FROM t RETURNING *)
+   SELECT * FROM x` parses as a `Select` and would otherwise pass. The read-only role rejects
+   the write regardless, so this is defence in depth rather than the only barrier.
+5. Schema-qualified tables limited to `omop` (blocks `information_schema` / `pg_catalog`
    enumeration, which Postgres exposes to role `public` by default).
-5. Literal-integer `LIMIT`/`OFFSET` (defeats blind extraction that makes the row count a function
+6. Literal-integer `LIMIT`/`OFFSET` (defeats blind extraction that makes the row count a function
    of a character value and reads it back through the cohort-size response).
 
 It then returns the query **re-emitted from the AST it just checked**. Callers pass that string to
@@ -147,7 +151,7 @@ multi-minute fan-out into an immediate 400.
 So the hub check is deliberately *weaker*, and only rejects what every trust would reject too:
 unparseable input, multiple statements, non-SELECT statements, and over-length queries. It
 intentionally does **not** enforce trust-local policy — the `omop` schema pin, the literal-`LIMIT`
-rule, the read-only role, or the cohort-size threshold — because those depend on facts the hub has
+rule, the writable-CTE rejection, the read-only role, or the cohort-size threshold — because those depend on facts the hub has
 no authority over and which may legitimately differ per trust.
 
 That asymmetry makes drift harmless in the direction that matters. A hub lagging behind a trust
@@ -188,7 +192,40 @@ alias around it. Column-level minimisation belongs in the cohort query a project
 project approval, not at this layer.
 
 `/cohort/accession-ids` is the minimal-disclosure endpoint: it wraps the caller's validated query
-so only the `accession_id` column can cross the boundary.
+so only the `accession_id` column can cross the boundary. It applies the same threshold and the
+same fixed refusal text, because accession IDs are still row-level identifiers — and they are the
+pointer set into the imaging data, deciding whose studies get pulled into XNAT where project
+members view them. Releasing them for a cohort of three is the disclosure the threshold exists to
+prevent, whatever the column count.
+
+The trust applies that check itself rather than relying on the hub. The hub does have a guard —
+`stage_project` refuses to stage a trust whose cohort came back empty or suppressed — but relying
+on it would be exactly the "assume the hub filtered first" this layering rejects, and the hub's own
+`start_project_imaging_creation` endpoint does not re-check staging.
+
+**Both row-level gates evaluate the cohort as it is now, not as it was at approval.** FLIP has no
+frozen approved-cohort artefact: the cohort query is a SQL string that is re-run against live OMOP
+at every stage — including by the imaging status poll roughly every 10 seconds while a user has the
+project page open. A project can therefore import cleanly and later start refusing if its cohort
+shrinks below the threshold. That is the correct behaviour for a disclosure control, but it means
+the gate is not a one-time approval-time check; see FLIP#857 for the underlying design gap.
+
+When `/cohort/accession-ids` refuses, imaging-api translates the 403 into a
+`CohortBelowThresholdError` rather than a generic transport failure, so the initial pull logs a
+clear reason and queues nothing, and the status path reports a readable message to the hub instead
+of a raw HTTP error.
+
+### Configuring the threshold
+
+`COHORT_QUERY_THRESHOLD` defaults to `10` and is the trust's own disclosure floor — set it in the
+trust's kit file (`trust/.env.<CODE>.<env>`) to raise it. It is not a hub setting and trusts need
+not agree on a value.
+
+Note for anyone adding settings here: the service Makefile exports kit-file names with
+`sed 's/=.*//'`, which strips the value from *every* line including commented ones, so a
+commented-out entry reaches the process as an empty string. Any non-`str` setting therefore needs
+an empty-string coercion validator (see `coerce_empty_cohort_query_threshold` in `config.py`), or
+the service fails at import.
 
 ## Testing
 

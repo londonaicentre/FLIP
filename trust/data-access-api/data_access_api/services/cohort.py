@@ -32,8 +32,6 @@ from data_access_api.services.query_cache import get_cached_result, set_cached_r
 from data_access_api.utils.logger import logger
 from data_access_api.utils.sql_parsers import extract_missing_identifier
 
-COHORT_QUERY_THRESHOLD = get_settings().COHORT_QUERY_THRESHOLD
-
 # OMOP schema is the only schema callers may reference. Any qualified
 # reference to a different schema is rejected by validate_query.
 ALLOWED_SCHEMA = "omop"
@@ -49,6 +47,17 @@ _ALLOWED_QUERY_TYPES: tuple[type[exp.Expression], ...] = (
     exp.Union,
     exp.Intersect,
     exp.Except,
+)
+
+# Data-modifying nodes rejected anywhere in the tree, not just at the top level.
+# Postgres allows a writable CTE — ``WITH x AS (DELETE ... RETURNING *) SELECT * FROM x``
+# — which sqlglot parses with a top-level ``exp.Select``, so the SELECT-shape check
+# alone passes it through.
+_DATA_MODIFYING_TYPES: tuple[type[exp.Expression], ...] = (
+    exp.Insert,
+    exp.Update,
+    exp.Delete,
+    exp.Merge,
 )
 
 
@@ -70,6 +79,9 @@ def validate_query(query: str) -> str:
     ``CREATE`` explicitly REVOKEd. Any DDL or DML is therefore rejected by
     Postgres itself, so this function does NOT keyword-filter for ``DROP`` /
     ``INSERT`` / ``UPDATE`` / etc. — those are already covered at the DB layer.
+    Rules 3 and 4 below still reject writes *structurally*, from the parsed tree
+    rather than from a keyword scan, so a write fails in-hand with a clear 400
+    instead of as an opaque permission error from the engine.
 
     What this function enforces
     ---------------------------
@@ -79,12 +91,17 @@ def validate_query(query: str) -> str:
     2. The query parses as exactly one non-empty statement (defeats query stacking,
        stray semicolons that bypass the count check, and empty inputs).
     3. The top-level statement is SELECT-shaped (rejects ``COPY``, ``EXPLAIN``,
-       and any DDL/DML the DB would also reject — fail fast at the API).
-    4. Any schema-qualified table reference targets only the ``omop`` schema
+       and top-level DDL/DML — fail fast at the API rather than at the DB).
+    4. No ``INSERT`` / ``UPDATE`` / ``DELETE`` / ``MERGE`` node appears *anywhere*
+       in the tree. Rule 3 inspects only the top-level node, and Postgres allows a
+       writable CTE — ``WITH x AS (DELETE FROM t RETURNING *) SELECT * FROM x``
+       parses as a ``Select`` and would otherwise pass. The read-only role rejects
+       the write regardless, so this is defence in depth, not the only barrier.
+    5. Any schema-qualified table reference targets only the ``omop`` schema
        (blocks enumeration of ``information_schema``, ``pg_catalog``,
        ``pg_class`` etc., which Postgres makes readable to role ``public``
        by default).
-    5. Every ``LIMIT`` and ``OFFSET`` is a literal integer (defeats the blind
+    6. Every ``LIMIT`` and ``OFFSET`` is a literal integer (defeats the blind
        data-extraction technique that abuses
        ``LIMIT CASE WHEN <predicate> THEN n ELSE m END`` to make the row count
        a function of a single character value, then reads it back via the
@@ -129,6 +146,12 @@ def validate_query(query: str) -> str:
 
     if not isinstance(stmt, _ALLOWED_QUERY_TYPES):
         raise _invalid_query("Only SELECT statements are allowed.")
+
+    # The check above only inspects the top-level node, and Postgres lets a write
+    # hide inside a CTE body while the outer statement still parses as a SELECT.
+    # Walk the whole tree for data-modifying nodes.
+    if any(stmt.find_all(*_DATA_MODIFYING_TYPES)):
+        raise _invalid_query("Data-modifying statements are not allowed.")
 
     # Walk the whole AST so subqueries, CTEs, and set-operation arms are checked.
     for table in stmt.find_all(exp.Table):
@@ -388,7 +411,7 @@ def verify_cardinality(df: pd.DataFrame, threshold: float = 0.05) -> bool:
         percentage_unique = unique_count / len(df) if len(df) > 0 else 0
         logger.info(f"Column '{col}' has {unique_count} unique values ({percentage_unique:.2%} of total)")
         if all([
-            unique_count < COHORT_QUERY_THRESHOLD,  # Absolute threshold
+            unique_count < get_settings().COHORT_QUERY_THRESHOLD,  # Absolute threshold
             percentage_unique < threshold,  # Relative threshold
         ]):
             logger.info(f"Column '{col}' has insufficient unique values ({threshold=}, {unique_count=})")
@@ -396,17 +419,22 @@ def verify_cardinality(df: pd.DataFrame, threshold: float = 0.05) -> bool:
     return True
 
 
-def make_other_category(results: list[dict], min_count: int = COHORT_QUERY_THRESHOLD) -> list[dict]:
+def make_other_category(results: list[dict], min_count: int | None = None) -> list[dict]:
     """
     Groups entries in the results list with counts less than min_count into an "Other" category.
 
     Args:
         results (list of dict): List of dictionaries with 'value' and 'count' keys.
-        min_count (int): Minimum count threshold to avoid grouping into "Other".
+        min_count (int | None): Minimum count threshold to avoid grouping into "Other".
+            Defaults to ``COHORT_QUERY_THRESHOLD``, resolved at call time — a default
+            argument would bind the setting at import and ignore a per-trust override.
 
     Returns:
         list of dict: Updated list with low-count entries grouped into "Other".
     """
+    if min_count is None:
+        min_count = get_settings().COHORT_QUERY_THRESHOLD
+
     other_count = sum(item["count"] for item in results if item["count"] < min_count)
     filtered_results = [item for item in results if item["count"] >= min_count]
 
@@ -436,21 +464,27 @@ def get_statistics(df: pd.DataFrame, query_input: CohortQueryInput, threshold: i
     Args:
         df (pd.DataFrame): Query results dataframe.
         query_input (data_access_api.routers.schema.CohortQueryInput): Input object containing the query and metadata.
-        threshold (int): Minimum number of records required to return results.
+        threshold (int): Minimum number of records the caller requires. ``COHORT_QUERY_THRESHOLD``
+            is applied as a floor underneath it, so a caller can raise the bar but never
+            lower it below the trust's configured disclosure threshold.
 
     Returns:
         StatisticsResponse: Contains the aggregated statistics, or a 0-count empty response
-        when below ``COHORT_QUERY_THRESHOLD``.
+        when below the effective threshold.
     """
     record_count = len(df)
+    # The configured threshold is a floor, not a default: a caller passing a smaller value
+    # must not be able to weaken suppression. Read live rather than at import so a per-trust
+    # override actually applies.
+    threshold = max(threshold, get_settings().COHORT_QUERY_THRESHOLD)
 
-    if record_count < COHORT_QUERY_THRESHOLD:
+    if record_count < threshold:
         # Privacy-suppress every below-threshold count, INCLUDING a genuine zero: a true
         # zero and a small (1..threshold-1) count return identically (record_count=0,
         # suppressed=True) so the response can't reveal that >=1 patient matched.
         # Distinguishing them would leak membership/existence (issue #519, security review).
         logger.info(
-            f"Query returned {record_count} records (< {COHORT_QUERY_THRESHOLD});"
+            f"Query returned {record_count} records (< {threshold});"
             " returning privacy-suppressed 0-count response"
         )
         return StatisticsResponse(
@@ -474,10 +508,10 @@ def get_statistics(df: pd.DataFrame, query_input: CohortQueryInput, threshold: i
     if "person_id" in df.columns:
         logger.info("person_id column found in the query results; including age and sex distribution calculations.")
         age = get_age_distribution(df)
-        age["results"] = make_other_category(age["results"], min_count=COHORT_QUERY_THRESHOLD)
+        age["results"] = make_other_category(age["results"], min_count=threshold)
 
         sex = get_sex_distribution(df)
-        sex["results"] = make_other_category(sex["results"], min_count=COHORT_QUERY_THRESHOLD)
+        sex["results"] = make_other_category(sex["results"], min_count=threshold)
 
         stats.data += [age, sex]
     return stats

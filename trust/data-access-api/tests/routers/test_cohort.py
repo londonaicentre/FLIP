@@ -96,8 +96,10 @@ def test_receive_cohort_query_invalid_validation(mock_validate_query, mock_get_s
 def test_receive_cohort_query_statistics_error(
     mock_get_statistics, mock_validate_query, mock_get_settings, mock_get_records
 ):
+    """Aggregation failures return a category only — the hub relays this detail to every
+    project member, and raw exception text can carry row values (FLIP-PT-016)."""
     mock_get_settings.return_value.COHORT_QUERY_THRESHOLD = 5
-    mock_get_statistics.side_effect = RuntimeError("Statistics computation failed")
+    mock_get_statistics.side_effect = RuntimeError("failed on patient 12345 birth_datetime")
 
     # Mock DataFrame
     mock_df = pd.DataFrame({"col1": range(10)})
@@ -106,7 +108,8 @@ def test_receive_cohort_query_statistics_error(
     response = client.post("/cohort", json=sample_query_input, headers=AUTH_HEADERS)
 
     assert response.status_code == 500
-    assert response.json()["detail"] == "Statistics computation failed"
+    assert response.json()["detail"] == "Statistics aggregation failed."
+    assert "12345" not in response.text
 
 
 @patch("data_access_api.routers.cohort.get_records")
@@ -322,9 +325,11 @@ def test_get_dataframe_allows_cohort_at_threshold(mock_get_records, mock_decrypt
 # ---------------------------------------------------------------------------
 
 
+@patch("data_access_api.routers.cohort.get_settings")
 @patch("data_access_api.routers.cohort.decrypt")
 @patch("data_access_api.routers.cohort.get_records")
-def test_get_accession_ids_success(mock_get_records, mock_decrypt):
+def test_get_accession_ids_success(mock_get_records, mock_decrypt, mock_get_settings):
+    mock_get_settings.return_value.COHORT_QUERY_THRESHOLD = 2
     mock_decrypt.return_value = "decrypted-id"
     mock_get_records.return_value = pd.DataFrame({"accession_id": ["ACC1", "ACC2", "ACC3"]})
 
@@ -339,9 +344,11 @@ def test_get_accession_ids_success(mock_get_records, mock_decrypt):
     assert sample_dataframe_query["query"] in called_query
 
 
+@patch("data_access_api.routers.cohort.get_settings")
 @patch("data_access_api.routers.cohort.decrypt")
 @patch("data_access_api.routers.cohort.get_records")
-def test_get_accession_ids_strips_trailing_semicolon(mock_get_records, mock_decrypt):
+def test_get_accession_ids_strips_trailing_semicolon(mock_get_records, mock_decrypt, mock_get_settings):
+    mock_get_settings.return_value.COHORT_QUERY_THRESHOLD = 1
     mock_decrypt.return_value = "decrypted-id"
     mock_get_records.return_value = pd.DataFrame({"accession_id": ["ACC1"]})
 
@@ -370,9 +377,11 @@ def test_get_accession_ids_invalid_query(mock_validate_query, mock_decrypt):
     assert response.json()["detail"] == "Invalid query syntax"
 
 
+@patch("data_access_api.routers.cohort.get_settings")
 @patch("data_access_api.routers.cohort.decrypt")
 @patch("data_access_api.routers.cohort.get_records")
-def test_get_accession_ids_missing_column(mock_get_records, mock_decrypt):
+def test_get_accession_ids_missing_column(mock_get_records, mock_decrypt, mock_get_settings):
+    mock_get_settings.return_value.COHORT_QUERY_THRESHOLD = 1
     mock_decrypt.return_value = "decrypted-id"
     mock_get_records.return_value = pd.DataFrame({"some_other_column": [1, 2]})
 
@@ -400,26 +409,84 @@ def test_get_accession_ids_propagates_http_exception(mock_get_records, mock_decr
 
 @patch("data_access_api.routers.cohort.decrypt")
 @patch("data_access_api.routers.cohort.get_records")
-def test_get_accession_ids_sqlalchemy_error(mock_get_records, mock_decrypt):
+def test_get_accession_ids_sqlalchemy_error_does_not_leak(mock_get_records, mock_decrypt):
+    """Driver text must not reach the caller: the trust forwards this detail to the hub,
+    which shows it to every project member (FLIP-PT-016)."""
     mock_decrypt.return_value = "decrypted-id"
-    mock_get_records.side_effect = SQLAlchemyError("SQLAlchemy error")
+    mock_get_records.side_effect = SQLAlchemyError("relation omop.secret_table row 42")
 
     response = client.post("/cohort/accession-ids", json=sample_dataframe_query, headers=AUTH_HEADERS)
 
     assert response.status_code == 500
-    assert response.json()["detail"] == "SQLAlchemy error"
+    assert response.json()["detail"] == "Query execution failed."
+    assert "secret_table" not in response.text
 
 
 @patch("data_access_api.routers.cohort.decrypt")
 @patch("data_access_api.routers.cohort.get_records")
-def test_get_accession_ids_generic_error(mock_get_records, mock_decrypt):
+def test_get_accession_ids_generic_error_does_not_leak(mock_get_records, mock_decrypt):
     mock_decrypt.return_value = "decrypted-id"
-    mock_get_records.side_effect = RuntimeError("Unexpected failure")
+    mock_get_records.side_effect = RuntimeError("connection to 10.0.0.5 failed for user svc_omop")
 
     response = client.post("/cohort/accession-ids", json=sample_dataframe_query, headers=AUTH_HEADERS)
 
     assert response.status_code == 500
-    assert response.json()["detail"] == "Unexpected failure"
+    assert response.json()["detail"] == "Query execution failed."
+    assert "svc_omop" not in response.text
+
+
+@patch("data_access_api.routers.cohort.get_settings")
+@patch("data_access_api.routers.cohort.decrypt")
+@patch("data_access_api.routers.cohort.get_records")
+def test_get_accession_ids_rejects_cohort_below_threshold(mock_get_records, mock_decrypt, mock_get_settings):
+    """Accession IDs are row-level identifiers and decide whose imaging is pulled into XNAT,
+    so a below-threshold cohort is refused just as it is on /cohort/dataframe."""
+    mock_get_settings.return_value.COHORT_QUERY_THRESHOLD = 10
+    mock_decrypt.return_value = "decrypted-id"
+    mock_get_records.return_value = pd.DataFrame({"accession_id": [f"ACC{i}" for i in range(9)]})
+
+    response = client.post("/cohort/accession-ids", json=sample_dataframe_query, headers=AUTH_HEADERS)
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "Cohort is too small for row-level data to be released."
+    # No identifier may appear in the refusal.
+    assert "ACC" not in response.text
+
+
+@patch("data_access_api.routers.cohort.get_settings")
+@patch("data_access_api.routers.cohort.decrypt")
+@patch("data_access_api.routers.cohort.get_records")
+def test_get_accession_ids_below_threshold_is_indistinguishable_from_zero(
+    mock_get_records, mock_decrypt, mock_get_settings
+):
+    """A zero-row cohort and a below-threshold one must return byte-identical responses,
+    or the refusal itself becomes a row-count oracle."""
+    mock_get_settings.return_value.COHORT_QUERY_THRESHOLD = 10
+    mock_decrypt.return_value = "decrypted-id"
+
+    mock_get_records.return_value = pd.DataFrame({"accession_id": []})
+    zero_response = client.post("/cohort/accession-ids", json=sample_dataframe_query, headers=AUTH_HEADERS)
+
+    mock_get_records.return_value = pd.DataFrame({"accession_id": [f"ACC{i}" for i in range(9)]})
+    below_response = client.post("/cohort/accession-ids", json=sample_dataframe_query, headers=AUTH_HEADERS)
+
+    assert zero_response.status_code == below_response.status_code == 403
+    assert zero_response.text == below_response.text
+
+
+@patch("data_access_api.routers.cohort.get_settings")
+@patch("data_access_api.routers.cohort.decrypt")
+@patch("data_access_api.routers.cohort.get_records")
+def test_get_accession_ids_allows_cohort_at_threshold(mock_get_records, mock_decrypt, mock_get_settings):
+    """Exactly at the threshold is allowed — the gate is `<`, not `<=`."""
+    mock_get_settings.return_value.COHORT_QUERY_THRESHOLD = 10
+    mock_decrypt.return_value = "decrypted-id"
+    mock_get_records.return_value = pd.DataFrame({"accession_id": [f"ACC{i}" for i in range(10)]})
+
+    response = client.post("/cohort/accession-ids", json=sample_dataframe_query, headers=AUTH_HEADERS)
+
+    assert response.status_code == 200
+    assert len(response.json()["accession_ids"]) == 10
 
 
 # ---------------------------------------------------------------------------

@@ -11,7 +11,9 @@ FastAPI service for querying the OMOP Common Data Model database. Receives cohor
 - Every internal caller authenticates with the per-trust `TRUST_INTERNAL_SERVICE_KEY` header (see the root `CLAUDE.md` "Trust-internal Service Authentication" section). `/health` stays unauthenticated
 - OMOP CDM query translation layer
 - `services/cohort.py::validate_query` is the **authority** on cohort-query safety: one parse-validate-emit pass that returns the query re-emitted from the AST it checked. Pass that return value to the engine, never the caller's raw string. The hub runs its own pre-check, but it is fast-feedback only and deliberately weaker — never relax a rule here on the assumption the hub filtered first, and do not mirror trust-local rules onto the hub. See [`README.md`](README.md#cohort-query-validation)
-- `/cohort/dataframe` returns row-level training data to FL code and is gated on `COHORT_QUERY_THRESHOLD`; the below-threshold refusal text is fixed so it cannot act as a row-count oracle
+- Both row-level routes — `/cohort/dataframe` (FL training data) and `/cohort/accession-ids` (the accession list that decides whose imaging is pulled into XNAT) — are gated on `COHORT_QUERY_THRESHOLD` and share one fixed refusal string, so a below-threshold cohort is indistinguishable from an empty one and the refusal cannot act as a row-count oracle. The trust enforces this itself; the hub's staging guard is not relied on
+- The gates evaluate the **live** cohort on every call, not the cohort as approved. The cohort query is re-run against OMOP at every stage (the imaging status poll alone re-runs it roughly every 10s while a project page is open), so a project can import cleanly and later start refusing. There is no frozen approved-cohort artefact anywhere in FLIP — see FLIP#857
+- `COHORT_QUERY_THRESHOLD` is the trust's own disclosure floor (default 10), set per trust in its kit file. Any new non-`str` setting needs an empty-string coercion validator: the service Makefile's `export $(shell sed 's/=.*//' $(KIT_ENV_FILE))` strips values from commented lines too, so a commented-out entry arrives as `""` and pydantic rejects it at import
 
 ## Commands
 

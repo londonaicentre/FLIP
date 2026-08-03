@@ -45,7 +45,27 @@ class Settings(BaseSettings):
     LOG_LEVEL: str = "INFO"
 
     #
-    COHORT_QUERY_THRESHOLD: int = 10  # Minimum number of records required to return statistics
+    # Minimum cohort size below which no row-level data or statistics are released. The
+    # trust's own disclosure floor: operators may raise it in their kit file, and both
+    # row-level routes (/cohort/dataframe, /cohort/accession-ids) enforce it alongside the
+    # statistics suppression on /cohort.
+    COHORT_QUERY_THRESHOLD: int = 10
+
+    @field_validator("COHORT_QUERY_THRESHOLD", mode="before")
+    @classmethod
+    def coerce_empty_cohort_query_threshold(cls, v: object) -> object:
+        """Treat an empty-string threshold as the default.
+
+        The service Makefile exports kit-file names with ``sed 's/=.*//'``, which strips the
+        value from every line — including commented ones — so an entry the operator has
+        commented out arrives as ``COHORT_QUERY_THRESHOLD=""``. pydantic treats a present but
+        empty env var as a real override and rejects it against ``int``, which would fail at
+        import and take the whole service (and its test collection) down. Same shape as
+        ``coerce_empty_env``; must stay in sync with the field default above.
+        """
+        if v is None or v == "":
+            return 10
+        return v
     CACHE_TTL_DAYS: int = 60  # Number of days before cached query results expire
     CACHE_MAX_RESULT_ROWS: PositiveInt = 50_000  # Max rows per cached result; larger results skip caching
     CACHE_MAX_ENTRIES: PositiveInt = 64  # Max number of cached query results
