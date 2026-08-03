@@ -44,7 +44,7 @@ server; no inbound ports are exposed from the K8s cluster.
 ## Prerequisites
 
 - **Kubernetes cluster** 1.28+ (EKS, AKS, or on-prem)
-- **Helm** 3.16+
+- **Helm** 4.x (the CI-tested version; 3.16+ also works)
 - **kubectl** configured with cluster access
 - **NVIDIA GPU Operator** (if GPU workloads are enabled)
 - **External Secrets Operator** or **Secrets Store CSI Driver** (recommended for
