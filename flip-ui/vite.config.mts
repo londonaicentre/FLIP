@@ -15,9 +15,16 @@ import svgLoader from "vite-svg-loader";
 import iconStubPlugin from "./test/iconStubPlugin";
 
 // https://vitejs.dev/config/
-export default defineConfig(({ mode, command }) => {
+export default defineConfig(({ mode, command, isPreview }) => {
 
     const env = loadEnv(mode, process.cwd());
+
+    // Public Ark+ demo build (`vite --mode demo` / `vite build --mode demo`).
+    // The deployable build (and `vite preview`, which serves that build) lives
+    // under /ark_demo/; the dev server stays at "/" so local eyeballing needs
+    // no path juggling.
+    const isDemo = mode === "demo";
+    const demoBase = isDemo && (command === "build" || isPreview);
 
     // Belt-and-braces guard for `vite build` invoked directly (bypassing
     // the npm prebuild hook in package.json). Vite inlines VITE_LOCAL at
@@ -35,6 +42,22 @@ export default defineConfig(({ mode, command }) => {
         );
     }
 
+    // Same stakes for the public-demo flag: VITE_DEMO bypasses Cognito auth
+    // and swaps the real API for the offline demo Mirage server
+    // (mocks/demo-server.ts). The only supported way to set it is
+    // `--mode demo`, where the `define` below inlines it deterministically —
+    // so any build where it arrives through the environment instead is a
+    // mis-configured production build, not a demo build.
+    if (command === "build" && !isDemo && env.VITE_DEMO === "true") {
+        throw new Error(
+            "Refusing to build flip-ui: VITE_DEMO=true is set. " +
+            "VITE_DEMO bypasses Cognito auth and boots the offline demo " +
+            "MirageJS server; the only supported way to build the demo " +
+            "bundle is `npm run build:demo` (vite build --mode demo). " +
+            "Unset VITE_DEMO before running `vite build`."
+        );
+    }
+
     const envWithProcessPrefix = Object.entries(env).reduce(
         (prev, [key, val]) => {
             return {
@@ -46,6 +69,7 @@ export default defineConfig(({ mode, command }) => {
     );
 
     return {
+        base: demoBase ? "/ark_demo/" : "/",
         plugins: [
             progress(),
             vue(
@@ -103,10 +127,24 @@ export default defineConfig(({ mode, command }) => {
                 }
             ]
         },
-        define: envWithProcessPrefix,
+        define: {
+            ...envWithProcessPrefix,
+            // Inline the demo flag deterministically for `--mode demo`, independent
+            // of .env-file / process-env resolution quirks.
+            ...(isDemo ? { "import.meta.env.VITE_DEMO": JSON.stringify("true") } : {})
+        },
         build: {
             sourcemap: false,
             chunkSizeWarningLimit: 1024,
+            // Demo build only: Vite's default assetsDir ("assets") would put the
+            // SPA's own JS/CSS/font bundle at /ark_demo/assets/*, colliding with
+            // the CloudFront behavior that routes /ark_demo/assets/* to the
+            // separate demo-downloads S3 bucket (deploy/providers/AWS/cloudfront.tf,
+            // "Public Ark+ demo download assets"). That behavior would intercept
+            // the bundle's own JS/CSS requests and 403 them against the wrong
+            // bucket, breaking the app before Vue ever mounts. Non-demo builds
+            // keep Vite's default.
+            assetsDir: isDemo ? "static" : "assets",
             rolldownOptions: {
                 output: {
                     manualChunks: (id) => {
@@ -142,7 +180,7 @@ export default defineConfig(({ mode, command }) => {
             globals: true,
             environment: "jsdom",
             setupFiles: ["./test/setup.ts"],
-            include: ["src/**/*.spec.ts", "scripts/**/*.spec.ts"],
+            include: ["src/**/*.spec.ts", "scripts/**/*.spec.ts", "mocks/**/*.spec.ts"],
             coverage: { reporter: ["text", "json", "cobertura"] },
             server: {
                 deps: {

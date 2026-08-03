@@ -82,6 +82,15 @@ export const authCheck = async (
             return next();
         }
 
+        // Public Ark+ demo build (VITE_DEMO): no Cognito, every route open.
+        // Safe because the demo bundle talks only to the in-browser Mirage
+        // server (mocks/demo-server.ts), which has no passthrough — there is
+        // no real backend to protect. Vite inlines the flag, so no other
+        // build ships this branch.
+        if (import.meta.env.VITE_DEMO === "true") {
+            return next();
+        }
+
         // Cypress E2E test seam. Gated on a build-time mode flag rather than
         // a runtime window probe so a stray script setting `window.Cypress`
         // can never enable it in a production bundle.

@@ -21,8 +21,10 @@ import { createApp } from "vue";
 import VueTippy from "vue-tippy";
 import SmartTable from "vuejs-smart-table";
 
+import { makeDemoServer } from "../mocks/demo-server";
 import { makeServer } from "../mocks/server";
 import App from "./App.vue";
+import { IS_DEMO, seedDemoAuth } from "./demo/bootstrap";
 import router from "./router";
 import { authConfig } from "./utils/auth";
 
@@ -38,7 +40,17 @@ Amplify.configure(authConfig);
 // no runtime-flippable bypass to worry about.
 const isE2E = import.meta.env.VITE_E2E === "true";
 
-if (import.meta.env.VITE_LOCAL === "true" && !isE2E) {
+if (IS_DEMO) {
+    // Public Ark+ demo: offline, read-only, mocked API with the recorded
+    // (anonymised) platform register. Pin the axios baseURL to the prefix the
+    // demo Mirage server answers on, so a stale window.js can't point the app
+    // at a real backend, then seed the read-only viewer identity.
+    console.info("Running in Ark+ demo mode — offline, read-only, mocked API.");
+    window.AWS_BASE_URL = "/api";
+    makeDemoServer();
+    seedDemoAuth();
+}
+else if (import.meta.env.VITE_LOCAL === "true" && !isE2E) {
     console.info("Running locally, will use mocked API.");
     makeServer();
 }

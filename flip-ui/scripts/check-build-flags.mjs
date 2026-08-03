@@ -12,14 +12,18 @@
  * limitations under the License.
  */
 
-// Wired into the `prebuild` and `prebuild:deploy` npm hooks so it runs
-// only before `npm run build` / `npm run build:deploy`, never before
-// `npm run dev`. Vite inlines `import.meta.env.VITE_LOCAL` at build
-// time and the surrounding branches in src/utils/auth.ts and
-// src/main.ts are dead-code-eliminated when the flag is "false" — so
-// any production-style build with VITE_LOCAL=true ships a bundle that
-// bypasses the Cognito session check on every guarded route and
-// boots the MirageJS mock instead of the real backend.
+// Wired into the `prebuild`, `prebuild:deploy` and `prebuild:demo` npm
+// hooks so it runs before every `npm run build*`, never before
+// `npm run dev`. Vite inlines `import.meta.env.VITE_LOCAL` /
+// `import.meta.env.VITE_DEMO` at build time and the surrounding
+// branches in src/utils/auth.ts and src/main.ts are
+// dead-code-eliminated when the flag is anything but "true" — so any
+// production-style build carrying either flag ships a bundle that
+// bypasses the Cognito session check on every guarded route and boots
+// a MirageJS mock instead of the real backend. The public demo build
+// is not exempt: `npm run build:demo` gets its flag from vite.config's
+// `define` for `--mode demo`, so VITE_DEMO must never be set in the
+// environment at all.
 
 import { pathToFileURL } from "node:url";
 
@@ -49,6 +53,35 @@ export function checkViteLocal(env) {
 }
 
 /**
+ * Same contract as checkViteLocal, for the public-demo flag. VITE_DEMO
+ * short-circuits the Cognito session check and boots the offline demo
+ * MirageJS server (mocks/demo-server.ts) — an unauthenticated bundle,
+ * exactly like VITE_LOCAL. The legitimate demo build never needs the
+ * env var: `npm run build:demo` runs `vite build --mode demo`, and
+ * vite.config.mts inlines the flag via `define` for that mode.
+ *
+ * @param {Record<string, string | undefined>} env
+ * @returns {string | null}
+ */
+export function checkViteDemo(env) {
+    if (env.VITE_DEMO !== "true") return null;
+
+    return [
+        "Refusing to build flip-ui: VITE_DEMO=true is set in the environment.",
+        "",
+        "VITE_DEMO bypasses the Cognito session check in src/utils/auth.ts",
+        "and boots the offline demo MirageJS server from src/main.ts. Vite",
+        "inlines this flag at build time, so a production-style build with",
+        "VITE_DEMO=true ships an unauthenticated demo bundle in place of",
+        "the real app.",
+        "",
+        "The only supported way to produce the public demo bundle is",
+        "'npm run build:demo' (vite build --mode demo), which inlines the",
+        "flag itself. Never set VITE_DEMO in the environment or an env file."
+    ].join("\n");
+}
+
+/**
  * CLI driver. Takes the side-effecting bits as parameters so a unit
  * test can drive it without forking a real process — child-process
  * spawns don't count for vitest's coverage instrumentation, and we
@@ -59,7 +92,7 @@ export function checkViteLocal(env) {
  * @returns {0 | 1} exit code; the caller forwards it to process.exit.
  */
 export function runCli(env, io) {
-    const reason = checkViteLocal(env);
+    const reason = checkViteLocal(env) ?? checkViteDemo(env);
     if (reason) {
         io.error(reason);
         io.exit(1);
