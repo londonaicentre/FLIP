@@ -120,6 +120,11 @@ loss-like metrics, `BEST_MODEL_METRIC_MINIMIZE: true`) wires NVFLARE's stock
   save `best_FL_global_model.pt` next to `FL_global_model.pt` — same file format as the final
   model. Round 0 is skipped (no aggregated model exists yet), so selection needs
   `GLOBAL_ROUNDS >= 2` — a single-round job can never save a best model.
+- The **final model itself is never a selection candidate**: metrics are evaluated on received
+  global models before training, and the last round's aggregate is never re-broadcast, so there
+  is no post-last-round evaluation. "Best" therefore means best among the intermediate global
+  models — the final model may in fact outperform the saved best, in which case the two files
+  differ even though the final is the better checkpoint.
 - The results zip contains the best model only when selection ran and saved one; no best file is
   fabricated from the final model otherwise.
 

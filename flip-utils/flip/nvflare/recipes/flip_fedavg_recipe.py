@@ -150,11 +150,16 @@ class FlipFedAvgRecipe(Recipe):
         best_model_metric: when set, wire stock ``IntimeModelSelector`` keyed on this metric so the
             best global model is saved alongside the final one (FLIP#673). Clients must report the
             metric — evaluated on the *received* global model, before local training — via
-            ``FLModel(metrics={...})``; the selector weight-averages it across clients each round
-            and fires ``GLOBAL_BEST_MODEL_AVAILABLE`` on improvement, which the persistor answers
-            by saving ``best_FL_global_model.pt`` in the same format as the final model. Round 0 is
-            skipped (there is no aggregated model yet). Empty/None (default) wires no selector and
-            no best model is saved.
+            ``FLModel(metrics={...})``; the selector averages it across clients each round (an
+            unweighted mean — stock defaults: no ``aggregation_weights``, ``weigh_by_local_iter``
+            off) and fires ``GLOBAL_BEST_MODEL_AVAILABLE`` on improvement, which the persistor
+            answers by saving ``best_FL_global_model.pt`` in the same format as the final model.
+            Round 0 is skipped (there is no aggregated model yet), so this requires
+            ``num_rounds >= 2`` — a single-round job raises ``ValueError`` at construction,
+            mirroring the fl-api's ``BEST_MODEL_METRIC`` upload guard. The *final* aggregated
+            model is never re-broadcast and therefore never evaluated for selection: "best" means
+            best among the intermediate global models, and the final model may in fact outperform
+            it. Empty/None (default) wires no selector and no best model is saved.
         best_model_metric_minimize: True negates the key metric for selection, for loss-like
             metrics where lower is better. Defaults to False (higher is better).
     """
@@ -183,6 +188,15 @@ class FlipFedAvgRecipe(Recipe):
         best_model_metric: str | None = None,
         best_model_metric_minimize: bool = False,
     ):
+        # IntimeModelSelector always skips round 0, so a single-round job could never fire it: the
+        # job would run fine but silently never save a best model. Fail fast instead, mirroring
+        # fl-api's validate_config guard on the platform path.
+        if best_model_metric and num_rounds <= 1:
+            raise ValueError(
+                "best_model_metric requires num_rounds >= 2: the best-model selector skips "
+                "round 0, so a single-round job can never save a best model"
+            )
+
         self.num_rounds = num_rounds
         self.min_clients = min_clients
         self.train_script = train_script if train_script.startswith("custom/") else f"custom/{train_script}"

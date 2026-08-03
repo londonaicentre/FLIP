@@ -44,7 +44,10 @@ trainer evaluates the *received* global model on its validation split before tra
 `F1-SCORE`/`PRECISION`/`RECALL` — the default is macro `VAL-F1-SCORE`. Remove both keys to skip
 selection (and the extra per-round validation pass); the results zip then contains only the final
 model. Round 0 is never selected (no aggregated model exists yet), so `BEST_MODEL_METRIC` requires
-`GLOBAL_ROUNDS >= 2` in `config.json` — platform uploads reject the combination otherwise.
+`GLOBAL_ROUNDS >= 2` in `config.json` — platform uploads reject the combination otherwise. Note
+that the final model is never a selection candidate: the metric is evaluated on the global model
+each client *receives*, and the last round's aggregate is never sent back out, so `best` means
+best among the intermediate global models — the final model may actually outperform it.
 
 ## FLIP-specific values
 

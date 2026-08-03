@@ -14,6 +14,8 @@ import sys
 import types
 from pathlib import Path
 
+import pytest
+
 # PTFileModelPersistor's model={"path": "models.get_model"} triggers an import of the user's
 # ``models`` module at construction. In a real job that module lives in custom/; under unit
 # tests we inject a stub before importing the recipe.
@@ -286,3 +288,17 @@ class TestFlipFedAvgRecipeBestModel:
         server_cfg = self._export_server_cfg(tmp_path, best_model_metric="VAL_LOSS", best_model_metric_minimize=True)
         selector = next(c for c in server_cfg["components"] if "IntimeModelSelector" in c.get("path", ""))
         assert selector["args"]["negate_key_metric"] is True
+
+    def test_best_model_metric_with_single_round_raises(self):
+        """best_model_metric on a 1-round job fails fast instead of silently never saving a best model.
+
+        IntimeModelSelector always skips round 0, so a single-round job can never fire it —
+        mirrors the fl-api validate_config guard on the platform path.
+        """
+        with pytest.raises(ValueError, match="num_rounds >= 2"):
+            FlipFedAvgRecipe(num_rounds=1, best_model_metric="VAL_DICE")
+
+    def test_best_model_metric_with_two_rounds_constructs(self, tmp_path: Path):
+        """num_rounds=2 is the minimum where selection can fire; the selector is wired normally."""
+        server_cfg = self._export_server_cfg(tmp_path, num_rounds=2, best_model_metric="VAL_DICE")
+        assert any("IntimeModelSelector" in c.get("path", "") for c in server_cfg["components"])
