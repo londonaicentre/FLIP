@@ -44,3 +44,11 @@ ADMIN_EMAIL_2 = "alexandre.triay_bagur@kcl.ac.uk"
 ADMIN_EMAIL_3 = "rafael.dias@kcl.ac.uk"
 RESEARCHER_EMAIL = "rafaelagd@gmail.com"
 VIEWER_EMAIL = "triayalex@gmail.com"
+
+# Demo users for the scripted demo-video recorder (tests/demo_video.py). Created
+# in Cognito by flip_api/scripts/create_demo_users.py (passwords come from
+# DEMO_*_PASSWORD env vars, never committed); role grants are seeded at boot by
+# db/seed/main_users.py iff the users exist in the pool. Emails are env-
+# overridable so operators can point the demo at their own accounts.
+DEMO_RESEARCHER_EMAIL = os.environ.get("DEMO_RESEARCHER_EMAIL", "flip-demo-researcher@example.com")
+DEMO_ADMIN_EMAIL = os.environ.get("DEMO_ADMIN_EMAIL", "flip-demo-admin@example.com")

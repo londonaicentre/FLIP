@@ -10,30 +10,25 @@
 # limitations under the License.
 #
 
-import json
 import uuid
 from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi import status
-from fastapi.exceptions import HTTPException
 from fastapi.testclient import TestClient
 
 from flip_api.auth.dependencies import verify_token
 from flip_api.config import Settings
 from flip_api.db.database import get_session
 from flip_api.db.models.main_models import UploadedFiles
-from flip_api.domain.schemas.file import BucketStatus, FileUploadStatus, ScannedFileInput
-from flip_api.file_services.uploaded_file import process_scanned_file
+from flip_api.domain.schemas.file import FileUploadStatus
 from flip_api.main import app
-
-# ---------- Authorisation tests for /files/process-scanned-file ----------
 
 client = TestClient(app)
 
-auth_test_user_id = uuid.uuid4()
-auth_test_model_id = uuid.uuid4()
-auth_test_file_name = "weights.bin"
+_USER_ID = uuid.uuid4()
+_MODEL_ID = uuid.uuid4()
+_FILE_NAME = "weights.pt"
 
 
 @pytest.fixture
@@ -41,268 +36,173 @@ def override_auth_dependencies():
     """Inject a deterministic user_id and a mock DB session into the endpoint."""
     mock_session = MagicMock()
     app.dependency_overrides[get_session] = lambda: mock_session
-    app.dependency_overrides[verify_token] = lambda: auth_test_user_id
+    app.dependency_overrides[verify_token] = lambda: _USER_ID
     yield mock_session
     app.dependency_overrides.clear()
 
 
 @pytest.fixture
-def mocked_settings_for_auth():
-    settings = Settings(UPLOADED_MODEL_FILES_BUCKET="test-uploaded-bucket")
+def mocked_settings():
+    settings = Settings(UPLOADED_MODEL_FILES_BUCKET="s3://test-uploaded-bucket/uploaded")
     with patch("flip_api.file_services.uploaded_file.get_settings", return_value=settings):
         yield settings
 
 
 @pytest.fixture
-def mock_s3_for_auth():
+def mock_s3():
+    """S3 stub: the staged object exists with fixed metadata."""
     with patch("flip_api.file_services.uploaded_file.S3Client") as mock_client:
         instance = MagicMock()
+        instance.object_exists.return_value = True
         instance.head_object.return_value = {"ContentLength": 1024, "ContentType": "application/octet-stream"}
         mock_client.return_value = instance
         yield instance
 
 
-def test_process_scanned_file_returns_403_when_user_cannot_modify_model(
-    override_auth_dependencies, mocked_settings_for_auth, mock_s3_for_auth
+@pytest.fixture
+def mock_reconcile():
+    """Stub the background reconcile so tests never open a real DB session.
+
+    Patched in the endpoint module's namespace — ``BackgroundTasks`` holds
+    whatever object the route passed to ``add_task``, and the TestClient runs
+    it synchronously after the response is built.
+    """
+    with patch("flip_api.file_services.uploaded_file.reconcile_uploaded_file_in_background") as mock_fn:
+        yield mock_fn
+
+
+def test_returns_403_when_user_cannot_modify_model(
+    override_auth_dependencies, mocked_settings, mock_s3, mock_reconcile
 ):
     mock_session = override_auth_dependencies
     with patch("flip_api.file_services.uploaded_file.can_modify_model", return_value=False):
-        response = client.post(f"/api/files/process-scanned-file/{auth_test_model_id}/{auth_test_file_name}")
+        response = client.post(f"/api/files/process-scanned-file/{_MODEL_ID}/{_FILE_NAME}")
 
     assert response.status_code == status.HTTP_403_FORBIDDEN
-    assert str(auth_test_user_id) in response.json()["detail"]
+    assert str(_USER_ID) in response.json()["detail"]
     mock_session.add.assert_not_called()
     mock_session.commit.assert_not_called()
-    mock_s3_for_auth.head_object.assert_not_called()
+    mock_s3.head_object.assert_not_called()
+    mock_reconcile.assert_not_called()
 
 
-def test_process_scanned_file_succeeds_when_user_can_modify_model(
-    override_auth_dependencies, mocked_settings_for_auth, mock_s3_for_auth
+def test_returns_404_when_staged_object_absent(
+    override_auth_dependencies, mocked_settings, mock_s3, mock_reconcile
+):
+    """A registration for a file that never landed in S3 must not create a row."""
+    mock_session = override_auth_dependencies
+    mock_s3.object_exists.return_value = False
+
+    with patch("flip_api.file_services.uploaded_file.can_modify_model", return_value=True):
+        response = client.post(f"/api/files/process-scanned-file/{_MODEL_ID}/{_FILE_NAME}")
+
+    assert response.status_code == status.HTTP_404_NOT_FOUND
+    mock_session.add.assert_not_called()
+    mock_session.commit.assert_not_called()
+    mock_reconcile.assert_not_called()
+
+
+def test_registers_new_file_as_scanning_and_schedules_reconcile(
+    override_auth_dependencies, mocked_settings, mock_s3, mock_reconcile
 ):
     mock_session = override_auth_dependencies
-    mock_session.exec.return_value.first.return_value = None  # no existing row → insert path
+    mock_session.exec.return_value.first.return_value = None  # no existing row -> insert path
+
     with patch("flip_api.file_services.uploaded_file.can_modify_model", return_value=True):
-        response = client.post(f"/api/files/process-scanned-file/{auth_test_model_id}/{auth_test_file_name}")
+        response = client.post(f"/api/files/process-scanned-file/{_MODEL_ID}/{_FILE_NAME}")
 
     assert response.status_code == status.HTTP_200_OK
-    assert response.json() == {"message": "File processed successfully"}
+    assert response.json() == {"message": "File registered for scanning", "status": "SCANNING"}
+
     mock_session.add.assert_called_once()
+    inserted = mock_session.add.call_args.args[0]
+    # Regression guard: the legacy insert path passed ``status=<str>`` while
+    # the update path passed the enum — both must be the enum now.
+    assert inserted.status is FileUploadStatus.SCANNING
+    assert inserted.size == 1024
+    assert inserted.type == "application/octet-stream"
+    assert inserted.updated_at is not None
     mock_session.commit.assert_called_once()
 
+    mock_reconcile.assert_called_once_with(_MODEL_ID, _FILE_NAME)
 
-def test_process_scanned_file_returns_422_for_non_uuid_model_id(
-    override_auth_dependencies, mocked_settings_for_auth, mock_s3_for_auth
+
+def test_reregistration_resets_terminal_status_to_scanning(
+    override_auth_dependencies, mocked_settings, mock_s3, mock_reconcile
 ):
+    """Re-uploading a file previously judged INFECTED is the only way out of
+    that status — the upsert must reset it to SCANNING for the fresh object."""
+    mock_session = override_auth_dependencies
+    existing = UploadedFiles(
+        name=_FILE_NAME,
+        status=FileUploadStatus.INFECTED,
+        size=1,
+        type="deleted",
+        model_id=_MODEL_ID,
+    )
+    mock_session.exec.return_value.first.return_value = existing
+
+    with patch("flip_api.file_services.uploaded_file.can_modify_model", return_value=True):
+        response = client.post(f"/api/files/process-scanned-file/{_MODEL_ID}/{_FILE_NAME}")
+
+    assert response.status_code == status.HTTP_200_OK
+    assert existing.status is FileUploadStatus.SCANNING
+    assert existing.size == 1024
+    assert existing.updated_at is not None
+    mock_session.add.assert_not_called()
+    mock_session.commit.assert_called_once()
+    mock_reconcile.assert_called_once_with(_MODEL_ID, _FILE_NAME)
+
+
+def test_returns_422_for_non_uuid_model_id(override_auth_dependencies, mocked_settings, mock_s3, mock_reconcile):
     """FastAPI must reject malformed model_id at the path-parameter layer."""
     with patch("flip_api.file_services.uploaded_file.can_modify_model", return_value=True) as can_modify:
-        response = client.post(f"/api/files/process-scanned-file/not-a-uuid/{auth_test_file_name}")
+        response = client.post(f"/api/files/process-scanned-file/not-a-uuid/{_FILE_NAME}")
 
     assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
     can_modify.assert_not_called()
 
 
-# ---------- Legacy SNS-pipeline tests (skipped, see comment below) ----------
+@pytest.mark.parametrize(
+    "bad_file_name",
+    [
+        # ``..`` (literal) is collapsed by HTTP-client URL normalisation
+        # before the request is sent, so it never reaches the validator;
+        # the percent-encoded forms below are the real attack shape.
+        "..%2Fescape.pt",
+        "subdir%2Ffile.pt",
+        "subdir%5Cfile.pt",
+        "file%00.pt",
+    ],
+)
+def test_rejects_path_traversal_file_name(
+    override_auth_dependencies, mocked_settings, mock_s3, mock_reconcile, bad_file_name
+):
+    """The ``SafeFileName`` path-param validator must short-circuit before any
+    S3 access — the file name is later used as an S3 key segment and as a
+    local file name for the picklescan download."""
+    with patch("flip_api.file_services.uploaded_file.can_modify_model", return_value=True):
+        response = client.post(f"/api/files/process-scanned-file/{_MODEL_ID}/{bad_file_name}")
+
+    # Accept either 422 (validator rejects) or 404 (Starlette routing rejects
+    # the raw segment); the contract is that no S3 call happens.
+    assert response.status_code in (status.HTTP_404_NOT_FOUND, status.HTTP_422_UNPROCESSABLE_ENTITY)
+    mock_s3.object_exists.assert_not_called()
+    mock_reconcile.assert_not_called()
 
 
-@pytest.fixture
-def mock_s3_client():
-    """Mock S3Client for testing."""
-    with patch("flip_api.file_services.uploaded_file.S3Client") as mock_client:
-        s3_instance = MagicMock()
-        mock_client.return_value = s3_instance
-        # Mock head_object to return file metadata
-        s3_instance.head_object.return_value = {"ContentLength": 1024, "ContentType": "text/plain"}
-        yield s3_instance
+def test_unhandled_error_does_not_echo_exception_text(
+    override_auth_dependencies, mocked_settings, mock_s3, mock_reconcile
+):
+    """The 500 detail must stay generic — the legacy handler interpolated
+    ``str(e)`` into the response body."""
+    mock_session = override_auth_dependencies
+    mock_session.exec.side_effect = Exception("SECRET-INTERNAL-DETAIL")
 
+    with patch("flip_api.file_services.uploaded_file.can_modify_model", return_value=True):
+        response = client.post(f"/api/files/process-scanned-file/{_MODEL_ID}/{_FILE_NAME}")
 
-@pytest.fixture
-def mocked_settings():
-    mock = Settings(
-        SCANNED_MODEL_FILES_BUCKET="test-secure-bucket",
-    )
-    with patch("flip_api.file_services.uploaded_file.get_settings", return_value=mock):
-        yield mock
-
-
-@pytest.fixture
-def clean_file_event():
-    """Create a sample SNS event for a clean file."""
-    model_id = str(uuid.uuid4())
-    file_name = "test.txt"
-    key = f"{model_id}/{file_name}"
-
-    message = {"bucket": "test-bucket", "key": key, "status": BucketStatus.CLEAN.value}
-
-    return ScannedFileInput(Records=[{"Sns": {"Message": json.dumps(message)}}])
-
-
-@pytest.fixture
-def infected_file_event():
-    """Create a sample SNS event for an infected file."""
-    model_id = str(uuid.uuid4())
-    file_name = "infected.txt"
-    key = f"{model_id}/{file_name}"
-
-    message = {"bucket": "test-bucket", "key": key, "status": BucketStatus.INFECTED.value}
-
-    return ScannedFileInput(Records=[{"Sns": {"Message": json.dumps(message)}}])
-
-
-@pytest.mark.skip("Bypassing virus scanning and AWS SNS after model file upload for the demo.")
-def test_process_clean_file_success(mock_s3_client, mocked_settings, clean_file_event):
-    """Test successful processing of a clean file."""
-    # Mock the database session
-    mock_db = MagicMock()
-    mock_db.exec.return_value.first.return_value = None  # File doesn't exist in DB yet
-
-    # Call the function
-    result = process_scanned_file(clean_file_event, mock_db)
-
-    # Verify result is the original message
-    message = json.loads(clean_file_event.Records[0]["Sns"]["Message"])
-    assert result == message
-
-    # Verify database operations
-    mock_db.add.assert_called_once()
-    mock_db.commit.assert_called_once()
-
-    # Verify S3 operations
-    key = message["key"]
-    mock_s3_client.head_object.assert_called()
-    mock_s3_client.copy_object.assert_called_once_with(message["bucket"], key, "test-secure-bucket", key)
-    mock_s3_client.delete_object.assert_called_once_with(message["bucket"], key)
-
-
-@pytest.mark.skip("Bypassing virus scanning and AWS SNS after model file upload for the demo.")
-def test_process_existing_file_update(mock_s3_client, mocked_settings, clean_file_event):
-    """Test updating an existing file in the database."""
-    # Create existing file record
-    message = json.loads(clean_file_event.Records[0]["Sns"]["Message"])
-    key_parts = message["key"].split("/")
-    model_id = key_parts[0]
-    file_name = key_parts[1]
-
-    existing_file = UploadedFiles(
-        name=file_name, status=FileUploadStatus.SCANNING, size=0, type="unknown", model_id=model_id
-    )
-
-    # Mock the database session
-    mock_db = MagicMock()
-    mock_db.exec.return_value.first.return_value = existing_file
-
-    # Call the function
-    process_scanned_file(clean_file_event, mock_db)
-
-    # Verify file was updated not added
-    mock_db.add.assert_not_called()
-    mock_db.commit.assert_called_once()
-
-    # Verify file attributes were updated
-    assert existing_file.status == FileUploadStatus.COMPLETED
-    assert existing_file.size == 1024
-    assert existing_file.type == "text/plain"
-
-
-@pytest.mark.skip("Bypassing virus scanning and AWS SNS after model file upload for the demo.")
-def test_process_infected_file(mock_s3_client, mocked_settings, infected_file_event):
-    """Test handling of an infected file."""
-    # Mock the database session
-    mock_db = MagicMock()
-    mock_db.exec.return_value.first.return_value = None
-
-    # Call the function and expect an HTTPException
-    with pytest.raises(HTTPException) as excinfo:
-        process_scanned_file(infected_file_event, mock_db)
-
-    # Verify the status code is 400 (Bad Request)
-    assert excinfo.value.status_code == 400
-
-    # Verify S3 delete was called to remove the infected file
-    message = json.loads(infected_file_event.Records[0]["Sns"]["Message"])
-    mock_s3_client.delete_object.assert_called_once_with(message["bucket"], message["key"])
-
-    # Verify file wasn't copied
-    mock_s3_client.copy_object.assert_not_called()
-
-
-@pytest.mark.skip("Bypassing virus scanning and AWS SNS after model file upload for the demo.")
-def test_s3_head_object_exception(mock_s3_client, mocked_settings, clean_file_event):
-    """Test handling an exception when retrieving file metadata."""
-    # Setup mock to raise an exception
-    mock_s3_client.head_object.side_effect = Exception("S3 head_object error")
-
-    # Mock the database session
-    mock_db = MagicMock()
-
-    # Call the function and expect an HTTPException
-    with pytest.raises(HTTPException) as excinfo:
-        process_scanned_file(clean_file_event, mock_db)
-
-    # Verify the status code is 500 (Internal Server Error)
-    assert excinfo.value.status_code == 500
-    assert "Unable to retrieve the file's details" in str(excinfo.value.detail)
-
-
-@pytest.mark.skip("Bypassing virus scanning and AWS SNS after model file upload for the demo.")
-def test_s3_copy_exception(mock_s3_client, mocked_settings, clean_file_event):
-    """Test handling an exception when copying file to secure bucket."""
-    # Setup mock to raise an exception on copy_object
-    mock_s3_client.copy_object.side_effect = Exception("S3 copy error")
-
-    # Mock the database session
-    mock_db = MagicMock()
-    mock_db.exec.return_value.first.return_value = None
-
-    # Call the function and expect an HTTPException
-    with pytest.raises(HTTPException) as excinfo:
-        process_scanned_file(clean_file_event, mock_db)
-
-    # Verify the status code is 500 (Internal Server Error)
-    assert excinfo.value.status_code == 500
-    assert "Unable to copy scanned file in secure bucket" in str(excinfo.value.detail)
-
-
-@pytest.mark.skip("Bypassing virus scanning and AWS SNS after model file upload for the demo.")
-def test_invalid_model_id(mock_s3_client, mocked_settings):
-    """Test handling an invalid model ID in the file key."""
-    # Create event with empty model ID
-    message = {
-        "bucket": "test-bucket",
-        "key": "/test.txt",  # Missing model ID
-        "status": BucketStatus.CLEAN.value,
-    }
-
-    event = ScannedFileInput(Records=[{"Sns": {"Message": json.dumps(message)}}])
-
-    # Mock the database session
-    mock_db = MagicMock()
-
-    # Call the function and expect an HTTPException
-    with pytest.raises(HTTPException) as excinfo:
-        process_scanned_file(event, mock_db)
-
-    # Verify the status code is 400 (Bad Request)
-    assert excinfo.value.status_code == 400
-    assert "valid model ID" in str(excinfo.value.detail)
-
-
-@pytest.mark.skip("Bypassing virus scanning and AWS SNS after model file upload for the demo.")
-def test_s3_verify_exception(mock_s3_client, mocked_settings, clean_file_event):
-    """Test handling an exception when verifying file in secure bucket."""
-    # Setup mock to raise an exception on second head_object call
-    mock_s3_client.head_object.side_effect = [
-        {"ContentLength": 1024, "ContentType": "text/plain"},  # First call succeeds
-        Exception("S3 verification error"),  # Second call fails
-    ]
-
-    # Mock the database session
-    mock_db = MagicMock()
-    mock_db.exec.return_value.first.return_value = None
-
-    # Call the function and expect an HTTPException
-    with pytest.raises(HTTPException) as excinfo:
-        process_scanned_file(clean_file_event, mock_db)
-
-    # Verify the status code is 500 (Internal Server Error)
-    assert excinfo.value.status_code == 500
-    assert "Unable to access scanned file in secure bucket" in str(excinfo.value.detail)
+    assert response.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
+    assert response.json()["detail"] == "Internal server error"
+    assert "SECRET-INTERNAL-DETAIL" not in response.text
+    mock_reconcile.assert_not_called()

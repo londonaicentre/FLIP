@@ -15,7 +15,7 @@ FLIP/
 ├── flip-ui/            # Frontend UI (Vue 3 / TypeScript / TailwindCSS)
 ├── flip-utils/         # FLIP Python library (pip-installable flip-utils)
 ├── fl-services/        # FL Docker services + network provisioning, per backend (Makefile owns build/provision/up/down/submit; flower also up-secure): fl-services/nvflare/{fl-base,fl-server,fl-client,fl-api-base, provision/{net-*_project_*.yml, scripts/, workspace-{dev,stag,prod}/ gitignored}}, fl-services/flower/{fl-base,superlink,supernode,fl-api-flower, provision/{scripts/, creds/ gitignored}} (#622)
-├── fl-apps/            # FL app templates per backend: fl-apps/nvflare/{standard,standard_client_api,fed_opt,evaluation,evaluation_client_api,diffusion_model}, fl-apps/flower/{standard,evaluation} + check_required_files.sh (cross-backend CI validator at root)
+├── fl-apps/            # FL app templates per backend: fl-apps/nvflare/{standard,standard_client_api,fed_opt,evaluation,evaluation_client_api,diffusion_model,diffusion_model_client_api}, fl-apps/flower/{standard,evaluation} + check_required_files.sh (cross-backend CI validator at root)
 ├── fl-tutorials/       # FL tutorials per backend: fl-tutorials/nvflare/{image_*,testing}, fl-tutorials/flower/{xray_classification,3d_spleen_segmentation*,numpy} (root Makefile forwards by FL_BACKEND); xray classification, spleen seg/eval, diffusion
 ├── trust/
 │   ├── trust-api/      # Trust API gateway (Python/FastAPI)
@@ -233,7 +233,32 @@ make debug-off SERVICE=flip-api    # Stop debug mode
 ```bash
 make -C flip-api create_testing_projects   # Create test projects
 make -C flip-api delete_testing_projects   # Clean up test data
+make seed-demo-projects                    # Curated radiology catalogue in honest lifecycle states
+                                           # (EXTRA_ARGS="--cleanup" removes it again)
 ```
+
+### Demo Video Recorder
+
+`make demo-video` records the full end-to-end walkthrough (researcher creates project + cohort → admin checks
+Connection Status, stages + approves → XNAT/OHIF DICOM view at a trust → model + app upload → training → results
+download) against the **live dev stack** and assembles one mp4. Local dev tool, not run in CI. Six Cypress segments
+(`flip-ui/test/cypress/demo/`, config `flip-ui/cypress.demo.config.ts` — a live-wired fork of the docs-GIF harness
+with a `demoCaption` subtitle verb) run in Docker (`cypress/included`, `--network host`); the slow platform waits
+(cohort responses, ~6 min imaging import, FL training) happen **off-camera** between segments via
+`flip-api/tests/demo_video.py`, which reuses `tests/e2e_smoke.py`'s wait functions and finally calls
+`flip-ui/scripts/assemble-demo-video.sh` (same crop constants as `videos-to-gifs.sh`). Prerequisites: stack up,
+live AWS SSO session, and ideally the demo Cognito users — `make demo-users` (reads `DEMO_RESEARCHER_PASSWORD` /
+`DEMO_ADMIN_PASSWORD` from env, never committed) then restart flip-api so seeding grants their roles; without them
+the recorder falls back to the well-known admin for both parts. Useful `DEMO_ARGS`: `--app spleen` (record the 3D
+spleen segmentation tutorial instead of chest X-ray; pair with `--data-enrichment-cwd/-cmd` for the off-camera
+label upload, same contract as `e2e_smoke`), `--publish-segmentations` (republish those NIfTI labels as DICOM-SEG
+ROI collections via `flip-api/tests/xnat_seg_upload.py` so segment 3 shows the segmentation overlaid in OHIF —
+dcmqi in Docker for the conversion, the viewer's own `PUT /xapi/roi/…?type=SEG` for the upload; `--seg-limit`
+caps how many sessions per trust are converted), `--skip-xnat`, `--project-id <uuid> --from-segment <n>` (iterate
+on later segments without re-running the pull), `--trusts GSTT`, `--fl-backend flower`, `--video-scale 1` (fast
+drafts; the default 3 renders the browser at 3× device pixels so the 1280x800 viewport is captured at 3840x2400 —
+4K-class). Segment mp4s + the final video land under `flip-ui/test/cypress/demo/` (gitignored). The final mp4 is
+named for the recorded app (`flip-demo-xray.mp4` / `flip-demo-spleen.mp4`).
 
 ### Database migrations (flip-api)
 
@@ -359,6 +384,10 @@ After changes, evaluate if docs need updating:
 - `ENFORCE_MFA` — `true` (the `Settings` default; do **not** set in `.env*` files for stag/prod) gates every authenticated route on TOTP enrolment via the app-layer MFA check in `verify_token`. The dev override lives in `deploy/compose.development.yml` (`ENFORCE_MFA=false`) so local development doesn't force enrolment on a burner authenticator app. Production compose (`compose.production.yml`) passes `ENFORCE_MFA=${ENFORCE_MFA:-true}` so the env var can be overridden from `.env.stag`/`.env.prod` for testing, but falls back to the secure `true` default when unset. Intentionally not in `.env.development.example` or AWS Secrets Manager — the Settings default (`true`) is the canonical secure anchor. The UI mirrors this flag from `/users/me/mfa/status` and skips the enrolment redirect when it's false.
 - `MAX_MODEL_FILE_BYTES` — Hard cap on the file size of a single model-file upload, in bytes. Bound on the presigned POST policy so S3 rejects oversized payloads at the edge — the hub never sees them. Default `5368709120` (5 GiB) — raised from 100 MiB so large evaluation checkpoints (e.g. the ~759 MiB Ark+ weights, ~1.5 GiB for the multimodel variant) can be uploaded; such checkpoints are staged server-side by the FL API and loaded by the fl-server, not bundled into the app deployed to clients. The S3 policy condition allows a small fixed overhead above this for multipart/form-data framing (see `_MULTIPART_OVERHEAD_BUFFER_BYTES` in `flip_api/utils/s3_client.py`); the UI guard at `flip-ui/src/utils/file.ts` compares against this raw value so a file at exactly the cap is accepted on both sides.
 - `PRE_SIGNED_URL_EXPIRATION_SECONDS` — Setting default for presigned-URL TTLs, in seconds: the model-file presigned POST policy (upload) and the presigned GET URLs for model-file downloads (FLIP#784). The hub silently clamps to the 1800s (30 min) security ceiling encoded as `MAX_PRESIGNED_URL_TTL_SECONDS` in `flip_api/utils/s3_client.py` (a leaked URL is a capability against the bucket in either direction — writable for POST, readable for GET — so the leak window must stay tight). The ceiling is 1800s rather than the original 600s to give larger transfers (up to the `MAX_MODEL_FILE_BYTES` cap) enough time to complete. Setting default equals the ceiling (1800) so default-configured deployments never trip the clamp; over-ceiling operator values leave a warning in the logs and are clamped.
+- `UPLOADED_MODEL_FILES_BUCKET` / `SCANNED_MODEL_FILES_BUCKET` — the two model-file prefixes, and the platform's quarantine boundary (FLIP#52). Researcher uploads are written to the `uploaded/` staging prefix by the presigned POST policy; `POST /files/process-scanned-file/{model_id}/{file}` registers the row as `SCANNING` and schedules the scan, which promotes clean files into `scanned/` and deletes rejected ones. Every consumer — the FL app bundler (`fl_services/services/fl_service.py`), model-file downloads, and listings — reads `scanned/` only, so an unscanned or rejected file can never be bundled to a trust. **They must point at distinct prefixes**: pointed at the same location the promote step degrades to a no-op (logged) and the boundary disappears.
+- `ALLOWED_MODEL_FILE_EXTENSIONS` — extension whitelist enforced before a presigned POST policy is minted, so a disallowed type never reaches S3. JSON list or comma-separated string, matched case-insensitively; default `.py .json .toml .pt .pth .pkl .txt .yaml .yml .safetensors`. `.toml` is **required by the Flower backend** — every Flower app and tutorial ships a `config.toml` run-config that fl-api-flower feeds to `flwr run --run-config`, so dropping it rejects every Flower upload. Opaque archives (`.zip`/`.tar`) are excluded — the scan pipeline cannot gate their contents. A value that normalises to nothing (`",,,"`) falls back to the default rather than an empty list, which would otherwise reject everything (or, for `PICKLESCAN_FILE_SUFFIXES`, silently skip all scanning). A rejection returns 400 with the allowed set, which the UI surfaces verbatim.
+- `PICKLESCAN_FILE_SUFFIXES` / `PICKLESCAN_TIMEOUT_SECONDS` — which uploads get a structural picklescan before promotion (default `.pt .pth .pkl .pickle`) and the wall-clock cap per scan (default 120s). Dangerous globals mark the file `INFECTED` and delete the object; a scan that errors or times out fails closed to `ERROR`. Signature-based AV (GuardDuty Malware Protection for S3) is tracked separately in FLIP#838.
+- `SCHEDULER_MALWARE_SCAN_RECONCILE_RATE` — how often (minutes, default 1) the sweep re-checks uploads left `SCANNING` by an app restart mid-scan.
 
 ## Deployment Architecture
 

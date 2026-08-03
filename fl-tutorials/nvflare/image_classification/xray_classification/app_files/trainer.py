@@ -17,7 +17,7 @@ from pathlib import Path
 import numpy as np
 import pydicom
 import torch
-from data_utils import Lesion, LesionDict, get_labels_from_radiology_row, get_lesion_label, get_xray_transforms
+from data_utils import Lesion, LesionDict, get_labels_from_radiology_row, get_lesion_label
 from flip import FLIP
 from flip.constants import PTConstants, ResourceType
 from flip.nvflare.metrics import send_metrics_value
@@ -35,6 +35,7 @@ from nvflare.app_common.abstract.model import make_model_learnable, model_learna
 from nvflare.app_common.app_constant import AppConstants
 from nvflare.app_opt.pt.model_persistence_format_manager import PTModelPersistenceFormatManager
 from tqdm import tqdm
+from transforms import get_xray_transforms
 
 
 class FLIP_TRAINER(Executor):

@@ -375,10 +375,34 @@ Upload Files
 2. Navigate to the Model Files section on the left-hand side of the model page
 3. Either browse to the files on your local file system or drag and drop them into the box on screen
 4. You will receive confirmation once your files have successfully uploaded
+5. Each file is then checked. A magnifying-glass icon marks a file as being checked; it becomes a
+   document icon once the check passes and the file is ready to use
 
 .. note::
 
-   As files are uploaded, they are scanned for vulnerabilities and viruses.
+   **Every uploaded file is held in a staging area and released only after it has been checked.**
+   Until then it cannot be used for training and is never sent to a trust.
+
+   Files that carry Python pickle data (``.pt``, ``.pth``, ``.pkl``, ``.pickle``) — including model
+   checkpoints — are **scanned for unsafe content**, because loading such a file executes whatever it
+   contains. A file that fails this scan is marked with a red virus icon and deleted from storage.
+   Delete the entry and upload a corrected file to continue.
+
+   .. warning::
+
+      **Your Python source is not analysed for malicious code.** ``.py`` files are checked for type
+      and released like any other file, then executed as-is on every participating trust. Only upload
+      code you have written or reviewed yourself, and treat code from third parties as untrusted.
+
+   Only recognised file types may be uploaded (by default ``.py``, ``.json``, ``.toml``, ``.pt``,
+   ``.pth``, ``.pkl``, ``.txt``, ``.yaml``, ``.yml`` and ``.safetensors``). Anything else — including
+   archives such as ``.zip`` — is refused at upload time with a message listing the accepted types.
+
+   Training cannot start until every file has been released.
+
+Checking starts as soon as a file is uploaded and usually finishes within seconds, though scanning a
+large checkpoint takes longer. You can leave the page while it runs — it continues on the server and
+the status updates when you return.
 
 If model files need to be managed further after uploading, the uploader function allows files to be downloaded, removed and re-uploaded.
 
