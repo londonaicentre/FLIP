@@ -699,22 +699,22 @@ deploy-ark-demo: ## Build the public Ark+ demo SPA from the working tree and dep
 	@# prefix), so it never touches the real app's objects at the bucket root —
 	@# see deploy-ui's own --exclude "ark_demo/*" for the other half of that
 	@# separation.
-	@UI_BUCKET=$$(AWS_PROFILE=$(AWS_PROFILE) terraform output -raw FlipUiBucketName); \
+	@UI_BUCKET=$$($(_AWS_ENV) terraform output -raw FlipUiBucketName); \
 	[ -n "$$UI_BUCKET" ] || { echo "❌ Terraform output FlipUiBucketName is empty"; exit 1; }; \
 	echo "   s3://$$UI_BUCKET/ark_demo/"; \
-	AWS_PROFILE=$(AWS_PROFILE) aws s3 sync ../../../flip-ui/dist/ s3://$$UI_BUCKET/ark_demo/ \
+	$(_AWS_ENV) aws s3 sync ../../../flip-ui/dist/ s3://$$UI_BUCKET/ark_demo/ \
 		--delete \
 		--cache-control "public, max-age=31536000, immutable" \
 		--exclude "index.html" --exclude "js/window.js"; \
-	AWS_PROFILE=$(AWS_PROFILE) aws s3 cp ../../../flip-ui/dist/index.html s3://$$UI_BUCKET/ark_demo/index.html \
+	$(_AWS_ENV) aws s3 cp ../../../flip-ui/dist/index.html s3://$$UI_BUCKET/ark_demo/index.html \
 		--cache-control "no-cache, no-store, must-revalidate" \
 		--content-type "text/html; charset=utf-8"; \
-	AWS_PROFILE=$(AWS_PROFILE) aws s3 cp ../../../flip-ui/dist/js/window.js s3://$$UI_BUCKET/ark_demo/js/window.js \
+	$(_AWS_ENV) aws s3 cp ../../../flip-ui/dist/js/window.js s3://$$UI_BUCKET/ark_demo/js/window.js \
 		--cache-control "no-cache, no-store, must-revalidate" \
 		--content-type "application/javascript; charset=utf-8"
 	@echo "🧹 Invalidating CloudFront (/ark_demo/*)..."
-	@AWS_PROFILE=$(AWS_PROFILE) aws cloudfront create-invalidation \
-		--distribution-id $$(AWS_PROFILE=$(AWS_PROFILE) terraform output -raw CloudfrontDistributionId) \
+	@$(_AWS_ENV) aws cloudfront create-invalidation \
+		--distribution-id $$($(_AWS_ENV) terraform output -raw CloudfrontDistributionId) \
 		--paths "/ark_demo/*" >/dev/null
 	@echo "✅ deploy-ark-demo complete."
 
