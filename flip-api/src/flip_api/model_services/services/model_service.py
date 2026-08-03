@@ -591,6 +591,7 @@ def get_all_models_service(
             project_name=project_name,
             owner_id=model.owner_id,
             owner_name=owner_name,
+            creation_timestamp=model.creation_timestamp,
             trusts=trusts_by_model.get(model.id, []),
             queue_position=queue_positions.get(model.id),
         )  # type: ignore[call-arg]

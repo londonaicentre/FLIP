@@ -273,8 +273,9 @@ describe("Projects Page", () => {
 
     test("renders a relative-time stamp ('Xs / Xm / Xh / Xd ago') for project creation", async () => {
         const project = makeProject("STAGED", [trust("t1", "KCH", true)]);
-        // 2 hours ago — should land in the "h ago" bucket.
-        project.creationtimestamp = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+        // 2 hours ago — should land in the "h ago" bucket. Offset-less naive-UTC
+        // string: the wire format the API actually sends.
+        project.creationtimestamp = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString().slice(0, 19);
         setProject(project);
         const wrapper = mountPage();
         await wrapper.vm.$nextTick();
@@ -430,7 +431,7 @@ describe("Projects Page", () => {
 
     test("relativeUpdated renders 'created Xd ago' for older projects", async () => {
         const project = makeProject("STAGED", []);
-        project.creationtimestamp = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString();
+        project.creationtimestamp = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString().slice(0, 19);
         setProject(project);
         const wrapper = mountPage();
         await wrapper.vm.$nextTick();
