@@ -69,6 +69,11 @@ spec:
           volumeMounts:
             - name: vocab-work
               mountPath: /vocab-work
+            {{- if .Values.omopDb.initJob.hostAwsMount.enabled }}
+            - name: host-aws
+              mountPath: /root/.aws
+              readOnly: true
+            {{- end }}
       containers:
         - name: load-vocab
           image: "{{ .Values.omopDb.image.repository }}:{{ .Values.omopDb.image.tag }}"
@@ -109,4 +114,10 @@ spec:
         - name: vocab-work
           emptyDir:
             sizeLimit: 10Gi
+        {{- if .Values.omopDb.initJob.hostAwsMount.enabled }}
+        - name: host-aws
+          hostPath:
+            path: {{ .Values.omopDb.initJob.hostAwsMount.hostPath | quote }}
+            type: Directory
+        {{- end }}
 {{- end }}
