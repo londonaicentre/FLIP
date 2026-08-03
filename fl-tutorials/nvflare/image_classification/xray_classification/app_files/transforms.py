@@ -9,7 +9,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""MONAI transforms for chest-X-ray inputs."""
+"""MONAI transforms for chest-X-ray inputs.
+
+By convention a FLIP app declares its transforms here, so the inference chain can be found in one
+predictable place when the model is later packaged for deployment. See
+``docs/source/working-with-flip-apps/package-model-as-map.rst``.
+"""
 
 import monai.transforms as mt
 
@@ -18,8 +23,8 @@ def get_xray_transforms(is_validation: bool = False) -> mt.Compose:
     """Return the MONAI transforms used for chest-X-ray training/validation.
 
     Args:
-        is_validation (bool): When True, skip random affine augmentation so
-            validation is deterministic.
+        is_validation (bool): When True, skip random affine augmentation so validation is
+            deterministic. This is the chain to transcribe when exporting the model for inference.
 
     Returns:
         mt.Compose: Composed transform pipeline keyed on "image".

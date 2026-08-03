@@ -457,3 +457,10 @@ fl-tutorials/nvflare/image_segmentation/3d_spleen_segmentation/uv.lock
 fl-services/flower/provision/creds/
 fl-services/flower/runs/
 fl-tutorials/flower/data/
+
+# Exported TorchScript model bundles (MAP build artefacts). Scoped to the Python trees, NOT global
+# *.ts / model.ts rules — flip-ui is TypeScript, where a module could legitimately be named model.ts
+# or live under an export/ directory, and must stay tracked.
+map-apps/**/*.ts
+fl-tutorials/**/*.ts
+flip-utils/**/*.ts
