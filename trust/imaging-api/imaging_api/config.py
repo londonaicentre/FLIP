@@ -10,10 +10,15 @@
 # limitations under the License.
 #
 
-from typing import Literal
+from typing import Literal, Self
 
-from pydantic import field_validator
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings
+from sqlalchemy.engine import make_url
+
+# The kit-template placeholder for the not-yet-minted XNAT credentials
+# (trust/.env.example, FLIP-PT-056) — never a real password.
+_XNAT_CREDENTIAL_PLACEHOLDER = "<run-make-generate-xnat-credentials>"
 
 
 class Settings(BaseSettings):
@@ -47,6 +52,25 @@ class Settings(BaseSettings):
     XNAT_SERVICE_USER: str
     XNAT_SERVICE_PASSWORD: str
     XNAT_DATABASE_URL: str = "postgresql+asyncpg://xnat:xnat@xnat-db:5432/xnat"
+    # The minted per-trust XNAT DB password (kit-file XNAT_DATASOURCE_PASSWORD,
+    # FLIP-PT-056). When set, it replaces the password embedded in
+    # XNAT_DATABASE_URL, so the URL itself stays a non-secret topology constant.
+    # Empty or still the kit-template placeholder → the URL is used as-is, so a
+    # pre-mint kit keeps working against a legacy weak-credential xnat-db.
+    XNAT_DATASOURCE_PASSWORD: str = ""
+
+    @model_validator(mode="after")
+    def apply_xnat_datasource_password(self) -> Self:
+        """Splice the minted XNAT DB password into ``XNAT_DATABASE_URL``.
+
+        Returns:
+            Self: The settings with ``XNAT_DATABASE_URL`` carrying the minted
+            password when one is configured.
+        """
+        if self.XNAT_DATASOURCE_PASSWORD and self.XNAT_DATASOURCE_PASSWORD != _XNAT_CREDENTIAL_PLACEHOLDER:
+            url = make_url(self.XNAT_DATABASE_URL).set(password=self.XNAT_DATASOURCE_PASSWORD)
+            self.XNAT_DATABASE_URL = url.render_as_string(hide_password=False)
+        return self
 
     #
     DATA_ACCESS_API_URL: str = "http://data-access-api:8000"

@@ -326,7 +326,7 @@ with `secrets.create=true` or pre-created externally):
 | `xnat-admin-password` | xnat-web | XNAT admin password |
 | `xnat-service-user` | xnat-web, imaging-api | XNAT service account username |
 | `xnat-service-password` | xnat-web, imaging-api | XNAT service account password |
-| `xnat-datasource-password` | xnat-web, xnat-db | XNAT database password — mint via `make generate-xnat-credentials KIT=<CODE>` and fill from the kit with `scripts/generate_values.py`; xnat-web refuses to start on the shipped placeholder or weak values (FLIP-PT-056) |
+| `xnat-datasource-password` | xnat-web, xnat-db, imaging-api | XNAT database password — mint via `make generate-xnat-credentials KIT=<CODE>` and fill from the kit with `scripts/generate_values.py`; xnat-web and xnat-db refuse to start on the shipped placeholder or weak values, and imaging-api splices it into its `XNAT_DATABASE_URL` (FLIP-PT-056) |
 | `grafana-admin-password` | grafana | Grafana admin password |
 | `s3-access-key-id` | fl-client (init container) | AWS access key for S3 kit sync |
 | `s3-secret-access-key` | fl-client (init container) | AWS secret key for S3 kit sync |

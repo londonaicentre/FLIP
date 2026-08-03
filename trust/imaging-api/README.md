@@ -140,7 +140,8 @@ Key environment variables (set in [`.env.development.example`](../../.env.develo
 | `XNAT_URL` | URL of the XNAT instance |
 | `XNAT_SERVICE_USER` | XNAT service account username |
 | `XNAT_SERVICE_PASSWORD` | XNAT service account password |
-| `XNAT_DATABASE_URL` | PostgreSQL connection string for the XNAT database |
+| `XNAT_DATABASE_URL` | PostgreSQL connection string for the XNAT database (non-secret topology constant; defaults in `config.py`) |
+| `XNAT_DATASOURCE_PASSWORD` | Minted per-trust XNAT DB password from the kit file (FLIP-PT-056). When set, it replaces the password embedded in `XNAT_DATABASE_URL`; empty or the kit-template placeholder leaves the URL untouched |
 | `DATA_ACCESS_API_URL` | Internal URL of the data-access-api |
 | `AES_KEY_BASE64` | AES encryption key for decrypting project identifiers |
 | `TRUST_INTERNAL_SERVICE_KEY_HEADER` | Header name for trust-internal service auth (default `X-Trust-Internal-Service-Key`) |

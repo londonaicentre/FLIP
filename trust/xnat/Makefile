@@ -136,18 +136,41 @@ endef
 # are operator-set, XNAT_DATASOURCE_* are minted by `make register-trust` /
 # `make generate-xnat-credentials`. Checks the exported process env (the same
 # values `docker stack deploy` substitutes), not just Make vars.
+# Beyond emptiness: refuse the committed kit-template placeholder for any of
+# them, and the historical weak defaults for the minted XNAT_DATASOURCE_* pair
+# (XNAT_ADMIN_*/XNAT_SERVICE_* are operator-set and legitimately simple in dev
+# kits, so only the placeholder is rejected there). A skipped mint would
+# otherwise reach the stock Postgres entrypoint as POSTGRES_PASSWORD — applied
+# silently at first initdb, leaving the superuser password set to a literal
+# committed across this public repo. xnat-web re-checks
+# XNAT_DATASOURCE_PASSWORD at container start (wait-for-postgres.sh) and the
+# xnat-db image guards both DB passwords itself (guard-xnat-db-passwords.sh,
+# covering non-make deploys such as the K8s chart); this check just fails
+# earliest, before a half-configured stack is deployed.
 XNAT_REQUIRED_PASSWORDS := XNAT_ADMIN_INITIAL_PASSWORD XNAT_ADMIN_PASSWORD \
 	XNAT_SERVICE_PASSWORD XNAT_DATASOURCE_PASSWORD XNAT_DATASOURCE_ADMIN_PASSWORD
+XNAT_MINTED_PASSWORDS := XNAT_DATASOURCE_PASSWORD XNAT_DATASOURCE_ADMIN_PASSWORD
+XNAT_CREDENTIAL_PLACEHOLDER := <run-make-generate-xnat-credentials>
 define require_xnat_passwords
-	@missing=""; \
+	@missing=""; weak=""; \
 	for v in $(XNAT_REQUIRED_PASSWORDS); do \
-		if [ -z "$$(printenv $$v 2>/dev/null)" ]; then missing="$$missing $$v"; fi; \
+		val="$$(printenv $$v 2>/dev/null)"; \
+		if [ -z "$$val" ]; then missing="$$missing $$v"; \
+		elif [ "$$val" = "$(XNAT_CREDENTIAL_PLACEHOLDER)" ]; then weak="$$weak $$v"; fi; \
 	done; \
-	if [ -n "$$missing" ]; then \
-		echo "❌ Refusing to deploy XNAT for KIT=$(KIT): empty password(s):$$missing"; \
-		echo "   These are substituted into the compose stack with no default, so an empty"; \
-		echo "   value yields a broken/insecure XNAT. Set XNAT_ADMIN_*/XNAT_SERVICE_* in the"; \
-		echo "   kit file ($(KIT_FILE)); mint XNAT_DATASOURCE_*/XNAT_ACTIVEMQ_PASSWORD into it"; \
+	for v in $(XNAT_MINTED_PASSWORDS); do \
+		case "$$(printenv $$v 2>/dev/null)" in \
+			xnat|password|admin|postgres) weak="$$weak $$v";; \
+		esac; \
+	done; \
+	if [ -n "$$missing$$weak" ]; then \
+		echo "❌ Refusing to deploy XNAT for KIT=$(KIT):"; \
+		if [ -n "$$missing" ]; then echo "   empty password(s):$$missing"; fi; \
+		if [ -n "$$weak" ]; then echo "   placeholder/weak password(s):$$weak"; fi; \
+		echo "   These are substituted into the compose stack with no default, so an empty or"; \
+		echo "   placeholder value yields a broken/insecure XNAT (Postgres applies its passwords"; \
+		echo "   silently at first initdb). Set XNAT_ADMIN_*/XNAT_SERVICE_* in the kit file"; \
+		echo "   ($(KIT_FILE)); mint XNAT_DATASOURCE_*/XNAT_ACTIVEMQ_PASSWORD into it"; \
 		echo "   with 'make register-trust KIT=$(KIT)' or 'make generate-xnat-credentials'."; \
 		exit 1; \
 	fi
