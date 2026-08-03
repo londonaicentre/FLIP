@@ -968,7 +968,7 @@ full-deploy-hub-only: ## Hub-only deployment: no cloud Trust EC2 — every trust
 	##   2. make new-trust TRUST_CODE=<CODE> ... PROD=<env> && make register-trusts KIT=<CODE> PROD=$(PROD)
 	##      (register-trusts in this chain already registers every kit present)
 	##   3. on the trust host: sudo -E env PROD=<env> make -C trust up-trust KIT=<CODE>
-##      (sudo: the provisioned login user is deliberately not in the docker group)
+	##      (sudo: the provisioned login user is deliberately not in the docker group)
 	## Remember `make deploy-ui PROD=$(PROD)` — the UI ships separately, same as full-deploy.
 full-deploy-hub-only: DEPLOY_TRUST_EC2 := false
 full-deploy-hub-only: github-login aws-login init import-persistent generate-internal-service-key plan apply update-env ssh-config ansible-init deploy-centralhub register-trusts status
@@ -988,7 +988,7 @@ full-deploy-with-local-trust: ## Full AWS deployment (honours PROD) plus on-prem
 	## 8. deploy-trust + provision-local-trust + status: bring up cloud + on-prem trust hosts and verify
 	## NOTE: After this completes you must manually:
 	##   - Start the on-prem trust stack (sudo: the provisioned login user is deliberately not in
-##     the docker group): cd ../../.. && sudo -E env PROD=$(PROD) make -C trust up-trust KIT=$(KIT)
+	##     the docker group): cd ../../.. && sudo -E env PROD=$(PROD) make -C trust up-trust KIT=$(KIT)
 	@[ -n "$(LOCAL_TRUST_IP)" ] || (echo ""; echo "❌  ERROR: LOCAL_TRUST_IP is required."; echo "   Usage: make full-deploy-with-local-trust LOCAL_TRUST_IP=<public-ip>"; echo ""; exit 1)
 # The one on-prem trust IP this all-in-one run opens the NLB to — the chain's `apply`
 # step creates the SG rule. For multiple trusts use the async flow instead: set

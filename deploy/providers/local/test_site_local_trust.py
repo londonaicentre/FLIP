@@ -75,6 +75,25 @@ def test_login_user_not_added_to_docker_group(playbook: list[dict]) -> None:
         ), f"Play '{play.get('name', '<unnamed>')}' sets docker_users={docker_users!r}; this gives the listed user root-equivalent access."
 
 
+def _user_module_grants_docker(task: dict) -> bool:
+    """Return True if an ``ansible.builtin.user`` task grants docker group membership.
+
+    ``groups`` may be a comma-separated string or a YAML list. ``append`` is
+    irrelevant to the finding: with ``append: false`` (Ansible's default) the
+    user's groups are *replaced* by the listed ones, which still grants docker
+    membership.
+    """
+    user_module = task.get("user") or task.get("ansible.builtin.user") or {}
+    if not isinstance(user_module, dict):
+        return False
+    groups = user_module.get("groups") or []
+    if isinstance(groups, str):
+        groups = groups.split(",")
+    if not isinstance(groups, list):
+        return False
+    return "docker" in (str(group).strip() for group in groups)
+
+
 def test_no_usermod_adding_to_docker_group(playbook: list[dict]) -> None:
     """No ad-hoc shell/command/user task may add a user to the docker group."""
     suspect_substrings = ("usermod -aG docker", "usermod --append --groups docker", "gpasswd -a")
@@ -86,11 +105,27 @@ def test_no_usermod_adding_to_docker_group(playbook: list[dict]) -> None:
                     assert needle not in cmd, (
                         f"Task '{task.get('name', '<unnamed>')}' appears to add a user to the docker group via {module}: {cmd!r}"
                     )
-        user_module = task.get("user") or task.get("ansible.builtin.user") or {}
-        if isinstance(user_module, dict):
-            groups = user_module.get("groups") or ""
-            append = user_module.get("append")
-            if isinstance(groups, str) and "docker" in groups.split(",") and append:
-                pytest.fail(
-                    f"Task '{task.get('name', '<unnamed>')}' appends user to the docker group via the user module."
-                )
+        if _user_module_grants_docker(task):
+            pytest.fail(
+                f"Task '{task.get('name', '<unnamed>')}' grants docker group membership via the user module."
+            )
+
+
+@pytest.mark.parametrize(
+    ("task", "expected"),
+    [
+        pytest.param({"user": {"groups": "docker", "append": True}}, True, id="comma-string-append"),
+        pytest.param({"user": {"groups": "sudo,docker"}}, True, id="comma-string-no-append"),
+        pytest.param({"user": {"groups": "sudo, docker"}}, True, id="comma-string-with-space"),
+        pytest.param({"user": {"groups": ["docker"]}}, True, id="yaml-list"),
+        pytest.param({"user": {"groups": ["adm", "docker"], "append": False}}, True, id="yaml-list-replace"),
+        pytest.param({"ansible.builtin.user": {"groups": "docker"}}, True, id="fqcn-module"),
+        pytest.param({"user": {"groups": "sudo"}}, False, id="other-group-string"),
+        pytest.param({"user": {"groups": ["adm", "sudo"]}}, False, id="other-group-list"),
+        pytest.param({"user": {"name": "ubuntu"}}, False, id="no-groups-key"),
+        pytest.param({"shell": "echo docker"}, False, id="no-user-module"),
+    ],
+)
+def test_user_module_docker_grant_detection(task: dict, expected: bool) -> None:
+    """The docker-grant checker must catch every ``groups`` form Ansible accepts."""
+    assert _user_module_grants_docker(task) is expected

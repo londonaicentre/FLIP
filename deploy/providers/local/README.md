@@ -93,9 +93,11 @@ sudo -E env PROD=<stag|true> make -C trust up-trust KIT=<CODE>
 ```
 
 Use the trust code you registered, whose kit file is `trust/.env.<CODE>.production`.
-`sudo -E` preserves the `PROD` env var for the make target. Any direct `docker`,
-`docker compose`, or `docker swarm` invocations on the trust host should
-likewise be prefixed with `sudo`.
+`-E` is load-bearing: it preserves `$HOME`, so root's docker client reuses your
+`~/.docker/config.json` GHCR login for the image pulls — a plain `sudo` looks in
+`/root/.docker` and the pulls fail. (`PROD` needs no preserving; `env PROD=…` sets
+it explicitly for the command.) Any direct `docker`, `docker compose`, or
+`docker swarm` invocations on the trust host should likewise be prefixed with `sudo`.
 
 ### Provision the trust host
 

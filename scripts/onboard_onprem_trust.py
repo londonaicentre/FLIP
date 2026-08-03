@@ -180,7 +180,7 @@ def fetch_public_ip(timeout: float = 5.0) -> str | None:
 
 
 def docker_swarm_state() -> str:
-    """Return the local docker swarm state (`active`, `inactive`, etc.) or `unavailable`."""
+    """Return the local docker swarm state (`active`, `inactive`, etc.), `permission-denied`, or `unavailable`."""
     try:
         result = subprocess.run(
             ["docker", "info", "--format", "{{.Swarm.LocalNodeState}}"],
@@ -189,6 +189,8 @@ def docker_swarm_state() -> str:
     except (FileNotFoundError, subprocess.SubprocessError):
         return "unavailable"
     if result.returncode != 0:
+        if "permission denied" in (result.stderr or "").lower():
+            return "permission-denied"
         return "unavailable"
     return result.stdout.strip() or "inactive"
 
@@ -226,6 +228,16 @@ def check_swarm() -> Check:
     state = docker_swarm_state()
     if state == "active":
         return Check("Docker swarm", Status.PASS, "active on this host")
+    if state == "permission-denied":
+        return Check(
+            "Docker swarm", Status.FAIL,
+            "docker daemon is up but denied this user access",
+            hints=[
+                "Expected on an on-prem host — the login user is deliberately not in the docker group"
+                " (membership is root-equivalent). Do NOT add yourself to the docker group;"
+                " re-run via: sudo -E make onboard-onprem-trust KIT=<CODE>",
+            ],
+        )
     if state == "unavailable":
         return Check(
             "Docker swarm", Status.FAIL,
