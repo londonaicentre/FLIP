@@ -15,7 +15,8 @@
 		check-aws-access generate-internal-service-key \
 		register-trust register-trusts new-trust _wait-for-hub integration_test \
 		sync-trust-kit sync-trust-kits lock \
-		deploy-trust-k8s undeploy-trust-k8s
+		deploy-trust-k8s undeploy-trust-k8s \
+		demo-video demo-users seed-demo-projects
 
 ifeq ($(PROD),true)
 MAIN_ENV_FILE=.env.production
@@ -406,6 +407,25 @@ lock:
 # See flip-api/Makefile for overrides (MODEL_FILES_DIR, QUERY_FILE, EXTRA_ARGS).
 e2e_smoke:
 	$(MAKE) -C flip-api e2e_smoke $(if $(FL_BACKEND),FL_BACKEND=$(FL_BACKEND)) $(if $(MODEL_FILES_DIR),MODEL_FILES_DIR=$(MODEL_FILES_DIR)) $(if $(QUERY_FILE),QUERY_FILE=$(QUERY_FILE)) $(if $(EXTRA_ARGS),EXTRA_ARGS="$(EXTRA_ARGS)")
+
+# Record the end-to-end demo video against the running dev stack: six
+# Dockerised Cypress segments over the live UI (real Cognito, trusts, S3,
+# FL training) with the slow waits handled off-camera between segments, then
+# ffmpeg-assembled into one mp4. Local dev tool — not run in CI. Options via
+# DEMO_ARGS (see flip-api/tests/demo_video.py), e.g. DEMO_ARGS="--skip-xnat".
+demo-video:
+	$(MAKE) -C flip-api demo_video $(if $(DEMO_ARGS),DEMO_ARGS="$(DEMO_ARGS)")
+
+# Provision the demo Cognito users the recorder signs in as (passwords from
+# DEMO_RESEARCHER_PASSWORD / DEMO_ADMIN_PASSWORD env vars, never committed).
+demo-users:
+	$(MAKE) -C flip-api create_demo_users
+
+# Pre-populate the platform with a curated catalogue of radiology projects in
+# honest lifecycle states (no fabricated metrics/results). Cleanup:
+# make seed-demo-projects EXTRA_ARGS="--cleanup"
+seed-demo-projects:
+	$(MAKE) -C flip-api seed_demo_projects $(if $(EXTRA_ARGS),EXTRA_ARGS="$(EXTRA_ARGS)")
 
 generate-internal-service-key:
 	$(MAKE) -C flip-api generate-internal-service-key $(if $(ENV_FILE),ENV_FILE=$(ENV_FILE)) $(if $(FORCE),FORCE=$(FORCE))

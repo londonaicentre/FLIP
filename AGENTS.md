@@ -233,7 +233,32 @@ make debug-off SERVICE=flip-api    # Stop debug mode
 ```bash
 make -C flip-api create_testing_projects   # Create test projects
 make -C flip-api delete_testing_projects   # Clean up test data
+make seed-demo-projects                    # Curated radiology catalogue in honest lifecycle states
+                                           # (EXTRA_ARGS="--cleanup" removes it again)
 ```
+
+### Demo Video Recorder
+
+`make demo-video` records the full end-to-end walkthrough (researcher creates project + cohort → admin checks
+Connection Status, stages + approves → XNAT/OHIF DICOM view at a trust → model + app upload → training → results
+download) against the **live dev stack** and assembles one mp4. Local dev tool, not run in CI. Six Cypress segments
+(`flip-ui/test/cypress/demo/`, config `flip-ui/cypress.demo.config.ts` — a live-wired fork of the docs-GIF harness
+with a `demoCaption` subtitle verb) run in Docker (`cypress/included`, `--network host`); the slow platform waits
+(cohort responses, ~6 min imaging import, FL training) happen **off-camera** between segments via
+`flip-api/tests/demo_video.py`, which reuses `tests/e2e_smoke.py`'s wait functions and finally calls
+`flip-ui/scripts/assemble-demo-video.sh` (same crop constants as `videos-to-gifs.sh`). Prerequisites: stack up,
+live AWS SSO session, and ideally the demo Cognito users — `make demo-users` (reads `DEMO_RESEARCHER_PASSWORD` /
+`DEMO_ADMIN_PASSWORD` from env, never committed) then restart flip-api so seeding grants their roles; without them
+the recorder falls back to the well-known admin for both parts. Useful `DEMO_ARGS`: `--app spleen` (record the 3D
+spleen segmentation tutorial instead of chest X-ray; pair with `--data-enrichment-cwd/-cmd` for the off-camera
+label upload, same contract as `e2e_smoke`), `--publish-segmentations` (republish those NIfTI labels as DICOM-SEG
+ROI collections via `flip-api/tests/xnat_seg_upload.py` so segment 3 shows the segmentation overlaid in OHIF —
+dcmqi in Docker for the conversion, the viewer's own `PUT /xapi/roi/…?type=SEG` for the upload; `--seg-limit`
+caps how many sessions per trust are converted), `--skip-xnat`, `--project-id <uuid> --from-segment <n>` (iterate
+on later segments without re-running the pull), `--trusts GSTT`, `--fl-backend flower`, `--video-scale 1` (fast
+drafts; the default 3 renders the browser at 3× device pixels so the 1280x800 viewport is captured at 3840x2400 —
+4K-class). Segment mp4s + the final video land under `flip-ui/test/cypress/demo/` (gitignored). The final mp4 is
+named for the recorded app (`flip-demo-xray.mp4` / `flip-demo-spleen.mp4`).
 
 ### Database migrations (flip-api)
 

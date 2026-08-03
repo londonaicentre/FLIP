@@ -325,6 +325,7 @@ translate/
 .DS_Store
 
 flip-api/tests/debug_prelaunch_task_projects.json
+flip-api/tests/seed_demo_projects.json
 
 flip-fl-api/transfer/*/*
 
