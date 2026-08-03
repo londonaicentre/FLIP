@@ -37,7 +37,7 @@ HSTS, AWS WAF managed rules, and an internal-only Application Load Balancer. Not
 else in the platform is reachable from the public internet.
 
 **A site-to-site VPN is available on request.** Trust-to-hub traffic is encrypted in
-transit by default, and payloads carry their own authenticated encryption on top of
+transit by default, and payloads carry their own encryption layer on top of
 that. Where a trust's own policy calls for network-layer separation as well, a
 site-to-site VPN between the trust's network and the hub VPC can be provisioned,
 carrying all outbound polling and FL client traffic.
@@ -129,7 +129,9 @@ independent controls would each have to fail before anything unintended could ex
   literal values;
 - results below ``COHORT_QUERY_THRESHOLD`` are suppressed, and a genuine zero is
   deliberately indistinguishable from a small suppressed count, so a response cannot
-  reveal that a handful of patients matched;
+  reveal that a handful of patients matched — the threshold is the trust's own
+  disclosure floor (default 10), set by each trust in its deployment kit: trusts need
+  not agree on a shared value, and the hub cannot lower it;
 - cached results are scoped to the requesting project and expire in minutes, so no
   project is served another's data and no result outlives a withdrawal of consent or a
   correction to a record.
@@ -172,10 +174,15 @@ Data in transit and at rest
 
 **All traffic is encrypted in transit.** Every connection between a trust and the
 Central Hub runs over HTTPS, outbound from the trust only. On top of that transport
-encryption, task payloads carry their own **authenticated encryption**: any tampering
-with a message causes decryption to fail outright rather than passing silently. Payload
-keys carry key identifiers, and each trust has its own key, so a compromise at one trust
-does not expose the traffic of any other.
+encryption, task payloads are themselves encrypted before they are handed to the
+transport, so the payload body is never carried in the clear inside an established
+session. Stated precisely, because this page exists to be relied on: today the payload
+layer uses a **single platform-wide symmetric key**, and message integrity is provided
+by the TLS transport rather than by the payload cipher itself. An upgrade to
+**authenticated encryption with per-trust keys** — tampering makes decryption fail
+outright, each trust's traffic is protected by its own key so a compromise at one trust
+exposes no other's, and keys carry identifiers so they can be rotated without a
+synchronised cutover — is in delivery, not yet a shipped control.
 
 **At rest**, model and results storage uses S3 with managed encryption under a
 customer-managed KMS key, versioning, blocked public access, HTTPS-only bucket policies,
@@ -186,10 +193,12 @@ connections require TLS on both hops.
 time-limited, with a hard ceiling enforced centrally, because such a link is a
 capability against the bucket in either direction.
 
-**Credentials are designed to be rotated.** A trust's API key, its trust-internal
-service key, and its payload-encryption key are issued at registration and can be
-re-issued without redeploying the platform. Payload keys carry identifiers precisely so
-that a new key can be introduced and an old one retired without a synchronised cutover.
+**Credentials are designed to be rotated.** A trust's API key and its trust-internal
+service key are issued at registration and can be re-issued without redeploying the
+platform. Rotating the payload-encryption key currently means re-issuing the shared
+key to every participant at once; removing that coordination — by giving each trust
+its own identified key, so a new key can be introduced and an old one retired without
+a synchronised cutover — is part of the per-trust key work described above.
 
 **The trust imaging archive requires authentication to start.** Orthanc will not run
 without credentials configured, an automated check verifies that authentication is
@@ -203,13 +212,17 @@ Diagnostics and disclosure control
 Error messages are a quiet disclosure route: an unhandled error can return database
 structure, internal hostnames, or fragments of a failing query to whoever triggered it.
 
-FLIP returns a fixed message accompanied by a **correlation identifier**. The identifier
-is generated server-side, never accepted from the caller, and recorded alongside the full
-technical detail in the internal logs. A user who encounters an error quotes that
-identifier and an engineer can find exactly what happened — diagnosability is preserved
-without disclosing internals. Automated checks in CI prevent raw exception text from
-reappearing in responses, and logging is scoped so that secrets, pre-signed URLs, and
-query text are not written out in the first place.
+The platform's target here is a fixed client-facing message accompanied by a
+**correlation identifier**: generated server-side, never accepted from the caller, and
+recorded alongside the full technical detail in the internal logs, so a user who
+encounters an error quotes the identifier and an engineer finds exactly what happened —
+diagnosability preserved without disclosing internals — with automated checks in CI
+keeping raw exception text from reappearing in responses. That mechanism is **in
+delivery, not yet a shipped control**: today some error paths still return the
+underlying exception text to the caller, and the CI guard does not yet exist. What
+holds today is narrower: log lines are written to avoid carrying sensitive values
+themselves — counts, file names, and hashed object identifiers stand in for pre-signed
+URLs and storage keys.
 
 ****************************************
 Software supply chain and change control

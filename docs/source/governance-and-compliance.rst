@@ -56,6 +56,13 @@ group size below which results are suppressed; model updates produced during fed
 training, which pass through a privacy filter before transmission; and operational
 telemetry such as task status. Model updates are mathematical parameters, not records.
 
+**The suppression threshold is the trust's own setting.** Each trust sets its
+disclosure floor in the deployment configuration it holds locally — the same kit file
+that carries its credentials — so a trust whose small-numbers policy demands a higher
+minimum simply raises its own floor. Trusts need not agree on a shared value, and the
+Central Hub cannot lower it: the suppression runs on the trust's own deployment, next
+to the data.
+
 **What enters a trust** is the definition of work to be done — an approved project, a
 cohort query, and the model application to train — and nothing else. The hub cannot read
 into a trust: trusts poll outbound and the hub has no route back in.
@@ -308,11 +315,11 @@ Objective B — Protecting against cyber attack
        operator access with no exposed remote-login port.
      - Operational
    * - **B3 Data security**
-     - Patient data never leaves the trust; authenticated encryption in transit with
-       per-trust keys; mutually authenticated TLS between federated learning
+     - Patient data never leaves the trust; encrypted transport with an additional
+       payload-encryption layer; mutually authenticated TLS between federated learning
        participants; encryption at rest under managed keys; no standing production
        database credential.
-     - Operational
+     - Operational; per-trust authenticated payload encryption in delivery
    * - **B4 System security**
      - Container hardening with least privilege, dropped capabilities, and
        no-new-privileges; secure-by-default configuration; immutable images; automated
