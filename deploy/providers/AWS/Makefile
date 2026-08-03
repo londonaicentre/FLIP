@@ -833,6 +833,9 @@ ifeq ($(FL_BACKEND),nvflare)
 	  echo "  sudo mkdir -p /opt/flip/services/$(FL_KIT_SLOT)/startup /opt/flip/services/$(FL_KIT_SLOT)/local /opt/flip/services/$(FL_KIT_SLOT)/transfer" && \
 	  echo "  sudo rsync -av --delete $$TRUST_KIT_DIR/startup/ /opt/flip/services/$(FL_KIT_SLOT)/startup/" && \
 	  echo "  sudo rsync -av --delete $$TRUST_KIT_DIR/local/ /opt/flip/services/$(FL_KIT_SLOT)/local/" && \
+	  echo "  # fl-client now runs as a non-root uid (GHSA-8465) — hand the rsync'd kit back to" && \
+	  echo "  # this shell's own user so the container can read/write it:" && \
+	  echo "  sudo chown -R \$$(id -u):\$$(id -g) /opt/flip/services/$(FL_KIT_SLOT)" && \
 	  echo "✅ $(FL_KIT_SLOT) NVFLARE kit staged"
 else
 	@TRUST_KIT_DIR=/tmp/$(KIT)_kit && \
