@@ -150,17 +150,37 @@ jobs:
           test "$(curl -s -u ci:ci-test-password -o /dev/null -w '%{http_code}' http://localhost:8042/dicom-web/studies)" = "404"
           docker rm -f orthanc-smoke
 
-      - name: Smoke test — image refuses to start without registered users (FLIP-PT-091)
+      - name: Smoke test — image refuses to start without a usable user map (FLIP-PT-091)
         env:
           DOCKER_TAGS: ${{ steps.tags.outputs.tags }}
         run: |
           TAG="${DOCKER_TAGS%%,*}"
-          if timeout 30 docker run --rm --name orthanc-nouser "$TAG" > nouser.log 2>&1; then
-            echo "::error::image started without ORTHANC__REGISTERED_USERS"
-            cat nouser.log
-            exit 1
-          fi
-          grep -q "REFUSING TO START" nouser.log
+          # First case = env var entirely unset; the rest are the malformed maps the
+          # entrypoint guards against — userless {}, the {"": ""} a kit file missing
+          # ORTHANC_USERNAME/ORTHANC_PASSWORD renders, empty password, empty username,
+          # and a valid pair that must not mask an empty-password user beside it.
+          refuse_cases=(
+            unset
+            '{}'
+            '{"": ""}'
+            '{"admin": ""}'
+            '{"": "admin"}'
+            '{"admin": "", "backup": "backup-pass"}'
+          )
+          for users in "${refuse_cases[@]}"; do
+            env_flags=()
+            [ "$users" != "unset" ] && env_flags=(-e "ORTHANC__REGISTERED_USERS=${users}")
+            if timeout 30 docker run --rm "${env_flags[@]}" "$TAG" > refuse.log 2>&1; then
+              echo "::error::image started with ORTHANC__REGISTERED_USERS ${users}"
+              cat refuse.log
+              exit 1
+            fi
+            if ! grep -q "REFUSING TO START" refuse.log; then
+              echo "::error::no refusal message with ORTHANC__REGISTERED_USERS ${users}"
+              cat refuse.log
+              exit 1
+            fi
+          done
 
       - name: Push Docker image
         if: github.event_name != 'pull_request'

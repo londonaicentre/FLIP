@@ -12,12 +12,15 @@
 #
 
 # FLIP-PT-091: fail closed — never boot an Orthanc that would accept
-# unauthenticated HTTP. Without ORTHANC__REGISTERED_USERS the base image falls
-# back to the well-known orthanc/orthanc default user, and a kit file missing
-# ORTHANC_USERNAME/ORTHANC_PASSWORD renders the compose user map as {"": ""},
-# which basic auth accepts with empty credentials. Refuse both (the empty-value
-# greps are a heuristic on the JSON text, not a parser) and point the operator
-# at the credential source for their deployment mode.
+# unauthenticated HTTP. Without ORTHANC__REGISTERED_USERS — or with a userless
+# map like {} — the base image falls back to the well-known orthanc/orthanc
+# default user, and a kit file missing ORTHANC_USERNAME/ORTHANC_PASSWORD
+# renders the compose user map as {"": ""}, which basic auth accepts with
+# empty credentials. Require at least one non-empty "user": "password" pair,
+# and separately refuse empty usernames/passwords so a valid pair cannot mask
+# an empty-credential user elsewhere in the map (the greps are a heuristic on
+# the JSON text, not a parser). Point the operator at the credential source
+# for their deployment mode.
 set -eu
 
 fail() {
@@ -37,6 +40,9 @@ if printf '%s' "$users" | grep -q '""[[:space:]]*:'; then
 fi
 if printf '%s' "$users" | grep -q ':[[:space:]]*""'; then
     fail "ORTHANC__REGISTERED_USERS contains an empty password"
+fi
+if ! printf '%s' "$users" | grep -q '"[^"][^"]*"[[:space:]]*:[[:space:]]*"[^"][^"]*"'; then
+    fail "ORTHANC__REGISTERED_USERS contains no username/password pair"
 fi
 
 exec /docker-entrypoint.sh "$@"
