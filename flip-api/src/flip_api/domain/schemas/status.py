@@ -17,22 +17,6 @@ from enum import Enum, StrEnum
 # ---------------------------
 
 
-class BucketStatus(Enum):
-    """Status of the bucket."""
-
-    CLEAN = "clean"
-    INFECTED = "infected"
-    NO = "no"
-
-
-class BucketAction(Enum):
-    """Action to be taken on the bucket."""
-
-    DELETE = "delete"
-    TAG = "tag"
-    NO = "no"
-
-
 class ClientDeployResponse(StrEnum):
     """Response for client deployment."""
 
@@ -111,6 +95,13 @@ class FileUploadStatus(Enum):
     SCANNING = "SCANNING"
     COMPLETED = "COMPLETED"
     ERROR = "ERROR"
+    # Malware-scan verdict: the uploaded object contained dangerous content
+    # (e.g. a pickle with dangerous globals) and has been deleted from S3.
+    # Distinct from ERROR so the UI can tell "scan judged the file malicious"
+    # from "something went wrong". Appended last to keep the native Postgres
+    # enum order consistent between fresh databases and ones migrated via
+    # ALTER TYPE ... ADD VALUE.
+    INFECTED = "INFECTED"
 
 
 class FileUploadTag(Enum):

@@ -11,7 +11,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-# extract_simulator_metrics.sh — local-simulator counterpart of extract_model_metrics.sh.
+# extract_simulator_round_timings.sh — local-simulator counterpart of extract_platform_round_timings.sh.
 #
 # Parses an NVFLARE SimEnv workspace's logs for the SAME controller events the production
 # script pulls from CloudWatch (flip.nvflare.controllers.scatter_and_gather.ScatterAndGather
@@ -44,22 +44,22 @@ Extract FL round metrics from a local NVFLARE simulator workspace
 (default workspace: /tmp/nvflare/arkplus_finetuning_client_api).
 
 Options:
-  -o, --output-dir DIR   Base output directory (default: ./model_metrics)
+  -o, --output-dir DIR   Base output directory (default: ./round_metrics)
       --run-name NAME    Output subdirectory name (default: simulator-<workspace basename>-<log mtime>)
       --log FILE         Parse this log file directly (skips workspace discovery)
-      --compare TSV      Platform rounds.tsv (from extract_model_metrics.sh) to
+      --compare TSV      Platform rounds.tsv (from extract_platform_round_timings.sh) to
                          compare against — adds a steady-state overhead table
   -h, --help             Show this help and exit
 
 Examples:
   ${SCRIPT_NAME}                                    # after 'make sim' in the finetuning tutorial
-  ${SCRIPT_NAME} /tmp/nvflare/arkplus_finetuning_client_api -o model_metrics \\
-      --compare model_metrics/eff70d90-5706-4cc9-8087-5059dfb40d96/rounds.tsv
+  ${SCRIPT_NAME} /tmp/nvflare/arkplus_finetuning_client_api -o round_metrics \\
+      --compare round_metrics/eff70d90-5706-4cc9-8087-5059dfb40d96/rounds.tsv
 EOF
 }
 
 WORKSPACE="/tmp/nvflare/arkplus_finetuning_client_api"
-OUTPUT_DIR="./model_metrics"
+OUTPUT_DIR="./round_metrics"
 RUN_NAME=""
 LOG_FILE=""
 COMPARE_TSV=""
@@ -183,7 +183,7 @@ extract_events 'Start aggregation\.' "${WORK_DIR}/as.raw"
 extract_events 'End aggregation\.' "${WORK_DIR}/ae.raw"
 # Pinned NVFLARE (2.8.0)'s stock ScatterAndGather unconditionally tags this line with the
 # round number ("... by the aggregator at round <N>."); the optional group is a defensive
-# fallback for older builds that omitted it, matching extract_model_metrics.sh's pattern.
+# fallback for older builds that omitted it, matching extract_platform_round_timings.sh's pattern.
 extract_events 'Contribution from [^ ]+ (ACCEPTED|REJECTED) by the aggregator( at round [0-9]+)?\.' "${WORK_DIR}/co.raw"
 
 sed -E 's/^([0-9]+)\t.*Round ([0-9]+) started\..*/\2\t\1/' "${WORK_DIR}/rs.raw" | sort -n -k1,1 > "$ROUND_STARTS"
@@ -201,11 +201,11 @@ REJECTED_TOTAL="$(grep -c $'^REJECTED\t' "$CONTRIBS" || true)"
 log "Parsed ${n_rounds} round(s); contributions: ${ACCEPTED_TOTAL} accepted, ${REJECTED_TOTAL} rejected"
 
 # --------------------------------------------------------------------------------------
-# Build rounds.tsv — identical schema to extract_model_metrics.sh, so
+# Build rounds.tsv — identical schema to extract_platform_round_timings.sh, so
 # plot_round_timings.py consumes it unchanged. Aggregation start/end pairs are matched to
 # rounds chronologically (ScatterAndGather aggregates synchronously once per round);
 # contributions are matched by their own round tag (see CONTRIBS above) exactly like
-# extract_model_metrics.sh — untagged ('-') lines only count towards the grand totals above,
+# extract_platform_round_timings.sh — untagged ('-') lines only count towards the grand totals above,
 # not any specific round.
 # NB: "started_utc"/"finished_utc" columns hold the log's LOCAL wall-clock time (the
 # simulator writes no timezone); the column names are kept for schema compatibility.
@@ -255,8 +255,13 @@ col_stats() {
         END { if (n==0) {print "-\t-\t0"; exit}
               m=s/n; sd=(n>1)?sqrt((ss-n*m*m)/(n-1)):0; printf "%.3f\t%.3f\t%d\n", m, sd, n }' "$ROUNDS_TSV"
 }
+# Inter-round gap = this round's start minus the PREVIOUS round's end. A round with a
+# missing start or end breaks that chain, so reset prev_end instead of skipping the row:
+# skipping would measure the next round's gap from two rounds back, silently folding the
+# whole incomplete round into the gap and inflating the mean.
 gap_stats() {
-    awk -F'\t' 'NR > 1 && $10 != "-" && $11 != "-" {
+    awk -F'\t' 'NR > 1 {
+            if ($10 == "-" || $11 == "-") { prev_end = ""; next }
             if (prev_end != "") {g=($10-prev_end)/1000; s+=g; ss+=g*g; n++}
             prev_end=$11 }
         END { if (n==0) {print "-\t-\t0"; exit}
@@ -267,7 +272,13 @@ DUR_ALL="$(col_stats 4)";     DUR_SS="$(col_stats 4 1)"
 AGG_ALL="$(col_stats 7)";     AGG_SS="$(col_stats 7 1)"
 GAP_ALL="$(gap_stats)"
 ROUND0_DUR="$(awk -F'\t' 'NR>1 && $1==0 {print $4; exit}' "$ROUNDS_TSV")"
-SPAN_S="$(awk -F'\t' 'NR>1 && $10!="-" {if(min==""||$10+0<min)min=$10+0} NR>1 && $11!="-" {if($11+0>max)max=$11+0} END{printf "%.0f", (max-min)/1000}' "$ROUNDS_TSV")"
+# Span needs BOTH a first start and a last end. An aborted run (no round ever finished)
+# leaves max unset, and an unguarded (max-min) then renders as a huge negative span —
+# report it as n/a instead. Emitted with its own unit so "n/a" doesn't render as "n/as".
+SPAN_S="$(awk -F'\t' '
+    NR>1 && $10!="-" {if(!have_min || $10+0<min){min=$10+0; have_min=1}}
+    NR>1 && $11!="-" {if(!have_max || $11+0>max){max=$11+0; have_max=1}}
+    END{ if (!have_min || !have_max) print "n/a"; else printf "%.0fs", (max-min)/1000 }' "$ROUNDS_TSV")"
 
 # --------------------------------------------------------------------------------------
 # Boxplot (best-effort, same runner strategy as the production script)
@@ -284,8 +295,10 @@ if [[ -f "$PLOT_SCRIPT" ]]; then
         plot_cmd=(python3)
     fi
     if [[ ${#plot_cmd[@]} -gt 0 ]]; then
+        # --time-label local: simulator logs carry local wall-clock time with no timezone
+        # (see the header note), so the plot must not label the start stamp "UTC".
         if "${plot_cmd[@]}" "$PLOT_SCRIPT" "$ROUNDS_TSV" "$BOXPLOT" \
-                --model-id "$RUN_NAME" --backend "nvflare-simulator" >&2; then
+                --model-id "$RUN_NAME" --backend "nvflare-simulator" --time-label local >&2; then
             BOXPLOT_GENERATED=true
             log "Wrote round-timing boxplot: ${BOXPLOT}"
         else
@@ -319,7 +332,9 @@ if [[ -n "$COMPARE_TSV" ]]; then
     }
     P_DUR_SS="$(p_stats 4 1)"; P_AGG_SS="$(p_stats 7 1)"
     P_ROUND0="$(awk -F'\t' 'NR>1 && $1==0 {print $4; exit}' "$COMPARE_TSV")"
-    P_GAP="$(awk -F'\t' 'NR > 1 && $10 != "-" && $11 != "-" {
+    # Same chain-reset as gap_stats above — see the comment there.
+    P_GAP="$(awk -F'\t' 'NR > 1 {
+            if ($10 == "-" || $11 == "-") { prev_end = ""; next }
             if (prev_end != "") {g=($10-prev_end)/1000; s+=g; ss+=g*g; n++}
             prev_end=$11 }
         END { if (n==0) {print "-\t-\t0"; exit}
@@ -373,7 +388,7 @@ fmt_row() { local IFS=$'\t'; read -r m s n <<<"$1"; echo "| $2 | ${m} | ${s} | $
     echo
     echo "**${n_rounds} round(s) executed**; contributions in-log: **${ACCEPTED_TOTAL} accepted**, **${REJECTED_TOTAL} rejected** (per-round breakdown in the table below matches each contribution to its own \`at round <N>\` tag; untagged lines, from pre-round-tag NVFLARE builds, only count towards these totals)."
     echo
-    echo "Total span (first round start to last round end): **${SPAN_S}s**."
+    echo "Total span (first round start to last round end): **${SPAN_S}**."
     echo
     echo "## Timing summary (all rounds / steady-state)"
     echo
@@ -387,7 +402,7 @@ fmt_row() { local IFS=$'\t'; read -r m s n <<<"$1"; echo "| $2 | ${m} | ${s} | $
     echo
     echo "Round 0 duration: **${ROUND0_DUR:-n/a}s** (one-off initialisation: weight load, data-loader start-up, first-access caching)."
     echo
-    echo "Machine-readable copy: \`rounds.tsv\` (same schema as extract_model_metrics.sh)."
+    echo "Machine-readable copy: \`rounds.tsv\` (same schema as extract_platform_round_timings.sh)."
     if [[ "$BOXPLOT_GENERATED" == "true" ]]; then
         echo "Timing distributions: \`round_timings_boxplot.png\`."
     fi

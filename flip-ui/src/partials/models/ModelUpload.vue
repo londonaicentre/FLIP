@@ -75,17 +75,38 @@
                                 :class="[
                                     file.status === FileUploadStatus.COMPLETED &&
                                         'ring-green-600/70 dark:ring-green-400',
-                                    [FileUploadStatus.UPLOADING, FileUploadStatus.SCANNING].includes(file.status) &&
+                                    file.status === FileUploadStatus.UPLOADING &&
                                         'ring-gray-400/70 dark:ring-gray-600',
+                                    file.status === FileUploadStatus.SCANNING &&
+                                        'ring-amber-500/70 dark:ring-amber-400',
                                     file.status === FileUploadStatus.ERROR && 'ring-red-600/70 dark:ring-red-400',
+                                    file.status === FileUploadStatus.INFECTED && 'ring-red-600 dark:ring-red-500',
                                 ]"
                             >
                                 <div class="relative flex items-center justify-center w-full h-full text-gray-700 bg-gray-100 border border-gray-300 rounded-full shadow dark:bg-dark-surface dark:text-gray-300 dark:border-dark-border-strong text-[10px]">
                                     <Transition name="fade" mode="out-in">
-                                        <AiLoader v-if="file.status === FileUploadStatus.UPLOADING" small data-test="file-upload-status-uploading" />
-                                        <AiLoader v-else-if="file.status === FileUploadStatus.SCANNING" small data-test="file-upload-status-scanning" />
-                                        <icon-ph-file-duotone v-else-if="file.status === FileUploadStatus.COMPLETED" data-test="file-upload-status-completed" />
-                                        <icon-ph-x-circle-duotone v-else-if="file.status === FileUploadStatus.ERROR" data-test="file-upload-status-error" />
+                                        <AiLoader v-if="file.status === FileUploadStatus.UPLOADING" small data-test="file-upload-status-uploading" aria-label="Uploading" />
+                                        <!-- Its own mark, not the upload spinner: the bytes are safely
+                                             stored, what's pending is the release check (#52). Worded as
+                                             "checked" rather than "scanned for malware" because only
+                                             pickle-bearing files are content-scanned — Python source is
+                                             released uninspected, so a malware claim here would be false. -->
+                                        <icon-ph-magnifying-glass-duotone
+                                            v-else-if="file.status === FileUploadStatus.SCANNING"
+                                            class="text-amber-600 dark:text-amber-400 animate-pulse"
+                                            data-test="file-upload-status-scanning"
+                                            aria-label="Checking file"
+                                            title="Being checked before it can be used for training. Model checkpoints and other pickle files are also scanned for unsafe content."
+                                        />
+                                        <icon-ph-file-duotone v-else-if="file.status === FileUploadStatus.COMPLETED" data-test="file-upload-status-completed" aria-label="Ready" />
+                                        <icon-ph-virus-duotone
+                                            v-else-if="file.status === FileUploadStatus.INFECTED"
+                                            class="text-red-600 dark:text-red-400"
+                                            data-test="file-upload-status-infected"
+                                            aria-label="Unsafe content detected"
+                                            title="Unsafe content detected — the file was removed. Delete this entry and upload a fixed file."
+                                        />
+                                        <icon-ph-x-circle-duotone v-else-if="file.status === FileUploadStatus.ERROR" data-test="file-upload-status-error" aria-label="Upload failed" />
                                     </Transition>
                                 </div>
                             </div>
@@ -113,7 +134,7 @@
                                     </AiButton>
                                 </Transition>
                                 <Transition name="fade">
-                                    <AiButton v-if="canUpload && (file.status === FileUploadStatus.COMPLETED || file.status === FileUploadStatus.ERROR)" small :aria-label="`Delete ${file.name}`" @click="() => confirmDeleteFile(file.name)">
+                                    <AiButton v-if="canUpload && DELETABLE_STATUSES.includes(file.status)" small :aria-label="`Delete ${file.name}`" @click="() => confirmDeleteFile(file.name)">
                                         <icon-ph-trash-duotone class="text-red-500 dark:text-red-400" />
                                     </AiButton>
                                 </Transition>
@@ -185,6 +206,15 @@ const deletingFile = ref<boolean>(false);
 const downloadingFile = ref<string>();
 const downloadingAll = ref<boolean>(false);
 const fileToDelete = ref<string>();
+
+// Terminal states whose row can be cleared. INFECTED is included so the user
+// can dismiss a rejected file and upload a fixed one — its object is already
+// gone from storage, so there is nothing left to protect.
+const DELETABLE_STATUSES = [
+    FileUploadStatus.COMPLETED,
+    FileUploadStatus.ERROR,
+    FileUploadStatus.INFECTED
+];
 
 // "Download all" is offered only when every visible file finished uploading
 // + scanning. Any in-flight or errored file would either be missing from S3
@@ -291,12 +321,10 @@ const uploadFile = async (fileList: FileList) => {
                 fileToUpdate.status = FileUploadStatus.SCANNING;
             }
 
-            // Process the scanned file after upload
-
-            // wait 3 seconds
-            await new Promise(resolve => setTimeout(resolve, 3000));
-
-            // Define modelId as route.params["modelId"].toString()
+            // Register the upload so the server scans it. The scan itself runs
+            // server-side and its outcome (COMPLETED / INFECTED / ERROR) reaches
+            // us through the parent's model polling — there is nothing to wait
+            // for here.
             const modelId = route.params["modelId"].toString();
 
             await processScannedFile(
@@ -317,19 +345,37 @@ const uploadFile = async (fileList: FileList) => {
                         + `${formatBytes(error.limitBytes)} limit.`
                 }, 12_000);
             } else {
-                Snackbar.error({
-                    title: "Error uploading file",
-                    text: "There was an error uploading this file. Please try again."
-                });
+                const rejectionReason = getRejectionReason(error);
+
+                if (rejectionReason) {
+                    Snackbar.error({
+                        title: "File not accepted",
+                        text: rejectionReason
+                    }, 12_000);
+                } else {
+                    Snackbar.error({
+                        title: "Error uploading file",
+                        text: "There was an error uploading this file. Please try again."
+                    });
+                }
             }
         }
     }
 
-    // Once files have uploaded, wait 10s before getting model again.
-    setTimeout(() => {
-        emits("uploaded", true);
-    }, 10_000);
+    emits("uploaded", true);
+};
 
+/**
+ * Pull the server's own explanation out of a 400 so the user is told what to
+ * fix (e.g. which file types are allowed) rather than "please try again".
+ * Only 400s are surfaced verbatim — other statuses can carry internal detail.
+ */
+const getRejectionReason = (error: unknown): string | undefined => {
+    const response = (error as { response?: { status?: number, data?: { detail?: unknown } } })?.response;
+
+    if (response?.status !== 400) return undefined;
+
+    return typeof response.data?.detail === "string" ? response.data.detail : undefined;
 };
 
 const confirmDeleteFile = (name: string) => {

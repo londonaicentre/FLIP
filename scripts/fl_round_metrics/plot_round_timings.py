@@ -13,7 +13,7 @@
 #
 """Render seaborn boxplots of per-round FL timing metrics from a rounds.tsv.
 
-Companion to extract_model_metrics.sh, which writes rounds.tsv (one row per
+Companion to extract_platform_round_timings.sh (and its simulator sibling), which writes rounds.tsv (one row per
 communication round, ms-precision epoch columns) and invokes this script
 best-effort via `uv run --no-project --with pandas --with seaborn`. Not part of
 any FLIP service — pandas/seaborn are deliberately NOT project dependencies.
@@ -26,6 +26,7 @@ orders of magnitude below round duration, so a shared axis would flatten it):
 """
 
 import argparse
+import re
 import sys
 
 import matplotlib
@@ -48,12 +49,37 @@ METRIC_ORDER = ["Round duration", "Aggregation", "Inter-round gap"]
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("rounds_tsv", help="rounds.tsv written by extract_model_metrics.sh")
+    parser.add_argument("rounds_tsv", help="rounds.tsv written by either extractor")
     parser.add_argument("output_png", help="path of the PNG to write")
-    parser.add_argument("--model-id", default="unknown", help="model UUID (title only)")
+    parser.add_argument("--model-id", default="unknown", help="model UUID or simulator run name (title only)")
     parser.add_argument("--backend", default="unknown", help="detected FL backend (title only)")
+    parser.add_argument(
+        "--time-label",
+        default="UTC",
+        help="timezone label for the start time in the subtitle. Platform logs are UTC; "
+        "simulator logs carry local wall-clock time with no timezone, so that caller passes 'local'",
+    )
     parser.add_argument("--dpi", type=int, default=150)
     return parser.parse_args()
+
+
+_UUID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.IGNORECASE)
+
+
+def title_subject(model_id: str) -> str:
+    """Render the title's subject phrase for a model UUID or a simulator run name.
+
+    Args:
+        model_id (str): the ``--model-id`` value — a model UUID from the platform extractor,
+            or a run name like ``simulator-<workspace>-<stamp>`` from the simulator one.
+
+    Returns:
+        str: ``"model <first-uuid-block>"`` for a UUID, else ``"run <name>"`` in full — blindly
+            truncating to 8 characters renders a simulator run name as the useless "simulat".
+    """
+    if _UUID_RE.fullmatch(model_id):
+        return f"model {model_id[:8]}"
+    return f"run {model_id}"
 
 
 def load_metrics(rounds_tsv: str) -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -134,14 +160,19 @@ def main() -> None:
                 textcoords="offset points", ha="left", fontsize=8.5, color=INK_2,
             )
 
+    # An aborted run (no round ever finished) leaves end_ms all-NaN, so both the span and
+    # the start stamp can be NaN/NaT — render those as "n/a" rather than "span nan h".
     span_s = (df["end_ms"].max() - df["start_ms"].min()) / 1000
     started = pd.to_datetime(df["start_ms"].min(), unit="ms", utc=True)
+    started_txt = f"started {started:%Y-%m-%d %H:%M} {args.time_label}" if pd.notna(started) else "started n/a"
+    span_txt = f"span {span_s / 3600:.1f} h" if pd.notna(span_s) else "span n/a"
     context = (
         f"{len(df)} rounds | backend: {args.backend} | "
-        f"started {started:%Y-%m-%d %H:%M} UTC | rounds 0–{int(df['round'].max())} "
-        f"span {span_s / 3600:.1f} h"
+        f"{started_txt} | rounds 0–{int(df['round'].max())} {span_txt}"
     )
-    fig.suptitle(f"Per-round timing — model {args.model_id[:8]}", fontsize=12, color=INK, x=0.06, y=0.985, ha="left")
+    fig.suptitle(
+        f"Per-round timing — {title_subject(args.model_id)}", fontsize=12, color=INK, x=0.06, y=0.985, ha="left"
+    )
     fig.text(0.06, 0.925, context, fontsize=9, color=INK_2, ha="left")
 
     fig.tight_layout(rect=(0, 0, 1, 0.9))

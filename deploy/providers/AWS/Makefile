@@ -323,6 +323,67 @@ apply-cert: ## Apply only the ACM certificate (step 1 of 2 for HTTPS)
 	@$(_TF) apply -target=aws_acm_certificate.flip -auto-approve
 	@echo "✅ Certificate created! Now run 'make plan' and 'make apply' to deploy DNS validation."
 
+.PHONY: plan-fl-kit-slots
+plan-fl-kit-slots: ## Plan only the /flip/fl_kit_slot_names SSM parameter (+ flip-api task-role read)
+	@echo "📋 Planning FL kit-slot parameter..."
+	@$(_TF) plan -target=aws_ssm_parameter.fl_kit_slot_names \
+		-target=aws_iam_role_policy.ecs_flip_api_task -out=plan-fl-kit-slots.tfplan
+
+.PHONY: apply-fl-kit-slots
+apply-fl-kit-slots: ## Apply only the FL kit-slot SSM parameter — the slot activation path
+	## Re-renders /flip/fl_kit_slot_names from the env file's FL_KIT_SLOT_NAMES.
+	## flip-api re-reads the parameter when the slot pool runs dry (register_trust
+	## reconcile), so new kit slots become claimable with no task-definition change
+	## and no restart. The plan diff is plain-text (the list is not a secret) —
+	## review it before it applies. Also targets the flip-api task-role policy so
+	## the first rollout (which adds the ssm:GetParameter read) is self-contained;
+	## a no-op on every later run. Targeted on purpose: never run a full prod
+	## `make apply` for this (AMI drift can force-replace trust EC2s).
+	##
+	## NOT literally one resource: -target applies the target's whole dependency
+	## closure, and the task-role policy references the bucket modules, whose
+	## server-access logging targets aws_s3_bucket.flip_access_logs. So on an env whose
+	## state predates that S3-logging hardening the first run ALSO creates
+	## flip-access-logs-<subdomain> + its ACL/ownership (additive, 0 destroys). Seen on
+	## stag 2026-07-14: 4 to add, 1 to change, 0 to destroy. Prod has no access-logs
+	## bucket either — expect the same there. The plan prints and pauses for
+	## confirmation before it applies (YES=1 skips the pause, matching add_fl_kits.sh).
+	@echo "🎛️  Planning FL kit-slot parameter..."
+	@$(_TF) plan -target=aws_ssm_parameter.fl_kit_slot_names \
+		-target=aws_iam_role_policy.ecs_flip_api_task -out=plan-fl-kit-slots.tfplan
+	@if [ "$(YES)" != "1" ]; then \
+	  printf "   Apply this plan? [y/N] "; \
+	  read -r answer; \
+	  case "$$answer" in \
+	    [Yy]|[Yy][Ee][Ss]) ;; \
+	    *) echo "❌ Aborted — nothing applied (plan saved at plan-fl-kit-slots.tfplan)."; exit 1;; \
+	  esac; \
+	fi
+	@$(_TF) apply plan-fl-kit-slots.tfplan
+	@echo "✅ FL kit-slot parameter applied — new slots (if any) are claimable on the next trust registration."
+
+.PHONY: add-fl-kits
+add-fl-kits: ## Ensure N more claimable FL kit slots exist, end to end (NVFLARE; PROD=stag|true)
+	## Wraps scripts/add_fl_kits.sh: discover nets from S3 → ACTIVATE up to N spares
+	## (kits already minted on every net but not yet in FL_KIT_SLOT_NAMES — no certs, no
+	## upload) → MINT only the shortfall on every net (restore/fingerprint-verify each
+	## net's CA workspace, additive S3 upload, never sync --delete) → append the activated
+	## + minted names to FL_KIT_SLOT_NAMES in the env file. Then re-invokes make for
+	## apply-fl-kit-slots so the sub-make re-reads the just-edited env file (this parse's
+	## TF_VAR_FL_KIT_SLOT_NAMES predates the edit). N is a target ("N more live slots"),
+	## not a mint count — spares are reused before any fresh mint, so a good kit is never
+	## stranded and, when spares cover N, nothing is minted at all.
+	@[ -n "$(N)" ] || { echo "❌ N is required, e.g. make add-fl-kits N=2 PROD=true"; exit 1; }
+	@$(_AWS_ENV) MAIN_ENV_FILE=$(MAIN_ENV_FILE) N=$(N) YES=$(YES) \
+		FL_BACKEND=$(FL_BACKEND) ./scripts/add_fl_kits.sh
+	@$(MAKE) apply-fl-kit-slots PROD=$(PROD) YES=$(YES) || { \
+	  echo "❌ Parameter apply failed AFTER the new slot names were appended to the env file"; \
+	  echo "   (and any shortfall minted + uploaded)."; \
+	  echo "   Recover with just: make apply-fl-kit-slots PROD=$(PROD)"; \
+	  echo "   Do NOT re-run add-fl-kits — it would grow the pool by another N slots (activating"; \
+	  echo "   more spares or minting higher-numbered kits)."; \
+	  exit 1; }
+
 .PHONY: destroy-cert
 destroy-cert: ## Destroy only the ACM certificate (use with caution - will break HTTPS)
 	@echo "💥 Destroying ACM certificate (Step 1/2)..."

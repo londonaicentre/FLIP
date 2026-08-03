@@ -67,9 +67,14 @@ locals {
   # into the flip-api image from the repo's fl-apps/ tree and read locally via
   # FL_APP_BASE_DIR (FLIP#724). Only the completed bundle still lands in S3
   # (fl_app_destination_uri).
+  # The two model-file prefixes are the quarantine boundary (#52): researcher
+  # uploads land in `uploaded/` and only reach `scanned/` once flip-api's scan
+  # promotes them. Everything that consumes model files — the FL app bundler,
+  # downloads, listings — reads `scanned/` exclusively, so an unscanned or
+  # rejected file can never be shipped to a trust. They must stay distinct.
   uploaded_federated_data_uri = "${local.flip_fl_results_bucket_uri}/results"
   uploaded_model_files_uri    = "${local.flip_model_files_uploads_bucket_uri}/uploaded"
-  scanned_model_files_uri     = "${local.flip_model_files_uploads_bucket_uri}/uploaded"
+  scanned_model_files_uri     = "${local.flip_model_files_uploads_bucket_uri}/scanned"
   fl_app_destination_uri      = "${local.flip_app_bundles_bucket_uri}/app_destinations"
 
   # NET_ENDPOINTS tells flip-api how to reach each FL network's fl-api. On
@@ -125,7 +130,10 @@ locals {
       # 1800s (MAX_PUT_PRESIGNED_URL_TTL_SECONDS), so multi-GB uploads must
       # complete within 30 minutes or they time out at the edge.
       MAX_MODEL_FILE_BYTES = "5000000000"
-      FL_KIT_SLOT_NAMES    = var.FL_KIT_SLOT_NAMES
+      # FL_KIT_SLOT_NAMES is deliberately NOT in the task env: in production the
+      # kit-slot pool's single source is the /flip/fl_kit_slot_names SSM parameter
+      # (parameter_store.tf), read at runtime by resolve_fl_kit_slot_names — an env
+      # copy here would be dead config that apply-fl-kit-slots never updates.
     })
     fl_server = {
       LOCAL_DEV                      = "false"

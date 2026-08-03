@@ -19,7 +19,7 @@ import nvflare.client as flare
 import pandas as pd
 import pydicom
 import torch
-from data_utils import Lesion, LesionDict, get_labels_from_radiology_row, get_lesion_label, get_xray_transforms
+from data_utils import Lesion, LesionDict, get_labels_from_radiology_row, get_lesion_label
 from flip import FLIP
 from flip.constants import ResourceType
 from loss_and_metrics import compute_precision_recall_f1, get_bce_loss
@@ -27,6 +27,7 @@ from models import get_model
 from monai.data import DataLoader, Dataset
 from nvflare.client.tracking import SummaryWriter
 from tqdm import tqdm
+from transforms import get_xray_transforms
 
 logger = logging.getLogger(__name__)
 

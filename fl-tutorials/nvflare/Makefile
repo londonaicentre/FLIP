@@ -77,7 +77,7 @@ download-arkplus-finetuning-data:
 	@# Written last, only on a fully successful run: `experiment`'s dataset-present check in
 	@# arkplus_fine_tuning/Makefile looks for this marker (not just directory existence), so an
 	@# interrupted download/copy (e.g. Ctrl+C mid-run) can't be mistaken for complete data on the
-	@# next `make experiment`.
+	@# next `make reproduce-overhead`.
 	@touch data/arkplus/site1/.download-complete data/arkplus/site2/.download-complete
 	@echo "✅ Ark+ training data ready at data/arkplus/site{1,2}/ — run: make run-tutorial TUTORIAL=arkplus_fine_tuning"
 
