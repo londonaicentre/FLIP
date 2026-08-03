@@ -31,11 +31,11 @@ Central Hub REST API. FastAPI + psycopg2 + SQLModel (sync sessions). Handles use
 | `trusts_services/` | Trust registration, health checks, imaging creation |
 | `cohort_services/` | Cohort query submission, results retrieval |
 | `step_functions_services/` | Step function orchestration (register user, approve, cohort) |
-| `file_services/` | S3 file upload/download |
+| `file_services/` | S3 model-file upload/download, plus the scan-and-promote pipeline (`services/malware_scan_service.py`) that gates the `uploaded/` → `scanned/` quarantine boundary (#52) |
 | `private_services/` | Trust-to-hub internal endpoints (tasks, cohort results) |
 | `site_services/` | Site configuration, details |
 | `role_services/` | Role CRUD |
-| `scheduler/` | APScheduler background jobs (FL scheduling, trust polling) |
+| `scheduler/` | APScheduler background jobs (FL scheduling, trust polling, malware-scan reconcile sweep) |
 | `shared/` | Shared utilities, middleware |
 
 ## Commands (from `flip-api/`)
