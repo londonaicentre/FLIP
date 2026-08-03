@@ -70,12 +70,19 @@ def delete_model_file(
         else:
             logger.warning(f"File {file_name} not found for Model ID: {model_id} in the database.")
 
-        # Delete from S3
-        s3_path = f"{get_settings().SCANNED_MODEL_FILES_BUCKET}/{model_id}/{file_name}"
+        # Delete from S3 — both the promoted copy and any staged copy (a file
+        # still SCANNING, or whose promote was interrupted, lives only under
+        # the uploaded prefix). S3 DeleteObject succeeds on missing keys, so
+        # INFECTED/ERROR rows whose object is already gone delete cleanly.
+        settings = get_settings()
+        scanned_path = f"{settings.SCANNED_MODEL_FILES_BUCKET}/{model_id}/{file_name}"
+        uploaded_path = f"{settings.UPLOADED_MODEL_FILES_BUCKET}/{model_id}/{file_name}"
 
         s3 = S3Client()
         try:
-            s3.delete_object(s3_path)
+            s3.delete_object(scanned_path)
+            if uploaded_path != scanned_path:
+                s3.delete_object(uploaded_path)
         except Exception:
             logger.exception(f"Error deleting file from S3 for model_id={model_id}")
             raise HTTPException(

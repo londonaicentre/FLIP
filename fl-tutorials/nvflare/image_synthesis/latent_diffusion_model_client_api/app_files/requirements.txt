@@ -1,0 +1,15 @@
+boto3>=1.38.31
+monai>=1.4.0
+nibabel>=5.3.2
+nvflare==2.8.0
+pandas>=2.3.0
+pydantic>=2.11.7
+pydantic-settings>=2.10.1
+gdown
+einops
+pydicom
+matplotlib
+lpips
+# Needed by lpips / MONAI PerceptualLoss (provides torchvision.ops.nms). Must match the base
+# image's torch (>=2.11, cu128); the authoritative pin lives in flip-utils/pyproject.toml.
+torchvision>=0.26.0

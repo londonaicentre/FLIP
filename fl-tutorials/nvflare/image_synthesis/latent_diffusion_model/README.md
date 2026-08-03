@@ -1,5 +1,8 @@
 # Latent diffusion model
 
+> **Note:** this is the legacy Executor-based tutorial. The NVFLARE **Client API**
+> sibling is [`latent_diffusion_model_client_api`](../latent_diffusion_model_client_api/README.md).
+
 This code allows to train a two-stage latent diffusion model. The main model is made up of several stages: a variational autoencoder and a diffusion model.
 The code is entirely based on `MONAI` functions.
 

@@ -46,3 +46,9 @@ variable "kms_key_arn" {
   type        = string
   default     = null
 }
+
+variable "noncurrent_version_expiration_days" {
+  description = "Days after which noncurrent object versions are expired. 0 (default) creates no lifecycle configuration. Versioning is always on, so buckets whose objects are routinely deleted or replaced (e.g. model-file staging, where the scan pipeline deletes rejected uploads and moves promoted ones) otherwise retain every superseded version forever."
+  type        = number
+  default     = 0
+}
