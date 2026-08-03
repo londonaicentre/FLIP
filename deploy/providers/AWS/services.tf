@@ -57,6 +57,13 @@ module "flip_model_files_uploads_bucket" {
   kms_key_arn           = aws_kms_key.flip_app_key.arn
   logging_target_bucket = local.access_logs_bucket_name
   mfa_delete_protection = true
+  # This bucket holds both model-file prefixes, and the scan pipeline (#52)
+  # churns objects in both: rejected uploads are deleted from `uploaded/`,
+  # promoted ones are copied to `scanned/` and then deleted from `uploaded/`.
+  # Every one of those deletes leaves a noncurrent version behind on this
+  # versioned bucket. 30 days keeps a forensic window on quarantined files
+  # while bounding the storage those tombstones accumulate.
+  noncurrent_version_expiration_days = 30
   # The module enables server access logging to flip_access_logs; force it
   # to wait for the LogDelivery ACL grant on that destination bucket so the
   # first-apply order is `ACL → bucket_logging`.

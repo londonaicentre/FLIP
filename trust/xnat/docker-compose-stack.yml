@@ -33,7 +33,7 @@ services:
       - XNAT_SERVICE_USER=${XNAT_SERVICE_USER}
       - XNAT_SERVICE_PASSWORD=${XNAT_SERVICE_PASSWORD}
       - XNAT_PORT=${XNAT_PORT}
-      - PACS_DICOM_PORT=${PACS_DICOM_PORT}
+      - PACS_DICOM_PORT=${PACS_DICOM_PORT:-4242}
     # Dual-homed: the trust overlay for everything else, plus the stack-scoped
     # socket-proxy network — the only route to the Docker API proxy below.
     networks:

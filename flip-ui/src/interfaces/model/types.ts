@@ -15,10 +15,16 @@
 
 
 export enum FileUploadStatus {
+    // Client-side only: the bytes are still on their way to S3. The server
+    // knows nothing about the file until it is registered for scanning.
     UPLOADING = "UPLOADING",
     SCANNING = "SCANNING",
     COMPLETED = "COMPLETED",
     ERROR = "ERROR",
+    // The scan judged the file unsafe (e.g. a pickle naming dangerous
+    // globals) and deleted it from storage. Distinct from ERROR so the user
+    // is told the file was rejected, not that something went wrong.
+    INFECTED = "INFECTED",
 }
 
 export interface FileInfo {

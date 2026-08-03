@@ -81,6 +81,10 @@ module "flip_model_files_uploads_bucket" {
   # download (FLIP#784) — the browser fetches bytes directly from the bucket.
   cors_methods         = ["POST", "GET"]
   cors_allowed_origins = var.s3_cors_allowed_origins
+  # Mirrors the stag/prod root: the scan pipeline (#52) deletes and moves
+  # objects across the `uploaded/` and `scanned/` prefixes, and every such
+  # delete leaves a noncurrent version on this versioned bucket.
+  noncurrent_version_expiration_days = 30
 }
 
 module "flip_fl_results_bucket" {
