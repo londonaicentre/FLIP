@@ -148,6 +148,105 @@ def test_prepare_and_start_training_aborted_mid_prepare_returns_false(fake_sessi
     mock_release.assert_called_once_with(model_id, fake_session)
 
 
+def test_prepare_and_start_training_aborted_before_prepare_returns_false(fake_session, model_id, fl_job_id):
+    """An abort landed between the pickup commit and this tick takes the clean aborted branch.
+
+    Before the gate, the abort's net release made the first ``get_net_by_model_id`` raise
+    ``NotFoundError`` into the generic failure handler: a "Failed to start training: Net not
+    found" false-alarm log for what was a normal abort.
+    """
+    with (
+        patch(
+            "flip_api.fl_services.services.fl_scheduler_service._raise_if_job_aborted",
+            side_effect=JobAbortedError("aborted"),
+        ),
+        patch("flip_api.fl_services.services.fl_scheduler_service.get_net_by_model_id") as mock_get_net,
+        patch("flip_api.fl_services.services.fl_scheduler_service.release_scheduler_for_model") as mock_release,
+        patch("flip_api.fl_services.services.fl_scheduler_service.remove_job") as mock_remove,
+        patch("flip_api.fl_services.services.fl_scheduler_service.add_log") as mock_log,
+        patch("flip_api.fl_services.services.fl_scheduler_service.update_model_status") as mock_status,
+    ):
+        started = fl_scheduler_service.prepare_and_start_training(
+            model_id=model_id,
+            fl_job_id=fl_job_id,
+            trust_ids=[uuid4()],
+            session=fake_session,
+        )
+
+    assert started is False
+    mock_get_net.assert_not_called()
+    mock_remove.assert_not_called()
+    mock_status.assert_not_called()
+    mock_log.assert_not_called()
+    mock_release.assert_called_once_with(model_id, fake_session)
+
+
+def test_prepare_and_start_training_net_unpinned_by_concurrent_abort_reclassified(fake_session, model_id, fl_job_id):
+    """An abort landing between the gate and the net lookup is reclassified, not a failure.
+
+    The gate passes (job still alive), the abort then unpins the net so the lookup raises
+    ``NotFoundError``, and the re-gate sees the now-DELETED job → clean aborted branch.
+    """
+    with (
+        patch(
+            "flip_api.fl_services.services.fl_scheduler_service._raise_if_job_aborted",
+            side_effect=[None, JobAbortedError("aborted")],
+        ) as mock_gate,
+        patch(
+            "flip_api.fl_services.services.fl_scheduler_service.get_net_by_model_id",
+            side_effect=NotFoundError("Net not found"),
+        ),
+        patch("flip_api.fl_services.services.fl_scheduler_service.release_scheduler_for_model") as mock_release,
+        patch("flip_api.fl_services.services.fl_scheduler_service.remove_job") as mock_remove,
+        patch("flip_api.fl_services.services.fl_scheduler_service.add_log") as mock_log,
+        patch("flip_api.fl_services.services.fl_scheduler_service.update_model_status") as mock_status,
+    ):
+        started = fl_scheduler_service.prepare_and_start_training(
+            model_id=model_id,
+            fl_job_id=fl_job_id,
+            trust_ids=[uuid4()],
+            session=fake_session,
+        )
+
+    assert started is False
+    assert mock_gate.call_count == 2
+    mock_remove.assert_not_called()
+    mock_status.assert_not_called()
+    mock_log.assert_not_called()
+    mock_release.assert_called_once_with(model_id, fake_session)
+
+
+def test_prepare_and_start_training_genuine_net_not_found_still_errors(fake_session, model_id, fl_job_id):
+    """A NotFoundError from the net lookup with the job still alive keeps the failure path.
+
+    Pins that the abort reclassification did not swallow real net-resolution failures: the
+    error is re-raised with the job removed, a failure log written, and ERROR status set.
+    """
+    with (
+        patch("flip_api.fl_services.services.fl_scheduler_service._raise_if_job_aborted", return_value=None),
+        patch(
+            "flip_api.fl_services.services.fl_scheduler_service.get_net_by_model_id",
+            side_effect=NotFoundError("Net not found"),
+        ),
+        patch("flip_api.fl_services.services.fl_scheduler_service.release_scheduler_for_model") as mock_release,
+        patch("flip_api.fl_services.services.fl_scheduler_service.remove_job") as mock_remove,
+        patch("flip_api.fl_services.services.fl_scheduler_service.add_log") as mock_log,
+        patch("flip_api.fl_services.services.fl_scheduler_service.update_model_status") as mock_status,
+        pytest.raises(NotFoundError, match="Net not found"),
+    ):
+        fl_scheduler_service.prepare_and_start_training(
+            model_id=model_id,
+            fl_job_id=fl_job_id,
+            trust_ids=[uuid4()],
+            session=fake_session,
+        )
+
+    mock_remove.assert_called_once_with(fl_job_id, fake_session)
+    mock_log.assert_called_once_with(model_id, "Net not found", fake_session, success=False)
+    mock_status.assert_called_once_with(model_id, ModelStatus.ERROR, fake_session)
+    mock_release.assert_called_once_with(model_id, fake_session)
+
+
 def test_update_fl_scheduler_success(fake_session, model_id, fl_job_id):
     job = MagicMock()
     job.id = fl_job_id

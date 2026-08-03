@@ -40,6 +40,7 @@ from flip_api.domain.schemas.status import (
 )
 from flip_api.domain.schemas.types import FLBackend, FLLogEvent
 from flip_api.fl_services.services.fl_service import (
+    _raise_if_job_aborted,
     bundle_flower_application,
     bundle_nvflare_application,
     get_bundle_urls,
@@ -592,8 +593,9 @@ def prepare_and_start_training(model_id: UUID, fl_job_id: UUID, trust_ids: list[
 
     Returns:
         bool: True when the job was submitted to the fl-server; False when a concurrent abort
-            (#787) deleted the job mid-prepare, in which case submission was skipped and the
-            net released.
+            (#787) deleted the job before or during prepare — an abort gate at the top of the
+            function catches aborts landed since the pickup commit — in which case submission
+            was skipped and the net released.
 
     Raises:
         Exception: If the FL backend is unsupported, the net endpoint cannot be resolved, client
@@ -604,9 +606,20 @@ def prepare_and_start_training(model_id: UUID, fl_job_id: UUID, trust_ids: list[
     try:
         logger.debug("Attempting to prepare and start training...")
 
+        # Abort gate (#787): a user abort between the job pickup commit and this tick has
+        # already DELETEd the job and released the net — take the clean aborted branch below
+        # instead of surfacing the unpinned net as a "Failed to start training" false alarm.
+        _raise_if_job_aborted(fl_job_id, session)
+
         # Resolve the backend from the net this job is pinned to. The value is the net's
         # canonical seeded backend (FLNets.fl_backend), read from the DB, never a boot-time env var.
-        net_details = get_net_by_model_id(model_id, session)
+        try:
+            net_details = get_net_by_model_id(model_id, session)
+        except NotFoundError:
+            # The abort can land between the gate above and this lookup and unpin the net;
+            # reclassify if so, otherwise a missing net is a genuine error.
+            _raise_if_job_aborted(fl_job_id, session)
+            raise
         if not net_details.endpoint:
             raise Exception("Failed to get the net endpoint")
 
