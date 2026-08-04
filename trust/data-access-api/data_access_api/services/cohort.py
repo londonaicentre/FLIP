@@ -41,7 +41,12 @@ ALLOWED_SCHEMA = "omop"
 # defence in depth and stops the parser allocating an arbitrarily large AST.
 MAX_QUERY_LENGTH = 10_240  # 10 KiB
 
-# Top-level statement shapes that count as SELECT-like for the cohort API.
+# Top-level statement shapes that count as SELECT-like for the cohort API. This is an
+# allowlist and must stay one — never add ``exp.Command``, sqlglot's catch-all for syntax it
+# does not model (``EXPLAIN`` lands there, as does anything a future sqlglot stops
+# understanding). A Command node round-trips the raw text verbatim and exposes no children,
+# so the DML, schema and LIMIT/OFFSET walks below would all traverse nothing and pass it
+# through unchecked.
 _ALLOWED_QUERY_TYPES: tuple[type[exp.Expression], ...] = (
     exp.Select,
     exp.Union,

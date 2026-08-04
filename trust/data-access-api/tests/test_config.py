@@ -11,9 +11,13 @@
 #
 
 import pytest
+from pydantic import ValidationError
 
 from data_access_api.config import Settings
 
+# Deliberately a literal rather than an import of ``config.DEFAULT_COHORT_QUERY_THRESHOLD``:
+# these tests pin the shipped value independently of its source, so importing the constant
+# would make ``test_cohort_query_threshold_defaults_to_ten`` tautological.
 DEFAULT_COHORT_QUERY_THRESHOLD = 10
 
 
@@ -34,6 +38,30 @@ def test_cohort_query_threshold_coerces_empty_to_default(value):
     assert Settings(COHORT_QUERY_THRESHOLD=value).COHORT_QUERY_THRESHOLD == DEFAULT_COHORT_QUERY_THRESHOLD
 
 
+def test_cohort_query_threshold_empty_coercion_tracks_field_default():
+    """The empty-string coercion must yield whatever the field default is, not a copy of it.
+
+    Regression test for the drift the validator used to carry: it returned a hard-coded ``10``
+    alongside a field default of ``10``, so changing one silently left the other behind. Both
+    now read ``DEFAULT_COHORT_QUERY_THRESHOLD``, and re-introducing a literal fails this.
+    """
+    assert Settings(COHORT_QUERY_THRESHOLD="").COHORT_QUERY_THRESHOLD == Settings().COHORT_QUERY_THRESHOLD
+
+
 def test_cohort_query_threshold_accepts_operator_override():
     """A trust may raise its own floor; the value still parses from a string as env vars do."""
     assert Settings(COHORT_QUERY_THRESHOLD="25").COHORT_QUERY_THRESHOLD == 25
+
+
+@pytest.mark.parametrize("value", [0, -1, "0", "-5"])
+def test_cohort_query_threshold_rejects_non_positive(value):
+    """A non-positive threshold must fail loudly rather than disable the control.
+
+    ``COHORT_QUERY_THRESHOLD=0`` would turn off every check that reads it at once: both
+    row-level gates (``len(df) < 0`` is never true, so ``/cohort/dataframe`` and
+    ``/cohort/accession-ids`` would release any cohort, including a single patient) and the
+    statistics suppression on ``/cohort``. Settings are built at import, so rejecting here
+    means the service refuses to start instead of running with the floor silently removed.
+    """
+    with pytest.raises(ValidationError):
+        Settings(COHORT_QUERY_THRESHOLD=value)

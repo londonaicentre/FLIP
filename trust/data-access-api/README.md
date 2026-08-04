@@ -221,6 +221,13 @@ of a raw HTTP error.
 trust's kit file (`trust/.env.<CODE>.<env>`) to raise it. It is not a hub setting and trusts need
 not agree on a value.
 
+It must be a **positive integer**; `0` or a negative value is rejected at startup rather than
+accepted. A threshold of `0` would disable every check that reads it in one stroke — both row-level
+gates (`len(df) < 0` is never true, so `/cohort/dataframe` and `/cohort/accession-ids` would release
+a cohort of any size) and the statistics suppression on `/cohort`. Settings are built at import, so
+a bad value stops the service starting instead of leaving it running with no floor. Requiring the
+value to be at least the shipped `10`, rather than merely positive, is tracked in FLIP#870.
+
 Note for anyone adding settings here: the service Makefile exports kit-file names with
 `sed 's/=.*//'`, which strips the value from *every* line including commented ones, so a
 commented-out entry reaches the process as an empty string. Any non-`str` setting therefore needs

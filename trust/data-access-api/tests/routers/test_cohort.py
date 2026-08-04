@@ -377,18 +377,27 @@ def test_get_accession_ids_invalid_query(mock_validate_query, mock_decrypt):
     assert response.json()["detail"] == "Invalid query syntax"
 
 
-@patch("data_access_api.routers.cohort.get_settings")
 @patch("data_access_api.routers.cohort.decrypt")
 @patch("data_access_api.routers.cohort.get_records")
-def test_get_accession_ids_missing_column(mock_get_records, mock_decrypt, mock_get_settings):
-    mock_get_settings.return_value.COHORT_QUERY_THRESHOLD = 1
+def test_get_accession_ids_missing_column_propagates_400(mock_get_records, mock_decrypt):
+    """A cohort that does not project ``accession_id`` is refused by ``get_records``, not the router.
+
+    The route wraps the inner query as ``SELECT accession_id FROM (...)``, so Postgres raises
+    ``UndefinedColumn`` during execution and ``get_records`` turns it into a category 400 —
+    there is no DataFrame to inspect afterwards, which is why the router carries no
+    column-presence guard. This mocks the conversion ``get_records`` performs; the real
+    Postgres behaviour it stands in for is pinned by
+    ``tests/integration/test_cohort_endpoint.py::test_accession_ids_missing_column_surfaces_get_records_400``.
+    """
     mock_decrypt.return_value = "decrypted-id"
-    mock_get_records.return_value = pd.DataFrame({"some_other_column": [1, 2]})
+    mock_get_records.side_effect = HTTPException(
+        status_code=400, detail="The column 'accession_id' does not exist."
+    )
 
     response = client.post("/cohort/accession-ids", json=sample_dataframe_query, headers=AUTH_HEADERS)
 
     assert response.status_code == 400
-    assert "accession_id" in response.json()["detail"]
+    assert response.json()["detail"] == "The column 'accession_id' does not exist."
 
 
 @patch("data_access_api.routers.cohort.decrypt")
