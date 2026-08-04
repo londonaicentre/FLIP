@@ -86,6 +86,26 @@ def test_upgrade_head_on_empty_db_reaches_head(empty_db_engine: Engine) -> None:
         assert current == _script_head(connection)
 
 
+def test_running_migrations_does_not_disable_application_logging(empty_db_engine: Engine) -> None:
+    """Running Alembic in-process must leave the app's logger enabled.
+
+    ``migrations/env.py`` calls ``logging.config.fileConfig``, whose default
+    ``disable_existing_loggers=True`` sets ``disabled = True`` on every logger
+    absent from ``alembic.ini`` — including the "uvicorn" logger the app logs
+    through. Production is unaffected (the entrypoint runs ``alembic upgrade
+    head`` as its own process), but in-process runs poison logging for the rest
+    of the interpreter: the logger emits nothing, so every later ``caplog``
+    assertion sees an empty log and fails for reasons unrelated to its subject.
+    """
+    from flip_api.utils.logger import logger
+
+    with empty_db_engine.connect() as connection:
+        command.upgrade(make_alembic_config(connection), "head")
+
+    assert logger.disabled is False, "alembic's fileConfig disabled the application logger"
+    assert logger.propagate is True, "the application logger no longer propagates to root (caplog cannot see it)"
+
+
 def test_no_drift_between_models_and_migrations(empty_db_engine: Engine) -> None:
     """Drift guard: the migrations reproduce ``SQLModel.metadata`` with no diff.
 
