@@ -40,7 +40,7 @@ class RUN_TRAINER(Executor):
         self,
         train_task_name: str = AppConstants.TASK_TRAIN,
         submit_model_task_name: str = AppConstants.TASK_SUBMIT_MODEL,
-        exclude_vars: str | None = None,
+        exclude_vars: list[str] | None = None,
         project_id: str = "",
         query: str = "",
     ) -> None:
