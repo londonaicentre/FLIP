@@ -50,6 +50,15 @@ server; no inbound ports are exposed from the K8s cluster.
 - **External Secrets Operator** or **Secrets Store CSI Driver** (recommended for
   production secrets management)
 
+> **Helm 4 readiness semantics.** Helm 4 reimplemented `--wait` on top of
+> [kstatus](https://github.com/kubernetes-sigs/cli-utils/tree/master/pkg/kstatus),
+> which is stricter than Helm 3's readiness check — an install that Helm 3 called
+> ready can now block until the workloads genuinely settle, and time out if they
+> never do. `make deploy` does **not** pass `--wait` (it relies on `--timeout 20m`
+> alone), so this only bites if you add `--wait` to your own `helm upgrade`
+> invocation; if you do, size `--timeout` for the slowest service to become ready
+> rather than for the API call to return.
+
 ## Quickstart
 
 A K8s trust is registered with the hub **exactly like any other trust** — by a
