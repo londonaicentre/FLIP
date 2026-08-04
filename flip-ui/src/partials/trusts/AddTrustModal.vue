@@ -178,6 +178,9 @@ const submitAction = async () => {
             text: extractErrorDetail(e, "There was an error creating the trust. Please try again.")
         });
         errorStore.setError();
+        // The dialog overlay would sit on top of the snackbar — close it so the
+        // error is actually readable.
+        close();
     } finally {
         isSubmitting.value = false;
     }

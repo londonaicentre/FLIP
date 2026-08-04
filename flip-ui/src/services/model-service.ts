@@ -401,6 +401,10 @@ export interface IModelSummary {
     projectName: string;
     ownerId: string;
     ownerName?: string | null;
+    // Optional only until the deployed API ships the field: the owner sub-line
+    // shows an em-dash and the default created-sort keeps the backend order
+    // when it is absent.
+    creationTimestamp?: string;
     trusts: IModelSummaryTrust[];
     // The model's 1-based place in the FL training queue (1 = next to be picked
     // up); null/absent unless the model has a queued job waiting for a net.
