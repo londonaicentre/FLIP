@@ -267,12 +267,13 @@ endpoints — different hostnames behind different load balancers, so both must 
   default 8002) — the NLB (e.g. ``fl.app.flip.aicentre.co.uk``).
 
 If the trust's public IP changes (common with residential broadband), update
-the NLB security group by re-running the ``allow-local-trust-nlb`` target
-(the Terraform variable is ``local_trust_public_ips``, a list):
+the NLB security group. Add the new IP to the ``LOCAL_TRUST_PUBLIC_IPS`` HCL
+list in the hub env file (``.env.stag`` / ``.env.production``), then apply
+the targeted security-group change:
 
 .. code-block:: shell
 
-   make -C deploy/providers/AWS allow-local-trust-nlb LOCAL_TRUST_IP=<new-ip>
+   make -C deploy/providers/AWS allow-local-trust-nlb LOCAL_TRUST_IP=<new-ip> PROD=<stag|true>
 
 ***************
 Troubleshooting
