@@ -99,6 +99,19 @@ Use the trust code you registered, whose kit file is `trust/.env.<CODE>.producti
 it explicitly for the command.) Any direct `docker`, `docker compose`, or
 `docker swarm` invocations on the trust host should likewise be prefixed with `sudo`.
 
+> **Hosts provisioned before this change are not remediated by re-running the
+> playbook.** `geerlingguy.docker`'s `docker_users` is additive — it only ever
+> adds to the `docker` group, never removes — so dropping the setting stops *new*
+> grants but leaves membership a host already picked up in place. Affected hosts
+> (the `Trust_2`/BDMS on-prem host among them) are remediated by the planned
+> trust reprovisioning, which rebuilds them from this playbook. To close the gap
+> sooner on a host that is already up, evict the user directly and have them log
+> back in for it to take effect:
+>
+> ```bash
+> sudo gpasswd -d <login-user> docker   # verify with: id -nG <login-user>
+> ```
+
 ### Provision the trust host
 
 Run this **on the trust host** — there is no SSH path:

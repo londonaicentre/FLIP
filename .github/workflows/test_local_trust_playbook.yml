@@ -44,4 +44,4 @@ jobs:
 
       - name: Run playbook regression tests
         working-directory: deploy/providers/local
-        run: uv run --no-project --with pytest --with pyyaml pytest test_site_local_trust.py -v
+        run: uv run --no-project --with pytest --with pyyaml pytest tests/ -v

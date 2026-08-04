@@ -28,7 +28,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-PLAYBOOK_PATH = Path(__file__).parent / "site_local_trust.yml"
+PLAYBOOK_PATH = Path(__file__).parent.parent / "site_local_trust.yml"
 
 
 @pytest.fixture(scope="module")
@@ -38,6 +38,17 @@ def playbook() -> list[dict]:
 
 
 def _iter_tasks(playbook: list[dict]):
+    """Yield every task in the playbook.
+
+    Scope: inline ``tasks:`` of each play only. Values reached indirectly —
+    ``vars_files:``, ``group_vars/``, ``host_vars/``, an inventory, or role
+    defaults — are *not* resolved, and neither are ``pre_tasks``/``post_tasks``/
+    ``handlers``/``roles:`` blocks. That is a complete match for the current
+    single-play, single-file playbook, which uses none of them. If the playbook
+    grows any of those, widen this walk (and the checks built on it) to match,
+    or a ``docker_users`` / ``groups: docker`` value could be introduced without
+    failing these tests.
+    """
     for play in playbook:
         for task in play.get("tasks", []) or []:
             yield task
@@ -63,16 +74,18 @@ def test_login_user_not_added_to_docker_group(playbook: list[dict]) -> None:
     for task in _iter_tasks(playbook):
         task_vars = task.get("vars") or {}
         docker_users = task_vars.get("docker_users")
-        assert (
-            not docker_users
-        ), f"Task '{task.get('name', '<unnamed>')}' sets docker_users={docker_users!r}; this gives the listed user root-equivalent access."
+        assert not docker_users, (
+            f"Task '{task.get('name', '<unnamed>')}' sets docker_users={docker_users!r}; "
+            "this gives the listed user root-equivalent access."
+        )
 
     for play in playbook:
         play_vars = play.get("vars") or {}
         docker_users = play_vars.get("docker_users")
-        assert (
-            not docker_users
-        ), f"Play '{play.get('name', '<unnamed>')}' sets docker_users={docker_users!r}; this gives the listed user root-equivalent access."
+        assert not docker_users, (
+            f"Play '{play.get('name', '<unnamed>')}' sets docker_users={docker_users!r}; "
+            "this gives the listed user root-equivalent access."
+        )
 
 
 def _user_module_grants_docker(task: dict) -> bool:
@@ -103,7 +116,8 @@ def test_no_usermod_adding_to_docker_group(playbook: list[dict]) -> None:
             if isinstance(cmd, str):
                 for needle in suspect_substrings:
                     assert needle not in cmd, (
-                        f"Task '{task.get('name', '<unnamed>')}' appears to add a user to the docker group via {module}: {cmd!r}"
+                        f"Task '{task.get('name', '<unnamed>')}' appears to add a user to the docker group "
+                        f"via {module}: {cmd!r}"
                     )
         if _user_module_grants_docker(task):
             pytest.fail(
