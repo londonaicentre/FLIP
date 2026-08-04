@@ -72,16 +72,19 @@ def invoke_model_status_update_endpoint(
         }.get(model_status)
 
         # `updated != model_status` means update_model_status ignored the transition (e.g. a
-        # STOPPED model receiving a late RUNNING) — don't write a misleading log line.
-        if log_message and updated == model_status:
-            add_log(
-                model_id,
-                log_message,
-                db,
-                success=model_status not in [ModelStatus.ERROR, ModelStatus.STOPPED, ModelStatus.RESULTS_UPLOAD_FAILED],
-            )
-
-        logger.info(f"Status of model {model_id} updated successfully to {model_status}")
+        # STOPPED model receiving a late RUNNING) — don't write misleading timeline or log lines.
+        if updated == model_status:
+            if log_message:
+                add_log(
+                    model_id,
+                    log_message,
+                    db,
+                    success=model_status
+                    not in [ModelStatus.ERROR, ModelStatus.STOPPED, ModelStatus.RESULTS_UPLOAD_FAILED],
+                )
+            logger.info(f"Status of model {model_id} updated successfully to {model_status}")
+        else:
+            logger.info(f"Status update of model {model_id} to {model_status} ignored; status remains {updated}")
         return {"success": "status set"}
 
     except SQLAlchemyError:
