@@ -358,6 +358,41 @@ def load_global_weights(model: torch.nn.Module, input_model: flare.FLModel) -> d
     return torch_weights
 
 
+def evaluate_global_model(
+    model: torch.nn.Module,
+    val_loader: DataLoader,
+    lesions: LesionDict,
+    device: torch.device,
+) -> dict[str, float]:
+    """Evaluate the received global model on the local validation split for best-model selection.
+
+    Must run BEFORE local training so the metrics describe the aggregated global model the server
+    just broadcast — they ride back on the returned ``FLModel`` (DXO meta ``INITIAL_METRICS``) and
+    drive the server-side ``IntimeModelSelector``, which averages them across clients and saves the
+    best global checkpoint on improvement.
+
+    Args:
+        model (torch.nn.Module): Model already loaded with the received global weights.
+        val_loader (DataLoader): Local validation split loader.
+        lesions (LesionDict): The trainable lesion classes.
+        device (torch.device): Torch device to evaluate on.
+
+    Returns:
+        dict[str, float]: Flat metrics — ``VAL_LOSS``, per-lesion ``VAL-<METRIC>-<lesion>`` and
+        macro ``VAL-<METRIC>`` (mean across lesions) for f1-score/precision/recall. NaNs are
+        mapped to 0.0 (as in ``_publish``) so a masked-out lesion cannot poison the server-side
+        cross-client average.
+    """
+    metrics = epoch_loop(model, val_loader, lesions, device, optimizer=None, epoch=0, phase="Val")
+    flat = {"VAL_LOSS": _safe_mean(metrics["loss"])}
+    for metric in ["f1-score", "precision", "recall"]:
+        per_lesion = [_safe_mean(metrics[metric][name]) for name in lesions.get_lesion_list()]
+        for name, value in zip(lesions.get_lesion_list(), per_lesion):
+            flat[f"VAL-{metric.upper()}-{name}"] = value
+        flat[f"VAL-{metric.upper()}"] = _safe_mean(per_lesion)
+    return {label: (0.0 if np.isnan(value) else float(value)) for label, value in flat.items()}
+
+
 def main() -> None:
     args = parse_args()
     config = load_config()
@@ -414,6 +449,13 @@ def main() -> None:
             original_weights = load_global_weights(model, input_model)
             global_round = input_model.current_round or 0
 
+            # Best-model selection (FLIP#673): evaluate the received global model before local
+            # training mutates it. Gated on BEST_MODEL_METRIC so runs without selection skip the
+            # extra validation pass.
+            global_val_metrics = None
+            if config.get("BEST_MODEL_METRIC"):
+                global_val_metrics = evaluate_global_model(model, val_loader, lesions, device)
+
             n_iterations = local_train(
                 model,
                 train_loader,
@@ -435,6 +477,10 @@ def main() -> None:
                 flare.FLModel(
                     params=diff,
                     params_type="DIFF",
+                    # metrics of the *received* global model (see evaluate_global_model) — the
+                    # framework treats params+metrics as "evaluation on the global model" and
+                    # carries them as INITIAL_METRICS for IntimeModelSelector.
+                    metrics=global_val_metrics,
                     meta={"NUM_STEPS_CURRENT_ROUND": n_iterations},
                 )
             )

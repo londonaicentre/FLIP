@@ -17,7 +17,7 @@ from pathlib import Path
 
 from nvflare.apis.fl_component import FLComponent
 from nvflare.apis.fl_context import FLContext
-from nvflare.app_common.app_constant import AppConstants
+from nvflare.app_common.app_constant import AppConstants, DefaultCheckpointFileName
 from nvflare.app_opt.pt.file_model_persistor import PTFileModelPersistor
 
 from flip import FLIP
@@ -134,6 +134,17 @@ class PersistToS3AndCleanup(FLComponent):
             if os.path.isfile(fl_global_model_filepath):
                 self.log_info(fl_ctx, f"Found global model: {fl_global_model_filepath}")
                 shutil.move(fl_global_model_filepath, run_dir)
+
+            # Move the best global model too, when best-model selection saved one (FLIP#673). The
+            # persistor writes it next to the final model on GLOBAL_BEST_MODEL_AVAILABLE (fired by
+            # IntimeModelSelector). Absent the selector no file exists and none is fabricated — a
+            # "best" artefact in the results must mean a selection actually happened.
+            fl_best_model_filepath = os.path.join(
+                os.path.dirname(fl_global_model_filepath), DefaultCheckpointFileName.BEST_GLOBAL_MODEL
+            )
+            if os.path.isfile(fl_best_model_filepath):
+                self.log_info(fl_ctx, f"Found best global model: {fl_best_model_filepath}")
+                shutil.move(fl_best_model_filepath, run_dir)
 
             # For certain workflows (e.g., diffusion_model), also move trainer.py and validator.py
             trainer_path = os.path.join(app_server_path, "custom", "trainer.py")
