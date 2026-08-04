@@ -20,12 +20,12 @@
             data-test="stop-training-btn"
             class="inline-flex items-center gap-2 px-4 py-2 rounded-md text-sm font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed bg-red-600 text-white hover:bg-red-700 disabled:hover:bg-red-600"
             :disabled="!canStopTraining"
-            title="Stop Training"
-            aria-label="Stop Training"
+            :title="stopActionLabel"
+            :aria-label="stopActionLabel"
             @click="dialogStopTraining = true"
         >
             <icon-mdi-stop class="w-4 h-4" aria-hidden="true" />
-            <span class="hidden lg:inline">Stop Training</span>
+            <span class="hidden lg:inline">{{ stopActionLabel }}</span>
         </button>
 
         <AiButton
@@ -43,9 +43,9 @@
 
     <AiConfirmModal
         :dialog="dialogStopTraining"
-        confirmation-text="Are you sure you want to stop training this model?"
+        :confirmation-text="stopConfirmationText"
         close-button-text="Cancel"
-        continue-button-text="Stop Training"
+        :continue-button-text="stopActionLabel"
         :continue-action="stopTrainingAction"
         :submitting="stopTrainingSubmitting"
         @close-modal="dialogStopTraining = false;"
@@ -73,9 +73,22 @@ const stopTrainingSubmitting = ref(false);
 
 const canDownloadResults = computed(() => props.status === ModelStatusEnum.RESULTS_UPLOADED);
 
+// While the model is still queued (INITIATED — before the fl-server reports PREPARED) the same
+// stop endpoint aborts the job before it runs: it is dequeued and its net released, so the
+// action reads "Abort job" rather than "Stop Training". PENDING never renders this menu (page
+// gate). "Pre-running", not "pre-training": the ML term "pretraining" means something else.
+const isPreRunning = computed(() => props.status === ModelStatusEnum.INITIATED);
+
 const canStopTraining = computed(() =>
-    props.status >= ModelStatusEnum.PREPARED && props.status < ModelStatusEnum.RESULTS_UPLOADED
+    props.status >= ModelStatusEnum.INITIATED && props.status < ModelStatusEnum.RESULTS_UPLOADED
 );
+
+const stopActionLabel = computed(() => (isPreRunning.value ? "Abort job" : "Stop Training"));
+
+const stopConfirmationText = computed(() => (isPreRunning.value
+    ? "This model has not started training yet. Are you sure you want to abort this job? "
+      + "It will be removed from the queue and its training slot will be released."
+    : "Are you sure you want to stop training this model?"));
 
 const modelId = route.params["modelId"].toString();
 
@@ -91,7 +104,7 @@ const stopTrainingAction = async () => {
         stopTrainingSubmitting.value = false;
         Snackbar.error({
             title: "Something went wrong!",
-            text: "Failed to stop training"
+            text: isPreRunning.value ? "Failed to abort job" : "Failed to stop training"
         });
     }
 };
