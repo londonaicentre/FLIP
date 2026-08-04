@@ -10,27 +10,41 @@
 # limitations under the License.
 #
 
-name: Trust - XNAT Anonymization Script CI
+name: Trust - XNAT CI
 
+# The suite covers the anonymization script and the weak-password guards. The
+# guard parity tests read their inputs from outside trust/xnat/tests/, so every
+# file they assert on has to trigger this workflow — otherwise a change to a
+# guard (or to the credential minter) lands with the test that pins it unrun.
 on:
   push:
     branches: [main, develop]
     paths:
       - "trust/xnat/xnat/config/anon_script.das"
       - "trust/xnat/tests/**"
+      - "trust/xnat/Makefile"
+      - "trust/xnat/xnat/wait-for-postgres.sh"
+      - "trust/xnat/postgres/guard-xnat-db-passwords.sh"
+      - "trust/imaging-api/imaging_api/config.py"
+      - "flip-api/src/flip_api/scripts/generate_xnat_credentials.py"
       - ".github/workflows/test_trust_xnat_anon.yml"
   pull_request:
     branches: [main, develop]
     paths:
       - "trust/xnat/xnat/config/anon_script.das"
       - "trust/xnat/tests/**"
+      - "trust/xnat/Makefile"
+      - "trust/xnat/xnat/wait-for-postgres.sh"
+      - "trust/xnat/postgres/guard-xnat-db-passwords.sh"
+      - "trust/imaging-api/imaging_api/config.py"
+      - "flip-api/src/flip_api/scripts/generate_xnat_credentials.py"
       - ".github/workflows/test_trust_xnat_anon.yml"
 
 permissions:
   contents: read
 
 jobs:
-  xnat-anon-tests:
+  xnat-tests:
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -48,5 +62,5 @@ jobs:
       - name: Install uv
         run: pip install uv
 
-      - name: Run anonymization tests
+      - name: Run XNAT tests
         run: make unit_test

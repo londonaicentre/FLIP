@@ -48,4 +48,13 @@ if [ "$XNAT_DATASOURCE_PASSWORD" = "${XNAT_DATASOURCE_USERNAME:-xnat}" ]; then
   fail "XNAT_DATASOURCE_PASSWORD" "identical to XNAT_DATASOURCE_USERNAME"
 fi
 
+# The superuser and the xnat application role are separate credentials by
+# design; wiring both to one value silently collapses that separation, so the
+# app role's password becomes superuser-equivalent. Deployments that template
+# these from a secret store are where this happens (both keys pointed at the
+# same entry) and nothing downstream would notice.
+if [ "$POSTGRES_PASSWORD" = "$XNAT_DATASOURCE_PASSWORD" ]; then
+  fail "POSTGRES_PASSWORD" "identical to XNAT_DATASOURCE_PASSWORD (the superuser and xnat role must differ)"
+fi
+
 exec docker-entrypoint.sh "$@"

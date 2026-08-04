@@ -17,8 +17,6 @@
 
 set -e
 
-cmd="$@"
-
 if [ -z "$XNAT_DATASOURCE_USERNAME" ] || [ -z "$XNAT_DATASOURCE_PASSWORD" ]; then
   >&2 echo "ERROR: XNAT_DATASOURCE_USERNAME and XNAT_DATASOURCE_PASSWORD must be set."
   >&2 echo "       Run 'make generate-xnat-credentials' on the deployment host."
@@ -26,7 +24,7 @@ if [ -z "$XNAT_DATASOURCE_USERNAME" ] || [ -z "$XNAT_DATASOURCE_PASSWORD" ]; the
 fi
 
 case "$XNAT_DATASOURCE_PASSWORD" in
-  xnat|password|admin|"<run-make-generate-xnat-credentials>"|"$XNAT_DATASOURCE_USERNAME")
+  xnat|password|admin|postgres|"<run-make-generate-xnat-credentials>"|"$XNAT_DATASOURCE_USERNAME")
     >&2 echo "ERROR: XNAT_DATASOURCE_PASSWORD is set to a weak default or placeholder value."
     >&2 echo "       Run 'make generate-xnat-credentials' to rotate."
     exit 1
@@ -66,5 +64,8 @@ done
 
 unset PGPASSWORD
 
->&2 echo "Postgres is up - executing command \"$cmd\""
-exec $cmd
+# "$@" (not a flattened scalar) so the original argument boundaries survive —
+# a quoted or globbed argument in the image CMD / a compose `command:` override
+# would otherwise be re-split on $IFS and glob-expanded here.
+>&2 echo "Postgres is up - executing command \"$*\""
+exec "$@"

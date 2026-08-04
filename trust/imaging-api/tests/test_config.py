@@ -30,7 +30,7 @@ def test_internal_topology_vars_default(monkeypatch):
     assert settings.PACS_ID == 1
     assert settings.XNAT_URL == "http://xnat-web:8080"
     assert settings.DATA_ACCESS_API_URL == "http://data-access-api:8000"
-    assert settings.XNAT_DATABASE_URL == "postgresql+asyncpg://xnat:xnat@xnat-db:5432/xnat"
+    assert settings.XNAT_DATABASE_URL == "postgresql+asyncpg://xnat@xnat-db:5432/xnat"
 
 
 def test_minted_xnat_datasource_password_replaces_url_password(monkeypatch):
@@ -49,15 +49,17 @@ def test_minted_xnat_datasource_password_replaces_url_password(monkeypatch):
 @pytest.mark.parametrize("value", ["", "<run-make-generate-xnat-credentials>"])
 def test_unminted_xnat_datasource_password_leaves_url_untouched(monkeypatch, value):
     """Empty (kit omits it) or still the committed kit-template placeholder
-    (mint skipped) must not touch the URL, so a pre-mint kit keeps working
-    against a legacy weak-credential xnat-db instead of failing differently.
+    (mint skipped) must not touch the URL. The URL then stays passwordless, so a
+    pre-mint deployment fails on its first query instead of authenticating with
+    a weak literal shipped in the image (FLIP-PT-056).
     """
     monkeypatch.delenv("XNAT_DATABASE_URL", raising=False)
     monkeypatch.setenv("XNAT_DATASOURCE_PASSWORD", value)
 
     settings = Settings()
 
-    assert settings.XNAT_DATABASE_URL == "postgresql+asyncpg://xnat:xnat@xnat-db:5432/xnat"
+    assert settings.XNAT_DATABASE_URL == "postgresql+asyncpg://xnat@xnat-db:5432/xnat"
+    assert make_url(settings.XNAT_DATABASE_URL).password is None
 
 
 def test_minted_password_with_url_special_chars_survives_round_trip(monkeypatch):

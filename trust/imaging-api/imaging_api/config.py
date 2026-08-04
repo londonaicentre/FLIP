@@ -51,12 +51,16 @@ class Settings(BaseSettings):
     XNAT_URL: str = "http://xnat-web:8080"
     XNAT_SERVICE_USER: str
     XNAT_SERVICE_PASSWORD: str
-    XNAT_DATABASE_URL: str = "postgresql+asyncpg://xnat:xnat@xnat-db:5432/xnat"
+    # Passwordless by design (FLIP-PT-056): topology only, so no credential is
+    # baked into the image. The K8s chart ships the same form
+    # (values.yaml imagingApi.env.XNAT_DATABASE_URL).
+    XNAT_DATABASE_URL: str = "postgresql+asyncpg://xnat@xnat-db:5432/xnat"
     # The minted per-trust XNAT DB password (kit-file XNAT_DATASOURCE_PASSWORD,
     # FLIP-PT-056). When set, it replaces the password embedded in
     # XNAT_DATABASE_URL, so the URL itself stays a non-secret topology constant.
-    # Empty or still the kit-template placeholder → the URL is used as-is, so a
-    # pre-mint kit keeps working against a legacy weak-credential xnat-db.
+    # Empty or still the kit-template placeholder → the URL is used as-is, i.e.
+    # passwordless, and a pre-mint deployment fails on its first query rather
+    # than silently authenticating with a known-weak credential.
     XNAT_DATASOURCE_PASSWORD: str = ""
 
     @model_validator(mode="after")

@@ -326,13 +326,45 @@ with `secrets.create=true` or pre-created externally):
 | `xnat-admin-password` | xnat-web | XNAT admin password |
 | `xnat-service-user` | xnat-web, imaging-api | XNAT service account username |
 | `xnat-service-password` | xnat-web, imaging-api | XNAT service account password |
-| `xnat-datasource-password` | xnat-web, xnat-db, imaging-api | XNAT database password — mint via `make generate-xnat-credentials KIT=<CODE>` and fill from the kit with `scripts/generate_values.py`; xnat-web and xnat-db refuse to start on the shipped placeholder or weak values, and imaging-api splices it into its `XNAT_DATABASE_URL` (FLIP-PT-056) |
+| `xnat-datasource-password` | xnat-web, xnat-db, imaging-api | Password of the `xnat` **application role** — mint via `make generate-xnat-credentials KIT=<CODE>` and fill from the kit with `scripts/generate_values.py`; xnat-web and xnat-db refuse to start on the shipped placeholder or weak values, and imaging-api splices it into its `XNAT_DATABASE_URL` (FLIP-PT-056) |
+| `xnat-datasource-admin-password` | xnat-db | Password of the Postgres **superuser** (`POSTGRES_PASSWORD`). Minted by the same command, from the kit's `XNAT_DATASOURCE_ADMIN_PASSWORD`. Must differ from `xnat-datasource-password` — xnat-db's entrypoint refuses to start when the two match (FLIP-PT-056) |
 | `grafana-admin-password` | grafana | Grafana admin password |
 | `s3-access-key-id` | fl-client (init container) | AWS access key for S3 kit sync |
 | `s3-secret-access-key` | fl-client (init container) | AWS secret key for S3 kit sync |
 
 For production, use [External Secrets Operator](https://external-secrets.io/) to
 sync secrets from AWS Secrets Manager or HashiCorp Vault.
+
+### xnat-db roles and credential rotation
+
+xnat-db runs two Postgres roles, mirroring the swarm deployment: the `postgres`
+superuser (`xnat-datasource-admin-password`) and the non-superuser `xnat`
+application role (`xnat-datasource-password`) that xnat-web, imaging-api and the
+imaging-import worker authenticate with. The `xnat` role is created by the
+image's baked `XNAT.sql`, which runs from `/docker-entrypoint-initdb.d`.
+
+> **Do not mount a ConfigMap over `/docker-entrypoint-initdb.d`.** A directory
+> mount replaces the directory, hiding `XNAT.sql`, and the two roles silently
+> collapse into one. Per-file mounts need an explicit `subPath`.
+
+**Both passwords apply only at the first initdb of an empty PVC.** A StatefulSet
+PVC survives `helm upgrade` and `helm uninstall`, so changing either secret
+afterwards leaves the database on the old credential while the pods start using
+the new one, and authentication fails. To rotate on a live install, update the
+database to match the secret:
+
+```bash
+kubectl exec -it <xnat-db-pod> -- \
+  psql -U postgres -c "ALTER ROLE xnat WITH PASSWORD '<xnat-datasource-password>'"
+kubectl exec -it <xnat-db-pod> -- \
+  psql -U postgres -c "ALTER ROLE postgres WITH PASSWORD '<xnat-datasource-admin-password>'"
+```
+
+**Upgrading an install created before the roles were split:** those deployments
+set `POSTGRES_USER=xnat`, so their single role is a superuser named `xnat` and
+there is no `postgres` role to authenticate as. Either re-initialise the xnat-db
+PVC (destroys the XNAT database — export anything you need first), or keep the
+old install on the previous chart version.
 
 ## Architecture
 

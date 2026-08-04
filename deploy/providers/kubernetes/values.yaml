@@ -89,9 +89,12 @@ secrets:
     xnat-service-user: ""
     xnat-service-password: ""
     xnat-datasource-password: ""
+    xnat-datasource-admin-password: ""
     grafana-admin-password: ""
     s3-access-key-id: ""
     s3-secret-access-key: ""
+    # Only for temporary AWS credentials (SSO/STS); leave empty for long-lived keys.
+    aws-session-token: ""
 
 # ---------------------------------------------------------------------------
 # trust-api — API gateway, polls Central Hub for tasks, orchestrates trust

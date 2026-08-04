@@ -14,7 +14,7 @@ from unittest.mock import patch
 
 import pytest
 
-from flip_api.scripts.generate_xnat_credentials import PASSWORD_VARS, main
+from flip_api.scripts.generate_xnat_credentials import PASSWORD_VARS, PLACEHOLDER_VALUES, main
 
 ENV_TEMPLATE = """\
 SOME_VAR=foo
@@ -48,7 +48,7 @@ class TestGenerateXnatCredentials:
         assert env["OTHER_VAR"] == "bar"
         for var in PASSWORD_VARS:
             assert var in env
-            assert env[var] not in {"", "xnat", "password", "admin"}
+            assert env[var] not in PLACEHOLDER_VALUES
             assert len(env[var]) >= 32
 
     def test_passwords_differ(self, tmp_path):
@@ -77,10 +77,10 @@ class TestGenerateXnatCredentials:
         assert env["XNAT_DATASOURCE_ADMIN_PASSWORD"] != existing
         assert env["XNAT_ACTIVEMQ_PASSWORD"] != existing
 
-    @pytest.mark.parametrize(
-        "weak_value",
-        ["xnat", "password", "admin", "", "<run-make-generate-xnat-credentials>"],
-    )
+    # Driven off the module constant rather than a literal copy, so a value added
+    # to PLACEHOLDER_VALUES is covered here automatically instead of silently
+    # drifting out of test.
+    @pytest.mark.parametrize("weak_value", sorted(PLACEHOLDER_VALUES))
     def test_overwrites_known_weak_default(self, tmp_path, weak_value):
         """Known weak/placeholder values must always be regenerated, even without --force."""
         env_file = tmp_path / ".env.test"

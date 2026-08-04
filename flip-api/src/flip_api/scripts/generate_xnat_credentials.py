@@ -51,6 +51,14 @@ PASSWORD_VARS = (
     "XNAT_ACTIVEMQ_PASSWORD",
 )
 
+# Values this script treats as "not a real credential", so it may overwrite them
+# without --force: the kit-template placeholder, unset, and the historical weak
+# literals. This set must agree with the three deploy/runtime guards that reject
+# the same values — trust/xnat/Makefile (require_xnat_passwords),
+# trust/xnat/xnat/wait-for-postgres.sh and trust/xnat/postgres/guard-xnat-db-passwords.sh.
+# Otherwise a value one layer calls strong is refused by the next: a kit set to
+# `postgres` would be reported "skipped" here and then refused by `make up-xnat`.
+# trust/xnat/tests/test_password_guards.py fails if the four ever diverge.
 PLACEHOLDER_VALUES = frozenset(
     {
         "",
@@ -58,6 +66,7 @@ PLACEHOLDER_VALUES = frozenset(
         "xnat",
         "password",
         "admin",
+        "postgres",
     }
 )
 
