@@ -13,6 +13,7 @@ services, with a focus on the XNAT DICOM import pipeline.
    - [2.2 Studies Received but Land in the Unassigned Prearchive](#22-studies-received-but-land-in-the-unassigned-prearchive)
    - [2.3 imaging-api Gets 401 from XNAT (flipServiceAccount)](#23-imaging-api-gets-401-from-xnat-flipserviceaccount)
    - [2.3a dcm2niix Never Registered (admin missing ContainerManager)](#23a-dcm2niix-never-registered-admin-missing-containermanager)
+   - [2.3b dcm2niix Runs but Produces No NIfTI (Container Service PVC mounts)](#23b-dcm2niix-runs-but-produces-no-nifti-container-service-pvc-mounts)
    - [2.4 Forcing a Re-pull (status stuck on "Processing")](#24-forcing-a-re-pull-status-stuck-on-processing)
    - [2.5 C-MOVE Testing from the DCMTK Pod](#25-c-move-testing-from-the-dcmtk-pod)
    - [2.6 Checking DICOM Connectivity](#26-checking-dicom-connectivity)
@@ -296,6 +297,63 @@ Verify: `curl -s -u admin:<pass> http://localhost:8080/xapi/users/admin/roles/`
 must include `ContainerManager`, and
 `curl -s -u admin:<pass> "http://localhost:8080/xapi/commands?name=dcm2niix"`
 must return a command with a `dcm2niix-scan` wrapper.
+
+### 2.3b dcm2niix Runs but Produces No NIfTI (Container Service PVC mounts)
+
+**Symptom:** the `dcm2niix` command is registered and enabled, scans archive
+normally, and `GET /xapi/containers` shows containers with status `Failed`. The
+container's own log (`GET /xapi/containers/<id>/logs/stdout`) reads:
+
+```
+Error: Unable to find any DICOM images in /input (or subfolders 5 deep)
+```
+
+The Job pod pulls its image, starts, and exits — so this is not RBAC, image
+pull, or scheduling.
+
+**Root Cause:** the Container Service must be told which PVC holds the archive
+and build directories. Left unset it falls back to "no PVC mount" and bind-mounts
+the scan path as a **node `hostPath`** at XNAT's own path (`/data/xnat/...`). That
+path exists only inside the `xnat-web` pod, so kubelet creates it *empty* on the
+node and dcm2niix converts nothing. Telltale: the node accumulates the scan
+directory tree with zero files in it —
+
+```bash
+docker exec <node> find /data/xnat/archive -type d | wc -l   # many
+docker exec <node> find /data/xnat/archive -type f | wc -l   # zero
+```
+
+**Fix:** the chart sets this in the Kubernetes backend entry of the
+`xnat-cs-config` ConfigMap (`combined-pvc-name` + `combined-path-translation`),
+since the single `xnat-web` data PVC holds both `archive/` and `build/` at its
+root. If you configure a backend by hand, mirror it:
+
+```json
+"combined-pvc-name": "<release>-flip-trust-xnat-web",
+"combined-path-translation": "/data/xnat/"
+```
+
+**Keep the trailing slash.** It is the prefix the plugin strips from XNAT's paths
+to build the volume's `subPath`; without it the `subPath` keeps a leading `/` and
+the Kubernetes API rejects the entire Job with HTTP 422 —
+`volumeMounts.subPath: Invalid value: "/archive/...": must be a relative path`.
+The launch then fails *before any pod exists*, so `GET /xapi/containers` gains no
+record at all and only `logs/containers.log` shows the error. Changing the backend
+config interrupts the plugin's Kubernetes informers; **restart `xnat-web`** after
+editing it or launches will keep failing with no pod.
+
+**Multi-node caveat:** the spawned Job mounts the *same* PVC as `xnat-web`. With
+the default `ReadWriteOnce` access mode that only works when the Job lands on the
+node running `xnat-web`. On a multi-node cluster give the XNAT data volume a
+`ReadWriteMany` storage class:
+
+```yaml
+xnat:
+  web:
+    persistence:
+      accessMode: ReadWriteMany
+      storageClassName: efs-sc        # any RWX-capable provisioner
+```
 
 ### 2.4 Forcing a Re-pull (status stuck on "Processing")
 

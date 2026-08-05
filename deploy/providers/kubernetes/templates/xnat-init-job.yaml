@@ -588,6 +588,20 @@ spec:
 ---
 # Container Service plugin configuration (K8s backend) + dcm2niix command JSON
 # + site-wide DICOM anonymization script.
+#
+# The Kubernetes backend entry carries the PVC mount settings (FLIP#565). Without
+# them the Container Service falls back to "no PVC mount" and bind-mounts the scan
+# path as a node hostPath — a path that only exists inside the xnat-web pod, so
+# kubelet creates it empty and dcm2niix exits with "Unable to find any DICOM images
+# in /input". `combined-pvc-name` is the single xnat-web data PVC (its root holds
+# both `archive/` and `build/`, which xnat-web mounts by subPath).
+#
+# `combined-path-translation` MUST keep its trailing slash. It is the prefix the
+# plugin strips from XNAT's own paths to build the volume's `subPath`; without the
+# slash the result keeps a leading `/` and the Kubernetes API rejects the whole Job
+# with `spec.template.spec.containers[0].volumeMounts.subPath: Invalid value ...
+# must be a relative path` (HTTP 422) — the launch then fails before any pod exists.
+#
 # The `data:` entries are sourced verbatim from:
 #   trust/xnat/xnat/config/container-service-backend-configuration.kubernetes.json
 #   trust/xnat/xnat/config/dcm2niix_command.json
@@ -669,6 +683,8 @@ data:
         "host": "",
         "cert-path": "",
         "swarm-mode": false,
+        "combined-pvc-name": "{{ include "flip-trust.fullname" . }}-xnat-web",
+        "combined-path-translation": "/data/xnat/",
         "pull-images-on-xnat-init": true,
         "container-user": "",
         "auto-cleanup": true
