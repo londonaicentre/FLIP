@@ -93,9 +93,11 @@ Pass it as the project's cohort query (e.g. `make e2e_smoke QUERY_FILE=.../arkpl
 > **⚠️ MONAI's `LoadImaged` returns the DICOM pixel array transposed, and this app undoes that.** The
 > array arrives indexed `(column, row)` where `PixelData` is `(row, column)`, so a chest radiograph
 > loads **on its side**. `get_xray_transforms` in `app_files/data_utils.py` corrects it with
-> `Transposed(keys=["image"], indices=(0, 2, 1))` immediately after the load. If you change the reader,
-> the dataset or the image format, re-check that step — it is a property of this loading chain, not a
-> universal correction.
+> `Transposed(keys=["image"], indices=(0, 2, 1))`, placed after the channel-first step and before
+> anything spatial runs. The leading `0` is the channel axis added by `_ensure_image_channel_first`, so
+> the permutation assumes that step has already run — moving it literally adjacent to `LoadImaged` hands
+> a 3-element permutation to a 2-D array. If you change the reader, the dataset or the image format,
+> re-check this step: it is a property of this loading chain, not a universal correction.
 
 Ark+ is pretrained on upright chest radiographs, so a sideways (or mirrored) image is a large
 distribution shift that **silently** depresses every reported metric — nothing errors or warns, the
@@ -107,7 +109,8 @@ Do not check this by eye: a mirrored chest X-ray looks entirely plausible unless
 silhouette or the laterality marker. Verify it **numerically** — compare the transform output against an
 array read straight from `pydicom`'s `PixelData`. Note that no rotation or flip substitutes for the
 transpose: `Rotate90d(k=-1)` composed with the loader transpose leaves the image upright but mirrored,
-and `Flipd` leaves it on its side. Both shipped here at some point, which is how this went unnoticed.
+and `Flipd` leaves it on its side — the variant this app shipped, and why the fault went unnoticed for
+so long.
 
 ## Checkpoint setup
 
@@ -202,10 +205,10 @@ The evaluator returns **aggregate** (cohort-level) per-lesion AUROC only, collec
 }
 ```
 
-(Values above are illustrative — the pretrained checkpoint over one hold-out cohort, scored **after** the
-FLIP#820 orientation fix. The pre-fix chain fed the model sideways radiographs and scored materially
-lower on the same data, e.g. Pneumothorax 0.64 rather than 0.97 — see
-[Image orientation](#image-orientation).)
+(Values above are **real measured scores**, not a fabricated example: the pretrained checkpoint over one
+hold-out cohort, scored **after** the FLIP#820 orientation fix. The pre-fix chain fed the model sideways
+radiographs and scored materially lower on the same data — e.g. Pneumothorax 0.64 rather than 0.97 — so
+treat them as one cohort's result, not a target to reproduce. See [Image orientation](#image-orientation).)
 
 ### Fields
 

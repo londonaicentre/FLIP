@@ -300,14 +300,15 @@ Pretrained Ark+ checkpoint scored against each trust's **holdout** cohort
 (GSTT/Trust_1 n=478, KCH/Trust_2 n=468). Read from
 `evaluation_results/evaluation_results.json` in the downloaded results zip.
 
-> **⚠️ Every AUROC on this page predates the FLIP#820 orientation fix.** These runs used the pre-#821
-> transform chain, which never undid MONAI's `LoadImaged` transpose and so fed Ark+ **sideways**
-> radiographs — see
+> **⚠️ Every AUROC in the three Results sections below (staging 2026-07-03/04, production 2026-07-07)
+> predates the FLIP#820 orientation fix.** These runs used the pre-fix transform chain, which never undid
+> MONAI's `LoadImaged` transpose and so fed Ark+ **sideways** radiographs — see
 > [Image orientation](image_evaluation/arkplus_baseline_classification_evaluation/README.md#image-orientation).
-> Re-scoring the same checkpoint over the same two cohorts upright (FLIP#821) raises every lesion:
+> Re-scoring the same checkpoint over the same two cohorts upright raises every lesion's point estimate:
 > mean AUROC **0.827 → 0.958** (GSTT) and **0.894 → 0.966** (KCH), the worst case being Pneumothorax
-> at GSTT, **0.642 → 0.972** (DeLong *p* = 3.5×10⁻²⁷). The tables are kept as the record of what the
-> platform reported at the time; regenerating them on the fixed chain is a separate step.
+> at GSTT, **0.642 → 0.972** (DeLong *p* = 3.5×10⁻²⁷). Four of the five move significantly at each trust;
+> Infiltration moves within noise (*p* = 0.39 GSTT, *p* = 0.77 KCH). The tables are kept as the record of
+> what the platform reported at the time; regenerating them on the fixed chain is a separate step.
 
 > **Shape change (FLIP#754).** Runs from that fix onwards nest the metrics one level deeper —
 > `{"<trust>": {"SRV_<model_name>": {...}}}` rather than `{"<trust>": {...}}`. Keying on the trust
@@ -361,8 +362,10 @@ possible, exercised together for the first time here:
 There's no cross-site metric from training itself (no held-out split is scored during `standard_client_api`
 training) — the finetuned checkpoint is scored downstream in the multimodel evaluation below,
 which is what actually demonstrates the finetune improved the model. Note that this checkpoint was
-trained through the pre-#821 chain, i.e. on **sideways** radiographs (see the orientation warning
-above); it scores the same either way on this saturated task, but a retrain is the clean path.
+trained through the pre-fix chain, i.e. on **sideways** radiographs (see the orientation warning above).
+The production finetune re-scored upright moved by less than 0.005 mean AUROC on this saturated task, so
+this one is unlikely to shift much either — but that has not been measured, and a retrain is the clean
+path.
 
 > **Reproduced on production (GSTT + BDMS), 2026-07-07.** On prod the finetune's post-training
 > cross-site validation surfaced a **third** memory issue not seen on staging: broadcasting the full
