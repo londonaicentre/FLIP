@@ -110,12 +110,28 @@ jobs:
         run: |
           helm template trust-release deploy/providers/kubernetes/ \
             --set omopDb.vocabLoad.s3Bucket=test-bucket > /tmp/vocab.yaml
-          grep -q "omop-vocab-load" /tmp/vocab.yaml
+          if ! grep -q "omop-vocab-load" /tmp/vocab.yaml; then
+            echo "::error::the vocab-load Job did not render with s3Bucket set — its body is now untested in CI"
+            exit 1
+          fi
 
+      # Asserted with an explicit `if`, not `! grep -q`: `set -e` exempts a
+      # negated command, so that form only fails the step by virtue of being the
+      # LAST line — appending so much as a debug echo would silently disarm it.
+      # The positive control matters too: `! grep -q` also passes on an empty
+      # file, so without it "the Job is absent" and "nothing rendered at all"
+      # would be indistinguishable.
       - name: Render template (vocab-load skipped without a bucket)
         run: |
           helm template trust-release deploy/providers/kubernetes/ > /tmp/novocab.yaml
-          ! grep -q "omop-vocab-load" /tmp/novocab.yaml
+          if ! grep -q "omop-db" /tmp/novocab.yaml; then
+            echo "::error::the default render produced no omop-db resources — the absence check below would pass vacuously"
+            exit 1
+          fi
+          if grep -q "omop-vocab-load" /tmp/novocab.yaml; then
+            echo "::error::the vocab-load Job rendered with no s3Bucket set — a failed hook fails the WHOLE Helm release"
+            exit 1
+          fi
 
       # FLIP-PT-091: the orthanc user map must stay a required secret reference.
       # With optional: true, an install whose Secret lacks the key boots a PACS

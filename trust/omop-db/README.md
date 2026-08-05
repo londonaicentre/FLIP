@@ -48,11 +48,12 @@ make -C trust up-trust KIT=KCH     # KCH only
 The downloaded volumes are **vocab-free** (~11 MB each): after the stack is
 up, load the core vocabulary into each trust database once (idempotent — safe
 to re-run; needs the bundle, see "The core vocabulary bundle" below, and
-`psql` on the host):
+`psql` on the host). Unlike the stack commands above, these run from this
+directory — `make -C trust/omop-db …` from the repository root:
 
 ```sh
-make load-omop-vocab                    # Trust_1 (GSTT, port 5434)
-make load-omop-vocab OMOP_DB_PORT=5436  # Trust_2 (KCH)
+make -C trust/omop-db load-omop-vocab                    # Trust_1 (GSTT, port 5434)
+make -C trust/omop-db load-omop-vocab OMOP_DB_PORT=5436  # Trust_2 (KCH)
 ```
 
 Cohort queries that join `omop.concept` return nothing until this step has
@@ -103,8 +104,11 @@ FLIP's cohort queries and the licensing-relevant ones are:
 
 Because of the licensed entries the bundle is **never tracked in git**, never
 part of the published image, and not fetchable in CI. Two ways to obtain it
-(needed only for populating fresh datasets — not for building the image or
-running the trust stacks):
+(not needed to build the image, but needed both to populate fresh datasets and
+to run the one-time `make load-omop-vocab` seeding of any stack — see
+"Using the database (dev trust stacks)" above; a stack whose vocabulary was never loaded
+starts cleanly but returns nothing from cohort queries that join
+`omop.concept`):
 
 1. **FLIP developers (org AWS access)** — `make fetch-vocab-core`: downloads
    `s3://flipdev-aicentre/vocab/vocab_aicentre_core_20240916.zip` (override

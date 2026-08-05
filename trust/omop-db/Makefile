@@ -175,10 +175,27 @@ fetch-vocab-dicom:
 fetch-dataset:
 	uv run python -m omop_db_tools.dataset fetch --version $(OMOP_CSV_DATA_VERSION) --dest data/canonical
 
+# Every fan-out below is `$(addprefix …,$(shell seq 1 $(NUM_TRUSTS)))`. `$(shell)`
+# is expanded at parse time and make never fails on its exit status, so a
+# NUM_TRUSTS of 0 — or a typo like `two` — yields ZERO prerequisites and the
+# target "succeeds" having done nothing at all. That is indistinguishable from a
+# real run to any wrapper script checking the exit code, and `make populate`
+# would go on to fetch multi-GB bundles and load none of them. Guard first.
+check-num-trusts:
+	@case "$(NUM_TRUSTS)" in \
+		''|*[!0-9]*) \
+			echo "❌ NUM_TRUSTS must be a positive integer (got '$(NUM_TRUSTS)')"; \
+			exit 1 ;; \
+	esac; \
+	if [ "$(NUM_TRUSTS)" -le 0 ]; then \
+		echo "❌ NUM_TRUSTS must be a positive integer (got '$(NUM_TRUSTS)')"; \
+		exit 1; \
+	fi
+
 # Populate every build database with its slice of the canonical dataset, then
 # `make apply-constraints`. Constraints are deliberately NOT part of image init:
 # loading data after applying them fails.
-populate: fetch-vocab-dicom fetch-dataset $(addprefix populate-trust-,$(shell seq 1 $(NUM_TRUSTS)))
+populate: check-num-trusts fetch-vocab-dicom fetch-dataset $(addprefix populate-trust-,$(shell seq 1 $(NUM_TRUSTS)))
 
 populate-trust-%: check-build-env
 	@if [ -z "$(OMOP_DB_PORT_TRUST_$*)" ]; then \
@@ -197,7 +214,7 @@ populate-trust-%: check-build-env
 	OMOP_DB_PORT=$(OMOP_DB_PORT_TRUST_$*) uv run python -m omop_db_tools.import_tables \
 		--trust-index $* --num-trusts $(NUM_TRUSTS) --partition $(PARTITION) --data-dir data/canonical
 
-apply-constraints: check-build-env $(addprefix apply-constraints-trust-,$(shell seq 1 $(NUM_TRUSTS)))
+apply-constraints: check-num-trusts check-build-env $(addprefix apply-constraints-trust-,$(shell seq 1 $(NUM_TRUSTS)))
 
 apply-constraints-trust-%:
 	@echo "🔗 Applying OMOP CDM constraints (trust $*)..."
@@ -211,7 +228,7 @@ apply-constraints-trust-%:
 # update_omop_data.sh extracts.
 PGDATA_VERSION = $(shell tr -d ' \n\r\t' < .data_version)
 
-export-pgdata: $(addprefix export-pgdata-trust-,$(shell seq 1 $(NUM_TRUSTS)))
+export-pgdata: check-num-trusts $(addprefix export-pgdata-trust-,$(shell seq 1 $(NUM_TRUSTS)))
 
 export-pgdata-trust-%:
 	@mkdir -p dist

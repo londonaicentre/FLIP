@@ -440,7 +440,13 @@ ansible-init: ## Initialize Ansible configuration on EC2 instances (if failed tr
 	@[ -n "$(ORTHANC_DATA_VERSION)" ] || (echo "❌  trust/orthanc/.data_version not found"; exit 1)
 	@uv sync
 	@uv run ansible-galaxy install -r requirements.yml
+	@# --skip-tags omop-vocab: the vocabulary load needs the trust's OMOP cluster
+	@# credentials, which live in the kit file. This target runs BEFORE
+	@# register-trusts in every deploy chain, so it has no KIT in scope (hence
+	@# trust_num falling back to 1 above) and cannot supply them. The vocabulary
+	@# is seeded later by `make seed-trust-data KIT=<CODE>`, which does have them.
 	@unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_SECURITY_TOKEN; uv run ansible-playbook site.yml \
+		--skip-tags omop-vocab \
 		-e flip_aicentre_bucket=$(AICENTRE_BUCKET_NAME) \
 		-e fl_backend=$(FL_BACKEND) \
 		-e fl_kit_date=$(FL_KIT_DATE) \

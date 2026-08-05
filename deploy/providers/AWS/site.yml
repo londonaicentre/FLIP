@@ -544,21 +544,32 @@
 
     # Everything from the S3 fetch onwards is wrapped so the `always:` cleanup runs
     # even when the unzip, the container, the readiness wait or the loader fails.
-    # Without it a mid-play failure leaves the licensed bundle at rest on the host
-    # AND wedges the retry: the `creates:` guards below key on the unpacked
-    # directory, so a re-run would skip both the download and the unzip and reuse
-    # a possibly-truncated bundle.
+    # Without it a mid-play failure leaves the licensed bundle at rest on the host.
+    #
+    # Both stages stage into a dot-prefixed temp path and rename only on success,
+    # so an interrupted download or extraction is never mistaken for a present
+    # bundle by the next run's `creates:` guard. Same idiom as `fetch-vocab-core`
+    # in trust/omop-db/Makefile.
     - name: load the core vocabulary, cleaning up whatever happens
       block:
         - name: download core vocabulary bundle from S3 (instance role)
-          command: aws s3 cp s3://{{ vocab_s3_bucket }}/vocab/{{ vocab_core_bundle }}.zip {{ omop_dir }}/{{ vocab_core_bundle }}.zip
+          shell: |
+            set -euo pipefail
+            aws s3 cp "s3://{{ vocab_s3_bucket }}/vocab/{{ vocab_core_bundle }}.zip" "{{ omop_dir }}/.{{ vocab_core_bundle }}.zip.tmp"
+            mv "{{ omop_dir }}/.{{ vocab_core_bundle }}.zip.tmp" "{{ omop_dir }}/{{ vocab_core_bundle }}.zip"
           args:
-            creates: "{{ omop_dir }}/{{ vocab_core_bundle }}"
+            creates: "{{ omop_dir }}/{{ vocab_core_bundle }}.zip"
+            executable: /bin/bash
 
         - name: unzip core vocabulary bundle
-          command: unzip -o {{ omop_dir }}/{{ vocab_core_bundle }}.zip -d {{ omop_dir }}/{{ vocab_core_bundle }}
+          shell: |
+            set -euo pipefail
+            rm -rf "{{ omop_dir }}/.{{ vocab_core_bundle }}.tmp"
+            unzip -q "{{ omop_dir }}/{{ vocab_core_bundle }}.zip" -d "{{ omop_dir }}/.{{ vocab_core_bundle }}.tmp"
+            mv "{{ omop_dir }}/.{{ vocab_core_bundle }}.tmp" "{{ omop_dir }}/{{ vocab_core_bundle }}"
           args:
             creates: "{{ omop_dir }}/{{ vocab_core_bundle }}"
+            executable: /bin/bash
 
         - name: copy vocabulary loader and constraints from the repo checkout
           copy:
@@ -593,6 +604,22 @@
             OMOP_POSTGRES_PASSWORD: "{{ omop_postgres_password }}"
             OMOP_POSTGRES_DB: "{{ omop_postgres_db }}"
       always:
+        # Deleting the licensed content comes FIRST: a failing task in `always:`
+        # aborts the remaining `always:` tasks, so with the container removal
+        # ahead of it a `docker rm` against an unreachable daemon would leave
+        # ~3.6GB of licensed vocabulary at rest on the host — exactly what this
+        # task exists to prevent. The temp paths are included so an interrupted
+        # download or extraction leaves nothing behind either.
+        - name: remove the downloaded bundle (~3.6GB of licensed content does not belong at rest on the host)
+          file:
+            path: "{{ item }}"
+            state: absent
+          loop:
+            - "{{ omop_dir }}/{{ vocab_core_bundle }}.zip"
+            - "{{ omop_dir }}/{{ vocab_core_bundle }}"
+            - "{{ omop_dir }}/.{{ vocab_core_bundle }}.zip.tmp"
+            - "{{ omop_dir }}/.{{ vocab_core_bundle }}.tmp"
+
         # This runs even when the container was never started. `docker rm -f`
         # already exits 0 on a missing container (since Docker 23), so only the
         # "No such container" case is tolerated explicitly — a genuine failure
@@ -604,14 +631,6 @@
           register: vocab_rm
           changed_when: false
           failed_when: vocab_rm.rc != 0 and 'No such container' not in (vocab_rm.stderr | default(''))
-
-        - name: remove the downloaded bundle (~3.6GB of licensed content does not belong at rest on the host)
-          file:
-            path: "{{ item }}"
-            state: absent
-          loop:
-            - "{{ omop_dir }}/{{ vocab_core_bundle }}.zip"
-            - "{{ omop_dir }}/{{ vocab_core_bundle }}"
 
 - name: restore Orthanc storage on Trust EC2
   hosts: trust_ec2

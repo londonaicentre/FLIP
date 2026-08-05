@@ -28,8 +28,12 @@ jobs:
   omop-db:
     # Lint + type-check + unit tests for the omop-db populate tooling. No
     # backing services needed — the DB-touching pipeline is manual by design
-    # (the baked vocabulary cannot be fetched in CI; see trust/omop-db/README.md).
+    # (the licensed core vocabulary cannot be fetched in CI; see
+    # trust/omop-db/README.md).
     runs-on: ubuntu-latest
+    # Matches every sibling test workflow that uploads to Codecov — CODECOV_TOKEN
+    # is scoped to this environment.
+    environment: flip
     defaults:
       run:
         working-directory: ./trust/omop-db

@@ -396,7 +396,7 @@ BEGIN
     IF NOT EXISTS ( SELECT CONSTRAINT_NAME
 					FROM   INFORMATION_SCHEMA.KEY_COLUMN_USAGE
 					WHERE  CONSTRAINT_SCHEMA = 'omop'
-					AND    CONSTRAINT_NAME = 'fpk_provider_specialty_concept_id')
+					AND    CONSTRAINT_NAME = 'fpk_payer_plan_period_payer_plan_period_id')
 	THEN
 
         ALTER TABLE PAYER_PLAN_PERIOD ADD CONSTRAINT fpk_PAYER_PLAN_PERIOD_payer_plan_period_id FOREIGN KEY (payer_plan_period_id) REFERENCES PERSON (PERSON_ID) ON DELETE CASCADE ON UPDATE CASCADE;

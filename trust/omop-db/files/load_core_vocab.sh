@@ -79,10 +79,23 @@ core_present() {
 }
 
 for table in ${TABLES}; do
-  if [ "$(core_present "${table}")" = "t" ]; then
-    echo "⏭️  omop.${table} already holds the core vocabulary — skipping."
-    continue
-  fi
+  # Deliberately a plain assignment, not `if [ "$(core_present …)" = "t" ]`:
+  # a command substitution inside an `if` condition is exempt from `set -e`, so
+  # a psql that failed for any reason (server restart, connection limit) would
+  # yield "", compare unequal to "t", and fall straight through to the COPY —
+  # silently duplicating rows in the four tables that carry no primary key.
+  present="$(core_present "${table}")"
+  case "${present}" in
+    t)
+      echo "⏭️  omop.${table} already holds the core vocabulary — skipping."
+      continue
+      ;;
+    f) ;;
+    *)
+      echo "❌ unexpected guard result for omop.${table}: '${present}'" >&2
+      exit 1
+      ;;
+  esac
   echo "📥 Loading omop.${table} ..."
   run_psql -c "COPY omop.${table} FROM STDIN WITH (FORMAT CSV, HEADER, DELIMITER E'\t', QUOTE E'\b')" \
     < "${VOCAB_DIR}/${table}.csv"
