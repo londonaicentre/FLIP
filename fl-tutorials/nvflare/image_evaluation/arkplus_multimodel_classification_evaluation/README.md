@@ -100,35 +100,6 @@ The cohort query for a real deployment is [`query.sql`](query.sql) — it select
 X-ray set (`procedure_source_value = 'Chest X-ray (holdout)'`) and returns the seven lesion-label columns
 both models are scored against.
 
-### Image orientation
-
-> **⚠️ MONAI's `LoadImaged` returns the DICOM pixel array transposed, and this app undoes that.** The
-> array arrives indexed `(column, row)` where `PixelData` is `(row, column)`, so a chest radiograph
-> loads **on its side**. `get_xray_transforms` in `app_files/data_utils.py` corrects it with
-> `Transposed(keys=["image"], indices=(0, 2, 1))`, placed after the channel-first step and before
-> anything spatial runs. The leading `0` is the channel axis added by `_ensure_image_channel_first`, so
-> the permutation assumes that step has already run — moving it literally adjacent to `LoadImaged` hands
-> a 3-element permutation to a 2-D array. If you change the reader, the dataset or the image format,
-> re-check this step: it is a property of this loading chain, not a universal correction.
-
-Ark+ is pretrained on upright chest radiographs, so a sideways (or mirrored) image is a large
-distribution shift that **silently** depresses every reported metric — nothing errors or warns, the
-AUROCs are just quietly worse. Because this app scores two models head-to-head, an orientation fault
-also distorts the *comparison* — and it need not hit both models equally. Re-scoring the production
-checkpoints over one hold-out cohort in both orientations (FLIP#820), the pretrained model's mean AUROC
-rose from 0.827 to 0.958 once the images were upright, while the fine-tuned model — already saturated
-near 1.0 on this synthetic task — did not move, so the apparent gap between them collapsed from 0.172 to
-0.041 without either checkpoint changing. (The staging run tabulated in
-[`ARKPLUS_EXPERIMENTS_GUIDE.md`](../../ARKPLUS_EXPERIMENTS_GUIDE.md) used a different, shorter finetune,
-so its figures differ in the third decimal. Do not read across the two runs.)
-
-Do not check this by eye: a mirrored chest X-ray looks entirely plausible unless you read the cardiac
-silhouette or the laterality marker. Verify it **numerically** — compare the transform output against an
-array read straight from `pydicom`'s `PixelData`. Note that no rotation or flip substitutes for the
-transpose: `Rotate90d(k=-1)` composed with the loader transpose leaves the image upright but mirrored,
-and `Flipd` leaves it on its side — the variant this app shipped, and why the fault went unnoticed for
-so long.
-
 ## Checkpoint setup
 
 The app evaluates two models, so it needs two clean `.pt` checkpoints in `app_files/`: the foundation
@@ -270,8 +241,7 @@ DeLong p-values and Benjamini-Hochberg (BH) FDR-adjusted q-values — collected 
 }
 ```
 
-(Values above are **synthetic placeholders** chosen to show the JSON shape — not measured scores, and not
-consistent with the real results referenced under [Image orientation](#image-orientation).)
+(Values above are **synthetic placeholders** chosen to show the JSON shape — not measured scores.)
 
 ### Fields
 

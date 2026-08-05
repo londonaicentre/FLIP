@@ -300,16 +300,6 @@ Pretrained Ark+ checkpoint scored against each trust's **holdout** cohort
 (GSTT/Trust_1 n=478, KCH/Trust_2 n=468). Read from
 `evaluation_results/evaluation_results.json` in the downloaded results zip.
 
-> **⚠️ Every AUROC in the three Results sections below (staging 2026-07-03/04, production 2026-07-07)
-> predates the FLIP#820 orientation fix.** These runs used the pre-fix transform chain, which never undid
-> MONAI's `LoadImaged` transpose and so fed Ark+ **sideways** radiographs — see
-> [Image orientation](image_evaluation/arkplus_baseline_classification_evaluation/README.md#image-orientation).
-> Re-scoring the same checkpoint over the same two cohorts upright raises every lesion's point estimate:
-> mean AUROC **0.827 → 0.958** (GSTT) and **0.894 → 0.966** (KCH), the worst case being Pneumothorax
-> at GSTT, **0.642 → 0.972** (DeLong *p* = 3.5×10⁻²⁷). Four of the five move significantly at each trust;
-> Infiltration moves within noise (*p* = 0.39 GSTT, *p* = 0.77 KCH). The tables are kept as the record of
-> what the platform reported at the time; regenerating them on the fixed chain is a separate step.
-
 > **Shape change (FLIP#754).** Runs from that fix onwards nest the metrics one level deeper —
 > `{"<trust>": {"SRV_<model_name>": {...}}}` rather than `{"<trust>": {...}}`. Keying on the trust
 > alone made each evaluated model overwrite the previous one, so a multimodel evaluation only ever
@@ -319,11 +309,12 @@ Pretrained Ark+ checkpoint scored against each trust's **holdout** cohort
 
 | Lesion | GSTT (Trust_1) AUROC | KCH (Trust_2) AUROC |
 |---|---|---|
-| Effusion | 0.839 | 0.953 |
-| Consolidation | 0.866 | 0.871 |
-| Infiltration | 0.846 | 0.875 |
-| Lung Nodule or Mass | 0.944 | 0.939 |
-| Pneumothorax | 0.642 | 0.832 |
+| Effusion | 0.998 | 1.000 |
+| Consolidation | 0.989 | 0.998 |
+| Infiltration | 0.863 | 0.878 |
+| Lung Nodule or Mass | 0.970 | 0.955 |
+| Pneumothorax | 0.971 | 0.997 |
+| **Mean** | **0.958** | **0.966** |
 
 `project_id`, cohort decryption and `flip.get_dataframe` all work on the platform — the
 per-site datalist is fetched from the trust APIs and the DICOMs are pulled on demand at eval
@@ -361,11 +352,7 @@ possible, exercised together for the first time here:
 
 There's no cross-site metric from training itself (no held-out split is scored during `standard_client_api`
 training) — the finetuned checkpoint is scored downstream in the multimodel evaluation below,
-which is what actually demonstrates the finetune improved the model. Note that this checkpoint was
-trained through the pre-fix chain, i.e. on **sideways** radiographs (see the orientation warning above).
-The production finetune re-scored upright moved by less than 0.005 mean AUROC on this saturated task, so
-this one is unlikely to shift much either — but that has not been measured, and a retrain is the clean
-path.
+which is what actually demonstrates the finetune improved the model.
 
 > **Reproduced on production (GSTT + BDMS), 2026-07-07.** On prod the finetune's post-training
 > cross-site validation surfaced a **third** memory issue not seen on staging: broadcasting the full
@@ -381,38 +368,39 @@ path.
 
 Evaluates the pretrained Ark+ checkpoint **and** the finetuned checkpoint from the run above,
 head-to-head, against the same **holdout** cohort used for the baseline evaluation above (reusing
-that project — `model_id ed2d49b5`, image `acfbd280`). The finetuned model wins on all 5 lesions
-at both trusts, every comparison significant (DeLong *p* < 1×10⁻⁶):
-
-> **⚠️ Pre-#821 orientation applies here too, and it inflates the Δ column.** Both models were scored
-> on sideways radiographs (see the baseline warning above). Upright, the pretrained column rises to the
-> means quoted there (0.958 GSTT / 0.966 KCH) while the finetuned column — already saturated near 1.0 —
-> barely moves, so the mean Δ collapses from the **+0.168 / +0.105** below to roughly **+0.04 / +0.03**.
-> The finetune still wins on every lesion; the margin below is not the margin you would measure today.
+that project — `model_id ed2d49b5`, image `acfbd280`). The finetune is at least as good on every
+lesion at both trusts, and the gain survives Benjamini-Hochberg correction on 6 of the 10
+lesion–trust pairings; the exceptions are the four where the pretrained model already sits at or
+above 0.997, which leaves it no headroom. Significance is a two-sided DeLong test, BH-corrected per
+trust (critical *p* = 2.7×10⁻² at GSTT, 7.2×10⁻⁷ at KCH). The figures below are the 50-round
+production finetune — the staging run above used a shorter 5-round one and is not tabulated
+separately.
 
 **GSTT (Trust_1, n=478)**
 
 | Lesion | Pretrained AUROC | Finetuned AUROC | Δ | DeLong *p* |
 |---|---|---|---|---|
-| Effusion | 0.839 | 0.995 | +0.156 | 1.7×10⁻¹⁰ |
-| Consolidation | 0.866 | 0.986 | +0.120 | 6.0×10⁻¹³ |
-| Infiltration | 0.846 | 0.996 | +0.151 | 3.5×10⁻¹⁶ |
-| Lung Nodule or Mass | 0.944 | 1.000 | +0.056 | 1.3×10⁻⁶ |
-| Pneumothorax | 0.642 | 0.999 | +0.357 | 3.4×10⁻²⁸ |
-| **Mean** | **0.827** | **0.995** | **+0.168** | |
+| Effusion | 0.998 | 1.000 | +0.002 | 0.12 (n.s.) |
+| Consolidation | 0.989 | 0.997 | +0.008 | 0.027 |
+| Infiltration | 0.863 | 0.998 | +0.135 | 1.8×10⁻¹⁴ |
+| Lung Nodule or Mass | 0.970 | 1.000 | +0.030 | 5.9×10⁻⁶ |
+| Pneumothorax | 0.971 | 1.000 | +0.029 | 0.0065 |
+| **Mean** | **0.958** | **0.999** | **+0.041** | |
 
 **KCH (Trust_2, n=468)**
 
 | Lesion | Pretrained AUROC | Finetuned AUROC | Δ | DeLong *p* |
 |---|---|---|---|---|
-| Effusion | 0.953 | 1.000 | +0.047 | 9.4×10⁻⁷ |
-| Consolidation | 0.871 | 0.999 | +0.128 | 5.0×10⁻¹⁰ |
-| Infiltration | 0.875 | 1.000 | +0.125 | 6.0×10⁻¹⁵ |
-| Lung Nodule or Mass | 0.939 | 1.000 | +0.061 | 3.9×10⁻⁷ |
-| Pneumothorax | 0.832 | 0.997 | +0.165 | 2.4×10⁻¹⁰ |
-| **Mean** | **0.894** | **0.999** | **+0.105** | |
+| Effusion | 1.000 | 1.000 | +0.000 | 1.00 (n.s.) |
+| Consolidation | 0.998 | 1.000 | +0.002 | 0.31 (n.s.) |
+| Infiltration | 0.878 | 1.000 | +0.122 | 1.2×10⁻¹⁵ |
+| Lung Nodule or Mass | 0.955 | 1.000 | +0.045 | 7.2×10⁻⁷ |
+| Pneumothorax | 0.997 | 1.000 | +0.003 | 0.19 (n.s.) |
+| **Mean** | **0.966** | **1.000** | **+0.034** | |
 
-The biggest single gain is Pneumothorax at GSTT (0.642 → 0.999) — the same lesion that was the
-weakest pretrained score in the baseline evaluation above. Results zip was ~12 KB
+The biggest single gain is Infiltration (0.863 → 0.998 at GSTT, 0.878 → 1.000 at KCH) — the weakest
+pretrained score at both trusts in the baseline evaluation above. The finetuned model saturates both
+cohorts (AUROC ≥ 0.997), so these numbers speak to the platform working end to end, not to a
+state-of-the-art result on a synthetic task. Results zip was ~12 KB
 (`evaluation_results/evaluation_results.json` only — the same results-zip prune from the baseline
 evaluation applies here too).

@@ -172,10 +172,10 @@ def get_xray_transforms(is_validation: bool = False):
         # LoadImaged returns the array transposed - indexed (column, row) where DICOM PixelData
         # is (row, column) - so swap the spatial axes back before anything spatial runs. Neither a
         # Rotate90 nor a Flip undoes a transpose: Rotate90d(k=-1) leaves the radiograph upright but
-        # mirrored, and the Flipd that replaced it left the image lying on its side, which is what
-        # Ark+ was scored on. Sitting before Resized is not load-bearing while the target is square
-        # - the resamplers are separable, so the two orders are bit-identical - but it keeps the
-        # correction next to the load it undoes, and correct if the target ever stops being square.
+        # mirrored, and a Flipd leaves it lying on its side. Sitting before Resized is not
+        # load-bearing while the target is square - the resamplers are separable, so the two orders
+        # are bit-identical - but it keeps the correction next to the load it undoes, and stays
+        # correct if the target ever stops being square.
         mt.Transposed(keys=["image"], indices=(0, 2, 1)),
         mt.Resized(keys=["image"], spatial_size=[input_size, input_size]),
         mt.ScaleIntensityd(keys=["image"], channel_wise=True),
