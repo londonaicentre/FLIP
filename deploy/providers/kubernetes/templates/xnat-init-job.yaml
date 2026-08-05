@@ -95,15 +95,25 @@ spec:
               XNAT_URL="http://xnat-web:8080"
               ADMIN_USER="{{ .Values.xnat.web.adminUser }}"
               ADMIN_PASS="${XNAT_ADMIN_PASS}"
+              # `set -e` aborts on a failing command substitution, so the probe must swallow
+              # curl's connect error (exit 7) explicitly — otherwise this loop cannot wait at
+              # all: it dies on the first attempt while Tomcat is still starting, and the Job
+              # burns its backoffLimit in seconds.
               echo "Waiting for XNAT to be ready..."
+              XNAT_READY=false
               for i in $(seq 1 60); do
-                HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "${XNAT_URL}/xapi/siteConfig" 2>/dev/null)
+                HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "${XNAT_URL}/xapi/siteConfig" 2>/dev/null) || HTTP_CODE=000
                 if [ "$HTTP_CODE" = "200" ] || [ "$HTTP_CODE" = "401" ]; then
                   echo "XNAT is ready (HTTP ${HTTP_CODE})!"
+                  XNAT_READY=true
                   break
                 fi
                 sleep 10
               done
+              if [ "$XNAT_READY" != "true" ]; then
+                echo "XNAT did not become ready within 10 minutes (last HTTP ${HTTP_CODE})" >&2
+                exit 1
+              fi
 
               # Login: try configured password first, fall back to XNAT default (admin:admin pre-init)
               _xnat_login() {
@@ -303,29 +313,44 @@ spec:
               CREDS="${XNAT_ADMIN_USER}:${XNAT_ADMIN_PASS}"
               DCM2NIIX_NAME="dcm2niix"
 
+              # See the note in the configure-xnat-web container: under `set -e` a failing
+              # command substitution aborts the script, so both probes below must swallow
+              # curl's connect error explicitly or the loops cannot wait.
               echo "Waiting for XNAT to be ready..."
+              XNAT_READY=false
               for i in $(seq 1 60); do
-                HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "${XNAT_URL}/xapi/siteConfig" 2>/dev/null)
+                HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "${XNAT_URL}/xapi/siteConfig" 2>/dev/null) || HTTP_CODE=000
                 if [ "$HTTP_CODE" = "200" ] || [ "$HTTP_CODE" = "401" ]; then
                   echo "XNAT is ready (HTTP ${HTTP_CODE})!"
+                  XNAT_READY=true
                   break
                 fi
                 sleep 10
               done
+              if [ "$XNAT_READY" != "true" ]; then
+                echo "XNAT did not become ready within 10 minutes (last HTTP ${HTTP_CODE})" >&2
+                exit 1
+              fi
 
               # The sibling configure-xnat-web container activates the site
               # ({"initialized": true} on /xapi/siteConfig). Wait for that before
               # touching the Container Service plugin so we don't race it.
               echo "Waiting for XNAT site activation..."
+              SITE_ACTIVATED=false
               for i in $(seq 1 60); do
                 INIT=$(curl -sf -u "${CREDS}" "${XNAT_URL}/xapi/siteConfig" 2>/dev/null \
-                  | jq -r '.initialized // false')
+                  | jq -r '.initialized // false') || INIT=false
                 if [ "${INIT}" = "true" ]; then
                   echo "XNAT site is activated."
+                  SITE_ACTIVATED=true
                   break
                 fi
                 sleep 5
               done
+              if [ "$SITE_ACTIVATED" != "true" ]; then
+                echo "XNAT site was not activated within 5 minutes — configure-xnat-web must run first" >&2
+                exit 1
+              fi
 
               echo "Registering Kubernetes backend with the Container Service plugin..."
               CS_HTTP=$(curl -s -o /tmp/cs_resp.txt -w "%{http_code}" \
