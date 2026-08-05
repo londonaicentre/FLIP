@@ -39,6 +39,9 @@ echo "XNAT is up!"
 # by a prior run. Re-running the rest of the script would silently 401 on the
 # initial-password curls and then produce duplicate-key errors for the service
 # account, PACS registration, and PACS availability intervals — so skip it.
+# This never suppresses a configuration change on the Swarm path: `up-xnat` wipes XNAT_DATA_DIR on
+# every redeploy, so the script always meets a fresh instance — see "Every redeploy is a fresh
+# install" in ../../README.md.
 init_pw_status=$(curl -s -o /dev/null -w '%{http_code}' \
   -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_INITIAL_PASSWORD}" \
   "$XNAT_URL/xapi/siteConfig/initialized")

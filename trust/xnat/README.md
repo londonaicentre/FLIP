@@ -71,6 +71,13 @@ XNAT is deployed using Docker Swarm (both locally and on EC2). This is because S
 
   The base file defines the three services (`xnat-web`, `xnat-db`, `xnat-nginx`). The development overlay adds host bind-mounts for hot-reload and resource limits sized for dev machines. The production overlay mounts persistent data volumes under `/opt/flip/xnat/`.
 - Two XNAT instances are deployed as separate Swarm stacks (`xnat1`, `xnat2`), one per trust
+- **Every redeploy is a fresh install.** `up-xnat` blocks on `down-xnat` and then runs `xnat-reset`,
+  which `rm -rf`s `XNAT_DATA_DIR` and recreates it — in development *and* in staging/production
+  (local Docker context or remote-over-ssh alike). So `configure-xnat.sh` always runs against a
+  brand-new instance and re-applies the full site configuration; its `initialized=true`
+  short-circuit is there for a re-run against a *live* instance, not for an upgrade. If an in-place
+  upgrade of a persistent XNAT is ever supported outside this tooling, that short-circuit would skip
+  re-applying site config (`siteUrl`, DQR access control) and would need revisiting.
 
 ## Setup
 
