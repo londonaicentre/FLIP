@@ -16,6 +16,7 @@ import httpx
 from pydantic import BaseModel, Field
 
 from imaging_api.config import get_settings
+from imaging_api.utils.exceptions import CohortBelowThresholdError
 from imaging_api.utils.logger import logger
 
 DATA_ACCESS_API_URL = get_settings().DATA_ACCESS_API_URL
@@ -45,8 +46,10 @@ async def get_accession_ids(encrypted_project_id: str, query: str) -> list[str]:
         list[str]: The accession IDs returned by the cohort query, in query order.
 
     Raises:
-        RuntimeError: If the HTTP call to the Data Access API fails (network error or non-2xx
-            response).
+        CohortBelowThresholdError: If the cohort is smaller than the trust's
+            ``COHORT_QUERY_THRESHOLD`` and data-access-api refuses to release identifiers.
+        RuntimeError: If the HTTP call to the Data Access API fails for any other reason
+            (network error or other non-2xx response).
     """
     request = AccessionIdsRequest(encrypted_project_id=encrypted_project_id, query=query)
 
@@ -66,6 +69,21 @@ async def get_accession_ids(encrypted_project_id: str, query: str) -> list[str]:
 
         response.raise_for_status()
         return list(response.json().get("accession_ids", []))
+
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code == httpx.codes.FORBIDDEN:
+            # A deliberate refusal, not a failure: the cohort is below the trust's disclosure
+            # threshold. Typed separately so callers can report it as a settled outcome rather
+            # than as a transport error they might retry.
+            message = (
+                "get_accession_ids: the Data Access API refused to release accession IDs — "
+                "the cohort is below the trust's minimum size."
+            )
+            logger.warning(message)
+            raise CohortBelowThresholdError(message) from exc
+        error_message = f"get_accession_ids: HTTP error occurred while calling the Data Access API: {exc}"
+        logger.error(error_message)
+        raise RuntimeError(error_message) from exc
 
     except httpx.HTTPError as exc:
         error_message = f"get_accession_ids: HTTP error occurred while calling the Data Access API: {exc}"
