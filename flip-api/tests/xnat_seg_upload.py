@@ -48,7 +48,7 @@ import requests
 # Both dev trust XNATs. IPv4 literals on purpose: the XNAT ports are published by Docker
 # Swarm ingress, which accepts but never answers ::1, and localhost resolves there first.
 DEFAULT_XNAT_URLS = ("http://127.0.0.1:8104", "http://127.0.0.1:8106")
-DCMQI_IMAGE = "qiicr/dcmqi:latest"
+DCMQI_IMAGE = "qiicr/dcmqi:v1.5.6"
 ROI_COLLECTION_TYPE = "icr:roiCollectionData"
 
 
