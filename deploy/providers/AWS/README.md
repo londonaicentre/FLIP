@@ -805,7 +805,7 @@ the direction of the request flow.
 - **CloudWatch**: Logging and monitoring for ECS tasks, the Trust EC2, the WAFv2 ACL, and VPC endpoints. The minimal Central Hub bastion does not run the CloudWatch agent.
 - **Secrets Manager**: Secure storage for API secrets and database credentials (`FLIP_API` secret).
 - **SSM Parameter Store**: Configuration values read by ECS tasks at startup — bucket URIs, internal service URL, internal-service-key header name.
-- **S3 Backend**: Remote state storage with environment-specific buckets, DynamoDB lock table.
+- **S3 Backend**: Remote state storage with environment-specific buckets, using S3 native locking (`use_lockfile = true` in `backend.tf`; no DynamoDB lock table).
 
 ### Subnet placement at a glance
 

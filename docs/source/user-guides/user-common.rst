@@ -443,13 +443,13 @@ Prior to commencing training you may also upload an optional ``config.json`` fil
 
 **GLOBAL_ROUNDS**
    Number of global training iterations. How many times the server should execute the ``trainer.py``.
-   Must be greater than 0. Less than 100.
+   Must be between 1 and 1000 (inclusive).
 
    *Default=1*
 
 **LOCAL_ROUNDS**
    Number of local training iterations at client sites.
-   Must be greater than 0. Less than 100.
+   Must be between 1 and 1000 (inclusive).
 
    *Default=1*
 
