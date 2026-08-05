@@ -100,6 +100,29 @@ The cohort query for a real deployment is [`query.sql`](query.sql) — it select
 X-ray set (`procedure_source_value = 'Chest X-ray (holdout)'`) and returns the seven lesion-label columns
 both models are scored against.
 
+### Image orientation
+
+> **⚠️ MONAI's `LoadImaged` returns the DICOM pixel array transposed, and this app undoes that.** The
+> array arrives indexed `(column, row)` where `PixelData` is `(row, column)`, so a chest radiograph
+> loads **on its side**. `get_xray_transforms` in `app_files/data_utils.py` corrects it with
+> `Transposed(keys=["image"], indices=(0, 2, 1))` immediately after the load. If you change the reader,
+> the dataset or the image format, re-check that step — it is a property of this loading chain, not a
+> universal correction.
+
+Ark+ is pretrained on upright chest radiographs, so a sideways (or mirrored) image is a large
+distribution shift that **silently** depresses every reported metric — nothing errors or warns, the
+AUROCs are just quietly worse. Because this app scores two models head-to-head, an orientation fault
+also distorts the *comparison* — and it need not hit both models equally. In the evaluation that
+prompted the fix (FLIP#820) the pretrained model's mean AUROC rose from 0.83 to 0.96 once the images
+were upright, while the fine-tuned model (saturated on that task at 0.999) did not move at all, so the
+apparent gap between them shrank from 0.172 to 0.041 without either checkpoint changing.
+
+Do not check this by eye: a mirrored chest X-ray looks entirely plausible unless you read the cardiac
+silhouette or the laterality marker. Verify it **numerically** — compare the transform output against an
+array read straight from `pydicom`'s `PixelData`. Note that no rotation or flip substitutes for the
+transpose: `Rotate90d(k=-1)` composed with the loader transpose leaves the image upright but mirrored,
+and `Flipd` leaves it on its side. Both shipped here at some point, which is how this went unnoticed.
+
 ## Checkpoint setup
 
 The app evaluates two models, so it needs two clean `.pt` checkpoints in `app_files/`: the foundation

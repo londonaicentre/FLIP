@@ -300,6 +300,15 @@ Pretrained Ark+ checkpoint scored against each trust's **holdout** cohort
 (GSTT/Trust_1 n=478, KCH/Trust_2 n=468). Read from
 `evaluation_results/evaluation_results.json` in the downloaded results zip.
 
+> **⚠️ Every AUROC on this page predates the FLIP#820 orientation fix.** These runs used the pre-#821
+> transform chain, which never undid MONAI's `LoadImaged` transpose and so fed Ark+ **sideways**
+> radiographs — see
+> [Image orientation](image_evaluation/arkplus_baseline_classification_evaluation/README.md#image-orientation).
+> Re-scoring the same checkpoint over the same two cohorts upright (FLIP#821) raises every lesion:
+> mean AUROC **0.827 → 0.958** (GSTT) and **0.894 → 0.966** (KCH), the worst case being Pneumothorax
+> at GSTT, **0.642 → 0.972** (DeLong *p* = 3.5×10⁻²⁷). The tables are kept as the record of what the
+> platform reported at the time; regenerating them on the fixed chain is a separate step.
+
 > **Shape change (FLIP#754).** Runs from that fix onwards nest the metrics one level deeper —
 > `{"<trust>": {"SRV_<model_name>": {...}}}` rather than `{"<trust>": {...}}`. Keying on the trust
 > alone made each evaluated model overwrite the previous one, so a multimodel evaluation only ever
@@ -351,7 +360,9 @@ possible, exercised together for the first time here:
 
 There's no cross-site metric from training itself (no held-out split is scored during `standard_client_api`
 training) — the finetuned checkpoint is scored downstream in the multimodel evaluation below,
-which is what actually demonstrates the finetune improved the model.
+which is what actually demonstrates the finetune improved the model. Note that this checkpoint was
+trained through the pre-#821 chain, i.e. on **sideways** radiographs (see the orientation warning
+above); it scores the same either way on this saturated task, but a retrain is the clean path.
 
 > **Reproduced on production (GSTT + BDMS), 2026-07-07.** On prod the finetune's post-training
 > cross-site validation surfaced a **third** memory issue not seen on staging: broadcasting the full
@@ -369,6 +380,12 @@ Evaluates the pretrained Ark+ checkpoint **and** the finetuned checkpoint from t
 head-to-head, against the same **holdout** cohort used for the baseline evaluation above (reusing
 that project — `model_id ed2d49b5`, image `acfbd280`). The finetuned model wins on all 5 lesions
 at both trusts, every comparison significant (DeLong *p* < 1×10⁻⁶):
+
+> **⚠️ Pre-#821 orientation applies here too, and it inflates the Δ column.** Both models were scored
+> on sideways radiographs (see the baseline warning above). Upright, the pretrained column rises to the
+> means quoted there (0.958 GSTT / 0.966 KCH) while the finetuned column — already saturated near 1.0 —
+> barely moves, so the mean Δ collapses from the **+0.168 / +0.105** below to roughly **+0.04 / +0.03**.
+> The finetune still wins on every lesion; the margin below is not the margin you would measure today.
 
 **GSTT (Trust_1, n=478)**
 

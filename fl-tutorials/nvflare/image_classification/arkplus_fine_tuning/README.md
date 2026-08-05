@@ -133,6 +133,27 @@ It runs in the tutorial-local env with the `docs` extra (`matplotlib` + `pydicom
 it checks each panel's lesion against `config.json` and each accession's labels against its split's
 cohort dataframe, so a mislabelled figure fails rather than ships.
 
+### Image orientation
+
+> **⚠️ MONAI's `LoadImaged` returns the DICOM pixel array transposed, and this app undoes that.** The
+> array arrives indexed `(column, row)` where `PixelData` is `(row, column)`, so a chest radiograph
+> loads **on its side**. `get_xray_transforms` in `app_files/data_utils.py` corrects it with
+> `Transposed(keys=["image"], indices=(0, 2, 1))` immediately after the load. If you change the reader,
+> the dataset or the image format, re-check that step — it is a property of this loading chain, not a
+> universal correction.
+
+Ark+ is pretrained on upright chest radiographs, so fine-tuning on sideways (or mirrored) images
+**silently** works against the pretraining: nothing errors or warns, and the training curves look
+normal. In the evaluation that prompted the fix (FLIP#820) the pretrained checkpoint scored a mean
+AUROC of 0.83 sideways vs 0.96 upright over the reference hold-out cohort. Any weights fine-tuned
+through the pre-fix chain were trained on sideways radiographs; retraining is the clean path.
+
+Do not check this by eye: a mirrored chest X-ray looks entirely plausible unless you read the cardiac
+silhouette or the laterality marker. Verify it **numerically** — compare the transform output against an
+array read straight from `pydicom`'s `PixelData`. Note that no rotation or flip substitutes for the
+transpose: `Rotate90d(k=-1)` composed with the loader transpose leaves the image upright but mirrored,
+and `Flipd` leaves it on its side. Both shipped here at some point, which is how this went unnoticed.
+
 ## Checkpoint setup
 
 `make run`/`make export` require the backbone checkpoint at `app_files/pretrained_weights.pt`, produced

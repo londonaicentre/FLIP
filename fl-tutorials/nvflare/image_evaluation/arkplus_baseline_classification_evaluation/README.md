@@ -88,6 +88,27 @@ The cohort query for a real deployment is [`query.sql`](query.sql) — it select
 X-ray set (`procedure_source_value = 'Chest X-ray (holdout)'`) and returns the seven lesion-label columns.
 Pass it as the project's cohort query (e.g. `make e2e_smoke QUERY_FILE=.../arkplus_baseline_classification_evaluation/query.sql`).
 
+### Image orientation
+
+> **⚠️ MONAI's `LoadImaged` returns the DICOM pixel array transposed, and this app undoes that.** The
+> array arrives indexed `(column, row)` where `PixelData` is `(row, column)`, so a chest radiograph
+> loads **on its side**. `get_xray_transforms` in `app_files/data_utils.py` corrects it with
+> `Transposed(keys=["image"], indices=(0, 2, 1))` immediately after the load. If you change the reader,
+> the dataset or the image format, re-check that step — it is a property of this loading chain, not a
+> universal correction.
+
+Ark+ is pretrained on upright chest radiographs, so a sideways (or mirrored) image is a large
+distribution shift that **silently** depresses every reported metric — nothing errors or warns, the
+AUROCs are just quietly worse. In the evaluation that prompted the fix (FLIP#820), the same checkpoint
+over the same hold-out cohort scored a mean AUROC of **0.83 sideways vs 0.96 upright**, with
+Pneumothorax alone moving 0.64 → 0.97.
+
+Do not check this by eye: a mirrored chest X-ray looks entirely plausible unless you read the cardiac
+silhouette or the laterality marker. Verify it **numerically** — compare the transform output against an
+array read straight from `pydicom`'s `PixelData`. Note that no rotation or flip substitutes for the
+transpose: `Rotate90d(k=-1)` composed with the loader transpose leaves the image upright but mirrored,
+and `Flipd` leaves it on its side. Both shipped here at some point, which is how this went unnoticed.
+
 ## Checkpoint setup
 
 The evaluation app needs the foundation-model checkpoint as a clean `.pt` file at
@@ -168,11 +189,11 @@ The evaluator returns **aggregate** (cohort-level) per-lesion AUROC only, collec
 {
     "site-1": {
         "arkplus_pretrained": {
-            "auroc_Effusion": 0.84,
-            "auroc_Consolidation": 0.87,
-            "auroc_Infiltration": 0.85,
-            "auroc_Lung Nodule or Mass": 0.94,
-            "auroc_Pneumothorax": 0.64
+            "auroc_Effusion": 0.998,
+            "auroc_Consolidation": 0.989,
+            "auroc_Infiltration": 0.858,
+            "auroc_Lung Nodule or Mass": 0.973,
+            "auroc_Pneumothorax": 0.972
         }
     },
     "site-2": {
@@ -181,7 +202,10 @@ The evaluator returns **aggregate** (cohort-level) per-lesion AUROC only, collec
 }
 ```
 
-(Values above are illustrative, from a sample local run.)
+(Values above are illustrative — the pretrained checkpoint over one hold-out cohort, scored **after** the
+FLIP#820 orientation fix. The pre-fix chain fed the model sideways radiographs and scored materially
+lower on the same data, e.g. Pneumothorax 0.64 rather than 0.97 — see
+[Image orientation](#image-orientation).)
 
 ### Fields
 
