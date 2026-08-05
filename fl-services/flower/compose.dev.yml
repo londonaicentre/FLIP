@@ -47,8 +47,9 @@ services:
       - ../../fl-services/flower/fl-api-flower/fl_api:/app/fl_api
       - ../../fl-services/flower/fl-api-flower/tests:/app/tests
     # No host port published by default — submit jobs with `make submit` (which
-    # execs into this container). Run `make up-debug` (layers compose.debug.yml)
-    # to publish 8000 for the Swagger UI at http://localhost:8000/docs.
+    # execs into this container). To reach the Swagger UI on
+    # http://localhost:8000/docs, publish port 8000 by editing this compose
+    # file and re-running `make -C fl-services/flower up`.
     networks:
       - flwr-dev-net
 
@@ -82,8 +83,9 @@ services:
       - --health-server-address
       - ${SUPERLINK_HEALTH_SERVER_BIND_ADDRESS:-0.0.0.0:9097}
     # No host port published by default; fl-api reaches the SuperLink over the
-    # internal network (superlink:9093). `make up-debug` publishes 9093 for the
-    # `flwr` CLI from the host.
+    # internal network (superlink:9093). To use the `flwr` CLI from the host,
+    # publish port 9093 by editing this compose file and re-running
+    # `make -C fl-services/flower up`.
     networks:
       - flwr-dev-net
 

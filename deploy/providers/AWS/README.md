@@ -753,7 +753,7 @@ the direction of the request flow.
                   │  eu-west-2 ACM cert          │    │  FL_SERVER_PORT               │
                   │  https-listener: default 404;│    │  SG ingress allow-listed to: │
                   │  /api/* → flip-api TG        │    │   FLIP VPC NAT public IP +   │
-                  │                              │    │   local_trust_public_ip      │
+                  │                              │    │   local_trust_public_ips     │
                   └──────────────┬──────────────┘    └──────────────┬───────────────┘
                                  │ → ip:8000                         │ → ip:FL_SERVER_PORT
                                  ▼                                   ▼
@@ -794,7 +794,7 @@ the direction of the request flow.
   - Automatic Docker network creation for inter-service communication
   - No inbound ports open — access via SSM (`ssh flip-trust`) and SSM port forwarding for XNAT/Orthanc debugging (`make forward-trust`)
 - **ALB (Application Load Balancer)**: HTTPS-only entrypoint for API traffic. **Internal** (`internal = true`), lives in the **private subnets** — it has no public IP and no internet-facing path. CloudFront reaches it via an `aws_cloudfront_vpc_origin` (AWS-managed ENI in this VPC). The ALB security group accepts HTTPS:443 only from the AWS-managed `CloudFront-VPCOrigins-Service-SG` (Option 2 in the AWS VPC origins docs — the documented most-restrictive pattern; a `vpc_cidr` rule would not work because AWS evaluates VPC-origin SG checks against the service-managed SG, not the ENI source IP). The `https-listener` returns 404 by default and routes `/api/*` to the `ecs-flip-api` target group (`target_type=ip`, port 8000). The legacy `http-redirect` listener on port 80 exists as a belt-and-braces fallback only — its SG has no port-80 ingress, so it is unreachable externally.
-- **NLB (Network Load Balancer)**: TCP pass-through entrypoint for FL server traffic. Lives in the **public subnets**. Listens on `FL_SERVER_PORT` and forwards to the `ecs-fl-server-tcp` target group (`target_type=ip`) so the `fl-server-net-1` Fargate task receives the connection. The NLB security group ingress is allow-listed: NAT Gateway public IP (so the AWS-resident Trust EC2 can reach the FL server) plus any `local_trust_public_ip` set in the env file (so an on-prem trust can reach it). HTTP/2 gRPC framing is opaque to the NLB and forwarded as-is. **Why an NLB and not the ALB?** NVFLARE FL traffic is end-to-end mutual-TLS over gRPC, and an ALB (Layer 7) terminates TLS, which breaks NVFLARE's own certificate handshake. An NLB (Layer 4) does raw TCP pass-through, so the FL client and FL server complete their mTLS handshake untouched.
+- **NLB (Network Load Balancer)**: TCP pass-through entrypoint for FL server traffic. Lives in the **public subnets**. Listens on `FL_SERVER_PORT` and forwards to the `ecs-fl-server-tcp` target group (`target_type=ip`) so the `fl-server-net-1` Fargate task receives the connection. The NLB security group ingress is allow-listed: NAT Gateway public IP (so the AWS-resident Trust EC2 can reach the FL server) plus every IP in `local_trust_public_ips` (an HCL list, set via `LOCAL_TRUST_PUBLIC_IPS` in the env file — so each on-prem trust can reach it). HTTP/2 gRPC framing is opaque to the NLB and forwarded as-is. **Why an NLB and not the ALB?** NVFLARE FL traffic is end-to-end mutual-TLS over gRPC, and an ALB (Layer 7) terminates TLS, which breaks NVFLARE's own certificate handshake. An NLB (Layer 4) does raw TCP pass-through, so the FL client and FL server complete their mTLS handshake untouched.
 - **CloudFront + WAFv2**: Edge distribution that serves the `flip-ui` static site from S3 and forwards `/api/*` to the internal ALB via an `aws_cloudfront_vpc_origin` (HTTPS-only). A WAFv2 WebACL is attached to the distribution for L7 protection; WAF logs are shipped to CloudWatch Logs.
 - **ACM**: Two certificates — one in `eu-west-2` for the ALB, one in `us-east-1` for the CloudFront viewer.
 - **Route53**: `A` alias records for the canonical subdomain (→ CloudFront) and for the FL-server NLB.
@@ -848,7 +848,7 @@ Ingress at the load balancers (not at any EC2 SG — both EC2 hosts are in priva
 | **22** | — | 🔴 **CLOSED everywhere** | n/a | SSH never exposed — remote access is via SSM Session Manager tunnel |
 | **443** | ALB (internal) | 🟢 **OPEN to VPC origin only** | `CloudFront-VPCOrigins-Service-SG` | `/api/*` HTTPS traffic from CloudFront via the VPC origin ENI. Not reachable from the internet (ALB has no public IP). Default action returns 404. |
 | **80** | ALB (internal) | 🟡 **DEFINED, UNREACHABLE** | (no ingress rule) | Legacy HTTP→HTTPS redirect listener. SG has no port-80 ingress and the ALB has no public IP anyway; CloudFront already redirects HTTP→HTTPS at the edge and dials the origin HTTPS-only. |
-| **`FL_SERVER_PORT`** | NLB | 🟡 **CONDITIONAL** | NAT Gateway public IP + `local_trust_public_ip` if set | TCP/gRPC pass-through to the `fl-server-net-1` Fargate task |
+| **`FL_SERVER_PORT`** | NLB | 🟡 **CONDITIONAL** | NAT Gateway public IP + every IP in `local_trust_public_ips` (list) | TCP/gRPC pass-through to the `fl-server-net-1` Fargate task |
 
 Ports referenced internally only (no internet-facing ingress; reached only from inside the VPC or from the load balancers):
 
