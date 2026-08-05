@@ -219,15 +219,30 @@ re-pull (see §2.4).
 with an XNAT Tomcat 401 page (`Your login attempt failed...`) in the body. The
 hub marks the task FAILED.
 
-**Root Cause:** The XNAT init job creates `flipServiceAccount` at the DB layer
-with a **fixed bcrypt hash** that does not correspond to the
-`xnat-service-password` value in the chart Secret (which is what imaging-api
-sends as `XNAT_SERVICE_PASSWORD`). Repeated failures also lock the account for
-1 hour (20-attempt lockout).
+**Root Cause:** The XNAT init job used to create `flipServiceAccount` at the DB
+layer, INSERTing into `xdat_user` with a **fixed bcrypt hash** that does not
+correspond to the `xnat-service-password` value in the chart Secret (which is
+what imaging-api sends as `XNAT_SERVICE_PASSWORD`). Repeated failures also lock
+the account for 1 hour (20-attempt lockout).
 
-**Fix:** Sync the password via the REST API (idempotent; the chart's
-`xnat-init-job.yaml` `configure-xnat-web` container now does this on every
-install/upgrade):
+A DB-layer insert has a second, worse failure mode on **XNAT >= 1.10.0**: it
+writes no `xhbm_xdat_user_auth` "localdb" record, and without that record XNAT
+rejects every login 401 whatever `xdat_user.primary_password` holds. XNAT 1.9.3
+hid this by back-filling the record on the password PUT below; 1.10.0 does not,
+and the PUT still answers 200 — so the init job reported success on an XNAT
+whose service account could never authenticate. The chart therefore creates the
+account with `POST /xapi/users` (the only path that provisions the auth record)
+and no longer touches the database directly. Check for the record with:
+
+```bash
+kubectl exec -n flip-trust "$XNAT_DB_POD" -- \
+  psql -U xnat -d xnat -c \
+  "select xdat_username, auth_method from xhbm_xdat_user_auth;"
+```
+
+**Fix (for an account that exists and has an auth record):** sync the password
+via the REST API (idempotent; the chart's `xnat-init-job.yaml`
+`configure-xnat-web` container does this on every install/upgrade):
 
 ```bash
 kubectl exec -n flip-trust "$XNAT_POD" -- \
@@ -238,6 +253,18 @@ kubectl exec -n flip-trust "$XNAT_POD" -- \
 
 Verify: `curl -u flipServiceAccount:<pass> http://localhost:8080/xapi/users/flipServiceAccount`
 from inside the pod should return 200.
+
+**Fix (for an account with no auth record — the `xhbm_xdat_user_auth` query
+above lists every user *except* `flipServiceAccount`):** no password sync can
+repair it, because the record is what authentication reads. Delete the account
+so the init job recreates it through `POST /xapi/users`:
+
+```bash
+kubectl exec -n flip-trust "$XNAT_POD" -- \
+  curl -s -X DELETE -u admin:<admin-pass> \
+  "http://localhost:8080/xapi/users/flipServiceAccount?permanently=true"
+helm upgrade ...   # re-runs the init job, which recreates the account
+```
 
 ### 2.3a dcm2niix Never Registered (admin missing ContainerManager)
 
