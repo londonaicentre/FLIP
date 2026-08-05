@@ -611,7 +611,9 @@ def main(
             ("service/trust-api", 8000, "/health", "trust-api", 200),
             ("service/imaging-api", 8000, "/health", "imaging-api", 200),
             ("service/data-access-api", 8000, "/health", "data-access-api", 200),
-            ("service/orthanc", 8042, "/", "Orthanc", [200, 401]),
+            # Auth is always enforced (FLIP-PT-091): a 200 without credentials
+            # means an unauthenticated PACS — fail.
+            ("service/orthanc", 8042, "/", "Orthanc", [401]),
         ]
 
         for service_ref, container_port, path, name, expected in service_endpoints:

@@ -98,6 +98,15 @@ spec:
                 secretKeyRef:
                   name: {{ if .Values.secrets.create }}{{ include "flip-trust.fullname" . }}-secrets{{ else }}{{ .Values.secrets.existingName }}{{ end }}
                   key: xnat-service-password
+            # Minted XNAT DB password (FLIP-PT-056): imaging_api/config.py splices
+            # it over the password portion of XNAT_DATABASE_URL, so the URL in
+            # values.yaml stays a non-secret topology constant. Same secret key as
+            # xnat-db's POSTGRES_PASSWORD / xnat-web's datasource password.
+            - name: XNAT_DATASOURCE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ if .Values.secrets.create }}{{ include "flip-trust.fullname" . }}-secrets{{ else }}{{ .Values.secrets.existingName }}{{ end }}
+                  key: xnat-datasource-password
             - name: AES_KEY_BASE64
               valueFrom:
                 secretKeyRef:

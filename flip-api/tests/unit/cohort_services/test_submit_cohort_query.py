@@ -16,7 +16,11 @@ from unittest.mock import MagicMock, patch
 import pytest
 from fastapi import HTTPException, Request
 
-from flip_api.cohort_services.submit_cohort_query import submit_cohort_query
+from flip_api.cohort_services.submit_cohort_query import (
+    MAX_QUERY_LENGTH,
+    submit_cohort_query,
+    validate_query,
+)
 from flip_api.db.models.main_models import TrustTask
 from flip_api.domain.schemas.cohort import SubmitCohortQuery
 from flip_api.domain.schemas.status import TaskType
@@ -155,22 +159,80 @@ def test_submit_cohort_query_warns_when_query_row_missing(
     assert "queried_trust_ids was not persisted" in caplog.text
 
 
-@patch("flip_api.cohort_services.submit_cohort_query.can_modify_project", return_value=True)
-def test_submit_cohort_query_forbidden_sql(mock_can_modify, mock_auth_request):
-    """Queries with forbidden SQL commands should be rejected."""
-    query = SubmitCohortQuery(
-        name="Hack",
-        query="DROP TABLE patients;",
+def _query(sql: str) -> SubmitCohortQuery:
+    """Build a SubmitCohortQuery carrying ``sql``, for the pre-check tests below."""
+    return SubmitCohortQuery(
+        name="Test Query",
+        query=sql,
         project_id=project_id,
         query_id=query_id,
-        authenticationToken=mock_auth_request.headers.get("Authorization", ""),
+        authenticationToken="Bearer test-token",
     )
 
+
+@patch("flip_api.cohort_services.submit_cohort_query.can_modify_project", return_value=True)
+def test_submit_cohort_query_rejects_non_select(mock_can_modify, mock_auth_request):
+    """Statements that are not SELECT-shaped are rejected by the hub pre-check."""
     with pytest.raises(HTTPException) as exc_info:
-        submit_cohort_query(mock_auth_request, query, MagicMock(), user_id)
+        submit_cohort_query(mock_auth_request, _query("DROP TABLE patients;"), MagicMock(), user_id)
 
     assert exc_info.value.status_code == 400
-    assert "forbidden SQL commands" in str(exc_info.value.detail)
+    assert "SELECT" in str(exc_info.value.detail)
+
+
+@patch("flip_api.cohort_services.submit_cohort_query.can_modify_project", return_value=True)
+def test_submit_cohort_query_rejects_unparseable_sql(mock_can_modify, mock_auth_request):
+    """Input that is not SQL at all is rejected.
+
+    The previous sqlparse-based check accepted this: ``sqlparse.parse`` is a
+    non-validating tokenizer and returns a truthy result for arbitrary text.
+    """
+    with pytest.raises(HTTPException) as exc_info:
+        submit_cohort_query(mock_auth_request, _query("$$$$ not sql at all !!!"), MagicMock(), user_id)
+
+    assert exc_info.value.status_code == 400
+
+
+@patch("flip_api.cohort_services.submit_cohort_query.can_modify_project", return_value=True)
+def test_submit_cohort_query_rejects_stacked_statements(mock_can_modify, mock_auth_request):
+    """Query stacking is rejected — only one statement may be submitted."""
+    with pytest.raises(HTTPException) as exc_info:
+        submit_cohort_query(
+            mock_auth_request, _query("SELECT 1; DROP TABLE patients"), MagicMock(), user_id
+        )
+
+    assert exc_info.value.status_code == 400
+
+
+@patch("flip_api.cohort_services.submit_cohort_query.can_modify_project", return_value=True)
+def test_submit_cohort_query_rejects_oversized_query(mock_can_modify, mock_auth_request):
+    """Pathologically large queries are rejected before the parser allocates an AST."""
+    oversized = f"SELECT {'a' * (MAX_QUERY_LENGTH + 1)} FROM omop.person"
+
+    with pytest.raises(HTTPException) as exc_info:
+        submit_cohort_query(mock_auth_request, _query(oversized), MagicMock(), user_id)
+
+    assert exc_info.value.status_code == 400
+    assert "length" in str(exc_info.value.detail).lower()
+
+
+def test_validate_query_accepts_substring_function():
+    """``SUBSTRING()`` is legitimate SQL and must not be rejected.
+
+    The removed denylist contained the bare token "substring", so every query
+    using the standard function was refused — the flexibility cost of a keyword
+    denylist. Blind data extraction via ``SUBSTRING`` is defeated trust-side by
+    the literal-LIMIT rule, not by banning the function name.
+    """
+    validate_query("SELECT SUBSTRING(gender_source_value, 1, 1) FROM omop.person")
+
+
+def test_validate_query_accepts_cte_with_set_operation():
+    """Real cohort queries use CTEs and set operations; both are SELECT-shaped."""
+    validate_query(
+        "WITH a AS (SELECT person_id FROM omop.person) "
+        "SELECT person_id FROM a UNION SELECT person_id FROM omop.observation"
+    )
 
 
 @patch("flip_api.cohort_services.submit_cohort_query.can_modify_project", return_value=True)

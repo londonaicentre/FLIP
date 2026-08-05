@@ -17,8 +17,13 @@
 # tasks lose local state on every restart, so the cert/admin/transfer
 # directories must persist on EFS and be mounted via access points.
 #
-# Access points use posix_user uid/gid 1001 — never root. The FL service
-# Dockerfiles run as a non-root user that must match this uid.
+# Access points use posix_user uid/gid 1001 — never root. This is an
+# override, not a match requirement: NFSv4 access points remap every
+# reader/writer to 1001 regardless of the calling container's own uid, so the
+# FL service Dockerfiles (built non-root at UID=1000/GID=1000/UNAME=flip,
+# GHSA-8465 — 1000 to match the ubuntu uid EC2/on-prem trust hosts stage kits
+# as) don't need to match 1001 themselves; flare-fl-api already runs as uid
+# 1000 against these same access points in prod.
 
 ############################
 # File system

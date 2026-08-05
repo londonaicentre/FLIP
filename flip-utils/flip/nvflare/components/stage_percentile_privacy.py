@@ -63,10 +63,17 @@ class StagePercentilePrivacy(PercentilePrivacy):
             self.log_info(fl_ctx, "Stage info is missing in DXO meta; not applying privacy filter.")
             return dxo
 
+        # One output dict for the whole update: each stage filters only its own parameters in it,
+        # so every stage's filtering survives, and parameters outside all stages pass through
+        # untouched (they never get the per-step scaling applied).
+        filtered = dict(model_diff)
         for stage in stages:
             # We handle the privacy filtering for each stage separately
             named_parameters_to_filter = [name for name in model_diff if name.split(".")[0] in stage]
-            delta_w = {name: model_diff[name] / total_steps for name in model_diff}
+            if not named_parameters_to_filter:
+                self.log_info(fl_ctx, f"Stage {stage!r} matches no parameters; skipping.")
+                continue
+            delta_w = {name: model_diff[name] / total_steps for name in named_parameters_to_filter}
             # abs delta
             all_abs_values = np.concatenate([np.abs(delta_w[name].ravel()) for name in named_parameters_to_filter])
             cutoff = np.percentile(a=all_abs_values, q=self.percentile, overwrite_input=False)
@@ -77,17 +84,14 @@ class StagePercentilePrivacy(PercentilePrivacy):
                 f"cutoff: {cutoff}, scale: {total_steps}.",
             )
 
-            for name in delta_w:
-                if name not in named_parameters_to_filter:
-                    continue
-                diff_w = delta_w[name]
+            for name, diff_w in delta_w.items():
                 if np.ndim(diff_w) == 0:  # single scalar, no clipping
-                    delta_w[name] = diff_w * total_steps
+                    filtered[name] = diff_w * total_steps
                     continue
                 selector = (diff_w > -cutoff) & (diff_w < cutoff)
                 diff_w[selector] = 0.0
                 diff_w = np.clip(diff_w, a_min=-self.gamma, a_max=self.gamma)
-                delta_w[name] = diff_w * total_steps
+                filtered[name] = diff_w * total_steps
 
-        dxo.data = delta_w
+        dxo.data = filtered
         return dxo

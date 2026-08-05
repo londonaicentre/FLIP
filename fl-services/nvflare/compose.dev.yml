@@ -22,6 +22,9 @@ services:
       dockerfile: fl-services/nvflare/fl-base/Dockerfile
       args:
         LOCAL_DEV: ${LOCAL_DEV:-false}
+        UID: ${UID:-1000}
+        GID: ${GID:-1000}
+        UNAME: ${UNAME:-flip}
     profiles: ["build-only"]
 
   fl-server:

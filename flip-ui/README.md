@@ -183,6 +183,18 @@ The image (`cypress/included:14.5.2`) is ~3 GB on first pull and cached
 afterwards. Pin the tag to whatever `cypress` version is in `package.json` so
 the binary in the image matches the project config.
 
+### Demo-video recording (live stack)
+
+[`cypress.demo.config.ts`](cypress.demo.config.ts) + [`test/cypress/demo/`](test/cypress/demo) are a separate,
+live-wired harness: unlike the functional and docs suites there is **no request mocking** — the six demo segments
+sign in through real Cognito and drive the running dev stack, so the recording is genuine end-to-end behaviour.
+They are driven one segment at a time by the orchestrator in `flip-api/tests/demo_video.py` (`make demo-video`
+from the repo root), which does the slow platform waits off-camera and finally crops + concatenates the segment
+mp4s via [`scripts/assemble-demo-video.sh`](scripts/assemble-demo-video.sh). The crop constants are shared with
+the docs-GIF pipeline (`scripts/videos-to-gifs.sh`) — keep viewport, `--window-size` and crop in lockstep. All
+recorder outputs under `test/cypress/demo/` (videos, screenshots, downloads, `state.json`, `out/`) are gitignored.
+See [`test/cypress/demo/README.md`](test/cypress/demo/README.md) for the full contract.
+
 #### CI
 
 The Cypress suite runs on every PR and on push to `develop` / `main` via the `cypress-e2e` job in

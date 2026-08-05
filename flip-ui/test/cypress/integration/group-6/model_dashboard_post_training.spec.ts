@@ -36,15 +36,37 @@ describe("Model Dashboard - Post Training", () => {
             .as("getLogs");
     });
 
-    it("does not allow the user to stop training if the model status is anything before 'PREPARED'", () => {
+    it("offers 'Abort job' while the model is queued (INITIATED) and aborts on click", () => {
         cy.intercept("POST", `/step/model/${modelId}`, { fixture: "model/getModelPostTrainingInitiatedStatus" })
             .as("getModel");
+
+        cy.intercept("POST", `/fl/stop/${modelId}`, { statusCode: 200 })
+            .as("stopTraining");
 
         cy.visit(`project/${projectId}/model/${modelId}`);
         cy.wait("@getModel");
 
         // After training has started the Initiate button isn't even rendered —
         // it's gated on isTrainingPending() (model.status === "PENDING").
+        cy.getBySel("initiate-training-btn").should("not.exist");
+        // While the model is queued the same stop endpoint aborts the job pre-running (#787):
+        // the button is enabled and relabelled.
+        cy.getBySel("stop-training-btn")
+            .should("be.enabled")
+            .and("have.attr", "title", "Abort job")
+            .click();
+        cy.getBySel("confirm-modal-btn").click();
+
+        cy.wait("@stopTraining");
+    });
+
+    it("does not allow the user to stop training once the model is in a terminal state", () => {
+        cy.intercept("POST", `/step/model/${modelId}`, { fixture: "model/getModelPostTrainingError" })
+            .as("getModel");
+
+        cy.visit(`project/${projectId}/model/${modelId}`);
+        cy.wait("@getModel");
+
         cy.getBySel("initiate-training-btn").should("not.exist");
         // TrainingActionsMenu now exposes stop-training-btn / download-results-btn
         // directly — the old "user-btn" dropdown wrapper is gone.

@@ -11,13 +11,12 @@
 #
 
 import json
-import re
 from uuid import UUID
 
-# SQL parser library - would need Python equivalent
-# For this example using sqlparse, but may need a more robust solution
-import sqlparse  # type: ignore[import]
+import sqlglot
+import sqlglot.expressions
 from fastapi import APIRouter, Body, Depends, HTTPException, Request
+from sqlglot.errors import SqlglotError
 from sqlmodel import Session, select
 
 from flip_api.auth.access_manager import can_modify_project
@@ -37,58 +36,83 @@ from flip_api.utils.logger import logger
 router = APIRouter(prefix="/cohort", tags=["cohort_services"])
 
 
-FORBIDDEN_COMMANDS = [
-    "alter user",
-    "alter table",
-    "alter database",
-    "drop table",
-    "drop user",
-    "drop role",
-    "drop database",
-    "create table",
-    "substring",
-]
+# Reject pathologically large queries before the parser allocates an AST. Kept
+# equal to the trust-side MAX_QUERY_LENGTH so the hub does not accept a query
+# that every trust would then refuse.
+MAX_QUERY_LENGTH = 10_240  # 10 KiB
 
-# Match any occurrence of any forbidden commands
-REGEX = re.compile(f"({'|'.join(FORBIDDEN_COMMANDS)})", re.IGNORECASE)
-
-
-def contains_forbidden_commands(query: str) -> bool:
-    """
-    Check if the query contains any forbidden commands
-
-    Args:
-        query: SQL query string
-
-    Returns:
-        bool: True if the query contains forbidden commands, False otherwise
-    """
-    return bool(REGEX.search(query))
+# Top-level statement shapes that count as SELECT-like for the cohort API.
+_SELECT_LIKE_STATEMENTS: tuple[type[sqlglot.expressions.Expression], ...] = (
+    sqlglot.expressions.Select,
+    sqlglot.expressions.Union,
+    sqlglot.expressions.Intersect,
+    sqlglot.expressions.Except,
+)
 
 
 def validate_query(query: str) -> None:
     """
-    Validate the SQL query syntax
+    Fast-feedback validity pre-check for a cohort query. **Not a security control.**
+
+    Why this exists at all
+    ----------------------
+    The trust-side ``data-access-api`` is the *authority* on what a cohort query
+    may do (see ``data_access_api.services.cohort.validate_query``), and it is
+    deliberately self-sufficient: a trust holds patient data and must stay safe
+    regardless of what the hub did or did not check, because the hub is a
+    separate administrative domain that the trust does not trust. Anything this
+    function enforced for safety would therefore have to be enforced trust-side
+    anyway, so duplicating the trust's rules here would buy no security — only
+    two copies of one policy to keep in sync.
+
+    What it buys instead is **fast feedback**. Submitting a cohort query fans it
+    out to every registered trust as an encrypted task, each of which runs its
+    own validation asynchronously and reports back. Without a pre-check, a
+    researcher who typos their SQL waits for that whole round-trip, across N
+    trusts, to be told. Catching "this cannot possibly succeed anywhere" while
+    the request is still in-hand turns a multi-minute fan-out into a 400.
+
+    The asymmetry is intentional and safe by construction
+    -----------------------------------------------------
+    This check is deliberately *weaker* than the trust's, and only ever rejects
+    queries that every trust would reject too. It intentionally does **not**
+    enforce trust-local policy — the ``omop`` schema pin, literal-``LIMIT``
+    rule, read-only role, or minimum-cohort threshold — because those depend on
+    facts the hub has no authority over and which may legitimately differ per
+    trust.
+
+    That makes drift between the two harmless in the direction that matters: a
+    hub lagging behind the trust merely wastes a fan-out on a query the trust
+    then refuses, never a bypass. Do not "fix" the asymmetry by copying the
+    trust's rules in here.
 
     Args:
-        query: SQL query string
+        query (str): The SQL query string submitted by the researcher.
 
     Raises:
-        ValueError: If the query is not valid SQL
+        ValueError: If the query is over length, unparseable, not exactly one
+            statement, or not SELECT-shaped.
     """
-    try:
-        # Use sqlparse to verify SQL validity
-        # This is a simplified version - you might need a more robust parser
-        # TODO: Replace with a more robust SQL parser if needed.
-        # TODO: Create tests to veryfy if sql injection can be done
-        parsed = sqlparse.parse(query)
-        if not parsed:
-            raise ValueError("Empty or invalid SQL")
+    if len(query) > MAX_QUERY_LENGTH:
+        raise ValueError(f"Query exceeds maximum length of {MAX_QUERY_LENGTH} characters.")
 
-        logger.info("Query is valid SQL")
-    except Exception as e:
-        logger.error({"message": "Query is not valid SQL.", "error": str(e)})
-        raise ValueError("Invalid SQL Query")
+    try:
+        statements = sqlglot.parse(query, read="postgres")
+    except SqlglotError as e:
+        # SqlglotError covers both ParseError and TokenError (e.g. an
+        # unterminated string literal), so a tokenizer failure cannot bubble up
+        # as an unhandled 500.
+        logger.info({"message": "Cohort query rejected: could not be parsed as SQL.", "error": str(e)})
+        raise ValueError("Query could not be parsed as SQL.") from e
+
+    # sqlglot yields None for empty input and for stray semicolons (``SELECT 1; ;``
+    # parses to ``[Select, None]``), so filtering None out would let a caller
+    # smuggle an extra statement past the count check.
+    if len(statements) != 1 or statements[0] is None:
+        raise ValueError("Exactly one SQL statement is allowed per request.")
+
+    if not isinstance(statements[0], _SELECT_LIKE_STATEMENTS):
+        raise ValueError("Only SELECT statements are allowed.")
 
 
 # TODO [#114] This endpoint was not defined in the old repo. The old repo defined a step function that ran the
@@ -123,11 +147,9 @@ def submit_cohort_query(
                 detail=f"User with ID: {user_id} is not allowed to modify this project",
             )
 
-        # Additional validation
-        if contains_forbidden_commands(cohort_query.query):
-            raise HTTPException(status_code=400, detail="Invalid query: Contains forbidden SQL commands")
-
-        # Validate SQL syntax
+        # Fast-feedback validity pre-check only — the trust is the authority on
+        # query safety. See validate_query's docstring for why this is
+        # deliberately weaker than the trust-side check.
         try:
             validate_query(cohort_query.query)
         except ValueError as e:
