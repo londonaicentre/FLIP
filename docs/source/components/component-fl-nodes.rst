@@ -45,7 +45,9 @@ we call an app. Some of these files are required to run the app, and some are op
 are required depends on the job type (see :ref:`fl-required-files` below).
 
 The job type is passed as key `job_type` in the `config.json` file (for both NVFLARE and Flower apps).
-An unrecognised value is rejected at submission; a missing one falls back to ``standard``.
+An unrecognised value is rejected at submission. A missing one falls back to ``standard``, as does an
+app carrying no ``config.json`` at all — which is a valid Flower submission, since ``config.json`` is a
+required file for the NVFLARE job types but not for the Flower ones (see :ref:`fl-required-files`).
 
 Once uploaded, the UI will indicate which files are required for the specific job.
 

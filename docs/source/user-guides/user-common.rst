@@ -354,7 +354,9 @@ Model Files
 There is no single list of required files. What a model must contain depends on its **job type**
 — the kind of federated job it runs, such as federated averaging or evaluation — and on which FL
 backend your platform is running. An app declares its job type with the ``job_type`` key in
-``config.json``; if that key is absent, the ``standard`` job type is assumed.
+``config.json``. Every NVFLARE app carries a ``config.json``, because it is itself a required file
+for those job types; a Flower app only needs one in order to run a job type other than the default.
+Where the key — or the file itself — is absent, the ``standard`` job type is assumed.
 
 **You do not need to look this up.** FLIP tells you which files your model needs, in two places on
 the model page:
