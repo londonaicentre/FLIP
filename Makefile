@@ -12,7 +12,7 @@
 
 .PHONY: build build-fl dev prod clean stop up down up-no-trust up-trusts central-fl central-hub \
 		restart restart-fl restart-no-trust ci tests debug create-networks remove-networks recreate-networks consolidate-deps \
-		check-aws-access generate-internal-service-key \
+		check-aws-access generate-internal-service-key generate-xnat-credentials \
 		register-trust register-trusts new-trust _wait-for-hub integration_test \
 		sync-trust-kit sync-trust-kits lock \
 		deploy-trust-k8s undeploy-trust-k8s \
@@ -467,6 +467,7 @@ register-trust: _wait-for-hub
 	  kitjson="$$($(DOCKER_COMMAND) exec -T flip-api uv run python -m flip_api.scripts.register_trust "$$@")" \
 	    || { echo "❌ register_trust failed for KIT=$(KIT)"; exit 1; }; \
 	  printf '%s\n' "$$kitjson" | uv run --no-config scripts/distribute_trust_kits.py --target "$$kit"
+	@$(MAKE) generate-xnat-credentials KIT=$(KIT)
 
 # Register every dev trust: the shipped trust/.env.<CODE>.<env>.example kits ARE
 # the roster (each is seeded to a live kit + registered). Used by `make up`.
@@ -527,6 +528,26 @@ deploy-trust-k8s: ## Deploy trust services to Kubernetes via Helm
 
 undeploy-trust-k8s: ## Remove trust services from Kubernetes
 	$(MAKE) -C deploy/providers/kubernetes undeploy
+
+# Mint the XNAT stack passwords (XNAT_DATASOURCE_PASSWORD,
+# XNAT_DATASOURCE_ADMIN_PASSWORD, XNAT_ACTIVEMQ_PASSWORD) into kit files —
+# they are runtime-only secrets, never committed and never baked into the
+# published XNAT image (FLIP-PT-056). Runs automatically inside
+# `register-trust`; invoke directly to backfill every local kit, one kit
+# (KIT=<CODE>), an explicit file (ENV_FILE=<path>), or rotate (FORCE=1).
+# Existing non-placeholder values are preserved unless FORCE=1.
+generate-xnat-credentials:
+	@if [ -n "$(ENV_FILE)" ]; then \
+	  $(MAKE) -C flip-api generate-xnat-credentials ENV_FILE=$(ENV_FILE) $(if $(FORCE),FORCE=$(FORCE)); \
+	elif [ -n "$(KIT)" ]; then \
+	  $(MAKE) -C flip-api generate-xnat-credentials ENV_FILE=$(CURDIR)/trust/.env.$(KIT).$(ENV) $(if $(FORCE),FORCE=$(FORCE)); \
+	else \
+	  found=0; for kit in trust/.env.*.$(ENV); do \
+	    [ -e "$$kit" ] || continue; case "$$kit" in *.example) continue;; esac; \
+	    found=1; $(MAKE) -C flip-api generate-xnat-credentials ENV_FILE=$(CURDIR)/$$kit $(if $(FORCE),FORCE=$(FORCE)) || exit 1; \
+	  done; \
+	  [ "$$found" = 1 ] || echo "ℹ️  No trust/.env.<CODE>.$(ENV) kit files found — run 'make register-trusts' (or 'make register-trust KIT=<CODE>') first."; \
+	fi
 
 check-aws-access:
 	@echo "🔎 Checking AWS CLI access..."

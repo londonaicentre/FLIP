@@ -140,11 +140,34 @@ Key environment variables (set in [`.env.development.example`](../../.env.develo
 | `XNAT_URL` | URL of the XNAT instance |
 | `XNAT_SERVICE_USER` | XNAT service account username |
 | `XNAT_SERVICE_PASSWORD` | XNAT service account password |
-| `XNAT_DATABASE_URL` | PostgreSQL connection string for the XNAT database |
+| `XNAT_DATABASE_URL` | PostgreSQL connection string for the XNAT database (non-secret topology constant; defaults in `config.py`, and the default carries **no** password) |
+| `XNAT_DATASOURCE_PASSWORD` | Minted per-trust XNAT DB password from the kit file (FLIP-PT-056). When set, it replaces the password embedded in `XNAT_DATABASE_URL`; empty or the kit-template placeholder leaves the URL untouched, so a pre-mint deployment fails on its first query instead of falling back to a weak credential |
 | `DATA_ACCESS_API_URL` | Internal URL of the data-access-api |
 | `AES_KEY_BASE64` | AES encryption key for decrypting project identifiers |
 | `TRUST_INTERNAL_SERVICE_KEY_HEADER` | Header name for trust-internal service auth (default `X-Trust-Internal-Service-Key`) |
 | `TRUST_INTERNAL_SERVICE_KEY` | Per-trust plaintext key. Validated as inbound auth on every router except `/health`, and forwarded outbound on calls to data-access-api `/cohort/accession-ids`. |
+
+### Troubleshooting: healthy service, but every XNAT-DB query returns 500
+
+Unlike xnat-web and xnat-db — whose entrypoints refuse to boot on a missing or weak credential —
+imaging-api starts normally when `XNAT_DATASOURCE_PASSWORD` is unset or still the kit-template
+placeholder. The engine is created lazily and `/health` reports `{"status": "ok"}` without touching
+the database, so a mis-minted kit looks healthy until the first XNAT-DB query. It then surfaces as a
+bare **500** with `asyncpg.exceptions.InvalidPasswordError` (or `no password supplied`) in the logs —
+typically on `GET /retrieval/import_status_count/{project_id}`, i.e. the project appears stuck at the
+imaging-import step.
+
+The tell is imaging-api's own start-up line, which logs the DSN with the password masked:
+
+```
+Database URL: postgresql+asyncpg://xnat@xnat-db:5432/xnat      # no password — kit not minted
+Database URL: postgresql+asyncpg://xnat:***@xnat-db:5432/xnat  # password spliced in
+```
+
+Remedy: mint the credential into the trust's kit file with `make generate-xnat-credentials`
+(`KIT=<CODE>` for one trust) and redeploy. If xnat-db's data volume was already initialised with a
+different password, Postgres will not pick the new one up — apply the `ALTER ROLE` that
+`make generate-xnat-credentials FORCE=1` prints. See [XNAT setup](../xnat/README.md).
 
 ## Authentication
 

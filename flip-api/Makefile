@@ -166,3 +166,5 @@ e2e_smoke_spleen_evaluation: e2e_smoke
 
 generate-internal-service-key:
 	uv run python -m flip_api.scripts.generate_internal_service_key $(if $(ENV_FILE),--env-file $(ENV_FILE)) $(if $(FORCE),--force)
+generate-xnat-credentials:
+	uv run python -m flip_api.scripts.generate_xnat_credentials $(if $(ENV_FILE),--env-file $(ENV_FILE)) $(if $(FORCE),--force)
