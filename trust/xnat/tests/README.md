@@ -27,10 +27,22 @@ protect the XNAT database credentials (FLIP-PT-056).
   context is its own leaf directory — so these tests parse all four and fail if
   any one drifts. Without them a value one layer calls strong and the next calls
   weak strands the operator between two tools that disagree.
+- **Guard behaviour** (`test_guard_scripts.py`) — parity pins *what* each layer
+  calls weak, by reading its source; it cannot see whether the guard still runs.
+  An errant `exit 0`, a `case` block that drifts below the `exec`, or a reverted
+  `exec "$@"` all keep the literals intact and pass every static assertion. So
+  these tests execute the two entrypoint guards as real subprocesses across the
+  reject / accept / retry matrix, under each POSIX shell on the runner (the two
+  images ship different ones: dash for xnat-web, busybox ash for xnat-db). The
+  reject cases also assert the `psql` stub was *never* called, which is what pins
+  the guard ahead of any database contact.
 
-The tests do not stand up XNAT or DicomEdit. They validate the FLIP
-authored ruleset against synthetic studies so a regression in the
-script is caught in CI without a heavyweight integration environment.
+The tests do not stand up XNAT, DicomEdit, or Postgres. The anonymization tests
+validate the FLIP-authored ruleset against synthetic studies; the guard-behaviour
+tests stub the few external commands the scripts reach for (`docker-entrypoint.sh`,
+`psql`) onto `PATH`, the same mock-bin idiom as
+`deploy/providers/AWS/scripts/tests/test_add_fl_kits.sh`. So a regression is caught
+in CI without a heavyweight integration environment or an image build.
 
 ## Running
 
@@ -50,7 +62,8 @@ in `conftest.py`.
 
 If you change what counts as a weak XNAT password, change it in **all four**
 places and update `CANONICAL_WEAK_VALUES` in `test_password_guards.py` — the
-tests fail until they agree. Note these read files from outside this directory,
-so `.github/workflows/test_trust_xnat_anon.yml` lists each of them in its paths
-filter; a new input needs adding there too, or the guard change lands with its
-test unrun.
+tests fail until they agree. `test_guard_scripts.py` imports that same set, so a
+new value is exercised against both entrypoints automatically. Note these read
+files from outside this directory, so `.github/workflows/test_trust_xnat.yml`
+lists each of them in its paths filter; a new input needs adding there too, or
+the guard change lands with its test unrun.

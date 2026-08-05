@@ -147,6 +147,28 @@ Key environment variables (set in [`.env.development.example`](../../.env.develo
 | `TRUST_INTERNAL_SERVICE_KEY_HEADER` | Header name for trust-internal service auth (default `X-Trust-Internal-Service-Key`) |
 | `TRUST_INTERNAL_SERVICE_KEY` | Per-trust plaintext key. Validated as inbound auth on every router except `/health`, and forwarded outbound on calls to data-access-api `/cohort/accession-ids`. |
 
+### Troubleshooting: healthy service, but every XNAT-DB query returns 500
+
+Unlike xnat-web and xnat-db — whose entrypoints refuse to boot on a missing or weak credential —
+imaging-api starts normally when `XNAT_DATASOURCE_PASSWORD` is unset or still the kit-template
+placeholder. The engine is created lazily and `/health` reports `{"status": "ok"}` without touching
+the database, so a mis-minted kit looks healthy until the first XNAT-DB query. It then surfaces as a
+bare **500** with `asyncpg.exceptions.InvalidPasswordError` (or `no password supplied`) in the logs —
+typically on `GET /retrieval/import_status_count/{project_id}`, i.e. the project appears stuck at the
+imaging-import step.
+
+The tell is imaging-api's own start-up line, which logs the DSN with the password masked:
+
+```
+Database URL: postgresql+asyncpg://xnat@xnat-db:5432/xnat      # no password — kit not minted
+Database URL: postgresql+asyncpg://xnat:***@xnat-db:5432/xnat  # password spliced in
+```
+
+Remedy: mint the credential into the trust's kit file with `make generate-xnat-credentials`
+(`KIT=<CODE>` for one trust) and redeploy. If xnat-db's data volume was already initialised with a
+different password, Postgres will not pick the new one up — apply the `ALTER ROLE` that
+`make generate-xnat-credentials FORCE=1` prints. See [XNAT setup](../xnat/README.md).
+
 ## Authentication
 
 imaging-api exposes privileged XNAT operations via a service account. To prevent any container on the trust Docker network — or any operator with SSM port-forward access — from acting as that service account, every router except `/health` requires callers to send `TRUST_INTERNAL_SERVICE_KEY` in the configured header. imaging-api compares the header against its own copy of the same per-trust key with a constant-time compare.

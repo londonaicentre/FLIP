@@ -27,7 +27,7 @@ on:
       - "trust/xnat/postgres/guard-xnat-db-passwords.sh"
       - "trust/imaging-api/imaging_api/config.py"
       - "flip-api/src/flip_api/scripts/generate_xnat_credentials.py"
-      - ".github/workflows/test_trust_xnat_anon.yml"
+      - ".github/workflows/test_trust_xnat.yml"
   pull_request:
     branches: [main, develop]
     paths:
@@ -38,7 +38,7 @@ on:
       - "trust/xnat/postgres/guard-xnat-db-passwords.sh"
       - "trust/imaging-api/imaging_api/config.py"
       - "flip-api/src/flip_api/scripts/generate_xnat_credentials.py"
-      - ".github/workflows/test_trust_xnat_anon.yml"
+      - ".github/workflows/test_trust_xnat.yml"
 
 permissions:
   contents: read
