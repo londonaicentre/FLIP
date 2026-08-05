@@ -259,6 +259,25 @@
         mode: "0755"
       when: fl_backend == "nvflare"
 
+    # The fl-client/fl-server images now run as a non-root uid (GHSA-8465;
+    # CI builds them at UID=1000, matching ubuntu on this host). Pre-create
+    # the leaf dirs owned by ubuntu, mirroring deploy/providers/local/
+    # site_local_trust.yml — otherwise the `mkdir -p` inside the shell task
+    # below runs under `become: true` (root) and the bind-mount source is
+    # root-owned, which the non-root container can't write into.
+    - name: pre-create NVFLARE Trust_1 kit subdirectories (owned by ubuntu)
+      file:
+        path: "{{ fl_kit_dir }}/net-1/services/Trust_1/{{ item }}"
+        state: directory
+        owner: ubuntu
+        group: ubuntu
+        mode: "0755"
+      loop:
+        - local
+        - startup
+        - transfer
+      when: fl_backend == "nvflare"
+
     - name: sync NVFLARE Trust_1 participant kit from S3
       # `aws s3 sync` skips files when source/dest size + mtime "look
       # equivalent", so a freshly regenerated kit can leave stale
@@ -273,6 +292,11 @@
       # trust/deploy/compose_trust.production.nvflare.yml is
       # ${FL_KIT_DIR}/net-1/services/${TRUST_NAME}/{local,startup,transfer},
       # which resolves to /opt/flip/fl-kit/net-1/services/Trust_1/...
+      #
+      # The sync (and the `find -delete` before it) run as root via
+      # `become: true`, so files land root-owned regardless of the
+      # pre-created parent's ownership above — the closing chown fixes that
+      # up for the non-root fl-client (GHSA-8465).
       shell: |
         set -euo pipefail
         dest="{{ fl_kit_dir }}/net-1/services/Trust_1"
@@ -281,6 +305,7 @@
         aws s3 sync \
           "{{ trust_s3_source }}" \
           "$dest"
+        chown -R ubuntu:ubuntu "$dest"
       args:
         executable: /bin/bash
       register: trust_sync

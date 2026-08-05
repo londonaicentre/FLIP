@@ -453,13 +453,14 @@ def resize_3d(image, target_shape=(128, 128, 128)):
                     upload_response = requests.put(upload_url, data=content, timeout=60)
 
                     if upload_response.status_code < 300:
-                        # The presigned PUT only puts bytes in S3 — the DB row that
-                        # makes the file show up in the UI is written by
-                        # /files/process-scanned-file, which is the SNS webhook the
-                        # antivirus scanner calls in prod. The UI invokes it
-                        # directly after a 3s scan grace; without it, the model
-                        # ends up trainable (fl-server reads from S3 by path) but
-                        # with an empty Model Files panel.
+                        # The upload only puts bytes into the staging prefix — the DB
+                        # row, and the malware scan that promotes the file into the
+                        # bucket the FL bundler reads from, are both driven by
+                        # /files/process-scanned-file (#52). Without it the file is
+                        # never promoted, so training sees no model files at all.
+                        # NOTE: this helper still speaks the pre-#784 presigned-PUT
+                        # protocol and does not poll for the scan verdict; use
+                        # tests/e2e_smoke.py for an end-to-end check.
                         scanned_response = client.post(
                             f"{constants.BASE_URL}/files/process-scanned-file/{model_id}/{filename}",
                             headers=AUTH_TOKEN,

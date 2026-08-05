@@ -85,6 +85,18 @@ _STATUS_AUDIT_MAP: dict[ModelStatus, ModelAuditAction] = {
     ModelStatus.RESULTS_UPLOADED: ModelAuditAction.RESULTS_UPLOADED,
 }
 
+# Once a user has STOPPED a model, late fl-server callbacks (PREPARED / RUNNING from a
+# prepare the abort raced, or END_RUN results) and the prepare-failure handler (ERROR) must not
+# overwrite the stop — a stopped model expects no results (#787). The only transition kept open
+# is STOPPED → INITIATED, so a stopped model can be queued for training again.
+_IGNORED_WHEN_STOPPED: set[ModelStatus] = {
+    ModelStatus.PREPARED,
+    ModelStatus.RUNNING,
+    ModelStatus.ERROR,
+    ModelStatus.RESULTS_UPLOADED,
+    ModelStatus.RESULTS_UPLOAD_FAILED,
+}
+
 
 def update_model_status(
     model_id: UUID,
@@ -114,6 +126,10 @@ def update_model_status(
 
     if not status:
         status = model.status
+
+    if model.status == ModelStatus.STOPPED and status in _IGNORED_WHEN_STOPPED:
+        logger.info(f"Model {model_id} is STOPPED; ignoring late transition to {status}.")
+        return model.status
 
     previous_status = model.status
     model.status = status
@@ -591,6 +607,7 @@ def get_all_models_service(
             project_name=project_name,
             owner_id=model.owner_id,
             owner_name=owner_name,
+            creation_timestamp=model.creation_timestamp,
             trusts=trusts_by_model.get(model.id, []),
             queue_position=queue_positions.get(model.id),
         )  # type: ignore[call-arg]
