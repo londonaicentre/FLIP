@@ -369,8 +369,11 @@ Both update as soon as you upload or replace ``config.json``, and training canno
 until every required file has been uploaded.
 
 Files beyond the required set may be uploaded freely — anything your code imports (helper modules,
-transforms, pre-trained checkpoints) is bundled with the app and shipped to the participating
-Trusts.
+transforms) is bundled with the app and shipped to the participating Trusts. Two things do not
+follow that rule: a file whose name matches one the platform's own app template supplies is quietly
+dropped in favour of the template's copy, and a checkpoint declared for server-side use stays on the
+FL server rather than travelling to the Trusts. Both are covered under
+:ref:`fl-required-files` on the FL nodes component page.
 
 The full per-job-type file lists, and the configuration each backend accepts, are documented on
 the :ref:`FL nodes component page <flip-fl-nodes>`. For worked examples of complete, working apps,
@@ -443,9 +446,11 @@ Where that configuration lives, and which settings are available, depends on the
 - **Flower apps** take their run configuration from the platform's app template, which your app
   can override with a ``config.toml`` file. Flower apps do not use the NVFLARE keys.
 
-Any key the platform does not recognise is passed through untouched, for your own code to read at
-runtime — which is how the tutorials carry app-specific settings such as learning rate or
-validation split.
+For NVFLARE apps, any key the platform does not recognise is passed through untouched, for your own
+code to read at runtime — which is how the tutorials carry app-specific settings such as learning
+rate or validation split. Flower works the other way round: ``config.toml`` may only override keys
+the app template already declares, and a key it does not declare fails the run at submission rather
+than being ignored.
 
 Every platform-recognised key has a default, so an app that sets only ``job_type`` will still run.
 For the full list of keys, their accepted values and defaults per backend, see

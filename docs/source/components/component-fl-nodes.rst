@@ -148,8 +148,19 @@ page — so the UI, not this table, is what to trust if the two ever disagree.
    uploaded as a model file does not become the app's project file. Per-run overrides go in
    ``config.toml`` instead (see below).
 
-Beyond the required set, any additional file uploaded with the model is bundled into the app, which
-is how apps ship helper modules, transforms and pre-trained checkpoints.
+Beyond the required set, additional files uploaded with the model are bundled into the app, which is
+how apps ship helper modules and transforms. Two exceptions are worth knowing:
+
+- **A file whose name collides with one the base template already provides is silently dropped.**
+  The template's copy wins and the upload is skipped with only a server-side log line — no error
+  reaches the UI. For Flower this covers ``server_app.py``, ``strategy.py``, ``__init__.py`` and
+  ``pyproject.toml``, which matters in practice because the Flower tutorials ship the first three in
+  their app directories; for NVFLARE it covers whatever the chosen job type's template already
+  contains.
+- **A checkpoint declared for server-side use is not shipped to the Trusts.** A file named by
+  ``SERVER_CHECKPOINT``, or by an evaluation job's ``models`` entries, is staged on the FL server
+  rather than placed in the app bundle, so it never travels to a client. This is deliberate: it
+  keeps large weights off the client deployment path.
 
 .. _fl-training-configuration:
 
@@ -190,10 +201,24 @@ training settings. Every setting has a default, so an app that declares only ``j
 
    .. note::
 
-      A ``GLOBAL_ROUNDS`` or ``LOCAL_ROUNDS`` value that is not a number, or that falls outside the
-      accepted range, does not fail the job — it is discarded and the default of 1 is used instead.
-      A single-round job is easy to mistake for a broken one, so check the value that reached the
-      job if training finishes sooner than expected.
+      A value that is not a number, or that falls outside the accepted range, is discarded rather
+      than reported. What happens next differs between the two keys, because the platform consumes
+      them differently.
+
+      ``GLOBAL_ROUNDS`` is read by the platform and written into the server's job configuration, so
+      a discarded value really does produce a **one-round run**. A single-round job is easy to
+      mistake for a broken one, so check the value that reached the job if training finishes sooner
+      than expected. The exception is ``BEST_MODEL_METRIC``: because it requires at least two global
+      rounds, a discarded ``GLOBAL_ROUNDS`` fails the job outright instead of defaulting.
+
+      ``LOCAL_ROUNDS`` is **not** read by the platform — it is read by your own trainer, straight out
+      of ``config.json``. The default of 1 is filled in only when the key is *absent*; a key that is
+      present but invalid is left exactly as written, so the value reaches your trainer verbatim.
+      ``"LOCAL_ROUNDS": 5000`` will run 5000 local iterations, and a non-numeric value will fail
+      inside your own code rather than at validation.
+
+      Neither key is rewritten in the ``config.json`` deployed with the app, so app code that reads
+      ``GLOBAL_ROUNDS`` from that file sees the value you wrote, not the value the server is using.
 
 **IGNORE_RESULT_ERROR**
    Whether training should proceed when a client returns an error.
@@ -240,11 +265,18 @@ training settings. Every setting has a default, so an app that declares only ``j
 
    *Default = unset, i.e. only the final model is saved*
 
-Keys the platform does not recognise are passed through to the app untouched, for the uploaded code
-to read at runtime. This is how the tutorials carry app-specific settings such as ``LEARNING_RATE``
-or ``VAL_SPLIT`` — those are conventions of individual apps, not platform settings, and they are
-neither validated nor defaulted. A misspelled key of this kind is therefore silently absent at
-runtime rather than reported as an error.
+Three further keys are read by FLIP's own NVFLARE components rather than by the FL API's validator,
+so they are unvalidated but are not simply passed through either: ``SERVER_CHECKPOINT`` (names a
+model file to stage on the FL server instead of bundling it into the app — a string or a list of
+strings), ``GLOBAL_ROUNDS_AE`` and ``GLOBAL_ROUNDS_DM`` (per-phase round counts for the two-phase
+``diffusion_model`` job types, which bypass the range check applied to ``GLOBAL_ROUNDS``), and
+``models`` (the checkpoints an evaluation job loads, each entry naming a ``checkpoint`` file).
+
+Any other key the platform does not recognise is passed through to the app untouched, for the
+uploaded code to read at runtime. This is how the tutorials carry app-specific settings such as
+``LEARNING_RATE`` or ``VAL_SPLIT`` — those are conventions of individual apps, not platform
+settings, and they are neither validated nor defaulted. A misspelled key of this kind is therefore
+silently absent at runtime rather than reported as an error.
 
 Flower run configuration
 ~~~~~~~~~~~~~~~~~~~~~~~~
@@ -323,8 +355,7 @@ Disclaimer: some things are still under construction!
 There are currently some elements that are still under construction, and might not adjust exactly to 
 the description above:
 
-- for the Flower framework, users have to upload the `server_app.py` in addition to the `client_app.py` and additional auxiliary code, but in the future, this will not be the case.
-- for the class-based NVFLARE job types (`standard`, `evaluation`, `fed_opt`, `diffusion_model`) the user upload is intentionally minimal — `trainer.py` / `validator.py` / `models.py` / `config.json` — and the rest of the app is filled in from
+- for the class-based NVFLARE job types (``standard``, ``evaluation``, ``fed_opt``, ``diffusion_model``) the user upload is intentionally minimal — see :ref:`fl-required-files` for the per-job-type set — and the rest of the app is filled in from
   the static (non-modifiable) templates baked into the flip-api image at `FL_APP_BASE_DIR` (`fl-apps/`, see FLIP#724).
   These templates used to be published to an S3 bucket; that path has been removed. You can check what a fully bundled app looks like by consulting
   the per-job-type implementations under `fl-apps/ <https://github.com/londonaicentre/FLIP/tree/develop/fl-apps/nvflare>`_.
