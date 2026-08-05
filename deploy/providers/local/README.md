@@ -81,14 +81,36 @@ make full-deploy-hybrid PROD=<stag|true> [LOCAL_TRUST_IP=<public-ip>]
 
 This wrapper target runs the full AWS + on-prem trust provisioning pipeline and registers the trust on the running hub (`make register-trusts`) — inserting the `trust` row with its `api_key_hash`, claiming an FL kit slot, and writing the per-trust kit file. No hub redeploy is needed. `PROD` is inherited from the environment and supports both staging (`stag`) and production (`true`). Omit `LOCAL_TRUST_IP` to auto-detect the operator machine's public IP.
 
-You still need to start the on-prem trust stack on the trust host:
+You still need to start the on-prem trust stack on the trust host. The playbook
+deliberately does **not** add the SSH login user to the `docker` group (docker
+group membership is equivalent to root on the host — any member can mount `/`
+into a container and chroot in), so docker commands and `make -C trust up-trust`
+must be run via `sudo`:
 
 ```bash
 cd ../../..
-env PROD=<stag|true> make -C trust up-trust KIT=<CODE>
+sudo -E env PROD=<stag|true> make -C trust up-trust KIT=<CODE>
 ```
 
 Use the trust code you registered, whose kit file is `trust/.env.<CODE>.production`.
+`-E` is load-bearing: it preserves `$HOME`, so root's docker client reuses your
+`~/.docker/config.json` GHCR login for the image pulls — a plain `sudo` looks in
+`/root/.docker` and the pulls fail. (`PROD` needs no preserving; `env PROD=…` sets
+it explicitly for the command.) Any direct `docker`, `docker compose`, or
+`docker swarm` invocations on the trust host should likewise be prefixed with `sudo`.
+
+> **Hosts provisioned before this change are not remediated by re-running the
+> playbook.** `geerlingguy.docker`'s `docker_users` is additive — it only ever
+> adds to the `docker` group, never removes — so dropping the setting stops *new*
+> grants but leaves membership a host already picked up in place. Affected hosts
+> (the `Trust_2`/BDMS on-prem host among them) are remediated by the planned
+> trust reprovisioning, which rebuilds them from this playbook. To close the gap
+> sooner on a host that is already up, evict the user directly and have them log
+> back in for it to take effect:
+>
+> ```bash
+> sudo gpasswd -d <login-user> docker   # verify with: id -nG <login-user>
+> ```
 
 ### Provision the trust host
 
@@ -112,14 +134,16 @@ Opening the AWS FL-server NLB to the trust's public IP is a **separate** step �
 
 ### Post-provisioning manual steps
 
-1. **Start the trust stack** on the trust host:
+1. **Start the trust stack** on the trust host. The login user is intentionally
+   **not** in the `docker` group (see the security note in the recommended
+   end-to-end target above), so use `sudo`:
 
    ```bash
    cd ../../..
-   env PROD=stag make -C trust up-trust KIT=<CODE>   # the trust code you registered
+   sudo -E env PROD=stag make -C trust up-trust KIT=<CODE>   # the trust code you registered
    ```
 
-2. **Verify** the trust can poll the hub (check trust-api logs for successful task polling).
+2. **Verify** the trust can poll the hub (check trust-api logs for successful task polling — `sudo docker compose logs trust-api`).
 
 ## Communication Model
 
@@ -203,7 +227,7 @@ Re-running with an already-listed IP is a no-op (idempotent).
 
 | Symptom | Check |
 | --- | --- |
-| Trust not polling hub | Trust stack running? (`docker ps` on trust host). Check trust-api logs for polling errors. |
+| Trust not polling hub | Trust stack running? (`sudo docker ps` on trust host). Check trust-api logs for polling errors. |
 | `Connection timed out` (FL) | Trust's public IP changed? Update NLB security group. Host/router firewall blocking outbound on port 8002? |
 | Firewall blocking outbound | Check host/router firewall allows outbound HTTPS (443) and gRPC (8002) |
 | Ansible `Permission denied` | SSH key correct? User has sudo? `ANSIBLE_BECOME_PASS` set for local mode? |

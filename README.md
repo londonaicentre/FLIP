@@ -100,7 +100,7 @@ For example:
 | `make restart-no-trust` | Stop and start all services except the trust services related services |
 | `make clean` | Remove all stopped containers, networks, and images |
 | `make ci` | Run the CI pipeline locally using `act` |
-| `make -C trust up-trust KIT=<CODE> PROD=<env>` | Run a trust on the local host pointing at a remote hub (kit file `trust/.env.<CODE>.<env>`; the on-prem trust kit is `trust/.env.<CODE>.production`) |
+| `make -C trust up-trust KIT=<CODE> PROD=<env>` | Run a trust on the local host pointing at a remote hub (kit file `trust/.env.<CODE>.<env>`; the on-prem trust kit is `trust/.env.<CODE>.production`; on-prem hosts: prefix `sudo -E` — the provisioned login user is not in the docker group) |
 | `make new-trust TRUST_CODE=<CODE> TRUST_NAME="..."` | Scaffold a new trust kit file `trust/.env.<CODE>.<env>` from the base template |
 | `make register-trusts` | Register the shipped dev roster (`trust/.env.*.development.example`, currently GSTT + KCH) on the running hub and write per-trust kit files (run automatically by `make up`) |
 | `make register-trust KIT=<CODE>` | Register one trust on the running hub and fill its kit file (creds + hub-shared block) |
@@ -340,10 +340,13 @@ To connect a local Ubuntu host as a trust against the AWS staging hub:
 cd deploy/providers/AWS
 make full-deploy-hybrid PROD=stag [LOCAL_TRUST_IP=<public-ip>]
 
-# Then on the trust host: provision it, then start the stack
+# Then on the trust host: provision it, then start the stack.
+# sudo is required: the provisioned login user is deliberately not in the
+# docker group (docker group membership is root-equivalent) — see
+# deploy/providers/local/README.md.
 make provision-local-trust          # run ON the trust host
 cd ../../..
-env PROD=stag make -C trust up-trust KIT=<CODE>
+sudo -E env PROD=stag make -C trust up-trust KIT=<CODE>
 ```
 
 No inbound firewall rules or NAT port-forwarding are needed on the trust host — all communication is outbound from the trust to the hub. See [deploy/providers/local/README.md](deploy/providers/local/README.md) for full details.

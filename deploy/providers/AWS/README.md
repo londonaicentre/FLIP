@@ -144,7 +144,9 @@ Each on-prem trust then joins exactly as in the hybrid flow:
    already registers every kit file present at deploy time).
 3. On the trust host: stage the FL kit (`make provision-local-trust KIT=<CODE>` on the
    host, or point `FL_KIT_DIR` in the kit at a locally-provisioned workspace) and start
-   the stack: `env PROD=<env> make -C trust up-trust KIT=<CODE>`.
+   the stack: `sudo -E env PROD=<env> make -C trust up-trust KIT=<CODE>` (sudo required —
+   the provisioned login user is deliberately not in the docker group, see the
+   [local provider README](../local/README.md)).
 
 Multiple on-prem trusts can share one host — give each kit non-colliding ports and data
 directories (see the shipped `trust/.env.*.development.example` kits for a working
@@ -629,7 +631,7 @@ make full-deploy-hybrid PROD=<stag|true> [LOCAL_TRUST_IP=<public-ip>]
 This wrapper target runs the full AWS deployment, provisions the on-prem trust host, and redeploys the Central Hub so the new secret values are loaded. `PROD` is inherited from the environment — omit `LOCAL_TRUST_IP` to auto-detect the operator machine's public IP via `curl ipify.org`.
 You still need to:
 
-1. Start the trust stack on the host: `cd ../../.. && env PROD=<stag|true> make -C trust up-trust KIT=<CODE>` (the trust code you registered)
+1. Start the trust stack on the host: `cd ../../.. && sudo -E env PROD=<stag|true> make -C trust up-trust KIT=<CODE>` (the trust code you registered). sudo is required — the provisioned login user is deliberately not in the docker group (docker group membership is root-equivalent, see the [local provider README](../local/README.md)).
 2. Verify the trust can poll the hub (check trust-api logs for successful task polling)
 
 Or onboard the trust step by step — the trust operator provisions their own host,
@@ -637,10 +639,11 @@ and the FLIP admin opens the firewall once the operator reports their public IP:
 
 ```bash
 # On the trust host (trust operator) — provision, then start the stack
+# (sudo: the provisioned login user is deliberately not in the docker group)
 cd deploy/providers/AWS
 set -x ANSIBLE_BECOME_PASS (read -s -P 'Sudo password: ')   # fish; bash differs
 make provision-local-trust KIT=<CODE>
-cd ../../.. && env PROD=<stag|true> make -C trust up-trust KIT=<CODE>
+cd ../../.. && sudo -E env PROD=<stag|true> make -C trust up-trust KIT=<CODE>
 
 # On the FLIP side (admin), once the operator reports their host's public IP:
 #   add it to LOCAL_TRUST_PUBLIC_IPS (an HCL list) in .env.stag / .env.production, e.g.

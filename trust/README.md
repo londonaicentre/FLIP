@@ -79,6 +79,11 @@ make -C trust down-trust KIT=GSTT   # if a previous GSTT stack is running
 make -C trust up-trust KIT=GSTT
 ```
 
+On an on-prem host provisioned by the local playbook, prefix these with `sudo -E` — the login
+user is deliberately not in the docker group (see
+[deploy/providers/local/README.md](../deploy/providers/local/README.md)). Dev workstations are
+unaffected.
+
 The trust-api container authenticates with its `TRUST_API_KEY` and posts a heartbeat to `POST /trust/heartbeat` (no name segment — the hub resolves the trust's identity from the API key). The Connection status page flips the row online within ~30s.
 
 ### Cleanup / lost kit
@@ -116,7 +121,11 @@ need only your trust's kit file (`trust/.env.<CODE>.<env>`).
    Grafana passwords) — these are your secrets, the hub never sees them.
 5. Start the stack:
    - EC2 trust: `make -C trust up-trust-ec2 KIT=<CODE> PROD=true`
-   - On-prem trust (or laptop-against-prod): `make -C trust up-trust KIT=<CODE> PROD=true`
+   - On-prem trust: `sudo -E env PROD=true make -C trust up-trust KIT=<CODE>`
+     (sudo: the provisioned login user is deliberately not in the docker group;
+     `-E` keeps `$HOME` so root's docker reuses your GHCR login)
+   - Laptop-against-prod: `make -C trust up-trust KIT=<CODE> PROD=true` (no sudo —
+     your workstation isn't provisioned by the on-prem playbook)
 
    The on-prem path skips the dev-only `update-omop-data` / `update-orthanc-data`
    steps (which pull test fixtures from S3 and need hub AWS credentials) —
