@@ -82,9 +82,14 @@ flip/
 ├── nvflare/      # NVFLARE-specific logic and components
 │   ├── executors/    # RUN_TRAINER, RUN_VALIDATOR, RUN_EVALUATOR wrappers
 │   ├── controllers/  # FLIP workflows (ScatterAndGather, BroadcastTask, …)
-│   └── components/   # Event handlers, persistors, privacy filters, locators, …
+│   ├── components/   # Event handlers, persistors, privacy filters, locators, …
+│   ├── recipes/      # High-level NVFLARE job recipes
+│   ├── runtime.py    # Runtime helpers for NVFLARE apps
+│   └── metrics.py    # Metrics collection and reporting
 └── flower/       # Flower-specific server-side helpers
-    └── metrics.py    # handle_client_metrics / handle_client_exception
+    ├── strategy.py   # Flower Strategy implementations (FedAvgWithClientMetrics)
+    ├── metrics.py    # handle_client_metrics / handle_client_exception
+    └── progress.py   # Progress / status reporting helpers
 ```
 
 The `FLIP()` factory selects `FLIPStandardDev` (local CSV/filesystem) or `FLIPStandardProd` (FLIP platform APIs) based
@@ -97,7 +102,11 @@ crashed-reply exceptions — extracted from Flower reply Messages in `Strategy.a
 
 ### User Application Requirements
 
-User-provided files go in the job's `custom/` directory and are dynamically imported by the executor wrappers:
+The executor wrappers dynamically import user-provided files from the job's `custom/`
+directory. For most templates that directory is materialised at run time by the tutorial
+harness (`fl-tutorials/nvflare/testing/app_organiser.sh`), which copies each file from
+the tutorial's `app_files/` into `./tmp/app/custom/`; the `diffusion_model` template
+already carries a git-tracked `custom/` with baseline files that the same overlay extends.
 
 | File | Description |
 | ------ | ------------- |
@@ -139,7 +148,8 @@ platform defaults to a single round, where selection could never fire).
 
 ### Job Types
 
-Set via the `JOB_TYPE` environment variable:
+Pass the job type to the `FLIP()` factory (`FLIP(job_type=...)`). The `JobType` enum
+(`flip.constants.job_types`) defines the values recognised by `FLIP()`:
 
 | Type | Description |
 | ------ | ------------- |
@@ -147,10 +157,11 @@ Set via the `JOB_TYPE` environment variable:
 | `evaluation` | Distributed model evaluation without training |
 | `diffusion_model` | Two-stage training (VAE encoder + diffusion) |
 | `fed_opt` | Custom federated optimization |
-| `standard_client_api` | Federated averaging via the modern NVFLARE Client API (script-driven, uses `nvflare.client`) |
-| `evaluation_client_api` | Distributed model evaluation via the modern NVFLARE Client API |
 
-The corresponding configs live in `fl-apps/nvflare/<job_type>/app/config/`.
+The NVFLARE backend additionally ships template directories under `fl-apps/nvflare/` for
+the Client-API variants (`standard_client_api`, `evaluation_client_api`); these are
+selected as app templates and are not `JobType` enum members. The corresponding configs
+live in `fl-apps/nvflare/<template>/app/config/`.
 
 ### Development Mode
 
@@ -187,11 +198,13 @@ uv run pytest -s -vv
 
 ## Tutorials
 
-The [`../fl-tutorials/`](../fl-tutorials/) directory contains ready-to-use example applications that can be uploaded to the FLIP platform UI. Each tutorial is designed to work with a specific app template from `../fl-apps/`, and runs on the local NVFLARE simulator via `make -C fl-tutorials run-tutorial TUTORIAL=<name>`.
+The [`../fl-tutorials/`](../fl-tutorials/) directory contains ready-to-use example applications that can be uploaded to the FLIP platform UI. Each tutorial is designed to work with a specific app template from `../fl-apps/<backend>/`, and runs on the local FL simulator via `make -C fl-tutorials run-tutorial TUTORIAL=<name>` (defaults to `FL_BACKEND=nvflare`; pass `FL_BACKEND=flower` for Flower).
 
 ![FL app structure](./assets/fl_app_structure.png)
 
 ### App / Tutorial Compatibility
+
+Paths below are relative to `../fl-tutorials/nvflare/` (the NVFLARE tutorials tree):
 
 | App | Tutorial |
 |-----|----------|

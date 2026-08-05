@@ -90,6 +90,12 @@ services:
       XNAT_PORT: ${XNAT_PORT}
       XNAT_SERVICE_USER: ${XNAT_SERVICE_USER}
       XNAT_SERVICE_PASSWORD: ${XNAT_SERVICE_PASSWORD}
+      # Minted per-trust XNAT DB password (FLIP-PT-056): imaging_api/config.py
+      # splices it over the password in the XNAT_DATABASE_URL default, keeping
+      # the URL itself a non-secret topology constant. Empty/placeholder (a
+      # pre-mint kit) is a documented no-op there, so unconditional injection
+      # is safe.
+      XNAT_DATASOURCE_PASSWORD: ${XNAT_DATASOURCE_PASSWORD}
       AES_KEY_BASE64: ${AES_KEY_BASE64}
       ENV: production
       BASE_IMAGES_DOWNLOAD_DIR: /app/data/images
@@ -123,6 +129,10 @@ services:
       ENV: production
       LOG_LEVEL: ${TRUST_LOG_LEVEL}
       TRUST_INTERNAL_SERVICE_KEY: ${TRUST_INTERNAL_SERVICE_KEY}
+      # The trust's own minimum-cohort disclosure floor. Operator-owned: raise it in the
+      # kit file to release less. The `:-10` keeps an unset variable from arriving as an
+      # empty string, which pydantic would reject against `int`.
+      COHORT_QUERY_THRESHOLD: ${COHORT_QUERY_THRESHOLD:-10}
 
   trust-api:
     image: ghcr.io/londonaicentre/trust-api:${DOCKER_TAG}

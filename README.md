@@ -59,7 +59,7 @@ for FL server/client/API), and [`fl-apps/`](fl-apps/) (job-type implementations 
 | [`docs/`](docs/) | Sphinx documentation source (ReadTheDocs) |
 | [`flip-utils/`](flip-utils/) | `flip` Python package — platform logic, NVFLARE components, Flower helpers |
 | [`fl-services/`](fl-services/) | Docker images for FL networks, nested per backend ([`fl-services/nvflare/`](fl-services/nvflare/): `fl-server`, `fl-client`, `fl-api-base`, `fl-base`; [`fl-services/flower/`](fl-services/flower/): `superlink`, `supernode`, `fl-api-flower`, `fl-base`) |
-| [`fl-apps/`](fl-apps/) | FL job-type implementations / app templates, nested per backend ([`fl-apps/nvflare/`](fl-apps/nvflare/): `standard`, `evaluation`, `diffusion_model`, `fed_opt`; [`fl-apps/flower/`](fl-apps/flower/): `standard`, `evaluation`) |
+| [`fl-apps/`](fl-apps/) | FL job-type implementations / app templates, nested per backend ([`fl-apps/nvflare/`](fl-apps/nvflare/): `standard`, `standard_client_api`, `evaluation`, `evaluation_client_api`, `diffusion_model`, `fed_opt`; [`fl-apps/flower/`](fl-apps/flower/): `standard`, `evaluation`) |
 | [`fl-tutorials/`](fl-tutorials/) | End-to-end tutorial examples, nested per backend ([`fl-tutorials/nvflare/`](fl-tutorials/nvflare/): xray classification, spleen seg/eval, diffusion; [`fl-tutorials/flower/`](fl-tutorials/flower/): xray classification, spleen seg/eval, numpy) |
 
 Both backends are now provisioned in-tree (gitignored): the NVFLARE workspace at
@@ -100,7 +100,7 @@ For example:
 | `make restart-no-trust` | Stop and start all services except the trust services related services |
 | `make clean` | Remove all stopped containers, networks, and images |
 | `make ci` | Run the CI pipeline locally using `act` |
-| `make -C trust up-trust KIT=<CODE> PROD=<env>` | Run a trust on the local host pointing at a remote hub (kit file `trust/.env.<CODE>.<env>`; the on-prem trust kit is `trust/.env.<CODE>.production`) |
+| `make -C trust up-trust KIT=<CODE> PROD=<env>` | Run a trust on the local host pointing at a remote hub (kit file `trust/.env.<CODE>.<env>`; the on-prem trust kit is `trust/.env.<CODE>.production`; on-prem hosts: prefix `sudo -E` — the provisioned login user is not in the docker group) |
 | `make new-trust TRUST_CODE=<CODE> TRUST_NAME="..."` | Scaffold a new trust kit file `trust/.env.<CODE>.<env>` from the base template |
 | `make register-trusts` | Register the shipped dev roster (`trust/.env.*.development.example`, currently GSTT + KCH) on the running hub and write per-trust kit files (run automatically by `make up`) |
 | `make register-trust KIT=<CODE>` | Register one trust on the running hub and fill its kit file (creds + hub-shared block) |
@@ -193,6 +193,14 @@ make register-trusts
 ```
 
 `register-trusts` registers the shipped dev roster — every `trust/.env.*.development.example` kit (currently GSTT and KCH) — on the hub: for each, it inserts a `trust` row with its `api_key_hash`, claims an FL kit slot, and fills that trust's kit file `trust/.env.<CODE>.development` (with `TRUST_API_KEY`, `TRUST_INTERNAL_SERVICE_KEY`, `FL_KIT_SLOT`, `FL_KIT_SLOT_NUMBER`, `EXPECTED_TRUST_ID`). The kit files ARE the roster — trusts are not enumerated in the hub env file. To add another, run `make new-trust TRUST_CODE=<CODE> TRUST_NAME="..."` then `make register-trust KIT=<CODE>`. `make up` runs `register-trusts` automatically once the hub is up. See [`CLAUDE.md`](CLAUDE.md#trust-internal-service-authentication) for the trust-internal auth threat model.
+
+The XNAT stack passwords (`XNAT_DATASOURCE_PASSWORD`, `XNAT_DATASOURCE_ADMIN_PASSWORD`, `XNAT_ACTIVEMQ_PASSWORD`) are minted into each kit file the same way — `register-trust` runs the generator for the kit automatically. They are runtime-only secrets: never committed and never baked into the published XNAT image (FLIP-PT-056). A kit that skipped minting cannot slip through: `make -C trust/xnat up-xnat` refuses to deploy on an empty, placeholder, or known-weak value, and the xnat-web and xnat-db entrypoints refuse to start on one (Postgres would otherwise apply the committed kit-template placeholder silently at first initdb). imaging-api reads the same minted `XNAT_DATASOURCE_PASSWORD` from the kit for its direct XNAT DB connection. `XNAT_DATASOURCE_PASSWORD` and `XNAT_DATASOURCE_ADMIN_PASSWORD` are two separate credentials — the `xnat` application role and the Postgres superuser — and xnat-db refuses to start if a deployment wires both to the same value, since that makes the app role's password superuser-equivalent. Invoke the generator directly to backfill every local kit, one kit, or rotate:
+
+```bash
+make generate-xnat-credentials [KIT=<CODE>] [FORCE=1]
+```
+
+> **Rotation caveat:** Postgres applies these values only on xnat-db's very first initdb. Rotating with `FORCE=1` after the trust's xnat-db data volume exists changes what xnat-web sends but not what the database expects — update the live database to match (the generator prints the exact `ALTER ROLE` commands), otherwise xnat-web fails fast at startup with a credential-mismatch error.
 
 ### Basic Usage
 
@@ -319,7 +327,7 @@ This runs the following steps in order:
 | 9 | `make ssh-config` | Write SSM-tunnelled `Host flip` / `Host flip-trust` into `~/.ssh/config` |
 | 10 | `make ansible-init` | Configure Trust EC2 with Docker, CloudWatch, and FL assets |
 | 11 | `make deploy-centralhub` | Deploy ECS Fargate services at the env branch tip (immutable `sha-<short7>` task-def revisions) + sync UI to S3 + invalidate CloudFront |
-| 12 | `make register-trusts` | Register trusts on the hub and write per-trust kit files |
+| 12 | `make register-trusts` | Register trusts on the hub and write per-trust kit files (incl. minting the XNAT stack passwords) |
 | 13 | `make deploy-trust` | Deploy trust stack to Trust EC2 via Docker Compose |
 | 14 | `make status` | Health checks |
 
@@ -340,10 +348,13 @@ To connect a local Ubuntu host as a trust against the AWS staging hub:
 cd deploy/providers/AWS
 make full-deploy-hybrid PROD=stag [LOCAL_TRUST_IP=<public-ip>]
 
-# Then on the trust host: provision it, then start the stack
+# Then on the trust host: provision it, then start the stack.
+# sudo is required: the provisioned login user is deliberately not in the
+# docker group (docker group membership is root-equivalent) — see
+# deploy/providers/local/README.md.
 make provision-local-trust          # run ON the trust host
 cd ../../..
-env PROD=stag make -C trust up-trust KIT=<CODE>
+sudo -E env PROD=stag make -C trust up-trust KIT=<CODE>
 ```
 
 No inbound firewall rules or NAT port-forwarding are needed on the trust host — all communication is outbound from the trust to the hub. See [deploy/providers/local/README.md](deploy/providers/local/README.md) for full details.
@@ -453,7 +464,7 @@ The repository is organised as follows:
 - `flip-utils`: The `flip` Python package (pip-installable `flip-utils`) — platform logic, NVFLARE components, Flower helpers
 - `fl-services`: Docker images for FL networks, per backend: `fl-services/nvflare/{fl-server,fl-client,fl-api-base,fl-base}` and `fl-services/flower/{superlink,supernode,fl-api-flower,fl-base}`. Each backend's `Makefile` also owns its network provisioning under `provision/`.
 - `fl-apps`: FL app templates per backend: `fl-apps/nvflare/{standard,standard_client_api,evaluation,evaluation_client_api,diffusion_model,fed_opt}`, `fl-apps/flower/{standard,evaluation}` (plus `check_required_files.sh`)
-- `fl-tutorials`: End-to-end tutorial examples per backend: `fl-tutorials/nvflare/` (xray classification, spleen seg/eval, diffusion) and `fl-tutorials/flower/` (xray classification, 3D spleen seg, numpy)
+- `fl-tutorials`: End-to-end tutorial examples per backend: `fl-tutorials/nvflare/` (xray classification, spleen seg/eval, diffusion) and `fl-tutorials/flower/` (xray classification, spleen seg/eval, numpy)
 - `trust`: Services deployed inside each trust environment
   - `data-access-api`: Data-access API (OMOP queries)
   - `imaging-api`: DICOM image retrieval API

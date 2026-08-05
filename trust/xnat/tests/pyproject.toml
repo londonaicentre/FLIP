@@ -13,7 +13,7 @@
 [project]
 name = "xnat-anon-tests"
 version = "0.1.0"
-description = "Tests for the XNAT site-wide DICOM anonymization script"
+description = "Tests for the XNAT site-wide DICOM anonymization script and the weak-password guards"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
