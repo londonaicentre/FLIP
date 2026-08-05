@@ -23,7 +23,7 @@ from imaging_api.services.retrieval import (
     retrieve_images_for_project,
     retry_retrieve_images_for_project,
 )
-from imaging_api.utils.exceptions import NotFoundError
+from imaging_api.utils.exceptions import CohortBelowThresholdError, NotFoundError
 
 
 @pytest.fixture
@@ -105,6 +105,48 @@ async def test_retrieve_images_project_generic_error(mock_get_project, headers):
     with pytest.raises(HTTPException) as exc_info:
         await retrieve_images_for_project("proj1", "SELECT *", headers)
     assert exc_info.value.status_code == 500
+
+
+@pytest.mark.asyncio
+@patch("imaging_api.services.retrieval.queue_image_import_request")
+@patch("imaging_api.services.retrieval.query_by_accession_number")
+@patch("imaging_api.services.retrieval.get_accession_ids", new_callable=AsyncMock)
+@patch("imaging_api.services.retrieval.encrypt")
+@patch("imaging_api.services.retrieval.get_project")
+async def test_retrieve_images_below_threshold_queues_nothing(
+    mock_get_project, mock_encrypt, mock_get_accession_ids, mock_query, mock_queue, headers,
+):
+    """A below-threshold cohort is a settled outcome, not a crash.
+
+    This runs as a background task after the create-project response has been sent, so letting
+    the exception escape would surface only as a traceback in the server log while the hub
+    still recorded the imaging project as created. Return False and queue nothing instead.
+    """
+    mock_get_project.return_value = MagicMock()
+    mock_encrypt.return_value = "encrypted_id"
+    mock_get_accession_ids.side_effect = CohortBelowThresholdError("cohort below minimum size")
+
+    result = await retrieve_images_for_project("proj1", "SELECT *", headers)
+
+    assert result is False
+    mock_query.assert_not_called()
+    mock_queue.assert_not_called()
+
+
+@pytest.mark.asyncio
+@patch("imaging_api.services.retrieval.get_accession_ids", new_callable=AsyncMock)
+@patch("imaging_api.services.retrieval.encrypt")
+async def test_get_import_status_below_threshold_raises_403(mock_encrypt, mock_get_accession_ids, headers):
+    """The status path has a caller waiting, so the refusal must reach it as a 403 with a
+    readable reason — trust-api relays this detail to the hub for the per-trust status."""
+    mock_encrypt.return_value = "encrypted_id"
+    mock_get_accession_ids.side_effect = CohortBelowThresholdError("cohort below minimum size")
+
+    with pytest.raises(HTTPException) as exc_info:
+        await get_import_status("proj1", "SELECT *", headers)
+
+    assert exc_info.value.status_code == 403
+    assert "below the trust's minimum size" in exc_info.value.detail
 
 
 @pytest.mark.asyncio

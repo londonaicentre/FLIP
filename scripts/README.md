@@ -56,7 +56,7 @@ pre-commit run --all-files
 - **check-env-vars**: Verifies that all variables in `.env.development.example` exist in `.env.development`. This ensures the example file stays up to date and developers are aware of new required environment variables.
 - **trufflehog**: Scans for high-entropy strings and verified secrets
 - **detect-secrets**: Pattern-based secret detection with baseline support
-- **check-added-large-files**: Prevents committing files larger than 1MB
+- **check-added-large-files**: Prevents committing files larger than 1000 KiB (`--maxkb=1000` — the hook compares against `getsize // 1024`, so the cap is ~1.024 MB)
 - **check-merge-conflict**: Detects merge conflict markers
 - **check-yaml**: Validates YAML syntax
 - **end-of-file-fixer**: Ensures files end with a newline

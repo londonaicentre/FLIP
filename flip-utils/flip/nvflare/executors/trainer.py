@@ -38,12 +38,12 @@ class RUN_TRAINER(Executor):
 
     def __init__(
         self,
-        train_task_name=AppConstants.TASK_TRAIN,
-        submit_model_task_name=AppConstants.TASK_SUBMIT_MODEL,
-        exclude_vars=None,
-        project_id="",
-        query="",
-    ):
+        train_task_name: str = AppConstants.TASK_TRAIN,
+        submit_model_task_name: str = AppConstants.TASK_SUBMIT_MODEL,
+        exclude_vars: list[str] | None = None,
+        project_id: str = "",
+        query: str = "",
+    ) -> None:
         """
         Initialize the RUN_TRAINER executor.
 

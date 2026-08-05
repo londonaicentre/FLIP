@@ -67,9 +67,14 @@ locals {
   # into the flip-api image from the repo's fl-apps/ tree and read locally via
   # FL_APP_BASE_DIR (FLIP#724). Only the completed bundle still lands in S3
   # (fl_app_destination_uri).
+  # The two model-file prefixes are the quarantine boundary (#52): researcher
+  # uploads land in `uploaded/` and only reach `scanned/` once flip-api's scan
+  # promotes them. Everything that consumes model files — the FL app bundler,
+  # downloads, listings — reads `scanned/` exclusively, so an unscanned or
+  # rejected file can never be shipped to a trust. They must stay distinct.
   uploaded_federated_data_uri = "${local.flip_fl_results_bucket_uri}/results"
   uploaded_model_files_uri    = "${local.flip_model_files_uploads_bucket_uri}/uploaded"
-  scanned_model_files_uri     = "${local.flip_model_files_uploads_bucket_uri}/uploaded"
+  scanned_model_files_uri     = "${local.flip_model_files_uploads_bucket_uri}/scanned"
   fl_app_destination_uri      = "${local.flip_app_bundles_bucket_uri}/app_destinations"
 
   # NET_ENDPOINTS tells flip-api how to reach each FL network's fl-api. On

@@ -56,7 +56,7 @@ jobs:
       - name: Set up Helm
         uses: azure/setup-helm@v4
         with:
-          version: "v3.16.0"
+          version: "v4.2.3"
 
       - name: Lint chart
         run: helm lint deploy/providers/kubernetes/
@@ -71,7 +71,7 @@ jobs:
       - name: Set up Helm
         uses: azure/setup-helm@v4
         with:
-          version: "v3.16.0"
+          version: "v4.2.3"
 
       - name: Render template (default/nvflare)
         run: helm template trust-release deploy/providers/kubernetes/ > /dev/null
@@ -128,7 +128,7 @@ jobs:
       - name: Set up Helm
         uses: azure/setup-helm@v4
         with:
-          version: "v3.16.0"
+          version: "v4.2.3"
 
       - name: Create kind cluster
         uses: helm/kind-action@v1

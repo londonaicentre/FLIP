@@ -2,41 +2,31 @@
 Platform Support
 ################
 
-*********
-Security
-*********
-
-Trusts authenticate to the Central Hub using per-trust API keys. The hub identifies a trust solely by its API key — it looks up the trust whose stored SHA-256 hash (the ``api_key_hash`` column of the ``trust`` table) matches the presented key. Each trust holds its secret ``TRUST_API_KEY`` in its own environment. Trust communication payloads are encrypted with a shared ``AES_KEY_BASE64``.
-
-See :ref:`deploy-flip-node-on-prem` for details on trust provisioning and authentication setup.
-
 ***********
 Networking
 ***********
 
-All trust communication is **outbound** — trusts poll the Central Hub for tasks over HTTPS (via the ALB). 
-The hub never makes inbound connections to trusts. FL clients connect outbound to the FL server via the NLB. 
-No inbound firewall rules or port forwarding are required on trust hosts.
+All trust communication is **outbound** — trusts poll the Central Hub for tasks over HTTPS
+(via the ALB), and FL clients connect outbound to the FL server via the NLB. The hub never
+makes inbound connections to trusts, so no inbound firewall rules or port forwarding are
+required on trust hosts. Operator access is via AWS Systems Manager Session Manager
+(SSH-over-SSM); XNAT, Orthanc, and the trust-api Swagger docs are reachable only through SSM
+port forwarding (``make forward-trust``). Orthanc additionally requires HTTP basic auth — log in
+with the trust kit file's ``ORTHANC_USERNAME``/``ORTHANC_PASSWORD``.
 
-Both the Central Hub and Trust EC2 instances run in private subnets with no open inbound ports. 
-Operator access is via AWS Systems Manager Session Manager (SSH-over-SSM).
-XNAT, Orthanc, and the Trust API swagger docs are accessible via SSM port forwarding only (``make forward-trust``).
-Orthanc additionally requires HTTP basic auth — log in with the trust kit file's ``ORTHANC_USERNAME``/``ORTHANC_PASSWORD``.
+Trust-to-hub traffic can additionally be carried over a site-to-site VPN between the trust
+network and the Central Hub VPC, provisioned on request rather than by default.
 
-In production, trust-to-hub communication will be carried over a site-to-site VPN between each Trust's network and the Central Hub VPC, providing an
-encrypted tunnel for all outbound polling and FL client traffic in addition to the application-layer protections described above. This is not yet implemented
-— current deployments rely on HTTPS over the public internet — but is planned as part of the production rollout.
+See :ref:`security` for the rationale behind this design and the wider set of controls it
+sits within. The operational detail — the architecture and the ports to open — follows here.
 
 .. figure:: ../assets/support/flip_architecture-flip_network_architecture.png
    :align: center
 
    FLIP network architecture.
 
-The following is the list of ports required to be opened for trust-host communication. No inbound
-ports are required on trust hosts; everything trust-side is outbound HTTPS to the Central Hub or
-to the FL server NLB. Operator access is via AWS Systems Manager Session Manager — port 22 (SSH)
-is never opened. Internal trust services (Orthanc, XNAT, trust-api Swagger) are accessible only
-via SSM port forwarding (``make forward-trust``).
+The ports required for trust-host communication are listed below. Port 22 (SSH) is never
+opened.
 
 .. list-table:: Firewall Rules
    :header-rows: 1

@@ -19,7 +19,7 @@ and should call handle_client_metrics to forward them to the Central Hub.
 Only the fl-server should import from this module — it forwards to the
 Central Hub using credentials that must never reach the fl-client containers.
 
-Usage (server-side, in a FedAvg strategy subclass):
+Usage (server-side, in a FedAvg strategy subclass)::
 
     from flip.flower.metrics import handle_client_metrics, handle_client_exception
 

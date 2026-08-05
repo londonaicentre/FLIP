@@ -109,14 +109,22 @@ def run_jobs_core(db: Session) -> None:
             "model": job.model_id,
         })
 
-        prepare_and_start_training(job.model_id, job.id, job.trust_ids, db)
+        started = prepare_and_start_training(job.model_id, job.id, job.trust_ids, db)
 
-        logger.info({
-            "message": "Training started successfully! 🚀",
-            "net": scheduler.netId,
-            "job": job.id,
-            "model": job.model_id,
-        })
+        if started:
+            logger.info({
+                "message": "Training started successfully! 🚀",
+                "net": scheduler.netId,
+                "job": job.id,
+                "model": job.model_id,
+            })
+        else:
+            logger.info({
+                "message": "Job aborted before submission; net released. 🛑",
+                "net": scheduler.netId,
+                "job": job.id,
+                "model": job.model_id,
+            })
         return
 
     except Exception as e:
