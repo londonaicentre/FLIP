@@ -14,9 +14,8 @@ services, with a focus on the XNAT DICOM import pipeline.
    - [2.3 imaging-api Gets 401 from XNAT (flipServiceAccount)](#23-imaging-api-gets-401-from-xnat-flipserviceaccount)
    - [2.3a dcm2niix Never Registered (admin missing ContainerManager)](#23a-dcm2niix-never-registered-admin-missing-containermanager)
    - [2.4 Forcing a Re-pull (status stuck on "Processing")](#24-forcing-a-re-pull-status-stuck-on-processing)
-   - [2.5 Running the Imaging Import Worker Manually](#25-running-the-imaging-import-worker-manually)
-   - [2.6 C-MOVE Testing from the DCMTK Pod](#26-c-move-testing-from-the-dcmtk-pod)
-   - [2.7 Checking DICOM Connectivity](#27-checking-dicom-connectivity)
+   - [2.5 C-MOVE Testing from the DCMTK Pod](#25-c-move-testing-from-the-dcmtk-pod)
+   - [2.6 Checking DICOM Connectivity](#26-checking-dicom-connectivity)
 3. [OMOP Data Issues](#3-omop-data-issues)
 4. [Trust Registration and Heartbeat](#4-trust-registration-and-heartbeat)
 5. [XNAT HTTPS Issues](#5-xnat-https-issues)
@@ -339,80 +338,7 @@ Expect `202 {"message": "Reimport queued", ...}`, then
 `All studies queued successfully` in the imaging-api logs, and archived
 sessions a few minutes later.
 
-### 2.5 Running the Imaging Import Worker
-
-> **Note:** The worker was originally written as a workaround when
-> `PacsNotStorableException` was believed to be a DQR plugin bug. The real
-> cause was the destination AE/port mismatch (§2.1) — with §§2.1–2.3 applied,
-> the DQR pipeline works end-to-end and the worker is **not needed** for
-> normal operation. It remains useful as a diagnostic fallback for moving
-> studies when DQR is unavailable, but it bypasses the DQR relabel map, so
-> sessions it imports are **not** relabelled (Subject UUID / Session=accession).
-
-The Imaging Import Worker is a Kubernetes Job that:
-1. Reads QUEUED PACS requests from the XNAT database
-2. C-FINDs Orthanc to locate each study
-3. C-MOVEs each study directly from Orthanc to XNAT
-4. Updates the XNAT database to reflect completion
-
-#### Enable the Worker
-
-The worker is disabled by default. Enable it in your values override:
-
-```yaml
-imagingImportWorker:
-  enabled: true
-  runOnce: true
-  batchSize: 100
-  pacsId: 1
-```
-
-Then deploy:
-```bash
-helm upgrade trust-release deploy/providers/kubernetes -n flip-trust \
-  -f deploy/providers/kubernetes/values.yaml \
-  -f deploy/providers/kubernetes/k8s-trust-Trust_K8s.yaml \
-  --set imageTag=stag \
-  --set imagingImportWorker.enabled=true
-```
-
-#### Monitor the Worker
-
-```bash
-# Check Job status
-kubectl get jobs -n flip-trust -l app.kubernetes.io/component=imaging-import-worker
-
-# View logs
-WORKER_POD=$(kubectl get pods -n flip-trust -l job-name -o jsonpath='{.items[0].metadata.name}')
-kubectl logs -n flip-trust "$WORKER_POD" --tail=50
-
-# Delete after completion (clean up)
-kubectl delete job -n flip-trust trust-release-flip-trust-imaging-import-worker
-```
-
-#### Manual Run (one-off from the dcmtk pod)
-
-The worker can also run directly from the DCMTK diagnostic pod:
-
-```bash
-# Copy the script to the pod
-dcmtk_pod=$(kubectl get pods -n flip-trust -l run=dcmtk -o jsonpath='{.items[0].metadata.name}')
-kubectl cp deploy/providers/kubernetes/scripts/imaging-import-worker.py \
-  "$dcmtk_pod":/tmp/imaging-import-worker.py
-
-# Install dependencies
-kubectl exec -n flip-trust "$dcmtk_pod" -- pip install pynetdicom psycopg2-binary -q
-
-# Run with custom settings
-kubectl exec -n flip-trust "$dcmtk_pod" -- \
-  python3 /tmp/imaging-import-worker.py
-
-# Or adjust batch size and logging:
-kubectl exec -n flip-trust "$dcmtk_pod" -- \
-  BATCH_SIZE=150 LOG_LEVEL=DEBUG python3 /tmp/imaging-import-worker.py
-```
-
-### 2.6 C-MOVE Testing from the DCMTK Pod
+### 2.5 C-MOVE Testing from the DCMTK Pod
 
 The DCMTK diagnostic pod (`dcmtk`) contains `movescu`, `findscu`, and `echoscu`
 for manual DICOM testing.
@@ -467,18 +393,7 @@ kubectl exec -n flip-trust "$dcmtk_pod" -- \
 
 The study data is sent to XNAT's prearchive.
 
-#### Bulk Import via Script
-
-A direct import script is available:
-```bash
-kubectl cp deploy/providers/kubernetes/scripts/imaging-import-worker.py \
-  "$dcmtk_pod":/tmp/imaging-import-worker.py
-kubectl exec -n flip-trust "$dcmtk_pod" -- pip install pynetdicom psycopg2-binary -q
-kubectl exec -n flip-trust "$dcmtk_pod" -- \
-  BATCH_SIZE=150 python3 /tmp/imaging-import-worker.py
-```
-
-### 2.7 Checking DICOM Connectivity
+### 2.6 Checking DICOM Connectivity
 
 #### DICOM Port Map
 
@@ -675,7 +590,6 @@ machine and in `deploy/providers/kubernetes/scripts/`. Key scripts:
 
 | Script | Purpose |
 |--------|---------|
-| `imaging-import-worker.py` | DQR bypass — direct C-MOVE import worker |
 | `sync_k8s_kit.py` | Sync a registered trust kit into the cluster (Secret + override) |
 
 ### Available Tools on DCMTK Pod

@@ -423,7 +423,7 @@ old install on the previous chart version.
 - **Pod Security & container hardening** (#530): the chart-created namespace
   carries Pod Security Standards labels (`enforce=baseline`, `warn`/`audit=restricted`
   by default — tune via `podSecurity.*`), and the stateless services
-  (trust-api, imaging-api, data-access-api, fl-client, imaging-import-worker)
+  (trust-api, imaging-api, data-access-api, fl-client)
   apply a container `securityContext` (`allowPrivilegeEscalation: false`, drop
   `ALL` capabilities, `seccompProfile: RuntimeDefault`) from `.Values.securityContext`.
   `runAsNonRoot` / `readOnlyRootFilesystem` are left opt-in (image-dependent).
