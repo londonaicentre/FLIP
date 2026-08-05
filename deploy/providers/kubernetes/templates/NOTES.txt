@@ -32,8 +32,10 @@ Check the stack is up:
     Load it by either:
       * setting omopDb.vocabLoad.s3Bucket to a bucket this cluster can read
         (your OWN environment's AICENTRE_BUCKET_NAME — trust roles have no
-        cross-account read; `make sync-kit KIT=<CODE> PROD=<env>` sets this
-        for you) and re-running `helm upgrade`; or
+        cross-account read) and re-running `helm upgrade`. From the repo root:
+            make -C deploy/providers/kubernetes sync-kit KIT=<CODE> PROD=<env>
+            make -C deploy/providers/kubernetes deploy-trust-k8s KIT=<CODE>
+        or
       * running trust/omop-db/files/load_core_vocab.sh against the database
         with your own OHDSI Athena / NHS TRUD export.
 

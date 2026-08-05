@@ -380,15 +380,22 @@ omopDb:
   # omop.concept return nothing. Either set s3Bucket, or load the bundle by hand
   # (chart README → "OMOP core vocabulary").
   #
-  # Use YOUR environment's own bucket (the kit's AICENTRE_BUCKET_NAME) — trust
-  # roles have no cross-account read on another environment's bucket.
-  # `make sync-kit KIT=<CODE> PROD=<env>` fills this in automatically.
+  # Use YOUR environment's own bucket — trust roles have no cross-account read
+  # on another environment's bucket. `make -C deploy/providers/kubernetes
+  # sync-kit KIT=<CODE> PROD=<env>` writes this from the kit's
+  # AICENTRE_BUCKET_NAME, so check that the kit carries the right one (it is not
+  # a hub-managed key — a kit scaffolded from trust/.env.example ships the dev
+  # bucket).
   #
-  # AWS auth is deliberately shared with initJob (initJob.awsProfile /
-  # initJob.hostAwsMount): both jobs read the same bucket with the same
-  # credentials, so there is one place to configure it, not two.
+  # AWS *credentials* are deliberately shared with initJob (initJob.awsProfile /
+  # initJob.hostAwsMount) — one place to configure auth, not two. Note the
+  # AWS_PROFILE/region env vars only reach this Job when initJob.hostAwsMount is
+  # enabled; on EKS it relies on IRSA. The bucket itself is a separate key per
+  # job, and sync-kit sets only this one.
   #
-  # Set enabled: false when the trust brings an external OMOP database.
+  # enabled: false is only for keeping an in-cluster omop-db while loading the
+  # vocabulary by hand — an external database (omopDb.enabled: false) already
+  # skips this Job.
   vocabLoad:
     enabled: true
     s3Bucket: ""

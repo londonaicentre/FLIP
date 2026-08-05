@@ -101,6 +101,22 @@ jobs:
             --set omopDb.external.host=test.example.com \
             > /dev/null
 
+      # omopDb.vocabLoad.s3Bucket defaults to "" (the licensed bundle has no public
+      # mirror — FLIP#842/843), so every other render in this job skips the
+      # vocab-load Job. Without this step its ~110-line body is never rendered in
+      # CI and a broken .Values path there would merge green, only to fail the
+      # WHOLE Helm release of the first operator who configures a bucket.
+      - name: Render template (vocab-load enabled)
+        run: |
+          helm template trust-release deploy/providers/kubernetes/ \
+            --set omopDb.vocabLoad.s3Bucket=test-bucket > /tmp/vocab.yaml
+          grep -q "omop-vocab-load" /tmp/vocab.yaml
+
+      - name: Render template (vocab-load skipped without a bucket)
+        run: |
+          helm template trust-release deploy/providers/kubernetes/ > /tmp/novocab.yaml
+          ! grep -q "omop-vocab-load" /tmp/novocab.yaml
+
   kind-e2e:
     name: kind E2E
     runs-on: ubuntu-latest

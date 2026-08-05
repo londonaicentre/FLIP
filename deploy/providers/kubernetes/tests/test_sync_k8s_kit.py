@@ -97,19 +97,24 @@ def test_render_override_sets_vocab_load_bucket_from_kit():
     The override must supply the env's OWN bucket, or the deployment installs
     cleanly with no vocabulary and cohort queries silently match nothing."""
     out = sync_k8s_kit.render_override(_FL_KIT, "Trust_K8s", "eu-west-2")
-    assert "omopDb:" in out
-    assert "  vocabLoad:" in out
-    assert "    s3Bucket: flipstag-aicentre" in out
+    # Anchored on newlines, not loose substrings: the nesting IS the meaning here.
+    # Emitted one level deeper (e.g. folded into the preceding trustApi block) each
+    # fragment would still match, and `trustApi` is additionalProperties:true in
+    # values.schema.json — so Helm would silently accept the misplaced key.
+    assert "\nomopDb:\n  vocabLoad:\n    s3Bucket: flipstag-aicentre\n" in out
 
 
 def test_render_override_omits_vocab_load_without_bucket():
-    """No AICENTRE_BUCKET_NAME in the kit ⇒ no omopDb block, leaving the chart's
+    """No AICENTRE_BUCKET_NAME in the kit ⇒ no vocabLoad block, leaving the chart's
     empty default in place (rather than emitting an empty bucket that reads as a
     configured one)."""
     kit = {k: v for k, v in _FL_KIT.items() if k != "AICENTRE_BUCKET_NAME"}
     out = sync_k8s_kit.render_override(kit, "Trust_K8s", "eu-west-2")
-    assert "omopDb:" not in out
+    # Not `"omopDb:" not in out` — that would break spuriously the day an unrelated
+    # omopDb key joins the override. s3Bucket appears nowhere else (the fl-client
+    # section emits a bare `bucket:`).
     assert "vocabLoad" not in out
+    assert "s3Bucket" not in out
 
 
 if __name__ == "__main__":

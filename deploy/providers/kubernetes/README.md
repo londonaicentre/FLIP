@@ -264,15 +264,22 @@ Two ways to load it:
 
 | You have… | Do this |
 | --- | --- |
-| Org S3 access | `make sync-kit KIT=<CODE> PROD=<env>` writes `omopDb.vocabLoad.s3Bucket` from the kit's `AICENTRE_BUCKET_NAME`, then `make deploy-trust-k8s KIT=<CODE>`. Use your **own** environment's bucket — trust roles have no cross-account read. |
+| Org S3 access | `make -C deploy/providers/kubernetes sync-kit KIT=<CODE> PROD=<env>` writes `omopDb.vocabLoad.s3Bucket` from the kit's `AICENTRE_BUCKET_NAME`, then `make -C deploy/providers/kubernetes deploy-trust-k8s KIT=<CODE>`. **Check the kit carries your own environment's bucket** — it is not a hub-managed key, so a kit scaffolded from `trust/.env.example` ships the dev one, and trust roles have no cross-account read. |
 | Your own licences | Build an equivalent bundle from [OHDSI Athena](https://athena.ohdsi.org/) / [NHS TRUD](https://isd.digital.nhs.uk/) (see `trust/omop-db/README.md`), put it in a bucket you control, and set `omopDb.vocabLoad.s3Bucket` / `bundleName`. Or run `trust/omop-db/files/load_core_vocab.sh` against the database directly. |
 
-AWS auth for the fetch is shared with the init job: `omopDb.initJob.awsProfile`
-and `omopDb.initJob.hostAwsMount` (enable the host `~/.aws` mount for local
-clusters; use IRSA on EKS).
+Run both targets with `-C deploy/providers/kubernetes` (or from that directory):
+the repo-root `make sync-kit` does not exist, and the root `deploy-trust-k8s`
+forwards to the chart's plain `deploy` target, so `KIT=` never reaches the
+per-trust override file.
 
-Set `omopDb.vocabLoad.enabled: false` when the trust brings its own external
-OMOP database that is already populated.
+AWS credentials for the fetch are shared with the init job:
+`omopDb.initJob.awsProfile` and `omopDb.initJob.hostAwsMount` (enable the host
+`~/.aws` mount for local clusters; use IRSA on EKS). Note `awsProfile` only
+reaches this Job when `hostAwsMount` is enabled.
+
+An external OMOP database (`omopDb.enabled: false`) already skips this Job. Set
+`omopDb.vocabLoad.enabled: false` only to keep an in-cluster `omop-db` while
+loading the vocabulary by hand.
 
 ### FL Backend Configuration
 
@@ -519,8 +526,11 @@ Symptoms: trust-api can't reach imaging-api or data-access-api (connection timeo
   (`omopDb.initJob.hostAwsMount` for local clusters, IRSA on EKS).
 - `/flip/omop/load_core_vocab.sh: No such file or directory` → the `omopDb.image.tag`
   in use predates FLIP#842; repull a CI-published tag.
-- The Job is idempotent (it skips tables already holding the core vocabulary), so
-  re-running `helm upgrade` is a cheap no-op once the bucket is right.
+- The *load* is idempotent (it skips tables already holding the core vocabulary),
+  so re-running `helm upgrade` is safe. It is not free: the `vocab-work` volume is
+  an `emptyDir`, so the `fetch-bundle` initContainer re-downloads and re-unzips the
+  multi-GB bundle on every upgrade that renders the hook. Set
+  `vocabLoad.enabled: false` once loaded if that cost is unwelcome.
 
 ### Getting help
 

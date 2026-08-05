@@ -568,13 +568,17 @@
             OMOP_POSTGRES_PASSWORD: "{{ omop_postgres_password }}"
             OMOP_POSTGRES_DB: "{{ omop_postgres_db }}"
       always:
-        # failed_when: false — this runs even when the container was never
-        # started, and `docker rm -f` exits non-zero on a missing container; a
-        # failing cleanup task would fail the play it is meant to clean up after.
+        # This runs even when the container was never started. `docker rm -f`
+        # already exits 0 on a missing container (since Docker 23), so only the
+        # "No such container" case is tolerated explicitly — a genuine failure
+        # (unreachable daemon, un-removable container) must still fail the play:
+        # it would leave a Postgres container holding {{ omop_dir }}/db_data and
+        # the loopback port, which the real omop-db later mounts.
         - name: stop the throwaway container
           command: docker rm -f omop-vocab-load
+          register: vocab_rm
           changed_when: false
-          failed_when: false
+          failed_when: vocab_rm.rc != 0 and 'No such container' not in (vocab_rm.stderr | default(''))
 
         - name: remove the downloaded bundle (~3.6GB of licensed content does not belong at rest on the host)
           file:

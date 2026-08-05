@@ -182,7 +182,8 @@ tarball (both freely redistributable); the archives are ~11 MB.
 
 To publish the image manually (CI normally does this): `make push`
 (GHCR write access required; `OMOP_DB_TAG` overrides the tag, and the target
-asks for confirmation — the trust stacks resolve `:latest` by default).
+asks for confirmation — CI publishes `:latest` only from `main`, so an
+unqualified push repoints the "newest release" pointer at a local build).
 
 The canonical dataset is regenerated from per-trust CSV exports with
 `uv run python -m omop_db_tools.dataset build --trust-dirs <dir1> <dir2> --dest <out>`.

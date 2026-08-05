@@ -15,11 +15,12 @@
 # already hold the core vocabulary, so re-runs are cheap no-ops). Not applicable
 # when the trust brings an external OMOP database.
 #
-# Gated on s3Bucket as well as enabled, mirroring the sibling omop-db-init-job:
-# the licensed bundle cannot be publicly mirrored, so an operator without a
-# readable bucket has no way to run this. No bucket ⇒ no Job ⇒ the release
-# installs cleanly (a failed Helm hook fails the WHOLE release). NOTES.txt
-# announces the skip so it is not silent.
+# Gated on s3Bucket as well as enabled — deliberately UNLIKE the sibling
+# omop-db-init-job, which renders unconditionally because it can fall back to an
+# anonymous Hugging Face download when its bucket is empty. The licensed bundle
+# has no such mirror, so with no bucket there is nothing this Job could do: no
+# bucket ⇒ no Job ⇒ the release installs cleanly (a failed Helm hook fails the
+# WHOLE release). NOTES.txt announces the skip so it is not silent.
 {{- if and .Values.omopDb.enabled .Values.omopDb.vocabLoad.enabled .Values.omopDb.vocabLoad.s3Bucket }}
 ---
 apiVersion: batch/v1
