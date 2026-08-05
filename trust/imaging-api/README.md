@@ -29,7 +29,7 @@ Tested with `XNAT version 1.9.3, build: 158`.
 The imaging-api handles the imaging data lifecycle for federated learning studies:
 
 1. **Project creation** — creates XNAT projects and user accounts for approved FL studies
-2. **DICOM import** — queries Orthanc (PACS) with accession numbers and queues image retrieval into XNAT
+2. **DICOM import** — queries the PACS with accession numbers and queues image retrieval into XNAT, all through XNAT's DQR REST API (XNAT talks to Orthanc over DIMSE; imaging-api itself never contacts Orthanc)
 3. **Data download** — packages and transfers XNAT datasets for FL training
 4. **Upload** — stores result files back into XNAT experiments
 5. **Retrieval status** — monitors import progress by querying the XNAT database

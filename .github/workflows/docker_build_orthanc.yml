@@ -19,6 +19,12 @@ on:
     paths:
       - "trust/orthanc/**"
       - ".github/workflows/docker_build_orthanc.yml"
+  # PR runs build + the FLIP-PT-091 auth smoke tests only — the push steps are
+  # gated below, so nothing is published from a pull request.
+  pull_request:
+    paths:
+      - "trust/orthanc/**"
+      - ".github/workflows/docker_build_orthanc.yml"
 
 permissions:
   contents: read
@@ -100,6 +106,7 @@ jobs:
           echo "Generated tags: ${TAGS}"
 
       - name: Log in to GitHub Container Registry
+        if: github.event_name != 'pull_request'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_ACTOR: ${{ github.actor }}
@@ -117,7 +124,91 @@ jobs:
           # shellcheck disable=SC2086
           docker build $BUILD_ARGS "${TAG_FLAGS[@]}" .
 
+      # FLIP-PT-091: a red auth smoke never publishes — these steps sit between
+      # Build and Push, and also run standalone on pull requests.
+      - name: Smoke test — unauthenticated access denied (FLIP-PT-091)
+        env:
+          DOCKER_TAGS: ${{ steps.tags.outputs.tags }}
+        run: |
+          TAG="${DOCKER_TAGS%%,*}"
+          docker run -d --name orthanc-smoke -p 8042:8042 \
+            -e ORTHANC__REGISTERED_USERS='{"ci": "ci-test-password"}' "$TAG"
+          for _ in $(seq 1 30); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8042/ || true)
+            [ "$code" = "401" ] && break
+            sleep 2
+          done
+          code=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8042/)
+          if [ "$code" != "401" ]; then
+            echo "::error::expected 401 for unauthenticated /, got ${code}"
+            docker logs orthanc-smoke
+            exit 1
+          fi
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8042/system)" = "401"
+          # Wrong credentials against a populated user map must be rejected too — a
+          # base-image bump that loosened auth semantics would otherwise pass unnoticed.
+          test "$(curl -s -u ci:wrong-password -o /dev/null -w '%{http_code}' http://localhost:8042/system)" = "401"
+          test "$(curl -s -u wrong-user:ci-test-password -o /dev/null -w '%{http_code}' http://localhost:8042/system)" = "401"
+          test "$(curl -s -u ci:ci-test-password -o /dev/null -w '%{http_code}' http://localhost:8042/system)" = "200"
+          # DICOM-Web plugin is not loaded — the route must not exist even when authenticated
+          test "$(curl -s -u ci:ci-test-password -o /dev/null -w '%{http_code}' http://localhost:8042/dicom-web/studies)" = "404"
+          docker rm -f orthanc-smoke
+
+      - name: Smoke test — image refuses to start without a usable user map (FLIP-PT-091)
+        env:
+          DOCKER_TAGS: ${{ steps.tags.outputs.tags }}
+        run: |
+          TAG="${DOCKER_TAGS%%,*}"
+          # First case = env var entirely unset; the rest are the malformed maps the
+          # entrypoint guards against — userless {}, the {"": ""} a kit file missing
+          # ORTHANC_USERNAME/ORTHANC_PASSWORD renders, empty password, empty username,
+          # a valid pair that must not mask an empty-password user beside it, and the
+          # whitespace-only credentials that basic auth would otherwise accept.
+          refuse_cases=(
+            unset
+            '{}'
+            '{"": ""}'
+            '{"admin": ""}'
+            '{"": "admin"}'
+            '{"admin": "", "backup": "backup-pass"}'
+            '{" ": "admin-pass"}'
+            '{"admin": " "}'
+          )
+          for users in "${refuse_cases[@]}"; do
+            env_flags=()
+            [ "$users" != "unset" ] && env_flags=(-e "ORTHANC__REGISTERED_USERS=${users}")
+            if timeout 30 docker run --rm "${env_flags[@]}" "$TAG" > refuse.log 2>&1; then
+              echo "::error::image started with ORTHANC__REGISTERED_USERS ${users}"
+              cat refuse.log
+              exit 1
+            fi
+            if ! grep -q "REFUSING TO START" refuse.log; then
+              echo "::error::no refusal message with ORTHANC__REGISTERED_USERS ${users}"
+              cat refuse.log
+              exit 1
+            fi
+          done
+
+          # Auth must not be switchable off: a valid user map is supplied throughout,
+          # so the flag is the only reason to refuse. Empty counts as an override —
+          # only an unset value takes the image default.
+          for auth in false 0 True ''; do
+            if timeout 30 docker run --rm \
+              -e ORTHANC__REGISTERED_USERS='{"ci": "ci-test-password"}' \
+              -e "ORTHANC__AUTHENTICATION_ENABLED=${auth}" "$TAG" > refuse.log 2>&1; then
+              echo "::error::image started with ORTHANC__AUTHENTICATION_ENABLED '${auth}'"
+              cat refuse.log
+              exit 1
+            fi
+            if ! grep -q "REFUSING TO START" refuse.log; then
+              echo "::error::no refusal message with ORTHANC__AUTHENTICATION_ENABLED '${auth}'"
+              cat refuse.log
+              exit 1
+            fi
+          done
+
       - name: Push Docker image
+        if: github.event_name != 'pull_request'
         env:
           DOCKER_TAGS: ${{ steps.tags.outputs.tags }}
         run: |

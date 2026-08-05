@@ -34,7 +34,7 @@ Orthanc, Imaging API, Data Access API and Trust API can be started using the Mak
 make up
 ```
 
-DICOMs can be uploaded to Orthanc at <http://localhost:8042>.
+DICOMs can be uploaded to Orthanc at <http://localhost:8042> — log in with `ORTHANC_USERNAME`/`ORTHANC_PASSWORD` from the trust kit file (`trust/.env.<CODE>.<env>`).
 
 The Trust API polls the Central Hub for tasks. In development, it connects to the hub over HTTP on the internal Docker network.
 

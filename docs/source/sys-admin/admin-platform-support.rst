@@ -11,7 +11,8 @@ All trust communication is **outbound** — trusts poll the Central Hub for task
 makes inbound connections to trusts, so no inbound firewall rules or port forwarding are
 required on trust hosts. Operator access is via AWS Systems Manager Session Manager
 (SSH-over-SSM); XNAT, Orthanc, and the trust-api Swagger docs are reachable only through SSM
-port forwarding (``make forward-trust``).
+port forwarding (``make forward-trust``). Orthanc additionally requires HTTP basic auth — log in
+with the trust kit file's ``ORTHANC_USERNAME``/``ORTHANC_PASSWORD``.
 
 Trust-to-hub traffic can additionally be carried over a site-to-site VPN between the trust
 network and the Central Hub VPC, provisioned on request rather than by default.

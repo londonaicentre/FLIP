@@ -609,7 +609,7 @@ This prints a list of URLs you can paste into your browser:
 | Service | Local URL | Purpose |
 | --- | --- | --- |
 | XNAT | `http://localhost:8104` | Neuroimaging platform UI |
-| Orthanc | `http://localhost:8042` | DICOM server UI |
+| Orthanc | `http://localhost:8042` | DICOM server UI (basic auth: the kit file's `ORTHANC_USERNAME`/`ORTHANC_PASSWORD`) |
 | trust-api swagger | `http://localhost:8020/docs` | Trust API documentation |
 | imaging-api swagger | `http://localhost:8001/docs` | Imaging API documentation |
 | data-access-api swagger | `http://localhost:8010/docs` | Data access API documentation |
