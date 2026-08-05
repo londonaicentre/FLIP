@@ -12,6 +12,7 @@ services, with a focus on the XNAT DICOM import pipeline.
    - [2.1 PacsNotStorableException — destination AE/port mismatch](#21-pacsnotstorableexception--destination-aeport-mismatch)
    - [2.2 Studies Received but Land in the Unassigned Prearchive](#22-studies-received-but-land-in-the-unassigned-prearchive)
    - [2.3 imaging-api Gets 401 from XNAT (flipServiceAccount)](#23-imaging-api-gets-401-from-xnat-flipserviceaccount)
+   - [2.3a dcm2niix Never Registered (admin missing ContainerManager)](#23a-dcm2niix-never-registered-admin-missing-containermanager)
    - [2.4 Forcing a Re-pull (status stuck on "Processing")](#24-forcing-a-re-pull-status-stuck-on-processing)
    - [2.5 Running the Imaging Import Worker Manually](#25-running-the-imaging-import-worker-manually)
    - [2.6 C-MOVE Testing from the DCMTK Pod](#26-c-move-testing-from-the-dcmtk-pod)
@@ -237,6 +238,38 @@ kubectl exec -n flip-trust "$XNAT_POD" -- \
 
 Verify: `curl -u flipServiceAccount:<pass> http://localhost:8080/xapi/users/flipServiceAccount`
 from inside the pod should return 200.
+
+### 2.3a dcm2niix Never Registered (admin missing ContainerManager)
+
+**Symptom:** Studies pull and archive fine, but no NIfTI is ever produced, so
+FL training sees `num_samples=0`. `GET /xapi/commands?name=dcm2niix` returns
+`[]` and `GET /xapi/docker/server` 500s — yet the `xnat-init` Job reported
+**success**.
+
+**Root Cause:** Container Service >= 3.7.0 requires the `ContainerManager` role
+for `/xapi/docker/server` and `/xapi/commands`. The Compose deploy's
+`trust/xnat/xnat/config/configure-xnat.sh` grants it to the admin account; the
+chart's init job did not, so those two calls returned 401/403. Because every
+call in the `configure-dcm2niix` container was `|| true` (or warn-only), the
+Job still exited 0 with dcm2niix silently unregistered — the same
+silent-failure class as FLIP#822 / FLIP#862.
+
+**Fix:** Both are now handled by `xnat-init-job.yaml`: `configure-xnat-web`
+grants the role, and `configure-dcm2niix` waits for it and then fails loudly
+rather than swallowing the error. To repair a cluster configured by an older
+chart:
+
+```bash
+kubectl exec -n flip-trust "$XNAT_POD" -- \
+  curl -s -X PUT -u admin:<admin-pass> -H "accept: application/json" \
+  http://localhost:8080/xapi/users/admin/roles/ContainerManager
+```
+
+Then re-run the init job (`helm upgrade` re-fires the post-install hook).
+Verify: `curl -s -u admin:<pass> http://localhost:8080/xapi/users/admin/roles/`
+must include `ContainerManager`, and
+`curl -s -u admin:<pass> "http://localhost:8080/xapi/commands?name=dcm2niix"`
+must return a command with a `dcm2niix-scan` wrapper.
 
 ### 2.4 Forcing a Re-pull (status stuck on "Processing")
 

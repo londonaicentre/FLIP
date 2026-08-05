@@ -61,6 +61,11 @@ make up
 
 `make up` will create the required data directories, deploy the XNAT stack via Docker Swarm, and automatically configure both XNAT instances (service account, admin password, SCP receiver, PACS registration, dcm2niix command).
 
+Every configuration call is checked: a rejected XNAT API call (non-2xx) aborts the deploy with the failing request's
+HTTP status and response body (see `configure-xnat-<stack>.log` inside the container), instead of silently skipping
+that step. Re-running against an already-configured instance is tolerated — the existing service account, PACS
+registration, and availability intervals are detected and left as-is.
+
 In development (when `PROD` is not set), `make up` also mounts the local `xnat/plugins` and `xnat/config` directories into the container for hot-reload. In production, these are baked into the Docker image.
 
 > **Important — XNAT data volumes must be bind-mounted.**
