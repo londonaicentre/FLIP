@@ -241,7 +241,7 @@ DeLong p-values and Benjamini-Hochberg (BH) FDR-adjusted q-values — collected 
 }
 ```
 
-(Values above are illustrative.)
+(Values above are **synthetic placeholders** chosen to show the JSON shape — not measured scores.)
 
 ### Fields
 
