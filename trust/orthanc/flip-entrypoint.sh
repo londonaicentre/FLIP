@@ -17,10 +17,14 @@
 # default user, and a kit file missing ORTHANC_USERNAME/ORTHANC_PASSWORD
 # renders the compose user map as {"": ""}, which basic auth accepts with
 # empty credentials. Require at least one non-empty "user": "password" pair,
-# and separately refuse empty usernames/passwords so a valid pair cannot mask
-# an empty-credential user elsewhere in the map (the greps are a heuristic on
-# the JSON text, not a parser). Point the operator at the credential source
-# for their deployment mode.
+# and separately refuse blank usernames/passwords — empty or whitespace-only,
+# since Orthanc accepts a single space as a credential — so a valid pair cannot
+# mask a blank-credential user elsewhere in the map (the greps are a heuristic
+# on the JSON text, not a parser). Also re-assert ORTHANC__AUTHENTICATION_ENABLED
+# here: the Dockerfile sets it and nothing in the platform overrides it, but a
+# runtime check makes "this image cannot boot unauthenticated" enforced rather
+# than conventional. Point the operator at the credential source for their
+# deployment mode.
 set -eu
 
 fail() {
@@ -31,15 +35,29 @@ fail() {
     exit 1
 }
 
+fail_auth() {
+    echo "REFUSING TO START: $1" >&2
+    echo "ORTHANC__AUTHENTICATION_ENABLED must be \"true\" — this image always" >&2
+    echo "enforces HTTP basic auth; unset it to take the image default." >&2
+    exit 1
+}
+
+# Only an unset value falls back to the image default — an explicitly empty
+# value is a misconfiguration and must refuse, hence `-` rather than `:-`.
+auth="${ORTHANC__AUTHENTICATION_ENABLED-true}"
+if [ "$auth" != "true" ]; then
+    fail_auth "ORTHANC__AUTHENTICATION_ENABLED is \"$auth\", not \"true\""
+fi
+
 users="${ORTHANC__REGISTERED_USERS:-}"
 if [ -z "$users" ]; then
     fail "ORTHANC__REGISTERED_USERS is unset or empty"
 fi
-if printf '%s' "$users" | grep -q '""[[:space:]]*:'; then
-    fail "ORTHANC__REGISTERED_USERS contains an empty username"
+if printf '%s' "$users" | grep -q '"[[:space:]]*"[[:space:]]*:'; then
+    fail "ORTHANC__REGISTERED_USERS contains a blank username"
 fi
-if printf '%s' "$users" | grep -q ':[[:space:]]*""'; then
-    fail "ORTHANC__REGISTERED_USERS contains an empty password"
+if printf '%s' "$users" | grep -q ':[[:space:]]*"[[:space:]]*"'; then
+    fail "ORTHANC__REGISTERED_USERS contains a blank password"
 fi
 if ! printf '%s' "$users" | grep -q '"[^"][^"]*"[[:space:]]*:[[:space:]]*"[^"][^"]*"'; then
     fail "ORTHANC__REGISTERED_USERS contains no username/password pair"

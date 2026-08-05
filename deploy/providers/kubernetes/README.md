@@ -322,7 +322,7 @@ with `secrets.create=true` or pre-created externally):
 | `trust-internal-service-key` | trust-api, imaging-api, data-access-api | Secret key for trust-internal auth |
 | `omop-postgres-password` | omop-db | PostgreSQL password |
 | `data-access-postgres-password` | data-access-api | Data reader DB password |
-| `orthanc-registered-users` | orthanc | Orthanc registered users, JSON user map e.g. `{"admin": "<password>"}`. Required when `orthanc.enabled` — the env ref is non-optional and the image refuses to start without users (FLIP-PT-091). Populated from the `ORTHANC_REGISTERED_USERS` env var by `scripts/generate_values.py` |
+| `orthanc-registered-users` | orthanc | Orthanc registered users, JSON user map e.g. `{"admin": "<password>"}`. Required when `orthanc.enabled` — the env ref is non-optional (asserted on every chart render by the `Helm Template` CI job) and the image refuses to start without users (FLIP-PT-091). Populated from the `ORTHANC_REGISTERED_USERS` env var by `scripts/generate_values.py` |
 | `xnat-admin-password` | xnat-web | XNAT admin password |
 | `xnat-service-user` | xnat-web, imaging-api | XNAT service account username |
 | `xnat-service-password` | xnat-web, imaging-api | XNAT service account password |

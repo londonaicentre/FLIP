@@ -145,6 +145,10 @@ jobs:
             exit 1
           fi
           test "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8042/system)" = "401"
+          # Wrong credentials against a populated user map must be rejected too — a
+          # base-image bump that loosened auth semantics would otherwise pass unnoticed.
+          test "$(curl -s -u ci:wrong-password -o /dev/null -w '%{http_code}' http://localhost:8042/system)" = "401"
+          test "$(curl -s -u wrong-user:ci-test-password -o /dev/null -w '%{http_code}' http://localhost:8042/system)" = "401"
           test "$(curl -s -u ci:ci-test-password -o /dev/null -w '%{http_code}' http://localhost:8042/system)" = "200"
           # DICOM-Web plugin is not loaded — the route must not exist even when authenticated
           test "$(curl -s -u ci:ci-test-password -o /dev/null -w '%{http_code}' http://localhost:8042/dicom-web/studies)" = "404"
@@ -158,7 +162,8 @@ jobs:
           # First case = env var entirely unset; the rest are the malformed maps the
           # entrypoint guards against — userless {}, the {"": ""} a kit file missing
           # ORTHANC_USERNAME/ORTHANC_PASSWORD renders, empty password, empty username,
-          # and a valid pair that must not mask an empty-password user beside it.
+          # a valid pair that must not mask an empty-password user beside it, and the
+          # whitespace-only credentials that basic auth would otherwise accept.
           refuse_cases=(
             unset
             '{}'
@@ -166,6 +171,8 @@ jobs:
             '{"admin": ""}'
             '{"": "admin"}'
             '{"admin": "", "backup": "backup-pass"}'
+            '{" ": "admin-pass"}'
+            '{"admin": " "}'
           )
           for users in "${refuse_cases[@]}"; do
             env_flags=()
@@ -177,6 +184,24 @@ jobs:
             fi
             if ! grep -q "REFUSING TO START" refuse.log; then
               echo "::error::no refusal message with ORTHANC__REGISTERED_USERS ${users}"
+              cat refuse.log
+              exit 1
+            fi
+          done
+
+          # Auth must not be switchable off: a valid user map is supplied throughout,
+          # so the flag is the only reason to refuse. Empty counts as an override —
+          # only an unset value takes the image default.
+          for auth in false 0 True ''; do
+            if timeout 30 docker run --rm \
+              -e ORTHANC__REGISTERED_USERS='{"ci": "ci-test-password"}' \
+              -e "ORTHANC__AUTHENTICATION_ENABLED=${auth}" "$TAG" > refuse.log 2>&1; then
+              echo "::error::image started with ORTHANC__AUTHENTICATION_ENABLED '${auth}'"
+              cat refuse.log
+              exit 1
+            fi
+            if ! grep -q "REFUSING TO START" refuse.log; then
+              echo "::error::no refusal message with ORTHANC__AUTHENTICATION_ENABLED '${auth}'"
               cat refuse.log
               exit 1
             fi

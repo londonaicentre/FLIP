@@ -17,7 +17,9 @@ FROM orthancteam/orthanc:25.12.2
 # kit file's ORTHANC_USERNAME/ORTHANC_PASSWORD; k8s reads the
 # orthanc-registered-users secret key. flip-entrypoint.sh refuses to start
 # without a usable user map, so the image cannot boot unauthenticated (Orthanc
-# would otherwise auto-register the well-known orthanc/orthanc user).
+# would otherwise auto-register the well-known orthanc/orthanc user). The
+# entrypoint also re-asserts the flag below at runtime, so an override that
+# turned auth off would refuse to start rather than silently take effect.
 # DICOM-Web stays disabled: nothing in FLIP issues QIDO/WADO/STOW — XNAT DQR
 # pulls over plain DICOM (port 4242). Do NOT set
 # ORTHANC__REMOTE_ACCESS_ALLOWED=false: it limits the HTTP server to loopback
