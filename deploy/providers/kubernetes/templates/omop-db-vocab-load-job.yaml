@@ -14,7 +14,13 @@
 # after install/upgrade, using the image's own loader (which skips tables that
 # already hold the core vocabulary, so re-runs are cheap no-ops). Not applicable
 # when the trust brings an external OMOP database.
-{{- if and .Values.omopDb.enabled .Values.omopDb.vocabLoad.enabled }}
+#
+# Gated on s3Bucket as well as enabled, mirroring the sibling omop-db-init-job:
+# the licensed bundle cannot be publicly mirrored, so an operator without a
+# readable bucket has no way to run this. No bucket ⇒ no Job ⇒ the release
+# installs cleanly (a failed Helm hook fails the WHOLE release). NOTES.txt
+# announces the skip so it is not silent.
+{{- if and .Values.omopDb.enabled .Values.omopDb.vocabLoad.enabled .Values.omopDb.vocabLoad.s3Bucket }}
 ---
 apiVersion: batch/v1
 kind: Job
@@ -27,6 +33,10 @@ metadata:
   annotations:
     "helm.sh/hook": post-install,post-upgrade
     "helm.sh/hook-weight": "5"
+    # No `hook-succeeded`, unlike omop-db-init-job: the failure mode of a missing
+    # vocabulary is silence (cohort queries return nothing), so the completed Job
+    # is the operator's evidence that the load ran and what it skipped. Exactly
+    # one lingers — the next upgrade replaces it.
     "helm.sh/hook-delete-policy": before-hook-creation
 spec:
   backoffLimit: 2

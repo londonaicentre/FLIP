@@ -91,5 +91,26 @@ def test_render_override_omits_block_without_fl_port():
     assert "allowedEgressPorts" not in out
 
 
+def test_render_override_sets_vocab_load_bucket_from_kit():
+    """The chart's vocab-load hook is gated on omopDb.vocabLoad.s3Bucket, whose
+    default is empty (the licensed bundle has no public mirror — FLIP#842/843).
+    The override must supply the env's OWN bucket, or the deployment installs
+    cleanly with no vocabulary and cohort queries silently match nothing."""
+    out = sync_k8s_kit.render_override(_FL_KIT, "Trust_K8s", "eu-west-2")
+    assert "omopDb:" in out
+    assert "  vocabLoad:" in out
+    assert "    s3Bucket: flipstag-aicentre" in out
+
+
+def test_render_override_omits_vocab_load_without_bucket():
+    """No AICENTRE_BUCKET_NAME in the kit ⇒ no omopDb block, leaving the chart's
+    empty default in place (rather than emitting an empty bucket that reads as a
+    configured one)."""
+    kit = {k: v for k, v in _FL_KIT.items() if k != "AICENTRE_BUCKET_NAME"}
+    out = sync_k8s_kit.render_override(kit, "Trust_K8s", "eu-west-2")
+    assert "omopDb:" not in out
+    assert "vocabLoad" not in out
+
+
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-q"]))

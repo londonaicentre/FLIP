@@ -244,6 +244,36 @@ omopDb:
 When `enabled: false`, the chart creates an `ExternalName` Service pointing to
 the external host instead of deploying the service itself.
 
+### OMOP core vocabulary
+
+The `omop-db` image and the pgdata archive restored by `omopDb.initJob` are both
+**vocab-free** (FLIP#842/843). The licensed core vocabulary — SNOMED CT, LOINC,
+Read v2, dm+d — is streamed in afterwards by the `omop-vocab-load`
+post-install/post-upgrade hook.
+
+That bundle cannot be publicly mirrored, so unlike `initJob` there is **no
+anonymous fallback**. The hook runs only when `omopDb.vocabLoad.s3Bucket` names
+a bucket the cluster can read; the chart default is empty, so a default install
+succeeds with **no vocabulary loaded** (`helm install` prints a warning).
+
+> **Cohort queries that join `omop.concept` return nothing until the vocabulary
+> is loaded.** The stack passes every health check in this state — the only
+> symptom is empty cohorts.
+
+Two ways to load it:
+
+| You have… | Do this |
+| --- | --- |
+| Org S3 access | `make sync-kit KIT=<CODE> PROD=<env>` writes `omopDb.vocabLoad.s3Bucket` from the kit's `AICENTRE_BUCKET_NAME`, then `make deploy-trust-k8s KIT=<CODE>`. Use your **own** environment's bucket — trust roles have no cross-account read. |
+| Your own licences | Build an equivalent bundle from [OHDSI Athena](https://athena.ohdsi.org/) / [NHS TRUD](https://isd.digital.nhs.uk/) (see `trust/omop-db/README.md`), put it in a bucket you control, and set `omopDb.vocabLoad.s3Bucket` / `bundleName`. Or run `trust/omop-db/files/load_core_vocab.sh` against the database directly. |
+
+AWS auth for the fetch is shared with the init job: `omopDb.initJob.awsProfile`
+and `omopDb.initJob.hostAwsMount` (enable the host `~/.aws` mount for local
+clusters; use IRSA on EKS).
+
+Set `omopDb.vocabLoad.enabled: false` when the trust brings its own external
+OMOP database that is already populated.
+
 ### FL Backend Configuration
 
 Switch between NVFLARE and Flower:
@@ -477,6 +507,20 @@ Symptoms: trust-api can't reach imaging-api or data-access-api (connection timeo
 - If the Job fails: check `s3-bucket` and `s3-path` values. Verify `s3-access-key-id` / `s3-secret-access-key` in the Secret.
 - PVC name must match the StatefulSet's `volumeClaimTemplates` — the Job expects a PVC named `<release-name>-omop-db-data`.
 - To re-run: `helm upgrade trust-release . --set omopDb.initJob.enabled=true` or delete the Job and let Helm re-create it.
+
+**OMOP vocabulary load** (`omop-vocab-load`):
+
+- Cohorts come back empty but every pod is healthy → the vocabulary was never loaded.
+  Check with `kubectl get job -n <ns> -l app.kubernetes.io/component=omop-vocab-load`.
+  **No Job at all** means `omopDb.vocabLoad.s3Bucket` is empty and the hook was skipped
+  by design — see "OMOP core vocabulary" above.
+- `aws s3 cp` denied in the `fetch-bundle` initContainer → wrong bucket for this
+  environment (each env reads its own; no cross-account read), or no credentials
+  (`omopDb.initJob.hostAwsMount` for local clusters, IRSA on EKS).
+- `/flip/omop/load_core_vocab.sh: No such file or directory` → the `omopDb.image.tag`
+  in use predates FLIP#842; repull a CI-published tag.
+- The Job is idempotent (it skips tables already holding the core vocabulary), so
+  re-running `helm upgrade` is a cheap no-op once the bucket is right.
 
 ### Getting help
 

@@ -345,7 +345,11 @@ omopDb:
     port: 5432
   image:
     repository: ghcr.io/londonaicentre/omop-db
-    tag: latest
+    # Tracks the develop build like every other service in this file. The tag is
+    # load-bearing here, not cosmetic: the vocab-load Job below runs the image's
+    # own /flip/omop/load_core_vocab.sh, which only exists in CI-published
+    # (vocab-free, FLIP#842) images.
+    tag: stag
     pullPolicy: Always
   persistence:
     enabled: true
@@ -364,11 +368,30 @@ omopDb:
     # password is supplied via secrets.data.omop-postgres-password
   # Streams the licensed core vocabulary into the running database after
   # install/upgrade (the published image and pgdata tarballs are vocab-free —
-  # FLIP#842/843). Bundle comes from the org S3 bucket; same AWS auth options
-  # as initJob. Disable when using an external OMOP database.
+  # FLIP#842/843).
+  #
+  # The bundle CANNOT be publicly mirrored (SNOMED CT / LOINC / Read v2 / dm+d
+  # licences — see trust/omop-db/README.md), so unlike initJob there is no
+  # credential-free fallback. The Job therefore runs only when s3Bucket names a
+  # bucket this cluster can read; left empty, the release installs cleanly with
+  # NO vocabulary loaded.
+  #
+  # ⚠️  With no vocabulary the stack looks healthy but cohort queries that join
+  # omop.concept return nothing. Either set s3Bucket, or load the bundle by hand
+  # (chart README → "OMOP core vocabulary").
+  #
+  # Use YOUR environment's own bucket (the kit's AICENTRE_BUCKET_NAME) — trust
+  # roles have no cross-account read on another environment's bucket.
+  # `make sync-kit KIT=<CODE> PROD=<env>` fills this in automatically.
+  #
+  # AWS auth is deliberately shared with initJob (initJob.awsProfile /
+  # initJob.hostAwsMount): both jobs read the same bucket with the same
+  # credentials, so there is one place to configure it, not two.
+  #
+  # Set enabled: false when the trust brings an external OMOP database.
   vocabLoad:
     enabled: true
-    s3Bucket: "flipdev-aicentre"
+    s3Bucket: ""
     bundleName: "vocab_aicentre_core_20240916"
   initJob:
     enabled: true

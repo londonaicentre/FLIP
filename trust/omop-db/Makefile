@@ -220,8 +220,11 @@ export-pgdata-trust-%:
 	@echo "📦 dist/trust$*_pgdata_$(PGDATA_VERSION).tar"
 
 # Push the already-built image to GHCR. Do `docker login ghcr.io` first if
-# needed. Interactive confirmation: the trust stacks resolve :latest by default,
-# so a push to the default tag repoints every default-configured deployment.
+# needed. Interactive confirmation: OMOP_DB_TAG defaults to :latest here, which
+# CI otherwise publishes only from main (alongside :prod), so an unqualified
+# push silently repoints the "newest release" pointer at a local build. No
+# deployment path resolves :latest any more — the trust composes follow
+# DOCKER_TAG, the Helm chart and the Ansible vocab-load play default to stag.
 push:
 	@printf "About to push %s — continue? [y/N] " "$(GHCR_IMAGE):$(OMOP_DB_TAG)"; \
 	read ans; \

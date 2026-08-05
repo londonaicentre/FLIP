@@ -491,7 +491,11 @@
     # the instance role has no cross-account read on other envs' buckets.
     vocab_s3_bucket: "{{ vocab_s3_bucket | default('flipdev-aicentre', true) }}"
     vocab_core_bundle: "vocab_aicentre_core_20240916"
-    omop_db_image: "ghcr.io/londonaicentre/omop-db:{{ omop_db_tag | default('latest') }}"
+    # Supplied by `make seed-trust-data` as the env's own DOCKER_TAG. The fallback
+    # only applies to a hand-run playbook: the container is a throwaway Postgres
+    # server over an already-restored volume, so the tag matters little here —
+    # 'stag' is simply the safer accident than the production image.
+    omop_db_image: "ghcr.io/londonaicentre/omop-db:{{ omop_db_tag | default('stag', true) }}"
     vocab_load_port: "15499"
     # Superuser credentials of the restored cluster — the kit's OMOP_POSTGRES_*
     # values, passed as extra-vars by the Makefile seed-trust-data target.
@@ -513,60 +517,72 @@
         state: present
         update_cache: yes
 
-    - name: download core vocabulary bundle from S3 (instance role)
-      command: aws s3 cp s3://{{ vocab_s3_bucket }}/vocab/{{ vocab_core_bundle }}.zip {{ omop_dir }}/{{ vocab_core_bundle }}.zip
-      args:
-        creates: "{{ omop_dir }}/{{ vocab_core_bundle }}"
+    # Everything from the S3 fetch onwards is wrapped so the `always:` cleanup runs
+    # even when the unzip, the container, the readiness wait or the loader fails.
+    # Without it a mid-play failure leaves the licensed bundle at rest on the host
+    # AND wedges the retry: the `creates:` guards below key on the unpacked
+    # directory, so a re-run would skip both the download and the unzip and reuse
+    # a possibly-truncated bundle.
+    - name: load the core vocabulary, cleaning up whatever happens
+      block:
+        - name: download core vocabulary bundle from S3 (instance role)
+          command: aws s3 cp s3://{{ vocab_s3_bucket }}/vocab/{{ vocab_core_bundle }}.zip {{ omop_dir }}/{{ vocab_core_bundle }}.zip
+          args:
+            creates: "{{ omop_dir }}/{{ vocab_core_bundle }}"
 
-    - name: unzip core vocabulary bundle
-      command: unzip -o {{ omop_dir }}/{{ vocab_core_bundle }}.zip -d {{ omop_dir }}/{{ vocab_core_bundle }}
-      args:
-        creates: "{{ omop_dir }}/{{ vocab_core_bundle }}"
+        - name: unzip core vocabulary bundle
+          command: unzip -o {{ omop_dir }}/{{ vocab_core_bundle }}.zip -d {{ omop_dir }}/{{ vocab_core_bundle }}
+          args:
+            creates: "{{ omop_dir }}/{{ vocab_core_bundle }}"
 
-    - name: copy vocabulary loader and constraints from the repo checkout
-      copy:
-        src: "../../../trust/omop-db/files/{{ item }}"
-        dest: "{{ omop_dir }}/{{ item }}"
-        mode: "0755"
-      loop:
-        - load_core_vocab.sh
-        - OMOPCDM_postgresql_5.4_constraints.sql
+        - name: copy vocabulary loader and constraints from the repo checkout
+          copy:
+            src: "../../../trust/omop-db/files/{{ item }}"
+            dest: "{{ omop_dir }}/{{ item }}"
+            mode: "0755"
+          loop:
+            - load_core_vocab.sh
+            - OMOPCDM_postgresql_5.4_constraints.sql
 
-    - name: start throwaway database container on the restored volume
-      command: >
-        docker run -d --name omop-vocab-load
-        -v {{ omop_dir }}/db_data:/var/lib/postgresql/data
-        -p 127.0.0.1:{{ vocab_load_port }}:5432
-        {{ omop_db_image }}
+        - name: start throwaway database container on the restored volume
+          command: >
+            docker run -d --name omop-vocab-load
+            -v {{ omop_dir }}/db_data:/var/lib/postgresql/data
+            -p 127.0.0.1:{{ vocab_load_port }}:5432
+            {{ omop_db_image }}
 
-    - name: wait for the database to accept connections
-      command: docker exec omop-vocab-load pg_isready -U {{ omop_postgres_user }}
-      register: pg_ready
-      until: pg_ready.rc == 0
-      retries: 30
-      delay: 5
-      changed_when: false
+        - name: wait for the database to accept connections
+          command: docker exec omop-vocab-load pg_isready -U {{ omop_postgres_user }}
+          register: pg_ready
+          until: pg_ready.rc == 0
+          retries: 30
+          delay: 5
+          changed_when: false
 
-    - name: stream the core vocabulary and apply constraints
-      command: bash {{ omop_dir }}/load_core_vocab.sh {{ omop_dir }}/{{ vocab_core_bundle }} {{ omop_dir }}/OMOPCDM_postgresql_5.4_constraints.sql
-      environment:
-        OMOP_DB_HOST: "127.0.0.1"
-        OMOP_DB_PORT: "{{ vocab_load_port }}"
-        OMOP_POSTGRES_USER: "{{ omop_postgres_user }}"
-        OMOP_POSTGRES_PASSWORD: "{{ omop_postgres_password }}"
-        OMOP_POSTGRES_DB: "{{ omop_postgres_db }}"
+        - name: stream the core vocabulary and apply constraints
+          command: bash {{ omop_dir }}/load_core_vocab.sh {{ omop_dir }}/{{ vocab_core_bundle }} {{ omop_dir }}/OMOPCDM_postgresql_5.4_constraints.sql
+          environment:
+            OMOP_DB_HOST: "127.0.0.1"
+            OMOP_DB_PORT: "{{ vocab_load_port }}"
+            OMOP_POSTGRES_USER: "{{ omop_postgres_user }}"
+            OMOP_POSTGRES_PASSWORD: "{{ omop_postgres_password }}"
+            OMOP_POSTGRES_DB: "{{ omop_postgres_db }}"
+      always:
+        # failed_when: false — this runs even when the container was never
+        # started, and `docker rm -f` exits non-zero on a missing container; a
+        # failing cleanup task would fail the play it is meant to clean up after.
+        - name: stop the throwaway container
+          command: docker rm -f omop-vocab-load
+          changed_when: false
+          failed_when: false
 
-    - name: stop the throwaway container
-      command: docker rm -f omop-vocab-load
-      changed_when: false
-
-    - name: remove the downloaded bundle (7GB of licensed content does not belong at rest on the host)
-      file:
-        path: "{{ item }}"
-        state: absent
-      loop:
-        - "{{ omop_dir }}/{{ vocab_core_bundle }}.zip"
-        - "{{ omop_dir }}/{{ vocab_core_bundle }}"
+        - name: remove the downloaded bundle (~3.6GB of licensed content does not belong at rest on the host)
+          file:
+            path: "{{ item }}"
+            state: absent
+          loop:
+            - "{{ omop_dir }}/{{ vocab_core_bundle }}.zip"
+            - "{{ omop_dir }}/{{ vocab_core_bundle }}"
 
 - name: restore Orthanc storage on Trust EC2
   hosts: trust_ec2

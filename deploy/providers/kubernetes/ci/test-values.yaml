@@ -58,8 +58,11 @@ orthanc:
       initialDelaySeconds: 10
 
 omopDb:
-  # The vocab-load hook needs org S3 credentials — not available (and not
-  # licence-appropriate) in CI; the kind cluster runs vocab-less.
+  # Belt and braces: the chart already skips the vocab-load hook when
+  # vocabLoad.s3Bucket is empty (the default), so CI installs vocab-less without
+  # this. Pinned off so a future default bucket can never make CI reach for org
+  # credentials — the licensed bundle is neither available nor licence-appropriate
+  # in CI.
   vocabLoad:
     enabled: false
   persistence:
