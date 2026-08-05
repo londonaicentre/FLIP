@@ -96,6 +96,13 @@ def test_running_migrations_does_not_disable_application_logging(empty_db_engine
     head`` as its own process), but in-process runs poison logging for the rest
     of the interpreter: the logger emits nothing, so every later ``caplog``
     assertion sees an empty log and fails for reasons unrelated to its subject.
+
+    The regression pinned here is ``logger.disabled`` — that flag alone is what
+    ``disable_existing_loggers`` moves, and reverting the fix fails on it. The
+    ``logger.propagate`` assertion is a general safety check, not part of this
+    regression: ``fileConfig`` never touches ``propagate``, but detaching the
+    logger from root would blind ``caplog`` just as completely, so both routes
+    to an empty ``caplog`` are covered rather than only the one we hit.
     """
     from flip_api.utils.logger import logger
 
