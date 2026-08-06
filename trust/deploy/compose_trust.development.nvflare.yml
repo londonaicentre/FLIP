@@ -17,6 +17,19 @@ services:
 
   fl-client-net-1:
     image: ${DOCKER_FL_REGISTRY}${DOCKER_FL_CLIENT_NAME}:${DOCKER_FL_TAG}
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      # provision/workspace-dev/ (gitignored) is written by `make provision` as
+      # the host user, and the image's non-root UID is baked in at build time
+      # (fl-base's UID/GID build args) from that same user's .env.development —
+      # so build+provision by the same developer already match. FOWNER is a
+      # safety margin for when they don't (CI, a shared devbox, running against
+      # a teammate's prebuilt :dev image): without it, entrypoint.sh's
+      # `chmod +x` on the bind-mounted startup/*.sh crash-loops under cap_drop: ALL.
+      - FOWNER
     volumes:
       # Mount the base images download directory to share images downloaded from XNAT with FL clients
       - ${BASE_IMAGES_DOWNLOAD_DIR}:/app/data/images
@@ -50,6 +63,13 @@ services:
 
   fl-client-net-2:
     image: ${DOCKER_FL_REGISTRY}${DOCKER_FL_CLIENT_NAME}:${DOCKER_FL_TAG}
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      # See fl-client-net-1 above — same workspace-dev ownership-mismatch risk.
+      - FOWNER
     volumes:
       # Mount the base images download directory to share images downloaded from XNAT with FL clients
       - ${BASE_IMAGES_DOWNLOAD_DIR}:/app/data/images

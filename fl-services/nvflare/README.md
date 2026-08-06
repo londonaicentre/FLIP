@@ -84,6 +84,17 @@ root-owned files under the kit's `local/` directory (e.g. `resources.json`, `log
 the old containers. The non-root entrypoint can't overwrite those in place — a one-time `chown -R` of the
 provisioned kit directories to the new container uid is needed before the first non-root run.
 
+### Container capability hardening
+
+The trust-deployment `fl-client-net-*` services (`trust/deploy/compose_trust.{production,development}.nvflare.yml`)
+also set `security_opt: [no-new-privileges:true]` and `cap_drop: [ALL]`, matching every other trust-side
+service. Production needs no capability added back — the Ansible-provisioned `FL_KIT_DIR` is already owned
+by the container's UID. The development compose adds back `FOWNER` as a safety margin for when the
+`provision/workspace-dev/` output and the built image's baked-in UID diverge (see
+[`deploy/README.md`](../../deploy/README.md#linux-capability-restrictions) for the full rationale). This
+does **not** cover the standalone `fl-services/nvflare/compose.dev.yml` dev harness (`make -C fl-services/nvflare up`),
+which remains unhardened.
+
 ## Step-by-step provisioning
 
 ### Project yml file
