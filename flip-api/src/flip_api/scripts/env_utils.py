@@ -13,6 +13,11 @@
 """Shared utilities for reading and updating environment files."""
 
 import json
+from pathlib import Path
+
+# Owner read/write only. Kit files carry generated database passwords, per-trust API keys and the
+# trust-internal service key, so their mode must never be left to the process umask.
+KIT_FILE_MODE = 0o600
 
 
 def get_json_value(json_str: str, key: str) -> str:
@@ -67,6 +72,28 @@ def update_or_append(lines: list[str], var_name: str, value: str) -> list[str]:
     if not found:
         new_lines.append(f"{var_name}={value}")
     return new_lines
+
+
+def write_env_file(path: Path, lines: list[str]) -> None:
+    """Write env file lines to *path* and restrict it to owner read/write.
+
+    ``Path.write_text`` does not change the mode of a file that already exists, so a kit file
+    created outside the sanctioned paths (which chmod 0600 themselves) would keep whatever the
+    umask gave it — 0644 on a stock box — while receiving generated credentials. Chmod-ing after
+    every write tightens those files rather than only newly created ones.
+
+    Mirrors ``scripts/trust_kit_lib.write_kit``, which cannot be imported here: it lives at the
+    repository root, outside this package and its virtual environment.
+
+    Args:
+        path (Path): The env file to write.
+        lines (list[str]): Lines to write, without trailing newlines.
+
+    Returns:
+        None
+    """
+    path.write_text("\n".join(lines) + "\n")
+    path.chmod(KIT_FILE_MODE)
 
 
 if __name__ == "__main__":
