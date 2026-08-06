@@ -110,3 +110,15 @@ def test_validate_bundle_url_still_accepts_public_hosts(host):
     """
     url = f"https://{host}/bundle/app/custom/train.py"
     assert validate_bundle_url(url) == url
+
+
+@pytest.mark.parametrize("host", ["127.0.0.1\x00", "example.com\x00", "2130706433\x00"])
+def test_validate_bundle_url_rejects_hosts_with_embedded_nul(host):
+    """An embedded NUL must stay a 400, not escape as an uncaught ValueError.
+
+    urlparse passes NUL through to .hostname and socket.inet_aton raises a plain ValueError on it —
+    which ipaddress.AddressValueError does not cover, since it is a subclass rather than a parent.
+    """
+    with pytest.raises(HTTPException) as exc:
+        validate_bundle_url(f"https://{host}/bundle/app/custom/train.py")
+    assert exc.value.status_code == 400

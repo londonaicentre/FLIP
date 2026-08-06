@@ -106,6 +106,18 @@ def validate_bundle_url(url: str) -> str:
             detail=f"Bundle URL port not allowed: {port}.",
         )
 
+    # Refuse a host carrying a NUL or other control character before either parser sees it.
+    # urlparse passes NUL straight through to .hostname, and resolvers that truncate at NUL would
+    # then reach a different host than the one checked here — "127.0.0.1\x00" is the loopback
+    # bypass that shape buys. Neither parser rejects it usefully on its own: inet_aton raises a
+    # plain ValueError (not the AddressValueError subclass), which would either escape as a 500 or,
+    # if swallowed, leave the range checks below unrun. No legitimate host contains these.
+    if any(ch < " " or ch == "\x7f" for ch in hostname):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Bundle URL host not allowed: {hostname!r}.",
+        )
+
     # Block IP-literal hosts in non-public ranges. Two parsers, because they disagree:
     # ipaddress.ip_address accepts only the canonical dotted-quad form, while the resolver behind
     # the actual fetch (getaddrinfo -> inet_aton) also accepts packed decimal, hex and octal
@@ -121,7 +133,7 @@ def validate_bundle_url(url: str) -> str:
     except ValueError:
         try:
             ip = ipaddress.IPv4Address(socket.inet_aton(hostname))
-        except (OSError, ipaddress.AddressValueError):
+        except OSError:
             ip = None
     if ip is not None and (
         ip.is_private
