@@ -13,10 +13,24 @@
 
 import { _http } from "./api";
 
+// Wire vocabulary for one probed service inside a trust's health snapshot.
+export type ServiceStatus = "healthy" | "degraded" | "down" | "unknown";
+
+// One service entry of the per-trust health snapshot (mirrors the backend
+// ServiceHealthEntry): probed status plus optional version and probe latency.
+export interface IServiceHealth {
+    status: ServiceStatus;
+    version: string | null;
+    response_ms: number | null;
+}
+
 // Trust list item with connection status — benign metadata only (no secrets),
 // served by the authenticated (non-admin) GET /trust endpoint. Mirrors the
 // backend ITrustStatus schema. The trust pickers only read id/name/code; the
-// Connection Status page additionally uses region / last_heartbeat / project_count.
+// Connection Status page additionally uses region / last_heartbeat /
+// project_count / services. `services` + `services_updated_at` are optional so
+// older fixtures and the MirageJS mocks keep compiling: absent means the trust
+// never reported a snapshot (pre-collector trust-api build).
 export interface ITrustResponse {
     id: string;
     name: string;
@@ -24,6 +38,8 @@ export interface ITrustResponse {
     region: string | null;
     last_heartbeat: string | null;
     project_count: number;
+    services?: Record<string, IServiceHealth> | null;
+    services_updated_at?: string | null;
 }
 
 // Bootstrap / picker list. Errors are intentionally swallowed → []: a trust-list
