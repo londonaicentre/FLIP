@@ -96,6 +96,16 @@ def _arrays_of(msg: Message) -> dict[str, np.ndarray]:
     return dict(zip(record.keys(), record.to_numpy_ndarrays(), strict=True))
 
 
+def _released(
+    global_arrays: dict[str, np.ndarray],
+    trained: dict[str, np.ndarray],
+    run_config: dict | None = None,
+) -> dict[str, np.ndarray]:
+    """Run the mod over one train round trip and return the arrays it releases."""
+    reply = flip_local_dp_mod(_message(global_arrays), _context(run_config), _call_next(trained))
+    return _arrays_of(reply)
+
+
 class TestLocalDpConfig:
     """The config object owns FLIP's defaults, validation, and the noise-scale formula."""
 
@@ -173,23 +183,19 @@ class TestFlipLocalDpMod:
 
     def test_disabled_returns_the_apps_reply_untouched(self):
         """The off switch mirrors the NVFLARE filter's `off` flag: same app, no component removed."""
-        global_arrays = {"w": np.array([1.0, 2.0, 3.0], dtype=np.float32)}
         trained = {"w": np.array([9.0, 9.0, 9.0], dtype=np.float32)}
-        msg = _message(global_arrays)
 
-        reply = flip_local_dp_mod(msg, _context({CONFIG_ENABLED: False}), _call_next(trained))
+        released = _released({"w": np.array([1.0, 2.0, 3.0], dtype=np.float32)}, trained, {CONFIG_ENABLED: False})
 
-        np.testing.assert_array_equal(_arrays_of(reply)["w"], trained["w"])
+        np.testing.assert_array_equal(released["w"], trained["w"])
 
     def test_enabled_by_default_privatises_the_update(self):
         """An app declaring no DP keys still gets DP: absence must not mean off."""
-        global_arrays = {"w": np.array([0.0, 0.0, 0.0], dtype=np.float32)}
         trained = {"w": np.array([9.0, 9.0, 9.0], dtype=np.float32)}
-        msg = _message(global_arrays)
 
-        reply = flip_local_dp_mod(msg, _context(), _call_next(trained))
+        released = _released({"w": np.array([0.0, 0.0, 0.0], dtype=np.float32)}, trained)
 
-        assert not np.allclose(_arrays_of(reply)["w"], trained["w"])
+        assert not np.allclose(released["w"], trained["w"])
 
     def test_evaluate_messages_pass_through(self):
         """Training rounds only — evaluation carries no update to privatise."""
@@ -223,36 +229,31 @@ class TestFlipLocalDpMod:
         """A large update is scaled so its L2 norm equals clipping_norm (noise-free config)."""
         global_arrays = {"w": np.zeros(4, dtype=np.float32)}
         trained = {"w": np.array([3.0, 4.0, 0.0, 0.0], dtype=np.float32)}  # update norm 5.0
-        msg = _message(global_arrays)
 
-        reply = flip_local_dp_mod(msg, _context({**NOISELESS, CONFIG_CLIPPING_NORM: 1.0}), _call_next(trained))
+        released = _released(global_arrays, trained, {**NOISELESS, CONFIG_CLIPPING_NORM: 1.0})
 
-        update = _arrays_of(reply)["w"] - global_arrays["w"]
+        update = released["w"] - global_arrays["w"]
         assert np.linalg.norm(update) == pytest.approx(1.0, rel=1e-5)
         np.testing.assert_allclose(update, np.array([0.6, 0.8, 0.0, 0.0]), rtol=1e-5)
 
     def test_small_updates_are_left_unclipped(self):
         """Below the clipping norm the update survives intact — clipping is a ceiling, not a rescale."""
-        global_arrays = {"w": np.zeros(2, dtype=np.float32)}
         trained = {"w": np.array([0.03, 0.04], dtype=np.float32)}  # update norm 0.05
-        msg = _message(global_arrays)
 
-        reply = flip_local_dp_mod(msg, _context({**NOISELESS, CONFIG_CLIPPING_NORM: 1.0}), _call_next(trained))
+        released = _released({"w": np.zeros(2, dtype=np.float32)}, trained, {**NOISELESS, CONFIG_CLIPPING_NORM: 1.0})
 
-        np.testing.assert_allclose(_arrays_of(reply)["w"], trained["w"], rtol=1e-6)
+        np.testing.assert_allclose(released["w"], trained["w"], rtol=1e-6)
 
     def test_noise_scale_matches_the_configured_epsilon_delta(self):
         """The released update's deviation tracks LocalDpConfig.noise_stddev."""
         rng = np.random.default_rng(0)
-        global_arrays = {"w": np.zeros(20000, dtype=np.float32)}
         trained = {"w": rng.normal(0, 1e-6, 20000).astype(np.float32)}
         run_config = {CONFIG_SENSITIVITY: 0.1, CONFIG_EPSILON: 5.0, CONFIG_DELTA: 1e-5}
-        msg = _message(global_arrays)
 
-        reply = flip_local_dp_mod(msg, _context(run_config), _call_next(trained))
+        released = _released({"w": np.zeros(20000, dtype=np.float32)}, trained, run_config)
 
         expected = LocalDpConfig.from_run_config(run_config).noise_stddev
-        assert np.std(_arrays_of(reply)["w"]) == pytest.approx(expected, rel=0.05)
+        assert np.std(released["w"]) == pytest.approx(expected, rel=0.05)
 
     def test_integer_buffers_survive_bit_identical(self):
         """Regression: Flower's clip_inputs_inplace raises UFuncTypeError on int arrays.
@@ -272,11 +273,9 @@ class TestFlipLocalDpMod:
             "features.norm0.weight": np.array([3.0, 4.0, 0.0, 0.0], dtype=np.float32),
             "features.norm0.num_batches_tracked": np.array(19, dtype=np.int64),
         }
-        msg = _message(global_arrays)
 
-        reply = flip_local_dp_mod(msg, _context({**NOISELESS, CONFIG_CLIPPING_NORM: 1.0}), _call_next(trained))
+        released = _released(global_arrays, trained, {**NOISELESS, CONFIG_CLIPPING_NORM: 1.0})
 
-        released = _arrays_of(reply)
         assert released["features.norm0.num_batches_tracked"].dtype == np.int64
         assert released["features.norm0.num_batches_tracked"] == 19
         assert np.linalg.norm(released["features.norm0.weight"]) == pytest.approx(1.0, rel=1e-5)
@@ -294,11 +293,8 @@ class TestFlipLocalDpMod:
         raw_update = rng.normal(0, 5e-4, 8192).astype(np.float32)
         global_arrays = {"head.weight": rng.normal(0, 0.02, 8192).astype(np.float32)}
         trained = {"head.weight": (global_arrays["head.weight"] + raw_update).astype(np.float32)}
-        msg = _message(global_arrays)
 
-        reply = flip_local_dp_mod(msg, _context(), _call_next(trained))
-
-        released_update = _arrays_of(reply)["head.weight"] - global_arrays["head.weight"]
+        released_update = _released(global_arrays, trained)["head.weight"] - global_arrays["head.weight"]
         # Direction survives: the released update still correlates strongly with the real one.
         cosine = float(
             np.dot(released_update, raw_update) / (np.linalg.norm(released_update) * np.linalg.norm(raw_update))

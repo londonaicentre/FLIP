@@ -201,7 +201,8 @@ def flip_local_dp_mod(msg: Message, context: Context, call_next: ClientAppCallab
         return reply
 
     reply_key, reply_record = _single_array_record(reply, "reply from the ClientApp")
-    if list(global_record.keys()) != list(reply_record.keys()):
+    reply_keys = list(reply_record.keys())
+    if list(global_record.keys()) != reply_keys:
         raise ValueError(
             "FLIP local DP requires the reply's ArrayRecord to carry the same keys, in the same "
             "order, as the one sent by the ServerApp; the update cannot be aligned to the global "
@@ -209,7 +210,11 @@ def flip_local_dp_mod(msg: Message, context: Context, call_next: ClientAppCallab
         )
 
     global_arrays = global_record.to_numpy_ndarrays()
-    reply_arrays = reply_record.to_numpy_ndarrays()
+    # keep_input=False drops each serialized entry as it materialises (hence reply_keys above):
+    # reply_record is replaced wholesale below, so keeping its buffered bytes alongside the numpy
+    # copies would only double the update's peak memory. The incoming msg's record is left intact —
+    # it belongs to the framework.
+    reply_arrays = reply_record.to_numpy_ndarrays(keep_input=False)
 
     # Integer entries (BatchNorm's num_batches_tracked and friends) are step counters, not learned
     # parameters. They are excluded because Flower's in-place float scaling cannot write back into
@@ -242,7 +247,7 @@ def flip_local_dp_mod(msg: Message, context: Context, call_next: ClientAppCallab
     )
 
     reply.content[reply_key] = ArrayRecord(
-        dict(zip(reply_record.keys(), (Array(np.asarray(v)) for v in reply_arrays), strict=True))
+        dict(zip(reply_keys, (Array(np.asarray(v)) for v in reply_arrays), strict=True))
     )
     return reply
 
