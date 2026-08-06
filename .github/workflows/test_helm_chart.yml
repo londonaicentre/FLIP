@@ -115,6 +115,40 @@ jobs:
             exit 1
           fi
 
+      # The probe stage is what keeps a routine `helm upgrade` from re-downloading
+      # the multi-GB bundle into a fresh emptyDir. Drop it and nothing breaks
+      # loudly — the Job still loads correctly, just slowly, on the critical path
+      # of a release hook. Scoped with --show-only so these strings have to appear
+      # in THIS Job and not merely somewhere in the release.
+      - name: Vocab-load probes before it fetches
+        run: |
+          helm template trust-release deploy/providers/kubernetes/ \
+            --set omopDb.vocabLoad.s3Bucket=test-bucket \
+            --show-only templates/omop-db-vocab-load-job.yaml > /tmp/vocabjob.yaml
+          # Every pattern is passed with -e: three of these begin with "-" and
+          # would otherwise be parsed as grep options rather than as patterns.
+          # fetch-bundle is asserted here as well as below, so that the ordering
+          # check cannot pass vacuously on an empty line number if it is renamed.
+          for want in \
+            '- name: probe-vocab' \
+            '- name: fetch-bundle' \
+            'load_core_vocab.sh --check' \
+            'touch /vocab-work/.vocab-present' \
+            '-f /vocab-work/.vocab-present'
+          do
+            if ! grep -qF -e "${want}" /tmp/vocabjob.yaml; then
+              echo "::error::vocab-load Job no longer probes before fetching (missing: ${want})"
+              exit 1
+            fi
+          done
+          # The probe is only worth anything if it runs BEFORE the fetch.
+          probe_at=$(grep -nF -m1 -e '- name: probe-vocab' /tmp/vocabjob.yaml | cut -d: -f1)
+          fetch_at=$(grep -nF -m1 -e '- name: fetch-bundle' /tmp/vocabjob.yaml | cut -d: -f1)
+          if [ "${probe_at}" -gt "${fetch_at}" ]; then
+            echo "::error::probe-vocab must be ordered before fetch-bundle in initContainers"
+            exit 1
+          fi
+
       # Asserted with an explicit `if`, not `! grep -q`: `set -e` exempts a
       # negated command, so that form only fails the step by virtue of being the
       # LAST line — appending so much as a debug echo would silently disarm it.

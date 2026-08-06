@@ -286,6 +286,17 @@ AWS credentials for the fetch are shared with the init job:
 `~/.aws` mount for local clusters; use IRSA on EKS). Note `awsProfile` only
 reaches this Job when `hostAwsMount` is enabled.
 
+The hook probes before it fetches: `probe-vocab` asks the database what is
+missing, and only if something is does `fetch-bundle` download the bundle. This
+matters because the hook is on the critical path of *every* `helm upgrade` and a
+failed hook fails the whole release — so an upgrade that changes an unrelated
+image tag costs one query per vocabulary table, not a multi-GB download. The
+download lands in an `emptyDir` sized by `omopDb.vocabLoad.workDirSize` (10Gi,
+enough for the zip and its unpacked contents together); lower it, and the
+matching `fetchResources` / `loadResources` requests, for a cluster with small
+nodes. Keep the container `ephemeral-storage` limits above `workDirSize` — a full
+work dir is otherwise itself the thing that gets the pod evicted.
+
 An external OMOP database (`omopDb.enabled: false`) already skips this Job. Set
 `omopDb.vocabLoad.enabled: false` only to keep an in-cluster `omop-db` while
 loading the vocabulary by hand.
@@ -567,11 +578,21 @@ Symptoms: trust-api can't reach imaging-api or data-access-api (connection timeo
   (`omopDb.initJob.hostAwsMount` for local clusters, IRSA on EKS).
 - `/flip/omop/load_core_vocab.sh: No such file or directory` → the `omopDb.image.tag`
   in use predates FLIP#842; repull a CI-published tag.
-- The *load* is idempotent (it skips tables already holding the core vocabulary),
-  so re-running `helm upgrade` is safe. It is not free: the `vocab-work` volume is
-  an `emptyDir`, so the `fetch-bundle` initContainer re-downloads and re-unzips the
-  multi-GB bundle on every upgrade that renders the hook. Set
-  `vocabLoad.enabled: false` once loaded if that cost is unwelcome.
+- Re-running `helm upgrade` is safe *and* cheap. The Job runs three stages —
+  `probe-vocab` asks the database what is missing, `fetch-bundle` downloads the
+  bundle only if something is, then `load-vocab` loads it. On an upgrade where the
+  vocabulary is already loaded the probe logs `Core vocabulary already present in
+  every table`, the fetch logs `skipping bundle fetch`, and no multi-GB download
+  happens. The loader still runs (it re-applies the FK constraints, so a previous
+  run that died between the load and the constraints heals here).
+- `probe-vocab` fails with `omop-db not reachable after 60 attempts` → the database
+  never became ready; check the `omop-db` pod and the init Job that restores its
+  PVC. A probe that cannot reach the database does *not* skip the fetch — it
+  deliberately falls through to a full fetch-and-load, because a needless download
+  is recoverable and a wrongly-skipped load is silent.
+- `microdnf install` fails in `fetch-bundle` → the cluster has no egress to the
+  Amazon Linux package mirror. That step installs `unzip`, which the `aws-cli`
+  image does not ship.
 
 ### Getting help
 

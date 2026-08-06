@@ -410,6 +410,38 @@ omopDb:
     enabled: true
     s3Bucket: ""
     bundleName: "vocab_aicentre_core_20240916"
+    # Scratch space for the downloaded bundle. Must hold the zip and its
+    # unpacked contents at the same time (~4.8Gi for the 20240916 bundle); the
+    # container ephemeral-storage limits below must stay ABOVE this, or a full
+    # work dir is itself the thing that gets the pod evicted.
+    workDirSize: 10Gi
+    # The fetch initContainer is the only one with a real footprint — it writes
+    # the whole bundle into the emptyDir above. Requesting the storage it will
+    # actually use is what keeps the kubelet from picking this pod first under
+    # node disk pressure: eviction ranks on usage OVER request, and an evicted
+    # download restarts from zero (a new pod gets a new, empty work dir).
+    fetchResources:
+      requests:
+        cpu: "250m"
+        memory: 512Mi
+        ephemeral-storage: 6Gi
+      limits:
+        cpu: "1"
+        memory: 1Gi
+        ephemeral-storage: 12Gi
+    # Probe and loader are psql-only: COPY streams from disk, so neither buffers
+    # the bundle. They still declare ephemeral-storage because a pod-level limit
+    # exists only when EVERY container sets one — without it the emptyDir above
+    # is unbounded by anything but the node.
+    loadResources:
+      requests:
+        cpu: "100m"
+        memory: 256Mi
+        ephemeral-storage: 1Gi
+      limits:
+        cpu: "500m"
+        memory: 512Mi
+        ephemeral-storage: 12Gi
   initJob:
     enabled: true
     s3Bucket: ""

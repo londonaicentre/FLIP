@@ -31,7 +31,10 @@ tolerate the DICOM vocab already present in the tarballs):
 - **EC2**: the "load OMOP core vocabulary on Trust EC2" Ansible play (part of `seed-trust-data`;
   throwaway container on loopback port 15499; kit credentials passed by the AWS Makefile).
 - **Kubernetes**: the chart's `omop-vocab-load` post-install/post-upgrade hook Job
-  (`omopDb.vocabLoad` values; bundle from S3, loader + constraints from the image).
+  (`omopDb.vocabLoad` values; bundle from S3, loader + constraints from the image). Its first
+  stage runs `load_core_vocab.sh --check` and skips the multi-GB fetch when the database is
+  already loaded — the hook sits on the critical path of every `helm upgrade`, so the fetch
+  must stay conditional. The loader still runs (constraints).
 
 ## Load-bearing facts
 

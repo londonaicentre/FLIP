@@ -291,7 +291,10 @@
           "properties": {
             "enabled": { "type": "boolean" },
             "s3Bucket": { "type": "string" },
-            "bundleName": { "type": "string" }
+            "bundleName": { "type": "string" },
+            "workDirSize": { "type": "string" },
+            "fetchResources": { "type": "object" },
+            "loadResources": { "type": "object" }
           }
         },
         "resources": {

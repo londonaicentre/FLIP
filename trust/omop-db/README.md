@@ -60,6 +60,16 @@ Cohort queries that join `omop.concept` return nothing until this step has
 run. On EC2 trusts the equivalent load is part of `seed-trust-data` (Ansible);
 on Kubernetes it is the chart's `omop-vocab-load` post-install job.
 
+To ask a database whether it has been loaded — without a bundle, and without
+loading anything — run the script's probe mode. It exits 0 only when every
+vocabulary table already holds core rows, which is how the Kubernetes hook
+decides whether it needs to download the bundle at all:
+
+```sh
+cd trust/omop-db && OMOP_DB_PORT=5434 OMOP_POSTGRES_USER=… OMOP_POSTGRES_PASSWORD=… \
+  OMOP_POSTGRES_DB=… ./files/load_core_vocab.sh --check
+```
+
 For database-only debugging (without the rest of the trust stack), `make -C trust/omop-db up-test-omop-trust1` will start just the first dev trust's OMOP container.
 
 Bringing the container up should not run any initialization scripts — the data volume already contains a populated database.

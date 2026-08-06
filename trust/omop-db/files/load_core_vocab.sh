@@ -18,15 +18,38 @@
 # tarballs are vocab-free (FLIP#842/#843), so every environment loads the
 # bundle it is licensed to hold. Idempotent: tables that already hold rows are
 # skipped, and the constraints file guards itself with IF NOT EXISTS checks.
+# The bundle is read only for the tables that actually need loading, so a run
+# where everything is already present still applies the constraints without
+# needing a bundle on disk at all.
 #
-# Usage: load_core_vocab.sh <vocab-dir> [constraints.sql]
+# Usage: load_core_vocab.sh [--check] <vocab-dir> [constraints.sql]
+#        load_core_vocab.sh --check
 # Connection from env: OMOP_DB_HOST (default localhost), OMOP_DB_PORT,
 # OMOP_POSTGRES_USER, OMOP_POSTGRES_PASSWORD, OMOP_POSTGRES_DB.
+#
+# --check only probes the database and loads nothing, exiting 0 when every
+# table already holds the core vocabulary. It exists so a caller can decide
+# whether it needs to fetch the multi-GB bundle at all (the Kubernetes
+# vocab-load Job does exactly this). Any non-zero status — including an
+# unreachable database — means "could not confirm", and callers must treat that
+# as "fetch and load": this script re-runs the same guards on the real load, so
+# a false "not loaded" costs a download while a false "loaded" would silently
+# leave the platform without a vocabulary.
 
 set -euo pipefail
 
-VOCAB_DIR="${1:?usage: load_core_vocab.sh <vocab-dir> [constraints.sql]}"
+CHECK_ONLY=0
+if [ "${1:-}" = "--check" ]; then
+  CHECK_ONLY=1
+  shift
+fi
+
+VOCAB_DIR="${1:-}"
 CONSTRAINTS_FILE="${2:-}"
+if [ "${CHECK_ONLY}" -eq 0 ] && [ -z "${VOCAB_DIR}" ]; then
+  echo "usage: load_core_vocab.sh [--check] <vocab-dir> [constraints.sql]" >&2
+  exit 1
+fi
 
 for var in OMOP_DB_PORT OMOP_POSTGRES_USER OMOP_POSTGRES_PASSWORD OMOP_POSTGRES_DB; do
   if [ -z "${!var:-}" ]; then
@@ -43,13 +66,6 @@ fi
 # (populate_vocabulary_tables.sql): Athena TSV with header, QUOTE E'\b'
 # effectively disables quoting.
 TABLES="CONCEPT_ANCESTOR CONCEPT_CLASS CONCEPT_RELATIONSHIP CONCEPT_SYNONYM CONCEPT DOMAIN DRUG_STRENGTH RELATIONSHIP VOCABULARY"
-
-for table in ${TABLES}; do
-  if [ ! -f "${VOCAB_DIR}/${table}.csv" ]; then
-    echo "❌ ${VOCAB_DIR}/${table}.csv missing — is this a complete vocabulary bundle?" >&2
-    exit 1
-  fi
-done
 
 export PGPASSWORD="${OMOP_POSTGRES_PASSWORD}"
 run_psql() {
@@ -78,6 +94,10 @@ core_present() {
   esac
 }
 
+# Pass 1 — ask the database what is missing. Nothing is read from the bundle
+# here, so this is also the whole of --check: the expensive fetch a caller may
+# be about to do can be decided on one round-trip per table.
+PENDING=""
 for table in ${TABLES}; do
   # Deliberately a plain assignment, not `if [ "$(core_present …)" = "t" ]`:
   # a command substitution inside an `if` condition is exempt from `set -e`, so
@@ -88,14 +108,38 @@ for table in ${TABLES}; do
   case "${present}" in
     t)
       echo "⏭️  omop.${table} already holds the core vocabulary — skipping."
-      continue
       ;;
-    f) ;;
+    f)
+      PENDING="${PENDING} ${table}"
+      ;;
     *)
       echo "❌ unexpected guard result for omop.${table}: '${present}'" >&2
       exit 1
       ;;
   esac
+done
+
+if [ "${CHECK_ONLY}" -eq 1 ]; then
+  if [ -n "${PENDING}" ]; then
+    echo "📋 Core vocabulary still to load:${PENDING}"
+    exit 1
+  fi
+  echo "✅ Core vocabulary already present in every table."
+  exit 0
+fi
+
+# Fail fast on an incomplete bundle before loading any of it — but only over the
+# tables actually being loaded, so a no-op run still reaches the constraints
+# below (which is the point: a previous run that loaded every table and then
+# died before applying them must be recoverable by re-running).
+for table in ${PENDING}; do
+  if [ ! -f "${VOCAB_DIR}/${table}.csv" ]; then
+    echo "❌ ${VOCAB_DIR}/${table}.csv missing — is this a complete vocabulary bundle?" >&2
+    exit 1
+  fi
+done
+
+for table in ${PENDING}; do
   echo "📥 Loading omop.${table} ..."
   run_psql -c "COPY omop.${table} FROM STDIN WITH (FORMAT CSV, HEADER, DELIMITER E'\t', QUOTE E'\b')" \
     < "${VOCAB_DIR}/${table}.csv"
