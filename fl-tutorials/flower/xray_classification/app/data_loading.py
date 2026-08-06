@@ -11,8 +11,8 @@
 
 """Chest-X-ray data loading and label extraction for FLIP."""
 
+from collections.abc import Sequence
 from logging import INFO
-from typing import List, Sequence
 
 import numpy as np
 import pydicom
@@ -36,7 +36,7 @@ class LesionDict(BaseModel):
         """Return True if any lesion has this name."""
         return any(item.lesion == element_value for item in self.items)
 
-    def get_lesion_list(self) -> List[str]:
+    def get_lesion_list(self) -> list[str]:
         """Return all lesion names in declaration order."""
         return [item.lesion for item in self.items]
 
@@ -152,12 +152,10 @@ class FLIP_BASE:
                 continue
 
             all_images = list(accession_folder_path.rglob("*.dcm"))
-            this_accession_matches = 0
-            log(INFO, f"Total base count found for accession_id {accession_id}: {len(all_images)}")
 
             for img in all_images:
                 try:
-                    _ = pydicom.dcmread(str(img))
+                    _ = pydicom.dcmread(str(img), stop_before_pixels=True)
                 except Exception as e:
                     log(INFO, f"Problem loading header of base image {str(img)}: {e}")
                     continue
@@ -165,11 +163,8 @@ class FLIP_BASE:
                 item_ = {"image": str(img)}
                 item_.update(pathology_dict)
                 datalist.append(item_)
-                this_accession_matches += 1
 
-            log(INFO, f"Added {this_accession_matches} image / label pairs for {accession_id}.")
-
-        log(INFO, f"Found {len(datalist)} files in total.")
+        log(INFO, "Dataset ready: %d image/label pairs", len(datalist))
 
         train_datalist, val_datalist, test_datalist = np.split(
             datalist,

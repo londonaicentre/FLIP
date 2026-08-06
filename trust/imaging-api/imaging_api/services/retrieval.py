@@ -31,15 +31,21 @@ from imaging_api.services.projects import get_experiments, get_project
 from imaging_api.services_external.data_access import get_accession_ids
 from imaging_api.utils.auth import get_xnat_auth_headers
 from imaging_api.utils.encryption import encrypt
-from imaging_api.utils.exceptions import NotFoundError
+from imaging_api.utils.exceptions import CohortBelowThresholdError, NotFoundError
 from imaging_api.utils.logger import logger
 
 XNATAuthHeaders = Annotated[dict[str, str], Depends(get_xnat_auth_headers)]
 
-# Terminal-failure status values. Verified against XNAT 1.9.3 source — re-check on any XNAT upgrade,
-# since a renamed value would silently misclassify a failed import as in-flight `processing`:
+# Terminal-failure status values. Re-check on any XNAT upgrade, since a renamed value would silently
+# misclassify a failed import as in-flight `processing`:
 #   - queued/executed PACS requests (DQR plugin):  PacsRequest.FAILED_STATUS_TEXT == "FAILED"
 #   - directArchive sessions (XNAT prearchive):    PrearcUtils.PrearcStatus.ERROR
+# `PrearcStatus.ERROR` re-verified present in the XNAT 1.10.0 source. The DQR value IS verified for
+# DQR 3.0.0 (the 1.10-targeting major bump that also swaps dcm4che2 for dcm4che5): the released JAR
+# (public download on bitbucket.org/xnatdev/dicom-query-retrieve) keeps
+# `PacsRequest.FAILED_STATUS_TEXT == "FAILED"` (full vocabulary: QUEUED/PROCESSING/ISSUED/RECEIVED/FAILED),
+# and the `xhbm_*_pacs_request` columns read by imaging_api/db/get_*_pacs_request_by_project.py were
+# confirmed unchanged against a live 3.0.0 instance during the 1.10.0 upgrade smoke test.
 # Any other status on a row that exists means the import is still in flight. A successful directArchive
 # deletes its row, so "successful" is never read from these tables — only from the experiment listing.
 _PACS_REQUEST_FAILED_STATUS = "FAILED"
@@ -64,7 +70,9 @@ async def retrieve_images_for_project(project_id: str, query: str, headers: XNAT
         headers (XNATAuthHeaders): The headers containing XNAT authentication details.
 
     Returns:
-        bool: True if all studies were successfully queued, False otherwise.
+        bool: True if all studies were successfully queued, False otherwise — including when
+        the cohort is below the trust's ``COHORT_QUERY_THRESHOLD``, in which case the Data
+        Access API withholds the accession IDs and nothing is imported.
 
     Raises:
         HTTPException: If the request cannot be processed.
@@ -81,7 +89,18 @@ async def retrieve_images_for_project(project_id: str, query: str, headers: XNAT
     # query to the accession_id column server-side, so no other columns are
     # transmitted across the trust boundary.
     encrypted_project_id = encrypt(project_id)
-    accession_ids: list[str] = await get_accession_ids(encrypted_project_id, query)
+    try:
+        accession_ids: list[str] = await get_accession_ids(encrypted_project_id, query)
+    except CohortBelowThresholdError:
+        # A settled outcome, not a failure to retry: the trust will not release identifiers
+        # for a cohort this small, so there is nothing to import. Logged rather than raised
+        # because this runs as a background task — the create-project response has already
+        # been sent, so an exception here would only reach the server log as a traceback.
+        logger.warning(
+            f"Not importing images for project {project_id}: the cohort is below the trust's "
+            "minimum size, so the Data Access API withheld its accession IDs."
+        )
+        return False
 
     studies_list: list[ImportStudy] = []
 
@@ -166,14 +185,30 @@ async def get_import_status(project_id: str, query: str, headers: XNATAuthHeader
         ImportStatus: An object containing the status of study imports.
 
     Raises:
-        HTTPException: If the request cannot be processed.
+        HTTPException: 403 if the cohort has fallen below the trust's ``COHORT_QUERY_THRESHOLD``
+            so its accession IDs cannot be released — note the cohort query is re-run against
+            live OMOP on every status check, so a project that imported cleanly can start
+            refusing later if its cohort shrinks (see FLIP#857). Otherwise, if the request
+            cannot be processed.
     """
     # Encrypt project ID to send to the data access API
     encrypted_project_id = encrypt(project_id)
 
     # Get accession IDs from data access API (server-side projection — no other
     # cohort columns leave the trust).
-    accession_ids: list[str] = await get_accession_ids(encrypted_project_id, query)
+    try:
+        accession_ids: list[str] = await get_accession_ids(encrypted_project_id, query)
+    except CohortBelowThresholdError as e:
+        # Unlike the import path, this one has a caller waiting on a response, so surface the
+        # reason: trust-api relays this detail to the hub, and without it the per-trust status
+        # shows only a raw transport error for what is actually a policy decision.
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                "Cohort is below the trust's minimum size, so its accession IDs cannot be "
+                "released and import status cannot be reported."
+            ),
+        ) from e
 
     # Fetches a list of XNAT experiments associated with a given XNAT project.
     experiments = get_experiments(project_id, headers)

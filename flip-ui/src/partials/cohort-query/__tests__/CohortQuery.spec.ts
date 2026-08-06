@@ -71,7 +71,7 @@ const stubs = {
     },
     QueryResultCharts: { template: "<div data-test='query-result-charts' />" },
     Form: { template: "<form @submit.prevent=\"$emit('submit', { query: 'SELECT * FROM patients' })\"><slot /></form>" },
-    "icon-heroicons-outline-clock": { template: "<span />" },
+    "icon-ph-clock": { template: "<span />" },
     Transition: { template: "<div><slot /></div>" }
 };
 
@@ -221,6 +221,28 @@ describe("CohortQuery", () => {
 
             expect(wrapper.find("form").exists()).toBe(true);
             expect(wrapper.find("[data-test='loader']").exists()).toBe(false);
+        });
+    });
+
+    describe("page wrapper de-carded skeleton", () => {
+        it("flattens the page: no nested main, no outer card, one page scroller", () => {
+            const wrapper = mountCohortQueryPage({ project: unstagedProject });
+
+            // MainLayout owns the app's <main>; the page must not nest another.
+            expect(wrapper.find("main").exists()).toBe(false);
+
+            // Models-page px-8 side gutters, one overflow-y-auto scroller.
+            const header = wrapper.find("header");
+            expect(header.classes()).toContain("px-8");
+            expect(header.classes()).toContain("pt-4");
+            expect(header.element.parentElement?.className).toContain("overflow-y-auto");
+
+            // The partial sits in a plain gutter, not inside an AiCard.
+            const gutter = wrapper.find("[data-test='cohort-query-partial-stub']").element.parentElement;
+            expect(gutter?.className).toContain("px-8");
+            expect(gutter?.className).toContain("pt-4");
+            expect(gutter?.className).toContain("pb-8");
+            expect(gutter?.className).not.toContain("shadow");
         });
     });
 
@@ -535,6 +557,20 @@ describe("CohortQuery", () => {
             expect(cell).not.toBeNull();
             expect(cell!.text()).toContain("today");
             expect(cell!.text()).toContain("by R. Patel");
+        });
+
+        it("shows the SQL file icon next to the run stamp", () => {
+            const project: IProject = {
+                ...unstagedProjectWithQuery,
+                query: {
+                    ...unstagedProjectWithQuery.query!,
+                    created: new Date().toISOString()
+                }
+            };
+            const wrapper = mountCohortQuery({ project });
+            const cell = lastRunCell(wrapper);
+            expect(cell).not.toBeNull();
+            expect(cell!.find("[data-test=last-run-sql-icon]").exists()).toBe(true);
         });
 
         it("renders 'yesterday' when the query was created on the previous calendar day", () => {

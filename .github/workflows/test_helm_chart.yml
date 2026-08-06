@@ -27,17 +27,36 @@ on:
   workflow_dispatch:
 
 jobs:
+  python-tests:
+    name: Python tests (sync-kit)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        run: pip install uv
+
+      - name: Run sync-kit unit tests
+        working-directory: deploy/providers/kubernetes
+        run: uv run --no-project --with pytest pytest tests/ -v
+
   helm-lint:
     name: Helm Lint
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Helm
         uses: azure/setup-helm@v4
         with:
-          version: "v3.16.0"
+          version: "v4.2.3"
 
       - name: Lint chart
         run: helm lint deploy/providers/kubernetes/
@@ -47,12 +66,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Helm
         uses: azure/setup-helm@v4
         with:
-          version: "v3.16.0"
+          version: "v4.2.3"
 
       - name: Render template (default/nvflare)
         run: helm template trust-release deploy/providers/kubernetes/ > /dev/null
@@ -82,18 +101,34 @@ jobs:
             --set omopDb.external.host=test.example.com \
             > /dev/null
 
+      # FLIP-PT-091: the orthanc user map must stay a required secret reference.
+      # With optional: true, an install whose Secret lacks the key boots a PACS
+      # with no registered users instead of failing the pod.
+      - name: Orthanc registered-users secret ref stays required (FLIP-PT-091)
+        run: |
+          helm template trust-release deploy/providers/kubernetes/ \
+            --show-only templates/orthanc.yaml > orthanc.rendered.yaml
+          if ! grep -q 'key: orthanc-registered-users' orthanc.rendered.yaml; then
+            echo "::error::orthanc-registered-users secretKeyRef missing from the rendered manifest"
+            exit 1
+          fi
+          if grep -A5 'key: orthanc-registered-users' orthanc.rendered.yaml | grep -qE 'optional: *true'; then
+            echo "::error::the orthanc-registered-users secretKeyRef is optional again — a missing key would boot a userless PACS"
+            exit 1
+          fi
+
   kind-e2e:
     name: kind E2E
     runs-on: ubuntu-latest
     needs: [helm-lint, helm-template]
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Helm
         uses: azure/setup-helm@v4
         with:
-          version: "v3.16.0"
+          version: "v4.2.3"
 
       - name: Create kind cluster
         uses: helm/kind-action@v1

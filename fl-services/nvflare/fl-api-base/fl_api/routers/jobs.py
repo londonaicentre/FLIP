@@ -11,25 +11,27 @@
 #
 
 # Job functions: upload, monitor, delete and handle jobs
-from typing import Optional, Union
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, status
-from nvflare.fuel.hci.client.fl_admin_api import TargetType
 
 from fl_api.core.dependencies import get_session
 from fl_api.utils.flip_session import FLIP_Session
-from fl_api.utils.schemas import JobMetadata, JobStatus, normalize_status
+from fl_api.utils.schemas import JobMetadata, JobStatus, TargetType, normalize_status
 
 router = APIRouter()
 
 
 @router.post("/submit_job/{job_folder}")
-def submit_job(job_folder: str, session: FLIP_Session = Depends(get_session)) -> str:
+def submit_job(job_folder: UUID, session: FLIP_Session = Depends(get_session)) -> str:
     """
     Submits an existing job to the server.
 
     Args:
-        job_folder (str): folder where the job is located.
+        job_folder (UUID): The Central Hub model_id. The uploaded job lives in the folder
+            named after it (created by /upload_app/{model_id}), so the submit "job folder"
+            and the upload "model_id" are the same UUID; flip-api is the only caller.
+            FastAPI rejects any non-UUID path segment with 422 before this handler runs.
         session (FLIP_Session): FLIP session instance.
 
     Returns:
@@ -38,7 +40,7 @@ def submit_job(job_folder: str, session: FLIP_Session = Depends(get_session)) ->
     Raises:
         HTTPException: if the job submission fails due to any reason.
     """
-    return session.submit_job(job_folder)
+    return session.submit_job(str(job_folder))
 
 
 @router.get("/download_job/{job_id}")
@@ -59,9 +61,9 @@ def download_job(job_id: str, session: FLIP_Session = Depends(get_session)) -> s
 @router.get("/list_jobs", response_model=list[JobMetadata])
 def list_jobs(
     detailed: bool = False,
-    limit: Optional[int] = None,
-    id_prefix: Union[str, None] = None,
-    name_prefix: Union[str, None] = None,
+    limit: int | None = None,
+    id_prefix: str | None = None,
+    name_prefix: str | None = None,
     reverse: bool = False,
     session: FLIP_Session = Depends(get_session),
 ) -> list[JobMetadata]:
@@ -100,7 +102,7 @@ def list_jobs(
 def show_errors(
     job_id: str,
     target_type: TargetType,
-    targets: Optional[str] = None,
+    targets: str | None = None,
     session: FLIP_Session = Depends(get_session),
 ) -> dict:
     """
@@ -124,7 +126,7 @@ def show_errors(
 def show_stats(
     job_id: str,
     target_type: TargetType,
-    targets: Optional[str] = None,
+    targets: str | None = None,
     session: FLIP_Session = Depends(get_session),
 ) -> dict:
     """

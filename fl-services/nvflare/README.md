@@ -11,13 +11,35 @@
     limitations under the License.
 -->
 
-# NVFLARE Federated  Learning services
+# NVFLARE Federated Learning Services
 
 This folder contains base code to create NVIDIA FLARE federated learning networks, each containing a set of clients, a server and an API. `fl-api-base` and `fl-base` are base services used by the provisioning command to build upon. `fl-base` can be used to test applications locally, but is a single container that does not constitute a fully working FL network.
 
-This diagram provides an overview of the services:
+## Layout
 
-![FL Services Architecture](../assets/fl-services_overview.png)
+```text
+fl-services/nvflare/
+├── fl-base/          # base image for the server + clients      (flare-fl-base)
+├── fl-server/        # FLARE server image                       (flare-fl-server)
+├── fl-client/        # FLARE client image                       (flare-fl-client)
+├── fl-api-base/      # FastAPI admin-API image — see its README (flare-fl-api)
+├── provision/        # project YAMLs, scripts/, and the gitignored workspace-{dev,stag,prod}/ output
+├── compose.dev.yml   # build + standalone-run definitions for the four FL images
+├── Makefile          # this backend's build / provision / up / down / submit
+└── README.md
+```
+
+## Anatomy of a network
+
+A provisioned **network** (`net-N`) is a self-contained FLARE deployment. Each net runs:
+
+- **`fl-server`** (image `flare-fl-server`) — the single FLARE server that coordinates rounds and aggregates client updates.
+- **`fl-api`** (image `flare-fl-api`) — a FastAPI service wrapping the FLARE admin `Session`. The Central Hub drives the net **only** through this API (submit/abort jobs, poll server/client status). See [`fl-api-base/README.md`](./fl-api-base/README.md).
+- **`fl-client-1 … fl-client-N`** (image `flare-fl-client`) — one client per participating trust, each holding that trust's signed startup kit.
+
+`fl-base` and `fl-api-base` are the **base build contexts** the provisioning step layers on top of: `fl-base` backs the server and clients, `fl-api-base` backs the API. `fl-base` alone runs as a single container for local app testing, but is not a working FL network.
+
+Provisioning mints, per participant, a signed **startup kit** under `provision/workspace-dev/net-N/services/<participant>/` — a `startup/` folder (`root_CA.pem`, `signature.json`, `fed_*.json`, `*.crt`/`*.key`, `start.sh`/`sub_start.sh`/`stop_fl.sh`) and a `local/` folder. The shared root CA that signs these kits is what binds a net together — see [Step-by-step provisioning](#step-by-step-provisioning) below.
 
 ## Images: built in CI, or locally as `:dev`
 
@@ -45,11 +67,28 @@ make up DOCKER_FL_REGISTRY= DOCKER_FL_TAG=dev
 [`deploy/fl_backend.mk`](../../deploy/fl_backend.mk)). Note `make build` does **not** build these — the deploy
 compose pulls FL images by tag, so their build definitions live only in [`compose.dev.yml`](./compose.dev.yml).
 
+### Containers run as a non-root user (GHSA-8465)
+
+`fl-server`, `fl-client`, and `fl-base` run as a non-root user created from the `UID`/`GID`/`UNAME` build
+args (default `1000`/`1000`/`flip`; the dev compose overrides them with the host user so bind-mounted
+provision directories stay writable). Anywhere one of these containers bind-mounts a host path — a
+provisioned startup kit, the AWS SSO credential cache — that host path must already be owned by a uid the
+container can write, or the entrypoint fails (loudly, since the entrypoint scripts now exit non-zero when
+they can't write their generated config). Letting Docker auto-create the bind source leaves it root-owned
+and silently breaks the container. See `deploy/providers/AWS/TROUBLESHOOTING.md` for the failure mode and
+`deploy/providers/AWS/site.yml` / `deploy/providers/local/site_local_trust.yml` for how the provisioning
+Ansible pre-creates these paths with the right owner.
+
+**Upgrading an existing environment:** hosts that already ran the previous (root) images may have
+root-owned files under the kit's `local/` directory (e.g. `resources.json`, `log_config.json`), written by
+the old containers. The non-root entrypoint can't overwrite those in place — a one-time `chown -R` of the
+provisioned kit directories to the new container uid is needed before the first non-root run.
+
 ## Step-by-step provisioning
 
 ### Project yml file
 
-The per-environment project files in [`../../deploy/providers/nvflare/`](../../deploy/providers/nvflare/)
+The per-environment project files under [`provision/`](./provision/)
 (`net-1_project_dev.yml`, `net-2_project_dev.yml`, `net-1_project_stag.yml`, `net-1_project_prod.yml`)
 define the services available within a network. Modify the relevant one if you want to:
 
@@ -59,49 +98,192 @@ define the services available within a network. Modify the relevant one if you w
 
 ### Net-specific yml file
 
-You can run `make nvflare-provision NET_NUMBER=${NET_NUMBER}` to create a network: this will create an instance of the
+You can run `make -C fl-services/nvflare provision NET_NUMBER=${NET_NUMBER}` to create a network: this will create an instance of the
 services defined in `net-${NET_NUMBER}_project_dev.yml`, substituting the naming by `net-${NET_NUMBER}`.
 You can also pass `FL_PORT` if you do not want to use the default (which will be the same for each created net).
 
 ### Provisioning command
 
-This runs the `nvflare provision` CLI as part of `make nvflare-provision`. It is executed from the
-`fl-services/nvflare/fl-api-base` uv project (which declares `nvflare`), so it resolves even though the repo-root `flip`
-project has no dependencies. It creates the services defined in the net-specific yml file, initially under
-`deploy/workspace/net-${NET_NUMBER}/prod_XX`, with default names.
-Inside of these services, you should have at least a `local` and `startup` folder. The `startup` folder contains the
-scripts to start and stop the services (`start.sh`, `stop_fl.sh` etc.), as well as configuration files
-(`fed_[service_name].json`), and signature and certificate files.
-Once these service files are created, the signature and certificate files will link them together and make them not
-re-usable.
+`make -C fl-services/nvflare provision` wraps the `nvflare provision` CLI. It runs from the
+`fl-services/nvflare/fl-api-base` uv project (which declares `nvflare`), so it resolves even though
+the repo-root `flip` project has no dependencies. End to end, the target:
 
-After this command is run, the make command moves every service into `deploy/workspace/net-${NET_NUMBER}/services/`.
-Additionally, files that are not created by the `nvflare provision` command yet are crucial to run
-the services (e.g. Python API files for the Admin API) will be added from `fl-base` (for client and server) and
-`fl-api-base` (for API).
+1. **Generates the kits.** `nvflare provision` reads the net-specific yml and writes each
+   participant's startup kit under `provision/workspace-dev/net-${NET_NUMBER}/prod_XX/`, with default
+   names. Each kit has a `local/` and a `startup/` folder; `startup/` holds the start/stop scripts
+   (`start.sh`, `sub_start.sh`, `stop_fl.sh`), per-service config (`fed_[service_name].json`), and the
+   signature + certificate files. Those certs link the participants together and make the kits
+   **non-reusable** across nets.
+2. **Moves them into place.** The make target relocates every service into
+   `provision/workspace-dev/net-${NET_NUMBER}/services/`.
+3. **Adds the runtime code.** Files the `nvflare provision` CLI doesn't emit but the services still
+   need (e.g. the Admin API's Python files) are copied in from `fl-base` (server + clients) and
+   `fl-api-base` (API).
 
-Once your network is provisioned, you can test it works by running
+Once your network is provisioned, you can test it works by bringing the net up standalone (no hub/trusts)
+on the local `:dev` images — build them first with `make build-fl` (see [Images](#images-built-in-ci-or-locally-as-dev)):
 
 ```sh
-make up NET_NUMBER=<NET_NUMBER>
+make -C fl-services/nvflare up NET_NUMBER=<NET_NUMBER>
 ```
 
 ### Onboarding a new client onto an existing network
 
-To onboard a new client, the procedure would involve:
+The **default** is over-provisioning: stag/prod networks are minted up front with spare
+client slots. `make -C fl-services/nvflare provision-stag` / `provision-prod` mint
+`Trust_1 .. Trust_N` (default 50 / 500 — see
+[FLIP#626](https://github.com/londonaicentre/FLIP/issues/626)). Onboarding a new trust
+then just **claims the next unclaimed `Trust_N` kit** via `register_trust` on the hub —
+no provisioning step at all, provided the slot name is already in the hub's pool (see
+[Activating the new slot on the hub](#activating-the-new-slot-on-the-hub)).
 
-- Run Python `nvflare provision` on the same network-specific yml file that was used to create the FL network, but
-adding the new client on the yml file.
-- Extract the client's folder from the workspace (deleting everything else), restructure it to match every other
-client's and remove everything else that was created and left in the workspace (server, admin, other clients).
-- Replace the `rootCA.pem` from the client's `startup` folder by the server's `fl-server/startup/rootCA.pem` of the
-network the client belongs to.
-
-This should ensure that the client stays part of the network, without re-creating the other services or altering signed
-files.
-
-There is a helper Makefile target for this process (wrapping `deploy/providers/nvflare/scripts/provision-additional-client.sh`):
+Don't assume the spare pool exists — nets provisioned before FLIP#626 (including the
+current prod net-1) carry **no** spare slots. Check what is actually in S3 first:
 
 ```sh
-make nvflare-provision-additional-client NET_NUMBER=<NET_NUMBER>
+aws s3 ls s3://${AICENTRE_BUCKET_NAME}/fl-flare-participant-kits/${FLARE_KIT_DATE}/net-<N>/services/
+```
+
+When the spare pool runs dry (or never existed) — or for an ad-hoc dev add — add a
+single client **without disrupting the running federation** using the official
+`nvflare provision --add_client` flag:
+
+```sh
+make -C fl-services/nvflare provision-add-client      NET_NUMBER=1 CLIENT_NAME=Trust_3    # dev
+make -C fl-services/nvflare provision-add-client-stag NET_NUMBER=1 CLIENT_NAME=Trust_51   # stag workspace
+make -C fl-services/nvflare provision-add-client-prod NET_NUMBER=1 CLIENT_NAME=Trust_501  # prod workspace
+```
+
+This reuses the network's existing root CA (loaded from the preserved
+`workspace-<env>/net-N/state/`) to sign **only** the new client's kit, and leaves every
+already-onboarded participant's kit byte-identical — no re-provision, no CA rotation, no
+fleet-wide redeploy. The new kit lands in `workspace-<env>/net-N/services/<CLIENT_NAME>/`.
+
+**One-command path (stag/prod).** `make -C deploy/providers/AWS add-fl-kits N=<n>
+PROD=stag|true` runs this whole section end to end. `N` is a target ("ensure N more live
+slots"), not a mint count: it discovers the deployment's nets from S3, **activates** up
+to `N` existing spares first (env-file edit only — no CA workspace, no certs, no upload),
+and for any remaining shortfall restores + fingerprint-verifies each net's CA workspace
+and mints the next `Trust_<n>` names on **every** net (slot names are global across nets —
+see the hub section below), uploads only the new kits additively. When spares cover `N`
+nothing is minted and the CA workspace is never touched. It then appends the activated +
+minted names to `FL_KIT_SLOT_NAMES` in the env file and applies the
+`/flip/fl_kit_slot_names` SSM parameter (`make apply-fl-kit-slots`) so the slots are
+immediately claimable. The manual steps below are what it automates — use them for
+unusual cases (custom slot names, a single net).
+
+**Minting vs activating.** A kit existing in S3 and a slot being *claimable* are two
+different things: the hub only claims names listed in `FL_KIT_SLOT_NAMES` (via the SSM
+parameter). A net provisioned with spare kits therefore has kits no trust can claim, and
+those need **activating, not minting** — add the name to `FL_KIT_SLOT_NAMES`, run
+`make -C deploy/providers/AWS apply-fl-kit-slots PROD=…`, done (no certs, no upload, no
+restart). `add-fl-kits N=<n>` does this for you: it treats `N` as "ensure N more live
+slots" and activates up to `N` such spares (lowest-numbered first) before minting the
+shortfall, so a good kit is never stranded and, when spares cover `N`, nothing is minted
+at all.
+
+**CA-state custody.** The preserved `state/` is the hard prerequisite: it holds the root
+CA that signs the new kit. The workspace is gitignored, so it exists only in the checkout
+that provisioned (or last added to) the net. `upload-kits-to-s3` mirrors it to S3
+alongside the kits, so to add a client from a fresh checkout, restore the CA state and
+the server kit (the two things `add-client.sh` checks for) first:
+
+```sh
+aws s3 cp s3://${AICENTRE_BUCKET_NAME}/fl-flare-participant-kits/${FLARE_KIT_DATE}/net-<N>/state/ \
+  provision/workspace-<env>/net-<N>/state/ --recursive
+aws s3 cp s3://${AICENTRE_BUCKET_NAME}/fl-flare-participant-kits/${FLARE_KIT_DATE}/net-<N>/services/fl-server-net-<N>/ \
+  provision/workspace-<env>/net-<N>/services/fl-server-net-<N>/ --recursive
+```
+
+**Pushing the new kit to S3 (stag/prod).** Upload **additively** — only the new kit, plus
+a refresh of `state/cert.json` so the mirrored CA registry records the new identity for
+the next add-from-a-fresh-checkout:
+
+```sh
+aws s3 cp provision/workspace-<env>/net-<N>/services/<CLIENT_NAME>/ \
+  s3://${AICENTRE_BUCKET_NAME}/fl-flare-participant-kits/${FLARE_KIT_DATE}/net-<N>/services/<CLIENT_NAME>/ --recursive
+aws s3 cp provision/workspace-<env>/net-<N>/state/cert.json \
+  s3://${AICENTRE_BUCKET_NAME}/fl-flare-participant-kits/${FLARE_KIT_DATE}/net-<N>/state/cert.json
+```
+
+> ⚠️ Do **not** push a single added kit with `upload-kits-to-s3`. That target runs
+> `aws s3 sync --delete` over the **whole** `net-<N>/` prefix, so unless your local
+> workspace is a complete, byte-identical copy of everything in S3 (a fresh checkout
+> is not), it will **delete or overwrite the live kits of already-onboarded trusts**.
+> Reserve it for full (re-)provisions in a maintenance window.
+
+> ⚠️ Do **not** add a client by appending it to the project YAML and re-running
+> `make provision*`. Those targets `rm -rf` the workspace first (including `state/`), so
+> NVFLARE mints a fresh root CA and regenerates **every** participant's certs — forcing a
+> redeploy of every already-onboarded trust. `provision-add-client` preserves `state/`
+> and avoids that.
+>
+> To **grow the pool** itself you have two routes. **No disruption (preferred):** loop
+> `provision-add-client*` — each add reuses the existing root CA, so no already-onboarded
+> trust is touched; only the new slots are minted. **Bulk, but disruptive:** bump
+> `STAG_NUM_CLIENTS` / `PROD_NUM_CLIENTS` and re-provision out of band — one command, but it
+> wipes `state/`, rotates the root CA, and so **forces a redeploy of every already-onboarded
+> trust** (the same fleet-wide churn called out above). Only take this route in a maintenance
+> window where redeploying the whole fleet is acceptable, then re-upload:
+> `make -C fl-services/nvflare provision-prod PROD_NUM_CLIENTS=1000 && make -C fl-services/nvflare upload-kits-to-s3 PROD=true`.
+
+### Activating the new slot on the hub
+
+A kit in S3 is not yet claimable. `register_trust` claims rows from the hub's
+`fl_kit_slot` DB pool (`flip_api/db/seed/fl_kit_slots.py` — additive; it never deletes or
+re-assigns rows, so existing trust↔slot bindings are safe). One pool row covers **all**
+nets — every net carries a kit per slot name, which is why the minting steps above run
+per net. The pool is seeded at flip-api boot and **reconciled on demand**: when a
+registration finds the pool exhausted, flip-api re-reads the configured slot list,
+additively inserts any new names, and retries the claim; only if the pool is still empty
+does it fail with `NoFreeKitSlotError: "No FL kit slots available…"`. The configured
+list has a single source per environment (`resolve_fl_kit_slot_names`):
+
+- **Dev**: the `FL_KIT_SLOT_NAMES` env var (a `DevSettings`-only field). Add the name to
+  `.env.development` and restart flip-api (settings load once per process).
+- **Stag/prod (ECS)**: the **`/flip/fl_kit_slot_names` SSM parameter** — the only
+  production source (the list is plain configuration, not a secret, and there is
+  deliberately no env fallback: a broken or missing parameter means the pool can't grow,
+  loudly, rather than silently serving stale env values). Add the name to
+  `FL_KIT_SLOT_NAMES` in `.env.stag` / `.env.production` and run
+  `make -C deploy/providers/AWS apply-fl-kit-slots PROD=stag|true` — a targeted
+  plan/apply of just that parameter, with a plain-text diff you can review. **No
+  restart, no task-definition change**: the next registration reconciles the pool from
+  the parameter. (`make add-fl-kits` runs this step for you.)
+
+> **The env file must stay a superset of every name ever activated.** Pool rows are
+> never deleted, and `add-fl-kits` detects spares purely as *minted-in-S3 on every net
+> but absent from `FL_KIT_SLOT_NAMES`* — it cannot see the hub's `fl_kit_slot` table. If
+> a previously-activated name drops out of the env file (a restored or hand-edited
+> copy), the script "activates" it again: the run reports success, the reconcile inserts
+> nothing (the row already exists — possibly assigned to a live trust), and **zero
+> claimable capacity is added**, so the next registration still fails with
+> `NoFreeKitSlotError`. Treat the `FL_KIT_SLOT_NAMES` list as append-only — `N` means
+> "N more live slots" only while that invariant holds.
+
+Then `make register-trust KIT=<CODE>` (see the
+[root README](../../README.md#trust-registration)) claims the slot — registration writes
+the claimed `FL_KIT_SLOT` / `FL_KIT_SLOT_NUMBER` into the trust's kit file, and the
+trust-host deploy pulls that kit from the S3 path above.
+
+> Flower caveat: the dynamic path is NVFLARE-only. Flower's per-slot SuperNode key
+> labelling reads `TRUST_NAMES` at net startup, so a slot added at runtime isn't usable
+> on a running Flower net until its containers are recreated.
+
+## Standalone targets
+
+This backend's [`Makefile`](./Makefile) owns its own `build`/`provision`/`up`/`down`/`submit`. To run
+**one provisioned net** on its own — no Central Hub, no trusts — on the local `:dev` images:
+
+```sh
+make -C fl-services/nvflare up NET_NUMBER=<N>     # fl-server + fl-api + 2 clients
+make -C fl-services/nvflare down                  # tear it down
+```
+
+`make -C fl-services/nvflare submit` is **intentionally not wired** for NVFLARE: job submission goes
+through the provisioned FLARE admin API, not a simple HTTP POST (unlike Flower's `submit`). To run a
+job standalone, use the simulator harness instead:
+
+```sh
+make -C fl-tutorials run-tutorial TUTORIAL=<name>
 ```

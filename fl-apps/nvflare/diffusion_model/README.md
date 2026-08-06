@@ -13,6 +13,9 @@
 
 # Latent diffusion model
 
+> **Note:** this is the legacy Executor-based job type. The NVFLARE **Client API**
+> counterpart is [`diffusion_model_client_api`](../diffusion_model_client_api/README.md).
+
 This app allows to train a two-stage diffusion model from a single validator and trainer file.
 The `scatter_and_gather` function has been modified to persist the first stage (autoenocder-like network) to train the second stage (diffusion model).
 
@@ -28,15 +31,17 @@ Two stages run back to back: the autoencoder (`_ae`) is trained and validated fi
 
 1. `init_training` — `flip.nvflare.controllers.InitTraining`
 2. `scatter_and_gather_ae` — `flip.nvflare.controllers.ScatterAndGatherLDM` (stage 1: autoencoder)
-3. `cross_site_validate_ae` — `flip.nvflare.controllers.CrossSiteModelEval`
-4. `scatter_and_gather_dm` — `flip.nvflare.controllers.ScatterAndGatherLDM` (stage 2: diffusion)
-5. `cross_site_validate_dm` — `flip.nvflare.controllers.CrossSiteModelEval`
+3. `cross_site_validate_ae` — stock `nvflare.app_common.workflows.global_model_eval.GlobalModelEval`
+4. `post_validation_cleanup_ae` — `flip.nvflare.controllers.BroadcastTask`
+5. `scatter_and_gather_dm` — `flip.nvflare.controllers.ScatterAndGatherLDM` (stage 2: diffusion)
+6. `cross_site_validate_dm` — stock `nvflare.app_common.workflows.global_model_eval.GlobalModelEval`
+7. `post_validation_cleanup_dm` — `flip.nvflare.controllers.BroadcastTask`
 
 **Client — `config_fed_client.json` `executors` (by task):**
 
 - `init_training`, `post_validation` → `flip.nvflare.components.CleanupImages`
 - `train_ae` → `flip.nvflare.executors.RUN_TRAINER`
-- `train_dm`, `submit_model` → `flip.nvflare.executors.RUN_TRAINER`
+- `train_dm` → `flip.nvflare.executors.RUN_TRAINER`
 - `validate_ae` → `flip.nvflare.executors.RUN_VALIDATOR`
 - `validate_dm` → `flip.nvflare.executors.RUN_VALIDATOR`
 

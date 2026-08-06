@@ -18,6 +18,7 @@ import numpy as np
 from nvflare.apis.dxo import DXO, DataKind, MetaKey
 
 from flip.constants import FlipMetaKey
+from flip.nvflare.components.custom_percentile_privacy import PercentilePrivacy
 from flip.nvflare.components.stage_percentile_privacy import StagePercentilePrivacy
 
 
@@ -26,6 +27,12 @@ class TestStagePercentilePrivacy:
         self.fl_ctx = MagicMock()
         self.fl_ctx.get_peer_context.return_value = None
         self.shareable = MagicMock()
+
+    def test_subclasses_flip_percentile_privacy(self):
+        """De-fork guard: inherits FLIP's PercentilePrivacy __init__/off (and, transitively, stock)
+        while keeping its own per-stage process_dxo."""
+        assert issubclass(StagePercentilePrivacy, PercentilePrivacy)
+        assert isinstance(StagePercentilePrivacy(), PercentilePrivacy)
 
     def test_init_default_values(self):
         f = StagePercentilePrivacy()
@@ -176,4 +183,56 @@ class TestStagePercentilePrivacy:
 
         # Scalar: delta_w = 1.0/5 = 0.2, then multiplied back: 0.2 * 5 = 1.0
         assert result is not None
+
+    def test_every_stage_filtering_survives(self):
+        """Each stage's zeroing must survive into the final DXO — a later stage must not reset an
+        earlier stage's filtered params back to their raw values (the pre-fix behaviour rebuilt the
+        whole delta dict per stage, so only the last stage's filtering was kept)."""
+        f = StagePercentilePrivacy(percentile=50, gamma=10.0)
+        weights = {
+            "encoder.w": np.array([0.001, 0.002, 1.0, 2.0]),
+            "decoder.w": np.array([0.003, 0.004, 3.0, 4.0]),
+        }
+        dxo = DXO(data_kind=DataKind.WEIGHT_DIFF, data=weights)
+        dxo.set_meta_prop(MetaKey.NUM_STEPS_CURRENT_ROUND, 1)
+        dxo.set_meta_prop(FlipMetaKey.STAGE, [["encoder"], ["decoder"]])
+
+        result = f.process_dxo(dxo, self.shareable, self.fl_ctx)
+
         assert result is not None
+        # Both stages: the two small components sit below their stage's 50th-percentile cutoff
+        # and must be zeroed; the two large ones survive (clipped to gamma=10, i.e. unchanged).
+        np.testing.assert_array_equal(result.data["encoder.w"], np.array([0.0, 0.0, 1.0, 2.0]))
+        np.testing.assert_array_equal(result.data["decoder.w"], np.array([0.0, 0.0, 3.0, 4.0]))
+
+    def test_params_outside_all_stages_pass_through_untouched(self):
+        """Params not matched by any stage keep their exact values — the pre-fix behaviour left them
+        divided by NUM_STEPS_CURRENT_ROUND (silent shrink for total_steps > 1)."""
+        f = StagePercentilePrivacy(percentile=50, gamma=10.0)
+        untouched = np.array([0.5, -0.5])
+        weights = {
+            "encoder.w": np.array([0.001, 1.0]),
+            "frozen.w": untouched.copy(),
+        }
+        dxo = DXO(data_kind=DataKind.WEIGHT_DIFF, data=weights)
+        dxo.set_meta_prop(MetaKey.NUM_STEPS_CURRENT_ROUND, 4)
+        dxo.set_meta_prop(FlipMetaKey.STAGE, [["encoder"]])
+
+        result = f.process_dxo(dxo, self.shareable, self.fl_ctx)
+
+        assert result is not None
+        np.testing.assert_array_equal(result.data["frozen.w"], untouched)
+
+    def test_stage_matching_no_params_is_skipped(self):
+        """A stage that matches no parameters is skipped instead of crashing on an empty
+        percentile input."""
+        f = StagePercentilePrivacy(percentile=50, gamma=10.0)
+        weights = {"encoder.w": np.array([0.001, 1.0])}
+        dxo = DXO(data_kind=DataKind.WEIGHT_DIFF, data=weights)
+        dxo.set_meta_prop(MetaKey.NUM_STEPS_CURRENT_ROUND, 1)
+        dxo.set_meta_prop(FlipMetaKey.STAGE, [["encoder"], ["no_such_module"]])
+
+        result = f.process_dxo(dxo, self.shareable, self.fl_ctx)
+
+        assert result is not None
+        np.testing.assert_array_equal(result.data["encoder.w"], np.array([0.0, 1.0]))

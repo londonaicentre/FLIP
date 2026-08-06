@@ -13,37 +13,49 @@
 # limitations under the License.
 #
 
-FROM flwr/base:${FLWR_VERSION:-1.27.0-py3.12-ubuntu24.04} AS base
+FROM flwr/base:${FLWR_VERSION:-1.32.0-py3.12-ubuntu24.04} AS base
 
+ARG LOCAL_DEV=false
 WORKDIR /app
 
-# Copy only what we need for dependency install (keeps build cache efficient)
-COPY --chown=app:app tutorials/3d_spleen_segmentation/pyproject.toml .
-
-# Only the non-Flower dependencies are needed.
-# Remove the flwr[simulation] dependency from pyproject.toml before installing, since it's only needed for the
-# simulation service, and would pull in extra dependencies that aren't needed for the API service.
+# Install flip-utils from the IN-REPO source (build context = repo root). This
+# replaces two older mechanisms now that flip-utils lives in this monorepo:
+#   * the install of deps from one hard-coded tutorial pyproject.toml (footgun #37), and
+#   * the `fliputils_dist` external-wheel `development` target (now deprecated).
+# It is installed into flwr/base's own Python so the `flwr` CLI and the `flip`
+# package coexist. The `full` extra brings the ML deps Flower apps need
+# (torch/MONAI/etc.); flip-utils' readme points at docs/overview.rst and its
+# version at flip/__init__.py, so both are copied.
+#
+# The source is kept at /opt/flip-utils after the install: Flower's runtime
+# dependency installer (`uv sync` on every app launch) resolves the fl-apps
+# templates' `[tool.uv.sources] flip-utils = { path = "/opt/flip-utils" }`
+# against this copy, so FL runs always execute the in-repo flip-utils rather
+# than a PyPI release (#767). Removing this directory fails the launch of
+# every platform app (each fl-apps template pins it).
 #
 # --extra-index-url points pip at PyTorch's CUDA-12.8 wheel index. Combined with
-# the pyproject pin "torch>=2.10.0,<2.12", pip picks torch 2.11.0+cu128 (the
-# highest cu128 build, and the highest torch that runs on the host NVIDIA
-# driver 575.x — CUDA-13 wheels need driver >=580). All other deps still
-# resolve from PyPI as normal. Re-evaluate the upper bound when the trust
-# hosts upgrade their drivers and a newer cu12x or cu13x build becomes safe.
-RUN sed -i 's/.*flwr\[simulation\].*//' pyproject.toml \
-  && python -m pip install -U --no-cache-dir . \
-       --extra-index-url https://download.pytorch.org/whl/cu128
+# flip-utils' "torch>=2.11,<2.12" pin, pip picks torch 2.11.x+cu128 — the highest
+# torch that runs on the host NVIDIA driver 575.x (cu13 wheels need driver >=580).
+# COPY's default root ownership is deliberate: user-submitted apps execute in
+# this container as the same non-root `app` user that flwr/base runs as, so an
+# app-writable copy could be mutated by app code, poisoning what later runs in
+# the container resolve. Root-owned, the tree is read-only to `app` — enough
+# for the pip install below and the per-run uv builds, which only read it
+# (flip-utils' hatchling backend builds in temp dirs, never the source tree).
+COPY flip-utils/pyproject.toml flip-utils/README.md /opt/flip-utils/
+COPY flip-utils/docs/ /opt/flip-utils/docs/
+COPY flip-utils/flip/ /opt/flip-utils/flip/
+# flwr/base ships flwr==1.32.0, which pins cryptography>=46.0.7,<47.0.0 (GHSA-537c-gmf6-5ccf
+# needs >=48.0.1). This is a plain `pip install`, not a `uv sync`, so the
+# `[tool.uv] override-dependencies` escape hatch used in fl-api-flower/pyproject.toml
+# doesn't apply here — listing cryptography directly on the install line is the pip
+# equivalent, forcing the upgrade past flwr's declared ceiling. Safe for the same reason
+# recorded there: flwr only uses cryptography for TLS cert loading in secure aggregation,
+# a stable surface across majors.
+RUN python -m pip install -U --no-cache-dir "/opt/flip-utils[full]" "cryptography>=50.0.0" \
+      --extra-index-url https://download.pytorch.org/whl/cu128
 
-# Copy register-supernode-keys.sh
-COPY --chown=app:app fl_services/register-supernode-keys.sh /scripts/register-supernode-keys.sh
-
-FROM base AS development
-
-COPY --from=fliputils_dist *.whl /wheels/
-
-# NOTE use --force-reinstall to always replace installed flip-utils from 'base' even if the version is unchanged
-# This allows us to overwrite the flip-utils package in 'base' (PyPI version) with the local dev version
-RUN python -m pip install --no-cache-dir --force-reinstall /wheels/*.whl
-
-FROM base AS production
-# base already ran `pip install .` so flip-utils comes from PyPI
+# Copy register-supernode-keys.sh (used by the secure / central-hub topology to
+# register SuperNode public keys with the SuperLink).
+COPY --chown=app:app fl-services/flower/register-supernode-keys.sh /scripts/register-supernode-keys.sh

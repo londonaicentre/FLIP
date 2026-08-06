@@ -14,7 +14,7 @@
 # Chest-X-ray multi-lesion classification (Flower)
 
 Flower port of the chest-X-ray tutorial that lives at
-`flip-fl-base/tutorials/image_classification/xray_classification`. It scores
+`fl-tutorials/nvflare/image_classification/xray_classification`. It scores
 every X-ray against the lesions named in `app/config.json` (Effusion + Edema
 by default, with "Lungs in normal arrangement" as a negative override) using
 a MONAI DenseNet121 trained with multi-label BCE.
@@ -28,7 +28,7 @@ and matches the chest-X-ray data seeded into the trust mock OMOP DB
 
 ```
 xray_classification/
-├── query.sql                  # Cohort SQL — verbatim from flip-fl-base
+├── query.sql                  # Cohort SQL — verbatim from the NVFLARE tutorial
 ├── pyproject.toml             # Dependency manifest; not consumed by FLIP (base bundle wins)
 ├── README.md
 └── app/
@@ -40,13 +40,14 @@ xray_classification/
     ├── transforms.py          # MONAI X-ray transforms
     ├── models.py              # DenseNet121
     ├── loss_and_metrics.py    # BCE loss + per-lesion P/R/F1
-    ├── server_app.py          # symlink → ../../../src/standard/app/server_app.py
-    └── strategy.py            # symlink → ../../../src/standard/app/strategy.py
+    ├── server_app.py          # copy of fl-apps/flower/standard/app/server_app.py
+    └── strategy.py            # copy of fl-apps/flower/standard/app/strategy.py
 ```
 
-`server_app.py` and `strategy.py` are symlinks to the canonical base bundle in
-`src/standard/app/`. They exist only so that `flwr run` from this tutorial
-can resolve `app.server_app` / `app.strategy` locally — FLIP's
+`server_app.py` and `strategy.py` are copies of the canonical `standard`
+Flower base bundle at [`fl-apps/flower/standard/app/`](../../../fl-apps/flower/standard/app).
+They live here so that `flwr run` from this tutorial can resolve
+`app.server_app` / `app.strategy` locally — FLIP's
 `bundle_flower_application` overlays the same base files at deploy time, so
 the upload flow is unaffected.
 
@@ -68,13 +69,14 @@ make up                   # start fl-api, superlink, supernode-1, supernode-2
 Then submit the run against the `fl-api` control plane:
 
 ```bash
-curl -X POST http://localhost:8000/submit_run/xray_classification
+curl -X POST http://localhost:8000/submit_tutorial/xray_classification
 ```
 
-The compose file (`deploy/compose.yml`) wires everything correctly:
+The dev compose stack (`deploy/compose.development.yml` +
+`deploy/compose.development.flower.yml`) wires everything correctly:
 
 - `DEV_DATAFRAME`, `DEV_IMAGES_DIR`, `WORKING_DIR`
-  are resolved from `.env.flwr.development` (read by Docker Compose as the
+  are resolved from `.env.development` (read by Docker Compose as the
   `${VAR}` substitutions in each service's `volumes:` block) and bind-mounted
   into the SuperNode and SuperLink containers — one source of truth for paths.
 - Inside the containers the mounts always land at stable locations

@@ -14,7 +14,7 @@ from uuid import UUID
 
 from sqlmodel import Session, select
 
-from flip_api.db.database import engine
+from flip_api.db.database import get_engine
 from flip_api.db.models.user_models import Permission, PermissionRef, Role, RolePermission
 from flip_api.db.seed.seed_logger import logger
 
@@ -82,7 +82,7 @@ def seed_role_permissions(session: Session) -> None:
 
 
 if __name__ == "__main__":
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         seed_role_permissions(session)
         logger.info("Role permissions seeding completed.")
         session.close()

@@ -7,7 +7,7 @@ About flip-utils
 ``flip-utils`` is the pip-installable distribution published from this
 repository. Its Python import package is ``flip``, which contains the shared
 platform logic used by FLIP jobs and services including core training logic,
-NVFLARE components, and utility helpers.
+NVFLARE components, Flower helpers, and utility helpers.
 
 The FLIP platform uses this package to power federated learning applications
 across multiple job types: standard federated training, distributed evaluation,
@@ -75,7 +75,16 @@ The ``flip`` package is organized into logical modules:
    - ``executors/`` — RUN_TRAINER, RUN_VALIDATOR, RUN_EVALUATOR wrappers
    - ``controllers/`` — Workflow controllers (ScatterAndGather, CrossSiteModelEval, etc.)
    - ``components/`` — Event handlers, persistors, privacy filters, model locators, etc.
+   - ``recipes/`` — High-level NVFLARE job recipes
+   - ``runtime.py`` — Runtime helpers for NVFLARE apps
    - ``metrics.py`` — Metrics collection and reporting
+
+``flip.flower``
+   Flower-specific helpers:
+
+   - ``strategy.py`` — Flower ``Strategy`` implementations (e.g. ``FedAvgWithClientMetrics``)
+   - ``metrics.py`` — Server-side metrics collection and reporting for Flower runs
+   - ``progress.py`` — Progress/status reporting helpers for Flower runs
 
 
 Using the FLIP Factory
@@ -98,23 +107,37 @@ See the API reference for detailed method documentation.
 Job Types
 ---------
 
-Set the job type via the ``JOB_TYPE`` environment variable:
+Pass the job type to the ``FLIP()`` factory (``FLIP(job_type=...)``). The
+``JobType`` enum (``flip.constants.job_types``) defines the values recognised by
+``FLIP()``:
 
-====================  ====================================================================================
-Type                  Description
-====================  ====================================================================================
-``standard``          Federated training with FedAvg aggregation (default)
-``evaluation``        Distributed model evaluation without training
-``diffusion_model``   Two-stage training: VAE encoder followed by diffusion model training
-``fed_opt``           Custom federated optimization with flexible aggregation strategies
-====================  ====================================================================================
+===========================  ====================================================================================
+Type                         Description
+===========================  ====================================================================================
+``standard``                 Federated training with FedAvg aggregation (default)
+``evaluation``               Distributed model evaluation without training
+``diffusion_model``          Two-stage training: VAE encoder followed by diffusion model training
+``fed_opt``                  Custom federated optimization with flexible aggregation strategies
+===========================  ====================================================================================
+
+The NVFLARE backend additionally ships template directories under
+``fl-apps/nvflare/`` for the Client-API variants (``standard_client_api``,
+``evaluation_client_api``); these are selected as app templates and are not
+``JobType`` enum values. The Flower backend ships its own ``standard`` and
+``evaluation`` templates under ``fl-apps/flower/`` — selected at the deploy
+layer by ``FL_BACKEND=flower``.
 
 
 User Application Requirements
 -----------------------------
 
-User-provided application code goes in the job's ``custom/`` directory. The
-executor wrappers dynamically import these files:
+The executor wrappers dynamically import user-provided code from the job's
+``custom/`` directory. For most templates that directory is materialised at
+run time by the tutorial harness
+(``fl-tutorials/nvflare/testing/app_organiser.sh``), which copies each file
+from the tutorial's ``app_files/`` into ``./tmp/app/custom/``; the
+``diffusion_model`` template already carries a git-tracked ``custom/`` with
+baseline files that the same overlay extends.
 
 ====================  ================================================================
 File                  Description
@@ -139,15 +162,23 @@ To test FL applications locally before deploying to production:
       LOCAL_DEV=true
       DEV_IMAGES_DIR=../data/accession-resources
       DEV_DATAFRAME=../data/sample_get_dataframe.csv
-      JOB_TYPE=standard
 
-2. Place your application files in ``fl-apps/nvflare/<JOB_TYPE>/app/custom/`` (e.g. fl-apps/nvflare/standard/app/custom/).
+2. Place your application files in the tutorial's ``app_files/`` directory
+   (e.g. ``fl-tutorials/nvflare/image_classification/xray_classification/app_files/``).
+   At run time the harness copies them into ``./tmp/app/custom/`` on top of the
+   matching ``fl-apps/nvflare/<template>/app/`` template.
 
-3. Run the simulator in Docker:
+3. Run one of the shipped tutorials against the NVFLARE simulator from the repository root:
 
    .. code-block:: bash
 
-      make run-container
+      make -C fl-tutorials run-tutorial TUTORIAL=xray_classification
+      # list every available tutorial with:
+      make -C fl-tutorials list-tutorials
+
+   The simulator harness is documented in ``fl-tutorials/nvflare/testing/`` and is driven per-tutorial
+   via that tutorial's ``.env.app``. See ``fl-services/nvflare/README.md`` for building the local
+   ``:dev`` FL images the harness uses.
 
 
 Running Tests
@@ -167,18 +198,19 @@ Tests use pytest with coverage reporting and are located in ``tests/unit/``.
 Building the Docs Locally
 --------------------------
 
-From the repository root, run:
+``flip-utils`` is documented as part of the FLIP documentation. From the
+repository root, run:
 
 .. code-block:: bash
 
-   make docs
+   cd docs && make docs
 
-The generated HTML site will be written to ``docs/_build/html``. To clean
+The generated HTML site will be written to ``docs/build/html``. To clean
 previous builds:
 
 .. code-block:: bash
 
-   make docs-clean
+   cd docs && make clean
 
 
 How the API Reference is Generated
@@ -191,5 +223,6 @@ the built documentation for complete coverage of all public classes and function
 
 .. note::
 
-   The flip-fl-base repository has been merged into the FLIP monorepo.
-   The ``flip-utils`` package lives under ``flip-utils/`` in the `FLIP repository <https://github.com/londonaicentre/FLIP>`_.
+   The ``flip-utils`` package lives under ``flip-utils/`` in the `FLIP repository
+   <https://github.com/londonaicentre/FLIP>`_, and its documentation is published as part of the
+   `FLIP documentation <https://londonaicentreflip.readthedocs.io/en/latest/>`_.

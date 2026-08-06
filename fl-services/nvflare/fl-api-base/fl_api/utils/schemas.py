@@ -12,7 +12,6 @@
 
 import time
 from enum import Enum, IntEnum, StrEnum
-from typing import Dict, List, Optional
 
 from pydantic import BaseModel
 
@@ -26,8 +25,8 @@ class UploadAppRequest(BaseModel):
 
     project_id: str
     cohort_query: str
-    trusts: List[str]
-    bundle_urls: List[str]
+    trusts: list[str]
+    bundle_urls: list[str]
 
 
 class ServerInfoModel(BaseModel):
@@ -67,8 +66,8 @@ class SystemInfoModel(BaseModel):
     """Pydantic model for system information. Combines server info, client info, and job info into a single model."""
 
     server_info: ServerInfoModel
-    client_info: List[ClientInfoModel]
-    job_info: List[JobInfoModel]
+    client_info: list[ClientInfoModel]
+    job_info: list[JobInfoModel]
 
     def __str__(self) -> str:
         client_info_str = "\n".join(map(str, self.client_info))
@@ -99,12 +98,40 @@ class TrainingRound(IntEnum):
     MAX = 1000
 
 
+class TargetType(StrEnum):
+    """System target for admin operations (restart/shutdown), used as a FastAPI path param.
+
+    NVFLARE 2.8.0 removed the deprecated ``nvflare.fuel.hci.client.fl_admin_api`` tree, which
+    previously exported ``TargetType`` as a ``(str, Enum)``. Its successor,
+    ``nvflare.fuel.flare_api.api_spec.TargetType``, is a plain class (bare string class-attrs) that
+    FastAPI rejects as a path-param annotation. We therefore re-declare it locally as a ``StrEnum``,
+    preserving the original wire contract: the member values are exactly the ``"all"``/``"server"``/
+    ``"client"`` strings that ``flare_api.Session.restart``/``shutdown`` validate against.
+    """
+
+    ALL = "all"
+    SERVER = "server"
+    CLIENT = "client"
+
+
 class IOverridableConfig(BaseModel):
-    LOCAL_ROUNDS: Optional[int] = None
-    GLOBAL_ROUNDS: Optional[int] = None
-    IGNORE_RESULT_ERROR: Optional[bool] = None
-    AGGREGATOR: Optional[str] = None
-    AGGREGATION_WEIGHTS: Optional[Dict[str, float]] = None
+    LOCAL_ROUNDS: int | None = None
+    GLOBAL_ROUNDS: int | None = None
+    IGNORE_RESULT_ERROR: bool | None = None
+    AGGREGATOR: str | None = None
+    AGGREGATION_WEIGHTS: dict[str, float] | None = None
+    # Regex of model-parameter names to KEEP in each per-round client update. When set, a
+    # KeepOnlyVars task_result_filter is injected client-side so only matching (trainable) params
+    # are sent — e.g. a frozen-backbone fine-tune sends just its head, avoiding the large-payload
+    # uplink timeout (FLIP#684). Unset (default) = full-model update, unchanged behaviour.
+    AGGREGATE_ONLY_REGEX: str | None = None
+    # Validation-metric label driving best-global-model selection. When set, a stock
+    # IntimeModelSelector is injected server-side so the best global model is saved alongside the
+    # final one (FLIP#673); the client trainer must report this metric on its returned FLModel.
+    # Unset (default) = no selector, only the final model is saved.
+    BEST_MODEL_METRIC: str | None = None
+    # Whether lower metric values are better (loss-like). Negates the selector's key metric.
+    BEST_MODEL_METRIC_MINIMIZE: bool = False
 
 
 class JobStatus(StrEnum):
@@ -128,7 +155,7 @@ class JobMetadata(BaseModel):
 
 
 # NVFLARE RunStatus (nvflare/apis/job_def.py) -> normalized contract status.
-_NVFLARE_STATUS_MAP: Dict[str, JobStatus] = {
+_NVFLARE_STATUS_MAP: dict[str, JobStatus] = {
     "SUBMITTED": JobStatus.PENDING,
     "APPROVED": JobStatus.PENDING,
     "DISPATCHED": JobStatus.PENDING,

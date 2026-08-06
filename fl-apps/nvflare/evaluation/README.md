@@ -42,13 +42,21 @@ and retrieves a DXO with the metrics.
 - `models.py`: this contains the code to instance the model(s) that are to be tested.
 - [checkpoints]: any model has to have its checkpoint uploaded under `pt` format.
 - `transforms.py`: support file to define data transforms and other data related thing.
-- `config.json`: configuration for the model. The following fields are required in this pipeline:
+- `config.json`: configuration for the model. The following field is required in this pipeline:
   - `models`. For each element of this class, `checkpoint` and `path` are mandatory. Checkpoint is the name of the
     pt file for this specific model. 'path' is the key to the function that defines this model in `models.py`
     (in dictionary `model_paths`).
-  - `evaluation_output`: this is the skeletton of the evaluation output, defining, the output that you'll get
-    for each model. Your evaluator.py output will be checked against this, to ensure that additional fields are not
-    being added. All results should be floats (no text can be passed).
+
+  `evaluator.py` may return any JSON-serialisable metrics (for example a dict of floats and/or lists of floats);
+  they are saved verbatim into `evaluation_results.json`, keyed by data site (then by the model name your
+  evaluator returns), so there is no output schema to declare.
+
+  Every `validate` task that does not return metrics is recorded alongside it in
+  `evaluation_failures.json` as `{"model": ..., "client": ..., "return_code": ...}` (`model` is `null`
+  here — this job type sends all models in one task, so failures are per client). The file is always
+  written, so an empty list `[]` positively means no task failed. If **every** task fails, the model
+  ends in `ERROR` rather than `RESULTS_UPLOADED`; the results are still uploaded so the zip can carry
+  `evaluation_failures.json` and `error_log.txt`.
 
 ## Test it with the spleen MSD dataset
 

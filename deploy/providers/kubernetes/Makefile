@@ -67,7 +67,6 @@ deploy: preflight ## Deploy the Helm chart to the cluster
 	$(HELM) upgrade --install $(RELEASE_NAME) $(CHART_DIR) \
 		--namespace $(NAMESPACE) \
 		--timeout 20m \
-		--force-conflicts \
 		$(VALUES_OPTS)
 
 undeploy: ## Remove the Helm release from the cluster
@@ -81,8 +80,13 @@ down: undeploy ## Tear down the trust K8s release (alias for undeploy)
 
 deploy-trust-k8s: ## Deploy trust services to K8s; KIT= selects the per-trust override file and re-patches secrets
 ifdef KIT
-	@$(MAKE) deploy OVERRIDES_FILE=$(CHART_DIR)/k8s-trust-$(KIT).yaml
-	@$(MAKE) patch-kit-secrets KIT=$(KIT)
+	@rc=0; \
+	$(MAKE) deploy OVERRIDES_FILE=$(CHART_DIR)/k8s-trust-$(KIT).yaml || rc=$$?; \
+	if [ $$rc -ne 0 ]; then \
+		echo "⚠️  deploy returned non-zero ($$rc) — often a non-fatal post-install hook (e.g. xnat-init — see #565), but it may be a genuine Helm failure. Patching per-trust secrets first so trust-api gets the correct key and does not poll with the stale seed key (#595), then re-exiting with the deploy status."; \
+	fi; \
+	$(MAKE) patch-kit-secrets KIT=$(KIT); \
+	exit $$rc
 else
 	@$(MAKE) deploy
 endif
@@ -184,12 +188,13 @@ patch-kit-secrets: ## Patch per-trust secrets from kit file into the cluster Sec
 		--env $(ENV) \
 		--namespace $(NAMESPACE) \
 		--secret-name $(RELEASE_NAME)-flip-trust-secrets \
+		--release-name $(RELEASE_NAME) \
 		--output-dir $(CHART_DIR) \
 		--no-write-override
-	@for svc in trust-api data-access-api imaging-api imaging-import-worker; do \
+	@for svc in trust-api data-access-api imaging-api; do \
 		kubectl rollout restart deployment/$(RELEASE_NAME)-flip-trust-$$svc -n $(NAMESPACE); \
 	done
-	@for svc in trust-api data-access-api imaging-api imaging-import-worker; do \
+	@for svc in trust-api data-access-api imaging-api; do \
 		kubectl rollout status deployment/$(RELEASE_NAME)-flip-trust-$$svc -n $(NAMESPACE) --timeout=120s; \
 	done
 
@@ -200,4 +205,5 @@ sync-kit: ## Sync a registered trust KIT into the cluster (patches Secret + writ
 		--env $(ENV) \
 		--namespace $(NAMESPACE) \
 		--secret-name $(RELEASE_NAME)-flip-trust-secrets \
+		--release-name $(RELEASE_NAME) \
 		--output-dir $(CHART_DIR)

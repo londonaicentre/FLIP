@@ -16,6 +16,8 @@
 #
 #   make download-xray-data                       # fetch the x-ray dataset from HF
 #   make download-spleen-data                      # fetch + build the MSD spleen dataset
+#   make download-arkplus-finetuning-data          # fetch the Ark+ train splits from HF
+#   make download-arkplus-eval-data                # fetch the Ark+ hold-out splits from HF
 #   make list-tutorials
 #   make run-tutorial TUTORIAL=xray_classification
 #   make run-all-tutorials      # runs every tutorial (heavy; stops on first failure)
@@ -25,12 +27,17 @@
 #   - xray_classification: reference dataset from Hugging Face (download-xray-data)
 #   - the three spleen tutorials (segmentation / evaluation / synthesis) share the MSD
 #     spleen dataset (download-spleen-data); override case count with NUM_CASES=<n>.
+#   - the three Ark+ tutorials share aicentreflip/tutorials-arkplus-cxr-classification:
+#     arkplus_fine_tuning uses download-arkplus-finetuning-data (data/arkplus/site{1,2}/); the two
+#     Ark+ evaluation tutorials use download-arkplus-eval-data (data/arkplus/site{1,2}_holdoff/).
 
 # Discover tutorials: any <category>/<name>/ that carries a .env.app.
 TUTORIAL_DIRS := $(sort $(patsubst %/,%,$(dir $(wildcard */*/.env.app))))
 
 # Hugging Face dataset backing the xray_classification tutorial.
 XRAY_DATA_REPO := aicentreflip/flip-fl-base-test-data
+# Hugging Face dataset backing the three Ark+ tutorials (site{1,2} train + hold-out splits).
+ARKPLUS_DATA_REPO := aicentreflip/tutorials-arkplus-cxr-classification
 # Number of MSD spleen cases to download for the spleen tutorials (1-41).
 NUM_CASES ?= 10
 SPLEEN_DIR := image_segmentation/3d_spleen_segmentation
@@ -41,7 +48,7 @@ SPLEEN_DIR := image_segmentation/3d_spleen_segmentation
 TEMPLATE ?= fed_opt
 TEMPLATE_TUTORIAL ?= image_segmentation/3d_spleen_segmentation
 
-.PHONY: list-tutorials run-tutorial run-all-tutorials download-xray-data download-spleen-data test-template
+.PHONY: list-tutorials run-tutorial run-all-tutorials download-xray-data download-spleen-data download-arkplus-finetuning-data download-arkplus-eval-data test-template
 
 # Download the x-ray reference dataset from Hugging Face and normalise it into the
 # layout image_classification/xray_classification/.env.app expects (data/xrays_mini_300/,
@@ -54,6 +61,39 @@ download-xray-data:
 	@cp -r data/.hf/flip-fl-base-test-data/xrays_mini_300/accession-resources data/xrays_mini_300/accession-resources
 	@cp data/.hf/flip-fl-base-test-data/xrays_mini_300/sample_get_dataframe_response.csv data/xrays_mini_300/dataframe.csv
 	@echo "✅ x-ray data ready at data/xrays_mini_300/ — run: make run-tutorial TUTORIAL=xray_classification"
+
+# Download the Ark+ chest X-ray TRAIN splits from Hugging Face and normalise them into the layout
+# image_classification/arkplus_fine_tuning/.env.app expects (data/arkplus/site{1,2}/, gitignored).
+# Idempotent — safe to re-run. Large (~6.3 GB).
+download-arkplus-finetuning-data:
+	@echo "⬇️  Downloading Ark+ training splits from Hugging Face ($(ARKPLUS_DATA_REPO))..."
+	@uv run --no-project --with huggingface_hub python -c "from huggingface_hub import snapshot_download; snapshot_download(repo_id='$(ARKPLUS_DATA_REPO)', repo_type='dataset', local_dir='data/.hf', allow_patterns=['site1/*', 'site2/*'])"
+	@rm -rf data/arkplus/site1 data/arkplus/site2
+	@mkdir -p data/arkplus/site1 data/arkplus/site2
+	@cp -r data/.hf/site1/accession-resources data/arkplus/site1/accession-resources
+	@cp data/.hf/site1/sample_get_dataframe_response.csv data/arkplus/site1/sample_get_dataframe_response.csv
+	@cp -r data/.hf/site2/accession-resources data/arkplus/site2/accession-resources
+	@cp data/.hf/site2/sample_get_dataframe_response.csv data/arkplus/site2/sample_get_dataframe_response.csv
+	@# Written last, only on a fully successful run: `experiment`'s dataset-present check in
+	@# arkplus_fine_tuning/Makefile looks for this marker (not just directory existence), so an
+	@# interrupted download/copy (e.g. Ctrl+C mid-run) can't be mistaken for complete data on the
+	@# next `make reproduce-overhead`.
+	@touch data/arkplus/site1/.download-complete data/arkplus/site2/.download-complete
+	@echo "✅ Ark+ training data ready at data/arkplus/site{1,2}/ — run: make run-tutorial TUTORIAL=arkplus_fine_tuning"
+
+# Download the Ark+ chest X-ray HOLD-OUT splits from Hugging Face and normalise them into the layout
+# the two Ark+ evaluation tutorials' .env.app expect (data/arkplus/site{1,2}_holdoff/, gitignored).
+# Idempotent — safe to re-run (~1.6 GB).
+download-arkplus-eval-data:
+	@echo "⬇️  Downloading Ark+ hold-out splits from Hugging Face ($(ARKPLUS_DATA_REPO))..."
+	@uv run --no-project --with huggingface_hub python -c "from huggingface_hub import snapshot_download; snapshot_download(repo_id='$(ARKPLUS_DATA_REPO)', repo_type='dataset', local_dir='data/.hf', allow_patterns=['site1_holdoff/*', 'site2_holdoff/*'])"
+	@rm -rf data/arkplus/site1_holdoff data/arkplus/site2_holdoff
+	@mkdir -p data/arkplus/site1_holdoff data/arkplus/site2_holdoff
+	@cp -r data/.hf/site1_holdoff/accession-resources data/arkplus/site1_holdoff/accession-resources
+	@cp data/.hf/site1_holdoff/sample_get_dataframe_response.csv data/arkplus/site1_holdoff/sample_get_dataframe_response.csv
+	@cp -r data/.hf/site2_holdoff/accession-resources data/arkplus/site2_holdoff/accession-resources
+	@cp data/.hf/site2_holdoff/sample_get_dataframe_response.csv data/arkplus/site2_holdoff/sample_get_dataframe_response.csv
+	@echo "✅ Ark+ hold-out data ready at data/arkplus/site{1,2}_holdoff/ — run: make run-tutorial TUTORIAL=arkplus_baseline_classification_evaluation (or arkplus_multimodel_classification_evaluation)"
 
 # Download the MSD spleen dataset and build its accession CSV into data/spleen/ (gitignored),
 # shared by the segmentation / evaluation / synthesis tutorials. Uses the spleen tutorial's own

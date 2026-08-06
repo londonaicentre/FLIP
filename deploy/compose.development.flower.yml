@@ -33,6 +33,12 @@ services:
       - "5679:5679"
     depends_on:
       - fl-server-net-1
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
     networks:
       - default
       - shared-net-1
@@ -58,6 +64,12 @@ services:
       - FLOWER_SRC_ROOT=/app/src
     depends_on:
       - fl-server-net-2
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
     networks:
       - default
       - shared-net-2
@@ -72,10 +84,22 @@ services:
   fl-server-net-1:
     container_name: fl-server-net-1
     image: ${DOCKER_FL_REGISTRY}${DOCKER_FL_SERVER_NAME}:${DOCKER_FL_TAG}
+    # Dev-only: run as root so the server can read BOTH the host-provisioned
+    # 0640 TLS keys AND the host operator's AWS SSO cache. The app user (uid
+    # 49999) can't read the cache: `aws sso login` writes the token file 0600,
+    # and group_add can't grant read on a 0600 file. The NVFLARE dev fl-server
+    # instead mounts the cache under the non-root user's own HOME (GHSA-8465;
+    # see deploy/compose.development.nvflare.yml) rather than running as root
+    # — that approach doesn't apply here because it's the 0640 TLS keys, not
+    # just the SSO cache, that need the override. Prod uses an ECS task IAM
+    # role (no mounted creds), so this root override is confined to dev compose.
+    user: "0:0"
     volumes:
-      # Mount the AWS credentials (needed to upload model results to S3).
-      # The image runs as `app` (uid 49999) with HOME=/app, so the mount
-      # lands at /app/.aws/ — the SDK's default lookup path for that user.
+      # Mount the host AWS credentials (needed to upload model results to S3). The image
+      # pins HOME=/app (kept even under the root override), so boto3 looks under /app/.aws/.
+      # Running as root with DAC_OVERRIDE (granted below — cap_drop: ALL strips root's
+      # implicit DAC bypass), it reads the 0640 key + 0600 SSO token there.
+      # sso/cache is rw so boto3 can refresh the cached token in place.
       - ~/.aws/config:/app/.aws/config:ro
       - ~/.aws/sso/cache:/app/.aws/sso/cache:rw
       # Provisioned Flower secrets (only certificates are needed here)
@@ -106,6 +130,16 @@ services:
       - 0.0.0.0:9097
     ports:
       - 9093:9093
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      # The root override above still needs DAC_OVERRIDE under cap_drop: ALL to read
+      # the host-owned 0640 TLS key and 0600 SSO token cache — root's implicit DAC
+      # bypass is itself a capability, and it is dropped here (FLIP#485).
+      - DAC_OVERRIDE
     networks:
       - shared-net-1
     restart: unless-stopped
@@ -128,9 +162,9 @@ services:
       - ${FL_PROVISIONED_DIR}/net-1/certificates:/certs:ro
       - ${FL_PROVISIONED_DIR}/net-1/keys:/keys:ro
       # Dev-overlay: edits to the register-supernode-keys.sh script apply without a rebuild.
-      # Lands in-tree at fl-services/flower/ with the Flower migration (#622); same script is
-      # baked into the image, so removal still works.
-      - ${FL_PROVISIONED_DIR}/../fl-services/flower/register-supernode-keys.sh:/scripts/register-supernode-keys.sh:ro
+      # In-tree at fl-services/flower/ (#622); also baked into the image, so removal still works.
+      # Pathed off FL_JOBS_DIR (abs /repo/jobs) since FL_PROVISIONED_DIR now lives under deploy/.
+      - ${FL_JOBS_DIR}/../fl-services/flower/register-supernode-keys.sh:/scripts/register-supernode-keys.sh:ro
     entrypoint: ["/bin/bash", "/scripts/register-supernode-keys.sh"]
     depends_on:
       fl-server-net-1:
@@ -143,10 +177,22 @@ services:
   fl-server-net-2:
     container_name: fl-server-net-2
     image: ${DOCKER_FL_REGISTRY}${DOCKER_FL_SERVER_NAME}:${DOCKER_FL_TAG}
+    # Dev-only: run as root so the server can read BOTH the host-provisioned
+    # 0640 TLS keys AND the host operator's AWS SSO cache. The app user (uid
+    # 49999) can't read the cache: `aws sso login` writes the token file 0600,
+    # and group_add can't grant read on a 0600 file. The NVFLARE dev fl-server
+    # instead mounts the cache under the non-root user's own HOME (GHSA-8465;
+    # see deploy/compose.development.nvflare.yml) rather than running as root
+    # — that approach doesn't apply here because it's the 0640 TLS keys, not
+    # just the SSO cache, that need the override. Prod uses an ECS task IAM
+    # role (no mounted creds), so this root override is confined to dev compose.
+    user: "0:0"
     volumes:
-      # Mount the AWS credentials (needed to upload model results to S3).
-      # The image runs as `app` (uid 49999) with HOME=/app, so the mount
-      # lands at /app/.aws/ — the SDK's default lookup path for that user.
+      # Mount the host AWS credentials (needed to upload model results to S3). The image
+      # pins HOME=/app (kept even under the root override), so boto3 looks under /app/.aws/.
+      # Running as root with DAC_OVERRIDE (granted below — cap_drop: ALL strips root's
+      # implicit DAC bypass), it reads the 0640 key + 0600 SSO token there.
+      # sso/cache is rw so boto3 can refresh the cached token in place.
       - ~/.aws/config:/app/.aws/config:ro
       - ~/.aws/sso/cache:/app/.aws/sso/cache:rw
       # Provisioned Flower secrets (only certificates are needed here)
@@ -175,6 +221,18 @@ services:
       - --enable-supernode-auth
       - --health-server-address
       - 0.0.0.0:9097
+    ports:
+      - 9095:9093
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      # The root override above still needs DAC_OVERRIDE under cap_drop: ALL to read
+      # the host-owned 0640 TLS key and 0600 SSO token cache — root's implicit DAC
+      # bypass is itself a capability, and it is dropped here (FLIP#485).
+      - DAC_OVERRIDE
     networks:
       - shared-net-2
     restart: unless-stopped
@@ -193,8 +251,8 @@ services:
     volumes:
       - ${FL_PROVISIONED_DIR}/net-2/certificates:/certs:ro
       - ${FL_PROVISIONED_DIR}/net-2/keys:/keys:ro
-      # See net-1 above — symmetric dev-overlay.
-      - ${FL_PROVISIONED_DIR}/../fl-services/flower/register-supernode-keys.sh:/scripts/register-supernode-keys.sh:ro
+      # See net-1 above — symmetric dev-overlay (was missing the flower/ path segment).
+      - ${FL_JOBS_DIR}/../fl-services/flower/register-supernode-keys.sh:/scripts/register-supernode-keys.sh:ro
     entrypoint: ["/bin/bash", "/scripts/register-supernode-keys.sh"]
     depends_on:
       fl-server-net-2:

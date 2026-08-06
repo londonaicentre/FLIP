@@ -57,16 +57,25 @@ The operator role used to provision infrastructure needs the following managed
 policies (or equivalent custom permissions):
 
 - ``AmazonEC2FullAccess``
+- ``AmazonECS_FullAccess``
 - ``AmazonRDSFullAccess``
+- ``AmazonElasticFileSystemFullAccess``
 - ``CloudWatchLogsFullAccess``
 - ``SecretsManagerReadWrite``
 - ``IAMFullAccess``
-- ``ElasticLoadBalancingFullAccess``
+- ``ElasticLoadBalancingFullAccess`` (covers ALB and NLB)
+- ``CloudFrontFullAccess``
+- ``AWSWAFFullAccess``
+- ``AWSCertificateManagerFullAccess``
+- ``AmazonRoute53FullAccess``
+- ``AWSCloudMapFullAccess``
+- ``AmazonSSMFullAccess``
 - ``AmazonSESFullAccess`` (optional, for email functionality)
 
 Deployed EC2 instances themselves use **scoped least-privilege roles** rather
 than these broad permissions — see ``deploy/providers/AWS/iam_ecs.tf`` for the
-exact policy attachments.
+exact policy attachments. The canonical list lives in
+``deploy/providers/AWS/README.md`` under "Required IAM permissions".
 
 *********************
 Full-stack deployment
@@ -87,13 +96,21 @@ This runs, in order:
 2. ``aws-login`` — AWS SSO auth for the selected profile.
 3. ``init`` — initialise Terraform with the environment-specific S3 backend.
 4. ``import-persistent`` — import existing persistent resources (Cognito, S3, Secrets) to prevent replacement.
-5. ``plan`` and ``apply`` — apply infrastructure changes.
-6. ``update-env`` — refresh the root env file with Terraform outputs.
-7. ``ssh-config`` — write SSH config blocks with SSM ProxyCommand.
-8. ``ansible-init`` — configure EC2 instances with Docker, CloudWatch, and FL assets.
-9. ``deploy-centralhub`` — deploy hub services via Docker Compose / ECS.
-10. ``deploy-trust`` — deploy any AWS-hosted trust services (skip when only using on-prem trusts).
-11. ``status`` — comprehensive health checks.
+5. ``generate-internal-service-key`` — mint the fl-server → flip-api internal service key.
+6. ``plan`` and ``apply`` — apply infrastructure changes.
+7. ``update-env`` — refresh the root env file with Terraform outputs.
+8. ``ssh-config`` — write SSH config blocks with SSM ProxyCommand.
+9. ``ansible-init`` — install ``psql`` on the minimal Central Hub SSM bastion
+   and provision Docker, CloudWatch, and FL assets on the Trust EC2.
+10. ``deploy-centralhub`` — deploy the Central Hub ECS Fargate services at the
+    tip of the env's branch via immutable ``sha-<short7>`` task-definition
+    revisions, and publish the UI to S3/CloudFront. ``make rollback-centralhub``
+    repoints the services at the previous revision; see the "Central Hub deploys
+    and rollback" section of ``deploy/providers/AWS/README.md`` for the tag
+    resolution, the ``TAG=`` override, and the production rollout timing.
+11. ``register-trusts`` — register the shipped trust roster on the hub (after ``deploy-centralhub`` seeds the FL kit-slot pool).
+12. ``deploy-trust`` — deploy any AWS-hosted trust services (skip when only using on-prem trusts).
+13. ``status`` — comprehensive health checks.
 
 The ``PROD`` variable selects the environment file (``stag`` → ``.env.stag``,
 ``true`` → ``.env.production``) and is mapped onto ``TF_VAR_environment``
@@ -163,59 +180,43 @@ exist; ``make register-trusts`` writes the per-trust keys into the kit files.
 Applying schema changes
 ***********************
 
-The hub has **no migration framework** (no Alembic). On startup the entrypoint runs
-``seed_essential_data.py``, which calls ``SQLModel.metadata.create_all()`` — this only creates
-*missing* tables. It never alters an existing table, so a release that adds a non-nullable column,
-changes a column type, or drops/renames a column is **not** applied to a database that already has
-those tables; the new code then fails at runtime against the old schema.
+The hub schema is owned by **Alembic** (``flip-api/src/flip_api/db/migrations/``). On
+startup the ``flip-api`` entrypoint runs ``alembic upgrade head`` **before** seeding —
+fail-fast, so a release whose code expects a column an in-place database hasn't migrated
+yet refuses to start instead of silently corrupting data.
 
-The Central Hub database is treated as **recreatable**: it holds platform state (projects, queries,
-FL job / metrics / audit rows, the trust registry), not a system of record that must be migrated in
-place. To apply a schema-changing release, recreate the database so the entrypoint rebuilds it.
+Any schema-affecting change to ``flip-api/src/flip_api/db/models/*.py`` must ship a revision
+in the same PR. The drift guard at ``flip-api/tests/integration/test_migrations.py`` fails
+CI otherwise.
 
-**Development** (docker-compose, disposable volume):
-
-.. code-block:: shell
-
-   make down
-   docker compose -f deploy/compose.development.yml down -v   # drop the postgres volume
-   make up                                                    # entrypoint reruns create_all + seeders
-
-**Staging** (RDS is not deletion-protected):
+**Authoring a revision** (from ``flip-api/``):
 
 .. code-block:: shell
 
-   cd deploy/providers/AWS
-   make destroy PROD=stag && make full-deploy PROD=stag
+   make migration MESSAGE="<short description>"   # autogenerate from the model diff (flip-db must be up)
+   # review the file under src/flip_api/db/migrations/versions/ — autogen misses native-PG-enum
+   # ALTER TYPE … ADD VALUE (needs op.get_context().autocommit_block()) and downgrades that drop
+   # an enum-typed table (must also DROP TYPE).
+   make migrate                                   # alembic upgrade head, apply locally
+   make migration_current                         # confirm head matches the new revision
 
-**Production** (RDS has deletion protection + a final snapshot):
+**Applying a release** — nothing extra is required. The ``flip-api`` entrypoint runs
+``alembic upgrade head`` on every container start, so a fresh ``flip-api`` deploy
+applies any pending revisions in order against the existing database:
 
-1. Take a manual RDS snapshot first.
-2. Connect to the database (SSM port-forward) and reset the schema so the entrypoint can rebuild it —
-   do **not** delete the RDS instance (deletion protection blocks it, and recreating churns the
-   endpoint and secrets):
+- **Development**: ``make restart`` re-creates the ``flip-api`` container; revisions apply on boot.
+- **Staging / Production**: a normal ECS redeploy (``make deploy-centralhub`` from
+  ``deploy/providers/AWS/``) applies the revisions before the new task serves traffic.
 
-   .. code-block:: sql
-
-      DROP SCHEMA public CASCADE;
-      CREATE SCHEMA public;
-
-3. Force a new ``flip-api`` deploy so the entrypoint reruns ``create_all`` and the seeders.
-4. Re-register the trusts (``make register-trusts``) and redistribute the refreshed kit files — the
-   ``trust`` table and FL kit-slot pool come back empty.
-
-.. warning::
-
-   Recreation is destructive: every project, cohort query, model, FL result, and trust registration
-   is lost. Confirm the database genuinely holds no data that must be preserved before recreating a
-   production hub. If in-place preservation is ever required, a real migration (Alembic or
-   hand-written ``ALTER`` / backfill SQL) must be introduced instead.
+Because revisions are real ``ALTER`` / ``UPDATE`` statements written by the PR author, schema
+changes preserve the existing rows — there is **no** drop-and-recreate workflow for the
+Central Hub database in routine operation.
 
 **********************************
 FL image compatibility on upgrade
 **********************************
 
-The FL base images for the hub and trust-side (``flare-fl-base`` for NVFLARE, ``flip-fl-base-flower`` for
+The FL base images for the hub and trust-side (``flare-fl-base`` for NVFLARE, ``flower-fl-base`` for
 Flower) share a wire contract for training metrics and logs. The metrics and logs endpoints now
 **require** an ``fl_client_name`` field, so the hub and the FL images must be upgraded together:
 

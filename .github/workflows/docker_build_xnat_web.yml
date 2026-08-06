@@ -25,6 +25,10 @@ permissions:
 
 jobs:
   build-and-push:
+    # Skip on forks: they cannot assume the upstream AWS OIDC role or push to
+    # ghcr.io/londonaicentre, so this whole build-and-publish job would otherwise
+    # show a spurious CI failure on fork pushes. Upstream publishing is unchanged.
+    if: github.repository == 'londonaicentre/FLIP'
     runs-on: ubuntu-latest
     permissions: # override top-level read-only default to allow GHCR push
       id-token: write # required for OIDC
@@ -38,17 +42,15 @@ jobs:
       REGISTRY: ghcr.io
       IMAGE_NAME: londonaicentre/xnat-web
       FLIP_ARTIFACTS_BUCKET_NAME: flipdev-artifacts
+      # Credential and SMTP env values are NOT passed as build args — they are
+      # injected at container start from the deployment env file so they are
+      # never written into image layers (verifiable via docker history --no-trunc).
+      # XNAT_VERSION is absent for a different reason: it is read from
+      # trust/xnat/.env by the step below and appended at the docker build call.
       BUILD_ARGS: |
-        --build-arg XNAT_VERSION=1.9.3
-        --build-arg XNAT_SMTP_ENABLED=false
-        --build-arg XNAT_DATASOURCE_DRIVER=org.postgresql.Driver
-        --build-arg XNAT_DATASOURCE_USERNAME=xnat
-        --build-arg XNAT_DATASOURCE_PASSWORD=xnat
-        --build-arg XNAT_DATASOURCE_URL=jdbc:postgresql://xnat-db/xnat
         --build-arg TOMCAT_XNAT_FOLDER=ROOT
         --build-arg XNAT_ROOT=/data/xnat
         --build-arg XNAT_HOME=/data/xnat/home
-        --build-arg XNAT_EMAIL=email@gstt.nhs.uk
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
@@ -56,8 +58,18 @@ jobs:
           repository: ${{ github.event.workflow_run.head_repository.full_name }}
           ref: ${{ github.event.workflow_run.head_sha }}
 
+      # Single source for the XNAT version: trust/xnat/.env — the same pin the
+      # Makefile build reads — so a version bump there flows through the WAR and
+      # plugin downloads and the image build without editing this workflow.
+      - name: Read XNAT version from trust/xnat/.env
+        run: |
+          XNAT_VERSION="$(grep -E '^XNAT_VERSION=' ../.env | cut -d= -f2 || true)"
+          [[ -n "$XNAT_VERSION" ]] || { echo "::error::XNAT_VERSION not set in trust/xnat/.env"; exit 1; }
+          echo "Using XNAT version: $XNAT_VERSION"
+          echo "XNAT_VERSION=$XNAT_VERSION" >> "$GITHUB_ENV"
+
       - name: Configure AWS credentials (OIDC)
-        uses: aws-actions/configure-aws-credentials@v4.2.1
+        uses: aws-actions/configure-aws-credentials@v6.2.1
         with:
           role-to-assume: ${{ vars.AWS_ROLE_TO_ASSUME }}
           role-session-name: ${{ vars.AWS_ROLE_SESSION_NAME }}
@@ -69,10 +81,19 @@ jobs:
           GH_REF_NAME: ${{ github.ref_name }}
           GH_EVENT_NAME: ${{ github.event_name }}
           GH_REF: ${{ github.ref }}
+          GH_SHA: ${{ github.sha }}
           GH_WR_BRANCH: ${{ github.event.workflow_run.head_branch }}
           GH_WR_EVENT: ${{ github.event.workflow_run.event }}
         run: |
           TAGS="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}"
+
+          # An empty sha would silently publish a mutable literal `sha-` tag — refuse.
+          [[ -n "$GH_SHA" ]] || { echo "::error::empty commit SHA — cannot compute the sha-<short7> tag"; exit 1; }
+
+          # Immutable short-SHA tag (FLIP#751), pushed uniformly on every publish; today
+          # only the hub ECS images are consumed (by `make deploy-centralhub`). Length 7
+          # must match the tag resolution in deploy/providers/AWS/Makefile.
+          TAGS="${TAGS},${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${GH_SHA:0:7}"
 
           # Branch name sanitization
           SAFE_REF_NAME=$(echo "$GH_REF_NAME" | sed 's/[^a-zA-Z0-9]/-/g')
@@ -112,11 +133,17 @@ jobs:
           GH_ACTOR: ${{ github.actor }}
         run: echo "$GH_TOKEN" | docker login $REGISTRY -u "$GH_ACTOR" --password-stdin
 
+      # The S3 artifact set is keyed by XNAT version — s3://<bucket>/xnat-<version>/{war, plugins/} —
+      # so branches on different XNAT versions (e.g. main vs develop across an upgrade) each build
+      # against their own WAR + plugin roster.
       - name: Download XNAT WAR
-        run: aws s3 cp s3://${{ env.FLIP_ARTIFACTS_BUCKET_NAME }}/xnat/xnat-web-1.9.3.war build-artifacts/xnat-web-1.9.3.war
+        run: aws s3 cp "s3://${{ env.FLIP_ARTIFACTS_BUCKET_NAME }}/xnat-${XNAT_VERSION}/xnat-web-${XNAT_VERSION}.war" "build-artifacts/xnat-web-${XNAT_VERSION}.war"
 
       - name: Download XNAT plugins
-        run: aws s3 sync s3://${{ env.FLIP_ARTIFACTS_BUCKET_NAME }}/xnat/plugins/ plugins/
+        # Exclude ohif-viewer: FLIP never opens the viewer, and its per-session
+        # metadata-rebuild listener is the dominant load on XNAT's Reactor
+        # EventBus (FLIP#662). Keep this in sync with scripts/ensure_plugins.sh.
+        run: aws s3 sync "s3://${{ env.FLIP_ARTIFACTS_BUCKET_NAME }}/xnat-${XNAT_VERSION}/plugins/" plugins/ --exclude "ohif-viewer-*"
 
       - name: Build Docker image
         env:
@@ -128,7 +155,7 @@ jobs:
             TAG_FLAGS+=("-t" "$tag")
           done
           # shellcheck disable=SC2086
-          docker build $BUILD_ARGS "${TAG_FLAGS[@]}" .
+          docker build --build-arg XNAT_VERSION="$XNAT_VERSION" $BUILD_ARGS "${TAG_FLAGS[@]}" .
 
       - name: Push Docker image
         env:

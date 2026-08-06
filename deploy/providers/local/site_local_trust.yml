@@ -40,11 +40,14 @@
         update_cache: yes
 
     # ── Docker ───────────────────────────────────────────────────────────────
+    # Intentionally do NOT pass `docker_users` — adding the SSH login user to
+    # the `docker` group is equivalent to giving them passwordless root (any
+    # group member can `docker run -v /:/host …` and chroot to the host fs).
+    # Operators run docker / `make -C trust up-trust` via `sudo` instead; the
+    # `ubuntu` account already has sudo per the on-prem README prerequisites.
     - name: Install Docker
       include_role:
         name: geerlingguy.docker
-      vars:
-        docker_users: [ubuntu]
 
     # ── Application directories ───────────────────────────────────────────────
     - name: Create application directories
@@ -57,8 +60,19 @@
       loop:
         - "{{ flip_dir }}"
         - "{{ flip_dir }}/data/images"
-        # XNAT bind-mount directories (Docker Swarm does not auto-create them).
-        # Keep this list in sync with deploy/providers/AWS/site.yml.
+
+    # XNAT containers run as the in-image `xnat` user (UID 1001) after the
+    # Docker-hardening pass on `trust/xnat/xnat/Dockerfile`. Bind-mounted host
+    # paths must be writable by that UID — see deploy/providers/AWS/site.yml
+    # for the full rationale. Keep this list in sync with that playbook.
+    - name: Create XNAT bind-mount directories (owned by container UID 1001)
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: "1001"
+        group: "1001"
+        mode: "0755"
+      loop:
         - "{{ flip_dir }}/xnat"
         - "{{ flip_dir }}/xnat/xnat-data/tomcat_logs"
         - "{{ flip_dir }}/xnat/xnat-data/archive"

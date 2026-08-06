@@ -97,7 +97,7 @@ applied a schema *diff* to an existing database.
 - Migration scripts live in `src/flip_api/db/migrations/` (so they ride the dev `src/`
   bind mount and the prod `COPY src/`); config is in `alembic.ini`.
 - `alembic.ini` holds **no** database URL or credentials. `env.py` reuses
-  `flip_api.db.database.engine`, so migrations inherit the exact same connection
+  `flip_api.db.database.get_engine()`, so migrations inherit the exact same connection
   string and the prod RDS-Proxy IAM authentication (a per-connection token minted
   by a `do_connect` hook). Tests inject their Testcontainers connection via
   `config.attributes["connection"]` instead.
@@ -166,11 +166,30 @@ A session-scoped autouse fixture (`aws_mock` in `tests/integration/conftest.py`)
 
 Per-service helper fixtures bootstrap the state each test needs:
 
-- `s3_buckets` — creates the buckets configured in `Settings` (`UPLOADED_MODEL_FILES_BUCKET`, `SCANNED_MODEL_FILES_BUCKET`, `UPLOADED_FEDERATED_DATA_BUCKET`, `FL_APP_BASE_BUCKET`, `FL_APP_DESTINATION_BUCKET`).
+- `s3_buckets` — creates the buckets configured in `Settings` (`UPLOADED_MODEL_FILES_BUCKET`, `SCANNED_MODEL_FILES_BUCKET`, `UPLOADED_FEDERATED_DATA_BUCKET`, `FL_APP_DESTINATION_BUCKET`). The base FL application templates are not an S3 bucket — they are read from the local `FL_APP_BASE_DIR` tree baked into the image (FLIP#724).
 - `cognito_user_pool` — creates a moto user pool + app client and rebinds `Settings.AWS_COGNITO_USER_POOL_ID` / `AWS_COGNITO_APP_CLIENT_ID` to point at them, clearing the `_cognito_client` `lru_cache` so the next call rebuilds against the fresh IDs.
 - `ses_send_email_recorder` — captures every `sesv2.send_email` call. moto v5 explicitly raises `NotImplementedError` on `send_email` with `Content.Template`, and every flip-api SES caller uses templated content; the recorder wraps the production-code path up to the SDK boundary so the test asserts the boto3 call shape (`FromEmailAddress`, `Destination.ToAddresses`, `TemplateName`, `TemplateData`). It's the closest approximation to a real SES round-trip moto's coverage allows today.
 
 Why moto and not LocalStack: `cognito-idp` and `sesv2` are Pro-only on LocalStack — the free tier rejects `CreateUserPool` / `CreateEmailIdentity` outright. moto covers all three in OSS and runs in-process, so there's no container boot per test session.
+
+### Demo tooling (live stack)
+
+Three developer utilities drive the **running dev stack** end to end (none run in CI):
+
+- `tests/demo_video.py` (`make demo-video` from the repo root, `make demo_video` here) — records the scripted
+  end-to-end demo video: runs the six Cypress segments in `flip-ui/test/cypress/demo/` one Dockerised run at a
+  time, performs the slow waits (cohort responses, imaging import, FL training) off-camera by reusing
+  `tests/e2e_smoke.py`'s wait functions, then assembles one mp4. Resumable via `--project-id` /
+  `--from-segment`; `--video-scale` controls capture resolution (default 3 → 3840x2400).
+- `tests/seed_demo_projects.py` (`make seed_demo_projects`) — seeds a curated catalogue of radiology projects in
+  honest lifecycle states through the real API; `--states` phases the pull-heavy approved entries, `--cleanup`
+  removes everything it recorded in `tests/seed_demo_projects.json`. Idempotent: a re-run skips catalogue
+  entries whose project name already exists on the hub, so it never duplicates the real imaging imports.
+- `flip_api/scripts/create_demo_users.py` (`make create_demo_users`) — provisions the demo Cognito users the
+  recorder signs in as (`DEMO_RESEARCHER_PASSWORD` / `DEMO_ADMIN_PASSWORD` from env, never committed); restart
+  flip-api afterwards so boot seeding grants their roles. Before any write it resolves the target pool's
+  name/region/AWS account and requires an interactive `yes`, so a stale `AWS_COGNITO_USER_POOL_ID` or wrong
+  SSO account can't plant a known-password admin in an unintended pool.
 
 `aws_mock` also pins `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` / `AWS_SESSION_TOKEN` / `AWS_DEFAULT_REGION` to test-only stub values in the environment for the duration of the session, and clobbers any `AWS_PROFILE` from the developer's shell. Real-AWS credentials are never reachable while the fixture is active.
 

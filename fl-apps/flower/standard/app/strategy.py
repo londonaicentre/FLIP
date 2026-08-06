@@ -13,40 +13,45 @@
 
 """Custom Federated Learning strategies."""
 
-from typing import Iterable
+from collections.abc import Iterable
 
-from flip import FLIP
-from flip.constants.flip_constants import ModelStatus
-from flip.flower.metrics import handle_client_exception, handle_client_metrics
+from flip.flower.strategy import FlipFedAvg
 from flwr.app import ArrayRecord, Message, MetricRecord
 from flwr.common import ConfigRecord
 from flwr.serverapp import Grid
-from flwr.serverapp.strategy import FedAvg
 
 # Dictionary to store per-client metrics
 per_client_train_metrics: dict[int, dict[str, dict]] = {}
 per_client_eval_metrics: dict[int, dict[str, dict]] = {}
 
 
-class FedAvgWithClientMetrics(FedAvg):
+def _record_per_client_metrics(msg: Message, server_round: int, store: dict[int, dict[str, dict]]) -> None:
+    """Capture one client's metrics into the per-round store for output artifacts."""
+    if msg.has_error() or not msg.content.get("metrics"):
+        return
+
+    client_metrics = dict(msg.content["metrics"])
+
+    # Extract site name from config (not metrics, as MetricRecord only accepts numeric values)
+    site_name = f"unknown_{msg.metadata.src_node_id}"
+    if msg.content.get("config") and "site" in msg.content["config"]:
+        site_name = msg.content["config"]["site"]
+
+    # Add site name to metrics for output
+    client_metrics["site"] = site_name
+
+    # Store per-client metrics using site name as key
+    store.setdefault(server_round, {})[site_name] = client_metrics
+
+
+class FedAvgWithClientMetrics(FlipFedAvg):
     """FedAvg strategy that captures per-client train and evaluation metrics.
 
-    This strategy extends the standard FedAvg to collect and store individual
-    client metrics during training and evaluation, in addition to the aggregated
-    metrics. It also supports configuring evaluation to run only on the final round.
+    All Central Hub telemetry (status, metric/exception forwarding, round
+    events) is inherited from ``FlipFedAvg``. This subclass only adds the
+    app-specific behaviour: capturing per-client metrics for output, and
+    running evaluation on the final round only.
     """
-
-    def __init__(self, flip: FLIP, model_id: str, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.flip = flip
-        self.model_id = model_id
-        self.num_rounds = None
-
-    def start(self, grid: Grid, initial_arrays: ArrayRecord, num_rounds: int = 3, **kwargs):
-        """Override start to capture num_rounds for evaluation control."""
-        self.num_rounds = num_rounds
-        self.flip.update_status(self.model_id, ModelStatus.TRAINING_STARTED)
-        return super().start(grid, initial_arrays, num_rounds, **kwargs)
 
     def configure_evaluate(
         self, server_round: int, arrays: ArrayRecord, config: ConfigRecord, grid: Grid
@@ -67,28 +72,12 @@ class FedAvgWithClientMetrics(FedAvg):
         """Aggregate training results while capturing per-client metrics."""
         replies = list(replies)
 
-        # Store per-client training metrics before aggregation
+        # Store per-client training metrics before aggregation; hub forwarding
+        # happens in FlipFedAvg.
         for msg in replies:
-            # Forward to the Central Hub via fl-server (fl-clients have no hub credentials).
-            handle_client_metrics(msg, server_round, self.model_id, self.flip)
-            handle_client_exception(msg, self.model_id, self.flip)
+            _record_per_client_metrics(msg, server_round, per_client_train_metrics)
 
-            if not msg.has_error() and msg.content.get("metrics"):
-                client_metrics = dict(msg.content["metrics"])
-
-                site_name = f"unknown_{msg.metadata.src_node_id}"
-                if msg.content.get("config") and "site" in msg.content["config"]:
-                    site_name = msg.content["config"]["site"]
-
-                # Add site name to metrics for output
-                client_metrics["site"] = site_name
-
-                # Store per-client metrics using site name as key
-                if server_round not in per_client_train_metrics:
-                    per_client_train_metrics[server_round] = {}
-                per_client_train_metrics[server_round][site_name] = client_metrics
-
-        # Call parent method for standard aggregation
+        # Call parent method for hub telemetry + standard aggregation
         return super().aggregate_train(server_round, replies)
 
     def aggregate_evaluate(
@@ -99,26 +88,10 @@ class FedAvgWithClientMetrics(FedAvg):
         """Aggregate evaluation metrics while capturing per-client results."""
         replies = list(replies)
 
-        # Store per-client metrics before aggregation
+        # Store per-client metrics before aggregation; hub forwarding happens
+        # in FlipFedAvg.
         for msg in replies:
-            handle_client_metrics(msg, server_round, self.model_id, self.flip)
-            handle_client_exception(msg, self.model_id, self.flip)
+            _record_per_client_metrics(msg, server_round, per_client_eval_metrics)
 
-            if not msg.has_error() and msg.content.get("metrics"):
-                client_metrics = dict(msg.content["metrics"])
-
-                # Extract site name from config (not metrics, as MetricRecord only accepts numeric values)
-                site_name = f"unknown_{msg.metadata.src_node_id}"
-                if msg.content.get("config") and "site" in msg.content["config"]:
-                    site_name = msg.content["config"]["site"]
-
-                # Add site name to metrics for output
-                client_metrics["site"] = site_name
-
-                # Store per-client metrics using site name as key
-                if server_round not in per_client_eval_metrics:
-                    per_client_eval_metrics[server_round] = {}
-                per_client_eval_metrics[server_round][site_name] = client_metrics
-
-        # Call parent method for standard aggregation
+        # Call parent method for hub telemetry + standard aggregation
         return super().aggregate_evaluate(server_round, replies)

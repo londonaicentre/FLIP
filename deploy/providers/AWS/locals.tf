@@ -45,11 +45,11 @@ locals {
   # ECS task env below pins fl-server / flip-api to the `${bucket}/results`
   # path, not the bucket root, as a workaround for a leading-slash bug in
   # the FL package's S3 upload path-construction
-  # (flip-fl-base/flip/core/standard.py:415-427: when `urlparse(bucket).path`
+  # (flip-utils/flip/core/standard.py:415-427: when `urlparse(bucket).path`
   # is empty, the concatenation `f"{prefix}/{key}"` produces `/<key>` with
   # a literal leading slash, so flip-api's `list_objects_v2(Prefix=<model_id>)`
   # never matches the keys fl-server actually uploads). Removing this
-  # workaround requires patching flip-fl-base, rebuilding fl-server, and
+  # workaround requires patching flip-utils/flip, rebuilding fl-server, and
   # redeploying — see PR description on FLIP#465 for the long-term fix path.
   flip_model_files_uploads_bucket_uri = "s3://${module.flip_model_files_uploads_bucket.bucket_id}"
   flip_fl_results_bucket_uri          = "s3://${module.flip_fl_results_bucket.bucket_id}"
@@ -57,20 +57,24 @@ locals {
 
   # Sub-paths under the new three-bucket layout. The legacy single-bucket
   # prefixes (`model_files/uploaded`, `uploaded_federated_data`,
-  # `base-application`, `app_destination_bucket`) are re-pointed
-  # at the new purpose-built buckets per the migration mapping in
-  # `make migrate-flip-bucket` (see deploy/providers/AWS/Makefile). Keeping
-  # the same local names (`uploaded_federated_data_uri`, …) means the
-  # ecs_task_env map below can stay byte-identical with the prior single-bucket
-  # layout — only the value behind each local changes.
-  # fl_app_base_uri is the backend-agnostic root: flip-api appends the per-backend
-  # segment (.../base-application/{nvflare,flower}/...) in code from each net's seeded
-  # (canonical) backend. A framework switch is applied via `make restart-fl`, which
-  # recreates flip-api so seeding re-applies the backend onto every net.
+  # `app_destination_bucket`) are re-pointed at the new purpose-built buckets
+  # per the migration mapping in `make migrate-flip-bucket` (see
+  # deploy/providers/AWS/Makefile). Keeping the same local names
+  # (`uploaded_federated_data_uri`, …) means the ecs_task_env map below can stay
+  # byte-identical with the prior single-bucket layout — only the value behind
+  # each local changes.
+  # The base FL application templates are no longer published to S3: they are baked
+  # into the flip-api image from the repo's fl-apps/ tree and read locally via
+  # FL_APP_BASE_DIR (FLIP#724). Only the completed bundle still lands in S3
+  # (fl_app_destination_uri).
+  # The two model-file prefixes are the quarantine boundary (#52): researcher
+  # uploads land in `uploaded/` and only reach `scanned/` once flip-api's scan
+  # promotes them. Everything that consumes model files — the FL app bundler,
+  # downloads, listings — reads `scanned/` exclusively, so an unscanned or
+  # rejected file can never be shipped to a trust. They must stay distinct.
   uploaded_federated_data_uri = "${local.flip_fl_results_bucket_uri}/results"
   uploaded_model_files_uri    = "${local.flip_model_files_uploads_bucket_uri}/uploaded"
-  scanned_model_files_uri     = "${local.flip_model_files_uploads_bucket_uri}/uploaded"
-  fl_app_base_uri             = "${local.flip_app_bundles_bucket_uri}/base-application"
+  scanned_model_files_uri     = "${local.flip_model_files_uploads_bucket_uri}/scanned"
   fl_app_destination_uri      = "${local.flip_app_bundles_bucket_uri}/app_destinations"
 
   # NET_ENDPOINTS tells flip-api how to reach each FL network's fl-api. On
@@ -112,7 +116,6 @@ locals {
       UPLOADED_MODEL_FILES_BUCKET    = local.uploaded_model_files_uri
       SCANNED_MODEL_FILES_BUCKET     = local.scanned_model_files_uri
       UPLOADED_FEDERATED_DATA_BUCKET = local.uploaded_federated_data_uri
-      FL_APP_BASE_BUCKET             = local.fl_app_base_uri
       FL_APP_DESTINATION_BUCKET      = local.fl_app_destination_uri
       NET_ENDPOINTS                  = local.net_endpoints_json
       FL_BACKEND                     = var.fl_backend
@@ -127,7 +130,10 @@ locals {
       # 1800s (MAX_PUT_PRESIGNED_URL_TTL_SECONDS), so multi-GB uploads must
       # complete within 30 minutes or they time out at the edge.
       MAX_MODEL_FILE_BYTES = "5000000000"
-      FL_KIT_SLOT_NAMES    = var.FL_KIT_SLOT_NAMES
+      # FL_KIT_SLOT_NAMES is deliberately NOT in the task env: in production the
+      # kit-slot pool's single source is the /flip/fl_kit_slot_names SSM parameter
+      # (parameter_store.tf), read at runtime by resolve_fl_kit_slot_names — an env
+      # copy here would be dead config that apply-fl-kit-slots never updates.
     })
     fl_server = {
       LOCAL_DEV                      = "false"
@@ -137,12 +143,31 @@ locals {
       UPLOADED_FEDERATED_DATA_BUCKET = local.uploaded_federated_data_uri
       FLIP_API_INTERNAL_URL          = "http://${local.service_discovery_names.flip_api}:${local.api_container_port}/api"
       INTERNAL_SERVICE_KEY_HEADER    = var.INTERNAL_SERVICE_KEY_HEADER
+      # Root of the shared checkpoint-staging volume (mounted from the
+      # fl_checkpoints EFS access point in ecs_tasks.tf). The fl-server's
+      # EvaluationModelLocator reads a staged checkpoint from
+      # <root>/<model_id>/ here (FLIP#695). Matches the default in
+      # flip-utils FlipConstants + compose.production.nvflare.yml.
+      SERVER_CHECKPOINT_ROOT = "/app/server-checkpoints"
       # INTERNAL_SERVICE_KEY is injected via the `secrets` block in
       # ecs_tasks.tf (sourced from the FLIP_API Secrets Manager secret),
       # never exposed as plain env in the task definition.
     }
     fl_api = {
+      # ENV gates the entrypoint's uvicorn --reload off in prod/stag so a failed
+      # startup is a dead container (replaced by ECS), not a zombie (FLIP#593 pt.1).
+      ENV                = "production"
       FL_ADMIN_DIRECTORY = var.FL_ADMIN_DIRECTORY
+      # Writer side of the shared checkpoint-staging volume: fl-api de-bundles a
+      # large eval checkpoint out of the client app and writes it to
+      # <root>/<model_id>/ for the fl-server to load (FLIP#695). Same path the
+      # fl-server reads. Mounted from the fl_checkpoints EFS access point.
+      SERVER_CHECKPOINT_ROOT = "/app/server-checkpoints"
+      # Per-job GPU resource spec the fl-api stamps onto an NVFLARE job's meta.
+      # Requests GPUs on the fl-CLIENTS (trust hosts) — the hub Fargate tasks are
+      # CPU-only. Default 0; set via TF_VAR_JOB_RESOURCE_SPEC_* for GPU jobs.
+      JOB_RESOURCE_SPEC_NUM_GPUS           = tostring(var.JOB_RESOURCE_SPEC_NUM_GPUS)
+      JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB = tostring(var.JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB)
     }
   }
 }

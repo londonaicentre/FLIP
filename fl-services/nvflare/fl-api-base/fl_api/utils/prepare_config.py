@@ -10,8 +10,8 @@
 # limitations under the License.
 #
 
+import re
 from pathlib import Path
-from typing import List
 
 from nvflare.app_common.app_constant import EnvironmentKey
 
@@ -141,7 +141,195 @@ def configure_config(
     return config_json
 
 
-def configure_client(job_dir: Path, app_name: str, project_id: str, cohort_query: str) -> Path:
+def _inject_keep_only_vars_filter(config: dict, include_regex: str) -> None:
+    """Prepend a KeepOnlyVars filter to the ``train`` task_result_filters (client-side).
+
+    Shrinks the per-round client update to only the parameters matching ``include_regex`` (the
+    trainable ones), so a frozen-backbone fine-tune sends just its head instead of the full model
+    (FLIP#684). Prepended so it runs BEFORE any existing result filter (e.g. PercentilePrivacy),
+    which should see only the retained head — otherwise the percentile cutoff is skewed by the
+    ~0 diffs of the frozen backbone. Mutates ``config`` in place.
+    """
+    keep_filter = {
+        "id": "keep_only_trainable_vars",
+        "path": "flip.nvflare.components.KeepOnlyVars",
+        "args": {"include_vars": include_regex},
+    }
+    filters_blocks = config.setdefault("task_result_filters", [])
+    for block in filters_blocks:
+        if "train" in block.get("tasks", []):
+            block.setdefault("filters", []).insert(0, keep_filter)
+            return
+    # No existing train filter block — add one.
+    filters_blocks.append({"tasks": ["train"], "filters": [keep_filter]})
+
+
+def _inject_reconstruct_full_model_filter(config: dict) -> None:
+    """Prepend a ReconstructFullModelForEval filter covering BOTH ``train`` and ``validate`` (client).
+
+    The client-side half of the head-only broadcast: it rebuilds the full global model from the
+    trimmed (head-only) broadcast the server sends after round 0 (training, see
+    ``_inject_trim_broadcast_filter`` / TrimBroadcastVars) and for cross-site validation (see
+    ``_inject_trim_eval_broadcast_filter`` / TrimEvalBroadcastVars), so the client trainer and
+    validator keep receiving a full state dict and need no change.
+
+    Wired as a SINGLE filter chain over ``["train", "validate"]`` so ONE component instance handles
+    both tasks: the frozen backbone the client reconstructs against is the round-0 broadcast cached
+    during training, and NVFLARE builds a fresh filter instance per chain occurrence — so that cache
+    is only visible during validation when the same instance serves both tasks. Prepended so it runs
+    before any other incoming task_data_filter. Injected alongside the KeepOnlyVars result filter —
+    together the matched client-side ends of the frozen-backbone round-trip. Mutates ``config`` in
+    place.
+
+    NVFLARE rejects a job in which the same task appears in more than one task_data_filters chain
+    (``FedJsonConfigurator._build_filter_table`` raises "multiple data filter chains defined for
+    task ..."), so any pre-existing chain covering ``train`` or ``validate`` is FOLDED INTO the
+    injected chain rather than left alongside it: its filters keep their relative order after the
+    reconstruct filter (which must see the broadcast first), and any ``ReconstructFullModel*`` filter
+    already wired (e.g. by a ``FlipFedAvgRecipe(aggregate_only_regex=...)`` export) is dropped as
+    superseded — the deploy-time instance must be the ONE holding the round-0 cache across both
+    tasks. A pre-existing chain that also covers OTHER tasks cannot be folded without silently
+    changing which tasks its filters run on, so that raises instead.
+
+    Raises:
+        ValueError: if an existing task_data_filters chain covers ``train`` or ``validate`` together
+            with other tasks — unmergeable, and NVFLARE would reject the overlap at job parse time.
+    """
+    reconstruct_filter = {
+        "id": "reconstruct_full_model",
+        "path": "flip.nvflare.components.ReconstructFullModelForEval",
+        "args": {},
+    }
+    covered_tasks = {"train", "validate"}
+    filters_blocks = config.setdefault("task_data_filters", [])
+    to_merge = [block for block in filters_blocks if covered_tasks & set(block.get("tasks", []))]
+    unmergeable = [block for block in to_merge if set(block.get("tasks", [])) - covered_tasks]
+    if unmergeable:
+        raise ValueError(
+            "AGGREGATE_ONLY_REGEX requires a single client task_data_filters chain over ['train', 'validate'], "
+            f"but the app config has a chain over {unmergeable[0].get('tasks')} — folding it in would apply its "
+            "filters to train/validate only, and NVFLARE rejects a task covered by two chains. Restrict the "
+            "chain to train/validate tasks or unset AGGREGATE_ONLY_REGEX."
+        )
+    merged_filters = [reconstruct_filter]
+    for block in to_merge:
+        for existing in block.get("filters", []):
+            if str(existing.get("path", "")).startswith("flip.nvflare.components.ReconstructFullModel"):
+                # Already wired (e.g. recipe-baked); superseded by the instance injected above — keeping
+                # both would double-reconstruct and NVFLARE would build a second, cache-less instance.
+                logger.info(f"Dropping pre-existing {existing.get('path')} filter superseded by injected chain")
+                continue
+            merged_filters.append(existing)
+        if set(block["tasks"]) != covered_tasks and len(block.get("filters", [])) > 0:
+            logger.warning(
+                f"Folding task_data_filters chain over {block['tasks']} into the injected "
+                "['train', 'validate'] chain; its filters now run on both tasks"
+            )
+    remaining_blocks = [block for block in filters_blocks if not any(block is merged for merged in to_merge)]
+    config["task_data_filters"] = [{"tasks": ["train", "validate"], "filters": merged_filters}, *remaining_blocks]
+
+
+def _inject_trim_broadcast_filter(config: dict, include_regex: str) -> None:
+    """Append a TrimBroadcastVars filter to the ``train`` task_data_filters (server-side).
+
+    The server-side half of the head-only broadcast: after round 0 it trims the outgoing global-model
+    broadcast down to only the trainable params matching ``include_regex``, so the frozen backbone
+    (~759 MiB) ships once at round 0 instead of every round. Clients rebuild the full model via
+    ReconstructFullModel. Mutates ``config`` in place.
+    """
+    trim_filter = {
+        "id": "trim_broadcast_to_trainable",
+        "path": "flip.nvflare.components.TrimBroadcastVars",
+        "args": {"include_vars": include_regex},
+    }
+    filters_blocks = config.setdefault("task_data_filters", [])
+    for block in filters_blocks:
+        if "train" in block.get("tasks", []):
+            block.setdefault("filters", []).append(trim_filter)
+            return
+    filters_blocks.append({"tasks": ["train"], "filters": [trim_filter]})
+
+
+def _inject_trim_eval_broadcast_filter(config: dict, include_regex: str) -> None:
+    """Append a TrimEvalBroadcastVars filter to the ``validate`` task_data_filters (server-side).
+
+    The server-side half of head-only cross-site validation: it trims the ``validate`` broadcast
+    (the full aggregated global model that ``GlobalModelEval`` sends to each client for scoring) down
+    to only the trainable params matching ``include_regex``, so the frozen ~759 MiB backbone is not
+    re-shipped for evaluation — the client rebuilds the full model via ReconstructFullModelForEval
+    from the backbone it cached at training round 0. Kept as its own ``["validate"]`` chain (distinct
+    from the ``["train"]`` TrimBroadcastVars chain); both filters are stateless, so a separate
+    server-side instance per task is fine. Mutates ``config`` in place.
+
+    Detection is by membership (any chain covering ``validate``), not exact match — NVFLARE rejects a
+    task covered by two chains, so appending a second validate-covering chain would fail the job at
+    parse time. But unlike the round-gated TrimBroadcastVars (which no-ops on tasks without a round
+    header), this filter trims UNCONDITIONALLY, so it must not be appended into a chain that also
+    covers other tasks (it would e.g. trim the round-0 ``train`` broadcast and destroy the client's
+    backbone cache) — that raises instead.
+
+    Raises:
+        ValueError: if an existing task_data_filters chain covers ``validate`` together with other
+            tasks — the unconditional trim cannot be scoped to ``validate`` within a shared chain.
+    """
+    trim_filter = {
+        "id": "trim_eval_broadcast_to_trainable",
+        "path": "flip.nvflare.components.TrimEvalBroadcastVars",
+        "args": {"include_vars": include_regex},
+    }
+    filters_blocks = config.setdefault("task_data_filters", [])
+    for block in filters_blocks:
+        tasks = block.get("tasks", [])
+        if "validate" not in tasks:
+            continue
+        if tasks != ["validate"]:
+            raise ValueError(
+                "AGGREGATE_ONLY_REGEX requires a dedicated ['validate'] server task_data_filters chain, but the "
+                f"app config has a chain over {tasks} — TrimEvalBroadcastVars trims unconditionally, so it cannot "
+                "share a chain with other tasks, and NVFLARE rejects a task covered by two chains. Split validate "
+                "into its own chain or unset AGGREGATE_ONLY_REGEX."
+            )
+        block.setdefault("filters", []).append(trim_filter)
+        return
+    filters_blocks.append({"tasks": ["validate"], "filters": [trim_filter]})
+
+
+def _inject_intime_model_selector(config: dict, key_metric: str, minimize: bool) -> None:
+    """Append a stock ``IntimeModelSelector`` component keyed on ``key_metric`` (server-side, FLIP#673).
+
+    The production mirror of ``FlipFedAvgRecipe(best_model_metric=...)``: the selector averages the
+    client-reported validation metric each round and fires ``GLOBAL_BEST_MODEL_AVAILABLE`` on
+    improvement, which the persistor answers by saving ``best_FL_global_model.pt`` alongside the final
+    model. The FLIP ``ScatterAndGather`` controller (a thin subclass of stock) already fires the round
+    events the selector listens on, so only the component needs adding. The client trainer must report
+    ``key_metric`` on its returned ``FLModel`` (evaluated on the received global model) for selection
+    to fire; without it the selector stays dormant and no best model is saved.
+
+    Idempotent: a template that already carries an ``IntimeModelSelector`` (e.g. a recipe export built
+    with ``best_model_metric``) is left untouched — two selectors would drive best-model saves off
+    separate accumulators. Mutates ``config`` in place.
+    """
+    selector_path = "nvflare.app_common.widgets.intime_model_selector.IntimeModelSelector"
+    components = config.setdefault("components", [])
+    if any(component.get("path") == selector_path for component in components):
+        logger.info("IntimeModelSelector already present in server config; not injecting a second one")
+        return
+    components.append(
+        {
+            "id": "model_selector",
+            "path": selector_path,
+            "args": {"key_metric": key_metric, "negate_key_metric": minimize},
+        }
+    )
+
+
+def configure_client(
+    job_dir: Path,
+    app_name: str,
+    project_id: str,
+    cohort_query: str,
+    aggregate_only_regex: str | None = None,
+) -> Path:
     """
     Populates config_fed_client.json, necessary to modulate the client controllers in NVFLARE jobs, with the project_id
     and cohort_query.
@@ -151,6 +339,10 @@ def configure_client(job_dir: Path, app_name: str, project_id: str, cohort_query
         app_name (str): name of the job (corresponds to model_id)
         project_id (str): unique project_id identifier
         cohort_query (str): cohort query identifying the project (SQL query used to obtain the data)
+        aggregate_only_regex (str | None): when set, inject a KeepOnlyVars ``train`` result filter so
+            only matching (trainable) params are sent per round, plus a ReconstructFullModelForEval
+            data filter over ``train``+``validate`` that rebuilds the full model client-side for both
+            training and cross-site validation (frozen-backbone head-only, FLIP#684 / #730).
 
     Returns:
         Path: path to the client config file that was updated.
@@ -170,6 +362,14 @@ def configure_client(job_dir: Path, app_name: str, project_id: str, cohort_query
     config["project_id"] = project_id
     config["query"] = cohort_query
 
+    if aggregate_only_regex:
+        _inject_keep_only_vars_filter(config, aggregate_only_regex)
+        _inject_reconstruct_full_model_filter(config)
+        logger.info(
+            f"Injected KeepOnlyVars result filter + ReconstructFullModel data filter "
+            f"(include_vars={aggregate_only_regex!r}) for app '{app_name}'"
+        )
+
     logger.debug(f"Client config to be written: {config}")
 
     write_config(config, config_file)
@@ -182,10 +382,13 @@ def configure_server(
     job_dir: Path,
     app_name: str,
     global_rounds: int,
-    trusts: List[str],
+    trusts: list[str],
     ignore_result_error: bool,
     aggregator: str,
     aggregation_weights: dict,
+    aggregate_only_regex: str | None = None,
+    best_model_metric: str | None = None,
+    best_model_metric_minimize: bool = False,
 ) -> Path:
     """
     Configures the server config file. Making sure the app name, global rounds, and other variables are set correctly.
@@ -198,6 +401,15 @@ def configure_server(
         ignore_result_error (bool): whether to ignore result errors
         aggregator (str): name of the aggregator to be used
         aggregation_weights (dict): aggregation weights to be used in the job (per trust)
+        aggregate_only_regex (str | None): when set, inject a TrimBroadcastVars ``train`` data filter so
+            only the trainable params (matching the regex) are broadcast per round after round 0, plus a
+            TrimEvalBroadcastVars ``validate`` data filter so post-training cross-site validation also
+            broadcasts only the head (frozen-backbone head-only downstream — the server-side mirror of
+            the client KeepOnlyVars / ReconstructFullModelForEval; FLIP#684 / #730).
+        best_model_metric (str | None): when set, inject a stock IntimeModelSelector keyed on this
+            validation metric so the best global model is saved alongside the final one (FLIP#673).
+        best_model_metric_minimize (bool): when True, negate the selector's key metric for loss-like
+            metrics where lower is better. Defaults to False (higher is better).
 
     Returns:
         Path: path to the server config file that was updated.
@@ -250,6 +462,22 @@ def configure_server(
             workflow["args"]["participating_clients"] = trusts
         if "args" in workflow and "ignore_result_error" in workflow["args"]:
             workflow["args"]["ignore_result_error"] = ignore_result_error
+        # Recipe-generated templates (standard_client_api) carry LITERAL num_rounds/min_clients
+        # baked in by FedJob serialisation instead of the executor templates' "{global_rounds}" /
+        # "{min_clients}" placeholders, so the top-level keys set above never reach the workflow.
+        # Override them directly or every deployed client_api job silently runs the template
+        # defaults: 3 rounds no matter what GLOBAL_ROUNDS asks for, and min_clients=1 — which lets
+        # ScatterAndGather close every round on the first (fastest) trust's update, silently
+        # dropping all slower trusts' contributions (observed live: a 2-trust 20-round job
+        # aggregated 20/20 updates from one trust and 0 from the other).
+        if "args" in workflow and "num_rounds" in workflow["args"] and not isinstance(
+            workflow["args"]["num_rounds"], str
+        ):
+            workflow["args"]["num_rounds"] = global_rounds
+        if "args" in workflow and "min_clients" in workflow["args"] and not isinstance(
+            workflow["args"]["min_clients"], str
+        ):
+            workflow["args"]["min_clients"] = len(trusts)
 
     for component in config["components"]:
         if ("name" in component and "aggregator" in component["name"]) or (
@@ -258,13 +486,28 @@ def configure_server(
             component["name"] = aggregator  # override the aggregator if specified in the config, otherwise use default
             component["args"]["aggregation_weights"] = aggregation_weights  # override the aggregation weights
 
+    if aggregate_only_regex:
+        _inject_trim_broadcast_filter(config, aggregate_only_regex)
+        _inject_trim_eval_broadcast_filter(config, aggregate_only_regex)
+        logger.info(
+            f"Injected TrimBroadcastVars (train) + TrimEvalBroadcastVars (validate) data filters "
+            f"(include_vars={aggregate_only_regex!r}) for app '{app_name}'"
+        )
+
+    if best_model_metric:
+        _inject_intime_model_selector(config, best_model_metric, best_model_metric_minimize)
+        logger.info(
+            f"Injected IntimeModelSelector (key_metric={best_model_metric!r}, "
+            f"negate_key_metric={best_model_metric_minimize}) for app '{app_name}'"
+        )
+
     write_config(config, config_file)
 
     logger.info(f"Successfully updated {CONFIG_FED_SERVER} for app '{app_name}'")
     return config_file
 
 
-def configure_meta(job_dir: Path, app_name: str, trusts: List[str]) -> Path:
+def configure_meta(job_dir: Path, app_name: str, trusts: list[str]) -> Path:
     """
     Creates a meta.json file, which is part of the NVFLARE application.
 
@@ -294,17 +537,31 @@ def configure_meta(job_dir: Path, app_name: str, trusts: List[str]) -> Path:
     #     }
     # }
     if num_gpus > 0:
-        resource_spec = {trust: {"num_gpus": num_gpus, "mem_per_gpu_in_GiB": mem_per_gpu_in_gib} for trust in trusts}
+        # NVFLARE's GPUResourceManager reads the requirement via num_gpu_key="num_of_gpus"
+        # (app_common/resource_managers/gpu_resource_manager.py) and RAISES if it's absent — so
+        # the key must be "num_of_gpus", not "num_gpus", or the job fails to schedule.
+        resource_spec = {
+            trust: {"num_of_gpus": num_gpus, "mem_per_gpu_in_GiB": mem_per_gpu_in_gib} for trust in trusts
+        }
     else:
         resource_spec = {}
 
-    # Create the meta.json file
+    # Create the meta.json file.
+    #
+    # ``custom_props`` is NVFLARE's officially-sanctioned channel for job-scoped metadata
+    # (``JobMetaKey.CUSTOM_PROPS``; surfaced to components via ``FLContextKey.JOB_META``). We
+    # publish the FLIP ``model_id`` (== ``app_name``) here so recipe-built job types whose
+    # component configs carry no ``model_id`` (e.g. ``standard_client_api``, built before the UUID is
+    # known) can resolve it lazily at runtime via ``flip.nvflare.runtime.get_flip_model_id``.
+    # Legacy job types still receive ``model_id`` through their component args and ignore this
+    # key, so populating it unconditionally is safe and keeps both paths consistent.
     meta_config = {
         "name": app_name,
         "resource_spec": resource_spec,
         "deploy_map": {"app": ["server"] + trusts},
         "min_clients": len(trusts),
         "mandatory_clients": trusts,
+        "custom_props": {"model_id": app_name},
     }
     logger.debug(f"Meta config to be written: {meta_config}")
 
@@ -392,5 +649,43 @@ def validate_config(config: dict) -> IOverridableConfig:
                 raise ValueError(f"Invalid weight: {val}")
 
         validated.AGGREGATION_WEIGHTS = weights
+
+    regex = config.get("AGGREGATE_ONLY_REGEX")
+    if regex:
+        if not isinstance(regex, str):
+            raise ValueError("AGGREGATE_ONLY_REGEX must be a string regex")
+        try:
+            re.compile(regex)
+        except re.error as exc:
+            raise ValueError(f"AGGREGATE_ONLY_REGEX is not a valid regex: {exc}") from exc
+        validated.AGGREGATE_ONLY_REGEX = regex
+
+    best_model_metric = config.get("BEST_MODEL_METRIC")
+    if best_model_metric is not None:
+        if not isinstance(best_model_metric, str) or not best_model_metric.strip():
+            raise ValueError("BEST_MODEL_METRIC must be a non-empty string metric label")
+        # Store stripped: a stray space in the JSON would otherwise survive validation and never
+        # match the metric label the trainer reports.
+        validated.BEST_MODEL_METRIC = best_model_metric.strip()
+
+        minimize = config.get("BEST_MODEL_METRIC_MINIMIZE", False)
+        # Guard bool before int: in Python ``isinstance(True, int)`` is True, but we want to reject
+        # a stray 1/0 here so the config stays explicit.
+        if not isinstance(minimize, bool):
+            raise ValueError("BEST_MODEL_METRIC_MINIMIZE must be a boolean")
+        validated.BEST_MODEL_METRIC_MINIMIZE = minimize
+
+        # IntimeModelSelector always skips round 0, so a job whose effective GLOBAL_ROUNDS is 1 —
+        # the platform default when the key is unset or invalid (see upload.py) — can never fire
+        # the selector: the job would run fine but the results zip silently lacks the best model.
+        if (validated.GLOBAL_ROUNDS or TrainingRound.MIN) <= 1:
+            raise ValueError(
+                "BEST_MODEL_METRIC requires GLOBAL_ROUNDS >= 2: the best-model selector skips "
+                "round 0, so a single-round job can never save a best model"
+            )
+    elif "BEST_MODEL_METRIC_MINIMIZE" in config:
+        # BEST_MODEL_METRIC_MINIMIZE only has meaning alongside a selector metric — silently
+        # accepting it without BEST_MODEL_METRIC would let a user believe it took effect.
+        raise ValueError("BEST_MODEL_METRIC_MINIMIZE requires BEST_MODEL_METRIC to also be set")
 
     return validated

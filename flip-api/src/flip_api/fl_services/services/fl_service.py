@@ -11,14 +11,17 @@
 #
 
 import json
-from typing import Any
+import os
+from pathlib import Path
+from typing import Any, cast
 from uuid import UUID
 
 from fastapi import Request
-from sqlmodel import Session, select
+from sqlalchemy import Column
+from sqlmodel import Session, col, select
 
 from flip_api.config import get_settings
-from flip_api.db.database import engine
+from flip_api.db.database import get_engine
 from flip_api.db.models.main_models import FLJob, Trust
 from flip_api.domain.interfaces.fl import (
     DEFAULT_JOB_TYPE,
@@ -28,9 +31,10 @@ from flip_api.domain.interfaces.fl import (
     IStartTrainingBody,
     JobRequiredFiles,
 )
-from flip_api.domain.schemas.status import FLJobStatus, FLTargets
+from flip_api.domain.schemas.status import FLJobStatus, FLTargets, JobStatus
 from flip_api.domain.schemas.types import FLBackend
 from flip_api.utils.encryption import encrypt
+from flip_api.utils.exceptions import JobAbortedError, NotFoundError
 from flip_api.utils.http import http_delete, http_get, http_post
 from flip_api.utils.logger import logger
 from flip_api.utils.s3_client import S3Client
@@ -40,6 +44,40 @@ class UnknownJobTypeError(Exception):
     """Custom exception for unknown job types in FL"""
 
     pass
+
+
+def list_local_base_files(base_dir: Path) -> list[str]:
+    """List every file under a local base-application directory, recursively.
+
+    The base FL application templates live in the repo's ``fl-apps/`` tree, baked into the
+    flip-api image and read from ``FL_APP_BASE_DIR`` (FLIP#724) — no longer from S3. This walks
+    ``base_dir`` and returns each file's path relative to it, so the bundler can mirror the tree
+    1:1 into the destination bucket.
+
+    Args:
+        base_dir (Path): Root directory of a backend/job-type base application
+            (``<FL_APP_BASE_DIR>/<backend>/<job_type>``).
+
+    Returns:
+        list[str]: Sorted relative POSIX paths of every regular file under ``base_dir`` (nested
+        paths included). Empty if ``base_dir`` does not exist or contains no files.
+
+    Note:
+        Symlinks are ignored — both symlinked files and symlinked directories (``followlinks=False``).
+        The default baked-in ``fl-apps/`` tree contains none, but ``FL_APP_BASE_DIR`` may point at an
+        operator-provided tree; skipping symlinks keeps the walk inside the template tree so a stray
+        link can't pull files from elsewhere on the host into the uploaded bundle.
+    """
+    if not base_dir.is_dir():
+        return []
+    rel_paths: list[str] = []
+    for dirpath, _dirnames, filenames in os.walk(base_dir, followlinks=False):
+        for name in filenames:
+            path = Path(dirpath) / name
+            if path.is_symlink():
+                continue
+            rel_paths.append(path.relative_to(base_dir).as_posix())
+    return sorted(rel_paths)
 
 
 def upload_app(model_id: UUID, training_details: IStartTrainingBody, endpoint: str) -> Any:
@@ -58,7 +96,14 @@ def upload_app(model_id: UUID, training_details: IStartTrainingBody, endpoint: s
         Any: The response from the server after uploading the application.
     """
     url = f"{endpoint}/upload_app/{model_id}"
-    response = http_post(url=url, data=training_details.model_dump())
+    # Stopgap timeout: staging a large evaluation checkpoint (S3 download -> shared volume on
+    # flip-fl-api) can take far longer than httpx's 5s default. Match fl-api-base's staging
+    # timeout so this blocking call doesn't abandon an in-progress upload.
+    # FIXME: this is a synchronous, blocking call on the run_jobs scheduler path — holding a
+    # request open for a multi-hundred-MB (up to 5 GB) transfer is fragile by design. The proper
+    # fix is to make upload_app async (flip-fl-api returns 202 + a staging-status endpoint that
+    # run_jobs polls, then submit_job once staged) rather than bumping the timeout. Tracked separately.
+    response = http_post(url=url, data=training_details.model_dump(), timeout=900)
     logger.info(f"upload_app response: {response}")
     # TODO There should be some response validation here, and the return type should not be Any
     return response
@@ -68,6 +113,12 @@ def get_fl_backend_job_id_by_model_id(model_id: UUID, session: Session) -> str:
     """
     Get the FL backend job ID associated with a given model ID
 
+    A re-queued model (STOPPED → INITIATED, #787) keeps its earlier DELETED job rows, so the
+    lookup reads only the newest job by ``created`` — the current training attempt (mirrors
+    ``update_fl_scheduler``). Deliberately no status filter: ``abort_model_training`` calls this
+    right after the dequeue flipped the current job to DELETED, and that job's backend id is
+    exactly the one to abort.
+
     Args:
         model_id (UUID): The ID of the model
         session (Session): SQLModel session object
@@ -76,11 +127,16 @@ def get_fl_backend_job_id_by_model_id(model_id: UUID, session: Session) -> str:
         str: The FL backend job ID associated with the model ID
 
     Raises:
-        ValueError: If the model ID is not found in the database
+        ValueError: If the model has no job, or its newest job was never submitted to the FL
+            backend (``fl_backend_job_id`` still NULL).
     """
-    statement = select(FLJob.fl_backend_job_id).where(FLJob.model_id == model_id)
-    result = session.exec(statement)
-    fl_backend_job_id = result.one_or_none()
+    statement = (
+        select(FLJob.fl_backend_job_id)
+        .where(FLJob.model_id == model_id)
+        .order_by(cast(Column, FLJob.created).desc())
+        .limit(1)
+    )
+    fl_backend_job_id = session.exec(statement).first()
 
     if fl_backend_job_id is None:
         raise ValueError(f"No backend job ID found for model_id {model_id}")
@@ -143,7 +199,9 @@ def check_server_status(endpoint: str) -> IServerStatus | None:
     """
     url = f"{endpoint}/check_server_status"
     logger.debug(f"Checking server status at '{url}'")
-    response = http_get(url)
+    # Same generous timeout as check_client_status: the Flower FL API hits the SuperLink and can
+    # be slower than httpx's 5s default.
+    response = http_get(url, timeout=30)
     logger.debug(f"Server status response: {response}")
     if not response:
         logger.error(f"No response from FL API for server at endpoint {endpoint}")
@@ -164,7 +222,10 @@ def check_client_status(endpoint: str) -> list[IClientStatus] | None:
     """
     url = f"{endpoint}/check_client_status"
     logger.debug(f"Checking client status at '{url}'")
-    response = http_get(url)
+    # NOTE the Flower FL API queries the SuperLink (ControlServicer.ShowFederation) on each call,
+    # which can take ~9s — past httpx's 5s default — so a single check would time out and fail the
+    # whole run (run_jobs marks the model ERROR). Use the same generous timeout as Flower submit.
+    response = http_get(url, timeout=30)
     logger.debug(f"Client status response: {response}")
     if not response:
         logger.error(f"No response from FL API for clients at endpoint {endpoint}")
@@ -282,6 +343,25 @@ def abort_job(endpoint: str, job_id: str) -> dict:
     return response
 
 
+def _raise_if_job_aborted(fl_job_id: UUID, session: Session) -> None:
+    """
+    Abort gate for the prepare window: raise if the FL job was DELETED mid-prepare.
+
+    Selects the status column (not the entity) so the check bypasses the session identity map
+    and sees the latest committed value from a concurrent abort (READ COMMITTED).
+
+    Args:
+        fl_job_id (UUID): The ID of the FL job to check.
+        session (Session): SQLModel session.
+
+    Raises:
+        JobAbortedError: If the job no longer exists or was DELETED by a concurrent abort.
+    """
+    job_status = session.exec(select(col(FLJob.status)).where(FLJob.id == fl_job_id)).one_or_none()
+    if job_status is None or job_status == JobStatus.DELETED:
+        raise JobAbortedError(f"FL job {fl_job_id} was aborted before submission")
+
+
 def start_training(
     model_id: UUID,
     fl_job_id: UUID,
@@ -318,7 +398,12 @@ def start_training(
         bundle_urls=bundle_urls,
     )
 
+    # Gate before the (up to 900s) app transfer, and again right before submission: submit_job
+    # is the side effect that creates the backend run, so a job aborted mid-prepare (#787) must
+    # never reach it.
+    _raise_if_job_aborted(fl_job_id, session)
     upload_app(model_id, training_details, endpoint)
+    _raise_if_job_aborted(fl_job_id, session)
     logger.info(f"Submitting job for training for model {model_id} with FL job ID {fl_job_id}")
     submit_job(fl_job_id, endpoint, model_id, session)
 
@@ -327,16 +412,16 @@ def bundle_nvflare_application(model_id: UUID, job_type: str = DEFAULT_JOB_TYPE)
     """
     Creates the app folder from the base application files and the uploaded files.
 
-    It copies the base application files and the model files to the destination bucket.
-    It checks if the destination bucket has any files, and if it does, it deletes them.
+    It uploads the local base application templates and copies the model files to the destination
+    bucket. It checks if the destination bucket has any files, and if it does, it deletes them.
 
     After copying, path-level verification ensures that all expected files are present in the destination bucket.
 
     Example:
 
-    Base application files in the base bucket:
+    Base application files on the local FL_APP_BASE_DIR tree (baked into the image, FLIP#724):
 
-        s3://base-bucket/standard/
+        <FL_APP_BASE_DIR>/nvflare/standard/
         ├── app_site1/
         │   ├── config/
         │   │   └── config_fed_client.json
@@ -414,6 +499,7 @@ def bundle_nvflare_application(model_id: UUID, job_type: str = DEFAULT_JOB_TYPE)
         raise FileNotFoundError("Model files missing on the S3 bucket")
 
     # Determine job_type from config.json if present
+    input_config: dict = {}
     config_file = next((k for k in model_files if k.endswith("/config.json")), None)
     if not config_file:
         logger.info("No config.json file was found in the scanned files. Using job_type=standard.")
@@ -436,42 +522,35 @@ def bundle_nvflare_application(model_id: UUID, job_type: str = DEFAULT_JOB_TYPE)
             job_type = jt
             logger.info(f"job_type in config.json: {job_type}. Using it to select base application.")
 
-    # List base files for that job_type. This bundler is the nvflare-specific path, so the
-    # backend segment is fixed: <base>/nvflare/<job_type>.
-    base_bucket_s3_path = f"{get_settings().FL_APP_BASE_BUCKET}/nvflare/{job_type}"
-    logger.debug(f"Base bucket: {base_bucket_s3_path}")
-    base_files = s3.list_objects(base_bucket_s3_path)
-    if not base_files:
-        raise FileNotFoundError("Base application files missing on the S3 bucket")
+    # Locate the base application for this job_type on the local FL_APP_BASE_DIR tree. This
+    # bundler is the nvflare-specific path, so the backend segment is fixed:
+    # <FL_APP_BASE_DIR>/nvflare/<job_type>. The templates are baked into the flip-api image
+    # (FLIP#724) — there is no S3 base bucket.
+    base_dir = Path(get_settings().FL_APP_BASE_DIR) / FLBackend.NVFLARE / job_type
+    logger.debug(f"Base application dir: {base_dir}")
+    base_rel_paths = list_local_base_files(base_dir)
+    if not base_rel_paths:
+        raise FileNotFoundError(f"Base application files missing in the local base directory: {base_dir}")
 
     # Clear destination if files already exist there (e.g. from a previous training run)
     dest_files = s3.list_objects(dest_bucket_s3_path)
     if dest_files:
         s3.delete_objects(dest_files)
 
-    # Copy entire base tree into destination (1:1 paths under base_bucket_s3_path)
-    for src_key in base_files:
-        rel = src_key.replace(f"{base_bucket_s3_path}/", "", 1)
-        dst_key = f"{dest_bucket_s3_path}/{rel}"
-        logger.debug(f"Copying base {src_key} -> {dst_key}")
-        s3.copy_object(src_key, dst_key)
-
-    # Find app folders (top-level directories that start with "app", e.g. app_site1, app_site2, etc)
-    # Retrieve the name of the app folders from the base_files
+    # Find app folders (top-level directories that start with "app", e.g. app, app_site1, etc)
     app_folders: set[str] = set()
-    for src_key in base_files:
-        rel = src_key.replace(f"{base_bucket_s3_path}/", "", 1)
-        logger.debug(f"Checking base file for app folder: {rel}")
-        top = rel.split("/", 1)[0]  # e.g. "app_site1"
+    for rel in base_rel_paths:
+        top = rel.split("/", 1)[0]  # e.g. "app" or "app_site1"
         if top.startswith("app"):
             app_folders.add(top)
 
     if not app_folders:
-        raise FileNotFoundError(f"No app folders found under base application: {base_bucket_s3_path}")
+        raise FileNotFoundError(f"No app folders found under base application: {base_dir}")
 
     logger.debug(f"App folders found: {sorted(app_folders)}")
 
-    # Validate required model files exist for the job type
+    # Validate required model files exist for the job type before uploading anything, so a bad
+    # submission fails fast without leaving a partial bundle in the destination bucket.
     required_files = JobRequiredFiles.get_required_files(job_type, FLBackend.NVFLARE)
     model_rel = {
         k.replace(f"{model_bucket_s3_path}/", "", 1) for k in model_files
@@ -480,14 +559,12 @@ def bundle_nvflare_application(model_id: UUID, job_type: str = DEFAULT_JOB_TYPE)
     if len(missing_files) > 0:
         raise FileNotFoundError(f"Missing required files for job type {job_type}: {', '.join(missing_files)}. ")
 
-    # Copy base application files to the destination bucket
-    for file in base_files:
-        # extract the rest of the file after the parent s3 path to copy the file tree structure
-        key = file.replace(f"{base_bucket_s3_path}/", "")
-        dest_file_path = f"{dest_bucket_s3_path}/{key}"
-
-        logger.debug(f"Copying {file} to {dest_file_path}")
-        s3.copy_object(file, dest_file_path)
+    # Upload the base application tree into the destination bucket (1:1 paths under base_dir)
+    for rel in base_rel_paths:
+        src_path = base_dir / rel
+        dest_file_path = f"{dest_bucket_s3_path}/{rel}"
+        logger.debug(f"Uploading base {src_path} -> {dest_file_path}")
+        s3.upload_file(str(src_path), dest_file_path)
 
     # Copy meta.json file from model files (if it exists) to the destination bucket
     if f"{model_bucket_s3_path}/meta.json" in model_files:
@@ -496,12 +573,45 @@ def bundle_nvflare_application(model_id: UUID, job_type: str = DEFAULT_JOB_TYPE)
         logger.debug(f"Copying meta.json {src_meta_path} -> {dest_meta_path}")
         s3.copy_object(src_meta_path, dest_meta_path)
 
-    # Copy model files into each app*/custom/, skipping meta.json
+    # Some jobs load a large model checkpoint SERVER-SIDE and don't need it on the clients:
+    #   - evaluation jobs: the models[*].checkpoint files, loaded by EvaluationPTModelLocator;
+    #   - training jobs: a pretrained backbone declared via top-level SERVER_CHECKPOINT (str or
+    #     list), loaded by InitialCheckpointPTModelPersistor and broadcast as the round-0 model.
+    # Divert those to a server-only `server_checkpoints/` prefix so they are staged for the
+    # fl-server (via the shared checkpoint volume) instead of being bundled into every
+    # app*/custom/ and shipped to every client by NVFLARE's deploy_map (a large bundled file
+    # collapses app-deploy). Mirrors the Flower backend, which keeps the checkpoint server-side.
+    server_checkpoints: set[str] = set()
+    if job_type in ("evaluation", "evaluation_client_api"):
+        server_checkpoints = {
+            m["checkpoint"]
+            for m in input_config.get("models", {}).values()
+            if isinstance(m, dict) and m.get("checkpoint")
+        }
+    else:
+        declared = input_config.get("SERVER_CHECKPOINT")
+        if isinstance(declared, str) and declared:
+            server_checkpoints = {declared}
+        elif isinstance(declared, list):
+            server_checkpoints = {c for c in declared if isinstance(c, str) and c}
+    if server_checkpoints:
+        logger.info(f"Diverting server-side checkpoints out of the app bundle: {server_checkpoints}")
+
+    # Copy model files, skipping meta.json. Evaluation checkpoints go once to the server-only
+    # `server_checkpoints/` prefix; every other model file is mirrored into each app*/custom/.
     for src_key in model_files:
         rel = src_key.replace(f"{model_bucket_s3_path}/", "", 1)
 
         # Skip meta.json as it is already copied
         if rel == "meta.json":
+            continue
+
+        if rel in server_checkpoints:
+            # Copied once to a non-app prefix; never placed in app*/custom/, so NVFLARE's
+            # deploy_map never ships it to clients. The fl-server reads it off the shared volume.
+            dst_key = f"{dest_bucket_s3_path}/server_checkpoints/{rel}"
+            logger.debug(f"Copying server-side checkpoint {src_key} -> {dst_key}")
+            s3.copy_object(src_key, dst_key)
             continue
 
         for app in app_folders:
@@ -519,12 +629,12 @@ def bundle_nvflare_application(model_id: UUID, job_type: str = DEFAULT_JOB_TYPE)
     # Path-level verification to ensure all expected files are present in the destination bucket after copying
     verify_bundle_paths(
         s3=s3,
-        base_files=base_files,
+        base_rel_paths=base_rel_paths,
         model_files=model_files,
         app_folders=app_folders,
-        base_bucket_s3_path=base_bucket_s3_path,
         model_bucket_s3_path=model_bucket_s3_path,
         dest_bucket_s3_path=dest_bucket_s3_path,
+        server_checkpoints=server_checkpoints,
     )
 
     return dest_bucket_s3_path
@@ -534,14 +644,14 @@ def bundle_flower_application(model_id: UUID, job_type: str = DEFAULT_JOB_TYPE) 
     """
     Creates the app folder from the base application files and the uploaded files.
 
-    It copies the base application files and the model files to the destination bucket.
-    It checks if the destination bucket has any files, and if it does, it deletes them.
+    It uploads the local base application templates and copies the model files to the destination
+    bucket. It checks if the destination bucket has any files, and if it does, it deletes them.
 
     Example:
 
-    Base application files in the base bucket:
+    Base application files on the local FL_APP_BASE_DIR tree (baked into the image, FLIP#724):
 
-        s3://base-bucket/standard/
+        <FL_APP_BASE_DIR>/flower/standard/
         ├── app/
         │   └── server_app.py
         └── pyproject.toml
@@ -618,27 +728,23 @@ def bundle_flower_application(model_id: UUID, job_type: str = DEFAULT_JOB_TYPE) 
             job_type = jt
             logger.info(f"job_type in config.json: {job_type}. Using it to select base application.")
 
-    # List base files for that job_type. This bundler is the flower-specific path, so the
-    # backend segment is fixed: <base>/flower/<job_type>.
-    base_bucket_s3_path = f"{get_settings().FL_APP_BASE_BUCKET}/flower/{job_type}"
-    logger.debug(f"Base bucket: {base_bucket_s3_path}")
-    base_files = s3.list_objects(base_bucket_s3_path)
-    if not base_files:
-        raise FileNotFoundError("Base application files missing on the S3 bucket")
+    # Locate the base application for this job_type on the local FL_APP_BASE_DIR tree. This
+    # bundler is the flower-specific path, so the backend segment is fixed:
+    # <FL_APP_BASE_DIR>/flower/<job_type>. The templates are baked into the flip-api image
+    # (FLIP#724) — there is no S3 base bucket.
+    base_dir = Path(get_settings().FL_APP_BASE_DIR) / FLBackend.FLOWER / job_type
+    logger.debug(f"Base application dir: {base_dir}")
+    base_rel_paths = list_local_base_files(base_dir)
+    if not base_rel_paths:
+        raise FileNotFoundError(f"Base application files missing in the local base directory: {base_dir}")
 
     # Clear destination if files already exist there (e.g. from a previous training run)
     dest_files = s3.list_objects(dest_bucket_s3_path)
     if dest_files:
         s3.delete_objects(dest_files)
 
-    # Copy entire base tree into destination (1:1 paths under base_bucket_s3_path)
-    for src_key in base_files:
-        rel = src_key.replace(f"{base_bucket_s3_path}/", "", 1)
-        dst_key = f"{dest_bucket_s3_path}/{rel}"
-        logger.debug(f"Copying base {src_key} -> {dst_key}")
-        s3.copy_object(src_key, dst_key)
-
-    # Validate required model files exist for the job type
+    # Validate required model files exist for the job type before uploading anything, so a bad
+    # submission fails fast without leaving a partial bundle in the destination bucket.
     required_files = JobRequiredFiles.get_required_files(job_type, FLBackend.FLOWER)
     model_rel = {
         k.replace(f"{model_bucket_s3_path}/", "", 1) for k in model_files
@@ -647,14 +753,12 @@ def bundle_flower_application(model_id: UUID, job_type: str = DEFAULT_JOB_TYPE) 
     if len(missing_files) > 0:
         raise FileNotFoundError(f"Missing required files for job type {job_type}: {', '.join(missing_files)}. ")
 
-    # Copy base application files to the destination bucket
-    for file in base_files:
-        # extract the rest of the file after the parent s3 path to copy the file tree structure
-        key = file.replace(f"{base_bucket_s3_path}/", "")
-        dest_file_path = f"{dest_bucket_s3_path}/{key}"
-
-        logger.debug(f"Copying {file} to {dest_file_path}")
-        s3.copy_object(file, dest_file_path)
+    # Upload the base application tree into the destination bucket (1:1 paths under base_dir)
+    for rel in base_rel_paths:
+        src_path = base_dir / rel
+        dest_file_path = f"{dest_bucket_s3_path}/{rel}"
+        logger.debug(f"Uploading base {src_path} -> {dest_file_path}")
+        s3.upload_file(str(src_path), dest_file_path)
 
     # Copy model files into app/
     for src_key in model_files:
@@ -677,24 +781,27 @@ def bundle_flower_application(model_id: UUID, job_type: str = DEFAULT_JOB_TYPE) 
 def verify_bundle_paths(
     *,
     s3: "S3Client",
-    base_files: list[str],
+    base_rel_paths: list[str],
     model_files: list[str],
     app_folders: set[str],
-    base_bucket_s3_path: str,
     model_bucket_s3_path: str,
     dest_bucket_s3_path: str,
+    server_checkpoints: set[str] | None = None,
 ) -> None:
     """
     Verifies that all expected destination keys exist after bundling.
 
     Args:
         s3 (S3Client): S3 client used to list destination objects.
-        base_files (list[str]): Keys of the base application files in the source bucket.
+        base_rel_paths (list[str]): Relative paths of the base application files (relative to the
+            local base directory), each mirrored 1:1 into the destination bundle.
         model_files (list[str]): Keys of the user-uploaded model files in the source bucket.
         app_folders (set[str]): Application subfolder names that model files get mirrored into.
-        base_bucket_s3_path (str): Root S3 path of the base application bucket.
         model_bucket_s3_path (str): Root S3 path of the user model bucket.
         dest_bucket_s3_path (str): Root S3 path of the destination bundle bucket.
+        server_checkpoints (set[str] | None): Model-file names diverted to the server-only
+            ``server_checkpoints/`` prefix (evaluation jobs); expected there instead of in
+            each ``app*/custom/``.
 
     Raises:
         RuntimeError: If any expected destination key is missing from the bundle bucket.
@@ -707,17 +814,21 @@ def verify_bundle_paths(
     expected: set[str] = set()
 
     # Base files (mirrored exactly)
-    for src_key in base_files:
-        rel = src_key.replace(f"{base_bucket_s3_path}/", "", 1)
+    for rel in base_rel_paths:
         expected.add(f"{dest_bucket_s3_path}/{rel}")
 
     # meta.json copied once
     if "meta.json" in model_rel:
         expected.add(f"{dest_bucket_s3_path}/meta.json")
 
-    # Model files copied into each app/custom (skip meta.json)
+    # Model files copied into each app/custom (skip meta.json). Evaluation checkpoints are
+    # diverted once to the server-only `server_checkpoints/` prefix instead of app*/custom/.
+    server_checkpoints = server_checkpoints or set()
     for rel in model_rel:
         if rel == "meta.json":
+            continue
+        if rel in server_checkpoints:
+            expected.add(f"{dest_bucket_s3_path}/server_checkpoints/{rel}")
             continue
         for app in app_folders:
             expected.add(f"{dest_bucket_s3_path}/{app}/custom/{rel}")
@@ -791,7 +902,10 @@ def extract_current_job_data(net_endpoint: str, fl_backend_job_id: str) -> IJobM
             here is intentional.
     """
     url = f"{net_endpoint}/list_jobs"
-    current_job_data = http_get(url)
+    # Same generous timeout as the other FL status checks: the Flower FL API lists runs from the
+    # SuperLink and can exceed httpx's 5s default; this is polled during a run, so a 5s timeout
+    # would risk flipping a healthy in-flight model to ERROR.
+    current_job_data = http_get(url, timeout=30)
     logger.debug(f"Current job data: {current_job_data}")
 
     # Validate the response format
@@ -838,12 +952,16 @@ def abort_model_training(request: Request, model_id: UUID, session: Session) -> 
 
     Raises:
         ValueError: If the FL server is not running, or if ``target`` is invalid.
+        DatabaseError: If the dequeue or a scheduler lookup fails at the DB layer — surfaced
+            rather than swallowed, so a failed abort is never reported as a success.
     """
     logger.debug(f"Checking if model {model_id} is currently running...")
 
-    try:
-        from flip_api.fl_services.services import fl_scheduler_service
+    # Imported locally to avoid the fl_service -> model_service -> fl_scheduler_service cycle.
+    from flip_api.fl_services.services import fl_scheduler_service
+    from flip_api.model_services.services.model_service import add_log
 
+    try:
         # Always try to remove the job from queue
         fl_scheduler_service.remove_job_from_queue(model_id, session)
 
@@ -854,8 +972,19 @@ def abort_model_training(request: Request, model_id: UUID, session: Session) -> 
 
         logger.info(f"Net info for model {model_id}: endpoint={net_endpoint}, name={net_name}")
 
-    except Exception as e:
-        logger.info(f"Model {model_id} not currently running training; removed from queue. Reason: {e}")
+    except (NotFoundError, ValueError) as e:
+        # Pre-running window (#787): the job was dequeued but was never submitted to the
+        # fl-server (fl_backend_job_id still NULL → ValueError) or no net is pinned to it yet
+        # (NotFoundError), so there is nothing to abort — but the net may already be BUSY with
+        # this job's pickup. Release it now rather than leaving it to the stale-BUSY watchdog on
+        # the next scheduler tick. Deliberately narrow: a DatabaseError here means the dequeue
+        # or lookup itself failed, and must surface as an error — not as a successful abort.
+        released = fl_scheduler_service.release_scheduler_for_model(model_id, session)
+        logger.info(
+            f"Model {model_id} not currently running training; removed from queue "
+            f"(released {released} scheduler(s)). Reason: {e}"
+        )
+        add_log(model_id, "Training job aborted before start; training slot released.", session)
         return
 
     server_status = fetch_server_status(net_endpoint)
@@ -867,8 +996,10 @@ def abort_model_training(request: Request, model_id: UUID, session: Session) -> 
         raise ValueError(error_msg)
 
     # If there is no running job for this model, it is already terminal — abort is an
-    # idempotent no-op.
+    # idempotent no-op. The jobs were just dequeued above, so free the net promptly instead of
+    # leaving it to the stale-BUSY watchdog.
     if extract_current_job_data(net_endpoint, fl_backend_job_id) is None:
+        fl_scheduler_service.release_scheduler_for_model(model_id, session)
         logger.info(
             f"No running FL job for model {model_id} (job ID {fl_backend_job_id}); "
             f"already stopped — nothing to abort."
@@ -890,6 +1021,11 @@ def abort_model_training(request: Request, model_id: UUID, session: Session) -> 
     response = abort_job(net_endpoint, fl_backend_job_id)
 
     logger.info(f"Abort job response ({target=}, {clients=}): {response}")
+
+    # The dequeue above DELETEd the model's jobs, so update_fl_scheduler (which only considers
+    # non-DELETED jobs) can no longer free the net — release it here now the abort is delivered.
+    released = fl_scheduler_service.release_scheduler_for_model(model_id, session)
+    logger.info(f"Released {released} scheduler(s) for model {model_id} after abort")
 
 
 def add_fl_job(model_id: UUID, trusts: list[Trust], session: Session) -> None:
@@ -940,7 +1076,7 @@ def keep_fl_api_session_alive() -> None:
     # NOTE In the old implementation, we had 3 'nets' in the database, each with its own FLAdminAPI. So each net had a
     # separate FLAdminAPI endpoint. Here, there should just be 1 net for now. If we add more nets in the future, they
     # might all have the same FLARE_API endpoint, if the FLARE_API controls all controllers/clients.
-    with Session(engine) as db:
+    with Session(get_engine()) as db:
         nets = fl_scheduler_service.get_nets(db)
 
         for net in nets:

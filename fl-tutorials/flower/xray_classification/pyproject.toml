@@ -28,8 +28,8 @@ description = "Tutorial for chest-X-ray multi-lesion classification using MONAI 
 license = "Apache-2.0"
 dependencies = [
     "flip-utils>=0.1.8",
-    "flwr[simulation]>=1.27.0",
-    "monai>=1.5.2",
+    "flwr[simulation]>=1.32.0",
+    "monai>=1.6.0",
     "numpy>=2.4.2",
     "pandas>=3.0.0",
     "pydicom>=3.0.1",
@@ -64,4 +64,4 @@ line-length = 120
 
 [tool.ruff.lint]
 preview = true
-select = ['I', 'F', 'E', 'W', 'PT']
+select = ['I', 'F', 'E', 'W', 'PT', 'UP006', 'UP007', 'UP035', 'UP042', 'UP045']

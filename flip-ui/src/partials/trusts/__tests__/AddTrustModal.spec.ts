@@ -17,8 +17,16 @@ import { describe, expect, it, vi } from "vitest";
 
 import AddTrustModal from "@/partials/trusts/AddTrustModal.vue";
 import { addTrustSchema } from "@/partials/trusts/addTrustSchema";
+import { createAdminTrust } from "@/services/admin-trusts-service";
+import { Snackbar } from "@/utils/snackbar";
 
 vi.mock("@/services/admin-trusts-service", () => ({ createAdminTrust: vi.fn() }));
+vi.mock("@/utils/snackbar", () => ({
+    Snackbar: {
+        success: vi.fn(),
+        error: vi.fn()
+    }
+}));
 
 // Pass-through stubs for the headless-ui dialog chrome so the form fields render inline.
 const passthrough = (tag = "div") => ({ template: `<${tag}><slot /></${tag}>` });
@@ -89,5 +97,54 @@ describe("AddTrustModal rendering", () => {
         expect(text).toContain("Letters, digits, underscore, hyphen.");
         // The name field no longer mis-describes itself as the auth identifier.
         expect(text).not.toContain("authenticate with the hub");
+    });
+
+    it("centres the dialog on mobile instead of pinning it to the bottom", () => {
+        const wrapper = mountModal();
+
+        const layout = wrapper.find(".h-screen");
+        expect(layout.classes()).toContain("items-center");
+        expect(layout.classes()).not.toContain("items-end");
+    });
+
+    it("closes from the header cross button like Cancel", async () => {
+        const wrapper = mountModal();
+
+        await wrapper.find("[data-test=add-trust-close-x-btn]").trigger("click");
+
+        expect(wrapper.emitted("closeModal")).toHaveLength(1);
+    });
+
+    it("closes the dialog when creation fails, so the error snackbar isn't hidden behind it", async () => {
+        // e.g. the kit-slot pool is exhausted: the API 409s with a user-facing detail.
+        vi.mocked(createAdminTrust).mockRejectedValueOnce({ response: { data: { detail: "No FL kit slots available. Pre-provision more FL kits and try again." } } });
+        const wrapper = mountModal();
+
+        await wrapper.find("[data-test=trust-name-field]").setValue("Guy's Trust");
+        await wrapper.find("[data-test=trust-code-field]").setValue("GSTT");
+        await wrapper.find("[data-test=confirm-create-trust-btn]").trigger("click");
+
+        // Async validation + the rejected request resolve over macrotasks.
+        await vi.waitFor(() => {
+            expect(Snackbar.error).toHaveBeenCalled();
+            expect(wrapper.emitted("closeModal")).toHaveLength(1);
+        });
+    });
+
+    it("keeps the footer buttons on one row at every width", () => {
+        const wrapper = mountModal();
+
+        // AiButton puts its class attribute on a wrapper div around the native button.
+        const confirm = wrapper.find("[data-test=confirm-create-trust-btn]").element.parentElement;
+        const cancel = wrapper.find("[data-test=close-add-trust-modal-btn]").element.parentElement;
+
+        // The two buttons fit side by side even on phones — no full-width
+        // stacking, no vertical gap, just a right-aligned row everywhere.
+        const footer = confirm?.parentElement;
+        expect(footer?.className).toContain("flex-row-reverse");
+        expect(confirm?.className).toMatch(/(?:^|\s)ml-2(?:\s|$)/);
+        expect(confirm?.className).not.toContain("w-full");
+        expect(cancel?.className).not.toContain("w-full");
+        expect(cancel?.className).not.toContain("mt-2");
     });
 });

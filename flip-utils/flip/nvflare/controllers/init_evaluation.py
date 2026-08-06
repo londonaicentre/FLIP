@@ -25,14 +25,14 @@ from nvflare.apis.signal import Signal
 from nvflare.app_common.app_constant import AppConstants
 
 from flip import FLIP
-from flip.constants import FlipConstants, FlipEvents, FlipTasks, ModelStatus
-from flip.utils import Utils
+from flip.constants import FlipConstants, FlipEvents, FlipTasks
+from flip.nvflare.runtime import get_flip_model_id
 
 
 class InitEvaluation(Controller):
     def __init__(
         self,
-        model_id: str,
+        model_id: str = "",
         min_clients: int = FlipConstants.MIN_CLIENTS,
         flip: FLIP = FLIP(),
         cleanup_timeout: int = 600,
@@ -43,7 +43,8 @@ class InitEvaluation(Controller):
         and executes the client cleanup task.
 
         Args:
-            model_id (str): ID of the model that the evaluation is being performed under.
+            model_id (str, optional): ID of the model that the evaluation is being performed under. When omitted
+                the ID is resolved lazily from the job's meta.json custom_props at first use.
             min_clients (int, optional): Minimum number of clients. Defaults to 1 for the aggregation to take place with
                 successful results.
             flip (FLIP, optional): FLIP instance used for status updates and exception reporting (default: FLIP()).
@@ -51,42 +52,40 @@ class InitEvaluation(Controller):
 
         Raises:
            ValueError:
-            - when the model ID is not a valid UUID.
             - when the minimum number of clients specified is less than 1
             - when cleanup_timeout is less the 0
         """
 
         super().__init__()
 
-        try:
-            if Utils.is_valid_uuid(model_id) is False:
-                raise ValueError(f"The model ID: {model_id} is not a valid UUID")
+        if min_clients < FlipConstants.MIN_CLIENTS:
+            raise ValueError(
+                f"Invalid number of minimum clients specified. {min_clients} is less than "
+                f"{FlipConstants.MIN_CLIENTS} which is the minimum number for a successful aggregation"
+            )
 
-            if min_clients < FlipConstants.MIN_CLIENTS:
-                raise ValueError(
-                    f"Invalid number of minimum clients specified. {min_clients} is less than "
-                    f"{FlipConstants.MIN_CLIENTS} which is the minimum number for a successful aggregation"
-                )
+        if cleanup_timeout < 0:
+            raise ValueError("cleanup_timeout must be greater than or equal to 0.")
 
-            if cleanup_timeout < 0:
-                raise ValueError("cleanup_timeout must be greater than or equal to 0.")
-        except ValueError as e:
-            flip.update_status(model_id, ModelStatus.ERROR)
-            raise ValueError(e)
-
-        self._model_id = model_id
+        self._model_id_fallback = model_id
+        self._model_id: str | None = None
         self._min_clients = min_clients
         self.flip = flip
         self._cleanup_timeout = cleanup_timeout
 
-    def start_controller(self, fl_ctx: FLContext):
+    def _resolve_model_id(self, fl_ctx: FLContext) -> str:
+        if self._model_id is None:
+            self._model_id = get_flip_model_id(fl_ctx, fallback=self._model_id_fallback)
+        return self._model_id
+
+    def start_controller(self, fl_ctx: FLContext) -> None:
         self.log_info(fl_ctx, "Initializing InitTraining workflow.")
         engine = fl_ctx.get_engine()
         if not engine:
             self.system_panic("Engine not found. InitTraining exiting.", fl_ctx)
             return
 
-    def control_flow(self, abort_signal: Signal, fl_ctx: FLContext):
+    def control_flow(self, abort_signal: Signal, fl_ctx: FLContext) -> None:
         try:
             self.log_info(fl_ctx, "Beginning InitEvaluation control flow phase...")
             self._set_init_evaluation_status(fl_ctx)
@@ -150,11 +149,11 @@ class InitEvaluation(Controller):
         self.cancel_all_tasks()
 
     def process_result_of_unknown_task(
-        self, client: Client, task_name, client_task_id, result: Shareable, fl_ctx: FLContext
+        self, client: Client, task_name: str, client_task_id: str, result: Shareable, fl_ctx: FLContext
     ) -> None:
         self.log_error(fl_ctx, "Ignoring result from unknown task.")
 
-    def _set_init_evaluation_status(self, fl_ctx: FLContext):
+    def _set_init_evaluation_status(self, fl_ctx: FLContext) -> None:
         try:
             self.log_info(fl_ctx, "Attempting to start the step to initialise evaluation...")
             self.fire_event(FlipEvents.TASK_INITIATED, fl_ctx)
@@ -163,7 +162,7 @@ class InitEvaluation(Controller):
             self.log_error(fl_ctx, str(e))
             self.system_panic(str(e), fl_ctx)
 
-    def _check_abort_signal(self, fl_ctx, abort_signal: Signal):
+    def _check_abort_signal(self, fl_ctx: FLContext, abort_signal: Signal) -> bool:
         if abort_signal.triggered:
             self._phase = AppConstants.PHASE_FINISHED
             self.log_info(fl_ctx, "Abort signal received.")
@@ -171,7 +170,7 @@ class InitEvaluation(Controller):
             return True
         return False
 
-    def _process_cleanup_result(self, client_task: ClientTask, fl_ctx: FLContext):
+    def _process_cleanup_result(self, client_task: ClientTask, fl_ctx: FLContext) -> None:
         result = client_task.result
         client_name = client_task.client.name
 
@@ -179,7 +178,7 @@ class InitEvaluation(Controller):
 
         client_task.result = None
 
-    def _accept_cleanup_result(self, client_name: str, result: Shareable, fl_ctx: FLContext):
+    def _accept_cleanup_result(self, client_name: str, result: Shareable, fl_ctx: FLContext) -> bool | None:
         rc = result.get_return_code()
 
         if rc and rc == ReturnCode.OK:
@@ -191,7 +190,9 @@ class InitEvaluation(Controller):
             if formatted_exception is not None:
                 self.log_error(fl_ctx, formatted_exception)
                 self.flip.send_handled_exception(
-                    formatted_exception=formatted_exception, client_name=client_name, model_id=self._model_id
+                    formatted_exception=formatted_exception,
+                    client_name=client_name,
+                    model_id=self._resolve_model_id(fl_ctx),
                 )
 
             self.system_panic("Execution Exception initiating client training. InitTraining exiting.", fl_ctx=fl_ctx)

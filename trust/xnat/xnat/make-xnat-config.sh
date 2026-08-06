@@ -29,9 +29,24 @@ EOF
 fi
 
 
-if [ ! -z "$XNAT_EMAIL" ]; then
-  cat > $XNAT_HOME/config/prefs-init.ini << EOF
+# Initialise site preferences. The JMS listener concurrency caps bound XNAT's
+# directArchive build pool: at the default (max 40) a bulk DQR cohort import
+# spawns ~40 build threads that each publish events synchronously, saturating the
+# Reactor EventBus ring buffer until it deadlocks — the import wedges permanently
+# with everything stuck PROCESSING (FLIP#662). Capping concurrency keeps the
+# event-bus producers under the buffer capacity so large imports flow steadily.
+# NOTE: prefs-init.ini is applied at XNAT initialisation; for an already-running
+# instance set these via the admin UI / xapi siteConfig (or DB) and restart.
+cat > $XNAT_HOME/config/prefs-init.ini << EOF
 [siteConfig]
+defaultJmsListenerMinConcurrency=2
+defaultJmsListenerMaxConcurrency=4
+prearchiveOperationJmsListenerMinConcurrency=2
+prearchiveOperationJmsListenerMaxConcurrency=4
+EOF
+
+if [ ! -z "$XNAT_EMAIL" ]; then
+  cat >> $XNAT_HOME/config/prefs-init.ini << EOF
 adminEmail=$XNAT_EMAIL
 EOF
 fi

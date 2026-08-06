@@ -35,6 +35,7 @@
                 data-test="email"
                 :initial-value="route.params['email']?.toString()"
                 label="Email"
+                autocomplete="username"
                 :pre-icon="AccountOutline"
             />
 
@@ -81,6 +82,7 @@
                     type="email"
                     data-test="email"
                     label="Email"
+                    autocomplete="username"
                     :pre-icon="AccountOutline"
                 />
                 <AiInput
@@ -88,6 +90,7 @@
                     type="text"
                     data-test="confirmation-code"
                     label="Confirmation code"
+                    autocomplete="one-time-code"
                     :pre-icon="CodeIcon"
                 />
                 <AiInput
@@ -95,6 +98,7 @@
                     type="password"
                     data-test="password"
                     label="New password"
+                    autocomplete="new-password"
                     :pre-icon="LockOutline"
                 />
             </div>

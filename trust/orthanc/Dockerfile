@@ -12,4 +12,34 @@
 
 FROM orthancteam/orthanc:25.12.2
 
-ENV ORTHANC__DICOM_WEB='{"Enable":true,"Root":"/dicom-web/","EnableWado":true,"WadoRoot":"/wado","Ssl":false,"QidoCaseSensitive":true,"Host":"localhost","StudiesMetadata":"Full","SeriesMetadata":"Full"}'
+# FLIP-PT-091: HTTP basic auth is always enforced. Users come from
+# ORTHANC__REGISTERED_USERS, injected at runtime — compose builds it from the
+# kit file's ORTHANC_USERNAME/ORTHANC_PASSWORD; k8s reads the
+# orthanc-registered-users secret key. flip-entrypoint.sh refuses to start
+# without a usable user map, so the image cannot boot unauthenticated (Orthanc
+# would otherwise auto-register the well-known orthanc/orthanc user). The
+# entrypoint also re-asserts the flag below at runtime, so an override that
+# turned auth off would refuse to start rather than silently take effect.
+# DICOM-Web stays disabled: nothing in FLIP issues QIDO/WADO/STOW — XNAT DQR
+# pulls over plain DICOM (port 4242). Do NOT set
+# ORTHANC__REMOTE_ACCESS_ALLOWED=false: it limits the HTTP server to loopback
+# clients, which would break the published UI port and the XNAT nginx
+# /orthanc/ proxy.
+ENV ORTHANC__AUTHENTICATION_ENABLED=true
+
+COPY --chmod=0755 flip-entrypoint.sh /flip-entrypoint.sh
+
+# Run as the non-root orthanc user (UID 999) shipped by the base image.
+# Every pre-start write the entrypoint performs is 999-safe: /etc/hostid is
+# owned by orthanc (so the random hostid is written in place), the generated
+# config is written to /tmp/orthanc.json, and /var/lib/orthanc is orthanc-owned.
+# The only path that must be made 999-writable is the storage bind mount, which
+# is handled at the provisioning layer (update_orthanc_data.sh in dev, the
+# Ansible playbooks in prod). Running non-root from PID 1 means no capabilities
+# survive into the process (no-new-privileges), so cap_add is minimal.
+USER orthanc
+
+# Setting ENTRYPOINT resets the CMD inherited from the base image — restate it
+# (base 25.12.2: ENTRYPOINT ["/docker-entrypoint.sh"], CMD ["/tmp/orthanc.json"]).
+ENTRYPOINT ["/flip-entrypoint.sh"]
+CMD ["/tmp/orthanc.json"]

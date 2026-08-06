@@ -20,20 +20,20 @@ paths without the fragility of UI selectors.
 Backend-agnostic: the script uploads whatever files are in `--model-files-dir`,
 and the FL framework (Flower vs NVFLARE) is decided server-side by `FL_BACKEND`
 in flip-api's bundling code. `make e2e_smoke` picks the chest-xray tutorial
-that matches FL_BACKEND — the Flower tutorial lives in flip-fl-base-flower,
-the NVFLARE one in flip-fl-base. Both reuse the same `query.sql` against the
-trust mock OMOP data. Override either path with `--model-files-dir` and
-`--query-file`.
+that matches FL_BACKEND — both tutorials are now in-tree under
+fl-tutorials/<backend>/ (Flower at fl-tutorials/flower/, NVFLARE at
+fl-tutorials/nvflare/). Both reuse the same `query.sql` against the trust mock
+OMOP data. Override either path with `--model-files-dir` and `--query-file`.
 
 Usage (preferred):
-    make e2e_smoke                    # picks Flower tutorial (default)
-    FL_BACKEND=nvflare make e2e_smoke # picks NVFLARE tutorial
+    make e2e_smoke                    # NVFLARE tutorial (default backend)
+    make e2e_smoke FL_BACKEND=flower  # Flower tutorial
 
 Direct invocation:
     cd flip-api
     uv run python -m tests.e2e_smoke \\
-        --model-files-dir ../../flip-fl-base-flower/tutorials/xray_classification/app \\
-        --query-file ../../flip-fl-base-flower/tutorials/xray_classification/query.sql
+        --model-files-dir ../fl-tutorials/flower/xray_classification/app \\
+        --query-file ../fl-tutorials/flower/xray_classification/query.sql
 
 Run on a stack that already has trusts approved (`make up` plus the usual
 seeding) and non-empty XNAT data so image pull has something to do.
@@ -70,11 +70,17 @@ DEFAULT_PROJECT_NAME_PREFIX = "Xrays E2E Smoke"
 DEFAULT_MODEL_NAME = "Xrays E2E Smoke Model"
 ABORT_MIDWAY_NAME_SUFFIX = " (abort-midway)"
 
+# How long to wait for uploaded files to clear malware scanning (#52). The
+# scan runs server-side as a background task; tutorial-sized files finish in
+# seconds, but a multi-GB checkpoint has to be downloaded and structurally
+# scanned first, hence the generous ceiling.
+FILE_SCAN_TIMEOUT_S = 600
+
 # Anything strictly past INITIATED. RESULTS_UPLOADED is included so a fast
 # finish short-circuits wait_for_training_finished cleanly on the first poll.
 TRAINING_PROGRESS_STATUSES = {
     ModelStatus.PREPARED.value,
-    ModelStatus.TRAINING_STARTED.value,
+    ModelStatus.RUNNING.value,
     ModelStatus.RESULTS_UPLOADED.value,
 }
 
@@ -185,10 +191,12 @@ def authenticate() -> dict[str, str]:
 
 
 def create_project_with_query(
-    client: requests.Session, headers: dict[str, str], project_name: str, query: str
+    client: requests.Session, headers: dict[str, str], project_name: str, query: str, dicom_to_nifti: bool = True
 ) -> tuple[str, str]:
-    _log(f"🏗️  Creating project: {project_name}")
-    project_payload = ProjectDetails(name=project_name, description="E2E smoke run", users=[]).model_dump()
+    _log(f"🏗️  Creating project: {project_name} (dicom_to_nifti={dicom_to_nifti})")
+    project_payload = ProjectDetails(
+        name=project_name, description="E2E smoke run", users=[], dicom_to_nifti=dicom_to_nifti
+    ).model_dump()
     project_id = _ensure_ok(
         _post(client, "/projects/", project_payload, headers), "create project"
     ).json()["id"]
@@ -228,10 +236,44 @@ def create_project_with_query(
     return project_id, query_id
 
 
+def select_trusts(trusts: list[dict[str, Any]], selection: str | None) -> list[dict[str, Any]]:
+    """Filter the ``GET /trust/`` listing down to a ``--trusts`` selection.
+
+    Args:
+        trusts (list[dict[str, Any]]): Trusts as returned by ``GET /trust/``.
+        selection (str | None): Comma-separated trust codes or names, matched
+            case-insensitively. None/empty selects every registered trust.
+
+    Returns:
+        list[dict[str, Any]]: The matching trusts, in listing order.
+
+    Raises:
+        SmokeFailure: If any selection token matches no registered trust.
+    """
+    if not selection:
+        return trusts
+    wanted = {token.strip().casefold() for token in selection.split(",") if token.strip()}
+    selected = [
+        t for t in trusts if (t.get("code") or "").casefold() in wanted or (t.get("name") or "").casefold() in wanted
+    ]
+    matched = {(t.get("code") or "").casefold() for t in selected} | {
+        (t.get("name") or "").casefold() for t in selected
+    }
+    missing = sorted(wanted - matched)
+    if missing:
+        known = sorted(f"{t.get('code') or '?'} ({t.get('name')})" for t in trusts)
+        raise SmokeFailure(f"--trusts entries not registered on the hub: {missing}. Registered trusts: {known}")
+    return selected
+
+
 def wait_for_trusts_responded(
-    client: requests.Session, headers: dict[str, str], project_id: str, timeout_s: int = 120
+    client: requests.Session,
+    headers: dict[str, str],
+    project_id: str,
+    timeout_s: int = 120,
+    required_trust_ids: set[str] | None = None,
 ) -> int:
-    """Block until every queried trust has posted a cohort result.
+    """Block until the required trusts have posted a cohort result.
 
     `/cohort/submit/` dispatches the query asynchronously: the hub records the
     dispatched trusts in `query.queriedTrustIds` immediately, but each trust
@@ -239,6 +281,23 @@ def wait_for_trusts_responded(
     OMOP query, then POSTs `/cohort/results`). `/projects/{id}/stage` rejects a
     project whose staged trusts are not in `query.respondedTrustIds`, so the
     smoke must wait for the results to land — not merely for the dispatch.
+
+    The hub always dispatches to every registered trust (`/cohort/submit/` has
+    no subset parameter), so with ``required_trust_ids`` (the ``--trusts``
+    subset) only those trusts must respond — a registered-but-offline trust no
+    longer blocks the run.
+
+    Args:
+        client (requests.Session): HTTP session for hub calls.
+        headers (dict[str, str]): Auth headers.
+        project_id (str): Project whose cohort query to poll.
+        timeout_s (int): Seconds to wait before failing.
+        required_trust_ids (set[str] | None): Trust ids that must appear in
+            ``respondedTrustIds``. None keeps the legacy behaviour (every
+            queried trust must respond).
+
+    Returns:
+        int: Number of trusts that had responded when the wait was satisfied.
     """
     _log(f"⏳ Waiting for trusts to return cohort results (timeout {timeout_s}s)")
     deadline = time.monotonic() + timeout_s
@@ -250,27 +309,38 @@ def wait_for_trusts_responded(
             continue
         query = resp.json().get("query") or {}
         queried = len(query.get("queriedTrustIds") or [])
-        responded = len(query.get("respondedTrustIds") or [])
+        responded_ids = {str(t) for t in (query.get("respondedTrustIds") or [])}
+        responded = len(responded_ids)
         if (queried, responded) != last:
             _log(f"  📊 queriedTrustIds={queried}  respondedTrustIds={responded}")
             last = (queried, responded)
-        if queried > 0 and responded >= queried:
+        if required_trust_ids is not None:
+            if required_trust_ids <= responded_ids:
+                return responded
+        elif queried > 0 and responded >= queried:
             return responded
         time.sleep(5)
     raise SmokeFailure(
-        f"Not all queried trusts returned cohort results within {timeout_s}s. "
+        f"Not all required trusts returned cohort results within {timeout_s}s. "
         "Check trust-api / data-access-api logs for query failures."
     )
 
 
-def stage_and_approve(client: requests.Session, headers: dict[str, str], project_id: str) -> list[dict[str, Any]]:
+def stage_and_approve(
+    client: requests.Session, headers: dict[str, str], project_id: str, trusts_selection: str | None = None
+) -> list[dict[str, Any]]:
     _log("🏥 Fetching trusts")
     trusts = _ensure_ok(_get(client, "/trust/", headers), "list trusts").json()
     if not trusts:
         raise SmokeFailure("No trusts registered with the hub — start the trust services and seed first")
     _log(f"  ✅ found {len(trusts)} trust(s): {[t['name'] for t in trusts]}")
+    trusts = select_trusts(trusts, trusts_selection)
+    if trusts_selection:
+        _log(f"  🎯 --trusts selection: {[t.get('code') or t['name'] for t in trusts]}")
 
-    wait_for_trusts_responded(client, headers, project_id)
+    wait_for_trusts_responded(
+        client, headers, project_id, required_trust_ids={str(t["id"]) for t in trusts}
+    )
 
     trust_ids = [t["id"] for t in trusts]
     _log("📋 Staging project")
@@ -320,8 +390,18 @@ def wait_for_image_pull(
     project_id: str,
     threshold: float,
     timeout_s: int,
+    required_trust_names: set[str] | None = None,
 ) -> None:
-    _log(f"⏳ Waiting for image pull (≥{int(threshold * 100)}% per trust, timeout {timeout_s}s)")
+    """Block until every required trust's image pull reaches the threshold.
+
+    With ``required_trust_names`` (the ``--trusts`` selection, matched against the
+    status entries' ``trustName``), only those trusts must reach the bar — so a
+    job targeting a subset of an existing multi-trust project isn't blocked by a
+    non-selected (possibly offline) trust's pull entries. None keeps the legacy
+    behaviour (every trust in the project must reach the threshold).
+    """
+    scope = f" across {sorted(required_trust_names)}" if required_trust_names else " per trust"
+    _log(f"⏳ Waiting for image pull (≥{int(threshold * 100)}%{scope}, timeout {timeout_s}s)")
     deadline = time.monotonic() + timeout_s
     last_summary = ""
     poll_interval = 10
@@ -337,6 +417,8 @@ def wait_for_image_pull(
         if resp.status_code >= 300:
             raise SmokeFailure(f"image-status failed: HTTP {resp.status_code} {resp.text}")
         statuses = resp.json()
+        if required_trust_names is not None:
+            statuses = [s for s in statuses if s.get("trustName") in required_trust_names]
         if not statuses:
             time.sleep(poll_interval)
             continue
@@ -409,12 +491,19 @@ def upload_files(
         raise SmokeFailure(f"--model-files-dir does not exist: {files_dir}")
     blacklist = _blacklisted_filenames()
     all_paths = sorted(p for p in files_dir.iterdir() if p.is_file())
-    skipped = [p.name for p in all_paths if p.name in blacklist]
-    paths = [p for p in all_paths if p.name not in blacklist]
+    # Dotfiles are repo housekeeping (.gitignore in the Flower spleen-evaluation
+    # app, editor droppings), never model content. The hub refuses them anyway —
+    # they carry no whitelisted extension — so uploading them would fail the run
+    # on a file the researcher never meant to send.
+    dotfiles = [p.name for p in all_paths if p.name.startswith(".")]
+    blacklisted = [p.name for p in all_paths if p.name in blacklist]
+    paths = [p for p in all_paths if p.name not in blacklist and not p.name.startswith(".")]
     if not paths:
         raise SmokeFailure(f"No files found under {files_dir}")
-    if skipped:
-        _log(f"⏭️  Skipping {len(skipped)} blacklisted file(s): {', '.join(skipped)}")
+    if dotfiles:
+        _log(f"⏭️  Skipping {len(dotfiles)} dotfile(s): {', '.join(dotfiles)}")
+    if blacklisted:
+        _log(f"⏭️  Skipping {len(blacklisted)} blacklisted file(s): {', '.join(blacklisted)}")
     _log(f"📤 Uploading {len(paths)} file(s) from {files_dir}")
     uploaded: list[str] = []
     for path in paths:
@@ -441,19 +530,62 @@ def upload_files(
             )
         if post_resp.status_code >= 300:
             raise SmokeFailure(f"S3 upload failed for {path.name}: HTTP {post_resp.status_code}")
-        # The presigned POST only puts bytes in S3 — the DB row is written by
-        # /files/process-scanned-file, which is the SNS-driven webhook the
-        # antivirus scanner calls in prod. The UI invokes it directly after a
-        # 3s grace, so the file shows up in the model dashboard. Without this
-        # call, training initiates against a model that the UI considers
-        # empty (and `required_files` enforcement would block a real user).
+        # The presigned POST only puts bytes into the staging prefix — the DB
+        # row is written by /files/process-scanned-file, which also kicks off
+        # the malware scan that promotes the file into the bucket the FL
+        # bundler reads from (#52). Without this call, training initiates
+        # against a model whose files were never promoted.
         _ensure_ok(
             _post(client, f"/files/process-scanned-file/{model_id}/{path.name}", {}, headers),
             f"process-scanned-file for {path.name}",
         )
         _log(f"  ✅ {path.name} ({path.stat().st_size} bytes)")
         uploaded.append(path.name)
+    wait_for_files_scanned(client, headers, model_id, uploaded, FILE_SCAN_TIMEOUT_S)
     return uploaded
+
+
+def wait_for_files_scanned(
+    client: requests.Session,
+    headers: dict[str, str],
+    model_id: str,
+    file_names: list[str],
+    timeout_s: int,
+) -> None:
+    """Block until every uploaded file has been scanned and promoted (#52).
+
+    Files sit in ``SCANNING`` until the scan completes; only ``COMPLETED``
+    files exist in the bucket the FL bundler reads, so training would fail
+    confusingly if we proceeded early. ``INFECTED`` (scan rejected the file)
+    and ``ERROR`` are terminal failures worth surfacing immediately.
+    """
+    _log(f"🔬 Waiting for {len(file_names)} file(s) to pass scanning (timeout {timeout_s}s)")
+    deadline = time.monotonic() + timeout_s
+    poll_interval = 3
+    pending: dict[str, str] = {name: "UNKNOWN" for name in file_names}
+    while time.monotonic() < deadline:
+        resp = _try_request(_post, client, f"/step/model/{model_id}", {}, headers)
+        if resp is None or resp.status_code >= 300:
+            time.sleep(poll_interval)
+            continue
+        statuses = {f["name"]: f.get("status", "UNKNOWN") for f in resp.json().get("files", [])}
+        bad = {name: statuses.get(name) for name in file_names if statuses.get(name) in ("INFECTED", "ERROR")}
+        if bad:
+            raise SmokeFailure(
+                f"File(s) failed malware scanning: {bad}. "
+                "INFECTED means the scan judged the content unsafe and deleted it; "
+                "ERROR means the file could not be scanned (fail-closed)."
+            )
+        pending = {name: statuses.get(name, "UNKNOWN") for name in file_names}
+        if all(status == "COMPLETED" for status in pending.values()):
+            _log("  ✅ all files scanned and promoted")
+            return
+        time.sleep(poll_interval)
+    unfinished = {name: status for name, status in pending.items() if status != "COMPLETED"}
+    raise SmokeFailure(
+        f"File(s) did not finish scanning within {timeout_s}s: {unfinished}. "
+        "Check flip-api logs for the malware-scan reconcile."
+    )
 
 
 def initiate_training(
@@ -469,9 +601,14 @@ def initiate_training(
     _log("  ✅ training initiated (model status now INITIATED)")
 
 
-def wait_for_training_started(
+def wait_for_model_advanced(
     client: requests.Session, headers: dict[str, str], model_id: str, timeout_s: int
 ) -> str:
+    """Block until the model reports any status past INITIATED (PREPARED counts).
+
+    This is the "did the FL scheduler pick the job up at all" gate, not a wait for
+    RUNNING — that lives in ``wait_for_model_running``.
+    """
     _log(f"⏳ Waiting for FL pipeline to advance the model (timeout {timeout_s}s)")
     deadline = time.monotonic() + timeout_s
     last_status = ""
@@ -529,18 +666,18 @@ def wait_for_training_finished(
     )
 
 
-def wait_for_training_running(
+def wait_for_model_running(
     client: requests.Session, headers: dict[str, str], model_id: str, timeout_s: int
 ) -> str:
-    """Block until the model reports TRAINING_STARTED — a genuinely live FL job.
+    """Block until the model reports RUNNING — a genuinely live FL job.
 
-    ``wait_for_training_started`` returns on the first status past INITIATED, which
+    ``wait_for_model_advanced`` returns on the first status past INITIATED, which
     can be the transient PREPARED. The --abort-midway stop test wants a running job,
-    so poll on for TRAINING_STARTED specifically. If training races to RESULTS_UPLOADED
+    so poll on for RUNNING specifically. If training races to RESULTS_UPLOADED
     first, return that — stopping an already-finished job is still a valid idempotency
     check, the caller just notes it.
     """
-    _log(f"⏳ Waiting for model to reach TRAINING_STARTED (timeout {timeout_s}s)")
+    _log(f"⏳ Waiting for model to reach RUNNING (timeout {timeout_s}s)")
     deadline = time.monotonic() + timeout_s
     last_status = ""
     poll_interval = 5
@@ -554,12 +691,12 @@ def wait_for_training_running(
             _log(f"  📊 status={status}")
             last_status = status
         if status == ModelStatus.ERROR.value:
-            raise SmokeFailure("Model entered ERROR state before training started — check fl-server logs")
-        if status in (ModelStatus.TRAINING_STARTED.value, ModelStatus.RESULTS_UPLOADED.value):
+            raise SmokeFailure("Model entered ERROR state before reaching RUNNING — check fl-server logs")
+        if status in (ModelStatus.RUNNING.value, ModelStatus.RESULTS_UPLOADED.value):
             return status
         time.sleep(poll_interval)
     raise SmokeFailure(
-        f"Model did not reach TRAINING_STARTED within {timeout_s}s (last status: {last_status or 'unknown'})."
+        f"Model did not reach RUNNING within {timeout_s}s (last status: {last_status or 'unknown'})."
     )
 
 
@@ -649,8 +786,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         type=Path,
         required=True,
         help="Directory whose files are uploaded to the model. Flower: "
-        "../../flip-fl-base-flower/tutorials/xray_classification/app. "
-        "NVFLARE: ../../flip-fl-base/tutorials/image_classification/xray_classification/app_files.",
+        "../fl-tutorials/flower/xray_classification/app. "
+        "NVFLARE: ../fl-tutorials/nvflare/image_classification/xray_classification/app_files.",
     )
     parser.add_argument(
         "--query-file",
@@ -668,10 +805,26 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=None,
         help="Reuse an existing approved project: skip cohort submission and approval; jump straight "
         "to model creation + upload + training. Image-pull wait still runs (cheap when already at "
-        "100%, correct when a prior --abort-midway run left pulls in flight). Lets you iterate on "
+        "100%%, correct when a prior --abort-midway run left pulls in flight). Lets you iterate on "
         "training code without re-creating the project for every retry.",
     )
     parser.add_argument("--model-name", default=DEFAULT_MODEL_NAME)
+    parser.add_argument(
+        "--no-dicom-to-nifti",
+        action="store_true",
+        help="Create the project with dicom_to_nifti=false (apps that read DICOMs directly, e.g. the "
+        "Ark+ tutorials with ResourceType.ALL, skip the XNAT dcm2niix conversion). Set at project "
+        "creation and immutable afterwards; ignored with --project-id.",
+    )
+    parser.add_argument(
+        "--trusts",
+        default=None,
+        help="Comma-separated trust codes or names (case-insensitive) to run against, e.g. "
+        "--trusts GSTT or --trusts 'GSTT,Bangkok Dusit Medical Services'. The cohort query is "
+        "still dispatched to every registered trust (the API has no subset submit), but the smoke "
+        "only waits for, stages, approves and trains the selected trusts — so a registered-but-"
+        "offline trust no longer blocks the run. Default: every registered trust.",
+    )
     parser.add_argument(
         "--image-pull-threshold",
         type=float,
@@ -773,9 +926,14 @@ def main(argv: list[str] | None = None) -> int:
             if not trusts:
                 raise SmokeFailure("No trusts registered with the hub")
             _log(f"  ✅ found {len(trusts)} trust(s): {[t['name'] for t in trusts]}")
+            trusts = select_trusts(trusts, args.trusts)
+            if args.trusts:
+                _log(f"  🎯 --trusts selection: {[t.get('code') or t['name'] for t in trusts]}")
         else:
-            project_id, _query_id = create_project_with_query(client, headers, project_name, query)
-            trusts = stage_and_approve(client, headers, project_id)
+            project_id, _query_id = create_project_with_query(
+                client, headers, project_name, query, dicom_to_nifti=not args.no_dicom_to_nifti
+            )
+            trusts = stage_and_approve(client, headers, project_id, args.trusts)
         # Create the model and upload files before waiting for image pull. This
         # surfaces model-creation / upload errors immediately instead of after
         # 5–15 minutes of XNAT pulling, and the FL pipeline only consumes the
@@ -786,18 +944,23 @@ def main(argv: list[str] | None = None) -> int:
         # Always wait for image pull, including on --project-id reuse: a prior
         # run on this project may have left pulls in flight (aborted midway,
         # failed, or simply queued back-to-back before the first pull finished),
-        # in which case skipping the wait here would have wait_for_training_started
+        # in which case skipping the wait here would have wait_for_model_advanced
         # sit blocked on the (still pulling) FL clients until it times out.
         wait_for_image_pull(
-            client, headers, project_id, args.image_pull_threshold, args.image_pull_timeout
+            client,
+            headers,
+            project_id,
+            args.image_pull_threshold,
+            args.image_pull_timeout,
+            required_trust_names={t["name"] for t in trusts} if args.trusts else None,
         )
         if args.data_enrichment_cmd:
             run_data_enrichment(args.data_enrichment_cwd, args.data_enrichment_cmd, project_id)
         initiate_training(client, headers, model_id, trusts)
-        wait_for_training_started(client, headers, model_id, args.training_start_timeout)
+        wait_for_model_advanced(client, headers, model_id, args.training_start_timeout)
         if args.abort_midway:
             # #490: exercise the FL "stop training" path instead of running to completion.
-            running_status = wait_for_training_running(
+            running_status = wait_for_model_running(
                 client, headers, model_id, args.training_start_timeout
             )
             if running_status == ModelStatus.RESULTS_UPLOADED.value:

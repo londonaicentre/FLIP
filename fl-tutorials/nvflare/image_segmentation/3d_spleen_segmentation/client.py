@@ -284,7 +284,9 @@ def main() -> None:
         train_loss = 0.0
         for epoch in range(args.local_epochs):
             train_loss = _train_one_epoch(model, train_loader, loss_fn, optimizer, device)
-            writer.add_scalar("training/loss", train_loss, global_step=global_round * args.local_epochs + epoch)
+            # Per-epoch point: the "@epoch" tag suffix names the x-axis, global_step is its coordinate
+            # (the FLIP analytics bridge parses "<label>[@<x_label>]" — see FLIP#148).
+            writer.add_scalar("training/loss@epoch", train_loss, global_step=global_round * args.local_epochs + epoch)
             print(f"[FLIP] Epoch {epoch + 1}/{args.local_epochs} — train loss: {train_loss:.4f}")
 
         # ------------------------------------------------------------------
@@ -320,14 +322,14 @@ def main() -> None:
             model_id=args.model_id,
             label="VAL_DICE",
             value=float(val_dice),
-            round=global_round,
+            global_round=global_round,
         )
         flip.send_metrics(
             client_name=flare.get_site_name(),
             model_id=args.model_id,
             label="TRAIN_LOSS",
             value=float(train_loss),
-            round=global_round,
+            global_round=global_round,
         )
 
     print("[FLIP] FL loop ended. Exiting.")

@@ -273,8 +273,9 @@ describe("Projects Page", () => {
 
     test("renders a relative-time stamp ('Xs / Xm / Xh / Xd ago') for project creation", async () => {
         const project = makeProject("STAGED", [trust("t1", "KCH", true)]);
-        // 2 hours ago — should land in the "h ago" bucket.
-        project.creationtimestamp = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+        // 2 hours ago — should land in the "h ago" bucket. Offset-less naive-UTC
+        // string: the wire format the API actually sends.
+        project.creationtimestamp = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString().slice(0, 19);
         setProject(project);
         const wrapper = mountPage();
         await wrapper.vm.$nextTick();
@@ -303,6 +304,21 @@ describe("Projects Page", () => {
         const wrapper = mountPage({ permissions: [] });
         await wrapper.vm.$nextTick();
         expect(wrapper.find("[data-test='add-project-btn']").exists()).toBe(false);
+    });
+
+    test("puts Create project on the title row and collapses it to a plus below lg", async () => {
+        setProject(makeProject("STAGED", []));
+        const wrapper = mountPage();
+        await wrapper.vm.$nextTick();
+
+        const btn = wrapper.find("[data-test='add-project-btn']");
+        // Same row as the h1 — not a separate bottom-aligned block.
+        expect(btn.element.parentElement?.querySelector("h1")).toBeTruthy();
+        // Icon-collapse idiom: plus icon always, label only at lg+.
+        expect(btn.find("svg").exists()).toBe(true);
+        const label = btn.find("span.hidden");
+        expect(label.text()).toBe("Create project");
+        expect(label.classes()).toContain("lg:inline");
     });
 
     test("clicking Create project toggles the create-project modal store", async () => {
@@ -415,7 +431,7 @@ describe("Projects Page", () => {
 
     test("relativeUpdated renders 'created Xd ago' for older projects", async () => {
         const project = makeProject("STAGED", []);
-        project.creationtimestamp = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString();
+        project.creationtimestamp = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString().slice(0, 19);
         setProject(project);
         const wrapper = mountPage();
         await wrapper.vm.$nextTick();

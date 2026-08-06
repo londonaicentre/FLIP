@@ -17,7 +17,11 @@ from pathlib import Path
 import numpy as np
 import pydicom
 import torch
-from data_utils import Lesion, LesionDict, get_labels_from_radiology_row, get_lesion_label, get_xray_transforms
+from data_utils import Lesion, LesionDict, get_labels_from_radiology_row, get_lesion_label
+from flip import FLIP
+from flip.constants import PTConstants, ResourceType
+from flip.nvflare.metrics import send_metrics_value
+from flip.utils import get_model_weights_diff
 from loss_and_metrics import compute_precision_recall_f1, get_bce_loss
 from models import get_model
 from monai.data import DataLoader, Dataset
@@ -30,11 +34,8 @@ from nvflare.apis.signal import Signal
 from nvflare.app_common.abstract.model import make_model_learnable, model_learnable_to_dxo
 from nvflare.app_common.app_constant import AppConstants
 from nvflare.app_opt.pt.model_persistence_format_manager import PTModelPersistenceFormatManager
-
-from flip import FLIP
-from flip.constants import PTConstants, ResourceType
-from flip.nvflare.metrics import send_metrics_value
-from flip.utils import get_model_weights_diff
+from tqdm import tqdm
+from transforms import get_xray_transforms
 
 
 class FLIP_TRAINER(Executor):
@@ -142,17 +143,20 @@ class FLIP_TRAINER(Executor):
         label value.
 
         Args:
-            dataframe (_type_): dataframe output by FLIP, which has to contain accession_id and
-                columns for each of the lesions.
+            None
 
         Returns:
-            _type_: list of dictionaries for data loading.
+            train_datalist (list): List of dicts containing image paths and corresponding lesion labels for the training
+            set.
+            val_datalist (list): List of dicts containing image paths and corresponding lesion labels for the validation
+            set.
         """
         datalist = []
 
         # loop over each accession id in the train set
-        for _, row in self.dataframe.iterrows():
+        for _, row in tqdm(self.dataframe.iterrows(), desc="Preparing dataset", unit="accession"):
             accession_id = row["accession_id"]
+
             # First, we load the radiology note; format should be: [project] - [lesion1,lesion2,lesion3_lesion3]
             pathology_dict = get_labels_from_radiology_row(
                 row, self._lesions, self._value_to_numerical, self._normal_key
@@ -167,32 +171,25 @@ class FLIP_TRAINER(Executor):
                     ],
                 )
             except Exception as err:
-                self.logger.error(f"Could not get image data folder path for {accession_id}: {err}")
+                self.logger.info("⚠️ Could not fetch images for accession_id=%s: %s", accession_id, err)
                 continue
 
+            # get all images in the accession folder that match the pattern "*.dcm"
             all_images = list(accession_folder_path.rglob("*.dcm"))
-            this_accession_matches = 0
-            self.logger.info(f"Total base count found for accession_id {accession_id}: {len(all_images)}")
 
             for img in all_images:
                 try:
-                    _ = pydicom.dcmread(str(img))
+                    _ = pydicom.dcmread(str(img), stop_before_pixels=True)
                 except Exception as e:
-                    self.logger.error(f"Problem loading header of base image {str(img)}.")
-                    self.logger.error(f"{e=}")
-                    self.logger.error(f"{type(e)=}")
-                    self.logger.error(f"{e.args=}")
+                    self.logger.warning("Skipping invalid DICOM %s: %s", img.name, e)
                     continue
 
                 # defines keys for image and segmentation
                 item_ = {"image": str(img)}
                 item_.update(pathology_dict)
                 datalist.append(item_)
-                this_accession_matches += 1
 
-            self.logger.info(f"Added {this_accession_matches} image / label pairs for {accession_id}.")
-
-        self.logger.info(f"Found {len(datalist)} files in total.")
+        self.logger.info("Dataset ready: %d images", len(datalist))
 
         # split into the training and testing data
         train_datalist, val_datalist, test_datalist = np.split(
@@ -204,8 +201,10 @@ class FLIP_TRAINER(Executor):
         )
 
         self.logger.info(
-            f"Found {len(train_datalist)} files for training, {len(val_datalist)} files for validation and "
-            f"{len(test_datalist)} files for testing."
+            "Found %d files for training, %d files for validation and %d files for testing.",
+            len(train_datalist),
+            len(val_datalist),
+            len(test_datalist),
         )
 
         return train_datalist, val_datalist
@@ -288,10 +287,35 @@ class FLIP_TRAINER(Executor):
                         batch_info += f"{lesion.lesion}: all masked; "
                 self.logger.info(batch_info)
 
+                # A fully-masked batch (every label -1) carries no supervision signal: the clamped
+                # loss would be a flat 0.0 that trains nothing and drags the epoch mean down. Skip
+                # it loudly so a systematic label degeneracy (e.g. a broken label join) stays
+                # visible in the logs instead of vanishing into the clamp (FLIP#764).
+                if (labels == -1).all():
+                    self.logger.warning(
+                        "Train batch %d/%d: all labels masked (-1), skipping batch",
+                        i + 1,
+                        len(self.training_dataloader),
+                    )
+                    continue
+
                 self.optimizer.zero_grad()
                 output = self.model(images)
                 loss = get_bce_loss(output, labels)
+
+                # Skip a non-finite batch instead of letting it poison the model: a single NaN/Inf
+                # loss backpropagates into every weight via optimizer.step(), after which every
+                # subsequent batch is NaN and the whole pass reports loss=nan (see FLIP#764).
+                if not torch.isfinite(loss):
+                    self.logger.warning(
+                        "Skipping batch %d/%d: non-finite loss (%s)", i + 1, len(self.training_dataloader), loss.item()
+                    )
+                    continue
+
                 loss.backward()
+                # Gradient clipping bounds the update so an exploding gradient on one batch can't
+                # diverge the model to NaN within a single optimizer step.
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
                 self.optimizer.step()
                 training_metrics_["loss"]["train"].append(loss.item())
                 output = torch.sigmoid(output)
@@ -332,9 +356,34 @@ class FLIP_TRAINER(Executor):
                             batch_info += f"{lesion.lesion}: all masked; "
                     self.logger.info(batch_info)
 
+                    # Skip fully-masked batches here too: with the clamped loss they would
+                    # contribute a spurious 0.0 to the epoch mean, where the pre-clamp NaN was
+                    # excluded by np.nanmean below. Skipping keeps the epoch average over
+                    # supervised batches only, and keeps the degeneracy visible.
+                    if (labels == -1).all():
+                        self.logger.warning(
+                            "Val batch %d/%d: all labels masked (-1), skipping batch",
+                            i + 1,
+                            len(self.validation_dataloader),
+                        )
+                        continue
+
                     output = self.model(images)
-                    loss = get_bce_loss(output, labels).item()
-                    training_metrics_["loss"]["val"].append(loss)
+                    loss = get_bce_loss(output, labels)
+
+                    # Mirror the train loop's guard: np.nanmean below already excludes a NaN from
+                    # the epoch mean, but skipping silently would hide the degeneracy behind it
+                    # (see FLIP#764).
+                    if not torch.isfinite(loss):
+                        self.logger.warning(
+                            "Skipping val batch %d/%d: non-finite loss (%s)",
+                            i + 1,
+                            len(self.validation_dataloader),
+                            loss.item(),
+                        )
+                        continue
+
+                    training_metrics_["loss"]["val"].append(loss.item())
                     output = torch.sigmoid(output)
                     for pathology in self._lesions.get_lesion_list():
                         precision, recall, f1_score = compute_precision_recall_f1(
@@ -434,8 +483,9 @@ class FLIP_TRAINER(Executor):
             if has_nan:
                 self.logger.info(nan_summary)
                 self.log_info(fl_ctx, nan_summary)
-            # Send metrics over to FLIP
-            round = global_round * (self._epochs) + epoch + 1
+            # Send metrics over to FLIP. These are per-epoch points, so plot them on an "epoch" axis at
+            # the cumulative epoch count; the FL global round is recorded alongside as provenance.
+            cumulative_epoch = global_round * (self._epochs) + epoch + 1
 
             # Send loss metrics - convert NaN to 0.0
             train_loss = training_metrics["loss"]["train"][-1]
@@ -451,14 +501,16 @@ class FLIP_TRAINER(Executor):
 
             send_metrics_value(
                 label="TRAIN_LOSS",
-                round=round,
+                x_value=cumulative_epoch,
+                x_label="epoch",
                 value=train_loss,
                 fl_ctx=fl_ctx,
                 flip=self.flip,
             )
             send_metrics_value(
                 label="VAL_LOSS",
-                round=round,
+                x_value=cumulative_epoch,
+                x_label="epoch",
                 value=val_loss,
                 fl_ctx=fl_ctx,
                 flip=self.flip,
@@ -483,15 +535,17 @@ class FLIP_TRAINER(Executor):
                         val_value = 0.0
 
                     send_metrics_value(
-                        label=f"{'train'.upper()}-{metric.upper()}",
-                        round=round,
+                        label=f"{'train'.upper()}-{metric.upper()}-{lesion_name}",
+                        x_value=cumulative_epoch,
+                        x_label="epoch",
                         value=train_value,
                         fl_ctx=fl_ctx,
                         flip=self.flip,
                     )
                     send_metrics_value(
-                        label=f"{'val'.upper()}-{metric.upper()}",
-                        round=round,
+                        label=f"{'val'.upper()}-{metric.upper()}-{lesion_name}",
+                        x_value=cumulative_epoch,
+                        x_label="epoch",
                         value=val_value,
                         fl_ctx=fl_ctx,
                         flip=self.flip,

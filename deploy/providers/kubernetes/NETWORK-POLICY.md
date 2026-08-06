@@ -43,10 +43,10 @@ boundary — see [Residual risk](#residual-risk).
 
 | Rule | Destination | Why it exists | Risk if abused |
 |---|---|---|---|
-| `allowedEgressPorts` (default 53/UDP, 53/TCP, 80/TCP, 443/TCP) | **any IP** | DNS resolution; 443 for the hub poll (CloudFront), S3 (kit/results), Cognito, GHCR/ECR image pulls; 80 for redirects/package metadata. | **Primary residual risk: 443/80 to any IP is an exfiltration channel.** A compromised fl-client could POST data anywhere on 443. |
+| `allowedEgressPorts` (default 53/UDP, 53/TCP, 80/TCP, 443/TCP) | **any IP** | DNS resolution; 443 for the hub poll (CloudFront), S3 (kit/results), Cognito, GHCR/ECR image pulls; 80 for redirects/package metadata. `sync-kit` appends `FL_SERVER_PORT` here for the fl-client → fl-server gRPC (#593 pt.3, port-only). | **Primary residual risk: 443/80 to any IP is an exfiltration channel.** A compromised fl-client could POST data anywhere on 443. The added FL-server port widens egress on that one port to any IP — accepted because the FL server is behind an internet-facing NLB with rotating AWS-managed IPs that a `/32` pin cannot track. |
 | intra-namespace | same namespace | trust-api → imaging/data-access/fl-client, etc. | Low — intra-trust only. |
 | `allowedEgressCIDRs` (default `[]`) | listed CIDRs, **all ports** | Operator escape hatch to reach an external OMOP/PACS/XNAT on arbitrary ports. | Scoped to listed CIDRs; all-ports is broad — keep the list tight. |
-| `allowedEgressCIDRsWithPorts` (default `[]`) | listed CIDRs, one port | fl-client → fl-server gRPC on `FL_SERVER_PORT` (NLB IPs). Populated by `sync-kit` (#593 pt.3). | Scoped CIDR+port — tightest rule. |
+| `allowedEgressCIDRsWithPorts` (default `[]`) | listed CIDRs, one port | Operator escape hatch for CIDR+port egress (e.g. an on-prem service on a fixed IP). Not populated by `sync-kit` — the FL-server allowance is port-only (see `allowedEgressPorts`). | Scoped CIDR+port — tightest rule. |
 | AWS IMDS | `169.254.169.254/32` | EC2 metadata / IAM-role credentials for the fl-client S3 kit sync. | IMDS is a known SSRF/cred-theft target — see hardening note. |
 
 ## Residual risk

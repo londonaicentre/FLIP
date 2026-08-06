@@ -20,19 +20,19 @@ trust.id and none of them declare ON DELETE CASCADE, so a naive
 script clears each dependent table in the right order before deleting the
 trust row.
 
-Dependent tables (from flip_api.db.models.main_models):
+Dependent tables (from flip_api.db.models.main_models)::
 
-| Table                    | FK field                  | Strategy        |
-|--------------------------|---------------------------|-----------------|
-| fl_kit_slot              | assigned_to_trust_id      | NULL the FK     |
-| fl_job_trust             | trust_id (PK part)        | DELETE rows     |
-| fl_metrics               | trust (NOT NULL)          | DELETE rows     |
-| fl_logs                  | trust (nullable)          | DELETE rows     |
-| model_trust_intersect    | trust_id (nullable)       | DELETE rows     |
-| project_trust_intersect  | trust_id (nullable)       | DELETE rows     |
-| query_result             | trust_id (nullable)       | DELETE rows     |
-| trust_task               | trust_id (NOT NULL)       | DELETE rows     |
-| xnat_project_status      | trust_id (nullable)       | DELETE rows     |
+    | Table                    | FK field                  | Strategy        |
+    |--------------------------|---------------------------|-----------------|
+    | fl_kit_slot              | assigned_to_trust_id      | NULL the FK     |
+    | fl_job_trust             | trust_id (PK part)        | DELETE rows     |
+    | fl_metrics               | trust (NOT NULL)          | DELETE rows     |
+    | fl_logs                  | trust (nullable)          | DELETE rows     |
+    | model_trust_intersect    | trust_id (nullable)       | DELETE rows     |
+    | project_trust_intersect  | trust_id (nullable)       | DELETE rows     |
+    | query_result             | trust_id (nullable)       | DELETE rows     |
+    | trust_task               | trust_id (NOT NULL)       | DELETE rows     |
+    | xnat_project_status      | trust_id (nullable)       | DELETE rows     |
 
 For the nullable FKs we could either NULL or DELETE — DELETE makes the
 intent clearer (a metric/log/result tied to a now-gone trust serves no
@@ -66,7 +66,7 @@ from typing import Any
 from sqlmodel import Session, delete, select
 
 from flip_api.auth import trust_key_cache
-from flip_api.db.database import engine
+from flip_api.db.database import get_engine
 from flip_api.db.models.main_models import (
     FLJobTrust,
     FLKitSlot,
@@ -193,7 +193,7 @@ def main() -> None:
     parser.add_argument("--name", required=True, help="Trust name (exact match).")
     args = parser.parse_args()
 
-    with Session(engine) as session:
+    with Session(get_engine()) as session:
         result = delete_one_trust(args.name, session)
 
     # Single JSON line on stdout — the deploy script reads this to confirm

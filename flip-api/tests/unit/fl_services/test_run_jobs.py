@@ -27,6 +27,15 @@ def mock_db():
     return MagicMock()
 
 
+@pytest.fixture(autouse=True)
+def deployment_mode_disabled():
+    # With a MagicMock session the real is_deployment_mode_enabled would read a
+    # truthy row and report the gate as closed, so default it to open here; the
+    # deployment-mode tests below override the return value.
+    with patch("flip_api.fl_services.run_jobs.is_deployment_mode_enabled", return_value=False) as mock_enabled:
+        yield mock_enabled
+
+
 @pytest.fixture
 def mock_check_for_available_net():
     with patch("flip_api.fl_services.run_jobs.check_for_available_net") as mock_check:
@@ -50,7 +59,7 @@ def model_id():
 
 def test_run_jobs_success(mock_db, mock_check_for_available_net, mock_check_for_queued_jobs, caplog):
     with (
-        patch("flip_api.fl_services.run_jobs.prepare_and_start_training") as mock_prepare,
+        patch("flip_api.fl_services.run_jobs.prepare_and_start_training", return_value=True) as mock_prepare,
     ):
         response = run_jobs_core(mock_db)
 
@@ -62,6 +71,19 @@ def test_run_jobs_success(mock_db, mock_check_for_available_net, mock_check_for_
         assert str(job.id) in caplog.text
         assert str(job.model_id) in caplog.text
         mock_prepare.assert_called_once()
+
+
+def test_run_jobs_aborted_before_submission(mock_db, mock_check_for_available_net, mock_check_for_queued_jobs, caplog):
+    # prepare_and_start_training returning False means the job was aborted mid-prepare (#787):
+    # the tick must not claim training started.
+    with (
+        patch("flip_api.fl_services.run_jobs.prepare_and_start_training", return_value=False),
+    ):
+        response = run_jobs_core(mock_db)
+
+        assert response is None
+        assert "Training started successfully!" not in caplog.text
+        assert "aborted before submission" in caplog.text
 
 
 def test_run_jobs_no_available_net(mock_db, mock_check_for_available_net, caplog):
@@ -88,6 +110,35 @@ def test_run_jobs_failure(mock_db, mock_check_for_available_net, mock_check_for_
             run_jobs_core(mock_db)
         assert exc_info.value.status_code == 500
         assert "start error" in exc_info.value.detail
+
+
+# ── deployment-mode gate tests ──────────────────────────────────────────────
+
+
+def test_run_jobs_deployment_mode_pauses_job_pickup(
+    mock_db, deployment_mode_disabled, mock_check_for_available_net, mock_check_for_queued_jobs, caplog
+):
+    """Deployment mode enabled → no net lookup, no job pickup, no training start."""
+    deployment_mode_disabled.return_value = True
+
+    with patch("flip_api.fl_services.run_jobs.prepare_and_start_training") as mock_prepare:
+        response = run_jobs_core(mock_db)
+
+    assert response is None
+    assert "Deployment mode enabled" in caplog.text
+    mock_check_for_available_net.assert_not_called()
+    mock_check_for_queued_jobs.assert_not_called()
+    mock_prepare.assert_not_called()
+
+
+def test_run_jobs_deployment_mode_still_recovers_stale_schedulers(mock_db, deployment_mode_disabled):
+    """Stale-BUSY scheduler recovery must keep running while the gate is closed."""
+    deployment_mode_disabled.return_value = True
+    mock_db.execute.return_value.rowcount = 0
+
+    run_jobs_core(mock_db)
+
+    mock_db.execute.assert_called_once()
 
 
 # ── _recover_stale_busy_schedulers tests ────────────────────────────────────
@@ -142,3 +193,30 @@ def test_recover_stale_busy_deleted_job(caplog):
     assert result == 2
     session.commit.assert_called_once()
     assert "Recovered 2 stale BUSY scheduler(s)" in caplog.text
+
+
+# ── queue-position re-emission ───────────────────────────────────────────────
+
+
+def test_run_jobs_reemits_queue_positions_after_pickup(
+    mock_db, mock_check_for_available_net, mock_check_for_queued_jobs
+):
+    """A pickup advances every remaining queued model, so positions are re-logged."""
+    with (
+        patch("flip_api.fl_services.run_jobs.prepare_and_start_training"),
+        patch("flip_api.fl_services.run_jobs.log_queue_positions") as mock_positions,
+    ):
+        run_jobs_core(mock_db)
+
+    mock_positions.assert_called_once_with(mock_db)
+
+
+def test_run_jobs_does_not_reemit_when_no_job_was_picked(
+    mock_db, mock_check_for_available_net, mock_check_for_queued_jobs
+):
+    mock_check_for_queued_jobs.return_value = None
+
+    with patch("flip_api.fl_services.run_jobs.log_queue_positions") as mock_positions:
+        run_jobs_core(mock_db)
+
+    mock_positions.assert_not_called()

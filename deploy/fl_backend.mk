@@ -20,7 +20,7 @@
 #   make up FL_PROVISIONED_DIR=/tmp/my-workspace
 #
 # FL_PROVISIONED_DIR is only read by deploy/compose.development.{flower,nvflare}.yml
-# (volume mounts of the provisioned certs / workspace from deploy/workspace).
+# (volume mounts of the provisioned certs / workspace from deploy/providers/<backend>/).
 # In stag/prod the FL services pull their kit from S3 and this path is unused —
 # the root Makefile still absolutises it for consistency but no prod compose
 # references ${FL_PROVISIONED_DIR}.
@@ -36,13 +36,13 @@ ifeq ($(FL_BACKEND),nvflare)
 DOCKER_FL_API_NAME    := flare-fl-api
 DOCKER_FL_SERVER_NAME := flare-fl-server
 DOCKER_FL_CLIENT_NAME := flare-fl-client
-FL_PROVISIONED_DIR    := deploy/workspace
+FL_PROVISIONED_DIR    := fl-services/nvflare/provision/workspace-dev
 FL_JOBS_DIR           := jobs
 else
 DOCKER_FL_API_NAME    := flower-fl-api
 DOCKER_FL_SERVER_NAME := flower-superlink
 DOCKER_FL_CLIENT_NAME := flower-supernode
-FL_PROVISIONED_DIR    := ../flip-fl-base-flower/certs
+FL_PROVISIONED_DIR    := fl-services/flower/provision/creds
 # Per-net shared host dir mounted as /app/src on fl-api and fl-server: the FL API
 # downloads uploaded bundles to <FL_JOBS_DIR>/net-X/<model_id>/ and the FL server's
 # evaluation ServerApp reads checkpoints from there via the flip-job-dir run-config.

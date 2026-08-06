@@ -44,11 +44,20 @@ server; no inbound ports are exposed from the K8s cluster.
 ## Prerequisites
 
 - **Kubernetes cluster** 1.28+ (EKS, AKS, or on-prem)
-- **Helm** 3.16+
+- **Helm** 4.x (the CI-tested version; 3.16+ also works)
 - **kubectl** configured with cluster access
 - **NVIDIA GPU Operator** (if GPU workloads are enabled)
 - **External Secrets Operator** or **Secrets Store CSI Driver** (recommended for
   production secrets management)
+
+> **Helm 4 readiness semantics.** Helm 4 reimplemented `--wait` on top of
+> [kstatus](https://github.com/kubernetes-sigs/cli-utils/tree/master/pkg/kstatus),
+> which is stricter than Helm 3's readiness check — an install that Helm 3 called
+> ready can now block until the workloads genuinely settle, and time out if they
+> never do. `make deploy` does **not** pass `--wait` (it relies on `--timeout 20m`
+> alone), so this only bites if you add `--wait` to your own `helm upgrade`
+> invocation; if you do, size `--timeout` for the slowest service to become ready
+> rather than for the API call to return.
 
 ## Quickstart
 
@@ -130,9 +139,12 @@ helm upgrade --install trust-release ./deploy/providers/kubernetes/ \
 >   `helm` reports the release failed and `patch-kit-secrets` is skipped, leaving
 >   trust-api on the stale seed key (`401`). Re-run it manually:
 >   `make -C deploy/providers/kubernetes patch-kit-secrets KIT=<CODE> PROD=stag`.
-> - For FL training, `sync-kit` strips the egress NetworkPolicy block each run
->   (see [#593](https://github.com/londonaicentre/FLIP/issues/593)); re-add it
->   before relying on the fl-client → fl-server connection.
+> - For FL training, `sync-kit` regenerates the FL-server egress allowance on
+>   every run (see [#593](https://github.com/londonaicentre/FLIP/issues/593)):
+>   when the kit carries `FL_SERVER_PORT` it emits `networkPolicies.allowedEgressPorts`
+>   into the override with a port-only rule for that port (alongside the chart's
+>   default DNS/HTTP/HTTPS ports), so the fl-client → fl-server gRPC is allowed
+>   without pinning the NLB's rotating IPs. No manual re-add is needed.
 
 ### 5. Verify the trust is polling
 
@@ -319,17 +331,49 @@ with `secrets.create=true` or pre-created externally):
 | `trust-internal-service-key` | trust-api, imaging-api, data-access-api | Secret key for trust-internal auth |
 | `omop-postgres-password` | omop-db | PostgreSQL password |
 | `data-access-postgres-password` | data-access-api | Data reader DB password |
-| `orthanc-registered-users` | orthanc | Orthanc registered users (JSON) |
+| `orthanc-registered-users` | orthanc | Orthanc registered users, JSON user map e.g. `{"admin": "<password>"}`. Required when `orthanc.enabled` — the env ref is non-optional (asserted on every chart render by the `Helm Template` CI job) and the image refuses to start without users (FLIP-PT-091). Populated from the `ORTHANC_REGISTERED_USERS` env var by `scripts/generate_values.py` |
 | `xnat-admin-password` | xnat-web | XNAT admin password |
 | `xnat-service-user` | xnat-web, imaging-api | XNAT service account username |
 | `xnat-service-password` | xnat-web, imaging-api | XNAT service account password |
-| `xnat-datasource-password` | xnat-web, xnat-db | XNAT database password |
+| `xnat-datasource-password` | xnat-web, xnat-db, imaging-api | Password of the `xnat` **application role** — mint via `make generate-xnat-credentials KIT=<CODE>` and fill from the kit with `scripts/generate_values.py`; xnat-web and xnat-db refuse to start on the shipped placeholder or weak values, and imaging-api splices it into its `XNAT_DATABASE_URL` (FLIP-PT-056) |
+| `xnat-datasource-admin-password` | xnat-db | Password of the Postgres **superuser** (`POSTGRES_PASSWORD`). Minted by the same command, from the kit's `XNAT_DATASOURCE_ADMIN_PASSWORD`. Must differ from `xnat-datasource-password` — xnat-db's entrypoint refuses to start when the two match (FLIP-PT-056) |
 | `grafana-admin-password` | grafana | Grafana admin password |
 | `s3-access-key-id` | fl-client (init container) | AWS access key for S3 kit sync |
 | `s3-secret-access-key` | fl-client (init container) | AWS secret key for S3 kit sync |
 
 For production, use [External Secrets Operator](https://external-secrets.io/) to
 sync secrets from AWS Secrets Manager or HashiCorp Vault.
+
+### xnat-db roles and credential rotation
+
+xnat-db runs two Postgres roles, mirroring the swarm deployment: the `postgres`
+superuser (`xnat-datasource-admin-password`) and the non-superuser `xnat`
+application role (`xnat-datasource-password`) that xnat-web, imaging-api and the
+imaging-import worker authenticate with. The `xnat` role is created by the
+image's baked `XNAT.sql`, which runs from `/docker-entrypoint-initdb.d`.
+
+> **Do not mount a ConfigMap over `/docker-entrypoint-initdb.d`.** A directory
+> mount replaces the directory, hiding `XNAT.sql`, and the two roles silently
+> collapse into one. Per-file mounts need an explicit `subPath`.
+
+**Both passwords apply only at the first initdb of an empty PVC.** A StatefulSet
+PVC survives `helm upgrade` and `helm uninstall`, so changing either secret
+afterwards leaves the database on the old credential while the pods start using
+the new one, and authentication fails. To rotate on a live install, update the
+database to match the secret:
+
+```bash
+kubectl exec -it <xnat-db-pod> -- \
+  psql -U postgres -c "ALTER ROLE xnat WITH PASSWORD '<xnat-datasource-password>'"
+kubectl exec -it <xnat-db-pod> -- \
+  psql -U postgres -c "ALTER ROLE postgres WITH PASSWORD '<xnat-datasource-admin-password>'"
+```
+
+**Upgrading an install created before the roles were split:** those deployments
+set `POSTGRES_USER=xnat`, so their single role is a superuser named `xnat` and
+there is no `postgres` role to authenticate as. Either re-initialise the xnat-db
+PVC (destroys the XNAT database — export anything you need first), or keep the
+old install on the previous chart version.
 
 ## Architecture
 
@@ -379,7 +423,7 @@ sync secrets from AWS Secrets Manager or HashiCorp Vault.
 - **Pod Security & container hardening** (#530): the chart-created namespace
   carries Pod Security Standards labels (`enforce=baseline`, `warn`/`audit=restricted`
   by default — tune via `podSecurity.*`), and the stateless services
-  (trust-api, imaging-api, data-access-api, fl-client, imaging-import-worker)
+  (trust-api, imaging-api, data-access-api, fl-client)
   apply a container `securityContext` (`allowPrivilegeEscalation: false`, drop
   `ALL` capabilities, `seccompProfile: RuntimeDefault`) from `.Values.securityContext`.
   `runAsNonRoot` / `readOnlyRootFilesystem` are left opt-in (image-dependent).
@@ -489,20 +533,17 @@ Include:
 
 ## Known Limitations
 
-1. **XNAT Container Service — Job execution not yet wired**: The Container
-   Service plugin's native Kubernetes compute backend (available since plugin
-   3.2.0) is registered at init time and the `dcm2niix` command is available
-   for per-project event subscriptions. However, the storage path for spawned
-   container Jobs is not yet plumbed: XNAT's data PVC is `ReadWriteOnce`, so a
-   dcm2niix Job would need either `nodeAffinity` onto the XNAT pod's node or a
-   `ReadWriteMany` storage class (e.g. NFS/EFS) to mount the same archive/build
-   data. Subscriptions are created successfully, but DICOM-to-NIfTI conversion
-   will not yet run end-to-end on the K8s deployment until the PVC topology
-   for Jobs is finalised. **See [DCM2NIIX-K8S.md](DCM2NIIX-K8S.md) (#565)** for
-   the storage analysis, the RWX / single-node fixes (set
-   `xnat.web.persistence.accessMode: ReadWriteMany` for multi-node), and the
-   remaining chart work that must be validated against a live XNAT Container
-   Service.
+1. **XNAT Container Service — single-node by default**: DICOM-to-NIfTI
+   conversion runs end-to-end on Kubernetes (FLIP#565). The Container Service
+   spawns each `dcm2niix` Job with the `xnat-web` data PVC mounted, configured by
+   `combined-pvc-name` + `combined-path-translation` in the Kubernetes backend
+   entry of the `xnat-cs-config` ConfigMap. Because the Job mounts the *same* PVC
+   as `xnat-web`, the chart default `ReadWriteOnce` only works when the Job is
+   scheduled onto the node running `xnat-web` — true for a single-node cluster.
+   For multi-node, give the XNAT data volume a `ReadWriteMany` storage class
+   (`xnat.web.persistence.accessMode: ReadWriteMany`, e.g. NFS/EFS). See
+   [TROUBLESHOOTING.md §2.3b](TROUBLESHOOTING.md) for the failure modes,
+   including the trailing slash that `combined-path-translation` must keep.
 
 2. **Orthanc SQLite**: Orthanc uses an embedded SQLite database that cannot be
    shared across multiple pod replicas. The chart configures Orthanc with

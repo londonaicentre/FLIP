@@ -29,7 +29,7 @@ LOG_CFG="/app/local/log_config.json"
 
 # Use envsubst to replace environment variables in the template
 echo "🔧 Generating log_config.json from template..."
-envsubst < "$LOG_TEMPLATE" > "$LOG_CFG"
+envsubst < "$LOG_TEMPLATE" > "$LOG_CFG" || { echo "❌ cannot write ${LOG_CFG}"; exit 1; }
 echo "✅ log_config.json written to ${LOG_CFG}"
 #################################################################
 

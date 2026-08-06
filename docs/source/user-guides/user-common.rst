@@ -32,6 +32,16 @@ Initial Login
 
    Logging into FLIP for the first time.
 
+.. _flip-login:
+
+On subsequent visits, sign in with your email address and password to reach the Projects page.
+
+.. figure:: ../assets/flip/flip-login.gif
+   :width: 600
+   :align: center
+
+   Signing in to FLIP.
+
 .. _forgot-password:
 
 ***************
@@ -55,6 +65,43 @@ Forgot Password
    You may also speak to your local FLIP system administrator and ask them to perform the reset for you, in which case you will receive an email including the confirmation code required to change your password.
 
    In this case, you will select the 'I have a code' button rather than the 'Request Code' button in the above process.
+
+.. _change-password:
+
+***************
+Change Password
+***************
+
+While signed in, you can change your password at any time from the account menu.
+
+1. Open the account menu in the top right-hand corner
+2. Click 'Change Password'
+3. Click the 'Request Code' button to have a confirmation code emailed to you
+4. Enter the confirmation code and a new password
+5. Click the 'Change Password' button
+
+.. figure:: ../assets/flip/change-password-user.gif
+   :width: 600
+   :align: center
+
+   Changing your password while signed in.
+
+.. _dark-mode:
+
+*********
+Dark Mode
+*********
+
+FLIP supports light and dark display modes. Your choice is remembered across sessions.
+
+1. Open the account menu in the top right-hand corner
+2. Click 'Dark Mode' to toggle between the light and dark themes
+
+.. figure:: ../assets/flip/dark-mode.gif
+   :width: 600
+   :align: center
+
+   Switching between light and dark mode.
 
 ********
 Projects
@@ -83,6 +130,13 @@ Edit Project
 
 1. Click the 'Edit Project' button
 2. Update the project details, such as project name, description and added users
+3. Click the 'Update Project' button
+
+.. figure:: ../assets/flip/edit-project.gif
+   :width: 600
+   :align: center
+
+   Editing a project.
 
 .. warning::
 
@@ -214,7 +268,7 @@ Following project approval, a corresponding XNAT project will be generated at ea
 
 To view the progress of the imaging data import at each participating Trust, users can refer to the Imaging Project Status section on the project page.
 
-.. figure:: ../assets/flip/imaging-status.png
+.. figure:: ../assets/flip/imaging-status.gif
    :width: 600
    :align: center
 
@@ -225,19 +279,11 @@ To view the progress of the imaging data import at each participating Trust, use
    Importing large sets of studies from PACS systems can take a very long time and individual imports may fail if the system is under too much strain. Overtime, FLIP will automatically reimport failed studies as indicated by the reimport count.
    Once the reimport cap is reached, failed studies will no longe be reimported. If there are still failures present, please contact an XNAT administrator. Manual intervention may be needed.
 
-.. figure:: ../assets/flip/study-reimport-max.png
+.. figure:: ../assets/flip/study-reimport-max.gif
    :width: 600
    :align: center
 
    Reimport cap has been reached
-
-Trust sites can be filtered using the search bar at the top of the imaging project status section.
-
-.. figure:: ../assets/flip/imaging-status-filter.gif
-   :width: 600
-   :align: center
-
-   Filter imaging status trust locations
 
 
 *******
@@ -305,16 +351,33 @@ Model Files
 
    A model must be created before proceeding to upload model files and prepare the model for training.
 
-**For NVIDIA FLARE apps**, the minimum required files are:
+There is no single list of required files. What a model must contain depends on its **job type**
+— the kind of federated job it runs, such as federated averaging or evaluation — and on which FL
+backend your platform is running. An app declares its job type with the ``job_type`` key in
+``config.json``. Every NVFLARE app carries a ``config.json``, because it is itself a required file
+for those job types; a Flower app only needs one in order to run a job type other than the default.
+Where the key — or the file itself — is absent, the ``standard`` job type is assumed.
 
-- ``validator.py``
-- ``trainer.py``
+**You do not need to look this up.** FLIP tells you which files your model needs, in two places on
+the model page:
 
-Additional files may be uploaded, especially if these are referenced by the validator or trainer. A config file may also be uploaded (see :ref:`training-configuration` section for more information), in which optional variables can be defined.
+- The Model Files panel shows the job type currently detected from your uploaded ``config.json``.
+- The Training panel lists the files that job type requires, and highlights any that are still
+  missing.
 
-**For Flower apps**, the required files differ (e.g. ``client_app.py``, ``pyproject.toml``). See the :ref:`FL nodes documentation <flip-fl-nodes>` for Flower-specific file requirements and job types.
+Both update as soon as you upload or replace ``config.json``, and training cannot be initiated
+until every required file has been uploaded.
 
-For more information on model training and model files, please see the `FLIP tutorials <https://github.com/londonaicentre/FLIP/tree/develop/fl-tutorials>`_.
+Files beyond the required set may be uploaded freely — anything your code imports (helper modules,
+transforms) is bundled with the app and shipped to the participating Trusts. Two things do not
+follow that rule: a file whose name matches one the platform's own app template supplies is quietly
+dropped in favour of the template's copy, and a checkpoint declared for server-side use stays on the
+FL server rather than travelling to the Trusts. Both are covered under
+:ref:`fl-required-files` on the FL nodes component page.
+
+The full per-job-type file lists, and the configuration each backend accepts, are documented on
+the :ref:`FL nodes component page <flip-fl-nodes>`. For worked examples of complete, working apps,
+see the `FLIP tutorials <https://github.com/londonaicentre/FLIP/tree/develop/fl-tutorials>`_.
 
 .. warning::
 
@@ -329,10 +392,34 @@ Upload Files
 2. Navigate to the Model Files section on the left-hand side of the model page
 3. Either browse to the files on your local file system or drag and drop them into the box on screen
 4. You will receive confirmation once your files have successfully uploaded
+5. Each file is then checked. A magnifying-glass icon marks a file as being checked; it becomes a
+   document icon once the check passes and the file is ready to use
 
 .. note::
 
-   As files are uploaded, they are scanned for vulnerabilities and viruses.
+   **Every uploaded file is held in a staging area and released only after it has been checked.**
+   Until then it cannot be used for training and is never sent to a trust.
+
+   Files that carry Python pickle data (``.pt``, ``.pth``, ``.pkl``, ``.pickle``) — including model
+   checkpoints — are **scanned for unsafe content**, because loading such a file executes whatever it
+   contains. A file that fails this scan is marked with a red virus icon and deleted from storage.
+   Delete the entry and upload a corrected file to continue.
+
+   .. warning::
+
+      **Your Python source is not analysed for malicious code.** ``.py`` files are checked for type
+      and released like any other file, then executed as-is on every participating trust. Only upload
+      code you have written or reviewed yourself, and treat code from third parties as untrusted.
+
+   Only recognised file types may be uploaded (by default ``.py``, ``.json``, ``.toml``, ``.pt``,
+   ``.pth``, ``.pkl``, ``.txt``, ``.yaml``, ``.yml`` and ``.safetensors``). Anything else — including
+   archives such as ``.zip`` — is refused at upload time with a message listing the accepted types.
+
+   Training cannot start until every file has been released.
+
+Checking starts as soon as a file is uploaded and usually finishes within seconds, though scanning a
+large checkpoint takes longer. You can leave the page while it runs — it continues on the server and
+the status updates when you return.
 
 If model files need to be managed further after uploading, the uploader function allows files to be downloaded, removed and re-uploaded.
 
@@ -347,71 +434,27 @@ If model files need to be managed further after uploading, the uploader function
 Training Configuration
 ----------------------
 
-.. note::
+Alongside your code, an app carries a small configuration file that sets how the federated run
+behaves — how many rounds it trains for, how client updates are combined, and any settings your
+own code reads.
 
-   The following configuration applies to **NVIDIA FLARE** apps. For Flower apps, training configuration is managed via ``pyproject.toml``. See the :ref:`FL nodes documentation <flip-fl-nodes>` for details.
+Where that configuration lives, and which settings are available, depends on the FL backend:
 
-Prior to commencing training you may also upload an optional ``config.json`` file (see example below). The config file defines variables which are used during FLIP training (e.g. ``GLOBAL_ROUNDS``, ``LOCAL_ROUNDS``, ``AGGREGATION_WEIGHTS``, ``AGGREGATOR``).
+- **NVIDIA FLARE apps** are configured through ``config.json``, which is one of the required files
+  for every NVFLARE job type. As well as declaring ``job_type``, it may set platform-recognised
+  keys such as ``GLOBAL_ROUNDS`` and ``LOCAL_ROUNDS``.
+- **Flower apps** take their run configuration from the platform's app template, which your app
+  can override with a ``config.toml`` file. Flower apps do not use the NVFLARE keys.
 
-.. code-block:: json
+For NVFLARE apps, any key the platform does not recognise is passed through untouched, for your own
+code to read at runtime — which is how the tutorials carry app-specific settings such as learning
+rate or validation split. Flower works the other way round: ``config.toml`` may only override keys
+the app template already declares, and a key it does not declare fails the run at submission rather
+than being ignored.
 
-    {
-      "GLOBAL_ROUNDS": 5,
-      "LOCAL_ROUNDS": 2,
-      "IGNORE_RESULT_ERROR": false,
-      "AGGREGATOR": "InTimeAccumulateWeightedAggregator",
-      "AGGREGATION_WEIGHTS": {
-         "KCH": 1.0,
-         "UCLH": 0.5
-      }
-    }
-
-.. note::
-
-   All config properties have default values. If a ``config.json`` file is not uploaded, or some properties are missing from the file, default values will be utilised at runtime.
-   See default values specified below.
-
-**GLOBAL_ROUNDS**
-   Number of global training iterations. How many times the server should execute the ``trainer.py``.
-   Must be greater than 0. Less than 100.
-
-   *Default=1*
-
-**LOCAL_ROUNDS**
-   Number of local training iterations at client sites.
-   Must be greater than 0. Less than 100.
-
-   *Default=1*
-
-**IGNORE_RESULT_ERROR**
-   Whether training should proceed if a client returns an error.
-
-   *Default=false*
-
-**AGGREGATOR**
-   The nvflare aggregation component used to aggregate training results from each client.
-
-   .. warning::
-      Allowed values are "InTimeAccumulateWeightedAggregator" or "AccumulateWeightedAggregator". As of v4, FLIP only supports aggregator components built into nvflare. Specifying any other value will cause
-      a config validation error and prevent training from initiating.
-
-   *Default="InTimeAccumulateWeightedAggregator"*
-
-**AGGREGATION_WEIGHTS**
-   Weight dictionary passed into the aggregator component to define its aggregation behaviour.
-
-   .. warning::
-      Client sites *must* be referenced via their common abbreviation e.g KCH=Kings College Hospital, UCLH=University College London Hospital.
-      Weights must be provided as a valid json object.
-
-   *Default=1.0 applied to each client site*
-
-.. code-block:: json
-
-    {
-        "KCH": 1.0,
-        "UCLH": 1.0
-    }
+Every platform-recognised key has a default, so an app that sets only ``job_type`` will still run.
+For the full list of keys, their accepted values and defaults per backend, see
+:ref:`fl-training-configuration` on the FL nodes component page.
 
 View Files
 ----------
@@ -441,6 +484,8 @@ FLIP allows for multiple models to be deployed to and trained at multiple Trust 
 FLIP uses the concept of *nets* that are deployed on the Central Hub and remote hardware at each Trust. Each *net* consists of a controller and worker (to manage the model training cycle) and FLIP uses a task scheduler to manage the resources available on the hardware at Trust sites. The scheduler maintains a queue of waiting *tasks*, when a *net* becomes free a *task* is assigned to it.
 
 This scheduling capability means model developers can submit their model for training via the UI and need not be concerned with matters such as GPU capacity or existing jobs that are running/queued. When initiating training the platform will check for available nets and assign the model training to an available net.
+
+While a model is waiting for a net, its place in the queue is shown alongside its status — e.g. ``Model Queued (2)``, where position 1 is the next model to start — both on the Models page and on the model's page, and the model's Live activity feed logs a new line each time the model moves up the queue.
 
 Initiate Training
 -----------------
@@ -474,6 +519,11 @@ Stop Training
 1. Click the 'Actions' drop-down menu
 2. Click the 'Stop Training' button
 3. When the model training has been stopped, the progress bar will show at which stage the process was stopped
+
+While the model is still queued (the status shows 'Model Queued', before training has started) the same button
+reads **'Abort job'** instead: clicking it removes the job from the queue, marks the model as Stopped, and
+immediately releases the training *net* so the next queued job can start. A stopped model expects no results —
+'Download Results' stays disabled — but it can be initiated for training again.
 
 .. figure:: ../assets/flip/stop-training.gif
    :width: 600
@@ -512,3 +562,19 @@ Hovering over the graphs at various points will display the values.
    :align: center
 
    Viewing model training metrics.
+
+.. _connection-status:
+
+*****************
+Connection Status
+*****************
+
+The Connection Status page shows the live state of the federation. Each participating Trust is shown as online, degraded or offline based on its most recent heartbeat, and can be viewed as a list or as a radial topology.
+
+The FL nets card reports the FL client-to-server connectivity for each net — that is, whether each Trust's FL client is connected. No training requests can be sent to a Trust whose FL client is offline.
+
+.. figure:: ../assets/flip/fl-status.gif
+   :width: 600
+   :align: center
+
+   Viewing the federation connection status.

@@ -22,29 +22,33 @@
             <AiLoader v-if="!data?.data" />
             <div v-else class="flex flex-col flex-1 min-w-0 overflow-y-auto">
                 <!-- Page header (design ref: ProjectsStatusSpine + ProjectsB header section) -->
-                <header class="flex flex-col gap-4 px-8 pt-8 pb-4 sm:flex-row sm:items-end sm:justify-between">
-                    <div>
-                        <p class="text-xs font-mono uppercase tracking-widest text-gray-500 dark:text-gray-400">
-                            Workspace · {{ approvedTrustCount }} {{ approvedTrustCount === 1 ? "trust" : "trusts" }} active
-                        </p>
+                <header class="px-8 pt-8 pb-4">
+                    <p class="text-xs font-mono uppercase tracking-widest text-gray-500 dark:text-gray-300">
+                        Workspace · {{ approvedTrustCount }}
+                        {{ approvedTrustCount === 1 ? "trust" : "trusts" }} active
+                    </p>
+                    <div class="flex items-center justify-between gap-4">
                         <h1 class="text-3xl font-semibold font-heading mt-1 text-gray-900 dark:text-gray-100">
                             <span class="text-primary-600 underline decoration-4 decoration-primary-500/60 underline-offset-8 dark:text-white">Projects</span>
-                            <span class="ml-3 text-gray-400 dark:text-gray-600 font-medium">{{ data.data.length }}</span>
+                            <span class="ml-3 text-gray-400 dark:text-gray-300 font-medium">{{ data.data.length }}</span>
                         </h1>
-                        <p class="mt-2 text-sm text-gray-500 dark:text-gray-400">
-                            Approved &amp; staged projects you can access.
-                        </p>
-                    </div>
-                    <div v-if="canCreateProjects" class="flex-shrink-0 sm:pb-4">
                         <AiButton
+                            v-if="canCreateProjects"
                             primary
                             large
+                            class="shrink-0"
                             data-test="add-project-btn"
+                            aria-label="Create project"
+                            tooltip="Create project"
                             @click="addProject"
                         >
-                            Create project
+                            <icon-mdi-plus class="lg:mr-2" />
+                            <span class="hidden lg:inline">Create project</span>
                         </AiButton>
                     </div>
+                    <p class="mt-2 text-sm text-gray-500 dark:text-gray-300">
+                        Below are the projects you can access.
+                    </p>
                 </header>
 
                 <!-- Toolbar: search + My/All toggle + sort + view toggle -->
@@ -59,7 +63,7 @@
 
                     <div
                         role="tablist"
-                        class="inline-flex bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg p-1"
+                        class="inline-flex bg-white dark:bg-dark-canvas border border-gray-200 dark:border-dark-border rounded-lg p-1"
                     >
                         <button
                             v-for="opt in accessOptions"
@@ -68,8 +72,8 @@
                             role="tab"
                             class="px-3 py-1.5 rounded-md text-sm font-semibold transition-colors"
                             :class="ownerFilter === opt.value
-                                ? 'bg-gray-100 dark:bg-gray-800 text-gray-900 dark:text-gray-100'
-                                : 'bg-transparent text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200'"
+                                ? 'bg-gray-100 dark:bg-dark-surface text-gray-900 dark:text-gray-100'
+                                : 'bg-transparent text-gray-500 hover:text-gray-800 dark:text-gray-300 dark:hover:text-gray-200'"
                             :data-test="`access-filter-${opt.id}`"
                             @click="ownerFilter = opt.value"
                         >
@@ -79,7 +83,7 @@
 
                     <select
                         v-model="sortKey"
-                        class="rounded-md border-gray-200 dark:border-gray-700 dark:bg-gray-900 text-sm py-2 pl-3 pr-8"
+                        class="rounded-md border-gray-200 dark:border-dark-border dark:bg-dark-canvas text-sm py-2 pl-3 pr-8"
                         data-test="project-sort"
                     >
                         <option value="created">
@@ -100,33 +104,33 @@
                     <div
                         role="group"
                         aria-label="View"
-                        class="inline-flex bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg p-1"
+                        class="inline-flex bg-white dark:bg-dark-canvas border border-gray-200 dark:border-dark-border rounded-lg p-1"
                     >
                         <button
                             type="button"
                             class="p-1.5 rounded-md transition-colors"
                             :class="viewMode === 'list'
-                                ? 'bg-gray-100 dark:bg-gray-800 text-gray-900 dark:text-gray-100'
-                                : 'text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200'"
+                                ? 'bg-gray-100 dark:bg-dark-surface text-gray-900 dark:text-gray-100'
+                                : 'text-gray-500 hover:text-gray-800 dark:text-gray-300 dark:hover:text-gray-200'"
                             :aria-pressed="viewMode === 'list'"
                             data-test="view-mode-list"
                             title="List view"
                             @click="viewMode = 'list'"
                         >
-                            <icon-ph-list-bullets-duotone class="w-5 h-5" />
+                            <icon-ph-list-bullets class="w-5 h-5" />
                         </button>
                         <button
                             type="button"
                             class="p-1.5 rounded-md transition-colors"
                             :class="viewMode === 'grid'
-                                ? 'bg-gray-100 dark:bg-gray-800 text-gray-900 dark:text-gray-100'
-                                : 'text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200'"
+                                ? 'bg-gray-100 dark:bg-dark-surface text-gray-900 dark:text-gray-100'
+                                : 'text-gray-500 hover:text-gray-800 dark:text-gray-300 dark:hover:text-gray-200'"
                             :aria-pressed="viewMode === 'grid'"
                             data-test="view-mode-grid"
                             title="Grid view"
                             @click="viewMode = 'grid'"
                         >
-                            <icon-ph-squares-four-duotone class="w-5 h-5" />
+                            <icon-ph-squares-four class="w-5 h-5" />
                         </button>
                     </div>
                 </div>
@@ -134,7 +138,7 @@
                 <!-- Empty state -->
                 <div v-if="!sortedProjects.length" class="flex flex-col items-center justify-center px-8 py-16">
                     <icon-ph-archive-duotone class="w-16 h-16 text-primary-500 dark:text-primary-400" />
-                    <p class="mt-3 text-gray-500 dark:text-gray-400">
+                    <p class="mt-3 text-gray-500 dark:text-gray-300">
                         There are no projects to show
                     </p>
                 </div>
@@ -146,8 +150,8 @@
                             v-for="(project, idx) in sortedProjects"
                             :key="project.id"
                             :to="`/project/${project.id}`"
-                            class="flex items-stretch bg-white dark:bg-gray-900 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
-                            :class="idx > 0 ? 'border-t border-gray-100 dark:border-gray-800' : ''"
+                            class="flex items-stretch bg-white dark:bg-dark-canvas hover:bg-gray-50 dark:hover:bg-dark-surface transition-colors"
+                            :class="idx > 0 ? 'border-t border-gray-100 dark:border-dark-border' : ''"
                             :data-test="`project-list-item-${idx}`"
                         >
                             <!-- Fat status spine (8px) — replaces the avatar -->
@@ -163,18 +167,18 @@
                                     <div class="font-heading font-semibold text-base text-gray-900 dark:text-gray-100 truncate" data-test="project-name">
                                         {{ project.name }}
                                     </div>
-                                    <div class="text-xs text-gray-500 dark:text-gray-400 mt-0.5 truncate">
+                                    <div class="text-xs text-gray-500 dark:text-gray-300 mt-0.5 truncate">
                                         {{ ownerLabel(project) }} · {{ relativeUpdated(project) }}
                                     </div>
                                 </div>
-                                <div class="text-sm text-gray-600 dark:text-gray-400 leading-snug line-clamp-2">
+                                <div class="text-sm text-gray-600 dark:text-gray-300 leading-snug line-clamp-2">
                                     {{ project.description || "—" }}
                                 </div>
                                 <div class="hidden lg:flex flex-row items-center gap-1.5">
                                     <span
                                         v-for="trust in trustsToShow(project)"
                                         :key="trust.id"
-                                        class="inline-flex items-center py-0.5 rounded text-[11px] font-medium font-mono bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300"
+                                        class="inline-flex items-center py-0.5 rounded text-[11px] font-medium font-mono bg-gray-100 dark:bg-dark-surface text-gray-700 dark:text-gray-300"
                                         :class="showsTrustDot(project, trust) ? 'gap-1.5 pl-1.5 pr-2' : 'px-2'"
                                         :title="trust.name"
                                         data-test="trust-chip"
@@ -190,13 +194,13 @@
                                     </span>
                                     <span
                                         v-if="remainingTrustCount(project) > 0"
-                                        class="text-xs text-gray-500 dark:text-gray-400"
+                                        class="text-xs text-gray-500 dark:text-gray-300"
                                     >
                                         +{{ remainingTrustCount(project) }}
                                     </span>
                                     <span
                                         v-if="!trustsForProject(project).length"
-                                        class="text-xs text-gray-400 dark:text-gray-500 italic"
+                                        class="text-xs text-gray-400 dark:text-gray-300 italic"
                                     >
                                         No trusts staged
                                     </span>
@@ -209,10 +213,10 @@
                                     >
                                         {{ statusLabel(project.status) }}
                                     </span>
-                                    <span v-if="nextActionFor(project)" class="text-[11px] text-gray-500 dark:text-gray-400">
+                                    <span v-if="nextActionFor(project)" class="text-[11px] text-gray-500 dark:text-gray-300">
                                         {{ nextActionFor(project) }}
                                     </span>
-                                    <span v-if="cohortSize(project)" class="text-[11px] text-gray-500 dark:text-gray-400 font-mono">
+                                    <span v-if="cohortSize(project)" class="text-[11px] text-gray-500 dark:text-gray-300 font-mono">
                                         {{ cohortSize(project)?.toLocaleString() }} patients
                                     </span>
                                 </div>
@@ -231,7 +235,7 @@
                         v-for="(project, idx) in sortedProjects"
                         :key="project.id"
                         :to="`/project/${project.id}`"
-                        class="relative flex flex-col gap-3 p-5 bg-white dark:bg-gray-900 border border-gray-100 dark:border-gray-800 rounded-lg shadow-sm hover:shadow-md hover:border-gray-200 dark:hover:border-gray-700 transition-all overflow-hidden"
+                        class="relative flex flex-col gap-3 p-5 bg-white dark:bg-dark-canvas border border-gray-100 dark:border-dark-border rounded-lg shadow-sm hover:shadow-md hover:border-gray-200 dark:hover:border-dark-border transition-all overflow-hidden"
                         :data-test="`project-card-${idx}`"
                     >
                         <!-- Top status stripe (3px) -->
@@ -250,7 +254,7 @@
                             <h3 class="font-heading font-semibold text-lg leading-tight text-gray-900 dark:text-gray-100">
                                 {{ project.name }}
                             </h3>
-                            <p class="mt-1.5 text-sm text-gray-500 dark:text-gray-400 leading-snug line-clamp-2">
+                            <p class="mt-1.5 text-sm text-gray-500 dark:text-gray-300 leading-snug line-clamp-2">
                                 {{ project.description || "No description provided" }}
                             </p>
                         </div>
@@ -259,7 +263,7 @@
                             <span
                                 v-for="trust in trustsToShow(project)"
                                 :key="trust.id"
-                                class="inline-flex items-center py-0.5 rounded text-[11px] font-medium font-mono bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300"
+                                class="inline-flex items-center py-0.5 rounded text-[11px] font-medium font-mono bg-gray-100 dark:bg-dark-surface text-gray-700 dark:text-gray-300"
                                 :class="showsTrustDot(project, trust) ? 'gap-1.5 pl-1.5 pr-2' : 'px-2'"
                                 :title="trust.name"
                                 data-test="trust-chip"
@@ -275,35 +279,35 @@
                             </span>
                             <span
                                 v-if="remainingTrustCount(project) > 0"
-                                class="text-xs text-gray-500 dark:text-gray-400"
+                                class="text-xs text-gray-500 dark:text-gray-300"
                             >
                                 +{{ remainingTrustCount(project) }}
                             </span>
                             <span
                                 v-if="!trustsForProject(project).length"
-                                class="text-xs text-gray-400 dark:text-gray-500 italic"
+                                class="text-xs text-gray-400 dark:text-gray-300 italic"
                             >
                                 No trusts staged
                             </span>
                         </div>
 
                         <div
-                            class="flex items-center gap-2 px-3 py-2 rounded-md bg-gray-50 dark:bg-gray-800 text-xs"
+                            class="flex items-center gap-2 px-3 py-2 rounded-md bg-gray-50 dark:bg-dark-surface text-xs"
                             data-test="project-cohort"
                         >
-                            <icon-ph-users-three-duotone class="w-4 h-4 text-gray-500 dark:text-gray-400 shrink-0" />
+                            <icon-ph-users-three-duotone class="w-4 h-4 text-gray-500 dark:text-gray-300 shrink-0" />
                             <template v-if="cohortSize(project)">
                                 <span class="font-mono font-semibold text-gray-800 dark:text-gray-200">
                                     {{ cohortSize(project)?.toLocaleString() }}
                                 </span>
-                                <span class="text-gray-500 dark:text-gray-400">patients in cohort</span>
+                                <span class="text-gray-500 dark:text-gray-300">patients in cohort</span>
                             </template>
-                            <span v-else class="text-gray-400 dark:text-gray-500 italic">
+                            <span v-else class="text-gray-400 dark:text-gray-300 italic">
                                 No cohort yet
                             </span>
                         </div>
 
-                        <div class="flex justify-between items-center pt-2 mt-auto border-t border-gray-100 dark:border-gray-800 text-xs text-gray-500 dark:text-gray-400">
+                        <div class="flex justify-between items-center pt-2 mt-auto border-t border-gray-100 dark:border-dark-border text-xs text-gray-500 dark:text-gray-300">
                             <span class="truncate max-w-[60%]">{{ ownerLabel(project) }}</span>
                             <span>{{ userCountLabel(project) }}</span>
                         </div>
@@ -339,6 +343,7 @@ import CreateProjectModal from "@/partials/projects/CreateProjectModal.vue";
 import { getProjects, IProject, IProjectTrust, ProjectStatus } from "@/services/project-service";
 import { useAuthStore } from "@/store/auth";
 import { useModalsStore } from "@/store/modals";
+import { apiTimestampMs, relativeCreatedLabel } from "@/utils/helpers";
 
 const pageSize = 20;
 const authStore = useAuthStore();
@@ -432,8 +437,8 @@ const sortedProjects = computed<IProject[]>(() => {
     } else {
         // "created" — newest first; rows without a timestamp sink to the bottom.
         arr.sort((a, b) => {
-            const ta = a.creationtimestamp ? new Date(a.creationtimestamp).getTime() : 0;
-            const tb = b.creationtimestamp ? new Date(b.creationtimestamp).getTime() : 0;
+            const ta = apiTimestampMs(a.creationtimestamp) ?? 0;
+            const tb = apiTimestampMs(b.creationtimestamp) ?? 0;
 
             return tb - ta;
         });
@@ -505,7 +510,7 @@ const statusLabel = (s: ProjectStatus): string => STATUS_LABEL[s];
 const PILL_CLASS: Record<ProjectStatus, string> = {
     APPROVED: "bg-emerald-100 text-emerald-900 dark:bg-emerald-900/40 dark:text-emerald-100",
     STAGED: "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200",
-    UNSTAGED: "bg-gray-200 text-gray-700 dark:bg-gray-700 dark:text-gray-300"
+    UNSTAGED: "bg-gray-200 text-gray-700 dark:bg-dark-raised dark:text-gray-300"
 };
 const pillClass = (s: ProjectStatus): string => PILL_CLASS[s];
 
@@ -552,15 +557,6 @@ const userCountLabel = (project: IProject): string => {
 
 // IProject has no `lastUpdated` — fall back to creation timestamp as a
 // proxy for the design's "updated 2h ago". Real updated-at tracking is a
-// separate backend change.
-const relativeUpdated = (project: IProject): string => {
-    if (!project.creationtimestamp) return "—";
-    const created = new Date(project.creationtimestamp).getTime();
-    const sec = (Date.now() - created) / 1000;
-    if (sec < 60) return `created ${Math.max(0, Math.floor(sec))}s ago`;
-    if (sec < 3_600) return `created ${Math.floor(sec / 60)}m ago`;
-    if (sec < 86_400) return `created ${Math.floor(sec / 3_600)}h ago`;
-
-    return `created ${Math.floor(sec / 86_400)}d ago`;
-};
+// separate backend change. Formatting is shared with the Models list.
+const relativeUpdated = (project: IProject): string => relativeCreatedLabel(project.creationtimestamp);
 </script>

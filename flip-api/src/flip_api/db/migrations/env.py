@@ -20,9 +20,9 @@ database URL + secret handling as the application:
 * Online migrations prefer a live ``Connection`` injected programmatically via
   ``config.attributes["connection"]`` (the integration suite points this at its
   Testcontainers Postgres). When none is supplied — the CLI / entrypoint path —
-  we fall back to ``flip_api.db.database.engine``, which already encapsulates the
-  prod RDS-Proxy IAM auth (a per-connection token minted by a ``do_connect`` hook)
-  and the dev env-var URL.
+  we fall back to ``flip_api.db.database.get_engine()``, which already
+  encapsulates the prod RDS-Proxy IAM auth (a per-connection token minted by a
+  ``do_connect`` hook) and the dev env-var URL.
 """
 
 from logging.config import fileConfig
@@ -42,7 +42,13 @@ import flip_api.db.models.user_models  # noqa: F401
 config = context.config
 
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    # disable_existing_loggers=False is load-bearing: the default (True) disables
+    # every logger not declared in alembic.ini, including the app's own "uvicorn"
+    # logger. Harmless for the entrypoint's `alembic upgrade head`, which is its
+    # own process, but the integration tests run Alembic in-process — so the
+    # default silently muted application logging for the rest of the session and
+    # every later caplog assertion saw an empty log.
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 target_metadata = SQLModel.metadata
 
@@ -93,10 +99,10 @@ def run_migrations_offline() -> None:
     ``alembic upgrade --sql`` still works. The URL is taken from flip-api's engine
     so there is still a single source of truth for the connection string.
     """
-    from flip_api.db.database import engine
+    from flip_api.db.database import get_engine
 
     context.configure(
-        url=str(engine.url),
+        url=str(get_engine().url),
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
@@ -114,12 +120,13 @@ def run_migrations_online() -> None:
         _configure_and_run(injected)
         return
 
-    # Lazy import so the injected-connection path never imports flip-api's prod
-    # engine machinery (boto3 + the RDS-Proxy IAM do_connect hook registered at
-    # import time); a supplied Connection already carries its own credentials.
-    from flip_api.db.database import engine
+    # Only reached without an injected connection: get_engine() builds flip-api's
+    # prod engine machinery (boto3 + the RDS-Proxy IAM do_connect hook) on first
+    # call, so the injected-connection path never constructs it — a supplied
+    # Connection already carries its own credentials.
+    from flip_api.db.database import get_engine
 
-    with engine.connect() as connection:
+    with get_engine().connect() as connection:
         _configure_and_run(connection)
 
 

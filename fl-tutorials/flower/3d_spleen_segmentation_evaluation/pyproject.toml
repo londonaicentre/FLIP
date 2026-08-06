@@ -28,8 +28,8 @@ license = "Apache-2.0"
 # Dependencies for your Flower App
 dependencies = [
     "flip-utils>=0.1.8",
-    "flwr[simulation]>=1.27.0",
-    "monai>=1.5.2",
+    "flwr[simulation]>=1.32.0",
+    "monai>=1.6.0",
     "nibabel>=5.3.3",
     "numpy>=2.4.2",
     "pandas>=3.0.0",
@@ -74,4 +74,4 @@ line-length = 120
 
 [tool.ruff.lint]
 preview = true
-select = ['I', 'F', 'E', 'W', 'PT']
+select = ['I', 'F', 'E', 'W', 'PT', 'UP006', 'UP007', 'UP035', 'UP042', 'UP045']

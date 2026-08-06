@@ -12,12 +12,11 @@
 
 .PHONY: build build-fl dev prod clean stop up down up-no-trust up-trusts central-fl central-hub \
 		restart restart-fl restart-no-trust ci tests debug create-networks remove-networks recreate-networks consolidate-deps \
-		check-aws-access generate-internal-service-key \
+		check-aws-access generate-internal-service-key generate-xnat-credentials \
 		register-trust register-trusts new-trust _wait-for-hub integration_test \
 		sync-trust-kit sync-trust-kits lock \
 		deploy-trust-k8s undeploy-trust-k8s \
-		nvflare-provision nvflare-provision-2-nets nvflare-provision-additional-client \
-		nvflare-provision-stag nvflare-provision-prod upload-flare-kits-to-s3
+		demo-video demo-users seed-demo-projects
 
 ifeq ($(PROD),true)
 MAIN_ENV_FILE=.env.production
@@ -43,6 +42,9 @@ export $(shell sed 's/=.*//' $(MAIN_ENV_FILE))
 endif
 
 include deploy/fl_backend.mk
+
+# Host gid for group_add on FL containers reading host-provisioned 640 certs/keys (dev).
+export DOCKER_GID := $(shell id -g)
 
 COMMON_COMPOSE_FILE := deploy/compose.$(__DCKR_SUFFIX).yml
 FL_BACKEND_COMPOSE_FILE := deploy/compose.$(__DCKR_SUFFIX).$(FL_BACKEND).yml
@@ -113,12 +115,12 @@ build:
 # fl-base's build-only profile keeps it out of `up`; the derived images pull it via BASE_REF.
 # Then run the stack on the freshly-built images with:
 #   make up DOCKER_FL_REGISTRY= DOCKER_FL_TAG=dev
-FL_DEV_COMPOSE := docker compose -f fl-services/$(FL_BACKEND)/compose.dev.yml
+# build-fl forwards to the selected backend's Makefile (fl-services/<backend>/Makefile),
+# mirroring the fl-tutorials/ forwarder. Standalone FL run/provision/submit targets are
+# deliberately NOT mirrored here — run them in the backend dir, which is where FL
+# deployments are tested: make -C fl-services/<backend> {build,provision,up,down,submit}.
 build-fl:
-	@echo "🛠️ Building flare-fl-base:dev (base image; LOCAL_DEV=$(LOCAL_DEV))..."
-	LOCAL_DEV=$(LOCAL_DEV) $(FL_DEV_COMPOSE) --profile build-only build fl-base
-	@echo "🛠️ Building flare-fl-{server,api,client}:dev..."
-	$(FL_DEV_COMPOSE) build fl-server flip-fl-api fl-client-1
+	@$(MAKE) -C fl-services/$(FL_BACKEND) build LOCAL_DEV=$(LOCAL_DEV)
 	@echo "✅ FL :dev images built. Run them with: make up DOCKER_FL_REGISTRY= DOCKER_FL_TAG=dev"
 
 # Run all services
@@ -142,9 +144,10 @@ up: check-aws-access generate-internal-service-key create-networks _ensure-fl-jo
 # Net IDs come from NET_ENDPOINTS (the per-env single source of truth — prod
 # has only net-1; dev has net-1 + net-2). A new net is just an NET_ENDPOINTS
 # entry plus a compose service block; this target picks it up automatically.
-# Only needed for the Flower backend (NVFLARE doesn't use FL_JOBS_DIR).
+# Both backends use jobs/<net>: Flower stores uploaded app bundles there; NVFLARE
+# stages de-bundled evaluation checkpoints there for the fl-server to load from disk.
 _ensure-fl-jobs-dir:
-	@if [ "$(FL_BACKEND)" = "flower" ]; then \
+	@if [ "$(FL_BACKEND)" = "flower" ] || [ "$(FL_BACKEND)" = "nvflare" ]; then \
 		command -v jq >/dev/null 2>&1 || { echo "❌ _ensure-fl-jobs-dir: jq not found on PATH; required to parse NET_ENDPOINTS" >&2; exit 1; }; \
 		nets=$$(printf '%s' '$(NET_ENDPOINTS)' | jq -r 'keys_unsorted | join(" ")' 2>/dev/null) || nets=""; \
 		if [ -z "$$nets" ]; then \
@@ -179,17 +182,6 @@ up-trusts: create-networks
 	@echo "🚢 Starting Trust services (each trust brings up its own XNAT)..."
 	$(MAKE) DEBUG=$(DEBUG) -C trust up
 	@echo "✅ Trust services started successfully!"
-
-# Uses --pull always to ensure the latest FL images and 'stag'/'prod' version are used
-up-centralhub-ec2: create-networks-centralhub _ensure-fl-jobs-dir
-	@echo "Hey! PROD="$(PROD)
-	@echo "Hey! UI_PORT="$(UI_PORT)
-	@echo "🚢 Starting central hub API services..."
-	PROVIDER=AWS \
-	DOCKER_TAG=$(DOCKER_TAG) \
-	DOCKER_FL_TAG=$(DOCKER_FL_TAG) \
-	${DOCKER_COMMAND} up --remove-orphans -d --pull always
-	@echo "✅ Central hub API services started successfully!"
 
 up-trust-ec2: create-networks
 	@echo "Hey! PROD="$(PROD)
@@ -263,7 +255,7 @@ restart: down up
 
 # Restart only FL services (APIs, servers, and clients in trusts)
 # NOTE: Uses $(UP_PULL_FLAGS) — pulls fresh FL images only when DOCKER_FL_REGISTRY is set
-#       (same logic as `up`); an empty registry keeps locally built flip-fl-base-flower images.
+#       (same logic as `up`); an empty registry keeps locally built FL images.
 # NOTE: Client keys must be re-registered before starting clients (Flower only)
 # NOTE: flip-api is recreated first so its startup seeding re-applies FL_BACKEND onto the
 #       FLNets rows — the seeded backend is canonical, so this is how a framework switch
@@ -406,67 +398,34 @@ lock:
 	done
 	@echo "All uv.lock files regenerated."
 
-# NVFLARE provisioning targets — delegate to the scripts colocated with the project
-# YML files under deploy/providers/nvflare/. Dev output goes to deploy/workspace/
-# (gitignored), where the compose mounts expect it; stag/prod output goes to
-# workspace-<env>/ (gitignored) for upload to S3 via upload-flare-kits-to-s3.
-NET_NUMBER ?= 1
-FL_WORKSPACE_DIR ?= deploy/workspace
-NVFLARE_SCRIPTS := deploy/providers/nvflare/scripts
-NVFLARE_PROJECTS := deploy/providers/nvflare
-
-nvflare-provision:
-	$(NVFLARE_SCRIPTS)/provision-network.sh $(NVFLARE_PROJECTS)/net-${NET_NUMBER}_project_dev.yml $(NET_NUMBER) $(FL_WORKSPACE_DIR)
-
-nvflare-provision-2-nets:
-	NET_NUMBER=1 $(MAKE) nvflare-provision
-	NET_NUMBER=2 $(MAKE) nvflare-provision
-
-nvflare-provision-additional-client:
-	$(NVFLARE_SCRIPTS)/provision-additional-client.sh $(NET_NUMBER) $(FL_PORT) $(NVFLARE_PROJECTS)/net-${NET_NUMBER}_project_dev.yml $(FL_WORKSPACE_DIR)
-
-# Provision the stag/prod FL network into a gitignored workspace-<env>/, ready to
-# upload to S3 (see upload-flare-kits-to-s3). Unlike dev (2 fixed clients), stag/
-# prod over-provision spare client kit slots (FLIP#626): the committed
-# net-${NET_NUMBER}_project_<env>.yml holds a single client template, which
-# generate-project-yaml.sh clones into Trust_1 .. Trust_<N> before provisioning.
-# N defaults to 50 (stag) / 500 (prod); override on the command line, e.g.
-# `make nvflare-provision-prod PROD_NUM_CLIENTS=512`. The generated project YAML
-# lands beside the provisioned output, both in the gitignored workspace-<env>/.
-STAG_NUM_CLIENTS ?= 50
-PROD_NUM_CLIENTS ?= 500
-
-nvflare-provision-stag:
-	$(NVFLARE_SCRIPTS)/generate-project-yaml.sh $(NVFLARE_PROJECTS)/net-${NET_NUMBER}_project_stag.yml $(STAG_NUM_CLIENTS) workspace-stag/net-${NET_NUMBER}_project.generated.yml
-	$(NVFLARE_SCRIPTS)/provision-network.sh workspace-stag/net-${NET_NUMBER}_project.generated.yml $(NET_NUMBER) workspace-stag
-
-nvflare-provision-prod:
-	$(NVFLARE_SCRIPTS)/generate-project-yaml.sh $(NVFLARE_PROJECTS)/net-${NET_NUMBER}_project_prod.yml $(PROD_NUM_CLIENTS) workspace-prod/net-${NET_NUMBER}_project.generated.yml
-	$(NVFLARE_SCRIPTS)/provision-network.sh workspace-prod/net-${NET_NUMBER}_project.generated.yml $(NET_NUMBER) workspace-prod
-
-# Upload the provisioned FLARE participant kits to S3 under the FLARE_KIT_DATE prefix
-# the deploy flow pulls from (deploy/providers/AWS Makefile `provision-local-trust`,
-# which reads s3://$(AICENTRE_BUCKET_NAME)/fl-flare-participant-kits/$(FLARE_KIT_DATE)/
-# net-N/services/<slot>/). Run with PROD=stag|true so AICENTRE_BUCKET_NAME + FLARE_KIT_DATE
-# load from the matching .env. Defaults to a dry run — pass DRYRUN= to upload for real.
-FL_KIT_WORKSPACE := $(if $(filter true,$(PROD)),workspace-prod,workspace-stag)
-DRYRUN ?= --dryrun
-upload-flare-kits-to-s3:
-	@[ -n "$(AICENTRE_BUCKET_NAME)" ] || { echo "❌ AICENTRE_BUCKET_NAME not set — run with PROD=stag|true"; exit 1; }
-	@[ -n "$(FLARE_KIT_DATE)" ] || { echo "❌ FLARE_KIT_DATE not set — run with PROD=stag|true"; exit 1; }
-	@echo "⬆️  Uploading FLARE kits (net-$(NET_NUMBER), $(FL_KIT_WORKSPACE)) → s3://$(AICENTRE_BUCKET_NAME)/fl-flare-participant-kits/$(FLARE_KIT_DATE)/net-$(NET_NUMBER) $(DRYRUN)"
-	aws s3 sync ./$(FL_KIT_WORKSPACE)/net-$(NET_NUMBER) s3://$(AICENTRE_BUCKET_NAME)/fl-flare-participant-kits/$(FLARE_KIT_DATE)/net-$(NET_NUMBER) --delete $(DRYRUN)
-
 # Drives a fresh project end-to-end against a running `make up` stack:
 # create → approve → upload model → wait for image pull → start training.
 # Defaults pick the chest-xray tutorial that matches FL_BACKEND (flower or
-# nvflare). The NVFLARE defaults target the in-tree tutorial under
-# fl-tutorials/; the Flower one is still the legacy sibling
-# ../../flip-fl-base-flower/tutorials/... — override via MODEL_FILES_DIR= / QUERY_FILE=.
+# nvflare). The defaults target the in-tree tutorials under
+# fl-tutorials/<backend>/ — override via MODEL_FILES_DIR= / QUERY_FILE=.
 # Useful for sanity-checking PRs without manually clicking through the UI.
 # See flip-api/Makefile for overrides (MODEL_FILES_DIR, QUERY_FILE, EXTRA_ARGS).
 e2e_smoke:
 	$(MAKE) -C flip-api e2e_smoke $(if $(FL_BACKEND),FL_BACKEND=$(FL_BACKEND)) $(if $(MODEL_FILES_DIR),MODEL_FILES_DIR=$(MODEL_FILES_DIR)) $(if $(QUERY_FILE),QUERY_FILE=$(QUERY_FILE)) $(if $(EXTRA_ARGS),EXTRA_ARGS="$(EXTRA_ARGS)")
+
+# Record the end-to-end demo video against the running dev stack: six
+# Dockerised Cypress segments over the live UI (real Cognito, trusts, S3,
+# FL training) with the slow waits handled off-camera between segments, then
+# ffmpeg-assembled into one mp4. Local dev tool — not run in CI. Options via
+# DEMO_ARGS (see flip-api/tests/demo_video.py), e.g. DEMO_ARGS="--skip-xnat".
+demo-video:
+	$(MAKE) -C flip-api demo_video $(if $(DEMO_ARGS),DEMO_ARGS="$(DEMO_ARGS)")
+
+# Provision the demo Cognito users the recorder signs in as (passwords from
+# DEMO_RESEARCHER_PASSWORD / DEMO_ADMIN_PASSWORD env vars, never committed).
+demo-users:
+	$(MAKE) -C flip-api create_demo_users
+
+# Pre-populate the platform with a curated catalogue of radiology projects in
+# honest lifecycle states (no fabricated metrics/results). Cleanup:
+# make seed-demo-projects EXTRA_ARGS="--cleanup"
+seed-demo-projects:
+	$(MAKE) -C flip-api seed_demo_projects $(if $(EXTRA_ARGS),EXTRA_ARGS="$(EXTRA_ARGS)")
 
 generate-internal-service-key:
 	$(MAKE) -C flip-api generate-internal-service-key $(if $(ENV_FILE),ENV_FILE=$(ENV_FILE)) $(if $(FORCE),FORCE=$(FORCE))
@@ -508,6 +467,7 @@ register-trust: _wait-for-hub
 	  kitjson="$$($(DOCKER_COMMAND) exec -T flip-api uv run python -m flip_api.scripts.register_trust "$$@")" \
 	    || { echo "❌ register_trust failed for KIT=$(KIT)"; exit 1; }; \
 	  printf '%s\n' "$$kitjson" | uv run --no-config scripts/distribute_trust_kits.py --target "$$kit"
+	@$(MAKE) generate-xnat-credentials KIT=$(KIT)
 
 # Register every dev trust: the shipped trust/.env.<CODE>.<env>.example kits ARE
 # the roster (each is seeded to a live kit + registered). Used by `make up`.
@@ -568,6 +528,26 @@ deploy-trust-k8s: ## Deploy trust services to Kubernetes via Helm
 
 undeploy-trust-k8s: ## Remove trust services from Kubernetes
 	$(MAKE) -C deploy/providers/kubernetes undeploy
+
+# Mint the XNAT stack passwords (XNAT_DATASOURCE_PASSWORD,
+# XNAT_DATASOURCE_ADMIN_PASSWORD, XNAT_ACTIVEMQ_PASSWORD) into kit files —
+# they are runtime-only secrets, never committed and never baked into the
+# published XNAT image (FLIP-PT-056). Runs automatically inside
+# `register-trust`; invoke directly to backfill every local kit, one kit
+# (KIT=<CODE>), an explicit file (ENV_FILE=<path>), or rotate (FORCE=1).
+# Existing non-placeholder values are preserved unless FORCE=1.
+generate-xnat-credentials:
+	@if [ -n "$(ENV_FILE)" ]; then \
+	  $(MAKE) -C flip-api generate-xnat-credentials ENV_FILE=$(ENV_FILE) $(if $(FORCE),FORCE=$(FORCE)); \
+	elif [ -n "$(KIT)" ]; then \
+	  $(MAKE) -C flip-api generate-xnat-credentials ENV_FILE=$(CURDIR)/trust/.env.$(KIT).$(ENV) $(if $(FORCE),FORCE=$(FORCE)); \
+	else \
+	  found=0; for kit in trust/.env.*.$(ENV); do \
+	    [ -e "$$kit" ] || continue; case "$$kit" in *.example) continue;; esac; \
+	    found=1; $(MAKE) -C flip-api generate-xnat-credentials ENV_FILE=$(CURDIR)/$$kit $(if $(FORCE),FORCE=$(FORCE)) || exit 1; \
+	  done; \
+	  [ "$$found" = 1 ] || echo "ℹ️  No trust/.env.<CODE>.$(ENV) kit files found — run 'make register-trusts' (or 'make register-trust KIT=<CODE>') first."; \
+	fi
 
 check-aws-access:
 	@echo "🔎 Checking AWS CLI access..."

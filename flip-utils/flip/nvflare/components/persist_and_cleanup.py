@@ -17,34 +17,33 @@ from pathlib import Path
 
 from nvflare.apis.fl_component import FLComponent
 from nvflare.apis.fl_context import FLContext
-from nvflare.app_common.app_constant import AppConstants
+from nvflare.app_common.app_constant import AppConstants, DefaultCheckpointFileName
 from nvflare.app_opt.pt.file_model_persistor import PTFileModelPersistor
 
 from flip import FLIP
-from flip.constants import FlipConstants, FlipEvents, ModelStatus, PTConstants
-from flip.utils import Utils
+from flip.constants import FlipConstants, FlipEvents, PTConstants
+from flip.nvflare.runtime import get_flip_model_id
 
 
 class PersistToS3AndCleanup(FLComponent):
-    def __init__(self, model_id: str, persistor_id: str = AppConstants.DEFAULT_PERSISTOR_ID, flip: FLIP = FLIP()):
+    def __init__(self, model_id: str = "", persistor_id: str = AppConstants.DEFAULT_PERSISTOR_ID, flip: FLIP = FLIP()):
         """The component that is executed post training and is a part of the FLIP training model
 
         The PersistToS3AndCleanup workflow saves the aggregated model (once training has finished) to an S3 bucket, and
         then deletes files created as part of the run
 
         Args:
-            model_id (str): ID of the model that the training is being performed under.
+            model_id (str, optional): ID of the model that the training is being performed under. When empty,
+                the model ID is resolved lazily from job metadata via ``get_flip_model_id`` on first use.
             persistor_id (str, optional): ID of the persistor component. Defaults to "persistor".
 
         Raises:
-           ValueError:
-            - when the model ID is not a valid UUID.
-
             FileNotFoundError: boto3 error for when the zip file does not exist.
         """
 
         super().__init__()
-        self.model_id = model_id
+        self._model_id_fallback = model_id
+        self._model_id: str | None = None
         self.persistor_id: str = persistor_id
         self.model_persistor: PTFileModelPersistor | None = None
         self.model_inventory: dict = {}
@@ -53,9 +52,18 @@ class PersistToS3AndCleanup(FLComponent):
 
         self.flip = flip
 
-        if Utils.is_valid_uuid(self.model_id) is False:
-            self.flip.update_status(self.model_id, ModelStatus.ERROR)
-            raise ValueError(f"The model ID: {self.model_id} is not a valid UUID")
+    def _resolve_model_id(self, fl_ctx: FLContext) -> str:
+        """Resolve model ID lazily from job metadata, falling back to the constructor arg.
+
+        Args:
+            fl_ctx (FLContext): The FL context for the current job.
+
+        Returns:
+            str: The resolved model ID.
+        """
+        if self._model_id is None:
+            self._model_id = get_flip_model_id(fl_ctx, fallback=self._model_id_fallback)
+        return self._model_id
 
     def execute(self, fl_ctx: FLContext) -> None:
         try:
@@ -127,6 +135,17 @@ class PersistToS3AndCleanup(FLComponent):
                 self.log_info(fl_ctx, f"Found global model: {fl_global_model_filepath}")
                 shutil.move(fl_global_model_filepath, run_dir)
 
+            # Move the best global model too, when best-model selection saved one (FLIP#673). The
+            # persistor writes it next to the final model on GLOBAL_BEST_MODEL_AVAILABLE (fired by
+            # IntimeModelSelector). Absent the selector no file exists and none is fabricated — a
+            # "best" artefact in the results must mean a selection actually happened.
+            fl_best_model_filepath = os.path.join(
+                os.path.dirname(fl_global_model_filepath), DefaultCheckpointFileName.BEST_GLOBAL_MODEL
+            )
+            if os.path.isfile(fl_best_model_filepath):
+                self.log_info(fl_ctx, f"Found best global model: {fl_best_model_filepath}")
+                shutil.move(fl_best_model_filepath, run_dir)
+
             # For certain workflows (e.g., diffusion_model), also move trainer.py and validator.py
             trainer_path = os.path.join(app_server_path, "custom", "trainer.py")
             validator_path = os.path.join(app_server_path, "custom", "validator.py")
@@ -144,7 +163,22 @@ class PersistToS3AndCleanup(FLComponent):
                 self.log_info(fl_ctx, f"Removing app_server directory: {app_server_path}")
                 shutil.rmtree(app_server_path)
 
-            self.flip.upload_results_to_s3(run_dir, self.model_id)
+            # Drop the cross-site-eval model artefacts before zipping. CrossSiteModelEval persists
+            # every validated model to cross_site_val/model_shareables/ purely to broadcast it to the
+            # clients for scoring — e.g. the server-loaded evaluation checkpoint (~759 MiB for Ark+,
+            # ~1.5 GiB for the multimodel variant), which the user already uploaded. It is an input to
+            # the eval, not an output, so re-shipping it in the results zip is pure waste. The metrics
+            # live in evaluation_results/evaluation_results.json (EvaluationJsonGenerator) and the raw
+            # per-model/per-site shareables in cross_site_val/result_shareables/ — both retained. For
+            # training jobs this directory does not exist, so the guard makes this a no-op there.
+            cross_val_models_dir = os.path.join(
+                run_dir, AppConstants.CROSS_VAL_DIR, AppConstants.CROSS_VAL_MODEL_DIR_NAME
+            )
+            if os.path.isdir(cross_val_models_dir):
+                self.log_info(fl_ctx, f"Removing cross-site-eval model artefacts before upload: {cross_val_models_dir}")
+                shutil.rmtree(cross_val_models_dir)
+
+            self.flip.upload_results_to_s3(run_dir, self._resolve_model_id(fl_ctx))
 
         except Exception as e:
             self.log_error(fl_ctx, "Upload to the s3 bucket failed. Attempting to cleanup")
@@ -157,9 +191,10 @@ class PersistToS3AndCleanup(FLComponent):
         Cleans up the workspace by deleting the transfer and save directories for the model ID.
         """
         workspace_dir = fl_ctx.get_engine().get_workspace().get_root_dir()
+        model_id = self._resolve_model_id(fl_ctx)
 
-        transfer_job_dir = os.path.join(workspace_dir, "transfer", self.model_id)
-        save_dir = os.path.join(workspace_dir, "save", self.model_id)
+        transfer_job_dir = os.path.join(workspace_dir, "transfer", model_id)
+        save_dir = os.path.join(workspace_dir, "save", model_id)
 
         for path in [save_dir, transfer_job_dir]:
             if not os.path.isdir(path):

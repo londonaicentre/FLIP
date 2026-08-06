@@ -1,0 +1,40 @@
+{
+  "version": "0.0.1",
+  "pytorch_version": "2.11.0+cu128",
+  "task": "FLIP federated chest radiograph classification",
+  "description": "Multi-label chest radiograph classification. Research artefact \u2014 not for clinical use.",
+  "authors": "London AI Centre for Value Based Healthcare",
+  "network_data_format": {
+    "inputs": {
+      "image": {
+        "type": "image",
+        "format": "magnitude",
+        "modality": "CR",
+        "num_channels": 1,
+        "spatial_shape": [
+          224,
+          224
+        ],
+        "dtype": "float32",
+        "value_range": [
+          0,
+          1
+        ],
+        "channel_def": {
+          "0": "image"
+        }
+      }
+    },
+    "outputs": {
+      "pred": {
+        "type": "probabilities",
+        "num_channels": 2,
+        "activation": "sigmoid",
+        "channel_def": {
+          "0": "Effusion",
+          "1": "Edema"
+        }
+      }
+    }
+  }
+}

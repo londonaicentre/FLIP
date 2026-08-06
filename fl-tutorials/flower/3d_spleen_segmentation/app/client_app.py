@@ -16,8 +16,8 @@
 Metrics flow through the reply Message's MetricRecord. The fl-server forwards
 them to the Central Hub on this client's behalf — clients must not hold the
 hub credential. Per-epoch granularity is preserved via the
-``<label>.round_<N>`` key convention understood by
-``flip.flower.metrics.handle_client_metrics``.
+``<label>[@<x_label>][.x_<V>]`` key convention understood by
+``flip.flower.metrics.handle_client_metrics`` (FLIP#148).
 """
 
 import os
@@ -96,7 +96,7 @@ def train(msg: Message, context: Context) -> Message:
     model.to(device)
 
     # Initialize optimizer and loss function
-    # DiceCELoss recipe mirrors the flip-fl-base reference trainer (line 205 of
+    # DiceCELoss recipe mirrors the reference trainer (line 205 of
     # its trainer.py). The 0.2*CE component pushes argmax predictions off the
     # all-background baseline that pure DiceLoss gets stuck on with this dataset
     # (spleen is <1% of voxels); batch=True aggregates the loss across the whole
@@ -124,7 +124,7 @@ def train(msg: Message, context: Context) -> Message:
             loss_fn=loss_fn,
             device=device,
         )
-        round = global_round * (local_epochs) + epoch + 1
+        cumulative_epoch = global_round * (local_epochs) + epoch + 1
 
         val_dice, val_loss = validate_func(
             model=model,
@@ -133,11 +133,12 @@ def train(msg: Message, context: Context) -> Message:
             loss_fn=loss_fn,
         )
 
-        # Tag each epoch's data point with its own round number so the fl-server
-        # forwards one Hub point per epoch (see handle_client_metrics).
-        per_epoch_metrics[f"train_loss.round_{round}"] = float(train_loss)
-        per_epoch_metrics[f"val_loss.round_{round}"] = float(val_loss)
-        per_epoch_metrics[f"val_dice.round_{round}"] = float(val_dice)
+        # Per-epoch points: "@epoch" names the x-axis and ".x_<N>" is the coordinate (the cumulative
+        # epoch count), so the fl-server forwards one Hub point per epoch — see the
+        # "<label>[@<x_label>][.x_<V>]" key grammar in flip.flower.metrics (FLIP#148).
+        per_epoch_metrics[f"train_loss@epoch.x_{cumulative_epoch}"] = float(train_loss)
+        per_epoch_metrics[f"val_loss@epoch.x_{cumulative_epoch}"] = float(val_loss)
+        per_epoch_metrics[f"val_dice@epoch.x_{cumulative_epoch}"] = float(val_dice)
 
         losses["train"].append(train_loss)
         losses["val"].append(val_loss)
@@ -210,7 +211,7 @@ def evaluate(msg: Message, context: Context) -> Message:
     model.to(device)
 
     # Initialize loss function
-    # DiceCELoss recipe mirrors the flip-fl-base reference trainer (line 205 of
+    # DiceCELoss recipe mirrors the reference trainer (line 205 of
     # its trainer.py). The 0.2*CE component pushes argmax predictions off the
     # all-background baseline that pure DiceLoss gets stuck on with this dataset
     # (spleen is <1% of voxels); batch=True aggregates the loss across the whole
@@ -247,13 +248,13 @@ def evaluate(msg: Message, context: Context) -> Message:
         test_dice,
     )
 
-    # Preserve the previous "send at round=0" convention using the
-    # label.round_N suffix understood by handle_client_metrics server-side.
+    # Test metrics are a single point, plotted at x=0 by convention using the
+    # label.x_0 suffix understood by handle_client_metrics server-side.
     metrics = {
         "test_loss": test_loss,
         "test_dice": test_dice,
-        "test_loss.round_0": float(test_loss),
-        "test_dice.round_0": float(test_dice),
+        "test_loss.x_0": float(test_loss),
+        "test_dice.x_0": float(test_dice),
         "num-examples": len(test_loader.dataset),
     }
 

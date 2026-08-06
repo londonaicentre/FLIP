@@ -17,8 +17,13 @@
 # tasks lose local state on every restart, so the cert/admin/transfer
 # directories must persist on EFS and be mounted via access points.
 #
-# Access points use posix_user uid/gid 1001 — never root. The flip-fl-base
-# Dockerfiles run as a non-root user that must match this uid.
+# Access points use posix_user uid/gid 1001 — never root. This is an
+# override, not a match requirement: NFSv4 access points remap every
+# reader/writer to 1001 regardless of the calling container's own uid, so the
+# FL service Dockerfiles (built non-root at UID=1000/GID=1000/UNAME=flip,
+# GHSA-8465 — 1000 to match the ubuntu uid EC2/on-prem trust hosts stage kits
+# as) don't need to match 1001 themselves; flare-fl-api already runs as uid
+# 1000 against these same access points in prod.
 
 ############################
 # File system
@@ -98,6 +103,20 @@ locals {
     fl_server_transfer = {
       path  = "/fl-server-net-1/transfer"
       perms = "0755"
+    }
+    # Shared checkpoint-staging volume. The fl-api de-bundles large evaluation
+    # checkpoints (e.g. the ~759 MiB Ark+ weights) out of the client app and
+    # writes them to SERVER_CHECKPOINT_ROOT/<model_id>/ (see FLIP#695); the
+    # fl-server's EvaluationModelLocator reads them back from the same path.
+    # This ONE access point is mounted at /app/server-checkpoints on BOTH the
+    # fl-api-net-1 (writer) and fl-server-net-1 (reader) tasks — mirroring the
+    # single `${FL_JOBS_DIR}/net-1:/app/server-checkpoints` bind shared between
+    # the two services in compose.production.nvflare.yml. Both containers run as
+    # uid/gid 1001, which the access point pins, so writer and reader agree on
+    # ownership. 0775 lets the group write the per-model subdirs fl-api mkdirs.
+    fl_checkpoints = {
+      path  = "/fl-server-net-1/server-checkpoints"
+      perms = "0775"
     }
     fl_server_certs = {
       path  = "/fl-server-net-1/certificates"

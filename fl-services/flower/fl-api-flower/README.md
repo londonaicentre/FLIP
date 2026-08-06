@@ -23,18 +23,21 @@ Standalone FastAPI service for Flower deployment runtime.
 - `GET /check_server_status`
 - `GET /check_client_status?targets=<name>&targets=<name>`
 - `GET /list_runs`
-- `POST /submit_run?app_folder=<app>`
-- `DELETE /abort_run?run_id=<run_id>`
+- `POST /upload_app/{model_id}`
+- `POST /submit_run/{job_folder}` — submit a previously uploaded application; `job_folder` is the Central Hub `model_id` (UUID). flip-api's production path (also exposed as the hidden `/submit_job` alias)
+- `POST /submit_tutorial/{tutorial_name}` — submit a pre-baked tutorial folder by name (e.g. `numpy`, `xray_classification`); the local tutorial harness targets this
+- `DELETE /abort_run/{run_id}`
 
 ## API docs
 
-With the FL API running and its host port published (`make up-debug`; the default `make up` keeps it internal), access on `localhost:8000`:
+The FL API's host port is not published by default; the standalone dev stack keeps it internal and jobs are submitted via `make submit` (exec into the container). To reach the Swagger UI/OpenAPI JSON/ReDoc from the host, publish port 8000 by editing `fl-services/flower/compose.dev.yml` and re-running `make -C fl-services/flower up`, then access on `localhost:8000`:
 
 - Swagger UI: `http://localhost:8000/docs`
 - OpenAPI JSON: `http://localhost:8000/openapi.json`
 - ReDoc: `http://localhost:8000/redoc`
 
-The submit endpoint starts a Flower run with:
+Both submit endpoints (`/submit_run/{job_folder}` for uploaded applications, `/submit_tutorial/{tutorial_name}`
+for pre-baked tutorials) start a Flower run with:
 
 ```bash
 uvx flwr run . local --format json
@@ -49,6 +52,7 @@ uvx flwr list local --format json
 ```
 
 It returns a list of dictionaries with:
+
 - all fields from all Flower run objects in the `runs` array.
 
 The abort endpoint runs:
@@ -61,6 +65,7 @@ It returns the full JSON payload from Flower.
 
 The server status endpoint checks the Flower SuperLink health service configured by
 `SUPERLINK_HEALTH_ADDRESS` and returns:
+
 - `{"status": "RUNNING"}` when gRPC health returns `SERVING`
 - `{"status": "STOPPED"}` otherwise
 
@@ -71,6 +76,7 @@ can resolve Flower node IDs to human-readable trust names.
 The client status endpoint queries the SuperLink Control API via
 `flwr federation list --federation @none/default local --format json` and uses the
 registered node mappings to return one item per trust:
+
 - `{"name": "<target>", "status": "CONNECTED"}` when the node is online
 - `{"name": "<target>", "status": "DISCONNECTED"}` otherwise
 
@@ -84,19 +90,16 @@ Set these environment variables in the FL API container:
 
 ## Development startup with Docker Compose
 
-Use the existing compose startup method:
+Use the standalone Flower dev stack under `fl-services/flower/`:
 
 ```bash
-docker compose \
-  -f deploy/compose.dev.fl-api.yml \
-  --env-file .env.flwr.development up \
-  --build \
-  --force-recreate
+make -C fl-services/flower build   # build the flower-* :dev images (first time / after Dockerfile changes)
+make -C fl-services/flower up      # start SuperLink + 2 SuperNodes + fl-api on the :dev images
 ```
 
-The FL API container runs uvicorn with `--reload` and watches `/app/fl_api`. Since
-`deploy/compose.dev.fl-api.yml` mounts `../fl_services/fl-api/fl_api:/app/fl_api`,
-code changes are applied immediately without restarting the container.
+The FL API container runs uvicorn with `--reload` and `fl-services/flower/compose.dev.yml`
+mounts `../../fl-services/flower/fl-api-flower/fl_api:/app/fl_api`, so code changes are
+applied immediately without restarting the container.
 
 ## Lint and Tests
 

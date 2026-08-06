@@ -14,7 +14,7 @@ from fastapi import HTTPException, status
 from sqlmodel import Session
 
 from flip_api.config import get_settings
-from flip_api.db.database import engine
+from flip_api.db.database import get_engine
 from flip_api.project_services.services.image_service import reimport_failed_studies
 from flip_api.project_services.services.project_services import get_reimport_queries_service
 from flip_api.utils.logger import logger
@@ -67,7 +67,7 @@ def reimport_imaging_project_studies_scheduled_task() -> None:
     """
     logger.info("🩻 Running scheduled reimport_imaging_project_studies execution...")
     try:
-        with Session(engine) as db:
+        with Session(get_engine()) as db:
             reimport_imaging_project_studies(db)
     except Exception as e:
         error_message = f"Error in scheduled reimport_imaging_project_studies execution: {str(e)}"

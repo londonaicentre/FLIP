@@ -24,15 +24,15 @@ describe("docs: role assignment", () => {
         cy.visit("/admin/users");
         cy.demoPause();
 
-        cy.getBySel("user").contains("researcher.user@flip.com").demoClick();
+        cy.getBySel("user").contains("Researcher User").demoClick();
         cy.demoPause();
 
-        cy.getBySel("add-admin-btn").demoClick();
+        cy.getBySel("select-admin-role").demoClick();
         cy.demoPause();
 
         cy.getBySel("save-user-btn").demoClick();
         cy.wait("@postRoles");
-        cy.contains("The user's permissions have been updated").should("be.visible");
+        cy.contains("The user has been updated").should("be.visible");
         cy.demoPause(1200);
     });
 });

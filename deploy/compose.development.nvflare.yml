@@ -22,13 +22,30 @@ services:
     environment:
       - FL_ADMIN_DIRECTORY=${FL_ADMIN_DIRECTORY}
       - DEBUG=${DEBUG}
+      # Shared volume where the FL API stages a de-bundled eval checkpoint (mirrors Flower's /app/src).
+      - SERVER_CHECKPOINT_ROOT=/app/server-checkpoints
+      # Per-job GPU request written into meta.json resource_spec by configure_meta. Default 0 =>
+      # empty resource_spec => NVFLARE hides the GPU from the training worker (CPU). Set >0 (with
+      # mem <= the client's advertised mem_per_gpu_in_GiB) so jobs train on the GPU.
+      - JOB_RESOURCE_SPEC_NUM_GPUS=${JOB_RESOURCE_SPEC_NUM_GPUS:-0}
+      - JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB=${JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB:-0}
     ports:
       - "${FL_API_PORT}:8000"
       - "5679:5679"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
     volumes:
       # Provisioned NVFLARE admin secrets (certificates, fed_admin.json)
       - ${FL_PROVISIONED_DIR}/net-1/services/flip-fl-api-net-1/local:/app/admin/local
       - ${FL_PROVISIONED_DIR}/net-1/services/flip-fl-api-net-1/startup:/app/admin/startup
+      # Shared with fl-server-net-1: the FL API writes de-bundled eval checkpoints here; the
+      # fl-server reads them from disk. The checkpoint is never bundled into the NVFLARE job,
+      # so it is never deployed to clients (mirrors the Flower backend's /app/src mount).
+      - ${FL_JOBS_DIR}/net-1:/app/server-checkpoints
     depends_on:
       - fl-server-net-1
     networks:
@@ -42,10 +59,25 @@ services:
     environment:
       - FL_ADMIN_DIRECTORY=${FL_ADMIN_DIRECTORY}
       - DEBUG=${DEBUG}
+      # Shared volume where the FL API stages a de-bundled eval checkpoint (mirrors Flower's /app/src).
+      - SERVER_CHECKPOINT_ROOT=/app/server-checkpoints
+      # Per-job GPU request (see fl-api-net-1). Default 0 => CPU; set >0 to train on the GPU.
+      - JOB_RESOURCE_SPEC_NUM_GPUS=${JOB_RESOURCE_SPEC_NUM_GPUS:-0}
+      - JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB=${JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB:-0}
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
     volumes:
       # Provisioned NVFLARE admin secrets (certificates, fed_admin.json)
       - ${FL_PROVISIONED_DIR}/net-2/services/flip-fl-api-net-2/local:/app/admin/local
       - ${FL_PROVISIONED_DIR}/net-2/services/flip-fl-api-net-2/startup:/app/admin/startup
+      # Shared with fl-server-net-2: the FL API writes de-bundled eval checkpoints here; the
+      # fl-server reads them from disk. The checkpoint is never bundled into the NVFLARE job,
+      # so it is never deployed to clients (mirrors the Flower backend's /app/src mount).
+      - ${FL_JOBS_DIR}/net-2:/app/server-checkpoints
     depends_on:
       - fl-server-net-2
     networks:
@@ -61,11 +93,16 @@ services:
       - ${FL_PROVISIONED_DIR}/net-1/services/fl-server-net-1/local:/app/local
       - ${FL_PROVISIONED_DIR}/net-1/services/fl-server-net-1/startup:/app/startup
       - ${FL_PROVISIONED_DIR}/net-1/services/fl-server-net-1/transfer:/app/transfer
+      # Shared with fl-api-net-1: de-bundled eval checkpoints staged by the FL API are read
+      # from here by the fl-server. The checkpoint is never in the NVFLARE job, so it is never
+      # deployed to clients (mirrors the Flower backend's /app/src mount).
+      - ${FL_JOBS_DIR}/net-1:/app/server-checkpoints
       # Mount the AWS credentials (needed to upload model results to S3).
-      # The image runs as root with HOME=/root, so the mount lands at
-      # /root/.aws/ — the SDK's default lookup path for that user.
-      - ~/.aws/config:/root/.aws/config:ro
-      - ~/.aws/sso/cache:/root/.aws/sso/cache:rw
+      # The image now runs as the non-root ${UNAME} user with
+      # HOME=/home/${UNAME} (GHSA-8465), so the mount lands under
+      # /home/${UNAME}/.aws/ — the SDK's default lookup path for that user.
+      - ~/.aws/config:/home/${UNAME}/.aws/config:ro
+      - ~/.aws/sso/cache:/home/${UNAME}/.aws/sso/cache:rw
     environment:
       - NET_ID=net-1
       - LOCAL_DEV=false
@@ -76,6 +113,22 @@ services:
       - INTERNAL_SERVICE_KEY_HEADER=${INTERNAL_SERVICE_KEY_HEADER}
       - INTERNAL_SERVICE_KEY=${INTERNAL_SERVICE_KEY}
       - AWS_PROFILE=${AWS_PROFILE}
+      - SERVER_CHECKPOINT_ROOT=/app/server-checkpoints
+      - HOME=/home/${UNAME}
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      # The container runs as the non-root ${UNAME} user (GHSA-8465), but its bind
+      # mounts (the provisioned NVFLARE kit with 0600 keys; on fl-server also the
+      # operator's 0600 AWS SSO token cache) are owned by the host uid. cap_drop: ALL
+      # strips the implicit DAC bypass root would otherwise have, so DAC_OVERRIDE is
+      # needed to read them; the entrypoint also chmods kit scripts it does not own
+      # (FOWNER). Without these the container crash-loops (FLIP#485).
+      - DAC_OVERRIDE
+      - FOWNER
     networks:
       - shared-net-1
     restart: unless-stopped
@@ -89,11 +142,16 @@ services:
       - ${FL_PROVISIONED_DIR}/net-2/services/fl-server-net-2/local:/app/local
       - ${FL_PROVISIONED_DIR}/net-2/services/fl-server-net-2/startup:/app/startup
       - ${FL_PROVISIONED_DIR}/net-2/services/fl-server-net-2/transfer:/app/transfer
+      # Shared with fl-api-net-2: de-bundled eval checkpoints staged by the FL API are read
+      # from here by the fl-server. The checkpoint is never in the NVFLARE job, so it is never
+      # deployed to clients (mirrors the Flower backend's /app/src mount).
+      - ${FL_JOBS_DIR}/net-2:/app/server-checkpoints
       # Mount the AWS credentials (needed to upload model results to S3).
-      # The image runs as root with HOME=/root, so the mount lands at
-      # /root/.aws/ — the SDK's default lookup path for that user.
-      - ~/.aws/config:/root/.aws/config:ro
-      - ~/.aws/sso/cache:/root/.aws/sso/cache:rw
+      # The image now runs as the non-root ${UNAME} user with
+      # HOME=/home/${UNAME} (GHSA-8465), so the mount lands under
+      # /home/${UNAME}/.aws/ — the SDK's default lookup path for that user.
+      - ~/.aws/config:/home/${UNAME}/.aws/config:ro
+      - ~/.aws/sso/cache:/home/${UNAME}/.aws/sso/cache:rw
     environment:
       - NET_ID=net-2
       - LOCAL_DEV=false
@@ -104,6 +162,22 @@ services:
       - INTERNAL_SERVICE_KEY_HEADER=${INTERNAL_SERVICE_KEY_HEADER}
       - INTERNAL_SERVICE_KEY=${INTERNAL_SERVICE_KEY}
       - AWS_PROFILE=${AWS_PROFILE}
+      - SERVER_CHECKPOINT_ROOT=/app/server-checkpoints
+      - HOME=/home/${UNAME}
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      # The container runs as the non-root ${UNAME} user (GHSA-8465), but its bind
+      # mounts (the provisioned NVFLARE kit with 0600 keys; on fl-server also the
+      # operator's 0600 AWS SSO token cache) are owned by the host uid. cap_drop: ALL
+      # strips the implicit DAC bypass root would otherwise have, so DAC_OVERRIDE is
+      # needed to read them; the entrypoint also chmods kit scripts it does not own
+      # (FOWNER). Without these the container crash-loops (FLIP#485).
+      - DAC_OVERRIDE
+      - FOWNER
     networks:
       - shared-net-2
     restart: unless-stopped

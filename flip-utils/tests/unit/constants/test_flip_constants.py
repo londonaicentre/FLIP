@@ -123,6 +123,20 @@ class TestProdSettings:
             settings = ProdSettings()
             assert settings.UPLOADED_FEDERATED_DATA_BUCKET == "s3://my-federated-bucket/path"
 
+    def test_prod_settings_server_checkpoint_root_default(self):
+        """SERVER_CHECKPOINT_ROOT defaults to the shared-volume mount path the fl-server reads."""
+        with patch.dict(os.environ, self.get_valid_prod_env(), clear=True):
+            settings = ProdSettings()
+            assert settings.SERVER_CHECKPOINT_ROOT == "/app/server-checkpoints"
+
+    def test_prod_settings_server_checkpoint_root_override(self):
+        """SERVER_CHECKPOINT_ROOT is overridable via environment."""
+        env = self.get_valid_prod_env()
+        env["SERVER_CHECKPOINT_ROOT"] = "/custom/checkpoints"
+        with patch.dict(os.environ, env, clear=True):
+            settings = ProdSettings()
+            assert settings.SERVER_CHECKPOINT_ROOT == "/custom/checkpoints"
+
 
 class TestCommonSettings:
     """Test _Common base settings class."""
@@ -223,7 +237,7 @@ class TestModelStatus:
         assert ModelStatus.PENDING.value == "PENDING"
         assert ModelStatus.INITIATED.value == "INITIATED"
         assert ModelStatus.PREPARED.value == "PREPARED"
-        assert ModelStatus.TRAINING_STARTED.value == "TRAINING_STARTED"
+        assert ModelStatus.RUNNING.value == "RUNNING"
         assert ModelStatus.RESULTS_UPLOADED.value == "RESULTS_UPLOADED"
         assert ModelStatus.ERROR.value == "ERROR"
         assert ModelStatus.STOPPED.value == "STOPPED"

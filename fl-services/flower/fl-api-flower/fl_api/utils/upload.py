@@ -8,6 +8,7 @@ from tomlkit import dumps, parse
 
 from fl_api.schemas import UploadAppRequest
 from fl_api.utils.logger import logger
+from fl_api.utils.validation import safe_join, validate_bundle_url
 
 
 def _key_after_model_id(url: str, model_id: str) -> Path:
@@ -72,12 +73,13 @@ def upload_application(model_id: str, body: UploadAppRequest, upload_dir: Path) 
     """
     logger.info(f"Received request to upload app: {model_id}")
 
-    # This section takes care of taking every uploaded file and copying it to the model_id path.
+    # model_id is the Central Hub model UUID (validated as a UUID by the endpoint); it names
+    # the per-model job dir. This section copies every uploaded file into that dir.
 
     bundle_urls = body.bundle_urls  # Retrieve the files that the user has uploaded to the platform.
 
     # We create the job app in the upload dir folder
-    job_dir = upload_dir / model_id
+    job_dir = safe_join(upload_dir, model_id)
 
     # If the job directory already exists, we remove it to avoid conflicts with previous uploads.
     if job_dir.exists():
@@ -92,18 +94,27 @@ def upload_application(model_id: str, body: UploadAppRequest, upload_dir: Path) 
     for url in bundle_urls:
         logger.info(f"Downloading file from {url}")
 
+        # The FL API fetches each URL server-side, so reject non-https / off-origin URLs.
+        validate_bundle_url(url)
+
         # Reconstruct structure under job_dir using the URL path after model_id
         relative_path = _key_after_model_id(url, model_id)  # e.g. app/config.toml
-        dest_path = job_dir / relative_path  # e.g. job_dir/app/config.toml
+        dest_path = safe_join(job_dir, *relative_path.parts)  # contained under job_dir
         dest_path.parent.mkdir(parents=True, exist_ok=True)
 
         try:
-            with requests.get(url, stream=True, timeout=60) as resp:
+            with requests.get(url, stream=True, timeout=60, allow_redirects=False) as resp:
+                # A redirect would dodge validate_bundle_url (which only saw the original URL),
+                # reopening the SSRF hole; treat any 3xx as a failure.
+                if resp.is_redirect or resp.is_permanent_redirect:
+                    raise HTTPException(status_code=400, detail=f"Bundle URL returned a redirect: {url!r}.")
                 resp.raise_for_status()
                 with open(dest_path, "wb") as f:
                     for chunk in resp.iter_content(chunk_size=1024 * 1024):
                         if chunk:
                             f.write(chunk)
+        except HTTPException:
+            raise  # propagate the 400 redirect rejection unchanged (not a generic download failure)
         except Exception as e:
             logger.error(f"Failed to download file from {url} with error: {e}")
             raise HTTPException(status_code=500, detail=f"Failed to download file from {url}: {e}")

@@ -27,8 +27,8 @@ Coverage:
   S3 object's metadata makes its way into the ``uploaded_files`` row.
 * ``GET /files/model/{model_id}/files/list`` — listing reflects the keys
   actually present in the scanned bucket.
-* ``GET /files/model/{model_id}/{file_name}`` — download streams the bytes
-  byte-for-byte.
+* ``GET /files/model/{model_id}/{file_name}`` — download returns a presigned URL
+  that itself serves the object's bytes byte-for-byte.
 * ``DELETE /files/model/{model_id}/{file_name}`` — endpoint removes the S3
   object and the DB row.
 * ``GET /files/model/{model_id}/fl/results`` — federated-results endpoint
@@ -155,7 +155,7 @@ def test_post_presigned_url_endpoint_returns_working_upload_policy(
 
     response = client.post(
         f"/api/files/preSignedUrl/model/{model_id}",
-        json={"fileName": "weights.bin", "contentType": "application/octet-stream"},
+        json={"fileName": "weights.pt", "contentType": "application/octet-stream"},
     )
     assert response.status_code == 200, response.text
     policy = response.json()
@@ -168,14 +168,14 @@ def test_post_presigned_url_endpoint_returns_working_upload_policy(
     post = requests.post(
         policy["url"],
         data=policy["fields"],
-        files={"file": ("weights.bin", payload, "application/octet-stream")},
+        files={"file": ("weights.pt", payload, "application/octet-stream")},
         timeout=10,
     )
     assert post.status_code in (200, 204), post.text
 
     settings = get_settings()
     bucket, prefix = _bucket_and_prefix(settings.UPLOADED_MODEL_FILES_BUCKET)
-    expected_key = f"{prefix}/{model_id}/weights.bin"
+    expected_key = f"{prefix}/{model_id}/weights.pt"
     obj = boto3.client("s3").get_object(Bucket=bucket, Key=expected_key)
     assert obj["Body"].read() == payload
 
@@ -205,7 +205,7 @@ def test_post_presigned_url_policy_carries_size_cap_and_content_type_lock(
 
     response = client.post(
         f"/api/files/preSignedUrl/model/{model_id}",
-        json={"fileName": "huge.bin", "contentType": "application/octet-stream"},
+        json={"fileName": "huge.pt", "contentType": "application/octet-stream"},
     )
     assert response.status_code == 200, response.text
     policy_response = response.json()
@@ -237,7 +237,7 @@ def test_post_presigned_url_endpoint_404_for_unknown_model(client: TestClient, s
 
     response = client.post(
         f"/api/files/preSignedUrl/model/{uuid4()}",
-        json={"fileName": "weights.bin"},
+        json={"fileName": "weights.pt"},
     )
     assert response.status_code == 404, response.text
 
@@ -247,36 +247,160 @@ def test_post_presigned_url_endpoint_404_for_unknown_model(client: TestClient, s
 # ---------------------------------------------------------------------------
 
 
-def test_process_scanned_file_records_metadata_in_db(client: TestClient, session, s3_buckets):
-    """Pre-seed an object in the upload bucket; assert the resulting DB row."""
-    user_id = admin_user(session)
-    _, model_id = _seed_project_and_model(session, user_id)
-    override_verify_token_as(user_id)
+def _uploaded_file_row(session, model_id: UUID, file_name: str) -> UploadedFiles | None:
+    """Re-read the row from the DB, discarding any identity-map copy.
 
-    settings = get_settings()
-    bucket, prefix = _bucket_and_prefix(settings.UPLOADED_MODEL_FILES_BUCKET)
-    file_name = "model.tar.gz"
-    payload = b"\x00" * 4096
-    boto3.client("s3").put_object(
-        Bucket=bucket,
-        Key=f"{prefix}/{model_id}/{file_name}",
-        Body=payload,
-        ContentType="application/gzip",
-    )
-
-    response = client.post(f"/api/files/process-scanned-file/{model_id}/{file_name}")
-    assert response.status_code == 200, response.text
-
-    row = session.exec(
+    The endpoint's background reconcile commits from its own Session, so the
+    test's Session must expire first or it would serve the pre-scan state.
+    """
+    session.expire_all()
+    return session.exec(
         select(UploadedFiles).where(
             UploadedFiles.model_id == model_id,
             UploadedFiles.name == file_name,
         )
     ).first()
+
+
+def _object_keys(bucket: str, prefix: str) -> list[str]:
+    listing = boto3.client("s3").list_objects_v2(Bucket=bucket, Prefix=prefix)
+    return [obj["Key"] for obj in listing.get("Contents", [])]
+
+
+def test_process_scanned_file_promotes_clean_file_to_scanned_prefix(
+    client: TestClient, session, s3_buckets
+):
+    """The end-to-end quarantine boundary: a clean upload is registered,
+    scanned, copied to the scanned prefix, and removed from staging.
+
+    ``TestClient`` runs FastAPI background tasks synchronously once the
+    response is built, so the reconcile has already completed here.
+    """
+    user_id = admin_user(session)
+    _, model_id = _seed_project_and_model(session, user_id)
+    override_verify_token_as(user_id)
+
+    settings = get_settings()
+    up_bucket, up_prefix = _bucket_and_prefix(settings.UPLOADED_MODEL_FILES_BUCKET)
+    sc_bucket, sc_prefix = _bucket_and_prefix(settings.SCANNED_MODEL_FILES_BUCKET)
+    file_name = "trainer.py"
+    payload = b"import torch\n" * 128
+    boto3.client("s3").put_object(
+        Bucket=up_bucket,
+        Key=f"{up_prefix}/{model_id}/{file_name}",
+        Body=payload,
+        ContentType="text/x-python",
+    )
+
+    response = client.post(f"/api/files/process-scanned-file/{model_id}/{file_name}")
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "SCANNING"
+
+    row = _uploaded_file_row(session, model_id, file_name)
     assert row is not None
     assert row.size == len(payload)
-    assert row.type == "application/gzip"
+    assert row.type == "text/x-python"
     assert row.status == FileUploadStatus.COMPLETED
+
+    # Promoted to the scanned prefix (what the FL bundlers read) and gone from staging.
+    assert f"{sc_prefix}/{model_id}/{file_name}" in _object_keys(sc_bucket, f"{sc_prefix}/{model_id}/")
+    assert _object_keys(up_bucket, f"{up_prefix}/{model_id}/") == []
+    promoted = boto3.client("s3").get_object(Bucket=sc_bucket, Key=f"{sc_prefix}/{model_id}/{file_name}")
+    assert promoted["Body"].read() == payload
+
+
+def test_process_scanned_file_quarantines_malicious_pickle(client: TestClient, session, s3_buckets):
+    """A pickle naming a dangerous global must be deleted, never promoted, and
+    the row marked INFECTED — the attack this pipeline exists for."""
+    import pickle
+
+    class _Evil:
+        def __reduce__(self):  # pragma: no cover - executed only by pickle.dumps
+            import os
+
+            return (os.system, ("echo pwned",))
+
+    user_id = admin_user(session)
+    _, model_id = _seed_project_and_model(session, user_id)
+    override_verify_token_as(user_id)
+
+    settings = get_settings()
+    up_bucket, up_prefix = _bucket_and_prefix(settings.UPLOADED_MODEL_FILES_BUCKET)
+    sc_bucket, sc_prefix = _bucket_and_prefix(settings.SCANNED_MODEL_FILES_BUCKET)
+    file_name = "weights.pkl"
+    boto3.client("s3").put_object(
+        Bucket=up_bucket,
+        Key=f"{up_prefix}/{model_id}/{file_name}",
+        Body=pickle.dumps(_Evil()),
+        ContentType="application/octet-stream",
+    )
+
+    response = client.post(f"/api/files/process-scanned-file/{model_id}/{file_name}")
+    assert response.status_code == 200, response.text
+
+    row = _uploaded_file_row(session, model_id, file_name)
+    assert row is not None
+    assert row.status == FileUploadStatus.INFECTED
+
+    # Removed from staging and never copied to the prefix FL reads from.
+    assert _object_keys(up_bucket, f"{up_prefix}/{model_id}/") == []
+    assert _object_keys(sc_bucket, f"{sc_prefix}/{model_id}/") == []
+
+
+def test_process_scanned_file_promotes_clean_pickle(client: TestClient, session, s3_buckets):
+    """A benign pickle passes the scan and is promoted like any other file."""
+    import pickle
+
+    user_id = admin_user(session)
+    _, model_id = _seed_project_and_model(session, user_id)
+    override_verify_token_as(user_id)
+
+    settings = get_settings()
+    up_bucket, up_prefix = _bucket_and_prefix(settings.UPLOADED_MODEL_FILES_BUCKET)
+    sc_bucket, sc_prefix = _bucket_and_prefix(settings.SCANNED_MODEL_FILES_BUCKET)
+    file_name = "weights.pt"
+    boto3.client("s3").put_object(
+        Bucket=up_bucket,
+        Key=f"{up_prefix}/{model_id}/{file_name}",
+        Body=pickle.dumps({"epoch": 1, "loss": 0.5}),
+        ContentType="application/octet-stream",
+    )
+
+    response = client.post(f"/api/files/process-scanned-file/{model_id}/{file_name}")
+    assert response.status_code == 200, response.text
+
+    row = _uploaded_file_row(session, model_id, file_name)
+    assert row is not None
+    assert row.status == FileUploadStatus.COMPLETED
+    assert f"{sc_prefix}/{model_id}/{file_name}" in _object_keys(sc_bucket, f"{sc_prefix}/{model_id}/")
+
+
+def test_process_scanned_file_404_when_nothing_was_uploaded(client: TestClient, session, s3_buckets):
+    """Registering a file that never landed in S3 must not create a row."""
+    user_id = admin_user(session)
+    _, model_id = _seed_project_and_model(session, user_id)
+    override_verify_token_as(user_id)
+
+    response = client.post(f"/api/files/process-scanned-file/{model_id}/ghost.py")
+
+    assert response.status_code == 404, response.text
+    assert _uploaded_file_row(session, model_id, "ghost.py") is None
+
+
+def test_presigned_url_endpoint_rejects_disallowed_extension(client: TestClient, session, s3_buckets):
+    """The whitelist gate runs before any policy is minted, so a disallowed
+    type can never reach the bucket."""
+    user_id = admin_user(session)
+    _, model_id = _seed_project_and_model(session, user_id)
+    override_verify_token_as(user_id)
+
+    response = client.post(
+        f"/api/files/preSignedUrl/model/{model_id}",
+        json={"fileName": "payload.exe", "contentType": "application/octet-stream"},
+    )
+
+    assert response.status_code == 400, response.text
+    assert "not allowed" in response.json()["detail"]
 
 
 # ---------------------------------------------------------------------------
@@ -334,8 +458,13 @@ def test_retrieve_model_files_list_404_when_no_objects(client: TestClient, sessi
 # ---------------------------------------------------------------------------
 
 
-def test_download_file_streams_bytes_byte_for_byte(client: TestClient, session, s3_buckets):
-    """The streamed response body must be byte-identical to the S3 object."""
+def test_download_file_returns_working_presigned_url(client: TestClient, session, s3_buckets):
+    """Endpoint returns a presigned GET URL, and that URL actually serves the exact bytes.
+
+    FLIP#784: the endpoint used to stream the object through flip-api (bounded by a
+    client-side timeout for large files); it now hands back a short-lived presigned
+    URL and the caller fetches bytes directly from S3.
+    """
     user_id = admin_user(session)
     _, model_id = _seed_project_and_model(session, user_id)
     override_verify_token_as(user_id)
@@ -361,7 +490,19 @@ def test_download_file_streams_bytes_byte_for_byte(client: TestClient, session, 
 
     response = client.get(f"/api/files/model/{model_id}/{file_name}")
     assert response.status_code == 200, response.text
-    assert response.content == payload
+    body = response.json()
+    assert body["fileName"] == file_name
+    # Presigned URLs carry a ``Signature=`` query param (SigV2) or an
+    # ``X-Amz-Signature=`` query param (SigV4); either confirms it was signed.
+    assert "Signature=" in body["url"] or "X-Amz-Signature=" in body["url"], f"not a presigned URL: {body['url']}"
+
+    # Note: the Content-Disposition override (see test_s3_client.py's
+    # get_presigned_url tests for that contract) isn't asserted here — moto's
+    # GetObject simulation doesn't echo back ResponseContentDisposition,
+    # unlike real S3.
+    download = requests.get(body["url"], timeout=10)
+    assert download.status_code == 200, download.text
+    assert download.content == payload
 
 
 def test_download_file_404_when_db_row_missing(client: TestClient, session, s3_buckets):

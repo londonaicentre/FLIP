@@ -95,15 +95,30 @@ create_testing_projects:
 delete_testing_projects:
 	@echo "🔢 Removing projects created for debugging..."
 	env DB_HOST=localhost uv run python -m tests.debug_post_debug_task
+# Curated radiology catalogue in honest lifecycle states so a fresh platform
+# doesn't look empty. Cleanup: EXTRA_ARGS="--cleanup".
+seed_demo_projects:
+	@echo "🌱 Seeding the demo radiology project catalogue..."
+	env DB_HOST=localhost uv run python -m tests.seed_demo_projects $(EXTRA_ARGS)
+# Provision the demo Cognito users for the demo-video recorder. Passwords
+# come from DEMO_RESEARCHER_PASSWORD / DEMO_ADMIN_PASSWORD in the env.
+create_demo_users:
+	uv run python -m flip_api.scripts.create_demo_users
+# Record the end-to-end demo video against the running dev stack (Dockerised
+# Cypress segments + off-camera waits + ffmpeg assembly). Args via DEMO_ARGS,
+# e.g. DEMO_ARGS="--skip-xnat" or DEMO_ARGS="--project-id <uuid> --from-segment 4".
+demo_video:
+	@echo "🎬 Recording the end-to-end demo video..."
+	env DB_HOST=localhost uv run python -m tests.demo_video $(DEMO_ARGS)
 # End-to-end smoke against a running `make up` stack: creates a project, gets
 # it approved, uploads model files, waits for image pull, kicks off training,
 # waits for results, downloads them. Intended for PR sanity checks — replaces
 # the manual UI clickthrough.
 #
 # Defaults pick the chest-xray tutorial that matches FL_BACKEND so the same
-# `make e2e_smoke` invocation works against either stack. The NVFLARE tutorial
-# is in-tree at fl-tutorials/nvflare/; the Flower one is still in the sibling
-# flip-fl-base-flower repo (not yet migrated). Both reuse the same query.sql
+# `make e2e_smoke` invocation works against either stack. Both tutorials are
+# now in-tree under fl-tutorials/<backend>/ (NVFLARE at fl-tutorials/nvflare/,
+# Flower at fl-tutorials/flower/). Both reuse the same query.sql
 # against the trust mock OMOP data. Default backend matches
 # deploy/fl_backend.mk (nvflare). Override either path explicitly:
 #     make e2e_smoke MODEL_FILES_DIR=/path/to/app_files
@@ -112,8 +127,8 @@ delete_testing_projects:
 #     make e2e_smoke EXTRA_ARGS="--image-pull-threshold 0.5"
 FL_BACKEND ?= nvflare
 ifeq ($(FL_BACKEND),flower)
-MODEL_FILES_DIR ?= ../../flip-fl-base-flower/tutorials/xray_classification/app
-QUERY_FILE ?= ../../flip-fl-base-flower/tutorials/xray_classification/query.sql
+MODEL_FILES_DIR ?= ../fl-tutorials/flower/xray_classification/app
+QUERY_FILE ?= ../fl-tutorials/flower/xray_classification/query.sql
 else
 MODEL_FILES_DIR ?= ../fl-tutorials/nvflare/image_classification/xray_classification/app_files
 QUERY_FILE ?= $(MODEL_FILES_DIR)/../query.sql
@@ -133,8 +148,8 @@ e2e_smoke:
 # public CLAUDE.md "Related Repositories" list -- ask the team for access if you
 # don't already have it. Without it, both e2e_smoke_spleen and
 # e2e_smoke_spleen_evaluation will fail in the data-enrichment step.
-e2e_smoke_spleen: MODEL_FILES_DIR := ../../flip-fl-base-flower/tutorials/3d_spleen_segmentation/app
-e2e_smoke_spleen: QUERY_FILE := ../../flip-fl-base-flower/tutorials/3d_spleen_segmentation/query.sql
+e2e_smoke_spleen: MODEL_FILES_DIR := ../fl-tutorials/flower/3d_spleen_segmentation/app
+e2e_smoke_spleen: QUERY_FILE := ../fl-tutorials/flower/3d_spleen_segmentation/query.sql
 e2e_smoke_spleen: EXTRA_ARGS := --data-enrichment-cwd ../../flip_project_spleen_segmentation --data-enrichment-cmd 'uv run upload_labels_to_XNAT.py --flip-project-id $$FLIP_PROJECT_ID'
 e2e_smoke_spleen: e2e_smoke
 
@@ -144,10 +159,12 @@ e2e_smoke_spleen: e2e_smoke
 # alongside the code -- the e2e smoke uploads it as part of the model files;
 # the fl-api writes it into /app/src/<model_id>/app/ on the shared FL_JOBS_DIR
 # mount; the evaluation ServerApp reads it via flip-job-dir at submit time.
-e2e_smoke_spleen_evaluation: MODEL_FILES_DIR := ../../flip-fl-base-flower/tutorials/3d_spleen_segmentation_evaluation/app
-e2e_smoke_spleen_evaluation: QUERY_FILE := ../../flip-fl-base-flower/tutorials/3d_spleen_segmentation/query.sql
+e2e_smoke_spleen_evaluation: MODEL_FILES_DIR := ../fl-tutorials/flower/3d_spleen_segmentation_evaluation/app
+e2e_smoke_spleen_evaluation: QUERY_FILE := ../fl-tutorials/flower/3d_spleen_segmentation/query.sql
 e2e_smoke_spleen_evaluation: EXTRA_ARGS := --data-enrichment-cwd ../../flip_project_spleen_segmentation --data-enrichment-cmd 'uv run upload_labels_to_XNAT.py --flip-project-id $$FLIP_PROJECT_ID'
 e2e_smoke_spleen_evaluation: e2e_smoke
 
 generate-internal-service-key:
 	uv run python -m flip_api.scripts.generate_internal_service_key $(if $(ENV_FILE),--env-file $(ENV_FILE)) $(if $(FORCE),--force)
+generate-xnat-credentials:
+	uv run python -m flip_api.scripts.generate_xnat_credentials $(if $(ENV_FILE),--env-file $(ENV_FILE)) $(if $(FORCE),--force)

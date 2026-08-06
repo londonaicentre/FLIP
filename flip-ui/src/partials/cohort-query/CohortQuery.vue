@@ -19,44 +19,47 @@
                 v-else
                 id="cohort-query-form"
                 :validation-schema="schema"
-                class="flex flex-col w-full overflow-y-auto"
+                class="flex flex-col w-full"
                 @submit="runCohortQuery"
             >
-                <div class="relative p-4 transition">
-                    <div class="grid grid-cols-1 gap-4 lg:grid-cols-3">
-                        <div class="space-y-2 lg:col-span-2">
-                            <div
-                                v-if="lastRunLine"
-                                class="text-xs font-semibold tracking-wider uppercase font-mono text-gray-500 dark:text-gray-400"
-                            >
-                                {{ lastRunLine }}
-                            </div>
-                            <AiCodeTextArea
-                                :initial-value="project?.query?.query"
-                                :input-props="{readonly: queryLocked || isViewer}"
-                                :height="440"
-                                name="query"
-                                label=""
-                                data-test="cohort-query"
+                <div class="grid grid-cols-1 gap-4 lg:grid-cols-3">
+                    <div class="space-y-2 lg:col-span-2">
+                        <div
+                            v-if="lastRunLine"
+                            class="flex items-center gap-1.5 text-xs font-semibold tracking-wider uppercase
+                            font-mono text-gray-500 dark:text-gray-300"
+                        >
+                            <icon-ph-file-sql
+                                data-test="last-run-sql-icon"
+                                class="w-4 h-4 shrink-0"
+                                aria-hidden="true"
                             />
+                            {{ lastRunLine }}
                         </div>
-                        <div class="flex flex-col gap-3 min-h-[440px]">
-                            <CohortAggregateCard :submitting="formSubmitting" />
-                            <div class="flex-1 min-h-0">
-                                <PerTrustResponse :submitting="formSubmitting" />
-                            </div>
+                        <AiCodeTextArea
+                            :initial-value="project?.query?.query"
+                            :input-props="{readonly: queryLocked || isViewer}"
+                            :height="440"
+                            copyable
+                            name="query"
+                            label=""
+                            data-test="cohort-query"
+                        />
+                    </div>
+                    <div class="flex flex-col gap-3 min-h-[440px]">
+                        <CohortAggregateCard :submitting="formSubmitting" />
+                        <div class="flex-1 min-h-0">
+                            <PerTrustResponse :submitting="formSubmitting" />
                         </div>
                     </div>
                 </div>
-                <div v-if="queryId && !project?.query" class="flex items-center gap-2 px-4 py-3 text-sm text-blue-700 dark:text-blue-300">
-                    <icon-heroicons-outline-clock class="w-5 h-5" />
+                <div v-if="queryId && !project?.query" class="flex items-center gap-2 py-3 text-sm text-blue-700 dark:text-blue-300">
+                    <icon-ph-clock class="w-5 h-5" />
                     Awaiting trust results…
                 </div>
-                <div v-if="project?.query" class="relative p-4 pt-4 space-y-4">
+                <div v-if="project?.query" class="pt-4">
                     <Transition name="slidedown">
-                        <div v-if="true" class="overflow-hidden border border-gray-300 rounded-lg shadow-lg dark:border-gray-700 bg-gray-50 dark:bg-gray-900">
-                            <QueryResultCharts :submitting="formSubmitting" />
-                        </div>
+                        <QueryResultCharts :submitting="formSubmitting" />
                     </Transition>
                 </div>
             </Form>
@@ -76,7 +79,6 @@ import router from "@/router";
 import { ICohortQueryCreate, sendQuery } from "@/services/cohort-query-service";
 import { IProject } from "@/services/project-service";
 import { useProjectStore } from "@/store/project";
-import { containsForbiddenCommands } from "@/utils/cohort/query";
 import { Snackbar } from "@/utils/snackbar";
 
 import CohortAggregateCard from "./CohortAggregateCard.vue";
@@ -101,20 +103,15 @@ onBeforeMount(() => {
 
 watch(projectStore, () => project.value = projectStore.project);
 
+// Required-field validation only. SQL validity is checked by the hub, which
+// answers synchronously before fanning the query out to any trust, and the
+// trust's data-access-api is the authority on what may run. A client-side
+// keyword denylist here blocked legitimate SQL (e.g. SUBSTRING()) without
+// adding security — see trust/data-access-api/README.md#cohort-query-validation.
 const schema = object().shape({
     query: string()
         .trim()
         .required("A query is required and can't be left blank")
-        .test(
-            "valid-query",
-            "Please enter a valid query",
-            function() {
-                try {
-                    return !containsForbiddenCommands(this.parent.query);
-                } catch {
-                    return false;
-                }
-            })
 });
 
 const runCohortQuery = async (v: unknown) => {

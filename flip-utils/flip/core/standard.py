@@ -17,10 +17,6 @@ This module contains the production and development implementations of FLIP
 for the standard, evaluation, and fed_opt job types.
 """
 
-try:
-    from typing import override
-except ImportError:
-    from typing_extensions import override
 import json
 import logging
 import os
@@ -28,7 +24,7 @@ import shutil
 import tempfile
 from datetime import datetime
 from pathlib import Path
-from typing import List, Union
+from typing import Any, override
 from urllib.parse import urlparse
 
 import boto3
@@ -39,8 +35,15 @@ from requests import HTTPError
 from flip.constants.flip_constants import FlipConstants, ModelStatus, ResourceType
 from flip.core.base import FLIPBase
 from flip.exceptions import ResultsUploadError
-from flip.schemas import TrainingLog, TrainingMetrics
+from flip.schemas import DEFAULT_X_AXIS_LABEL, FLLogEvent, TrainingLog, TrainingMetrics
 from flip.utils.utils import Utils
+
+# (connect, read) bound on every hub call (update_status, send_metrics,
+# send_handled_exception, send_event). The surrounding try/except arms cannot
+# catch a hang — a hub that accepts TCP and then stalls would otherwise freeze
+# the FL loop at the call site; send_event and send_metrics run inside result
+# acceptance, the worst place to block.
+_HUB_POST_TIMEOUT_SECONDS: tuple[int, int] = (5, 30)
 
 
 def _trust_internal_headers() -> dict[str, str]:
@@ -166,7 +169,7 @@ class FLIPStandardProd(FLIPBase):
         self,
         project_id: str,
         accession_id: str,
-        resource_type: Union[ResourceType, List[ResourceType]] = ResourceType.NIFTI,
+        resource_type: ResourceType | list[ResourceType] = ResourceType.NIFTI,
     ) -> Path:
         """
         Calls the imaging-service to return a filepath that contains images downloaded from XNAT
@@ -175,7 +178,7 @@ class FLIPStandardProd(FLIPBase):
         Args:
             project_id (str): The ID of the project.
             accession_id (str): The accession ID of the imaging study.
-            resource_type (Union[ResourceType, List[ResourceType]]): The type of resource to download. Defaults to
+            resource_type (ResourceType | list[ResourceType]): The type of resource to download. Defaults to
             ResourceType.NIFTI.
 
         Returns:
@@ -226,7 +229,7 @@ class FLIPStandardProd(FLIPBase):
         accession_id: str,
         scan_id: str,
         resource_id: str,
-        files: List[str],
+        files: list[str],
     ) -> None:
         """
         Calls the imaging-service to upload image(s) to XNAT based on the accession number,
@@ -237,7 +240,7 @@ class FLIPStandardProd(FLIPBase):
             accession_id (str): Accession ID to upload the resource to
             scan_id (str): ID of the scan to upload
             resource_id (str): Type of resource that is being uploaded (e.g. NIFTI)
-            files (List[str]): List of files to upload
+            files (list[str]): List of files to upload
         """
         if not isinstance(project_id, str):
             raise TypeError(f"expect project id to be string, but got {type(project_id)}")
@@ -251,7 +254,7 @@ class FLIPStandardProd(FLIPBase):
         if not isinstance(resource_id, str):
             raise TypeError(f"expect resource_id to be string, but got {type(resource_id)}")
 
-        if not isinstance(files, List):
+        if not isinstance(files, list):
             raise TypeError(f"expect files to be List, but got {type(files)}")
 
         self.logger.info(
@@ -302,6 +305,7 @@ class FLIPStandardProd(FLIPBase):
             response = requests.put(
                 endpoint,
                 headers=_hub_internal_headers(),
+                timeout=_HUB_POST_TIMEOUT_SECONDS,
             )
             self.logger.info(f"Received response status code: {response.status_code}, response text: {response.text}")
             response.raise_for_status()
@@ -318,7 +322,16 @@ class FLIPStandardProd(FLIPBase):
             self.logger.exception(e)
 
     @override
-    def send_metrics(self, client_name: str, model_id: str, label: str, value: float, round: int) -> None:
+    def send_metrics(
+        self,
+        client_name: str,
+        model_id: str,
+        label: str,
+        value: float,
+        global_round: int,
+        x_value: float | None = None,
+        x_label: str | None = None,
+    ) -> None:
         """
         Sends a metric value to the Central Hub.
 
@@ -327,13 +340,26 @@ class FLIPStandardProd(FLIPBase):
             model_id (str): The ID of the model.
             label (str): The label of the metric.
             value (float): The value of the metric.
-            round (int): The round number.
+            global_round (int): Provenance — the FL global round the metric is reported in (never the
+                plot coordinate).
+            x_value (float | None): The x-coordinate the metric is plotted at; ``None`` plots it at
+                ``global_round`` (the schema backfills it).
+            x_label (str | None): Label naming the x-axis; falls back to "Global Rounds" when not given.
         """
-        payload = TrainingMetrics(
-            fl_client_name=client_name,
-            global_round=round,
-            label=label,
-            result=value,
+        # model_validate (not kwargs) so a None x_value reaches the schema's backfill validator,
+        # which resolves it to the global round — the schema owns that default, not this call site.
+        # `or` (not an explicit None check) is deliberate for x_label: "" is not a meaningful axis
+        # name and the hub rejects it (min_length=1), so a falsy label coalesces to the default
+        # rather than shipping a guaranteed-reject payload.
+        payload = TrainingMetrics.model_validate(
+            {
+                "fl_client_name": client_name,
+                "global_round": global_round,
+                "label": label,
+                "result": value,
+                "x_value": x_value,
+                "x_label": x_label or DEFAULT_X_AXIS_LABEL,
+            }
         ).model_dump()
 
         endpoint = _join_url(FlipConstants.FLIP_API_INTERNAL_URL, f"model/{model_id}/metrics")
@@ -345,6 +371,7 @@ class FLIPStandardProd(FLIPBase):
                 endpoint,
                 json=payload,
                 headers=_hub_internal_headers(),
+                timeout=_HUB_POST_TIMEOUT_SECONDS,
             )
             self.logger.info(f"Received response status code: {response.status_code}, response text: {response.text}")
             response.raise_for_status()
@@ -361,27 +388,33 @@ class FLIPStandardProd(FLIPBase):
             self.logger.exception(e)
 
     @override
-    def send_handled_exception(self, formatted_exception: str, client_name: str, model_id: str) -> None:
+    def send_handled_exception(self, formatted_exception: str, client_name: str | None, model_id: str) -> None:
         """
         Sends a handled exception to the Central Hub.
 
         Args:
             formatted_exception (str): The formatted exception message.
-            client_name (str): The name of the client that raised the exception.
+            client_name (str | None): The name of the client that raised the exception.
+                None when the client cannot be identified (e.g. a Flower reply that
+                crashed before its first healthy response), in which case the hub
+                records the exception model-level rather than rejecting it.
             model_id (str): The ID of the model associated with the exception.
         """
         if not isinstance(formatted_exception, str):
             raise TypeError(f"formatted_exception must be type str but got {type(formatted_exception)}")
 
-        if not isinstance(client_name, str):
-            raise TypeError(f"client_name must be type str but got {type(client_name)}")
+        if client_name is not None and not isinstance(client_name, str):
+            raise TypeError(f"client_name must be type str or None but got {type(client_name)}")
 
         if Utils.is_valid_uuid(model_id) is False:
             raise ValueError(f"Invalid model ID: {model_id}, unable to send exception")
 
+        # success=False so the hub persists (and the UI shows) a failure row —
+        # the ingest default is success=True.
         payload = TrainingLog(
             fl_client_name=client_name,
             log=formatted_exception,
+            success=False,
         ).model_dump()
 
         endpoint = _join_url(FlipConstants.FLIP_API_INTERNAL_URL, f"model/{model_id}/logs")
@@ -393,6 +426,7 @@ class FLIPStandardProd(FLIPBase):
                 endpoint,
                 json=payload,
                 headers=_hub_internal_headers(),
+                timeout=_HUB_POST_TIMEOUT_SECONDS,
             )
             self.logger.info(f"Received response status code: {response.status_code}, response text: {response.text}")
             response.raise_for_status()
@@ -406,6 +440,73 @@ class FLIPStandardProd(FLIPBase):
             self.logger.exception(http_err)
         except Exception as e:
             self.logger.error("Something went wrong when sending the exception to the Central Hub, see exception below")
+            self.logger.exception(e)
+
+    @override
+    def send_event(
+        self,
+        model_id: str,
+        event_type: FLLogEvent,
+        global_round: int,
+        client_name: str | None = None,
+        details: dict[str, Any] | None = None,
+        success: bool = True,
+    ) -> None:
+        """
+        Sends a typed round-progress event to the Central Hub.
+
+        Facts only — the hub composes display text at serve time. Best-effort:
+        a failed post and a payload that fails validation are logged and never
+        break training. Only an invalid ``model_id`` raises — a deliberate
+        precondition, matching ``send_handled_exception``.
+
+        Args:
+            model_id (str): The ID of the model the event belongs to.
+            event_type (FLLogEvent): Which round event this is.
+            global_round (int): The 1-based federated round.
+            client_name (str | None): FL client identity for trust-attributed
+                events; None for hub-attributed ones.
+            details (dict[str, Any] | None): Event-specific facts.
+            success (bool): Whether the event marks a healthy step.
+        """
+        if Utils.is_valid_uuid(model_id) is False:
+            raise ValueError(f"Invalid model ID: {model_id}, unable to send event")
+
+        endpoint = _join_url(FlipConstants.FLIP_API_INTERNAL_URL, f"model/{model_id}/logs")
+
+        self.logger.info(f"Attempting to send {event_type} (round {global_round}) to the Central Hub...")
+
+        try:
+            # Constructed inside the guard: send_event runs inside result
+            # acceptance, so a malformed fact must be dropped, not raised.
+            payload = TrainingLog(
+                fl_client_name=client_name,
+                event_type=event_type,
+                global_round=global_round,
+                details=details,
+                success=success,
+            ).model_dump(mode="json")
+
+            response = requests.post(
+                endpoint,
+                json=payload,
+                headers=_hub_internal_headers(),
+                # The except arms cannot catch a hang: a hub that accepts TCP
+                # and then stalls would freeze result acceptance mid-round.
+                timeout=_HUB_POST_TIMEOUT_SECONDS,
+            )
+            self.logger.info(f"Received response status code: {response.status_code}, response text: {response.text}")
+            response.raise_for_status()
+
+            self.logger.info(f"Successfully sent {event_type} for round {global_round}")
+        except HTTPError as http_err:
+            self.logger.error(
+                f"An http error occurred when sending a round event to the Central Hub, "
+                f"see exception below | status code {http_err.response.status_code}"
+            )
+            self.logger.exception(http_err)
+        except Exception as e:
+            self.logger.error("Something went wrong when sending a round event to the Central Hub, see exception below")
             self.logger.exception(e)
 
     @override
@@ -517,7 +618,7 @@ class FLIPStandardDev(FLIPBase):
         self,
         project_id: str,
         accession_id: str,
-        resource_type: Union[ResourceType, List[ResourceType]] = ResourceType.NIFTI,
+        resource_type: ResourceType | list[ResourceType] = ResourceType.NIFTI,
     ) -> Path:
         """
         Returns the path to the image directory for a specific accession ID.
@@ -525,7 +626,7 @@ class FLIPStandardDev(FLIPBase):
         Args:
             project_id (str): Project identifier
             accession_id (str): Accession ID to retrieve
-            resource_type (Union[ResourceType, List[ResourceType]]): Type of imaging resource (not used in dev)
+            resource_type (ResourceType | list[ResourceType]): Type of imaging resource (not used in dev)
 
         Returns:
             Path: Path to the accession_id folder within the images folder.
@@ -546,47 +647,71 @@ class FLIPStandardDev(FLIPBase):
         accession_id: str,
         scan_id: str,
         resource_id: str,
-        files: List[str],
+        files: list[str],
     ) -> None:
         """Log only in dev mode - no actual upload."""
-        self.logger.info("[DEV] add_resource is not supported in LOCAL_DEV mode.")
+        self.logger.info(
+            "[DEV] Resource → add %s file(s) to accession=%s scan=%s resource=%s",
+            len(files),
+            accession_id,
+            scan_id,
+            resource_id,
+        )
 
     @override
     def update_status(self, model_id: str, new_model_status: ModelStatus) -> None:
         """Log only in dev mode - no actual status update."""
-        self.logger.info(
-            "[DEV] update_status is not supported in LOCAL_DEV mode."
-            f"Details of the function call: updating model status to {new_model_status}."
-        )
+        self.logger.info("[DEV] Status → %s", new_model_status)
 
     @override
-    def send_metrics(self, client_name: str, model_id: str, label: str, value: float, round: int) -> None:
+    def send_metrics(
+        self,
+        client_name: str,
+        model_id: str,
+        label: str,
+        value: float,
+        global_round: int,
+        x_value: float | None = None,
+        x_label: str | None = None,
+    ) -> None:
         """Log only in dev mode - no actual metrics sending."""
         self.logger.info(
-            "[DEV] send_metrics is not supported in LOCAL_DEV mode."
-            f"Details of the function call: sending metrics with label {label} and value {value} for {client_name}."
+            "[DEV] Metric → %s=%0.4f (%s, global_round=%s, x_value=%s, x_label=%s)",
+            label,
+            value,
+            client_name,
+            global_round,
+            x_value,
+            x_label,
         )
 
     @override
-    def send_handled_exception(self, formatted_exception: str, client_name: str, model_id: str) -> None:
+    def send_handled_exception(self, formatted_exception: str, client_name: str | None, model_id: str) -> None:
         """Log only in dev mode - no actual exception sending."""
-        self.logger.info(
-            "[DEV] send_handled_exception is not supported in LOCAL_DEV mode."
-            f"Details of the function call: sending {formatted_exception} for {client_name}."
-        )
+        self.logger.info("[DEV] Exception → reported from %s", client_name)
+
+    @override
+    def send_event(
+        self,
+        model_id: str,
+        event_type: FLLogEvent,
+        global_round: int,
+        client_name: str | None = None,
+        details: dict[str, Any] | None = None,
+        success: bool = True,
+    ) -> None:
+        """Log only in dev mode - no actual event sending."""
+        self.logger.info("[DEV] Event → %s (round %d) from %s", event_type, global_round, client_name or "hub")
 
     @override
     def upload_results_to_s3(self, results_folder: Path, model_id: str) -> None:
         """Log only in dev mode - no actual upload."""
         # NOTE FlipConstants.UPLOADED_FEDERATED_DATA_BUCKET is not available in dev mode, so we can't log it here.
-        self.logger.info(
-            "[DEV] upload_results_to_s3 is not supported in LOCAL_DEV mode."
-            f"Details of the function call: uploading results from {results_folder} for model {model_id}."
-        )
+        self.logger.info("[DEV] Upload → results from %s", results_folder)
 
     @override
     def cleanup(self, path: Path) -> None:
         """
         Log only in dev mode - no actual deletion of any files.
         """
-        self.logger.info(f"[DEV] cleanup is not supported in LOCAL_DEV mode. Would have cleaned up path: {path}")
+        self.logger.info("[DEV] Cleanup → %s", path)

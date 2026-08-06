@@ -10,10 +10,12 @@
 # limitations under the License.
 #
 
-from typing import Literal
+import json
+import logging
+from typing import Annotated, Literal
 
-from pydantic import EmailStr, SecretStr, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import EmailStr, SecretStr, ValidationInfo, field_validator
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 from flip_api.domain.schemas.types import FLBackend
 
@@ -55,13 +57,60 @@ class Settings(BaseSettings):
     UPLOADED_MODEL_FILES_BUCKET: str
     SCANNED_MODEL_FILES_BUCKET: str
     UPLOADED_FEDERATED_DATA_BUCKET: str
-    FL_APP_BASE_BUCKET: str
     FL_APP_DESTINATION_BUCKET: str
+
+    # Local directory holding the base FL application templates (the repo's fl-apps/ tree),
+    # baked into the flip-api image and bind-mounted in dev. The bundler walks
+    # <FL_APP_BASE_DIR>/<backend>/<job_type>/ and uploads those files into
+    # FL_APP_DESTINATION_BUCKET/<model_id>; the per-backend required_files.json manifest is
+    # read from <FL_APP_BASE_DIR>/<backend>/required_files.json. Defaults to the baked-in
+    # image path; override to mount operator-provided templates. Replaces the former
+    # FL_APP_BASE_BUCKET S3 dependency (FLIP#724).
+    FL_APP_BASE_DIR: str = "/app/fl-apps"
 
     # Hard cap on model-file uploads. Bound on the presigned POST policy so
     # S3 rejects oversized payloads at the edge — the hub never sees them.
-    MAX_MODEL_FILE_BYTES: int = 100 * 1024 * 1024
-    PRE_SIGNED_URL_EXPIRATION_SECONDS: int = 3600
+    # Raised to 5 GiB so large evaluation checkpoints (e.g. the ~759 MiB Ark+
+    # weights, ~1.5 GiB for the multimodel variant) can be uploaded; the FL API
+    # stages such checkpoints server-side rather than bundling them into the app.
+    MAX_MODEL_FILE_BYTES: int = 5 * 1024 * 1024 * 1024
+    # Default equals the MAX_PRESIGNED_URL_TTL_SECONDS security ceiling in
+    # utils/s3_client.py: anything higher would be silently clamped anyway,
+    # with a per-call warning — so a default-configured deployment would log
+    # that warning on every presigned upload/download. Operators may set a
+    # lower value; higher values are clamped (with the warning as audit trail).
+    PRE_SIGNED_URL_EXPIRATION_SECONDS: int = 1800
+
+    # Extension whitelist for model-file uploads, enforced before minting the
+    # presigned POST policy so disallowed types never reach S3. Suffixes are
+    # matched case-insensitively against the end of the filename. Env format:
+    # JSON list or comma-separated string (NoDecode defers parsing to the
+    # validator below). Opaque archives (.zip/.tar) are deliberately excluded —
+    # their contents can't be gated by the scan pipeline.
+    ALLOWED_MODEL_FILE_EXTENSIONS: Annotated[list[str], NoDecode] = [
+        ".py",
+        ".json",
+        # Flower's per-app run config. `config.toml` sits beside the app code in
+        # every Flower template and tutorial; fl-api-flower feeds it to
+        # `flwr run --run-config` to override the bundle pyproject's
+        # [tool.flwr.app.config]. Omitting it would reject every Flower upload.
+        ".toml",
+        ".pt",
+        ".pth",
+        ".pkl",
+        ".txt",
+        ".yaml",
+        ".yml",
+        ".safetensors",
+    ]
+    # Suffixes given a structural picklescan before promotion to the scanned
+    # bucket: pickle-bearing formats where deserialisation is code execution
+    # by design. Subset of ALLOWED_MODEL_FILE_EXTENSIONS in practice, kept
+    # separate so widening the upload whitelist never silently skips scanning.
+    PICKLESCAN_FILE_SUFFIXES: Annotated[list[str], NoDecode] = [".pt", ".pth", ".pkl", ".pickle"]
+    # Hard wall-clock cap on a single picklescan run. A timeout is treated as
+    # a scan failure (fail-closed -> ERROR), never as clean.
+    PICKLESCAN_TIMEOUT_SECONDS: int = 120
 
     # Reimport imaging project studies
     PROJECT_REIMPORT_RATE: int = 60  # How often to reimport studies for a given project (in minutes)
@@ -74,6 +123,7 @@ class Settings(BaseSettings):
     SCHEDULER_REIMPORT_IMAGING_PROJECT_STUDIES_RATE: int = (
         30  # How often to check for projects with unimported studies (in minutes)
     )
+    SCHEDULER_MALWARE_SCAN_RECONCILE_RATE: int = 1  # How often to reconcile stuck SCANNING uploads (in minutes)
 
     # Database settings
     DB_PORT: int
@@ -83,12 +133,6 @@ class Settings(BaseSettings):
 
     # Variables used during database seeding
     NET_ENDPOINTS: dict[str, str]
-    # FL kit slot pool names — pre-provisioned in flip-fl-base (workspace/net-N/services/<slot>).
-    # Seeded into `fl_kit_slot` so POST /admin/trusts can hand each joining trust the next
-    # free slot regardless of the trust's friendly name. Defaults to [] so existing dev
-    # envs aren't required to set it; in that case the pool is empty until the admin
-    # provisions kits and adds them here.
-    FL_KIT_SLOT_NAMES: list[str] = []
 
     # FL backend written onto the FLNets.fl_backend column at seed time (seed_fl_nets). This is
     # canonical: flip-api reads it only at seeding, and the seeded value is never reconciled at
@@ -141,26 +185,87 @@ class Settings(BaseSettings):
     @field_validator("MAX_MODEL_FILE_BYTES", mode="before")
     @classmethod
     def coerce_empty_max_model_file_bytes(cls, v: object) -> object:
-        """Treat empty-string MAX_MODEL_FILE_BYTES as the default 100 MiB.
+        """Treat empty-string MAX_MODEL_FILE_BYTES as the field default 5 GiB.
 
         GitHub Actions environments inject empty-string env vars for every
         var that isn't explicitly set in the environment scope; Pydantic
         treats that as a real override and rejects it against ``int``.
-        Same shape as ``coerce_empty_env`` / ``coerce_empty_mfa``.
+        Same shape as ``coerce_empty_env`` / ``coerce_empty_mfa``. Must stay
+        in sync with the ``MAX_MODEL_FILE_BYTES`` field default above.
         """
         if v is None or v == "":
-            return 100 * 1024 * 1024
+            return 5 * 1024 * 1024 * 1024
         return v
 
     @field_validator("PRE_SIGNED_URL_EXPIRATION_SECONDS", mode="before")
     @classmethod
     def coerce_empty_pre_signed_url_expiration(cls, v: object) -> object:
-        """Treat empty-string PRE_SIGNED_URL_EXPIRATION_SECONDS as the default 3600s.
+        """Treat empty-string PRE_SIGNED_URL_EXPIRATION_SECONDS as the default 1800s.
 
-        Same rationale as ``coerce_empty_max_model_file_bytes``.
+        Same rationale as ``coerce_empty_max_model_file_bytes``. Must stay in
+        sync with the field default above (== the presigned-URL TTL ceiling).
         """
         if v is None or v == "":
-            return 3600
+            return 1800
+        return v
+
+    @field_validator("PICKLESCAN_TIMEOUT_SECONDS", "SCHEDULER_MALWARE_SCAN_RECONCILE_RATE", mode="before")
+    @classmethod
+    def coerce_empty_scan_int(cls, v: object, info: ValidationInfo) -> object:
+        """Treat an empty-string scan-timing setting as the field default.
+
+        Same rationale as ``coerce_empty_max_model_file_bytes``: these arrive
+        as empty strings whenever the name appears in an env file at all —
+        including *commented out*, since the Makefile's
+        ``export $(shell sed 's/=.*//' ../.env.development)`` strips the value
+        from every line and exports the bare name. Pydantic treats that as a
+        real override and rejects it against ``int``.
+        """
+        if v is None or v == "":
+            return cls.model_fields[info.field_name].default  # type: ignore[index]
+        return v
+
+    @field_validator("ALLOWED_MODEL_FILE_EXTENSIONS", "PICKLESCAN_FILE_SUFFIXES", mode="before")
+    @classmethod
+    def parse_suffix_list(cls, v: object, info: ValidationInfo) -> object:
+        """Parse the suffix-list env vars and normalise every entry.
+
+        The fields carry ``NoDecode``, so env input arrives here as the raw
+        string: a JSON list (``[".py", ".pt"]``) or a comma-separated string
+        (``.py,.pt``) are both accepted, and empty/unset falls back to the
+        field default. Entries are lowercased and given a leading dot so
+        matching stays purely suffix-based regardless of how the operator
+        wrote them.
+
+        A value that contains only separators or whitespace (``",,,"``,
+        ``" , "``) normalises to nothing, and is treated exactly like the
+        empty case — it falls back to the default rather than yielding an
+        empty list. An empty list would fail *open* in the worst way for
+        ``PICKLESCAN_FILE_SUFFIXES``: no suffix would ever match, so every
+        upload would skip scanning silently. Never let a malformed value
+        disable the gate.
+        """
+        if v is None or v == "" or v == []:
+            v = cls.model_fields[info.field_name].default  # type: ignore[index]
+        if isinstance(v, str):
+            stripped = v.strip()
+            v = json.loads(stripped) if stripped.startswith("[") else stripped.split(",")
+        if isinstance(v, list):
+            normalised = [
+                entry if entry.startswith(".") else f".{entry}"
+                for entry in (str(raw).strip().lower() for raw in v)
+                if entry
+            ]
+            if not normalised:
+                default = cls.model_fields[info.field_name].default  # type: ignore[index]
+                # flip_api.utils.logger imports get_settings(), so it cannot be
+                # imported here without a cycle — use the same underlying logger.
+                logging.getLogger("uvicorn").warning(
+                    f"{info.field_name} resolved to an empty list from {v!r}; "
+                    f"falling back to the default {default}"
+                )
+                return default
+            return normalised
         return v
 
     # Trust task queue settings
@@ -184,6 +289,16 @@ class DevSettings(Settings):
     AES_KEY_BASE64: str  # in dev, get AES key from env variable
 
     INTERNAL_SERVICE_KEY_HASH: str  # in dev, get internal service auth key hash from env variable
+
+    # FL kit slot pool names — one per pre-provisioned FL kit (workspace/net-N/services/<slot>).
+    # Seeded into `fl_kit_slot` so POST /admin/trusts can hand each joining trust the next
+    # free slot regardless of the trust's friendly name. Dev-only on purpose: in production
+    # the pool's single source is the /flip/fl_kit_slot_names SSM parameter (see
+    # db/seed/fl_kit_slots.resolve_fl_kit_slot_names) — there is no env-var fallback, so a
+    # broken parameter can't be silently masked by stale task-definition env. Defaults to []
+    # so existing dev envs aren't required to set it; in that case the pool is empty until
+    # the admin provisions kits and adds them here.
+    FL_KIT_SLOT_NAMES: list[str] = []
 
 
 class ProdSettings(Settings):

@@ -4,6 +4,8 @@
     "host": "",
     "cert-path": "",
     "swarm-mode": false,
+    "combined-pvc-name": "flip-trust-xnat-web",
+    "combined-path-translation": "/data/xnat/",
     "pull-images-on-xnat-init": true,
     "container-user": "",
     "auto-cleanup": true

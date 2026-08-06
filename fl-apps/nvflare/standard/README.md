@@ -41,13 +41,17 @@ Orchestration is the standard NVFLARE Scatter-and-Gather workflow; the privilege
 
 1. `init_training` — `flip.nvflare.controllers.InitTraining`
 2. `scatter_and_gather` — `flip.nvflare.controllers.ScatterAndGather`
-3. `cross_site_validate` — `flip.nvflare.controllers.CrossSiteModelEval`
+3. `cross_site_validate` — stock `nvflare.app_common.workflows.global_model_eval.GlobalModelEval`
+4. `post_validation_cleanup` — `flip.nvflare.controllers.BroadcastTask`
 
 **Client — `config_fed_client.json` `executors` (by task):**
 
 - `init_training`, `post_validation` → `flip.nvflare.components.CleanupImages`
-- `train`, `submit_model` → `flip.nvflare.executors.RUN_TRAINER`
+- `train` → `flip.nvflare.executors.RUN_TRAINER`
 - `validate` → `flip.nvflare.executors.RUN_VALIDATOR`
+
+Post-training evaluation broadcasts only the aggregated global model to each participating trust. Client-local
+models are not returned to the server or evaluated against other sites.
 
 ## What does the user upload?
 
@@ -61,6 +65,27 @@ The required files (see [`required_files.json`](./required_files.json)) are:
 
 The base config (`app/config/config_fed_server.json`, `app/config/config_fed_client.json`) ships with the
 template; the files above are merged in on top at job-assembly time.
+
+## Config placeholders (populated at job-assembly)
+
+Several top-level keys in the base config are **placeholders** — the committed values are dummies, and the
+fl-server (`fl-services/nvflare/fl-api-base`, in `utils/prepare_config.py`) overwrites them with the real
+per-submission values when it assembles the job, *before* NVFLARE loads the config:
+
+| File | Key | Committed placeholder | Populated by | Source value |
+| --- | --- | --- | --- | --- |
+| `config_fed_client.json` | `project_id` | `""` | `configure_client()` | the model's project id |
+| `config_fed_client.json` | `query` | `"SELECT * FROM Table;"` | `configure_client()` | the project's cohort SQL |
+| `config_fed_server.json` | `model_id` | a dummy UUID | `configure_server()` | the model id (`app_name`); nested `"{model_id}"` references in the components' args resolve to it |
+| `config_fed_server.json` | `global_rounds`, `min_clients` | defaults | `configure_server()` / `configure_config()` | the model's round count + participating-trust count |
+
+So a site's `trainer.py` reaches its cohort via `flip.get_dataframe(project_id, query)` — `query` is read
+straight from `config_fed_client.json`, and `project_id` is passed to the trainer (in the Client API
+`standard_client_api` template it's the `{project_id}` reference in the executor's `task_script_args`, which
+resolves against the top-level `project_id` key). In `LOCAL_DEV` / SimEnv these are ignored: data comes from
+the `DEV_DATAFRAME` / `DEV_IMAGES_DIR` env instead. `local_rounds` is the per-round local-epoch count read by
+the trainer/executor. (The `standard_client_api` template is recipe-generated but emits the same
+placeholders, so it behaves identically here.)
 
 ## Run it
 

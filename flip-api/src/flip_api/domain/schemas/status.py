@@ -17,22 +17,6 @@ from enum import Enum, StrEnum
 # ---------------------------
 
 
-class BucketStatus(Enum):
-    """Status of the bucket."""
-
-    CLEAN = "clean"
-    INFECTED = "infected"
-    NO = "no"
-
-
-class BucketAction(Enum):
-    """Action to be taken on the bucket."""
-
-    DELETE = "delete"
-    TAG = "tag"
-    NO = "no"
-
-
 class ClientDeployResponse(StrEnum):
     """Response for client deployment."""
 
@@ -68,13 +52,26 @@ class ModelStatus(Enum):
     PENDING = "PENDING"
     INITIATED = "INITIATED"
     PREPARED = "PREPARED"
-    TRAINING_STARTED = "TRAINING_STARTED"
+    # Job-type-neutral "the FL job is executing" status (renamed from TRAINING_STARTED
+    # so evaluation jobs can report it honestly, #782). Keeps TRAINING_STARTED's slot in
+    # the native Postgres enum — the migration is ALTER TYPE ... RENAME VALUE.
+    RUNNING = "RUNNING"
     RESULTS_UPLOADED = "RESULTS_UPLOADED"
     # Training finished but the post-training results upload to S3 failed. Distinct
-    # from ERROR so the UI keeps "Training Started" complete and only flags the
+    # from ERROR so the UI keeps "Running" complete and only flags the
     # upload step. Appended last to keep the native Postgres enum order consistent
     # between fresh databases and ones migrated via ALTER TYPE ... ADD VALUE.
     RESULTS_UPLOAD_FAILED = "RESULTS_UPLOAD_FAILED"
+
+    @classmethod
+    def _missing_(cls, value: object) -> "ModelStatus | None":
+        # Back-compat alias: fl-server images deploy separately from flip-api, so a
+        # pre-rename fl-server may still report "TRAINING_STARTED" (#782). Accept it
+        # as RUNNING until every deployed FL image is post-rename — removal is
+        # tracked in #803.
+        if value == "TRAINING_STARTED":
+            return cls.RUNNING
+        return None
 
 
 class NetStatus(Enum):
@@ -98,6 +95,13 @@ class FileUploadStatus(Enum):
     SCANNING = "SCANNING"
     COMPLETED = "COMPLETED"
     ERROR = "ERROR"
+    # Malware-scan verdict: the uploaded object contained dangerous content
+    # (e.g. a pickle with dangerous globals) and has been deleted from S3.
+    # Distinct from ERROR so the UI can tell "scan judged the file malicious"
+    # from "something went wrong". Appended last to keep the native Postgres
+    # enum order consistent between fresh databases and ones migrated via
+    # ALTER TYPE ... ADD VALUE.
+    INFECTED = "INFECTED"
 
 
 class FileUploadTag(Enum):
@@ -124,6 +128,19 @@ class ProjectStatus(StrEnum):
     UNSTAGED = "UNSTAGED"
     STAGED = "STAGED"
     APPROVED = "APPROVED"
+
+
+class AccessRequestStatus(StrEnum):
+    """Lifecycle state of a platform access request.
+
+    ``PENDING`` — awaiting an administrator's decision.
+    ``ENROLLED`` — an administrator registered the requester as a platform user.
+    ``DISMISSED`` — an administrator declined the request.
+    """
+
+    PENDING = "PENDING"
+    ENROLLED = "ENROLLED"
+    DISMISSED = "DISMISSED"
 
 
 class ServerEngineStatus(StrEnum):

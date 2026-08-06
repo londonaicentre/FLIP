@@ -12,9 +12,13 @@
 
 import os
 
-from flip_api.domain.schemas.types import FLBackend
-
 SERVICE_UNAVAILABLE_MESSAGE = "The server is unable to process any requests at the moment, please try again later."
+
+# Default label naming the x-axis of an FL training-metric plot. Used when a metric is logged without
+# an explicit x-axis label — the historical behaviour, where the x-axis is the FL global round. Single
+# source of truth for the FLMetrics column default, the ingest-schema default, and the plot's x-axis
+# title (FLIP#148).
+DEFAULT_X_AXIS_LABEL = "Global Rounds"
 
 # AWS SES email templates
 ACCESS_REQUEST_TEMPLATE_NAME = "flip-access-request"
@@ -22,36 +26,12 @@ IMAGING_CREDENTIALS_TEMPLATE_NAME = "flip-xnat-credentials"
 IMAGING_PROJECT_ACCESS_TEMPLATE_NAME = "flip-xnat-added-to-project"
 
 
-# File containing job types and their required files. The manifest is per-backend:
-# each FL backend (nvflare/flower) has its own copy pulled from S3 at runtime (never
-# committed to source control), so the two frameworks never clobber each other's file.
-def job_types_required_files_name(fl_backend: FLBackend) -> str:
-    """Local filename for the per-backend job-types/required-files manifest.
-
-    Args:
-        fl_backend (FLBackend): The FL backend the manifest belongs to (``nvflare`` or ``flower``).
-
-    Returns:
-        str: The manifest filename, e.g. ``job_types_and_required_files.nvflare.json``.
-    """
-    return f"job_types_and_required_files.{fl_backend}.json"
-
-
-# S3 object name for the per-backend manifest — the same filename lives in each backend's
-# folder under FL_APP_BASE_BUCKET (e.g. <base>/nvflare/required_files.json).
-JOB_TYPES_REQUIRED_FILES_S3_NAME = "required_files.json"
-
-
-def job_types_required_files_s3_key(fl_backend: FLBackend) -> str:
-    """S3 key (relative to ``FL_APP_BASE_BUCKET``) of the per-backend required-files manifest.
-
-    Args:
-        fl_backend (FLBackend): The FL backend whose manifest to locate (``nvflare`` or ``flower``).
-
-    Returns:
-        str: The per-backend key, e.g. ``nvflare/required_files.json``.
-    """
-    return f"{fl_backend}/{JOB_TYPES_REQUIRED_FILES_S3_NAME}"
+# Filename of the per-backend job-types/required-files manifest. It lives in each backend's
+# folder on the local base-application tree (e.g. ``<FL_APP_BASE_DIR>/nvflare/required_files.json``),
+# generated from the per-template arrays by ``fl-apps/check_required_files.sh``, committed to the
+# repo, and baked into the flip-api image. flip-api reads it directly from disk (FLIP#724) — the
+# two backends live in separate folders so they never clobber each other's manifest.
+REQUIRED_FILES_MANIFEST_NAME = "required_files.json"
 
 
 # Testing constants. BASE_URL defaults to the local dev stack; override with
@@ -64,3 +44,11 @@ ADMIN_EMAIL_2 = "alexandre.triay_bagur@kcl.ac.uk"
 ADMIN_EMAIL_3 = "rafael.dias@kcl.ac.uk"
 RESEARCHER_EMAIL = "rafaelagd@gmail.com"
 VIEWER_EMAIL = "triayalex@gmail.com"
+
+# Demo users for the scripted demo-video recorder (tests/demo_video.py). Created
+# in Cognito by flip_api/scripts/create_demo_users.py (passwords come from
+# DEMO_*_PASSWORD env vars, never committed); role grants are seeded at boot by
+# db/seed/main_users.py iff the users exist in the pool. Emails are env-
+# overridable so operators can point the demo at their own accounts.
+DEMO_RESEARCHER_EMAIL = os.environ.get("DEMO_RESEARCHER_EMAIL", "flip-demo-researcher@example.com")
+DEMO_ADMIN_EMAIL = os.environ.get("DEMO_ADMIN_EMAIL", "flip-demo-admin@example.com")

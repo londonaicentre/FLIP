@@ -19,12 +19,12 @@ Exports:
     - InitTraining: Initialization controller for training setup
     - ScatterAndGather: Main training loop controller with FedAvg aggregation
     - ScatterAndGatherLDM: Dual-phase training controller for LDM (autoencoder + diffusion model)
-    - CrossSiteModelEval: Cross-site model evaluation controller
+    - BroadcastTask: Broadcast a lifecycle task and wait for client responses
     - InitEvaluation: Initialization controller for evaluation setup
     - ModelEval: Main evaluation loop controller
 """
 
-from flip.nvflare.controllers.cross_site_model_eval import CrossSiteModelEval
+from flip.nvflare.controllers.broadcast_task import BroadcastTask
 from flip.nvflare.controllers.fed_evaluation import ModelEval
 from flip.nvflare.controllers.init_evaluation import InitEvaluation
 from flip.nvflare.controllers.init_training import InitTraining
@@ -35,7 +35,7 @@ __all__ = [
     "InitTraining",
     "ScatterAndGather",
     "ScatterAndGatherLDM",
-    "CrossSiteModelEval",
+    "BroadcastTask",
     "InitEvaluation",
     "ModelEval",
 ]

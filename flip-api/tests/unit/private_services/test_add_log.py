@@ -17,6 +17,7 @@ from fastapi import HTTPException
 
 from flip_api.db.models.main_models import Trust
 from flip_api.domain.schemas.private import TrainingLog
+from flip_api.domain.schemas.types import FLLogEvent
 from flip_api.private_services.add_log import add_log_endpoint
 from flip_api.utils.logger import logger  # To assert logger calls
 
@@ -61,8 +62,12 @@ class TestAddLogEndpoint:
             model_id=model_id,
             log=sample_training_log.log,
             session=session,
+            success=True,
             trust=resolved_trust,
             fl_client_name=fl_client_name,
+            event_type=None,
+            global_round=None,
+            details=None,
         )
         assert response == {"detail": "Created"}
         # validate_trust_ids is called with the resolved trust's id.
@@ -144,3 +149,124 @@ class TestAddLogEndpoint:
 
         assert exc_info.value.status_code == 400
         assert "could not be resolved" in exc_info.value.detail.lower()
+
+    @patch("flip_api.private_services.add_log.resolve_trust_from_fl_client_name", return_value=resolved_trust)
+    @patch("flip_api.private_services.add_log.validate_trust_ids", return_value=True)
+    @patch("flip_api.private_services.add_log.add_log")
+    def test_success_false_is_persisted(self, mock_add_log, mock_validate, mock_resolve, mock_db_session):
+        """A failed log (handled exception) must not default back to success=True on write."""
+
+        failed_log = TrainingLog(fl_client_name=fl_client_name, log="trust exception: boom", success=False)
+
+        add_log_endpoint(model_id, failed_log, mock_db_session)
+
+        assert mock_add_log.call_args.kwargs["success"] is False
+
+    @patch("flip_api.private_services.add_log.resolve_trust_from_fl_client_name")
+    @patch("flip_api.private_services.add_log.add_log")
+    def test_hub_event_skips_trust_resolution(self, mock_add_log, mock_resolve, mock_db_session):
+        """A hub-attributed event (fl_client_name=None) never touches the slot-to-trust lookup."""
+
+        hub_event = TrainingLog(
+            event_type=FLLogEvent.ROUND_STARTED,
+            global_round=7,
+            details={"total_rounds": 15},
+        )
+
+        response = add_log_endpoint(model_id, hub_event, mock_db_session)
+
+        assert response == {"detail": "Created"}
+        mock_resolve.assert_not_called()
+        kwargs = mock_add_log.call_args.kwargs
+        assert kwargs["trust"] is None
+        assert kwargs["fl_client_name"] is None
+        assert kwargs["event_type"] == FLLogEvent.ROUND_STARTED
+        assert kwargs["global_round"] == 7
+        assert kwargs["details"] == {"total_rounds": 15}
+
+    @patch("flip_api.private_services.add_log.resolve_trust_from_fl_client_name", return_value=resolved_trust)
+    @patch("flip_api.private_services.add_log.validate_trust_ids", return_value=True)
+    @patch("flip_api.private_services.add_log.add_log")
+    def test_trust_event_forwards_event_fields(self, mock_add_log, mock_validate, mock_resolve, mock_db_session):
+        """A trust-attributed event resolves the trust exactly like free-text logs do."""
+
+        trust_event = TrainingLog(
+            fl_client_name=fl_client_name,
+            event_type=FLLogEvent.CLIENT_RESULT_RECEIVED,
+            global_round=3,
+            details={"size_bytes": 2400000},
+        )
+
+        add_log_endpoint(model_id, trust_event, mock_db_session)
+
+        kwargs = mock_add_log.call_args.kwargs
+        assert kwargs["trust"] is resolved_trust
+        assert kwargs["event_type"] == FLLogEvent.CLIENT_RESULT_RECEIVED
+        assert kwargs["global_round"] == 3
+        assert kwargs["details"] == {"size_bytes": 2400000}
+
+    @patch("flip_api.private_services.add_log.add_log")
+    def test_unknown_event_type_is_stored_not_rejected(self, mock_add_log, mock_db_session):
+        """A newer FL image's event must reach persistence: the vocabulary is plain
+        text end-to-end, and the renderer degrades unknown events at serve time."""
+
+        newer_image_event = TrainingLog(event_type="ROUND_CHECKPOINTED", global_round=4)
+
+        response = add_log_endpoint(model_id, newer_image_event, mock_db_session)
+
+        assert response == {"detail": "Created"}
+        assert mock_add_log.call_args.kwargs["event_type"] == "ROUND_CHECKPOINTED"
+
+    @patch("flip_api.private_services.add_log.resolve_trust_from_fl_client_name", return_value=None)
+    @patch("flip_api.private_services.add_log.add_log")
+    def test_unresolvable_error_report_is_kept_model_level(self, mock_add_log, mock_resolve, mock_db_session):
+        """A traceback must never be dropped: uploaded apps control the reported site
+        name, and a 400 here would strand the error in fl-server container logs while
+        the user's model sits red. Persist model-level, naming the sender in the text."""
+
+        error_report = TrainingLog(fl_client_name="mystery-host", log="trust exception: boom", success=False)
+
+        response = add_log_endpoint(model_id, error_report, mock_db_session)
+
+        assert response == {"detail": "Created"}
+        kwargs = mock_add_log.call_args.kwargs
+        assert kwargs["success"] is False
+        assert kwargs["trust"] is None
+        assert "mystery-host" in kwargs["log"]
+        assert "trust exception: boom" in kwargs["log"]
+        # The row must say WHY attribution failed — users can't see hub logs, and
+        # "unknown slot" vs "wrong model" point at different operator fixes.
+        assert "unknown FL kit slot" in kwargs["log"]
+
+    @patch("flip_api.private_services.add_log.resolve_trust_from_fl_client_name", return_value=resolved_trust)
+    @patch("flip_api.private_services.add_log.validate_trust_ids", return_value=False)
+    @patch("flip_api.private_services.add_log.add_log")
+    def test_unassociated_trust_error_report_is_kept_model_level(
+        self, mock_add_log, mock_validate, mock_resolve, mock_db_session
+    ):
+        error_report = TrainingLog(fl_client_name=fl_client_name, log="trust exception: boom", success=False)
+
+        response = add_log_endpoint(model_id, error_report, mock_db_session)
+
+        assert response == {"detail": "Created"}
+        kwargs = mock_add_log.call_args.kwargs
+        assert kwargs["success"] is False
+        assert kwargs["trust"] is None
+        assert "trust exception: boom" in kwargs["log"]
+        assert "not associated with this model" in kwargs["log"]
+
+    @patch("flip_api.private_services.add_log.resolve_trust_from_fl_client_name", return_value=None)
+    def test_unresolvable_typed_event_still_400s(self, mock_resolve, mock_db_session):
+        """Typed events carry no traceback; rejecting a misattributed count is safer
+        than storing it against nobody."""
+
+        trust_event = TrainingLog(
+            fl_client_name="mystery-host",
+            event_type=FLLogEvent.CLIENT_RESULT_RECEIVED,
+            global_round=2,
+        )
+
+        with pytest.raises(HTTPException) as exc_info:
+            add_log_endpoint(model_id, trust_event, mock_db_session)
+
+        assert exc_info.value.status_code == 400

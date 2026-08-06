@@ -23,6 +23,16 @@ services:
     restart: always
     ports:
       - "${OMOP_DB_PORT}:5432"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETUID
+      - SETGID
     environment:
       POSTGRES_USER: ${OMOP_POSTGRES_USER}
       POSTGRES_PASSWORD: ${OMOP_POSTGRES_PASSWORD}
@@ -36,6 +46,19 @@ services:
     ports:
       # - "${PACS_DICOM_PORT}:4242"
       - "${PACS_UI_PORT}:8042"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      # Legacy root-image compat: a pre-hardening orthanc image runs its
+      # entrypoint as root, and cap_drop: ALL strips root's implicit DAC bypass
+      # (hostid write) and FOWNER (plugin symlink fixup). Inert for the current
+      # image, which runs USER orthanc (uid 999) from PID 1 — see
+      # deploy/README.md ("Linux Capability Restrictions").
+      - DAC_OVERRIDE
+      - FOWNER
     volumes:
       - ${ORTHANC_STORAGE_DIR:-/opt/flip/orthanc/orthanc-storage}:/var/lib/orthanc/db
     environment:
@@ -53,6 +76,12 @@ services:
     command: ["uv", "run", "python", "-m", "uvicorn", "imaging_api.main:app", "--host", "0.0.0.0", "--port", "8000"]
     ports:
       - "${IMAGING_API_PORT}:8000"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
     environment:
       # XNAT_URL, PACS_ID, XNAT_DATABASE_URL, DATA_ACCESS_API_URL and
       # TRUST_INTERNAL_SERVICE_KEY_HEADER are internal-topology constants and now
@@ -61,6 +90,12 @@ services:
       XNAT_PORT: ${XNAT_PORT}
       XNAT_SERVICE_USER: ${XNAT_SERVICE_USER}
       XNAT_SERVICE_PASSWORD: ${XNAT_SERVICE_PASSWORD}
+      # Minted per-trust XNAT DB password (FLIP-PT-056): imaging_api/config.py
+      # splices it over the password in the XNAT_DATABASE_URL default, keeping
+      # the URL itself a non-secret topology constant. Empty/placeholder (a
+      # pre-mint kit) is a documented no-op there, so unconditional injection
+      # is safe.
+      XNAT_DATASOURCE_PASSWORD: ${XNAT_DATASOURCE_PASSWORD}
       AES_KEY_BASE64: ${AES_KEY_BASE64}
       ENV: production
       BASE_IMAGES_DOWNLOAD_DIR: /app/data/images
@@ -78,6 +113,12 @@ services:
     image: ghcr.io/londonaicentre/data-access-api:${DOCKER_TAG}
     ports:
       - "${DATA_ACCESS_API_PORT}:8000"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
     environment:
       # OMOP_DB_SERVICE_NAME and TRUST_INTERNAL_SERVICE_KEY_HEADER default in
       # data_access_api/config.py — not injected (see imaging-api note above).
@@ -88,6 +129,10 @@ services:
       ENV: production
       LOG_LEVEL: ${TRUST_LOG_LEVEL}
       TRUST_INTERNAL_SERVICE_KEY: ${TRUST_INTERNAL_SERVICE_KEY}
+      # The trust's own minimum-cohort disclosure floor. Operator-owned: raise it in the
+      # kit file to release less. The `:-10` keeps an unset variable from arriving as an
+      # empty string, which pydantic would reject against `int`.
+      COHORT_QUERY_THRESHOLD: ${COHORT_QUERY_THRESHOLD:-10}
 
   trust-api:
     image: ghcr.io/londonaicentre/trust-api:${DOCKER_TAG}
@@ -95,6 +140,12 @@ services:
     # Security group blocks all inbound — only reachable via SSM tunnel.
     ports:
       - "${TRUST_API_PORT}:8000"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
     environment:
       CENTRAL_HUB_API_URL: ${CENTRAL_HUB_API_URL}
       # DATA_ACCESS_API_URL, IMAGING_API_URL and TRUST_INTERNAL_SERVICE_KEY_HEADER
@@ -116,6 +167,12 @@ services:
     command: -config.file=/etc/loki/loki-config.yml
     ports:
       - "${LOKI_PORT}:3100"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
     volumes:
       - ${OBSERVABILITY_CONFIG_DIR:-/opt/flip/config/observability}/loki/loki-config.yml:/etc/loki/loki-config.yml:ro
       - ${LOKI_DATA_VOLUME:-trust-local-loki-data}:/loki
@@ -127,6 +184,12 @@ services:
       - run
       - --server.http.listen-addr=0.0.0.0:12345
       - /etc/alloy/config.alloy
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
     volumes:
       - ${OBSERVABILITY_CONFIG_DIR:-/opt/flip/config/observability}/alloy/config.alloy:/etc/alloy/config.alloy:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
@@ -138,6 +201,12 @@ services:
     restart: always
     ports:
       - "${GRAFANA_PORT}:3000"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
     environment:
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD}
     volumes:

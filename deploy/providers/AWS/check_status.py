@@ -197,6 +197,23 @@ def run_aws_command(args: list[str]) -> tuple[bool, str]:
         return False, str(e)
 
 
+def format_ssm_ping_status(success: bool, ping_status: str) -> str:
+    """Format an SSM ping-status query result for operator output.
+
+    Args:
+        success: Whether the AWS CLI command completed successfully.
+        ping_status: Stripped stdout from the command, or its error description.
+
+    Returns:
+        A clear status description for the deployment report.
+    """
+    if not success:
+        return f"query failed: {ping_status or 'unknown error'}"
+    if ping_status in {"", "None"}:
+        return "not registered"
+    return ping_status
+
+
 def run_ssh_command(ssh_key: str, host: str, command: str, timeout: int = 10) -> tuple[bool, str]:
     """Run a command via SSH.
 
@@ -452,10 +469,10 @@ def check_ecs_cluster() -> None:
 
 
 def check_vpc_endpoints() -> None:
-    """Verify essential VPC interface endpoints are AVAILABLE.
+    """Verify configured AWS VPC interface endpoints are AVAILABLE.
 
-    Detects: missing or broken endpoints that would block ECS Fargate tasks
-    from pulling images (ECR), reading secrets (Secrets Manager), or logging.
+    Detects broken endpoints that would block ECS Fargate tasks from reading
+    parameters or secrets, or from writing logs.
     """
     print_status("INFO", "Checking VPC endpoints...")
     success, output = run_aws_command([
@@ -478,19 +495,10 @@ def check_vpc_endpoints() -> None:
         print_status("WARN", "Could not parse VPC endpoint data")
         return
 
-    essential_prefixes = [
-        "com.amazonaws.",
-        ".ecr.dkr",
-        ".ecr.api",
-        ".ssm",
-        ".secretsmanager",
-        ".logs",
-    ]
     for ep in endpoints:
         name = ep.get("Name", "")
         state = ep.get("State", "?")
-        is_essential = any(p in name for p in essential_prefixes)
-        if is_essential:
+        if name.startswith("com.amazonaws."):
             if state == "available":
                 print_status("PASS", f"VPC endpoint {name.split('.')[-1]} is {state}")
             else:
@@ -515,23 +523,54 @@ def check_trust_pipeline() -> None:
 
 
 def check_xnat_health() -> None:
-    """Verify XNAT is serving its API (not a setup page)."""
+    """Verify XNAT is serving its API (not a setup page).
+
+    XNAT REST endpoints use session-based auth: obtain a JSESSIONID cookie
+    via Basic Auth on ``POST /data/JSESSION``, then present that cookie on
+    subsequent API calls.
+    """
     print_status("INFO", "Checking XNAT API health (not setup page)...")
 
     py = """\
-import os, requests
-r = requests.get(
-    "http://xnat-web:8080/data/projects",
-    auth=(os.environ.get("XNAT_SERVICE_USER", "flipServiceAccount"),
-          os.environ.get("XNAT_SERVICE_PASSWORD", "")),
-    timeout=10,
-)
-print(r.status_code, r.headers.get("content-type", "").split(";")[0])
+import os, re, requests
+
+XNAT_URL = "http://xnat-web:8080"
+USER = os.environ.get("XNAT_SERVICE_USER", "flipServiceAccount")
+PASS = os.environ.get("XNAT_SERVICE_PASSWORD", "")
+
+# Step 1: Obtain JSESSIONID via XNAT session endpoint
+session_url = f"{XNAT_URL}/data/JSESSION"
+creds = (USER, PASS)
+session_resp = requests.post(session_url, auth=creds, timeout=10)
+
+if session_resp.status_code != 200:
+    # Print real content-type — caller distinguishes 401 (auth failure)
+    # from non-HTTP responses.
+    print(session_resp.status_code,
+          session_resp.headers.get("content-type", "").split(";")[0])
+else:
+    token = session_resp.text.strip()
+    # Validate JSESSIONID token before using as a cookie header value.
+    # A setup page returns multi-line HTML — feeding that into a Cookie
+    # header raises InvalidHeader, which masks the XNAT problem as an
+    # SSH failure.
+    if not re.match(r'^[A-Za-z0-9]+$', token):
+        print("0", f"invalid-token:{token[:100]}")
+    else:
+        # Step 2: Use session cookie to call API
+        headers = {"Cookie": f"JSESSIONID={token}"}
+        r = requests.get(
+            f"{XNAT_URL}/data/projects", headers=headers, timeout=10
+        )
+        print(r.status_code, r.headers.get("content-type", "").split(";")[0])
 """
     success, output = run_remote_python("flip-trust", "trust1-imaging-api-1", py, timeout=25)
 
     if not success or "Traceback" in output:
-        print_status("INFO", "Could not check XNAT (SSH unavailable)")
+        if not success and "Traceback" not in output:
+            print_status("INFO", "Could not check XNAT (SSH unavailable)")
+        else:
+            print_status("FAIL", "XNAT health check script crashed — XNAT may be in setup mode")
         return
 
     parts = output.strip().split()
@@ -541,12 +580,14 @@ print(r.status_code, r.headers.get("content-type", "").split(";")[0])
 
     try:
         code = int(parts[0])
-        ctype = parts[1] if len(parts) > 1 else ""
-    except (ValueError, IndexError):
+        ctype = " ".join(parts[1:])
+    except ValueError:
         print_status("WARN", f"Could not parse XNAT response: {output[:100]}")
         return
 
-    if code == 200 and "html" not in ctype.lower():
+    if code == 0:
+        print_status("FAIL", f"XNAT session endpoint returned invalid token ({ctype})")
+    elif code == 200 and "html" not in ctype.lower():
         print_status("PASS", f"XNAT API responding (HTTP {code})")
     elif code == 200 and "html" in ctype.lower():
         print_status("FAIL", "XNAT returned HTML (setup page?) — restart XNAT web container")
@@ -986,17 +1027,15 @@ def main(
     print_section("Fetching Terraform Outputs")
 
     # Get Terraform outputs
-    central_hub_ip = get_terraform_output("Ec2PrivateIp")
     central_hub_id = get_terraform_output("Ec2InstanceId")
 
     trust_id = get_terraform_output("TrustEc2InstanceId")
 
-    if not central_hub_ip:
-        print_status("FAIL", "Could not retrieve Central Hub EC2 Private IP from Terraform outputs")
+    if not central_hub_id:
+        print_status("FAIL", "Could not retrieve Central Hub SSM bastion instance ID from Terraform outputs")
         sys.exit(1)
 
-    print_status("PASS", f"Central Hub EC2 Private IP: {central_hub_ip}")
-    print_status("PASS", f"Central Hub EC2 ID: {central_hub_id}")
+    print_status("PASS", f"Central Hub SSM bastion ID: {central_hub_id}")
 
     if trust_id:
         print_status("PASS", f"Trust EC2 ID: {trust_id}")
@@ -1019,9 +1058,24 @@ def main(
             "text",
         ])
         if success and output == "running":
-            print_status("PASS", "Central Hub EC2 instance is running")
+            print_status("PASS", "Central Hub SSM bastion is running")
         else:
-            print_status("FAIL", f"Central Hub EC2 instance state: {output}")
+            print_status("FAIL", f"Central Hub SSM bastion state: {output}")
+
+        success, ping_status = run_aws_command([
+            "ssm",
+            "describe-instance-information",
+            "--filters",
+            f"Key=InstanceIds,Values={central_hub_id}",
+            "--query",
+            "InstanceInformationList[0].PingStatus",
+            "--output",
+            "text",
+        ])
+        if success and ping_status == "Online":
+            print_status("PASS", "Central Hub bastion is online in SSM")
+        else:
+            print_status("FAIL", f"Central Hub bastion SSM status: {format_ssm_ping_status(success, ping_status)}")
 
     # Check Trust EC2 instance status if it exists
     if trust_id:
@@ -1054,6 +1108,20 @@ def main(
         ])
         if success and sg_id:
             print_status("PASS", f"Security Group: {sg_id}")
+            success, ingress_count = run_aws_command([
+                "ec2",
+                "describe-security-groups",
+                "--group-ids",
+                sg_id,
+                "--query",
+                "length(SecurityGroups[0].IpPermissions)",
+                "--output",
+                "text",
+            ])
+            if success and ingress_count == "0":
+                print_status("PASS", "Central Hub bastion security group has no inbound rules")
+            else:
+                print_status("FAIL", f"Central Hub bastion security group inbound rule count: {ingress_count}")
         else:
             print_status("WARN", "Could not retrieve Security Group ID")
 
@@ -1158,7 +1226,8 @@ def main(
                     if failure_reason == "CAA_ERROR":
                         print_status(
                             "INFO",
-                            "CAA_ERROR: Domain has CAA records that block AWS ACM. Contact domain admin to add 'amazon.com' to CAA records.",
+                            "CAA_ERROR: Domain has CAA records that block AWS ACM. "
+                            "Contact domain admin to add 'amazon.com' to CAA records.",
                         )
                 else:
                     print_status("WARN", f"Certificate status: {status}")
@@ -1181,9 +1250,10 @@ def main(
             with socket.create_connection((alb_subdomain, 443), timeout=10) as sock:
                 with context.wrap_socket(sock, server_hostname=alb_subdomain) as ssock:
                     cert = ssock.getpeercert()
+                    common_name = cert.get("subject", [[("commonName", "N/A")]])[0][0][1]
                     print_status(
                         "PASS",
-                        f"HTTPS connection successful - Certificate issued to: {cert.get('subject', [[('commonName', 'N/A')]])[0][0][1]}",
+                        f"HTTPS connection successful - Certificate issued to: {common_name}",
                     )
 
                     # Check certificate expiry
@@ -1294,7 +1364,9 @@ def main(
             # absence as WARN, not FAIL.
             trust_endpoints = [
                 ("XNAT", "http://127.0.0.1:8104/", ["200", "302"], "FAIL"),
-                ("Orthanc", "http://127.0.0.1:8042/", ["200", "401"], "FAIL"),
+                # Auth is always enforced (FLIP-PT-091): a 200 without
+                # credentials means an unauthenticated PACS — fail.
+                ("Orthanc", "http://127.0.0.1:8042/", ["401"], "FAIL"),
                 ("trust-api", "http://127.0.0.1:8020/health", ["200"], "FAIL"),
                 ("imaging-api", "http://127.0.0.1:8001/health", ["200"], "FAIL"),
                 ("data-access-api", "http://127.0.0.1:8010/health", ["200"], "FAIL"),
@@ -1345,7 +1417,7 @@ def main(
 
     # Central Hub EC2 is now an SSM bastion only — flip-api, fl-api, and
     # fl-server all run as ECS Fargate tasks. We still check the bastion for
-    # disk/memory headroom (SSM agent, CloudWatch agent, occasional ad-hoc
+    # disk/memory headroom (SSM agent, PostgreSQL client, occasional ad-hoc
     # diagnostics), but the application-container checks moved to the ECS
     # section (check_ecs_services_running, check_ecs_target_group_health).
     if not skip_docker:
@@ -1528,43 +1600,11 @@ def main(
             else:
                 print_status("WARN", "Cannot SSH to Trust EC2 (check security groups and key)")
 
-    # CloudWatch Logs check
-    print_section("CloudWatch Logs")
+    # The Central Hub bastion deliberately has no CloudWatch agent. Application
+    # logs are checked through the ECS log groups; only the Trust EC2 host-level
+    # log group remains here.
+    print_section("Trust EC2 CloudWatch Logs")
 
-    print_status("INFO", "Checking Central Hub CloudWatch log groups...")
-    log_group = "/aws/ec2/flip"
-    success, output = run_aws_command(["logs", "describe-log-groups", "--log-group-name-prefix", log_group])
-    if success and log_group in output:
-        print_status("PASS", f"CloudWatch log group '{log_group}' exists")
-
-        # Check for recent log streams
-        success, streams_output = run_aws_command([
-            "logs",
-            "describe-log-streams",
-            "--log-group-name",
-            log_group,
-            "--order-by",
-            "LastEventTime",
-            "--descending",
-            "--max-items",
-            "1",
-        ])
-        if success:
-            try:
-                streams_data = json.loads(streams_output)
-                if streams_data.get("logStreams"):
-                    print_status("PASS", "Recent Central Hub log streams found")
-                else:
-                    print_status(
-                        "WARN",
-                        "No recent Central Hub log streams (instance may not be sending logs yet)",
-                    )
-            except json.JSONDecodeError:
-                print_status("WARN", "Could not parse log streams data")
-    else:
-        print_status("WARN", "Central Hub CloudWatch log group not found")
-
-    # Check Trust EC2 CloudWatch logs if it exists
     if trust_id:
         print_status("INFO", "Checking Trust EC2 CloudWatch log groups...")
         trust_log_group = "/aws/ec2/flip-trust"

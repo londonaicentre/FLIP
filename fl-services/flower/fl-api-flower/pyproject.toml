@@ -18,7 +18,7 @@ description = "FL API for Flower deployment runtime."
 requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.115.11",
-    "flwr>=1.27.0",
+    "flwr>=1.32.0",
     "pydantic>=2.11.0",
     "pydantic-settings>=2.11.0",
     "tomlkit>=0.14.0",
@@ -37,6 +37,14 @@ dev = [
     "types-requests>=2.32.0.20250515",
 ]
 
+[tool.uv]
+# 72h supply-chain cooldown; see CONTRIBUTING.md ("Dependency cooldown").
+exclude-newer = "3 days"
+# flwr pins cryptography<47.0.0 even in its latest release (GHSA-537c-gmf6-5ccf
+# needs >=48.0.1); override past that ceiling since flwr only uses cryptography
+# for TLS cert loading in secure aggregation, a stable surface across majors.
+override-dependencies = ["cryptography>=50.0.0"]
+
 [tool.coverage.report]
 exclude_lines = ["if __name__ == .__main__.:"]
 omit = ["*.venv/*", "*/tests/*", "*/__init__.py"]
@@ -51,4 +59,4 @@ line-length = 120
  
 [tool.ruff.lint]
 preview = true
-select = ['I', 'F', 'E', 'W', 'PT']
+select = ['I', 'F', 'E', 'W', 'PT', 'UP006', 'UP007', 'UP035', 'UP042', 'UP045']

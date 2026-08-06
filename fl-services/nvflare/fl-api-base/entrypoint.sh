@@ -14,8 +14,23 @@
 
 set -e
 
+ENV=${ENV:-development}
+echo "🌍 Environment: $ENV"
+
+# uvicorn's --reload spawns a supervisor process that survives a crash of the
+# worker it manages. In production that turns a failed startup (e.g. the FLARE
+# admin session init in app.py's startup event) into a zombie: the worker dies
+# but the supervisor keeps PID 1 alive, so the container stays "up" while the
+# app is dead and ECS never replaces it (FLIP#593 pt.1). Only reload in dev;
+# production/staging run a single process so a dead app is a dead container.
+if [ "$ENV" = "production" ] || [ "$ENV" = "staging" ]; then
+    RELOAD_OPTS=""
+else
+    RELOAD_OPTS="--reload --reload-dir ./fl_api"
+fi
+
 DEBUG_CMD="-Xfrozen_modules=off -m debugpy --listen 0.0.0.0:5679 --wait-for-client"
-API_CMD="-m uvicorn fl_api.app:app --host 0.0.0.0 --port 8000 --reload --reload-dir ./fl_api"
+API_CMD="-m uvicorn fl_api.app:app --host 0.0.0.0 --port 8000 $RELOAD_OPTS"
 
 
 if [ "$DEBUG" = "true" ]; then

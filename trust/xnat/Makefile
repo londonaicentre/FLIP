@@ -15,10 +15,12 @@
 	create-xnat-network test unit_test local_test
 
 # Mirrors trust/Makefile: no hub `.env.*` include. Runtime config (DOCKER_REGISTRY,
-# DOCKER_TAG, XNAT_PORT, XNAT_ADMIN_*, XNAT_SERVICE_*, XNAT_DATABASE_URL) is
-# pulled from the kit file via `-include $(KIT_FILE)` below; XNAT-internal
-# build args (XNAT_VERSION, XNAT_DATASOURCE_*, XNAT_SMTP_*, heap, paths) come
-# from trust/xnat/.env. The dev-admin build path (xnat-war-download /
+# DOCKER_TAG, XNAT_PORT, XNAT_ADMIN_*, XNAT_SERVICE_*, XNAT_DATABASE_URL) and the
+# XNAT stack passwords (XNAT_DATASOURCE_PASSWORD, XNAT_DATASOURCE_ADMIN_PASSWORD,
+# XNAT_ACTIVEMQ_PASSWORD — minted by `make register-trust`) are pulled from the
+# kit file via `-include $(KIT_FILE)` below; non-secret XNAT-internal config
+# (XNAT_VERSION, datasource driver/URL/usernames, XNAT_SMTP_*, heap, paths) comes
+# from trust/xnat/.env. Passwords are runtime env only — never build args. The dev-admin build path (xnat-war-download /
 # xnat-plugins-download) needs FLIP_ARTIFACTS_BUCKET_NAME — pass it on the
 # CLI if invoking those targets directly.
 
@@ -125,6 +127,55 @@ define require_kit
 	fi
 endef
 
+# Deploy-time guard: every XNAT password the compose stacks substitute is a
+# bare ${VAR} with no default (docker-compose-stack.yml), so an empty value
+# silently brings up a broken/insecure XNAT — admin auth 401s ("Site has not
+# yet been configured" forever, see the export note above) and Postgres comes
+# up with a blank superuser password — instead of failing. Refuse to deploy if
+# any are empty. All of these come from the kit file: XNAT_ADMIN_*/XNAT_SERVICE_*
+# are operator-set, XNAT_DATASOURCE_* are minted by `make register-trust` /
+# `make generate-xnat-credentials`. Checks the exported process env (the same
+# values `docker stack deploy` substitutes), not just Make vars.
+# Beyond emptiness: refuse the committed kit-template placeholder for any of
+# them, and the historical weak defaults for the minted XNAT_DATASOURCE_* pair
+# (XNAT_ADMIN_*/XNAT_SERVICE_* are operator-set and legitimately simple in dev
+# kits, so only the placeholder is rejected there). A skipped mint would
+# otherwise reach the stock Postgres entrypoint as POSTGRES_PASSWORD — applied
+# silently at first initdb, leaving the superuser password set to a literal
+# committed across this public repo. xnat-web re-checks
+# XNAT_DATASOURCE_PASSWORD at container start (wait-for-postgres.sh) and the
+# xnat-db image guards both DB passwords itself (guard-xnat-db-passwords.sh,
+# covering non-make deploys such as the K8s chart); this check just fails
+# earliest, before a half-configured stack is deployed.
+XNAT_REQUIRED_PASSWORDS := XNAT_ADMIN_INITIAL_PASSWORD XNAT_ADMIN_PASSWORD \
+	XNAT_SERVICE_PASSWORD XNAT_DATASOURCE_PASSWORD XNAT_DATASOURCE_ADMIN_PASSWORD
+XNAT_MINTED_PASSWORDS := XNAT_DATASOURCE_PASSWORD XNAT_DATASOURCE_ADMIN_PASSWORD
+XNAT_CREDENTIAL_PLACEHOLDER := <run-make-generate-xnat-credentials>
+define require_xnat_passwords
+	@missing=""; weak=""; \
+	for v in $(XNAT_REQUIRED_PASSWORDS); do \
+		val="$$(printenv $$v 2>/dev/null)"; \
+		if [ -z "$$val" ]; then missing="$$missing $$v"; \
+		elif [ "$$val" = "$(XNAT_CREDENTIAL_PLACEHOLDER)" ]; then weak="$$weak $$v"; fi; \
+	done; \
+	for v in $(XNAT_MINTED_PASSWORDS); do \
+		case "$$(printenv $$v 2>/dev/null)" in \
+			xnat|password|admin|postgres) weak="$$weak $$v";; \
+		esac; \
+	done; \
+	if [ -n "$$missing$$weak" ]; then \
+		echo "❌ Refusing to deploy XNAT for KIT=$(KIT):"; \
+		if [ -n "$$missing" ]; then echo "   empty password(s):$$missing"; fi; \
+		if [ -n "$$weak" ]; then echo "   placeholder/weak password(s):$$weak"; fi; \
+		echo "   These are substituted into the compose stack with no default, so an empty or"; \
+		echo "   placeholder value yields a broken/insecure XNAT (Postgres applies its passwords"; \
+		echo "   silently at first initdb). Set XNAT_ADMIN_*/XNAT_SERVICE_* in the kit file"; \
+		echo "   ($(KIT_FILE)); mint XNAT_DATASOURCE_*/XNAT_ACTIVEMQ_PASSWORD into it"; \
+		echo "   with 'make register-trust KIT=$(KIT)' or 'make generate-xnat-credentials'."; \
+		exit 1; \
+	fi
+endef
+
 # Build XNAT Docker images locally (mirrors CI workflow)
 # Requires AWS CLI access to download WAR and plugins from S3
 build:
@@ -134,15 +185,9 @@ build:
 	@echo "🐳 Building xnat-web image..."
 	docker build \
 		--build-arg XNAT_VERSION=${XNAT_VERSION} \
-		--build-arg XNAT_SMTP_ENABLED=${XNAT_SMTP_ENABLED} \
-		--build-arg XNAT_DATASOURCE_DRIVER=${XNAT_DATASOURCE_DRIVER} \
-		--build-arg XNAT_DATASOURCE_USERNAME=${XNAT_DATASOURCE_USERNAME} \
-		--build-arg XNAT_DATASOURCE_PASSWORD=${XNAT_DATASOURCE_PASSWORD} \
-		--build-arg XNAT_DATASOURCE_URL=${XNAT_DATASOURCE_URL} \
 		--build-arg TOMCAT_XNAT_FOLDER=${TOMCAT_XNAT_FOLDER} \
 		--build-arg XNAT_ROOT=${XNAT_ROOT} \
 		--build-arg XNAT_HOME=${XNAT_HOME} \
-		--build-arg XNAT_EMAIL=${XNAT_EMAIL} \
 		-t ${DOCKER_REGISTRY}xnat-web:${DOCKER_TAG} \
 		xnat/
 	@echo "🐳 Building xnat-db image..."
@@ -177,6 +222,7 @@ up:
 # trust/Makefile's up-trust calls this so a trust comes up complete.
 up-xnat: create-xnat-network
 	$(require_kit)
+	$(require_xnat_passwords)
 	$(MAKE) down-xnat KIT=$(KIT)
 	$(MAKE) xnat-reset KIT=$(KIT)
 	XNAT_PATH=${XNAT_PATH} \
@@ -233,13 +279,16 @@ xnat-war-download:
 		echo "✅ XNAT WAR already exists locally."; \
 	else \
 		echo "📦 Downloading XNAT WAR from S3..."; \
-		aws s3 cp "s3://$(FLIP_ARTIFACTS_BUCKET_NAME)/xnat/xnat-web-$(XNAT_VERSION).war" \
+		aws s3 cp "s3://$(FLIP_ARTIFACTS_BUCKET_NAME)/xnat-$(XNAT_VERSION)/xnat-web-$(XNAT_VERSION).war" \
 			"xnat/build-artifacts/xnat-web-$(XNAT_VERSION).war"; \
 	fi
 
-# Ensure required XNAT plugins are present locally (skips S3 sync if all are available)
+# Ensure required XNAT plugins are present locally (skips S3 sync if all are available).
+# The S3 artifact set is keyed by XNAT version — s3://<bucket>/xnat-<version>/{xnat-web-<version>.war,
+# plugins/} — so different branches (e.g. main vs develop across an XNAT upgrade) can build against
+# different WAR + plugin rosters without clobbering each other.
 xnat-plugins-download:
-	@./scripts/ensure_plugins.sh "xnat/plugins" "$(FLIP_ARTIFACTS_BUCKET_NAME)"
+	@./scripts/ensure_plugins.sh "xnat/plugins" "$(FLIP_ARTIFACTS_BUCKET_NAME)" "xnat-$(XNAT_VERSION)/plugins"
 
 # Creates the data-volume directory structure for one trust's XNAT stack and
 # wipes any previous data. Docker Swarm requires host directories to exist
@@ -287,6 +336,11 @@ xnat-reset:
 
 # Configure an XNAT instance with initial settings and run dcm2niix setup.
 # Usage: make xnat-configure XNAT_PROJECT=<stack-name>
+# The `rm -f` before each tee: /data/xnat/config is a host bind mount, and log
+# files left by pre-hardening deploys (root-running xnat-web) are root-owned —
+# the non-root xnat user can't open them for truncation (tee still streams but
+# exits non-zero under pipefail, aborting the configure chain). It can unlink
+# them, though: the config dir itself is xnat-writable.
 xnat-configure:
 	@[ -n "$(XNAT_PROJECT)" ] || (echo "❌ XNAT_PROJECT is required"; exit 1)
 	@echo "⏳ Waiting for $(XNAT_PROJECT)_xnat-web container to be ready..."
@@ -295,8 +349,9 @@ xnat-configure:
 		echo "  Waiting for container..."; sleep 5; elapsed=$$((elapsed + 5)); \
 	done
 	CONTAINER=$$(docker ps --filter "name=$(XNAT_PROJECT)_xnat-web" -q); \
-	docker exec $$CONTAINER bash -c 'set -o pipefail; cd /data/xnat/config && LOG_FILE="configure-xnat-$(XNAT_PROJECT).log" && bash configure-xnat.sh 2>&1 | tee "$$LOG_FILE"'; \
-	docker exec $$CONTAINER bash -c 'set -o pipefail; cd /data/xnat/config && LOG_FILE="configure-dcm2niix-$(XNAT_PROJECT).log" && bash configure-dcm2niix.sh 2>&1 | tee "$$LOG_FILE"'
+	[ -n "$$CONTAINER" ] || { echo "❌ ERROR: $(XNAT_PROJECT)_xnat-web container not found at configure time"; exit 1; }; \
+	docker exec $$CONTAINER bash -c 'set -o pipefail; cd /data/xnat/config && LOG_FILE="configure-xnat-$(XNAT_PROJECT).log" && rm -f "$$LOG_FILE" && bash configure-xnat.sh 2>&1 | tee "$$LOG_FILE"' && \
+	docker exec $$CONTAINER bash -c 'set -o pipefail; cd /data/xnat/config && LOG_FILE="configure-dcm2niix-$(XNAT_PROJECT).log" && rm -f "$$LOG_FILE" && bash configure-dcm2niix.sh 2>&1 | tee "$$LOG_FILE"'
 
 create-xnat-network:
 	$(require_kit)

@@ -8,7 +8,6 @@ FLIP components
    components/architecture-overview
    components/component-fl-nodes
    components/component-omop-database
-   components/component-user-roles
    components/component-xnat
    components/component-logging-stack
 

@@ -21,6 +21,7 @@ from sqlmodel import Session, col, select
 from flip_api.db.models.main_models import (
     FLJob,
     FLKitSlot,
+    FLLogs,
     FLNets,
     FLScheduler,
     Model,
@@ -37,8 +38,9 @@ from flip_api.domain.schemas.status import (
     ModelStatus,
     NetStatus,
 )
-from flip_api.domain.schemas.types import FLBackend
+from flip_api.domain.schemas.types import FLBackend, FLLogEvent
 from flip_api.fl_services.services.fl_service import (
+    _raise_if_job_aborted,
     bundle_flower_application,
     bundle_nvflare_application,
     get_bundle_urls,
@@ -46,7 +48,7 @@ from flip_api.fl_services.services.fl_service import (
     validate_client_availability,
 )
 from flip_api.model_services.services.model_service import add_log, update_model_status, validate_trust_ids
-from flip_api.utils.exceptions import DatabaseError, NotFoundError
+from flip_api.utils.exceptions import DatabaseError, JobAbortedError, NotFoundError
 from flip_api.utils.logger import logger
 
 
@@ -115,10 +117,122 @@ def remove_job_from_queue(model_id: UUID, session: Session) -> None:
         session.commit()
         logger.info("Set job(s) as deleted")
 
+        # Deleting a queued job re-ranks everything behind it.
+        log_queue_positions(session)
+
     except SQLAlchemyError as e:
         session.rollback()
         logger.error(f"Error removing job from queue: {e}")
         raise DatabaseError("Error removing job from queue") from e
+
+
+def log_queue_positions(session: Session) -> None:
+    """Emit one typed activity row per queued job whose queue position changed.
+
+    The FL queue is ``FLJob`` rows in ``QUEUED`` status, ordered by ``created``
+    ascending — exactly the order ``check_for_queued_jobs`` picks from, so
+    position 1 is the next model to start when a net frees up. For each queued
+    job the last logged ``QUEUE_POSITION`` row is compared (keyed by job id, so
+    a re-initiated model always re-logs its first position); a row is written
+    only when the position is new or changed, making the function idempotent —
+    callers invoke it after any queue mutation without worrying about noise.
+    Rows are batched into a single commit so a deep queue never costs O(N)
+    commits per mutation.
+
+    Idempotence holds for serialized callers only: emit-on-change is a
+    read-then-write with nothing locked, so concurrent calls (the scheduler
+    tick on its ``BackgroundScheduler`` thread vs a request thread, or a
+    second flip-api replica) can both read the same prior rows and both
+    write, leaving duplicate — or transiently contradictory — feed rows.
+    That is tolerated: positions are a display nicety and the next mutation
+    self-heals. The hub currently runs one flip-api replica with a single
+    Uvicorn worker (ECS ``desired_count = 1``, no autoscaling; ``fastapi
+    run`` without ``--workers``), so only in-process thread interleaving can
+    race. Scaling flip-api out multiplies the emission sites per tick — close
+    the race then with ``SELECT ... FOR UPDATE`` on the queued jobs or a
+    partial unique index over the ``details`` (job_id, position) pair.
+
+    Positions are a display nicety: any failure is logged, the batch is rolled
+    back, and nothing is raised — an emission problem can never wedge the
+    scheduler tick or the caller's queue mutation. **Precondition:** call this
+    only after the caller has committed its own mutation; the failure-path
+    rollback would otherwise discard the caller's uncommitted state.
+
+    Args:
+        session (Session): The database session.
+
+    Returns:
+        None
+    """
+    try:
+        # id is the tiebreak on identical created timestamps so this ranking,
+        # queued_positions_by_model and check_for_queued_jobs can never disagree.
+        queued_jobs = session.exec(
+            select(FLJob)
+            .where(FLJob.status == JobStatus.QUEUED)
+            .order_by(cast(Column, FLJob.created).asc(), cast(Column, FLJob.id).asc())
+        ).all()
+        if not queued_jobs:
+            return
+
+        # DISTINCT ON collapses each job's history to its newest row inside
+        # Postgres, and only the compared details payload is fetched — a
+        # model's QUEUE_POSITION rows accumulate for life (each drain of a
+        # depth-N queue writes O(N^2) rows in total), so materialising every
+        # historical row as a full ORM object would grow monotonically with
+        # usage. If this scan ever shows up in slow-query logs regardless, the
+        # next lever is an index on (model_id, event_type) in a future
+        # Alembic revision.
+        prior_job_id = col(FLLogs.details)["job_id"].astext
+        prior_details = session.exec(
+            select(cast(Column, FLLogs.details))
+            .where(
+                col(FLLogs.model_id).in_([job.model_id for job in queued_jobs]),
+                FLLogs.event_type == FLLogEvent.QUEUE_POSITION.value,
+            )
+            .distinct(prior_job_id)
+            .order_by(prior_job_id, cast(Column, FLLogs.log_date).desc())
+        ).all()
+        # Keyed by job id (not model id): a model can hold two QUEUED jobs (no
+        # uniqueness on FLJob.model_id), and a model-keyed lookup would let the
+        # newest row suppress one job while forcing the other to re-emit forever.
+        # setdefault keeps first-seen-newest as defense in depth should the
+        # query ever hand back more than one row per job.
+        last_details_by_job: dict[str, dict] = {}
+        for row_details in prior_details:
+            row_job_id = (row_details or {}).get("job_id")
+            if isinstance(row_job_id, str):
+                last_details_by_job.setdefault(row_job_id, row_details or {})
+
+        emitted = False
+        for position, job in enumerate(queued_jobs, start=1):
+            if last_details_by_job.get(str(job.id), {}).get("position") == position:
+                continue
+            # A non-None transaction makes add_log skip its per-row commit; the
+            # whole batch lands in the single commit below.
+            add_log(
+                job.model_id,
+                None,
+                session,
+                event_type=FLLogEvent.QUEUE_POSITION.value,
+                details={"position": position, "job_id": str(job.id)},
+                transaction=session,
+            )
+            emitted = True
+        if emitted:
+            session.commit()
+    except Exception:
+        logger.exception("Failed to emit queue-position logs")
+        try:
+            session.rollback()
+        except Exception:
+            # A session whose rollback failed raises PendingRollbackError on
+            # every subsequent use — handed back to run_jobs_core it would fail
+            # the training start and wedge the net. invalidate() discards the
+            # broken connection without running ROLLBACK on it, leaving the
+            # session reusable on a fresh connection.
+            logger.exception("Failed to roll back queue-position emission; invalidating session")
+            session.invalidate()
 
 
 def revert_scheduler_pickup(scheduler_id: UUID, session: Session) -> None:
@@ -154,6 +268,43 @@ def revert_scheduler_pickup(scheduler_id: UUID, session: Session) -> None:
         session.rollback()
         logger.error(f"Error reverting scheduler pickup: {e}")
         raise DatabaseError("Error reverting scheduler pickup") from e
+
+
+def release_scheduler_for_model(model_id: UUID, session: Session) -> int:
+    """
+    Free any BUSY scheduler still pinned to one of this model's FL jobs.
+
+    ``FLScheduler.job_id`` survives a job's flip to ``DELETED`` (``remove_job`` /
+    ``remove_job_from_queue`` only change ``FLJob.status``), so the scheduler is found by joining
+    through the model's job rows — no need to capture job ids before dequeueing. Only BUSY
+    schedulers are touched, so a scheduler already reassigned to another model's job is never
+    released by mistake. Idempotent: no matching scheduler is a no-op.
+
+    Args:
+        model_id (UUID): The model whose scheduler pickup should be reverted.
+        session (Session): SQLModel session.
+
+    Returns:
+        int: Number of schedulers released.
+
+    Raises:
+        DatabaseError: If the lookup or the release fails at the DB layer.
+    """
+    try:
+        statement = (
+            select(FLScheduler)
+            .join(FLJob)
+            .where(FLJob.model_id == model_id, FLScheduler.status == NetStatus.BUSY)
+        )
+        schedulers = session.exec(statement).all()
+    except SQLAlchemyError as e:
+        logger.error(f"Error looking up BUSY scheduler for model {model_id}: {e}")
+        raise DatabaseError("Error looking up BUSY scheduler for model") from e
+
+    for scheduler in schedulers:
+        revert_scheduler_pickup(scheduler.id, session)
+
+    return len(schedulers)
 
 
 def get_net_by_model_id(model_id: UUID, session: Session) -> INetDetails:
@@ -382,11 +533,13 @@ def check_for_queued_jobs(scheduler_id: UUID, session: Session) -> IJobResponse 
     logger.info("Checking for any queued jobs...")
 
     try:
-        # Find the earliest queued job
+        # Find the earliest queued job. The id tiebreak on identical created
+        # timestamps keeps the pickup order in exact agreement with the ranks
+        # shown by log_queue_positions / queued_positions_by_model.
         job_stmt = (
             select(FLJob)
             .where(FLJob.status == JobStatus.QUEUED)
-            .order_by(cast(Column, FLJob.created).asc())
+            .order_by(cast(Column, FLJob.created).asc(), cast(Column, FLJob.id).asc())
             .limit(1)
             .with_for_update(skip_locked=True)
         )
@@ -426,7 +579,7 @@ def check_for_queued_jobs(scheduler_id: UUID, session: Session) -> IJobResponse 
         raise DatabaseError("Error checking for queued jobs") from e
 
 
-def prepare_and_start_training(model_id: UUID, fl_job_id: UUID, trust_ids: list[UUID], session: Session) -> None:
+def prepare_and_start_training(model_id: UUID, fl_job_id: UUID, trust_ids: list[UUID], session: Session) -> bool:
     """
     Prepares and starts the training process for a given model.
 
@@ -439,19 +592,34 @@ def prepare_and_start_training(model_id: UUID, fl_job_id: UUID, trust_ids: list[
         session (Session): The database session.
 
     Returns:
-        None
+        bool: True when the job was submitted to the fl-server; False when a concurrent abort
+            (#787) deleted the job before or during prepare — an abort gate at the top of the
+            function catches aborts landed since the pickup commit — in which case submission
+            was skipped and the net released.
 
     Raises:
         Exception: If the FL backend is unsupported, the net endpoint cannot be resolved, client
             availability validation fails, or training fails to start. On failure the job is
-            removed, the model is marked as errored, and the original exception is re-raised.
+            removed, the model is marked as errored, the net is released, and the original
+            exception is re-raised.
     """
     try:
         logger.debug("Attempting to prepare and start training...")
 
+        # Abort gate (#787): a user abort between the job pickup commit and this tick has
+        # already DELETEd the job and released the net — take the clean aborted branch below
+        # instead of surfacing the unpinned net as a "Failed to start training" false alarm.
+        _raise_if_job_aborted(fl_job_id, session)
+
         # Resolve the backend from the net this job is pinned to. The value is the net's
         # canonical seeded backend (FLNets.fl_backend), read from the DB, never a boot-time env var.
-        net_details = get_net_by_model_id(model_id, session)
+        try:
+            net_details = get_net_by_model_id(model_id, session)
+        except NotFoundError:
+            # The abort can land between the gate above and this lookup and unpin the net;
+            # reclassify if so, otherwise a missing net is a genuine error.
+            _raise_if_job_aborted(fl_job_id, session)
+            raise
         if not net_details.endpoint:
             raise Exception("Failed to get the net endpoint")
 
@@ -499,6 +667,15 @@ def prepare_and_start_training(model_id: UUID, fl_job_id: UUID, trust_ids: list[
         )
 
         add_log(model_id, f"Model training assigned to '{net_details.name}'", session)
+        return True
+
+    except JobAbortedError:
+        # A user abort deleted the job while it was being prepared (#787): not a scheduler
+        # error. The job is already DELETED and the model STOPPED — just make sure the net is
+        # free (the abort usually released it already; this is an idempotent belt-and-braces).
+        logger.info(f"Job {fl_job_id} for model {model_id} was aborted mid-prepare; skipping submission.")
+        release_scheduler_for_model(model_id, session)
+        return False
 
     except Exception as e:
         logger.error(f"Failed to start training: {e}")
@@ -507,8 +684,11 @@ def prepare_and_start_training(model_id: UUID, fl_job_id: UUID, trust_ids: list[
         remove_job(fl_job_id, session)
         add_log(model_id, error_message, session, success=False)
         update_model_status(model_id, ModelStatus.ERROR, session)
+        # update_model_status(ERROR) can't free the net (its scheduler lookup only considers
+        # non-DELETED jobs and remove_job just DELETEd this one), so release it explicitly.
+        release_scheduler_for_model(model_id, session)
 
-        logger.debug("Reverted job and scheduler pickup")
+        logger.debug("Reverted job and released scheduler pickup")
         raise e
 
 
@@ -595,6 +775,14 @@ def update_fl_scheduler(model_id: UUID, session: Session) -> None:
                 session.add(scheduler)
 
         session.commit()
+
+        if job:
+            # Completing a still-QUEUED job (e.g. a queued model stopped or
+            # errored) re-ranks everything behind it; for a job already picked
+            # up this normally emits nothing (emit-on-change), though it also
+            # self-heals rows a previously failed emission rolled back.
+            log_queue_positions(session)
+
         if job and scheduler:
             logger.info(
                 "FL job %s set to COMPLETED, scheduler %s released to AVAILABLE.",
