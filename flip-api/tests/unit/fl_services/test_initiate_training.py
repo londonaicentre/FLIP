@@ -162,7 +162,11 @@ def test_initiate_training_failure(model_id, fake_request, mock_db, client1, moc
         with pytest.raises(HTTPException) as exc_info:
             initiate_training(model_id, payload, fake_request, mock_db, user_id="user123")
         assert exc_info.value.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
-        assert "Unexpected error" in exc_info.value.detail
+        # The underlying exception text must stay in the log, not the response body — it can carry
+        # connection strings and other internals, and this endpoint is reachable by any researcher
+        # who owns the model.
+        assert exc_info.value.detail == "Internal server error"
+        assert "Unexpected error" not in exc_info.value.detail
 
 
 def test_initiate_training_unavailable_in_deployment_mode(

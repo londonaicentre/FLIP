@@ -94,7 +94,8 @@ def initiate_training(
     except HTTPException:
         raise  # re-raise known errors
     except Exception as e:
+        logger.exception("Error during training initiation")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"An error occurred during training initiation: {str(e)}",
-        )
+            detail="Internal server error",
+        ) from e

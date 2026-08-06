@@ -242,5 +242,5 @@ def submit_cohort_query(
         raise
     except Exception as e:
         db.rollback()
-        logger.error(f"Error submitting cohort query: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+        logger.exception("Error submitting cohort query")
+        raise HTTPException(status_code=500, detail="Internal server error") from e
