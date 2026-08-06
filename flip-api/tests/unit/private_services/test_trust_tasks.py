@@ -251,6 +251,82 @@ def test_heartbeat_updates_timestamp_and_returns_identity(mock_auth, mock_trust)
     app.dependency_overrides.pop(get_session, None)
 
 
+def _snapshot_body():
+    """A valid heartbeat body as sent by a collector-enabled trust-api."""
+    return {
+        "services": {
+            "trust-api": {"status": "healthy", "version": "0.3.0", "response_ms": None},
+            "xnat": {"status": "down", "version": None, "response_ms": None},
+            "imaging-api": {"status": "degraded", "version": "0.3.0", "response_ms": 1500},
+        },
+        "collected_at": "2020-01-01T00:00:00+00:00",
+    }
+
+
+def test_heartbeat_without_body_leaves_services_health_untouched(mock_auth, mock_trust):
+    """A bodyless heartbeat (pre-collector trust-api) must behave exactly as before —
+    stamp last_heartbeat, never touch the services columns."""
+    mock_trust.services_health = {"sentinel": True}
+    mock_trust.services_health_at = "sentinel-ts"
+    mock_db = MagicMock()
+    app.dependency_overrides[get_session] = lambda: mock_db
+
+    response = client.post("/api/trust/heartbeat")
+
+    assert response.status_code == 200
+    assert mock_trust.services_health == {"sentinel": True}
+    assert mock_trust.services_health_at == "sentinel-ts"
+    assert mock_db.commit.called
+
+    app.dependency_overrides.pop(get_session, None)
+
+
+def test_heartbeat_with_body_persists_services_and_stamps_server_time(mock_auth, mock_trust):
+    """A snapshot body lands in services_health; services_health_at is stamped
+    server-side (the payload's collected_at — year 2020 here — is never trusted)."""
+    mock_db = MagicMock()
+    app.dependency_overrides[get_session] = lambda: mock_db
+    before = datetime.now(timezone.utc)
+
+    response = client.post("/api/trust/heartbeat", json=_snapshot_body())
+
+    assert response.status_code == 200
+    assert mock_trust.services_health == _snapshot_body()["services"]
+    assert mock_trust.services_health_at >= before
+    assert mock_trust.last_heartbeat is not None
+    assert mock_db.commit.called
+
+    app.dependency_overrides.pop(get_session, None)
+
+
+@pytest.mark.parametrize(
+    ("mutate", "reason"),
+    [
+        (lambda b: b["services"]["xnat"].update(status="sideways"), "unknown status value"),
+        (lambda b: b["services"].update({f"svc-{i}": {"status": "healthy"} for i in range(17)}), "over 16 services"),
+        (lambda b: b["services"].update({"Bad_Key!": {"status": "healthy"}}), "key with invalid characters"),
+        (lambda b: b["services"].update({"k" * 33: {"status": "healthy"}}), "key over 32 chars"),
+        (lambda b: b["services"]["xnat"].update(version="v" * 65), "version over 64 chars"),
+        (lambda b: b["services"]["xnat"].update(response_ms=-1), "negative response_ms"),
+        (lambda b: b["services"]["xnat"].update(response_ms=1_000_001), "response_ms over cap"),
+        (lambda b: b.pop("services"), "body present but services missing"),
+    ],
+)
+def test_heartbeat_rejects_invalid_body(mutate, reason, mock_auth, mock_trust):
+    """Malformed snapshots are rejected loudly (422) — nothing is persisted."""
+    body = _snapshot_body()
+    mutate(body)
+    mock_db = MagicMock()
+    app.dependency_overrides[get_session] = lambda: mock_db
+
+    response = client.post("/api/trust/heartbeat", json=body)
+
+    assert response.status_code == 422, reason
+    assert not mock_db.commit.called
+
+    app.dependency_overrides.pop(get_session, None)
+
+
 # ---- Email notification on CREATE_IMAGING result ----
 
 

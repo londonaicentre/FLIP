@@ -93,6 +93,8 @@ def get_trusts(
                 region=t.region,
                 last_heartbeat=_as_utc_iso(t.last_heartbeat),
                 project_count=counts.get(t.id, 0),
+                services=t.services_health,
+                services_updated_at=_as_utc_iso(t.services_health_at),
             )
             for t in trusts
         ]

@@ -11,7 +11,9 @@
 #
 
 import json
+import re
 from datetime import datetime
+from enum import StrEnum
 from typing import Any
 from uuid import UUID
 
@@ -219,3 +221,52 @@ class TaskResultInput(BaseModel):
 
     success: bool
     result: str | None = Field(default=None, max_length=get_settings().MAX_TASK_RESULT_LENGTH)
+
+
+class ServiceHealthStatus(StrEnum):
+    """Wire vocabulary for a trust-internal service's probed state."""
+
+    HEALTHY = "healthy"
+    DEGRADED = "degraded"
+    DOWN = "down"
+    UNKNOWN = "unknown"
+
+
+class ServiceHealthEntry(BaseModel):
+    """One probed service inside a heartbeat snapshot.
+
+    Bounds are defence-in-depth: the payload originates inside a trust but is
+    persisted verbatim into JSONB and rendered on the Connection Status page, so
+    every free-text field is length-capped and numerics are range-capped.
+    """
+
+    status: ServiceHealthStatus
+    version: str | None = Field(default=None, max_length=64)
+    response_ms: int | None = Field(default=None, ge=0, le=1_000_000)
+
+
+_SERVICE_KEY_PATTERN = re.compile(r"^[a-z0-9-]{1,32}$")
+_MAX_SERVICES_PER_SNAPSHOT = 16
+
+
+class TrustHeartbeatInput(BaseModel):
+    """Optional heartbeat body: the trust's per-service health snapshot (issue #901).
+
+    Older trust-api builds POST no body at all — the route treats an absent body as
+    "no snapshot" and only stamps ``last_heartbeat``. ``collected_at`` is accepted
+    for observability but never used for staleness; the hub stamps its own
+    ``services_health_at`` on receipt so a trust cannot backdate or postdate its
+    snapshot.
+    """
+
+    services: dict[str, ServiceHealthEntry]
+    collected_at: datetime | None = None
+
+    @model_validator(mode="after")
+    def _bound_services(self) -> "TrustHeartbeatInput":
+        if len(self.services) > _MAX_SERVICES_PER_SNAPSHOT:
+            raise ValueError(f"'services' must contain at most {_MAX_SERVICES_PER_SNAPSHOT} entries")
+        for key in self.services:
+            if not _SERVICE_KEY_PATTERN.fullmatch(key):
+                raise ValueError("service keys must match ^[a-z0-9-]{1,32}$")
+        return self

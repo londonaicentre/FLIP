@@ -11,6 +11,7 @@
 #
 
 from datetime import datetime
+from typing import Any
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
@@ -41,6 +42,14 @@ class ITrustStatus(BaseModel):
     # we just need to tag it on the wire.
     last_heartbeat: str | None = None
     project_count: int = 0
+    # Latest per-service health snapshot from the trust's health collector (issue
+    # #901), passed through verbatim — it was strictly validated at write time
+    # (TrustHeartbeatInput). None for trusts on pre-collector trust-api builds.
+    # services_updated_at is the hub-stamped receipt time (Z-tagged like
+    # last_heartbeat); the UI treats snapshots older than its staleness window as
+    # "no data".
+    services: dict[str, Any] | None = None
+    services_updated_at: str | None = None
 
 
 class ICreateTrust(BaseModel):

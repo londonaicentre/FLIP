@@ -287,6 +287,13 @@ class Trust(SQLModel, table=True):
     region: str | None = Field(default=None)
     api_key_hash: str | None = Field(default=None)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    # Latest per-service health snapshot reported by the trust's health collector on
+    # the heartbeat (issue #901). Validated at the API boundary (TrustHeartbeatInput)
+    # and stored verbatim; `services_health_at` is stamped server-side on receipt —
+    # the payload's own collected_at is never trusted for staleness. Both stay NULL
+    # for trusts running pre-collector trust-api builds.
+    services_health: dict | None = Field(default=None, sa_column=Column("services_health", JSONB, nullable=True))
+    services_health_at: datetime | None = Field(default=None)
 
 
 class TrustsAudit(SQLModel, table=True):

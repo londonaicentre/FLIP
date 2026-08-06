@@ -108,6 +108,35 @@ def test_get_trusts_tags_heartbeat_as_utc():
     assert result[0].last_heartbeat.endswith("Z")
 
 
+def test_get_trusts_serialises_services_health():
+    """A reported snapshot is passed through verbatim, with a Z-tagged timestamp."""
+    trust = _make_trust("Healthy", "HL", "London")
+    services = {
+        "trust-api": {"status": "healthy", "version": "0.3.0", "response_ms": None},
+        "xnat": {"status": "down", "version": None, "response_ms": None},
+    }
+    trust.services_health = services
+    trust.services_health_at = datetime(2026, 5, 27, 12, 0, 0)
+    db = _db_with_trusts_and_counts(trusts=[trust], count_rows=[])
+
+    result = get_trusts(db=db, user_id=uuid.uuid4())
+
+    assert result[0].services == services
+    assert result[0].services_updated_at == "2026-05-27T12:00:00.000Z"
+
+
+def test_get_trusts_nulls_services_when_never_reported():
+    """A trust that has never sent a snapshot (pre-collector trust-api) serialises
+    both new fields as null — the UI renders every non-core service as No data."""
+    trust = _make_trust("Legacy", "LG", "London")
+    db = _db_with_trusts_and_counts(trusts=[trust], count_rows=[])
+
+    result = get_trusts(db=db, user_id=uuid.uuid4())
+
+    assert result[0].services is None
+    assert result[0].services_updated_at is None
+
+
 def test_get_trusts_drops_null_trust_ids_from_count_aggregation():
     """The count query is a left-join-style group_by; a NULL `trust_id` row
     is a join orphan and must not poison the counts map.
