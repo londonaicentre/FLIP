@@ -22,11 +22,17 @@ on:
     paths:
       - "fl-services/flower/fl-api-flower/fl_api/**"
       - ".github/workflows/fl-api-test-flower.yml"
+      # The sibling copy and the sync check, so drift in either direction runs the guard.
+      - "fl-services/nvflare/fl-api-base/fl_api/utils/validation.py"
+      - "scripts/check_fl_api_validation_sync.sh"
   pull_request:
     branches: [main, develop]
     paths:
       - "fl-services/flower/fl-api-flower/fl_api/**"
       - ".github/workflows/fl-api-test-flower.yml"
+      # The sibling copy and the sync check, so drift in either direction runs the guard.
+      - "fl-services/nvflare/fl-api-base/fl_api/utils/validation.py"
+      - "scripts/check_fl_api_validation_sync.sh"
 jobs:
   flip-fl-api:
     runs-on: ubuntu-latest
@@ -47,6 +53,10 @@ jobs:
 
       - name: Install uv (if used for dependency management)
         run: pip install uv
+
+      - name: Check fl-api validation guards are in sync
+        working-directory: ./
+        run: ./scripts/check_fl_api_validation_sync.sh
 
       - name: Run tests with pytest (example)
         run: |

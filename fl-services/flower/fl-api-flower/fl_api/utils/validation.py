@@ -23,6 +23,7 @@ that becomes a filesystem path or an outbound fetch is validated here first.
 import ipaddress
 import os
 import re
+import socket
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -135,12 +136,23 @@ def validate_bundle_url(url: str) -> str:
             detail=f"Bundle URL port not allowed: {port}.",
         )
 
-    # Block IP-literal hosts in non-public ranges. A host that is not an IP literal raises
-    # ValueError and is left to the https + optional allow-list checks (we do not resolve DNS).
+    # Block IP-literal hosts in non-public ranges. Two parsers, because they disagree:
+    # ipaddress.ip_address accepts only the canonical dotted-quad form, while the resolver behind
+    # the actual fetch (getaddrinfo -> inet_aton) also accepts packed decimal, hex and octal
+    # spellings — "2130706433", "0x7f000001", "017700000001", "127.1" and "0" all reach loopback.
+    # Parsing with ip_address alone therefore left the checks below unrun for exactly the
+    # spellings an attacker would pick. inet_aton raises OSError on a real DNS name, so a host
+    # neither parser accepts is left to the https + optional allow-list checks — we still do not
+    # resolve DNS here, which would make this function network-dependent without closing the
+    # rebinding window anyway.
+    ip: ipaddress.IPv4Address | ipaddress.IPv6Address | None
     try:
-        ip: ipaddress.IPv4Address | ipaddress.IPv6Address | None = ipaddress.ip_address(hostname)
+        ip = ipaddress.ip_address(hostname)
     except ValueError:
-        ip = None
+        try:
+            ip = ipaddress.IPv4Address(socket.inet_aton(hostname))
+        except (OSError, ipaddress.AddressValueError):
+            ip = None
     if ip is not None and (
         ip.is_private
         or ip.is_loopback
