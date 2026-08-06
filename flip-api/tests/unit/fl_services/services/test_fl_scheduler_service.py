@@ -475,7 +475,10 @@ def test_check_for_queued_jobs_retires_a_job_with_unapproved_trusts(fake_session
     job.model_id = model_id
     job.trusts = [trust]
 
-    fake_session.exec.side_effect = [MagicMock(first=MagicMock(return_value=job))]
+    fake_session.exec.side_effect = [
+        MagicMock(first=MagicMock(return_value=job)),
+        MagicMock(first=MagicMock(return_value=None)),
+    ]
 
     with (
         patch("flip_api.fl_services.services.fl_scheduler_service.validate_trust_ids", return_value=False),
@@ -495,6 +498,34 @@ def test_check_for_queued_jobs_retires_a_job_with_unapproved_trusts(fake_session
     mock_status.assert_called_once_with(model_id, ModelStatus.ERROR, fake_session)
     # The researcher needs to know why their training never started.
     assert mock_add_log.call_args.kwargs["success"] is False
+    mock_revert.assert_called_once()
+
+
+def test_check_for_queued_jobs_preserves_a_newer_valid_retry_when_retiring_an_invalid_job(
+    fake_session, scheduler_id, model_id
+):
+    """Retiring an old invalid job must not complete a later valid retry for the same model."""
+    invalid_trust = MagicMock(id=uuid4())
+    invalid_job = MagicMock(id=uuid4(), model_id=model_id, trusts=[invalid_trust])
+    valid_retry = MagicMock(id=uuid4(), model_id=model_id, status=JobStatus.QUEUED)
+
+    fake_session.exec.side_effect = [
+        MagicMock(first=MagicMock(return_value=invalid_job)),
+        MagicMock(first=MagicMock(return_value=valid_retry)),
+    ]
+
+    with (
+        patch("flip_api.fl_services.services.fl_scheduler_service.validate_trust_ids", return_value=False),
+        patch("flip_api.fl_services.services.fl_scheduler_service.update_model_status") as mock_status,
+        patch("flip_api.fl_services.services.fl_scheduler_service.add_log"),
+        patch("flip_api.fl_services.services.fl_scheduler_service.revert_scheduler_pickup") as mock_revert,
+    ):
+        result = fl_scheduler_service.check_for_queued_jobs(scheduler_id, fake_session)
+
+    assert result is None
+    assert invalid_job.status == JobStatus.DELETED
+    assert valid_retry.status == JobStatus.QUEUED
+    mock_status.assert_not_called()
     mock_revert.assert_called_once()
 
 

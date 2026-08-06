@@ -569,7 +569,20 @@ def check_for_queued_jobs(scheduler_id: UUID, session: Session) -> IJobResponse 
                 "retiring it so it cannot block the queue"
             )
             job.status = JobStatus.DELETED
-            update_model_status(job.model_id, ModelStatus.ERROR, session)
+
+            # A model can have been retried while this older job was waiting in the queue. Do not
+            # transition the model to ERROR in that case: update_model_status(ERROR) releases the
+            # latest non-deleted job for the model, which would silently complete the valid retry.
+            active_job = session.exec(
+                select(FLJob.id)
+                .where(
+                    FLJob.model_id == job.model_id,
+                    col(FLJob.status).in_((JobStatus.QUEUED, JobStatus.IN_PROGRESS)),
+                )
+                .limit(1)
+            ).first()
+            if not active_job:
+                update_model_status(job.model_id, ModelStatus.ERROR, session)
             add_log(
                 job.model_id,
                 "Training could not start: the selected trusts are not approved for this model.",
