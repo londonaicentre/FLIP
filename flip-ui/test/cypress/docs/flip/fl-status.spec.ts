@@ -67,9 +67,12 @@ describe("docs: connection status", () => {
         cy.intercept("GET", "**/trust", (req) => {
             const now = new Date().toISOString();
             const kchServices = healthyServices();
+            // A down probe reports no version or latency: the collector's _entry("down")
+            // passes both as null, so a fixture carrying them would document a state
+            // the platform cannot produce.
             kchServices.xnat = {
                 status: "down",
-                version: "1.10.0",
+                version: null,
                 response_ms: null
             };
             req.reply([
