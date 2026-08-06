@@ -11,13 +11,12 @@
 #
 
 import json
-import re
 from datetime import datetime
 from enum import StrEnum
-from typing import Any
+from typing import Annotated, Any
 from uuid import UUID
 
-from pydantic import BaseModel, Field, model_validator, validator
+from pydantic import BaseModel, Field, StringConstraints, model_validator, validator
 
 from flip_api.config import get_settings
 from flip_api.domain.schemas.status import TaskType
@@ -245,28 +244,21 @@ class ServiceHealthEntry(BaseModel):
     response_ms: int | None = Field(default=None, ge=0, le=1_000_000)
 
 
-_SERVICE_KEY_PATTERN = re.compile(r"^[a-z0-9-]{1,32}$")
-_MAX_SERVICES_PER_SNAPSHOT = 16
-
-
 class TrustHeartbeatInput(BaseModel):
     """Optional heartbeat body: the trust's per-service health snapshot (issue #901).
 
     Older trust-api builds POST no body at all — the route treats an absent body as
     "no snapshot" and only stamps ``last_heartbeat``. ``collected_at`` is accepted
-    for observability but never used for staleness; the hub stamps its own
+    (and discarded) so collector payloads stay self-describing on the wire; it is
+    never persisted or used for staleness — the hub stamps its own
     ``services_health_at`` on receipt so a trust cannot backdate or postdate its
     snapshot.
     """
 
-    services: dict[str, ServiceHealthEntry]
+    # Bounds declared on the field (≤16 services, keys ^[a-z0-9-]{1,32}$) so they
+    # also surface in the OpenAPI schema; entry-level caps live on ServiceHealthEntry.
+    services: Annotated[
+        dict[Annotated[str, StringConstraints(pattern=r"^[a-z0-9-]{1,32}$")], ServiceHealthEntry],
+        Field(max_length=16),
+    ]
     collected_at: datetime | None = None
-
-    @model_validator(mode="after")
-    def _bound_services(self) -> "TrustHeartbeatInput":
-        if len(self.services) > _MAX_SERVICES_PER_SNAPSHOT:
-            raise ValueError(f"'services' must contain at most {_MAX_SERVICES_PER_SNAPSHOT} entries")
-        for key in self.services:
-            if not _SERVICE_KEY_PATTERN.fullmatch(key):
-                raise ValueError("service keys must match ^[a-z0-9-]{1,32}$")
-        return self

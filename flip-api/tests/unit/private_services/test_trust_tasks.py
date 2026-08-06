@@ -327,6 +327,35 @@ def test_heartbeat_rejects_invalid_body(mutate, reason, mock_auth, mock_trust):
     app.dependency_overrides.pop(get_session, None)
 
 
+@pytest.mark.parametrize(
+    ("mutate", "reason"),
+    [
+        (
+            lambda b: b.update(services={f"svc-{i:02d}": {"status": "healthy"} for i in range(16)}),
+            "exactly 16 services",
+        ),
+        (lambda b: b["services"].update({"k" * 32: {"status": "healthy"}}), "key at 32 chars"),
+        (lambda b: b["services"]["xnat"].update(version="v" * 64), "version at 64 chars"),
+        (lambda b: b["services"]["xnat"].update(response_ms=0), "response_ms at zero"),
+        (lambda b: b["services"]["imaging-api"].update(response_ms=1_000_000), "response_ms at cap"),
+    ],
+)
+def test_heartbeat_accepts_values_at_the_caps(mutate, reason, mock_auth, mock_trust):
+    """Boundary payloads exactly at the documented caps are legitimate — tightening
+    any bound by one would reject real snapshots with no failing test otherwise."""
+    body = _snapshot_body()
+    mutate(body)
+    mock_db = MagicMock()
+    app.dependency_overrides[get_session] = lambda: mock_db
+
+    response = client.post("/api/trust/heartbeat", json=body)
+
+    assert response.status_code == 200, reason
+    assert mock_db.commit.called
+
+    app.dependency_overrides.pop(get_session, None)
+
+
 # ---- Email notification on CREATE_IMAGING result ----
 
 

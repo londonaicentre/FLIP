@@ -28,6 +28,7 @@ from sqlmodel import select
 
 from flip_api.config import get_settings
 from flip_api.db.models.main_models import Trust
+from flip_api.domain.schemas.private import ServiceHealthEntry
 
 
 def _register_trust(session, name: str, api_key: str) -> UUID:
@@ -102,6 +103,11 @@ def test_heartbeat_body_round_trips_jsonb_and_is_server_stamped(client, session)
     refreshed = session.exec(select(Trust).where(Trust.id == trust_id)).first()
     assert refreshed is not None
     assert refreshed.services_health == services
+    # Shape-sync tripwire: everything the hub persists (and passes through on
+    # GET /trust) must keep re-parsing as ServiceHealthEntry — if the entry model
+    # is ever reshaped, this fails instead of the UI silently rendering em dashes.
+    for entry in refreshed.services_health.values():
+        ServiceHealthEntry.model_validate(entry)
     # The column is `timestamp without time zone` holding UTC; compare naive-UTC.
     assert refreshed.services_health_at is not None
     assert refreshed.services_health_at >= before - timedelta(seconds=1)
