@@ -77,16 +77,21 @@ def validate_query(query: str) -> str:
 
     Database-layer protections already in place
     -------------------------------------------
-    The data-access-api connects as ``data_analyst_reader`` (see
-    ``flip-omop-db/files/create_readonly_users.sql``), a Postgres role granted
-    only ``CONNECT`` + ``USAGE`` on schema ``omop`` + ``SELECT`` on its tables
-    and sequences, with ``INSERT``, ``UPDATE``, ``DELETE``, ``TRUNCATE``, and
-    ``CREATE`` explicitly REVOKEd. Any DDL or DML is therefore rejected by
-    Postgres itself, so this function does NOT keyword-filter for ``DROP`` /
-    ``INSERT`` / ``UPDATE`` / etc. — those are already covered at the DB layer.
-    Rules 3 and 4 below still reject writes *structurally*, from the parsed tree
-    rather than from a keyword scan, so a write fails in-hand with a clear 400
-    instead of as an opaque permission error from the engine.
+    The data-access-api connects as ``data_analyst_reader``, a Postgres role with
+    no write privileges: ``INSERT`` / ``UPDATE`` / ``DELETE`` / ``TRUNCATE`` /
+    ``CREATE`` are never granted. Any DDL or DML is therefore rejected by Postgres
+    itself, so this function does NOT keyword-filter for ``DROP`` / ``INSERT`` /
+    ``UPDATE`` / etc. Rules 3 and 4 below still reject writes *structurally*, from
+    the parsed tree rather than from a keyword scan, so a write fails in-hand with
+    a clear 400 instead of as an opaque permission error from the engine.
+
+    **Read scope is NOT guaranteed by the database role, and differs by deployment.**
+    The Kubernetes trust chart grants the role ``pg_read_all_data``
+    (``deploy/providers/kubernetes/templates/omop-db.yaml``) — SELECT on every table
+    in every schema — while the Compose path grants only ``USAGE`` on ``omop`` plus
+    ``SELECT`` on its tables. So rule 5 below is the *only* thing keeping a caller
+    inside ``omop`` on a Kubernetes trust, not a redundant second layer over a narrow
+    grant. Do not weaken it on the assumption the role is scoped.
 
     What this function enforces
     ---------------------------
@@ -102,10 +107,17 @@ def validate_query(query: str) -> str:
        writable CTE — ``WITH x AS (DELETE FROM t RETURNING *) SELECT * FROM x``
        parses as a ``Select`` and would otherwise pass. The read-only role rejects
        the write regardless, so this is defence in depth, not the only barrier.
-    5. Any schema-qualified table reference targets only the ``omop`` schema
-       (blocks enumeration of ``information_schema``, ``pg_catalog``,
-       ``pg_class`` etc., which Postgres makes readable to role ``public``
-       by default).
+    5. Every table reference is pinned to the ``omop`` schema. A qualified
+       reference to any other schema is rejected, as is a three-part
+       ``db.schema.table`` reference; an *unqualified* reference is rewritten to
+       ``omop.<table>`` in the AST before emission. Rewriting rather than
+       trusting ``search_path`` is the load-bearing part: Postgres searches
+       ``pg_catalog`` implicitly and first, whatever ``search_path`` says, so an
+       unqualified ``pg_class`` would otherwise read the catalog — and on a
+       Kubernetes trust the role can read every schema (see above). Names bound
+       by a ``WITH`` clause are exempt because they are not schema-qualified and
+       never can be; ``pg_``-prefixed CTE names are refused so that exemption
+       cannot be used to shadow a catalog relation.
     6. Every ``LIMIT`` and ``OFFSET`` is a literal integer (defeats the blind
        data-extraction technique that abuses
        ``LIMIT CASE WHEN <predicate> THEN n ELSE m END`` to make the row count
@@ -158,14 +170,43 @@ def validate_query(query: str) -> str:
     if any(stmt.find_all(*_DATA_MODIFYING_TYPES)):
         raise _invalid_query("Data-modifying statements are not allowed.")
 
+    # Names bound by a WITH clause parse as exp.Table with no schema — the same shape as an
+    # unqualified physical table — so collect them first to tell the two apart below.
+    cte_aliases: set[str] = set()
+    for cte in stmt.find_all(exp.CTE):
+        cte_alias = cte.alias.lower()
+        # This set is flat, but Postgres CTE scope is lexical. A CTE named ``pg_class`` would
+        # therefore also exempt an unqualified ``pg_class`` in an enclosing scope where that CTE
+        # is not visible. Postgres reserves the ``pg_`` prefix for system objects, so refusing
+        # the name costs a caller nothing and keeps the flat set sound.
+        if cte_alias.startswith("pg_"):
+            raise _invalid_query(f"CTE name '{cte_alias}' is reserved.")
+        cte_aliases.add(cte_alias)
+
     # Walk the whole AST so subqueries, CTEs, and set-operation arms are checked.
     for table in stmt.find_all(exp.Table):
+        table_name = table.name.lower()
+        if not table_name or table_name in cte_aliases:
+            # An empty name is a table-valued function (``FROM generate_series(1, 10)``), which
+            # sqlglot wraps in an exp.Table carrying no name and no schema. There is no schema to
+            # pin and no catalog reachable through it.
+            continue
+
         schema_node = table.args.get("db")
         if schema_node is None:
-            # Unqualified — Postgres resolves via search_path, which is set to
-            # the omop schema in the OMOP DB image, so unqualified references
-            # can only resolve to omop tables.
+            # Unqualified. Postgres searches pg_catalog implicitly and *first*, whatever
+            # search_path is set to, so ``FROM pg_class`` reads the catalog however the database
+            # is configured (FLIP#879). Pin the reference to omop in the tree rather than trusting
+            # resolution order: the SQL that reaches the engine is emitted from this same tree at
+            # the end of this function, so a pinned node is a pinned query. ``omop.pg_class`` does
+            # not exist and fails as a clean undefined-table error.
+            #
+            # Pinning rather than rejecting is deliberate — unqualified references are ordinary in
+            # the cohort queries researchers write, and rejecting them would break saved queries to
+            # close a hole that pinning closes completely.
+            table.set("db", exp.to_identifier(ALLOWED_SCHEMA))
             continue
+
         # exp.Table.args["db"] is always None or an Identifier in sqlglot's
         # schema, so .name is safe here.
         schema_name = schema_node.name.lower()
@@ -173,6 +214,13 @@ def validate_query(query: str) -> str:
             raise _invalid_query(
                 f"Schema '{schema_name}' is not accessible. Only the '{ALLOWED_SCHEMA}' schema is allowed."
             )
+
+        # ``catalog`` holds the leading part of a three-part db.schema.table reference, which the
+        # schema check above does not see — ``otherdb.omop.person`` has db=omop and passes it.
+        # Postgres has no cross-database references, so this can only be an attempt to confuse the
+        # check; reject it rather than emit it.
+        if table.args.get("catalog") is not None:
+            raise _invalid_query("Cross-database table references are not allowed.")
 
     for clause_type, label in ((exp.Limit, "LIMIT"), (exp.Offset, "OFFSET")):
         for node in stmt.find_all(clause_type):

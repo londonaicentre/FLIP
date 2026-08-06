@@ -120,16 +120,26 @@ It performs a single parse-validate-emit pass and enforces:
    top-level node, and Postgres allows a writable CTE — `WITH x AS (DELETE FROM t RETURNING *)
    SELECT * FROM x` parses as a `Select` and would otherwise pass. The read-only role rejects
    the write regardless, so this is defence in depth rather than the only barrier.
-5. Schema-qualified tables limited to `omop` (blocks `information_schema` / `pg_catalog`
-   enumeration, which Postgres exposes to role `public` by default).
+5. Every table reference pinned to `omop`. A qualified reference to another schema is rejected,
+   as is a three-part `db.schema.table` reference; an *unqualified* reference is rewritten to
+   `omop.<table>` in the AST before emission. The rewrite is the load-bearing part: Postgres
+   searches `pg_catalog` implicitly and first, whatever `search_path` says, so `FROM pg_class`
+   would otherwise read the catalog no matter how the database is configured (FLIP#879). Names
+   bound by a `WITH` clause are exempt — they are never schema-qualified — and `pg_`-prefixed CTE
+   names are refused so that exemption cannot shadow a catalog relation.
 6. Literal-integer `LIMIT`/`OFFSET` (defeats blind extraction that makes the row count a function
    of a character value and reads it back through the cohort-size response).
 
 It then returns the query **re-emitted from the AST it just checked**. Callers pass that string to
 the engine, never the caller's original — so what reaches Postgres is generated from a validated
 tree. Underneath all of this the service connects as `data_analyst_reader`, a role with `SELECT`
-only and `INSERT`/`UPDATE`/`DELETE`/`TRUNCATE`/`CREATE` revoked, so DDL and DML are refused by
+only and `INSERT`/`UPDATE`/`DELETE`/`TRUNCATE`/`CREATE` never granted, so DDL and DML are refused by
 Postgres itself. That is why `validate_query` does not keyword-filter for `DROP` and friends.
+
+The role bounds *writes*, not *reads*, and its read scope differs by deployment: the Kubernetes
+chart grants it `pg_read_all_data` (every table in every schema), while the Compose path grants
+only `omop`. Rule 5 is therefore the sole barrier keeping a caller inside `omop` on a Kubernetes
+trust — it is not a redundant layer over a narrow grant, and must not be weakened as though it were.
 
 Emitting from `validate_query` rather than from a second helper is deliberate: it keeps one parse
 and one policy, so there is no second copy of the single-statement and SELECT-shape rules to drift

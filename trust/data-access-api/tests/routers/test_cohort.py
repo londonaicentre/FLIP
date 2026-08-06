@@ -341,7 +341,9 @@ def test_get_accession_ids_success(mock_get_records, mock_decrypt, mock_get_sett
     # The caller's query must be wrapped server-side so only accession_id is projected.
     called_query = mock_get_records.call_args[0][0]
     assert called_query.startswith("SELECT accession_id FROM (")
-    assert sample_dataframe_query["query"] in called_query
+    # What gets wrapped is validate_query's *emitted* SQL, not the caller's raw string — so the
+    # unqualified `dummy_table` arrives pinned to the omop schema.
+    assert "SELECT age, gender FROM omop.dummy_table" in called_query
 
 
 @patch("data_access_api.routers.cohort.get_settings")
@@ -360,8 +362,9 @@ def test_get_accession_ids_strips_trailing_semicolon(mock_get_records, mock_decr
 
     assert response.status_code == 200
     called_query = mock_get_records.call_args[0][0]
-    # No bare semicolon should leak into the wrapped subquery.
-    assert "SELECT * FROM cohort)" in called_query
+    # No bare semicolon should leak into the wrapped subquery. The table arrives schema-pinned
+    # because the wrapper wraps the emitted SQL, not the caller's raw string.
+    assert "SELECT * FROM omop.cohort)" in called_query
     assert ";" not in called_query
 
 

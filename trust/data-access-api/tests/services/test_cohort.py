@@ -397,10 +397,12 @@ def test_get_records_pandas_error_without_dbapi_cause(mock_read_sql):
 # Tests for validate_query
 #
 # DDL/DML keyword filtering is intentionally not asserted here: data-access-api
-# connects as data_analyst_reader (see flip-omop-db/files/create_readonly_users.sql),
-# a Postgres role that has INSERT/UPDATE/DELETE/TRUNCATE/CREATE explicitly
-# REVOKEd. Writes are rejected at the database layer; validate_query only
-# enforces structural rules that the DB role cannot enforce on its own.
+# connects as data_analyst_reader, a Postgres role that is never granted
+# INSERT/UPDATE/DELETE/TRUNCATE/CREATE. Writes are rejected at the database layer;
+# validate_query only enforces structural rules that the DB role cannot enforce on
+# its own. Note the role bounds writes, not reads — its read scope is deployment
+# dependent (the Kubernetes chart grants pg_read_all_data), which is why the schema
+# pinning in rule 5 is the only barrier and is asserted thoroughly below.
 
 
 @pytest.mark.parametrize(
@@ -578,6 +580,81 @@ def test_validate_query_rejects_non_omop_schemas(query: str):
     """
     with pytest.raises(HTTPException, match="is not accessible"):
         validate_query(query)
+
+
+def test_validate_query_rejects_cross_database_references():
+    """A three-part reference hides the real catalog from the schema check.
+
+    ``otherdb.omop.person`` parses with db=omop, so the schema comparison passes and only the
+    ``catalog`` arg reveals it. Postgres has no cross-database references, so there is no
+    legitimate reason to send one.
+    """
+    with pytest.raises(HTTPException, match="Cross-database table references are not allowed"):
+        validate_query("SELECT * FROM otherdb.omop.person")
+
+
+@pytest.mark.parametrize(
+    ("query", "expected_fragment"),
+    [
+        # Postgres searches pg_catalog implicitly and first, so dropping the schema qualifier
+        # reached the catalog no matter what search_path was set to (FLIP#879).
+        ("SELECT * FROM pg_class", "omop.pg_class"),
+        ("SELECT relname FROM pg_tables", "omop.pg_tables"),
+        ("SELECT rolname FROM pg_roles", "omop.pg_roles"),
+        # Ordinary unqualified cohort references are pinned the same way, not rejected.
+        ("SELECT * FROM person", "omop.person"),
+        # The walk covers every arm, not just the first table.
+        ("SELECT * FROM omop.person UNION SELECT relname, NULL FROM pg_class", "omop.pg_class"),
+        ("SELECT (SELECT relname FROM pg_class LIMIT 1) FROM omop.person", "omop.pg_class"),
+        ("SELECT * FROM omop.person p JOIN visit_occurrence v ON p.person_id = v.person_id", "omop.visit_occurrence"),
+    ],
+)
+def test_validate_query_pins_unqualified_tables_to_omop(query: str, expected_fragment: str):
+    """Unqualified references are rewritten to omop.<table> in the emitted SQL.
+
+    Asserting on the *emitted* string is the point: the emitted query is what reaches the engine,
+    so pinning the AST node is only a fix if the pin survives emission.
+    """
+    emitted = validate_query(query)
+
+    assert expected_fragment in emitted
+
+
+def test_validate_query_does_not_pin_cte_references():
+    """A name bound by WITH is not a schema-qualifiable table — pinning it would break the query.
+
+    The CTE is deliberately not named ``p``: ``omop.p`` is a substring of ``omop.person``, so the
+    negative assertion would pass for the wrong reason.
+    """
+    emitted = validate_query("WITH cohort_rows AS (SELECT * FROM omop.person) SELECT * FROM cohort_rows")
+
+    assert "FROM cohort_rows" in emitted
+    assert "omop.cohort_rows" not in emitted
+
+
+def test_validate_query_pins_unqualified_tables_inside_a_cte_body():
+    """The CTE exemption covers the bound name only, not the tables the CTE selects from."""
+    emitted = validate_query("WITH p AS (SELECT * FROM pg_class) SELECT * FROM p")
+
+    assert "omop.pg_class" in emitted
+
+
+def test_validate_query_rejects_pg_prefixed_cte_names():
+    """The CTE alias set is flat while Postgres CTE scope is lexical.
+
+    A CTE named ``pg_class`` would exempt an unqualified ``pg_class`` in an enclosing scope where
+    that CTE is not visible, so the name is refused outright.
+    """
+    with pytest.raises(HTTPException, match="is reserved"):
+        validate_query("WITH pg_class AS (SELECT 1 AS x) SELECT * FROM pg_class")
+
+
+def test_validate_query_leaves_table_valued_functions_alone():
+    """``FROM generate_series(...)`` parses as an exp.Table with no name and no schema to pin."""
+    emitted = validate_query("SELECT * FROM generate_series(1, 10)")
+
+    assert "GENERATE_SERIES" in emitted.upper()
+    assert "omop." not in emitted
 
 
 @pytest.mark.parametrize(
