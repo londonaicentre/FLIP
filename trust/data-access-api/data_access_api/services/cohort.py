@@ -24,6 +24,7 @@ from sqlalchemy.exc import DBAPIError, SQLAlchemyError
 from sqlalchemy.sql.elements import TextClause
 from sqlglot import exp
 from sqlglot.errors import SqlglotError
+from sqlglot.optimizer.scope import traverse_scope
 
 from data_access_api.config import get_settings
 from data_access_api.db.database import engine
@@ -116,8 +117,8 @@ def validate_query(query: str) -> str:
        unqualified ``pg_class`` would otherwise read the catalog — and on a
        Kubernetes trust the role can read every schema (see above). Names bound
        by a ``WITH`` clause are exempt because they are not schema-qualified and
-       never can be; ``pg_``-prefixed CTE names are refused so that exemption
-       cannot be used to shadow a catalog relation.
+       never can be. The exemption is determined from each lexical SQL scope, so
+       a CTE in a nested query cannot exempt a table reference in its parent.
     6. Every ``LIMIT`` and ``OFFSET`` is a literal integer (defeats the blind
        data-extraction technique that abuses
        ``LIMIT CASE WHEN <predicate> THEN n ELSE m END`` to make the row count
@@ -170,57 +171,49 @@ def validate_query(query: str) -> str:
     if any(stmt.find_all(*_DATA_MODIFYING_TYPES)):
         raise _invalid_query("Data-modifying statements are not allowed.")
 
-    # Names bound by a WITH clause parse as exp.Table with no schema — the same shape as an
-    # unqualified physical table — so collect them first to tell the two apart below.
-    cte_aliases: set[str] = set()
-    for cte in stmt.find_all(exp.CTE):
-        cte_alias = cte.alias.lower()
-        # This set is flat, but Postgres CTE scope is lexical. A CTE named ``pg_class`` would
-        # therefore also exempt an unqualified ``pg_class`` in an enclosing scope where that CTE
-        # is not visible. Postgres reserves the ``pg_`` prefix for system objects, so refusing
-        # the name costs a caller nothing and keeps the flat set sound.
-        if cte_alias.startswith("pg_"):
-            raise _invalid_query(f"CTE name '{cte_alias}' is reserved.")
-        cte_aliases.add(cte_alias)
+    # A CTE reference and an unqualified physical table have the same exp.Table shape. Walk each
+    # lexical scope so only a CTE visible from that exact SELECT is exempted; a flat set of every
+    # CTE name would let an inner CTE exempt a physical table in an enclosing query.
+    for scope in traverse_scope(stmt):
+        for table in scope.tables:
+            table_name = table.name
+            if not table_name:
+                # An empty name is a table-valued function (``FROM generate_series(1, 10)``),
+                # which sqlglot wraps in an exp.Table carrying no name and no schema.
+                continue
 
-    # Walk the whole AST so subqueries, CTEs, and set-operation arms are checked.
-    for table in stmt.find_all(exp.Table):
-        table_name = table.name.lower()
-        if not table_name or table_name in cte_aliases:
-            # An empty name is a table-valued function (``FROM generate_series(1, 10)``), which
-            # sqlglot wraps in an exp.Table carrying no name and no schema. There is no schema to
-            # pin and no catalog reachable through it.
-            continue
+            schema_node = table.args.get("db")
+            if schema_node is None:
+                if table_name in scope.cte_sources:
+                    continue
 
-        schema_node = table.args.get("db")
-        if schema_node is None:
-            # Unqualified. Postgres searches pg_catalog implicitly and *first*, whatever
-            # search_path is set to, so ``FROM pg_class`` reads the catalog however the database
-            # is configured (FLIP#879). Pin the reference to omop in the tree rather than trusting
-            # resolution order: the SQL that reaches the engine is emitted from this same tree at
-            # the end of this function, so a pinned node is a pinned query. ``omop.pg_class`` does
-            # not exist and fails as a clean undefined-table error.
-            #
-            # Pinning rather than rejecting is deliberate — unqualified references are ordinary in
-            # the cohort queries researchers write, and rejecting them would break saved queries to
-            # close a hole that pinning closes completely.
-            table.set("db", exp.to_identifier(ALLOWED_SCHEMA))
-            continue
+                # Unqualified. Postgres searches pg_catalog implicitly and *first*, whatever
+                # search_path is set to, so ``FROM pg_class`` reads the catalog however the
+                # database is configured (FLIP#879). Pin the reference to omop in the tree rather
+                # than trusting resolution order: the SQL that reaches the engine is emitted from
+                # this same tree at the end of this function, so a pinned node is a pinned query.
+                # ``omop.pg_class`` does not exist and fails as a clean undefined-table error.
+                #
+                # Pinning rather than rejecting is deliberate — unqualified references are
+                # ordinary in the cohort queries researchers write, and rejecting them would break
+                # saved queries to close a hole that pinning closes completely.
+                table.set("db", exp.to_identifier(ALLOWED_SCHEMA))
+                continue
 
-        # exp.Table.args["db"] is always None or an Identifier in sqlglot's
-        # schema, so .name is safe here.
-        schema_name = schema_node.name.lower()
-        if schema_name != ALLOWED_SCHEMA:
-            raise _invalid_query(
-                f"Schema '{schema_name}' is not accessible. Only the '{ALLOWED_SCHEMA}' schema is allowed."
-            )
+            # exp.Table.args["db"] is always None or an Identifier in sqlglot's schema, so .name
+            # is safe here.
+            schema_name = schema_node.name.lower()
+            if schema_name != ALLOWED_SCHEMA:
+                raise _invalid_query(
+                    f"Schema '{schema_name}' is not accessible. Only the '{ALLOWED_SCHEMA}' schema is allowed."
+                )
 
-        # ``catalog`` holds the leading part of a three-part db.schema.table reference, which the
-        # schema check above does not see — ``otherdb.omop.person`` has db=omop and passes it.
-        # Postgres has no cross-database references, so this can only be an attempt to confuse the
-        # check; reject it rather than emit it.
-        if table.args.get("catalog") is not None:
-            raise _invalid_query("Cross-database table references are not allowed.")
+            # ``catalog`` holds the leading part of a three-part db.schema.table reference, which
+            # the schema check above does not see — ``otherdb.omop.person`` has db=omop and passes
+            # it. Postgres has no cross-database references, so this can only be an attempt to
+            # confuse the check; reject it rather than emit it.
+            if table.args.get("catalog") is not None:
+                raise _invalid_query("Cross-database table references are not allowed.")
 
     for clause_type, label in ((exp.Limit, "LIMIT"), (exp.Offset, "OFFSET")):
         for node in stmt.find_all(clause_type):
