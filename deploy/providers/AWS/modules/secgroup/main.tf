@@ -45,3 +45,19 @@ resource "aws_security_group_rule" "ingress" {
   to_port                  = each.value.port
   description              = each.value.description
 }
+
+resource "aws_security_group_rule" "egress" {
+  # Keyed on description (required + expected unique per rule), not port —
+  # unlike ingress, several egress destinations legitimately share the same
+  # port (most of this allowlist is port 443), so keying on port would collide.
+  for_each                 = { for rule in var.egress_rules : rule.description => rule }
+  security_group_id        = aws_security_group.security_group.id
+  type                     = "egress"
+  cidr_blocks              = each.value.cidr_blocks
+  source_security_group_id = each.value.source_security_group_id
+  prefix_list_ids          = each.value.prefix_list_ids
+  protocol                 = each.value.protocol
+  from_port                = each.value.port
+  to_port                  = each.value.port
+  description              = each.value.description
+}

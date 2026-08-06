@@ -54,3 +54,32 @@ variable "block_all_outbound" {
   type    = bool
   default = false
 }
+
+variable "egress_rules" {
+  # Exactly one destination selector per rule: `cidr_blocks` OR
+  # `source_security_group_id` OR `prefix_list_ids`. Unlike ingress_rules,
+  # there is no "none set" fallback to 0.0.0.0/0 — an egress rule with no
+  # destination selector is almost certainly a mistake, not an intentional
+  # open rule, so it's rejected at plan time rather than silently defaulting
+  # to allow-all.
+  type = list(object({
+    port                     = number
+    protocol                 = optional(string, "tcp")
+    description              = string
+    cidr_blocks              = optional(list(string))
+    source_security_group_id = optional(string)
+    prefix_list_ids          = optional(list(string))
+  }))
+  default = []
+
+  validation {
+    condition = alltrue([
+      for r in var.egress_rules :
+      length([
+        for s in [r.cidr_blocks, r.source_security_group_id, r.prefix_list_ids] : s
+        if s != null
+      ]) == 1
+    ])
+    error_message = "Each egress rule must set exactly one of cidr_blocks, source_security_group_id, prefix_list_ids."
+  }
+}

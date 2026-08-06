@@ -85,13 +85,149 @@ resource "aws_ec2_tag" "ec2_security_group_flip_sg" {
 # NOTE: Trust API port removed — trusts now poll the hub outbound (no inbound connections needed).
 # XNAT and PACS UI ports kept for direct researcher access to imaging tools.
 
+# Egress allowlist for the trust EC2 (#876, GHSA-8465). Security groups can't match on hostname,
+# so CDN-fronted / dynamic-IP destinations (GHCR, Docker Hub, the Central Hub's CloudFront domain,
+# Hugging Face mock-data seeding, OS/package install sources) are scoped to 0.0.0.0/0 on port 443
+# as the practical floor for an SG-only design — accepted as a permanent, documented limitation,
+# not a gap slated for a domain-aware firewall follow-up. ssmmessages/ec2messages and CloudWatch
+# monitoring have no VPC endpoint provisioned at all (unlike ssm/secretsmanager/logs, gated by
+# var.enable_ecs_endpoints below) and get the same public-CIDR floor rather than three more
+# interface endpoints. See deploy/providers/AWS/README.md for the full rationale per destination.
+locals {
+  # Every entry carries the full attribute set (unused selectors explicitly null) so Terraform's
+  # object-type unification across this heterogeneous list — and across the two branches of the
+  # enable_ecs_endpoints ternary below — doesn't choke on "inconsistent conditional result types".
+  trust_egress_rule_defaults = {
+    protocol                 = "tcp"
+    cidr_blocks              = null
+    source_security_group_id = null
+    prefix_list_ids          = null
+  }
+
+  trust_egress_rules = concat(
+    [
+      for r in [
+        {
+          port        = 443
+          cidr_blocks = ["0.0.0.0/0"]
+          description = "Central Hub API (CloudFront) - trust-api polling"
+        },
+        {
+          port        = 443
+          cidr_blocks = ["0.0.0.0/0"]
+          description = "GHCR - fl-client/trust-api/imaging-api/data-access-api/orthanc image pulls"
+        },
+        {
+          port        = 443
+          cidr_blocks = ["0.0.0.0/0"]
+          description = "Docker Hub - grafana loki/alloy/grafana image pulls"
+        },
+        {
+          port        = 443
+          cidr_blocks = ["0.0.0.0/0"]
+          description = "Hugging Face - trust mock OMOP/Orthanc data seeding (make seed-trust-data)"
+        },
+        {
+          port        = 443
+          cidr_blocks = ["0.0.0.0/0"]
+          description = "download.docker.com - Docker Engine install/upgrade (geerlingguy.docker role)"
+        },
+        {
+          port        = 443
+          cidr_blocks = ["0.0.0.0/0"]
+          description = "awscli.amazonaws.com - one-time AWS CLI v2 install"
+        },
+        {
+          port        = 80
+          cidr_blocks = ["0.0.0.0/0"]
+          description = "Ubuntu apt mirrors (HTTP) - package install/upgrade"
+        },
+        {
+          port        = 443
+          cidr_blocks = ["0.0.0.0/0"]
+          description = "Ubuntu apt mirrors and esm.ubuntu.com (HTTPS) - package install/upgrade"
+        },
+        {
+          port        = 443
+          cidr_blocks = ["0.0.0.0/0"]
+          description = "CloudWatch metrics (monitoring) - no VPC endpoint provisioned"
+        },
+        {
+          port        = 443
+          cidr_blocks = ["0.0.0.0/0"]
+          description = "SSM Session Manager data channel (ssmmessages) - no VPC endpoint provisioned"
+        },
+        {
+          port        = 443
+          cidr_blocks = ["0.0.0.0/0"]
+          description = "SSM Session Manager EC2 channel (ec2messages) - no VPC endpoint provisioned"
+        },
+        {
+          port            = 443
+          prefix_list_ids = [data.aws_ec2_managed_prefix_list.s3.id]
+          description     = "S3 (AI Centre FL kit sync) - AWS-managed prefix list, not a raw CIDR"
+        },
+        {
+          port                     = var.FL_SERVER_PORT
+          source_security_group_id = module.fl_server_nlb.security_group_id
+          description              = "FL server NLB - FL training traffic"
+        },
+        {
+          port        = 53
+          protocol    = "tcp"
+          cidr_blocks = ["${cidrhost(var.vpc_cidr, 2)}/32"]
+          description = "VPC DNS resolver (TCP fallback for large responses)"
+        },
+        {
+          port        = 53
+          protocol    = "udp"
+          cidr_blocks = ["${cidrhost(var.vpc_cidr, 2)}/32"]
+          description = "VPC DNS resolver"
+        },
+      ] : merge(local.trust_egress_rule_defaults, r)
+    ],
+    # ssm and logs interface endpoints only exist when var.enable_ecs_endpoints is true (the
+    # default) - scope tightly to the endpoint SG when they exist, otherwise fall back to the
+    # same public-CIDR floor already accepted above for the endpoints that never exist.
+    var.enable_ecs_endpoints ? [
+      for r in [
+        {
+          port                     = 443
+          source_security_group_id = aws_security_group.vpc_endpoints[0].id
+          description              = "SSM control plane (ssm) - via VPC interface endpoint"
+        },
+        {
+          port                     = 443
+          source_security_group_id = aws_security_group.vpc_endpoints[0].id
+          description              = "CloudWatch Logs (logs) - via VPC interface endpoint"
+        },
+      ] : merge(local.trust_egress_rule_defaults, r)
+      ] : [
+      for r in [
+        {
+          port        = 443
+          cidr_blocks = ["0.0.0.0/0"]
+          description = "SSM control plane (ssm) - no VPC endpoint provisioned (enable_ecs_endpoints=false)"
+        },
+        {
+          port        = 443
+          cidr_blocks = ["0.0.0.0/0"]
+          description = "CloudWatch Logs (logs) - no VPC endpoint provisioned (enable_ecs_endpoints=false)"
+        },
+      ] : merge(local.trust_egress_rule_defaults, r)
+    ]
+  )
+}
+
 module "trust_security_group" {
   source      = "./modules/secgroup"
   name        = "trust-security-group"
   vpc_id      = module.flip_vpc.vpc_id
   description = "Security group for FLIP Trust EC2 instance (no inbound - access via SSM Session Manager and SSM port forwarding)"
 
-  ingress_rules = []
+  ingress_rules      = []
+  block_all_outbound = true
+  egress_rules       = local.trust_egress_rules
 }
 
 resource "aws_ec2_tag" "trust_security_group_flip_sg" {

@@ -857,6 +857,39 @@ Ports referenced internally only (no internet-facing ingress; reached only from 
 - **5432** — RDS PostgreSQL. Reachable only from the Central Hub EC2 SG and the `flip-api` ECS task SG.
 - **Trust API** — no inbound port needed; trusts poll the hub outbound.
 
+### Trust EC2 egress allowlist (GHSA-8465)
+
+The trust EC2's security group (`module.trust_security_group` in `main.tf`) sets
+`block_all_outbound = true` and an explicit `egress_rules` allowlist (`local.trust_egress_rules`) —
+previously it had no outbound restriction at all (`0.0.0.0/0`, every protocol/port, including
+DNS). Security groups can only match on CIDR, a peer security group, or an AWS-managed prefix
+list — never a hostname — so the allowlist necessarily has two tiers:
+
+| Destination | Port | Scope | Why |
+|---|---|---|---|
+| Central Hub API (CloudFront) | 443 | `0.0.0.0/0` | trust-api polling the hub |
+| GHCR | 443 | `0.0.0.0/0` | fl-client / trust-api / imaging-api / data-access-api / orthanc image pulls |
+| Docker Hub | 443 | `0.0.0.0/0` | grafana / loki / alloy image pulls |
+| Hugging Face | 443 | `0.0.0.0/0` | mock OMOP/Orthanc data seeding (`make seed-trust-data`, part of the standard `deploy-trust` chain) |
+| download.docker.com | 443 | `0.0.0.0/0` | Docker Engine install/upgrade (`geerlingguy.docker` Ansible role) |
+| awscli.amazonaws.com | 443 | `0.0.0.0/0` | one-time AWS CLI v2 install |
+| Ubuntu apt mirrors + esm.ubuntu.com | 80, 443 | `0.0.0.0/0` | package install/upgrade |
+| CloudWatch metrics (`monitoring`) | 443 | `0.0.0.0/0` | no VPC endpoint provisioned for this service |
+| SSM `ssmmessages` / `ec2messages` | 443 | `0.0.0.0/0` | no VPC endpoint provisioned for these (only `ssm` is, below) |
+| S3 (AI Centre FL kit sync) | 443 | AWS-managed prefix list | `com.amazonaws.<region>.s3`, not a raw CIDR — S3's edge IPs rotate |
+| SSM control plane (`ssm`) / CloudWatch Logs (`logs`) | 443 | peer SG (`aws_security_group.vpc_endpoints`) | via the VPC interface endpoints, gated on `var.enable_ecs_endpoints` (default `true`); falls back to `0.0.0.0/0` if that's disabled |
+| FL server NLB | `FL_SERVER_PORT` | peer SG (`module.fl_server_nlb.security_group_id`) | FL training traffic |
+| VPC DNS resolver | 53 (tcp+udp) | `cidrhost(var.vpc_cidr, 2)/32` | name resolution, scoped to the VPC's own resolver rather than the internet |
+
+The `0.0.0.0/0`-scoped destinations above are all third-party/CDN-fronted with no stable AWS-owned
+IP range — GHCR, Docker Hub, Hugging Face, the apt/Docker/AWS-CLI install mirrors, and the three
+AWS services with no VPC endpoint. This is the practical floor for a security-group-only design
+and is accepted as a permanent, documented limitation rather than a gap slated for a follow-up —
+closing it for real would mean a domain-aware layer (AWS Network Firewall domain rules, or a
+forward proxy), which is out of scope here. Every rule is still scoped to port 443 (or 80/53 where
+that's what the destination actually uses), so this is materially tighter than the previous
+allow-all-protocols-all-ports default even where it can't be hostname-precise.
+
 ### Remote Access via SSM Session Manager
 
 EC2 instances are accessed through AWS Systems Manager Session Manager — port 22 is **not** open in any security group. SSH traffic is tunnelled through the SSM agent running on each instance, so no bastion host or inbound firewall rule is needed.
