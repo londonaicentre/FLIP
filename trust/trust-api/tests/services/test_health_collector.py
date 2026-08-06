@@ -82,13 +82,19 @@ async def test_probe_health_endpoint_degraded_when_slower_than_threshold():
 
 
 @pytest.mark.asyncio
-async def test_probe_health_endpoint_down_on_transport_error():
+async def test_probe_health_endpoint_down_on_transport_error(caplog):
     mock_client = AsyncMock()
     mock_client.get.side_effect = Exception("connection refused")
 
-    result = await _probe_health_endpoint(mock_client, "http://imaging-api:8000/health")
+    with caplog.at_level("WARNING"):
+        result = await _probe_health_endpoint(mock_client, "http://imaging-api:8000/health")
 
     assert result == {"status": "down", "version": None, "response_ms": None}
+    # A red dot with no logged cause is undiagnosable: the log must name the target
+    # and distinguish refused/timeout/TLS, which all collapse to the same status.
+    assert any(
+        "imaging-api:8000/health" in r.message and "connection refused" in r.message for r in caplog.records
+    )
 
 
 @pytest.mark.asyncio
@@ -237,7 +243,7 @@ async def test_probe_dicom_healthy_measures_own_round_trip_and_sends_internal_ke
     with (
         patch.object(health_collector, "PACS_ID", 1),
         patch(
-            "trust_api.services.health_collector._trust_internal_headers",
+            "trust_api.services.health_collector.trust_internal_headers",
             return_value={"X-Trust-Internal-Service-Key": "secret"},
         ),
         patch("trust_api.services.health_collector.time.monotonic", side_effect=[10.0, 10.25]),
@@ -266,13 +272,15 @@ async def test_probe_dicom_degraded_when_the_echo_chain_is_slow():
 
 
 @pytest.mark.asyncio
-async def test_probe_dicom_unknown_on_non_object_json_body():
+async def test_probe_dicom_unknown_on_non_object_json_body(caplog):
     mock_client = AsyncMock()
     mock_client.get.return_value = _response(200, "ok")
 
-    result = await _probe_dicom(mock_client)
+    with caplog.at_level("WARNING"):
+        result = await _probe_dicom(mock_client)
 
     assert result == {"status": "unknown", "version": None, "response_ms": None}
+    assert any("expected a JSON object" in r.message for r in caplog.records)
 
 
 @pytest.mark.asyncio
@@ -312,14 +320,18 @@ async def test_probe_dicom_unknown_on_transport_error():
 
 
 @pytest.mark.asyncio
-async def test_probe_dicom_unknown_on_http_error():
+async def test_probe_dicom_unknown_on_http_error(caplog):
     """A 5xx from imaging-api/XNAT proves nothing about the PACS itself."""
     mock_client = AsyncMock()
     mock_client.get.return_value = _response(502)
 
-    result = await _probe_dicom(mock_client)
+    with caplog.at_level("WARNING"):
+        result = await _probe_dicom(mock_client)
 
     assert result == {"status": "unknown", "version": None, "response_ms": None}
+    # 401/403 here means a trust-internal key misconfiguration rather than PACS
+    # weather, so the status code must reach the log or the grey dot is a dead end.
+    assert any("502" in r.message for r in caplog.records)
 
 
 @pytest.mark.asyncio
@@ -450,14 +462,61 @@ async def test_collect_once_reports_down_omop_via_tcp():
     assert snapshot["services"]["omop"]["status"] == "down"
 
 
+def _fixed_entry(status):
+    """A probe stub returning one known status, for binding assertions."""
+    return {"status": status, "version": None, "response_ms": None}
+
+
 @pytest.mark.asyncio
-async def test_collect_once_isolates_a_probe_that_raises():
+async def test_collect_once_binds_each_probe_to_the_right_service_key():
+    """Every probe's result must land under its own key. The gather results are
+    zipped against a positional name tuple, so a reordered probe would mislabel two
+    services and send an operator to the wrong container — while every other test
+    stays green, since they stub one response for all probes."""
+    with (
+        patch(
+            "trust_api.services.health_collector._probe_health_endpoint",
+            new_callable=AsyncMock,
+            # imaging-api is probed first, data-access-api second.
+            side_effect=[_fixed_entry("healthy"), _fixed_entry("degraded")],
+        ),
+        patch(
+            "trust_api.services.health_collector._probe_xnat",
+            new_callable=AsyncMock,
+            return_value=_fixed_entry("down"),
+        ),
+        patch(
+            "trust_api.services.health_collector._probe_dicom",
+            new_callable=AsyncMock,
+            return_value=_fixed_entry("unknown"),
+        ),
+        patch(
+            "trust_api.services.health_collector._probe_tcp",
+            new_callable=AsyncMock,
+            return_value=_fixed_entry("degraded"),
+        ),
+    ):
+        snapshot = await collect_once(AsyncMock())
+
+    assert {key: entry["status"] for key, entry in snapshot["services"].items()} == {
+        "trust-api": "healthy",
+        "imaging-api": "healthy",
+        "data-access-api": "degraded",
+        "xnat": "down",
+        "dicom": "unknown",
+        "omop": "degraded",
+    }
+
+
+@pytest.mark.asyncio
+async def test_collect_once_isolates_a_probe_that_raises(caplog):
     """A bug escaping one probe must cost that entry (unknown), never the cycle —
     the other five services still report."""
     mock_client = AsyncMock()
     mock_client.get.return_value = _response(200, {"status": "ok", "successful": True, "pingTime": 5})
 
     with (
+        caplog.at_level("ERROR"),
         patch(
             "trust_api.services.health_collector._probe_xnat",
             new_callable=AsyncMock,
@@ -473,6 +532,8 @@ async def test_collect_once_isolates_a_probe_that_raises():
     assert set(snapshot["services"].keys()) == ROSTER
     assert snapshot["services"]["xnat"] == {"status": "unknown", "version": None, "response_ms": None}
     assert snapshot["services"]["imaging-api"]["status"] == "healthy"
+    # The swallowed bug must still be attributable to a service.
+    assert any("xnat" in r.message and "TypeError" in r.message for r in caplog.records)
 
 
 # ---- current_snapshot / run_health_collector ----
@@ -510,26 +571,92 @@ async def test_run_health_collector_caches_snapshot_while_alive_and_clears_on_ex
 
 @pytest.mark.asyncio
 async def test_run_health_collector_continues_on_collection_error():
-    call_count = 0
+    seen_during_loop: list[dict | None] = []
 
     async def fake_sleep(seconds):
-        nonlocal call_count
-        call_count += 1
-        if call_count >= 1:
+        seen_during_loop.append(current_snapshot())
+        if len(seen_during_loop) >= 2:
             raise asyncio.CancelledError()
 
     with (
         patch(
             "trust_api.services.health_collector.collect_once",
             new_callable=AsyncMock,
-            side_effect=Exception("probe explosion"),
-        ),
+            side_effect=[Exception("probe explosion"), {"services": {}, "collected_at": "recovered"}],
+        ) as mock_collect,
         patch("trust_api.services.health_collector.asyncio.sleep", side_effect=fake_sleep),
     ):
         with pytest.raises(asyncio.CancelledError):
             await run_health_collector()
 
-    assert current_snapshot() is None
+    # The loop survived the failure and ran a second cycle, which recovered.
+    assert mock_collect.call_count == 2
+    assert seen_during_loop == [None, {"services": {}, "collected_at": "recovered"}]
+
+
+@pytest.mark.asyncio
+async def test_run_health_collector_abandons_a_hung_cycle_and_drops_the_snapshot(caplog):
+    """A probe that HANGS (rather than raising) must not wedge the loop.
+
+    Without a cycle deadline the loop never reaches its sleep, the cached snapshot
+    is never refreshed or dropped, and the poller keeps attaching it every 5s while
+    the hub re-stamps it fresh — rendering frozen data as live indefinitely, the
+    exact failure the drop-on-failure logic exists to prevent (and which raises no
+    exception, so none of the other guards fire).
+    """
+    seen_during_loop: list[dict | None] = []
+    never_completes = asyncio.Event()  # deliberately never set
+
+    async def hang(client):
+        await never_completes.wait()
+
+    async def fake_sleep(seconds):
+        seen_during_loop.append(current_snapshot())
+        raise asyncio.CancelledError()
+
+    health_collector._snapshot = {"services": {}, "collected_at": "stale"}
+
+    with (
+        patch("trust_api.services.health_collector.collect_once", side_effect=hang),
+        patch.object(health_collector, "_CYCLE_TIMEOUT_SECONDS", 0.01),
+        patch("trust_api.services.health_collector.asyncio.sleep", side_effect=fake_sleep),
+        caplog.at_level("ERROR"),
+    ):
+        # Bound the test itself: without the fix this never returns, and a hung
+        # test is a worse failure signal than an assertion.
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(run_health_collector(), 5)
+
+    # The stale snapshot was dropped before the loop slept, so the next heartbeat
+    # goes bodyless rather than re-publishing frozen data.
+    assert seen_during_loop == [None]
+    assert any("exceeded" in r.message for r in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_probe_tcp_survives_a_hanging_teardown():
+    """writer.wait_closed() can block on a half-open connection; the except clause
+    catches raises, not hangs, so the teardown needs its own deadline or it wedges
+    the whole collection cycle."""
+    writer = MagicMock()
+    stuck = asyncio.Event()  # deliberately never set
+
+    async def never_closes():
+        await stuck.wait()
+
+    writer.wait_closed = never_closes
+
+    async def fake_open_connection(host, port):
+        return MagicMock(), writer
+
+    with (
+        patch("trust_api.services.health_collector.asyncio.open_connection", side_effect=fake_open_connection),
+        patch.object(health_collector, "_TEARDOWN_TIMEOUT_SECONDS", 0.01),
+    ):
+        result = await asyncio.wait_for(_probe_tcp("omop-db", 5432), 5)
+
+    # The connect already proved liveness — a stuck close must not change the verdict.
+    assert result["status"] == "healthy"
 
 
 @pytest.mark.asyncio
@@ -559,13 +686,16 @@ async def test_run_health_collector_drops_snapshot_when_a_later_cycle_fails():
     """A failing collector must NOT keep riding its last good snapshot: the hub
     re-stamps freshness on every heartbeat, so retaining stale data would render
     week-old statuses as current forever. Dropping to None makes the heartbeat go
-    bodyless and the UI honestly report No data via its staleness window."""
-    call_count = 0
+    bodyless and the UI honestly report No data via its staleness window.
+
+    Observed from INSIDE the loop: the loop's ``finally`` clears the snapshot on any
+    exit, so asserting after it returns would pass even with the drop reverted.
+    """
+    seen_during_loop: list[dict | None] = []
 
     async def fake_sleep(seconds):
-        nonlocal call_count
-        call_count += 1
-        if call_count >= 2:
+        seen_during_loop.append(current_snapshot())
+        if len(seen_during_loop) >= 2:
             raise asyncio.CancelledError()
 
     with (
@@ -579,4 +709,5 @@ async def test_run_health_collector_drops_snapshot_when_a_later_cycle_fails():
         with pytest.raises(asyncio.CancelledError):
             await run_health_collector()
 
-    assert current_snapshot() is None
+    # Good cycle publishes; the failed cycle drops it rather than re-publishing.
+    assert seen_during_loop == [{"services": {}, "collected_at": "t0"}, None]

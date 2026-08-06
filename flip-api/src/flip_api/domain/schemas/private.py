@@ -244,6 +244,11 @@ class ServiceHealthEntry(BaseModel):
     response_ms: int | None = Field(default=None, ge=0, le=1_000_000)
 
 
+# Roster keys are the trust collector's wire contract; the hub stays roster-agnostic
+# and only constrains the shape, so a trust can report a new service without a hub deploy.
+_ServiceKey = Annotated[str, StringConstraints(pattern=r"^[a-z0-9-]{1,32}$")]
+
+
 class TrustHeartbeatInput(BaseModel):
     """Optional heartbeat body: the trust's per-service health snapshot (issue #901).
 
@@ -255,10 +260,9 @@ class TrustHeartbeatInput(BaseModel):
     snapshot.
     """
 
-    # Bounds declared on the field (≤16 services, keys ^[a-z0-9-]{1,32}$) so they
-    # also surface in the OpenAPI schema; entry-level caps live on ServiceHealthEntry.
-    services: Annotated[
-        dict[Annotated[str, StringConstraints(pattern=r"^[a-z0-9-]{1,32}$")], ServiceHealthEntry],
-        Field(max_length=16),
-    ]
+    # Bounds declared on the field so they also surface in the OpenAPI schema;
+    # entry-level caps live on ServiceHealthEntry. min_length matters as much as
+    # max: an empty snapshot would overwrite a good one AND be stamped fresh,
+    # defeating the collector's drop-the-snapshot-on-failure design.
+    services: dict[_ServiceKey, ServiceHealthEntry] = Field(min_length=1, max_length=16)
     collected_at: datetime | None = None

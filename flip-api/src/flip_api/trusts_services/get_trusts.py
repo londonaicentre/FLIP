@@ -63,6 +63,13 @@ def get_trusts(
     trust (``POST /admin/trusts``) and the plaintext keys it returns stay
     admin-only.
 
+    Issue #901 added ``services``/``services_updated_at`` (per-service status,
+    version and probe latency) to that set, and the Connection Status page is
+    itself non-admin. The versions are the trust's own service inventory rather
+    than a secret — a trust exposes no inbound ports, so they are unreachable
+    except from inside the trust, where XNAT's version is anonymously readable
+    anyway — but note this widens the non-admin surface beyond the list above.
+
     Args:
         db (Session): Database session, provided by dependency injection.
         user_id (UUID): ID of the authenticated user making the request.

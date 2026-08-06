@@ -14,41 +14,42 @@
 import { flushPromises, mount, VueWrapper } from "@vue/test-utils";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { ITrustResponse } from "@/services/trust-service";
+import { IServiceHealth, ITrustResponse } from "@/services/trust-service";
+import { deriveTrust, SERVICE_REGISTRY } from "@/utils/connection-health";
 
 import TrustDetailDrawer from "../TrustDetailDrawer.vue";
 
 const now = Date.now();
 const seconds = (n: number) => new Date(now - n * 1000).toISOString();
 
-const snapshot = () => ({
+const snapshot = (): Record<string, IServiceHealth> => ({
     "trust-api": {
-        status: "healthy" as const,
+        status: "healthy",
         version: "0.3.0",
         response_ms: null
     },
     xnat: {
-        status: "down" as const,
+        status: "down",
         version: "1.10.0",
         response_ms: null
     },
     "imaging-api": {
-        status: "healthy" as const,
+        status: "healthy",
         version: "0.3.0",
         response_ms: 12
     },
     omop: {
-        status: "degraded" as const,
+        status: "degraded",
         version: null,
         response_ms: 1400
     },
     dicom: {
-        status: "healthy" as const,
+        status: "healthy",
         version: null,
         response_ms: 31
     },
     "data-access-api": {
-        status: "healthy" as const,
+        status: "healthy",
         version: "0.3.0",
         response_ms: 15
     }
@@ -78,10 +79,10 @@ const offlineTrust = (): ITrustResponse => ({
 
 const onlineTrust = (): ITrustResponse => {
     const services = snapshot();
-    services.xnat.status = "healthy" as never;
-    services.xnat.response_ms = 220 as never;
-    services.omop.status = "healthy" as never;
-    services.omop.response_ms = 64 as never;
+    services.xnat.status = "healthy";
+    services.xnat.response_ms = 220;
+    services.omop.status = "healthy";
+    services.omop.response_ms = 64;
 
     return {
         ...degradedTrust(),
@@ -113,7 +114,9 @@ const mountDrawer = async (trust: ITrustResponse | null, show = true) => {
             }
         },
         props: {
-            trust,
+            // The page derives once per refresh and passes the row on; mirror that
+            // so the spec exercises the same shape production uses.
+            trust: trust ? deriveTrust(trust) : null,
             show
         }
     });
@@ -273,5 +276,31 @@ describe("TrustDetailDrawer", () => {
     it("renders nothing before the first open", async () => {
         await mountDrawer(null, false);
         expect(q("[data-test='drawer-panel']")).toBeNull();
+    });
+});
+
+
+describe("TrustDetailDrawer guards", () => {
+    it("every registry service renders an icon", async () => {
+        // SERVICE_ICONS is typed Record<ServiceKey, …>, but nothing in CI runs a
+        // type-checker (vue-tsc is not in the test or build workflow), so the
+        // compile-time guarantee needs a runtime backstop: a missing icon renders
+        // <component :is="undefined"> — a silently blank glyph in production.
+        await mountDrawer(degradedTrust());
+
+        const icons = qa("[data-test='container-row'] svg");
+        expect(icons).toHaveLength(SERVICE_REGISTRY.length);
+        for (const icon of icons) {
+            expect(icon.getAttribute("data-icon")).toBeTruthy();
+        }
+    });
+
+    it("the observer mocks are constructible", () => {
+        // HeadlessUI's Dialog does `new ResizeObserver(...)` when mounted un-stubbed.
+        // An arrow-function mock throws "not a constructor" as an unhandled rejection,
+        // which fails the vitest run while every test still reports as passing —
+        // so assert the constructor form directly rather than relying on that signal.
+        expect(() => new ResizeObserver(() => {})).not.toThrow();
+        expect(() => new IntersectionObserver(() => {})).not.toThrow();
     });
 });

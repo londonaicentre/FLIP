@@ -173,14 +173,13 @@ import { Dialog, DialogTitle, TransitionChild, TransitionRoot } from "@headlessu
 import { computed, type FunctionalComponent, ref, watch } from "vue";
 
 import AiDialogOverlay from "@/components/AiDialogOverlay/AiDialogOverlay.vue";
-import { ITrustResponse, ServiceStatus } from "@/services/trust-service";
-import { deriveServices,
-    deriveTrustState,
-    heartbeatText,
+import { ServiceStatus } from "@/services/trust-service";
+import { heartbeatText,
+    IDerivedTrust,
+    isFailing,
     PILL_CLASSES,
     ServiceKey,
-    STATE_LABELS,
-    TrustState } from "@/utils/connection-health";
+    STATE_LABELS } from "@/utils/connection-health";
 import IconCube from "~icons/ph/cube-duotone";
 import IconDatabase from "~icons/ph/database-duotone";
 import IconHardDrives from "~icons/ph/hard-drives-duotone";
@@ -188,8 +187,11 @@ import IconImages from "~icons/ph/images-duotone";
 import IconPlugsConnected from "~icons/ph/plugs-connected-duotone";
 import IconStack from "~icons/ph/stack-duotone";
 
+// The page passes a row whose health was derived once for this refresh. Re-deriving
+// here would take a second Date.now() and could land the drawer on the other side
+// of a threshold, so the row and the drawer could contradict each other on screen.
 const props = defineProps<{
-    trust: ITrustResponse | null;
+    trust: IDerivedTrust | null;
     show: boolean;
 }>();
 
@@ -227,7 +229,7 @@ const SERVICE_ICONS: Record<ServiceKey, FunctionalComponent> = {
 
 // The page nulls `trust` in the same tick it flips `show` off; keep the last
 // non-null trust so the 250ms slide-out renders content, not an empty shell.
-const lastTrust = ref<ITrustResponse | null>(null);
+const lastTrust = ref<IDerivedTrust | null>(null);
 watch(
     () => props.trust,
     t => {
@@ -240,14 +242,14 @@ const displayTrust = computed(() => props.trust ?? lastTrust.value);
 const codeAndRegion = computed(() =>
     [displayTrust.value?.code, displayTrust.value?.region].filter(Boolean).join(" · "));
 
-const services = computed(() => (displayTrust.value ? deriveServices(displayTrust.value) : []));
-const state = computed<TrustState>(() => (displayTrust.value ? deriveTrustState(displayTrust.value) : "offline"));
+const services = computed(() => displayTrust.value?._services ?? []);
+const state = computed(() => displayTrust.value?._state ?? "offline");
 
 const bannerText = computed(() => {
     if (state.value === "offline") {
         return "Core trust-api is unreachable — no data can be collected from this Trust.";
     }
-    const affected = services.value.filter(s => s.status === "down" || s.status === "degraded").length;
+    const affected = services.value.filter(isFailing).length;
 
     return `${affected} ${affected === 1 ? "container" : "containers"} affecting service.`;
 });

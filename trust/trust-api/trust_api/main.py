@@ -21,24 +21,8 @@ from trust_api.config import get_settings
 from trust_api.routers.health import router as health_router
 from trust_api.services.health_collector import run_health_collector
 from trust_api.services.task_poller import run_poller
+from trust_api.utils.background import reset_dead_background_tasks, watch_background_task
 from trust_api.utils.logger import logger
-
-
-def _log_background_task_death(task: asyncio.Task) -> None:
-    """Surface a background task dying outside its own error handling.
-
-    Both loops catch their per-cycle exceptions, so anything reaching here is a
-    scaffolding failure (e.g. client construction) that would otherwise sit as an
-    unretrieved exception while /health keeps returning ok.
-
-    Args:
-        task (asyncio.Task): The finished background task.
-    """
-    if task.cancelled():
-        return
-    exception = task.exception()
-    if exception is not None:
-        logger.error(f"Background task {task.get_name()!r} died: {type(exception).__name__}: {exception}")
 
 
 @asynccontextmanager
@@ -48,12 +32,15 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     Args:
         app (FastAPI): The FastAPI application instance being started.
     """
+    reset_dead_background_tasks()
     background_tasks = [
         asyncio.create_task(run_poller(), name="task_poller"),
         asyncio.create_task(run_health_collector(), name="health_collector"),
     ]
+    # Both loops run until shutdown, so a finished task means the service is gone:
+    # record it so /health stops claiming "ok" while nothing is polling or probing.
     for task in background_tasks:
-        task.add_done_callback(_log_background_task_death)
+        task.add_done_callback(watch_background_task)
     logger.info("Trust API started with task poller and health collector")
     yield
     for task in background_tasks:

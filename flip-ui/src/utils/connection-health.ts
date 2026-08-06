@@ -25,18 +25,22 @@ import { apiTimestampMs, relativeAgeLabel } from "@/utils/helpers";
 
 export type TrustState = "online" | "degraded" | "offline";
 
-// A heartbeat newer than HEARTBEAT_FRESH_S is "online"; older than HEARTBEAT_DEGRADED_S
-// (or absent) is "offline"; in between is "degraded". Trust-side poll interval
-// defaults to 5s, so 30s/300s gives ~6×/60× the poll cadence.
+// Thresholds for the trust-api row's own status — the service vocabulary, not the
+// trust state: newer than HEARTBEAT_FRESH_S is "healthy"; older than
+// HEARTBEAT_DEGRADED_S (or absent) is "down", which stateFromServices turns into
+// Offline; in between is "degraded". The trust-side poll interval defaults to 5s,
+// so 30s/300s gives ~6×/60× the poll cadence.
 export const HEARTBEAT_FRESH_S = 30;
 export const HEARTBEAT_DEGRADED_S = 5 * 60;
 
-// A snapshot at most this old (inclusive) counts as live data. The hub stamps
-// services_updated_at on every snapshot-carrying heartbeat (~5s cadence), and the
-// collector drops its snapshot whenever a collection cycle fails — so this window
-// trips when heartbeats stop carrying snapshots: a failing or dead collector, a
-// pre-collector trust-api build, or heartbeats stopping altogether. 90s = three
-// 30s collector cycles of headroom so a normal cycle gap never flags.
+// A snapshot at most this old (inclusive) counts as live data. The hub re-stamps
+// services_updated_at on every snapshot-carrying heartbeat (~5s), so the stamp
+// freezes only when the trust stops sending snapshots — the collector dropped its
+// snapshot (failed, hung or dead), or heartbeats stopped — about 18 missed
+// heartbeats of tolerance. A trust that never reported doesn't reach this path
+// (the !t.services guard catches it first). Caveat: the poller runs tasks between
+// heartbeats, so a long cohort query can delay them past this window on an
+// otherwise healthy trust — see FLIP#920.
 export const SERVICES_STALE_S = 90;
 
 export interface IServiceDefinition {
@@ -94,9 +98,24 @@ export interface IDerivedService extends Omit<IServiceDefinition, "key"> {
     response_ms: number | null;
 }
 
+// The statuses that count as "failing", derived from the vocabulary rather than
+// restated — so a future status can't be added to one definition and not another.
+export type FailingStatus = Exclude<ServiceStatus, "healthy" | "unknown">;
+
 export interface IFailingService {
     text: string;
-    status: "down" | "degraded";
+    status: FailingStatus;
+}
+
+// A trust row with its health derived once. The page builds these per data refresh
+// and passes them on (drawer, tiles, sort), so every surface reads the same
+// derivation at the same instant — deriving again elsewhere would use a second
+// Date.now() and could straddle a threshold, showing Online in the row and
+// Degraded in the drawer at the same moment.
+export interface IDerivedTrust extends ITrustResponse {
+    _state: TrustState;
+    _services: IDerivedService[];
+    _failing: IFailingService[];
 }
 
 // Trust-state display vocabulary, shared by the page's status pills and the
@@ -176,10 +195,12 @@ export const stateFromServices = (services: IDerivedService[]): TrustState => {
 export const deriveTrustState = (t: ITrustResponse, nowMs: number = Date.now()): TrustState =>
     stateFromServices(deriveServices(t, nowMs));
 
-const isFailing = (s: IDerivedService): s is IDerivedService & { status: "down" | "degraded" } =>
+export const isFailing = (s: IDerivedService): s is IDerivedService & { status: FailingStatus } =>
     s.status === "down" || s.status === "degraded";
 
-// Caption parts for a non-online row ("XNAT down · OMOP degraded"), down first.
+// Caption parts for a non-online row ("XNAT down · OMOP degraded"), down first —
+// except when trust-api is down, where the caption collapses to just that, since
+// nothing else can be known about a trust that isn't reporting.
 export const failingFromServices = (services: IDerivedService[]): IFailingService[] => {
     if (services.find(s => s.key === "trust-api")?.status === "down") {
         return [
@@ -196,6 +217,18 @@ export const failingFromServices = (services: IDerivedService[]): IFailingServic
         text: `${s.label} ${s.status}`,
         status: s.status
     }));
+};
+
+// Derive every health-related field for one trust, in one pass at one instant.
+export const deriveTrust = (t: ITrustResponse, nowMs: number = Date.now()): IDerivedTrust => {
+    const services = deriveServices(t, nowMs);
+
+    return {
+        ...t,
+        _state: stateFromServices(services),
+        _services: services,
+        _failing: failingFromServices(services)
+    };
 };
 
 // "6s ago"-style heartbeat age; "never" when absent or unparseable.

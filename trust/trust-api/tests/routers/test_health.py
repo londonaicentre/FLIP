@@ -10,6 +10,7 @@
 # limitations under the License.
 #
 
+import asyncio
 import tomllib
 from pathlib import Path
 
@@ -18,6 +19,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from trust_api.routers.health import router
+from trust_api.utils.background import reset_dead_background_tasks, watch_background_task
 
 
 def _pyproject_version() -> str:
@@ -48,3 +50,34 @@ async def test_health_reports_package_version(client):
     response = client.get("/health/")
     assert response.status_code == 200
     assert response.json()["version"] == _pyproject_version()
+
+
+@pytest.mark.asyncio
+async def test_health_reports_degraded_when_a_background_task_died(client):
+    """/health must not keep saying ok once the poller or collector is gone —
+    otherwise a container that has silently stopped working stays in rotation."""
+    reset_dead_background_tasks()
+
+    async def explode():
+        raise RuntimeError("boom")
+
+    task = asyncio.create_task(explode(), name="health_collector")
+    task.add_done_callback(watch_background_task)
+    with pytest.raises(RuntimeError):
+        await task
+    await asyncio.sleep(0)
+
+    try:
+        response = client.get("/health/")
+        assert response.status_code == 200
+        assert response.json()["status"] == "degraded"
+        assert response.json()["dead_tasks"] == ["health_collector"]
+    finally:
+        reset_dead_background_tasks()
+
+
+@pytest.mark.asyncio
+async def test_health_is_ok_with_no_dead_tasks(client):
+    reset_dead_background_tasks()
+    assert client.get("/health/").json()["status"] == "ok"
+    assert client.get("/health/").json()["dead_tasks"] == []

@@ -10,44 +10,32 @@
 # limitations under the License.
 #
 
-import tomllib
-from functools import lru_cache
-from pathlib import Path
-
 from fastapi import APIRouter
+
+from trust_api.utils.background import dead_background_tasks
+from trust_api.utils.version import service_version
 
 router = APIRouter(prefix="/health", tags=["Health"])
 
-# The service is a uv "virtual" project (never installed as a distribution), so the
-# only version source shared by the repo checkout and the container image is the
-# pyproject.toml that sits next to the package (/app in the image).
-_PYPROJECT_PATH = Path(__file__).resolve().parents[2] / "pyproject.toml"
-
-
-@lru_cache(maxsize=1)
-def service_version() -> str | None:
-    """Look up the service version from the adjacent pyproject.toml.
-
-    Also used by the health collector for the snapshot's own ``trust-api`` entry.
-
-    Returns:
-        str | None: The ``[project].version`` value, or None when the file is
-        missing or unparsable.
-    """
-    try:
-        with _PYPROJECT_PATH.open("rb") as fh:
-            return tomllib.load(fh)["project"]["version"]
-    except (OSError, KeyError, tomllib.TOMLDecodeError):
-        return None
-
 
 @router.get("")
-async def health_check() -> dict[str, str | None]:
+async def health_check() -> dict[str, object]:
     """
     Health check endpoint for the Trust API
 
+    Reports ``degraded`` when a background service (task poller, health collector)
+    has died: the process still answers HTTP, but it has stopped polling the hub
+    and/or collecting container health, and a plain "ok" would keep the container
+    in rotation while it does nothing.
+
     Returns:
-        dict[str, str | None]: The status of the service and its installed package
-        version — the same contract as the sibling trust services' /health.
+        dict[str, object]: The service status, its version (the same contract as
+        the sibling trust services' /health), and any dead background tasks.
     """
-    return {"status": "ok", "version": service_version()}
+    dead = dead_background_tasks()
+
+    return {
+        "status": "degraded" if dead else "ok",
+        "version": service_version(),
+        "dead_tasks": sorted(dead),
+    }

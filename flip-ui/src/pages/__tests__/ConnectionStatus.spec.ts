@@ -762,6 +762,17 @@ describe("ConnectionStatus", () => {
             await row.trigger("keydown.enter");
             expect(drawer(wrapper).attributes("data-show")).toBe("true");
         });
+
+        it("rows activate on Space as their button role promises", async () => {
+            mockSwrvData.value = [fixture[0]];
+            const wrapper = mountPage();
+            await wrapper.vm.$nextTick();
+
+            // role="button" commits to both Enter and Space; without the handler
+            // Space just scrolls the page.
+            await wrapper.find("[data-test='trust-row']").trigger("keydown.space");
+            expect(drawer(wrapper).attributes("data-show")).toBe("true");
+        });
     });
 
     describe("mobile stacked trust rows (design 3a)", () => {

@@ -178,10 +178,11 @@
                                 role="button"
                                 tabindex="0"
                                 class="px-4 py-3 cursor-pointer focus-visible:outline focus-visible:outline-2
-                                focus-visible:outline-primary-500"
+                                focus-visible:outline-primary-500 dark:focus-visible:outline-primary-300"
                                 :class="t._state === 'offline' ? 'bg-red-50/40 dark:bg-red-900/10' : ''"
                                 @click="openDrawer(t.id)"
                                 @keydown.enter="openDrawer(t.id)"
+                                @keydown.space.prevent="openDrawer(t.id)"
                             >
                                 <div class="flex items-start gap-2.5">
                                     <span class="inline-block w-2 h-2 mt-[5px] rounded-full shrink-0" :class="dotClass(t._state)" />
@@ -275,15 +276,18 @@
                                     v-for="(t, idx) in displayedTrusts"
                                     :key="t.id"
                                     data-test="trust-row"
+                                    role="button"
                                     tabindex="0"
                                     class="cursor-pointer group hover:bg-gray-50 dark:hover:bg-dark-surface/60
-                                    focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary-500"
+                                    focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary-500
+                                    dark:focus-visible:outline-primary-300"
                                     :class="[
                                         idx > 0 ? 'border-t border-gray-100 dark:border-dark-border' : '',
                                         t._state === 'offline' ? 'bg-red-50/40 dark:bg-red-900/10' : ''
                                     ]"
                                     @click="openDrawer(t.id)"
                                     @keydown.enter="openDrawer(t.id)"
+                                    @keydown.space.prevent="openDrawer(t.id)"
                                 >
                                     <td class="px-4 py-4 align-middle relative">
                                         <span
@@ -691,15 +695,12 @@ import TrustKitModal from "@/partials/trusts/TrustKitModal.vue";
 import { ICreatedTrust } from "@/services/admin-trusts-service";
 import { getTrustStatuses, ITrustResponse, ServiceStatus } from "@/services/trust-service";
 import { useAuthStore } from "@/store/auth";
-import { deriveServices,
+import { deriveTrust,
     deriveTrustState,
-    failingFromServices,
     heartbeatText,
-    IDerivedService,
-    IFailingService,
+    IDerivedTrust,
     PILL_CLASSES,
     STATE_LABELS,
-    stateFromServices,
     TrustState } from "@/utils/connection-health";
 
 const authStore = useAuthStore();
@@ -758,11 +759,9 @@ const STATE_RANK: Record<TrustState, number> = {
     online: 2
 };
 
-interface IRenderedTrust extends ITrustResponse {
-    _state: TrustState;
-    _services: IDerivedService[];
-    _failing: IFailingService[];
-}
+// Derived rows come from connection-health so the drawer can consume the same
+// objects; see IDerivedTrust there for why one derivation per refresh matters.
+type IRenderedTrust = IDerivedTrust;
 
 type SortKey = "severity" | "name" | "region" | "heartbeat" | "projects";
 type SortDir = "asc" | "desc";
@@ -771,8 +770,8 @@ interface IColumn {
     key?: SortKey;
     label: string;
     align?: "left" | "right";
-    // Optional Tailwind width class applied to the <th> to bias column sizing
-    // (narrow Status/Projects so the Trust column can breathe).
+    // Tailwind width class applied to the <th> to bias column sizing. Every column
+    // but Trust is pinned; Trust takes w-full and truncates via the cell's max-w-0.
     width?: string;
 }
 
@@ -795,8 +794,9 @@ const columns: IColumn[] = [
     {
         key: "region",
         label: "Region",
-        // Pinned widths (~ the design grid's 148/150/104px) stop the w-full Trust
-        // column from squeezing these to their longest word.
+        // Region/Services/Heartbeat are pinned (144/144/112px, approximating the
+        // design grid) so the w-full Trust column can't squeeze them to their
+        // longest word.
         width: "w-36"
     },
     {
@@ -882,16 +882,7 @@ const toggleSort = (key: SortKey) => {
 // the service registry, so memoising here saves it running per cell).
 const sortedTrusts = computed<IRenderedTrust[]>(() => {
     if (!trusts.value) return [];
-    const arr: IRenderedTrust[] = trusts.value.map(t => {
-        const services = deriveServices(t);
-
-        return {
-            ...t,
-            _state: stateFromServices(services),
-            _services: services,
-            _failing: failingFromServices(services)
-        };
-    });
+    const arr: IRenderedTrust[] = trusts.value.map(t => deriveTrust(t));
     const cmp = SORT_COMPARATORS[sortKey.value];
     arr.sort(sortDir.value === "asc" ? cmp : (a, b) => cmp(b, a));
 
@@ -905,8 +896,8 @@ const selectedTrustId = ref<string | null>(null);
 const selectedTrust = computed<IRenderedTrust | null>(
     () => sortedTrusts.value.find(t => t.id === selectedTrustId.value) ?? null
 );
-// Clear the stale id once the trust vanishes — without this, a trust deleted and
-// later re-registered under the same id would pop the drawer back open unasked.
+// The drawer closes when its trust leaves the polled list (`show` is `!!selectedTrust`);
+// clear the id too, so a row that returns to the list can't silently re-open it.
 watch(selectedTrust, t => {
     if (t === null) selectedTrustId.value = null;
 });
@@ -952,13 +943,16 @@ const toggleTile = (key: TrustState): void => {
     activeTile.value = activeTile.value === key ? null : key;
 };
 
+// Counted off the already-derived rows, not re-derived: a second derivation takes
+// its own Date.now(), so a tile could read "Online 2" while a row shows Degraded —
+// and clicking that tile would then list fewer trusts than its own count claims.
 const stateCounts = computed<Record<TrustState, number>>(() => {
     const counts: Record<TrustState, number> = {
         online: 0,
         degraded: 0,
         offline: 0
     };
-    for (const t of trusts.value ?? []) counts[deriveTrustState(t)]++;
+    for (const t of sortedTrusts.value) counts[t._state]++;
 
     return counts;
 });
@@ -970,14 +964,10 @@ const displayedTrusts = computed<IRenderedTrust[]>(() =>
 
 const subtitle = computed(() => {
     if (!trusts.value) return "Loading…";
-    const incidents = trusts.value.filter(t => {
-        const s = deriveTrustState(t);
+    const incidentCount = sortedTrusts.value.filter(t => t._state !== "online").length;
+    if (incidentCount === 0) return "All trusts reporting healthy.";
 
-        return s === "offline" || s === "degraded";
-    }).length;
-    if (incidents === 0) return "All trusts reporting healthy.";
-
-    return `${incidents} ${incidents === 1 ? "incident needs" : "incidents need"} attention.`;
+    return `${incidentCount} ${incidentCount === 1 ? "incident needs" : "incidents need"} attention.`;
 });
 
 // SVG hex colors mirror DOT_CLASSES — Tailwind class names don't translate to

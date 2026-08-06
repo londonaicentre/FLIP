@@ -23,6 +23,8 @@ from datetime import datetime, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Request, status
+from fastapi.encoders import jsonable_encoder
+from pydantic import ValidationError
 from sqlmodel import Session, col, select
 
 from flip_api.auth.access_manager import authenticate_trust
@@ -289,20 +291,45 @@ def submit_task_result(
 @limiter.limit("30/minute")
 def trust_heartbeat(
     request: Request,
-    heartbeat: TrustHeartbeatInput | None = Body(default=None),
+    body: dict | None = Body(default=None),
     db: Session = Depends(get_session),
     authenticated_trust: Trust = Depends(authenticate_trust),
 ) -> dict[str, object]:
     """Record a heartbeat for the authenticated trust.
 
+    The snapshot is validated in-hand rather than by the route signature so the
+    rejection can be logged **hub-side**, naming the trust. FastAPI's automatic 422
+    leaves no application log, and the sender is an unattended process whose own
+    logs live inside another institution — so without this, a trust whose telemetry
+    is being rejected is indistinguishable, from the hub, from one that never
+    reported at all. The 422 itself is preserved: the trust-api sees it and retries
+    bodyless, so a bad snapshot still cannot cost the trust its liveness.
+
     Args:
         request (Request): The FastAPI request, used by the rate limiter.
-        heartbeat (TrustHeartbeatInput | None): Optional per-service health snapshot;
-            absent on bodyless heartbeats from pre-collector trust-api builds.
+        body (dict | None): Optional per-service health snapshot; absent on bodyless
+            heartbeats from pre-collector trust-api builds.
         db (Session): Database session.
         authenticated_trust (Trust): The trust resolved from the API key.
 
     Returns:
         dict[str, object]: ``{trust_id, trust_name, message}``.
+
+    Raises:
+        HTTPException: 422 when a body is present but is not a valid snapshot.
     """
+    heartbeat = None
+    if body is not None:
+        try:
+            heartbeat = TrustHeartbeatInput.model_validate(body)
+        except ValidationError as e:
+            logger.error(
+                f"Rejected health snapshot from trust '{authenticated_trust.name}' "
+                f"({authenticated_trust.id}): {e.errors(include_url=False)[:3]}"
+            )
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=jsonable_encoder(e.errors(include_url=False)),
+            ) from e
+
     return _record_heartbeat(authenticated_trust, db, heartbeat)
