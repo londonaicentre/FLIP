@@ -149,6 +149,35 @@ async def test_send_heartbeat_success():
 
 
 @pytest.mark.asyncio
+async def test_send_heartbeat_posts_no_body_before_first_collection():
+    """Until the health collector has a snapshot, the heartbeat must stay bodyless —
+    the exact wire behavior of pre-collector trust-api builds."""
+    mock_client = AsyncMock()
+    mock_client.post.return_value = MagicMock(is_success=True)
+
+    with patch("trust_api.services.task_poller.current_snapshot", return_value=None):
+        await _send_heartbeat(mock_client)
+
+    assert "json" not in mock_client.post.call_args.kwargs
+
+
+@pytest.mark.asyncio
+async def test_send_heartbeat_attaches_health_snapshot_body():
+    """Once a snapshot exists, it rides along as the heartbeat JSON body."""
+    snapshot = {
+        "services": {"trust-api": {"status": "healthy", "version": "0.3.0", "response_ms": None}},
+        "collected_at": "2026-08-06T12:00:00+00:00",
+    }
+    mock_client = AsyncMock()
+    mock_client.post.return_value = MagicMock(is_success=True)
+
+    with patch("trust_api.services.task_poller.current_snapshot", return_value=snapshot):
+        await _send_heartbeat(mock_client)
+
+    assert mock_client.post.call_args.kwargs["json"] == snapshot
+
+
+@pytest.mark.asyncio
 async def test_send_heartbeat_error():
     """Should not raise on transport error."""
     mock_client = AsyncMock()

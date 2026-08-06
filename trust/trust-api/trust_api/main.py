@@ -19,25 +19,31 @@ from log_config import LoggingMiddleware
 
 from trust_api.config import get_settings
 from trust_api.routers.health import router as health_router
+from trust_api.services.health_collector import run_health_collector
 from trust_api.services.task_poller import run_poller
 from trust_api.utils.logger import logger
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-    """Start the task poller background service.
+    """Start the task poller and health collector background services.
 
     Args:
         app (FastAPI): The FastAPI application instance being started.
     """
-    poller_task = asyncio.create_task(run_poller())
-    logger.info("Trust API started with task poller")
+    background_tasks = [
+        asyncio.create_task(run_poller()),
+        asyncio.create_task(run_health_collector()),
+    ]
+    logger.info("Trust API started with task poller and health collector")
     yield
-    poller_task.cancel()
-    try:
-        await poller_task
-    except asyncio.CancelledError:
-        pass
+    for task in background_tasks:
+        task.cancel()
+    for task in background_tasks:
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
     logger.info("Trust API shutting down")
 
 
