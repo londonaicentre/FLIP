@@ -109,19 +109,15 @@ spec:
                 echo "Core vocabulary already loaded — skipping bundle fetch."
                 exit 0
               fi
-              BUNDLE="{{ .Values.omopDb.vocabLoad.bundleName }}"
-              # No `2>/dev/null` on either installer. This is the one step that
-              # needs egress to a package mirror, and a trust behind an
-              # allowlist has to be able to see WHY it could not reach one.
-              if ! command -v unzip > /dev/null 2>&1; then
-                microdnf install -y unzip || yum install -y unzip
-              fi
+              # Download only. Unpacking is the loader's job because unzip lives
+              # in the omop-db image and not in this one — which is what keeps
+              # this step free of any package install, and therefore of any
+              # dependency on egress to a package mirror. S3 is the only host it
+              # has to reach.
               # Nothing to resume from on a retry: restartPolicy is Never, so a
               # failed attempt is replaced by a new pod with a new emptyDir. The
               # skip that saves the download is the probe above.
-              aws s3 cp "s3://{{ .Values.omopDb.vocabLoad.s3Bucket }}/vocab/${BUNDLE}.zip" /vocab-work/bundle.zip
-              unzip -q /vocab-work/bundle.zip -d "/vocab-work/${BUNDLE}"
-              rm -f /vocab-work/bundle.zip
+              aws s3 cp "s3://{{ .Values.omopDb.vocabLoad.s3Bucket }}/vocab/{{ .Values.omopDb.vocabLoad.bundleName }}.zip" /vocab-work/bundle.zip
           {{- if .Values.omopDb.initJob.hostAwsMount.enabled }}
           env:
             - name: AWS_DEFAULT_REGION
@@ -148,10 +144,16 @@ spec:
             - -c
             - |
               set -euo pipefail
-              # The bundle directory is absent when the probe skipped the fetch;
-              # the loader only reads it for tables it is actually loading, so
-              # this run still applies the constraints.
-              /flip/omop/load_core_vocab.sh "/vocab-work/{{ .Values.omopDb.vocabLoad.bundleName }}" /flip/omop/constraints.sql
+              BUNDLE="{{ .Values.omopDb.vocabLoad.bundleName }}"
+              # No zip means the probe found the vocabulary already loaded and
+              # the fetch skipped itself. The bundle directory is then absent
+              # too, which is fine: the loader only reads it for tables it is
+              # actually loading, so this run still applies the constraints.
+              if [ -f /vocab-work/bundle.zip ]; then
+                unzip -q /vocab-work/bundle.zip -d "/vocab-work/${BUNDLE}"
+                rm -f /vocab-work/bundle.zip
+              fi
+              /flip/omop/load_core_vocab.sh "/vocab-work/${BUNDLE}" /flip/omop/constraints.sql
           env:
             {{- include "flip-trust.omopVocabDbEnv" . | nindent 12 }}
           resources:

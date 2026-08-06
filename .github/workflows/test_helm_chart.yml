@@ -148,6 +148,13 @@ jobs:
             echo "::error::probe-vocab must be ordered before fetch-bundle in initContainers"
             exit 1
           fi
+          # unzip is baked into the omop-db image precisely so this Job never
+          # installs anything at run time: S3 must be the only host it needs to
+          # reach, or a trust behind an egress allowlist cannot load a vocabulary.
+          if grep -qE 'microdnf|yum install|apt-get install' /tmp/vocabjob.yaml; then
+            echo "::error::vocab-load Job installs packages at run time again — that needs egress to a package mirror"
+            exit 1
+          fi
 
       # Asserted with an explicit `if`, not `! grep -q`: `set -e` exempts a
       # negated command, so that form only fails the step by virtue of being the

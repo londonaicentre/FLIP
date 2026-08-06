@@ -590,9 +590,11 @@ Symptoms: trust-api can't reach imaging-api or data-access-api (connection timeo
   PVC. A probe that cannot reach the database does *not* skip the fetch — it
   deliberately falls through to a full fetch-and-load, because a needless download
   is recoverable and a wrongly-skipped load is silent.
-- `microdnf install` fails in `fetch-bundle` → the cluster has no egress to the
-  Amazon Linux package mirror. That step installs `unzip`, which the `aws-cli`
-  image does not ship.
+- The Job reaches no host but S3. `fetch-bundle` only downloads the zip; the
+  loader unpacks it with the `unzip` baked into the `omop-db` image, so nothing
+  is installed at run time and no package mirror has to be on the egress
+  allowlist. `unzip: not found` in `load-vocab` means the `omopDb.image.tag` in
+  use predates this — repull a CI-published tag.
 
 ### Getting help
 

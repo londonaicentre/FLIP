@@ -36,6 +36,15 @@ COPY ./files/create_readonly_users.sql /flip/omop/create_readonly_users.sql
 COPY ./files/create_readonly_users.sh /docker-entrypoint-initdb.d/50_create_readonly_users.sh
 RUN chmod +x /docker-entrypoint-initdb.d/50_create_readonly_users.sh
 
+# The vocabulary bundle ships as a zip and the postgres base has no extractor
+# (it does carry tar and gzip). Installing unzip at build time rather than
+# letting the Kubernetes vocab-load Job install it at runtime is what keeps that
+# Job free of any dependency on a package mirror: a trust behind an egress
+# allowlist can reach its S3 bucket but not necessarily Amazon Linux's repos.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends unzip \
+    && rm -rf /var/lib/apt/lists/*
+
 # Seed-time helpers, shipped in the image so any environment (dev host, EC2,
 # k8s job) can run them with the image's own psql:
 # - load_core_vocab.sh streams a vocabulary bundle into a RUNNING database
