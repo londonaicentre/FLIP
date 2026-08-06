@@ -176,44 +176,52 @@ def validate_query(query: str) -> str:
     # CTE name would let an inner CTE exempt a physical table in an enclosing query.
     for scope in traverse_scope(stmt):
         for table in scope.tables:
+            # Validate the schema FIRST, before any name-based skip. A schema-qualified
+            # table-valued function — ``FROM pg_catalog.pg_ls_dir('/')`` — parses as an exp.Table
+            # with an empty ``.name`` but a populated ``.db``, so skipping empty names ahead of
+            # this check would step straight over it and admit a qualified non-omop reference.
+            schema_node = table.args.get("db")
+            if schema_node is not None:
+                # exp.Table.args["db"] is always None or an Identifier in sqlglot's schema, so
+                # .name is safe here.
+                schema_name = schema_node.name.lower()
+                if schema_name != ALLOWED_SCHEMA:
+                    raise _invalid_query(
+                        f"Schema '{schema_name}' is not accessible. Only the '{ALLOWED_SCHEMA}' schema is allowed."
+                    )
+
+                # ``catalog`` holds the leading part of a three-part db.schema.table reference,
+                # which the schema check above does not see — ``otherdb.omop.person`` has db=omop
+                # and passes it. Postgres has no cross-database references, so this can only be an
+                # attempt to confuse the check; reject it rather than emit it.
+                if table.args.get("catalog") is not None:
+                    raise _invalid_query("Cross-database table references are not allowed.")
+
+                # Already qualified to omop — nothing to pin.
+                continue
+
             table_name = table.name
             if not table_name:
-                # An empty name is a table-valued function (``FROM generate_series(1, 10)``),
-                # which sqlglot wraps in an exp.Table carrying no name and no schema.
+                # An empty name with no schema is an unqualified table-valued function
+                # (``FROM generate_series(1, 10)``), which sqlglot wraps in an exp.Table carrying
+                # no name and no schema. Nothing to pin, and no schema to check.
                 continue
 
-            schema_node = table.args.get("db")
-            if schema_node is None:
-                if table_name in scope.cte_sources:
-                    continue
-
-                # Unqualified. Postgres searches pg_catalog implicitly and *first*, whatever
-                # search_path is set to, so ``FROM pg_class`` reads the catalog however the
-                # database is configured (FLIP#879). Pin the reference to omop in the tree rather
-                # than trusting resolution order: the SQL that reaches the engine is emitted from
-                # this same tree at the end of this function, so a pinned node is a pinned query.
-                # ``omop.pg_class`` does not exist and fails as a clean undefined-table error.
-                #
-                # Pinning rather than rejecting is deliberate — unqualified references are
-                # ordinary in the cohort queries researchers write, and rejecting them would break
-                # saved queries to close a hole that pinning closes completely.
-                table.set("db", exp.to_identifier(ALLOWED_SCHEMA))
+            if table_name in scope.cte_sources:
                 continue
 
-            # exp.Table.args["db"] is always None or an Identifier in sqlglot's schema, so .name
-            # is safe here.
-            schema_name = schema_node.name.lower()
-            if schema_name != ALLOWED_SCHEMA:
-                raise _invalid_query(
-                    f"Schema '{schema_name}' is not accessible. Only the '{ALLOWED_SCHEMA}' schema is allowed."
-                )
-
-            # ``catalog`` holds the leading part of a three-part db.schema.table reference, which
-            # the schema check above does not see — ``otherdb.omop.person`` has db=omop and passes
-            # it. Postgres has no cross-database references, so this can only be an attempt to
-            # confuse the check; reject it rather than emit it.
-            if table.args.get("catalog") is not None:
-                raise _invalid_query("Cross-database table references are not allowed.")
+            # Unqualified. Postgres always searches pg_catalog — implicitly ahead of the
+            # search_path schemas unless search_path names it explicitly, in which case at that
+            # position. Either way it is always on the effective path, so ``FROM pg_class`` reads
+            # the catalog however the database is configured (FLIP#879). Pin the reference to omop
+            # in the tree rather than trusting resolution order: the SQL that reaches the engine is
+            # emitted from this same tree at the end of this function, so a pinned node is a pinned
+            # query. ``omop.pg_class`` does not exist and fails as a clean undefined-table error.
+            #
+            # Pinning rather than rejecting is deliberate — unqualified references are ordinary in
+            # the cohort queries researchers write, and rejecting them would break saved queries to
+            # close a hole that pinning closes completely.
+            table.set("db", exp.to_identifier(ALLOWED_SCHEMA))
 
     for clause_type, label in ((exp.Limit, "LIMIT"), (exp.Offset, "OFFSET")):
         for node in stmt.find_all(clause_type):

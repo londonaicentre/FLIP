@@ -656,6 +656,37 @@ def test_validate_query_allows_pg_prefixed_cte_names_in_their_scope():
     assert emitted.endswith("SELECT * FROM pg_class")
 
 
+@pytest.mark.parametrize(
+    "query",
+    [
+        "SELECT * FROM pg_catalog.pg_ls_dir('/')",
+        "SELECT * FROM public.some_func()",
+        "SELECT * FROM otherdb.pg_catalog.pg_ls_dir('/')",
+    ],
+)
+def test_validate_query_rejects_schema_qualified_table_functions(query: str):
+    """A *qualified* table-valued function must not escape the schema check.
+
+    sqlglot parses it as an exp.Table with an empty ``.name`` but a populated ``.db``, so a skip
+    keyed on the name steps over the schema check — which is exactly the regression this test
+    exists to prevent. The unqualified-function case below is the one that legitimately skips.
+    """
+    with pytest.raises(HTTPException, match="is not accessible|Cross-database"):
+        validate_query(query)
+
+
+def test_validate_query_pins_across_lexical_cte_scopes():
+    """A CTE bound in one scope must not exempt a physical table in another.
+
+    Postgres CTE visibility is lexical: the outer ``person`` here is *not* the inner CTE, so it must
+    still be pinned. A statement-wide alias set exempts it — and with ``public`` on the search path
+    that is a read outside omop.
+    """
+    emitted = validate_query("SELECT * FROM person, (WITH person AS (SELECT 1 AS x) SELECT x FROM person) z")
+
+    assert "omop.person" in emitted
+
+
 def test_validate_query_leaves_table_valued_functions_alone():
     """``FROM generate_series(...)`` parses as an exp.Table with no name and no schema to pin."""
     emitted = validate_query("SELECT * FROM generate_series(1, 10)")

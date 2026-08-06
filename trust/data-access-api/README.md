@@ -124,7 +124,9 @@ It performs a single parse-validate-emit pass and enforces:
    as is a three-part `db.schema.table` reference; an *unqualified* reference is rewritten to
    `omop.<table>` in the AST before emission. The rewrite is the load-bearing part: Postgres
    searches `pg_catalog` implicitly and first, whatever `search_path` says, so `FROM pg_class`
-   would otherwise read the catalog no matter how the database is configured (FLIP#879). Names
+   would otherwise read the catalog no matter how the database is configured (FLIP#879) — `pg_catalog`
+   is searched implicitly ahead of the `search_path` schemas unless `search_path` names it explicitly,
+   in which case at that position, so it is always on the effective path. Names
    bound by a `WITH` clause are exempt — they are never schema-qualified — but only in the lexical
    SQL scope where the CTE is visible, so a nested CTE cannot exempt a table reference in its
    enclosing query.
