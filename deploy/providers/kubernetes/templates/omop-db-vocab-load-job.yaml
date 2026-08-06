@@ -19,7 +19,8 @@
 # a multi-GB download into a per-pod emptyDir — and this is a post-upgrade HOOK,
 # so an unconditional fetch would put that download on the critical path of every
 # `helm upgrade` (a failed hook fails the WHOLE release). Probing first makes a
-# routine upgrade cost one round-trip per vocabulary table.
+# routine upgrade cost two round-trips per vocabulary table — the probe's guards
+# and the loader's — plus a pass over the constraint catalogue.
 #
 # The loader still runs when the probe finds everything present: it re-checks the
 # same guards, loads nothing, and applies the FK constraints — which is how a
@@ -73,8 +74,9 @@ spec:
             - -c
             - |
               set -euo pipefail
-              # The pod's single readiness gate: the loader below runs seconds
-              # after this exits, so it does not repeat the wait.
+              # Timing out here fails the Pod, and after backoffLimit the whole
+              # release — deliberately: a database that never comes up is not a
+              # state this Job can load into.
               attempts=0
               until pg_isready -h "${OMOP_DB_HOST}" -p "${OMOP_DB_PORT}" > /dev/null 2>&1; do
                 attempts=$((attempts + 1))
@@ -88,8 +90,14 @@ spec:
               # vocabulary. Anything else — including a database that cannot be
               # queried — leaves the marker unwritten, so the fetch goes ahead:
               # a needless download is recoverable, a skipped load is silent.
+              # The else branch only logs: this container reports Completed
+              # either way, so without it "the vocabulary is genuinely absent"
+              # and "the probe could not reach the database" look identical in
+              # `kubectl get pods` and differ only in stderr nobody reads.
               if /flip/omop/load_core_vocab.sh --check; then
                 touch /vocab-work/.vocab-present
+              else
+                echo "probe could not confirm the vocabulary (status $?) — falling through to a full fetch and load" >&2
               fi
           env:
             {{- include "flip-trust.omopVocabDbEnv" . | nindent 12 }}
@@ -144,6 +152,24 @@ spec:
             - -c
             - |
               set -euo pipefail
+              # Waits again rather than trusting the probe's gate: on the path
+              # where this container does real work, the fetch between them was a
+              # multi-GB download, so minutes can have passed — long enough for
+              # omop-db to be rescheduled or to finish a rolling update. The
+              # release's own rollout may still be in flight in any case, because
+              # the chart deploys with `helm upgrade --install` and no --wait.
+              # Costs one round-trip when the database is already up, and what it
+              # protects is the most expensive artifact in the Job: failing here
+              # discards the Pod, and with it the emptyDir holding the bundle.
+              attempts=0
+              until pg_isready -h "${OMOP_DB_HOST}" -p "${OMOP_DB_PORT}" > /dev/null 2>&1; do
+                attempts=$((attempts + 1))
+                if [ "${attempts}" -ge 60 ]; then
+                  echo "omop-db not reachable after ${attempts} attempts" >&2
+                  exit 1
+                fi
+                sleep 5
+              done
               BUNDLE="{{ .Values.omopDb.vocabLoad.bundleName }}"
               # No zip means the probe found the vocabulary already loaded and
               # the fetch skipped itself. The bundle directory is then absent

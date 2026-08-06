@@ -290,12 +290,16 @@ The hook probes before it fetches: `probe-vocab` asks the database what is
 missing, and only if something is does `fetch-bundle` download the bundle. This
 matters because the hook is on the critical path of *every* `helm upgrade` and a
 failed hook fails the whole release — so an upgrade that changes an unrelated
-image tag costs one query per vocabulary table, not a multi-GB download. The
+image tag costs two queries per vocabulary table (the probe's guards, then the
+loader's) plus a pass over the constraint catalogue, not a multi-GB download. The
 download lands in an `emptyDir` sized by `omopDb.vocabLoad.workDirSize` (10Gi,
 enough for the zip and its unpacked contents together); lower it, and the
 matching `fetchResources` / `loadResources` requests, for a cluster with small
-nodes. Keep the container `ephemeral-storage` limits above `workDirSize` — a full
-work dir is otherwise itself the thing that gets the pod evicted.
+nodes. Keep the container `ephemeral-storage` limits above `workDirSize` too:
+emptyDir usage is charged to the pod, whose ceiling is the regular containers'
+limits summed with each init container's taken as a max against that total — so
+here it is 12Gi, not 3 × 12Gi. Limits below the work dir size would evict the pod
+before it had finished filling it.
 
 An external OMOP database (`omopDb.enabled: false`) already skips this Job. Set
 `omopDb.vocabLoad.enabled: false` only to keep an in-cluster `omop-db` while
@@ -586,10 +590,16 @@ Symptoms: trust-api can't reach imaging-api or data-access-api (connection timeo
   happens. The loader still runs (it re-applies the FK constraints, so a previous
   run that died between the load and the constraints heals here).
 - `probe-vocab` fails with `omop-db not reachable after 60 attempts` → the database
-  never became ready; check the `omop-db` pod and the init Job that restores its
-  PVC. A probe that cannot reach the database does *not* skip the fetch — it
-  deliberately falls through to a full fetch-and-load, because a needless download
-  is recoverable and a wrongly-skipped load is silent.
+  never became ready within five minutes. This is a hard failure: the Pod fails,
+  and after `backoffLimit` so does the release. Check the `omop-db` pod and the
+  init Job that restores its PVC. (`load-vocab` waits the same way and fails the
+  same way, which is what stops a database restart during a long download from
+  discarding the bundle that was just fetched.)
+- A database that *is* reachable but cannot answer the probe — wrong password,
+  `omop` schema absent — is treated differently: the probe leaves its marker
+  unwritten and the Job falls through to a full fetch-and-load rather than
+  failing, because a needless download is recoverable and a wrongly-skipped load
+  is silent. The loader then reports the real error.
 - The Job reaches no host but S3. `fetch-bundle` only downloads the zip; the
   loader unpacks it with the `unzip` baked into the `omop-db` image, so nothing
   is installed at run time and no package mirror has to be on the egress

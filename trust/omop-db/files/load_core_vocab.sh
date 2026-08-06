@@ -128,6 +128,16 @@ if [ "${CHECK_ONLY}" -eq 1 ]; then
   exit 0
 fi
 
+# No bundle at all is a different fault from an incomplete one, and worth saying
+# so: a caller that probed first (see --check) skips fetching the bundle when it
+# believes everything is loaded, so reaching here means the probe and this run
+# disagreed. Blaming "an incomplete bundle" would send the operator to inspect an
+# artifact that was deliberately never downloaded.
+if [ -n "${PENDING}" ] && [ ! -d "${VOCAB_DIR}" ]; then
+  echo "❌ ${VOCAB_DIR} does not exist, but these tables still need loading:${PENDING}" >&2
+  exit 1
+fi
+
 # Fail fast on an incomplete bundle before loading any of it — but only over the
 # tables actually being loaded, so a no-op run still reaches the constraints
 # below (which is the point: a previous run that loaded every table and then

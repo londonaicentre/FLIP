@@ -129,12 +129,26 @@ jobs:
           # would otherwise be parsed as grep options rather than as patterns.
           # fetch-bundle is asserted here as well as below, so that the ordering
           # check cannot pass vacuously on an empty line number if it is renamed.
+          # load-vocab and its loader invocation are asserted because none of the
+          # probe/fetch strings would notice a Job that probes, fetches, and then
+          # never loads — which is green everywhere else and leaves empty cohorts.
+          #
+          # The marker patterns deliberately carry their whole `if` line rather
+          # than just the path. Asserting the bare token `-f /vocab-work/...`
+          # matches `! -f /vocab-work/...` too, so inverting the fetch guard —
+          # which makes every upgrade re-download the bundle, silently, the exact
+          # regression this step exists to catch — passed the earlier form. Same
+          # for the touch: asserted alone it survives `--check || true; touch`,
+          # which writes the marker unconditionally and only surfaces on the next
+          # fresh install, as a failed release.
           for want in \
             '- name: probe-vocab' \
             '- name: fetch-bundle' \
-            'load_core_vocab.sh --check' \
+            '- name: load-vocab' \
+            'if /flip/omop/load_core_vocab.sh --check; then' \
+            '/flip/omop/load_core_vocab.sh "/vocab-work/' \
             'touch /vocab-work/.vocab-present' \
-            '-f /vocab-work/.vocab-present'
+            'if [ -f /vocab-work/.vocab-present ]; then'
           do
             if ! grep -qF -e "${want}" /tmp/vocabjob.yaml; then
               echo "::error::vocab-load Job no longer probes before fetching (missing: ${want})"
@@ -151,8 +165,27 @@ jobs:
           # unzip is baked into the omop-db image precisely so this Job never
           # installs anything at run time: S3 must be the only host it needs to
           # reach, or a trust behind an egress allowlist cannot load a vocabulary.
-          if grep -qE 'microdnf|yum install|apt-get install' /tmp/vocabjob.yaml; then
+          # The other half of that contract — that the image really does ship
+          # unzip — is asserted in test_trust_omop_db.yml, which is where it can
+          # actually fire: THIS workflow's pull_request trigger is path-filtered
+          # to deploy/providers/kubernetes/**, so it does not run for a change to
+          # the Dockerfile it would be guarding.
+          if grep -qE 'microdnf|dnf |yum |apt-get |apt |apk add|pip install' /tmp/vocabjob.yaml; then
             echo "::error::vocab-load Job installs packages at run time again — that needs egress to a package mirror"
+            exit 1
+          fi
+          # All three containers share the work dir. Drop the mount from
+          # fetch-bundle and its skip test reads a path that cannot exist, so
+          # every upgrade silently re-downloads the bundle it just skipped.
+          mounts=$(grep -cF -e 'mountPath: /vocab-work' /tmp/vocabjob.yaml)
+          if [ "${mounts}" -ne 3 ]; then
+            echo "::error::expected /vocab-work mounted in all 3 containers, found ${mounts}"
+            exit 1
+          fi
+          # A deleted resources value renders as `resources:` + `null`, which
+          # drops the ephemeral-storage bound the work dir relies on.
+          if grep -A1 -E '^\s*resources:' /tmp/vocabjob.yaml | grep -qE '^\s*null\s*$'; then
+            echo "::error::a vocabLoad resources block rendered null — the emptyDir would be bounded only by the node"
             exit 1
           fi
 

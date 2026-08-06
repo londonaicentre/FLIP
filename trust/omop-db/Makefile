@@ -258,7 +258,10 @@ local_lint:
 	$(lint_command)
 local_mypy:
 	$(mypy_command)
+# tests/test_load_core_vocab.sh is bash, not pytest: it drives files/load_core_vocab.sh
+# with a stubbed psql, so it needs no Postgres and stays a unit test. It runs here
+# rather than under pytest because pytest only collects tests/unit/.
 local_test:
-	$(lint_command) && $(mypy_command) && $(test_coverage_command)
+	$(lint_command) && $(mypy_command) && $(test_coverage_command) && bash tests/test_load_core_vocab.sh
 unit_test: local_test
 test: local_test

@@ -56,6 +56,24 @@ jobs:
       - name: Lint, type-check and unit tests
         run: make local_test
 
+      # The Kubernetes vocab-load Job unpacks the bundle with the image's own
+      # unzip so that it installs nothing at run time and needs no egress to a
+      # package mirror. That contract spans two repos' worth of distance — the
+      # Helm template assumes what this Dockerfile provides — so assert the
+      # artifact itself rather than the Dockerfile text. This gates the GHCR
+      # publish (docker_build_omop_db.yml runs on this workflow's success), so a
+      # broken image cannot reach a cluster, where the symptom would be
+      # `unzip: command not found` inside a failing release hook.
+      - name: Image carries the seed-time loader contract
+        run: |
+          docker build -t omop-db-ci-check .
+          docker run --rm omop-db-ci-check sh -c '
+            command -v unzip > /dev/null || { echo "unzip missing from the image"; exit 1; }
+            test -x /flip/omop/load_core_vocab.sh || { echo "load_core_vocab.sh missing or not executable"; exit 1; }
+            test -f /flip/omop/constraints.sql || { echo "constraints.sql missing"; exit 1; }
+            /flip/omop/load_core_vocab.sh 2>&1 | grep -q "usage:" || { echo "loader did not run"; exit 1; }
+          '
+
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
         with:

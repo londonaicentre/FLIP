@@ -410,14 +410,20 @@ omopDb:
     enabled: true
     s3Bucket: ""
     bundleName: "vocab_aicentre_core_20240916"
-    # Scratch space for the downloaded bundle. Must hold the zip and its
-    # unpacked contents at the same time (~4.8Gi for the 20240916 bundle); the
-    # container ephemeral-storage limits below must stay ABOVE this, or a full
-    # work dir is itself the thing that gets the pod evicted.
+    # Scratch space for the downloaded bundle. Must hold the zip and its unpacked
+    # contents at the same time — for the 20240916 bundle that is the ~3.6 GiB
+    # documented in trust/omop-db/README.md plus the zip beside it. The kubelet
+    # enforces this on the emptyDir directly; keep the pod's ephemeral-storage
+    # ceiling (below) above it, so that this limit is what bounds the work dir
+    # rather than the pod being evicted before it has finished filling it.
     workDirSize: 10Gi
     # The fetch initContainer downloads the zip and stops there — unpacking is
     # the loader's, because unzip is in the omop-db image and not in the aws-cli
-    # one. So the zip alone is this container's storage footprint.
+    # one. Its request is small for that reason, though the pod's request is set
+    # by loadResources either way (see the max rule below); the zip itself lands
+    # in the emptyDir, which is charged to the pod and never to this container —
+    # a container's own ephemeral-storage accounting covers only its writable
+    # layer and logs.
     fetchResources:
       requests:
         cpu: "250m"
@@ -427,16 +433,23 @@ omopDb:
         cpu: "1"
         memory: 1Gi
         ephemeral-storage: 12Gi
-    # Shared by the probe and the loader. The ephemeral-storage request is sized
-    # for the loader, which briefly holds the zip and its unpacked contents at
-    # once (~4.8Gi for the 20240916 bundle) — requesting what it will actually
-    # use is what keeps the kubelet from picking this pod first under node disk
-    # pressure, since eviction ranks on usage OVER request and an evicted run
-    # restarts from zero. The probe over-requests harmlessly: init-container
-    # requests count as a max against the regular containers, never a sum.
-    # Both also declare a limit because a pod-level ephemeral-storage limit
-    # exists only when EVERY container sets one — without it the emptyDir above
-    # is bounded by nothing but the node.
+    # Shared by the probe and the loader. The work dir itself is bounded by
+    # workDirSize above, which the kubelet enforces on the emptyDir directly and
+    # independently of anything here. What the ephemeral-storage REQUEST buys is
+    # scheduling and eviction ranking: emptyDir usage counts against the pod, and
+    # the kubelet ranks eviction on usage OVER request, so a pod that requested
+    # nothing is picked first under node disk pressure — and an evicted run
+    # restarts from zero. Sized for the loader, which briefly holds the zip and
+    # its unpacked contents at once. The probe over-requests harmlessly: an
+    # ordinary init container's resources are taken as a max against the regular
+    # containers' total, never added to it (a restartable init container — a
+    # sidecar — WOULD be added, so do not convert the probe into one without
+    # revisiting these numbers).
+    #
+    # Limits follow that same max rule, not a sum: the pod's ceiling here is
+    # max(12Gi regular, 12Gi per init) = 12Gi, above workDirSize. Do not read it
+    # as 3 x 12Gi — setting all three to 4Gi on a sum reading would give a real
+    # ceiling of 4Gi and evict the pod less than halfway through the work dir.
     loadResources:
       requests:
         cpu: "100m"
