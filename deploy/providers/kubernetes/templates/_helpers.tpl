@@ -117,6 +117,19 @@ different database than the loader writes to.
 {{- end }}
 
 {{/*
+Whether the FL participant kit is fetched from S3, for the ACTIVE backend.
+The init container and the kit volume must agree on this: reading nvflare's flag
+while running Flower fetched an S3 kit into a hostPath volume (and vice versa).
+*/}}
+{{- define "flip-trust.flKitFromS3" -}}
+{{- if eq .Values.flBackend "flower" }}
+{{- .Values.flClient.flower.kitFromS3.enabled }}
+{{- else }}
+{{- .Values.flClient.nvflare.kitFromS3.enabled }}
+{{- end }}
+{{- end }}
+
+{{/*
 FL client image name based on backend selection
 */}}
 {{- define "flip-trust.flClientImage" -}}

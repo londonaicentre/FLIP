@@ -41,3 +41,27 @@ Check the stack is up:
 
     See deploy/providers/kubernetes/README.md → "OMOP core vocabulary".
 {{- end }}
+{{- if and .Values.flClient.enabled (not (eq (include "flip-trust.flKitFromS3" .) "true")) (not .Values.flClient.kitHostPath) }}
+
+⚠️  FL client has NO participant kit
+
+    Neither flClient.kitHostPath nor the active backend's kitFromS3 is set, so
+    the kit volume is empty and the client will die on a missing
+    startup/start.sh rather than joining the federation.
+
+    Kits are delivered OUT OF BAND for production — a trust holding credentials
+    into the AI Centre's S3 account to fetch its own kit is the thing FLIP#922
+    removed, and the on-prem flow already works this way. Stage the kit and
+    point the chart at it:
+
+        make -C deploy/providers/AWS package-onprem-trust-kit KIT=<CODE> PROD=<env>
+        # copy the kit onto the node, then:
+        --set flClient.kitHostPath=/opt/fl-kit/<slot>
+
+    Or, as a dev convenience only, opt back in to fetching it from S3:
+
+        --set flClient.{{ .Values.flBackend }}.kitFromS3.enabled=true \
+        --set flClient.{{ .Values.flBackend }}.kitFromS3.bucket=<bucket>
+
+    See deploy/providers/kubernetes/README.md → "FL participant kits".
+{{- end }}

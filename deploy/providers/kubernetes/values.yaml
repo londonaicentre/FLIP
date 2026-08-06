@@ -291,8 +291,17 @@ flClient:
     tag: stag
     pullPolicy: Always
   nvflare:
+    # Fetching the kit from S3 requires this trust to hold credentials into the
+    # AI Centre's account, which is at odds with the platform's own boundary —
+    # FL clients deliberately carry no Central Hub credentials, and a cloud
+    # credential is the same category of secret (FLIP#922). Kits are therefore
+    # delivered OUT OF BAND for production, exactly as the on-prem flow already
+    # does (`make -C deploy/providers/AWS package-onprem-trust-kit`): stage the
+    # kit on the node and point flClient.kitHostPath at it. Turn this on only as
+    # a dev convenience, and only against a bucket the cluster should be able to
+    # read.
     kitFromS3:
-      enabled: true
+      enabled: false
       # S3 bucket holding the FL participant kits (the AI Centre bucket,
       # AICENTRE_BUCKET_NAME). Required, but deployment-specific — supply it via
       # the kit override (`make sync-kit` writes it from the kit file). Empty here
@@ -305,8 +314,17 @@ flClient:
       # only works when trustName == the slot.
       pathTemplate: "fl-flare-participant-kits/{{ .Values.flClient.nvflare.kitFromS3.kitDate }}/net-1/services/{{ .Values.trustName }}"
   flower:
+    # Fetching the kit from S3 requires this trust to hold credentials into the
+    # AI Centre's account, which is at odds with the platform's own boundary —
+    # FL clients deliberately carry no Central Hub credentials, and a cloud
+    # credential is the same category of secret (FLIP#922). Kits are therefore
+    # delivered OUT OF BAND for production, exactly as the on-prem flow already
+    # does (`make -C deploy/providers/AWS package-onprem-trust-kit`): stage the
+    # kit on the node and point flClient.kitHostPath at it. Turn this on only as
+    # a dev convenience, and only against a bucket the cluster should be able to
+    # read.
     kitFromS3:
-      enabled: true
+      enabled: false
       # See the nvflare note above — supply via the kit override (`make sync-kit`).
       bucket: ""
       kitDate: "20260401"
