@@ -639,14 +639,21 @@ def test_validate_query_pins_unqualified_tables_inside_a_cte_body():
     assert "omop.pg_class" in emitted
 
 
-def test_validate_query_rejects_pg_prefixed_cte_names():
-    """The CTE alias set is flat while Postgres CTE scope is lexical.
+def test_validate_query_pins_table_outside_nested_cte_scope():
+    """An inner CTE cannot exempt an unqualified table in its enclosing query."""
+    emitted = validate_query(
+        "WITH wrapper AS (WITH audit_log AS (SELECT 1) SELECT * FROM audit_log) SELECT * FROM audit_log"
+    )
 
-    A CTE named ``pg_class`` would exempt an unqualified ``pg_class`` in an enclosing scope where
-    that CTE is not visible, so the name is refused outright.
-    """
-    with pytest.raises(HTTPException, match="is reserved"):
-        validate_query("WITH pg_class AS (SELECT 1 AS x) SELECT * FROM pg_class")
+    assert "SELECT * FROM audit_log" in emitted
+    assert emitted.endswith("SELECT * FROM omop.audit_log")
+
+
+def test_validate_query_allows_pg_prefixed_cte_names_in_their_scope():
+    """A scope-aware CTE exemption safely permits ordinary PostgreSQL CTE names."""
+    emitted = validate_query("WITH pg_class AS (SELECT 1 AS x) SELECT * FROM pg_class")
+
+    assert emitted.endswith("SELECT * FROM pg_class")
 
 
 def test_validate_query_leaves_table_valued_functions_alone():

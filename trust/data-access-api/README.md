@@ -125,8 +125,9 @@ It performs a single parse-validate-emit pass and enforces:
    `omop.<table>` in the AST before emission. The rewrite is the load-bearing part: Postgres
    searches `pg_catalog` implicitly and first, whatever `search_path` says, so `FROM pg_class`
    would otherwise read the catalog no matter how the database is configured (FLIP#879). Names
-   bound by a `WITH` clause are exempt — they are never schema-qualified — and `pg_`-prefixed CTE
-   names are refused so that exemption cannot shadow a catalog relation.
+   bound by a `WITH` clause are exempt — they are never schema-qualified — but only in the lexical
+   SQL scope where the CTE is visible, so a nested CTE cannot exempt a table reference in its
+   enclosing query.
 6. Literal-integer `LIMIT`/`OFFSET` (defeats blind extraction that makes the row count a function
    of a character value and reads it back through the cohort-size response).
 
