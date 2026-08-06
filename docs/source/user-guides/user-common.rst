@@ -351,16 +351,33 @@ Model Files
 
    A model must be created before proceeding to upload model files and prepare the model for training.
 
-**For NVIDIA FLARE apps**, the minimum required files are:
+There is no single list of required files. What a model must contain depends on its **job type**
+— the kind of federated job it runs, such as federated averaging or evaluation — and on which FL
+backend your platform is running. An app declares its job type with the ``job_type`` key in
+``config.json``. Every NVFLARE app carries a ``config.json``, because it is itself a required file
+for those job types; a Flower app only needs one in order to run a job type other than the default.
+Where the key — or the file itself — is absent, the ``standard`` job type is assumed.
 
-- ``validator.py``
-- ``trainer.py``
+**You do not need to look this up.** FLIP tells you which files your model needs, in two places on
+the model page:
 
-Additional files may be uploaded, especially if these are referenced by the validator or trainer. A config file may also be uploaded (see :ref:`training-configuration` section for more information), in which optional variables can be defined.
+- The Model Files panel shows the job type currently detected from your uploaded ``config.json``.
+- The Training panel lists the files that job type requires, and highlights any that are still
+  missing.
 
-**For Flower apps**, the required files differ (e.g. ``client_app.py``, ``pyproject.toml``). See the :ref:`FL nodes documentation <flip-fl-nodes>` for Flower-specific file requirements and job types.
+Both update as soon as you upload or replace ``config.json``, and training cannot be initiated
+until every required file has been uploaded.
 
-For more information on model training and model files, please see the `FLIP tutorials <https://github.com/londonaicentre/FLIP/tree/develop/fl-tutorials>`_.
+Files beyond the required set may be uploaded freely — anything your code imports (helper modules,
+transforms) is bundled with the app and shipped to the participating Trusts. Two things do not
+follow that rule: a file whose name matches one the platform's own app template supplies is quietly
+dropped in favour of the template's copy, and a checkpoint declared for server-side use stays on the
+FL server rather than travelling to the Trusts. Both are covered under
+:ref:`fl-required-files` on the FL nodes component page.
+
+The full per-job-type file lists, and the configuration each backend accepts, are documented on
+the :ref:`FL nodes component page <flip-fl-nodes>`. For worked examples of complete, working apps,
+see the `FLIP tutorials <https://github.com/londonaicentre/FLIP/tree/develop/fl-tutorials>`_.
 
 .. warning::
 
@@ -417,71 +434,27 @@ If model files need to be managed further after uploading, the uploader function
 Training Configuration
 ----------------------
 
-.. note::
+Alongside your code, an app carries a small configuration file that sets how the federated run
+behaves — how many rounds it trains for, how client updates are combined, and any settings your
+own code reads.
 
-   The following configuration applies to **NVIDIA FLARE** apps. For Flower apps, training configuration is managed via ``pyproject.toml``. See the :ref:`FL nodes documentation <flip-fl-nodes>` for details.
+Where that configuration lives, and which settings are available, depends on the FL backend:
 
-Prior to commencing training you may also upload an optional ``config.json`` file (see example below). The config file defines variables which are used during FLIP training (e.g. ``GLOBAL_ROUNDS``, ``LOCAL_ROUNDS``, ``AGGREGATION_WEIGHTS``, ``AGGREGATOR``).
+- **NVIDIA FLARE apps** are configured through ``config.json``, which is one of the required files
+  for every NVFLARE job type. As well as declaring ``job_type``, it may set platform-recognised
+  keys such as ``GLOBAL_ROUNDS`` and ``LOCAL_ROUNDS``.
+- **Flower apps** take their run configuration from the platform's app template, which your app
+  can override with a ``config.toml`` file. Flower apps do not use the NVFLARE keys.
 
-.. code-block:: json
+For NVFLARE apps, any key the platform does not recognise is passed through untouched, for your own
+code to read at runtime — which is how the tutorials carry app-specific settings such as learning
+rate or validation split. Flower works the other way round: ``config.toml`` may only override keys
+the app template already declares, and a key it does not declare fails the run at submission rather
+than being ignored.
 
-    {
-      "GLOBAL_ROUNDS": 5,
-      "LOCAL_ROUNDS": 2,
-      "IGNORE_RESULT_ERROR": false,
-      "AGGREGATOR": "InTimeAccumulateWeightedAggregator",
-      "AGGREGATION_WEIGHTS": {
-         "KCH": 1.0,
-         "UCLH": 0.5
-      }
-    }
-
-.. note::
-
-   All config properties have default values. If a ``config.json`` file is not uploaded, or some properties are missing from the file, default values will be utilised at runtime.
-   See default values specified below.
-
-**GLOBAL_ROUNDS**
-   Number of global training iterations. How many times the server should execute the ``trainer.py``.
-   Must be between 1 and 1000 (inclusive).
-
-   *Default=1*
-
-**LOCAL_ROUNDS**
-   Number of local training iterations at client sites.
-   Must be between 1 and 1000 (inclusive).
-
-   *Default=1*
-
-**IGNORE_RESULT_ERROR**
-   Whether training should proceed if a client returns an error.
-
-   *Default=false*
-
-**AGGREGATOR**
-   The nvflare aggregation component used to aggregate training results from each client.
-
-   .. warning::
-      Allowed values are "InTimeAccumulateWeightedAggregator" or "AccumulateWeightedAggregator". As of v4, FLIP only supports aggregator components built into nvflare. Specifying any other value will cause
-      a config validation error and prevent training from initiating.
-
-   *Default="InTimeAccumulateWeightedAggregator"*
-
-**AGGREGATION_WEIGHTS**
-   Weight dictionary passed into the aggregator component to define its aggregation behaviour.
-
-   .. warning::
-      Client sites *must* be referenced via their common abbreviation e.g KCH=Kings College Hospital, UCLH=University College London Hospital.
-      Weights must be provided as a valid json object.
-
-   *Default=1.0 applied to each client site*
-
-.. code-block:: json
-
-    {
-        "KCH": 1.0,
-        "UCLH": 1.0
-    }
+Every platform-recognised key has a default, so an app that sets only ``job_type`` will still run.
+For the full list of keys, their accepted values and defaults per backend, see
+:ref:`fl-training-configuration` on the FL nodes component page.
 
 View Files
 ----------

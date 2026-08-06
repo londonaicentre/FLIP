@@ -32,58 +32,13 @@ spec:
     spec:
       enableServiceLinks: false
       restartPolicy: OnFailure
+      # The service account used to be created here by a sibling postgres:17-alpine
+      # container that INSERTed straight into xdat_user with a fixed bcrypt hash.
+      # That is removed: the row it wrote has no xhbm_xdat_user_auth record, which
+      # XNAT 1.9.3 back-filled on the later password PUT but 1.10.0 does not, so the
+      # account could never authenticate. configure-xnat-web now creates it through
+      # POST /xapi/users instead — see the comment at that call.
       containers:
-        - name: configure-xnat
-          image: postgres:17-alpine
-          command:
-            - /bin/sh
-            - -c
-            - |
-              set -euo pipefail
-              echo "Waiting for xnat-db to be ready..."
-              until pg_isready -h xnat-db -U xnat -d xnat 2>/dev/null; do
-                sleep 3
-              done
-              echo "xnat-db is ready. Waiting for XNAT to finish schema initialisation (xdat_user table)..."
-              until psql -h xnat-db -U xnat -d xnat -c "SELECT 1 FROM xdat_user LIMIT 0" >/dev/null 2>&1; do
-                echo "  xdat_user not ready yet — waiting 10s for XNAT web to finish DB init..."
-                sleep 10
-              done
-              echo "Schema ready. Creating XNAT service account..."
-              psql -h xnat-db -U xnat -d xnat <<-EOSQL
-                DO \$init\$
-                DECLARE
-                  next_id INTEGER;
-                  user_exists BOOLEAN;
-                BEGIN
-                  SELECT EXISTS(SELECT 1 FROM xdat_user WHERE login = 'flipServiceAccount') INTO user_exists;
-                  IF NOT user_exists THEN
-                    SELECT COALESCE(MAX(xdat_user_id), 0) + 1 INTO next_id FROM xdat_user;
-                    INSERT INTO xdat_user (xdat_user_id, login, email, primary_password, firstname, lastname, enabled, verified)
-                    VALUES (next_id, 'flipServiceAccount', 'flip@gstt.nhs.uk', '{bcrypt}\$2a\$10\$3iLPGsSFFfNYyZbZqh6Wgu0JSaaltV8nIrp55pBoqfWDY36fmwaxC', 'FLIP', 'Service', 1, 1);
-                    INSERT INTO xdat_r_xdat_role_type_assign_xdat_user (xdat_user_xdat_user_id, xdat_role_type_role_name, xdat_r_xdat_role_type_assign_xdat_user_id)
-                    VALUES (next_id, 'Administrator', (SELECT COALESCE(MAX(xdat_r_xdat_role_type_assign_xdat_user_id), 0) + 1 FROM xdat_r_xdat_role_type_assign_xdat_user)),
-                           (next_id, 'SiteUser', (SELECT COALESCE(MAX(xdat_r_xdat_role_type_assign_xdat_user_id), 0) + 2 FROM xdat_r_xdat_role_type_assign_xdat_user));
-                    RAISE NOTICE 'Created flipServiceAccount user with id %', next_id;
-                  ELSE
-                    RAISE NOTICE 'flipServiceAccount user already exists, skipping.';
-                  END IF;
-                END \$init\$;
-              EOSQL
-              echo "XNAT service account configuration complete."
-          env:
-            - name: PGPASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: {{ if .Values.secrets.create }}{{ include "flip-trust.fullname" . }}-secrets{{ else }}{{ .Values.secrets.existingName }}{{ end }}
-                  key: xnat-datasource-password
-          resources:
-            requests:
-              memory: "256Mi"
-              cpu: "100m"
-            limits:
-              memory: "512Mi"
-              cpu: "200m"
         - name: configure-xnat-web
           image: alpine:3.20
           command:
@@ -204,12 +159,15 @@ spec:
                 exit 1
               fi
 
-              # Activate XNAT site (idempotent — safe to call even if already initialized)
+              # Activate XNAT site (idempotent — safe to call even if already initialized).
+              # siteUrl must be non-empty on XNAT >= 1.10.0: the Restlet create paths NPE on a
+              # null siteUrl while building the response (entity created, request 500s) — see
+              # trust/xnat/xnat/config/configure-xnat.sh for the full explanation.
               echo "Activating XNAT site..."
               xnat_curl -X POST "${XNAT_URL}/xapi/siteConfig" \
                 -H "Cookie: JSESSIONID=${JSESSION}" \
                 -H "Content-Type: application/json" \
-                -d '{"initialized": true}' >/dev/null
+                -d "{\"initialized\": true, \"siteUrl\": \"${XNAT_URL}\"}" >/dev/null
 
               # Set admin password to configured value if it differs from default
               echo "Setting admin password..."
@@ -233,9 +191,37 @@ spec:
               # Assign roles to service account
               SERVICE_USER="${XNAT_SERVICE_USER:-flipServiceAccount}"
 
+              # Create the service account through the REST API, never with a raw
+              # INSERT into xdat_user: XNAT only provisions the account's matching
+              # xhbm_xdat_user_auth "localdb" record on this path, and without that
+              # record every login is rejected 401 no matter what
+              # xdat_user.primary_password holds. XNAT 1.9.3 masked a DB-layer
+              # insert by back-filling the record on the password PUT below; 1.10.0
+              # does not, and since the PUT still answers 200 the job would report
+              # success on an XNAT whose service account can never authenticate —
+              # imaging-api then 401s on every call (TROUBLESHOOTING.md §2.3).
+              echo "Ensuring service account ${SERVICE_USER} exists..."
+              existing_users=$(xnat_curl "${XNAT_URL}/xapi/users" \
+                -H "Cookie: JSESSIONID=${JSESSION}")
+              if printf '%s' "$existing_users" | jq -e --arg u "${SERVICE_USER}" 'index($u)' >/dev/null; then
+                echo "  ${SERVICE_USER} already exists — leaving as-is."
+              else
+                xnat_curl -X POST "${XNAT_URL}/xapi/users" \
+                  -H "Cookie: JSESSIONID=${JSESSION}" \
+                  -H "Content-Type: application/json" \
+                  -d "{\"username\": \"${SERVICE_USER}\",
+                       \"password\": \"${SERVICE_PASS}\",
+                       \"firstName\": \"FLIP\",
+                       \"lastName\": \"Service\",
+                       \"email\": \"flip@gstt.nhs.uk\",
+                       \"enabled\": true,
+                       \"verified\": true}" >/dev/null
+                echo "  ${SERVICE_USER} created."
+              fi
+
               # Sync service-account password from the chart secret so it always
               # matches XNAT_SERVICE_PASSWORD in imaging-api, even after a backup
-              # restore (the DB-layer user creation above uses a fixed hash).
+              # restore that carries an older password hash.
               echo "Setting ${SERVICE_USER} password..."
               xnat_curl -X PUT "${XNAT_URL}/xapi/users/${SERVICE_USER}" \
                 -H "Cookie: JSESSIONID=${JSESSION}" \
@@ -334,7 +320,7 @@ spec:
                   "pacsAvailabilityCheckFrequency": "1 minute",
                   "dqrWaitToRetryRequestInSeconds": "300",
                   "assumeSameSessionIfArrivedWithin": "30 minutes",
-                  "allowAllUsersToUseDqr": true,
+                  "allowAllUsersToUseDqr": false,
                   "dqrCallingAe": "XNAT",
                   "notifyAdminOnImport": false,
                   "allowAllProjectsToUseDqr": true,
@@ -602,6 +588,20 @@ spec:
 ---
 # Container Service plugin configuration (K8s backend) + dcm2niix command JSON
 # + site-wide DICOM anonymization script.
+#
+# The Kubernetes backend entry carries the PVC mount settings (FLIP#565). Without
+# them the Container Service falls back to "no PVC mount" and bind-mounts the scan
+# path as a node hostPath — a path that only exists inside the xnat-web pod, so
+# kubelet creates it empty and dcm2niix exits with "Unable to find any DICOM images
+# in /input". `combined-pvc-name` is the single xnat-web data PVC (its root holds
+# both `archive/` and `build/`, which xnat-web mounts by subPath).
+#
+# `combined-path-translation` MUST keep its trailing slash. It is the prefix the
+# plugin strips from XNAT's own paths to build the volume's `subPath`; without the
+# slash the result keeps a leading `/` and the Kubernetes API rejects the whole Job
+# with `spec.template.spec.containers[0].volumeMounts.subPath: Invalid value ...
+# must be a relative path` (HTTP 422) — the launch then fails before any pod exists.
+#
 # The `data:` entries are sourced verbatim from:
 #   trust/xnat/xnat/config/container-service-backend-configuration.kubernetes.json
 #   trust/xnat/xnat/config/dcm2niix_command.json
@@ -620,7 +620,7 @@ data:
   anon_script.das: |
     version "6.3"
     // FLIP Site-Wide DICOM Anonymization Script
-    // Compatible with XNAT 1.9.3 (DicomEdit 6.7.x)
+    // Compatible with XNAT 1.10.0 (DicomEdit 6.9.x)
     //
     // This script is applied to all incoming DICOM data when anonymizationEnabled
     // is set to true on the SCP receiver. It removes Protected Health Information
@@ -683,6 +683,8 @@ data:
         "host": "",
         "cert-path": "",
         "swarm-mode": false,
+        "combined-pvc-name": "{{ include "flip-trust.fullname" . }}-xnat-web",
+        "combined-path-translation": "/data/xnat/",
         "pull-images-on-xnat-init": true,
         "container-user": "",
         "auto-cleanup": true
@@ -873,10 +875,11 @@ data:
 
     COOKIE="Cookie: JSESSIONID=${JSESSION}"
 
-    # Activate XNAT site
+    # Activate XNAT site. siteUrl must be non-empty on XNAT >= 1.10.0 (Restlet create paths
+    # NPE on null siteUrl while building the response) — see configure-xnat.sh.
     echo "Activating XNAT site..."
     wget -q -O /dev/null --header="${COOKIE}" --header="Content-Type: application/json" \
-      --post-data='{"initialized": true}' "${XNAT_URL}/xapi/siteConfig"
+      --post-data="{\"initialized\": true, \"siteUrl\": \"${XNAT_URL}\"}" "${XNAT_URL}/xapi/siteConfig"
 
     # Register PACS (Orthanc)
     echo "Registering PACS..."
@@ -910,7 +913,7 @@ data:
         "pacsAvailabilityCheckFrequency": "1 minute",
         "dqrWaitToRetryRequestInSeconds": "300",
         "assumeSameSessionIfArrivedWithin": "30 minutes",
-        "allowAllUsersToUseDqr": true,
+        "allowAllUsersToUseDqr": false,
         "dqrCallingAe": "XNAT",
         "notifyAdminOnImport": false,
         "allowAllProjectsToUseDqr": true,

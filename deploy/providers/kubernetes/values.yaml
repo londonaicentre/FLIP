@@ -51,7 +51,7 @@ podSecurity:
   audit: restricted
 
 # Container-level securityContext applied to the stateless services (the API
-# pods + fl-client + imaging-import-worker). The defaults are safe for any
+# pods + fl-client). The defaults are safe for any
 # image — they do NOT require a non-root image. runAsNonRoot and
 # readOnlyRootFilesystem are intentionally left unset because they depend on the
 # image; enable them per-deployment once validated against the image.
@@ -580,9 +580,19 @@ xnat:
     plugins:
       enabled: true
       image: python:3.12-slim
+      # These URLs are the single source of the plugin roster: the download
+      # init-container derives each jar's filename from the URL, so a version
+      # bump is a one-line change here. Keep them in step with the Swarm roster
+      # baked by trust/xnat/xnat/Dockerfile — the chart mounts an emptyDir over
+      # ${XNAT_HOME}/plugins, so these downloads REPLACE the image's plugins
+      # rather than adding to them, and the XNAT_VERSION compatibility matrices
+      # apply to whatever is listed here.
+      # XNAT 1.10.0 requires DQR 3.0.0 and Container Service 3.8.x:
+      #   https://wiki.xnat.org/xnat-tools/dqr-plugin-compatibility-matrix
+      #   https://wiki.xnat.org/container-service/container-service-compatibility-matrix
       urls:
-        container-service: "https://api.bitbucket.org/2.0/repositories/xnatdev/container-service/downloads/container-service-3.8.0-fat.jar"
-        dicom-query-retrieve: "https://api.bitbucket.org/2.0/repositories/xnatdev/dicom-query-retrieve/downloads/dicom-query-retrieve-2.3.2-xpl.jar"
+        container-service: "https://github.com/NrgXnat/container-service/releases/download/3.8.1/container-service-3.8.1-fat.jar"
+        dicom-query-retrieve: "https://api.bitbucket.org/2.0/repositories/xnatdev/dicom-query-retrieve/downloads/dicom-query-retrieve-3.0.0-xpl.jar"
         batch-launch: "https://api.bitbucket.org/2.0/repositories/xnatx/xnatx-batch-launch-plugin/downloads/batch-launch-0.9.0-xpl.jar"
         ohif-viewer: "https://xnat.org/files/ohif-viewer-xnat-plugin/ohif-viewer-3.7.2.jar"
     env:
@@ -748,36 +758,3 @@ networkPolicies:
       protocol: TCP
     - port: 443
       protocol: TCP
-
-# ---------------------------------------------------------------------------
-# Imaging Import Worker (DQR bypass)
-#
-# Runs a Python-based worker that C-MOVEs studies directly from Orthanc to
-# XNAT, bypassing the buggy DQR plugin (PacsNotStorableException).
-#
-# Can run as a one-shot Job (default) or a CronJob (if a schedule is set).
-# ---------------------------------------------------------------------------
-imagingImportWorker:
-  enabled: true
-  runOnce: false
-  replicas: 1
-  batchSize: 50
-  pollInterval: 60
-  workerAet: FLIPIMPORT
-  pacsId: 1
-  logLevel: INFO
-  prearchivePollSecs: 10
-  backoffLimit: 3
-  ttlSecondsAfterFinished: 86400
-  restartPolicy: Always
-  image:
-    repository: python
-    tag: "3.12-slim"
-    pullPolicy: IfNotPresent
-  resources:
-    requests:
-      memory: "256Mi"
-      cpu: "100m"
-    limits:
-      memory: "512Mi"
-      cpu: "500m"
