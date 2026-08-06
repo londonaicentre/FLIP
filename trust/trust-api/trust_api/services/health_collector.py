@@ -205,11 +205,13 @@ async def _probe_dicom(client: httpx.AsyncClient) -> dict:
         itself fails, ``down`` only when XNAT reports the DIMSE echo failed.
     """
     url = f"{IMAGING_API_URL}/imaging/ping_pacs/{PACS_ID}"
+    start = time.monotonic()
     try:
         response = await client.get(url, headers=_trust_internal_headers())
     except Exception as e:
         logger.warning(f"Health probe {url} failed: {type(e).__name__}: {e}")
         return _entry("unknown")
+    elapsed_ms = int((time.monotonic() - start) * 1000)
     if not response.is_success:
         # A 401/403 here is a trust-internal key misconfiguration, not PACS weather —
         # log the status so the permanently-gray dot has a thread to pull.
@@ -224,9 +226,10 @@ async def _probe_dicom(client: httpx.AsyncClient) -> dict:
     if not body.get("successful"):
         return _entry("down")
 
-    # XNAT DQR reports the DIMSE echo round-trip in milliseconds; third-party data,
-    # so clamp it to the wire bounds rather than trusting it.
-    return _entry("healthy", None, _bounded_ms(body.get("pingTime")))
+    # The response's pingTime is an epoch timestamp of the DIMSE echo, NOT a
+    # duration (verified against live XNAT DQR) — report our own measured
+    # round-trip of the whole imaging-api → XNAT → PACS echo chain instead.
+    return _entry(_status_from_latency(elapsed_ms), None, _bounded_ms(elapsed_ms))
 
 
 async def _probe_tcp(host: str, port: int) -> dict:

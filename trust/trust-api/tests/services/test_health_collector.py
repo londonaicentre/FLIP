@@ -228,10 +228,11 @@ async def test_probe_xnat_degraded_when_slow():
 
 
 @pytest.mark.asyncio
-async def test_probe_dicom_healthy_uses_ping_time_and_internal_key():
-    """The probe reuses trust-api's shared trust-internal header builder."""
+async def test_probe_dicom_healthy_measures_own_round_trip_and_sends_internal_key():
+    """XNAT's pingTime is an epoch timestamp, not a duration — the probe must
+    report its own measured round-trip and reuse the shared header builder."""
     mock_client = AsyncMock()
-    mock_client.get.return_value = _response(200, {"successful": True, "pingTime": 31})
+    mock_client.get.return_value = _response(200, {"successful": True, "pingTime": 1_786_029_453_834})
 
     with (
         patch.object(health_collector, "PACS_ID", 1),
@@ -239,13 +240,29 @@ async def test_probe_dicom_healthy_uses_ping_time_and_internal_key():
             "trust_api.services.health_collector._trust_internal_headers",
             return_value={"X-Trust-Internal-Service-Key": "secret"},
         ),
+        patch("trust_api.services.health_collector.time.monotonic", side_effect=[10.0, 10.25]),
     ):
         result = await _probe_dicom(mock_client)
 
-    assert result == {"status": "healthy", "version": None, "response_ms": 31}
+    assert result == {"status": "healthy", "version": None, "response_ms": 250}
     call_args = mock_client.get.call_args
     assert call_args[0][0].endswith("/imaging/ping_pacs/1")
     assert call_args[1]["headers"] == {"X-Trust-Internal-Service-Key": "secret"}
+
+
+@pytest.mark.asyncio
+async def test_probe_dicom_degraded_when_the_echo_chain_is_slow():
+    mock_client = AsyncMock()
+    mock_client.get.return_value = _response(200, {"successful": True, "pingTime": 1_786_029_453_834})
+
+    with (
+        patch.object(health_collector, "HEALTH_PROBE_DEGRADED_MS", 1000),
+        patch("trust_api.services.health_collector.time.monotonic", side_effect=[10.0, 12.0]),
+    ):
+        result = await _probe_dicom(mock_client)
+
+    assert result["status"] == "degraded"
+    assert result["response_ms"] == 2000
 
 
 @pytest.mark.asyncio
@@ -259,27 +276,17 @@ async def test_probe_dicom_unknown_on_non_object_json_body():
 
 
 @pytest.mark.asyncio
-async def test_probe_dicom_drops_non_finite_ping_time():
-    """XNAT's pingTime is third-party data — NaN/Infinity must not raise or reach the wire."""
+async def test_probe_dicom_never_surfaces_ping_time_as_latency():
+    """Regression: an early build forwarded pingTime as response_ms and rendered
+    epoch milliseconds as a latency. Whatever XNAT puts there must not surface."""
     mock_client = AsyncMock()
     mock_client.get.return_value = _response(200, {"successful": True, "pingTime": float("nan")})
 
-    result = await _probe_dicom(mock_client)
+    with patch("trust_api.services.health_collector.time.monotonic", side_effect=[10.0, 10.5]):
+        result = await _probe_dicom(mock_client)
 
     assert result["status"] == "healthy"
-    assert result["response_ms"] is None
-
-
-@pytest.mark.asyncio
-async def test_probe_dicom_clamps_out_of_range_ping_time():
-    """The hub rejects response_ms outside [0, 1_000_000]; an out-of-range XNAT value
-    must be clamped, not allowed to 422 every heartbeat."""
-    mock_client = AsyncMock()
-    mock_client.get.return_value = _response(200, {"successful": True, "pingTime": 2_000_000})
-
-    result = await _probe_dicom(mock_client)
-
-    assert result["response_ms"] == 1_000_000
+    assert result["response_ms"] == 500
 
 
 @pytest.mark.asyncio
