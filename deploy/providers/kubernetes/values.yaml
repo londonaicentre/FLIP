@@ -411,8 +411,9 @@ omopDb:
     s3Bucket: ""
     bundleName: "vocab_aicentre_core_20240916"
     # Scratch space for the downloaded bundle. Must hold the zip and its unpacked
-    # contents at the same time — for the 20240916 bundle that is the ~3.6 GiB
-    # documented in trust/omop-db/README.md plus the zip beside it. The kubelet
+    # contents at the same time — for the 20240916 bundle that is ~3.6 GiB
+    # unpacked plus a ~600 MiB zip, so a peak near 4.2 GiB (both figures are in
+    # trust/omop-db/README.md, "The core vocabulary bundle"). The kubelet
     # enforces this on the emptyDir directly; keep the pod's ephemeral-storage
     # ceiling (below) above it, so that this limit is what bounds the work dir
     # rather than the pod being evicted before it has finished filling it.

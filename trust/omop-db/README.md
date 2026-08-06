@@ -93,7 +93,9 @@ make build                         # plain docker build — no data inputs
 
 `vocab_aicentre_core_20240916` is an [OHDSI Athena](https://athena.ohdsi.org/)
 vocabulary export (snapshot `v5.0 30-AUG-24`): nine tab-separated files
-(~3.6 GB unpacked — `CONCEPT.csv` 819 MB, `CONCEPT_RELATIONSHIP.csv` 2.0 GB,
+(~600 MB as the distributed zip, ~3.6 GB unpacked — so a loader that unpacks
+beside the zip needs ~4.2 GB of scratch space, which is what sizes the
+Kubernetes vocab-load Job's work dir — `CONCEPT.csv` 819 MB, `CONCEPT_RELATIONSHIP.csv` 2.0 GB,
 `CONCEPT_ANCESTOR.csv` 704 MB, `CONCEPT_SYNONYM.csv` 139 MB,
 `DRUG_STRENGTH.csv` 159 MB, plus the small `CONCEPT_CLASS` / `DOMAIN` /
 `RELATIONSHIP` / `VOCABULARY` tables) that
