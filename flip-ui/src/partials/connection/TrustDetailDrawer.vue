@@ -11,17 +11,230 @@
     limitations under the License.
 -->
 
+<!-- Trust detail side drawer (design handoff option 1b, issue #901): per-container
+     status / version / response for one trust, derived live from the same SWRV
+     data the Connection Status table renders. Esc / scrim close come from the
+     HeadlessUI Dialog; focus returns to the trigger row on close. -->
 <template>
-    <div v-if="show" />
+    <TransitionRoot as="template" :show="show">
+        <Dialog as="div" class="fixed inset-0 z-10 overflow-hidden" :unmount="true" @close="emit('close')">
+            <div class="absolute inset-0 overflow-hidden">
+                <TransitionChild
+                    as="template"
+                    enter="ease-out duration-[250ms]"
+                    enter-from="opacity-0"
+                    enter-to="opacity-100"
+                    leave="ease-out duration-[250ms]"
+                    leave-from="opacity-100"
+                    leave-to="opacity-0"
+                >
+                    <AiDialogOverlay />
+                </TransitionChild>
+
+                <div class="fixed inset-y-0 right-0 flex max-w-full pl-10">
+                    <TransitionChild
+                        as="template"
+                        enter="transform transition ease-out duration-[250ms]"
+                        enter-from="translate-x-full"
+                        enter-to="translate-x-0"
+                        leave="transform transition ease-out duration-[250ms]"
+                        leave-from="translate-x-0"
+                        leave-to="translate-x-full"
+                    >
+                        <div
+                            v-if="trust"
+                            data-test="drawer-panel"
+                            class="w-screen max-w-[410px] flex flex-col h-full bg-white dark:bg-dark-surface
+                            border-l border-gray-200 dark:border-dark-border shadow-2xl dark:ring-1 dark:ring-white/20"
+                        >
+                            <!-- Header -->
+                            <div class="px-[22px] pt-[22px] pb-[18px] border-b border-gray-200 dark:border-dark-border">
+                                <div class="flex items-start justify-between gap-3">
+                                    <div class="min-w-0">
+                                        <p class="text-[11px] font-mono uppercase tracking-widest text-gray-500 dark:text-gray-300">
+                                            Trust detail
+                                        </p>
+                                        <DialogTitle
+                                            class="font-heading font-semibold text-[19px] mt-1 text-gray-900 dark:text-gray-100 truncate"
+                                        >
+                                            {{ trust.name }}
+                                        </DialogTitle>
+                                        <p class="font-mono text-xs text-gray-600 dark:text-gray-300 mt-0.5 truncate">
+                                            {{ [trust.code, trust.region].filter(Boolean).join(" · ") }}
+                                        </p>
+                                    </div>
+                                    <button
+                                        type="button"
+                                        data-test="drawer-close"
+                                        class="shrink-0 opacity-70 hover:opacity-100 transition rounded
+                                        text-gray-600 dark:text-gray-300 focus:outline-none focus:ring-1
+                                        focus:ring-primary-400"
+                                        tabindex="0"
+                                        @click="emit('close')"
+                                    >
+                                        <span class="sr-only">Close</span>
+                                        <icon-heroicons-outline-x class="w-5 h-5" />
+                                    </button>
+                                </div>
+                                <div class="flex items-center gap-3 mt-[14px]">
+                                    <span
+                                        class="inline-block px-2 py-0.5 rounded text-xs font-medium"
+                                        :class="PILL_CLASSES[state]"
+                                    >
+                                        {{ STATE_LABELS[state] }}
+                                    </span>
+                                    <span
+                                        data-test="drawer-heartbeat"
+                                        class="font-mono text-xs"
+                                        :class="state === 'offline'
+                                            ? 'text-red-600 dark:text-red-400'
+                                            : 'text-gray-600 dark:text-gray-300'"
+                                    >
+                                        heartbeat {{ heartbeatText(trust.last_heartbeat) }}
+                                    </span>
+                                </div>
+                            </div>
+
+                            <!-- Issue banner -->
+                            <div v-if="state !== 'online'" class="px-[14px] pt-[14px]">
+                                <div
+                                    data-test="drawer-banner"
+                                    class="flex items-start gap-2 rounded-lg border px-3 py-2.5 text-[12.5px] font-semibold"
+                                    :class="state === 'offline'
+                                        ? 'bg-red-500/[0.08] border-red-500/25 text-red-800 dark:text-red-300'
+                                        : 'bg-amber-500/10 border-amber-500/30 text-amber-800 dark:text-amber-300'"
+                                >
+                                    <span aria-hidden="true">⚠</span>
+                                    <span>{{ bannerText }}</span>
+                                </div>
+                            </div>
+
+                            <!-- Container list -->
+                            <div class="flex-1 overflow-y-auto px-[22px] pb-[22px] pt-2">
+                                <p class="text-[11px] font-mono uppercase tracking-widest text-gray-500 dark:text-gray-300 pt-4 pb-1">
+                                    Containers · {{ services.length }}
+                                </p>
+                                <div
+                                    v-for="svc in services"
+                                    :key="svc.key"
+                                    data-test="container-row"
+                                    :data-service="svc.key"
+                                    class="flex items-start gap-3 py-[13px] border-t border-gray-200 dark:border-dark-border"
+                                >
+                                    <component
+                                        :is="SERVICE_ICONS[svc.key]"
+                                        class="w-[22px] h-[22px] mt-0.5 shrink-0"
+                                        :class="ICON_TINT[svc.status]"
+                                    />
+                                    <div class="flex-1 min-w-0">
+                                        <div class="flex items-center justify-between gap-2">
+                                            <span class="font-mono text-[13px] font-semibold text-gray-900 dark:text-gray-100 truncate">
+                                                {{ svc.label }}
+                                            </span>
+                                            <span
+                                                data-test="container-chip"
+                                                class="shrink-0 px-2 py-0.5 rounded-full text-[11px] font-bold whitespace-nowrap"
+                                                :class="CHIP_CLASSES[svc.status]"
+                                            >
+                                                {{ CHIP_LABELS[svc.status] }}
+                                            </span>
+                                        </div>
+                                        <p class="text-[11.5px] text-gray-600 dark:text-gray-300 mt-0.5">
+                                            {{ svc.role }}
+                                        </p>
+                                        <p data-test="container-meta" class="font-mono text-[11px] text-gray-500 dark:text-gray-300 mt-1.5">
+                                            <span>{{ svc.version ?? "—" }}</span>
+                                            <span class="mx-2 text-gray-300 dark:text-gray-600">·</span>
+                                            <span
+                                                class="font-semibold"
+                                                :class="svc.status === 'degraded' ? 'text-amber-700 dark:text-amber-400' : ''"
+                                            >{{ svc.response_ms !== null ? `${svc.response_ms} ms` : "—" }}</span>
+                                        </p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </TransitionChild>
+                </div>
+            </div>
+        </Dialog>
+    </TransitionRoot>
 </template>
 
 <script setup lang="ts">
-import { ITrustResponse } from "@/services/trust-service";
+import { Dialog, DialogTitle, TransitionChild, TransitionRoot } from "@headlessui/vue";
+import { computed, type FunctionalComponent } from "vue";
 
-defineProps<{
+import AiDialogOverlay from "@/components/AiDialogOverlay/AiDialogOverlay.vue";
+import { ITrustResponse, ServiceStatus } from "@/services/trust-service";
+import { deriveServices,
+    deriveTrustState,
+    heartbeatText,
+    TrustState } from "@/utils/connection-health";
+import IconCube from "~icons/ph/cube-duotone";
+import IconDatabase from "~icons/ph/database-duotone";
+import IconHardDrives from "~icons/ph/hard-drives-duotone";
+import IconImages from "~icons/ph/images-duotone";
+import IconPlugsConnected from "~icons/ph/plugs-connected-duotone";
+import IconStack from "~icons/ph/stack-duotone";
+
+const props = defineProps<{
     trust: ITrustResponse | null;
     show: boolean;
 }>();
 
-defineEmits<{ close: [] }>();
+const emit = defineEmits<{ close: [] }>();
+
+// Same trust-state visual vocabulary as the Connection Status table.
+const STATE_LABELS: Record<TrustState, string> = {
+    online: "Online",
+    degraded: "Degraded",
+    offline: "Offline"
+};
+const PILL_CLASSES: Record<TrustState, string> = {
+    online: "bg-emerald-100 text-emerald-900 dark:bg-emerald-900/40 dark:text-emerald-100",
+    degraded: "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200",
+    offline: "bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-200"
+};
+
+const CHIP_LABELS: Record<ServiceStatus, string> = {
+    healthy: "Healthy",
+    degraded: "Degraded",
+    down: "Down",
+    unknown: "No data"
+};
+const CHIP_CLASSES: Record<ServiceStatus, string> = {
+    healthy: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-100",
+    degraded: "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200",
+    down: "bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-200",
+    unknown: "bg-gray-100 text-gray-600 dark:bg-gray-800/60 dark:text-gray-300"
+};
+const ICON_TINT: Record<ServiceStatus, string> = {
+    healthy: "text-emerald-600",
+    degraded: "text-amber-500",
+    down: "text-red-500",
+    unknown: "text-gray-400 dark:text-gray-300"
+};
+
+// Duotone glyph per registry key (design handoff icon table).
+const SERVICE_ICONS: Record<string, FunctionalComponent> = {
+    "trust-api": IconPlugsConnected,
+    xnat: IconImages,
+    "imaging-api": IconCube,
+    omop: IconDatabase,
+    dicom: IconHardDrives,
+    "data-access-api": IconStack
+};
+
+const services = computed(() => (props.trust ? deriveServices(props.trust) : []));
+const state = computed<TrustState>(() => (props.trust ? deriveTrustState(props.trust) : "offline"));
+
+const bannerText = computed(() => {
+    if (state.value === "offline") {
+        return "Core trust-api is unreachable — no data can be collected from this Trust.";
+    }
+    const affected = services.value.filter(s => s.status === "down" || s.status === "degraded").length;
+
+    return `${affected} ${affected === 1 ? "container" : "containers"} affecting service.`;
+});
 </script>
