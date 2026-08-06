@@ -1364,7 +1364,9 @@ def main(
             # absence as WARN, not FAIL.
             trust_endpoints = [
                 ("XNAT", "http://127.0.0.1:8104/", ["200", "302"], "FAIL"),
-                ("Orthanc", "http://127.0.0.1:8042/", ["200", "401"], "FAIL"),
+                # Auth is always enforced (FLIP-PT-091): a 200 without
+                # credentials means an unauthenticated PACS — fail.
+                ("Orthanc", "http://127.0.0.1:8042/", ["401"], "FAIL"),
                 ("trust-api", "http://127.0.0.1:8020/health", ["200"], "FAIL"),
                 ("imaging-api", "http://127.0.0.1:8001/health", ["200"], "FAIL"),
                 ("data-access-api", "http://127.0.0.1:8010/health", ["200"], "FAIL"),

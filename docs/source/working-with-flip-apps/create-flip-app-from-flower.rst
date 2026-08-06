@@ -375,7 +375,7 @@ Abridged from ``fl-tutorials/flower/3d_spleen_segmentation/pyproject.toml``:
 Submitting the app to FLIP
 ************************************
 
-Once your app runs locally (see the next section), upload it through the FLIP UI's model page the same way you would upload a FLARE app. FLIP validates the required files for a Flower app (which differ from those required for a FLARE app — see the "Model Files" subsection of :doc:`/user-guides/user-common` and the :ref:`flip-fl-nodes` page for the canonical list) and then lets you click **Initiate Training**.
+Once your app runs locally (see the next section), upload it through the FLIP UI's model page the same way you would upload a FLARE app. FLIP validates the required files for a Flower app (which differ from those required for a FLARE app, and depend on the job type — see :ref:`fl-required-files` for the canonical list) and then lets you click **Initiate Training**.
 
 At submit time, the FLIP FL API:
 

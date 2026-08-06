@@ -45,8 +45,9 @@ jobs:
       # Credential and SMTP env values are NOT passed as build args — they are
       # injected at container start from the deployment env file so they are
       # never written into image layers (verifiable via docker history --no-trunc).
+      # XNAT_VERSION is absent for a different reason: it is read from
+      # trust/xnat/.env by the step below and appended at the docker build call.
       BUILD_ARGS: |
-        --build-arg XNAT_VERSION=1.9.3
         --build-arg TOMCAT_XNAT_FOLDER=ROOT
         --build-arg XNAT_ROOT=/data/xnat
         --build-arg XNAT_HOME=/data/xnat/home
@@ -56,6 +57,16 @@ jobs:
         with:
           repository: ${{ github.event.workflow_run.head_repository.full_name }}
           ref: ${{ github.event.workflow_run.head_sha }}
+
+      # Single source for the XNAT version: trust/xnat/.env — the same pin the
+      # Makefile build reads — so a version bump there flows through the WAR and
+      # plugin downloads and the image build without editing this workflow.
+      - name: Read XNAT version from trust/xnat/.env
+        run: |
+          XNAT_VERSION="$(grep -E '^XNAT_VERSION=' ../.env | cut -d= -f2 || true)"
+          [[ -n "$XNAT_VERSION" ]] || { echo "::error::XNAT_VERSION not set in trust/xnat/.env"; exit 1; }
+          echo "Using XNAT version: $XNAT_VERSION"
+          echo "XNAT_VERSION=$XNAT_VERSION" >> "$GITHUB_ENV"
 
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v6.2.1
@@ -122,14 +133,17 @@ jobs:
           GH_ACTOR: ${{ github.actor }}
         run: echo "$GH_TOKEN" | docker login $REGISTRY -u "$GH_ACTOR" --password-stdin
 
+      # The S3 artifact set is keyed by XNAT version — s3://<bucket>/xnat-<version>/{war, plugins/} —
+      # so branches on different XNAT versions (e.g. main vs develop across an upgrade) each build
+      # against their own WAR + plugin roster.
       - name: Download XNAT WAR
-        run: aws s3 cp s3://${{ env.FLIP_ARTIFACTS_BUCKET_NAME }}/xnat/xnat-web-1.9.3.war build-artifacts/xnat-web-1.9.3.war
+        run: aws s3 cp "s3://${{ env.FLIP_ARTIFACTS_BUCKET_NAME }}/xnat-${XNAT_VERSION}/xnat-web-${XNAT_VERSION}.war" "build-artifacts/xnat-web-${XNAT_VERSION}.war"
 
       - name: Download XNAT plugins
         # Exclude ohif-viewer: FLIP never opens the viewer, and its per-session
         # metadata-rebuild listener is the dominant load on XNAT's Reactor
         # EventBus (FLIP#662). Keep this in sync with scripts/ensure_plugins.sh.
-        run: aws s3 sync s3://${{ env.FLIP_ARTIFACTS_BUCKET_NAME }}/xnat/plugins/ plugins/ --exclude "ohif-viewer-*"
+        run: aws s3 sync "s3://${{ env.FLIP_ARTIFACTS_BUCKET_NAME }}/xnat-${XNAT_VERSION}/plugins/" plugins/ --exclude "ohif-viewer-*"
 
       - name: Build Docker image
         env:
@@ -141,7 +155,7 @@ jobs:
             TAG_FLAGS+=("-t" "$tag")
           done
           # shellcheck disable=SC2086
-          docker build $BUILD_ARGS "${TAG_FLAGS[@]}" .
+          docker build --build-arg XNAT_VERSION="$XNAT_VERSION" $BUILD_ARGS "${TAG_FLAGS[@]}" .
 
       - name: Push Docker image
         env:

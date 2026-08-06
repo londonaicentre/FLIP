@@ -15,6 +15,41 @@
 
 XNAT is the medical imaging archive used by each FLIP trust site. It stores DICOM data imported from the trust's PACS (Orthanc) and makes it available to federated learning pipelines via the Imaging API. This directory contains the Docker configuration for running XNAT locally and on EC2, along with the plugins and setup scripts needed to integrate it with the rest of the FLIP Trust Services layer.
 
+## Version notes (XNAT 1.10.0)
+
+FLIP runs XNAT `1.10.0` (see `XNAT_VERSION` in `.env`). Two things matter for us:
+
+- **JDK 21.** 1.10.0 moves from JDK 8 to JDK 21 (for long-term support), so the image's Tomcat base
+  moved to a `jdk21` variant. Upstream states there is **no change in the Tomcat or PostgreSQL
+  version requirements**, which is why Tomcat stays on 9.x and `PG_VERSION` stays at `12.2-alpine`.
+  Most JDK 8-compiled plugins still run — see [Plugin compatibility](#plugin-compatibility) below.
+- **dcm4che2 → dcm4che5.** XNAT's core DICOM processing library was replaced. This is what forces the
+  DQR plugin upgrade, and it is the change most likely to alter DICOM import behaviour, so the import
+  path (Orthanc → DQR → directArchive → NIfTI conversion) deserves a full re-test on 1.10. The
+  release also notes mitigations for imports of very large (>2 GB) uncompressed DICOM files.
+  *Re-tested live on the dev stack (2026-07-30, both trusts): imaging-api project create → DQR 3.0.0
+  query + import → C-MOVE from Orthanc → directArchive → Container Service dcm2niix → NIfTI resource,
+  with `import_status_count` reporting the queued → processing → successful lifecycle correctly.*
+- **`siteUrl` must be set (1.10.0 regression for headless installs).** The Restlet create paths
+  (e.g. `POST /data/projects`, used by imaging-api) resolve response references through the `siteUrl`
+  site preference via `URI.create()`, which throws an uncaught NPE when the preference is null — the
+  entity is created but the request returns 500 (`SecureResource -
+  NullPointerException ... "this.input" is null` in `restlet.log`), so imaging-api treats every
+  project create as failed while orphan projects accumulate in XNAT. The UI setup wizard always sets
+  `siteUrl`; our headless `configure-xnat.sh` (and the K8s init job) now set it explicitly during
+  activation. On 1.9.3 a null `siteUrl` fell into a caught `MalformedURLException` path, which is why
+  this never bit before.
+- **Dynamic Data Types.** 1.10.0 adds real-time creation of data types and management of display
+  fields — XSD additions without plugin development and without a Tomcat restart.
+
+> **This does not supersede the FLIP#612 fix.** Cohort imports of chest X-rays once reported a
+> permanent "0 imported" because `xnat:dxSessionData` is not in XNAT's default *secure element* set
+> (`cr/ct/mr/pet/petmr`), and the project-scoped experiment listing filters on element-access rows.
+> That data type already exists in the XSD — the gap was **element-security registration**, not a
+> missing type — so Dynamic Data Types does not address it. imaging-api reads the unfiltered global
+> listing (`GET /data/experiments?project={id}`) instead, which is modality-agnostic and needs no
+> registration; keep it that way. See `imaging_api/services/projects.py::get_experiments`.
+
 ## Docker Swarm
 
 XNAT is deployed using Docker Swarm (both locally and on EC2). This is because Swarm provides overlay networking, resource constraints, and restart policies needed for XNAT services.
@@ -36,6 +71,13 @@ XNAT is deployed using Docker Swarm (both locally and on EC2). This is because S
 
   The base file defines the three services (`xnat-web`, `xnat-db`, `xnat-nginx`). The development overlay adds host bind-mounts for hot-reload and resource limits sized for dev machines. The production overlay mounts persistent data volumes under `/opt/flip/xnat/`.
 - Two XNAT instances are deployed as separate Swarm stacks (`xnat1`, `xnat2`), one per trust
+- **Every redeploy is a fresh install.** `up-xnat` blocks on `down-xnat` and then runs `xnat-reset`,
+  which `rm -rf`s `XNAT_DATA_DIR` and recreates it — in development *and* in staging/production
+  (local Docker context or remote-over-ssh alike). So `configure-xnat.sh` always runs against a
+  brand-new instance and re-applies the full site configuration; its `initialized=true`
+  short-circuit is there for a re-run against a *live* instance, not for an upgrade. If an in-place
+  upgrade of a persistent XNAT is ever supported outside this tooling, that short-circuit would skip
+  re-applying site config (`siteUrl`, DQR access control) and would need revisiting.
 
 ## Setup
 
@@ -61,6 +103,11 @@ make up
 
 `make up` will create the required data directories, deploy the XNAT stack via Docker Swarm, and automatically configure both XNAT instances (service account, admin password, SCP receiver, PACS registration, dcm2niix command).
 
+Every configuration call is checked: a rejected XNAT API call (non-2xx) aborts the deploy with the failing request's
+HTTP status and response body (see `configure-xnat-<stack>.log` inside the container), instead of silently skipping
+that step. Re-running against an already-configured instance is tolerated — the existing service account, PACS
+registration, and availability intervals are detected and left as-is.
+
 In development (when `PROD` is not set), `make up` also mounts the local `xnat/plugins` and `xnat/config` directories into the container for hot-reload. In production, these are baked into the Docker image.
 
 > **Important — XNAT data volumes must be bind-mounted.**
@@ -70,24 +117,73 @@ If successful, you will be able to log in to XNAT with the service account crede
 
 ## Plugins
 
-Plugins and the XNAT WAR are stored in S3 at `s3://<FLIP_ARTIFACTS_BUCKET_NAME>/xnat/plugins/` and `s3://<FLIP_ARTIFACTS_BUCKET_NAME>/xnat/xnat-web-<version>.war`. The CI workflows download them and bake them into the Docker image during the build.
+Plugins and the XNAT WAR are stored in S3 as a **version-keyed artifact set**:
+`s3://<FLIP_ARTIFACTS_BUCKET_NAME>/xnat-<version>/xnat-web-<version>.war` plus
+`.../xnat-<version>/plugins/*.jar` (e.g. `xnat-1.10.0/`). Each XNAT version needs a matching plugin
+roster, and keying the whole set by version lets branches on different XNAT versions (e.g. `main` vs
+`develop` across an upgrade) build without clobbering each other. The CI workflows and
+`make build` download the set for the `XNAT_VERSION` in `.env` and bake it into the Docker image.
+
+> The pre-1.10 flat layout (`xnat/xnat-web-1.9.3.war` + `xnat/plugins/`) is kept as-is while `main`
+> still builds 1.9.3; delete it once this upgrade reaches `main`.
 
 ### Plugin compatibility
 
 Make sure to always use the correct version of the plugins that are compatible with the XNAT version specified. Check the plugin's compatibility matrix for more information (for example, see [DQR Plugin Compatibility Matrix](https://wiki.xnat.org/xnat-tools/dqr-plugin-compatibility-matrix)).
 
-The following table lists the compatible versions of the plugins for the XNAT version `1.9.3` used in this environment.
+**A JDK 8-compiled plugin is not automatically broken on 1.10.** Per the XNAT 1.10.0 release
+announcement, 1.10.0 runs most JDK 8-era plugins as-is; only plugins that depend on components XNAT
+itself updated (notably the `dcm4che2` → `dcm4che5` DICOM library swap) need a new build. This
+upgrade changes two plugins for FLIP: DQR (forced by `dcm4che5`) and Container Service (the
+[CS compatibility matrix](https://wiki.xnat.org/container-service/container-service-compatibility-matrix)
+ticks **only 3.8.x** for XNAT 1.10.0 — 3.7.x support stops at 1.9.3.x, even though 3.7.3 happened to
+pass a basic conversion smoke on 1.10.0).
 
-| Plugin                          | Version for XNAT 1.9.3  |
-| ------------------------------- | ----------------------- |
-| Container Service Plugin        | 3.7.3                   |
-| Batch Launch Plugin             | 0.9.0                   |
-| DICOM Query-Retrieve Plugin     | 2.2.0                   |
-| OHIF Viewer Plugin              | 3.7.1                   |
+The following table lists the plugin versions for the XNAT version `1.10.0` used in this environment.
+
+| Plugin                          | Version for XNAT 1.10.0     | Installed | Action for the 1.10 upgrade |
+| ------------------------------- | --------------------------- | --------- | --------------------------- |
+| DICOM Query-Retrieve Plugin     | 3.0.0                       | Yes       | **Must upgrade** from 2.2.0 — rebuilt on JDK 21 + `dcm4che5`, plus a thread-leakage fix |
+| Container Service Plugin        | 3.8.1 (JDK 8 build)         | Yes       | **Must upgrade** from 3.7.3 — 3.8.x is the only column the compatibility matrix ticks for 1.10.0 |
+| Batch Launch Plugin             | 0.9.0 (JDK 8 build)         | Yes       | None — the matrix keeps BLP 0.9.0 for 1.10.0 |
+| OHIF Viewer Plugin              | 3.8.0 available; n/a here   | No        | None — deliberately not installed (FLIP#662) |
+
+Not applicable to FLIP, but released alongside 1.10.0: **Distributed Events 2.0.0** (only needed for
+load-balanced multi-node XNAT — each FLIP trust runs a single node) and **MFA 1.6.0** (FLIP does not
+use XNAT-side MFA; hub auth is Cognito and imaging-api authenticates as a service account).
+
+> **DQR 3.0.0 is a major version bump and imaging-api reads DQR's tables directly.**
+> `imaging_api/db/get_{queued,executed}_pacs_request_by_project.py` query DQR's Hibernate tables
+> (`xhbm_queued_pacs_request`, `xhbm_executed_pacs_request`) and `services/retrieval.py` compares
+> against the literal status `"FAILED"`. A major bump carrying a `dcm4che5` rewrite could change
+> table columns or status vocabulary, which would silently misreport in-flight and failed imports.
+> **Verified compatible (2026-07-30):** the released 3.0.0 JAR keeps
+> `PacsRequest.FAILED_STATUS_TEXT == "FAILED"` (full vocabulary
+> QUEUED/PROCESSING/ISSUED/RECEIVED/FAILED), and the `xhbm_*_pacs_request` columns imaging-api reads
+> were confirmed unchanged on a live 3.0.0 instance during the dev-stack smoke test.
+>
+> The DQR thread-leakage fix is also worth attention: it is plausibly related to the bulk-import
+> wedging investigated in FLIP#662 (worked around here with the raised heap in `.env` and by
+> excluding the OHIF viewer). Re-test a large cohort pull on 1.10 + DQR 3.0.0 before assuming those
+> workarounds are still needed.
+
+**Staying on 1.9 instead?** Upstream also shipped **XNAT 1.9.3.4** (urgent fixes for JDK 8
+deployments) and **DQR 2.3.2** (the thread-leak fix alone, JDK 8). That is the lower-risk path to the
+DQR fix if this 1.10 upgrade stalls.
+
+The `xnat-1.10.0/` artifact set (WAR + DQR 3.0.0 + Container Service 3.8.1 + Batch Launch 0.9.0) is
+uploaded and CI-verified. All three upgraded artifacts are public downloads, no account needed:
+the WAR from `https://api.bitbucket.org/2.0/repositories/xnatdev/xnat-web/downloads/xnat-web-1.10.0.war`,
+DQR from
+`https://api.bitbucket.org/2.0/repositories/xnatdev/dicom-query-retrieve/downloads/dicom-query-retrieve-3.0.0-xpl.jar`
+(the same repo also carries `2.3.2`/`2.4.0` for the JDK 8 fallback), and CS from
+`https://github.com/NrgXnat/container-service/releases/download/3.8.1/container-service-3.8.1-fat.jar`.
+Local builds skip S3 when the files already sit in `xnat/build-artifacts/` and `xnat/plugins/`.
 
 ### Adding or updating a plugin
 
-1. Upload the new `.jar` file to `s3://<FLIP_ARTIFACTS_BUCKET_NAME>/xnat/plugins/`.
+1. Upload the new `.jar` file to `s3://<FLIP_ARTIFACTS_BUCKET_NAME>/xnat-<version>/plugins/` for the
+   XNAT version it targets (removing the JAR it replaces — the sync bakes every JAR in the prefix).
 2. Update the plugin compatibility table above.
 3. Trigger the CI workflows (push or `gh workflow run`) to rebuild the image with the new plugin.
 

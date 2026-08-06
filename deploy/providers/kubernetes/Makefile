@@ -191,10 +191,10 @@ patch-kit-secrets: ## Patch per-trust secrets from kit file into the cluster Sec
 		--release-name $(RELEASE_NAME) \
 		--output-dir $(CHART_DIR) \
 		--no-write-override
-	@for svc in trust-api data-access-api imaging-api imaging-import-worker; do \
+	@for svc in trust-api data-access-api imaging-api; do \
 		kubectl rollout restart deployment/$(RELEASE_NAME)-flip-trust-$$svc -n $(NAMESPACE); \
 	done
-	@for svc in trust-api data-access-api imaging-api imaging-import-worker; do \
+	@for svc in trust-api data-access-api imaging-api; do \
 		kubectl rollout status deployment/$(RELEASE_NAME)-flip-trust-$$svc -n $(NAMESPACE) --timeout=120s; \
 	done
 
