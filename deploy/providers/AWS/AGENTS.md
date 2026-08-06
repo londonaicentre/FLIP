@@ -7,16 +7,17 @@
 | `main.tf` | Provider config, VPC, subnets, IGW, NAT, route tables, RDS instance, Secrets Manager, SES |
 | `services.tf` | S3 buckets, Cognito |
 | `rds_proxy.tf` | RDS Proxy + IAM DB auth (proxy, IAM role/policy, SG, `rds-db:connect`) — see FLIP#556 |
-| `ecs.tf` | ECS cluster, ALB, target groups, listeners |
+| `ecs.tf` | ECS cluster, capacity providers, ECS CloudWatch log groups (ALB / NLB / target groups / listener rules live in `main.tf`) |
 | `ecs_services.tf` | ECS Fargate services (flip-api, FL services) |
 | `ecs_tasks.tf` | ECS task definitions for Central Hub services (flip-api + FL) |
-| `ecs_efs_provision.tf` | EFS access points + ECS provisioning task for FL workspace |
+| `efs.tf` | EFS file system, mount targets, and access points (FL workspace) |
+| `ecs_efs_provision.tf` | ECS provisioning task that pre-populates the FL EFS workspace |
 | `ecs_sg.tf` | ECS security groups |
 | `certificate.tf` | ACM certificates (ALB + CloudFront) |
 | `cloudfront.tf` | CloudFront distribution for flip-ui |
 | `iam_ecs.tf` | IAM roles, instance profiles, SSM policies |
 | `parameter_store.tf` | SSM Parameter Store entries |
-| `backend.tf` | S3 backend + DynamoDB lock |
+| `backend.tf` | S3 backend with S3 native locking (`use_lockfile`) |
 | `variables.tf` | All Terraform variables with defaults |
 
 ## AWS Profiles
@@ -33,8 +34,9 @@
 make full-deploy PROD=stag                   # Full staging deploy
 make full-deploy PROD=true                    # Full prod deploy
 make full-deploy-hybrid PROD=<stag|true> [LOCAL_TRUST_IP=<ip>]  # Hybrid with on-prem trust
+make full-deploy-hub-only PROD=<stag|true>    # Hub only, NO cloud Trust EC2 (all trusts on-prem, e.g. GPU hosts) — see README "Hub-only Deployment"
 make init/plan/apply                          # Terraform workflow
-make deploy-centralhub                        # ECS deploy at env branch tip via sha-<short7> task-def revisions + CloudFront UI (FLIP#751; TAG= to pin)
+make deploy-centralhub                        # ECS deploy at env branch tip via sha-<short7> task-def revisions + CloudFront UI (FLIP#751; TAG= to pin). Prints an FL quiesce reminder (FLIP#770): enable Deployment Mode (pauses FL job pickup) + wait for the running job before deploying; GET /fl/quiesce reports deployment_mode + fl_quiesced. PROD=true additionally asks "Are you sure you want to continue?" (stag stays non-interactive)
 make rollback-centralhub                      # Repoint ECS services at the previous ACTIVE task-def revision + deregister the rolled-away one
 make deploy-trust                             # Deploy trust stack to EC2
 make deploy-ui                                # Build + sync UI to S3 + invalidate CloudFront
@@ -45,6 +47,8 @@ make provision-local-trust                     # Provision an on-prem trust host
 make allow-local-trust-nlb LOCAL_TRUST_IP=<ip>  # Open the FL-server NLB to a trust's reported IP
 make package-onprem-trust-kit KIT=<CODE>      # Tarball a filled-in trust/.env.<CODE>.<env> + FL kit slice for an on-prem operator
 make delete-trust NAME=<name>                 # Hard-delete a trust on the hub (frees the slot)
+make add-fl-kits N=<n> PROD=<stag|true>       # Ensure N more claimable FL kit slots — activate spares first, mint only the shortfall (NVFLARE; no restart — see README)
+make apply-fl-kit-slots                       # Targeted plan/apply of the /flip/fl_kit_slot_names SSM parameter (slot activation path)
 make destroy                                  # Selective destroy (preserves Cognito, Secrets, S3)
 make aws-login                                # AWS SSO login
 ```
@@ -72,6 +76,6 @@ An FL redeploy is `make deploy-centralhub` (branch-tip resolution, or `TAG=sha-<
 
 ## State Management
 
-- Remote state in S3 (`FLIP_TFSTATE_BUCKET_NAME`) with DynamoDB locking
+- Remote state in S3 (`FLIP_TFSTATE_BUCKET_NAME`) with S3 native locking (`use_lockfile = true` in `backend.tf`; no DynamoDB lock table)
 - Persistent resources (S3, Secrets, Cognito) preserved during destroy
 - `make import-persistent` to import pre-existing resources

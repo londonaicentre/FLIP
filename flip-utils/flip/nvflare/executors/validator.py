@@ -38,10 +38,10 @@ class RUN_VALIDATOR(Executor):
 
     def __init__(
         self,
-        validate_task_name=AppConstants.TASK_VALIDATION,
-        project_id="",
-        query="",
-    ):
+        validate_task_name: str = AppConstants.TASK_VALIDATION,
+        project_id: str = "",
+        query: str = "",
+    ) -> None:
         """
         Initialize the RUN_VALIDATOR executor.
 

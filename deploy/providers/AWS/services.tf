@@ -27,9 +27,10 @@
 # CORS change to widen across every consumer. Splitting into three buckets
 # gives each tenant the minimum CORS surface it needs:
 #
-#   - flip-model-files-uploads: CORS POST (presigned POST policy enforces a
-#     content-length-range cap and optional Content-Type at the S3 edge —
-#     see flip-api/src/flip_api/utils/s3_client.py::get_put_presigned_post)
+#   - flip-model-files-uploads: CORS POST + GET (presigned POST policy enforces
+#     a content-length-range cap and optional Content-Type at the S3 edge —
+#     see flip-api/src/flip_api/utils/s3_client.py::get_put_presigned_post;
+#     GET is for the presigned-URL model-file download, FLIP#784)
 #   - flip-fl-results: CORS GET (browser presigned download)
 #   - flip-app-bundles: no CORS resource (server-only, never browser-direct)
 #
@@ -48,11 +49,21 @@ module "flip_model_files_uploads_bucket" {
   # policy bakes in `["content-length-range", 0, MAX_MODEL_FILE_BYTES]`
   # (and locks Content-Type when the caller supplies one), so S3 rejects
   # oversized or wrong-type uploads at the edge — the hub never sees them.
-  cors_methods          = ["POST"]
+  # GET is for model-file downloads: `download_file.py` hands the browser a
+  # presigned GET URL (FLIP#784) instead of proxying bytes through flip-api,
+  # so the bucket needs to accept a direct browser GET.
+  cors_methods          = ["POST", "GET"]
   cors_allowed_origins  = ["https://${var.flip_alb_subdomain}"]
   kms_key_arn           = aws_kms_key.flip_app_key.arn
   logging_target_bucket = local.access_logs_bucket_name
   mfa_delete_protection = true
+  # This bucket holds both model-file prefixes, and the scan pipeline (#52)
+  # churns objects in both: rejected uploads are deleted from `uploaded/`,
+  # promoted ones are copied to `scanned/` and then deleted from `uploaded/`.
+  # Every one of those deletes leaves a noncurrent version behind on this
+  # versioned bucket. 30 days keeps a forensic window on quarantined files
+  # while bounding the storage those tombstones accumulate.
+  noncurrent_version_expiration_days = 30
   # The module enables server access logging to flip_access_logs; force it
   # to wait for the LogDelivery ACL grant on that destination bucket so the
   # first-apply order is `ACL → bucket_logging`.

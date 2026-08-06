@@ -91,9 +91,8 @@ def _create_standard_flip(is_dev: bool, **kwargs) -> FLIPBase:
 
 def _create_diffusion_flip(is_dev: bool, **kwargs) -> FLIPBase:
     """Create a diffusion model FLIP instance based on environment."""
-    # For now, use the standard implementation.
-    # The diffusion model has slightly different send_metrics_value signature
-    # (no round parameter), but we can handle this at the executor level.
+    # For now, use the standard implementation. The diffusion tutorials only ever send metrics at the
+    # default plot coordinate (no x_value/x_label), which the standard classes already cover.
     # If needed, a dedicated FLIPDiffusion class can be created later.
     from flip.core.standard import FLIPStandardDev, FLIPStandardProd
 

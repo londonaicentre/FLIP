@@ -64,12 +64,10 @@ services:
       - FL_APP_DESTINATION_BUCKET=${FL_APP_DESTINATION_BUCKET}
       - NET_ENDPOINTS=${NET_ENDPOINTS}
       - FL_BACKEND=${FL_BACKEND}
-      # Seeds the fl_kit_slot pool that register_trust claims from. Empty ⇒
-      # NoFreeKitSlotError on every registration. Mirrored into the ECS task
-      # env via TF_VAR_FL_KIT_SLOT_NAMES (locals.tf).
-      - FL_KIT_SLOT_NAMES=${FL_KIT_SLOT_NAMES}
-      # Bridge for images built before FL_KIT_SLOT_NAMES rename (pre-tag-225):
-      - TRUST_NAMES=${FL_KIT_SLOT_NAMES}
+      # No FL_KIT_SLOT_NAMES here: in production the kit-slot pool's single source
+      # is the /flip/fl_kit_slot_names SSM parameter (read at runtime by
+      # resolve_fl_kit_slot_names) — an env copy would be dead config that
+      # apply-fl-kit-slots never updates.
     security_opt:
       - no-new-privileges:true
     cap_drop:

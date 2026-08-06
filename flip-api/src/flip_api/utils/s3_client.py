@@ -33,14 +33,26 @@ from flip_api.utils.logger import logger
 # "file bytes <= MAX_MODEL_FILE_BYTES" semantic the UI guard mirrors.
 _MULTIPART_OVERHEAD_BUFFER_BYTES = 16 * 1024
 
-# Upper bound on PUT pre-signed URL lifetime. A leaked URL is a writable
-# capability against the upload bucket, so the leak window must stay tight.
-# 1800s (30 min) is the security ceiling — callers may pass less. It was
-# raised from 600s to accommodate larger model-file uploads (up to the
-# MAX_MODEL_FILE_BYTES cap): an upload can't reliably finish inside a
-# 10-minute window on a typical link, and an expired policy aborts the
-# transfer at the S3 edge. Moving this value requires a security review.
-MAX_PUT_PRESIGNED_URL_TTL_SECONDS = 1800
+# Upper bound on pre-signed URL lifetime, for both PUT (upload) and GET
+# (download) URLs. A leaked URL is a capability against the bucket in
+# either direction — writable for PUT, readable for GET — so the leak
+# window must stay tight regardless of method. 1800s (30 min) is the
+# security ceiling — callers may pass less. It was raised from 600s to
+# accommodate larger model-file uploads (up to the MAX_MODEL_FILE_BYTES
+# cap): an upload can't reliably finish inside a 10-minute window on a
+# typical link, and an expired policy aborts the transfer at the S3 edge.
+# Moving this value requires a security review.
+MAX_PRESIGNED_URL_TTL_SECONDS = 1800
+
+
+class S3PreconditionFailedError(Exception):
+    """A conditional S3 operation failed because the object changed under the caller.
+
+    Raised by ``copy_object_if_match`` when the source object's ETag no longer
+    matches — i.e. the object was replaced between being scanned and being
+    promoted. Callers treat this as "abort quietly and let the next reconcile
+    pass handle the new object", distinct from a genuine copy failure.
+    """
 
 
 def parse_s3_path(s3_path: str) -> tuple[str, str]:
@@ -71,13 +83,29 @@ class S3Client:
         """Initialize S3 client with AWS credentials."""
         self.client = boto3.client("s3", region_name=get_settings().AWS_REGION)
 
-    def get_presigned_url(self, s3_path: str, expiration: int = 3600) -> str:
+    def get_presigned_url(
+        self,
+        s3_path: str,
+        expiration: int = MAX_PRESIGNED_URL_TTL_SECONDS,
+        response_content_disposition: str | None = None,
+    ) -> str:
         """
         Generate a pre-signed URL for downloading a file from S3.
 
         Args:
             s3_path: Full S3 path (e.g., s3://bucket-name/key)
-            expiration: URL expiration time in seconds (default: 1 hour)
+            expiration: URL expiration time in seconds (default: the 1800s
+                security ceiling, so default callers never trip the clamp
+                warning below). Values
+                above ``MAX_PRESIGNED_URL_TTL_SECONDS`` are silently clamped to
+                the ceiling — a warning is logged so an over-limit caller
+                leaves an audit trail. Silent clamping is deliberate: the
+                ceiling is a hard security policy, never an error condition.
+            response_content_disposition: If provided, overrides the
+                ``Content-Disposition`` response header S3 sends back for
+                this GET — lets the browser save the file under the right
+                name even though the client never touches flip-api's own
+                response headers for the transfer itself.
 
         Returns:
             str: Pre-signed URL string
@@ -86,11 +114,21 @@ class S3Client:
             Exception: If URL generation fails
         """
         bucket, key = parse_s3_path(s3_path)
+        ttl = min(expiration, MAX_PRESIGNED_URL_TTL_SECONDS)
+        if expiration > MAX_PRESIGNED_URL_TTL_SECONDS:
+            logger.warning(
+                f"Requested GET pre-signed URL TTL {expiration}s exceeds the "
+                f"{MAX_PRESIGNED_URL_TTL_SECONDS}s security ceiling; clamped to {ttl}s."
+            )
+
+        params: dict[str, Any] = {"Bucket": bucket, "Key": key}
+        if response_content_disposition is not None:
+            params["ResponseContentDisposition"] = response_content_disposition
 
         url = self.client.generate_presigned_url(
             "get_object",
-            Params={"Bucket": bucket, "Key": key},
-            ExpiresIn=expiration,
+            Params=params,
+            ExpiresIn=ttl,
         )
         return url
 
@@ -99,7 +137,7 @@ class S3Client:
         s3_path: str,
         max_bytes: int,
         content_type: str | None = None,
-        expiration: int = MAX_PUT_PRESIGNED_URL_TTL_SECONDS,
+        expiration: int = MAX_PRESIGNED_URL_TTL_SECONDS,
     ) -> dict[str, Any]:
         """
         Generate a pre-signed POST policy for uploading a file to S3 with
@@ -123,7 +161,7 @@ class S3Client:
                 Content-Type to this exact value. If ``None``, any
                 Content-Type is accepted but the size cap still applies.
             expiration (int): URL/policy expiration (seconds). Values above
-                ``MAX_PUT_PRESIGNED_URL_TTL_SECONDS`` are silently clamped to
+                ``MAX_PRESIGNED_URL_TTL_SECONDS`` are silently clamped to
                 the ceiling — a warning is logged so an over-limit caller
                 leaves an audit trail. Silent clamping is deliberate: the
                 ceiling is a hard security policy, never an error condition.
@@ -136,11 +174,11 @@ class S3Client:
             Exception: If policy generation fails.
         """
         bucket, key = parse_s3_path(s3_path)
-        ttl = min(expiration, MAX_PUT_PRESIGNED_URL_TTL_SECONDS)
-        if expiration > MAX_PUT_PRESIGNED_URL_TTL_SECONDS:
+        ttl = min(expiration, MAX_PRESIGNED_URL_TTL_SECONDS)
+        if expiration > MAX_PRESIGNED_URL_TTL_SECONDS:
             logger.warning(
                 f"Requested PUT pre-signed POST TTL {expiration}s exceeds the "
-                f"{MAX_PUT_PRESIGNED_URL_TTL_SECONDS}s security ceiling; clamped to {ttl}s."
+                f"{MAX_PRESIGNED_URL_TTL_SECONDS}s security ceiling; clamped to {ttl}s."
             )
         try:
             request_body_cap = max_bytes + _MULTIPART_OVERHEAD_BUFFER_BYTES
@@ -195,6 +233,35 @@ class S3Client:
         except ClientError as e:
             logger.error(f"Error deleting object {key} from bucket {bucket}: {e}")
             raise Exception(f"Unable to delete object {key} from bucket {bucket}")
+
+    def delete_object_if_match(self, s3_path: str, etag: str) -> None:
+        """
+        Delete an object only if it still carries the given ETag.
+
+        Used by the malware-scan quarantine step so a file re-uploaded between
+        the scan and the delete is never destroyed on the strength of the
+        *previous* object's verdict. S3 evaluates the precondition atomically,
+        closing the gap a read-then-delete would leave open.
+
+        Args:
+            s3_path (str): Full S3 path of the object to delete.
+            etag (str): ETag the object must still have.
+
+        Raises:
+            S3PreconditionFailedError: If the object's ETag no longer matches.
+            Exception: If deletion fails for any other reason.
+        """
+        bucket, key = parse_s3_path(s3_path)
+        try:
+            self.client.delete_object(Bucket=bucket, Key=key, IfMatch=etag)
+            logger.info(f"Deleted object {key} from bucket {bucket} (ETag-pinned)")
+        except ClientError as e:
+            error_code = e.response.get("Error", {}).get("Code", "Unknown")
+            if error_code in ("PreconditionFailed", "412"):
+                logger.warning(f"ETag precondition failed deleting {s3_path}: object changed since it was scanned")
+                raise S3PreconditionFailedError(f"Object changed: {s3_path}") from e
+            logger.error(f"Error deleting object {key} from bucket {bucket}: {error_code}")
+            raise Exception(f"Unable to delete object {key} from bucket {bucket}") from e
 
     def delete_objects(self, s3_paths: list[str]) -> dict[str, Any]:
         """
@@ -366,6 +433,71 @@ class S3Client:
         except ClientError as e:
             logger.error(f"Error copying {source_s3_path} to {dest_s3_path}: {e}")
             raise Exception(f"Unable to copy object: {e}")
+
+    def copy_object_if_match(self, source_s3_path: str, dest_s3_path: str, etag: str) -> None:
+        """
+        Copy an object only if the source still carries the given ETag.
+
+        Used by the malware-scan promote step so a file re-uploaded mid-scan
+        can never be promoted on the strength of the *previous* object's scan
+        verdict: the copy is pinned to the exact bytes that were scanned.
+        Uses boto3's managed ``copy`` (not ``copy_object``) so objects above
+        the single-request 5 GB CopyObject limit still transfer.
+
+        Args:
+            source_s3_path (str): Full S3 path of the source object.
+            dest_s3_path (str): Full S3 path of the destination object.
+            etag (str): ETag the source object must still have.
+
+        Raises:
+            S3PreconditionFailedError: If the source object's ETag no longer
+                matches (it was replaced since the caller captured ``etag``).
+            Exception: If copying fails for any other reason.
+        """
+        source_bucket, source_key = parse_s3_path(source_s3_path)
+        dest_bucket, dest_key = parse_s3_path(dest_s3_path)
+        copy_source = {"Bucket": source_bucket, "Key": source_key}
+        try:
+            self.client.copy(
+                copy_source,
+                dest_bucket,
+                dest_key,
+                ExtraArgs={"CopySourceIfMatch": etag},
+            )
+            logger.info(f"Successfully copied {source_s3_path} to {dest_s3_path} (ETag-pinned)")
+        except ClientError as e:
+            error_code = e.response.get("Error", {}).get("Code", "Unknown")
+            if error_code in ("PreconditionFailed", "412"):
+                logger.warning(
+                    f"ETag precondition failed copying {source_s3_path} to {dest_s3_path}: "
+                    "source object changed since it was scanned"
+                )
+                raise S3PreconditionFailedError(f"Source object changed: {source_s3_path}") from e
+            logger.error(f"Error copying {source_s3_path} to {dest_s3_path}: {e}")
+            raise Exception(f"Unable to copy object: {e}") from e
+
+    def download_file(self, s3_path: str, local_path: str) -> None:
+        """
+        Download an S3 object to a local file via boto3's managed transfer.
+
+        Streams to disk (never buffers the whole object in memory) — used by
+        the malware-scan step to fetch pickle-bearing uploads into a temp
+        directory for structural scanning.
+
+        Args:
+            s3_path (str): Full S3 path of the object (e.g., ``s3://bucket-name/key``).
+            local_path (str): Absolute local destination path.
+
+        Raises:
+            Exception: If the download fails.
+        """
+        try:
+            bucket, key = parse_s3_path(s3_path)
+            self.client.download_file(bucket, key, local_path)
+            logger.info(f"Successfully downloaded {s3_path} to local disk")
+        except (ClientError, OSError) as e:
+            logger.error(f"Error downloading {s3_path}: {e}")
+            raise Exception(f"Unable to download file {s3_path}: {e}") from e
 
     def list_objects(self, s3_path: str, delimiter: str = "") -> list[str]:
         """

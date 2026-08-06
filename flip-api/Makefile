@@ -95,6 +95,21 @@ create_testing_projects:
 delete_testing_projects:
 	@echo "🔢 Removing projects created for debugging..."
 	env DB_HOST=localhost uv run python -m tests.debug_post_debug_task
+# Curated radiology catalogue in honest lifecycle states so a fresh platform
+# doesn't look empty. Cleanup: EXTRA_ARGS="--cleanup".
+seed_demo_projects:
+	@echo "🌱 Seeding the demo radiology project catalogue..."
+	env DB_HOST=localhost uv run python -m tests.seed_demo_projects $(EXTRA_ARGS)
+# Provision the demo Cognito users for the demo-video recorder. Passwords
+# come from DEMO_RESEARCHER_PASSWORD / DEMO_ADMIN_PASSWORD in the env.
+create_demo_users:
+	uv run python -m flip_api.scripts.create_demo_users
+# Record the end-to-end demo video against the running dev stack (Dockerised
+# Cypress segments + off-camera waits + ffmpeg assembly). Args via DEMO_ARGS,
+# e.g. DEMO_ARGS="--skip-xnat" or DEMO_ARGS="--project-id <uuid> --from-segment 4".
+demo_video:
+	@echo "🎬 Recording the end-to-end demo video..."
+	env DB_HOST=localhost uv run python -m tests.demo_video $(DEMO_ARGS)
 # End-to-end smoke against a running `make up` stack: creates a project, gets
 # it approved, uploads model files, waits for image pull, kicks off training,
 # waits for results, downloads them. Intended for PR sanity checks — replaces
@@ -151,3 +166,5 @@ e2e_smoke_spleen_evaluation: e2e_smoke
 
 generate-internal-service-key:
 	uv run python -m flip_api.scripts.generate_internal_service_key $(if $(ENV_FILE),--env-file $(ENV_FILE)) $(if $(FORCE),--force)
+generate-xnat-credentials:
+	uv run python -m flip_api.scripts.generate_xnat_credentials $(if $(ENV_FILE),--env-file $(ENV_FILE)) $(if $(FORCE),--force)

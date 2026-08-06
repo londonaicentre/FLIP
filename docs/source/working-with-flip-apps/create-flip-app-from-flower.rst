@@ -290,10 +290,15 @@ Per-round, per-client metrics are pushed to the central hub with ``flip.send_met
        train_loss = train_func(...)
        val_dice, val_loss = validate_func(...)
 
-       round_num = global_round * local_epochs + epoch + 1
-       flip_utils.flip.send_metrics(client_name, model_id, label="TRAIN_LOSS", value=train_loss, round=round_num)
-       flip_utils.flip.send_metrics(client_name, model_id, label="VAL_LOSS",   value=val_loss,   round=round_num)
-       flip_utils.flip.send_metrics(client_name, model_id, label="VAL_DICE",   value=val_dice,   round=round_num)
+       # Per-epoch points are plotted on an "epoch" axis at the cumulative epoch count; the FL
+       # global round is always recorded alongside as provenance (never overridden).
+       cumulative_epoch = global_round * local_epochs + epoch + 1
+       flip_utils.flip.send_metrics(client_name, model_id, label="TRAIN_LOSS", value=train_loss,
+                                    global_round=global_round, x_value=cumulative_epoch, x_label="epoch")
+       flip_utils.flip.send_metrics(client_name, model_id, label="VAL_LOSS", value=val_loss,
+                                    global_round=global_round, x_value=cumulative_epoch, x_label="epoch")
+       flip_utils.flip.send_metrics(client_name, model_id, label="VAL_DICE", value=val_dice,
+                                    global_round=global_round, x_value=cumulative_epoch, x_label="epoch")
 
 .. warning::
 
@@ -302,6 +307,10 @@ Per-round, per-client metrics are pushed to the central hub with ``flip.send_met
 .. note::
 
    Use stable, upper-case ``label`` strings (``TRAIN_LOSS``, ``VAL_LOSS``, ``VAL_DICE`` are the conventions used in the MONAI tutorial) so that metrics from repeated runs line up on the same chart in the UI.
+
+.. note::
+
+   **Arbitrary x-axis.** By default a metric is plotted at its FL global round, on an x-axis titled "Global Rounds". To plot it elsewhere, pass a coordinate pair to ``flip.send_metrics``: ``x_value`` (any float, e.g. a cumulative epoch count) and ``x_label`` (the axis name, e.g. ``"epoch"``). The ``global_round`` argument is provenance — always the true FL round, never the plot coordinate. If instead you let the server-side ``handle_client_metrics`` helper forward metrics from the reply ``MetricRecord``, encode the coordinate in the metric key as ``<label>[@<x_label>][.x_<V>]`` (e.g. ``"train_loss@epoch.x_5"`` or ``"loss@wall_clock_s.x_12.5"``; the older ``.round_<N>`` suffix still parses but is deprecated). A plot is identified by the ``(label, x_label)`` pair, so the same metric logged under two different x-labels is shown as two separate plots in the UI.
 
 ************************************
 Wiring it up via ``pyproject.toml``
@@ -366,7 +375,7 @@ Abridged from ``fl-tutorials/flower/3d_spleen_segmentation/pyproject.toml``:
 Submitting the app to FLIP
 ************************************
 
-Once your app runs locally (see the next section), upload it through the FLIP UI's model page the same way you would upload a FLARE app. FLIP validates the required files for a Flower app (which differ from those required for a FLARE app — see the "Model Files" subsection of :doc:`/user-guides/user-common` and the :ref:`flip-fl-nodes` page for the canonical list) and then lets you click **Initiate Training**.
+Once your app runs locally (see the next section), upload it through the FLIP UI's model page the same way you would upload a FLARE app. FLIP validates the required files for a Flower app (which differ from those required for a FLARE app, and depend on the job type — see :ref:`fl-required-files` for the canonical list) and then lets you click **Initiate Training**.
 
 At submit time, the FLIP FL API:
 

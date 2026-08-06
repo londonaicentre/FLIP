@@ -53,10 +53,10 @@ class EvaluationJsonGenerator(ValidationJsonGenerator):
 
     def __init__(
         self,
-        results_dir=PTConstants.EvalDir,
-        json_file_name=PTConstants.EvalResultsFilename,
-        failures_file_name=PTConstants.EvalFailuresFilename,
-    ):
+        results_dir: str = PTConstants.EvalDir,
+        json_file_name: str = PTConstants.EvalResultsFilename,
+        failures_file_name: str = PTConstants.EvalFailuresFilename,
+    ) -> None:
         """Initialise the evaluation results generator.
 
         Args:

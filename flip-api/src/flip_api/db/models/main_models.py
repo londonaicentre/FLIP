@@ -32,6 +32,7 @@ from flip_api.domain.schemas.status import (
     XNATImageStatus,
 )
 from flip_api.domain.schemas.types import FLBackend
+from flip_api.utils.constants import DEFAULT_X_AXIS_LABEL
 
 
 # Tables
@@ -98,7 +99,16 @@ class FLMetrics(SQLModel, table=True):
     trust: UUID = Field(foreign_key="trust.id")
     fl_client_name: str = Field()
     model_id: UUID = Field(foreign_key="model.id")
+    # Provenance: the FL global round the metric was reported in — always the true round, never
+    # overridden. The plot coordinate is the (x_label, x_value) pair below — see FLIP#148.
     global_round: int = Field()
+    # The x-coordinate this metric is plotted at; defaults to the global round (backfilled by the
+    # ingest schema when the sender omits it).
+    x_value: float = Field()
+    # Label naming the x-axis this metric is plotted against (e.g. "epoch"). Defaults to the FL global
+    # round axis. A plot's identity is the pair (label, x_label), so the same metric logged against
+    # different x-labels renders as separate plots — see FLIP#148.
+    x_label: str = Field(default=DEFAULT_X_AXIS_LABEL)
     timestamp: datetime | None = Field(default_factory=datetime.utcnow)
     label: str = Field()
     result: float = Field()
@@ -316,9 +326,12 @@ class FLKitSlot(SQLModel, table=True):
     Operators get matching ``services/<slot_name>/`` dirs on every net's workspace —
     one global slot row covers all nets, so the assignment doesn't need a net_id column.
 
-    Lifecycle: rows are seeded from ``FL_KIT_SLOT_NAMES`` (one per pre-provisioned FL
-    kit slot). ``POST /admin/trusts`` claims the next ``assigned_to_trust_id IS
-    NULL`` row in the same transaction as the trust insert.
+    Lifecycle: rows are seeded at boot from the resolved slot names (one per
+    pre-provisioned FL kit slot; ``resolve_fl_kit_slot_names`` — the
+    ``/flip/fl_kit_slot_names`` SSM parameter in production, the ``FL_KIT_SLOT_NAMES``
+    env var in dev) and additively reconciled from the same source when a registration
+    finds the pool exhausted. ``POST /admin/trusts`` claims the next
+    ``assigned_to_trust_id IS NULL`` row in the same transaction as the trust insert.
     """
 
     __tablename__ = "fl_kit_slot"  # type: ignore
@@ -357,6 +370,10 @@ class UploadedFiles(SQLModel, table=True):
     type: str = Field()
     tag: str | None = Field(default=None)
     model_id: UUID | None = Field(default=None, foreign_key="model.id")
+    # Last status/metadata write. The malware-scan sweep uses this to pick out
+    # SCANNING rows old enough to be orphans (app restart mid-reconcile) while
+    # leaving fresh in-flight reconciles alone. Nullable — rows predate the column.
+    updated_at: datetime | None = Field(default=None)
 
 
 class XNATProjectStatus(SQLModel, table=True):

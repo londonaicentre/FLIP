@@ -84,11 +84,15 @@ services:
   fl-server-net-1:
     container_name: fl-server-net-1
     image: ${DOCKER_FL_REGISTRY}${DOCKER_FL_SERVER_NAME}:${DOCKER_FL_TAG}
-    # Dev-only: run as root (like the NVFLARE dev fl-server) so the server can read
-    # BOTH the host-provisioned 0640 TLS keys AND the host operator's AWS SSO cache.
-    # The app user (uid 49999) can't read the cache: `aws sso login` writes the token
-    # file 0600, and group_add can't grant read on a 0600 file. Prod uses an ECS task
-    # IAM role (no mounted creds), so this root override is confined to dev compose.
+    # Dev-only: run as root so the server can read BOTH the host-provisioned
+    # 0640 TLS keys AND the host operator's AWS SSO cache. The app user (uid
+    # 49999) can't read the cache: `aws sso login` writes the token file 0600,
+    # and group_add can't grant read on a 0600 file. The NVFLARE dev fl-server
+    # instead mounts the cache under the non-root user's own HOME (GHSA-8465;
+    # see deploy/compose.development.nvflare.yml) rather than running as root
+    # — that approach doesn't apply here because it's the 0640 TLS keys, not
+    # just the SSO cache, that need the override. Prod uses an ECS task IAM
+    # role (no mounted creds), so this root override is confined to dev compose.
     user: "0:0"
     volumes:
       # Mount the host AWS credentials (needed to upload model results to S3). The image
@@ -173,11 +177,15 @@ services:
   fl-server-net-2:
     container_name: fl-server-net-2
     image: ${DOCKER_FL_REGISTRY}${DOCKER_FL_SERVER_NAME}:${DOCKER_FL_TAG}
-    # Dev-only: run as root (like the NVFLARE dev fl-server) so the server can read
-    # BOTH the host-provisioned 0640 TLS keys AND the host operator's AWS SSO cache.
-    # The app user (uid 49999) can't read the cache: `aws sso login` writes the token
-    # file 0600, and group_add can't grant read on a 0600 file. Prod uses an ECS task
-    # IAM role (no mounted creds), so this root override is confined to dev compose.
+    # Dev-only: run as root so the server can read BOTH the host-provisioned
+    # 0640 TLS keys AND the host operator's AWS SSO cache. The app user (uid
+    # 49999) can't read the cache: `aws sso login` writes the token file 0600,
+    # and group_add can't grant read on a 0600 file. The NVFLARE dev fl-server
+    # instead mounts the cache under the non-root user's own HOME (GHSA-8465;
+    # see deploy/compose.development.nvflare.yml) rather than running as root
+    # — that approach doesn't apply here because it's the 0640 TLS keys, not
+    # just the SSO cache, that need the override. Prod uses an ECS task IAM
+    # role (no mounted creds), so this root override is confined to dev compose.
     user: "0:0"
     volumes:
       # Mount the host AWS credentials (needed to upload model results to S3). The image

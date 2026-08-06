@@ -83,15 +83,23 @@ secrets:
     trust-internal-service-key: ""
     omop-postgres-password: ""
     data-access-postgres-password: ""
+    # REQUIRED when orthanc.enabled — JSON user map, e.g. {"admin": "<password>"}.
+    # Left empty, templates/secrets.yaml omits the key and the orthanc pod fails
+    # with CreateContainerConfigError (fail-loud by design, FLIP-PT-091) — never
+    # weaken this with a dummy default. Populated from the ORTHANC_REGISTERED_USERS
+    # env var by scripts/generate_values.py.
     orthanc-registered-users: ""
     xnat-admin-user: ""
     xnat-admin-password: ""
     xnat-service-user: ""
     xnat-service-password: ""
     xnat-datasource-password: ""
+    xnat-datasource-admin-password: ""
     grafana-admin-password: ""
     s3-access-key-id: ""
     s3-secret-access-key: ""
+    # Only for temporary AWS credentials (SSO/STS); leave empty for long-lived keys.
+    aws-session-token: ""
 
 # ---------------------------------------------------------------------------
 # trust-api — API gateway, polls Central Hub for tasks, orchestrates trust
@@ -204,7 +212,9 @@ imagingApi:
     # the xnat-web Service dicom-scp port and the Orthanc modality config).
     XNAT_PORT: "8104"
     PACS_ID: "1"
-    XNAT_DATABASE_URL: "postgresql+asyncpg://xnat:xnat@xnat-db:5432/xnat"
+    # Topology only — no password here (FLIP-PT-056): imaging-api splices in the
+    # xnat-datasource-password secret at startup (see templates/imaging-api.yaml).
+    XNAT_DATABASE_URL: "postgresql+asyncpg://xnat@xnat-db:5432/xnat"
     DATA_ACCESS_API_URL: "http://data-access-api:8000"
     BASE_IMAGES_DOWNLOAD_DIR: "/app/data/images"
 

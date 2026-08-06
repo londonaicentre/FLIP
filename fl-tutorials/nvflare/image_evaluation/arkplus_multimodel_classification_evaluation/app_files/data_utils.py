@@ -382,9 +382,15 @@ def get_xray_transforms(input_size: int = 768):
     transforms = [
         mt.LoadImaged(keys=["image"]),
         mt.Lambdad(keys=["image"], func=_ensure_image_channel_first),
+        # LoadImaged returns the array transposed - indexed (column, row) where DICOM PixelData
+        # is (row, column) - so swap the spatial axes back before anything spatial runs. Neither a
+        # Rotate90 nor a Flip undoes a transpose: Rotate90d(k=-1) leaves the radiograph upright but
+        # mirrored, and a Flipd leaves it lying on its side. Sitting before Resized is not
+        # load-bearing while the target is square - the resamplers are separable, so the two orders
+        # are bit-identical - but it keeps the correction next to the load it undoes, and stays
+        # correct if the target ever stops being square.
+        mt.Transposed(keys=["image"], indices=(0, 2, 1)),
         mt.Resized(keys=["image"], spatial_size=[input_size, input_size]),
-        # mt.Rotate90d(keys=["image"], k=-1),
-        mt.Flipd(keys=["image"], spatial_axis=1),
         mt.ScaleIntensityd(keys=["image"], channel_wise=True),
         mt.EnsureTyped(keys=["image"]),
         RepeatChannelImageNetNormalized(keys=["image"]),

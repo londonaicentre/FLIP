@@ -11,7 +11,7 @@ Trust services run at each healthcare institution (cloud EC2 or on-prem). All tr
 | data-access-api | 8010 | OMOP database queries for cohort analysis |
 | fl-client | — | FL participant (connects outbound to FL server via NLB) |
 | omop-db | 5432 | Mocked OMOP patient database (PostgreSQL) |
-| orthanc | 8042 | Mocked DICOM PACS server (UI/REST; DICOM port 4242 is internal to the trust network and not bound to the host) |
+| orthanc | 8042 | Mocked DICOM PACS server (UI/REST behind HTTP basic auth — kit file's `ORTHANC_USERNAME`/`ORTHANC_PASSWORD`; DICOM port 4242 is internal to the trust network and not bound to the host) |
 | xnat | 8104 | Mocked neuroimaging platform |
 | observability | 3000/3100 | Grafana + Loki monitoring stack |
 
@@ -42,7 +42,7 @@ the commented dev form):
 
 The Hub-shared block is delimited by a sentinel comment
 (`# ── Hub-shared (managed by register-trust / sync-trust-kits — do not edit) ──`)
-that `scripts/distribute-trust-kits.sh` and `scripts/sync_trust_kit.py`
+that `scripts/distribute_trust_kits.py` and `scripts/sync_trust_kit.py`
 match byte-for-byte. The exact key set is the `HUB_SHARED_ENV_KEYS` tuple in
 `flip_api/scripts/register_trust.py` (`AES_KEY_BASE64`,
 `CENTRAL_HUB_API_URL`, `TRUST_API_KEY_HEADER`, `FL_BACKEND`,
@@ -82,10 +82,13 @@ The packager does NOT edit the kit file.
 
 The operator extracts, copies `.env.<CODE>.production` into their checkout,
 edits only the Host-local profile (sets `FL_KIT_DIR`, ports/dirs) and rotates
-the Trust-local passwords, runs `make onboard-onprem-trust KIT=<CODE> PROD=true`
-for the readiness checklist (kit present, swarm active, Hub-shared + Kit
-credentials populated, FL_KIT_DIR exists + has the expected files), then
-`make up-onprem-trust KIT=<CODE> PROD=true`.
+the Trust-local passwords, runs `sudo -E make onboard-onprem-trust KIT=<CODE> PROD=true`
+for the readiness checklist (kit present, swarm active — the swarm check queries
+the docker daemon, hence sudo; Hub-shared + Kit credentials populated, FL_KIT_DIR
+exists + has the expected files), then `sudo -E make up-onprem-trust KIT=<CODE> PROD=true`.
+Sudo because the provisioned login user is deliberately not in the docker group
+(root-equivalent); `-E` preserves `$HOME` so root's docker reuses the operator's
+GHCR login from `~/.docker/config.json`.
 
 ## Key Files
 
@@ -108,7 +111,7 @@ make up-trust KIT=GSTT         # Start one trust stack (also brings up its XNAT)
 make down-trust KIT=GSTT       # Stop one trust stack
 make restart-trust KIT=GSTT    # Restart one trust stack
 make up-trust-ec2 KIT=GSTT     # Start one trust stack on a cloud EC2 host
-make up-trust KIT=<CODE> PROD=true  # Start a trust pointing at a remote hub (e.g. on-prem)
+make up-trust KIT=<CODE> PROD=true  # Start a trust pointing at a remote hub (on-prem hosts: prefix sudo -E — login user is not in the docker group)
 make debug                     # Trust-1 in debug mode
 make debug-trust-api           # Debug trust-api only
 make debug-imaging-api         # Debug imaging-api only

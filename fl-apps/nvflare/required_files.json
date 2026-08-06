@@ -5,6 +5,12 @@
     "config.json",
     "models.py"
   ],
+  "diffusion_model_client_api": [
+    "trainer.py",
+    "validator.py",
+    "config.json",
+    "models.py"
+  ],
   "evaluation": [
     "config.json",
     "evaluator.py"

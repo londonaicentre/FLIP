@@ -320,6 +320,67 @@ apply-cert: ## Apply only the ACM certificate (step 1 of 2 for HTTPS)
 	@$(_TF) apply -target=aws_acm_certificate.flip -auto-approve
 	@echo "✅ Certificate created! Now run 'make plan' and 'make apply' to deploy DNS validation."
 
+.PHONY: plan-fl-kit-slots
+plan-fl-kit-slots: ## Plan only the /flip/fl_kit_slot_names SSM parameter (+ flip-api task-role read)
+	@echo "📋 Planning FL kit-slot parameter..."
+	@$(_TF) plan -target=aws_ssm_parameter.fl_kit_slot_names \
+		-target=aws_iam_role_policy.ecs_flip_api_task -out=plan-fl-kit-slots.tfplan
+
+.PHONY: apply-fl-kit-slots
+apply-fl-kit-slots: ## Apply only the FL kit-slot SSM parameter — the slot activation path
+	## Re-renders /flip/fl_kit_slot_names from the env file's FL_KIT_SLOT_NAMES.
+	## flip-api re-reads the parameter when the slot pool runs dry (register_trust
+	## reconcile), so new kit slots become claimable with no task-definition change
+	## and no restart. The plan diff is plain-text (the list is not a secret) —
+	## review it before it applies. Also targets the flip-api task-role policy so
+	## the first rollout (which adds the ssm:GetParameter read) is self-contained;
+	## a no-op on every later run. Targeted on purpose: never run a full prod
+	## `make apply` for this (AMI drift can force-replace trust EC2s).
+	##
+	## NOT literally one resource: -target applies the target's whole dependency
+	## closure, and the task-role policy references the bucket modules, whose
+	## server-access logging targets aws_s3_bucket.flip_access_logs. So on an env whose
+	## state predates that S3-logging hardening the first run ALSO creates
+	## flip-access-logs-<subdomain> + its ACL/ownership (additive, 0 destroys). Seen on
+	## stag 2026-07-14: 4 to add, 1 to change, 0 to destroy. Prod has no access-logs
+	## bucket either — expect the same there. The plan prints and pauses for
+	## confirmation before it applies (YES=1 skips the pause, matching add_fl_kits.sh).
+	@echo "🎛️  Planning FL kit-slot parameter..."
+	@$(_TF) plan -target=aws_ssm_parameter.fl_kit_slot_names \
+		-target=aws_iam_role_policy.ecs_flip_api_task -out=plan-fl-kit-slots.tfplan
+	@if [ "$(YES)" != "1" ]; then \
+	  printf "   Apply this plan? [y/N] "; \
+	  read -r answer; \
+	  case "$$answer" in \
+	    [Yy]|[Yy][Ee][Ss]) ;; \
+	    *) echo "❌ Aborted — nothing applied (plan saved at plan-fl-kit-slots.tfplan)."; exit 1;; \
+	  esac; \
+	fi
+	@$(_TF) apply plan-fl-kit-slots.tfplan
+	@echo "✅ FL kit-slot parameter applied — new slots (if any) are claimable on the next trust registration."
+
+.PHONY: add-fl-kits
+add-fl-kits: ## Ensure N more claimable FL kit slots exist, end to end (NVFLARE; PROD=stag|true)
+	## Wraps scripts/add_fl_kits.sh: discover nets from S3 → ACTIVATE up to N spares
+	## (kits already minted on every net but not yet in FL_KIT_SLOT_NAMES — no certs, no
+	## upload) → MINT only the shortfall on every net (restore/fingerprint-verify each
+	## net's CA workspace, additive S3 upload, never sync --delete) → append the activated
+	## + minted names to FL_KIT_SLOT_NAMES in the env file. Then re-invokes make for
+	## apply-fl-kit-slots so the sub-make re-reads the just-edited env file (this parse's
+	## TF_VAR_FL_KIT_SLOT_NAMES predates the edit). N is a target ("N more live slots"),
+	## not a mint count — spares are reused before any fresh mint, so a good kit is never
+	## stranded and, when spares cover N, nothing is minted at all.
+	@[ -n "$(N)" ] || { echo "❌ N is required, e.g. make add-fl-kits N=2 PROD=true"; exit 1; }
+	@$(_AWS_ENV) MAIN_ENV_FILE=$(MAIN_ENV_FILE) N=$(N) YES=$(YES) \
+		FL_BACKEND=$(FL_BACKEND) ./scripts/add_fl_kits.sh
+	@$(MAKE) apply-fl-kit-slots PROD=$(PROD) YES=$(YES) || { \
+	  echo "❌ Parameter apply failed AFTER the new slot names were appended to the env file"; \
+	  echo "   (and any shortfall minted + uploaded)."; \
+	  echo "   Recover with just: make apply-fl-kit-slots PROD=$(PROD)"; \
+	  echo "   Do NOT re-run add-fl-kits — it would grow the pool by another N slots (activating"; \
+	  echo "   more spares or minting higher-numbered kits)."; \
+	  exit 1; }
+
 .PHONY: destroy-cert
 destroy-cert: ## Destroy only the ACM certificate (use with caution - will break HTTPS)
 	@echo "💥 Destroying ACM certificate (Step 1/2)..."
@@ -406,7 +467,7 @@ provision-bastion: ssh-config ## Install the minimal operator tooling on the Cen
 # a pointer to the on-prem flow instead of an obscure SSH/inventory error.
 .PHONY: check-trust-ec2-enabled
 check-trust-ec2-enabled:
-	@[ "$(DEPLOY_TRUST_EC2)" != "false" ] || (echo "❌  DEPLOY_TRUST_EC2=false (hub-only deployment) — there is no cloud Trust EC2. On-prem trusts join via register-trusts + allow-local-trust-nlb and run 'make -C trust up-trust' on their own host."; exit 1)
+	@[ "$(DEPLOY_TRUST_EC2)" != "false" ] || (echo "❌  DEPLOY_TRUST_EC2=false (hub-only deployment) — there is no cloud Trust EC2. On-prem trusts join via register-trusts + allow-local-trust-nlb and run 'sudo -E make -C trust up-trust' on their own host."; exit 1)
 
 .PHONY: seed-trust-data
 seed-trust-data: check-trust-ec2-enabled ssh-config ## Load trust-specific OMOP + Orthanc mock data onto the Trust EC2 (re-run after data version bump; requires KIT=)
@@ -772,6 +833,9 @@ ifeq ($(FL_BACKEND),nvflare)
 	  echo "  sudo mkdir -p /opt/flip/services/$(FL_KIT_SLOT)/startup /opt/flip/services/$(FL_KIT_SLOT)/local /opt/flip/services/$(FL_KIT_SLOT)/transfer" && \
 	  echo "  sudo rsync -av --delete $$TRUST_KIT_DIR/startup/ /opt/flip/services/$(FL_KIT_SLOT)/startup/" && \
 	  echo "  sudo rsync -av --delete $$TRUST_KIT_DIR/local/ /opt/flip/services/$(FL_KIT_SLOT)/local/" && \
+	  echo "  # fl-client now runs as a non-root uid (GHSA-8465) — hand the rsync'd kit back to" && \
+	  echo "  # this shell's own user so the container can read/write it:" && \
+	  echo "  sudo chown -R \$$(id -u):\$$(id -g) /opt/flip/services/$(FL_KIT_SLOT)" && \
 	  echo "✅ $(FL_KIT_SLOT) NVFLARE kit staged"
 else
 	@TRUST_KIT_DIR=/tmp/$(KIT)_kit && \
@@ -790,7 +854,8 @@ endif
 	@echo ""
 	@echo "⚠️  REMAINING MANUAL STEPS:"
 	@echo "   1. Deploy the staged FL kit into /opt/flip (run the commands printed above)."
-	@echo "   2. Start the trust stack: cd ../../.. && env PROD=$(PROD) make -C trust up-trust KIT=$(KIT)"
+	@echo "   2. Start the trust stack (sudo: the login user is deliberately not in the docker group):"
+	@echo "      cd ../../.. && sudo -E env PROD=$(PROD) make -C trust up-trust KIT=$(KIT)"
 	@echo "   3. Report this host's public IP to the FLIP admin — they run:"
 	@echo "      make allow-local-trust-nlb LOCAL_TRUST_IP=<this-host-public-ip>"
 
@@ -966,7 +1031,8 @@ full-deploy-hub-only: ## Hub-only deployment: no cloud Trust EC2 — every trust
 	##      make allow-local-trust-nlb PROD=$(PROD)
 	##   2. make new-trust TRUST_CODE=<CODE> ... PROD=<env> && make register-trusts KIT=<CODE> PROD=$(PROD)
 	##      (register-trusts in this chain already registers every kit present)
-	##   3. on the trust host: env PROD=<env> make -C trust up-trust KIT=<CODE>
+	##   3. on the trust host: sudo -E env PROD=<env> make -C trust up-trust KIT=<CODE>
+	##      (sudo: the provisioned login user is deliberately not in the docker group)
 	## Remember `make deploy-ui PROD=$(PROD)` — the UI ships separately, same as full-deploy.
 full-deploy-hub-only: DEPLOY_TRUST_EC2 := false
 full-deploy-hub-only: github-login aws-login init import-persistent generate-internal-service-key plan apply update-env ssh-config ansible-init deploy-centralhub register-trusts status
@@ -985,7 +1051,8 @@ full-deploy-with-local-trust: ## Full AWS deployment (honours PROD) plus on-prem
 	## 7. register-trusts: register every live trust/.env.*.<env> kit on the hub and write kit files
 	## 8. deploy-trust + provision-local-trust + status: bring up cloud + on-prem trust hosts and verify
 	## NOTE: After this completes you must manually:
-	##   - Start the on-prem trust stack: cd ../../.. && env PROD=$(PROD) make -C trust up-trust KIT=$(KIT)
+	##   - Start the on-prem trust stack (sudo: the provisioned login user is deliberately not in
+	##     the docker group): cd ../../.. && sudo -E env PROD=$(PROD) make -C trust up-trust KIT=$(KIT)
 	@[ -n "$(LOCAL_TRUST_IP)" ] || (echo ""; echo "❌  ERROR: LOCAL_TRUST_IP is required."; echo "   Usage: make full-deploy-with-local-trust LOCAL_TRUST_IP=<public-ip>"; echo ""; exit 1)
 # The one on-prem trust IP this all-in-one run opens the NLB to — the chain's `apply`
 # step creates the SG rule. For multiple trusts use the async flow instead: set
@@ -1011,8 +1078,9 @@ full-deploy-hybrid: ## Full hybrid deployment including on-prem trust provisioni
 	$(MAKE) deploy-centralhub PROD=$(PROD) && \
 	echo "" && \
 	echo "✅ Hybrid deployment complete (PROD=$(PROD))." && \
-	echo "➡️  Final manual step: start the on-prem trust stack on the trust host:" && \
-	echo "   cd ../../.. && env PROD=$(PROD) make -C trust up-trust KIT=$(KIT)"
+	echo "➡️  Final manual step: start the on-prem trust stack on the trust host" && \
+	echo "   (sudo: the provisioned login user is deliberately not in the docker group):" && \
+	echo "   cd ../../.. && sudo -E env PROD=$(PROD) make -C trust up-trust KIT=$(KIT)"
 
 .PHONY: preflight-k8s-deploy
 preflight-k8s-deploy: ## Pre-flight checks for full-deploy-with-k8s (Trust_K8s slot, kubectl context, helm)

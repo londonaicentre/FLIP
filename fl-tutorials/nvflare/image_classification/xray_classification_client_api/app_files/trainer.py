@@ -19,7 +19,7 @@ import nvflare.client as flare
 import pandas as pd
 import pydicom
 import torch
-from data_utils import Lesion, LesionDict, get_labels_from_radiology_row, get_lesion_label, get_xray_transforms
+from data_utils import Lesion, LesionDict, get_labels_from_radiology_row, get_lesion_label
 from flip import FLIP
 from flip.constants import ResourceType
 from loss_and_metrics import compute_precision_recall_f1, get_bce_loss
@@ -27,6 +27,7 @@ from models import get_model
 from monai.data import DataLoader, Dataset
 from nvflare.client.tracking import SummaryWriter
 from tqdm import tqdm
+from transforms import get_xray_transforms
 
 logger = logging.getLogger(__name__)
 
@@ -191,12 +192,31 @@ def epoch_loop(
                     batch_info += f"{lesion.lesion}: all masked; "
             logger.info(batch_info)
 
+            # A fully-masked batch (every label -1) carries no supervision signal: the clamped loss
+            # would be a flat 0.0 that trains nothing and drags the epoch mean down (pre-clamp, the
+            # NaN it produced was excluded from the mean by np.nanmean). Skip it loudly so a
+            # systematic label degeneracy (e.g. a broken label join) stays visible (FLIP#764).
+            if (labels == -1).all():
+                logger.warning(f"{phase} batch {i + 1}/{len(dataloader)}: all labels masked (-1), skipping batch")
+                continue
+
             if is_train:
                 optimizer.zero_grad()
             output = model(images)
             loss = get_bce_loss(output, labels)
+
+            # Skip a non-finite batch instead of letting it poison the model: a single NaN/Inf loss
+            # backpropagates into every weight via optimizer.step(), after which every subsequent
+            # batch is NaN and the whole pass reports loss=nan (see FLIP#764).
+            if not torch.isfinite(loss):
+                logger.warning(f"Skipping {phase} batch {i + 1}/{len(dataloader)}: non-finite loss ({loss.item()})")
+                continue
+
             if is_train:
                 loss.backward()
+                # Gradient clipping bounds the update so an exploding gradient on one batch can't
+                # diverge the model to NaN within a single optimizer step.
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
                 optimizer.step()
 
             metrics["loss"].append(loss.item())
@@ -231,18 +251,20 @@ def aggregate_and_publish(
     lesions: LesionDict,
     step: int,
 ) -> None:
-    _publish(writer, "TRAIN_LOSS", _safe_mean(train_metrics["loss"]), step)
+    # These are per-epoch scalars: the "@epoch" tag suffix names the x-axis (the FLIP analytics bridge
+    # parses "<label>[@<x_label>]" — see FLIP#148) and `step` (cumulative epoch) is the coordinate.
+    _publish(writer, "TRAIN_LOSS@epoch", _safe_mean(train_metrics["loss"]), step)
     # Only publish VAL_* scalars when validation actually ran this epoch (per VALIDATE_EVERY) —
     # emitting a 0.0 placeholder would inject spurious zeros into the validation series.
     if val_metrics is not None:
-        _publish(writer, "VAL_LOSS", _safe_mean(val_metrics["loss"]), step)
+        _publish(writer, "VAL_LOSS@epoch", _safe_mean(val_metrics["loss"]), step)
 
     for metric in ["f1-score", "precision", "recall"]:
         for name in lesions.get_lesion_list():
             # Include the lesion name in the tag so each lesion writes to a distinct series.
-            _publish(writer, f"TRAIN-{metric.upper()}-{name}", _safe_mean(train_metrics[metric][name]), step)
+            _publish(writer, f"TRAIN-{metric.upper()}-{name}@epoch", _safe_mean(train_metrics[metric][name]), step)
             if val_metrics is not None:
-                _publish(writer, f"VAL-{metric.upper()}-{name}", _safe_mean(val_metrics[metric][name]), step)
+                _publish(writer, f"VAL-{metric.upper()}-{name}@epoch", _safe_mean(val_metrics[metric][name]), step)
 
 
 def local_train(
@@ -292,11 +314,26 @@ def cross_site_validate(
         metrics["f1-score"][name] = []
 
     with torch.no_grad():
-        for batch in test_loader:
+        for i, batch in enumerate(test_loader):
             images = batch["image"].to(device)
             labels = get_lesion_label(batch, lesions).to(device)
+
+            # Skip fully-masked batches: with the clamped loss they would contribute a spurious 0.0
+            # to the test mean, where the pre-clamp NaN was excluded by np.nanmean in _safe_mean.
+            if (labels == -1).all():
+                logger.warning(f"Test batch {i + 1}/{len(test_loader)}: all labels masked (-1), skipping batch")
+                continue
+
             output = model(images)
-            metrics["loss"].append(get_bce_loss(output, labels).item())
+            loss = get_bce_loss(output, labels)
+
+            # Mirror epoch_loop's guard: np.nanmean already excludes a NaN from the test mean, but
+            # skipping silently would hide the degeneracy behind it — keep it visible (FLIP#764).
+            if not torch.isfinite(loss):
+                logger.warning(f"Skipping test batch {i + 1}/{len(test_loader)}: non-finite loss ({loss.item()})")
+                continue
+
+            metrics["loss"].append(loss.item())
             probs = torch.sigmoid(output)
             for name in lesions.get_lesion_list():
                 precision, recall, f1 = compute_precision_recall_f1(probs, labels, name, lesions=lesions)
@@ -319,6 +356,41 @@ def load_global_weights(model: torch.nn.Module, input_model: flare.FLModel) -> d
     torch_weights = {k: torch.as_tensor(v) for k, v in input_model.params.items()}
     model.load_state_dict(torch_weights)
     return torch_weights
+
+
+def evaluate_global_model(
+    model: torch.nn.Module,
+    val_loader: DataLoader,
+    lesions: LesionDict,
+    device: torch.device,
+) -> dict[str, float]:
+    """Evaluate the received global model on the local validation split for best-model selection.
+
+    Must run BEFORE local training so the metrics describe the aggregated global model the server
+    just broadcast — they ride back on the returned ``FLModel`` (DXO meta ``INITIAL_METRICS``) and
+    drive the server-side ``IntimeModelSelector``, which averages them across clients and saves the
+    best global checkpoint on improvement.
+
+    Args:
+        model (torch.nn.Module): Model already loaded with the received global weights.
+        val_loader (DataLoader): Local validation split loader.
+        lesions (LesionDict): The trainable lesion classes.
+        device (torch.device): Torch device to evaluate on.
+
+    Returns:
+        dict[str, float]: Flat metrics — ``VAL_LOSS``, per-lesion ``VAL-<METRIC>-<lesion>`` and
+        macro ``VAL-<METRIC>`` (mean across lesions) for f1-score/precision/recall. NaNs are
+        mapped to 0.0 (as in ``_publish``) so a masked-out lesion cannot poison the server-side
+        cross-client average.
+    """
+    metrics = epoch_loop(model, val_loader, lesions, device, optimizer=None, epoch=0, phase="Val")
+    flat = {"VAL_LOSS": _safe_mean(metrics["loss"])}
+    for metric in ["f1-score", "precision", "recall"]:
+        per_lesion = [_safe_mean(metrics[metric][name]) for name in lesions.get_lesion_list()]
+        for name, value in zip(lesions.get_lesion_list(), per_lesion):
+            flat[f"VAL-{metric.upper()}-{name}"] = value
+        flat[f"VAL-{metric.upper()}"] = _safe_mean(per_lesion)
+    return {label: (0.0 if np.isnan(value) else float(value)) for label, value in flat.items()}
 
 
 def main() -> None:
@@ -377,6 +449,13 @@ def main() -> None:
             original_weights = load_global_weights(model, input_model)
             global_round = input_model.current_round or 0
 
+            # Best-model selection (FLIP#673): evaluate the received global model before local
+            # training mutates it. Gated on BEST_MODEL_METRIC so runs without selection skip the
+            # extra validation pass.
+            global_val_metrics = None
+            if config.get("BEST_MODEL_METRIC"):
+                global_val_metrics = evaluate_global_model(model, val_loader, lesions, device)
+
             n_iterations = local_train(
                 model,
                 train_loader,
@@ -398,6 +477,10 @@ def main() -> None:
                 flare.FLModel(
                     params=diff,
                     params_type="DIFF",
+                    # metrics of the *received* global model (see evaluate_global_model) — the
+                    # framework treats params+metrics as "evaluation on the global model" and
+                    # carries them as INITIAL_METRICS for IntimeModelSelector.
+                    metrics=global_val_metrics,
                     meta={"NUM_STEPS_CURRENT_ROUND": n_iterations},
                 )
             )

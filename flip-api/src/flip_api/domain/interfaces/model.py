@@ -61,6 +61,7 @@ class IAllModelsResponse(BaseModel):
     project_name: str = Field(..., alias="projectName")
     owner_id: UUID = Field(..., alias="ownerId")
     owner_name: str | None = Field(default=None, alias="ownerName")
+    creation_timestamp: datetime = Field(..., alias="creationTimestamp")
     trusts: list[ITrustSummary] = Field(default_factory=list)
     # The model's 1-based place in the FL training queue (position 1 = next to
     # be picked up); None unless the model has a QUEUED job waiting for a net.
@@ -227,18 +228,12 @@ class IModelAuditAction(BaseModel):
     userid: str
 
 
-class ITrainingMetricsResponse(BaseModel):
-    trust: str
-    globalround: int
-    label: str
-    result: float
-
-
 # Response-only models: Python attributes are snake_case; the wire format the UI
 # reads stays camelCase via serialization aliases (FastAPI serialises
-# response_model by alias).
+# response_model by alias). x_value is a float, not an int — arbitrary x axes
+# (FLIP#148) carry fractional values.
 class IModelMetricsValue(BaseModel):
-    x_value: int = Field(..., serialization_alias="xValue")
+    x_value: float = Field(..., serialization_alias="xValue")
     y_value: float = Field(..., serialization_alias="yValue")
 
 

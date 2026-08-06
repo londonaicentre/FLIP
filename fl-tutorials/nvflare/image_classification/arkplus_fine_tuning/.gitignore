@@ -3,3 +3,7 @@
 fl_job/
 uv.lock
 models/
+# `make reproduce-overhead`/`make package-overhead-bundle` result bundles (sent back for comparison, not committed)
+arkplus_sim_experiment_*
+# `make round-metrics` output (rounds.tsv / summary.md / boxplots per run)
+round_metrics/

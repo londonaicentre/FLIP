@@ -16,11 +16,18 @@ import torch
 
 
 def get_bce_loss(outputs: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
-    """Compute Binary Cross-Entropy with logits, ignoring -1 (masked/unknown) targets."""
+    """Compute Binary Cross-Entropy with logits, ignoring -1 (masked/unknown) targets.
+
+    The denominator is clamped to at least 1 so a fully-masked batch (every label
+    -1, e.g. when a shuffled batch happens to contain only unannotated studies)
+    yields 0.0 rather than 0/0 = NaN. An unguarded NaN here propagates through
+    ``loss.backward()`` + ``optimizer.step()`` and poisons every model weight, so
+    one bad batch would turn the whole training pass NaN (see FLIP#764).
+    """
     loss_function = torch.nn.BCEWithLogitsLoss(reduction="none")
     mask = (targets != -1).to(dtype=targets.dtype, device=targets.device)
     loss = loss_function(outputs, targets) * mask
-    return loss.sum() / mask.sum()
+    return loss.sum() / mask.sum().clamp_min(1.0)
 
 
 def compute_precision_recall_f1(

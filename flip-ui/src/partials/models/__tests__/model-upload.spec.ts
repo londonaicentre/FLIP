@@ -17,6 +17,7 @@ import { beforeEach, describe, expect, test, vi } from "vitest";
 
 import { FileInfo, FileUploadStatus } from "@/interfaces/model/types";
 import ModelUpload from "@/partials/models/ModelUpload.vue";
+import { ModelUploadModal } from "@/partials/models/selectors";
 import { useAuthStore } from "@/store/auth";
 
 // The component uses route.params.modelId inside uploadFile. Reactive
@@ -75,10 +76,12 @@ const policyFor = (overrides: { maxBytes?: number } = {}) => ({
 const mockProcessScannedFile = vi.fn();
 const mockDeleteModelFile = vi.fn();
 const mockDownloadModelFile = vi.fn();
+const mockGetModelFileDownloadUrl = vi.fn();
 vi.mock("@/services/file-service", () => ({
     processScannedFile: (...args: unknown[]) => mockProcessScannedFile(...args),
     deleteModelFile: (...args: unknown[]) => mockDeleteModelFile(...args),
-    downloadModelFile: (...args: unknown[]) => mockDownloadModelFile(...args)
+    downloadModelFile: (...args: unknown[]) => mockDownloadModelFile(...args),
+    getModelFileDownloadUrl: (...args: unknown[]) => mockGetModelFileDownloadUrl(...args)
 }));
 
 // JobType is imported by ModelUpload only as a type annotation; the
@@ -220,6 +223,7 @@ describe("ModelUpload", () => {
         mockProcessScannedFile.mockReset();
         mockDeleteModelFile.mockReset();
         mockDownloadModelFile.mockReset();
+        mockGetModelFileDownloadUrl.mockReset();
         mockSnackbarSuccess.mockReset();
         mockSnackbarError.mockReset();
         mockRoute.params = {
@@ -254,6 +258,73 @@ describe("ModelUpload", () => {
         test("shows skeleton placeholders while loading", () => {
             const wrapper = mountModelUpload({ loading: true });
             expect(wrapper.findAll("[data-test='ai-skeleton']").length).toBeGreaterThan(0);
+        });
+    });
+
+    describe("file status rendering", () => {
+        // The four states must be visually distinguishable: a researcher
+        // needs to tell "still uploading" from "uploaded, being scanned"
+        // (#52), and INFECTED from a generic ERROR.
+        const fileWith = (status: FileUploadStatus, name = "weights.pt"): FileInfo => ({
+            id: `id-${status}`,
+            name,
+            size: 2048,
+            status
+        });
+
+        test("renders a distinct icon for SCANNING vs UPLOADING", async () => {
+            const uploading = mountModelUpload({ files: [fileWith(FileUploadStatus.UPLOADING)] });
+            const scanning = mountModelUpload({ files: [fileWith(FileUploadStatus.SCANNING)] });
+            await flushPromises();
+
+            expect(uploading.find(ModelUploadModal.uploadingStatusLabel).exists()).toBe(true);
+            expect(uploading.find(ModelUploadModal.scanningStatusLabel).exists()).toBe(false);
+
+            expect(scanning.find(ModelUploadModal.scanningStatusLabel).exists()).toBe(true);
+            expect(scanning.find(ModelUploadModal.uploadingStatusLabel).exists()).toBe(false);
+        });
+
+        test("labels the SCANNING state without overstating what was inspected", async () => {
+            // The state covers every file type, but only pickle-bearing files
+            // are actually content-scanned — Python source is released
+            // uninspected. The label must not imply otherwise (#52).
+            const wrapper = mountModelUpload({ files: [fileWith(FileUploadStatus.SCANNING)] });
+            await flushPromises();
+            const icon = wrapper.find(ModelUploadModal.scanningStatusLabel);
+
+            expect(icon.exists()).toBe(true);
+            expect(icon.attributes("aria-label")?.toLowerCase()).toContain("check");
+            expect(icon.attributes("aria-label")?.toLowerCase()).not.toContain("unsafe");
+        });
+
+        test("renders a dedicated INFECTED icon, distinct from ERROR", async () => {
+            const infected = mountModelUpload({ files: [fileWith(FileUploadStatus.INFECTED)] });
+            await flushPromises();
+
+            expect(infected.find(ModelUploadModal.infectedStatusLabel).exists()).toBe(true);
+            expect(infected.find(ModelUploadModal.errorStatusLabel).exists()).toBe(false);
+            expect(
+                infected.find(ModelUploadModal.infectedStatusLabel).attributes("aria-label")?.toLowerCase()
+            ).toContain("unsafe");
+        });
+
+        test("offers delete but not download for an INFECTED file", async () => {
+            // The object is already gone from S3, so downloading is
+            // meaningless; deleting clears the row so the user can re-upload.
+            const wrapper = mountModelUpload({ files: [fileWith(FileUploadStatus.INFECTED)] });
+            await flushPromises();
+
+            expect(wrapper.find("[aria-label='Delete weights.pt']").exists()).toBe(true);
+            expect(wrapper.find("[aria-label='Download weights.pt']").exists()).toBe(false);
+        });
+
+        test("hides 'Download all' when any file is INFECTED or SCANNING", async () => {
+            const infected = mountModelUpload({ files: [fileWith(FileUploadStatus.COMPLETED, "a.py"), fileWith(FileUploadStatus.INFECTED, "b.pt")] });
+            const scanning = mountModelUpload({ files: [fileWith(FileUploadStatus.COMPLETED, "a.py"), fileWith(FileUploadStatus.SCANNING, "b.pt")] });
+            await flushPromises();
+
+            expect(infected.find("[data-test='download-all-files-btn']").exists()).toBe(false);
+            expect(scanning.find("[data-test='download-all-files-btn']").exists()).toBe(false);
         });
     });
 
@@ -468,21 +539,17 @@ describe("ModelUpload", () => {
     });
 
     describe("uploadFile — happy path", () => {
-        test("obtains a presigned policy, uploads, marks SCANNING, then processes the file", async () => {
+        test("obtains a presigned policy, uploads, marks SCANNING, then registers the file", async () => {
             const policy = policyFor();
             mockCreatePreSignedUrl.mockResolvedValue(policy);
             mockUploadFileService.mockResolvedValue(undefined);
             mockProcessScannedFile.mockResolvedValue(undefined);
 
-            vi.useFakeTimers();
             const wrapper = mountModelUpload();
             wrapper.findComponent({ name: "FileUpload" }).vm.$emit(
                 "new-files",
                 makeFileList([makeFile("model.py")])
             );
-
-            // Drain microtasks so createPreSignedUrl + uploadFileService resolve.
-            await vi.advanceTimersByTimeAsync(0);
             await flushPromises();
 
             expect(mockCreatePreSignedUrl).toHaveBeenCalledWith(
@@ -498,34 +565,43 @@ describe("ModelUpload", () => {
                 expect.objectContaining({ title: "File Uploaded!" })
             );
 
-            // Advance past the 3s scan-wait so processScannedFile runs.
-            await vi.advanceTimersByTimeAsync(3_500);
-            await flushPromises();
-
+            // No client-side scan wait: registration happens as soon as the
+            // bytes are in S3, and the server owns the scan from there (#52).
             expect(mockProcessScannedFile).toHaveBeenCalledWith(
                 "/files/process-scanned-file/model-under-test/model.py"
             );
         });
 
-        test("emits 'uploaded' 10s after the upload batch completes", async () => {
+        test("shows the file as SCANNING once registered", async () => {
             mockCreatePreSignedUrl.mockResolvedValue(policyFor());
             mockUploadFileService.mockResolvedValue(undefined);
             mockProcessScannedFile.mockResolvedValue(undefined);
 
-            vi.useFakeTimers();
             const wrapper = mountModelUpload();
             wrapper.findComponent({ name: "FileUpload" }).vm.$emit(
                 "new-files",
                 makeFileList([makeFile("model.py")])
             );
-
-            await vi.advanceTimersByTimeAsync(3_500);
             await flushPromises();
-            // Not yet — the emit is behind a 10s setTimeout.
-            expect(wrapper.emitted("uploaded")).toBeFalsy();
 
-            await vi.advanceTimersByTimeAsync(10_500);
+            expect(wrapper.find(ModelUploadModal.scanningStatusLabel).exists()).toBe(true);
+        });
+
+        test("emits 'uploaded' as soon as the batch is registered", async () => {
+            // The server-side scan outcome arrives via the parent's polling,
+            // so there is nothing to wait for here — the old fixed delay only
+            // deferred the first refresh.
+            mockCreatePreSignedUrl.mockResolvedValue(policyFor());
+            mockUploadFileService.mockResolvedValue(undefined);
+            mockProcessScannedFile.mockResolvedValue(undefined);
+
+            const wrapper = mountModelUpload();
+            wrapper.findComponent({ name: "FileUpload" }).vm.$emit(
+                "new-files",
+                makeFileList([makeFile("model.py")])
+            );
             await flushPromises();
+
             expect(wrapper.emitted("uploaded")).toEqual([[true]]);
         });
     });
@@ -536,14 +612,12 @@ describe("ModelUpload", () => {
             // the upload cannot proceed without somewhere to POST the bytes.
             mockCreatePreSignedUrl.mockResolvedValue(null);
 
-            vi.useFakeTimers();
             const wrapper = mountModelUpload();
             wrapper.findComponent({ name: "FileUpload" }).vm.$emit(
                 "new-files",
                 makeFileList([makeFile("model.py")])
             );
 
-            await vi.advanceTimersByTimeAsync(0);
             await flushPromises();
 
             expect(mockUploadFileService).not.toHaveBeenCalled();
@@ -556,14 +630,12 @@ describe("ModelUpload", () => {
             mockCreatePreSignedUrl.mockResolvedValue(policyFor());
             mockUploadFileService.mockRejectedValue(new Error("network blip"));
 
-            vi.useFakeTimers();
             const wrapper = mountModelUpload();
             wrapper.findComponent({ name: "FileUpload" }).vm.$emit(
                 "new-files",
                 makeFileList([makeFile("model.py")])
             );
 
-            await vi.advanceTimersByTimeAsync(0);
             await flushPromises();
 
             expect(mockSnackbarError).toHaveBeenCalledWith(
@@ -580,14 +652,12 @@ describe("ModelUpload", () => {
             // reject the upload after bytes have already been streamed.
             mockCreatePreSignedUrl.mockResolvedValue(policyFor({ maxBytes: 8 }));
 
-            vi.useFakeTimers();
             const wrapper = mountModelUpload();
             wrapper.findComponent({ name: "FileUpload" }).vm.$emit(
                 "new-files",
                 makeFileList([makeFile("model.py", 1024)])
             );
 
-            await vi.advanceTimersByTimeAsync(0);
             await flushPromises();
 
             expect(mockUploadFileService).not.toHaveBeenCalled();
@@ -596,6 +666,32 @@ describe("ModelUpload", () => {
                 12_000
             );
             expect(mockProcessScannedFile).not.toHaveBeenCalled();
+        });
+
+        test("surfaces the server's rejection reason when the file type is not allowed", async () => {
+            // flip-api refuses non-whitelisted extensions with a 400 whose
+            // detail names the offending suffix and the allowed set (#52).
+            // A generic "please try again" would leave the user guessing.
+            const detail = "File type '.exe' is not allowed. Allowed extensions: .py, .json, .pt";
+            mockCreatePreSignedUrl.mockRejectedValue({
+                response: {
+                    status: 400,
+                    data: { detail }
+                }
+            });
+
+            const wrapper = mountModelUpload();
+            wrapper.findComponent({ name: "FileUpload" }).vm.$emit(
+                "new-files",
+                makeFileList([makeFile("payload.exe")])
+            );
+            await flushPromises();
+
+            expect(mockUploadFileService).not.toHaveBeenCalled();
+            expect(mockSnackbarError).toHaveBeenCalledWith(
+                expect.objectContaining({ text: detail }),
+                12_000
+            );
         });
     });
 
@@ -636,17 +732,23 @@ describe("ModelUpload", () => {
     });
 
     describe("download flow", () => {
-        test("downloadFile fetches the blob and triggers an <a> click", async () => {
-            const blob = new Blob(["fake content"], { type: "text/plain" });
-            mockDownloadModelFile.mockResolvedValue(blob);
+        test("downloadFile navigates an <a> straight to the presigned URL (no Blob)", async () => {
+            // The per-file button must NOT buffer the file into memory: it
+            // fetches only the presigned URL and lets the browser's download
+            // manager stream from S3 (Content-Disposition: attachment is set
+            // server-side). A Blob round-trip would cap downloads at what the
+            // tab can hold — files can reach MAX_MODEL_FILE_BYTES (5 GiB).
+            mockGetModelFileDownloadUrl.mockResolvedValue({
+                url: "https://s3.example.com/signed-download",
+                fileName: "model.py"
+            });
 
-            // jsdom's URL.createObjectURL throws on Blob by default; spy
-            // so the component's download-link plumbing runs to completion
-            // and we can assert on the URL lifecycle.
-            const createObjectURLSpy = vi
-                .spyOn(URL, "createObjectURL")
-                .mockReturnValue("blob:fake");
-            const revokeObjectURLSpy = vi.spyOn(URL, "revokeObjectURL").mockReturnValue(undefined);
+            let clickedHref: string | undefined;
+            const clickSpy = vi
+                .spyOn(HTMLAnchorElement.prototype, "click")
+                .mockImplementation(function (this: HTMLAnchorElement) {
+                    clickedHref = this.href;
+                });
 
             const files: FileInfo[] = [
                 {
@@ -667,14 +769,40 @@ describe("ModelUpload", () => {
             await rowButtons[0].trigger("click");
             await flushPromises();
 
-            expect(mockDownloadModelFile).toHaveBeenCalledWith(
+            expect(mockGetModelFileDownloadUrl).toHaveBeenCalledWith(
                 "/files/model/model-under-test/model.py"
             );
-            expect(createObjectURLSpy).toHaveBeenCalledWith(blob);
-            expect(revokeObjectURLSpy).toHaveBeenCalledWith("blob:fake");
+            expect(clickedHref).toBe("https://s3.example.com/signed-download");
+            // The byte-fetching path must stay untouched by a plain download.
+            expect(mockDownloadModelFile).not.toHaveBeenCalled();
 
-            createObjectURLSpy.mockRestore();
-            revokeObjectURLSpy.mockRestore();
+            clickSpy.mockRestore();
+        });
+
+        test("downloadFile snackbars with the file name when the URL request rejects", async () => {
+            // Previously downloadFile had no catch at all — a rejection failed
+            // silently with no user-visible feedback.
+            mockGetModelFileDownloadUrl.mockRejectedValueOnce(new Error("network"));
+
+            const files: FileInfo[] = [
+                {
+                    id: "1",
+                    name: "model.py",
+                    size: 1024,
+                    status: FileUploadStatus.COMPLETED
+                }
+            ];
+            const wrapper = mountModelUpload({ files }, { hasPermissions: true });
+            await flushPromises();
+
+            const rowButtons = wrapper.findAll("li button");
+            await rowButtons[0].trigger("click");
+            await flushPromises();
+
+            expect(mockSnackbarError).toHaveBeenCalledWith({
+                title: "Download failed",
+                text: "Could not download model.py. Please try again."
+            });
         });
 
         test("viewer (no CanManageProjects) does not see the download button", async () => {
@@ -825,6 +953,40 @@ describe("ModelUpload", () => {
 
             // Wrap up so we don't leak a pending promise.
             resolveFirst!(new Blob(["x"]));
+        });
+
+        test("download-all fetches in batches of 3, not all files at once", async () => {
+            // 4 files -> batch 1 is the first 3, batch 2 is the remaining 1.
+            // Hold every download open so we can prove batch 2 hasn't started
+            // until batch 1 fully resolves.
+            const resolvers: Array<(b: Blob) => void> = [];
+            mockDownloadModelFile.mockImplementation(() =>
+                new Promise<Blob>(resolve => { resolvers.push(resolve); })
+            );
+
+            const files: FileInfo[] = Array.from({ length: 4 }, (_, i) => ({
+                id: String(i + 1),
+                name: `file-${i + 1}.py`,
+                size: 10,
+                status: FileUploadStatus.COMPLETED
+            }));
+            const wrapper = mountModelUpload({ files }, { hasPermissions: true });
+            await flushPromises();
+
+            await wrapper.find("[data-test=download-all-files-btn]").trigger("click");
+            await flushPromises();
+
+            // Only the first batch (3 files) should have started.
+            expect(mockDownloadModelFile).toHaveBeenCalledTimes(3);
+
+            // Resolving batch 1 lets the loop move on to batch 2 (1 file).
+            resolvers.splice(0).forEach(resolve => resolve(new Blob(["x"])));
+            await flushPromises();
+            expect(mockDownloadModelFile).toHaveBeenCalledTimes(4);
+
+            // Resolve the last file so the zip generation completes cleanly.
+            resolvers.splice(0).forEach(resolve => resolve(new Blob(["y"])));
+            await flushPromises();
         });
     });
 });

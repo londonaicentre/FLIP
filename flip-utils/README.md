@@ -82,7 +82,10 @@ flip/
 ├── nvflare/      # NVFLARE-specific logic and components
 │   ├── executors/    # RUN_TRAINER, RUN_VALIDATOR, RUN_EVALUATOR wrappers
 │   ├── controllers/  # FLIP workflows (ScatterAndGather, BroadcastTask, …)
-│   └── components/   # Event handlers, persistors, privacy filters, locators, …
+│   ├── components/   # Event handlers, persistors, privacy filters, locators, …
+│   ├── recipes/      # High-level NVFLARE job recipes
+│   ├── runtime.py    # Runtime helpers for NVFLARE apps
+│   └── metrics.py    # Metrics collection and reporting
 └── flower/       # Flower-specific server-side helpers
     ├── metrics.py    # handle_client_metrics / handle_client_exception
     ├── progress.py   # RoundTelemetry + typed round events
@@ -108,19 +111,54 @@ contract with the stock `IntimeModelSelector` (see `FlipFedAvgRecipe`).
 
 ### User Application Requirements
 
-User-provided files go in the job's `custom/` directory and are dynamically imported by the executor wrappers:
+The executor wrappers dynamically import user-provided files from the job's `custom/`
+directory. For most templates that directory is materialised at run time by the tutorial
+harness (`fl-tutorials/nvflare/testing/app_organiser.sh`), which copies each file from
+the tutorial's `app_files/` into `./tmp/app/custom/`; the `diffusion_model` template
+already carries a git-tracked `custom/` with baseline files that the same overlay extends.
 
 | File | Description |
 | ------ | ------------- |
 | `trainer.py` | Training logic — must export `FLIP_TRAINER` class |
 | `validator.py` | Validation logic — must export `FLIP_VALIDATOR` class |
 | `models.py` | Model definitions — must export `get_model()` function |
-| `config.json` | Hyperparameters — must include `LOCAL_ROUNDS` and `LEARNING_RATE` |
+| `config.json` | Hyperparameters — must include `LOCAL_ROUNDS` and `LEARNING_RATE`; optional `BEST_MODEL_METRIC` / `BEST_MODEL_METRIC_MINIMIZE` enable best-model selection (see below) |
 | `transforms.py` | Data transforms (optional) |
+
+### Best-Model Selection (optional)
+
+By default only the final aggregated model is saved. Setting `BEST_MODEL_METRIC` (and, for
+loss-like metrics, `BEST_MODEL_METRIC_MINIMIZE: true`) wires NVFLARE's stock
+`IntimeModelSelector` into the job so the best global model is saved too:
+
+- Each round, clients evaluate the **received global model** on their local validation split
+  *before* training and report the metrics via `FLModel(metrics={...})` — so the selection metric
+  measures exactly the checkpoint being considered.
+- The selector averages the chosen metric across clients and, on improvement, has the persistor
+  save `best_FL_global_model.pt` next to `FL_global_model.pt` — same file format as the final
+  model. Round 0 is skipped (no aggregated model exists yet), so selection needs
+  `GLOBAL_ROUNDS >= 2` — a single-round job can never save a best model.
+- The **final model itself is never a selection candidate**: metrics are evaluated on received
+  global models before training, and the last round's aggregate is never re-broadcast, so there
+  is no post-last-round evaluation. "Best" therefore means best among the intermediate global
+  models — the final model may in fact outperform the saved best, in which case the two files
+  differ even though the final is the better checkpoint.
+- The results zip contains the best model only when selection ran and saved one; no best file is
+  fabricated from the final model otherwise.
+
+The metric label must be one the trainer reports (e.g. the client-API x-ray tutorial reports
+`VAL_LOSS`, per-lesion `VAL-<METRIC>-<lesion>` and macro `VAL-<METRIC>` labels). Wired for both
+supported paths: the `standard_client_api` recipe (`FlipFedAvgRecipe(best_model_metric=...)`) and
+platform-submitted jobs, where fl-api-base's job-assembly step (`prepare_config.validate_config` /
+`configure_server`) reads `BEST_MODEL_METRIC` / `BEST_MODEL_METRIC_MINIMIZE` straight from the
+uploaded `config.json` and injects the same selector. On the platform path, a `config.json` that
+sets `BEST_MODEL_METRIC` without an explicit `GLOBAL_ROUNDS >= 2` is rejected at upload (the
+platform defaults to a single round, where selection could never fire).
 
 ### Job Types
 
-Set via the `JOB_TYPE` environment variable:
+Pass the job type to the `FLIP()` factory (`FLIP(job_type=...)`). The `JobType` enum
+(`flip.constants.job_types`) defines the values recognised by `FLIP()`:
 
 | Type | Description |
 | ------ | ------------- |
@@ -128,10 +166,11 @@ Set via the `JOB_TYPE` environment variable:
 | `evaluation` | Distributed model evaluation without training |
 | `diffusion_model` | Two-stage training (VAE encoder + diffusion) |
 | `fed_opt` | Custom federated optimization |
-| `standard_client_api` | Federated averaging via the modern NVFLARE Client API (script-driven, uses `nvflare.client`) |
-| `evaluation_client_api` | Distributed model evaluation via the modern NVFLARE Client API |
 
-The corresponding configs live in `fl-apps/nvflare/<job_type>/app/config/`.
+The NVFLARE backend additionally ships template directories under `fl-apps/nvflare/` for
+the Client-API variants (`standard_client_api`, `evaluation_client_api`); these are
+selected as app templates and are not `JobType` enum members. The corresponding configs
+live in `fl-apps/nvflare/<template>/app/config/`.
 
 ### Development Mode
 
@@ -168,11 +207,13 @@ uv run pytest -s -vv
 
 ## Tutorials
 
-The [`../fl-tutorials/`](../fl-tutorials/) directory contains ready-to-use example applications that can be uploaded to the FLIP platform UI. Each tutorial is designed to work with a specific app template from `../fl-apps/`, and runs on the local NVFLARE simulator via `make -C fl-tutorials run-tutorial TUTORIAL=<name>`.
+The [`../fl-tutorials/`](../fl-tutorials/) directory contains ready-to-use example applications that can be uploaded to the FLIP platform UI. Each tutorial is designed to work with a specific app template from `../fl-apps/<backend>/`, and runs on the local FL simulator via `make -C fl-tutorials run-tutorial TUTORIAL=<name>` (defaults to `FL_BACKEND=nvflare`; pass `FL_BACKEND=flower` for Flower).
 
 ![FL app structure](./assets/fl_app_structure.png)
 
 ### App / Tutorial Compatibility
+
+Paths below are relative to `../fl-tutorials/nvflare/` (the NVFLARE tutorials tree):
 
 | App | Tutorial |
 |-----|----------|
