@@ -89,7 +89,7 @@ flip/
 └── flower/       # Flower-specific server-side helpers
     ├── metrics.py    # handle_client_metrics / handle_client_exception
     ├── progress.py   # RoundTelemetry + typed round events
-    ├── selection.py  # BestModelSelector — best-global-model tracking
+    ├── selection.py  # BestModelSelector + best-model run-config parsing
     └── strategy.py   # FlipFedAvg (hub telemetry + best-model wiring; needs flwr)
 ```
 

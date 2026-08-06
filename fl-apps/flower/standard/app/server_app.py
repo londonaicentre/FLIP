@@ -22,6 +22,7 @@ import torch
 from flip import FLIP
 from flip.constants import PTConstants
 from flip.constants.flip_constants import ModelStatus
+from flip.flower.selection import parse_best_model_run_config
 from flwr.app import ArrayRecord, Context
 from flwr.common import log
 from flwr.serverapp import Grid, ServerApp
@@ -49,25 +50,21 @@ def main(grid: Grid, context: Context, flip: FLIP = FLIP()) -> None:
     run_config = context.run_config
     model_id = run_config.get("flip-model-id", "monai-flower-tutorial-model")
     num_rounds = int(run_config.get("num-server-rounds", 1))
-    # Best-model selection is opt-in: an empty metric key leaves behaviour unchanged
-    # (final-round-only evaluation, no best checkpoint).
-    best_model_metric = str(run_config.get("best-model-metric", "")) or None
-    # Read raw rather than coercing: bool("false") is True, and Flower's run config accepts
-    # strings, so a quoted TOML value would silently invert the selection direction and ship
-    # the worst-scoring checkpoint as the best one. Validated below.
-    best_model_metric_minimize = run_config.get("best-model-metric-minimize", False)
 
     flip.update_status(model_id, ModelStatus.INITIATED)
 
-    if not isinstance(best_model_metric_minimize, bool):
+    # Best-model selection is opt-in: an unset or blank metric leaves behaviour unchanged
+    # (final-round-only evaluation, no best checkpoint). Parsing lives in flip.flower — a
+    # coerced metric key or a quoted TOML boolean would otherwise enable selection on a key
+    # the clients never report, or silently invert the selection direction.
+    try:
+        best_model_metric, best_model_metric_minimize = parse_best_model_run_config(run_config, num_rounds=num_rounds)
+    except ValueError as err:
         # Fail the run rather than mislabel a model. ERROR is the only channel the researcher
         # can actually see — the ServerApp log stream is not surfaced through the platform.
-        log(INFO, "✗ best-model-metric-minimize must be an unquoted TOML boolean")
+        log(INFO, f"✗ {err}")
         flip.update_status(model_id, ModelStatus.ERROR)
-        raise ValueError(
-            "best-model-metric-minimize must be a TOML boolean (unquoted true/false), got "
-            f"{best_model_metric_minimize!r} — a quoted value silently inverts best-model selection"
-        )
+        raise
 
     model = get_model()
     flip.update_status(model_id, ModelStatus.PREPARED)

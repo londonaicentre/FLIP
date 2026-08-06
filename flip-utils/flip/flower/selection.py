@@ -33,7 +33,66 @@ from collections.abc import Mapping
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["BestModelSelector"]
+__all__ = ["BestModelSelector", "parse_best_model_run_config"]
+
+_METRIC_KEY = "best-model-metric"
+_MINIMIZE_KEY = "best-model-metric-minimize"
+
+
+def parse_best_model_run_config(run_config: Mapping[str, object], *, num_rounds: int) -> tuple[str | None, bool]:
+    """Resolve the best-model selection keys from a Flower run config, failing loud on misconfiguration.
+
+    The platform path has no hub-side validation of these keys — fl-api-flower feeds the
+    researcher's ``config.toml`` straight to ``flwr run`` — so this is the only gate between
+    a config typo and a mislabelled (or silently missing) best checkpoint. Selection is
+    opt-in: an absent or blank ``best-model-metric`` disables it, and then the minimize key
+    is inert and deliberately not validated.
+
+    Args:
+        run_config (Mapping[str, object]): The app's run config (``Context.run_config``).
+        num_rounds (int): The job's number of federated rounds. With selection enabled and
+            fewer than two rounds the best checkpoint can only duplicate the final model,
+            which is logged as a warning (NVFLARE rejects that configuration outright, but
+            Flower's round-1 evaluation still feeds the selector, so the artifact contract
+            holds — redundantly rather than not at all).
+
+    Returns:
+        tuple[str | None, bool]: ``(metric, minimize)`` — the stripped metric key or ``None``
+        when selection is disabled, and the selection direction.
+
+    Raises:
+        ValueError: When the metric is set but not a TOML string (``str()`` coercion would
+            enable selection on a bogus key the clients never report), or when the minimize
+            key is set alongside a metric but is not a TOML boolean (``bool("false")`` is
+            ``True``, so a quoted value would silently invert the selection direction and
+            ship the worst-scoring checkpoint as the best one).
+    """
+    raw_metric = run_config.get(_METRIC_KEY)
+    if raw_metric is None:
+        return None, False
+    if not isinstance(raw_metric, str):
+        raise ValueError(
+            f"{_METRIC_KEY} must be a TOML string, got {raw_metric!r} — a coerced value would enable "
+            "selection on a metric key the client apps never report"
+        )
+    metric = raw_metric.strip()
+    if not metric:
+        return None, False
+
+    minimize = run_config.get(_MINIMIZE_KEY, False)
+    if not isinstance(minimize, bool):
+        raise ValueError(
+            f"{_MINIMIZE_KEY} must be a TOML boolean (unquoted true/false), got {minimize!r} — "
+            "a quoted value silently inverts best-model selection"
+        )
+    if num_rounds < 2:
+        logger.warning(
+            "Best-model selection on %r is enabled but num_rounds=%d leaves a single candidate round — "
+            "the best checkpoint will just duplicate the final model",
+            metric,
+            num_rounds,
+        )
+    return metric, minimize
 
 
 class BestModelSelector:
@@ -96,7 +155,7 @@ class BestModelSelector:
             return False
         if arrays is None:
             logger.warning(
-                "Best-model metric %r improved in round %d but no evaluated arrays were provided — "
+                "Best-model metric %r is present in round %d but no evaluated arrays were provided — "
                 "ignoring this round",
                 self.metric,
                 server_round,

@@ -20,7 +20,9 @@ for both.
 
 import logging
 
-from flip.flower.selection import BestModelSelector
+import pytest
+
+from flip.flower.selection import BestModelSelector, parse_best_model_run_config
 
 ARRAYS_R1 = object()
 ARRAYS_R2 = object()
@@ -157,6 +159,9 @@ class TestBestModelSelectorIgnoredInputs:
         assert improved is False
         assert selector.best_round is None
         assert "arrays" in caplog.text.lower()
+        # The arrays check runs before any comparison against the current best, so the
+        # warning must not claim the metric "improved" — nothing was compared yet.
+        assert "improved" not in caplog.text.lower()
 
     def test_ignored_round_does_not_disturb_an_existing_best(self):
         selector = BestModelSelector("val_f1")
@@ -210,3 +215,70 @@ class TestBestModelSelectorNonFiniteValues:
         assert improved is False
         assert selector.best_round is None
         assert selector.best_arrays is None
+
+
+class TestParseBestModelRunConfig:
+    """Run-config parsing shared by the server-app templates.
+
+    The Flower platform path has no hub-side validation of these keys — fl-api-flower
+    feeds the researcher's config.toml straight to ``flwr run`` — so this parse is the
+    only gate between a typo and a mislabelled (or silently missing) best checkpoint.
+    """
+
+    def test_absent_metric_disables_selection(self):
+        assert parse_best_model_run_config({}, num_rounds=5) == (None, False)
+
+    def test_blank_metric_disables_selection(self):
+        assert parse_best_model_run_config({"best-model-metric": "   "}, num_rounds=5) == (None, False)
+
+    def test_metric_is_stripped(self):
+        # Mirrors fl-api's NVFLARE-side fix (#673): a stray space in the config must not
+        # survive parsing and silently never match the metric label the clients report.
+        config = {"best-model-metric": " val_f1 "}
+
+        assert parse_best_model_run_config(config, num_rounds=5) == ("val_f1", False)
+
+    def test_minimize_defaults_to_false(self):
+        assert parse_best_model_run_config({"best-model-metric": "val_f1"}, num_rounds=5) == ("val_f1", False)
+
+    def test_minimize_true_is_honoured(self):
+        config = {"best-model-metric": "val_loss", "best-model-metric-minimize": True}
+
+        assert parse_best_model_run_config(config, num_rounds=5) == ("val_loss", True)
+
+    def test_non_string_metric_is_rejected(self):
+        # str() coercion would turn e.g. an int into a bogus metric key that enables
+        # selection which then warns every round and produces no best artifact.
+        with pytest.raises(ValueError, match="best-model-metric"):
+            parse_best_model_run_config({"best-model-metric": 123}, num_rounds=5)
+
+    def test_quoted_minimize_is_rejected_when_selection_enabled(self):
+        # bool("false") is True: a quoted TOML value would silently invert the selection
+        # direction and ship the worst-scoring checkpoint as the best one.
+        config = {"best-model-metric": "val_loss", "best-model-metric-minimize": "true"}
+
+        with pytest.raises(ValueError, match="best-model-metric-minimize"):
+            parse_best_model_run_config(config, num_rounds=5)
+
+    def test_invalid_minimize_is_ignored_when_selection_disabled(self):
+        # With no metric set the minimize key is inert — failing the whole training run
+        # over an inert key would be worse than ignoring it.
+        config = {"best-model-metric-minimize": "true"}
+
+        assert parse_best_model_run_config(config, num_rounds=5) == (None, False)
+
+    def test_single_round_selection_warns_but_stays_enabled(self, caplog):
+        # Unlike NVFLARE (whose IntimeModelSelector skips round 0, so a 1-round job can
+        # never save a best model), Flower's round-1 evaluation still feeds the selector:
+        # best == final is redundant, not broken, so this warns instead of rejecting.
+        with caplog.at_level(logging.WARNING, logger="flip.flower.selection"):
+            result = parse_best_model_run_config({"best-model-metric": "val_f1"}, num_rounds=1)
+
+        assert result == ("val_f1", False)
+        assert "num_rounds" in caplog.text
+
+    def test_multi_round_selection_does_not_warn(self, caplog):
+        with caplog.at_level(logging.WARNING, logger="flip.flower.selection"):
+            parse_best_model_run_config({"best-model-metric": "val_f1"}, num_rounds=2)
+
+        assert caplog.text == ""
