@@ -93,7 +93,7 @@ spec:
         {{- if .Values.orthanc.initJob.hostAwsMount.enabled }}
         - name: host-aws
           hostPath:
-            path: {{ .Values.orthanc.initJob.hostAwsMount.hostPath | quote }}
+            path: {{ required "orthanc.initJob.hostAwsMount.hostPath is required when hostAwsMount is enabled — set it to the AWS config dir ON THE NODE, e.g. --set orthanc.initJob.hostAwsMount.hostPath=$HOME/.aws" .Values.orthanc.initJob.hostAwsMount.hostPath | quote }}
             type: Directory
         {{- end }}
 {{- end }}
