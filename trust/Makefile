@@ -308,7 +308,7 @@ up: create-networks
 	@found=0; for f in .env.*.$(ENV); do \
 	  [ -e "$$f" ] || continue; \
 	  kit=$${f#.env.}; kit=$${kit%.$(ENV)}; found=1; \
-	  $(MAKE) up-trust KIT=$$kit; \
+	  $(MAKE) up-trust KIT=$$kit || { echo "❌ Failed to start trust $$kit"; exit 1; }; \
 	done; \
 	[ "$$found" = 1 ] || echo "ℹ️  No trust/.env.*.$(ENV) kits found — run 'make register-trusts' (from repo root) first."
 

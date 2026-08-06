@@ -214,7 +214,7 @@ up:
 	@found=0; for f in ../.env.*.$(ENV); do \
 	  [ -e "$$f" ] || continue; \
 	  kit=$${f#../.env.}; kit=$${kit%.$(ENV)}; found=1; \
-	  $(MAKE) up-xnat KIT=$$kit; \
+	  $(MAKE) up-xnat KIT=$$kit || { echo "❌ Failed to start XNAT for trust $$kit"; exit 1; }; \
 	done; \
 	[ "$$found" = 1 ] || echo "ℹ️  No trust/.env.*.$(ENV) kits found — run 'make register-trusts' (from repo root) first."
 
@@ -223,6 +223,9 @@ up:
 up-xnat: create-xnat-network
 	$(require_kit)
 	$(require_xnat_passwords)
+	# Validate the version-matched, gitignored plugin cache before tearing down a
+	# working XNAT. A fresh clone downloads it here; a warm cache skips AWS.
+	$(MAKE) xnat-plugins-download
 	$(MAKE) down-xnat KIT=$(KIT)
 	$(MAKE) xnat-reset KIT=$(KIT)
 	XNAT_PATH=${XNAT_PATH} \

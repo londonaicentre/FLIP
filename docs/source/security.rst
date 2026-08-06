@@ -111,6 +111,25 @@ Services within a trust authenticate to one another with a per-trust
 ``TRUST_INTERNAL_SERVICE_KEY`` that never reaches the Central Hub, compared in constant
 time. Credentials compromised at one trust cannot be replayed against another.
 
+.. _trust-internal-service-authentication:
+
+Trust-internal service authentication
+=====================================
+
+Trust-side APIs can retrieve cohorts and imaging, so Docker or Kubernetes network
+reachability alone is not treated as authorisation. Every call from ``trust-api``,
+``imaging-api``, or an FL client to ``imaging-api`` or ``data-access-api`` carries the
+per-trust ``TRUST_INTERNAL_SERVICE_KEY`` in the configured header. Receivers compare it
+in constant time before running the requested operation. Health endpoints remain
+unauthenticated so orchestrator liveness probes do not need access to the secret.
+
+The key is minted during trust registration and written only to that trust's deployment
+kit. It is shared by the services inside one trust, never stored by the Central Hub, and
+is distinct from both the trust-to-hub API key and the hub-internal FL-server key. Each
+trust receives a different value, limiting the effect of disclosure to one trust. Key
+rotation is performed by issuing a new trust kit and restarting the trust-side services
+together so callers and receivers change atomically.
+
 **************************
 The clinical data boundary
 **************************

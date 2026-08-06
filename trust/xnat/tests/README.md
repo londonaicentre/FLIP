@@ -36,6 +36,10 @@ protect the XNAT database credentials (FLIP-PT-056).
   images ship different ones: dash for xnat-web, busybox ash for xnat-db). The
   reject cases also assert the `psql` stub was *never* called, which is what pins
   the guard ahead of any database contact.
+- **Startup reliability** (`test_startup.py`) — executes the plugin cache/download
+  guard and authenticated plugin-readiness wait with stubbed AWS/curl commands,
+  checks aggregate Make targets propagate failures, and pins root-relative paths
+  passed to the end-to-end smoke test.
 
 The tests do not stand up XNAT, DicomEdit, or Postgres. The anonymization tests
 validate the FLIP-authored ruleset against synthetic studies; the guard-behaviour

@@ -78,7 +78,7 @@ trust's kit file (`trust/.env.<CODE>.<env>`); hub-shared values (`AES_KEY_BASE64
 trust-api authenticates **outbound** in two directions:
 
 - **To the Central Hub**: every request carries `TRUST_API_KEY` in the `TRUST_API_KEY_HEADER`. The hub validates against the `api_key_hash` column on the trust's row in the `trust` table.
-- **To sibling trust services** (imaging-api, data-access-api): every request carries `TRUST_INTERNAL_SERVICE_KEY` in the configured header. Receivers compare with `hmac.compare_digest` against their own copy of the same per-trust key. See the **Trust-internal Service Authentication** section in [`CLAUDE.md`](../../CLAUDE.md) for the threat model.
+- **To sibling trust services** (imaging-api, data-access-api): every request carries `TRUST_INTERNAL_SERVICE_KEY` in the configured header. Receivers compare with `hmac.compare_digest` against their own copy of the same per-trust key. See the [public security model](../../docs/source/security.rst#trust-internal-service-authentication) for the threat model.
 
 trust-api itself does **not** receive inbound requests from the hub or any external caller — it only polls outbound — so it does not validate an inbound trust-internal header.
 

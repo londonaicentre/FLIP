@@ -50,6 +50,13 @@ until curl --output /dev/null --silent --head --fail \
 done
 echo "XNAT is up!"
 
+# Tomcat can serve the login page before plugin routes have registered. Wait
+# for the authenticated DQR settings endpoint before issuing any site changes;
+# otherwise a fresh boot races into a stream of 404s and leaves XNAT only
+# partially configured. The helper accepts either the initial or already-
+# rotated admin password, so a configuration-only retry remains idempotent.
+bash wait-for-xnat-plugins.sh
+
 # Helper: curl wrapper for XNAT's REST API — same contract as xnat_curl in
 # configure-dcm2niix.sh, except credentials are passed by the caller: this
 # script authenticates its first two calls with the *initial* admin password

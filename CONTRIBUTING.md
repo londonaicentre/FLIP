@@ -43,42 +43,21 @@ FLIP is developed by the [London AI Centre](https://www.aicentre.co.uk/) in coll
 
 The FLIP repository is a mono-repo: it consolidates the Central Hub API, Trust APIs, UI, Docker deployment, **and**
 the federated learning code (base library, FL services, and tutorials) for both NVFLARE and Flower. Both backends
-are also provisioned in-tree (gitignored) under `fl-services/<backend>/provision/` (see
-[`README.md#federated-learning-setup`](README.md#federated-learning-setup)).
-
-```bash
-FLIP/
-├── deploy/             # Docker deployment files
-│   └── providers/
-│       ├── AWS/            # Terraform for Central Hub + cloud trust (EC2)
-│       ├── kubernetes/     # Helm chart for K8s trust deployment
-│       └── local/          # Ansible for on-premises trust deployment
-├── docs/               # Sphinx documentation
-├── flip-api/           # Central Hub API service
-├── flip-ui/            # UI service
-├── trust/              # Services deployed in individual trust environments
-│   ├── data-access-api/    # Data access API
-│   ├── imaging-api/        # Imaging API
-│   ├── observability/      # Observability stack (Grafana, Loki, Alloy)
-│   ├── omop-db/            # Mocked OMOP database
-│   ├── orthanc/            # Mocked PACS service (Orthanc)
-│   ├── trust-api/          # Trust API
-│   └── xnat/               # Mocked XNAT service
-├── flip-utils/         # `flip` Python package — platform logic, NVFLARE components, Flower helpers
-├── fl-services/        # Docker images for FL networks, per backend: fl-services/nvflare/{fl-server,fl-client,fl-api-base,fl-base}, fl-services/flower/{superlink,supernode,fl-api-flower,fl-base}
-├── fl-apps/            # FL app templates per backend: fl-apps/nvflare/{standard,standard_client_api,evaluation,evaluation_client_api,diffusion_model,fed_opt}, fl-apps/flower/{standard,evaluation} (+ check_required_files.sh)
-└── fl-tutorials/       # End-to-end tutorial examples per backend: fl-tutorials/nvflare/ (xray classification, spleen seg/eval, diffusion), fl-tutorials/flower/ (xray classification, 3D spleen seg, numpy)
-```
+are provisioned in-tree (gitignored) under `fl-services/<backend>/provision/`. See the single canonical
+[repository layout](README.md#repository-layout) in the root README and the README within each area for details.
 
 ## Setting up the development environment
 
 ### Prerequisites
 
-In addition to the [deployment prerequisites](README.md#prerequisites), you'll need the following for development:
-
-- [Python 3.12+](https://www.python.org/downloads/)
-- [UV](https://docs.astral.sh/uv) - Python environment management tool (`curl -LsSf https://astral.sh/uv/install.sh | sh`)
-- [act](https://github.com/nektos/act) - Run GitHub Actions locally (install via [Homebrew](https://brew.sh/): `brew install act`)
+- A Linux development host; a CUDA-capable GPU is required for GPU-backed tutorials and training
+- [Docker Engine](https://docs.docker.com/engine/install/) with Compose and Swarm mode
+- [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)
+  on GPU hosts
+- GNU Make, `jq`, and the PostgreSQL client
+- [Python 3.12+](https://www.python.org/downloads/) and [uv](https://docs.astral.sh/uv/)
+- The AWS CLI configured for SSO access to the development environment
+- [act](https://github.com/nektos/act) if you want to run GitHub Actions locally
 - **GHCR login** — `make up` pulls the repo-built service images from GitHub Container Registry by default, so authenticate once with a PAT that has `read:packages`:
   ```bash
   echo "$GHCR_PAT" | docker login ghcr.io -u <your-github-username> --password-stdin
@@ -203,6 +182,21 @@ make generate-internal-service-key
 This writes `INTERNAL_SERVICE_KEY` with `INTERNAL_SERVICE_KEY_HASH` into `.env.development` for
 fl-server-to-hub authentication.
 
+For the full local stack, replace every placeholder in these minimum groups before running `make up`:
+
+| Group | Required development values |
+| --- | --- |
+| AWS session | `AWS_PROFILE`, `AWS_REGION` |
+| Central Hub auth | `AWS_COGNITO_USER_POOL_ID`, `AWS_COGNITO_APP_CLIENT_ID`, `ADMIN_USER_PASSWORD` |
+| Email | an SES-verified `SES_VERIFIED_EMAIL` |
+| Local secrets | `POSTGRES_PASSWORD`, a base64-encoded 32-byte `AES_KEY_BASE64` |
+| Runtime S3 | `FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME`, `FLIP_FL_RESULTS_BUCKET_NAME`, `FLIP_APP_BUNDLES_BUCKET_NAME`, `AICENTRE_BUCKET_NAME` |
+| XNAT artifacts | `FLIP_ARTIFACTS_BUCKET_NAME`, containing the versioned WAR and plugin set described in [`trust/xnat/README.md`](trust/xnat/README.md#plugins) |
+
+Development uses these configured AWS services directly; there is no LocalStack fallback. Authorised FLIP developers
+can use the shared development values. Other deployers should create their own resources with the
+[Central Hub deployment guide](docs/source/deploy-flip/deploy-central-hub.rst).
+
 Trusts are registered on the **running hub** with `make register-trusts` (shipped dev roster) or
 `make register-trust KIT=<CODE>` (one trust), which inserts each `trust` row (with its
 `api_key_hash`), claims an FL kit slot, and fills that trust's kit file `trust/.env.<CODE>.<env>`
@@ -226,7 +220,7 @@ compose file — avoid hardcoding values in Dockerfiles or compose files directl
 - `TRUST_INTERNAL_SERVICE_KEY` — single per-trust plaintext key, in that trust's kit file
   (`trust/.env.<CODE>.<env>`), minted by `register_trust`. Read by every trust-internal container. The hub
   never sees it. Distinct from `INTERNAL_SERVICE_KEY*` (which protects fl-server → flip-api on the
-  Central Hub). See [`CLAUDE.md`](CLAUDE.md#trust-internal-service-authentication) for the threat model.
+  Central Hub). See the [public security model](docs/source/security.rst#trust-internal-service-authentication).
 
 FL clients (trust side) intentionally do **not** receive Central Hub API credentials. Only the fl-server (on the Central
 Hub) communicates with flip-api. FL clients relay metrics and exceptions to the fl-server, which forwards them.

@@ -1,0 +1,52 @@
+<!--
+    Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+    Licensed under the Apache License, Version 2.0 (the "License");
+    you may not use this file except in compliance with the License.
+    You may obtain a copy of the License at
+        http://www.apache.org/licenses/LICENSE-2.0
+    Unless required by applicable law or agreed to in writing, software
+    distributed under the License is distributed on an "AS IS" BASIS,
+    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+    See the License for the specific language governing permissions and
+    limitations under the License.
+-->
+
+# FLIP federated-learning tutorials
+
+This directory contains complete example applications for FLIP's NVIDIA FLARE and Flower backends. Use them to learn
+the model-file contract, run an application locally, or provide the inputs to the full-platform `make e2e_smoke` flow.
+
+## Choose a backend
+
+| Backend | Examples |
+| --- | --- |
+| [`nvflare/`](nvflare/) | Chest X-ray classification, spleen segmentation and evaluation, diffusion, and template tests |
+| [`flower/`](flower/) | Chest X-ray classification, spleen segmentation and evaluation, NumPy, and SuperGrid examples |
+
+The root Makefile forwards tutorial commands to `FL_BACKEND=nvflare` by default. Select Flower explicitly with
+`FL_BACKEND=flower`.
+
+## Run an example
+
+List the examples supported by a backend:
+
+```bash
+make -C fl-tutorials list-tutorials
+make -C fl-tutorials list-tutorials FL_BACKEND=flower
+```
+
+For the NVFLARE X-ray example:
+
+```bash
+make -C fl-tutorials download-xray-data
+make -C fl-tutorials run-tutorial TUTORIAL=xray_classification
+```
+
+The simulator requires Docker, and GPU-backed examples require the NVIDIA Container Toolkit. Dataset downloads and
+generated runs are kept in gitignored backend data/output directories. Run `make -C fl-tutorials run-all-tutorials`
+only when you intentionally want the full, heavyweight suite.
+
+For network provisioning and standalone service operation, use the
+[`fl-services/nvflare/`](../fl-services/nvflare/README.md) or
+[`fl-services/flower/`](../fl-services/flower/README.md) guide. For the files a user uploads through FLIP, see
+[Working with FLIP apps](https://londonaicentreflip.readthedocs.io/en/latest/working-with-flip-apps.html).

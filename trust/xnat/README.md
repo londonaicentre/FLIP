@@ -95,18 +95,21 @@ This downloads the XNAT WAR and plugins from S3, then builds all three images (`
 
 ### Run XNAT
 
-After building, run with the tag you just built:
+Run both configured development XNAT instances with:
 
 ```sh
 make up
 ```
 
-`make up` will create the required data directories, deploy the XNAT stack via Docker Swarm, and automatically configure both XNAT instances (service account, admin password, SCP receiver, PACS registration, dcm2niix command).
+`make up` validates the local plugin cache first, creates the required data directories, deploys the XNAT stack via
+Docker Swarm, and automatically configures both XNAT instances (service account, admin password, SCP receiver, PACS
+registration, dcm2niix command). The repo-root `make up` follows the same path after registering the example Trusts.
 
 Every configuration call is checked: a rejected XNAT API call (non-2xx) aborts the deploy with the failing request's
 HTTP status and response body (see `configure-xnat-<stack>.log` inside the container), instead of silently skipping
-that step. Re-running against an already-configured instance is tolerated — the existing service account, PACS
-registration, and availability intervals are detected and left as-is.
+that step. Configuration waits up to 15 minutes for an authenticated DQR plugin endpoint, rather than treating the
+earlier Tomcat login page as proof that plugins are ready. Re-running against an already-configured instance is
+tolerated — the existing service account, PACS registration, and availability intervals are detected and left as-is.
 
 In development (when `PROD` is not set), `make up` also mounts the local `xnat/plugins` and `xnat/config` directories into the container for hot-reload. In production, these are baked into the Docker image.
 
@@ -123,6 +126,12 @@ Plugins and the XNAT WAR are stored in S3 as a **version-keyed artifact set**:
 roster, and keying the whole set by version lets branches on different XNAT versions (e.g. `main` vs
 `develop` across an upgrade) build without clobbering each other. The CI workflows and
 `make build` download the set for the `XNAT_VERSION` in `.env` and bake it into the Docker image.
+
+Development additionally bind-mounts the gitignored `xnat/plugins/` directory over the image's plugins. Therefore a
+fresh checkout must set `FLIP_ARTIFACTS_BUCKET_NAME` and have AWS access for its first start. `make up` runs
+`xnat-plugins-download` before stopping any existing XNAT: a complete cache stamped with the current versioned S3
+prefix skips AWS, while a missing or mismatched cache is downloaded and revalidated. A failed download leaves the
+currently running XNAT untouched.
 
 > The pre-1.10 flat layout (`xnat/xnat-web-1.9.3.war` + `xnat/plugins/`) is kept as-is while `main`
 > still builds 1.9.3; delete it once this upgrade reaches `main`.
@@ -224,7 +233,15 @@ The development overlay (`docker-compose-stack.development.yml`) sets these cons
 
 ## Troubleshooting
 
-All issues below have been resolved and are documented here for reference.
+- **Missing plugins or an S3/AWS error before startup** — confirm `FLIP_ARTIFACTS_BUCKET_NAME`, renew the selected AWS
+  SSO session, then run `make -C trust/xnat xnat-plugins-download` from the repository root. The command must find the
+  batch-launch, container-service, and DICOM Query-Retrieve plugin families before startup can continue.
+
+- **XNAT serves its login page but configuration reports plugin-route 404s** — inspect
+  `configure-xnat-<stack>.log` in the container. Once the plugin cache is repaired, rerun the individual Trust with
+  `make -C trust/xnat up-xnat KIT=<CODE>`. This target intentionally resets that development XNAT's data. If the
+  running instance already has the correct plugins and only configuration needs retrying, use
+  `make -C trust/xnat xnat-configure XNAT_PROJECT=xnat<N>` instead.
 
 - **"Error: Cannot import" when importing studies from PACS** — The DICOM SCP Receiver was missing the correct identifier. Fix: set the identifier to `dqrObjectIdentifier` and enable custom processing under **Administer > Site Administration > DICOM SCP Receivers > XNAT**. Now handled automatically by `make up`.
 
