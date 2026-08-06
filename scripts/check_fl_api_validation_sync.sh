@@ -46,10 +46,12 @@ done
 # Extract a single top-level function definition (def <name> ... up to the next top-level
 # statement). Emitted to stdout so the caller can diff two extractions.
 extract_function() {
-    local file="$1" func="$2"
-    awk -v func="$func" '
-        $0 ~ "^def " func "\\(" { inside = 1 }
-        inside && NR > 1 && /^[^ \t#)]/ && $0 !~ "^def " func "\\(" && started { inside = 0 }
+    local file="$1" fname="$2"
+    # `fname`, not `func`: gawk reserves `func` as a builtin and dies on -v func=...,
+    # while mawk accepts it — so the obvious name passes locally and fails in CI.
+    awk -v fname="$fname" '
+        $0 ~ "^def " fname "\\(" { inside = 1 }
+        inside && NR > 1 && /^[^ \t#)]/ && $0 !~ "^def " fname "\\(" && started { inside = 0 }
         inside { print; started = 1 }
     ' "$file"
 }
