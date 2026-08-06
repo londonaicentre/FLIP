@@ -119,15 +119,19 @@ jobs:
 
       # The init Job must never print the live XNAT admin JSESSIONID. It is reused as a Cookie
       # header on ~20 subsequent calls, and the chart ships Loki/Alloy, so a logged session is
-      # both replayable and retained beyond the Job. The pattern deliberately matches the shell
-      # *interpolation* rather than the literal string "JSESSIONID", which appears legitimately
-      # in every Cookie header and in scrub_args' own sed.
+      # both replayable and retained beyond the Job.
+      #
+      # The pattern matches an `echo` of the $JSESSION *interpolation* in any wording — not just
+      # the exact line removed in FLIP#892 — so `echo "session: ${JSESSION}"` and `echo "$JSESSION"`
+      # are caught too, which is the likelier shape of a future regression than a verbatim re-add.
+      # It deliberately does not key on the literal string "JSESSIONID", which appears legitimately
+      # ~25 times in Cookie headers (passed via -H, never echoed) and in scrub_args' own sed.
       - name: XNAT init job does not log the session token
         run: |
           helm template trust-release deploy/providers/kubernetes/ \
             --set xnat.enabled=true \
             --show-only templates/xnat-init-job.yaml > xnat-init.rendered.yaml
-          if grep -nE 'echo[^|]*JSESSIONID[^|]*\$\{?JSESSION\}?' xnat-init.rendered.yaml; then
+          if grep -nE 'echo[^|]*\$\{?JSESSION\}?' xnat-init.rendered.yaml; then
             echo "::error::the XNAT init job echoes the live JSESSIONID into the pod log"
             exit 1
           fi
