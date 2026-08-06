@@ -46,14 +46,21 @@ def override_dependencies():
 
 
 def _elastic_status_error(status_code: int) -> httpx.HTTPStatusError:
-    """Build the error httpx raises for a non-2xx, carrying the real request URL.
+    """Build the error httpx raises for a non-2xx, with the message httpx itself would construct.
 
-    ``str()`` on this exception embeds that URL — which is the whole point of the test.
+    Raising it via ``raise_for_status()`` rather than instantiating it directly is load-bearing:
+    ``HTTPStatusError`` carries whatever message it is given, so a hand-written one stringifies to
+    just that string and the URL assertions below would pass against the leaky code too. Only
+    ``raise_for_status`` builds the "... for url '<url>'" form that actually contains the secret.
     """
     request = httpx.Request("POST", f"{SECRET_ES_URL}/centralhub-eks/_search")
     response = httpx.Response(status_code=status_code, request=request)
+    try:
+        response.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        return exc
 
-    return httpx.HTTPStatusError("upstream failed", request=request, response=response)
+    raise AssertionError(f"status {status_code} did not raise")  # pragma: no cover
 
 
 @patch(f"{MODULE}.httpx.post")
