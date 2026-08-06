@@ -29,13 +29,16 @@ Due to security restrictions, FLIP users are not allowed to control what happens
 Although most adjustable aspects of machine learning training happen on the client side 
 (e.g. dataloading, training loop, model architecture), FLIP provides different job types
 that the user can choose based on their needs.
-Currently, these job types include federated averaging (job type `standard`),
-evaluation task (job type `evaluation`), federated optimisation (job type `fed_opt`)
-and diffusion model training (job type `diffusion_model`), which covers multi-stage federated training.
-For NVFLARE, three further job types drive the client code through the modern **NVFLARE Client API**
+Which job types are available depends on the backend.
+**Both backends** offer federated averaging (job type `standard`) and an evaluation task
+(job type `evaluation`) — for a Flower app, those two are the whole set.
+**NVFLARE** adds federated optimisation (job type `fed_opt`) and diffusion model training
+(job type `diffusion_model`), which covers multi-stage federated training, along with three further
+job types that drive the client code through the modern **NVFLARE Client API**
 (a plain training/evaluation script using ``nvflare.client`` instead of a class-based ``Executor``):
 federated averaging (job type `standard_client_api`), model evaluation (job type `evaluation_client_api`)
 and two-stage diffusion model training (job type `diffusion_model_client_api`).
+The manifests under :ref:`fl-required-files` are the authoritative list for each backend.
 More job types will be added in the future, adjusting to the community's needs.
 
 **How to choose a job type?**
@@ -56,9 +59,7 @@ Then, the Central Hub API will take care of bundling together:
 - The static (non-modifiable) files that are required for the specific job type.
 
 For more information about currently supported apps, see the per-job-type implementations under
-`fl-apps/ <https://github.com/londonaicentre/FLIP/tree/develop/fl-apps/nvflare>`_ (``standard``, ``evaluation``,
-``diffusion_model``, ``fed_opt``, ``standard_client_api``, ``evaluation_client_api``,
-``diffusion_model_client_api``).
+`fl-apps/ <https://github.com/londonaicentre/FLIP/tree/develop/fl-apps>`_.
 
 Examples of how the same job type (standard -> federated averaging) can run different user-uploaded applications are:
 
