@@ -20,7 +20,8 @@
 // trust-api builds) every non-core service is "unknown", which never degrades —
 // reproducing the page's original heartbeat-only behavior exactly.
 
-import { IServiceHealth, ITrustResponse, ServiceStatus } from "@/services/trust-service";
+import { IServiceHealth, ITrustResponse, SERVICE_STATUSES, ServiceStatus } from "@/services/trust-service";
+import { apiTimestampMs, relativeAgeLabel } from "@/utils/helpers";
 
 export type TrustState = "online" | "degraded" | "offline";
 
@@ -30,8 +31,12 @@ export type TrustState = "online" | "degraded" | "offline";
 export const HEARTBEAT_FRESH_S = 30;
 export const HEARTBEAT_DEGRADED_S = 5 * 60;
 
-// A snapshot older than this is treated as "no data" — three collector cycles
-// (30s each) behind means the collector, or the trust, is not reporting.
+// A snapshot at most this old (inclusive) counts as live data. The hub stamps
+// services_updated_at on every snapshot-carrying heartbeat (~5s cadence), and the
+// collector drops its snapshot whenever a collection cycle fails — so this window
+// trips when heartbeats stop carrying snapshots: a failing or dead collector, a
+// pre-collector trust-api build, or heartbeats stopping altogether. 90s = three
+// 30s collector cycles of headroom so a normal cycle gap never flags.
 export const SERVICES_STALE_S = 90;
 
 export interface IServiceDefinition {
@@ -43,7 +48,7 @@ export interface IServiceDefinition {
 // Display registry, in drawer/dots order (design handoff option 1b, with
 // data-access-api in the final slot). Keys are the heartbeat wire contract with
 // trust-api's health collector; payload keys outside this registry are ignored.
-export const SERVICE_REGISTRY: IServiceDefinition[] = [
+export const SERVICE_REGISTRY = [
     {
         key: "trust-api",
         label: "trust-api",
@@ -62,7 +67,7 @@ export const SERVICE_REGISTRY: IServiceDefinition[] = [
     {
         key: "omop",
         label: "OMOP",
-        role: "Cohort database (CDM 5.4)"
+        role: "Cohort database (OMOP CDM)"
     },
     {
         key: "dicom",
@@ -74,9 +79,16 @@ export const SERVICE_REGISTRY: IServiceDefinition[] = [
         label: "data-access-api",
         role: "OMOP cohort queries"
     }
-];
+] as const satisfies readonly IServiceDefinition[];
 
-export interface IDerivedService extends IServiceDefinition {
+// Registry-key union — typing consumer maps (e.g. the drawer's icon map) with it
+// turns "added a service but forgot its icon" into a compile error.
+export type ServiceKey = (typeof SERVICE_REGISTRY)[number]["key"];
+
+export interface IDerivedService extends Omit<IServiceDefinition, "key"> {
+    // Narrowed to the registry union: derived rows only ever come from
+    // SERVICE_REGISTRY, so consumers can index icon/label maps without casts.
+    key: ServiceKey;
     status: ServiceStatus;
     version: string | null;
     response_ms: number | null;
@@ -87,13 +99,25 @@ export interface IFailingService {
     status: "down" | "degraded";
 }
 
-const SERVICE_STATUSES: ServiceStatus[] = ["healthy", "degraded", "down", "unknown"];
+// Trust-state display vocabulary, shared by the page's status pills and the
+// drawer header (single home so the two can't drift — role-appearance.ts idiom).
+export const STATE_LABELS: Record<TrustState, string> = {
+    online: "Online",
+    degraded: "Degraded",
+    offline: "Offline"
+};
+export const PILL_CLASSES: Record<TrustState, string> = {
+    online: "bg-emerald-100 text-emerald-900 dark:bg-emerald-900/40 dark:text-emerald-100",
+    degraded: "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200",
+    offline: "bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-200"
+};
 
 // The trust-api service status, derived from heartbeat age (the snapshot rides
 // on the heartbeat, so this is the one service the payload cannot vouch for).
 export const trustApiStatus = (t: ITrustResponse, nowMs: number = Date.now()): ServiceStatus => {
-    if (!t.last_heartbeat) return "down";
-    const ageS = (nowMs - new Date(t.last_heartbeat).getTime()) / 1000;
+    const beatMs = apiTimestampMs(t.last_heartbeat);
+    if (beatMs === null) return "down";
+    const ageS = (nowMs - beatMs) / 1000;
     if (ageS < HEARTBEAT_FRESH_S) return "healthy";
     if (ageS < HEARTBEAT_DEGRADED_S) return "degraded";
 
@@ -101,9 +125,11 @@ export const trustApiStatus = (t: ITrustResponse, nowMs: number = Date.now()): S
 };
 
 const snapshotIsFresh = (t: ITrustResponse, nowMs: number): boolean => {
-    if (!t.services || !t.services_updated_at) return false;
+    if (!t.services) return false;
+    const stampMs = apiTimestampMs(t.services_updated_at);
+    if (stampMs === null) return false;
 
-    return (nowMs - new Date(t.services_updated_at).getTime()) / 1000 <= SERVICES_STALE_S;
+    return (nowMs - stampMs) / 1000 <= SERVICES_STALE_S;
 };
 
 // Hub-side validation guarantees the vocabulary at write time; guard anyway so
@@ -127,37 +153,34 @@ export const deriveServices = (t: ITrustResponse, nowMs: number = Date.now()): I
             };
         }
         const entry = fresh ? t.services?.[def.key] : undefined;
-        if (!entry) {
-            return {
-                ...def,
-                status: "unknown" as ServiceStatus,
-                version: null,
-                response_ms: null
-            };
-        }
 
         return {
             ...def,
-            status: payloadStatus(entry),
-            version: entry.version ?? null,
-            response_ms: entry.response_ms ?? null
+            status: entry ? payloadStatus(entry) : "unknown",
+            version: entry?.version ?? null,
+            response_ms: entry?.response_ms ?? null
         };
     });
 };
 
-// The design's pure state derivation: trust-api down → Offline; any service
-// down/degraded → Degraded; else Online. "unknown" never degrades.
-export const deriveTrustState = (t: ITrustResponse, nowMs: number = Date.now()): TrustState => {
-    const services = deriveServices(t, nowMs);
+// The design's pure state derivation over an already-derived row set: trust-api
+// down → Offline; any service down/degraded → Degraded; else Online. "unknown"
+// never degrades.
+export const stateFromServices = (services: IDerivedService[]): TrustState => {
     if (services.find(s => s.key === "trust-api")?.status === "down") return "offline";
     if (services.some(s => s.status === "down" || s.status === "degraded")) return "degraded";
 
     return "online";
 };
 
+export const deriveTrustState = (t: ITrustResponse, nowMs: number = Date.now()): TrustState =>
+    stateFromServices(deriveServices(t, nowMs));
+
+const isFailing = (s: IDerivedService): s is IDerivedService & { status: "down" | "degraded" } =>
+    s.status === "down" || s.status === "degraded";
+
 // Caption parts for a non-online row ("XNAT down · OMOP degraded"), down first.
-export const failingServices = (t: ITrustResponse, nowMs: number = Date.now()): IFailingService[] => {
-    const services = deriveServices(t, nowMs);
+export const failingFromServices = (services: IDerivedService[]): IFailingService[] => {
     if (services.find(s => s.key === "trust-api")?.status === "down") {
         return [
             {
@@ -166,21 +189,19 @@ export const failingServices = (t: ITrustResponse, nowMs: number = Date.now()): 
             }
         ];
     }
-    const failing = services.filter(s => s.status === "down" || s.status === "degraded");
+    const failing = services.filter(isFailing);
     failing.sort((a, b) => (a.status === b.status ? 0 : a.status === "down" ? -1 : 1));
 
     return failing.map(s => ({
         text: `${s.label} ${s.status}`,
-        status: s.status as "down" | "degraded"
+        status: s.status
     }));
 };
 
+// "6s ago"-style heartbeat age; "never" when absent or unparseable.
 export const heartbeatText = (iso: string | null, nowMs: number = Date.now()): string => {
-    if (!iso) return "never";
-    const sec = (nowMs - new Date(iso).getTime()) / 1000;
-    if (sec < 60) return `${Math.max(0, Math.floor(sec))}s ago`;
-    if (sec < 3_600) return `${Math.floor(sec / 60)}m ago`;
-    if (sec < 86_400) return `${Math.floor(sec / 3_600)}h ago`;
+    const beatMs = apiTimestampMs(iso);
+    if (beatMs === null) return "never";
 
-    return `${Math.floor(sec / 86_400)}d ago`;
+    return relativeAgeLabel((nowMs - beatMs) / 1000);
 };

@@ -175,9 +175,13 @@
                                 v-for="t in displayedTrusts"
                                 :key="t.id"
                                 data-test="trust-row-mobile"
-                                class="px-4 py-3 cursor-pointer"
+                                role="button"
+                                tabindex="0"
+                                class="px-4 py-3 cursor-pointer focus-visible:outline focus-visible:outline-2
+                                focus-visible:outline-primary-500"
                                 :class="t._state === 'offline' ? 'bg-red-50/40 dark:bg-red-900/10' : ''"
                                 @click="openDrawer(t.id)"
+                                @keydown.enter="openDrawer(t.id)"
                             >
                                 <div class="flex items-start gap-2.5">
                                     <span class="inline-block w-2 h-2 mt-[5px] rounded-full shrink-0" :class="dotClass(t._state)" />
@@ -689,10 +693,13 @@ import { getTrustStatuses, ITrustResponse, ServiceStatus } from "@/services/trus
 import { useAuthStore } from "@/store/auth";
 import { deriveServices,
     deriveTrustState,
-    failingServices,
+    failingFromServices,
     heartbeatText,
     IDerivedService,
     IFailingService,
+    PILL_CLASSES,
+    STATE_LABELS,
+    stateFromServices,
     TrustState } from "@/utils/connection-health";
 
 const authStore = useAuthStore();
@@ -706,7 +713,7 @@ const viewMode = ref<ViewMode>("list");
 const hoverTrustId = ref<string | null>(null);
 
 // SWRV handles 5s dedupe + 15s polling so the heartbeat column stays fresh
-// without per-page setInterval bookkeeping. Same pattern as ConnectionStatus.vue.
+// without per-page setInterval bookkeeping.
 const { data: trusts, mutate: refresh } = useSWRV<ITrustResponse[]>(
     "trust-connection-status",
     getTrustStatuses,
@@ -717,12 +724,9 @@ const { data: trusts, mutate: refresh } = useSWRV<ITrustResponse[]>(
     }
 );
 
-const STATE_LABELS: Record<TrustState, string> = {
-    online: "Online",
-    degraded: "Degraded",
-    offline: "Offline"
-};
+// Labels + pill classes are shared with the drawer via connection-health.ts.
 const stateLabel = (s: TrustState): string => STATE_LABELS[s];
+const pillClass = (s: TrustState): string => PILL_CLASSES[s];
 
 const DOT_CLASSES: Record<TrustState, string> = {
     online: "bg-emerald-600",
@@ -730,13 +734,6 @@ const DOT_CLASSES: Record<TrustState, string> = {
     offline: "bg-red-500"
 };
 const dotClass = (s: TrustState): string => DOT_CLASSES[s];
-
-const PILL_CLASSES: Record<TrustState, string> = {
-    online: "bg-emerald-100 text-emerald-900 dark:bg-emerald-900/40 dark:text-emerald-100",
-    degraded: "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200",
-    offline: "bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-200"
-};
-const pillClass = (s: TrustState): string => PILL_CLASSES[s];
 
 // Per-service dot colors for the Services column (whole literal Tailwind
 // classes so the JIT compiler emits them). unknown = "no data", not a failure.
@@ -780,7 +777,7 @@ interface IColumn {
 }
 
 // Header config drives both the rendered <th>s and the per-column sort handler.
-// Keys correspond to entries in `sortComparators`; columns without a key
+// Keys correspond to entries in `SORT_COMPARATORS`; columns without a key
 // (Services dots, drawer chevron) render as inert headers.
 const columns: IColumn[] = [
     {
@@ -878,12 +875,16 @@ const toggleSort = (key: SortKey) => {
 // the service registry, so memoising here saves it running per cell).
 const sortedTrusts = computed<IRenderedTrust[]>(() => {
     if (!trusts.value) return [];
-    const arr: IRenderedTrust[] = trusts.value.map(t => ({
-        ...t,
-        _state: deriveTrustState(t),
-        _services: deriveServices(t),
-        _failing: failingServices(t)
-    }));
+    const arr: IRenderedTrust[] = trusts.value.map(t => {
+        const services = deriveServices(t);
+
+        return {
+            ...t,
+            _state: stateFromServices(services),
+            _services: services,
+            _failing: failingFromServices(services)
+        };
+    });
     const cmp = SORT_COMPARATORS[sortKey.value];
     arr.sort(sortDir.value === "asc" ? cmp : (a, b) => cmp(b, a));
 
@@ -897,6 +898,8 @@ const selectedTrustId = ref<string | null>(null);
 const selectedTrust = computed<IRenderedTrust | null>(
     () => sortedTrusts.value.find(t => t.id === selectedTrustId.value) ?? null
 );
+// Clear the stale id once the trust vanishes — without this, a trust deleted and
+// later re-registered under the same id would pop the drawer back open unasked.
 watch(selectedTrust, t => {
     if (t === null) selectedTrustId.value = null;
 });

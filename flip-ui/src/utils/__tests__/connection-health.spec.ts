@@ -13,10 +13,10 @@
 
 import { describe, expect, it } from "vitest";
 
-import { ITrustResponse } from "@/services/trust-service";
+import { IServiceHealth, ITrustResponse } from "@/services/trust-service";
 import { deriveServices,
     deriveTrustState,
-    failingServices,
+    failingFromServices,
     heartbeatText,
     SERVICE_REGISTRY,
     SERVICES_STALE_S,
@@ -38,34 +38,34 @@ const makeTrust = (overrides: Partial<ITrustResponse> = {}): ITrustResponse => (
     ...overrides
 });
 
-const healthyServices = () => ({
+const healthyServices = (): Record<string, IServiceHealth> => ({
     "trust-api": {
-        status: "healthy" as const,
+        status: "healthy",
         version: "0.3.0",
         response_ms: null
     },
     "imaging-api": {
-        status: "healthy" as const,
+        status: "healthy",
         version: "0.3.0",
         response_ms: 12
     },
     "data-access-api": {
-        status: "healthy" as const,
+        status: "healthy",
         version: "0.3.0",
         response_ms: 15
     },
     xnat: {
-        status: "healthy" as const,
+        status: "healthy",
         version: "1.10.0",
         response_ms: 220
     },
     dicom: {
-        status: "healthy" as const,
+        status: "healthy",
         version: null,
         response_ms: 31
     },
     omop: {
-        status: "healthy" as const,
+        status: "healthy",
         version: null,
         response_ms: 2
     }
@@ -171,6 +171,48 @@ describe("deriveServices", () => {
         expect(deriveServices(t, NOW).find(s => s.key === "xnat")?.status).toBe("unknown");
     });
 
+
+    it("ignores payload keys outside the registry", () => {
+        const services = healthyServices();
+        services["mystery-svc"] = {
+            status: "down",
+            version: null,
+            response_ms: null
+        };
+        const t = makeTrust({
+            services,
+            services_updated_at: secondsAgo(5)
+        });
+
+        const derived = deriveServices(t, NOW);
+
+        expect(derived).toHaveLength(SERVICE_REGISTRY.length);
+        expect(derived.some(s => s.key === "mystery-svc")).toBe(false);
+    });
+
+    it("treats a snapshot without a timestamp as no data", () => {
+        const t = makeTrust({
+            services: healthyServices(),
+            services_updated_at: null
+        });
+
+        expect(deriveServices(t, NOW).find(s => s.key === "xnat")?.status).toBe("unknown");
+    });
+
+    it("tolerates a payload missing the trust-api entry", () => {
+        const services = healthyServices();
+        delete (services as Record<string, unknown>)["trust-api"];
+        const t = makeTrust({
+            services,
+            services_updated_at: secondsAgo(5)
+        });
+
+        const api = deriveServices(t, NOW).find(s => s.key === "trust-api");
+
+        expect(api?.status).toBe("healthy");
+        expect(api?.version).toBeNull();
+    });
+
     it("derives the trust-api entry from heartbeat age, not the payload", () => {
         const t = makeTrust({
             last_heartbeat: secondsAgo(301),
@@ -210,7 +252,7 @@ describe("deriveTrustState", () => {
 
     it("is degraded when any service is down while trust-api is alive", () => {
         const services = healthyServices();
-        services.xnat.status = "down" as never;
+        services.xnat.status = "down";
         const t = makeTrust({
             services,
             services_updated_at: secondsAgo(5)
@@ -221,7 +263,7 @@ describe("deriveTrustState", () => {
 
     it("is degraded when a service is degraded", () => {
         const services = healthyServices();
-        services.omop.status = "degraded" as never;
+        services.omop.status = "degraded";
         const t = makeTrust({
             services,
             services_updated_at: secondsAgo(5)
@@ -265,14 +307,14 @@ describe("deriveTrustState", () => {
     });
 });
 
-describe("failingServices", () => {
+describe("failingFromServices", () => {
     it("is empty for an online trust", () => {
         const t = makeTrust({
             services: healthyServices(),
             services_updated_at: secondsAgo(5)
         });
 
-        expect(failingServices(t, NOW)).toEqual([]);
+        expect(failingFromServices(deriveServices(t, NOW))).toEqual([]);
     });
 
     it("reports only trust-api when the trust is offline", () => {
@@ -282,7 +324,7 @@ describe("failingServices", () => {
             services_updated_at: secondsAgo(5)
         });
 
-        expect(failingServices(t, NOW)).toEqual([{
+        expect(failingFromServices(deriveServices(t, NOW))).toEqual([{
             text: "trust-api down",
             status: "down"
         }]);
@@ -290,14 +332,14 @@ describe("failingServices", () => {
 
     it("lists down services before degraded ones using display labels", () => {
         const services = healthyServices();
-        services.omop.status = "degraded" as never;
-        services.xnat.status = "down" as never;
+        services.omop.status = "degraded";
+        services.xnat.status = "down";
         const t = makeTrust({
             services,
             services_updated_at: secondsAgo(5)
         });
 
-        expect(failingServices(t, NOW)).toEqual([
+        expect(failingFromServices(deriveServices(t, NOW))).toEqual([
             {
                 text: "XNAT down",
                 status: "down"
@@ -317,5 +359,9 @@ describe("heartbeatText", () => {
         expect(heartbeatText(secondsAgo(120), NOW)).toBe("2m ago");
         expect(heartbeatText(secondsAgo(7200), NOW)).toBe("2h ago");
         expect(heartbeatText(secondsAgo(200_000), NOW)).toBe("2d ago");
+    });
+
+    it("renders never for an unparseable timestamp instead of NaN", () => {
+        expect(heartbeatText("not-a-timestamp", NOW)).toBe("never");
     });
 });

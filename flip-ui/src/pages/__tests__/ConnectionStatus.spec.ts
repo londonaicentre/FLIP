@@ -16,7 +16,7 @@ import { mount } from "@vue/test-utils";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ref } from "vue";
 
-import { ITrustResponse } from "@/services/trust-service";
+import { IServiceHealth, ITrustResponse } from "@/services/trust-service";
 
 import ConnectionStatus from "../ConnectionStatus.vue";
 
@@ -78,34 +78,34 @@ const now = Date.now();
 const seconds = (n: number) => new Date(now - n * 1000).toISOString();
 
 // A fully healthy collector snapshot (see connection-health SERVICE_REGISTRY).
-const healthySnapshot = () => ({
+const healthySnapshot = (): Record<string, IServiceHealth> => ({
     "trust-api": {
-        status: "healthy" as const,
+        status: "healthy",
         version: "0.3.0",
         response_ms: null
     },
     xnat: {
-        status: "healthy" as const,
+        status: "healthy",
         version: "1.10.0",
         response_ms: 220
     },
     "imaging-api": {
-        status: "healthy" as const,
+        status: "healthy",
         version: "0.3.0",
         response_ms: 12
     },
     omop: {
-        status: "healthy" as const,
+        status: "healthy",
         version: null,
         response_ms: 2
     },
     dicom: {
-        status: "healthy" as const,
+        status: "healthy",
         version: null,
         response_ms: 31
     },
     "data-access-api": {
-        status: "healthy" as const,
+        status: "healthy",
         version: "0.3.0",
         response_ms: 15
     }
@@ -636,7 +636,7 @@ describe("ConnectionStatus", () => {
 
         it("marks the trust Degraded with caption and amber accent when a service is down", async () => {
             const services = healthySnapshot();
-            services.xnat.status = "down" as never;
+            services.xnat.status = "down";
             mockSwrvData.value = [
                 {
                     ...fixture[0],
@@ -744,6 +744,18 @@ describe("ConnectionStatus", () => {
             await wrapper.vm.$nextTick();
 
             await wrapper.find("[data-test='trust-row-mobile']").trigger("click");
+            expect(drawer(wrapper).attributes("data-show")).toBe("true");
+        });
+
+        it("mobile rows are keyboard-reachable buttons", async () => {
+            mockSwrvData.value = [fixture[0]];
+            const wrapper = mountPage();
+            await wrapper.vm.$nextTick();
+
+            const row = wrapper.find("[data-test='trust-row-mobile']");
+            expect(row.attributes("role")).toBe("button");
+            expect(row.attributes("tabindex")).toBe("0");
+            await row.trigger("keydown.enter");
             expect(drawer(wrapper).attributes("data-show")).toBe("true");
         });
     });

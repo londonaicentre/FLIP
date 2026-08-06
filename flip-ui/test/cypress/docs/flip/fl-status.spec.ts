@@ -59,7 +59,7 @@ describe("docs: connection status", () => {
         });
 
         // The page derives online/degraded/offline from heartbeat age (<30s =
-        // online) and snapshot freshness (<90s). Static timestamps would age
+        // online) and snapshot freshness (≤90s). Static timestamps would age
         // into "Offline"/"No data" by the time the GIF is recorded, so reply
         // dynamically on every poll (SWRV refetches /trust every 15s). KCH
         // reports its XNAT down — the severity sort surfaces it first and its

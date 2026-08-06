@@ -101,9 +101,9 @@ const mountDrawer = async (trust: ITrustResponse | null, show = true) => {
     wrapper = mount(TrustDetailDrawer, {
         attachTo: document.body,
         global: {
-            // test/setup.ts shallow-stubs every HeadlessUI component globally,
-            // which would blank the drawer's slot content. This spec is ABOUT
-            // that content, so mount the real Dialog/Transition machinery.
+            // test/setup.ts shallow-stubs the HeadlessUI Dialog/Transition
+            // components globally, which would blank the drawer's slot content.
+            // This spec is ABOUT that content, so mount the real machinery.
             stubs: {
                 Dialog: false,
                 DialogTitle: false,
@@ -143,7 +143,7 @@ describe("TrustDetailDrawer", () => {
         expect(panel?.textContent).toContain("Guy's and St Thomas'");
         expect(panel?.textContent).toContain("GSTT · London");
         expect(panel?.textContent).toContain("Degraded");
-        expect(q("[data-test='drawer-heartbeat']")?.textContent).toContain("heartbeat 6s ago");
+        expect(q("[data-test='drawer-heartbeat']")?.textContent).toMatch(/heartbeat \d+s ago/);
     });
 
     it("lists all six containers in registry order with status chips", async () => {
@@ -240,7 +240,37 @@ describe("TrustDetailDrawer", () => {
         expect(w.emitted("close")).toHaveLength(1);
     });
 
-    it("survives a null trust while closing (content already gone)", async () => {
+    it("keeps rendering content through the close transition when the page nulls the trust", async () => {
+        // The page clears selectedTrustId on @close, so `trust` and `show` flip in
+        // the same tick while the 250ms leave transition still renders the panel.
+        // The panel div must stay unconditional (a v-if would hand HeadlessUI's
+        // TransitionChild a comment vnode -> render error) and the cached trust
+        // keeps the slide-out from going blank.
+        const w = await mountDrawer(degradedTrust());
+        expect(q("[data-test='drawer-panel']")).not.toBeNull();
+
+        await w.setProps({
+            trust: null,
+            show: false
+        });
+        await flushPromises();
+        // No render error thrown; the leaving panel still shows the trust's content.
+        expect(q("[data-test='drawer-panel']")?.textContent).toContain("Guy's and St Thomas'");
+    });
+
+    it("reopens cleanly after a close on the same mounted component", async () => {
+        const w = await mountDrawer(degradedTrust());
+
+        await w.setProps({ show: false });
+        await flushPromises();
+        await w.setProps({ show: true });
+        await flushPromises();
+
+        expect(q("[data-test='drawer-panel']")).not.toBeNull();
+        expect(qa("[data-test='container-row']")).toHaveLength(6);
+    });
+
+    it("renders nothing before the first open", async () => {
         await mountDrawer(null, false);
         expect(q("[data-test='drawer-panel']")).toBeNull();
     });

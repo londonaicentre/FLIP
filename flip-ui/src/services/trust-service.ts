@@ -14,7 +14,10 @@
 import { _http } from "./api";
 
 // Wire vocabulary for one probed service inside a trust's health snapshot.
-export type ServiceStatus = "healthy" | "degraded" | "down" | "unknown";
+// Array and union derive from one literal so the runtime guard in
+// connection-health.ts can never drift from the type.
+export const SERVICE_STATUSES = ["healthy", "degraded", "down", "unknown"] as const;
+export type ServiceStatus = (typeof SERVICE_STATUSES)[number];
 
 // One service entry of the per-trust health snapshot (mirrors the backend
 // ServiceHealthEntry): probed status plus optional version and probe latency.
