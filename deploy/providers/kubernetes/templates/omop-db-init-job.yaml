@@ -91,7 +91,7 @@ spec:
         {{- if .Values.omopDb.initJob.hostAwsMount.enabled }}
         - name: host-aws
           hostPath:
-            path: {{ .Values.omopDb.initJob.hostAwsMount.hostPath | quote }}
+            path: {{ required "omopDb.initJob.hostAwsMount.hostPath is required when hostAwsMount is enabled — set it to the AWS config dir ON THE NODE (on kind, the path an extraMount maps ~/.aws to), e.g. --set omopDb.initJob.hostAwsMount.hostPath=$HOME/.aws" .Values.omopDb.initJob.hostAwsMount.hostPath | quote }}
             type: Directory
         {{- end }}
 {{- end }}
