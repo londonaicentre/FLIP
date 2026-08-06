@@ -60,6 +60,12 @@ def can_access_project(user_id: UUID, project_id: UUID, db: Session) -> bool:
         """
         query = (
             select(Projects.id)
+            # The outerjoin is load-bearing, not cosmetic. Without it SQLAlchemy puts
+            # project_user_access in the FROM clause unjoined — `FROM projects, project_user_access`
+            # — and the cartesian product means any access row belonging to the caller satisfies
+            # the OR for any project. Same shape as can_access_model and can_access_cohort_query
+            # below; the ON clause is inferred from ProjectUserAccess.project_id's foreign key.
+            .outerjoin(ProjectUserAccess)
             .where((Projects.owner_id == user_id) | (ProjectUserAccess.user_id == user_id))
             .where(Projects.id == project_id)
         )
