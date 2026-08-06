@@ -69,7 +69,7 @@ class FedAvgWithClientMetrics(FlipFedAvg):
         self,
         server_round: int,
         replies: Iterable[Message],
-    ) -> ArrayRecord | None:
+    ) -> tuple[ArrayRecord | None, MetricRecord | None]:
         """Aggregate training results while capturing per-client metrics."""
         replies = list(replies)
 

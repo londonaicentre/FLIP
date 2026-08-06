@@ -150,6 +150,11 @@ exclude = [
 
 [dependency-groups]
 dev = [
+    # Test-only: lets tests/mypy exercise flip/flower/strategy.py against the real
+    # FedAvg. Matches the fl-server images' floor (flwr/base:1.32.0, fl-api-flower).
+    # Deliberately NOT a runtime dep — the flwr runtime is owned by the Flower images
+    # and each app's own pyproject; see the module docstring in flip/flower/strategy.py.
+    "flwr>=1.32.0",
     "huggingface-hub>=1.6.0",
     "matplotlib>=3.10.7",
     "mypy>=1.18.2,<2.0",

@@ -36,7 +36,7 @@ from typing import cast
 from flwr.app import ArrayRecord, Message, MetricRecord
 from flwr.common import ConfigRecord, log
 from flwr.serverapp import Grid
-from flwr.serverapp.strategy import FedAvg
+from flwr.serverapp.strategy import FedAvg, Result
 
 from flip import FLIP
 from flip.constants.flip_constants import ModelStatus
@@ -99,11 +99,13 @@ class FlipFedAvg(FedAvg):
         # wires the FedAvg hooks to it.
         self._telemetry = RoundTelemetry()
 
-    def start(self, grid: Grid, initial_arrays: ArrayRecord, num_rounds: int = 3, **kwargs):
+    def start(self, grid: Grid, initial_arrays: ArrayRecord, num_rounds: int = 3, *args, **kwargs) -> Result:
         """Capture the round total and mark the run as executing on the hub."""
+        # *args keeps FedAvg's optional params (timeout, …) passable positionally — a
+        # kwargs-only override silently breaks such callers.
         self.num_rounds = num_rounds
         self.flip.update_status(self.model_id, ModelStatus.RUNNING)
-        return super().start(grid, initial_arrays, num_rounds, **kwargs)
+        return super().start(grid, initial_arrays, num_rounds, *args, **kwargs)
 
     def configure_train(
         self, server_round: int, arrays: ArrayRecord, config: ConfigRecord, grid: Grid
@@ -115,7 +117,9 @@ class FlipFedAvg(FedAvg):
             report_round_started(self.flip, self.model_id, server_round, self.num_rounds)
         return messages
 
-    def aggregate_train(self, server_round: int, replies: Iterable[Message]) -> ArrayRecord | None:
+    def aggregate_train(
+        self, server_round: int, replies: Iterable[Message]
+    ) -> tuple[ArrayRecord | None, MetricRecord | None]:
         """Forward per-client telemetry, aggregate, then report the round aggregated."""
         replies = list(replies)
         returned = self._telemetry.forward_replies(replies, "train", server_round, self.model_id, self.flip)
