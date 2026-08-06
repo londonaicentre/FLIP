@@ -374,6 +374,11 @@ spec:
             path: {{ .Values.flClient.kitHostPath | quote }}
             type: Directory
 {{- else }}
+          # No kit source configured: neither flClient.kitHostPath nor the active
+          # backend's kitFromS3. The client will start against an EMPTY kit and
+          # die on a missing startup/start.sh — NOTES.txt says so at install
+          # time, because the chart's default values are a template rather than
+          # a deployable config and must still render.
           emptyDir: {}
 {{- end }}
 {{- end }}
