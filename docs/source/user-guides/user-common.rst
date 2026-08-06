@@ -569,7 +569,9 @@ Hovering over the graphs at various points will display the values.
 Connection Status
 *****************
 
-The Connection Status page shows the live state of the federation. Each participating Trust is shown as online, degraded or offline based on its most recent heartbeat, and can be viewed as a list or as a radial topology.
+The Connection Status page shows the live state of the federation. Each participating Trust reports the health of every container running at the Trust (trust-api, XNAT, imaging-api, OMOP, the PACS/DICOM connector and data-access-api), and its state is derived from those containers: Offline when the core trust-api is unreachable, Degraded when any other container is down or degraded, otherwise Online. The list can also be viewed as a radial topology.
+
+The Services column shows one status dot per container. Clicking a Trust row opens a detail drawer listing each container's status, running version and probe response time — so an administrator can see *why* a Trust is degraded without access to the Trust's own network. A Trust that has not reported container health (or whose report has gone stale) shows grey "No data" markers and falls back to heartbeat-only state.
 
 The FL nets card reports the FL client-to-server connectivity for each net — that is, whether each Trust's FL client is connected. No training requests can be sent to a Trust whose FL client is offline.
 
@@ -577,4 +579,4 @@ The FL nets card reports the FL client-to-server connectivity for each net — t
    :width: 600
    :align: center
 
-   Viewing the federation connection status.
+   Viewing the federation connection status and a Trust's container health.
