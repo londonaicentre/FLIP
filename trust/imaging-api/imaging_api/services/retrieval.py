@@ -36,10 +36,16 @@ from imaging_api.utils.logger import logger
 
 XNATAuthHeaders = Annotated[dict[str, str], Depends(get_xnat_auth_headers)]
 
-# Terminal-failure status values. Verified against XNAT 1.9.3 source — re-check on any XNAT upgrade,
-# since a renamed value would silently misclassify a failed import as in-flight `processing`:
+# Terminal-failure status values. Re-check on any XNAT upgrade, since a renamed value would silently
+# misclassify a failed import as in-flight `processing`:
 #   - queued/executed PACS requests (DQR plugin):  PacsRequest.FAILED_STATUS_TEXT == "FAILED"
 #   - directArchive sessions (XNAT prearchive):    PrearcUtils.PrearcStatus.ERROR
+# `PrearcStatus.ERROR` re-verified present in the XNAT 1.10.0 source. The DQR value IS verified for
+# DQR 3.0.0 (the 1.10-targeting major bump that also swaps dcm4che2 for dcm4che5): the released JAR
+# (public download on bitbucket.org/xnatdev/dicom-query-retrieve) keeps
+# `PacsRequest.FAILED_STATUS_TEXT == "FAILED"` (full vocabulary: QUEUED/PROCESSING/ISSUED/RECEIVED/FAILED),
+# and the `xhbm_*_pacs_request` columns read by imaging_api/db/get_*_pacs_request_by_project.py were
+# confirmed unchanged against a live 3.0.0 instance during the 1.10.0 upgrade smoke test.
 # Any other status on a row that exists means the import is still in flight. A successful directArchive
 # deletes its row, so "successful" is never read from these tables — only from the experiment listing.
 _PACS_REQUEST_FAILED_STATUS = "FAILED"

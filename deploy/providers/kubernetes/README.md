@@ -423,7 +423,7 @@ old install on the previous chart version.
 - **Pod Security & container hardening** (#530): the chart-created namespace
   carries Pod Security Standards labels (`enforce=baseline`, `warn`/`audit=restricted`
   by default — tune via `podSecurity.*`), and the stateless services
-  (trust-api, imaging-api, data-access-api, fl-client, imaging-import-worker)
+  (trust-api, imaging-api, data-access-api, fl-client)
   apply a container `securityContext` (`allowPrivilegeEscalation: false`, drop
   `ALL` capabilities, `seccompProfile: RuntimeDefault`) from `.Values.securityContext`.
   `runAsNonRoot` / `readOnlyRootFilesystem` are left opt-in (image-dependent).
@@ -533,20 +533,17 @@ Include:
 
 ## Known Limitations
 
-1. **XNAT Container Service — Job execution not yet wired**: The Container
-   Service plugin's native Kubernetes compute backend (available since plugin
-   3.2.0) is registered at init time and the `dcm2niix` command is available
-   for per-project event subscriptions. However, the storage path for spawned
-   container Jobs is not yet plumbed: XNAT's data PVC is `ReadWriteOnce`, so a
-   dcm2niix Job would need either `nodeAffinity` onto the XNAT pod's node or a
-   `ReadWriteMany` storage class (e.g. NFS/EFS) to mount the same archive/build
-   data. Subscriptions are created successfully, but DICOM-to-NIfTI conversion
-   will not yet run end-to-end on the K8s deployment until the PVC topology
-   for Jobs is finalised. **See [DCM2NIIX-K8S.md](DCM2NIIX-K8S.md) (#565)** for
-   the storage analysis, the RWX / single-node fixes (set
-   `xnat.web.persistence.accessMode: ReadWriteMany` for multi-node), and the
-   remaining chart work that must be validated against a live XNAT Container
-   Service.
+1. **XNAT Container Service — single-node by default**: DICOM-to-NIfTI
+   conversion runs end-to-end on Kubernetes (FLIP#565). The Container Service
+   spawns each `dcm2niix` Job with the `xnat-web` data PVC mounted, configured by
+   `combined-pvc-name` + `combined-path-translation` in the Kubernetes backend
+   entry of the `xnat-cs-config` ConfigMap. Because the Job mounts the *same* PVC
+   as `xnat-web`, the chart default `ReadWriteOnce` only works when the Job is
+   scheduled onto the node running `xnat-web` — true for a single-node cluster.
+   For multi-node, give the XNAT data volume a `ReadWriteMany` storage class
+   (`xnat.web.persistence.accessMode: ReadWriteMany`, e.g. NFS/EFS). See
+   [TROUBLESHOOTING.md §2.3b](TROUBLESHOOTING.md) for the failure modes,
+   including the trailing slash that `combined-path-translation` must keep.
 
 2. **Orthanc SQLite**: Orthanc uses an embedded SQLite database that cannot be
    shared across multiple pod replicas. The chart configures Orthanc with
