@@ -29,9 +29,10 @@ from flip_api.domain.schemas.cohort import (
     SubmitCohortQueryOutput,
     TrustDetails,
 )
-from flip_api.domain.schemas.status import TaskType
+from flip_api.domain.schemas.status import ProjectStatus, TaskType
 from flip_api.utils.encryption import encrypt
 from flip_api.utils.logger import logger
+from flip_api.utils.project_manager import has_project_status
 
 router = APIRouter(prefix="/cohort", tags=["cohort_services"])
 
@@ -147,11 +148,49 @@ def submit_cohort_query(
                 detail=f"User with ID: {user_id} is not allowed to modify this project",
             )
 
+        # The client-supplied query_id is only trusted once it is proven to belong to the project
+        # the caller was just authorised on. Scoping the lookup by project_id is what stops a
+        # caller authorised on project A from dispatching — and overwriting the queried-trust set
+        # of — a Queries row owned by project B, whose members then read the resulting stats.
+        query_row = db.exec(
+            select(Queries)
+            .where(Queries.id == cohort_query.query_id)
+            .where(Queries.project_id == cohort_query.project_id)
+        ).first()
+        if query_row is None:
+            logger.warning(
+                "Cohort submit refused: query_id %s is not a query of project %s (user %s).",
+                cohort_query.query_id,
+                cohort_query.project_id,
+                user_id,
+            )
+            raise HTTPException(status_code=404, detail="Cohort query not found for this project.")
+
+        # The same gate save_cohort_query enforces: once a project is staged or approved its cohort
+        # of record is frozen, so it must not be re-dispatched to the trusts either.
+        if not has_project_status(cohort_query.project_id, ProjectStatus.UNSTAGED, db):
+            raise HTTPException(
+                status_code=400,
+                detail="Unable to run the cohort query as the project has been staged/approved",
+            )
+
+        # Dispatch the SQL of record rather than the request body. Queries.query is what the UI
+        # renders, what project approval is granted against, and what the audit trail says was
+        # asked of patient data — shipping the body lets those diverge silently. Substituting
+        # rather than rejecting on mismatch keeps a client that round-trips the text with
+        # incidental whitespace working; the divergence is logged either way.
+        if cohort_query.query != query_row.query:
+            logger.info(
+                "Cohort submit: request body query differs from the persisted query for %s; "
+                "dispatching the persisted query.",
+                cohort_query.query_id,
+            )
+
         # Fast-feedback validity pre-check only — the trust is the authority on
         # query safety. See validate_query's docstring for why this is
         # deliberately weaker than the trust-side check.
         try:
-            validate_query(cohort_query.query)
+            validate_query(query_row.query)
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
 
@@ -176,17 +215,17 @@ def submit_cohort_query(
         for trust in trusts:
             try:
                 task_payload = SubmitCohortQueryBody(
-                    query_name=cohort_query.name,
-                    query=cohort_query.query,
+                    query_name=query_row.name,
+                    query=query_row.query,
                     encrypted_project_id=encrypted_project_id,
-                    query_id=cohort_query.query_id,
+                    query_id=query_row.id,
                     trust_id=str(trust.id),
                 )
 
                 task = TrustTask(
                     trust_id=trust.id,
                     task_type=TaskType.COHORT_QUERY,
-                    query_id=cohort_query.query_id,
+                    query_id=query_row.id,
                     payload=json.dumps(task_payload.model_dump(mode="json")),
                 )
                 db.add(task)
@@ -216,23 +255,12 @@ def submit_cohort_query(
         # can surface trusts that never responded — without this, a trust that
         # was sent the query but failed to post any result (offline, hub
         # rejected the error report) would silently vanish from the panel.
-        query_row = db.exec(select(Queries).where(Queries.id == cohort_query.query_id)).first()
-        if query_row is not None:
-            query_row.queried_trust_ids = queried_trust_ids
-        else:
-            # No Queries row means save_cohort_query never persisted (or was rolled back). The
-            # per-trust tasks are still queued, but queried_trust_ids stays empty, so the
-            # cohort-results UI can't surface trusts that never responded. Surface the upstream
-            # gap instead of committing silently.
-            logger.warning(
-                "No Queries row for query_id %s; cohort tasks were queued but queried_trust_ids was not persisted.",
-                cohort_query.query_id,
-            )
+        query_row.queried_trust_ids = queried_trust_ids
 
         db.commit()
 
         # Prepare response
-        data_to_return = SubmitCohortQueryOutput(trust=result, query_id=cohort_query.query_id)  # type: ignore[call-arg]
+        data_to_return = SubmitCohortQueryOutput(trust=result, query_id=query_row.id)  # type: ignore[call-arg]
 
         logger.info("Successfully queued cohort query tasks for all trusts")
 
