@@ -94,3 +94,35 @@ def test_validate_bundle_url_rejects_unsafe_hosts(bad):
 def test_validate_bundle_url_accepts_explicit_443():
     url = "https://s3.eu-west-2.amazonaws.com:443/bucket/key"
     assert validate_bundle_url(url) == url
+
+
+# FLIP#893: ipaddress.ip_address only accepts the canonical dotted-quad form, so every other
+# numeric spelling used to fall into the "not an IP literal" branch and skip the range checks
+# entirely — while glibc's resolver resolves all of them to loopback or a private address.
+@pytest.mark.parametrize(
+    ("host", "resolves_to"),
+    [
+        ("2130706433", "127.0.0.1"),      # packed decimal
+        ("0x7f000001", "127.0.0.1"),      # hex
+        ("017700000001", "127.0.0.1"),    # octal
+        ("127.1", "127.0.0.1"),           # short form
+        ("0", "0.0.0.0"),                 # unspecified
+        ("167772165", "10.0.0.5"),        # packed decimal, private range
+    ],
+)
+def test_validate_bundle_url_rejects_numeric_encoded_private_hosts(host, resolves_to):
+    with pytest.raises(HTTPException) as exc:
+        validate_bundle_url(f"https://{host}/bundle/app/custom/train.py")
+    assert exc.value.status_code == 400
+
+
+@pytest.mark.parametrize("host", ["test.local", "s3.eu-west-2.amazonaws.com", "1.1.1.1"])
+def test_validate_bundle_url_still_accepts_public_hosts(host):
+    """The second parser must not turn a DNS name into a rejection, or resolve anything.
+
+    ``test.local`` deliberately does not resolve: if this function ever starts calling
+    getaddrinfo, this case fails and the network dependency is caught here rather than in
+    production.
+    """
+    url = f"https://{host}/bundle/app/custom/train.py"
+    assert validate_bundle_url(url) == url
