@@ -47,7 +47,9 @@ def test_get_site_details_with_banner():
     assert isinstance(result, ISiteDetails)
     assert result.banner is not None
     assert result.banner.message == "Welcome!"
-    assert result.banner.link == "https://example.com"
+    # HttpUrl normalises a bare authority by appending the root path, so the round-tripped value
+    # gains a trailing slash. Equivalent URL, deliberate consequence of validating the scheme.
+    assert str(result.banner.link) == "https://example.com/"
     assert result.banner.enabled is True
     assert result.deploymentMode is True
 
@@ -87,7 +89,7 @@ def test_update_site_details_success(mock_db):
     # Assert
     assert result is None
     assert existing_banner.message == "New Message"
-    assert existing_banner.link == "https://example.com"
+    assert existing_banner.link == "https://example.com/"
     assert existing_banner.enabled is True
     assert existing_config.value is False
 
@@ -174,7 +176,7 @@ def test_update_site_details_creates_new_banner(mock_db):
     added_banner = mock_db.add.call_args[0][0]
     assert isinstance(added_banner, SiteBanner)
     assert added_banner.message == "Brand New"
-    assert added_banner.link == "https://new.com"
+    assert added_banner.link == "https://new.com/"
     assert added_banner.enabled is True
 
 

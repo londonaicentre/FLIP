@@ -11,6 +11,7 @@
 #
 
 from fastapi import HTTPException, status
+from pydantic import ValidationError
 from sqlmodel import Session, select
 
 from flip_api.config import get_settings
@@ -42,12 +43,23 @@ def get_site_details(db: Session) -> ISiteDetails:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Deployment mode not found")
 
     if banner:
-        validated_banner = ISiteBanner.model_validate(banner.model_dump())
+        stored = banner.model_dump()
+        try:
+            validated_banner = ISiteBanner.model_validate(stored)
+        except ValidationError:
+            # A row stored before the link-scheme validator existed (or written by some other
+            # path) must not take the whole site down: every page load reads this, so raising
+            # here would turn a bad banner link into a site-wide 500. Drop the link and serve
+            # the rest of the banner.
+            logger.warning("Stored site banner failed validation; serving it without its link")
+            validated_banner = ISiteBanner.model_validate({**stored, "link": None})
 
         return ISiteDetails(
             banner=ISiteBanner(
                 message=validated_banner.message,
-                link=validated_banner.link if banner.link and banner.link.strip() != "" else None,
+                # The empty-string sentinel is already normalised to None by ISiteBanner's
+                # validator, so no second emptiness check is needed here.
+                link=validated_banner.link,
                 enabled=validated_banner.enabled,
             ),
             deploymentMode=config.value,
