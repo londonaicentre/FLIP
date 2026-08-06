@@ -13,6 +13,7 @@
 """Shared utilities for reading and updating environment files."""
 
 import json
+import os
 from pathlib import Path
 
 # Owner read/write only. Kit files carry generated database passwords, per-trust API keys and the
@@ -77,10 +78,10 @@ def update_or_append(lines: list[str], var_name: str, value: str) -> list[str]:
 def write_env_file(path: Path, lines: list[str]) -> None:
     """Write env file lines to *path* and restrict it to owner read/write.
 
-    ``Path.write_text`` does not change the mode of a file that already exists, so a kit file
-    created outside the sanctioned paths (which chmod 0600 themselves) would keep whatever the
-    umask gave it — 0644 on a stock box — while receiving generated credentials. Chmod-ing after
-    every write tightens those files rather than only newly created ones.
+    A kit file created outside the sanctioned paths can keep whatever mode the umask gave it —
+    0644 on a stock box — while receiving generated credentials. Tighten the open file descriptor
+    before truncating or writing it, so the new contents are never exposed through an existing
+    permissive mode.
 
     Mirrors ``scripts/trust_kit_lib.write_kit``, which cannot be imported here: it lives at the
     repository root, outside this package and its virtual environment.
@@ -92,8 +93,19 @@ def write_env_file(path: Path, lines: list[str]) -> None:
     Returns:
         None
     """
-    path.write_text("\n".join(lines) + "\n")
-    path.chmod(KIT_FILE_MODE)
+    # Do not use Path.write_text followed by chmod: an existing 0644 file, or a new file created
+    # under umask 022, would contain fresh credentials before its mode is tightened. Opening
+    # without O_TRUNC lets fchmod run first; truncate and write only after the descriptor is 0600.
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT, KIT_FILE_MODE)
+    try:
+        os.fchmod(fd, KIT_FILE_MODE)
+        os.ftruncate(fd, 0)
+    except Exception:
+        os.close(fd)
+        raise
+
+    with os.fdopen(fd, "w") as env_file:
+        env_file.write("\n".join(lines) + "\n")
 
 
 if __name__ == "__main__":
