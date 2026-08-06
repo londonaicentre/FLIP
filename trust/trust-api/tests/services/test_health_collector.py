@@ -134,6 +134,31 @@ async def test_probe_health_endpoint_ignores_non_string_version():
     assert result["version"] is None
 
 
+@pytest.mark.asyncio
+async def test_probe_health_endpoint_tolerates_non_object_json_body():
+    """A 2xx whose JSON body is not an object (proxy/gateway interposition) must
+    degrade to version-less healthy, not raise out of the probe."""
+    mock_client = AsyncMock()
+    mock_client.get.return_value = _response(200, ["not", "an", "object"])
+
+    result = await _probe_health_endpoint(mock_client, "http://imaging-api:8000/health")
+
+    assert result["status"] == "healthy"
+    assert result["version"] is None
+
+
+@pytest.mark.asyncio
+async def test_probe_health_endpoint_truncates_oversized_version():
+    """The hub rejects version > 64 chars — a weird sibling reply must not be able
+    to 422 the whole heartbeat, so the collector clamps at the source."""
+    mock_client = AsyncMock()
+    mock_client.get.return_value = _response(200, {"status": "ok", "version": "v" * 100})
+
+    result = await _probe_health_endpoint(mock_client, "http://imaging-api:8000/health")
+
+    assert result["version"] == "v" * 64
+
+
 # ---- _probe_xnat (buildInfo) ----
 
 
@@ -204,13 +229,16 @@ async def test_probe_xnat_degraded_when_slow():
 
 @pytest.mark.asyncio
 async def test_probe_dicom_healthy_uses_ping_time_and_internal_key():
+    """The probe reuses trust-api's shared trust-internal header builder."""
     mock_client = AsyncMock()
     mock_client.get.return_value = _response(200, {"successful": True, "pingTime": 31})
 
     with (
         patch.object(health_collector, "PACS_ID", 1),
-        patch.object(health_collector, "TRUST_INTERNAL_SERVICE_KEY", "secret"),
-        patch.object(health_collector, "TRUST_INTERNAL_SERVICE_KEY_HEADER", "X-Trust-Internal-Service-Key"),
+        patch(
+            "trust_api.services.health_collector._trust_internal_headers",
+            return_value={"X-Trust-Internal-Service-Key": "secret"},
+        ),
     ):
         result = await _probe_dicom(mock_client)
 
@@ -218,6 +246,40 @@ async def test_probe_dicom_healthy_uses_ping_time_and_internal_key():
     call_args = mock_client.get.call_args
     assert call_args[0][0].endswith("/imaging/ping_pacs/1")
     assert call_args[1]["headers"] == {"X-Trust-Internal-Service-Key": "secret"}
+
+
+@pytest.mark.asyncio
+async def test_probe_dicom_unknown_on_non_object_json_body():
+    mock_client = AsyncMock()
+    mock_client.get.return_value = _response(200, "ok")
+
+    result = await _probe_dicom(mock_client)
+
+    assert result == {"status": "unknown", "version": None, "response_ms": None}
+
+
+@pytest.mark.asyncio
+async def test_probe_dicom_drops_non_finite_ping_time():
+    """XNAT's pingTime is third-party data — NaN/Infinity must not raise or reach the wire."""
+    mock_client = AsyncMock()
+    mock_client.get.return_value = _response(200, {"successful": True, "pingTime": float("nan")})
+
+    result = await _probe_dicom(mock_client)
+
+    assert result["status"] == "healthy"
+    assert result["response_ms"] is None
+
+
+@pytest.mark.asyncio
+async def test_probe_dicom_clamps_out_of_range_ping_time():
+    """The hub rejects response_ms outside [0, 1_000_000]; an out-of-range XNAT value
+    must be clamped, not allowed to 422 every heartbeat."""
+    mock_client = AsyncMock()
+    mock_client.get.return_value = _response(200, {"successful": True, "pingTime": 2_000_000})
+
+    result = await _probe_dicom(mock_client)
+
+    assert result["response_ms"] == 1_000_000
 
 
 @pytest.mark.asyncio
@@ -308,6 +370,23 @@ async def test_probe_tcp_down_on_timeout():
     assert result == {"status": "down", "version": None, "response_ms": None}
 
 
+@pytest.mark.asyncio
+async def test_probe_tcp_stays_healthy_when_teardown_fails():
+    """The connect already proved liveness — an RST on close must not flip the verdict
+    (or, worse, escape and kill the whole collection cycle)."""
+    writer = MagicMock()
+    writer.close.side_effect = ConnectionResetError("RST")
+    writer.wait_closed = AsyncMock()
+
+    async def fake_open_connection(host, port):
+        return MagicMock(), writer
+
+    with patch("trust_api.services.health_collector.asyncio.open_connection", side_effect=fake_open_connection):
+        result = await _probe_tcp("omop-db", 5432)
+
+    assert result["status"] == "healthy"
+
+
 # ---- collect_once ----
 
 
@@ -364,6 +443,31 @@ async def test_collect_once_reports_down_omop_via_tcp():
     assert snapshot["services"]["omop"]["status"] == "down"
 
 
+@pytest.mark.asyncio
+async def test_collect_once_isolates_a_probe_that_raises():
+    """A bug escaping one probe must cost that entry (unknown), never the cycle —
+    the other five services still report."""
+    mock_client = AsyncMock()
+    mock_client.get.return_value = _response(200, {"status": "ok", "successful": True, "pingTime": 5})
+
+    with (
+        patch(
+            "trust_api.services.health_collector._probe_xnat",
+            new_callable=AsyncMock,
+            side_effect=TypeError("refactor bug"),
+        ),
+        patch(
+            "trust_api.services.health_collector.asyncio.open_connection",
+            side_effect=ConnectionRefusedError("refused"),
+        ),
+    ):
+        snapshot = await collect_once(mock_client)
+
+    assert set(snapshot["services"].keys()) == ROSTER
+    assert snapshot["services"]["xnat"] == {"status": "unknown", "version": None, "response_ms": None}
+    assert snapshot["services"]["imaging-api"]["status"] == "healthy"
+
+
 # ---- current_snapshot / run_health_collector ----
 
 
@@ -372,14 +476,13 @@ def test_current_snapshot_is_none_before_first_collection():
 
 
 @pytest.mark.asyncio
-async def test_run_health_collector_caches_snapshot_and_loops():
-    call_count = 0
+async def test_run_health_collector_caches_snapshot_while_alive_and_clears_on_exit():
+    seen_during_loop: list[dict | None] = []
 
     async def fake_sleep(seconds):
-        nonlocal call_count
-        call_count += 1
-        if call_count >= 1:
-            raise asyncio.CancelledError()
+        # Observe the cache from inside the live loop (between cycles), then stop.
+        seen_during_loop.append(current_snapshot())
+        raise asyncio.CancelledError()
 
     with (
         patch(
@@ -393,7 +496,9 @@ async def test_run_health_collector_caches_snapshot_and_loops():
             await run_health_collector()
 
     mock_collect.assert_called_once()
-    assert current_snapshot() == {"services": {}, "collected_at": "now"}
+    assert seen_during_loop == [{"services": {}, "collected_at": "now"}]
+    # Exit (shutdown or death) clears the cache so the poller can't ride stale data.
+    assert current_snapshot() is None
 
 
 @pytest.mark.asyncio
@@ -411,6 +516,56 @@ async def test_run_health_collector_continues_on_collection_error():
             "trust_api.services.health_collector.collect_once",
             new_callable=AsyncMock,
             side_effect=Exception("probe explosion"),
+        ),
+        patch("trust_api.services.health_collector.asyncio.sleep", side_effect=fake_sleep),
+    ):
+        with pytest.raises(asyncio.CancelledError):
+            await run_health_collector()
+
+    assert current_snapshot() is None
+
+
+@pytest.mark.asyncio
+async def test_run_health_collector_clears_snapshot_when_the_loop_dies():
+    """If the loop itself dies (scaffolding failure, cancellation), the cached
+    snapshot must not survive it — a still-alive poller would otherwise keep
+    attaching frozen data that the hub re-stamps as fresh."""
+    with (
+        patch(
+            "trust_api.services.health_collector.collect_once",
+            new_callable=AsyncMock,
+            return_value={"services": {}, "collected_at": "t0"},
+        ),
+        patch(
+            "trust_api.services.health_collector.asyncio.sleep",
+            side_effect=RuntimeError("event loop scaffolding failure"),
+        ),
+    ):
+        with pytest.raises(RuntimeError):
+            await run_health_collector()
+
+    assert current_snapshot() is None
+
+
+@pytest.mark.asyncio
+async def test_run_health_collector_drops_snapshot_when_a_later_cycle_fails():
+    """A failing collector must NOT keep riding its last good snapshot: the hub
+    re-stamps freshness on every heartbeat, so retaining stale data would render
+    week-old statuses as current forever. Dropping to None makes the heartbeat go
+    bodyless and the UI honestly report No data via its staleness window."""
+    call_count = 0
+
+    async def fake_sleep(seconds):
+        nonlocal call_count
+        call_count += 1
+        if call_count >= 2:
+            raise asyncio.CancelledError()
+
+    with (
+        patch(
+            "trust_api.services.health_collector.collect_once",
+            new_callable=AsyncMock,
+            side_effect=[{"services": {}, "collected_at": "t0"}, Exception("probe explosion")],
         ),
         patch("trust_api.services.health_collector.asyncio.sleep", side_effect=fake_sleep),
     ):

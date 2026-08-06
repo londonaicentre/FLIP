@@ -24,6 +24,23 @@ from trust_api.services.task_poller import run_poller
 from trust_api.utils.logger import logger
 
 
+def _log_background_task_death(task: asyncio.Task) -> None:
+    """Surface a background task dying outside its own error handling.
+
+    Both loops catch their per-cycle exceptions, so anything reaching here is a
+    scaffolding failure (e.g. client construction) that would otherwise sit as an
+    unretrieved exception while /health keeps returning ok.
+
+    Args:
+        task (asyncio.Task): The finished background task.
+    """
+    if task.cancelled():
+        return
+    exception = task.exception()
+    if exception is not None:
+        logger.error(f"Background task {task.get_name()!r} died: {type(exception).__name__}: {exception}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Start the task poller and health collector background services.
@@ -32,9 +49,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         app (FastAPI): The FastAPI application instance being started.
     """
     background_tasks = [
-        asyncio.create_task(run_poller()),
-        asyncio.create_task(run_health_collector()),
+        asyncio.create_task(run_poller(), name="task_poller"),
+        asyncio.create_task(run_health_collector(), name="health_collector"),
     ]
+    for task in background_tasks:
+        task.add_done_callback(_log_background_task_death)
     logger.info("Trust API started with task poller and health collector")
     yield
     for task in background_tasks:

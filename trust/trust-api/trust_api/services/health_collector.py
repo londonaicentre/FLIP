@@ -17,23 +17,30 @@ surfaces it on the Connection Status page. Service keys and statuses form the wi
 contract with the hub (``healthy | degraded | down | unknown``):
 
 - ``trust-api`` is never probed — if this loop runs the service is up, so the entry is
-  static and the hub derives the row's status from heartbeat age instead.
+  static and the Connection Status page derives the row's status from heartbeat age
+  instead.
 - ``dicom`` is the PACS connector, probed transitively via imaging-api's ``ping_pacs``
   (imaging-api → XNAT → DIMSE echo). A transport/HTTP failure there proves nothing about
   the PACS itself, so it maps to ``unknown`` rather than ``down``.
 - ``omop`` is a raw TCP connect — trust-api deliberately carries no Postgres driver.
+
+Failure semantics: a probe can never raise out of ``collect_once`` (a leaked bug maps to
+``unknown``), and a failed collection cycle drops the cached snapshot entirely — the
+heartbeat then goes bodyless, the hub's freshness stamp stops advancing, and the UI
+honestly reports "No data" instead of re-rendering a frozen snapshot as current.
 """
 
 import asyncio
+import math
 import time
-import tomllib
 from datetime import datetime, timezone
-from functools import lru_cache
-from pathlib import Path
+from typing import Literal
 
 import httpx
 
 from trust_api.config import get_settings
+from trust_api.routers.health import service_version
+from trust_api.services.task_handlers import _trust_internal_headers
 from trust_api.utils.logger import logger
 
 DATA_ACCESS_API_URL = get_settings().DATA_ACCESS_API_URL
@@ -44,18 +51,19 @@ OMOP_DB_HOST = get_settings().OMOP_DB_HOST
 OMOP_DB_PORT = get_settings().OMOP_DB_PORT
 HEALTH_COLLECT_INTERVAL_SECONDS = get_settings().HEALTH_COLLECT_INTERVAL_SECONDS
 HEALTH_PROBE_DEGRADED_MS = get_settings().HEALTH_PROBE_DEGRADED_MS
-TRUST_INTERNAL_SERVICE_KEY = get_settings().TRUST_INTERNAL_SERVICE_KEY
-TRUST_INTERNAL_SERVICE_KEY_HEADER = get_settings().TRUST_INTERNAL_SERVICE_KEY_HEADER
 
 _PROBE_TIMEOUT_SECONDS = 5.0
 
-# The service is a uv "virtual" project (never installed as a distribution), so the only
-# version source shared by the repo checkout and the container image is the pyproject.toml
-# that sits next to the package (/app in the image).
-_PYPROJECT_PATH = Path(__file__).resolve().parents[2] / "pyproject.toml"
+# Wire bounds enforced by the hub (flip-api ServiceHealthEntry). Values are clamped
+# at the source so a weird sibling reply can never 422 the whole heartbeat.
+_MAX_VERSION_CHARS = 64
+_MAX_RESPONSE_MS = 1_000_000
+
+_ServiceStatus = Literal["healthy", "degraded", "down", "unknown"]
 
 # Latest snapshot, replaced wholesale each collection cycle; None until the first
-# cycle completes so the heartbeat stays bodyless exactly like pre-collector builds.
+# cycle completes (and again after a failed cycle) so the heartbeat stays bodyless
+# exactly like pre-collector builds whenever there is nothing trustworthy to report.
 _snapshot: dict | None = None
 
 
@@ -64,31 +72,16 @@ def current_snapshot() -> dict | None:
 
     Returns:
         dict | None: The heartbeat-ready body (``{"services": ..., "collected_at": ...}``),
-        or None before the first collection cycle completes.
+        or None when the last collection cycle failed or none has completed yet.
     """
     return _snapshot
 
 
-@lru_cache(maxsize=1)
-def _own_version() -> str | None:
-    """Look up this service's version from the adjacent pyproject.toml.
-
-    Returns:
-        str | None: The ``[project].version`` value, or None when the file is missing
-        or unparsable.
-    """
-    try:
-        with _PYPROJECT_PATH.open("rb") as fh:
-            return tomllib.load(fh)["project"]["version"]
-    except (OSError, KeyError, tomllib.TOMLDecodeError):
-        return None
-
-
-def _entry(status: str, version: str | None = None, response_ms: int | None = None) -> dict:
+def _entry(status: _ServiceStatus, version: str | None = None, response_ms: int | None = None) -> dict:
     """Build one wire-shaped service entry.
 
     Args:
-        status (str): One of ``healthy | degraded | down | unknown``.
+        status (_ServiceStatus): One of ``healthy | degraded | down | unknown``.
         version (str | None): Service version string when known.
         response_ms (int | None): Probe latency in milliseconds when measured.
 
@@ -98,16 +91,34 @@ def _entry(status: str, version: str | None = None, response_ms: int | None = No
     return {"status": status, "version": version, "response_ms": response_ms}
 
 
-def _status_from_latency(response_ms: int) -> str:
+def _status_from_latency(response_ms: int) -> _ServiceStatus:
     """Map a successful probe's latency onto healthy/degraded.
 
     Args:
         response_ms (int): Measured probe latency in milliseconds.
 
     Returns:
-        str: ``"degraded"`` when slower than ``HEALTH_PROBE_DEGRADED_MS``, else ``"healthy"``.
+        _ServiceStatus: ``"degraded"`` when slower than ``HEALTH_PROBE_DEGRADED_MS``,
+        else ``"healthy"``.
     """
     return "degraded" if response_ms > HEALTH_PROBE_DEGRADED_MS else "healthy"
+
+
+def _bounded_ms(value: object) -> int | None:
+    """Clamp a latency value to the hub's accepted range, dropping non-numbers.
+
+    Args:
+        value (object): A candidate millisecond value (possibly third-party data,
+            e.g. XNAT's ``pingTime``).
+
+    Returns:
+        int | None: The value clamped to ``[0, _MAX_RESPONSE_MS]``, or None when it
+        is not a finite number.
+    """
+    if not isinstance(value, (int, float)) or isinstance(value, bool) or not math.isfinite(value):
+        return None
+
+    return min(max(int(value), 0), _MAX_RESPONSE_MS)
 
 
 def _version_from_body(response: httpx.Response) -> str | None:
@@ -117,13 +128,17 @@ def _version_from_body(response: httpx.Response) -> str | None:
         response (httpx.Response): A successful probe response.
 
     Returns:
-        str | None: The version string, or None when the body is not JSON or carries none.
+        str | None: The version string (truncated to the hub's 64-char cap), or None
+        when the body is not a JSON object or carries no usable version.
     """
+    # Broad except: the body is arbitrary bytes from another process — any parse
+    # failure (non-JSON, bogus charset, non-object JSON) just means "no version".
     try:
         version = response.json().get("version")
-    except ValueError:
+    except Exception:
         return None
-    return version if isinstance(version, str) else None
+
+    return version[:_MAX_VERSION_CHARS] if isinstance(version, str) else None
 
 
 async def _probe_health_endpoint(client: httpx.AsyncClient, url: str) -> dict:
@@ -139,9 +154,11 @@ async def _probe_health_endpoint(client: httpx.AsyncClient, url: str) -> dict:
     start = time.monotonic()
     try:
         response = await client.get(url)
-    except Exception:
+    except Exception as e:
+        logger.warning(f"Health probe {url} failed: {type(e).__name__}: {e}")
         return _entry("down")
     if not response.is_success:
+        logger.warning(f"Health probe {url} answered HTTP {response.status_code}")
         return _entry("down")
     elapsed_ms = int((time.monotonic() - start) * 1000)
     return _entry(_status_from_latency(elapsed_ms), _version_from_body(response), elapsed_ms)
@@ -161,16 +178,19 @@ async def _probe_xnat(client: httpx.AsyncClient) -> dict:
     Returns:
         dict: Wire-shaped entry.
     """
+    url = f"{XNAT_URL}/xapi/siteConfig/buildInfo"
     start = time.monotonic()
     try:
-        response = await client.get(f"{XNAT_URL}/xapi/siteConfig/buildInfo")
-    except Exception:
+        response = await client.get(url)
+    except Exception as e:
+        logger.warning(f"Health probe {url} failed: {type(e).__name__}: {e}")
         return _entry("down")
     elapsed_ms = int((time.monotonic() - start) * 1000)
     if response.is_success:
         return _entry(_status_from_latency(elapsed_ms), _version_from_body(response), elapsed_ms)
     if response.status_code in (401, 403):
         return _entry(_status_from_latency(elapsed_ms), None, elapsed_ms)
+    logger.warning(f"Health probe {url} answered HTTP {response.status_code}")
     return _entry("down")
 
 
@@ -184,21 +204,29 @@ async def _probe_dicom(client: httpx.AsyncClient) -> dict:
         dict: Wire-shaped entry. ``unknown`` when the prober chain (imaging-api → XNAT)
         itself fails, ``down`` only when XNAT reports the DIMSE echo failed.
     """
-    headers = {TRUST_INTERNAL_SERVICE_KEY_HEADER: TRUST_INTERNAL_SERVICE_KEY}
+    url = f"{IMAGING_API_URL}/imaging/ping_pacs/{PACS_ID}"
     try:
-        response = await client.get(f"{IMAGING_API_URL}/imaging/ping_pacs/{PACS_ID}", headers=headers)
-    except Exception:
+        response = await client.get(url, headers=_trust_internal_headers())
+    except Exception as e:
+        logger.warning(f"Health probe {url} failed: {type(e).__name__}: {e}")
         return _entry("unknown")
     if not response.is_success:
+        # A 401/403 here is a trust-internal key misconfiguration, not PACS weather —
+        # log the status so the permanently-gray dot has a thread to pull.
+        logger.warning(f"Health probe {url} answered HTTP {response.status_code}")
         return _entry("unknown")
     try:
         body = response.json()
-    except ValueError:
+    except Exception:
+        body = None
+    if not isinstance(body, dict):
         return _entry("unknown")
     if not body.get("successful"):
         return _entry("down")
-    ping_time = body.get("pingTime")
-    return _entry("healthy", None, int(ping_time) if isinstance(ping_time, (int, float)) else None)
+
+    # XNAT DQR reports the DIMSE echo round-trip in milliseconds; third-party data,
+    # so clamp it to the wire bounds rather than trusting it.
+    return _entry("healthy", None, _bounded_ms(body.get("pingTime")))
 
 
 async def _probe_tcp(host: str, port: int) -> dict:
@@ -214,7 +242,8 @@ async def _probe_tcp(host: str, port: int) -> dict:
     start = time.monotonic()
     try:
         _, writer = await asyncio.wait_for(asyncio.open_connection(host, port), _PROBE_TIMEOUT_SECONDS)
-    except Exception:
+    except Exception as e:
+        logger.warning(f"Health probe tcp://{host}:{port} failed: {type(e).__name__}: {e}")
         return _entry("down")
     elapsed_ms = int((time.monotonic() - start) * 1000)
     try:
@@ -225,8 +254,28 @@ async def _probe_tcp(host: str, port: int) -> dict:
     return _entry(_status_from_latency(elapsed_ms), None, elapsed_ms)
 
 
+def _entry_or_unknown(result: object, service: str) -> dict:
+    """Map a gathered probe result onto a wire entry, absorbing leaked exceptions.
+
+    Args:
+        result (object): A probe's return value, or the exception it raised
+            (``asyncio.gather(..., return_exceptions=True)``).
+        service (str): Roster key, for the log line.
+
+    Returns:
+        dict: The probe's entry, or ``unknown`` when the probe itself blew up.
+    """
+    if isinstance(result, dict):
+        return result
+    logger.error(f"Health probe for '{service}' raised {type(result).__name__}: {result}")
+    return _entry("unknown")
+
+
 async def collect_once(client: httpx.AsyncClient) -> dict:
     """Probe every roster service concurrently and assemble a heartbeat-ready snapshot.
+
+    A single misbehaving probe costs its own entry (``unknown``), never the cycle —
+    the other services still report.
 
     Args:
         client (httpx.AsyncClient): HTTP client shared across probes.
@@ -234,16 +283,21 @@ async def collect_once(client: httpx.AsyncClient) -> dict:
     Returns:
         dict: ``{"services": {<key>: entry, ...}, "collected_at": <iso-utc>}``.
     """
-    imaging, data_access, xnat, dicom, omop = await asyncio.gather(
+    results = await asyncio.gather(
         _probe_health_endpoint(client, f"{IMAGING_API_URL}/health"),
         _probe_health_endpoint(client, f"{DATA_ACCESS_API_URL}/health"),
         _probe_xnat(client),
         _probe_dicom(client),
         _probe_tcp(OMOP_DB_HOST, OMOP_DB_PORT),
+        return_exceptions=True,
+    )
+    imaging, data_access, xnat, dicom, omop = (
+        _entry_or_unknown(result, service)
+        for result, service in zip(results, ("imaging-api", "data-access-api", "xnat", "dicom", "omop"))
     )
     return {
         "services": {
-            "trust-api": _entry("healthy", _own_version()),
+            "trust-api": _entry("healthy", service_version()),
             "imaging-api": imaging,
             "data-access-api": data_access,
             "xnat": xnat,
@@ -260,13 +314,23 @@ async def run_health_collector() -> None:
     This function is started as a background task during the FastAPI lifespan,
     alongside the task poller.
     """
-    global _snapshot  # noqa: PLW0603
+    global _snapshot
     logger.info(f"Starting health collector, probing trust services every {HEALTH_COLLECT_INTERVAL_SECONDS}s")
 
-    async with httpx.AsyncClient(timeout=httpx.Timeout(_PROBE_TIMEOUT_SECONDS)) as client:
-        while True:
-            try:
-                _snapshot = await collect_once(client)
-            except Exception as e:
-                logger.error(f"Error collecting service health: {e}")
-            await asyncio.sleep(HEALTH_COLLECT_INTERVAL_SECONDS)
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(_PROBE_TIMEOUT_SECONDS)) as client:
+            while True:
+                try:
+                    _snapshot = await collect_once(client)
+                except Exception:
+                    # Drop the snapshot rather than keep riding a stale one: the hub
+                    # re-stamps freshness on every snapshot-carrying heartbeat, so
+                    # retaining old data would render it as current indefinitely.
+                    logger.exception("Error collecting service health; dropping snapshot until collection recovers")
+                    _snapshot = None
+                await asyncio.sleep(HEALTH_COLLECT_INTERVAL_SECONDS)
+    finally:
+        # The task is exiting (shutdown cancellation, or a scaffolding failure that
+        # the lifespan's done-callback logs). A still-alive poller must not keep
+        # attaching the last snapshot, so it dies with the loop.
+        _snapshot = None

@@ -135,6 +135,13 @@ async def _send_heartbeat(client: httpx.AsyncClient) -> None:
         if snapshot is not None:
             kwargs["json"] = snapshot
         response = await client.post(f"{CENTRAL_HUB_API_URL}/trust/heartbeat", **kwargs)
+        if response.status_code == 422 and snapshot is not None:
+            # The hub rejected the snapshot, not the heartbeat. Telemetry must not
+            # cost liveness (an un-stamped last_heartbeat renders the trust Offline
+            # while it polls normally), so retry once bodyless and keep the loud log
+            # for the snapshot investigation.
+            logger.error(f"Hub rejected health snapshot (HTTP 422): {response.text[:500]} — retrying bodyless")
+            response = await client.post(f"{CENTRAL_HUB_API_URL}/trust/heartbeat", headers=_auth_headers())
         # httpx only raises on transport errors — auth/identity rejections
         # (401/403/404) come back as a successful HTTP response. Without this
         # check the trust silently never updates ``trust.last_heartbeat`` on
