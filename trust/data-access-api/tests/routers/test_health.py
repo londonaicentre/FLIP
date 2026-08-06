@@ -10,11 +10,20 @@
 # limitations under the License.
 #
 
+import tomllib
+from pathlib import Path
+
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from data_access_api.routers.health import router
+
+
+def _pyproject_version() -> str:
+    with (Path(__file__).resolve().parents[2] / "pyproject.toml").open("rb") as fh:
+        return tomllib.load(fh)["project"]["version"]
+
 
 # Create a test FastAPI app and include the router
 app = FastAPI()
@@ -30,4 +39,11 @@ def client():
 async def test_health_check(client):
     response = client.get("/health/")
     assert response.status_code == 200
-    assert response.json() == {"status": "ok"}
+    assert response.json()["status"] == "ok"
+
+
+@pytest.mark.asyncio
+async def test_health_reports_package_version(client):
+    response = client.get("/health/")
+    assert response.status_code == 200
+    assert response.json()["version"] == _pyproject_version()
