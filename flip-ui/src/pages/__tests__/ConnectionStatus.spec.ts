@@ -62,6 +62,14 @@ const stubs = {
     // Stubbed: the shared swrv mock returns trust fixtures, which the partial
     // (which expects IFLStatus shape) would otherwise misinterpret.
     FLNetsCard: { template: "<div />" },
+    // Stubbed: the drawer's own behavior is covered by TrustDetailDrawer.spec.ts;
+    // here we only assert the page wires `trust`/`show` and reacts to `close`.
+    TrustDetailDrawer: {
+        name: "TrustDetailDrawer",
+        props: ["trust", "show"],
+        emits: ["close"],
+        template: "<div data-test='trust-detail-drawer' :data-show='show' :data-trust-id='trust?.id ?? \"\"' />"
+    },
     "icon-ph-list-bullets-duotone": { template: "<span />" },
     "icon-ph-share-network-duotone": { template: "<span />" }
 };
@@ -69,6 +77,43 @@ const stubs = {
 const now = Date.now();
 const seconds = (n: number) => new Date(now - n * 1000).toISOString();
 
+// A fully healthy collector snapshot (see connection-health SERVICE_REGISTRY).
+const healthySnapshot = () => ({
+    "trust-api": {
+        status: "healthy" as const,
+        version: "0.3.0",
+        response_ms: null
+    },
+    xnat: {
+        status: "healthy" as const,
+        version: "1.10.0",
+        response_ms: 220
+    },
+    "imaging-api": {
+        status: "healthy" as const,
+        version: "0.3.0",
+        response_ms: 12
+    },
+    omop: {
+        status: "healthy" as const,
+        version: null,
+        response_ms: 2
+    },
+    dicom: {
+        status: "healthy" as const,
+        version: null,
+        response_ms: 31
+    },
+    "data-access-api": {
+        status: "healthy" as const,
+        version: "0.3.0",
+        response_ms: 15
+    }
+});
+
+// Zebra reports a fresh healthy snapshot; Acme (offline) never reported one —
+// exercising the pre-collector trust shape; Maple reports healthy services but
+// its aging heartbeat (120s) makes the trust-api row — and the trust — degraded.
 const fixture: ITrustResponse[] = [
     {
         id: "t1",
@@ -76,7 +121,9 @@ const fixture: ITrustResponse[] = [
         code: "ZNT",
         region: "London",
         last_heartbeat: seconds(10),
-        project_count: 1
+        project_count: 1,
+        services: healthySnapshot(),
+        services_updated_at: seconds(5)
     },
     {
         id: "t2",
@@ -92,7 +139,9 @@ const fixture: ITrustResponse[] = [
         code: "MNT",
         region: "North East",
         last_heartbeat: seconds(120),
-        project_count: 3
+        project_count: 3,
+        services: healthySnapshot(),
+        services_updated_at: seconds(5)
     }
 ];
 
@@ -129,11 +178,29 @@ beforeEach(() => {
 });
 
 describe("ConnectionStatus", () => {
-    it("defaults to alphabetical sort by trust name", async () => {
-        mockSwrvData.value = fixture;
+    it("defaults to severity-first sort so failing trusts surface on load", async () => {
+        // Alphabetical and severity order DIFFER here: Acme is online, Zebra is
+        // offline — severity-first must put Zebra on top despite its name.
+        mockSwrvData.value = [
+            {
+                ...fixture[1],
+                name: "Acme NHS Trust",
+                code: "ANT",
+                last_heartbeat: seconds(5)
+            },
+            {
+                ...fixture[0],
+                name: "Zebra NHS Trust",
+                code: "ZNT",
+                last_heartbeat: null,
+                services: undefined,
+                services_updated_at: undefined
+            }
+        ];
         const wrapper = mountPage();
         await wrapper.vm.$nextTick();
-        expect(codesInOrder(wrapper)).toEqual(["ANT", "MNT", "ZNT"]);
+        expect(codesInOrder(wrapper)).toEqual(["ZNT", "ANT"]);
+        expect(wrapper.find("[data-test='mobile-sort-btn']").text()).toContain("Sort: Severity ↑");
     });
 
     it("toggles to descending on a second click of the same column", async () => {
@@ -141,17 +208,19 @@ describe("ConnectionStatus", () => {
         const wrapper = mountPage();
         const trustHeader = wrapper.find("[data-test='sort-header-name']");
         await trustHeader.trigger("click");
-        expect(codesInOrder(wrapper)).toEqual(["ZNT", "MNT", "ANT"]);
-        await trustHeader.trigger("click");
         expect(codesInOrder(wrapper)).toEqual(["ANT", "MNT", "ZNT"]);
+        await trustHeader.trigger("click");
+        expect(codesInOrder(wrapper)).toEqual(["ZNT", "MNT", "ANT"]);
     });
 
-    it("sorts by severity (offline first) when the Status header is clicked", async () => {
+    it("severity is the active default — clicking its header toggles to online-first", async () => {
         mockSwrvData.value = fixture;
         const wrapper = mountPage();
-        await wrapper.find("[data-test='sort-header-severity']").trigger("click");
+        await wrapper.vm.$nextTick();
         // Acme has no heartbeat → offline; Maple is degraded (2 min old); Zebra is online.
         expect(codesInOrder(wrapper)).toEqual(["ANT", "MNT", "ZNT"]);
+        await wrapper.find("[data-test='sort-header-severity']").trigger("click");
+        expect(codesInOrder(wrapper)).toEqual(["ZNT", "MNT", "ANT"]);
     });
 
     it("sorts by project count, ascending then descending, on the Projects header", async () => {
@@ -168,7 +237,10 @@ describe("ConnectionStatus", () => {
     it("shows an up arrow on the active ascending column and a down arrow on descending", async () => {
         mockSwrvData.value = fixture;
         const wrapper = mountPage();
+        // Severity is the default active column.
+        expect(wrapper.find("[data-test='sort-header-severity']").text()).toContain("↑");
         const nameHeader = wrapper.find("[data-test='sort-header-name']");
+        await nameHeader.trigger("click");
         expect(nameHeader.text()).toContain("↑");
         await nameHeader.trigger("click");
         expect(nameHeader.text()).toContain("↓");
@@ -495,13 +567,185 @@ describe("ConnectionStatus", () => {
         expect(nameCell?.className).toContain("max-w-0");
     });
 
-    it("renders exactly six columns — no empty trailing action column", async () => {
+    it("renders seven columns — Services dots + drawer chevron, no sparkline", async () => {
         mockSwrvData.value = fixture;
         const wrapper = mountPage();
         await wrapper.vm.$nextTick();
 
-        expect(wrapper.findAll("th")).toHaveLength(6);
-        expect(wrapper.find("[data-test='trust-row']").findAll("td")).toHaveLength(6);
+        expect(wrapper.findAll("th")).toHaveLength(7);
+        const row = wrapper.find("[data-test='trust-row']");
+        expect(row.findAll("td")).toHaveLength(7);
+        // The placeholder 7d-uptime sparkline is gone (replaced by real service dots).
+        expect(wrapper.find("[data-test='trust-uptime']").exists()).toBe(false);
+        expect(row.find("polyline").exists()).toBe(false);
+        // The trailing cell carries the drawer-affordance chevron.
+        expect(row.find("svg[data-icon='heroicons-outline:chevron-right']").exists()).toBe(true);
+    });
+
+    describe("services column", () => {
+        it("renders six status dots in registry order with name · status titles", async () => {
+            mockSwrvData.value = [fixture[0]]; // Zebra: fresh healthy snapshot
+            const wrapper = mountPage();
+            await wrapper.vm.$nextTick();
+
+            const dots = wrapper.find("[data-test='trust-services']").findAll("span[title]");
+            expect(dots).toHaveLength(6);
+            expect(dots.map(d => d.attributes("title"))).toEqual([
+                "trust-api · healthy",
+                "XNAT · healthy",
+                "imaging-api · healthy",
+                "OMOP · healthy",
+                "dicom-node · healthy",
+                "data-access-api · healthy"
+            ]);
+            for (const dot of dots) {
+                expect(dot.classes()).toContain("bg-emerald-600");
+            }
+        });
+
+        it("greys out services for a trust that never reported a snapshot", async () => {
+            mockSwrvData.value = [fixture[1]]; // Acme: offline, no snapshot
+            const wrapper = mountPage();
+            await wrapper.vm.$nextTick();
+
+            const dots = wrapper.find("[data-test='trust-services']").findAll("span[title]");
+            // trust-api derives from the (absent) heartbeat → down/red …
+            expect(dots[0].attributes("title")).toBe("trust-api · down");
+            expect(dots[0].classes()).toContain("bg-red-500");
+            // … while the unprobeable rest render as unknown/grey.
+            for (const dot of dots.slice(1)) {
+                expect(dot.attributes("title")).toContain("· unknown");
+                expect(dot.classes()).toContain("bg-gray-400");
+            }
+        });
+
+        it("treats a stale snapshot as no data", async () => {
+            mockSwrvData.value = [
+                {
+                    ...fixture[0],
+                    services_updated_at: seconds(200)
+                }
+            ];
+            const wrapper = mountPage();
+            await wrapper.vm.$nextTick();
+
+            const dots = wrapper.find("[data-test='trust-services']").findAll("span[title]");
+            expect(dots[1].attributes("title")).toBe("XNAT · unknown");
+            expect(dots[1].classes()).toContain("bg-gray-400");
+        });
+
+        it("marks the trust Degraded with caption and amber accent when a service is down", async () => {
+            const services = healthySnapshot();
+            services.xnat.status = "down" as never;
+            mockSwrvData.value = [
+                {
+                    ...fixture[0],
+                    services
+                }
+            ];
+            const wrapper = mountPage();
+            await wrapper.vm.$nextTick();
+
+            const row = wrapper.find("[data-test='trust-row']");
+            expect(row.text()).toContain("Degraded");
+            expect(row.find("[data-test='trust-failing']").text()).toContain("XNAT down");
+            expect(row.find("[data-test='trust-accent']").classes()).toContain("bg-amber-500");
+            const dots = row.find("[data-test='trust-services']").findAll("span[title]");
+            expect(dots[1].attributes("title")).toBe("XNAT · down");
+            expect(dots[1].classes()).toContain("bg-red-500");
+        });
+
+        it("paints the accent red for offline and transparent for online rows", async () => {
+            mockSwrvData.value = fixture;
+            const wrapper = mountPage();
+            await wrapper.vm.$nextTick();
+
+            const accents = wrapper
+                .findAll("[data-test='trust-row']")
+                .map(r => r.find("[data-test='trust-accent']").classes().join(" "));
+            // Severity order: Acme (offline), Maple (degraded), Zebra (online).
+            expect(accents[0]).toContain("bg-red-500");
+            expect(accents[1]).toContain("bg-amber-500");
+            expect(accents[2]).toContain("bg-transparent");
+        });
+
+        it("shows no failing caption on an online row", async () => {
+            mockSwrvData.value = [fixture[0]];
+            const wrapper = mountPage();
+            await wrapper.vm.$nextTick();
+
+            expect(wrapper.find("[data-test='trust-failing']").exists()).toBe(false);
+        });
+    });
+
+    describe("trust detail drawer wiring", () => {
+        const drawer = (wrapper: ReturnType<typeof mountPage>) => wrapper.find("[data-test='trust-detail-drawer']");
+
+        it("opens the drawer for the clicked row", async () => {
+            mockSwrvData.value = fixture;
+            const wrapper = mountPage();
+            await wrapper.vm.$nextTick();
+
+            expect(drawer(wrapper).attributes("data-show")).toBe("false");
+            await wrapper.findAll("[data-test='trust-row']")[2].trigger("click"); // Zebra (online, last in severity order)
+            expect(drawer(wrapper).attributes("data-show")).toBe("true");
+            expect(drawer(wrapper).attributes("data-trust-id")).toBe("t1");
+        });
+
+        it("swaps the drawer to another trust when a different row is clicked", async () => {
+            mockSwrvData.value = fixture;
+            const wrapper = mountPage();
+            await wrapper.vm.$nextTick();
+
+            await wrapper.findAll("[data-test='trust-row']")[2].trigger("click");
+            await wrapper.findAll("[data-test='trust-row']")[0].trigger("click"); // Acme (offline, first)
+            expect(drawer(wrapper).attributes("data-trust-id")).toBe("t2");
+        });
+
+        it("opens via keyboard — rows are focusable and react to Enter", async () => {
+            mockSwrvData.value = [fixture[0]];
+            const wrapper = mountPage();
+            await wrapper.vm.$nextTick();
+
+            const row = wrapper.find("[data-test='trust-row']");
+            expect(row.attributes("tabindex")).toBe("0");
+            await row.trigger("keydown.enter");
+            expect(drawer(wrapper).attributes("data-show")).toBe("true");
+        });
+
+        it("closes when the drawer emits close", async () => {
+            mockSwrvData.value = fixture;
+            const wrapper = mountPage();
+            await wrapper.vm.$nextTick();
+
+            await wrapper.find("[data-test='trust-row']").trigger("click");
+            expect(drawer(wrapper).attributes("data-show")).toBe("true");
+
+            await wrapper.findComponent({ name: "TrustDetailDrawer" }).vm.$emit("close");
+            expect(drawer(wrapper).attributes("data-show")).toBe("false");
+        });
+
+        it("auto-closes when the selected trust disappears from the roster", async () => {
+            mockSwrvData.value = fixture;
+            const wrapper = mountPage();
+            await wrapper.vm.$nextTick();
+
+            await wrapper.findAll("[data-test='trust-row']")[2].trigger("click");
+            expect(drawer(wrapper).attributes("data-show")).toBe("true");
+
+            mockSwrvData.value = [fixture[1]]; // Zebra no longer registered
+            await wrapper.vm.$nextTick();
+            expect(drawer(wrapper).attributes("data-show")).toBe("false");
+        });
+
+        it("opens from a mobile stacked row tap too", async () => {
+            mockSwrvData.value = [fixture[0]];
+            const wrapper = mountPage();
+            await wrapper.vm.$nextTick();
+
+            await wrapper.find("[data-test='trust-row-mobile']").trigger("click");
+            expect(drawer(wrapper).attributes("data-show")).toBe("true");
+        });
     });
 
     describe("mobile stacked trust rows (design 3a)", () => {
@@ -526,7 +770,7 @@ describe("ConnectionStatus", () => {
             expect(tableWrap?.className).toContain("sm:block");
         });
 
-        it("stacks name, code, pill, meta line and sparkline into two lines", async () => {
+        it("stacks name, code, pill, meta line and service dots into two lines", async () => {
             mockSwrvData.value = [fixture[0]]; // Zebra: online, London, 1 project
             const wrapper = mountPage();
             await wrapper.vm.$nextTick();
@@ -538,7 +782,9 @@ describe("ConnectionStatus", () => {
             expect(row.text()).toContain("London");
             expect(row.text()).toContain("ago");
             expect(row.text()).toContain("1 project");
-            expect(row.find("svg polyline").exists()).toBe(true);
+            // The placeholder sparkline is gone; real per-service dots take its place.
+            expect(row.find("svg polyline").exists()).toBe(false);
+            expect(row.find("[data-test='trust-services-mobile']").findAll("span[title]")).toHaveLength(6);
         });
 
         it("tints the offline stacked row and its heartbeat red", async () => {
@@ -556,7 +802,7 @@ describe("ConnectionStatus", () => {
             const wrapper = mountPage();
             await wrapper.vm.$nextTick();
 
-            expect(wrapper.find("[data-test='mobile-sort-btn']").text()).toContain("Sort: Name ↑");
+            expect(wrapper.find("[data-test='mobile-sort-btn']").text()).toContain("Sort: Severity ↑");
 
             // Fixture project counts: Zebra=1, Maple=3, Acme=7.
             await wrapper.find("[data-test='mobile-sort-btn']").trigger("click");

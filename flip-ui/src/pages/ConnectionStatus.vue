@@ -175,8 +175,9 @@
                                 v-for="t in displayedTrusts"
                                 :key="t.id"
                                 data-test="trust-row-mobile"
-                                class="px-4 py-3"
+                                class="px-4 py-3 cursor-pointer"
                                 :class="t._state === 'offline' ? 'bg-red-50/40 dark:bg-red-900/10' : ''"
+                                @click="openDrawer(t.id)"
                             >
                                 <div class="flex items-start gap-2.5">
                                     <span class="inline-block w-2 h-2 mt-[5px] rounded-full shrink-0" :class="dotClass(t._state)" />
@@ -218,30 +219,18 @@
                                         {{ t.project_count }} {{ t.project_count === 1 ? "project" : "projects" }}
                                     </span>
                                     <span class="flex-1" />
-                                    <svg
-                                        :width="uptimeSvg.w"
-                                        :height="uptimeSvg.h"
-                                        class="block shrink-0"
-                                        :title="uptimeTitle"
+                                    <span
+                                        data-test="trust-services-mobile"
+                                        class="inline-flex items-center gap-[5px] shrink-0"
                                     >
-                                        <polyline
-                                            :points="t._uptimePoints"
-                                            fill="none"
-                                            :stroke="uptimeStroke(t._state)"
-                                            stroke-width="1.6"
-                                            stroke-linejoin="round"
-                                            stroke-linecap="round"
+                                        <span
+                                            v-for="svc in t._services"
+                                            :key="svc.key"
+                                            :title="`${svc.label} · ${svc.status}`"
+                                            class="inline-block w-[7px] h-[7px] rounded-full"
+                                            :class="SERVICE_DOT_CLASSES[svc.status]"
                                         />
-                                        <circle
-                                            v-for="(pt, i) in t._uptimeDots"
-                                            :key="i"
-                                            :cx="pt.x"
-                                            :cy="pt.y"
-                                            r="1.6"
-                                            :fill="uptimeStroke(t._state)"
-                                            :opacity="i === t._uptimeDots.length - 1 ? 1 : 0.35"
-                                        />
-                                    </svg>
+                                    </span>
                                 </div>
                             </div>
                             <div v-if="!displayedTrusts.length" class="text-center py-6 text-gray-500 dark:text-gray-300">
@@ -282,12 +271,23 @@
                                     v-for="(t, idx) in displayedTrusts"
                                     :key="t.id"
                                     data-test="trust-row"
+                                    tabindex="0"
+                                    class="cursor-pointer group hover:bg-gray-50 dark:hover:bg-dark-surface/60
+                                    focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary-500"
                                     :class="[
                                         idx > 0 ? 'border-t border-gray-100 dark:border-dark-border' : '',
                                         t._state === 'offline' ? 'bg-red-50/40 dark:bg-red-900/10' : ''
                                     ]"
+                                    @click="openDrawer(t.id)"
+                                    @keydown.enter="openDrawer(t.id)"
                                 >
-                                    <td class="px-4 py-4 align-middle">
+                                    <td class="px-4 py-4 align-middle relative">
+                                        <span
+                                            data-test="trust-accent"
+                                            aria-hidden="true"
+                                            class="absolute inset-y-0 left-0 w-[3px]"
+                                            :class="ACCENT_CLASSES[t._state]"
+                                        />
                                         <div class="inline-flex items-center gap-2">
                                             <span class="inline-block w-2 h-2 rounded-full" :class="dotClass(t._state)" />
                                             <span
@@ -313,10 +313,31 @@
                                             >
                                                 {{ t.code }}
                                             </span>
+                                            <span
+                                                v-if="t._failing.length"
+                                                data-test="trust-failing"
+                                                class="font-mono text-[11px] mt-0.5 truncate"
+                                                :class="t._state === 'offline'
+                                                    ? 'text-red-600 dark:text-red-400'
+                                                    : 'text-amber-600 dark:text-amber-400'"
+                                            >
+                                                {{ t._failing.map(f => f.text).join(" · ") }}
+                                            </span>
                                         </div>
                                     </td>
                                     <td class="px-4 py-4 align-middle text-base text-gray-600 dark:text-gray-300">
                                         {{ t.region ?? "—" }}
+                                    </td>
+                                    <td class="px-4 py-4 align-middle" data-test="trust-services">
+                                        <div class="flex items-center gap-[5px]">
+                                            <span
+                                                v-for="svc in t._services"
+                                                :key="svc.key"
+                                                :title="`${svc.label} · ${svc.status}`"
+                                                class="inline-block w-[7px] h-[7px] rounded-full"
+                                                :class="SERVICE_DOT_CLASSES[svc.status]"
+                                            />
+                                        </div>
                                     </td>
                                     <td
                                         class="px-4 py-4 align-middle font-mono text-sm"
@@ -328,35 +349,15 @@
                                     <td class="px-4 py-4 align-middle text-right font-mono text-base text-gray-900 dark:text-gray-100">
                                         {{ t.project_count }}
                                     </td>
-                                    <td class="px-4 py-4 align-middle" data-test="trust-uptime">
-                                        <svg
-                                            :width="uptimeSvg.w"
-                                            :height="uptimeSvg.h"
-                                            class="block"
-                                            :title="uptimeTitle"
-                                        >
-                                            <polyline
-                                                :points="t._uptimePoints"
-                                                fill="none"
-                                                :stroke="uptimeStroke(t._state)"
-                                                stroke-width="1.6"
-                                                stroke-linejoin="round"
-                                                stroke-linecap="round"
-                                            />
-                                            <circle
-                                                v-for="(pt, i) in t._uptimeDots"
-                                                :key="i"
-                                                :cx="pt.x"
-                                                :cy="pt.y"
-                                                r="1.6"
-                                                :fill="uptimeStroke(t._state)"
-                                                :opacity="i === t._uptimeDots.length - 1 ? 1 : 0.35"
-                                            />
-                                        </svg>
+                                    <td class="px-4 py-4 align-middle w-10">
+                                        <icon-heroicons-outline-chevron-right
+                                            class="w-4 h-4 opacity-50 text-gray-600 dark:text-gray-300
+                                            transition-transform group-hover:translate-x-1"
+                                        />
                                     </td>
                                 </tr>
                                 <tr v-if="!displayedTrusts.length">
-                                    <td colspan="6" class="text-center py-6 text-gray-500 dark:text-gray-300">
+                                    <td colspan="7" class="text-center py-6 text-gray-500 dark:text-gray-300">
                                         {{ activeTile ? "No trusts match this filter." : "No trusts registered yet." }}
                                     </td>
                                 </tr>
@@ -663,22 +664,36 @@
         :trust="createdTrust"
         @close-modal="onKitModalClose"
     />
+
+    <TrustDetailDrawer
+        :trust="selectedTrust"
+        :show="!!selectedTrust"
+        @close="selectedTrustId = null"
+    />
 </template>
 
 <script setup lang="ts">
 import { Menu, MenuButton, MenuItem, MenuItems } from "@headlessui/vue";
 import useSWRV from "swrv";
-import { computed, ref } from "vue";
+import { computed, ref, watch } from "vue";
 
 import AiButton from "@/components/AiButton/AiButton.vue";
 import AiCard from "@/components/AiCard/AiCard.vue";
 import AiLoader from "@/components/AiLoader/AiLoader.vue";
 import FLNetsCard from "@/partials/connection/FLNetsCard.vue";
+import TrustDetailDrawer from "@/partials/connection/TrustDetailDrawer.vue";
 import AddTrustModal from "@/partials/trusts/AddTrustModal.vue";
 import TrustKitModal from "@/partials/trusts/TrustKitModal.vue";
 import { ICreatedTrust } from "@/services/admin-trusts-service";
-import { getTrustStatuses, ITrustResponse } from "@/services/trust-service";
+import { getTrustStatuses, ITrustResponse, ServiceStatus } from "@/services/trust-service";
 import { useAuthStore } from "@/store/auth";
+import { deriveServices,
+    deriveTrustState,
+    failingServices,
+    heartbeatText,
+    IDerivedService,
+    IFailingService,
+    TrustState } from "@/utils/connection-health";
 
 const authStore = useAuthStore();
 const isAdmin = computed(() => authStore.hasPermissions(["CanAccessAdminPanel"]));
@@ -702,23 +717,6 @@ const { data: trusts, mutate: refresh } = useSWRV<ITrustResponse[]>(
     }
 );
 
-type TrustState = "online" | "degraded" | "offline";
-
-// A heartbeat newer than HEARTBEAT_FRESH_S is "online"; older than HEARTBEAT_DEGRADED_S
-// (or absent) is "offline"; in between is "degraded". Trust-side poll interval
-// defaults to 5s, so 30s/300s gives ~6×/60× the poll cadence.
-const HEARTBEAT_FRESH_S = 30;
-const HEARTBEAT_DEGRADED_S = 5 * 60;
-
-const trustState = (t: ITrustResponse): TrustState => {
-    if (!t.last_heartbeat) return "offline";
-    const ageS = (Date.now() - new Date(t.last_heartbeat).getTime()) / 1000;
-    if (ageS < HEARTBEAT_FRESH_S) return "online";
-    if (ageS < HEARTBEAT_DEGRADED_S) return "degraded";
-
-    return "offline";
-};
-
 const STATE_LABELS: Record<TrustState, string> = {
     online: "Online",
     degraded: "Degraded",
@@ -740,37 +738,22 @@ const PILL_CLASSES: Record<TrustState, string> = {
 };
 const pillClass = (s: TrustState): string => PILL_CLASSES[s];
 
-const heartbeatText = (iso: string | null): string => {
-    if (!iso) return "never";
-    const sec = (Date.now() - new Date(iso).getTime()) / 1000;
-    if (sec < 60) return `${Math.max(0, Math.floor(sec))}s ago`;
-    if (sec < 3_600) return `${Math.floor(sec / 60)}m ago`;
-    if (sec < 86_400) return `${Math.floor(sec / 3_600)}h ago`;
-
-    return `${Math.floor(sec / 86_400)}d ago`;
+// Per-service dot colors for the Services column (whole literal Tailwind
+// classes so the JIT compiler emits them). unknown = "no data", not a failure.
+const SERVICE_DOT_CLASSES: Record<ServiceStatus, string> = {
+    healthy: "bg-emerald-600",
+    degraded: "bg-amber-500",
+    down: "bg-red-500",
+    unknown: "bg-gray-400"
 };
 
-// Placeholder until backend uptime tracking lands (see issue #506 follow-up:
-// historical heartbeat storage). The shape is real — 7 daily samples in
-// [0, 1] — but values are derived from the trust's current state so the
-// sparkline renders consistently across reloads.
-const UPTIME_BY_STATE: Record<TrustState, number[]> = {
-    online: [1, 1, 1, 1, 1, 1, 1],
-    degraded: [1, 1, 0.4, 1, 1, 1, 0.7],
-    offline: [1, 1, 1, 0.5, 0, 0, 0]
+// Left row-accent strip (design 1b): amber for degraded, red for offline,
+// transparent when online so the row reads calm.
+const ACCENT_CLASSES: Record<TrustState, string> = {
+    online: "bg-transparent",
+    degraded: "bg-amber-500",
+    offline: "bg-red-500"
 };
-const uptimeSvg = {
-    w: 72,
-    h: 22
-};
-const uptimeTitle = "7-day uptime (placeholder — backend tracking pending)";
-
-const STROKE_BY_STATE: Record<TrustState, string> = {
-    online: "#059669",
-    degraded: "#f59e0b",
-    offline: "#ef4444"
-};
-const uptimeStroke = (s: TrustState): string => STROKE_BY_STATE[s];
 
 const STATE_RANK: Record<TrustState, number> = {
     offline: 0,
@@ -780,8 +763,8 @@ const STATE_RANK: Record<TrustState, number> = {
 
 interface IRenderedTrust extends ITrustResponse {
     _state: TrustState;
-    _uptimePoints: string;
-    _uptimeDots: { x: number; y: number }[];
+    _services: IDerivedService[];
+    _failing: IFailingService[];
 }
 
 type SortKey = "severity" | "name" | "region" | "heartbeat" | "projects";
@@ -798,7 +781,7 @@ interface IColumn {
 
 // Header config drives both the rendered <th>s and the per-column sort handler.
 // Keys correspond to entries in `sortComparators`; columns without a key
-// (sparkline) render as inert headers.
+// (Services dots, drawer chevron) render as inert headers.
 const columns: IColumn[] = [
     {
         key: "severity",
@@ -816,6 +799,7 @@ const columns: IColumn[] = [
         key: "region",
         label: "Region"
     },
+    { label: "Services" },
     {
         key: "heartbeat",
         label: "Heartbeat"
@@ -826,12 +810,15 @@ const columns: IColumn[] = [
         align: "right",
         width: "w-20"
     },
-    { label: "7d uptime" }
+    {
+        label: "",
+        width: "w-10"
+    }
 ];
 
-// Alphabetical by name is the default — admins land on a predictable list and
-// can re-sort via the column headers when triaging.
-const sortKey = ref<SortKey>("name");
+// Severity-first is the default (design 1b): failing trusts surface on load;
+// admins can re-sort via the column headers when triaging.
+const sortKey = ref<SortKey>("severity");
 const sortDir = ref<SortDir>("asc");
 
 // Heartbeat age in seconds; null heartbeat = oldest (Infinity).
@@ -872,7 +859,7 @@ const MOBILE_SORT_OPTIONS: { key: SortKey; label: string }[] = [
 ];
 
 const activeSortLabel = computed(
-    () => MOBILE_SORT_OPTIONS.find(o => o.key === sortKey.value)?.label ?? "Name"
+    () => MOBILE_SORT_OPTIONS.find(o => o.key === sortKey.value)?.label ?? "Severity"
 );
 
 // First click on a new column sorts ascending; subsequent clicks toggle direction.
@@ -886,32 +873,37 @@ const toggleSort = (key: SortKey) => {
     }
 };
 
-// Pre-compute per-row state + sparkline geometry once per data refresh so the
-// template doesn't re-derive them on every paint (saves ~5 trustState() calls
-// per row plus the nested uptimeValues → uptimeDots → uptimePoints chain).
+// Pre-compute per-row state + derived services once per data refresh so the
+// template doesn't re-derive them on every paint (deriveTrustState itself walks
+// the service registry, so memoising here saves it running per cell).
 const sortedTrusts = computed<IRenderedTrust[]>(() => {
     if (!trusts.value) return [];
-    const arr: IRenderedTrust[] = trusts.value.map(t => {
-        const state = trustState(t);
-        const values = UPTIME_BY_STATE[state];
-        const xStep = uptimeSvg.w / (values.length - 1);
-        const dots = values.map((v, i) => ({
-            x: i * xStep,
-            y: uptimeSvg.h - v * uptimeSvg.h
-        }));
-
-        return {
-            ...t,
-            _state: state,
-            _uptimePoints: dots.map(p => `${p.x},${p.y}`).join(" "),
-            _uptimeDots: dots
-        };
-    });
+    const arr: IRenderedTrust[] = trusts.value.map(t => ({
+        ...t,
+        _state: deriveTrustState(t),
+        _services: deriveServices(t),
+        _failing: failingServices(t)
+    }));
     const cmp = SORT_COMPARATORS[sortKey.value];
     arr.sort(sortDir.value === "asc" ? cmp : (a, b) => cmp(b, a));
 
     return arr;
 });
+
+// Which trust's detail drawer is open (null = closed). The computed resolves
+// against the live SWRV list, so drawer content re-renders on every poll and
+// the drawer closes itself if the trust disappears from the roster.
+const selectedTrustId = ref<string | null>(null);
+const selectedTrust = computed<IRenderedTrust | null>(
+    () => sortedTrusts.value.find(t => t.id === selectedTrustId.value) ?? null
+);
+watch(selectedTrust, t => {
+    if (t === null) selectedTrustId.value = null;
+});
+
+const openDrawer = (id: string): void => {
+    selectedTrustId.value = id;
+};
 
 // Summary filter tiles — one per connection state (models-page idiom). `dot`/`ring`
 // are whole literal Tailwind classes so the JIT compiler emits them.
@@ -956,7 +948,7 @@ const stateCounts = computed<Record<TrustState, number>>(() => {
         degraded: 0,
         offline: 0
     };
-    for (const t of trusts.value ?? []) counts[trustState(t)]++;
+    for (const t of trusts.value ?? []) counts[deriveTrustState(t)]++;
 
     return counts;
 });
@@ -969,7 +961,7 @@ const displayedTrusts = computed<IRenderedTrust[]>(() =>
 const subtitle = computed(() => {
     if (!trusts.value) return "Loading…";
     const incidents = trusts.value.filter(t => {
-        const s = trustState(t);
+        const s = deriveTrustState(t);
 
         return s === "offline" || s === "degraded";
     }).length;
@@ -1033,7 +1025,7 @@ const radialNodes = computed<IRadialNode[]>(() => {
             region: t.region,
             last_heartbeat: t.last_heartbeat,
             project_count: t.project_count,
-            state: trustState(t),
+            state: deriveTrustState(t),
             x,
             y,
             labelX,
