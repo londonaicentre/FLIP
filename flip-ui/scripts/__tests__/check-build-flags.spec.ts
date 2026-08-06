@@ -14,7 +14,7 @@
 import { execFileSync } from "node:child_process";
 import path from "node:path";
 
-import { checkViteLocal, runCli } from "../check-build-flags.mjs";
+import { checkViteE2e, checkViteLocal, runCli } from "../check-build-flags.mjs";
 
 // Resolved once because every spec runs the script as a child process,
 // and resolving relative to __dirname keeps the test order-independent
@@ -64,6 +64,31 @@ describe("checkViteLocal", () => {
     });
 });
 
+describe("checkViteE2e", () => {
+    it("names the Cypress auth seam so the stake is visible", () => {
+        // A generic "bad config" message would invite an operator to paper
+        // over it; the refusal has to say what the flag actually does.
+        const reason = checkViteE2e();
+        expect(reason).toContain("VITE_E2E");
+        expect(reason).toContain("cypress.auth.user");
+        expect(reason).toContain("/auth/login");
+    });
+
+    it("names .env.e2e as the one legitimate home", () => {
+        expect(checkViteE2e()).toContain(".env.e2e");
+    });
+
+    it("reports mode and command when the caller knows them", () => {
+        const reason = checkViteE2e("development", "serve");
+        expect(reason).toContain("development");
+        expect(reason).toContain("serve");
+    });
+
+    it("falls back to build phrasing when mode is unknown", () => {
+        expect(checkViteE2e()).toContain("Refusing to build");
+    });
+});
+
 describe("runCli", () => {
     // runCli is the exported CLI entry. We drive it directly (rather
     // than spawning the script as a child process) so vitest's
@@ -88,6 +113,24 @@ describe("runCli", () => {
         expect(code).toBe(0);
         expect(io.exit).not.toHaveBeenCalled();
         expect(io.error).not.toHaveBeenCalled();
+    });
+
+    it("returns 1 when VITE_E2E='true' — the prebuild hooks have no mode, so it can only be a shipping build", () => {
+        const io = makeIo();
+
+        const code = runCli({ VITE_E2E: "true" }, io);
+
+        expect(code).toBe(1);
+        expect(io.exit).toHaveBeenCalledWith(1);
+        expect(io.error.mock.calls[0][0]).toContain("VITE_E2E");
+    });
+
+    it("returns 0 when VITE_E2E is not exactly 'true'", () => {
+        const io = makeIo();
+
+        expect(runCli({ VITE_E2E: "false" }, io)).toBe(0);
+        expect(runCli({ VITE_E2E: "1" }, io)).toBe(0);
+        expect(io.exit).not.toHaveBeenCalled();
     });
 
     it("returns 1 and forwards the reason to error+exit when VITE_LOCAL='true'", () => {
