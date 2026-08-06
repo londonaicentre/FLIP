@@ -100,6 +100,13 @@ class ScatterAndGatherLDM(ScatterAndGather):
         self._fatal_error_delay = fatal_error_delay
         self.model_locator_id = model_locator_id
         self.model_locator = None
+        # FedJob/recipe serialisation omits args equal to their declared defaults, but the
+        # fl-server's deploy-time configure_server can only override workflow args that EXIST in
+        # the exported config — min_clients must always be emitted or a deployed job silently runs
+        # min_clients=1 and closes every round on the fastest trust's update. The per-phase round
+        # counts are emitted too so the exported template documents them (runtime re-reads
+        # GLOBAL_ROUNDS_AE/GLOBAL_ROUNDS_DM from config.json regardless).
+        self._always_serialize_args = {"min_clients", "num_rounds_ae", "num_rounds_dm"}
 
     def start_controller(self, fl_ctx: FLContext) -> None:
         engine = fl_ctx.get_engine()

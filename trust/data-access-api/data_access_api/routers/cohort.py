@@ -12,9 +12,6 @@
 
 from typing import Any
 
-import sqlglot
-import sqlglot.errors
-import sqlglot.expressions
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -30,52 +27,12 @@ from data_access_api.utils.encryption import decrypt
 from data_access_api.utils.internal_auth import authenticate_internal_service
 from data_access_api.utils.logger import logger
 
-_READ_ONLY_STATEMENT_TYPES = (
-    sqlglot.expressions.Select,
-    sqlglot.expressions.Union,
-    sqlglot.expressions.Intersect,
-    sqlglot.expressions.Except,
-)
-
-
-def _parse_and_emit(query: str) -> str:
-    """Parse SQL with sqlglot and re-emit it to break the injection taint chain.
-
-    Using sqlglot as a parse-then-emit step ensures the string reaching the
-    database engine is generated from a validated AST, not directly from the
-    HTTP request body.  The output is semantically equivalent to the input for
-    all valid SELECT queries while also normalising trailing semicolons and
-    whitespace.
-
-    Only read-only SELECT-shaped statements (SELECT, UNION, INTERSECT, EXCEPT)
-    are permitted.  DML (INSERT, UPDATE, DELETE) and DDL (DROP, CREATE, ALTER,
-    TRUNCATE) are rejected with HTTP 400.
-
-    Args:
-        query: Raw SQL string from the caller.
-
-    Returns:
-        Re-emitted SQL string.
-
-    Raises:
-        HTTPException: 400 if the query cannot be parsed, is empty, contains
-            multiple statements, or is not a read-only SELECT statement.
-    """
-    try:
-        transpiled = sqlglot.transpile(query, read="postgres", write="postgres")
-    except sqlglot.errors.SqlglotError as exc:
-        raise HTTPException(status_code=400, detail=f"Invalid SQL: {exc}") from exc
-    if not transpiled or not transpiled[0].strip():
-        raise HTTPException(status_code=400, detail="SQL query is empty or could not be parsed")
-    if len(transpiled) > 1:
-        raise HTTPException(status_code=400, detail="Multiple SQL statements are not allowed")
-    try:
-        ast = sqlglot.parse_one(transpiled[0], dialect="postgres")
-    except sqlglot.errors.SqlglotError as exc:
-        raise HTTPException(status_code=400, detail=f"Invalid SQL: {exc}") from exc
-    if not isinstance(ast, _READ_ONLY_STATEMENT_TYPES):
-        raise HTTPException(status_code=400, detail="Only SELECT statements are allowed")
-    return transpiled[0]
+# Returned instead of row-level data when a cohort is smaller than
+# COHORT_QUERY_THRESHOLD, by both row-level routes (/cohort/dataframe and
+# /cohort/accession-ids). Deliberately fixed text: it must be identical for a
+# cohort of zero and a cohort of threshold-minus-one, or the refusal itself
+# becomes a one-row oracle for probing the database.
+_BELOW_THRESHOLD_DETAIL = "Cohort is too small for row-level data to be released."
 
 
 # Create Router
@@ -111,11 +68,9 @@ def receive_cohort_query(query_input: CohortQueryInput) -> StatisticsResponse:
     minimum_cohort_size = get_settings().COHORT_QUERY_THRESHOLD
     logger.info(f"Minimum cohort size needed to return statistics: {minimum_cohort_size}")
 
-    validate_query(query_input.query)
-
     # On the original implementation get_records was invoked within get_statistics. However, to better handle
     # exceptions and log the query execution, we separate the two calls here.
-    safe_query = _parse_and_emit(query_input.query)
+    safe_query = validate_query(query_input.query)
 
     try:
         logger.info("Executing cohort query")
@@ -130,8 +85,11 @@ def receive_cohort_query(query_input: CohortQueryInput) -> StatisticsResponse:
 
     try:
         results = get_statistics(df, query_input=query_input, threshold=minimum_cohort_size)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception:
+        # Detail is category-only: the trust forwards it to the hub, which shows it to every
+        # project member, and raw exception text from the aggregation can carry row values.
+        logger.exception("Cohort statistics aggregation failed")
+        raise HTTPException(status_code=500, detail="Statistics aggregation failed.")
 
     logger.info("Cohort query returned results")
     return results
@@ -142,10 +100,24 @@ def get_dataframe(query_input: DataframeQuery) -> dict[str, list[Any]]:
     """
     Retrieves query results in a DataFrame-like structure (column-oriented dictionary).
 
-    TODO Do not return certain columns? e.g. "accession_id", "referring_physician", etc.
+    This is the training-data path: user-supplied FL code inside the trust's
+    fl-client reaches it through ``flip.get_dataframe(...)``, so it necessarily
+    returns row-level records — a model trains on rows. The data stays inside
+    the trust; only model updates leave it.
 
-    1. Decrypt the central hub project ID.
-    2. Send the query using get_dataframe(project_id, query).
+    Because it is row-level, the cohort must clear ``COHORT_QUERY_THRESHOLD``
+    before anything is released, mirroring the suppression the ``/cohort``
+    statistics route already applies. A cohort below the threshold is refused
+    outright rather than returned truncated: there is no training value in it,
+    and releasing a handful of identifiable rows is exactly the disclosure the
+    threshold exists to prevent.
+
+    Note there is deliberately no column allowlist here. ``accession_id`` is
+    load-bearing — it is how the returned rows join to the imaging studies
+    pulled into XNAT — and shipped tutorials legitimately select ``*``, so a
+    column filter would break every FL app on the platform while a caller could
+    trivially alias around it. Column-level minimisation belongs in the cohort
+    query the project submits and in project approval, not here.
 
     Args:
         query_input (DataframeQuery): The input data for the DataFrame query.
@@ -154,22 +126,39 @@ def get_dataframe(query_input: DataframeQuery) -> dict[str, list[Any]]:
         dict[str, list[Any]]: The query results in a DataFrame-like structure.
 
     Raises:
-        HTTPException: If there is an error during the execution of the query or if the query returns too few records.
+        HTTPException: 400 if the query is invalid, 403 if the cohort is below
+            the disclosure threshold, 500 if the query fails to execute.
     """
     project_id = decrypt(query_input.encrypted_project_id)
 
     logger.info(f"Received DataFrame query for project {project_id}")
 
-    validate_query(query_input.query)
-
-    safe_query = _parse_and_emit(query_input.query)
+    safe_query = validate_query(query_input.query)
 
     try:
         df = get_records(safe_query)
-    except SQLAlchemyError as e:
-        raise HTTPException(status_code=500, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    except HTTPException:
+        # get_records already converts driver errors into category-only
+        # HTTPExceptions; re-wrapping them below would discard that work and
+        # turn every categorised 400 into an opaque 500.
+        raise
+    except SQLAlchemyError:
+        logger.exception("DataFrame query failed with a database error")
+        raise HTTPException(status_code=500, detail="Query execution failed.")
+    except Exception:
+        # Detail is category-only: the trust forwards it to the hub, which shows
+        # it to every project member, and raw exception text can carry row
+        # values and connection internals.
+        logger.exception("DataFrame query failed unexpectedly")
+        raise HTTPException(status_code=500, detail="Query execution failed.")
+
+    minimum_cohort_size = get_settings().COHORT_QUERY_THRESHOLD
+    if len(df) < minimum_cohort_size:
+        logger.warning(
+            f"Withholding row-level data for project {project_id}: "
+            f"cohort below the minimum size of {minimum_cohort_size}"
+        )
+        raise HTTPException(status_code=403, detail=_BELOW_THRESHOLD_DETAIL)
 
     return df.to_dict(orient="list")
 
@@ -184,6 +173,25 @@ def get_accession_ids(query_input: DataframeQuery) -> AccessionIdsResponse:
     endpoint used by imaging-api to fetch the accession numbers it needs to import
     studies from PACS — it does not expose row-level patient attributes.
 
+    Accession IDs are still row-level identifiers, and they are the pointer set into
+    the imaging data: they decide whose studies get pulled into XNAT, where project
+    members view them. So the cohort must clear ``COHORT_QUERY_THRESHOLD`` here just
+    as it must on ``/cohort/dataframe``, and the refusal reuses that route's fixed
+    text so a zero-row cohort and a below-threshold one are indistinguishable.
+
+    The trust applies this itself rather than relying on the hub's staging guard
+    (``flip_api.project_services.stage_project``, which refuses to stage a trust whose
+    cohort came back empty or suppressed). The hub is a separate administrative domain;
+    a trust must stay safe regardless of what the hub checked, and the hub's own
+    ``start_project_imaging_creation`` endpoint does not re-check staging.
+
+    **This is evaluated against the live cohort on every call, not once at approval.**
+    The endpoint is re-invoked by the imaging status poll roughly every 10 s while a
+    user has the project page open, and again on reimport — each time re-running the
+    cohort SQL against OMOP, which changes underneath. A project can therefore pull
+    cleanly at approval and later start refusing if its cohort shrinks below the
+    threshold. FLIP has no frozen approved-cohort artefact; see FLIP#857.
+
     Args:
         query_input (DataframeQuery): The cohort query.
 
@@ -191,36 +199,50 @@ def get_accession_ids(query_input: DataframeQuery) -> AccessionIdsResponse:
         AccessionIdsResponse: The accession IDs returned by the cohort query.
 
     Raises:
-        HTTPException: If the query is invalid, does not select an ``accession_id``
-            column, or fails during execution.
+        HTTPException: 400 if the query is invalid or does not select an
+            ``accession_id`` column, 403 if the cohort is below the disclosure
+            threshold, 500 if the query fails to execute.
     """
     project_id = decrypt(query_input.encrypted_project_id)
 
     logger.info(f"Received accession-ids query for project {project_id}")
 
-    validate_query(query_input.query)
-
-    # Parse and re-emit the caller's SQL via sqlglot to break any injection
-    # taint chain.  sqlglot also strips trailing semicolons so the inner query
-    # composes cleanly inside the outer SELECT subquery.
-    safe_inner = _parse_and_emit(query_input.query)
+    # validate_query returns the caller's SQL re-emitted from its parsed AST,
+    # which breaks any injection taint chain and strips trailing semicolons so
+    # the inner query composes cleanly inside the outer SELECT subquery.
+    safe_inner = validate_query(query_input.query)
     wrapped_query = f"SELECT accession_id FROM ({safe_inner}) AS cohort_subquery"
 
     try:
         df = get_records(wrapped_query)
     except HTTPException:
+        # get_records already converts driver errors into category-only
+        # HTTPExceptions; re-wrapping them below would discard that work and
+        # turn every categorised 400 into an opaque 500.
         raise
-    except SQLAlchemyError as e:
-        raise HTTPException(status_code=500, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    except SQLAlchemyError:
+        logger.exception("Accession-ids query failed with a database error")
+        raise HTTPException(status_code=500, detail="Query execution failed.")
+    except Exception:
+        # Detail is category-only: the trust forwards it to the hub, which shows
+        # it to every project member, and raw exception text can carry row
+        # values and connection internals.
+        logger.exception("Accession-ids query failed unexpectedly")
+        raise HTTPException(status_code=500, detail="Query execution failed.")
 
-    if "accession_id" not in df.columns:
-        raise HTTPException(
-            status_code=400,
-            detail="Cohort query did not return an 'accession_id' column.",
+    minimum_cohort_size = get_settings().COHORT_QUERY_THRESHOLD
+    if len(df) < minimum_cohort_size:
+        logger.warning(
+            f"Withholding accession IDs for project {project_id}: "
+            f"cohort below the minimum size of {minimum_cohort_size}"
         )
+        raise HTTPException(status_code=403, detail=_BELOW_THRESHOLD_DETAIL)
 
+    # No "did the DataFrame come back with accession_id?" guard here: it could never fire.
+    # The wrapper above selects the column explicitly, so a cohort that does not project it
+    # fails inside get_records with UndefinedColumn — surfacing as a category 400 through the
+    # `except HTTPException: raise` branch, before any DataFrame exists. Pinned by
+    # tests/integration/test_cohort_endpoint.py::test_accession_ids_missing_column_surfaces_get_records_400.
     accession_ids = [str(value) for value in df["accession_id"].tolist()]
     logger.info(f"accession-ids query for project {project_id} returned {len(accession_ids)} ids")
     return AccessionIdsResponse(accession_ids=accession_ids)

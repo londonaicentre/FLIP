@@ -461,6 +461,51 @@ def test_update_model_status_no_audit_when_status_is_unchanged(mock_audit):
     mock_audit.assert_not_called()
 
 
+@pytest.mark.parametrize(
+    "late_status",
+    [
+        ModelStatus.PREPARED,
+        ModelStatus.RUNNING,
+        ModelStatus.ERROR,
+        ModelStatus.RESULTS_UPLOADED,
+        ModelStatus.RESULTS_UPLOAD_FAILED,
+    ],
+)
+@patch("flip_api.model_services.services.model_service.fl_scheduler_service")
+@patch("flip_api.model_services.services.model_service.audit_model_action")
+def test_update_model_status_ignores_late_transitions_when_stopped(mock_audit, mock_scheduler, late_status):
+    """A user stop is final (#787): late fl-server callbacks (PREPARED/RUNNING after an
+    abort raced the prepare, or END_RUN results) and the prepare-failure ERROR must not overwrite
+    STOPPED — a stopped model expects no results.
+    """
+    session = MagicMock()
+    mock_model = MagicMock(status=ModelStatus.STOPPED)
+    session.get.return_value = mock_model
+
+    result = update_model_status(uuid4(), late_status, session)
+
+    assert result == ModelStatus.STOPPED
+    assert mock_model.status == ModelStatus.STOPPED
+    session.commit.assert_not_called()
+    mock_audit.assert_not_called()
+    mock_scheduler.update_fl_scheduler.assert_not_called()
+
+
+@patch("flip_api.model_services.services.model_service.fl_scheduler_service")
+@patch("flip_api.model_services.services.model_service.audit_model_action")
+def test_update_model_status_allows_reinitiate_when_stopped(mock_audit, mock_scheduler):
+    """STOPPED → INITIATED stays allowed: a stopped model can be queued for training again."""
+    session = MagicMock()
+    mock_model = MagicMock(status=ModelStatus.STOPPED)
+    session.get.return_value = mock_model
+
+    result = update_model_status(uuid4(), ModelStatus.INITIATED, session)
+
+    assert result == ModelStatus.INITIATED
+    assert mock_model.status == ModelStatus.INITIATED
+    session.commit.assert_called()
+
+
 # ---------------------------------------------------------------------------
 # delete_models — the soft branch (ensure_deletion=False with no rows) returns
 # 0 instead of raising. Belt-and-braces for callers that loop over projects.

@@ -168,11 +168,11 @@ The evaluator returns **aggregate** (cohort-level) per-lesion AUROC only, collec
 {
     "site-1": {
         "arkplus_pretrained": {
-            "auroc_Effusion": 0.84,
-            "auroc_Consolidation": 0.87,
-            "auroc_Infiltration": 0.85,
-            "auroc_Lung Nodule or Mass": 0.94,
-            "auroc_Pneumothorax": 0.64
+            "auroc_Effusion": 0.998,
+            "auroc_Consolidation": 0.989,
+            "auroc_Infiltration": 0.863,
+            "auroc_Lung Nodule or Mass": 0.970,
+            "auroc_Pneumothorax": 0.971
         }
     },
     "site-2": {
@@ -181,7 +181,8 @@ The evaluator returns **aggregate** (cohort-level) per-lesion AUROC only, collec
 }
 ```
 
-(Values above are illustrative, from a sample local run.)
+(Values above are **real measured scores**, not a fabricated example: the pretrained checkpoint over one
+hold-out cohort. Treat them as one cohort's result, not a target to reproduce.)
 
 ### Fields
 

@@ -198,6 +198,32 @@ def test_model_without_run_trusts_returns_empty_trusts(
     assert row["trusts"] == []
 
 
+def test_rows_carry_creation_timestamp_and_list_newest_first(
+    client: TestClient, session, project_factory, model_factory
+):
+    """Each row exposes the model's creation timestamp and rows come newest-first."""
+    user_id = uuid4()
+    project = _add_project(session, project_factory, owner_id=user_id, name="Ordered")
+    older = model_factory.build(
+        project_id=project.id, owner_id=user_id, name="older", deleted=False,
+        status=ModelStatus.PREPARED, creation_timestamp=datetime(2026, 1, 1, 12, 0, 0),
+    )
+    newer = model_factory.build(
+        project_id=project.id, owner_id=user_id, name="newer", deleted=False,
+        status=ModelStatus.PREPARED, creation_timestamp=datetime(2026, 6, 1, 12, 0, 0),
+    )
+    session.add(older)
+    session.add(newer)
+    session.commit()
+
+    override_verify_token_as(user_id)
+    rows = [r for r in client.get(MODELS_URL).json()["data"] if r["id"] in {str(older.id), str(newer.id)}]
+
+    assert [r["name"] for r in rows] == ["newer", "older"]
+    assert rows[0]["creationTimestamp"] == "2026-06-01T12:00:00"
+    assert rows[1]["creationTimestamp"] == "2026-01-01T12:00:00"
+
+
 def test_status_filter_narrows_results(client: TestClient, session, project_factory, model_factory):
     """``?status=`` returns only models in that lifecycle state."""
     user_id = uuid4()

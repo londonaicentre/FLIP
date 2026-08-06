@@ -8,36 +8,30 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-#
 
-name: Trust - XNAT Anonymization Script CI
-
-on:
-  push:
-    branches: [main, develop]
-    paths:
-      - "trust/xnat/xnat/config/anon_script.das"
-      - "trust/xnat/tests/**"
-      - ".github/workflows/test_trust_xnat_anon.yml"
-  pull_request:
-    branches: [main, develop]
-    paths:
-      - "trust/xnat/xnat/config/anon_script.das"
-      - "trust/xnat/tests/**"
-      - ".github/workflows/test_trust_xnat_anon.yml"
+name: Test Local Trust Playbook
 
 permissions:
   contents: read
 
-jobs:
-  xnat-anon-tests:
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: ./trust/xnat/tests
+on:
+  pull_request:
+    paths:
+      - "deploy/providers/local/**"
+      - ".github/workflows/test_local_trust_playbook.yml"
+  push:
+    branches: [develop, main]
+    paths:
+      - "deploy/providers/local/**"
+      - ".github/workflows/test_local_trust_playbook.yml"
+  workflow_dispatch:
 
+jobs:
+  python-tests:
+    name: Playbook regression tests
+    runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
+      - name: Checkout
         uses: actions/checkout@v5
 
       - name: Set up Python
@@ -48,5 +42,6 @@ jobs:
       - name: Install uv
         run: pip install uv
 
-      - name: Run anonymization tests
-        run: make unit_test
+      - name: Run playbook regression tests
+        working-directory: deploy/providers/local
+        run: uv run --no-project --with pytest --with pyyaml pytest tests/ -v
