@@ -303,6 +303,77 @@ class TestFlipLocalDpMod:
         # Magnitude survives: noise has not swamped the signal.
         assert np.linalg.norm(released_update) == pytest.approx(np.linalg.norm(raw_update), rel=0.2)
 
+    def test_non_array_records_survive_privatisation(self):
+        """Only the ArrayRecord is replaced; metrics (num-examples!) and config records must survive."""
+        msg = _message({"w": np.array([1.0], dtype=np.float32)})
+
+        reply = flip_local_dp_mod(msg, _context(), _call_next({"w": np.array([2.0], dtype=np.float32)}))
+
+        assert reply.content["metrics"]["num-examples"] == 8
+        assert reply.content["config"]["site"] == "Trust_1"
+
+    def test_clipping_is_joint_across_float_arrays(self):
+        """The update is clipped to ONE L2 norm over all float arrays, with counters interleaved.
+
+        Per-array clipping would change the sensitivity bound (total norm sqrt(k), not C) and
+        silently invalidate the (epsilon, delta) accounting; a counter between the floats also
+        pins the index alignment between ``float_indices`` and the baselines.
+        """
+        global_arrays = {
+            "a": np.zeros(2, dtype=np.float32),
+            "counter": np.array(7, dtype=np.int64),
+            "b": np.zeros(2, dtype=np.float32),
+        }
+        trained = {
+            "a": np.array([3.0, 0.0], dtype=np.float32),
+            "counter": np.array(9, dtype=np.int64),
+            "b": np.array([0.0, 4.0], dtype=np.float32),
+        }  # joint update norm 5.0
+
+        released = _released(global_arrays, trained, {**NOISELESS, CONFIG_CLIPPING_NORM: 1.0})
+
+        joint = np.concatenate([released["a"], released["b"]])
+        assert np.linalg.norm(joint) == pytest.approx(1.0, rel=1e-5)
+        np.testing.assert_allclose(released["a"], [0.6, 0.0], rtol=1e-5)
+        np.testing.assert_allclose(released["b"], [0.0, 0.8], rtol=1e-5)
+        assert released["counter"] == 9
+
+    def test_rejects_a_reply_with_the_same_keys_in_a_different_order(self):
+        """Alignment to the global model is positional; set-equality would difference a against b."""
+        msg = _message({"a": np.array([1.0], dtype=np.float32), "b": np.array([2.0], dtype=np.float32)})
+        reordered = {"b": np.array([2.0], dtype=np.float32), "a": np.array([1.0], dtype=np.float32)}
+
+        with pytest.raises(ValueError, match="same keys"):
+            flip_local_dp_mod(msg, _context(), _call_next(reordered))
+
+    def test_malformed_message_fails_before_training_runs(self):
+        """The docstring's promise: a malformed message must not cost a training epoch."""
+        content = RecordDict(
+            {
+                "arrays": _record({"w": np.array([1.0], dtype=np.float32)}),
+                "extra": _record({"w": np.array([1.0], dtype=np.float32)}),
+            }
+        )
+        msg = Message(content=content, dst_node_id=1, message_type=MessageType.TRAIN)
+        trained = False
+
+        def call_next(m: Message, c: Context) -> Message:
+            nonlocal trained
+            trained = True
+            return _reply_with({"w": np.array([1.0], dtype=np.float32)}, m)
+
+        with pytest.raises(ValueError, match="message from the ServerApp"):
+            flip_local_dp_mod(msg, _context(), call_next)
+        assert not trained
+
+    def test_rejects_an_update_carrying_unclassifiable_dtypes(self):
+        """A bool mask (or complex weights) may be learned; only integer counters may pass raw."""
+        global_arrays = {"w": np.array([0.0], dtype=np.float32), "mask": np.array([True, False])}
+        trained = {"w": np.array([1.0], dtype=np.float32), "mask": np.array([True, True])}
+
+        with pytest.raises(ValueError, match="cannot classify"):
+            _released(global_arrays, trained)
+
     def test_rejects_a_reply_carrying_several_array_records(self):
         """Ambiguity must fail loudly — silently skipping DP would release a raw update."""
         msg = _message({"w": np.array([1.0], dtype=np.float32)})

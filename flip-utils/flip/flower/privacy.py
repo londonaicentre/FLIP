@@ -54,7 +54,7 @@ from __future__ import annotations
 import math
 from collections.abc import Mapping
 from dataclasses import dataclass
-from logging import INFO
+from logging import INFO, WARNING
 from typing import Any
 
 import numpy as np
@@ -180,16 +180,26 @@ def flip_local_dp_mod(msg: Message, context: Context, call_next: ClientAppCallab
             mechanism would release a raw update from the trust.
     """
     # ``@app.train(mods=[...])`` already scopes this to training, but the guard makes the scope
-    # structural for an app that instead registers the mod on the whole ClientApp: evaluation
-    # replies carry no update to privatise, matching the NVFLARE filter's "train" task scope.
-    # Message types are "<category>" or "<category>.<action>", so compare the category alone.
+    # structural for an app that instead registers the mod on the whole ClientApp: only training
+    # results are privatised, matching the NVFLARE filter's "train" task scope. Note that a query
+    # reply CAN carry an ArrayRecord — an app that serves the model over query must not rely on
+    # this mod to privatise it. Message types are "<category>" or "<category>.<action>", so
+    # compare the category alone.
     if msg.metadata.message_type.split(".")[0] != MessageType.TRAIN:
         return call_next(msg, context)
 
     config = LocalDpConfig.from_run_config(context.run_config)
     if not config.enabled:
-        log(INFO, "FLIP local DP is off (%s=false): the update is released unprivatised.", CONFIG_ENABLED)
+        # WARNING, not INFO: a raw update leaving the trust is the event an operator audits for.
+        log(WARNING, "FLIP local DP is off (%s=false): the update is released unprivatised.", CONFIG_ENABLED)
         return call_next(msg, context)
+    if config.noise_stddev == 0.0:
+        log(
+            WARNING,
+            "FLIP local DP noise stddev is 0 (%s=0): the update will be clipped but NOT noised — "
+            "clipping alone carries no (epsilon, delta) guarantee.",
+            CONFIG_SENSITIVITY,
+        )
 
     # Read the global arrays before running the app so a malformed message fails before a training
     # epoch is spent on it. The record is materialised to numpy only after the reply arrives, so
@@ -218,8 +228,23 @@ def flip_local_dp_mod(msg: Message, context: Context, call_next: ClientAppCallab
 
     # Integer entries (BatchNorm's num_batches_tracked and friends) are step counters, not learned
     # parameters. They are excluded because Flower's in-place float scaling cannot write back into
-    # an integer array once clipping engages.
-    float_indices = [i for i, array in enumerate(reply_arrays) if np.issubdtype(array.dtype, np.floating)]
+    # an integer array once clipping engages. Any OTHER non-float dtype (bool masks, complex
+    # weights, ...) has no counter precedent — it may carry learned values, so passing it through
+    # would be a silent unprivatised release: fail loudly instead. (Integer-quantised weights would
+    # also pass the integer test; dtype alone cannot tell them from counters — see the docs.)
+    float_indices: list[int] = []
+    unclassifiable: dict[str, str] = {}
+    for i, array in enumerate(reply_arrays):
+        if np.issubdtype(array.dtype, np.floating):
+            float_indices.append(i)
+        elif not np.issubdtype(array.dtype, np.integer):
+            unclassifiable[reply_keys[i]] = str(array.dtype)
+    if unclassifiable:
+        raise ValueError(
+            "FLIP local DP privatises floating-point arrays and passes through integer step "
+            f"counters, but the update carries arrays it cannot classify ({unclassifiable}); "
+            "they may hold learned values, so the update is not being released."
+        )
     if not float_indices:
         raise ValueError(
             "FLIP local DP found no floating-point arrays in the update, so there is nothing it "
@@ -236,18 +261,17 @@ def flip_local_dp_mod(msg: Message, context: Context, call_next: ClientAppCallab
     for position, index in enumerate(float_indices):
         reply_arrays[index] = updates[position]
 
+    reply.content[reply_key] = ArrayRecord(
+        dict(zip(reply_keys, (Array(np.asarray(v)) for v in reply_arrays), strict=True))
+    )
     log(
         INFO,
         "FLIP local DP: update clipped to L2 norm %.4f and Gaussian noise of stddev %.3e added "
-        "across %d array(s); %d non-floating array(s) passed through.",
+        "across %d array(s); %d integer array(s) passed through.",
         config.clipping_norm,
         config.noise_stddev,
         len(float_indices),
         len(reply_arrays) - len(float_indices),
-    )
-
-    reply.content[reply_key] = ArrayRecord(
-        dict(zip(reply_keys, (Array(np.asarray(v)) for v in reply_arrays), strict=True))
     )
     return reply
 
