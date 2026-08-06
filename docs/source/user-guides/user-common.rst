@@ -390,9 +390,13 @@ Upload Files
 
    .. warning::
 
-      **Your Python source is not analysed for malicious code.** ``.py`` files are checked for type
-      and released like any other file, then executed as-is on every participating trust. Only upload
-      code you have written or reviewed yourself, and treat code from third parties as untrusted.
+      **Your Python source is not blocked on the basis of what it does.** ``.py`` files are checked
+      for type and released like any other file, then executed as-is on every participating trust.
+      A non-blocking scan flags common risky patterns (``subprocess``, ``os.system``, ``eval``,
+      hardcoded credentials) for whoever reviews the project before it starts training, but this is
+      an advisory signal, not a gate — it does not stop obfuscated or otherwise-undetected code from
+      running. Only upload code you have written or reviewed yourself, and treat code from third
+      parties as untrusted.
 
    Only recognised file types may be uploaded (by default ``.py``, ``.json``, ``.toml``, ``.pt``,
    ``.pth``, ``.pkl``, ``.txt``, ``.yaml``, ``.yml`` and ``.safetensors``). Anything else — including

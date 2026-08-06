@@ -44,6 +44,7 @@ dependencies = [
     "tornado>=6.5.2",
     "urllib3>=2.7.0",
     "picklescan>=1.0.5",
+    "bandit>=1.7.10",
 ]
 
 [project.scripts]

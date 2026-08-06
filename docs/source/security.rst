@@ -149,9 +149,19 @@ the reverse.
 
 **Researcher-supplied training code runs on trust hardware with access to that trust's
 data.** That is the nature of federated learning, and it is why the surrounding controls
-matter. Model files are checked before use; the container that runs researcher code is
-hardened; FL clients deliberately hold **no Central Hub credentials**, so compromising
-one yields no access to the wider platform.
+matter. Model files are checked before use — Python source additionally gets a
+non-blocking static-analysis pass flagging common risky patterns — and the container
+that runs researcher code is hardened; FL clients deliberately hold **no Central Hub
+credentials**, so compromising one yields no access to the wider platform.
+
+**Arbitrary Python logic in uploaded training code is not sandboxed at runtime.** The
+static-analysis scan above is advisory, not a gate: it does not stop obfuscated or
+otherwise-undetected code from running. The accepted control for this class of risk is
+uploader self-review — supported by RBAC on who can upload — rather than a platform-enforced
+review process; there is no GitHub-review step in the upload path today. This is a
+deliberate decision (weighed against runtime enforcement options — an import allowlist,
+RestrictedPython, OS-level sandboxing — each rejected as either easily bypassed or a poor
+fit for legitimate ML code), not an oversight.
 
 **FL traffic is mutually authenticated.** Both supported backends — NVIDIA FLARE and
 Flower — run over TLS with per-participant certificates issued during network

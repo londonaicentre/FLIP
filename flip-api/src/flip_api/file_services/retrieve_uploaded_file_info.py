@@ -75,6 +75,7 @@ def _serialize_files(files: list[UploadedFiles]) -> list[dict[str, Any]]:
             "modelId": str(file.model_id) if file.model_id else None,
             "created": file.created.isoformat() if hasattr(file, "created") and file.created else None,
             "modified": file.modified.isoformat() if hasattr(file, "modified") and file.modified else None,
+            "banditFindings": file.bandit_findings,
         }
         for file in files
     ]

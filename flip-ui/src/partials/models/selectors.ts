@@ -19,5 +19,6 @@ export const ModelUploadModal = {
     scanningStatusLabel: "[data-test=file-upload-status-scanning]",
     completedStatusLabel: "[data-test=file-upload-status-completed]",
     errorStatusLabel: "[data-test=file-upload-status-error]",
-    infectedStatusLabel: "[data-test=file-upload-status-infected]"
+    infectedStatusLabel: "[data-test=file-upload-status-infected]",
+    banditFindingsIndicator: "[data-test=file-bandit-findings-indicator]"
 };
