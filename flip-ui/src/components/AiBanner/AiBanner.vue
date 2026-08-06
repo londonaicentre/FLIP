@@ -23,8 +23,8 @@
                     </div>
                     <div class="flex items-center flex-shrink-0 order-3 w-full mt-2 sm:order-2 sm:mt-0 sm:w-auto">
                         <a
-                            v-if="link"
-                            :href="link"
+                            v-if="safeLink"
+                            :href="safeLink"
                             target="_blank"
                             data-test="banner-link"
                             class="flex items-center justify-center px-4 py-2 text-white hover:text-primary-200 grow"
@@ -42,18 +42,24 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from "vue";
+import { computed, ref } from "vue";
 import { directive as vTippy } from "vue-tippy";
+
+import { safeExternalUrl } from "@/utils/helpers";
 
 interface IBannerProps {
     message: string;
     link?: string;
 }
 
-withDefaults(
+const props = withDefaults(
     defineProps<IBannerProps>(),
     { link: undefined }
 );
+
+// Gate the anchor itself, not just its href: a link with a rejected scheme should drop the
+// "Learn more" affordance entirely rather than render as an anchor that silently does nothing.
+const safeLink = computed(() => safeExternalUrl(props.link));
 
 const showBanner = ref(true);
 

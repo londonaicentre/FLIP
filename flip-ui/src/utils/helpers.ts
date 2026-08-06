@@ -124,6 +124,29 @@ export const capatilizeString = (value: string): string => {
 export const getRandomId = (): string => crypto.randomUUID();
 
 
+/**
+ * Return `url` only when it is an absolute http(s) URL, otherwise `undefined`.
+ *
+ * The site banner's link is admin-supplied and rendered into an `href` that every user sees, so a
+ * `javascript:` URL would execute in the visitor's session. The scheme is allow-listed rather than
+ * denied: a prefix check is defeated by leading whitespace (`\tjavascript:`) and by case
+ * (`JaVaScRiPt:`), whereas neither parses to an allowed protocol.
+ *
+ * Parsing against `window.location.origin` means a relative path resolves and is accepted; the
+ * banner is expected to hold absolute links, but a relative one is harmless.
+ */
+export const safeExternalUrl = (url?: string | null): string | undefined => {
+    if (!url) return undefined;
+
+    try {
+        const parsed = new URL(url, window.location.origin);
+
+        return ["http:", "https:"].includes(parsed.protocol) ? url : undefined;
+    } catch {
+        return undefined;
+    }
+};
+
 export const getInitials = (name: string): string => {
     const rgx = /(\p{L}{1})\p{L}+/gu;
 

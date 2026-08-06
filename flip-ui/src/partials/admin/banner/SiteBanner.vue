@@ -61,11 +61,11 @@
                                             <p class="ml-3 font-medium text-white" v-text="values.message" />
                                         </div>
                                         <div
-                                            v-if="values.link"
+                                            v-if="safeExternalUrl(values.link)"
                                             class="flex-shrink-0 order-3 w-full mt-2 sm:order-2 sm:mt-0 sm:w-auto"
                                         >
                                             <a
-                                                :href="values.link"
+                                                :href="safeExternalUrl(values.link)"
                                                 target="_blank"
                                                 class="flex items-center justify-center px-4 py-2 text-white group"
                                             >
@@ -156,6 +156,7 @@ import AiLoader from "@/components/AiLoader/AiLoader.vue";
 import AiSkeleton from "@/components/AiSkeleton/AiSkeleton.vue";
 import AiTextArea from "@/components/AiTextArea/AiTextArea.vue";
 import { ISiteBanner, useSiteDetailsStore } from "@/store/siteDetailsStore";
+import { safeExternalUrl } from "@/utils/helpers";
 
 const details = useSiteDetailsStore();
 const loadingButton = ref(false);

@@ -25,4 +25,28 @@ describe("AiBanner", () => {
 
         expect(comp.element).toMatchSnapshot();
     });
+
+    test("renders the link when the scheme is http(s)", () => {
+        const comp = mountComponent(AiBanner, {
+            props: {
+                message: "Some cool message",
+                link: "https://example.nhs.uk"
+            }
+        });
+
+        expect(comp.find("[data-test=\"banner-link\"]").attributes("href")).toBe("https://example.nhs.uk");
+    });
+
+    test("drops the link entirely when the scheme is not http(s)", () => {
+        // A javascript: href would execute in every user's session. The affordance should
+        // disappear rather than render as an anchor that silently does nothing.
+        const comp = mountComponent(AiBanner, {
+            props: {
+                message: "Some cool message",
+                link: "javascript:alert(1)"
+            }
+        });
+
+        expect(comp.find("[data-test=\"banner-link\"]").exists()).toBe(false);
+    });
 });
