@@ -10,7 +10,9 @@
 # limitations under the License.
 #
 
+import os
 import stat
+from unittest.mock import patch
 
 from flip_api.scripts.env_utils import get_json_value, write_env_file
 
@@ -44,16 +46,22 @@ class TestWriteEnvFile:
 
         assert stat.S_IMODE(target.stat().st_mode) == 0o600
 
-    def test_tightens_an_existing_world_readable_file(self, tmp_path):
-        """The chmod must follow the write, not just apply at creation.
-
-        Kit files are usually created by another path and only *updated* here, so a file that
-        already exists as 0644 has to be tightened rather than left as the umask made it.
-        """
+    def test_tightens_an_existing_world_readable_file_before_replacing_its_contents(self, tmp_path):
+        """Fresh credentials must not be written while the old permissive mode still applies."""
         target = tmp_path / ".env.test"
-        target.write_text("EXISTING=1\n")
+        existing_contents = "EXISTING=1\n"
+        target.write_text(existing_contents)
         target.chmod(0o644)
 
-        write_env_file(target, ["EXISTING=1", "SECRET=value"])
+        real_fchmod = os.fchmod
+
+        def assert_mode_is_tightened_before_write(fd, mode):
+            # ftruncate and the new write happen after fchmod, so this must still be the old
+            # content. Reversing the order would expose SECRET=value through mode 0644.
+            assert target.read_text() == existing_contents
+            real_fchmod(fd, mode)
+
+        with patch("flip_api.scripts.env_utils.os.fchmod", side_effect=assert_mode_is_tightened_before_write):
+            write_env_file(target, ["EXISTING=1", "SECRET=value"])
 
         assert stat.S_IMODE(target.stat().st_mode) == 0o600
