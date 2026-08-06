@@ -573,6 +573,12 @@ The Connection Status page shows the live state of the federation. Each particip
 
 The Services column shows one status dot per container. Clicking a Trust row opens a detail drawer listing each container's status, running version and probe response time — so an administrator can see *why* a Trust is degraded without access to the Trust's own network. A Trust that has not reported container health (or whose report has gone stale) shows grey "No data" markers and falls back to heartbeat-only state.
 
+.. figure:: ../assets/flip/connection-status-drawer.png
+   :width: 600
+   :align: center
+
+   The Trust detail drawer: this Trust is Degraded because its XNAT is unreachable.
+
 The FL nets card reports the FL client-to-server connectivity for each net — that is, whether each Trust's FL client is connected. No training requests can be sent to a Trust whose FL client is offline.
 
 .. figure:: ../assets/flip/fl-status.gif

@@ -573,6 +573,10 @@ describe("ConnectionStatus", () => {
         await wrapper.vm.$nextTick();
 
         expect(wrapper.findAll("th")).toHaveLength(7);
+        // Pinned column widths keep Region/Services/Heartbeat from being squeezed
+        // by the w-full Trust column (~ design grid 148/150/104px).
+        expect(wrapper.find("[data-test='sort-header-region']").classes()).toContain("w-36");
+        expect(wrapper.find("[data-test='sort-header-heartbeat']").classes()).toContain("w-28");
         const row = wrapper.find("[data-test='trust-row']");
         expect(row.findAll("td")).toHaveLength(7);
         // The placeholder 7d-uptime sparkline is gone (replaced by real service dots).

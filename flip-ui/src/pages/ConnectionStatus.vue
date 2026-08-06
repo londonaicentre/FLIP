@@ -329,7 +329,7 @@
                                             </span>
                                         </div>
                                     </td>
-                                    <td class="px-4 py-4 align-middle text-base text-gray-600 dark:text-gray-300">
+                                    <td class="px-4 py-4 align-middle text-base text-gray-600 dark:text-gray-300 whitespace-nowrap">
                                         {{ t.region ?? "—" }}
                                     </td>
                                     <td class="px-4 py-4 align-middle" data-test="trust-services">
@@ -794,12 +794,19 @@ const columns: IColumn[] = [
     },
     {
         key: "region",
-        label: "Region"
+        label: "Region",
+        // Pinned widths (~ the design grid's 148/150/104px) stop the w-full Trust
+        // column from squeezing these to their longest word.
+        width: "w-36"
     },
-    { label: "Services" },
+    {
+        label: "Services",
+        width: "w-36"
+    },
     {
         key: "heartbeat",
-        label: "Heartbeat"
+        label: "Heartbeat",
+        width: "w-28"
     },
     {
         key: "projects",
