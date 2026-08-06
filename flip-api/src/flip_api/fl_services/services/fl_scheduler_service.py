@@ -556,9 +556,29 @@ def check_for_queued_jobs(scheduler_id: UUID, session: Session) -> IJobResponse 
         job.started = datetime.utcnow()
 
         job_trust_ids = [t.id for t in job.trusts]
-        # Validate trusts
+        # Validate trusts. A job that references trusts not approved for its model can never run,
+        # so retire it here rather than raising: the raise left the job QUEUED (the status write
+        # above rolls back with the transaction), and because this query always picks the
+        # globally-earliest queued job, the same unrunnable job was re-selected on every tick and
+        # blocked every job behind it, on every net, indefinitely (FLIP#894). initiate_training now
+        # rejects these at the boundary, so reaching this branch means a job predating that check
+        # or one whose model approvals changed after it was queued.
         if not validate_trust_ids(job.model_id, job_trust_ids, session):
-            raise Exception(f"Job {job.id} references trust ids not approved for model {job.model_id}")
+            logger.error(
+                f"Job {job.id} references trust ids not approved for model {job.model_id}; "
+                "retiring it so it cannot block the queue"
+            )
+            job.status = JobStatus.DELETED
+            update_model_status(job.model_id, ModelStatus.ERROR, session)
+            add_log(
+                job.model_id,
+                "Training could not start: the selected trusts are not approved for this model.",
+                session,
+                success=False,
+            )
+            session.commit()
+            revert_scheduler_pickup(scheduler_id, session)
+            return None
 
         # Assign job to scheduler
         scheduler = session.get(FLScheduler, scheduler_id)

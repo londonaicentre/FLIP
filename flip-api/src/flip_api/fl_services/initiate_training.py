@@ -23,7 +23,7 @@ from flip_api.domain.interfaces.fl import IInitiateTrainingInputPayload
 from flip_api.domain.schemas.status import ModelStatus
 from flip_api.fl_services.services.fl_scheduler_service import log_queue_positions
 from flip_api.fl_services.services.fl_service import add_fl_job
-from flip_api.model_services.services.model_service import add_log, update_model_status
+from flip_api.model_services.services.model_service import add_log, update_model_status, validate_trust_ids
 from flip_api.utils.constants import SERVICE_UNAVAILABLE_MESSAGE
 from flip_api.utils.logger import logger
 from flip_api.utils.site_manager import is_deployment_mode_enabled
@@ -77,6 +77,16 @@ def initiate_training(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Unknown trust(s): {missing}",
+        )
+
+    # Existing is not the same as approved. Without this the request is accepted and the job only
+    # fails later, in the scheduler — where it used to sit at the head of a shared queue and block
+    # FL training for every project on every net (FLIP#894). Reject at the boundary so the caller
+    # gets a 400 in hand and nothing is enqueued.
+    if not validate_trust_ids(model_id, list(payload.trust_ids), db):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="One or more of the selected trusts are not approved for this model",
         )
 
     try:

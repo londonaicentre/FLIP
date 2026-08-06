@@ -460,6 +460,44 @@ def test_check_for_queued_jobs_success(fake_session, scheduler_id, model_id):
     fake_session.commit.assert_called()
 
 
+def test_check_for_queued_jobs_retires_a_job_with_unapproved_trusts(fake_session, scheduler_id, model_id):
+    """A job that can never run must be retired, not re-raised.
+
+    It previously raised a bare Exception, which check_for_queued_jobs does not catch (its only
+    handler is SQLAlchemyError). The status write above the raise rolled back with the
+    transaction, so the job went back to QUEUED — and because the dequeue always picks the
+    globally-earliest queued job, the same unrunnable job was re-selected on every tick and
+    blocked FL training on every net indefinitely (FLIP#894).
+    """
+    trust = MagicMock(id=uuid4())
+    job = MagicMock()
+    job.id = uuid4()
+    job.model_id = model_id
+    job.trusts = [trust]
+
+    fake_session.exec.side_effect = [MagicMock(first=MagicMock(return_value=job))]
+
+    with (
+        patch("flip_api.fl_services.services.fl_scheduler_service.validate_trust_ids", return_value=False),
+        patch("flip_api.fl_services.services.fl_scheduler_service.update_model_status") as mock_status,
+        patch("flip_api.fl_services.services.fl_scheduler_service.add_log") as mock_add_log,
+        patch("flip_api.fl_services.services.fl_scheduler_service.revert_scheduler_pickup") as mock_revert,
+    ):
+        result = fl_scheduler_service.check_for_queued_jobs(scheduler_id, fake_session)
+
+    # No job dispatched, and the tick ends cleanly rather than propagating.
+    assert result is None
+    # Retired, so the next tick reaches the job behind it.
+    assert job.status == JobStatus.DELETED
+    # The retirement is committed — an uncommitted status change would roll back and the job
+    # would be picked again, which is the whole bug.
+    fake_session.commit.assert_called()
+    mock_status.assert_called_once_with(model_id, ModelStatus.ERROR, fake_session)
+    # The researcher needs to know why their training never started.
+    assert mock_add_log.call_args.kwargs["success"] is False
+    mock_revert.assert_called_once()
+
+
 def test_check_for_queued_jobs_none(fake_session, scheduler_id):
     fake_session.exec.return_value.first.return_value = None
 
