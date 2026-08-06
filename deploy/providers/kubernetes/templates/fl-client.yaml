@@ -44,18 +44,6 @@ data:
 {{- if eq .Values.flBackend "flower" }}
   SUPERNODE_NAME: {{ .Values.trustName | quote }}
 {{- end }}
-{{- if eq .Values.flBackend "nvflare" }}
-  # Site-enforced privacy policy (FLIP#851) — read by `python -m flip.nvflare.site_policy`
-  # in the container command below. Empty string == unset == no site policy.
-  FL_SITE_PRIVACY_POLICY: {{ .Values.flClient.nvflare.sitePrivacy.policy | quote }}
-  FL_SITE_PRIVACY_PERCENTILE: {{ .Values.flClient.nvflare.sitePrivacy.percentile | quote }}
-  FL_SITE_PRIVACY_GAMMA: {{ .Values.flClient.nvflare.sitePrivacy.gamma | quote }}
-  FL_SITE_PRIVACY_SVT_FRACTION: {{ .Values.flClient.nvflare.sitePrivacy.svtFraction | quote }}
-  FL_SITE_PRIVACY_SVT_EPSILON: {{ .Values.flClient.nvflare.sitePrivacy.svtEpsilon | quote }}
-  FL_SITE_PRIVACY_SVT_NOISE_VAR: {{ .Values.flClient.nvflare.sitePrivacy.svtNoiseVar | quote }}
-  FL_SITE_PRIVACY_SVT_GAMMA: {{ .Values.flClient.nvflare.sitePrivacy.svtGamma | quote }}
-  FL_SITE_PRIVACY_SVT_TAU: {{ .Values.flClient.nvflare.sitePrivacy.svtTau | quote }}
-{{- end }}
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -209,6 +197,16 @@ spec:
           env:
             - name: UPLOADED_FEDERATED_DATA_BUCKET
               value: {{ .Values.uploadedFederatedDataBucket | default "" | quote }}
+            {{- if eq .Values.flBackend "nvflare" }}
+            # Keep policy values in the pod template, rather than only the ConfigMap,
+            # so a Helm value change triggers a Deployment rollout.
+            - name: FL_SITE_PRIVACY_POLICY
+              value: {{ .Values.flClient.nvflare.sitePrivacy.policy | quote }}
+            - name: FL_SITE_PRIVACY_PERCENTILE
+              value: {{ .Values.flClient.nvflare.sitePrivacy.percentile | quote }}
+            - name: FL_SITE_PRIVACY_GAMMA
+              value: {{ .Values.flClient.nvflare.sitePrivacy.gamma | quote }}
+            {{- end }}
             {{- if .Values.flClient.gpu.enabled }}
             - name: CUDA_VISIBLE_DEVICES
               value: "0"

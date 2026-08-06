@@ -17,7 +17,6 @@ import pytest
 from flip.nvflare.site_policy import (
     PERCENTILE_FILTER_PATH,
     SCOPE_NAME,
-    SVT_FILTER_PATH,
     SitePolicyError,
     build_policy_json,
     main,
@@ -40,8 +39,8 @@ class TestParseEnv:
     def test_percentile_defaults(self):
         policy = parse_env({"FL_SITE_PRIVACY_POLICY": "percentile"})
         assert policy is not None
-        assert policy.preset == "percentile"
-        assert policy.args == {"percentile": 10, "gamma": 0.01}
+        assert policy.percentile == 10
+        assert policy.gamma == 0.01
 
     def test_percentile_explicit_params(self):
         policy = parse_env(
@@ -52,80 +51,34 @@ class TestParseEnv:
             }
         )
         assert policy is not None
-        assert policy.args == {"percentile": 25, "gamma": 0.05}
+        assert policy.percentile == 25
+        assert policy.gamma == 0.05
 
     def test_policy_name_is_case_insensitive(self):
         policy = parse_env({"FL_SITE_PRIVACY_POLICY": "Percentile"})
         assert policy is not None
-        assert policy.preset == "percentile"
+        assert policy.percentile == 10
 
     def test_empty_param_value_uses_default(self):
         policy = parse_env({"FL_SITE_PRIVACY_POLICY": "percentile", "FL_SITE_PRIVACY_PERCENTILE": ""})
         assert policy is not None
-        assert policy.args["percentile"] == 10
+        assert policy.percentile == 10
 
-    @pytest.mark.parametrize("value", ["-1", "101", "abc"])
+    @pytest.mark.parametrize("value", ["-1", "101", "abc", "inf", "nan"])
     def test_percentile_out_of_bounds_rejected(self, value):
         # Stock PercentilePrivacy silently no-ops (fails OPEN) outside [0, 100] — must error at render time.
         with pytest.raises(SitePolicyError, match="FL_SITE_PRIVACY_PERCENTILE"):
             parse_env({"FL_SITE_PRIVACY_POLICY": "percentile", "FL_SITE_PRIVACY_PERCENTILE": value})
 
-    @pytest.mark.parametrize("value", ["0", "-0.1", "x"])
+    @pytest.mark.parametrize("value", ["0", "-0.1", "x", "inf", "nan"])
     def test_gamma_out_of_bounds_rejected(self, value):
         # Stock PercentilePrivacy silently no-ops (fails OPEN) when gamma <= 0 — must error at render time.
         with pytest.raises(SitePolicyError, match="FL_SITE_PRIVACY_GAMMA"):
             parse_env({"FL_SITE_PRIVACY_POLICY": "percentile", "FL_SITE_PRIVACY_GAMMA": value})
 
-    def test_svt_defaults(self):
-        policy = parse_env({"FL_SITE_PRIVACY_POLICY": "svt"})
-        assert policy is not None
-        assert policy.preset == "svt"
-        assert policy.args == {
-            "fraction": 0.1,
-            "epsilon": 0.1,
-            "noise_var": 0.1,
-            "gamma": 1e-5,
-            "tau": 1e-6,
-        }
-
-    def test_svt_explicit_params(self):
-        policy = parse_env(
-            {
-                "FL_SITE_PRIVACY_POLICY": "svt",
-                "FL_SITE_PRIVACY_SVT_FRACTION": "0.5",
-                "FL_SITE_PRIVACY_SVT_EPSILON": "1.0",
-                "FL_SITE_PRIVACY_SVT_NOISE_VAR": "0.2",
-                "FL_SITE_PRIVACY_SVT_GAMMA": "1e-4",
-                "FL_SITE_PRIVACY_SVT_TAU": "1e-5",
-            }
-        )
-        assert policy is not None
-        assert policy.args == {"fraction": 0.5, "epsilon": 1.0, "noise_var": 0.2, "gamma": 1e-4, "tau": 1e-5}
-
-    @pytest.mark.parametrize(
-        ("var", "value"),
-        [
-            ("FL_SITE_PRIVACY_SVT_FRACTION", "0"),
-            ("FL_SITE_PRIVACY_SVT_FRACTION", "1.5"),
-            ("FL_SITE_PRIVACY_SVT_EPSILON", "0"),
-            ("FL_SITE_PRIVACY_SVT_NOISE_VAR", "-1"),
-            ("FL_SITE_PRIVACY_SVT_GAMMA", "0"),
-            ("FL_SITE_PRIVACY_SVT_TAU", "nope"),
-        ],
-    )
-    def test_svt_out_of_bounds_rejected(self, var, value):
-        with pytest.raises(SitePolicyError, match=var):
-            parse_env({"FL_SITE_PRIVACY_POLICY": "svt", var: value})
-
     def test_unknown_policy_rejected(self):
         with pytest.raises(SitePolicyError, match="FL_SITE_PRIVACY_POLICY"):
             parse_env({"FL_SITE_PRIVACY_POLICY": "laplace"})
-
-    def test_params_for_unselected_preset_rejected(self):
-        with pytest.raises(SitePolicyError, match="FL_SITE_PRIVACY_SVT_EPSILON"):
-            parse_env({"FL_SITE_PRIVACY_POLICY": "percentile", "FL_SITE_PRIVACY_SVT_EPSILON": "1"})
-        with pytest.raises(SitePolicyError, match="FL_SITE_PRIVACY_PERCENTILE"):
-            parse_env({"FL_SITE_PRIVACY_POLICY": "svt", "FL_SITE_PRIVACY_PERCENTILE": "10"})
 
     def test_params_without_policy_rejected(self):
         # Params set but no policy selected — refusing to guess beats silently running unprotected.
@@ -150,14 +103,6 @@ class TestBuildPolicyJson:
         assert filter_entry["args"] == {"percentile": 10, "gamma": 0.01}
         # Client-side result filters default to direction "out"; omitting the key keeps stock semantics.
         assert "direction" not in filter_entry
-
-    def test_svt_document_shape(self):
-        policy = parse_env({"FL_SITE_PRIVACY_POLICY": "svt"})
-        doc = build_policy_json(policy)
-
-        (filter_entry,) = doc["scopes"][0]["task_result_filters"]
-        assert filter_entry["path"] == SVT_FILTER_PATH
-        assert filter_entry["args"] == {"fraction": 0.1, "epsilon": 0.1, "noise_var": 0.1, "gamma": 1e-5, "tau": 1e-6}
 
     def test_integral_percentile_serialises_as_int(self):
         policy = parse_env({"FL_SITE_PRIVACY_POLICY": "percentile", "FL_SITE_PRIVACY_PERCENTILE": "25"})
@@ -194,9 +139,11 @@ class TestRender:
         out_path = tmp_path / "privacy.json"
         out_path.write_text('{"scopes": [], "default_scope": "old"}')
 
-        assert render({"FL_SITE_PRIVACY_POLICY": "svt"}, out_path) == "written"
+        assert render(
+            {"FL_SITE_PRIVACY_POLICY": "percentile", "FL_SITE_PRIVACY_PERCENTILE": "20"}, out_path
+        ) == "written"
         doc = json.loads(out_path.read_text())
-        assert doc["scopes"][0]["task_result_filters"][0]["path"] == SVT_FILTER_PATH
+        assert doc["scopes"][0]["task_result_filters"][0]["args"]["percentile"] == 20
 
     def test_check_only_never_writes(self, tmp_path):
         out_path = tmp_path / "privacy.json"

@@ -12,7 +12,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Tests for scripts/onboard_onprem_trust.py::check_data_dir.
+"""Focused tests for the on-prem trust readiness checks.
 
 Regression cover for the on-prem onboarding crash: a trust data dir
 (OMOP_DATA_DIR / ORTHANC_STORAGE_DIR) owned by a container after a previous
@@ -134,6 +134,47 @@ def test_4_missing_dir_fails() -> None:
         _assert("does not exist" in result.detail, "detail mentions missing")
 
 
+def test_5_site_privacy_uses_runtime_validator() -> None:
+    """The readiness check accepts a valid NVFLARE percentile policy."""
+    print("▶ valid NVFLARE site privacy policy -> PASS")
+    result = mod.check_site_privacy_policy(
+        {"FL_BACKEND": "nvflare", "FL_SITE_PRIVACY_POLICY": "percentile"},
+        True,
+        "TEST",
+        SCRIPTS_DIR.parent,
+    )
+    _assert(result.status == mod.Status.PASS, "status is PASS", result.detail)
+
+
+def test_6_site_privacy_rejects_non_finite_value() -> None:
+    """The readiness check inherits fail-closed numeric validation from the renderer."""
+    print("▶ non-finite site privacy parameter -> FAIL")
+    result = mod.check_site_privacy_policy(
+        {
+            "FL_BACKEND": "nvflare",
+            "FL_SITE_PRIVACY_POLICY": "percentile",
+            "FL_SITE_PRIVACY_GAMMA": "inf",
+        },
+        True,
+        "TEST",
+        SCRIPTS_DIR.parent,
+    )
+    _assert(result.status == mod.Status.FAIL, "status is FAIL", result.detail)
+
+
+def test_7_site_privacy_rejects_unsupported_backend() -> None:
+    """A configured policy must not appear active when Flower will ignore it."""
+    print("▶ site privacy policy on Flower -> FAIL")
+    result = mod.check_site_privacy_policy(
+        {"FL_BACKEND": "flower", "FL_SITE_PRIVACY_POLICY": "percentile"},
+        True,
+        "TEST",
+        SCRIPTS_DIR.parent,
+    )
+    _assert(result.status == mod.Status.FAIL, "status is FAIL", result.detail)
+    _assert("ignored" in result.detail, "detail explains that Flower ignores the policy")
+
+
 def main() -> None:
     if not SCRIPT.is_file():
         sys.exit(f"❌ {SCRIPT} not found")
@@ -142,6 +183,9 @@ def main() -> None:
     test_2_populated_dir_passes()
     test_3_empty_dir_fails()
     test_4_missing_dir_fails()
+    test_5_site_privacy_uses_runtime_validator()
+    test_6_site_privacy_rejects_non_finite_value()
+    test_7_site_privacy_rejects_unsupported_backend()
 
     print("—")
     print(f"PASS={PASS}  FAIL={FAIL}")

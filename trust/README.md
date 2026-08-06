@@ -74,7 +74,7 @@ plus the trust's identity (`TRUST_NAME` / `TRUST_CODE` / `TRUST_REGION`, read by
 
 #### Site-enforced FL privacy policy (optional, NVFLARE only)
 
-The kit file's Host-local profile can set `FL_SITE_PRIVACY_POLICY=percentile|svt` (plus optional
+The kit file's Host-local profile can set `FL_SITE_PRIVACY_POLICY=percentile` (plus optional
 `FL_SITE_PRIVACY_*` parameters — see the commented block in `trust/.env.example`). The fl-client entrypoint
 renders these into the client's NVFLARE `local/privacy.json` at container start, so THIS trust's
 update-privacy filter is applied to every outgoing model update regardless of the researcher's app config

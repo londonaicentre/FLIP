@@ -19,7 +19,7 @@ job filters and never lets a job opt out (``nvflare/apis/utils/task_utils.py::ap
 
 The rendered document defines exactly one scope, set as ``default_scope`` — FLIP jobs never carry a
 ``scope`` meta key, so every job lands in it, and any other scope name is rejected at deploy time.
-Stock NVFLARE filter classes are used deliberately: unlike FLIP's app-level subclass they have no
+The stock NVFLARE filter class is used deliberately: unlike FLIP's app-level subclass it has no
 ``off`` switch, so an app config cannot disable the site filter.
 
 Stdlib-only on purpose — it must run before NVFLARE starts and never fail on framework imports.
@@ -31,16 +31,15 @@ removed — the env vars are the single source of truth, and the target lives on
 
 import argparse
 import json
+import math
 import os
 import sys
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
 SCOPE_NAME = "site_default"
 PERCENTILE_FILTER_PATH = "nvflare.app_common.filters.percentile_privacy.PercentilePrivacy"
-SVT_FILTER_PATH = "nvflare.app_common.filters.svt_privacy.SVTPrivacy"
-
 _POLICY_VAR = "FL_SITE_PRIVACY_POLICY"
 
 
@@ -53,38 +52,12 @@ class SitePolicy:
     """A validated site privacy policy selection.
 
     Attributes:
-        preset: Selected preset name (``percentile`` or ``svt``).
-        args: Validated filter constructor args for the preset's stock NVFLARE filter class.
+        percentile: Percentage threshold passed to NVFLARE's stock filter.
+        gamma: Maximum absolute update value passed to NVFLARE's stock filter.
     """
 
-    preset: str
-    args: dict[str, float]
-
-
-@dataclass(frozen=True)
-class _Param:
-    var: str
-    arg: str
-    default: float
-    is_valid: Callable[[float], bool]
-    bounds: str
-
-
-_PRESET_PARAMS: dict[str, tuple[_Param, ...]] = {
-    "percentile": (
-        _Param("FL_SITE_PRIVACY_PERCENTILE", "percentile", 10, lambda v: 0 <= v <= 100, "a number in [0, 100]"),
-        _Param("FL_SITE_PRIVACY_GAMMA", "gamma", 0.01, lambda v: v > 0, "a number > 0"),
-    ),
-    "svt": (
-        _Param("FL_SITE_PRIVACY_SVT_FRACTION", "fraction", 0.1, lambda v: 0 < v <= 1, "a number in (0, 1]"),
-        _Param("FL_SITE_PRIVACY_SVT_EPSILON", "epsilon", 0.1, lambda v: v > 0, "a number > 0"),
-        _Param("FL_SITE_PRIVACY_SVT_NOISE_VAR", "noise_var", 0.1, lambda v: v > 0, "a number > 0"),
-        _Param("FL_SITE_PRIVACY_SVT_GAMMA", "gamma", 1e-5, lambda v: v > 0, "a number > 0"),
-        _Param("FL_SITE_PRIVACY_SVT_TAU", "tau", 1e-6, lambda v: v > 0, "a number > 0"),
-    ),
-}
-
-_FILTER_PATHS = {"percentile": PERCENTILE_FILTER_PATH, "svt": SVT_FILTER_PATH}
+    percentile: float
+    gamma: float
 
 
 def _get(env: Mapping[str, str], var: str) -> str | None:
@@ -97,13 +70,25 @@ def _get(env: Mapping[str, str], var: str) -> str | None:
     return value or None
 
 
-def _parse_value(param: _Param, raw: str) -> float:
+def _parse_value(
+    var: str,
+    raw: str,
+    *,
+    minimum: float,
+    maximum: float | None = None,
+    minimum_exclusive: bool = False,
+) -> float:
     try:
         value = float(raw)
     except ValueError:
-        raise SitePolicyError(f"{param.var}={raw!r} is not a number (expected {param.bounds})") from None
-    if not param.is_valid(value):
-        raise SitePolicyError(f"{param.var}={raw!r} is out of bounds (expected {param.bounds})")
+        raise SitePolicyError(f"{var}={raw!r} is not a number") from None
+    below_minimum = value <= minimum if minimum_exclusive else value < minimum
+    if not math.isfinite(value) or below_minimum or (maximum is not None and value > maximum):
+        if maximum is not None:
+            bounds = f"[{minimum:g}, {maximum:g}]"
+        else:
+            bounds = f"> {minimum:g}" if minimum_exclusive else f">= {minimum:g}"
+        raise SitePolicyError(f"{var}={raw!r} is out of bounds (expected a finite number {bounds})")
     # Integral values (e.g. percentile) are emitted as ints so the JSON matches the filters' documented args.
     return int(value) if value.is_integer() else value
 
@@ -118,13 +103,12 @@ def parse_env(env: Mapping[str, str]) -> SitePolicy | None:
         The validated policy, or ``None`` when no policy is configured.
 
     Raises:
-        SitePolicyError: On an unknown preset, an out-of-bounds/non-numeric parameter, a parameter
-            belonging to a preset that is not selected, or parameters set with no preset selected.
+        SitePolicyError: On an unknown policy, an invalid parameter, or parameters set without a policy.
     """
     policy_raw = _get(env, _POLICY_VAR)
 
     if policy_raw is None:
-        stray = [p.var for params in _PRESET_PARAMS.values() for p in params if _get(env, p.var) is not None]
+        stray = [var for var in ("FL_SITE_PRIVACY_PERCENTILE", "FL_SITE_PRIVACY_GAMMA") if _get(env, var) is not None]
         if stray:
             raise SitePolicyError(
                 f"{', '.join(sorted(stray))} set but {_POLICY_VAR} is not — refusing to guess a policy; "
@@ -132,29 +116,18 @@ def parse_env(env: Mapping[str, str]) -> SitePolicy | None:
             )
         return None
 
-    preset = policy_raw.lower()
-    if preset not in _PRESET_PARAMS:
-        known = ", ".join(sorted(_PRESET_PARAMS))
-        raise SitePolicyError(f"{_POLICY_VAR}={policy_raw!r} is not a known preset (expected one of: {known})")
+    if policy_raw.lower() != "percentile":
+        raise SitePolicyError(f"{_POLICY_VAR}={policy_raw!r} is not a known policy (expected: percentile)")
 
-    foreign = [
-        p.var
-        for other, params in _PRESET_PARAMS.items()
-        if other != preset
-        for p in params
-        if _get(env, p.var) is not None
-    ]
-    if foreign:
-        raise SitePolicyError(
-            f"{', '.join(sorted(foreign))} set but {_POLICY_VAR}={preset!r} — these parameters belong to a "
-            f"different preset; unset them or change {_POLICY_VAR}"
-        )
-
-    args: dict[str, float] = {}
-    for param in _PRESET_PARAMS[preset]:
-        raw = _get(env, param.var)
-        args[param.arg] = param.default if raw is None else _parse_value(param, raw)
-    return SitePolicy(preset=preset, args=args)
+    percentile_raw = _get(env, "FL_SITE_PRIVACY_PERCENTILE")
+    gamma_raw = _get(env, "FL_SITE_PRIVACY_GAMMA")
+    percentile = 10 if percentile_raw is None else _parse_value(
+        "FL_SITE_PRIVACY_PERCENTILE", percentile_raw, minimum=0, maximum=100
+    )
+    gamma = 0.01 if gamma_raw is None else _parse_value(
+        "FL_SITE_PRIVACY_GAMMA", gamma_raw, minimum=0, minimum_exclusive=True
+    )
+    return SitePolicy(percentile=percentile, gamma=gamma)
 
 
 def build_policy_json(policy: SitePolicy) -> dict:
@@ -168,7 +141,9 @@ def build_policy_json(policy: SitePolicy) -> dict:
         "scopes": [
             {
                 "name": SCOPE_NAME,
-                "task_result_filters": [{"path": _FILTER_PATHS[policy.preset], "args": dict(policy.args)}],
+                "task_result_filters": [
+                    {"path": PERCENTILE_FILTER_PATH, "args": {"percentile": policy.percentile, "gamma": policy.gamma}}
+                ],
             }
         ],
         "default_scope": SCOPE_NAME,
@@ -230,9 +205,9 @@ def main(argv: list[str] | None = None, env: Mapping[str, str] | None = None) ->
     if status == "written":
         policy = parse_env(env)
         assert policy is not None  # "written" implies a configured policy
-        args_str = ", ".join(f"{k}={v}" for k, v in policy.args.items())
         print(
-            f"[site-privacy] site privacy policy ACTIVE: {policy.preset} ({args_str}) — {verb} {parsed.out_path} "
+            f"[site-privacy] site privacy policy ACTIVE: percentile "
+            f"(percentile={policy.percentile}, gamma={policy.gamma}) — {verb} {parsed.out_path} "
             f"(scope '{SCOPE_NAME}'; site filters run before app-level filters and jobs cannot opt out)"
         )
     elif status == "removed":

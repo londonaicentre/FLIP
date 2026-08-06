@@ -148,8 +148,8 @@ additionally enforce its **own** update-privacy filter through NVFLARE's site pr
   is exactly as before (app-level filters only). An **invalid** combination stops the fl-client at startup
   (fail closed) rather than running unfiltered.
 
-Two presets are available, both using **stock** NVFLARE filter classes — which, unlike the FLIP app-level
-subclass, have no ``off`` switch:
+The policy uses the **stock** NVFLARE ``PercentilePrivacy`` filter, which unlike FLIP's app-level subclass
+has no ``off`` switch:
 
 .. list-table::
    :header-rows: 1
@@ -159,15 +159,11 @@ subclass, have no ``off`` switch:
      - Meaning
      - Default
    * - ``FL_SITE_PRIVACY_POLICY``
-     - ``percentile`` (deterministic clip + sparsify) or ``svt`` (Sparse Vector Technique, differentially
-       private). Unset = no site policy.
+     - ``percentile`` (deterministic clip + sparsify). Unset = no site policy.
      - unset
    * - ``FL_SITE_PRIVACY_PERCENTILE`` / ``FL_SITE_PRIVACY_GAMMA``
-     - ``percentile`` preset parameters (same maths as the app-level filter above).
+     - Parameters for the percentile policy (same maths as the app-level filter above).
      - ``10`` / ``0.01``
-   * - ``FL_SITE_PRIVACY_SVT_FRACTION`` / ``_EPSILON`` / ``_NOISE_VAR`` / ``_GAMMA`` / ``_TAU``
-     - ``svt`` preset parameters (stock ``SVTPrivacy`` args).
-     - ``0.1`` / ``0.1`` / ``0.1`` / ``1e-5`` / ``1e-6``
 
 Semantics — verified against NVFLARE 2.8.0:
 
@@ -184,13 +180,10 @@ Semantics — verified against NVFLARE 2.8.0:
   vector is dominated by the backbone's all-zero diffs, unlike the app-level filter which deliberately runs
   after ``KeepOnlyVars``. Prefer modest site percentiles (the default ``10``); the convergence caveat above
   applies doubly here.
-- **Evaluation results are unaffected.** Both filter classes only transform ``WEIGHTS`` / ``WEIGHT_DIFF``
+- **Evaluation results are unaffected.** The filter only transforms ``WEIGHTS`` / ``WEIGHT_DIFF``
   payloads, so metrics and validation results pass through untouched.
 - **Failures are loud.** A filter error surfaces as ``TASK_RESULT_FILTER_ERROR`` in the FL logs and the
   client's audit trail — never a silent unfiltered send.
-- ``svt`` is a genuine differential-privacy mechanism (Laplace noise, explicit ``epsilon``); however FLIP does
-  not account the privacy budget across rounds — agreeing an ``epsilon`` and a round budget is a governance
-  decision between the trust and the project team.
 - **NVFLARE only.** Flower has no site-side filter hook, so this enforcement point does not exist on the
   Flower backend; the app-level review of uploaded training code remains the control there (Flower parity is
   tracked in FLIP#852).
@@ -209,4 +202,3 @@ the description above:
   the per-job-type implementations under `fl-apps/ <https://github.com/londonaicentre/FLIP/tree/develop/fl-apps/nvflare>`_.
 - the modern NVFLARE Client API job types (`standard_client_api`, `evaluation_client_api`) instead let the user upload a plain training/evaluation script that calls
   ``nvflare.client`` directly. Over time, more job types will migrate to this recipe-driven model.
-
