@@ -669,32 +669,50 @@ What FLIP actually validates in ``config.json``
 ================================================
 
 It is worth being explicit about this, because it is easy to assume more checking happens than
-does.
+does — and because the checking that *does* happen is split across two services, at two different
+moments.
 
-**FLIP reads exactly one key out of** ``config.json`` **:** ``job_type``. The Central Hub API
-opens the uploaded ``config.json`` solely to determine which base application template to bundle
-(``flip-api/src/flip_api/fl_services/services/fl_service.py:466-486``), and validates that value
-against the per-backend manifest of known job types
-(``fl_service.py:483-484``). An unrecognised ``job_type`` is rejected; a missing one falls back to
-``standard``.
+**The Central Hub API reads exactly one key:** ``job_type``. It opens the uploaded ``config.json``
+solely to decide which base application template to bundle, and validates that value against the
+per-backend manifest of known job types (``bundle_nvflare_application`` /
+``bundle_flower_application`` in ``flip-api/src/flip_api/fl_services/services/fl_service.py``). An
+unrecognised ``job_type`` is rejected; a missing one falls back to ``standard`` — as does a missing
+``config.json``, which is a valid submission for a Flower app.
 
-**Everything else in** ``config.json`` **is unvalidated.** ``LOCAL_ROUNDS``, ``LEARNING_RATE``,
-``VAL_SPLIT``, ``net_config`` and any other key are read only by your own trainer, validator and
-``models.py`` at runtime. There is no schema, no type checking and no required-key check. In the
-shipped NVFLARE tutorials only three of six declare ``LOCAL_ROUNDS`` and only two declare
-``LEARNING_RATE`` — both are conventions of particular apps, not platform requirements.
+**For NVFLARE, the FL API then validates a fixed set of platform keys** when it assembles the job
+(``validate_config`` in ``fl-services/nvflare/fl-api-base/fl_api/utils/prepare_config.py``). Several
+of those failures are hard rejections that stop the job rather than silent fallbacks: an unknown
+``AGGREGATOR``, an ``AGGREGATION_WEIGHTS`` weight outside 0–1, an uncompilable
+``AGGREGATE_ONLY_REGEX``, or ``BEST_MODEL_METRIC`` on a job that runs a single round. The full set,
+with accepted values and defaults, is documented under :ref:`fl-training-configuration`.
 
-**What *is* enforced is file presence.** Each job type declares a required file list in
-``fl-apps/<backend>/<job_type>/required_files.json``, and a submission missing any of them fails
-fast with ``FileNotFoundError`` before anything is uploaded
-(``fl_service.py:517-523``). The required set differs per job type — ``standard`` requires
-``trainer.py``, ``validator.py``, ``config.json`` and ``models.py``, while
-``standard_client_api`` does not require ``validator.py``.
+**Everything outside that set is passed through untouched**, for your own trainer, validator and
+``models.py`` to read at runtime. ``LEARNING_RATE``, ``VAL_SPLIT``, ``net_config`` and any key you
+invent are neither validated nor defaulted — some shipped tutorials declare them and some do not,
+because they are conventions of particular apps rather than platform requirements.
 
-The practical consequence for packaging: **a typo in an export-related key would fail silently
-today.** If a key is misspelled, nothing rejects the submission — the value is simply absent at
-runtime and your code falls back to whatever default it defines. Any export configuration added to
-``config.json`` in future should come with validation, or it will inherit this behaviour.
+**What *is* enforced is file presence.** Each job type declares a required file list, and a
+submission missing any of them fails fast with ``FileNotFoundError`` before anything is uploaded.
+The required set differs per job type — see :ref:`fl-required-files` for the manifests.
+
+The practical consequence for packaging is unchanged, and it is why this section exists: **a typo in
+an export-related key would fail silently today.** An invented key sits outside the validated set by
+definition, so nothing rejects the submission — the value is simply absent at runtime and your code
+falls back to whatever default it defines. Any export configuration added to ``config.json`` in
+future should come with validation, or it will inherit this behaviour.
+
+.. note::
+
+   Two traps hide in the gap between *validated* and *enforced*.
+
+   ``LOCAL_ROUNDS`` **is** read by ``validate_config``, but rejecting it changes nothing you would
+   notice. The default is written only when the key is *absent*, so a present-but-out-of-range value
+   survives into the deployed ``config.json`` and reaches your trainer verbatim —
+   ``"LOCAL_ROUNDS": 5000`` really does run 5000 local iterations.
+
+   On the Flower path, the silent-typo behaviour inverts. Run-config overrides live in
+   ``config.toml``, and ``flwr`` **rejects** any key the app's ``pyproject.toml`` does not already
+   declare, failing the run at submission rather than ignoring it.
 
 .. _map-open-questions:
 
