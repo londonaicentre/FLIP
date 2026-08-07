@@ -61,7 +61,7 @@ class TestBackgroundTaskLiveness:
         reset_dead_background_tasks()
 
     @pytest.mark.asyncio
-    async def test_records_and_logs_a_task_that_raised(self, caplog):
+    async def test_records_and_logs_a_task_that_raised_an_error(self, caplog):
         async def explode():
             raise RuntimeError("client construction failed")
 
