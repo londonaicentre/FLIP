@@ -571,7 +571,7 @@ Connection Status
 
 The Connection Status page shows the live state of the federation. Each participating Trust reports the health of its core platform services (trust-api, data-access-api, imaging-api, OMOP, XNAT and the PACS/DICOM link), and its state is derived from those reports: Offline when the Trust has stopped sending heartbeats, Degraded when any other service is down or degraded, otherwise Online. The list can also be viewed as a radial topology.
 
-The Services column shows one status dot per container. Clicking a Trust row opens a detail drawer listing each container's status, running version and probe response time — so an administrator can see *why* a Trust is degraded without access to the Trust's own network. A Trust that has not reported container health (or whose report has gone stale) shows grey "No data" markers and falls back to heartbeat-only state.
+The Services column shows one status dot per container. Clicking a Trust row opens a detail drawer listing each container's status, running version and probe response time — so you can see *why* a Trust is degraded without access to the Trust's own network. The page and the drawer are available to every signed-in user, not only administrators: if a project stalls, you can check whether the Trust holding your data is reporting a failing service before raising it with the platform team. A Trust that has not reported container health (or whose report has gone stale) shows grey "No data" markers and falls back to heartbeat-only state.
 
 .. figure:: ../assets/flip/connection-status-drawer.png
    :width: 600
