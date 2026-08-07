@@ -137,8 +137,10 @@ fi
 
 # Add dcm2niix command from json. POST /xapi/commands returns the new
 # command's numeric id as the response body — a bare JSON number, not the
-# command object (container-service 3.7.3, pinned in trust/xnat/README.md's
-# plugin table: CommandRestApi.createCommand returns ResponseEntity<Long>).
+# command object (container-service 3.8.1, pinned in trust/xnat/README.md's
+# plugin table: CommandRestApi.createCommand still returns ResponseEntity<Long>
+# in the 3.8.1 source, and the numeric-id guard below passed live during the
+# XNAT 1.10.0 upgrade smoke test).
 # Read the id straight from the POST response rather than re-GETting
 # /xapi/commands?name=...: on prod that GET came back with no usable
 # command even though the POST appeared to succeed (root cause
@@ -203,7 +205,9 @@ done
 # Every xnat_curl above aborts the script (via set -e) on a non-2xx
 # response, so reaching this block means every write was accepted; these
 # re-GETs check the resulting state actually persisted. The wrapper-enabled
-# endpoint returns a bare JSON boolean (container-service 3.7.3).
+# endpoint returns a bare JSON boolean (container-service 3.8.1 —
+# CommandConfigurationRestApi.isConfigurationEnabled returns a bare Boolean in
+# the 3.8.1 source; re-verified live during the XNAT 1.10.0 upgrade smoke test).
 echo " "
 echo "Validating dcm2niix setup..."
 WRAPPER_ENABLED=$(xnat_curl "$XNAT_URL/xapi/commands/$CMD_ID/wrappers/$dcm2niix_wrapper_name/enabled")

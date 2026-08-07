@@ -175,6 +175,55 @@ uv run --project ../../../../flip-utils --extra full python job.py --n_clients 3
 > (The standalone NVFLARE submit path, `make -C fl-services/nvflare submit`, is not wired — run
 > locally via the simulator, or exercise the platform path through the FLIP UI / `make e2e_smoke`.)
 
+## Round metrics & platform comparison
+
+After a simulator run, `make round-metrics` parses the FLIP `ScatterAndGather` controller events
+(`Round N started/finished`, `Start/End aggregation`, `Contribution ... ACCEPTED`) from the
+simulator server log — the same lines `scripts/fl_round_metrics/extract_platform_round_timings.sh` pulls from CloudWatch for
+a deployed run — and writes the same artefacts (`rounds.tsv`, `summary.md`, a timing boxplot) under
+`round_metrics/` in this directory:
+
+```bash
+make run NUM_ROUNDS=50            # full-length local replica (GPU, hours; smoke-test with the default 3 first)
+make round-metrics                # -> round_metrics/simulator-<workspace>-<timestamp>/
+make round-metrics COMPARE=/path/to/platform/rounds.tsv   # adds a platform − simulator overhead table
+```
+
+`COMPARE` takes a `rounds.tsv` produced by `scripts/fl_round_metrics/extract_platform_round_timings.sh` for a platform run of
+this same app; the summary then includes a side-by-side steady-state table (round duration,
+aggregation time, inter-round gap), i.e. a baseline for the overhead the platform adds over bare
+local training. Knobs: `WORKSPACE` (simulator workspace parsed for logs; defaults to `job.py`'s
+`/tmp/nvflare/arkplus_finetuning_client_api`) and `METRICS_OUT` (output base directory).
+
+> **Interpretation caveat.** Both simulated clients share one host and one GPU
+> (`num_threads = num_clients`), so simulator round durations bundle GPU contention between the two
+> clients; the platform − simulator round-duration delta in turn bundles WAN transfer, platform
+> orchestration, and hardware differences. The aggregation and inter-round-gap rows are the clean
+> comparables — the generated `summary.md` spells this out.
+
+### One-command cross-site replication
+
+For a collaborating site reproducing the baseline (no FLIP hub or AWS access needed), a single
+target chains the whole experiment — download the HF tutorial data (~6.3 GB) and the Ark+
+checkpoint if missing, run the full-length simulator replica, extract the metrics, and pack
+everything to send back:
+
+```bash
+git clone <repo> && cd FLIP/fl-tutorials/nvflare/image_classification/arkplus_fine_tuning
+make reproduce-overhead          # hours on GPU; produces arkplus_sim_experiment_<host>_<stamp>.zip here
+```
+
+The bundle contains the metrics artefacts (`rounds.tsv`, `summary.md`, boxplot), the simulator
+logs (model files excluded), and a `provenance/` folder (`config.json`, `.env.app`,
+`host_info.txt` with GPU/OS/git-commit) so runs from different sites can be compared like-for-like.
+
+Prerequisites: Linux with an NVIDIA GPU + drivers, [`uv`](https://docs.astral.sh/uv/) on `PATH`
+(the first run builds the flip-utils environment automatically), internet access (Hugging Face +
+Dropbox), and ~15 GB free disk. On a multi-GPU host pick a device with
+`CUDA_VISIBLE_DEVICES=<n> make reproduce-overhead`. Knobs: `OVERHEAD_ROUNDS` (default `50`, the deployed
+run's `GLOBAL_ROUNDS`). If the simulation finished but packing failed (or you want to re-send),
+`make package-overhead-bundle` re-bundles the last run without re-simulating.
+
 ## Key files
 
 - [`job.py`](job.py): builds `FlipFedAvgRecipe` (with `aggregate_only_regex`), stages `app_files/`

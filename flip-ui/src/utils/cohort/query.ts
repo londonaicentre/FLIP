@@ -14,26 +14,20 @@
 
 
 
-const forbiddenCommands = [
-    "alter user",
-    "alter table",
-    "alter database",
-    "drop table",
-    "drop user",
-    "drop role",
-    "drop database",
-    "create table",
-    "substring"
-];
-
-/**
- * Match any occurrence of any forbidden commands.
+/*
+ * There is deliberately no client-side SQL denylist here.
+ *
+ * This module used to export `containsForbiddenCommands`, a keyword regex that
+ * duplicated one the hub also carried. It blocked every legitimate use of the
+ * standard `SUBSTRING()` function while stopping nothing an attacker would do,
+ * and being a third copy of one policy it was guaranteed to drift.
+ *
+ * The layering is now: this form validates only that a query was entered; the
+ * hub runs a parser-based validity pre-check and answers synchronously before
+ * fanning the query out, so malformed SQL still fails fast; and the trust's
+ * data-access-api is the authority that decides what may actually run. See
+ * `trust/data-access-api/README.md#cohort-query-validation`.
  */
-const regex = new RegExp(`(${forbiddenCommands.join("|")})`, "i");
-
-export const containsForbiddenCommands = (query: string): boolean => {
-    return regex.test(query);
-};
 
 /**
  * Restrict a list of trusts to those that participated in a cohort query.

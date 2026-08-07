@@ -10,12 +10,12 @@
 # limitations under the License.
 #
 
-from typing import Annotated, Any
+from typing import Annotated
 from uuid import UUID
 
 from pydantic import AfterValidator, BaseModel, Field, field_validator
 
-from flip_api.domain.schemas.status import BucketAction, BucketStatus, FileUploadStatus
+from flip_api.domain.schemas.status import FileUploadStatus
 from flip_api.domain.schemas.types import NonEmptyUUIDList
 
 
@@ -67,26 +67,6 @@ class ModelFilesList(BaseModel):
     """Model for list of model files."""
 
     files: ModelFiles
-
-
-class ScannedFileSns(BaseModel):
-    """Model for SNS message when a file is scanned."""
-
-    message: str
-
-
-class ScannedFileMessage(BaseModel):
-    """Model for the message received when a file is scanned."""
-
-    bucket: str
-    key: str
-    status: BucketStatus
-    action: BucketAction
-    finding: str
-
-
-class ScannedFileInput(BaseModel):
-    Records: list[dict[str, Any]]
 
 
 class UploadFileBody(BaseModel):

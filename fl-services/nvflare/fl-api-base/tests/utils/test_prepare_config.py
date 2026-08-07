@@ -542,6 +542,36 @@ class TestConfigureServer:
         assert modified_config["workflows"][1]["args"]["min_clients"] == "{min_clients}"
         assert modified_config["min_clients"] == len(MOCK_APP_CLIENTS)
 
+    def test_configure_server_diffusion_recipe_overrides_min_clients_only(
+        self, mock_isfile, mock_read_config, mock_write_config
+    ):
+        """The diffusion_model_client_api template's ScatterAndGatherLDM workflows carry literal
+        min_clients (must be overridden to the trust count, as for the other recipe templates) but
+        num_rounds_ae/num_rounds_dm instead of num_rounds — those must pass through untouched:
+        the controller re-reads GLOBAL_ROUNDS_AE/GLOBAL_ROUNDS_DM from the app config.json at
+        start, so the deployed per-stage round counts come from the user config, not from here."""
+        config = self._minimal_server_config()
+        config["workflows"][0]["args"].update(
+            {"min_clients": 1, "num_rounds_ae": 1, "num_rounds_dm": 1, "train_task_name": "train_ae"}
+        )
+        mock_read_config.return_value = config
+
+        configure_server(
+            job_dir=MOCK_JOB_APP_DIR,
+            app_name=MOCK_APP_NAME,
+            global_rounds=20,
+            trusts=MOCK_APP_CLIENTS,
+            ignore_result_error=True,
+            aggregator="agg",
+            aggregation_weights=MOCK_AGGREGATION_WEIGHTS,
+        )
+
+        (modified_config, _), _ = mock_write_config.call_args
+        sag_args = modified_config["workflows"][0]["args"]
+        assert sag_args["min_clients"] == len(MOCK_APP_CLIENTS)
+        assert sag_args["num_rounds_ae"] == 1
+        assert sag_args["num_rounds_dm"] == 1
+
     def test_configure_server_injects_trim_broadcast_filter(self, mock_isfile, mock_read_config, mock_write_config):
         """With aggregate_only_regex set, a TrimBroadcastVars filter is appended to the train
         task_data_filters — the server half of the head-only broadcast (after round 0 it broadcasts
@@ -695,6 +725,98 @@ class TestConfigureServer:
         }
         assert "flip.nvflare.components.TrimBroadcastVars" not in injected_paths
         assert "flip.nvflare.components.TrimEvalBroadcastVars" not in injected_paths
+
+    _SELECTOR_PATH = "nvflare.app_common.widgets.intime_model_selector.IntimeModelSelector"
+
+    def test_configure_server_injects_intime_model_selector(self, mock_isfile, mock_read_config, mock_write_config):
+        """With best_model_metric set, a stock IntimeModelSelector component keyed on that metric is
+        appended so the best global model is saved alongside the final one (FLIP#673). This is the
+        production mirror of FlipFedAvgRecipe(best_model_metric=...) — the fl-server wires the selector
+        at job-assembly from the app's config.json, the same way AGGREGATE_ONLY_REGEX wires filters."""
+        mock_read_config.return_value = self._minimal_server_config()
+
+        configure_server(
+            job_dir=MOCK_JOB_APP_DIR,
+            app_name=MOCK_APP_NAME,
+            global_rounds=3,
+            trusts=MOCK_APP_CLIENTS,
+            ignore_result_error=True,
+            aggregator="agg",
+            aggregation_weights=MOCK_AGGREGATION_WEIGHTS,
+            best_model_metric="VAL_DICE",
+        )
+
+        modified_config = mock_write_config.call_args[0][0]
+        selector = next(c for c in modified_config["components"] if c.get("path") == self._SELECTOR_PATH)
+        assert selector["args"]["key_metric"] == "VAL_DICE"
+        assert selector["args"]["negate_key_metric"] is False
+
+    def test_configure_server_intime_selector_negates_for_minimize(
+        self, mock_isfile, mock_read_config, mock_write_config
+    ):
+        """Loss-like metrics (lower is better) inject with negate_key_metric=True."""
+        mock_read_config.return_value = self._minimal_server_config()
+
+        configure_server(
+            job_dir=MOCK_JOB_APP_DIR,
+            app_name=MOCK_APP_NAME,
+            global_rounds=3,
+            trusts=MOCK_APP_CLIENTS,
+            ignore_result_error=True,
+            aggregator="agg",
+            aggregation_weights=MOCK_AGGREGATION_WEIGHTS,
+            best_model_metric="VAL_LOSS",
+            best_model_metric_minimize=True,
+        )
+
+        modified_config = mock_write_config.call_args[0][0]
+        selector = next(c for c in modified_config["components"] if c.get("path") == self._SELECTOR_PATH)
+        assert selector["args"]["negate_key_metric"] is True
+
+    def test_configure_server_no_best_metric_leaves_components_untouched(
+        self, mock_isfile, mock_read_config, mock_write_config
+    ):
+        """No best_model_metric → no selector injected, so no best checkpoint is ever saved
+        (unchanged behaviour for every job that doesn't opt in)."""
+        mock_read_config.return_value = self._minimal_server_config()
+
+        configure_server(
+            job_dir=MOCK_JOB_APP_DIR,
+            app_name=MOCK_APP_NAME,
+            global_rounds=3,
+            trusts=MOCK_APP_CLIENTS,
+            ignore_result_error=True,
+            aggregator="agg",
+            aggregation_weights=MOCK_AGGREGATION_WEIGHTS,
+        )
+
+        modified_config = mock_write_config.call_args[0][0]
+        assert not any(c.get("path") == self._SELECTOR_PATH for c in modified_config["components"])
+
+    def test_configure_server_intime_selector_idempotent(self, mock_isfile, mock_read_config, mock_write_config):
+        """A template that already carries an IntimeModelSelector (e.g. a recipe-exported job built
+        with best_model_metric) must not get a second one — two selectors would both drive
+        best-model saves off different accumulators."""
+        config = self._minimal_server_config()
+        config["components"].append(
+            {"id": "model_selector", "path": self._SELECTOR_PATH, "args": {"key_metric": "VAL_DICE"}}
+        )
+        mock_read_config.return_value = config
+
+        configure_server(
+            job_dir=MOCK_JOB_APP_DIR,
+            app_name=MOCK_APP_NAME,
+            global_rounds=3,
+            trusts=MOCK_APP_CLIENTS,
+            ignore_result_error=True,
+            aggregator="agg",
+            aggregation_weights=MOCK_AGGREGATION_WEIGHTS,
+            best_model_metric="VAL_DICE",
+        )
+
+        modified_config = mock_write_config.call_args[0][0]
+        selectors = [c for c in modified_config["components"] if c.get("path") == self._SELECTOR_PATH]
+        assert len(selectors) == 1
 
     def test_configure_server_file_not_found(self, mock_isfile):
         # Setup

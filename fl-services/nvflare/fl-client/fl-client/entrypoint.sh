@@ -31,7 +31,7 @@ CFG_PATH="$CFG_DIR/resources.json"
 
 # Use envsubst to replace environment variables in the template
 echo "🔧 Generating resources.json from template..."
-envsubst < "$TEMPLATE" > "$CFG_PATH"
+envsubst < "$TEMPLATE" > "$CFG_PATH" || { echo "❌ cannot write ${CFG_PATH}"; exit 1; }
 echo "✅ resources.json written to ${CFG_PATH}"
 #################################################################
 
@@ -46,7 +46,7 @@ LOG_CFG="/app/local/log_config.json"
 
 # Use envsubst to replace environment variables in the template
 echo "🔧 Generating log_config.json from template..."
-envsubst < "$LOG_TEMPLATE" > "$LOG_CFG"
+envsubst < "$LOG_TEMPLATE" > "$LOG_CFG" || { echo "❌ cannot write ${LOG_CFG}"; exit 1; }
 echo "✅ log_config.json written to ${LOG_CFG}"
 #################################################################
 
