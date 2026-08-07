@@ -583,7 +583,7 @@ describe("ConnectionStatus", () => {
         expect(wrapper.find("[data-test='trust-uptime']").exists()).toBe(false);
         expect(row.find("polyline").exists()).toBe(false);
         // The trailing cell carries the drawer-affordance chevron.
-        expect(row.find("svg[data-icon='heroicons-outline:chevron-right']").exists()).toBe(true);
+        expect(row.find("svg[data-icon='ph:caret-right']").exists()).toBe(true);
     });
 
     describe("services column", () => {

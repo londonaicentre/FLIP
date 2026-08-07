@@ -79,7 +79,7 @@
                                             @click="emit('close')"
                                         >
                                             <span class="sr-only">Close</span>
-                                            <icon-heroicons-outline-x class="w-5 h-5" />
+                                            <icon-ph-x class="w-5 h-5" />
                                         </button>
                                     </div>
                                     <div class="flex items-center gap-3 mt-[14px]">

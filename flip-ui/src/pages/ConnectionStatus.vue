@@ -358,7 +358,7 @@
                                         {{ t.project_count }}
                                     </td>
                                     <td class="px-4 py-4 align-middle w-10">
-                                        <icon-heroicons-outline-chevron-right
+                                        <icon-ph-caret-right
                                             class="w-4 h-4 opacity-50 text-gray-600 dark:text-gray-300
                                             transition-transform group-hover:translate-x-1"
                                         />
