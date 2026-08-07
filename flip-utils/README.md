@@ -109,6 +109,13 @@ keys onto it and saves `best_FL_global_model.pt` alongside `FL_global_model.pt` 
 happened — unset, evaluation stays final-round-only and no best artefact is produced. NVFLARE reaches the same
 contract with the stock `IntimeModelSelector` (see `FlipFedAvgRecipe`).
 
+**The two backends aggregate the selection metric differently, deliberately.** On Flower the value the
+selector sees is whatever stock `FedAvg` produced — a **weighted average keyed on `num-examples`**, so a
+trust with more test samples pulls the score further. NVFLARE's `IntimeModelSelector` defaults to
+`weigh_by_local_iter=False` with no `aggregation_weights`, i.e. a plain **unweighted mean** across clients.
+Neither lets a single site dictate selection, but the same metric can pick a different round on each backend
+when trust cohort sizes are uneven; expect that rather than treating it as a bug.
+
 ### User Application Requirements
 
 The executor wrappers dynamically import user-provided files from the job's `custom/`

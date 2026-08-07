@@ -60,10 +60,11 @@ flip-model-id = "uuid"
 flip-project-id = "uuid"
 flip-cohort-query = "*"
 flip-job-dir = "job-dir"
-# Save the best aggregated global model by validation loss (lower is better);
-# saves best_FL_global_model.pt alongside FL_global_model.pt in the results.
-best-model-metric = "test_loss"
-best-model-metric-minimize = true
+# Save the best aggregated global model by macro F1 across lesions (higher is better),
+# the same interpretable metric the NVFLARE chest-X-ray tutorial selects on (VAL-F1-SCORE).
+# Saves best_FL_global_model.pt alongside FL_global_model.pt in the results.
+best-model-metric = "test_f1-score"
+best-model-metric-minimize = false
 
 [tool.ruff]
 line-length = 120
