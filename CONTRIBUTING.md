@@ -511,9 +511,13 @@ The new branch should be based on the latest `develop` branch.
 
 Releases are cut from `main`. The version is set in the root `pyproject.toml`, and merging to `main` triggers [`.github/workflows/release.yml`](.github/workflows/release.yml), which reads that version, creates a `v<MAJOR.MINOR.PATCH>` git tag, and publishes a GitHub Release with auto-generated notes. On the same merge, the per-service `.github/workflows/docker_build_*.yml` workflows rebuild every service and push the `:prod` image tag (alongside `:<sha>`) to GHCR. There is no separate release-publishing step beyond merging to `main`.
 
+The same merge also runs a **second, independent release path** for the one component that ships as a package: [`release-pypi.yml`](.github/workflows/release-pypi.yml) publishes `flip-utils` to PyPI off its own version string. Each path skips when its own tag already exists, so a given release usually exercises only one of them. See [flip-utils and the PyPI release path](#flip-utils-and-the-pypi-release-path) below and [`flip-utils/CONTRIBUTING.md`](flip-utils/CONTRIBUTING.md) for the detail.
+
 ### Versioning
 
 FLIP follows [Semantic Versioning](https://semver.org/). The version in the **root** [`pyproject.toml`](pyproject.toml) is the FLIP release version — it is what `release.yml` reads to create the git tag.
+
+Separately, [`flip-utils/flip/__init__.py`](flip-utils/flip/__init__.py) carries `__version__`, the version of the published `flip-utils` package. It is what `release-pypi.yml` reads, and it is **not** required to track the root version.
 
 Each service has its own version string:
 
@@ -532,20 +536,39 @@ Before opening the release PR from `develop` to `main`:
 - `develop` is green in [CI](https://github.com/londonaicentre/FLIP/actions).
 - All PRs intended for this release are merged into `develop` and carry an appropriate label. The release-notes categories come from [`.github/release.yml`](.github/release.yml): `enhancement` / `feature`, `bug` / `fix`, `documentation` / `docs`, `ci` / `build`, `chore` / `dependencies`. PRs labelled `ignore-for-release` are excluded.
 - Bump the `version` in the root `pyproject.toml` to the new release version. Additionally bump the `version` in any service file (`flip-api/pyproject.toml`, `flip-ui/package.json`, `trust/*/pyproject.toml`) whose code changed in this release, per the independent-SemVer rule above. Leave unchanged services alone.
+- If `flip-utils/**` changed in this release, bump `__version__` in [`flip-utils/flip/__init__.py`](flip-utils/flip/__init__.py) — [`check-version-bump.yml`](.github/workflows/check-version-bump.yml) fails the `develop` → `main` PR unless it is valid semver and strictly higher than the latest `v*.*.*` tag. Give it a different number from the root version (see [flip-utils and the PyPI release path](#flip-utils-and-the-pypi-release-path)).
+- Curate the release-notes header in [`.github/RELEASE_NOTES_TEMPLATE.md`](.github/RELEASE_NOTES_TEMPLATE.md) — Highlights, Breaking Changes, New Features, Bug Fixes. Editing the file is the only way to change those sections; the preview comment on the PR is regenerated from it on every push.
 - Run `make unit_test` and `make integration_test` locally.
 
 ### Cutting the release
 
 1. From a branch off `develop`, commit the version bumps above and open a PR targeting `develop` with title `Release v<X.Y.Z>`.
-1. Once that merges and CI is green, open a PR from `develop` to `main`.
+1. Once that merges and CI is green, open a PR from `develop` to `main`. [`validate_branch_origin.yml`](.github/workflows/validate_branch_origin.yml) rejects any PR to `main` that does not come from `develop`.
+1. On that PR, check the automated gates before merging:
+   - [`pr-release-notes-preview.yml`](.github/workflows/pr-release-notes-preview.yml) posts a **release-notes preview** comment — the rendered template header plus the generated changelog — and updates it in place on every push. Read it as the last check that the notes are right.
+   - [`check-version-bump.yml`](.github/workflows/check-version-bump.yml) and [`check-package-metadata.yml`](.github/workflows/check-package-metadata.yml) run when `flip-utils/**` changed.
 1. On merge to `main`:
-   - [`release.yml`](.github/workflows/release.yml) creates the `v<X.Y.Z>` git tag and publishes the GitHub Release with auto-generated notes.
+   - [`release.yml`](.github/workflows/release.yml) reads the root `pyproject.toml`, creates the `v<X.Y.Z>` git tag, and publishes the GitHub Release named `Release v<X.Y.Z>` with auto-generated notes.
+   - [`release-pypi.yml`](.github/workflows/release-pypi.yml) reads `flip-utils/flip/__init__.py` and, if that version is not yet tagged, lints + tests + builds the package, publishes it to PyPI via OIDC trusted publishing, tags it, and publishes a GitHub Release named `flip v<X.Y.Z>` with the template header, the generated changelog, and the build artifacts attached.
    - Every `docker_build_*.yml` workflow under [`.github/workflows/`](.github/workflows/) rebuilds its service and pushes the `:prod` and `:<sha>` tags to GHCR.
-1. Verify on the [Releases page](https://github.com/londonaicentre/FLIP/releases) that the new release exists and the notes look right. Verify on [GHCR](https://github.com/orgs/londonaicentre/packages) that the `:prod` tags on `flip-api`, `trust-api`, `imaging-api`, and `data-access-api` were updated by the latest build.
+1. Verify on the [Releases page](https://github.com/londonaicentre/FLIP/releases) that the new release exists and the notes look right. Verify on [GHCR](https://github.com/orgs/londonaicentre/packages) that the `:prod` tags on `flip-api`, `trust-api`, `imaging-api`, and `data-access-api` were updated by the latest build. If the package was released, verify it on [PyPI](https://pypi.org/project/flip-utils/).
 
 ### Release notes
 
-There is no `CHANGELOG.md` — the GitHub Releases page is the changelog. Release notes are generated automatically from PR titles and labels via [`.github/release.yml`](.github/release.yml). To curate the notes for a release, ensure each PR going into `develop` has the right label before it is merged.
+There is no `CHANGELOG.md` — the GitHub Releases page is the changelog. Release notes come from two pieces:
+
+- **The generated changelog** — GitHub's release-notes API lists every PR merged since the previous `v*.*.*` tag, plus a contributors section, categorised by PR label according to [`.github/release.yml`](.github/release.yml): `enhancement` / `feature`, `bug` / `fix`, `documentation` / `docs`, `ci` / `build`, `chore` / `dependencies`, then Other Changes. PRs labelled `ignore-for-release` are excluded. Curating this means labelling each PR correctly **before** it merges into `develop` — it cannot be fixed at release time.
+- **The hand-written header** — [`.github/RELEASE_NOTES_TEMPLATE.md`](.github/RELEASE_NOTES_TEMPLATE.md), with `{{VERSION}}`, `{{TAG}}`, and `{{PREV_TAG}}` substituted. Edit this file on the release branch to fill in Highlights and the Breaking Changes / New Features / Bug Fixes summaries.
+
+Both are rendered into the preview comment on the `develop` → `main` PR, and both go into the release published by `release-pypi.yml`. The release published by `release.yml` carries the generated changelog only, without the template header.
+
+### flip-utils and the PyPI release path
+
+`flip-utils` is the only component published as a package ([`flip-utils` on PyPI](https://pypi.org/project/flip-utils/)), so it has a release path of its own driven by `__version__` in [`flip-utils/flip/__init__.py`](flip-utils/flip/__init__.py) rather than the root `pyproject.toml`.
+
+The two paths share the `v<MAJOR.MINOR.PATCH>` tag namespace, and each skips when its own tag already exists. Bump only the root version and you cut a platform release; bump only `__version__` and you cut a package release. Bumping **both to the same number** in one release PR is the case to avoid: the two workflows then contend for a single tag on the same merge, their tag-existence checks are not synchronised, and which of the two releases wins is a race. Give the two version lines different numbers, or land the bumps in separate merges to `main`.
+
+Full detail — the per-PR gates, the trusted-publishing setup, and the `release.sh` manual fallback — is in [`flip-utils/CONTRIBUTING.md`](flip-utils/CONTRIBUTING.md).
 
 ### Deploying the release
 
