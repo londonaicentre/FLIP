@@ -517,6 +517,19 @@ The new branch should be based on the latest `develop` branch.
 
 Releases are cut from `main`. The version is set in the root `pyproject.toml`, and merging to `main` triggers [`.github/workflows/release.yml`](.github/workflows/release.yml), which reads that version, creates a `v<MAJOR.MINOR.PATCH>` git tag, and publishes a GitHub Release with auto-generated notes. On the same merge, the per-service `.github/workflows/docker_build_*.yml` workflows rebuild every service and push the `:prod` image tag (alongside `:<sha>`) to GHCR. There is no separate release-publishing step beyond merging to `main`.
 
+### Two release trains, two tag namespaces
+
+A push to `main` cuts **two independent releases**, from two independently-versioned artefacts. They must never share a tag namespace: each workflow skips its own release when it finds its tag already present, so a version number claimed by one artefact would silently suppress the other's release — or, for flip-utils, its PyPI publish.
+
+| Artefact | Version source | Workflow | Tag | Release title |
+| --- | --- | --- | --- | --- |
+| FLIP platform | root [`pyproject.toml`](pyproject.toml) | [`release.yml`](.github/workflows/release.yml) | `v<X.Y.Z>` | `Release v<X.Y.Z>` |
+| flip-utils (PyPI `flip-utils`) | [`flip-utils/flip/__init__.py`](flip-utils/flip/__init__.py) | [`release-pypi.yml`](.github/workflows/release-pypi.yml) | `flip-utils-v<X.Y.Z>` | `flip-utils v<X.Y.Z>` |
+
+The `flip-utils-` prefix is what keeps them apart: every `git tag --list 'v*.*.*'` lookup in the release and preview workflows matches platform tags only, so each train's changelog spans its own history. **Do not drop the prefix or widen those globs** — the two version sequences advance independently and will overlap.
+
+> **Historical note:** flip-utils 0.4.1 was released just before this split and originally tagged `v0.4.1`, in the platform namespace. It was retro-tagged as `flip-utils-v0.4.1` (same commit, `c55f79e8`) and the old tag deleted, so the two namespaces are clean from `v0.4.0` / `flip-utils-v0.4.1` onwards. The published PyPI artefact was never affected.
+
 ### Versioning
 
 FLIP follows [Semantic Versioning](https://semver.org/). The version in the **root** [`pyproject.toml`](pyproject.toml) is the FLIP release version — it is what `release.yml` reads to create the git tag.
