@@ -168,6 +168,9 @@ def test_absent_target_no_example_creates_file() -> None:
         tkl.write_kit(target, _full_kit())
         _assert(target.exists(), "file created")
         _assert("TRUST_API_KEY=plain-api-key" in target.read_text(), "creds written into new file")
+        # The seeding call passes [] when there is no example; writing a lone newline for that
+        # would leave the finished kit starting with a blank line.
+        _assert(not target.read_text().startswith("\n"), "no leading blank line when seeded empty")
 
 
 def test_ec2_rerun_preserves_host_local_profile() -> None:

@@ -157,7 +157,9 @@ def write_secure(target: Path, lines: list[str]) -> None:
 
     Args:
         target (Path): The env file to write.
-        lines (list[str]): Lines to write, without trailing newlines.
+        lines (list[str]): Lines to write, without trailing newlines. Empty writes an empty file,
+            not a lone newline — the seeding call passes ``[]`` when there is no example to copy,
+            and a stray newline there becomes a leading blank line in the finished kit.
 
     Returns:
         None
@@ -170,7 +172,7 @@ def write_secure(target: Path, lines: list[str]) -> None:
         os.close(fd)
         raise
     with os.fdopen(fd, "w") as handle:
-        handle.write("\n".join(lines) + "\n")
+        handle.write("\n".join(lines) + "\n" if lines else "")
 
 
 def write_kit(target: Path, kit: dict, example: Path | None = None, hub_shared_commented: bool = False) -> None:

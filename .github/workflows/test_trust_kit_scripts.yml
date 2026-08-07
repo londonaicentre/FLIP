@@ -1,0 +1,49 @@
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# scripts/tests/test_trust_kit_lib.py had no CI job, so its assertions — including the one proving
+# a kit file is restricted to 0600 *before* the trust credentials are written into it (FLIP#889) —
+# only ran when someone remembered to run them by hand. Stdlib only, no services, ~1s.
+
+name: Trust kit scripts
+
+on:
+  push:
+    branches: [develop]
+    paths:
+      - "scripts/trust_kit_lib.py"
+      - "scripts/tests/test_trust_kit_lib.py"
+      - ".github/workflows/test_trust_kit_scripts.yml"
+  pull_request:
+    branches: [develop]
+    paths:
+      - "scripts/trust_kit_lib.py"
+      - "scripts/tests/test_trust_kit_lib.py"
+      - ".github/workflows/test_trust_kit_scripts.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  test-trust-kit-lib:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Run trust_kit_lib tests
+        run: python scripts/tests/test_trust_kit_lib.py
