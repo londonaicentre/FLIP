@@ -49,6 +49,42 @@ export function checkViteLocal(env) {
 }
 
 /**
+ * Message for a VITE_E2E misuse. Unlike VITE_LOCAL this flag has one
+ * legitimate home — the Cypress dev server (`vite --mode e2e`, reading
+ * .env.e2e) — so the caller decides legality from (mode, command) and
+ * this only phrases the refusal.
+ *
+ * VITE_E2E arms the Cypress auth seam in src/utils/auth.ts, which takes
+ * the signed-in user from a `cypress.auth.user` localStorage key instead
+ * of Cognito. In a browser without that fixture nobody is ever signed in,
+ * so every guarded navigation redirects to /auth/login — an interactive
+ * dev server with the flag set silently logs you out on each refresh, and
+ * a build with it ships an auth seam to users.
+ *
+ * @param {string} [mode] Vite mode, when known (config-time callers).
+ * @param {string} [command] "build" | "serve", when known.
+ * @returns {string} multi-line refusal message
+ */
+export function checkViteE2e(mode, command) {
+    const where = mode === undefined
+        ? "Refusing to build flip-ui: VITE_E2E=true is set."
+        : `Refusing to run flip-ui (mode '${mode}', command '${command}') with VITE_E2E=true.`;
+
+    return [
+        where,
+        "",
+        "VITE_E2E arms the Cypress auth seam in src/utils/auth.ts, which",
+        "reads the signed-in user from a 'cypress.auth.user' localStorage",
+        "key instead of Cognito. A browser without that fixture is never",
+        "signed in, so every page refresh redirects to /auth/login.",
+        "",
+        "The flag is valid only for the Cypress dev server, which loads",
+        "flip-ui/.env.e2e via 'npm run test:start' (vite --mode e2e).",
+        "It must never appear in .env.development or in a built bundle."
+    ].join("\n");
+}
+
+/**
  * CLI driver. Takes the side-effecting bits as parameters so a unit
  * test can drive it without forking a real process — child-process
  * spawns don't count for vitest's coverage instrumentation, and we
@@ -59,7 +95,10 @@ export function checkViteLocal(env) {
  * @returns {0 | 1} exit code; the caller forwards it to process.exit.
  */
 export function runCli(env, io) {
-    const reason = checkViteLocal(env);
+    // The prebuild hooks have no Vite mode, so an exported VITE_E2E here is
+    // unambiguously a shipping build — refuse it on the same axis as
+    // VITE_LOCAL. The mode-aware check lives in vite.config.mts.
+    const reason = checkViteLocal(env) ?? (env.VITE_E2E === "true" ? checkViteE2e() : null);
     if (reason) {
         io.error(reason);
         io.exit(1);

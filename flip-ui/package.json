@@ -1,6 +1,6 @@
 {
     "name": "flip-ui",
-    "version": "0.3.0",
+    "version": "0.4.0",
     "engines": {
         "node": "^20.19.0 || >=22.12.0"
     },
@@ -23,7 +23,7 @@
         "test:ui": "cypress run --browser chrome",
         "test:ui:docker": "docker run --rm --network host -v \"$PWD\":/e2e -w /e2e --entrypoint cypress cypress/included:14.5.2 run --browser electron",
         "pretest:start": "npm run generate-window-js",
-        "test:start": "vite --port 4173 --mode development",
+        "test:start": "vite --port 4173 --mode e2e",
         "test:ci": "start-server-and-test test:start http-get://localhost:4173 test:ui",
         "test:ci:docker": "start-server-and-test test:start http-get://localhost:4173 test:ui:docker",
         "docs:record": "start-server-and-test test:start http-get://localhost:4173 'cypress run --config-file cypress.docs.config.ts --browser chrome'",

@@ -130,7 +130,16 @@ cd flip-ui
 npm install
 # One-shot env file. Values are dummies — the suite mocks Cognito + the API,
 # so nothing here ever leaves the box. Match the values used in CI.
-cat > .env.development <<'EOF'
+#
+# It MUST be `.env.e2e`, never `.env.development`: VITE_E2E arms the Cypress
+# auth seam (src/utils/auth.ts), which takes the signed-in user from a
+# `cypress.auth.user` localStorage key instead of Cognito. Vite loads
+# `.env.development` for `npm run dev` / `make ui` too, so putting the flag
+# there makes the interactive dev server bounce every page refresh to
+# /auth/login while your real Cognito tokens sit unused in localStorage.
+# `vite.config.mts` now refuses to start in any mode but `e2e` with the flag
+# set, so a misplaced file fails loudly instead of wasting an afternoon.
+cat > .env.e2e <<'EOF'
 VITE_LOCAL=false
 VITE_E2E=true
 CENTRAL_HUB_API_URL=http://localhost:8080
@@ -143,8 +152,9 @@ npm run test:ci            # boots the dev server on :4173 and runs cypress
 ```
 
 `test:ci` uses `start-server-and-test` to start the Vite dev server (`npm run test:start`, plain HTTP on
-`http://localhost:4173`) and then runs `cypress run --browser chrome` against it. The non-privileged port `4173`
-avoids the need to run with `sudo` on Linux/macOS and matches the port used in CI.
+`http://localhost:4173`, `--mode e2e` so it reads `.env.e2e`) and then runs `cypress run --browser chrome`
+against it. The non-privileged port `4173` avoids the need to run with `sudo` on Linux/macOS and matches the
+port used in CI.
 
 To open the Cypress GUI for interactive debugging:
 
@@ -202,7 +212,7 @@ The Cypress suite runs on every PR and on push to `develop` / `main` via the `cy
 
 - Uses `cypress-io/github-action@v6`, which caches the Cypress binary and `node_modules` between runs.
 - Fans out across the six spec groups via a `strategy.matrix.group` so wall-clock time stays short.
-- Boots the Vite dev server with the same `.env.development` stub shown above.
+- Boots the Vite dev server with the same `.env.e2e` stub shown above.
 - On failure, uploads `test/cypress/screenshots` as an artefact (`cypress-screenshots-<group>`, retained 7 days).
 
 Running the suite against the **real** backend stack is out of scope for the in-repo CI — that's the nightly E2E job

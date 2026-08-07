@@ -39,11 +39,11 @@ npm-install:
 # needs to be available locally. Requires Node >=20.19 and `npm install` to have
 # been run on the host.
 e2e_test:
-	@test -f .env.development || { \
-		echo "ERROR: flip-ui/.env.development is missing." >&2; \
+	@test -f .env.e2e || { \
+		echo "ERROR: flip-ui/.env.e2e is missing." >&2; \
 		echo "Cypress needs it for Vite + dotenv. See flip-ui/README.md → Testing → End-to-end tests for the dummy values to use locally." >&2; \
 		exit 1; \
 	}
 	@# `pretest:start` runs scripts/generate-window-js.sh which reads VITE_*
 	@# from the shell env (NOT the .env file). Source the file to export them.
-	set -a && . ./.env.development && set +a && npm run test:ci:docker
+	set -a && . ./.env.e2e && set +a && npm run test:ci:docker
