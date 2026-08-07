@@ -763,6 +763,25 @@ describe("ConnectionStatus", () => {
             expect(drawer(wrapper).attributes("data-show")).toBe("true");
         });
 
+        it("mobile rows activate on Space too, without scrolling the page", async () => {
+            mockSwrvData.value = [fixture[0]];
+            const wrapper = mountPage();
+            await wrapper.vm.$nextTick();
+
+            // Same role="button" contract as the desktop row. The handler is
+            // .prevent because on a touch device Space would otherwise page-scroll
+            // the list out from under the row the user just activated.
+            const event = new KeyboardEvent("keydown", {
+                key: " ",
+                cancelable: true
+            });
+            wrapper.find("[data-test='trust-row-mobile']").element.dispatchEvent(event);
+            await wrapper.vm.$nextTick();
+
+            expect(drawer(wrapper).attributes("data-show")).toBe("true");
+            expect(event.defaultPrevented).toBe(true);
+        });
+
         it("rows activate on Space as their button role promises", async () => {
             mockSwrvData.value = [fixture[0]];
             const wrapper = mountPage();
