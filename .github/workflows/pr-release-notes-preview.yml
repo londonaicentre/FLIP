@@ -84,6 +84,7 @@ jobs:
 
             // Substitute placeholders
             header = header
+              .replace(/\{\{PROJECT\}\}/g, 'FLIP')
               .replace(/\{\{VERSION\}\}/g, version)
               .replace(/\{\{TAG\}\}/g,     tag)
               .replace(/\{\{PREV_TAG\}\}/g, prevTag || 'initial release');
