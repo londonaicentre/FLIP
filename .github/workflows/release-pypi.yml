@@ -85,7 +85,7 @@ jobs:
 
       - name: Run unit tests
         if: steps.check_tag.outputs.skip == 'false'
-        run: uv run pytest -s -vv
+        run: uv run pytest -vv
 
       - name: Build package
         if: steps.check_tag.outputs.skip == 'false'
