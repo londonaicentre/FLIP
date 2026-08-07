@@ -26,6 +26,9 @@ jobs:
   preview:
     if: github.event.pull_request.head.ref == 'develop'
     runs-on: ubuntu-latest
+    permissions: # override the workflow default: releases/generate-notes needs contents:write
+      contents: write
+      pull-requests: write
 
     steps:
       - name: Checkout repository
@@ -37,8 +40,17 @@ jobs:
       - name: Extract version and previous tag
         id: meta
         run: |
-          VERSION=$(grep -m1 '__version__' flip-utils/flip/__init__.py | sed 's/.*= *"\(.*\)"/\1/')
+          # Read the ROOT pyproject.toml, exactly as release.yml does — that is the FLIP release
+          # version this PR will tag. Do NOT read flip-utils/flip/__init__.py: flip-utils ships to
+          # PyPI as `flip` and is versioned independently of the platform, so it describes a
+          # different artefact than the one being released.
+          VERSION=$(grep -m1 '^version' pyproject.toml | sed 's/version = "\(.*\)"/\1/')
           PREV_TAG=$(git tag --list 'v*.*.*' | sort -V | tail -n1)
+
+          if [[ -z "$VERSION" ]]; then
+            echo "ERROR: Could not extract version from the root pyproject.toml."
+            exit 1
+          fi
 
           echo "version=${VERSION}"           >> "$GITHUB_OUTPUT"
           echo "tag=v${VERSION}"              >> "$GITHUB_OUTPUT"
@@ -72,6 +84,7 @@ jobs:
 
             // Substitute placeholders
             header = header
+              .replace(/\{\{PROJECT\}\}/g, 'FLIP')
               .replace(/\{\{VERSION\}\}/g, version)
               .replace(/\{\{TAG\}\}/g,     tag)
               .replace(/\{\{PREV_TAG\}\}/g, prevTag || 'initial release');
@@ -91,13 +104,22 @@ jobs:
               const resp = await github.rest.repos.generateReleaseNotes(params);
               generatedNotes = resp.data.body;
             } catch (err) {
-              console.log(`generateReleaseNotes API error: ${err.message}`);
-              generatedNotes = '_Could not generate changelog preview at this time._';
+              // Surface the reason in both the run annotations and the comment itself. A bare
+              // "could not generate" hid a permissions misconfiguration across two releases: the
+              // preview looked merely empty rather than broken.
+              core.warning(`generateReleaseNotes API error: ${err.message}`);
+              generatedNotes = [
+                '> [!WARNING]',
+                `> Could not generate the changelog preview: \`${err.message}\``,
+                '>',
+                '> The sections below are the unpopulated template. This is a fault in',
+                '> `pr-release-notes-preview.yml`, not a sign that the release is empty.',
+              ].join('\n');
             }
 
             // ── Compose the full comment body ───────────────────────────────
             const marker  = '<!-- release-notes-preview -->';
-            const heading = `## :clipboard: Release Notes Preview — flip ${tag}`;
+            const heading = `## :clipboard: Release Notes Preview — FLIP ${tag}`;
             const footer  = [
               '---',
               `> **Version:** \`${tag}\``,
