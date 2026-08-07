@@ -156,16 +156,16 @@ describe("TrustDetailDrawer", () => {
         expect(rows).toHaveLength(6);
         expect(rows.map(r => r.getAttribute("data-service"))).toEqual([
             "trust-api",
-            "xnat",
+            "data-access-api",
             "imaging-api",
             "omop",
-            "dicom",
-            "data-access-api"
+            "xnat",
+            "dicom"
         ]);
         const chip = (row: HTMLElement) => row.querySelector("[data-test='container-chip']")?.textContent?.trim();
-        expect(chip(rows[1])).toBe("Down");
-        expect(chip(rows[3])).toBe("Degraded");
-        expect(chip(rows[0])).toBe("Healthy");
+        expect(chip(rows[4])).toBe("Down");      // xnat
+        expect(chip(rows[3])).toBe("Degraded");  // omop
+        expect(chip(rows[0])).toBe("Healthy");   // trust-api
     });
 
     it("shows role text and a version · response meta line with em-dash fallbacks", async () => {
@@ -178,8 +178,8 @@ describe("TrustDetailDrawer", () => {
         expect(meta(rows[2])).toContain("0.3.0");
         expect(meta(rows[2])).toContain("12 ms");
         // xnat is down: version still shown, response falls back to an em dash.
-        expect(meta(rows[1])).toContain("1.10.0");
-        expect(meta(rows[1])).toContain("—");
+        expect(meta(rows[4])).toContain("1.10.0");
+        expect(meta(rows[4])).toContain("—");
         // omop has no version: em dash for version, latency shown.
         expect(meta(rows[3])).toContain("—");
         expect(meta(rows[3])).toContain("1400 ms");
@@ -190,10 +190,12 @@ describe("TrustDetailDrawer", () => {
         const rows = qa("[data-test='container-row']");
         const icon = (row: HTMLElement) => row.querySelector("svg");
 
-        expect(icon(rows[0])?.getAttribute("data-icon")).toBe("ph:plugs-connected-duotone");
+        // The icons are MDI outline throughout — XNAT carries mdi:radiology-box-outline,
+        // and MDI has no duotone style, so no row can stay on the old Phosphor duotone set.
+        expect(icon(rows[0])?.getAttribute("data-icon")).toBe("mdi:power-plug-outline");
         expect(icon(rows[0])?.classList).toContain("text-emerald-600");
-        expect(icon(rows[1])?.getAttribute("data-icon")).toBe("ph:images-duotone");
-        expect(icon(rows[1])?.classList).toContain("text-red-500");
+        expect(icon(rows[4])?.getAttribute("data-icon")).toBe("mdi:radiology-box-outline");
+        expect(icon(rows[4])?.classList).toContain("text-red-500");
         expect(icon(rows[3])?.classList).toContain("text-amber-500");
     });
 

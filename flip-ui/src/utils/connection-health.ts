@@ -49,9 +49,11 @@ export interface IServiceDefinition {
     role: string;
 }
 
-// Display registry, in drawer/dots order (design handoff option 1b, with
-// data-access-api in the final slot). Keys are the heartbeat wire contract with
-// trust-api's health collector; payload keys outside this registry are ignored.
+// Display registry, in drawer/dots order: the two hub-facing APIs first, then
+// the request path a cohort actually takes through the trust — imaging-api ->
+// OMOP -> XNAT -> the PACS/DICOM node. Keys are the heartbeat wire contract
+// with trust-api's health collector; payload keys outside this registry are
+// ignored.
 export const SERVICE_REGISTRY = [
     {
         key: "trust-api",
@@ -59,9 +61,9 @@ export const SERVICE_REGISTRY = [
         role: "Core API · heartbeat & auth"
     },
     {
-        key: "xnat",
-        label: "XNAT",
-        role: "Imaging archive"
+        key: "data-access-api",
+        label: "data-access-api",
+        role: "OMOP cohort queries"
     },
     {
         key: "imaging-api",
@@ -74,14 +76,14 @@ export const SERVICE_REGISTRY = [
         role: "Cohort database (OMOP CDM)"
     },
     {
+        key: "xnat",
+        label: "XNAT",
+        role: "Imaging archive"
+    },
+    {
         key: "dicom",
         label: "dicom-node",
         role: "PACS / DICOM connector"
-    },
-    {
-        key: "data-access-api",
-        label: "data-access-api",
-        role: "OMOP cohort queries"
     }
 ] as const satisfies readonly IServiceDefinition[];
 

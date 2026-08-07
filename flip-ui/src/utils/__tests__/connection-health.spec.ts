@@ -88,14 +88,14 @@ describe("trustApiStatus", () => {
 });
 
 describe("SERVICE_REGISTRY", () => {
-    it("lists the six roster services with data-access-api in the final slot", () => {
+    it("lists the six roster services hub-facing APIs first, then the cohort request path", () => {
         expect(SERVICE_REGISTRY.map(s => s.key)).toEqual([
             "trust-api",
-            "xnat",
+            "data-access-api",
             "imaging-api",
             "omop",
-            "dicom",
-            "data-access-api"
+            "xnat",
+            "dicom"
         ]);
     });
 });

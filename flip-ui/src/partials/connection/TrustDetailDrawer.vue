@@ -180,12 +180,16 @@ import { heartbeatText,
     PILL_CLASSES,
     ServiceKey,
     STATE_LABELS } from "@/utils/connection-health";
-import IconCube from "~icons/ph/cube-duotone";
-import IconDatabase from "~icons/ph/database-duotone";
-import IconHardDrives from "~icons/ph/hard-drives-duotone";
-import IconImages from "~icons/ph/images-duotone";
-import IconPlugsConnected from "~icons/ph/plugs-connected-duotone";
-import IconStack from "~icons/ph/stack-duotone";
+// MDI, not Phosphor: XNAT wanted mdi:radiology-box-outline (the one medical-imaging
+// glyph across the sets in use — Phosphor has no radiology icon, and ph:images read
+// as a generic photo gallery). MDI ships no duotone style, so the whole row moved to
+// MDI's outline variants rather than leaving one flat icon in a duotone lineup.
+import IconCube from "~icons/mdi/cube-outline";
+import IconDatabase from "~icons/mdi/database-outline";
+import IconLayers from "~icons/mdi/layers-outline";
+import IconPowerPlug from "~icons/mdi/power-plug-outline";
+import IconRadiology from "~icons/mdi/radiology-box-outline";
+import IconServerNetwork from "~icons/mdi/server-network-outline";
 
 // The page passes a row whose health was derived once for this refresh. Re-deriving
 // here would take a second Date.now() and could land the drawer on the other side
@@ -219,12 +223,12 @@ const ICON_TINT: Record<ServiceStatus, string> = {
 // Duotone glyph per registry key (design handoff icon table). Keyed by ServiceKey
 // so adding a registry service without an icon fails to compile.
 const SERVICE_ICONS: Record<ServiceKey, FunctionalComponent> = {
-    "trust-api": IconPlugsConnected,
-    xnat: IconImages,
+    "trust-api": IconPowerPlug,
+    "data-access-api": IconLayers,
     "imaging-api": IconCube,
     omop: IconDatabase,
-    dicom: IconHardDrives,
-    "data-access-api": IconStack
+    xnat: IconRadiology,
+    dicom: IconServerNetwork
 };
 
 // The page nulls `trust` in the same tick it flips `show` off; keep the last

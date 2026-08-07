@@ -596,11 +596,11 @@ describe("ConnectionStatus", () => {
             expect(dots).toHaveLength(6);
             expect(dots.map(d => d.attributes("title"))).toEqual([
                 "trust-api · healthy",
-                "XNAT · healthy",
+                "data-access-api · healthy",
                 "imaging-api · healthy",
                 "OMOP · healthy",
-                "dicom-node · healthy",
-                "data-access-api · healthy"
+                "XNAT · healthy",
+                "dicom-node · healthy"
             ]);
             for (const dot of dots) {
                 expect(dot.classes()).toContain("bg-emerald-600");
@@ -634,8 +634,8 @@ describe("ConnectionStatus", () => {
             await wrapper.vm.$nextTick();
 
             const dots = wrapper.find("[data-test='trust-services']").findAll("span[title]");
-            expect(dots[1].attributes("title")).toBe("XNAT · unknown");
-            expect(dots[1].classes()).toContain("bg-gray-400");
+            expect(dots[4].attributes("title")).toBe("XNAT · unknown");
+            expect(dots[4].classes()).toContain("bg-gray-400");
         });
 
         it("marks the trust Degraded with caption and amber accent when a service is down", async () => {
@@ -655,8 +655,8 @@ describe("ConnectionStatus", () => {
             expect(row.find("[data-test='trust-failing']").text()).toContain("XNAT down");
             expect(row.find("[data-test='trust-accent']").classes()).toContain("bg-amber-500");
             const dots = row.find("[data-test='trust-services']").findAll("span[title]");
-            expect(dots[1].attributes("title")).toBe("XNAT · down");
-            expect(dots[1].classes()).toContain("bg-red-500");
+            expect(dots[4].attributes("title")).toBe("XNAT · down");
+            expect(dots[4].classes()).toContain("bg-red-500");
         });
 
         it("paints the accent red for offline and transparent for online rows", async () => {
