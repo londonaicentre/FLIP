@@ -24,6 +24,7 @@ from sqlalchemy.exc import DBAPIError, SQLAlchemyError
 from sqlalchemy.sql.elements import TextClause
 from sqlglot import exp
 from sqlglot.errors import SqlglotError
+from sqlglot.optimizer.normalize_identifiers import normalize_identifiers
 from sqlglot.optimizer.scope import traverse_scope
 
 from data_access_api.config import get_settings
@@ -36,6 +37,15 @@ from data_access_api.utils.sql_parsers import extract_missing_identifier
 # OMOP schema is the only schema callers may reference. Any qualified
 # reference to a different schema is rejected by validate_query.
 ALLOWED_SCHEMA = "omop"
+
+# Set-returning functions permitted in a FROM clause. An unqualified table-valued function carries
+# no name and no schema on its exp.Table node, so the schema pin cannot reach it — and Postgres
+# resolves it through the implicit pg_catalog, the same route the pin exists to close. There is no
+# schema to pin it to (these live in pg_catalog, not omop), so the only available control is an
+# allowlist. Keep it an allowlist, never a denylist of dangerous names: ``query_to_xml`` executes a
+# SQL string that sqlglot never parses, so it bypasses every other rule in validate_query, and the
+# next such function is one Postgres release away.
+_ALLOWED_TABLE_FUNCTIONS = frozenset({"generate_series", "unnest"})
 
 # Reject pathologically large queries before sqlglot does any work — cheap DoS guard
 # at the API layer. The DB role limits blast radius too, but rejecting here is
@@ -118,7 +128,14 @@ def validate_query(query: str) -> str:
        Kubernetes trust the role can read every schema (see above). Names bound
        by a ``WITH`` clause are exempt because they are not schema-qualified and
        never can be. The exemption is determined from each lexical SQL scope, so
-       a CTE in a nested query cannot exempt a table reference in its parent.
+       a CTE in a nested query cannot exempt a table reference in its parent, and
+       from Postgres-folded identifiers rather than raw text, so a quoted CTE
+       name cannot exempt a reference that would not bind to it.
+
+       A set-returning function in the ``FROM`` clause is checked against an
+       allowlist instead. It carries no name and no schema to pin, and it
+       resolves in ``pg_catalog`` rather than ``omop``, so pinning cannot
+       express anything about it.
     6. Every ``LIMIT`` and ``OFFSET`` is a literal integer (defeats the blind
        data-extraction technique that abuses
        ``LIMIT CASE WHEN <predicate> THEN n ELSE m END`` to make the row count
@@ -171,6 +188,24 @@ def validate_query(query: str) -> str:
     if any(stmt.find_all(*_DATA_MODIFYING_TYPES)):
         raise _invalid_query("Data-modifying statements are not allowed.")
 
+    # Fold identifiers the way Postgres does — unquoted lowered, quoted left alone — before any
+    # name comparison below. The CTE exemption matches ``scope.cte_sources`` keys against the
+    # reference's literal text, and raw text is not what Postgres binds on, in both directions:
+    #
+    #   WITH "PG_CLASS" AS (...) SELECT relname FROM PG_CLASS
+    #       raw text matches, so the reference was exempted -- but Postgres binds the CTE as
+    #       PG_CLASS and folds the reference to pg_class, which it cannot bind, so the reference
+    #       resolved through the implicit pg_catalog and skipped the pin entirely.
+    #   WITH cohort AS (...) SELECT count(*) FROM COHORT
+    #       raw text differs, so the reference was pinned to omop.COHORT -- but Postgres binds it
+    #       to the CTE. omop.cohort is a real, empty OMOP CDM table, so this did not even fail
+    #       loudly: the caller silently got a count of zero.
+    #
+    # Normalising first makes both sides agree with the engine. It is identity-preserving for
+    # Postgres (an unquoted identifier is folded at parse time anyway), so the emitted SQL means
+    # exactly what the caller wrote.
+    stmt = normalize_identifiers(stmt, dialect="postgres")
+
     # A CTE reference and an unqualified physical table have the same exp.Table shape. Walk each
     # lexical scope so only a CTE visible from that exact SELECT is exempted; a flat set of every
     # CTE name would let an inner CTE exempt a physical table in an enclosing query.
@@ -204,7 +239,22 @@ def validate_query(query: str) -> str:
             if not table_name:
                 # An empty name with no schema is an unqualified table-valued function
                 # (``FROM generate_series(1, 10)``), which sqlglot wraps in an exp.Table carrying
-                # no name and no schema. Nothing to pin, and no schema to check.
+                # no name and no schema. There is nothing to pin — these resolve in pg_catalog,
+                # not omop — so the allowlist is the only control available here. Skipping instead
+                # would leave the FROM-clause function shape as a hole straight through every rule
+                # above (FLIP#879).
+                # Take the name from the rendered call rather than the node: sqlglot models some
+                # functions as typed nodes whose ``.name`` is empty and whose ``sql_name()`` is an
+                # internal label (``generate_series`` renders from ExplodingGenerateSeries), while
+                # unrecognised ones are exp.Anonymous. Rendering gives the real Postgres name for
+                # both.
+                rendered = table.this.sql(dialect="postgres") if table.this else ""
+                function_name = rendered.split("(", 1)[0].strip().lower()
+                if function_name not in _ALLOWED_TABLE_FUNCTIONS:
+                    raise _invalid_query(
+                        f"'{function_name}' is not an allowed table-valued function. "
+                        f"Allowed: {', '.join(sorted(_ALLOWED_TABLE_FUNCTIONS))}."
+                    )
                 continue
 
             if table_name in scope.cte_sources:

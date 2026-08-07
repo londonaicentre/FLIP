@@ -129,7 +129,15 @@ It performs a single parse-validate-emit pass and enforces:
    in which case at that position, so it is always on the effective path. Names
    bound by a `WITH` clause are exempt — they are never schema-qualified — but only in the lexical
    SQL scope where the CTE is visible, so a nested CTE cannot exempt a table reference in its
-   enclosing query.
+   enclosing query, and only on Postgres-folded identifiers, so a quoted CTE name (`WITH "PG_CLASS"`)
+   cannot exempt an unquoted reference (`FROM PG_CLASS`) that Postgres would resolve through
+   `pg_catalog` instead.
+
+   A set-returning function in the `FROM` clause (`FROM generate_series(1, 10)`) is checked against
+   an allowlist rather than pinned: it carries no name and no schema, and it resolves in
+   `pg_catalog`, not `omop`, so there is nothing to pin it to. Without that check the FROM-clause
+   function shape skipped every rule here — including `query_to_xml(...)`, which executes a SQL
+   string sqlglot never parses.
 6. Literal-integer `LIMIT`/`OFFSET` (defeats blind extraction that makes the row count a function
    of a character value and reads it back through the cohort-size response).
 

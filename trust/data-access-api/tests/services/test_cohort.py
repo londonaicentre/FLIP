@@ -23,6 +23,7 @@ from sqlglot import exp
 
 from data_access_api.routers.schema import CohortQueryInput
 from data_access_api.services.cohort import (
+    ALLOWED_SCHEMA,
     MAX_QUERY_LENGTH,
     get_age_distribution,
     get_counts,
@@ -693,6 +694,67 @@ def test_validate_query_leaves_table_valued_functions_alone():
 
     assert "GENERATE_SERIES" in emitted.upper()
     assert "omop." not in emitted
+
+
+@pytest.mark.parametrize(
+    ("query", "catalog_table"),
+    [
+        ('WITH "PG_CLASS" AS (SELECT 1 AS x) SELECT relname FROM PG_CLASS', "pg_class"),
+        ('WITH "PG_ROLES" AS (SELECT 1 AS x) SELECT rolname FROM PG_ROLES', "pg_roles"),
+        ('WITH "PG_TABLES" AS (SELECT 1 AS x) SELECT tablename FROM PG_TABLES', "pg_tables"),
+    ],
+)
+def test_validate_query_pins_when_a_quoted_cte_name_cannot_bind_the_reference(query: str, catalog_table: str):
+    """A quoted CTE name must not exempt an unquoted reference to a real catalog table.
+
+    ``scope.cte_sources`` is keyed on the CTE's literal text, so a raw string comparison matches
+    ``"PG_CLASS"`` against ``PG_CLASS`` and exempts it. Postgres does not agree: the quoted CTE is
+    ``PG_CLASS`` while the unquoted reference folds to ``pg_class``, which the CTE cannot bind — so
+    it resolves through the implicit ``pg_catalog`` and the pin is bypassed entirely.
+    """
+    emitted = validate_query(query)
+
+    assert f"{ALLOWED_SCHEMA}.{catalog_table}" in emitted.lower()
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "WITH cohort AS (SELECT person_id FROM omop.person) SELECT COUNT(*) FROM COHORT",
+        "WITH COHORT AS (SELECT person_id FROM omop.person) SELECT COUNT(*) FROM cohort",
+        'WITH "Mixed" AS (SELECT 1 AS x) SELECT x FROM "Mixed"',
+    ],
+)
+def test_validate_query_exempts_a_cte_the_reference_can_actually_bind(query: str):
+    """Case-differing references to an unquoted CTE bind to it in Postgres, so must stay unpinned.
+
+    Pinning them rewrites a working query to ``omop.<name>``. For the most likely CTE name in this
+    product that is not even a clean error: ``omop.cohort`` is a real, empty OMOP CDM table, so the
+    researcher silently gets a count of zero.
+    """
+    emitted = validate_query(query)
+
+    assert f"{ALLOWED_SCHEMA}." not in emitted.lower().replace(f"{ALLOWED_SCHEMA}.person", "")
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "SELECT * FROM pg_ls_dir('/')",
+        "SELECT * FROM pg_read_file('/etc/passwd')",
+        "SELECT * FROM query_to_xml('SELECT 1', true, false, '')",
+        "SELECT * FROM pg_show_all_settings()",
+    ],
+)
+def test_validate_query_rejects_unqualified_table_functions_outside_the_allowlist(query: str):
+    """An unqualified table-valued function resolves through the implicit ``pg_catalog`` too.
+
+    The schema pin only reaches ``exp.Table`` nodes carrying a name, so a set-returning function in
+    the FROM clause skipped it entirely — including ``query_to_xml``, which executes a SQL string
+    sqlglot never parses and so bypasses every other rule here as well.
+    """
+    with pytest.raises(HTTPException, match="not an allowed table-valued function"):
+        validate_query(query)
 
 
 @pytest.mark.parametrize(
