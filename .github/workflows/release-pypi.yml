@@ -129,8 +129,12 @@ jobs:
           # here and is handled by the ${PREV_TAG:-initial release} default below.
           PREV_TAG=$(git tag --list 'flip-utils-v*.*.*' | sort -V | grep -v "^${TAG}$" | tail -n1 || true)
 
-          # Strip the license comment block and substitute placeholders
-          HEADER=$(sed '/^<!--/,/-->/d' "$GITHUB_WORKSPACE/.github/RELEASE_NOTES_TEMPLATE.md" \
+          # Strip the license comment block and substitute placeholders.
+          # The range delimiters are anchored to whole lines (`^<!--$` / `^-->$`) because only the
+          # license block spans lines that way. The template's other comments are single-line
+          # `<!-- ... -->`, and an unanchored `/^<!--/,/-->/` opens a range on one of those that
+          # does not close until the NEXT comment — silently eating every section in between.
+          HEADER=$(sed '/^<!--$/,/^-->$/d' "$GITHUB_WORKSPACE/.github/RELEASE_NOTES_TEMPLATE.md" \
             | sed "s/{{PROJECT}}/flip-utils/g" \
             | sed "s/{{VERSION}}/${VERSION}/g" \
             | sed "s/{{TAG}}/${TAG}/g" \
