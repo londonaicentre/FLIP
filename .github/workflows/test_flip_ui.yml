@@ -129,13 +129,15 @@ jobs:
           cache: npm
           cache-dependency-path: flip-ui/package-lock.json
 
-      - name: Stub flip-ui/.env.development for Cypress
+      - name: Stub flip-ui/.env.e2e for Cypress
         # Vite's `loadEnv` and the cypress plugin (dotenv) both read this
         # file at process start. The values mirror the job-level `env:`
         # block above — they're stubs because the suite mocks Cognito and
         # the API at the network layer, so nothing here ever hits AWS.
+        #
+        # `.env.e2e`, not `.env.development` — see flip-ui/README.md → Testing.
         run: |
-          cat > .env.development <<'EOF'
+          cat > .env.e2e <<'EOF'
           VITE_LOCAL=false
           VITE_E2E=true
           CENTRAL_HUB_API_URL=http://localhost:8080

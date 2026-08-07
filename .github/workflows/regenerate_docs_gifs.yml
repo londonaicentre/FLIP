@@ -63,10 +63,11 @@ jobs:
       - name: Install ffmpeg
         run: sudo apt-get update && sudo apt-get install -y ffmpeg
 
-      - name: Stub flip-ui/.env.development for Cypress
+      - name: Stub flip-ui/.env.e2e for Cypress
+        # `.env.e2e`, not `.env.development` — see flip-ui/README.md → Testing.
         working-directory: ./flip-ui
         run: |
-          cat > .env.development <<'EOF'
+          cat > .env.e2e <<'EOF'
           VITE_LOCAL=false
           VITE_E2E=true
           CENTRAL_HUB_API_URL=http://localhost:8080
