@@ -523,12 +523,13 @@ def check_for_queued_jobs(scheduler_id: UUID, session: Session) -> IJobResponse 
         session (Session): The database session.
 
     Returns:
-        IJobResponse | None: The job response if a queued job is found, otherwise None.
+        IJobResponse | None: The job response if a queued job is found, otherwise None. Also None
+            when the job at the head of the queue is retired for referencing trusts that are not
+            approved for its model — it is removed rather than raised on, so the queue drains.
 
     Raises:
         flip_api.utils.exceptions.NotFoundError: If the scheduler referenced by ``scheduler_id`` cannot be found.
         DatabaseError: If the query or update fails at the DB layer.
-        Exception: If the job references invalid trusts.
     """
     logger.info("Checking for any queued jobs...")
 
@@ -569,6 +570,14 @@ def check_for_queued_jobs(scheduler_id: UUID, session: Session) -> IJobResponse 
                 "retiring it so it cannot block the queue"
             )
             job.status = JobStatus.DELETED
+
+            # Commit the retirement on its own, before the bookkeeping below. Everything after this
+            # point can raise — add_log rolls the session back and re-raises on failure — and a
+            # rollback would discard an uncommitted DELETED, returning the job to QUEUED. It is the
+            # globally-earliest queued job, so the next tick would select it again: the FLIP#894
+            # wedge, restored by the code meant to end it. Committing here also stops the
+            # self-exclusion in the query below depending on autoflush.
+            session.commit()
 
             # A model can have been retried while this older job was waiting in the queue. Do not
             # transition the model to ERROR in that case: update_model_status(ERROR) releases the

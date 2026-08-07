@@ -524,9 +524,44 @@ def test_check_for_queued_jobs_preserves_a_newer_valid_retry_when_retiring_an_in
 
     assert result is None
     assert invalid_job.status == JobStatus.DELETED
-    assert valid_retry.status == JobStatus.QUEUED
     mock_status.assert_not_called()
     mock_revert.assert_called_once()
+
+
+def test_check_for_queued_jobs_commits_the_retirement_before_any_bookkeeping(
+    fake_session, scheduler_id, model_id
+):
+    """The retirement must be durable before anything that can roll the session back runs.
+
+    On the valid-retry branch update_model_status is deliberately skipped, so add_log used to be
+    the first thing to commit — and add_log rolls back and re-raises on failure. That rollback
+    discarded the uncommitted DELETED, the job returned to QUEUED, and the next tick selected the
+    same globally-earliest unrunnable job: the FLIP#894 wedge, restored by its own fix.
+    """
+    invalid_job = MagicMock(id=uuid4(), model_id=model_id, trusts=[MagicMock(id=uuid4())])
+    valid_retry = MagicMock(id=uuid4(), model_id=model_id, status=JobStatus.QUEUED)
+
+    fake_session.exec.side_effect = [
+        MagicMock(first=MagicMock(return_value=invalid_job)),
+        MagicMock(first=MagicMock(return_value=valid_retry)),
+    ]
+    commits_before_add_log = []
+
+    with (
+        patch("flip_api.fl_services.services.fl_scheduler_service.validate_trust_ids", return_value=False),
+        patch("flip_api.fl_services.services.fl_scheduler_service.update_model_status"),
+        patch(
+            "flip_api.fl_services.services.fl_scheduler_service.add_log",
+            side_effect=lambda *a, **kw: commits_before_add_log.append(fake_session.commit.call_count),
+        ),
+        patch("flip_api.fl_services.services.fl_scheduler_service.revert_scheduler_pickup"),
+    ):
+        fl_scheduler_service.check_for_queued_jobs(scheduler_id, fake_session)
+
+    assert invalid_job.status == JobStatus.DELETED
+    # The load-bearing assertion: at least one commit had already happened by the time add_log ran,
+    # so a rollback inside it cannot resurrect the job.
+    assert commits_before_add_log == [1]
 
 
 def test_check_for_queued_jobs_none(fake_session, scheduler_id):
