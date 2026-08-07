@@ -83,8 +83,9 @@ def write_env_file(path: Path, lines: list[str]) -> None:
     before truncating or writing it, so the new contents are never exposed through an existing
     permissive mode.
 
-    Mirrors ``scripts/trust_kit_lib.write_kit``, which cannot be imported here: it lives at the
-    repository root, outside this package and its virtual environment.
+    ``scripts/trust_kit_lib.write_secure`` is the same routine for the root-level ``register-trust``
+    scripts. It is duplicated rather than shared because that module lives at the repository root,
+    outside this package and its virtual environment, so neither can import the other.
 
     Args:
         path (Path): The env file to write.

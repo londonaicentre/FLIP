@@ -26,9 +26,11 @@ Usage:
 
 from __future__ import annotations
 
+import os
 import sys
 import tempfile
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -86,6 +88,37 @@ def test_new_kit_writes_creds_meta_and_hub_shared() -> None:
         _assert("AES_KEY_BASE64=v1==" in content, "hub-shared AES key written (trailing = preserved)")
         _assert("FL_BACKEND=flower" in content, "hub-shared FL_BACKEND written")
         _assert((target.stat().st_mode & 0o777) == 0o600, "kit file chmod 600")
+
+
+def test_existing_world_readable_kit_is_tightened_before_creds_land() -> None:
+    print("▶ write_kit tightens an existing 0644 kit file before writing credentials into it")
+    with tempfile.TemporaryDirectory() as td:
+        target = Path(td) / ".env.GSTT.development"
+        target.write_text("TRUST_API_KEY=old-key\n")
+        target.chmod(0o644)
+
+        seen_at_chmod: dict[str, object] = {}
+        real_fchmod = os.fchmod
+
+        def spy(fd: int, mode: int) -> None:
+            # Path.write_text + chmod would already have written the new credentials by now; the
+            # fd-based write must still show the OLD contents at the moment the mode is tightened.
+            seen_at_chmod["mode"] = mode
+            seen_at_chmod["content"] = target.read_text()
+            real_fchmod(fd, mode)
+
+        with mock.patch.object(os, "fchmod", spy):
+            tkl.write_kit(target, _full_kit())
+
+        # .get, not [...]: write_text-then-chmod never calls os.fchmod at all, and that must read as
+        # a failed assertion rather than a KeyError.
+        _assert(seen_at_chmod.get("mode") == 0o600, "fchmod called with 0600 before writing")
+        _assert(
+            "plain-api-key" not in str(seen_at_chmod.get("content", "plain-api-key")),
+            "new credentials absent from disk until after the mode is tightened",
+        )
+        _assert("TRUST_API_KEY=plain-api-key" in target.read_text(), "credentials written after chmod")
+        _assert((target.stat().st_mode & 0o777) == 0o600, "kit file ends at 0600")
 
 
 def test_skip_path_preserves_existing_creds() -> None:
@@ -196,6 +229,7 @@ def test_dev_commented_hub_shared() -> None:
 
 def main() -> None:
     test_new_kit_writes_creds_meta_and_hub_shared()
+    test_existing_world_readable_kit_is_tightened_before_creds_land()
     test_dev_commented_hub_shared()
     test_skip_path_preserves_existing_creds()
     test_idempotent_rotation_no_dupes()
