@@ -49,11 +49,14 @@ export interface IServiceDefinition {
     role: string;
 }
 
-// Display registry, in drawer/dots order: the two hub-facing APIs first, then
-// the request path a cohort actually takes through the trust — imaging-api ->
-// OMOP -> XNAT -> the PACS/DICOM node. Keys are the heartbeat wire contract
-// with trust-api's health collector; payload keys outside this registry are
-// ignored.
+// Display registry, in drawer/dots order, grouped by who an operator has to
+// call about a failure: the four FLIP-supplied components first (trust-api,
+// data-access-api, imaging-api, XNAT), then the two the host institution owns
+// (its OMOP database and its PACS/DICOM node). In production OMOP and the
+// DICOM node are the trust's own systems, so a red dot there is escalated
+// somewhere quite different from a red dot on the platform's own containers.
+// Keys are the heartbeat wire contract with trust-api's health collector;
+// payload keys outside this registry are ignored.
 export const SERVICE_REGISTRY = [
     {
         key: "trust-api",
@@ -71,14 +74,14 @@ export const SERVICE_REGISTRY = [
         role: "DICOM query / retrieve"
     },
     {
-        key: "omop",
-        label: "OMOP",
-        role: "Cohort database (OMOP CDM)"
-    },
-    {
         key: "xnat",
         label: "XNAT",
         role: "Imaging archive"
+    },
+    {
+        key: "omop",
+        label: "OMOP",
+        role: "Cohort database (OMOP CDM)"
     },
     {
         key: "dicom",

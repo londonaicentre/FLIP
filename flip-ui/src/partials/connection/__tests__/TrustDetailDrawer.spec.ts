@@ -158,13 +158,13 @@ describe("TrustDetailDrawer", () => {
             "trust-api",
             "data-access-api",
             "imaging-api",
-            "omop",
             "xnat",
+            "omop",
             "dicom"
         ]);
         const chip = (row: HTMLElement) => row.querySelector("[data-test='container-chip']")?.textContent?.trim();
-        expect(chip(rows[4])).toBe("Down");      // xnat
-        expect(chip(rows[3])).toBe("Degraded");  // omop
+        expect(chip(rows[3])).toBe("Down");      // xnat
+        expect(chip(rows[4])).toBe("Degraded");  // omop
         expect(chip(rows[0])).toBe("Healthy");   // trust-api
     });
 
@@ -178,11 +178,11 @@ describe("TrustDetailDrawer", () => {
         expect(meta(rows[2])).toContain("0.3.0");
         expect(meta(rows[2])).toContain("12 ms");
         // xnat is down: version still shown, response falls back to an em dash.
-        expect(meta(rows[4])).toContain("1.10.0");
-        expect(meta(rows[4])).toContain("—");
-        // omop has no version: em dash for version, latency shown.
+        expect(meta(rows[3])).toContain("1.10.0");
         expect(meta(rows[3])).toContain("—");
-        expect(meta(rows[3])).toContain("1400 ms");
+        // omop has no version: em dash for version, latency shown.
+        expect(meta(rows[4])).toContain("—");
+        expect(meta(rows[4])).toContain("1400 ms");
     });
 
     it("tints each container icon by its status", async () => {
@@ -194,9 +194,9 @@ describe("TrustDetailDrawer", () => {
         // and MDI has no duotone style, so no row can stay on the old Phosphor duotone set.
         expect(icon(rows[0])?.getAttribute("data-icon")).toBe("mdi:power-plug-outline");
         expect(icon(rows[0])?.classList).toContain("text-emerald-600");
-        expect(icon(rows[4])?.getAttribute("data-icon")).toBe("mdi:radiology-box-outline");
-        expect(icon(rows[4])?.classList).toContain("text-red-500");
-        expect(icon(rows[3])?.classList).toContain("text-amber-500");
+        expect(icon(rows[3])?.getAttribute("data-icon")).toBe("mdi:radiology-box-outline");
+        expect(icon(rows[3])?.classList).toContain("text-red-500");
+        expect(icon(rows[4])?.classList).toContain("text-amber-500");
     });
 
     it("renders No data chips when the trust is offline and the snapshot stale", async () => {

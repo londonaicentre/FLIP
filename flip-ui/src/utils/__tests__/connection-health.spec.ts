@@ -88,13 +88,13 @@ describe("trustApiStatus", () => {
 });
 
 describe("SERVICE_REGISTRY", () => {
-    it("lists the six roster services hub-facing APIs first, then the cohort request path", () => {
+    it("lists the four FLIP-supplied components first, then the two the institution owns", () => {
         expect(SERVICE_REGISTRY.map(s => s.key)).toEqual([
             "trust-api",
             "data-access-api",
             "imaging-api",
-            "omop",
             "xnat",
+            "omop",
             "dicom"
         ]);
     });

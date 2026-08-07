@@ -220,8 +220,8 @@ const ICON_TINT: Record<ServiceStatus, string> = {
     unknown: "text-gray-400 dark:text-gray-300"
 };
 
-// Duotone glyph per registry key (design handoff icon table). Keyed by ServiceKey
-// so adding a registry service without an icon fails to compile.
+// MDI outline glyph per registry key (design handoff icon table). Keyed by
+// ServiceKey so adding a registry service without an icon fails to compile.
 const SERVICE_ICONS: Record<ServiceKey, FunctionalComponent> = {
     "trust-api": IconPowerPlug,
     "data-access-api": IconLayers,
