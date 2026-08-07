@@ -528,7 +528,7 @@ A push to `main` cuts **two independent releases**, from two independently-versi
 
 The `flip-utils-` prefix is what keeps them apart: every `git tag --list 'v*.*.*'` lookup in the release and preview workflows matches platform tags only, so each train's changelog spans its own history. **Do not drop the prefix or widen those globs** — the two version sequences advance independently and will overlap.
 
-> **Note:** `v0.4.1` is a flip-utils tag that predates this split and still sits in the platform namespace. The platform must not use version 0.4.1.
+> **Historical note:** flip-utils 0.4.1 was released just before this split and originally tagged `v0.4.1`, in the platform namespace. It was retro-tagged as `flip-utils-v0.4.1` (same commit, `c55f79e8`) and the old tag deleted, so the two namespaces are clean from `v0.4.0` / `flip-utils-v0.4.1` onwards. The published PyPI artefact was never affected.
 
 ### Versioning
 
