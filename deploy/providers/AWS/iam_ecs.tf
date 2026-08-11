@@ -234,12 +234,34 @@ resource "aws_iam_role_policy" "ecs_flip_api_task" {
 # fl-api is internal-only and orchestrates FL training jobs against fl-server.
 # It does not read application secrets and does not need S3, Cognito, or SES.
 # CloudWatch Logs is granted via the execution role (LogConfiguration writes
-# come from the agent, not the task role). Empty inline policy by design —
-# extended in PR 2 only if a runtime call needs it.
+# come from the agent, not the task role). The only task-role grant is the
+# ECS Exec transport (see EcsExecSsmMessages on flip-api) — without it
+# `aws ecs execute-command` into fl-api fails TargetNotConnected, so there
+# is no way to inspect a stuck FL run (e.g. read `flwr ls`/`flwr log`
+# against the SuperLink) on ECS.
+
+data "aws_iam_policy_document" "ecs_fl_api_task" {
+  statement {
+    sid = "EcsExecSsmMessages"
+    actions = [
+      "ssmmessages:CreateControlChannel",
+      "ssmmessages:CreateDataChannel",
+      "ssmmessages:OpenControlChannel",
+      "ssmmessages:OpenDataChannel",
+    ]
+    resources = ["*"]
+  }
+}
 
 resource "aws_iam_role" "ecs_fl_api_task" {
   name               = "ecs-fl-api-task-role"
   assume_role_policy = data.aws_iam_policy_document.ecs_tasks_assume.json
+}
+
+resource "aws_iam_role_policy" "ecs_fl_api_task" {
+  name   = "fl-api-task-policy"
+  role   = aws_iam_role.ecs_fl_api_task.id
+  policy = data.aws_iam_policy_document.ecs_fl_api_task.json
 }
 
 ############################
@@ -262,6 +284,20 @@ resource "aws_iam_role" "ecs_fl_server_task" {
 }
 
 data "aws_iam_policy_document" "ecs_fl_server_task" {
+  # ECS Exec transport (see EcsExecSsmMessages on flip-api) — without it
+  # `aws ecs execute-command` into fl-server fails TargetNotConnected, so a
+  # stuck SuperLink/ServerApp can't be inspected live on ECS.
+  statement {
+    sid = "EcsExecSsmMessages"
+    actions = [
+      "ssmmessages:CreateControlChannel",
+      "ssmmessages:CreateDataChannel",
+      "ssmmessages:OpenControlChannel",
+      "ssmmessages:OpenDataChannel",
+    ]
+    resources = ["*"]
+  }
+
   # The whole flip-fl-results bucket is dedicated to FL training output, so the
   # prefix-scoped condition that used to constrain access to
   # `${flip_bucket}/uploaded_federated_data/*` is no longer needed — bucket-wide
