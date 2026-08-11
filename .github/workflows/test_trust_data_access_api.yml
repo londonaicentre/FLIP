@@ -52,7 +52,7 @@ jobs:
         run: make local_test
 
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v7
         with:
           files: trust/data-access-api/coverage-unit.xml
           flags: data-access-api
@@ -128,7 +128,7 @@ jobs:
           echo "::endgroup::"
 
       - name: Upload integration coverage to Codecov
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v7
         with:
           files: trust/data-access-api/coverage-integration.xml
           flags: data-access-api-integration
