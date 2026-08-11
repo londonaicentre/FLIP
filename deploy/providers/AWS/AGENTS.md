@@ -11,7 +11,8 @@
 | `ecs_services.tf` | ECS Fargate services (flip-api, FL services) |
 | `ecs_tasks.tf` | ECS task definitions for Central Hub services (flip-api + FL) |
 | `efs.tf` | EFS file system, mount targets, and access points (FL workspace) |
-| `ecs_efs_provision.tf` | ECS provisioning task that pre-populates the FL EFS workspace |
+| `ecs_efs_provision.tf` | ECS provisioning task that pre-populates the FL EFS workspace (NVFLARE kit or Flower creds, by `fl_backend`) |
+| `ecs_flower.tf` | Flower-only register-supernode-keys one-shot task + run-task trigger (FLIP#566) |
 | `ecs_sg.tf` | ECS security groups |
 | `certificate.tf` | ACM certificates (ALB + CloudFront) |
 | `cloudfront.tf` | CloudFront distribution for flip-ui |
@@ -56,7 +57,7 @@ make aws-login                                # AWS SSO login
 ## Infrastructure
 
 - **VPC**: 10.0.0.0/16, 2 AZs, public + private subnets
-- **ECS Fargate**: Central Hub services (flip-api, fl-api-net-1, fl-server-net-1)
+- **ECS Fargate**: Central Hub services (flip-api, fl-api-net-1, fl-server-net-1). The FL task families serve **both FL backends** (FLIP#566): `FL_BACKEND` switches image/ports/command/env/mounts — NVFLARE (single port `FL_SERVER_PORT`, EFS kit from `fl-flare-participant-kits/<FLARE_KIT_DATE>`) vs Flower (SuperLink 9092 Fleet/9093 Exec/9097 health, TLS + SuperNode auth, creds from `fl-flower-creds/<FLOWER_CREDS_DATE>`, shared `fl_jobs` EFS volume, register-supernode-keys one-shot). The NLB listener stays on `FL_SERVER_PORT` for both; only the target-side port changes.
 - **EC2**: Trust host (t3.xlarge, private subnet, SSM-only access)
 - **RDS**: PostgreSQL in private subnets. In production flip-api connects through **RDS Proxy** using **IAM auth** (short-lived per-connection tokens); the proxy uses the RDS-managed master secret to reach the DB, so secret rotation no longer takes flip-api down (FLIP#556). No `rds_iam` Postgres grant is needed.
 - **ALB**: Internal (`internal = true`, private subnets); HTTPS termination for `/api/*` reached via CloudFront VPC origin (no public IP)

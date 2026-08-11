@@ -27,14 +27,27 @@ locals {
   #   fl-flare-participant-kits/{date}/net-1/services/flip-fl-api-net-1/{startup,local}/...
   # NB: the fl-api kit dir on S3 keeps the docker-prefix `flip-fl-api-net-1`.
   fl_provision_base_s3 = "s3://${aws_s3_bucket.aicentre_bucket.id}/fl-flare-participant-kits/${var.flare_kit_date}/net-1/services"
+
+  # Flower creds are produced by `make -C fl-services/flower provision` (with
+  # FLOWER_EXTRA_SERVER_SANS covering the Cloud Map + public FL hostnames)
+  # and uploaded by its `upload-creds-to-s3` target. Layout:
+  #   fl-flower-creds/{date}/net-1/{certificates,keys}/...
+  flower_creds_base_s3 = "s3://${aws_s3_bucket.aicentre_bucket.id}/fl-flower-creds/${var.flower_creds_date}/net-1"
 }
 
 resource "null_resource" "provision_efs_certs" {
   count = var.enable_efs ? 1 : 0
 
   triggers = {
-    s3_source = local.fl_provision_base_s3
+    s3_source = var.fl_backend == "flower" ? local.flower_creds_base_s3 : local.fl_provision_base_s3
     task_def  = aws_ecs_task_definition.efs_provision[0].arn
+  }
+
+  lifecycle {
+    precondition {
+      condition     = var.fl_backend != "flower" || var.flower_creds_date != ""
+      error_message = "fl_backend=flower needs FLOWER_CREDS_DATE set (S3 path fl-flower-creds/<date>/ — provision + upload the creds first)."
+    }
   }
 
   provisioner "local-exec" {
@@ -94,7 +107,26 @@ resource "aws_ecs_task_definition" "efs_provision" {
       # with "Found invalid choice '/bin/sh'". Override entryPoint so the
       # shell is the actual entrypoint and the heredoc is its argument.
       entryPoint = ["/bin/sh", "-c"]
-      command = [
+      command = var.fl_backend == "flower" ? [
+        <<-SCRIPT
+        set -e
+        S3_BASE=${local.flower_creds_base_s3}
+        echo "Syncing Flower creds from $S3_BASE to EFS..."
+
+        # Same wipe-first rationale as the NVFLARE branch below: `aws s3 sync`
+        # skips size+mtime-equivalent files, which can leave rotated creds
+        # stale. certificates/ carries ca.crt + server.pem/server.key for the
+        # SuperLink; keys/ the per-slot SuperNode public keys the
+        # register-supernode-keys one-shot (ecs_flower.tf) feeds to it.
+        mkdir -p /mnt/flower-certs /mnt/flower-keys /mnt/flower-jobs
+        find /mnt/flower-certs -mindepth 1 -delete 2>/dev/null || true
+        find /mnt/flower-keys -mindepth 1 -delete 2>/dev/null || true
+        aws s3 sync "$S3_BASE/certificates/" /mnt/flower-certs/
+        aws s3 sync "$S3_BASE/keys/" /mnt/flower-keys/
+
+        echo "EFS provisioning complete."
+        SCRIPT
+        ] : [
         <<-SCRIPT
         set -e
         S3_BASE=${local.fl_provision_base_s3}
@@ -135,7 +167,20 @@ resource "aws_ecs_task_definition" "efs_provision" {
         SCRIPT
       ]
 
-      mountPoints = [
+      mountPoints = var.fl_backend == "flower" ? [
+        {
+          sourceVolume  = "efs-flower-certs"
+          containerPath = "/mnt/flower-certs"
+        },
+        {
+          sourceVolume  = "efs-flower-keys"
+          containerPath = "/mnt/flower-keys"
+        },
+        {
+          sourceVolume  = "efs-flower-jobs"
+          containerPath = "/mnt/flower-jobs"
+        },
+        ] : [
         {
           sourceVolume  = "efs-fl-api-local"
           containerPath = "/mnt/fl-api/local"
@@ -174,7 +219,11 @@ resource "aws_ecs_task_definition" "efs_provision" {
   # provisioning task no longer touches them (kit puts SSL files under
   # local/site-1/ssl-*).
   dynamic "volume" {
-    for_each = {
+    for_each = var.fl_backend == "flower" ? {
+      "efs-flower-certs" = "fl_server_certs"
+      "efs-flower-keys"  = "fl_server_keys"
+      "efs-flower-jobs"  = "fl_jobs"
+      } : {
       "efs-fl-api-local"       = "fl_api_local"
       "efs-fl-api-startup"     = "fl_api_startup"
       "efs-fl-server-local"    = "fl_server_local"

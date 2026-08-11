@@ -30,6 +30,52 @@
 locals {
   fl_api_image    = "${var.docker_registry}${var.fl_api_name}:${var.flip_fl_image_tag}"
   fl_server_image = "${var.docker_registry}${var.fl_server_name}:${var.flip_fl_image_tag}"
+
+  # FL backend shape (#566): the same task FAMILIES (fl-api-net-1,
+  # fl-server-net-1 — deploy-centralhub addresses services by family) serve
+  # both backends; var.fl_backend switches image (via var.fl_*_name from
+  # fl_backend.mk), container ports, command, env map and mounts. NVFLARE
+  # mirrors compose.production.nvflare.yml; Flower mirrors
+  # compose.production.flower.yml.
+  flower_superlink_fleet_port  = 9092
+  flower_superlink_exec_port   = 9093
+  flower_superlink_health_port = 9097
+
+  # Container port the NLB target group forwards to. The EXTERNAL listener
+  # port stays var.FL_SERVER_PORT for both backends — compose maps
+  # ${FL_SERVER_PORT}:9092 the same way for Flower.
+  fl_server_container_port = var.fl_backend == "flower" ? local.flower_superlink_fleet_port : var.FL_SERVER_PORT
+
+  # EFS volumes per backend and task, name → access-point key (efs.tf).
+  # Flower shares one RW jobs volume (/app/src — uploaded bundles +
+  # checkpoints, the ECS analogue of compose's ${FL_JOBS_DIR}/net-1 bind)
+  # between fl-api and fl-server, and mounts the SuperLink certs read-only
+  # on both (fl-api only reads ca.crt). The fl_server_certs / fl_server_keys
+  # access points were NVFLARE leftovers kept for state continuity — Flower
+  # now genuinely uses them.
+  fl_api_task_volumes = {
+    nvflare = {
+      "efs-fl-api-net-1-local"       = "fl_api_local"
+      "efs-fl-api-net-1-startup"     = "fl_api_startup"
+      "efs-fl-api-net-1-checkpoints" = "fl_checkpoints"
+    }
+    flower = {
+      "efs-fl-net-1-certs" = "fl_server_certs"
+      "efs-fl-net-1-jobs"  = "fl_jobs"
+    }
+  }
+  fl_server_task_volumes = {
+    nvflare = {
+      "efs-fl-server-net-1-local"       = "fl_server_local"
+      "efs-fl-server-net-1-startup"     = "fl_server_startup"
+      "efs-fl-server-net-1-transfer"    = "fl_server_transfer"
+      "efs-fl-server-net-1-checkpoints" = "fl_checkpoints"
+    }
+    flower = {
+      "efs-fl-net-1-certs" = "fl_server_certs"
+      "efs-fl-net-1-jobs"  = "fl_jobs"
+    }
+  }
 }
 
 ############################
@@ -118,15 +164,29 @@ resource "aws_ecs_task_definition" "fl_api_net_1" {
       ]
 
       environment = [
-        for k, v in local.ecs_task_env.fl_api :
+        for k, v in(var.fl_backend == "flower" ? local.ecs_task_env.fl_api_flower : local.ecs_task_env.fl_api) :
         { name = k, value = v }
       ]
 
-      # Container paths must match what the fl-api image expects (mirrors
-      # compose.production.nvflare.yml: /app/admin/{local,startup}). NVFLARE
-      # initialises a Workspace from FL_ADMIN_DIRECTORY/startup at boot - if
-      # the dir is missing the lifespan startup raises and the task crashes.
-      mountPoints = [
+      # Container paths must match what the fl-api image expects. NVFLARE
+      # (compose.production.nvflare.yml): /app/admin/{local,startup} — NVFLARE
+      # initialises a Workspace from FL_ADMIN_DIRECTORY/startup at boot; if the
+      # dir is missing the lifespan startup raises and the task crashes. The
+      # checkpoints mount is the writer side of the shared staging volume
+      # (SERVER_CHECKPOINT_ROOT; fl-server reads it back — FLIP#695).
+      # Flower (compose.production.flower.yml): SuperLink certs read-only
+      # (only ca.crt is read) + the shared RW jobs volume at FLOWER_SRC_ROOT.
+      mountPoints = var.fl_backend == "flower" ? [
+        {
+          sourceVolume  = "efs-fl-net-1-certs"
+          containerPath = "/certs"
+          readOnly      = true
+        },
+        {
+          sourceVolume  = "efs-fl-net-1-jobs"
+          containerPath = "/app/src"
+        },
+        ] : [
         {
           sourceVolume  = "efs-fl-api-net-1-local"
           containerPath = "/app/admin/local"
@@ -135,9 +195,6 @@ resource "aws_ecs_task_definition" "fl_api_net_1" {
           sourceVolume  = "efs-fl-api-net-1-startup"
           containerPath = "/app/admin/startup"
         },
-        # Writer side of the shared checkpoint-staging volume (SERVER_CHECKPOINT_ROOT).
-        # fl-api de-bundles large eval checkpoints here; fl-server-net-1 mounts the
-        # SAME EFS access point at the same path and reads them back (FLIP#695).
         {
           sourceVolume  = "efs-fl-api-net-1-checkpoints"
           containerPath = "/app/server-checkpoints"
@@ -153,14 +210,16 @@ resource "aws_ecs_task_definition" "fl_api_net_1" {
         }
       }
 
-      # Liveness probe (FLIP#593 pt.1): hit the session-independent /health/
-      # endpoint. If the app process is dead or wedged the check fails and ECS
-      # replaces the task — catching the wedged-but-alive case that removing
-      # uvicorn --reload (entrypoint) does not. The image is python-slim with no
-      # curl, but the venv python is on PATH. startPeriod covers the NVFLARE
-      # workspace/admin-session init at boot.
+      # Liveness probe (FLIP#593 pt.1): if the app process is dead or wedged
+      # the check fails and ECS replaces the task — catching the
+      # wedged-but-alive case that removing uvicorn --reload (entrypoint)
+      # does not. The image is python-slim with no curl, but the venv python
+      # is on PATH. startPeriod covers the NVFLARE workspace/admin-session
+      # init at boot. Endpoint per backend: NVFLARE fl-api exposes the
+      # session-independent /health/; the Flower fl-api image is probed on
+      # /openapi.json, mirroring its compose healthcheck.
       healthCheck = {
-        command     = ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:${local.api_container_port}/health/', timeout=4).getcode()==200 else 1)\""]
+        command     = ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:${local.api_container_port}${var.fl_backend == "flower" ? "/openapi.json" : "/health/"}', timeout=4).getcode()==200 else 1)\""]
         interval    = 30
         timeout     = 5
         retries     = 3
@@ -169,50 +228,18 @@ resource "aws_ecs_task_definition" "fl_api_net_1" {
     }
   ])
 
-  volume {
-    name = "efs-fl-api-net-1-local"
-
-    efs_volume_configuration {
-      file_system_id     = aws_efs_file_system.flip_fl[0].id
-      root_directory     = "/"
-      transit_encryption = "ENABLED"
-
-      authorization_config {
-        access_point_id = aws_efs_access_point.flip_fl["fl_api_local"].id
-        iam             = "ENABLED"
-      }
-    }
-  }
-
-  volume {
-    name = "efs-fl-api-net-1-startup"
-
-    efs_volume_configuration {
-      file_system_id     = aws_efs_file_system.flip_fl[0].id
-      root_directory     = "/"
-      transit_encryption = "ENABLED"
-
-      authorization_config {
-        access_point_id = aws_efs_access_point.flip_fl["fl_api_startup"].id
-        iam             = "ENABLED"
-      }
-    }
-  }
-
-  # Shared checkpoint-staging volume — same access point the fl-server mounts, so
-  # a checkpoint fl-api writes to /app/server-checkpoints/<model_id>/ is visible
-  # to the fl-server's EvaluationModelLocator (FLIP#695).
-  volume {
-    name = "efs-fl-api-net-1-checkpoints"
-
-    efs_volume_configuration {
-      file_system_id     = aws_efs_file_system.flip_fl[0].id
-      root_directory     = "/"
-      transit_encryption = "ENABLED"
-
-      authorization_config {
-        access_point_id = aws_efs_access_point.flip_fl["fl_checkpoints"].id
-        iam             = "ENABLED"
+  dynamic "volume" {
+    for_each = local.fl_api_task_volumes[var.fl_backend]
+    content {
+      name = volume.key
+      efs_volume_configuration {
+        file_system_id     = aws_efs_file_system.flip_fl[0].id
+        root_directory     = "/"
+        transit_encryption = "ENABLED"
+        authorization_config {
+          access_point_id = aws_efs_access_point.flip_fl[volume.value].id
+          iam             = "ENABLED"
+        }
       }
     }
   }
@@ -246,15 +273,33 @@ resource "aws_ecs_task_definition" "fl_server_net_1" {
       cpu               = 2048
       memoryReservation = 8192
 
-      portMappings = [
-        {
-          containerPort = 8002
-          protocol      = "tcp"
-        }
+      # Flower-only settings, null (dropped by the ECS API) for NVFLARE. The
+      # SuperLink image's entrypoint takes the TLS + SuperNode-auth flags as
+      # its command (mirroring the compose overlay); initProcessEnabled
+      # mirrors compose's `init: true` (the SuperLink forks per-run
+      # processes that need reaping).
+      command = var.fl_backend == "flower" ? [
+        "--ssl-ca-certfile", "/certs/ca.crt",
+        "--ssl-certfile", "/certs/server.pem",
+        "--ssl-keyfile", "/certs/server.key",
+        "--enable-supernode-auth",
+        "--health-server-address", "0.0.0.0:${local.flower_superlink_health_port}",
+      ] : null
+      linuxParameters = var.fl_backend == "flower" ? { initProcessEnabled = true } : null
+
+      # NVFLARE serves client gRPC + admin multiplexed on one port. Flower's
+      # SuperLink splits Fleet (9092, what the NLB forwards to), Exec (9093,
+      # fl-api submits runs here) and health (9097).
+      portMappings = var.fl_backend == "flower" ? [
+        { containerPort = local.flower_superlink_fleet_port, protocol = "tcp" },
+        { containerPort = local.flower_superlink_exec_port, protocol = "tcp" },
+        { containerPort = local.flower_superlink_health_port, protocol = "tcp" },
+        ] : [
+        { containerPort = var.FL_SERVER_PORT, protocol = "tcp" },
       ]
 
       environment = [
-        for k, v in local.ecs_task_env.fl_server :
+        for k, v in(var.fl_backend == "flower" ? local.ecs_task_env.fl_server_flower : local.ecs_task_env.fl_server) :
         { name = k, value = v }
       ]
 
@@ -270,13 +315,29 @@ resource "aws_ecs_task_definition" "fl_server_net_1" {
         },
       ]
 
-      # Container paths must match what the fl-server image expects (mirrors
-      # compose.production.nvflare.yml: /app/{local,startup,transfer}). The
-      # entrypoint chmods scripts in /app/startup and reads
-      # /app/local/log_config.template.json - wrong paths -> crash loop.
+      # Container paths must match what the fl-server image expects.
+      # NVFLARE (compose.production.nvflare.yml): /app/{local,startup,
+      # transfer} — the entrypoint chmods scripts in /app/startup and reads
+      # /app/local/log_config.template.json; wrong paths -> crash loop.
       # certs and keys live inside /app/local (NVFLARE puts them under
-      # site-1/ssl-key, ssl-cert), so no separate mount is needed.
-      mountPoints = [
+      # site-1/ssl-key, ssl-cert), so no separate mount is needed. The
+      # checkpoints mount is the reader side of the shared staging volume
+      # (SERVER_CHECKPOINT_ROOT — FLIP#695).
+      # Flower (compose.production.flower.yml): SuperLink TLS material
+      # read-only at /certs (referenced by the command flags below) + the
+      # shared RW jobs volume at /app/src (uploaded bundles + eval
+      # checkpoints, read via the flip-job-dir run-config).
+      mountPoints = var.fl_backend == "flower" ? [
+        {
+          sourceVolume  = "efs-fl-net-1-certs"
+          containerPath = "/certs"
+          readOnly      = true
+        },
+        {
+          sourceVolume  = "efs-fl-net-1-jobs"
+          containerPath = "/app/src"
+        },
+        ] : [
         {
           sourceVolume  = "efs-fl-server-net-1-local"
           containerPath = "/app/local"
@@ -289,9 +350,6 @@ resource "aws_ecs_task_definition" "fl_server_net_1" {
           sourceVolume  = "efs-fl-server-net-1-transfer"
           containerPath = "/app/transfer"
         },
-        # Reader side of the shared checkpoint-staging volume (SERVER_CHECKPOINT_ROOT).
-        # Same EFS access point as fl-api-net-1's writer mount — the fl-server's
-        # EvaluationModelLocator loads the staged checkpoint from here (FLIP#695).
         {
           sourceVolume  = "efs-fl-server-net-1-checkpoints"
           containerPath = "/app/server-checkpoints"
@@ -309,74 +367,29 @@ resource "aws_ecs_task_definition" "fl_server_net_1" {
     }
   ])
 
-  volume {
-    name = "efs-fl-server-net-1-local"
-
-    efs_volume_configuration {
-      file_system_id     = aws_efs_file_system.flip_fl[0].id
-      root_directory     = "/"
-      transit_encryption = "ENABLED"
-
-      authorization_config {
-        access_point_id = aws_efs_access_point.flip_fl["fl_server_local"].id
-        iam             = "ENABLED"
+  # Volume set per backend (local.fl_server_task_volumes). Shared-volume
+  # notes: the NVFLARE checkpoints volume is the SAME access point
+  # fl-api-net-1 writes to (both tasks pinned to uid/gid 1001 by the access
+  # point, so reader sees writer's files — FLIP#695); the Flower jobs volume
+  # is likewise shared RW with fl-api-net-1. NVFLARE keeps SSL key + cert
+  # under /app/local/site-1/ssl-* (inside the local volume) so it needs no
+  # certs mount; Flower mounts the fl_server_certs access point that was
+  # previously an NVFLARE leftover.
+  dynamic "volume" {
+    for_each = local.fl_server_task_volumes[var.fl_backend]
+    content {
+      name = volume.key
+      efs_volume_configuration {
+        file_system_id     = aws_efs_file_system.flip_fl[0].id
+        root_directory     = "/"
+        transit_encryption = "ENABLED"
+        authorization_config {
+          access_point_id = aws_efs_access_point.flip_fl[volume.value].id
+          iam             = "ENABLED"
+        }
       }
     }
   }
-
-  volume {
-    name = "efs-fl-server-net-1-startup"
-
-    efs_volume_configuration {
-      file_system_id     = aws_efs_file_system.flip_fl[0].id
-      root_directory     = "/"
-      transit_encryption = "ENABLED"
-
-      authorization_config {
-        access_point_id = aws_efs_access_point.flip_fl["fl_server_startup"].id
-        iam             = "ENABLED"
-      }
-    }
-  }
-
-  volume {
-    name = "efs-fl-server-net-1-transfer"
-
-    efs_volume_configuration {
-      file_system_id     = aws_efs_file_system.flip_fl[0].id
-      root_directory     = "/"
-      transit_encryption = "ENABLED"
-
-      authorization_config {
-        access_point_id = aws_efs_access_point.flip_fl["fl_server_transfer"].id
-        iam             = "ENABLED"
-      }
-    }
-  }
-
-  # Shared checkpoint-staging volume — the SAME access point fl-api-net-1 writes
-  # to. transit-encrypted NFS; both tasks are pinned to uid/gid 1001 by the
-  # access point so the reader sees the writer's files (FLIP#695).
-  volume {
-    name = "efs-fl-server-net-1-checkpoints"
-
-    efs_volume_configuration {
-      file_system_id     = aws_efs_file_system.flip_fl[0].id
-      root_directory     = "/"
-      transit_encryption = "ENABLED"
-
-      authorization_config {
-        access_point_id = aws_efs_access_point.flip_fl["fl_checkpoints"].id
-        iam             = "ENABLED"
-      }
-    }
-  }
-
-  # NVFLARE keeps SSL key + cert under /app/local/site-1/ssl-* (i.e. inside
-  # the local volume), so no separate certs/keys mounts are needed. The
-  # corresponding fl_server_certs / fl_server_keys access points in efs.tf
-  # are left in place to avoid a destroy on this hot path - drop them in a
-  # follow-up cleanup PR once the cutover is stable.
 
   tags = {
     Name = "fl-server-net-1"

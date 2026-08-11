@@ -235,9 +235,12 @@ The Central Hub has **one supported production deployment**: ECS Fargate via the
 [`deploy/providers/AWS/`](providers/AWS/README.md). The task definitions in `ecs_tasks.tf` (env maps in
 `locals.tf`) are the **canonical definition of production container config**. Deploying into an AWS
 LZA-governed account is an env-gated **mode** of that same root, not a separate path
-([FLIP#749](https://github.com/londonaicentre/FLIP/issues/749)). The ECS FL task definitions implement the
-NVFLARE backend only — Flower has no hub-side ECS resources yet
-([FLIP#566](https://github.com/londonaicentre/FLIP/issues/566) tracks that decision).
+([FLIP#749](https://github.com/londonaicentre/FLIP/issues/749)). The ECS FL task definitions serve **both
+FL backends** ([FLIP#566](https://github.com/londonaicentre/FLIP/issues/566)): `FL_BACKEND` in the env file
+switches the same task families between NVFLARE and Flower (SuperLink ports/command/creds — Flower
+additionally needs `FLOWER_CREDS_DATE` and provisioned creds uploaded via
+`make -C fl-services/flower provision upload-creds-to-s3`, with `FLOWER_EXTRA_SERVER_SANS` covering the
+Cloud Map + public FL hostnames).
 
 > **Deprecated — hub on EC2/compose** ([FLIP#936](https://github.com/londonaicentre/FLIP/issues/936)):
 > running the hub via `compose.production*.yml` on an EC2 or self-managed host is no longer a supported

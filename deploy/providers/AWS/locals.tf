@@ -94,9 +94,12 @@ locals {
   # disable MFA for stag-only testing (per TROUBLESHOOTING.md §4.3).
   enforce_mfa_env = var.ENFORCE_MFA == "" ? {} : { ENFORCE_MFA = var.ENFORCE_MFA }
 
-  # Env vars per service. Mirrors compose.production.yml +
-  # compose.production.nvflare.yml. ECS task definitions in ecs_tasks.tf read
-  # these so the deploy-time and runtime view are kept in sync.
+  # Env vars per service — the CANONICAL definition of production container
+  # config (#936; the compose.production*.yml files mirror a subset as the
+  # local prod-image harness). fl_server/fl_api are the NVFLARE maps
+  # (compose.production.nvflare.yml); fl_server_flower/fl_api_flower are the
+  # Flower maps (compose.production.flower.yml). ecs_tasks.tf selects by
+  # var.fl_backend (#566).
   ecs_task_env = {
     flip_api = merge(local.enforce_mfa_env, {
       ENV        = "production"
@@ -173,6 +176,29 @@ locals {
       # CPU-only. Default 0; set via TF_VAR_JOB_RESOURCE_SPEC_* for GPU jobs.
       JOB_RESOURCE_SPEC_NUM_GPUS           = tostring(var.JOB_RESOURCE_SPEC_NUM_GPUS)
       JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB = tostring(var.JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB)
+    }
+    # Flower SuperLink (compose.production.flower.yml fl-server-net-1). TLS +
+    # SuperNode-auth flags travel as the container command (ecs_tasks.tf), not
+    # env. INTERNAL_SERVICE_KEY is injected via the secrets block.
+    fl_server_flower = {
+      LOCAL_DEV                      = "false"
+      NET_ID                         = "net-1"
+      MIN_CLIENTS                    = tostring(var.MIN_CLIENTS)
+      IMAGES_DIR                     = "/app/data/images"
+      UPLOADED_FEDERATED_DATA_BUCKET = local.uploaded_federated_data_uri
+      FLIP_API_INTERNAL_URL          = "http://${local.service_discovery_names.flip_api}:${local.api_container_port}/api"
+      INTERNAL_SERVICE_KEY_HEADER    = var.INTERNAL_SERVICE_KEY_HEADER
+    }
+    # Flower fl-api (compose.production.flower.yml fl-api-net-1). SuperLink
+    # addresses use the Cloud Map name — the provisioned server cert must
+    # carry it as a SAN (FLOWER_EXTRA_SERVER_SANS at provision time).
+    fl_api_flower = {
+      # Same reload-gating rationale as the NVFLARE map (FLIP#593 pt.1).
+      ENV                         = "production"
+      SUPERLINK_ADDRESS           = "${local.service_discovery_names.fl_server}:9093"
+      SUPERLINK_HEALTH_ADDRESS    = "${local.service_discovery_names.fl_server}:9097"
+      SUPERLINK_ROOT_CERTIFICATES = "/certs/ca.crt"
+      FLOWER_SRC_ROOT             = "/app/src"
     }
   }
 }

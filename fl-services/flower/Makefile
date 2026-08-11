@@ -18,9 +18,20 @@
 
 REPO_ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST)))/../..)
 
-ifneq ("$(wildcard $(REPO_ROOT)/.env.development)","")
-include $(REPO_ROOT)/.env.development
-export $(shell sed 's/=.*//' $(REPO_ROOT)/.env.development)
+# Load the env file selected by PROD (dev by default), exactly as
+# fl-services/nvflare/Makefile does — with PROD=stag|true this brings in the
+# upload vars (AICENTRE_BUCKET_NAME, FLOWER_CREDS_DATE) used by
+# upload-creds-to-s3.
+ifeq ($(PROD),true)
+MAIN_ENV_FILE := $(REPO_ROOT)/.env.production
+else ifeq ($(PROD),stag)
+MAIN_ENV_FILE := $(REPO_ROOT)/.env.stag
+else
+MAIN_ENV_FILE := $(REPO_ROOT)/.env.development
+endif
+ifneq ("$(wildcard $(MAIN_ENV_FILE))","")
+include $(MAIN_ENV_FILE)
+export $(shell sed 's/=.*//' $(MAIN_ENV_FILE))
 endif
 include $(REPO_ROOT)/deploy/fl_backend.mk
 
@@ -37,7 +48,7 @@ APP              ?= numpy
 # Host dir bind-mounted as /app/runs (Flower run state); gitignored.
 export WORKING_DIR := $(REPO_ROOT)/fl-services/flower/runs
 
-.PHONY: build provision generate-tls-certificates-net-1 generate-tls-certificates-net-2 \
+.PHONY: build provision upload-creds-to-s3 generate-tls-certificates-net-1 generate-tls-certificates-net-2 \
         up up-secure down submit _ensure-dev-dirs
 
 # Build the flower-* :dev images. flwr-base builds first (own invocation) — a plain
@@ -51,6 +62,19 @@ build:
 # Provision per-net TLS certs + SuperNode keys → fl-services/flower/provision/creds/net-<N>.
 provision:
 	@bash $(PROVISION_SCRIPT) net-$(NET_NUMBER)
+
+# Upload provisioned Flower creds for one net to S3, where the ECS EFS
+# provisioning task syncs them onto the hub's EFS (deploy/providers/AWS/
+# ecs_efs_provision.tf; FLIP#566). Mirrors nvflare's upload-kits-to-s3.
+# For a hub deployment the server cert must carry the ECS hostnames — e.g.:
+#   FLOWER_EXTRA_SERVER_SANS="fl-server-net-1.flip.local,fl.stag.flip.aicentre.co.uk" \
+#     make provision NET_NUMBER=1
+#   make upload-creds-to-s3 NET_NUMBER=1 PROD=stag
+upload-creds-to-s3:
+	@[ -n "$(AICENTRE_BUCKET_NAME)" ] || { echo "❌ AICENTRE_BUCKET_NAME not set — run with PROD=stag|true"; exit 1; }
+	@[ -n "$(FLOWER_CREDS_DATE)" ] || { echo "❌ FLOWER_CREDS_DATE not set — add it to the env file (e.g. 20260811)"; exit 1; }
+	@echo "⬆️  Uploading Flower creds (net-$(NET_NUMBER)) → s3://$(AICENTRE_BUCKET_NAME)/fl-flower-creds/$(FLOWER_CREDS_DATE)/net-$(NET_NUMBER) $(DRYRUN)"
+	aws s3 sync ./provision/creds/net-$(NET_NUMBER) s3://$(AICENTRE_BUCKET_NAME)/fl-flower-creds/$(FLOWER_CREDS_DATE)/net-$(NET_NUMBER) --delete --exclude "certificates/ca.key" $(DRYRUN)
 generate-tls-certificates-net-1:
 	@bash $(PROVISION_SCRIPT) net-1
 generate-tls-certificates-net-2:
