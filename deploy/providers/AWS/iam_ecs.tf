@@ -263,15 +263,18 @@ data "aws_iam_policy_document" "ecs_fl_server_task" {
     resources = [module.flip_fl_results_bucket.bucket_arn]
   }
 
-  # Read access to the NVFLARE participant kit on the AICENTRE bucket. Used
-  # by the one-shot efs-provision-certs task (which runs under this role and
-  # syncs the kit into EFS at boot). Runtime fl-server never reads from
-  # this prefix - the data lives on EFS by the time the service starts.
+  # Read access to the FL participant kits on the AICENTRE bucket — the
+  # NVFLARE kit prefix and the Flower creds prefix (#566). Used by the
+  # one-shot efs-provision-certs task (which runs under this role and syncs
+  # the backend's kit/creds into EFS at boot). Runtime fl-server never reads
+  # from these prefixes - the data lives on EFS by the time the service
+  # starts.
   statement {
-    sid     = "S3ReadFlareKit"
+    sid     = "S3ReadFlKit"
     actions = ["s3:GetObject", "s3:HeadObject"]
     resources = [
       "${aws_s3_bucket.aicentre_bucket.arn}/fl-flare-participant-kits/*",
+      "${aws_s3_bucket.aicentre_bucket.arn}/fl-flower-participant-kits/*",
     ]
   }
 
@@ -282,7 +285,10 @@ data "aws_iam_policy_document" "ecs_fl_server_task" {
     condition {
       test     = "StringLike"
       variable = "s3:prefix"
-      values   = ["fl-flare-participant-kits/*", "fl-flare-participant-kits"]
+      values = [
+        "fl-flare-participant-kits/*", "fl-flare-participant-kits",
+        "fl-flower-participant-kits/*", "fl-flower-participant-kits",
+      ]
     }
   }
 
