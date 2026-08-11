@@ -206,7 +206,10 @@ resource "aws_ecs_service" "e2e_web" {
   launch_type     = "FARGATE"
 
   network_configuration {
-    subnets          = local.app_subnet_ids
+    # TGW-reachable only: a task placed in a -b subnet cannot reach the
+    # central ECR endpoints (its TGW route is blackholed — main.tf) and
+    # never starts.
+    subnets          = local.tgw_reachable_app_subnet_ids
     security_groups  = [module.web_service_security_group[0].security_group.id]
     assign_public_ip = false
   }
@@ -233,7 +236,8 @@ resource "aws_ecs_service" "e2e_fl" {
   launch_type     = "FARGATE"
 
   network_configuration {
-    subnets          = local.app_subnet_ids
+    # TGW-reachable only — same ECR-pull constraint as e2e-web above.
+    subnets          = local.tgw_reachable_app_subnet_ids
     security_groups  = [module.fl_service_security_group.security_group.id]
     assign_public_ip = false
   }

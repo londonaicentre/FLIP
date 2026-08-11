@@ -38,11 +38,16 @@ this root **data-sources** it rather than creating it:
   monitoring/ssm* live centrally in the Network account and resolve here).
   The `GRNETSEC2` SCP denies VPC/subnet/NAT/IGW/EIP/endpoint creation to
   workload roles, so this stack could not build those even if it wanted to.
-- The prod VPC template is **single-AZ today** (`prod-app-a` only). An ALB
-  needs ≥ 2 AZs, so the **web leg is gated behind `enable_web_leg`
-  (default false)** until the multi-AZ template change lands (open
-  question 2). The **FL leg (NLB) is single-AZ-capable and applies now** —
-  test it first.
+- Multi-AZ app subnets landed 2026-07-29 (lza PR #38: `prod-app-b`), which
+  unblocks the web leg's ALB (`enable_web_leg=true`). **But the TGW
+  attachment still has an ENI in eu-west-2a only** (`prod-tgw-a`;
+  `prod-tgw-b` was left optional in lza#37 and not built), and AWS silently
+  drops traffic routed to a TGW from an AZ with no attachment ENI. So
+  every placement that must originate or answer over the TGW — the probe
+  (central SSM endpoints), ECS tasks (central ECR endpoints), any LB node
+  the edge targets — is filtered to TGW-reachable AZs (`main.tf` locals);
+  the filter widens automatically when a `prod-tgw-b` attachment subnet
+  lands (open question 2).
 - CloudFront **VPC origins are SCP-denied** for workload roles
   (`GRCLOUDFRONTVPCORIGIN`, lza PR #36) — the legacy prod shortcut
   (CloudFront → VPC origin → internal ALB) is not available in the LZA.
@@ -62,11 +67,15 @@ this root **data-sources** it rather than creating it:
    it is empty apart from the migration scaffolding, the stack is fully
    disposable (`make destroy`), and it exercises the exact
    subnets/TGW/firewall path real FLIP will use.
-2. **Multi-AZ subnets** — tracked as **londonaicentre/lza#37**. The prod
-   VPC template is single-AZ; that blocks this stack's web-leg ALB and,
-   later, prod's ALB + RDS. Once `prod-app-b` exists, set
-   `TF_VAR_enable_web_leg=true` and re-apply — the subnet data source picks
-   the new subnet up automatically.
+2. **Multi-AZ subnets** — ~~tracked as londonaicentre/lza#37~~ `prod-app-b`
+   landed 2026-07-29 (lza PR #38) and the web leg is enabled. **Residual
+   ask: `prod-tgw-b`** (left optional in lza#37): without a TGW attachment
+   ENI in eu-west-2b, everything in `prod-app-b` that routes via the TGW is
+   silently blackholed — this stack pins the probe/ECS/published NLB IPs
+   to TGW-reachable AZs meanwhile, but the ALB's eu-west-2b node cannot
+   serve edge traffic (its return path dies), so the web tier is
+   effectively single-AZ until `prod-tgw-b` exists. `prod-data-b` is also
+   still missing for prod RDS (`DBSubnetGroupDoesNotCoverEnoughAZs`).
 3. **ALB DNS-sync mechanism.** The web leg only works if the networking
    side resolves `/flip-e2e/networking/alb_dns_name` **on a cadence** and
    keeps the edge NLB's target IPs current — ALB IPs rotate. Confirm the
@@ -78,6 +87,17 @@ this root **data-sources** it rather than creating it:
    Out of scope here (this stack only opens :8002 to
    `networking_ingress_cidrs` + the VPC), but it decides where trust IPs
    get managed later.
+5. **VPC Block Public Access blocks the edge NLB** (found 2026-08-11 while
+   running Phase B). The Network account has VPC BPA
+   `block-bidirectional` (org **declarative policy**, applied 2026-06-22),
+   which drops **all** IGW traffic account-wide — the internet-facing
+   `ingress-nlb` has a public IP, an all-open SG and a healthy target, yet
+   `NewFlowCount` has been zero since creation: every client SYN dies at
+   the IGW, invisible to SG/NACL/route-table inspection. Fix is
+   networking-side: a **BPA exclusion** (`allow-bidirectional`) scoped to
+   the ingress VPC (`ExclusionsAllowed: allowed` is already set), or a
+   carve-out in the org declarative policy. Until then no internet traffic
+   can reach any LZA edge, FL or web.
 
 Resolved since the original brief: ~~CIDR allocation~~ (the template's IPAM
 pool handles it) and ~~ECR pull-through availability~~ (exists for

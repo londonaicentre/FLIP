@@ -48,9 +48,9 @@ resource "aws_ssm_parameter" "alb_dns_name" {
 
 resource "aws_ssm_parameter" "nlb_private_ips" {
   name        = "${local.ssm_prefix}/nlb_private_ips"
-  description = "Internal FL NLB static private IPs (comma-separated, assigned via subnet_mapping so they are stable by construction) — registered as IP targets on the networking account's edge NLB :8002 listener"
+  description = "Internal FL NLB static private IPs (comma-separated, assigned via subnet_mapping so they are stable by construction; TGW-reachable AZs only — see nlb.tf) — registered as IP targets on the networking account's edge NLB :8002 listener"
   type        = "StringList"
-  value       = join(",", local.fl_nlb_private_ips)
+  value       = join(",", local.fl_nlb_published_ips)
 }
 
 resource "aws_ssm_parameter" "web_port" {

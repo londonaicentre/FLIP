@@ -58,7 +58,10 @@ resource "aws_instance" "probe" {
   tags = {
     Name = "${local.name_prefix}-probe"
   }
-  subnet_id                   = local.app_subnet_ids[0]
+  # TGW-reachable only: from a -b subnet the 0.0.0.0/0 → TGW route is
+  # blackholed (no attachment ENI in that AZ) and the SSM agent never
+  # registers — see the tgw_reachable locals in main.tf.
+  subnet_id                   = local.tgw_reachable_app_subnet_ids[0]
   associate_public_ip_address = false
   instance_type               = "t3.micro"
   ami                         = data.aws_ssm_parameter.ubuntu.value

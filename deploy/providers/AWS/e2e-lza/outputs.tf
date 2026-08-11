@@ -33,7 +33,12 @@ output "NlbDnsName" {
 }
 
 output "NlbPrivateIps" {
-  description = "Internal FL NLB static private IPs — the networking account's edge NLB targets"
+  description = "Internal FL NLB static private IPs published to the networking account (TGW-reachable AZs only — the edge NLB targets)"
+  value       = local.fl_nlb_published_ips
+}
+
+output "NlbAssignedPrivateIps" {
+  description = "All static private IPs assigned on the FL NLB, including AZs the edge cannot use until their TGW attachment subnet exists"
   value       = local.fl_nlb_private_ips
 }
 

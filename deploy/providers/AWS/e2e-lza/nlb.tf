@@ -38,6 +38,16 @@ locals {
   fl_nlb_private_ips = [
     for id in local.app_subnet_ids : cidrhost(data.aws_subnet.app[id].cidr_block, var.fl_nlb_host_num)
   ]
+
+  # Only IPs whose AZ can answer over the TGW are published to the edge —
+  # registering a -b node before prod-tgw-b exists would sit permanently
+  # unhealthy on the networking side (return path blackholed; main.tf).
+  # The NLB still spans every app subnet: subnets cannot be removed from an
+  # NLB without replacing it, and the -b node becomes usable the moment a
+  # prod-tgw-b attachment subnet lands.
+  fl_nlb_published_ips = [
+    for id in local.tgw_reachable_app_subnet_ids : cidrhost(data.aws_subnet.app[id].cidr_block, var.fl_nlb_host_num)
+  ]
 }
 
 module "fl_nlb_security_group" {

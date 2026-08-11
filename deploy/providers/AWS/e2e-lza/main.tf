@@ -123,3 +123,35 @@ locals {
   # guaranteed; an unsorted list would replan the probe's subnet).
   app_subnet_ids = sort(data.aws_subnets.app.ids)
 }
+
+# The VPC's TGW attachment (pre-provisioned with the VPC). Traffic may only
+# ENTER the TGW from an AZ where the attachment has an ENI — AWS silently
+# drops flows routed to the TGW from any other AZ. The attachment currently
+# has an ENI in eu-west-2a only (prod-tgw-a; a prod-tgw-b was left optional
+# in londonaicentre/lza#37 and not built), so anything in a -b subnet that
+# must originate or return traffic over the TGW — the probe reaching the
+# central SSM endpoints, ECS pulling from the central ECR endpoints, an
+# LB node answering the networking-account edge — is blackholed. Filter
+# such placements to TGW-reachable AZs; the filter widens automatically
+# when a prod-tgw-b attachment subnet lands.
+data "aws_ec2_transit_gateway_vpc_attachment" "lza_prod" {
+  filter {
+    name   = "vpc-id"
+    values = [data.aws_vpc.lza_prod.id]
+  }
+}
+
+data "aws_subnet" "tgw_attachment" {
+  for_each = toset(data.aws_ec2_transit_gateway_vpc_attachment.lza_prod.subnet_ids)
+  id       = each.value
+}
+
+locals {
+  tgw_attachment_azs = distinct([
+    for s in values(data.aws_subnet.tgw_attachment) : s.availability_zone
+  ])
+  tgw_reachable_app_subnet_ids = [
+    for id in local.app_subnet_ids : id
+    if contains(local.tgw_attachment_azs, data.aws_subnet.app[id].availability_zone)
+  ]
+}
