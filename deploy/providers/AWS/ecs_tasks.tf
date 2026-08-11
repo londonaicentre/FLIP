@@ -184,19 +184,23 @@ resource "aws_ecs_task_definition" "fl_api_net_1" {
         },
         {
           sourceVolume  = "efs-fl-net-1-jobs"
+          readOnly      = false
           containerPath = "/app/src"
         },
         ] : [
         {
           sourceVolume  = "efs-fl-api-net-1-local"
+          readOnly      = false
           containerPath = "/app/admin/local"
         },
         {
           sourceVolume  = "efs-fl-api-net-1-startup"
+          readOnly      = false
           containerPath = "/app/admin/startup"
         },
         {
           sourceVolume  = "efs-fl-api-net-1-checkpoints"
+          readOnly      = false
           containerPath = "/app/server-checkpoints"
         },
       ]
@@ -335,23 +339,28 @@ resource "aws_ecs_task_definition" "fl_server_net_1" {
         },
         {
           sourceVolume  = "efs-fl-net-1-jobs"
+          readOnly      = false
           containerPath = "/app/src"
         },
         ] : [
         {
           sourceVolume  = "efs-fl-server-net-1-local"
+          readOnly      = false
           containerPath = "/app/local"
         },
         {
           sourceVolume  = "efs-fl-server-net-1-startup"
+          readOnly      = false
           containerPath = "/app/startup"
         },
         {
           sourceVolume  = "efs-fl-server-net-1-transfer"
+          readOnly      = false
           containerPath = "/app/transfer"
         },
         {
           sourceVolume  = "efs-fl-server-net-1-checkpoints"
+          readOnly      = false
           containerPath = "/app/server-checkpoints"
         },
       ]
