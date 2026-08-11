@@ -190,17 +190,13 @@ Create Cohort Query
 -------------------
 
 .. note::
-    A number of keywords are restricted and the cohort query will not be run in the instance that any of these keywords are entered, such as:
-
-        - ``alter user``
-        - ``alter table``
-        - ``alter database``
-        - ``drop table``
-        - ``drop user``
-        - ``drop role``
-        - ``drop database``
-        - ``create table``
-        - ``substring``
+    Cohort queries must be a single ``SELECT`` statement against the ``omop`` schema. The query is
+    parsed and validated on the trust side (not by keyword matching), so only read-only ``SELECT``
+    shapes are accepted — ``INSERT``, ``UPDATE``, ``DELETE``, ``MERGE`` and DDL (``CREATE``,
+    ``ALTER``, ``DROP``) are rejected wherever they appear in the query tree, and only literal
+    integer ``LIMIT``/``OFFSET`` values are allowed. There is no keyword denylist, so ordinary
+    read-only functions such as ``SUBSTRING()`` are permitted. Trust-side execution runs as a
+    read-only database role, so anything that slips past the parser cannot mutate the database.
 
 1. Click the 'Create Cohort Query' button in the bottom left corner of the project page
 2. Enter a query in SQL format, for example:

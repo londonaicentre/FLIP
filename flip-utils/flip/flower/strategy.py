@@ -34,7 +34,7 @@ from collections.abc import Iterable
 from flwr.app import ArrayRecord, Message, MetricRecord
 from flwr.common import ConfigRecord
 from flwr.serverapp import Grid
-from flwr.serverapp.strategy import FedAvg
+from flwr.serverapp.strategy import FedAvg, Result
 
 from flip import FLIP
 from flip.constants.flip_constants import ModelStatus
@@ -72,7 +72,7 @@ class FlipFedAvg(FedAvg):
         # wires the FedAvg hooks to it.
         self._telemetry = RoundTelemetry()
 
-    def start(self, grid: Grid, initial_arrays: ArrayRecord, num_rounds: int = 3, **kwargs):
+    def start(self, grid: Grid, initial_arrays: ArrayRecord, num_rounds: int = 3, **kwargs) -> Result:
         """Capture the round total and mark the run as executing on the hub."""
         self.num_rounds = num_rounds
         self.flip.update_status(self.model_id, ModelStatus.RUNNING)
