@@ -78,7 +78,7 @@ def validate_query(query: str) -> str:
     Database-layer protections already in place
     -------------------------------------------
     The data-access-api connects as ``data_analyst_reader`` (see
-    ``flip-omop-db/files/create_readonly_users.sql``), a Postgres role granted
+    ``trust/omop-db/files/create_readonly_users.sql``), a Postgres role granted
     only ``CONNECT`` + ``USAGE`` on schema ``omop`` + ``SELECT`` on its tables
     and sequences, with ``INSERT``, ``UPDATE``, ``DELETE``, ``TRUNCATE``, and
     ``CREATE`` explicitly REVOKEd. Any DDL or DML is therefore rejected by

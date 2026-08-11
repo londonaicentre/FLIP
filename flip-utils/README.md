@@ -22,7 +22,7 @@ pip-installable `flip` Python package (published as `flip-utils` on PyPI) that s
 image and is imported as `from flip import ...` by user-uploaded training code. Sibling FL trees in the same mono-repo:
 
 - **[`flip-utils/flip/`](./flip/)** — pip-installable Python package with platform logic, NVFLARE components, Flower helpers and utilities (this directory)
-- **[`../fl-apps/`](../fl-apps/)** — FL job-type implementations / app templates per backend (`nvflare/{standard,standard_client_api,evaluation,evaluation_client_api,diffusion_model,fed_opt}`, `flower/{standard,evaluation}`)
+- **[`../fl-apps/`](../fl-apps/)** — FL job-type implementations / app templates per backend (`nvflare/{standard,standard_client_api,evaluation,evaluation_client_api,diffusion_model,diffusion_model_client_api,fed_opt}`, `flower/{standard,evaluation}`)
 - **[`../fl-tutorials/`](../fl-tutorials/)** — runnable end-to-end tutorial examples per backend (`nvflare/`, `flower/`)
 - **[`../fl-services/`](../fl-services/)** — Docker images and network provisioning for FL networks per backend (`nvflare/`, `flower/`); each backend's `Makefile` owns build / provision / up / down / submit
 
@@ -175,9 +175,9 @@ Pass the job type to the `FLIP()` factory (`FLIP(job_type=...)`). The `JobType` 
 | `fed_opt` | Custom federated optimization |
 
 The NVFLARE backend additionally ships template directories under `fl-apps/nvflare/` for
-the Client-API variants (`standard_client_api`, `evaluation_client_api`); these are
-selected as app templates and are not `JobType` enum members. The corresponding configs
-live in `fl-apps/nvflare/<template>/app/config/`.
+the Client-API variants (`standard_client_api`, `evaluation_client_api`,
+`diffusion_model_client_api`); these are selected as app templates and are not `JobType`
+enum members. The corresponding configs live in `fl-apps/nvflare/<template>/app/config/`.
 
 ### Development Mode
 
@@ -231,6 +231,7 @@ Paths below are relative to `../fl-tutorials/nvflare/` (the NVFLARE tutorials tr
 | `evaluation` | `image_evaluation/3d_spleen_segmentation_evaluation` |
 | `standard_client_api` | `image_classification/xray_classification_client_api` |
 | `evaluation_client_api` | `image_evaluation/3d_spleen_segmentation_evaluation_client_api` |
+| `diffusion_model_client_api` | `image_synthesis/latent_diffusion_model_client_api` |
 
 ---
 
