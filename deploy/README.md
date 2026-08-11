@@ -238,7 +238,7 @@ LZA-governed account is an env-gated **mode** of that same root, not a separate 
 ([FLIP#749](https://github.com/londonaicentre/FLIP/issues/749)). The ECS FL task definitions serve **both
 FL backends** ([FLIP#566](https://github.com/londonaicentre/FLIP/issues/566)): `FL_BACKEND` in the env file
 switches the same task families between NVFLARE and Flower (SuperLink ports/command/creds — Flower
-additionally needs `FLOWER_CREDS_DATE` and provisioned creds uploaded via
+additionally needs `FLOWER_KIT_DATE` and provisioned creds uploaded via
 `make -C fl-services/flower provision upload-creds-to-s3`, with `FLOWER_EXTRA_SERVER_SANS` covering the
 Cloud Map + public FL hostnames).
 

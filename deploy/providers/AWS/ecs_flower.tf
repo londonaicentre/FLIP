@@ -97,7 +97,7 @@ resource "aws_ecs_task_definition" "flower_register_supernode_keys" {
 # fl-api healthy). Runs with the fl-api SG so the Flower control-plane SG
 # rules in ecs_sg.tf cover its SuperLink Exec (9093) call, and the fl-api's
 # VPC HTTP rule covers FL_API_ADDRESS. Re-run on key rotation by bumping
-# FLOWER_CREDS_DATE (retriggers via the provisioning task's arn) or tainting.
+# FLOWER_KIT_DATE (retriggers via the provisioning task's arn) or tainting.
 resource "null_resource" "flower_register_supernode_keys" {
   count = var.enable_service_discovery && var.enable_efs && var.fl_backend == "flower" ? 1 : 0
 

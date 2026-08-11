@@ -160,11 +160,6 @@ variable "fl_backend" {
   default     = "nvflare"
 }
 
-variable "flower_creds_date" {
-  description = "Date stamp for the provisioned Flower creds (e.g. 20260811) — S3 path fl-flower-creds/<date>/net-1 synced onto EFS by the provisioning task. Required when fl_backend=flower (fail-fast precondition in ecs_efs_provision.tf). Provision + upload via `make -C fl-services/flower provision upload-creds-to-s3`; set via FLOWER_CREDS_DATE in the env file."
-  type        = string
-  default     = ""
-}
 
 variable "flare_kit_date" {
   description = "Date stamp for the NVFLARE provisioned kit (e.g. 20260429), used to construct the S3 path for cert syncing"

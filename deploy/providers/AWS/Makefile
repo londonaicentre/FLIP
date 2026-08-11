@@ -132,7 +132,6 @@ export TF_VAR_fl_server_name=${DOCKER_FL_SERVER_NAME}
 export TF_VAR_fl_client_name=${DOCKER_FL_CLIENT_NAME}
 export TF_VAR_fl_backend=${FL_BACKEND}
 export TF_VAR_flare_kit_date=${FLARE_KIT_DATE}
-export TF_VAR_flower_creds_date=${FLOWER_CREDS_DATE}
 export TF_VAR_flower_kit_date=${FLOWER_KIT_DATE}
 export TF_VAR_POSTGRES_USER=${POSTGRES_USER}
 export TF_VAR_DB_PORT=${DB_PORT}

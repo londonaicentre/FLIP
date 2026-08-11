@@ -30,9 +30,12 @@ locals {
 
   # Flower creds are produced by `make -C fl-services/flower provision` (with
   # FLOWER_EXTRA_SERVER_SANS covering the Cloud Map + public FL hostnames)
-  # and uploaded by its `upload-creds-to-s3` target. Layout:
-  #   fl-flower-creds/{date}/net-1/{certificates,keys}/...
-  flower_creds_base_s3 = "s3://${aws_s3_bucket.aicentre_bucket.id}/fl-flower-creds/${var.flower_creds_date}/net-1"
+  # and uploaded by its `upload-creds-to-s3` target. The prefix matches the
+  # convention the K8s trust chart already consumes for its SuperNode kit
+  # (values.yaml flClient.flower.kitFromS3.pathTemplate) — one tree serves
+  # both sides. Layout:
+  #   fl-flower-participant-kits/{date}/net-1/{certificates,keys}/...
+  flower_creds_base_s3 = "s3://${aws_s3_bucket.aicentre_bucket.id}/fl-flower-participant-kits/${var.flower_kit_date}/net-1"
 }
 
 resource "null_resource" "provision_efs_certs" {
@@ -45,8 +48,8 @@ resource "null_resource" "provision_efs_certs" {
 
   lifecycle {
     precondition {
-      condition     = var.fl_backend != "flower" || var.flower_creds_date != ""
-      error_message = "fl_backend=flower needs FLOWER_CREDS_DATE set (S3 path fl-flower-creds/<date>/ — provision + upload the creds first)."
+      condition     = var.fl_backend != "flower" || var.flower_kit_date != ""
+      error_message = "fl_backend=flower needs FLOWER_KIT_DATE set (S3 path fl-flower-participant-kits/<date>/ — provision + upload the creds first)."
     }
   }
 
