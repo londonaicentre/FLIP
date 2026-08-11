@@ -89,8 +89,10 @@
                                         <!-- Its own mark, not the upload spinner: the bytes are safely
                                              stored, what's pending is the release check (#52). Worded as
                                              "checked" rather than "scanned for malware" because only
-                                             pickle-bearing files are content-scanned — Python source is
-                                             released uninspected, so a malware claim here would be false. -->
+                                             pickle-bearing files get a scan that can block release —
+                                             Python source instead gets a non-blocking Bandit pass (#877)
+                                             that never gates promotion, so a malware claim here would
+                                             still be false. -->
                                         <icon-ph-magnifying-glass-duotone
                                             v-else-if="file.status === FileUploadStatus.SCANNING"
                                             class="text-amber-600 dark:text-amber-400 animate-pulse"
@@ -225,8 +227,8 @@ const DELETABLE_STATUSES = [
 ];
 
 // Advisory-only summary of a .py upload's Bandit findings (#877) — never
-// gates use, so this is purely informational for whoever is reviewing the
-// model before it starts training.
+// gates use, so this is purely informational: visible to the uploader and to
+// anyone else who later opens the model's file list.
 const banditFindingsTooltip = (findings: BanditFinding[]): string => {
     const lines = findings.map(f => {
         const where = f.line_number ? ` (line ${f.line_number})` : "";

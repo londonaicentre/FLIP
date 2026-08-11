@@ -161,7 +161,8 @@ uploader self-review — supported by RBAC on who can upload — rather than a p
 review process; there is no GitHub-review step in the upload path today. This is a
 deliberate decision (weighed against runtime enforcement options — an import allowlist,
 RestrictedPython, OS-level sandboxing — each rejected as either easily bypassed or a poor
-fit for legitimate ML code), not an oversight.
+fit for legitimate ML code), not an oversight — see FLIP#877 (tracking GHSA-8465) for the
+full reasoning, so it does not need re-deciding the next time this class of finding comes up.
 
 **FL traffic is mutually authenticated.** Both supported backends — NVIDIA FLARE and
 Flower — run over TLS with per-participant certificates issued during network

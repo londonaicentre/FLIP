@@ -71,7 +71,7 @@ def get_model_files_list(
                 "modelId": str(model_id),
                 "created": file.created.isoformat() if hasattr(file, "created") and file.created else None,
                 "modified": file.modified.isoformat() if hasattr(file, "modified") and file.modified else None,
-                "banditFindings": file.bandit_findings,
+                "bandit_findings": file.bandit_findings,
             })
 
         return result

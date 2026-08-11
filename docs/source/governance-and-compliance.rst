@@ -202,7 +202,7 @@ Appendix A — Cyber Essentials
        workloads are isolated and hardened; automated secret scanning on every change;
        supply-chain cooldown; cloud-native runtime threat detection. Arbitrary Python logic in
        uploaded training code is not sandboxed at runtime — the accepted control is uploader
-       self-review plus RBAC, not an enforced platform gate.
+       self-review plus RBAC, not an enforced platform gate (FLIP#877, GHSA-8465).
      - Operational
 
 *****************************************************

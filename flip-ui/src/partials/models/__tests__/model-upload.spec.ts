@@ -286,8 +286,10 @@ describe("ModelUpload", () => {
 
         test("labels the SCANNING state without overstating what was inspected", async () => {
             // The state covers every file type, but only pickle-bearing files
-            // are actually content-scanned — Python source is released
-            // uninspected. The label must not imply otherwise (#52).
+            // get a scan that can block release. Python source also gets a
+            // Bandit pass (#877), but it is advisory only and never gates
+            // release — the label must not imply the file was vetted for
+            // malicious behaviour (#52).
             const wrapper = mountModelUpload({ files: [fileWith(FileUploadStatus.SCANNING)] });
             await flushPromises();
             const icon = wrapper.find(ModelUploadModal.scanningStatusLabel);
