@@ -104,14 +104,19 @@ locals {
     flip_api = merge(local.enforce_mfa_env, {
       ENV        = "production"
       AWS_REGION = var.AWS_REGION
-      # Trust the ALB's X-Forwarded-Proto so uvicorn knows the edge scheme is
-      # HTTPS. Without it uvicorn's forwarded-ips default (127.0.0.1) ignores
-      # the ALB's header, sees the internal hop as http, and emits `http://`
-      # redirects on trailing-slash routes (e.g. GET /trust/ -> 307
-      # http://…/trust) — clients drop the Authorization header across the
-      # scheme downgrade and get 401. The ALB is the only ingress and always
-      # rewrites these headers, so `*` is the standard behind-ALB value.
-      FORWARDED_ALLOW_IPS = "*"
+      # Make uvicorn honour the ALB's `X-Forwarded-Proto: https` so it knows
+      # the edge scheme is HTTPS and builds https:// absolute URLs. Without it
+      # uvicorn's forwarded-ips default (127.0.0.1) ignores the header, treats
+      # the internal ALB->task hop as http, and emits `http://` Location
+      # redirects on trailing-slash routes (the routers define `/trust`,
+      # `/projects`, `/cohort/save|submit`, … with no slash, so a client
+      # request WITH a slash gets a 307 to the canonical path) — the client
+      # drops the Authorization header across the https->http downgrade and
+      # gets 401. Scoped to the VPC CIDR (uvicorn >=0.30 accepts CIDR) rather
+      # than `*`: the task is in a private subnet reachable only via the ALB
+      # SG, so the connecting peer is always an in-VPC ALB ENI — this trusts
+      # exactly that and nothing else, keeping every generated URL https.
+      FORWARDED_ALLOW_IPS = var.vpc_cidr
       # Pin boto3 to the regional S3 endpoint: the legacy global endpoint's
       # ~24h DNS lag on freshly created non-us-east-1 buckets caused the
       # FLIP#24 500s. Same rationale as the matching block in
