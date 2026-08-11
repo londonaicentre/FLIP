@@ -10,6 +10,11 @@
 # limitations under the License.
 #
 
+# ROLE (FLIP#936): NVFLARE overlay of the local prod-image harness (see the note in
+# compose.production.yml) — not a deployment target. The canonical production FL task definitions live in
+# deploy/providers/AWS/ecs_tasks.tf, which mirror THIS overlay (NVFLARE); Flower has no ECS resources
+# (FLIP#566).
+
 # NOTE Important: any sections specified in base configs will be overridden if you specify the same sections in the
 # inheriting service configs below
 

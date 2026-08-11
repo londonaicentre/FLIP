@@ -531,7 +531,7 @@ make destroy
 **What gets destroyed:**
 
 - Trust EC2 instance
-- Central Hub EC2 instance
+- Central Hub SSM bastion instance
 - ECS Fargate cluster, services, task definitions, and EFS file systems
 - Application Load Balancer (ALB) and Network Load Balancer (NLB)
 - CloudFront distribution + WAFv2 WebACL
@@ -801,7 +801,7 @@ the direction of the request flow.
 - **EFS**: Shared file systems and access points used by the FL services for workspace volumes (configs, certs, transfer dir). Mount targets live in the **private subnets**.
 - **Cloud Map (Service Discovery)**: Private DNS namespace `flip.local` used for ECS task-to-task resolution (e.g. `fl-api-net-1.flip.local`).
 - **VPC endpoints**: Interface endpoints (Secrets Manager, SSM, CloudWatch Logs, ECR API + DKR) in the **private subnets** plus an S3 gateway endpoint. Allow Fargate tasks to reach AWS APIs without traversing the NAT Gateway.
-- **RDS**: PostgreSQL 17 managed database (Terraform default, see `var.postgres_version`), in the **private subnets**. Subnet group + security group ingress restricted to the Central Hub EC2 SG and the `flip-api` ECS task SG.
+- **RDS**: PostgreSQL 17 managed database (Terraform default, see `var.postgres_version`), in the **private subnets**. Subnet group + security group ingress restricted to the Central Hub bastion SG and the `flip-api` ECS task SG.
 - **CloudWatch**: Logging and monitoring for ECS tasks, the Trust EC2, the WAFv2 ACL, and VPC endpoints. The minimal Central Hub bastion does not run the CloudWatch agent.
 - **Secrets Manager**: Secure storage for API secrets and database credentials (`FLIP_API` secret).
 - **SSM Parameter Store**: Configuration values read by ECS tasks at startup — bucket URIs, internal service URL, internal-service-key header name.
@@ -854,7 +854,7 @@ Ports referenced internally only (no internet-facing ingress; reached only from 
 
 - **8000** — `flip-api` ECS task port (ALB target group target port). Not exposed externally.
 - **`FL_API_PORT`** — `fl-api-net-1` ECS task port. Cloud Map internal only; no LB and no external ingress.
-- **5432** — RDS PostgreSQL. Reachable only from the Central Hub EC2 SG and the `flip-api` ECS task SG.
+- **5432** — RDS PostgreSQL. Reachable only from the Central Hub bastion SG and the `flip-api` ECS task SG.
 - **Trust API** — no inbound port needed; trusts poll the hub outbound.
 
 ### Remote Access via SSM Session Manager

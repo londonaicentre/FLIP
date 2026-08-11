@@ -99,8 +99,13 @@ locals {
   # these so the deploy-time and runtime view are kept in sync.
   ecs_task_env = {
     flip_api = merge(local.enforce_mfa_env, {
-      ENV                       = "production"
-      AWS_REGION                = var.AWS_REGION
+      ENV        = "production"
+      AWS_REGION = var.AWS_REGION
+      # Pin boto3 to the regional S3 endpoint: the legacy global endpoint's
+      # ~24h DNS lag on freshly created non-us-east-1 buckets caused the
+      # FLIP#24 500s. Same rationale as the matching block in
+      # deploy/compose.production.yml; was compose-only until #566.
+      AWS_ENDPOINT_URL_S3       = "https://s3.${var.AWS_REGION}.amazonaws.com"
       AWS_COGNITO_USER_POOL_ID  = module.cognito.user_pool_id
       AWS_COGNITO_APP_CLIENT_ID = module.cognito.app_client_id
       POSTGRES_USER             = var.POSTGRES_USER

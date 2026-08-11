@@ -161,9 +161,10 @@ export TF_VAR_SES_VERIFIED_EMAIL=${SES_VERIFIED_EMAIL}
 export TF_VAR_flip_alb_subdomain=${ALB_SUBDOMAIN}
 export TF_VAR_flip_nlb_subdomain=${NLB_SUBDOMAIN}
 export TF_VAR_FLIP_UI_BUCKET_NAME=${FLIP_UI_BUCKET_NAME}
-# flip-api / fl-* env vars consumed by ECS task definitions (locals.tf).
-# These mirror compose.production.yml so the running container sees the same
-# values whether it runs on EC2+compose or ECS Fargate.
+# flip-api / fl-* env vars consumed by the ECS task definitions (locals.tf) —
+# the canonical definition of production container config (#936). The prod
+# compose files mirror a subset as the local prod-image harness only; the hub
+# no longer deploys on EC2+compose.
 export TF_VAR_TRUST_API_KEY_HEADER=${TRUST_API_KEY_HEADER}
 export TF_VAR_INTERNAL_SERVICE_KEY_HEADER=${INTERNAL_SERVICE_KEY_HEADER}
 export TF_VAR_FL_ADMIN_DIRECTORY=${FL_ADMIN_DIRECTORY}

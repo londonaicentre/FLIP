@@ -10,6 +10,11 @@
 # limitations under the License.
 #
 
+# ROLE (FLIP#936): Flower overlay of the local prod-image harness (see the note in
+# compose.production.yml) — not a deployment target. There is NO ECS equivalent of this overlay: the hub's
+# ECS FL task definitions implement NVFLARE only, so Flower currently runs on the hub via this harness
+# alone (FLIP#566 tracks the ECS decision).
+
 # NOTE Important: any sections specified in base configs will be overridden if you specify the same sections in the
 # inheriting service configs below
 
