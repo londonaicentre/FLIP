@@ -140,8 +140,9 @@ Each on-prem trust then joins exactly as in the hybrid flow:
 1. Add the trust host's public IP to `LOCAL_TRUST_PUBLIC_IPS` in the env file, then
    `make allow-local-trust-nlb PROD=<env>` (one NLB ingress rule per IP).
 2. Scaffold + register the kit: `make new-trust TRUST_CODE=<CODE> TRUST_NAME="..." TRUST_REGION=... PROD=<env>`
-   then `make register-trusts KIT=<CODE> PROD=<env>` (the `full-deploy-hub-only` chain
-   already registers every kit file present at deploy time).
+   then register it — **see "Registering trusts against the ECS hub" below**: the root
+   `make register-trust` execs into a *local* flip-api container (an EC2-hub-era
+   assumption, FLIP#936) and cannot reach the ECS task on its own.
 3. On the trust host: stage the FL kit (`make provision-local-trust KIT=<CODE>` on the
    host, or point `FL_KIT_DIR` in the kit at a locally-provisioned workspace) and start
    the stack: `sudo -E env PROD=<env> make -C trust up-trust KIT=<CODE>` (sudo required —
@@ -151,6 +152,36 @@ Each on-prem trust then joins exactly as in the hybrid flow:
 Multiple on-prem trusts can share one host — give each kit non-colliding ports and data
 directories (see the shipped `trust/.env.*.development.example` kits for a working
 two-trust port allocation).
+
+### Registering trusts against the ECS hub
+
+`register_trust` must run **inside the hub's flip-api task** (it mints credentials
+against the hub DB and stages an ephemeral SSM handoff). With the hub on ECS there is
+no local container to exec into, so the flow is ECS Exec (until the make target grows
+an ECS-aware path — FLIP#938):
+
+```bash
+export AWS_PROFILE=<env> AWS_REGION=eu-west-2
+# One-time per debugging session: ECS Exec is off by default (var.ecs_exec_enabled)
+aws ecs update-service --cluster flip-cluster --service flip-api \
+  --enable-execute-command --force-new-deployment
+aws ecs wait services-stable --cluster flip-cluster --services flip-api
+
+TASK=$(aws ecs list-tasks --cluster flip-cluster --service-name flip-api \
+  --query 'taskArns[0]' --output text)
+OUT=$(aws ecs execute-command --cluster flip-cluster --task "$TASK" \
+  --container flip-api --interactive \
+  --command "uv run python -m flip_api.scripts.register_trust --name \"<Trust Name>\" --code <CODE>")
+# The last JSON line of the session output is the kit payload — feed it to the
+# same distribution script the make target uses:
+printf '%s\n' "$OUT" | grep -E '^\{.*\}\s*$' | tail -1 \
+  | uv run --no-config scripts/distribute_trust_kits.py --target trust/.env.<CODE>.<env>
+make generate-xnat-credentials KIT=<CODE> PROD=<env>
+```
+
+Registration is backend-agnostic — the kit inherits `FL_BACKEND` (e.g. `flower`) from
+the hub's env, and the claimed FL kit slot maps onto the matching SuperNode key
+(Flower) or participant kit (NVFLARE) provisioned for that slot name.
 
 ### flip-ui on S3 + CloudFront
 

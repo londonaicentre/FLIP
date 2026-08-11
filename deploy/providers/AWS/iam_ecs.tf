@@ -108,6 +108,23 @@ data "aws_iam_policy_document" "ecs_flip_api_task" {
     resources = [module.flip_api_secret.secret_arn]
   }
 
+  # ECS Exec transport (`aws ecs execute-command`, gated service-side by
+  # var.ecs_exec_enabled). Without these the ExecuteCommandAgent reports
+  # RUNNING but its SSM control channel never opens and every exec fails
+  # TargetNotConnected — needed e.g. for hub-side register_trust against the
+  # ECS hub (README "Registering trusts against the ECS hub"; FLIP#938).
+  # ssmmessages has no resource-level scoping.
+  statement {
+    sid = "EcsExecSsmMessages"
+    actions = [
+      "ssmmessages:CreateControlChannel",
+      "ssmmessages:CreateDataChannel",
+      "ssmmessages:OpenControlChannel",
+      "ssmmessages:OpenDataChannel",
+    ]
+    resources = ["*"]
+  }
+
   # Mint IAM auth tokens to connect through RDS Proxy (FLIP#556). Scoped to the
   # one proxy + the single DB user flip-api connects as — the proxy itself uses
   # the master secret to reach RDS, so no static DB password lives in the app.
