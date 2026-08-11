@@ -76,7 +76,7 @@ def test_get_statistics(mock_read_sql, mock_df):
         encrypted_project_id="my_project",
         query_id="1",
         query_name="query_1",
-        query="SELECT * FROM omop.radiology_occurrence",
+        query="SELECT * FROM omop.image_occurrence",
         trust_id="mock_trust",
     )
 
@@ -102,7 +102,7 @@ def test_get_statistics_below_threshold(mock_read_sql, mock_df_below_threshold):
         encrypted_project_id="my_project",
         query_id="2",
         query_name="query_2",
-        query="SELECT * FROM omop.radiology_occurrence WHERE omop.radiology_occurrence.manufacturer = 'Discovery'",
+        query="SELECT * FROM omop.image_occurrence WHERE omop.image_occurrence.manufacturer = 'Discovery'",
         trust_id="mock_trust",
     )
     stats = get_statistics(mock_df_below_threshold, query_input, threshold=10)
@@ -135,7 +135,7 @@ def test_get_statistics_fails_global_threshold(mock_read_sql):
         encrypted_project_id="my_project",
         query_id="3",
         query_name="query_3",
-        query="SELECT * FROM omop.radiology_occurrence",
+        query="SELECT * FROM omop.image_occurrence",
         trust_id="mock_trust",
     )
 
@@ -160,7 +160,7 @@ def test_get_statistics_genuine_zero_is_suppressed(mock_read_sql):
         encrypted_project_id="my_project",
         query_id="4",
         query_name="query_4",
-        query="SELECT * FROM omop.radiology_occurrence WHERE 1 = 0",
+        query="SELECT * FROM omop.image_occurrence WHERE 1 = 0",
         trust_id="mock_trust",
     )
 
@@ -397,7 +397,7 @@ def test_get_records_pandas_error_without_dbapi_cause(mock_read_sql):
 # Tests for validate_query
 #
 # DDL/DML keyword filtering is intentionally not asserted here: data-access-api
-# connects as data_analyst_reader (see flip-omop-db/files/create_readonly_users.sql),
+# connects as data_analyst_reader (see trust/omop-db/files/create_readonly_users.sql),
 # a Postgres role that has INSERT/UPDATE/DELETE/TRUNCATE/CREATE explicitly
 # REVOKEd. Writes are rejected at the database layer; validate_query only
 # enforces structural rules that the DB role cannot enforce on its own.
@@ -1129,7 +1129,7 @@ def test_get_statistics_no_person_id_column(mock_read_sql):
         encrypted_project_id="my_project",
         query_id="1",
         query_name="no_person_id_test",
-        query="SELECT modality, manufacturer, accession_id FROM omop.radiology_occurrence",
+        query="SELECT modality, manufacturer, accession_id FROM omop.image_occurrence",
         trust_id="mock_trust",
     )
 
@@ -1193,7 +1193,7 @@ def test_get_statistics_with_person_id_column(mock_read_sql):
         encrypted_project_id="my_project",
         query_id="1",
         query_name="with_person_id_test",
-        query="SELECT person_id, modality, accession_id FROM omop.radiology_occurrence",
+        query="SELECT person_id, modality, accession_id FROM omop.image_occurrence",
         trust_id="mock_trust",
     )
 
@@ -1271,7 +1271,7 @@ def test_get_statistics_with_person_id_and_low_count_categories(mock_read_sql):
         encrypted_project_id="my_project",
         query_id="1",
         query_name="low_count_test",
-        query="SELECT person_id, modality, accession_id FROM omop.radiology_occurrence",
+        query="SELECT person_id, modality, accession_id FROM omop.image_occurrence",
         trust_id="mock_trust",
     )
 

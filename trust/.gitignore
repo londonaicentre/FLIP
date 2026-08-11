@@ -42,6 +42,8 @@ orthanc/orthanc-storage-*
 xnat/plugins/*.jar
 xnat/plugins/.s3-prefix
 .env.*
+# ...but the omop-db build-pipeline template is documentation, not a live env file.
+!omop-db/.env.build.example
 
 # Image data folder
 data/**/*.dcm
