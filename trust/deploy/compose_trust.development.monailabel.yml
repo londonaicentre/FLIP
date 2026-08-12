@@ -1,0 +1,65 @@
+# Copyright (c) Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+# MONAI Label overlay (development). Applied by trust/Makefile only when the kit sets
+# MONAI_LABEL=true AND declares NUM_AVAILABLE_GPUS > 0 (see MONAILABEL_OVERRIDE). Kept in
+# an overlay rather than the base compose so a trust that does not want it — or has no
+# GPU — brings the stack up unchanged. Mirrors the GPU / TRUST_OVERRIDE pattern.
+
+services:
+
+  monailabel:
+    build:
+      # Relative to the compose project directory (trust/), which is what --project-directory
+      # pins — NOT to this file's location under trust/deploy/.
+      context: ./monailabel
+      dockerfile: Dockerfile
+    volumes:
+      # MONAI Label resolves DICOM straight off the XNAT archive instead of pulling every
+      # scan over HTTP. Its XNAT datastore builds the path as
+      #   <asset path> + <XNAT file URI minus '/data/xnat/archive/'>
+      # so this must be mounted at the archive itself, not at its parent — pointing one
+      # level too high makes every lookup miss and silently fall back to HTTP downloads.
+      # Read-only: labels are written back through the XNAT REST API, never the filesystem.
+      - ${MONAI_LABEL_XNAT_ARCHIVE_DIR}:/workspace/xnat-data/archive:ro
+      # Pretrained weights are fetched on every server start; persist them so a container
+      # recreate does not re-download every model.
+      - monailabel-models:/workspace/app/radiology/model
+    environment:
+      - MONAI_LABEL_PORT=${MONAI_LABEL_PORT:-8030}
+      - MONAI_LABEL_DATASTORE=xnat
+      - MONAI_LABEL_DATASTORE_URL=${XNAT_URL:-http://xnat-web:8080}
+      - MONAI_LABEL_DATASTORE_USERNAME=${XNAT_SERVICE_USER}
+      - MONAI_LABEL_DATASTORE_PASSWORD=${XNAT_SERVICE_PASSWORD}
+      - MONAI_LABEL_DATASTORE_ASSET_PATH=/workspace/xnat-data/archive
+      # Without this the datastore walks every project on the trust's XNAT, issuing one
+      # request per experiment. Comma-separated; empty means every project.
+      - MONAI_LABEL_DATASTORE_PROJECT=${MONAI_LABEL_PROJECTS:-}
+      # Which radiology models to load. 'all' loads nine, each downloading its own weights.
+      - MONAI_LABEL_MODELS=${MONAI_LABEL_MODELS:-deepedit}
+      # Reached from the clinician's browser, NOT from inside the trust network.
+      - MONAI_LABEL_PUBLIC_URL=${MONAI_LABEL_PUBLIC_URL:-http://localhost:${MONAI_LABEL_PORT:-8030}}
+    ports:
+      - "${MONAI_LABEL_PORT:-8030}:${MONAI_LABEL_PORT:-8030}"
+    shm_size: ${MONAI_LABEL_SHM_SIZE:-8gb}
+    # count tracks NUM_AVAILABLE_GPUS so the reservation stays in lockstep with the rest of
+    # the trust stack, exactly as the fl-client GPU overlay does.
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: ${NUM_AVAILABLE_GPUS}
+              capabilities: [gpu]
+
+volumes:
+  monailabel-models:

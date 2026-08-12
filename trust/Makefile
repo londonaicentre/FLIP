@@ -159,6 +159,43 @@ TRUST_OVERRIDE := $(if $(filter Trust_1,$(FL_KIT_SLOT)),-f deploy/compose_trust-
 GPU_OVERRIDE := $(if $(filter-out 0,$(strip $(NUM_AVAILABLE_GPUS))),-f deploy/compose_trust.$(__DCKR_SUFFIX).gpu.yml,)
 GPU_STATUS_MSG := $(if $(GPU_OVERRIDE),🖥️  GPU passthrough on — fl-client will reserve $(NUM_AVAILABLE_GPUS) NVIDIA GPU(s),⚠️  fl-client starting CPU-only — NUM_AVAILABLE_GPUS=$(or $(strip $(NUM_AVAILABLE_GPUS)),unset). Set it >0 on a GPU host to enable passthrough.)
 
+# MONAI Label: AI-assisted annotation for the XNAT OHIF viewer. Off unless the kit (or the
+# command line) sets MONAI_LABEL=true, because it needs an NVIDIA GPU and pulls a large
+# image — a trust that does not want it must be unaffected. Same overlay mechanism as
+# GPU_OVERRIDE above.
+MONAI_LABEL ?= false
+MONAILABEL_OVERRIDE := $(if $(filter true,$(strip $(MONAI_LABEL))),-f deploy/compose_trust.$(__DCKR_SUFFIX).monailabel.yml,)
+
+# The overlay bind-mounts this trust's XNAT archive read-only so MONAI Label reads DICOM
+# off disk instead of pulling every scan over HTTP. XNAT_DATA_DIR comes from the kit but is
+# written relative to trust/xnat/ (that Makefile abspath's it from there), so anchor a
+# relative value at xnat/ — abspath'ing it from trust/ would silently resolve one level
+# too high and mount a non-existent directory. Keeps the default in step with
+# trust/xnat/Makefile's XNAT_DATA_DIR.
+__MONAI_LABEL_XNAT_DIR := $(or $(strip $(XNAT_DATA_DIR)),$(if $(filter true stag,$(PROD)),/opt/flip/xnat-trust$(TRUST_NUM),./xnat-data-trust$(TRUST_NUM)))
+MONAI_LABEL_XNAT_ARCHIVE_DIR := $(abspath $(if $(filter /%,$(__MONAI_LABEL_XNAT_DIR)),$(__MONAI_LABEL_XNAT_DIR),xnat/$(__MONAI_LABEL_XNAT_DIR)))/xnat-data/archive
+export MONAI_LABEL_XNAT_ARCHIVE_DIR
+
+# MONAI Label is dev/hybrid only for now: the prod compose runs published images and no
+# monailabel image is published yet (the NVIDIA PyTorch base is too large to build on the
+# ubuntu-latest runners the docker_build_* workflows use). Fail here rather than let
+# compose fail on a missing overlay file.
+define require_monailabel_supported
+	@if [ "$(strip $(MONAI_LABEL))" = "true" ] && [ -n "$(filter true stag,$(PROD))" ]; then \
+		echo "❌ MONAI_LABEL=true is not supported with PROD=$(PROD) yet — no published"; \
+		echo "   monailabel image (see FLIP#55). Use the development stack, or build and"; \
+		echo "   push the image to GHCR first and add a production overlay."; \
+		exit 1; \
+	fi
+	@if [ "$(strip $(MONAI_LABEL))" = "true" ] && [ -z "$(GPU_OVERRIDE)" ]; then \
+		echo "❌ MONAI_LABEL=true needs a GPU, but NUM_AVAILABLE_GPUS=$(or $(strip $(NUM_AVAILABLE_GPUS)),unset)"; \
+		echo "   for KIT=$(KIT). Set NUM_AVAILABLE_GPUS>0 in trust/$(KIT_FILE) on a GPU host."; \
+		exit 1; \
+	fi
+endef
+
+MONAI_LABEL_STATUS_MSG := $(if $(MONAILABEL_OVERRIDE),🧠 MONAI Label on — serving $(or $(strip $(MONAI_LABEL_MODELS)),deepedit) at $(or $(strip $(MONAI_LABEL_PUBLIC_URL)),http://localhost:$(or $(strip $(MONAI_LABEL_PORT)),8030)),)
+
 # TRUST_NAME (passed to trust-api for display/logging) prefers the kit's
 # registered name, falling back to the assigned slot then the CODE so a
 # not-yet-migrated kit (no TRUST_NAME) still resolves. nvflare's FL-material
@@ -246,7 +283,7 @@ define require_kit_file
 endef
 
 build:
-	$(TRUST_VARS) $(TRUST_BUILD_VARS) ${DOCKER_COMPOSE_CMD} -p $(or $(TRUST_PROJECT),trust) build
+	$(TRUST_VARS) $(TRUST_BUILD_VARS) ${DOCKER_COMPOSE_CMD} $(MONAILABEL_OVERRIDE) -p $(or $(TRUST_PROJECT),trust) build
 
 # Bring up the trust stack selected by KIT (e.g. KIT=Trust_1). Reads
 # trust/.env.<KIT> for that trust's ports / dirs / credentials. The
@@ -261,10 +298,12 @@ up-trust: update-omop-data update-orthanc-data create-networks
 	@echo "🚢 Starting Trust services (KIT=$(KIT))..."
 	@echo "⚙️ Using kit file trust/$(KIT_FILE)"
 	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
+	$(require_monailabel_supported)
 	$(call check_omop_data_dir,$(or $(OMOP_DATA_DIR),./omop-db/volumes/Trust_$(TRUST_NUM)/db_data))
 	mkdir -p $(or $(BASE_IMAGES_DOWNLOAD_DIR),./data/$(KIT))
 	@echo "$(GPU_STATUS_MSG)"
-	$(TRUST_VARS) DEBUG=${DEBUG} ${DOCKER_COMPOSE_CMD} $(GPU_OVERRIDE) $(TRUST_OVERRIDE) -p $(TRUST_PROJECT) up -d $(UP_PULL_FLAGS)
+	@$(if $(MONAILABEL_OVERRIDE),echo "$(MONAI_LABEL_STATUS_MSG)",:)
+	$(TRUST_VARS) DEBUG=${DEBUG} ${DOCKER_COMPOSE_CMD} $(GPU_OVERRIDE) $(MONAILABEL_OVERRIDE) $(TRUST_OVERRIDE) -p $(TRUST_PROJECT) up -d $(UP_PULL_FLAGS)
 	@echo "🩻 Starting XNAT for $(KIT)..."
 	$(MAKE) -C xnat up-xnat KIT=$(KIT) PROD=$(PROD)
 

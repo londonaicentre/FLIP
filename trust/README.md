@@ -109,6 +109,58 @@ See dedicated README under [omop-db/README.md](omop-db/README.md) for instructio
 
 `make up` (and `make up-trust KIT=<name>`) brings up that trust's XNAT automatically — it is no longer a separate step. See the dedicated README under [xnat/README.md](xnat/README.md) for standalone XNAT management and debugging.
 
+## MONAI Label (optional)
+
+MONAI Label adds AI-assisted annotation to the XNAT OHIF viewer: a **MONAI Label** menu in the
+viewer's Masks panel that runs a segmentation model over the scan on screen and lets a user
+correct the result interactively.
+
+It is **off by default** — it needs an NVIDIA GPU on the trust host and pulls a large image, so
+a trust that does not want it is unaffected. Enable it per trust:
+
+```sh
+make up-trust KIT=<CODE> MONAI_LABEL=true       # or set MONAI_LABEL=true in trust/.env.<CODE>.<env>
+```
+
+The trust's kit file carries the rest of the settings:
+
+| Variable | Default | Notes |
+| --- | --- | --- |
+| `MONAI_LABEL` | `false` | Master switch. Requires `NUM_AVAILABLE_GPUS>0`. |
+| `MONAI_LABEL_PORT` | `8030` | Host port the server listens on. |
+| `MONAI_LABEL_MODELS` | `deepedit` | Comma-separated radiology models. `all` loads nine, each downloading its own weights. |
+| `MONAI_LABEL_PROJECTS` | *(empty)* | XNAT projects the server may read. Empty means **every** project on this trust. |
+| `MONAI_LABEL_PUBLIC_URL` | `http://localhost:$MONAI_LABEL_PORT` | See below — this one matters. |
+| `MONAI_LABEL_SHM_SIZE` | `8gb` | Shared memory for dataloader workers. |
+
+**`MONAI_LABEL_PUBLIC_URL` is the setting people get wrong.** XNAT stores this URL and hands it
+to the OHIF viewer, which calls it **from the clinician's browser** — XNAT never proxies the
+request. So it must resolve on the clinician's machine: a Docker service name, or `0.0.0.0`,
+will not work. The default only works when the browser runs on the trust host itself. Two
+further consequences on a real trust:
+
+- If XNAT is served over **HTTPS**, the browser blocks a plain-`http://` MONAI Label URL as
+  mixed content. Terminate TLS in front of MONAI Label, or serve it through the XNAT nginx so
+  it is same-origin.
+- The MONAI Label API is **unauthenticated** and holds this trust's XNAT service-account
+  credentials. Restrict who can reach `MONAI_LABEL_PORT`; do not expose it beyond the
+  clinical network.
+
+**Each user must also switch the panel on themselves**, in the viewer under
+*Options → Preferences → Experimental → MONAI Label*. Until they do, a perfectly working
+server is simply absent from the viewer — that is the first thing to check when it "isn't
+showing up".
+
+Notes:
+
+- The server reads DICOM straight off this trust's XNAT archive (mounted read-only), falling
+  back to HTTP downloads only for scans it cannot resolve there.
+- Pretrained weights are fetched on first start and persisted in the `monailabel-models`
+  volume, so a container recreate does not re-download them.
+- Currently **development/hybrid only**: the production stack runs published images and no
+  `monailabel` image is published yet. `MONAI_LABEL=true` with `PROD=true|stag` fails with a
+  message pointing here (see FLIP#55).
+
 ## Running standalone (remote trust operator)
 
 If you are operating a trust on a host that does not have the hub's
