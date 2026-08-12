@@ -11,7 +11,7 @@
 
 # Centralised file to obtain trainable labels from dataframe ones
 
-from typing import List, Sequence
+from collections.abc import Sequence
 
 import torch
 from pandas import Series
@@ -30,7 +30,7 @@ class LesionDict(BaseModel):
         """Check if a given string matches any lesion name."""
         return any(item.lesion == element_value for item in self.items)
 
-    def get_lesion_list(self) -> List[str]:
+    def get_lesion_list(self) -> list[str]:
         """Return a list of all lesion names."""
         return [item.lesion for item in self.items]
 

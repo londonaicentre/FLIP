@@ -45,8 +45,9 @@ def train(msg: Message, context: Context):
 def evaluate(msg: Message, context: Context):
     """Evaluate the model on local data."""
 
-    # The model is the global arrays
-    ndarrays = msg.content["arrays"].to_numpy_ndarrays()
+    # The model is the global arrays. This toy app reports a random metric instead of evaluating,
+    # so the unpacked arrays go unused - the line stays as the worked example of how to reach them.
+    _ndarrays = msg.content["arrays"].to_numpy_ndarrays()
 
     # Return reply Message
     metrics = {

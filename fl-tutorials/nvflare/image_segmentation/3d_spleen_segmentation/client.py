@@ -34,6 +34,8 @@ import numpy as np
 import nvflare.client as flare
 import pandas as pd
 import torch
+from flip import FLIP
+from flip.constants import ResourceType
 from model import FLUNet
 from monai.data import DataLoader, Dataset, decollate_batch
 from monai.losses import DiceCELoss
@@ -42,9 +44,6 @@ from monai.transforms import AsDiscrete
 from nvflare.app_opt.monai import decomposers
 from nvflare.client.tracking import SummaryWriter
 from transforms import get_sliding_window_inferer, get_train_transforms, get_val_transforms
-
-from flip import FLIP
-from flip.constants import ResourceType
 
 
 def _compute_weight_diff(

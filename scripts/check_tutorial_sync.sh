@@ -10,13 +10,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-# Verify that Flower tutorial files copied from the fl-apps/flower/ templates have
-# not drifted.
+# Verify that tutorial files kept as byte-identical copies of another file have not
+# drifted. Two families are checked:
+#
+#   1. Flower tutorial files copied from the fl-apps/flower/ templates.
+#   2. Ark+ NVFLARE tutorial files shared between the two evaluation apps.
 #
 # These files cannot be symlinks: `flwr build` excludes symlinks from the FAB,
-# so each tutorial keeps a real copy of the shared ServerApp and strategy. This
-# check fails if a copy drifts from its fl-apps/flower/ template -- resync by
-# copying the template over the tutorial file.
+# so each tutorial keeps a real copy of the shared ServerApp and strategy, and an
+# app directory is copied whole into a job. This check fails if a copy drifts from
+# its reference -- resync by copying the reference over the copy.
 #
 # The pyproject.toml files are intentionally NOT paired: the template
 # pyprojects carry platform-only [tool.uv] tables (flip-utils pinned to the
@@ -29,7 +32,7 @@
 # Paths are relative to the repo root (this script lives in scripts/, so cd up one).
 cd "$(dirname "$0")/.." || exit 1
 
-# "<tutorial file>:<fl-apps/flower template>"
+# "<copy>:<reference file it must match>"
 PAIRS=(
   "fl-tutorials/flower/3d_spleen_segmentation_evaluation/app/server_app.py:fl-apps/flower/evaluation/app/server_app.py"
   "fl-tutorials/flower/3d_spleen_segmentation_evaluation/app/strategy.py:fl-apps/flower/evaluation/app/strategy.py"
@@ -37,6 +40,13 @@ PAIRS=(
   "fl-tutorials/flower/3d_spleen_segmentation/app/strategy.py:fl-apps/flower/standard/app/strategy.py"
   "fl-tutorials/flower/xray_classification/app/server_app.py:fl-apps/flower/standard/app/server_app.py"
   "fl-tutorials/flower/xray_classification/app/strategy.py:fl-apps/flower/standard/app/strategy.py"
+  # The two Ark+ evaluation apps differ only in how many checkpoints they score; their data
+  # loading and their flattened model definitions are the same file, and have been the same git
+  # blob since they were written. Pinning that here is what stops a preprocessing fix landing in
+  # one and not the other -- exactly how the sideways-radiograph defect spread (FLIP#871).
+  # The reference side is the baseline app; resync by copying it over the multimodel copy.
+  "fl-tutorials/nvflare/image_evaluation/arkplus_multimodel_classification_evaluation/app_files/data_utils.py:fl-tutorials/nvflare/image_evaluation/arkplus_baseline_classification_evaluation/app_files/data_utils.py"
+  "fl-tutorials/nvflare/image_evaluation/arkplus_multimodel_classification_evaluation/app_files/arkplus_flat_models.py:fl-tutorials/nvflare/image_evaluation/arkplus_baseline_classification_evaluation/app_files/arkplus_flat_models.py"
 )
 
 FAIL=0
@@ -54,10 +64,10 @@ done
 
 if [ "$FAIL" -ne 0 ]; then
   echo "" >&2
-  echo "Tutorial files have drifted from their fl-apps/flower/ templates." >&2
-  echo "Resync by copying each fl-apps/flower/ template over the tutorial file." >&2
+  echo "Tutorial files have drifted from the files they are kept identical to." >&2
+  echo "Resync by copying each reference file (right-hand side above) over its copy." >&2
   exit 1
 fi
 
 echo ""
-echo "All tutorial files are in sync with their fl-apps/flower/ templates."
+echo "All tutorial copies are in sync with their reference files."

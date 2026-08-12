@@ -292,6 +292,18 @@ make -C fl-tutorials run-all-tutorials
 NVFLARE tutorials need a GPU + the `flare-fl-base` image. Build the FL images locally first (tagged `:dev`) with
 `make build-fl`. See each tutorial's README for backend-specific details.
 
+The tutorial sources also carry a **CPU-only** check that needs none of that — no GPU, no dataset, no FL image —
+and runs in CI on every PR touching `fl-tutorials/**`:
+
+```bash
+make -C fl-tutorials test        # ruff over fl-tutorials/ + the transform-chain suite
+make -C fl-tutorials pytest      # the suite only (fl-tutorials/tests/)
+make -C fl-tutorials lint        # ruff only
+```
+
+It pins what each app's preprocessing chain actually feeds its model against the raw DICOM `PixelData` — see
+[`fl-tutorials/tests/README.md`](fl-tutorials/tests/README.md) for what it does and does not cover.
+
 ## AWS Deployment
 
 ### Staging environment
