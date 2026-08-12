@@ -437,8 +437,14 @@ def _kit_tree(tmp_path: Path) -> Path:
     return trust_dir
 
 
-def _run_up_loop(makefile: Path, cwd: Path, tmp_path: Path, child_exit: int) -> tuple[int, int]:
+def _run_up_loop(
+    makefile: Path, cwd: Path, tmp_path: Path, child_exit: int, skip: tuple[str, ...] = ()
+) -> tuple[int, int]:
     """Drive an aggregate `up` target with every per-trust sub-make stubbed out.
+
+    `skip` names prerequisites to neutralise with make's -o flag. trust/Makefile's `up` depends on
+    create-networks, which talks to the Docker daemon — absent on a CI runner, where it would fail
+    before the loop is ever reached and look exactly like a loop that never ran.
 
     Returns (aggregate exit status, number of sub-make invocations).
     """
@@ -447,7 +453,15 @@ def _run_up_loop(makefile: Path, cwd: Path, tmp_path: Path, child_exit: int) -> 
     _write_executable(stub, f'#!/bin/sh\necho "$@" >> "{record}"\nexit {child_exit}\n')
 
     result = subprocess.run(
-        ["make", "-f", str(makefile), "up", f"MAKE={stub}", "FL_BACKEND=nvflare"],
+        [
+            "make",
+            "-f",
+            str(makefile),
+            "up",
+            f"MAKE={stub}",
+            "FL_BACKEND=nvflare",
+            *(arg for target in skip for arg in ("-o", target)),
+        ],
         cwd=cwd,
         check=False,
         capture_output=True,
@@ -467,11 +481,11 @@ def test_up_loops_abort_on_the_first_failing_trust(tmp_path: Path) -> None:
     """
     trust_dir = _kit_tree(tmp_path)
 
-    for makefile, cwd in (
-        (REPO_ROOT / "trust" / "xnat" / "Makefile", trust_dir / "xnat"),
-        (REPO_ROOT / "trust" / "Makefile", trust_dir),
+    for makefile, cwd, skip in (
+        (REPO_ROOT / "trust" / "xnat" / "Makefile", trust_dir / "xnat", ()),
+        (REPO_ROOT / "trust" / "Makefile", trust_dir, ("create-networks",)),
     ):
-        status, calls = _run_up_loop(makefile, cwd, tmp_path, child_exit=1)
+        status, calls = _run_up_loop(makefile, cwd, tmp_path, child_exit=1, skip=skip)
         assert status != 0, f"{makefile.parent.name} up reported success despite a failing trust"
         assert calls == 1, f"{makefile.parent.name} up kept going after a failure ({calls} calls)"
         (tmp_path / "sub-make-calls").unlink()
