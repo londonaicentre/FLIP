@@ -57,6 +57,14 @@ ifeq ($(ENV),development)
 export AES_KEY_BASE64 CENTRAL_HUB_API_URL TRUST_API_KEY_HEADER FL_BACKEND \
        FLOWER_KIT_DATE FLARE_KIT_DATE DOCKER_TAG DOCKER_REGISTRY \
        DOCKER_FL_TAG DOCKER_FL_REGISTRY NLB_SUBDOMAIN FL_SERVER_PORT
+# UID/GID/UNAME come from the same hub .env and must be exported for the same reason:
+# the dev compose runs imaging-api, data-access-api and trust-api as `user: "${UID}:${GID}"`
+# so they can write host-owned bind mounts (notably BASE_IMAGES_DOWNLOAD_DIR, which this
+# Makefile mkdir's as the host user). Unexported they interpolate to "", compose renders
+# `user: ":"`, the containers fall back to image root — and since they also run CapDrop=ALL
+# (no CAP_DAC_OVERRIDE) that root cannot write a host-user-owned dir. The visible symptom is
+# every FL image download failing 500 and training dying with num_samples=0.
+export UID GID UNAME
 endif
 
 include ../deploy/fl_backend.mk
