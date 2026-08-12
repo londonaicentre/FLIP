@@ -158,7 +158,7 @@ def get_uploaded_files_info(
 
 # TODO [#114] This endpoint was not defined in the old repo.
 # Alternative implementation with a POST request and request body
-@router.post("/", response_model=list[dict[str, Any]])
+@router.post("", response_model=list[dict[str, Any]])
 def get_uploaded_files_info_post(
     id_list: IdList,
     db: Session = Depends(get_session),

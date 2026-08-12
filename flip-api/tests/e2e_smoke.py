@@ -198,7 +198,7 @@ def create_project_with_query(
         name=project_name, description="E2E smoke run", users=[], dicom_to_nifti=dicom_to_nifti
     ).model_dump()
     project_id = _ensure_ok(
-        _post(client, "/projects/", project_payload, headers), "create project"
+        _post(client, "/projects", project_payload, headers), "create project"
     ).json()["id"]
     _log(f"  ✅ project_id={project_id}")
 
@@ -206,7 +206,7 @@ def create_project_with_query(
     add_resp = _ensure_ok(
         _post(
             client,
-            "/cohort/save/",
+            "/cohort/save",
             {"query": query, "name": "E2E smoke query", "project_id": project_id},
             headers,
         ),
@@ -219,7 +219,7 @@ def create_project_with_query(
     _ensure_ok(
         _post(
             client,
-            "/cohort/submit/",
+            "/cohort/submit",
             {
                 "authenticationToken": headers.get("authorization", headers.get("Authorization", "")),
                 "query": query,
@@ -330,7 +330,7 @@ def stage_and_approve(
     client: requests.Session, headers: dict[str, str], project_id: str, trusts_selection: str | None = None
 ) -> list[dict[str, Any]]:
     _log("🏥 Fetching trusts")
-    trusts = _ensure_ok(_get(client, "/trust/", headers), "list trusts").json()
+    trusts = _ensure_ok(_get(client, "/trust", headers), "list trusts").json()
     if not trusts:
         raise SmokeFailure("No trusts registered with the hub — start the trust services and seed first")
     _log(f"  ✅ found {len(trusts)} trust(s): {[t['name'] for t in trusts]}")
@@ -345,12 +345,12 @@ def stage_and_approve(
     trust_ids = [t["id"] for t in trusts]
     _log("📋 Staging project")
     _ensure_ok(
-        _post(client, f"/projects/{project_id}/stage/", {"trusts": trust_ids}, headers),
+        _post(client, f"/projects/{project_id}/stage", {"trusts": trust_ids}, headers),
         "stage project",
     )
     _log("✅ Approving project (step function)")
     _ensure_ok(
-        _post(client, f"/step/project/{project_id}/approve/", {"trusts": trust_ids}, headers),
+        _post(client, f"/step/project/{project_id}/approve", {"trusts": trust_ids}, headers),
         "approve project",
     )
     _log("  ✅ approved")
@@ -922,7 +922,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.project_id:
             project_id = args.project_id
             _log(f"♻️  Reusing existing project_id={project_id} (skipping cohort + approval)")
-            trusts = _ensure_ok(_get(client, "/trust/", headers), "list trusts").json()
+            trusts = _ensure_ok(_get(client, "/trust", headers), "list trusts").json()
             if not trusts:
                 raise SmokeFailure("No trusts registered with the hub")
             _log(f"  ✅ found {len(trusts)} trust(s): {[t['name'] for t in trusts]}")

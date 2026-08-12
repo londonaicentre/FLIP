@@ -117,6 +117,17 @@ spec:
               aws s3 sync "s3://${S3_BUCKET}/${S3_PATH}" "${DEST_DIR}" --delete
               {{- end }}
               chmod -R go-rwx "${DEST_DIR}"
+              # The init runs as root, so after stripping group/other access the
+              # tree must be handed to the fl-client's runtime user or the main
+              # container cannot even traverse the kit dirs (Permission denied
+              # on /certs, /keys). Uids are the image-baked users: Flower's
+              # upstream base runs as `app` (49999); the NVFLARE image as
+              # `flip` (1000, GHSA-8465).
+              {{- if eq .Values.flBackend "flower" }}
+              chown -R 49999:49999 "${DEST_DIR}"
+              {{- else }}
+              chown -R 1000:1000 "${DEST_DIR}"
+              {{- end }}
               echo "Kit sync complete."
           env:
             - name: AWS_DEFAULT_REGION
@@ -156,15 +167,25 @@ spec:
             {{- toYaml . | nindent 12 }}
           {{- end }}
           {{- if eq .Values.flBackend "flower" }}
-          command:
+          # args, NOT command: the flags append to the image's flower-supernode
+          # ENTRYPOINT (mirroring the compose overlay's `command:` semantics).
+          # A `command:` here overrides the entrypoint and runc tries to exec
+          # "--root-certificates" itself (StartError, exit 128). The auth key
+          # is the per-SLOT SuperNode credential — trustNumber tracks the
+          # assigned FL kit slot number (sync-kit pins it from the kit).
+          args:
             - "--root-certificates"
             - "/certs/ca.crt"
             - "--superlink"
             - {{ .Values.flClient.flower.superlink | quote }}
             - "--auth-supernode-private-key"
-            - "/keys/supernode_credentials_1"
+            - "/keys/supernode_credentials_{{ .Values.trustNumber }}"
             - "--clientappio-api-address"
             - {{ .Values.flClient.flower.supernodeClientAppIoAddress | quote }}
+            # ClientApp-side per-run dependency install (uv sync with the
+            # image's pinned flip-utils — FLIP#767); required for every
+            # Flower app run, mirroring compose_trust.production.flower.yml.
+            - "--allow-runtime-dependency-installation"
           {{- else if eq .Values.flBackend "nvflare" }}
           command:
             - /bin/bash

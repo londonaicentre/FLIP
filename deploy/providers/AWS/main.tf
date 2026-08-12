@@ -421,9 +421,11 @@ module "fl_server_nlb" {
     fl_server_egress = {
       description = "Allow NLB traffic and health checks to FL server targets"
       ip_protocol = "tcp"
-      from_port   = tostring(var.FL_SERVER_PORT)
-      to_port     = tostring(var.FL_SERVER_PORT)
-      cidr_ipv4   = var.vpc_cidr
+      # Target-side port — backend-dependent (Flower targets 9092), unlike
+      # the listener/ingress side which stays on FL_SERVER_PORT.
+      from_port = tostring(local.fl_server_container_port)
+      to_port   = tostring(local.fl_server_container_port)
+      cidr_ipv4 = var.vpc_cidr
     }
   }
 
@@ -473,11 +475,21 @@ resource "aws_route53_record" "alb" {
 # Fargate tasks. NLB protocol must be TCP - HTTP/2 gRPC framing is opaque
 # to the NLB and forwarded as-is.
 resource "aws_lb_target_group" "ecs_fl_server_tcp" {
-  name        = "ecs-fl-server-tcp"
-  port        = var.FL_SERVER_PORT
+  # Container port per backend (NVFLARE: FL_SERVER_PORT; Flower: SuperLink
+  # Fleet 9092 — see local.fl_server_container_port in ecs_tasks.tf). The
+  # NLB LISTENER stays on var.FL_SERVER_PORT for both. Port is ForceNew, so
+  # switching backend replaces this TG; the name is keyed by backend and
+  # create_before_destroy set so the replacement can stand up while the old
+  # TG is still attached to the listener (a same-name replace deadlocks).
+  name        = var.fl_backend == "flower" ? "ecs-fl-server-flwr-tcp" : "ecs-fl-server-tcp"
+  port        = local.fl_server_container_port
   protocol    = "TCP"
   target_type = "ip"
   vpc_id      = module.flip_vpc.vpc_id
+
+  lifecycle {
+    create_before_destroy = true
+  }
 
   health_check {
     enabled             = true
