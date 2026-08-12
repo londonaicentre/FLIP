@@ -4,7 +4,10 @@
   "description": "Schema for values.yaml of the flip-trust Helm chart",
   "type": "object",
   "additionalProperties": true,
-  "required": ["trustName", "trustNumber"],
+  "required": [
+    "trustName",
+    "trustNumber"
+  ],
   "properties": {
     "trustName": {
       "type": "string",
@@ -17,7 +20,11 @@
     },
     "environment": {
       "type": "string",
-      "enum": ["production", "staging", "development"],
+      "enum": [
+        "production",
+        "staging",
+        "development"
+      ],
       "description": "Deployment environment"
     },
     "logLevel": {
@@ -30,23 +37,34 @@
     },
     "flBackend": {
       "type": "string",
-      "enum": ["nvflare", "flower"],
+      "enum": [
+        "nvflare",
+        "flower"
+      ],
       "description": "FL backend selection"
     },
     "namespace": {
       "type": "object",
       "additionalProperties": true,
       "properties": {
-        "create": { "type": "boolean" },
-        "name": { "type": "string" }
+        "create": {
+          "type": "boolean"
+        },
+        "name": {
+          "type": "string"
+        }
       }
     },
     "secrets": {
       "type": "object",
       "additionalProperties": true,
       "properties": {
-        "create": { "type": "boolean" },
-        "existingName": { "type": "string" },
+        "create": {
+          "type": "boolean"
+        },
+        "existingName": {
+          "type": "string"
+        },
         "data": {
           "type": "object",
           "additionalProperties": true
@@ -57,8 +75,13 @@
       "type": "object",
       "additionalProperties": true,
       "properties": {
-        "enabled": { "type": "boolean" },
-        "replicas": { "type": "integer", "minimum": 1 },
+        "enabled": {
+          "type": "boolean"
+        },
+        "replicas": {
+          "type": "integer",
+          "minimum": 1
+        },
         "resources": {
           "type": "object",
           "additionalProperties": true,
@@ -66,15 +89,23 @@
             "requests": {
               "type": "object",
               "properties": {
-                "memory": { "type": "string" },
-                "cpu": { "type": "string" }
+                "memory": {
+                  "type": "string"
+                },
+                "cpu": {
+                  "type": "string"
+                }
               }
             },
             "limits": {
               "type": "object",
               "properties": {
-                "memory": { "type": "string" },
-                "cpu": { "type": "string" }
+                "memory": {
+                  "type": "string"
+                },
+                "cpu": {
+                  "type": "string"
+                }
               }
             }
           }
@@ -86,17 +117,29 @@
             "liveness": {
               "type": "object",
               "properties": {
-                "initialDelaySeconds": { "type": "integer" },
-                "periodSeconds": { "type": "integer" },
-                "timeoutSeconds": { "type": "integer" }
+                "initialDelaySeconds": {
+                  "type": "integer"
+                },
+                "periodSeconds": {
+                  "type": "integer"
+                },
+                "timeoutSeconds": {
+                  "type": "integer"
+                }
               }
             },
             "readiness": {
               "type": "object",
               "properties": {
-                "initialDelaySeconds": { "type": "integer" },
-                "periodSeconds": { "type": "integer" },
-                "timeoutSeconds": { "type": "integer" }
+                "initialDelaySeconds": {
+                  "type": "integer"
+                },
+                "periodSeconds": {
+                  "type": "integer"
+                },
+                "timeoutSeconds": {
+                  "type": "integer"
+                }
               }
             }
           }
@@ -104,16 +147,26 @@
         "image": {
           "type": "object",
           "properties": {
-            "repository": { "type": "string" },
-            "tag": { "type": "string" },
-            "pullPolicy": { "type": "string" }
+            "repository": {
+              "type": "string"
+            },
+            "tag": {
+              "type": "string"
+            },
+            "pullPolicy": {
+              "type": "string"
+            }
           }
         },
         "service": {
           "type": "object",
           "properties": {
-            "port": { "type": "integer" },
-            "type": { "type": "string" }
+            "port": {
+              "type": "integer"
+            },
+            "type": {
+              "type": "string"
+            }
           }
         }
       }
@@ -122,8 +175,13 @@
       "type": "object",
       "additionalProperties": true,
       "properties": {
-        "enabled": { "type": "boolean" },
-        "replicas": { "type": "integer", "minimum": 1 },
+        "enabled": {
+          "type": "boolean"
+        },
+        "replicas": {
+          "type": "integer",
+          "minimum": 1
+        },
         "resources": {
           "type": "object",
           "additionalProperties": true,
@@ -131,15 +189,23 @@
             "requests": {
               "type": "object",
               "properties": {
-                "memory": { "type": "string" },
-                "cpu": { "type": "string" }
+                "memory": {
+                  "type": "string"
+                },
+                "cpu": {
+                  "type": "string"
+                }
               }
             },
             "limits": {
               "type": "object",
               "properties": {
-                "memory": { "type": "string" },
-                "cpu": { "type": "string" }
+                "memory": {
+                  "type": "string"
+                },
+                "cpu": {
+                  "type": "string"
+                }
               }
             }
           }
@@ -151,17 +217,29 @@
             "liveness": {
               "type": "object",
               "properties": {
-                "initialDelaySeconds": { "type": "integer" },
-                "periodSeconds": { "type": "integer" },
-                "timeoutSeconds": { "type": "integer" }
+                "initialDelaySeconds": {
+                  "type": "integer"
+                },
+                "periodSeconds": {
+                  "type": "integer"
+                },
+                "timeoutSeconds": {
+                  "type": "integer"
+                }
               }
             },
             "readiness": {
               "type": "object",
               "properties": {
-                "initialDelaySeconds": { "type": "integer" },
-                "periodSeconds": { "type": "integer" },
-                "timeoutSeconds": { "type": "integer" }
+                "initialDelaySeconds": {
+                  "type": "integer"
+                },
+                "periodSeconds": {
+                  "type": "integer"
+                },
+                "timeoutSeconds": {
+                  "type": "integer"
+                }
               }
             }
           }
@@ -169,16 +247,26 @@
         "image": {
           "type": "object",
           "properties": {
-            "repository": { "type": "string" },
-            "tag": { "type": "string" },
-            "pullPolicy": { "type": "string" }
+            "repository": {
+              "type": "string"
+            },
+            "tag": {
+              "type": "string"
+            },
+            "pullPolicy": {
+              "type": "string"
+            }
           }
         },
         "service": {
           "type": "object",
           "properties": {
-            "port": { "type": "integer" },
-            "type": { "type": "string" }
+            "port": {
+              "type": "integer"
+            },
+            "type": {
+              "type": "string"
+            }
           }
         }
       }
@@ -187,8 +275,13 @@
       "type": "object",
       "additionalProperties": true,
       "properties": {
-        "enabled": { "type": "boolean" },
-        "replicas": { "type": "integer", "minimum": 1 },
+        "enabled": {
+          "type": "boolean"
+        },
+        "replicas": {
+          "type": "integer",
+          "minimum": 1
+        },
         "resources": {
           "type": "object",
           "additionalProperties": true,
@@ -196,15 +289,23 @@
             "requests": {
               "type": "object",
               "properties": {
-                "memory": { "type": "string" },
-                "cpu": { "type": "string" }
+                "memory": {
+                  "type": "string"
+                },
+                "cpu": {
+                  "type": "string"
+                }
               }
             },
             "limits": {
               "type": "object",
               "properties": {
-                "memory": { "type": "string" },
-                "cpu": { "type": "string" }
+                "memory": {
+                  "type": "string"
+                },
+                "cpu": {
+                  "type": "string"
+                }
               }
             }
           }
@@ -216,17 +317,29 @@
             "liveness": {
               "type": "object",
               "properties": {
-                "initialDelaySeconds": { "type": "integer" },
-                "periodSeconds": { "type": "integer" },
-                "timeoutSeconds": { "type": "integer" }
+                "initialDelaySeconds": {
+                  "type": "integer"
+                },
+                "periodSeconds": {
+                  "type": "integer"
+                },
+                "timeoutSeconds": {
+                  "type": "integer"
+                }
               }
             },
             "readiness": {
               "type": "object",
               "properties": {
-                "initialDelaySeconds": { "type": "integer" },
-                "periodSeconds": { "type": "integer" },
-                "timeoutSeconds": { "type": "integer" }
+                "initialDelaySeconds": {
+                  "type": "integer"
+                },
+                "periodSeconds": {
+                  "type": "integer"
+                },
+                "timeoutSeconds": {
+                  "type": "integer"
+                }
               }
             }
           }
@@ -234,16 +347,26 @@
         "image": {
           "type": "object",
           "properties": {
-            "repository": { "type": "string" },
-            "tag": { "type": "string" },
-            "pullPolicy": { "type": "string" }
+            "repository": {
+              "type": "string"
+            },
+            "tag": {
+              "type": "string"
+            },
+            "pullPolicy": {
+              "type": "string"
+            }
           }
         },
         "service": {
           "type": "object",
           "properties": {
-            "port": { "type": "integer" },
-            "type": { "type": "string" }
+            "port": {
+              "type": "integer"
+            },
+            "type": {
+              "type": "string"
+            }
           }
         }
       }
@@ -252,22 +375,32 @@
       "type": "object",
       "additionalProperties": true,
       "properties": {
-        "enabled": { "type": "boolean" },
+        "enabled": {
+          "type": "boolean"
+        },
         "resources": {
           "type": "object",
           "properties": {
             "requests": {
               "type": "object",
               "properties": {
-                "memory": { "type": "string" },
-                "cpu": { "type": "string" }
+                "memory": {
+                  "type": "string"
+                },
+                "cpu": {
+                  "type": "string"
+                }
               }
             },
             "limits": {
               "type": "object",
               "properties": {
-                "memory": { "type": "string" },
-                "cpu": { "type": "string" }
+                "memory": {
+                  "type": "string"
+                },
+                "cpu": {
+                  "type": "string"
+                }
               }
             }
           }
@@ -275,8 +408,12 @@
         "gpu": {
           "type": "object",
           "properties": {
-            "enabled": { "type": "boolean" },
-            "count": { "type": "integer" }
+            "enabled": {
+              "type": "boolean"
+            },
+            "count": {
+              "type": "integer"
+            }
           }
         }
       }
@@ -285,16 +422,33 @@
       "type": "object",
       "additionalProperties": true,
       "properties": {
-        "enabled": { "type": "boolean" },
+        "enabled": {
+          "type": "boolean"
+        },
         "vocabLoad": {
           "type": "object",
           "properties": {
-            "enabled": { "type": "boolean" },
-            "s3Bucket": { "type": "string" },
-            "bundleName": { "type": "string" },
-            "workDirSize": { "type": "string", "minLength": 1 },
-            "fetchResources": { "type": "object", "minProperties": 1 },
-            "loadResources": { "type": "object", "minProperties": 1 }
+            "enabled": {
+              "type": "boolean"
+            },
+            "s3Bucket": {
+              "type": "string"
+            },
+            "bundleName": {
+              "type": "string"
+            },
+            "workDirSize": {
+              "type": "string",
+              "minLength": 1
+            },
+            "fetchResources": {
+              "type": "object",
+              "minProperties": 1
+            },
+            "loadResources": {
+              "type": "object",
+              "minProperties": 1
+            }
           }
         },
         "resources": {
@@ -303,15 +457,23 @@
             "requests": {
               "type": "object",
               "properties": {
-                "memory": { "type": "string" },
-                "cpu": { "type": "string" }
+                "memory": {
+                  "type": "string"
+                },
+                "cpu": {
+                  "type": "string"
+                }
               }
             },
             "limits": {
               "type": "object",
               "properties": {
-                "memory": { "type": "string" },
-                "cpu": { "type": "string" }
+                "memory": {
+                  "type": "string"
+                },
+                "cpu": {
+                  "type": "string"
+                }
               }
             }
           }
@@ -322,23 +484,36 @@
       "type": "object",
       "additionalProperties": true,
       "properties": {
-        "enabled": { "type": "boolean" },
-        "replicas": { "type": "integer", "minimum": 1 },
+        "enabled": {
+          "type": "boolean"
+        },
+        "replicas": {
+          "type": "integer",
+          "minimum": 1
+        },
         "resources": {
           "type": "object",
           "properties": {
             "requests": {
               "type": "object",
               "properties": {
-                "memory": { "type": "string" },
-                "cpu": { "type": "string" }
+                "memory": {
+                  "type": "string"
+                },
+                "cpu": {
+                  "type": "string"
+                }
               }
             },
             "limits": {
               "type": "object",
               "properties": {
-                "memory": { "type": "string" },
-                "cpu": { "type": "string" }
+                "memory": {
+                  "type": "string"
+                },
+                "cpu": {
+                  "type": "string"
+                }
               }
             }
           }
@@ -349,26 +524,38 @@
       "type": "object",
       "additionalProperties": true,
       "properties": {
-        "enabled": { "type": "boolean" },
+        "enabled": {
+          "type": "boolean"
+        },
         "web": {
           "type": "object",
           "properties": {
-            "enabled": { "type": "boolean" },
+            "enabled": {
+              "type": "boolean"
+            },
             "resources": {
               "type": "object",
               "properties": {
                 "requests": {
                   "type": "object",
                   "properties": {
-                    "memory": { "type": "string" },
-                    "cpu": { "type": "string" }
+                    "memory": {
+                      "type": "string"
+                    },
+                    "cpu": {
+                      "type": "string"
+                    }
                   }
                 },
                 "limits": {
                   "type": "object",
                   "properties": {
-                    "memory": { "type": "string" },
-                    "cpu": { "type": "string" }
+                    "memory": {
+                      "type": "string"
+                    },
+                    "cpu": {
+                      "type": "string"
+                    }
                   }
                 }
               }
@@ -384,19 +571,25 @@
         "loki": {
           "type": "object",
           "properties": {
-            "enabled": { "type": "boolean" }
+            "enabled": {
+              "type": "boolean"
+            }
           }
         },
         "alloy": {
           "type": "object",
           "properties": {
-            "enabled": { "type": "boolean" }
+            "enabled": {
+              "type": "boolean"
+            }
           }
         },
         "grafana": {
           "type": "object",
           "properties": {
-            "enabled": { "type": "boolean" }
+            "enabled": {
+              "type": "boolean"
+            }
           }
         }
       }
@@ -405,28 +598,158 @@
       "type": "object",
       "additionalProperties": true,
       "properties": {
-        "enabled": { "type": "boolean" },
-        "minReplicas": { "type": "integer" },
-        "maxReplicas": { "type": "integer" }
+        "enabled": {
+          "type": "boolean"
+        },
+        "minReplicas": {
+          "type": "integer"
+        },
+        "maxReplicas": {
+          "type": "integer"
+        }
       }
     },
     "networkPolicies": {
       "type": "object",
       "additionalProperties": true,
       "properties": {
-        "enabled": { "type": "boolean" },
+        "enabled": {
+          "type": "boolean"
+        },
         "allowedEgressCIDRsWithPorts": {
           "type": "array",
           "description": "Egress rules combining CIDRs with a specific port (e.g. fl-server gRPC on 8002)",
           "items": {
             "type": "object",
-            "required": ["cidrs", "port"],
+            "required": [
+              "cidrs",
+              "port"
+            ],
             "properties": {
-              "cidrs": { "type": "array", "items": { "type": "string" } },
-              "port": { "type": "integer" },
-              "protocol": { "type": "string", "enum": ["TCP", "UDP", "SCTP"] }
+              "cidrs": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "port": {
+                "type": "integer"
+              },
+              "protocol": {
+                "type": "string",
+                "enum": [
+                  "TCP",
+                  "UDP",
+                  "SCTP"
+                ]
+              }
             }
           }
+        }
+      }
+    },
+    "monailabel": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "image": {
+          "type": "object",
+          "properties": {
+            "repository": {
+              "type": "string"
+            },
+            "tag": {
+              "type": "string"
+            },
+            "pullPolicy": {
+              "type": "string",
+              "enum": [
+                "Always",
+                "IfNotPresent",
+                "Never"
+              ]
+            }
+          }
+        },
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "models": {
+          "type": "string"
+        },
+        "projects": {
+          "type": "string"
+        },
+        "publicUrl": {
+          "type": "string"
+        },
+        "shmSize": {
+          "type": "string"
+        },
+        "gpu": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "count": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        },
+        "coScheduleWithXnat": {
+          "type": "boolean"
+        },
+        "service": {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "ClusterIP",
+                "NodePort",
+                "LoadBalancer"
+              ]
+            },
+            "nodePort": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 30000,
+                  "maximum": 32767
+                },
+                {
+                  "type": "null"
+                },
+                {
+                  "type": "string",
+                  "maxLength": 0
+                }
+              ]
+            },
+            "allowExternalIngress": {
+              "type": "boolean"
+            }
+          }
+        },
+        "persistence": {
+          "type": "object",
+          "properties": {
+            "size": {
+              "type": "string"
+            },
+            "storageClassName": {
+              "type": "string"
+            }
+          }
+        },
+        "resources": {
+          "type": "object"
         }
       }
     }
