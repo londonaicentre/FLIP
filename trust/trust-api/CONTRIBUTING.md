@@ -51,7 +51,7 @@ These can be used with the Swagger UI at `http://localhost:<TRUST_API_PORT>/docs
   "project_id": "my_project",
   "query_id": "1",
   "query_name": "my_query",
-  "query": "SELECT * FROM omop.radiology_occurrence",
+  "query": "SELECT * FROM omop.image_occurrence",
   "trust_id": "mock"
 }
 ```
@@ -63,7 +63,7 @@ These can be used with the Swagger UI at `http://localhost:<TRUST_API_PORT>/docs
   "project_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
   "trust_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
   "project_name": "my_project",
-  "query": "SELECT * FROM omop.radiology_occurrence",
+  "query": "SELECT * FROM omop.image_occurrence",
   "users": [
     {
       "id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
@@ -78,5 +78,5 @@ These can be used with the Swagger UI at `http://localhost:<TRUST_API_PORT>/docs
 
 ```
 project: test
-query: SELECT * FROM omop.radiology_occurrence
+query: SELECT * FROM omop.image_occurrence
 ```

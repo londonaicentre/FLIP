@@ -31,7 +31,7 @@ from monai.data import DataLoader, Dataset
 
 from app.data_loading import FLIP_BASE, Lesion, LesionDict
 from app.models import get_model
-from app.task import train_func, validate_func
+from app.task import macro_mean, train_func, validate_func
 from app.transforms import get_xray_transforms
 
 app = ClientApp()
@@ -184,9 +184,14 @@ def evaluate(msg: Message, context: Context) -> Message:
 
     if len(test_loader.dataset) == 0:
         log(INFO, "No test data found!")
-        empty: dict[str, float] = {"test_loss": 0.0, "num-examples": 0}
+        # Carries the same metric names as the populated path, notably the macro
+        # "test_f1-score" the server may be selecting the best model on: flwr's
+        # aggregate_metricrecords derives its weight factors from every reply but only sums
+        # the ones carrying a given key, so a key missing from one reply leaves that metric
+        # under-weighted in the aggregate rather than merely unrepresented.
+        empty: dict[str, float] = {"test_loss": 0.0, "test_f1-score": 0.0, "num-examples": 0}
         for name in lesions.get_lesion_list():
-            empty[f"test_f1-{name}"] = 0.0
+            empty[f"test_f1-score-{name}"] = 0.0
         site_config = ConfigRecord({"site": client_name})
         return Message(
             content=RecordDict({"metrics": MetricRecord(empty), "config": site_config}),
@@ -202,6 +207,13 @@ def evaluate(msg: Message, context: Context) -> Message:
         "num-examples": len(test_loader.dataset),
         "test_loss.x_0": float(test_metrics["loss"]),
     }
+    # Macro F1 across lesions — the one interpretable number this app is meant to be judged
+    # on, and what best-model selection scores (best-model-metric = "test_f1-score"). The
+    # per-lesion F1s below stay for the breakdown; the server weight-averages whichever key
+    # it was configured with across clients by num-examples.
+    macro_f1 = macro_mean(test_metrics, "f1-score", lesions)
+    metrics["test_f1-score"] = macro_f1
+    metrics["test_f1-score.x_0"] = macro_f1
     for name in lesions.get_lesion_list():
         metrics[f"test_f1-{name}.x_0"] = float(test_metrics[f"f1-score-{name}"])
 

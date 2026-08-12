@@ -511,7 +511,20 @@ The new branch should be based on the latest `develop` branch.
 
 Releases are cut from `main`. The version is set in the root `pyproject.toml`, and merging to `main` triggers [`.github/workflows/release.yml`](.github/workflows/release.yml), which reads that version, creates a `v<MAJOR.MINOR.PATCH>` git tag, and publishes a GitHub Release with auto-generated notes. On the same merge, the per-service `.github/workflows/docker_build_*.yml` workflows rebuild every service and push the `:prod` image tag (alongside `:<sha>`) to GHCR. There is no separate release-publishing step beyond merging to `main`.
 
-The same merge also runs a **second, independent release path** for the one component that ships as a package: [`release-pypi.yml`](.github/workflows/release-pypi.yml) publishes `flip-utils` to PyPI off its own version string. Each path skips when its own tag already exists, so a given release usually exercises only one of them. See [flip-utils and the PyPI release path](#flip-utils-and-the-pypi-release-path) below and [`flip-utils/CONTRIBUTING.md`](flip-utils/CONTRIBUTING.md) for the detail.
+### Two release trains, two tag namespaces
+
+A push to `main` cuts **two independent releases**, from two independently-versioned artefacts. They must never share a tag namespace: each workflow skips its own release when it finds its tag already present, so a version number claimed by one artefact would silently suppress the other's release — or, for flip-utils, its PyPI publish.
+
+| Artefact | Version source | Workflow | Tag | Release title |
+| --- | --- | --- | --- | --- |
+| FLIP platform | root [`pyproject.toml`](pyproject.toml) | [`release.yml`](.github/workflows/release.yml) | `v<X.Y.Z>` | `Release v<X.Y.Z>` |
+| flip-utils (PyPI `flip-utils`) | [`flip-utils/flip/__init__.py`](flip-utils/flip/__init__.py) | [`release-pypi.yml`](.github/workflows/release-pypi.yml) | `flip-utils-v<X.Y.Z>` | `flip-utils v<X.Y.Z>` |
+
+The `flip-utils-` prefix is what keeps them apart: every `git tag --list 'v*.*.*'` lookup in the release and preview workflows matches platform tags only, so each train's changelog spans its own history. **Do not drop the prefix or widen those globs** — the two version sequences advance independently and will overlap.
+
+> **Historical note:** flip-utils 0.4.1 was released just before this split and originally tagged `v0.4.1`, in the platform namespace. It was retro-tagged as `flip-utils-v0.4.1` (same commit, `c55f79e8`) and the old tag deleted, so the two namespaces are clean from `v0.4.0` / `flip-utils-v0.4.1` onwards. The published PyPI artefact was never affected.
+
+See [flip-utils and the PyPI release path](#flip-utils-and-the-pypi-release-path) below and [`flip-utils/CONTRIBUTING.md`](flip-utils/CONTRIBUTING.md) for the flip-utils train in detail.
 
 ### Versioning
 
@@ -566,7 +579,7 @@ Both are rendered into the preview comment on the `develop` → `main` PR, and b
 
 `flip-utils` is the only component published as a package ([`flip-utils` on PyPI](https://pypi.org/project/flip-utils/)), so it has a release path of its own driven by `__version__` in [`flip-utils/flip/__init__.py`](flip-utils/flip/__init__.py) rather than the root `pyproject.toml`.
 
-The two paths share the `v<MAJOR.MINOR.PATCH>` tag namespace, and each skips when its own tag already exists. Bump only the root version and you cut a platform release; bump only `__version__` and you cut a package release. Bumping **both to the same number** in one release PR is the case to avoid: the two workflows then contend for a single tag on the same merge, their tag-existence checks are not synchronised, and which of the two releases wins is a race. Give the two version lines different numbers, or land the bumps in separate merges to `main`.
+The two paths use **separate tag namespaces** — `v<X.Y.Z>` for the platform, `flip-utils-v<X.Y.Z>` for the package (see [Two release trains, two tag namespaces](#two-release-trains-two-tag-namespaces) above) — and each skips when its own tag already exists. Bump only the root version and you cut a platform release; bump only `__version__` and you cut a package release. Because the namespaces no longer collide, bumping both in the same release PR is safe: the two workflows tag independently and neither can suppress the other, even when the version numbers happen to match.
 
 Full detail — the per-PR gates, the trusted-publishing setup, and the `release.sh` manual fallback — is in [`flip-utils/CONTRIBUTING.md`](flip-utils/CONTRIBUTING.md).
 

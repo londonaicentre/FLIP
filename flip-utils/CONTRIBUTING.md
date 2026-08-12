@@ -43,8 +43,8 @@ and must be **strictly greater** than the highest existing `v*.*.*` git tag. Bot
 `flip-utils/**`.
 
 This version is **not** the same as the FLIP platform version in the root [`pyproject.toml`](../pyproject.toml), and
-the two are not required to move together — see [Two version sources](#two-version-sources-one-tag-namespace) below for
-how they interact.
+the two are not required to move together — see [Two version sources](#two-version-sources-two-tag-namespaces) below
+for how they interact.
 
 ## Checks on a `develop` → `main` PR
 
@@ -63,14 +63,14 @@ Publishing is automatic on merge to `main`. [`release-pypi.yml`](../.github/work
 `./flip-utils` and:
 
 1. Extracts `__version__` from `flip/__init__.py`.
-2. **Skips the whole release** if the tag `v<VERSION>` already exists — so an unbumped version is a no-op, not a
-   failure, and merges to `main` that do not touch this package cost nothing.
+2. **Skips the whole release** if the tag `flip-utils-v<VERSION>` already exists — so an unbumped version is a no-op,
+   not a failure, and merges to `main` that do not touch this package cost nothing.
 3. Runs `uv sync --all-extras`, `ruff check .`, and `pytest`.
 4. Builds with `uv build` and publishes to PyPI with `uv publish --trusted-publishing always` — OIDC trusted
    publishing against the `flip` GitHub environment, so no PyPI token is stored as a repository secret.
-5. Pushes the annotated tag `v<VERSION>`.
-6. Composes the release notes (below) and creates the GitHub Release titled `flip v<VERSION>`, attaching the built
-   `dist/*` wheel and sdist.
+5. Pushes the annotated tag `flip-utils-v<VERSION>`.
+6. Composes the release notes (below) and creates the GitHub Release titled `flip-utils v<VERSION>`, attaching the
+   built `dist/*` wheel and sdist.
 
 The job is skipped entirely on forks (`if: github.repository == 'londonaicentre/FLIP'`), which cannot publish or push
 tags upstream.
@@ -83,7 +83,8 @@ Notes are assembled from two pieces:
 - **Header** — [`.github/RELEASE_NOTES_TEMPLATE.md`](../.github/RELEASE_NOTES_TEMPLATE.md), with its license comment
   block stripped and `{{VERSION}}`, `{{TAG}}`, `{{PREV_TAG}}` substituted. This is where Highlights, Breaking Changes,
   New Features, and Bug Fixes live.
-- **Changelog** — GitHub's `releases/generate-notes` API, diffing the new tag against the previous `v*.*.*` tag. It
+- **Changelog** — GitHub's `releases/generate-notes` API, diffing the new tag against the previous
+  `flip-utils-v*.*.*` tag, so the range spans this package's own release history rather than the platform's. It
   lists every merged PR in the range plus a contributors section, categorised by PR label according to
   [`.github/release.yml`](../.github/release.yml).
 
@@ -117,21 +118,24 @@ Two behaviours to be aware of before reaching for it:
   package rather than this directory's `flip-utils` distribution. Prefer `uv build` from `flip-utils/` — which is what
   the workflow does — if you need artifacts to inspect.
 
-## Two version sources, one tag namespace
+## Two version sources, two tag namespaces
 
-Merging to `main` runs two independent release workflows that share the `v<MAJOR.MINOR.PATCH>` tag namespace:
+Merging to `main` runs two independent release workflows, each with its own tag namespace:
 
-| Workflow | Reads version from | Produces |
-| --- | --- | --- |
-| [`release.yml`](../.github/workflows/release.yml) | root [`pyproject.toml`](../pyproject.toml) | tag + GitHub Release named `Release v<X.Y.Z>` |
-| [`release-pypi.yml`](../.github/workflows/release-pypi.yml) | [`flip/__init__.py`](flip/__init__.py) | PyPI publish + tag + GitHub Release named `flip v<X.Y.Z>` |
+| Workflow | Reads version from | Tag | Produces |
+| --- | --- | --- | --- |
+| [`release.yml`](../.github/workflows/release.yml) | root [`pyproject.toml`](../pyproject.toml) | `v<X.Y.Z>` | tag + GitHub Release named `Release v<X.Y.Z>` |
+| [`release-pypi.yml`](../.github/workflows/release-pypi.yml) | [`flip/__init__.py`](flip/__init__.py) | `flip-utils-v<X.Y.Z>` | PyPI publish + tag + GitHub Release named `flip-utils v<X.Y.Z>` |
 
 Each skips when its own tag already exists, so in the common case only one fires and the other is a no-op: bump only
 the root version and you get a platform release; bump only `__version__` and you get a package release.
 
-Bumping **both to the same number** in one release PR is the case to avoid. The two workflows then contend for a
-single tag on the same merge, their tag-existence checks are not synchronised, and which release wins the tag is a
-race. Give the two version lines different numbers, or land the bumps in separate merges to `main`.
+The `flip-utils-` prefix is what keeps the two apart, and it is load-bearing: a `git tag --list 'v*.*.*'` lookup
+matches platform tags only. **Do not drop the prefix or widen those globs** — the two version sequences advance
+independently and will overlap. Because the namespaces are disjoint, bumping both versions in one release PR is safe:
+neither workflow can claim the other's tag or suppress its release, even when the numbers happen to match. See
+[Two release trains, two tag namespaces](../CONTRIBUTING.md#two-release-trains-two-tag-namespaces) in the root guide
+for the platform-side view.
 
 ## Documentation
 

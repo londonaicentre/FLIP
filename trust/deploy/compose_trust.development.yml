@@ -17,9 +17,15 @@ services:
 
   # --- Application services ---
 
-  # Image built from https://github.com/londonaicentre/flip-omop-db
+  # Image built from trust/omop-db in this repo (CI-published, vocab-free —
+  # the licensed vocabulary is loaded at seed time; see trust/omop-db/README.md).
+  # Tracks DOCKER_TAG like every other repo-built service in this file. The
+  # OMOP_DB_TAG opt-out pins omop-db at a known-good tag while the rest of the
+  # stack runs a feature-branch tag — omop-db changes rarely, so its branch tag is
+  # the one most likely to be missing (branch builds are workflow_dispatch only).
+  # Same role XNAT_TAG plays for the XNAT images (trust/xnat/Makefile).
   omop-db:
-    image: ghcr.io/londonaicentre/omop-db:latest
+    image: ghcr.io/londonaicentre/omop-db:${OMOP_DB_TAG:-${DOCKER_TAG}}
     restart: always
     ports:
       - "${OMOP_DB_PORT}:5432"
