@@ -49,8 +49,12 @@ jobs:
             exit 1
           fi
 
-          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-          echo "tag=v${VERSION}"    >> "$GITHUB_OUTPUT"
+          # flip-utils tags carry their own prefix. The platform release (release.yml) owns the
+          # bare `v*` namespace; sharing it meant a version number used by one artefact silently
+          # suppressed the other's release — see the tag-existence check below, which skips the
+          # PyPI publish outright when it finds a tag it does not own.
+          echo "version=${VERSION}"            >> "$GITHUB_OUTPUT"
+          echo "tag=flip-utils-v${VERSION}"    >> "$GITHUB_OUTPUT"
           echo "Detected version: ${VERSION}"
 
       - name: Check if tag already exists
@@ -67,7 +71,7 @@ jobs:
 
       - name: Set up Python
         if: steps.check_tag.outputs.skip == 'false'
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
@@ -117,10 +121,21 @@ jobs:
           set -euo pipefail
           VERSION="${{ steps.version.outputs.version }}"
           TAG="${{ steps.version.outputs.tag }}"
-          PREV_TAG=$(git tag --list 'v*.*.*' | sort -V | grep -v "^${TAG}$" | tail -n1)
+          # Match only this artefact's tags, so the changelog spans flip-utils history rather than
+          # whatever the platform released most recently. The `|| true` is load-bearing under
+          # `set -o pipefail`: the tag for THIS release already exists by now (created above), so on
+          # the first prefixed release grep filters the only match away and exits 1 — which would
+          # kill the step immediately after an irreversible PyPI publish. Empty is a valid answer
+          # here and is handled by the ${PREV_TAG:-initial release} default below.
+          PREV_TAG=$(git tag --list 'flip-utils-v*.*.*' | sort -V | grep -v "^${TAG}$" | tail -n1 || true)
 
-          # Strip the license comment block and substitute placeholders
-          HEADER=$(sed '/^<!--/,/-->/d' "$GITHUB_WORKSPACE/.github/RELEASE_NOTES_TEMPLATE.md" \
+          # Strip the license comment block and substitute placeholders.
+          # The range delimiters are anchored to whole lines (`^<!--$` / `^-->$`) because only the
+          # license block spans lines that way. The template's other comments are single-line
+          # `<!-- ... -->`, and an unanchored `/^<!--/,/-->/` opens a range on one of those that
+          # does not close until the NEXT comment — silently eating every section in between.
+          HEADER=$(sed '/^<!--$/,/^-->$/d' "$GITHUB_WORKSPACE/.github/RELEASE_NOTES_TEMPLATE.md" \
+            | sed "s/{{PROJECT}}/flip-utils/g" \
             | sed "s/{{VERSION}}/${VERSION}/g" \
             | sed "s/{{TAG}}/${TAG}/g" \
             | sed "s/{{PREV_TAG}}/${PREV_TAG:-initial release}/g")
@@ -146,6 +161,6 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release create "${{ steps.version.outputs.tag }}" \
-            --title "flip ${{ steps.version.outputs.tag }}" \
+            --title "flip-utils v${{ steps.version.outputs.version }}" \
             --notes-file "${{ steps.notes.outputs.notes_file }}" \
             dist/*

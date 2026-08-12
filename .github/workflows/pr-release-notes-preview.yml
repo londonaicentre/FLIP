@@ -58,7 +58,7 @@ jobs:
           echo "head_sha=${{ github.event.pull_request.head.sha }}" >> "$GITHUB_OUTPUT"
 
       - name: Post or update release notes preview comment
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         env:
           VERSION: ${{ steps.meta.outputs.version }}
           TAG: ${{ steps.meta.outputs.tag }}
@@ -84,6 +84,7 @@ jobs:
 
             // Substitute placeholders
             header = header
+              .replace(/\{\{PROJECT\}\}/g, 'FLIP')
               .replace(/\{\{VERSION\}\}/g, version)
               .replace(/\{\{TAG\}\}/g,     tag)
               .replace(/\{\{PREV_TAG\}\}/g, prevTag || 'initial release');

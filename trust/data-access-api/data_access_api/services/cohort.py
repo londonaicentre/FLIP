@@ -88,13 +88,15 @@ def validate_query(query: str) -> str:
 
     Database-layer protections already in place
     -------------------------------------------
-    The data-access-api connects as ``data_analyst_reader``, a Postgres role with
-    no write privileges: ``INSERT`` / ``UPDATE`` / ``DELETE`` / ``TRUNCATE`` /
-    ``CREATE`` are never granted. Any DDL or DML is therefore rejected by Postgres
-    itself, so this function does NOT keyword-filter for ``DROP`` / ``INSERT`` /
-    ``UPDATE`` / etc. Rules 3 and 4 below still reject writes *structurally*, from
-    the parsed tree rather than from a keyword scan, so a write fails in-hand with
-    a clear 400 instead of as an opaque permission error from the engine.
+    The data-access-api connects as ``data_analyst_reader`` (see
+    ``trust/omop-db/files/create_readonly_users.sql``), a Postgres role with no write
+    privileges: ``INSERT`` / ``UPDATE`` / ``DELETE`` / ``TRUNCATE`` / ``CREATE`` are
+    never granted, and are explicitly REVOKEd on top. Any DDL or DML is therefore
+    rejected by Postgres itself, so this function does NOT keyword-filter for ``DROP``
+    / ``INSERT`` / ``UPDATE`` / etc. Rules 3 and 4 below still reject writes
+    *structurally*, from the parsed tree rather than from a keyword scan, so a write
+    fails in-hand with a clear 400 instead of as an opaque permission error from the
+    engine.
 
     **Read scope is NOT guaranteed by the database role, and differs by deployment.**
     The Kubernetes trust chart grants the role ``pg_read_all_data``

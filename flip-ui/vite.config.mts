@@ -12,12 +12,22 @@ import Inspector from "vite-plugin-vue-inspector";
 import Layouts from "vite-plugin-vue-layouts-next";
 import svgLoader from "vite-svg-loader";
 
+import { checkViteE2e } from "./scripts/check-build-flags.mjs";
 import iconStubPlugin from "./test/iconStubPlugin";
 
 // https://vitejs.dev/config/
 export default defineConfig(({ mode, command }) => {
 
     const env = loadEnv(mode, process.cwd());
+
+    // VITE_E2E is legal only for the Cypress dev server (`vite --mode e2e`,
+    // reading .env.e2e); checkViteE2e explains the stake. Refusing on
+    // `command === "build"` as well as on a mode mismatch matters — the mode
+    // check alone still lets `vite build --mode e2e` inline the Cypress auth
+    // seam into a shippable dist/.
+    if (env.VITE_E2E === "true" && (command === "build" || mode !== "e2e")) {
+        throw new Error(checkViteE2e(mode, command));
+    }
 
     // Belt-and-braces guard for `vite build` invoked directly (bypassing
     // the npm prebuild hook in package.json). Vite inlines VITE_LOCAL at

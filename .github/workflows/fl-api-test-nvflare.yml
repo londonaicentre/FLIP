@@ -45,11 +45,11 @@ jobs:
         uses: actions/checkout@v5
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
-          # get python version from ./fl-services/nvflare/fl-api-base/fl_api/.python-version file
-          # if not found, use 3.11
-          python-version: "3.12"
+          # Read the version from the file rather than restating it here, so it
+          # cannot drift from requires-python.
+          python-version-file: ./fl-services/nvflare/fl-api-base/.python-version
 
       - name: Install uv (if used for dependency management)
         run: pip install uv
