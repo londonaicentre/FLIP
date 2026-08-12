@@ -176,21 +176,23 @@ __MONAI_LABEL_XNAT_DIR := $(or $(strip $(XNAT_DATA_DIR)),$(if $(filter true stag
 MONAI_LABEL_XNAT_ARCHIVE_DIR := $(abspath $(if $(filter /%,$(__MONAI_LABEL_XNAT_DIR)),$(__MONAI_LABEL_XNAT_DIR),xnat/$(__MONAI_LABEL_XNAT_DIR)))/xnat-data/archive
 export MONAI_LABEL_XNAT_ARCHIVE_DIR
 
-# MONAI Label is dev/hybrid only for now: the prod compose runs published images and no
-# monailabel image is published yet (the NVIDIA PyTorch base is too large to build on the
-# ubuntu-latest runners the docker_build_* workflows use). Fail here rather than let
-# compose fail on a missing overlay file.
+# A GPU-less host cannot run MONAI Label at all, so that stays a hard refusal. Under PROD
+# it runs from the published ghcr.io/londonaicentre/monailabel image
+# (docker_build_monailabel.yml) — allowed, but with an explicit warning: it re-introduces
+# the XNAT OHIF viewer plugin that the trust XNAT deliberately excludes (FLIP#662
+# bulk-import livelock). Intended for hybrid/on-prem annotation trusts; think twice on a
+# trust that pulls large cohorts.
 define require_monailabel_supported
-	@if [ "$(strip $(MONAI_LABEL))" = "true" ] && [ -n "$(filter true stag,$(PROD))" ]; then \
-		echo "❌ MONAI_LABEL=true is not supported with PROD=$(PROD) yet — no published"; \
-		echo "   monailabel image (see FLIP#55). Use the development stack, or build and"; \
-		echo "   push the image to GHCR first and add a production overlay."; \
-		exit 1; \
-	fi
 	@if [ "$(strip $(MONAI_LABEL))" = "true" ] && [ -z "$(GPU_OVERRIDE)" ]; then \
 		echo "❌ MONAI_LABEL=true needs a GPU, but NUM_AVAILABLE_GPUS=$(or $(strip $(NUM_AVAILABLE_GPUS)),unset)"; \
 		echo "   for KIT=$(KIT). Set NUM_AVAILABLE_GPUS>0 in trust/$(KIT_FILE) on a GPU host."; \
 		exit 1; \
+	fi
+	@if [ "$(strip $(MONAI_LABEL))" = "true" ] && [ -n "$(filter true stag,$(PROD))" ]; then \
+		echo "⚠️  MONAI_LABEL=true with PROD=$(PROD): AI-assisted annotation needs the XNAT OHIF"; \
+		echo "   viewer plugin, which trust XNAT deliberately excludes because of the bulk-import"; \
+		echo "   livelock it drives (FLIP#662). Enable only on trusts that accept that trade-off"; \
+		echo "   (hybrid/on-prem annotation trusts, not high-volume cohort pullers)."; \
 	fi
 endef
 

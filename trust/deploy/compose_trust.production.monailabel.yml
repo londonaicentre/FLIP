@@ -1,0 +1,62 @@
+# Copyright (c) Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+# MONAI Label overlay (production). Applied by trust/Makefile only when the kit sets
+# MONAI_LABEL=true AND declares NUM_AVAILABLE_GPUS > 0 (see MONAILABEL_OVERRIDE).
+# Image-only like the rest of the production compose — published by
+# .github/workflows/docker_build_monailabel.yml.
+#
+# Enabling this re-introduces the XNAT OHIF viewer plugin that the trust XNAT
+# deliberately excludes (FLIP#662 bulk-import livelock): intended for hybrid/on-prem
+# annotation trusts, weigh it before enabling on a trust that pulls large cohorts.
+# up-trust prints this warning when the flag is on.
+
+services:
+
+  monailabel:
+    image: ghcr.io/londonaicentre/monailabel:${DOCKER_TAG}
+    restart: always
+    volumes:
+      # Read-only mount of the XNAT archive itself (not its parent — the datastore
+      # resolves files as <asset path> + <URI minus /data/xnat/archive/>, so a parent
+      # path silently misses and falls back to per-scan HTTP downloads). Labels are
+      # written back through the XNAT REST API, never the filesystem.
+      - ${MONAI_LABEL_XNAT_ARCHIVE_DIR}:/workspace/xnat-data/archive:ro
+      # Pretrained weights are fetched on first start; persist them so a container
+      # recreate does not re-download every model (~GBs incl. the SAM checkpoint).
+      - monailabel-models:/workspace/app/radiology/model
+    environment:
+      - MONAI_LABEL_PORT=${MONAI_LABEL_PORT:-8030}
+      - MONAI_LABEL_DATASTORE=xnat
+      - MONAI_LABEL_DATASTORE_URL=${XNAT_URL:-http://xnat-web:8080}
+      - MONAI_LABEL_DATASTORE_USERNAME=${XNAT_SERVICE_USER}
+      - MONAI_LABEL_DATASTORE_PASSWORD=${XNAT_SERVICE_PASSWORD}
+      - MONAI_LABEL_DATASTORE_ASSET_PATH=/workspace/xnat-data/archive
+      # Comma-separated XNAT project allowlist; empty means every project.
+      - MONAI_LABEL_DATASTORE_PROJECT=${MONAI_LABEL_PROJECTS:-}
+      - MONAI_LABEL_MODELS=${MONAI_LABEL_MODELS:-deepedit}
+      # Reached from the clinician's BROWSER, never proxied by XNAT — must be
+      # browser-resolvable, and same-origin/TLS-fronted when XNAT is HTTPS.
+      - MONAI_LABEL_PUBLIC_URL=${MONAI_LABEL_PUBLIC_URL:-http://localhost:${MONAI_LABEL_PORT:-8030}}
+    ports:
+      - "${MONAI_LABEL_PORT:-8030}:${MONAI_LABEL_PORT:-8030}"
+    shm_size: ${MONAI_LABEL_SHM_SIZE:-8gb}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: ${NUM_AVAILABLE_GPUS}
+              capabilities: [gpu]
+
+volumes:
+  monailabel-models:

@@ -1,0 +1,223 @@
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+{{- if .Values.monailabel.enabled }}
+# Optional MONAI Label server: AI-assisted annotation (SAM click-to-segment, DeepEdit
+# multi-organ) in the XNAT OHIF viewer. Mirrors the compose overlay
+# (trust/deploy/compose_trust.*.monailabel.yml) — see trust/README.md#monai-label-optional
+# for the operational caveats (browser-reachable URL, unauthenticated API, stock-viewer
+# quirks). Unlike compose, the chart's XNAT already ships the ohif-viewer plugin in its
+# roster, so there is no separate plugin step here.
+#
+# The entrypoint handles XNAT registration itself: it polls XNAT and the service account,
+# starts the server, then PUTs monailabel.publicUrl to /xapi/ohifaiaa/servers and fails
+# loudly if the registration is rejected.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "flip-trust.fullname" . }}-monailabel
+  namespace: {{ include "flip-trust.namespace" . }}
+  labels:
+    {{- include "flip-trust.labels" . | nindent 4 }}
+    app.kubernetes.io/component: monailabel
+spec:
+  replicas: 1
+  # Recreate: the weights PVC is ReadWriteOnce and the server holds GPU memory — a rolling
+  # update would deadlock on both.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "flip-trust.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: monailabel
+  template:
+    metadata:
+      labels:
+        {{- include "flip-trust.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: monailabel
+    spec:
+      enableServiceLinks: false
+      {{- if .Values.imagePullSecrets }}
+      imagePullSecrets:
+{{ include "flip-trust.imagePullSecrets" . | nindent 8 }}
+      {{- end }}
+      {{- if .Values.monailabel.gpu.enabled }}
+      tolerations:
+        - key: nvidia.com/gpu
+          operator: Exists
+          effect: NoSchedule
+      {{- end }}
+      {{- if .Values.monailabel.coScheduleWithXnat }}
+      # The XNAT archive lives on xnat-web's data PVC. With the default ReadWriteOnce
+      # access mode that volume can only be mounted on the node where xnat-web runs, so
+      # this pod must land there too. Set coScheduleWithXnat: false only on an RWX
+      # storage class.
+      affinity:
+        podAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  {{- include "flip-trust.selectorLabels" . | nindent 18 }}
+                  app.kubernetes.io/component: xnat-web
+              topologyKey: kubernetes.io/hostname
+      {{- end }}
+      containers:
+        - name: monailabel
+          image: "{{ .Values.monailabel.image.repository }}:{{ .Values.monailabel.image.tag }}"
+          imagePullPolicy: {{ .Values.monailabel.image.pullPolicy }}
+          env:
+            - name: MONAI_LABEL_PORT
+              value: {{ .Values.monailabel.port | quote }}
+            - name: MONAI_LABEL_DATASTORE
+              value: "xnat"
+            - name: MONAI_LABEL_DATASTORE_URL
+              value: "http://xnat-web:8080"
+            - name: MONAI_LABEL_DATASTORE_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: {{ if .Values.secrets.create }}{{ include "flip-trust.fullname" . }}-secrets{{ else }}{{ .Values.secrets.existingName }}{{ end }}
+                  key: xnat-service-user
+            - name: MONAI_LABEL_DATASTORE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ if .Values.secrets.create }}{{ include "flip-trust.fullname" . }}-secrets{{ else }}{{ .Values.secrets.existingName }}{{ end }}
+                  key: xnat-service-password
+            # Mounted at the archive itself, not its parent: the datastore resolves files
+            # as <asset path> + <XNAT file URI minus '/data/xnat/archive/'>, so a parent
+            # path silently misses and falls back to per-scan HTTP downloads.
+            - name: MONAI_LABEL_DATASTORE_ASSET_PATH
+              value: "/workspace/xnat-data/archive"
+            - name: MONAI_LABEL_DATASTORE_PROJECT
+              value: {{ .Values.monailabel.projects | quote }}
+            - name: MONAI_LABEL_MODELS
+              value: {{ .Values.monailabel.models | quote }}
+            # Handed to the OHIF viewer, which calls it from the clinician's BROWSER —
+            # XNAT never proxies it. Must resolve outside the cluster, which the chart
+            # cannot derive, so it is required rather than defaulted.
+            - name: MONAI_LABEL_PUBLIC_URL
+              value: {{ required "monailabel.publicUrl is required when monailabel.enabled — the URL the clinician's browser uses to reach the MONAI Label service (e.g. http://<node>:<nodePort>)" .Values.monailabel.publicUrl | quote }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.monailabel.port }}
+          # Model load downloads pretrained weights on a cold volume (minutes, incl. the
+          # ~900MB SAM checkpoint); the startup probe gives it half an hour before the
+          # readiness probe takes over.
+          startupProbe:
+            httpGet:
+              path: /info/
+              port: http
+            periodSeconds: 15
+            failureThreshold: 120
+          readinessProbe:
+            httpGet:
+              path: /info/
+              port: http
+            periodSeconds: 30
+          resources:
+            {{- if .Values.monailabel.gpu.enabled }}
+            limits:
+              nvidia.com/gpu: {{ .Values.monailabel.gpu.count | quote }}
+            {{- end }}
+            {{- with .Values.monailabel.resources }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          volumeMounts:
+            - name: xnat-data
+              mountPath: /workspace/xnat-data/archive
+              subPath: archive
+              # Labels are written back through the XNAT REST API, never the filesystem.
+              readOnly: true
+            - name: models
+              mountPath: /workspace/app/radiology/model
+            - name: shm
+              mountPath: /dev/shm
+      volumes:
+        - name: xnat-data
+          persistentVolumeClaim:
+            claimName: {{ include "flip-trust.fullname" . }}-xnat-web
+        - name: models
+          persistentVolumeClaim:
+            claimName: {{ include "flip-trust.fullname" . }}-monailabel-models
+        - name: shm
+          emptyDir:
+            medium: Memory
+            sizeLimit: {{ .Values.monailabel.shmSize }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: monailabel
+  namespace: {{ include "flip-trust.namespace" . }}
+  labels:
+    {{- include "flip-trust.labels" . | nindent 4 }}
+    app.kubernetes.io/component: monailabel
+spec:
+  # The clinician's browser must reach this directly (see MONAI_LABEL_PUBLIC_URL above),
+  # so NodePort/LoadBalancer is the working default posture; ClusterIP only makes sense
+  # behind an ingress that fronts it.
+  type: {{ .Values.monailabel.service.type }}
+  selector:
+    {{- include "flip-trust.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: monailabel
+  ports:
+    - name: http
+      port: {{ .Values.monailabel.port }}
+      targetPort: http
+      {{- if and (eq .Values.monailabel.service.type "NodePort") .Values.monailabel.service.nodePort }}
+      nodePort: {{ .Values.monailabel.service.nodePort }}
+      {{- end }}
+---
+# Pretrained model weights (incl. the SAM checkpoint) — fetched on first start, persisted
+# so a pod restart does not re-download them.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "flip-trust.fullname" . }}-monailabel-models
+  namespace: {{ include "flip-trust.namespace" . }}
+  labels:
+    {{- include "flip-trust.labels" . | nindent 4 }}
+    app.kubernetes.io/component: monailabel
+spec:
+  accessModes:
+    - ReadWriteOnce
+  {{- if .Values.monailabel.persistence.storageClassName }}
+  storageClassName: {{ .Values.monailabel.persistence.storageClassName }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.monailabel.persistence.size }}
+{{- if and .Values.networkPolicies.enabled .Values.monailabel.service.allowExternalIngress }}
+---
+# The namespace default-denies ingress; the MONAI Label API must be reachable from the
+# clinician's browser (outside the cluster), so open exactly its port on exactly its pod.
+# The API is unauthenticated and holds the XNAT service-account credentials — matching the
+# compose deployment's posture, where the port is host-published; restrict who can reach
+# the node port at the network layer.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "flip-trust.fullname" . }}-monailabel-ingress
+  namespace: {{ include "flip-trust.namespace" . }}
+  labels:
+    {{- include "flip-trust.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "flip-trust.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: monailabel
+  ingress:
+    - ports:
+        - port: {{ .Values.monailabel.port }}
+          protocol: TCP
+  policyTypes:
+    - Ingress
+{{- end }}
+{{- end }}

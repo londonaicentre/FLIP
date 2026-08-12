@@ -237,6 +237,34 @@ Available services:
 | `observability.loki` | Log aggregation | Yes |
 | `observability.alloy` | Log collection agent | No (DaemonSet) |
 | `observability.grafana` | Metrics dashboard | Yes |
+| `monailabel` | Optional AI-assisted annotation in the XNAT OHIF viewer (off by default) | Yes |
+
+### MONAI Label (optional)
+
+Off by default — needs an NVIDIA GPU node and a ~10.4 GB image. Enable with:
+
+```yaml
+monailabel:
+  enabled: true
+  publicUrl: "http://<node-ip>:30030"   # REQUIRED: the clinician's BROWSER calls this —
+                                        # XNAT stores it and never proxies it
+```
+
+Chart-specific notes (the full operational guide, including the stock-viewer quirks, is
+[trust/README.md#monai-label-optional](../../../trust/README.md#monai-label-optional)):
+
+- Reads DICOM straight off xnat-web's archive PVC (read-only `archive` subPath). With the
+  default `ReadWriteOnce` storage the pod is pinned to xnat-web's node
+  (`coScheduleWithXnat: true`); only set it `false` on an RWX storage class.
+- Exposed as a `NodePort` (default `30030`) so the browser can reach it; a scoped
+  NetworkPolicy opens exactly that port through the namespace's default-deny ingress
+  (`service.allowExternalIngress`). The API is unauthenticated — restrict node-port reach
+  at the network layer.
+- Pretrained weights (incl. the ~900 MB SAM checkpoint) persist in the
+  `monailabel-models` PVC; first start on a cold volume takes minutes (the startup probe
+  allows 30).
+- The chart's XNAT already ships the `ohif-viewer` plugin in its roster (`xnat.web.plugins`),
+  so no extra plugin step — unlike the compose trust, which deliberately excludes it (FLIP#662).
 
 ### External Service Override
 
