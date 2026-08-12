@@ -381,6 +381,16 @@ class UploadedFiles(SQLModel, table=True):
     # SCANNING rows old enough to be orphans (app restart mid-reconcile) while
     # leaving fresh in-flight reconciles alone. Nullable — rows predate the column.
     updated_at: datetime | None = Field(default=None)
+    # Advisory Bandit findings for .py uploads (#877, GHSA-8465) — a list of
+    # {test_id, issue_text, severity, confidence, line_number} dicts. Written
+    # unconditionally on every Bandit run, so `[]` ("scanned, nothing found")
+    # stays distinguishable from `NULL` ("never scanned" — not Python, or a
+    # row that predates this column). Never gates promotion: unlike the
+    # picklescan verdict above, this never turns into an INFECTED/ERROR
+    # status. Purely a signal for whoever next opens the model's file list.
+    bandit_findings: list[dict] | None = Field(
+        default=None, sa_column=Column("bandit_findings", JSONB, nullable=True)
+    )
 
 
 class XNATProjectStatus(SQLModel, table=True):
