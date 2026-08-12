@@ -1,0 +1,168 @@
+# Copyright (c) Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+name: Build and Push Docker Image for MONAI Label
+
+# Direct push trigger like orthanc / xnat_* — monailabel has no test suite to
+# gate on. workflow_dispatch covers branch-pinned testing (see CLAUDE.md
+# "Docker image builds").
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, develop]
+    paths:
+      - "trust/monailabel/**"
+      - ".github/workflows/docker_build_monailabel.yml"
+  # PR runs build + the import smoke only — the push steps are gated below,
+  # so nothing is published from a pull request.
+  pull_request:
+    paths:
+      - "trust/monailabel/**"
+      - ".github/workflows/docker_build_monailabel.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-push:
+    # Skip on forks: they cannot push to ghcr.io/londonaicentre.
+    if: github.repository == 'londonaicentre/FLIP'
+    runs-on: ubuntu-latest
+    permissions: # override top-level read-only default to allow GHCR push
+      contents: read
+      packages: write
+    defaults:
+      run:
+        working-directory: ./trust/monailabel
+    env:
+      REGISTRY: ghcr.io
+      IMAGE_NAME: londonaicentre/monailabel
+      BUILD_ARGS: ""
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+        with:
+          repository: ${{ github.event.workflow_run.head_repository.full_name }}
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      # The image is ~10.4 GB (torch + CUDA runtime wheels + SAM2); a stock
+      # ubuntu-latest runner has ~14 GB free, which the build blows through in
+      # intermediate layers. Reclaim the ~25 GB of preinstalled toolchains this
+      # job never uses. Plain rm rather than a third-party action so the
+      # workflow keeps the repo's actions/* -only supply-chain posture.
+      - name: Reclaim runner disk space
+        working-directory: /
+        run: |
+          df -h / | tail -1
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+            /opt/hostedtoolcache/CodeQL /usr/local/.ghcup /usr/local/share/boost
+          sudo docker system prune -af --volumes >/dev/null 2>&1 || true
+          df -h / | tail -1
+
+      - name: Determine tags
+        id: tags
+        env:
+          GH_REF_NAME: ${{ github.ref_name }}
+          GH_EVENT_NAME: ${{ github.event_name }}
+          GH_REF: ${{ github.ref }}
+          GH_SHA: ${{ github.sha }}
+          GH_WR_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          GH_WR_EVENT: ${{ github.event.workflow_run.event }}
+        run: |
+          TAGS="${REGISTRY}/${IMAGE_NAME}:${{ github.sha }}"
+
+          # An empty sha would silently publish a mutable literal `sha-` tag — refuse.
+          [[ -n "$GH_SHA" ]] || { echo "::error::empty commit SHA — cannot compute the sha-<short7> tag"; exit 1; }
+
+          # Immutable short-SHA tag (FLIP#751), pushed uniformly on every publish.
+          # Length 7 must match the tag resolution in deploy/providers/AWS/Makefile.
+          TAGS="${TAGS},${REGISTRY}/${IMAGE_NAME}:sha-${GH_SHA:0:7}"
+
+          # Branch name sanitization
+          SAFE_REF_NAME=$(echo "$GH_REF_NAME" | sed 's/[^a-zA-Z0-9]/-/g')
+          TAGS="${TAGS},${REGISTRY}/${IMAGE_NAME}:${SAFE_REF_NAME}"
+
+          # Branch number (if starts with number)
+          if [[ "$GH_REF_NAME" =~ ^[0-9]+ ]]; then
+              BRANCH_NUM=$(echo "$GH_REF_NAME" | grep -oE '^[0-9]+')
+              TAGS="${TAGS},${REGISTRY}/${IMAGE_NAME}:${BRANCH_NUM}"
+          fi
+
+          # PR Number (if PR)
+          if [[ "$GH_EVENT_NAME" == "pull_request" ]]; then
+             PR_NUMBER=$(echo "$GH_REF" | awk -F / '{print $3}')
+             TAGS="${TAGS},${REGISTRY}/${IMAGE_NAME}:pr-${PR_NUMBER}"
+          fi
+
+          # Determine if this is a merge/push to main or develop
+          BRANCH_NAME=""
+          if [[ "$GH_EVENT_NAME" == "workflow_run" && "$GH_WR_EVENT" == "push" ]]; then
+            BRANCH_NAME="$GH_WR_BRANCH"
+          elif [[ "$GH_EVENT_NAME" == "push" ]]; then
+            BRANCH_NAME="$GH_REF_NAME"
+          fi
+
+          if [[ "$BRANCH_NAME" == "main" ]]; then
+            TAGS="${TAGS},${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:prod"
+          elif [[ "$BRANCH_NAME" == "develop" ]]; then
+            TAGS="${TAGS},${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:stag"
+          fi
+          echo "tags=${TAGS}" >> $GITHUB_OUTPUT
+          echo "Generated tags: ${TAGS}"
+
+      - name: Log in to GitHub Container Registry
+        if: github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_ACTOR: ${{ github.actor }}
+        run: echo "$GH_TOKEN" | docker login $REGISTRY -u "$GH_ACTOR" --password-stdin
+
+      # The Dockerfile itself asserts the two known-bad states at build time
+      # (unpatched XNAT datastore auth, non-CUDA-12 torch), so a green build
+      # already guarantees those.
+      - name: Build Docker image
+        env:
+          DOCKER_TAGS: ${{ steps.tags.outputs.tags }}
+        run: |
+          IFS=',' read -ra TAG_ARRAY <<< "$DOCKER_TAGS"
+          TAG_FLAGS=()
+          for tag in "${TAG_ARRAY[@]}"; do
+            TAG_FLAGS+=("-t" "$tag")
+          done
+          # shellcheck disable=SC2086
+          docker build $BUILD_ARGS "${TAG_FLAGS[@]}" .
+
+      # No GPU on the runner, so this stays at import level: the stack that
+      # must coexist (monailabel @ pinned commit, torch cu12, sam2, curl for
+      # the entrypoint's probes) actually loads in the built image.
+      - name: Smoke test — runtime stack imports
+        env:
+          DOCKER_TAGS: ${{ steps.tags.outputs.tags }}
+        run: |
+          TAG="${DOCKER_TAGS%%,*}"
+          docker run --rm --entrypoint sh "$TAG" -c '
+            curl --version >/dev/null &&
+            python -c "
+          import monailabel, torch, sam2
+          from monailabel.datastore.xnat import XNATDatastore
+          print(\"monailabel\", monailabel.__version__, \"torch\", torch.__version__)
+          "'
+
+      - name: Push Docker image
+        if: github.event_name != 'pull_request'
+        env:
+          DOCKER_TAGS: ${{ steps.tags.outputs.tags }}
+        run: |
+          IFS=',' read -ra TAG_ARRAY <<< "$DOCKER_TAGS"
+          for tag in "${TAG_ARRAY[@]}"; do
+            docker push "$tag"
+          done

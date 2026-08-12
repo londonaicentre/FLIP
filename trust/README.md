@@ -181,9 +181,11 @@ Notes:
   back to HTTP downloads only for scans it cannot resolve there.
 - Pretrained weights are fetched on first start and persisted in the `monailabel-models`
   volume, so a container recreate does not re-download them.
-- Currently **development/hybrid only**: the production stack runs published images and no
-  `monailabel` image is published yet. `MONAI_LABEL=true` with `PROD=true|stag` fails with a
-  message pointing here (see FLIP#55).
+- Production (`PROD=true|stag`) runs the published `ghcr.io/londonaicentre/monailabel` image
+  (built by `docker_build_monailabel.yml`; dev builds locally from `trust/monailabel/`).
+  Enabling it under `PROD` prints a warning: it re-introduces the OHIF viewer plugin that trust
+  XNAT deliberately excludes (FLIP#662) — intended for hybrid/on-prem annotation trusts, not
+  high-volume cohort pullers.
 
 ## Running standalone (remote trust operator)
 
