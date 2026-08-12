@@ -52,7 +52,14 @@ def get_site_details(db: Session) -> ISiteDetails:
             # here would turn a bad banner link into a site-wide 500. Drop the link and serve
             # the rest of the banner.
             logger.warning("Stored site banner failed validation; serving it without its link")
-            validated_banner = ISiteBanner.model_validate({**stored, "link": None})
+            try:
+                validated_banner = ISiteBanner.model_validate({**stored, "link": None})
+            except ValidationError:
+                # The row is invalid for a reason other than the link (e.g. a legacy NULL
+                # message), so nulling the link is not enough. Still must not 500 every page —
+                # fall back to a safe, disabled default banner.
+                logger.warning("Stored site banner is unusable even without its link; serving a default")
+                validated_banner = ISiteBanner(message="", link=None, enabled=False)
 
         return ISiteDetails(
             banner=ISiteBanner(
@@ -132,7 +139,7 @@ def update_site_details(site_details: ISiteDetails, db: Session) -> None:
 
     except Exception as e:
         db.rollback()
-        logger.exception(f"Error updating site details: {str(e)}")
+        logger.exception("Error updating site details")
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Error updating site details: {str(e)}"
-        )
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error"
+        ) from e
