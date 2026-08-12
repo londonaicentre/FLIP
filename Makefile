@@ -314,7 +314,7 @@ debug-off-all:
 	$(MAKE) -C trust debug-off
 
 create-networks-centralhub:
-	@{ docker network inspect central-hub-network >/dev/null 2>&1 || docker network create --driver bridge central-hub-network || true; }
+	@{ docker network inspect central-hub-network >/dev/null 2>&1 || docker network create --driver bridge central-hub-network >/dev/null || docker network inspect central-hub-network >/dev/null 2>&1 || { echo "❌ Could not create Docker network central-hub-network — see the daemon error above."; exit 1; }; }
 
 create-networks: create-networks-centralhub
 	$(MAKE) -C trust create-networks

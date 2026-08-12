@@ -375,9 +375,9 @@ tests:
 
 create-networks-core:
 	@echo "🔧 Ensuring external Docker networks exist..."
-	@{ docker network inspect central-hub-trust-apis-network >/dev/null 2>&1 || docker network create --driver bridge central-hub-trust-apis-network || true; }
-	@{ docker network inspect deploy_shared-net-1 >/dev/null 2>&1 || docker network create --driver bridge deploy_shared-net-1 || true; }
-	@{ docker network inspect deploy_shared-net-2 >/dev/null 2>&1 || docker network create --driver bridge deploy_shared-net-2 || true; }
+	@{ docker network inspect central-hub-trust-apis-network >/dev/null 2>&1 || docker network create --driver bridge central-hub-trust-apis-network >/dev/null || docker network inspect central-hub-trust-apis-network >/dev/null 2>&1 || { echo "❌ Could not create Docker network central-hub-trust-apis-network — see the daemon error above."; exit 1; }; }
+	@{ docker network inspect deploy_shared-net-1 >/dev/null 2>&1 || docker network create --driver bridge deploy_shared-net-1 >/dev/null || docker network inspect deploy_shared-net-1 >/dev/null 2>&1 || { echo "❌ Could not create Docker network deploy_shared-net-1 — see the daemon error above."; exit 1; }; }
+	@{ docker network inspect deploy_shared-net-2 >/dev/null 2>&1 || docker network create --driver bridge deploy_shared-net-2 >/dev/null || docker network inspect deploy_shared-net-2 >/dev/null 2>&1 || { echo "❌ Could not create Docker network deploy_shared-net-2 — see the daemon error above."; exit 1; }; }
 
 create-networks-trust-1:
 	@{ docker network inspect deploy_trust-network-1 >/dev/null 2>&1 || docker network create --driver overlay --attachable deploy_trust-network-1; }
