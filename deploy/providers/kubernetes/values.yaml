@@ -649,6 +649,51 @@ xnat:
         cpu: "200m"
 
 # ---------------------------------------------------------------------------
+# MONAI Label — optional AI-assisted annotation in the XNAT OHIF viewer
+# ---------------------------------------------------------------------------
+# Off by default: needs an NVIDIA GPU node and pulls a ~10.4GB image. Mirrors the compose
+# overlay (trust/deploy/compose_trust.*.monailabel.yml); operational caveats — the
+# browser-reachable URL, the unauthenticated API, the stock-viewer quirks — are documented
+# in trust/README.md#monai-label-optional.
+monailabel:
+  enabled: false
+  image:
+    repository: ghcr.io/londonaicentre/monailabel
+    tag: stag
+    pullPolicy: IfNotPresent
+  port: 8030
+  # Radiology models to load. 'all' loads nine, each downloading its own weights; the SAM
+  # tasks (sam_2d/sam_3d) register whenever the sam2 package is importable, independent of
+  # this list.
+  models: "deepedit"
+  # Comma-separated XNAT project allowlist; empty means every project on this trust.
+  projects: ""
+  # REQUIRED when enabled: the URL the clinician's BROWSER uses to reach the service
+  # (e.g. http://<node-ip>:30030). XNAT stores it and hands it to the OHIF viewer — it is
+  # never proxied, so a cluster-internal name will not work.
+  publicUrl: ""
+  # /dev/shm for dataloader workers (emptyDir, medium: Memory).
+  shmSize: 8Gi
+  gpu:
+    enabled: true
+    count: 1
+  # Pin the pod to xnat-web's node so the archive PVC (ReadWriteOnce by default) can be
+  # mounted read-only here too. Set false only on an RWX storage class.
+  coScheduleWithXnat: true
+  service:
+    type: NodePort
+    # Fixed nodePort (30000-32767) so publicUrl stays stable; empty lets the cluster pick.
+    nodePort: 30030
+    # Adds a NetworkPolicy opening the service port on this pod through the namespace's
+    # default-deny ingress — required for browser access when networkPolicies.enabled.
+    allowExternalIngress: true
+  persistence:
+    # Pretrained weights (incl. the ~900MB SAM checkpoint).
+    size: 20Gi
+    storageClassName: ""
+  resources: {}
+
+# ---------------------------------------------------------------------------
 # Observability Stack — Loki, Alloy, Grafana
 # ---------------------------------------------------------------------------
 observability:
