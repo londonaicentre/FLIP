@@ -42,7 +42,7 @@ from dicom_phantom import (
     read_pixel_data,
 )
 from monai.data import PydicomReader
-from tutorial_apps import find_load_transform, get_loader_prefix
+from tutorial_apps import DICOM_APPS, TUTORIALS_ROOT, find_load_transform, get_loader_prefix
 
 # How far ahead of the runner-up `identity` must correlate. Comfortably clear of the ~0.02 spread
 # resampling noise produces, comfortably below the ~0.5 gap a genuine dihedral confusion opens.
@@ -107,9 +107,22 @@ def test_loader_prefix_matches_pixel_data(dicom_app, dicom_path) -> None:
     assert np.array_equal(loaded, reference), _describe_orientation(loaded, reference)
 
 
-def test_full_chain_orientation_is_identity(dicom_app, dicom_path) -> None:
-    """The full chain's output must correlate best with the unrotated, unflipped reference."""
-    chain = dicom_app.transforms(is_validation=True)
+@pytest.mark.parametrize("is_validation", [True, False])
+def test_full_chain_orientation_is_identity(dicom_app, dicom_path, is_validation: bool) -> None:
+    """The full chain's output must correlate best with the unrotated, unflipped reference.
+
+    Both chains are pinned, not just the validation one. Models *train* on the training chain, and
+    its ``if not is_validation:`` branch is exactly where a well-meaning "fix the orientation for
+    training" lands — a ``Rotate90d`` appended there passes every validation-chain assertion while
+    reproducing the original defect: trained sideways, validated upright, every metric silently
+    depressed. The chain is seeded so the run is reproducible; the training-only ``RandAffined``
+    jitter (a few degrees, ``prob=0.1``) is orders of magnitude inside the correlation margin.
+    """
+    if not is_validation and not dicom_app.has_training_chain:
+        pytest.skip(f"{dicom_app.app_id} is inference-only and exposes no training chain")
+
+    chain = dicom_app.transforms(is_validation=is_validation)
+    chain.set_random_state(seed=0)
     output = _to_2d(np.asarray(chain({"image": str(dicom_path)})["image"]))
     reference = read_pixel_data(dicom_path)
 
@@ -128,6 +141,36 @@ def test_full_chain_orientation_is_identity(dicom_app, dicom_path) -> None:
     )
 
 
+def test_registry_covers_every_dicom_load_site() -> None:
+    """Every ``LoadImaged`` call site in the tutorial tree is registered or on the NIfTI path.
+
+    ``DICOM_APPS`` is hand-maintained, and a seventh DICOM app that nobody registers would be
+    silently uncovered — the drift mode this suite exists to end. This walk makes the registry's
+    completeness a test: a file composing ``LoadImaged`` must either be a registered entry or read
+    3-D NIfTI through ``Orientationd`` (the documented exclusion — those chains orient from image
+    metadata, and the ``swap_ij`` correction would be actively wrong there). The scan is textual,
+    so a false positive fails loudly and is resolved by registering the app or routing it through
+    ``Orientationd``, never by weakening the suite.
+    """
+    registered = {app.path.resolve() for app in DICOM_APPS}
+    unaccounted = []
+    for path in sorted(TUTORIALS_ROOT.rglob("*.py")):
+        # Skip this suite itself and anything non-tree-owned (per-tutorial .venv/ uv environments).
+        if any(part.startswith(".") for part in path.parts) or TUTORIALS_ROOT / "tests" in path.parents:
+            continue
+        text = path.read_text(encoding="utf-8")
+        if "LoadImaged(" not in text:
+            continue
+        if path.resolve() in registered or "Orientationd(" in text:
+            continue
+        unaccounted.append(str(path.relative_to(TUTORIALS_ROOT)))
+
+    assert not unaccounted, (
+        "these files compose LoadImaged but are neither registered in DICOM_APPS nor on the "
+        f"Orientationd NIfTI path — a DICOM-loading app here is untested for orientation: {unaccounted}"
+    )
+
+
 def test_loader_pins_its_reader(dicom_app) -> None:
     """The chain must name its reader instead of inheriting whichever one is registered last.
 
@@ -138,6 +181,10 @@ def test_loader_pins_its_reader(dicom_app) -> None:
     appended last, so it wins regardless of what else is installed.
     """
     loader = find_load_transform(dicom_app.transforms(is_validation=True))
+    # ``_loader`` is MONAI-private (no public accessor exists for a LoadImaged's readers). Accepted
+    # coupling for a config pin: a MONAI rename breaks this loudly with AttributeError on a healthy
+    # tree, never silently — and the pin earns it, e.g. a typo'd ``swap_ji=`` kwarg is swallowed by
+    # MONAI's own ``except TypeError`` reader probing and only this test notices.
     readers = loader._loader.readers
     assert readers, "LoadImaged registered no readers"
 

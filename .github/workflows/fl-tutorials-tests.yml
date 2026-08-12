@@ -14,9 +14,11 @@
 # -- unlike the simulator harness (`make -C fl-tutorials run-tutorial`), which needs all three
 # and therefore cannot run here.
 #
-# Path filters cover BOTH backends. The pre-existing tutorial workflow
-# (fl-apps-check-tutorial-sync.yml) is filtered to flower only, so before this job nothing in CI
-# fired on an nvflare-only tutorial change. See fl-tutorials/tests/README.md.
+# Path filters cover BOTH backends, plus the flip-utils environment AND source: the Ark+ apps
+# import `flip` at module-exec time, so a flip-utils source change can break this suite and must
+# trigger it. The pre-existing tutorial workflow (fl-apps-check-tutorial-sync.yml) was filtered to
+# flower only until this PR, so nothing in CI fired on an nvflare-only tutorial change.
+# See fl-tutorials/tests/README.md.
 name: FL Tutorials CI
 
 on:
@@ -24,6 +26,7 @@ on:
     branches: [main, develop]
     paths:
       - "fl-tutorials/**"
+      - "flip-utils/flip/**"
       - "flip-utils/pyproject.toml"
       - "flip-utils/uv.lock"
       - ".github/workflows/fl-tutorials-tests.yml"
@@ -31,6 +34,7 @@ on:
     branches: [main, develop]
     paths:
       - "fl-tutorials/**"
+      - "flip-utils/flip/**"
       - "flip-utils/pyproject.toml"
       - "flip-utils/uv.lock"
       - ".github/workflows/fl-tutorials-tests.yml"

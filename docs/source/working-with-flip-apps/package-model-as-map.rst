@@ -357,8 +357,9 @@ it may not.
    and wrong. The tutorials now correct nothing after the fact: they load with
    ``LoadImaged(keys=["image"], reader="PydicomReader", swap_ij=False)``, which returns the array
    exactly as ``PixelData`` stores it. Pinning the reader also matters in its own right — MONAI
-   picks the last-registered reader whose backend imports, so installing ``itk`` would otherwise
-   promote ``ITKReader`` and change the axis order silently. Because both paths then agree on the
+   tries its registered readers last-registered-first and takes the first that can read the file,
+   so installing ``itk`` would otherwise promote ``ITKReader`` and change the axis order silently.
+   Because both paths then agree on the
    image as DICOM stores it, ``map-apps/classification/classifier_operator.py`` needs no
    orientation transform at all.
 

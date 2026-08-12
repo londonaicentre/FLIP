@@ -77,7 +77,13 @@ class TutorialApp:
         module = importlib.util.module_from_spec(spec)
         # Register before executing so a module that imports itself indirectly still resolves.
         sys.modules[module_name] = module
-        spec.loader.exec_module(module)
+        try:
+            spec.loader.exec_module(module)
+        except BaseException:
+            # Never leave a half-initialised module reachable from the cache: the first caller
+            # fails loudly, but a later caller would silently get whatever fraction executed.
+            del sys.modules[module_name]
+            raise
         return module
 
     @property
@@ -86,9 +92,23 @@ class TutorialApp:
 
         The evaluation apps expose a single inference chain — ``get_xray_transforms(input_size)``
         with no ``is_validation`` — because they never train.
+
+        The sniff is on the literal parameter name, so it refuses any other boolean switch: a
+        renamed switch would otherwise misclassify the app as inference-only, its "validation"
+        tests would run the factory's *default* chain (the training one, ``is_validation=False``
+        everywhere), and the determinism test would degrade to a flake instead of a failure.
         """
         factory = getattr(self.load_module(), self.factory)
-        return "is_validation" in inspect.signature(factory).parameters
+        parameters = inspect.signature(factory).parameters
+        if "is_validation" in parameters:
+            return True
+        unrecognised = [name for name, parameter in parameters.items() if isinstance(parameter.default, bool)]
+        assert not unrecognised, (
+            f"{self.app_id}'s factory takes boolean switch(es) {unrecognised} this harness does not "
+            "understand; it selects chains by the literal name 'is_validation' — rename the switch "
+            "back, or teach TutorialApp the new shape"
+        )
+        return False
 
     def transforms(self, is_validation: bool = True) -> mt.Compose:
         """Return the app's composed transform chain.
@@ -141,6 +161,12 @@ DICOM_APPS: tuple[TutorialApp, ...] = (
         module_path="flower/xray_classification/app/transforms.py",
     ),
 )
+
+# A duplicated app_id would be silently green: both entries would resolve to the first one's
+# cached module (load_module keys sys.modules on app_id), so one app would go entirely untested
+# while pytest de-duplicates the colliding fixture ids. Fail at import instead.
+assert len({app.app_id for app in DICOM_APPS}) == len(DICOM_APPS), "DICOM_APPS app_ids must be unique"
+assert len({app.module_path for app in DICOM_APPS}) == len(DICOM_APPS), "DICOM_APPS module_paths must be unique"
 
 
 def find_load_transform(chain: mt.Compose) -> mt.LoadImaged:

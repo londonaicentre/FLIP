@@ -23,8 +23,9 @@ make -C fl-tutorials pytest      # this suite only
 make -C fl-tutorials lint        # ruff only
 ```
 
-CI runs the same two commands on every push and pull request touching `fl-tutorials/**`
-(`.github/workflows/fl-tutorials-tests.yml`), for both backends.
+CI runs the same two commands on every pull request touching `fl-tutorials/**` or the flip-utils
+source/environment, and on pushes to main/develop (`.github/workflows/fl-tutorials-tests.yml`),
+for both backends.
 
 ## Why this exists
 
@@ -55,7 +56,8 @@ reconstructed here, so the test asserts on the shipped code.
 | `test_phantom_has_no_dihedral_symmetry` | The fixture is non-square **and** distinguishable from all eight of its dihedral variants. |
 | `test_phantom_dicom_round_trips` | Each synthetic encoding decodes back to the phantom. |
 | `test_loader_prefix_matches_pixel_data` | The chain up to the first resampling transform is `np.array_equal` to `pydicom`'s `PixelData`. |
-| `test_full_chain_orientation_is_identity` | The full chain's output correlates best with the **unrotated, unflipped** reference, by a margin. |
+| `test_full_chain_orientation_is_identity` | The full chain's output correlates best with the **unrotated, unflipped** reference, by a margin — for **both** the validation chain and the (seeded) training chain, so an orientation "fix" landing in the training-only branch fails too. |
+| `test_registry_covers_every_dicom_load_site` | Every `LoadImaged` site in the tree is either registered in `DICOM_APPS` or on the documented `Orientationd` NIfTI path — a new DICOM app cannot land silently uncovered. |
 | `test_loader_pins_its_reader` | The chain names `PydicomReader(swap_ij=False)` instead of inheriting a reader. |
 | `test_chain_composes` / `test_validation_chain_is_deterministic` | Both chains import, compose, run, and the validation chain is reproducible. |
 

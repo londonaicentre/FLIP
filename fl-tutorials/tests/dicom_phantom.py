@@ -118,8 +118,13 @@ def correlation(left: np.ndarray, right: np.ndarray) -> float:
     Returns:
         float: ``|r|`` in ``[0, 1]``; ``0.0`` when either array is constant.
     """
-    a = np.asarray(left, dtype=np.float64).ravel()
-    b = np.asarray(right, dtype=np.float64).ravel()
+    a = np.asarray(left, dtype=np.float64)
+    b = np.asarray(right, dtype=np.float64)
+    # Two same-size, different-shape arrays — the phantom against its own rot90 — would ravel to
+    # compatible vectors and return a plausible-looking garbage number. Refuse instead of guessing.
+    assert a.shape == b.shape, f"correlation compares equal shapes, got {a.shape} vs {b.shape}"
+    a = a.ravel()
+    b = b.ravel()
     a = a - a.mean()
     b = b - b.mean()
     denominator = float(np.linalg.norm(a) * np.linalg.norm(b))

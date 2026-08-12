@@ -41,10 +41,14 @@ PAIRS=(
   "fl-tutorials/flower/xray_classification/app/server_app.py:fl-apps/flower/standard/app/server_app.py"
   "fl-tutorials/flower/xray_classification/app/strategy.py:fl-apps/flower/standard/app/strategy.py"
   # The two Ark+ evaluation apps differ only in how many checkpoints they score; their data
-  # loading and their flattened model definitions are the same file, and have been the same git
-  # blob since they were written. Pinning that here is what stops a preprocessing fix landing in
+  # loading and their flattened model definitions are meant to be the same file -- and they have
+  # already drifted once (the Client-API port landed in the baseline copy days before the
+  # multimodel copy caught up). Pinning them here is what stops a preprocessing fix landing in
   # one and not the other -- exactly how the sideways-radiograph defect spread (FLIP#871).
   # The reference side is the baseline app; resync by copying it over the multimodel copy.
+  # NOTE for future pairs: adding a pair whose files live outside the trees filtered by
+  # fl-apps-check-tutorial-sync.yml means extending that workflow's path filters too, or drift
+  # commits on the new path will never trigger the check.
   "fl-tutorials/nvflare/image_evaluation/arkplus_multimodel_classification_evaluation/app_files/data_utils.py:fl-tutorials/nvflare/image_evaluation/arkplus_baseline_classification_evaluation/app_files/data_utils.py"
   "fl-tutorials/nvflare/image_evaluation/arkplus_multimodel_classification_evaluation/app_files/arkplus_flat_models.py:fl-tutorials/nvflare/image_evaluation/arkplus_baseline_classification_evaluation/app_files/arkplus_flat_models.py"
 )

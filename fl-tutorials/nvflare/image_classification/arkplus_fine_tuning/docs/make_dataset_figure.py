@@ -20,7 +20,7 @@ finding in the split's cohort dataframe. A mislabelled figure therefore fails lo
 shipping.
 
 **This script reads pixels through ``pydicom`` directly, not through the app's transform chain.**
-That is why it drew upright radiographs for months while the model was being fed the transpose of
+That is why it drew upright radiographs the entire time the model was being fed the transpose of
 them (FLIP#821) — it is a picture of the data, not of what the model sees, and it cannot become one
 without pulling MONAI into the ``docs`` extra. The gap is closed at the other end instead:
 ``app_files/data_utils.py`` pins its loader to ``PydicomReader(swap_ij=False)``, which returns the
