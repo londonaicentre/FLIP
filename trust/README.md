@@ -115,6 +115,15 @@ MONAI Label adds AI-assisted annotation to the XNAT OHIF viewer: a **MONAI Label
 viewer's Masks panel that runs a segmentation model over the scan on screen and lets a user
 correct the result interactively.
 
+> **Prerequisite: the XNAT OHIF Viewer plugin, which FLIP does not install by default.**
+> The viewer is MONAI Label's only user interface, but FLIP deliberately excludes the plugin —
+> its metadata listener is a dominant producer on XNAT's event bus and materially drives the
+> bulk-import livelock in FLIP#662, and FLIP otherwise uses XNAT purely as a DICOM store. See
+> the plugin table in [xnat/README.md](xnat/README.md) and the exclusion note in
+> `xnat/scripts/ensure_plugins.sh`. Enabling MONAI Label on a trust therefore means accepting
+> the plugin back onto that trust's XNAT; weigh that against #662 before doing it on a trust
+> that pulls large cohorts.
+
 It is **off by default** — it needs an NVIDIA GPU on the trust host and pulls a large image, so
 a trust that does not want it is unaffected. Enable it per trust:
 
@@ -146,10 +155,49 @@ further consequences on a real trust:
   credentials. Restrict who can reach `MONAI_LABEL_PORT`; do not expose it beyond the
   clinical network.
 
-**Each user must also switch the panel on themselves**, in the viewer under
-*Options → Preferences → Experimental → MONAI Label*. Until they do, a perfectly working
-server is simply absent from the viewer — that is the first thing to check when it "isn't
-showing up".
+### Turning the panel on in the viewer (one-time, per browser)
+
+Registering the server is automatic — the entrypoint PUTs the URL to
+`/xapi/ohifaiaa/servers`, and the viewer reads
+`/xapi/ohifaiaa/projects/<id>/servers`, falling back to the site-wide list. Nothing to do.
+
+**The feature flag is not.** Each user enables it once, in their own browser:
+
+1. Open any session in the viewer (**View Images**).
+2. Top-right **Options → Preferences → Experimental**.
+3. Tick **MONAILabel Tools**, then save.
+4. A **MONAI Label** entry appears in the Masks panel of the toolbar.
+
+This is **once per browser, not per session** — the viewer persists it in `localStorage`
+under the key `state`, at
+`preferences.experimentalFeatures.MONAILabel.enabled`, so it survives logout and restarts.
+It is per browser and per profile, so a user switching machines does it again.
+
+**There is no way to default this on from the server.** The plugin exposes no preferences
+endpoint (its xapis are `ohifaiaa`, `viewer`, `viewerConfig` and `roiColor`), its server-side
+`ViewerSettings` object carries only `useMultiStack`, and `app-config.js` does not feed
+`experimentalFeatures` — the defaults are compiled into the viewer bundle with
+`MONAILabel: {enabled: false}`. The same applies to the NVIDIA Clara AIAA toggle beside it.
+The options, none of them free, are to seed each browser's `localStorage` (must write the
+whole `experimentalFeatures` object — the store merge is shallow at that level, so a partial
+write silently drops the other defaults), to patch the default in the vendored plugin jar and
+re-apply it on every upgrade, or to ask ICR upstream for a site-level default. FLIP does none
+of these; the one-time tick is the documented path.
+
+### When the panel does not appear
+
+Work down this list — the first two account for most of it:
+
+1. **Feature flag not ticked** in this browser (above). A fully working server is invisible
+   without it.
+2. **Plugin not installed** — `GET /xapi/plugins` should list `ohifViewerPlugin`. FLIP does
+   not install it by default (see the prerequisite note above).
+3. **No server registered** — `GET /xapi/ohifaiaa/servers` returns
+   `404 ["No AIAA server list found"]` instead of the URL. Check the monailabel container's
+   logs; the entrypoint fails loudly if the registration PUT is rejected.
+4. **Registered but unreachable from the browser** — open `MONAI_LABEL_PUBLIC_URL` directly.
+   A Docker-internal name, `0.0.0.0`, or an `http://` URL on an HTTPS XNAT (mixed content)
+   all fail here while looking correct in XNAT.
 
 Notes:
 

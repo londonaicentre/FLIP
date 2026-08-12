@@ -36,6 +36,10 @@ services:
       - XNAT_SERVICE_PASSWORD=${XNAT_SERVICE_PASSWORD}
       - XNAT_PORT=${XNAT_PORT}
       - PACS_DICOM_PORT=${PACS_DICOM_PORT:-4242}
+      # Read by config/configure-export-mask.sh, which pins the export_mask container-service
+      # command to this trust's network so the converter can reach xnat-web to upload results.
+      # Named DOCKER_NETWORK_NAME at the stack level (see the networks block below).
+      - TRUST_NETWORK_NAME=${DOCKER_NETWORK_NAME}
       - XNAT_DATASOURCE_DRIVER=${XNAT_DATASOURCE_DRIVER}
       - XNAT_DATASOURCE_URL=${XNAT_DATASOURCE_URL}
       - XNAT_DATASOURCE_NAME=${XNAT_DATASOURCE_NAME}

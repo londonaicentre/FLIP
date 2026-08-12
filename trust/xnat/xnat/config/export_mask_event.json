@@ -1,0 +1,14 @@
+{
+  "name": "Convert exported OHIF masks to NIfTI",
+  "event-selector": "org.nrg.xnat.eventservice.events.ImageAssessor:CREATED",
+  "action-key": "org.nrg.containers.services.CommandActionProvider:${CMD_ID}",
+  "attributes": {},
+  "active": true,
+  "project-id": "",
+  "event-filter": {
+    "event-type": "org.nrg.xnat.eventservice.events.ImageAssessorEvent",
+    "status": "CREATED",
+    "payload-filter": ""
+  },
+  "act-as-event-user": false
+}

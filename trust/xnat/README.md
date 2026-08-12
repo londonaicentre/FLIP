@@ -146,7 +146,7 @@ The following table lists the plugin versions for the XNAT version `1.10.0` used
 | DICOM Query-Retrieve Plugin     | 3.0.0                       | Yes       | **Must upgrade** from 2.2.0 — rebuilt on JDK 21 + `dcm4che5`, plus a thread-leakage fix |
 | Container Service Plugin        | 3.8.1 (JDK 8 build)         | Yes       | **Must upgrade** from 3.7.3 — 3.8.x is the only column the compatibility matrix ticks for 1.10.0 |
 | Batch Launch Plugin             | 0.9.0 (JDK 8 build)         | Yes       | None — the matrix keeps BLP 0.9.0 for 1.10.0 |
-| OHIF Viewer Plugin              | 3.8.0 available; n/a here   | No        | None — deliberately not installed (FLIP#662) |
+| OHIF Viewer Plugin              | 3.8.0 available; n/a here   | No        | None — deliberately not installed (FLIP#662). Required *only* by the optional MONAI Label server — see [MONAI Label](../README.md#monai-label-optional) |
 
 Not applicable to FLIP, but released alongside 1.10.0: **Distributed Events 2.0.0** (only needed for
 load-balanced multi-node XNAT — each FLIP trust runs a single node) and **MFA 1.6.0** (FLIP does not

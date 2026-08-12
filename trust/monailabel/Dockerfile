@@ -12,9 +12,11 @@
 
 # MONAI Label server for AI-assisted annotation in the XNAT OHIF viewer.
 #
-# Base has Blackwell support (sm_120 kernels) and works on hosts with driver CUDA 12.7 and
-# 12.9 thanks to CUDA 12.x minor-compat. PyTorch container 25.04 is based on 2.7.0a0.
-FROM nvcr.io/nvidia/pytorch:25.04-py3
+# Slim base + CUDA wheels from PyTorch's own index, matching fl-services/*/fl-base. The
+# obvious alternative — nvcr.io/nvidia/pytorch — is ~20GB because it bundles the full CUDA
+# toolkit, TensorRT, DALI, Apex and JupyterLab, none of which this server runs; the cu128
+# wheels carry the CUDA runtime libraries MONAI Label actually needs.
+FROM python:3.12-slim-bookworm
 
 ARG DEBIAN_FRONTEND=noninteractive
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -22,16 +24,6 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1
 
 WORKDIR /workspace
-
-# Build a constraints file that ONLY pins the torch stack, so the installs below cannot
-# swap out the CUDA-matched torch that ships in this base image.
-RUN python - <<'PY' > /tmp/torch_constraints.txt
-import importlib
-for m in ("torch","torchvision","torchaudio"):
-    try: print(f"{m}=={importlib.import_module(m).__version__}")
-    except Exception: pass
-PY
-RUN echo "Torch constraints:" && cat /tmp/torch_constraints.txt
 
 # MONAI Label is installed from a pinned git commit, NOT from PyPI.
 #
@@ -47,24 +39,57 @@ RUN echo "Torch constraints:" && cat /tmp/torch_constraints.txt
 # once a release after 0.8.5 exists, this can go back to a plain version pin.
 ARG MONAILABEL_REF=38062894051d6fd1d3ba72cb2f8a39ad4f66f535
 
-# IMPORTANT: temporarily clear NVIDIA's global constraints so pip can upgrade transitive deps
-# (urllib3, httpx, ...) while honouring ONLY the torch pins above.
-# git is needed because MONAI Label derives its version with versioneer from repo metadata.
+# git: MONAI Label derives its version with versioneer from repo metadata.
+# libgl1/libglib2.0-0: OpenCV, pulled in transitively, needs them at import time.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends git \
-    && rm -rf /var/lib/apt/lists/* \
-    && PIP_CONSTRAINT= pip install -U -c /tmp/torch_constraints.txt \
+    && apt-get install -y --no-install-recommends git libgl1 libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install the torch stack FIRST, from PyTorch's CUDA-12.8 index only.
+#
+# --index-url (not --extra-index-url) is load-bearing. With --extra-index-url pip still sees
+# PyPI, and PyPI's default torch is now a CUDA 13 build which outranks the cu128 wheel — that
+# resolution pulls nvidia-*-cu13 and produces an image that cannot run here, because cu13
+# requires NVIDIA driver >= 580 and the trust hosts run 575.x. Restricting the index to cu128
+# removes the choice. cu128 also carries the Blackwell (sm_120) kernels the RTX 5090 needs.
+RUN pip install --no-cache-dir torch torchvision \
+      --index-url https://download.pytorch.org/whl/cu128
+
+# Freeze exactly what that resolved, so the MONAI Label install below — whose dependency tree
+# (monai, sam2, pytorch-ignite) also declares torch — cannot quietly swap it for a PyPI build.
+RUN python - <<'PY' > /tmp/torch_constraints.txt
+import importlib
+for m in ("torch", "torchvision"):
+    try:
+        print(f"{m}=={importlib.import_module(m).__version__}")
+    except Exception:
+        pass
+PY
+RUN echo "Torch constraints:" && cat /tmp/torch_constraints.txt
+
+RUN pip install --no-cache-dir -c /tmp/torch_constraints.txt \
       "pydicom<3" \
       monai \
       "monailabel @ git+https://github.com/Project-MONAI/MONAILabel.git@${MONAILABEL_REF}" \
-      uvicorn[standard] fastapi python-multipart
+      uvicorn[standard] fastapi python-multipart \
+      --extra-index-url https://download.pytorch.org/whl/cu128
 
-# Fail the build rather than ship the 401 bug: the fixed _request_get passes auth through.
+# Fail the build rather than ship a broken image. These catch the three ways it silently
+# breaks, none of which surface until runtime:
+#   1. the unreleased XNAT auth fix disappearing from the pinned ref;
+#   2. a torch without Blackwell kernels (get_arch_list reads the wheel's compiled arch list,
+#      so this needs no GPU at build time);
+#   3. a CUDA 13 torch. PyPI serves cu13 by default and it also reports sm_120, so check (2)
+#      alone cannot catch it — but cu13 requires NVIDIA driver >= 580, and the trust hosts run
+#      575.x, so it would fail at first inference with an opaque CUDA error.
 RUN python -c "\
-import inspect, sys; \
+import inspect, sys, torch; \
 from monailabel.datastore.xnat import XNATDatastore as X; \
-src = inspect.getsource(X._request_get); \
-sys.exit(0) if 'auth=self.auth' in src else sys.exit('MONAI Label lacks the XNAT auth fix (#1838)')"
+archs = torch.cuda.get_arch_list(); cuda = torch.version.cuda or ''; \
+print('torch', torch.__version__, 'cuda', cuda, archs); \
+'auth=self.auth' in inspect.getsource(X._request_get) or sys.exit('MONAI Label lacks the XNAT auth fix (#1838)'); \
+'sm_120' in archs or sys.exit(f'torch has no Blackwell (sm_120) kernels: {archs}'); \
+cuda.startswith('12.') or sys.exit(f'torch is built for CUDA {cuda}; need 12.x (cu13 needs driver >=580)')"
 
 # Copy the radiology app out of the installed package at build time (this is a local copy from
 # the wheel's sample-apps, not a download) so a cold start does not depend on it. Pretrained

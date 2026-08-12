@@ -189,10 +189,20 @@ xnat_curl -X PUT "$XNAT_URL/xapi/events/prefs" \
 # controlled by the dicom_to_nifti flag. This ensures dcm2niix only auto-triggers
 # for projects that have opted in to DICOM-to-NIfTI conversion.
 
-# Clean up any legacy site-wide event subscriptions (from prior versions)
-echo "Cleaning up legacy site-wide event subscriptions..."
+# Clean up this command's own legacy SITE-WIDE subscriptions. Earlier versions of this script
+# created one; dcm2niix subscriptions are now per-project, made by imaging-api from the
+# project's dicom_to_nifti flag, so a site-wide one is stale and would double-trigger.
+#
+# Scoped to dcm2niix by name. It previously deleted EVERY site-wide subscription it found,
+# which silently removed anything else registered on the site — an operator's own
+# subscription, or the export_mask one from configure-export-mask.sh — with no indication
+# that it had happened. Both historical spellings are matched: the retired site-wide JSON
+# used "DICOM-NifTi Conversion", imaging-api uses "DICOM-NIfTI Conversion".
+echo "Cleaning up legacy site-wide dcm2niix event subscriptions..."
 SUBS=$(xnat_curl "$XNAT_URL/xapi/events/subscriptions")
-SITE_SUB_IDS=$(echo "$SUBS" | jq -r '.[] | select(.["project-id"] == null or .["project-id"] == "") | .id')
+SITE_SUB_IDS=$(echo "$SUBS" | jq -r \
+  --argjson names '["DICOM-NifTi Conversion","DICOM-NIfTI Conversion"]' \
+  '.[] | select(.["project-id"] == null or .["project-id"] == "") | select(.name as $n | $names | index($n)) | .id')
 for SUB_ID in $SITE_SUB_IDS; do
   echo "Deleting site-wide subscription $SUB_ID..."
   xnat_curl -X DELETE "$XNAT_URL/xapi/events/subscription/$SUB_ID" >/dev/null
