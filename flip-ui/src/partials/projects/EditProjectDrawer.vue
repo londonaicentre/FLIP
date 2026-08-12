@@ -212,6 +212,7 @@ import AiConfirmModal from "@/components/AiModal/AiConfirmModal.vue";
 import AiSwitch from "@/components/AiSwitch/AiSwitch.vue";
 import router from "@/router";
 import { deleteProject, IProjectUser } from "@/services/project-service";
+import { IProjectUserLookup } from "@/services/user-service";
 import { useAuthStore } from "@/store/auth";
 import { useErrorStore } from "@/store/error";
 import { projectSchema } from "@/utils/forms/validation";
@@ -272,7 +273,7 @@ const updateProject = (values: unknown) => {
     });
 };
 
-const handleUpdatedUsers = (latestUsers: IProjectUser[]) => {
+const handleUpdatedUsers = (latestUsers: IProjectUserLookup[]) => {
     userList = latestUsers.map(u => u.id);
 };
 

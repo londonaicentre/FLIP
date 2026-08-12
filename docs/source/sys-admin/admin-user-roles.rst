@@ -82,3 +82,44 @@ The following table summarises the permissions assigned to each role:
 .. warning::
 
    Project ownership is not revoked by a role change. A user who created a project keeps project-level write access to it (editing, staging, deleting, and submitting cohort queries) even after being demoted to Viewer — ownership, not the current role, is the authority for owned projects. Demotion still removes the user's ability to create new projects or write to projects they do not own. To fully revoke a former owner's access to a project they own, transfer ownership to another user or delete the project.
+
+Who can see whose profile
+-------------------------
+
+User profile visibility follows *Manage users*, not project ownership:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 40 20 20 20
+
+   * - Can read
+     - Admin
+     - Researcher
+     - Viewer
+   * - Any user's full profile (name, organisation, account status)
+     - Yes
+     - No
+     - No
+   * - Their own full profile
+     - Yes
+     - Yes
+     - Yes
+   * - Whether a given email address is registered, and its user ID
+     - Yes
+     - Yes
+     - No
+
+Only *Manage users* grants the full profile of another user. Every authenticated user can read their
+own profile regardless of role.
+
+Researchers additionally need to resolve an email address when adding someone to a project, so they
+may check whether an address is registered. That check returns only the user's ID, email address and
+enabled flag — never their name or organisation — and it confirms only addresses the Researcher
+already knows, since there is no way to list or enumerate users without *Manage users*.
+
+.. note::
+
+   Unlike project-level writes, this capability follows the *Create projects* permission rather than
+   project ownership. A project owner who has been demoted to Viewer keeps their existing project
+   write access (see the warning above) but loses the ability to look up new members, because the
+   add-member form is not shown to Viewers.

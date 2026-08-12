@@ -69,7 +69,7 @@ import { usePermissions } from "@/composables/usePermissions";
 import DeploymentMode from "@/pages/DeploymentMode.vue";
 import CreateModelModal from "@/partials/models/CreateModelModal.vue";
 import { getProject, IProject } from "@/services/project-service";
-import { validateUser } from "@/services/user-service";
+import { getCurrentUser } from "@/services/user-service";
 import { useAuthStore } from "@/store/auth";
 import { useErrorStore } from "@/store/error";
 import { useModalsStore } from "@/store/modals";
@@ -92,8 +92,8 @@ const pageRoute = ref(route.fullPath?.toString() ?? "");
 const emailAddress = authStore.user?.attributes?.email ?? "";
 
 const { data: currentUserProfile } = useSWRV(
-    () => emailAddress && `/users/${emailAddress}`,
-    () => validateUser(emailAddress),
+    () => emailAddress && "/users/me",
+    getCurrentUser,
     {
         dedupingInterval: 60_000,
         revalidateOnFocus: false,

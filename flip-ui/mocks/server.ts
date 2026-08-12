@@ -252,14 +252,25 @@ export const makeServer = ({ environment = "development" } = {}): Server<AppRegi
                 return new Response(200, undefined, allRoles);
             });
 
-            this.get(baseUrl + "/users/:email", (schema: AppSchema, request) => {
-                const user = schema.db.users.findBy({ email: request.params.email });
+            // Static segments must be registered before any /users/:param route so they are not
+            // swallowed by it — the same ordering constraint the hub enforces (FLIP#907).
+            this.get(baseUrl + "/users/me", (schema: AppSchema) => {
+                const user = schema.db.users.findBy({ email: "mr.admin@example.com" });
+
+                return new Response(200, undefined, user);
+            });
+
+            this.get(baseUrl + "/users/lookup", (schema: AppSchema, request) => {
+                const user = schema.db.users.findBy({ email: request.queryParams.email as string });
 
                 if (!user) {
                     return new Response(404);
                 }
 
-                return new Response(200, undefined, user);
+                // Mirror the hub: name and organisation are withheld from this route.
+                const { id, email, isDisabled } = user;
+
+                return new Response(200, undefined, { id, email, isDisabled });
             });
 
             // #endregion

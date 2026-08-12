@@ -151,7 +151,7 @@ import AiSwitch from "@/components/AiSwitch/AiSwitch.vue";
 import AiTextArea from "@/components/AiTextArea/AiTextArea.vue";
 import { routeChange } from "@/router";
 import { createProject, IProjectCreate } from "@/services/project-service";
-import { IProjectUser } from "@/services/user-service";
+import { IProjectUserLookup } from "@/services/user-service";
 import { useModalsStore } from "@/store/modals";
 import { projectSchema } from "@/utils/forms/validation";
 import { Snackbar } from "@/utils/snackbar";
@@ -168,9 +168,9 @@ const modalStore = useModalsStore();
 const schema = projectSchema;
 
 const formSubmitting = ref(false);
-let users: IProjectUser[] = [];
+let users: IProjectUserLookup[] = [];
 
-const handleUsers = (updatedUsers: IProjectUser[]) => {
+const handleUsers = (updatedUsers: IProjectUserLookup[]) => {
     users = updatedUsers;
 };
 

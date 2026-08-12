@@ -51,11 +51,14 @@ vi.mock("@/router", () => ({
     default: { push: vi.fn() }
 }));
 
+// Records every key swrv is given, so tests can assert which endpoints the layout subscribes to.
+const { swrvKeys } = vi.hoisted(() => ({ swrvKeys: [] as unknown[] }));
+
 vi.mock("swrv", () => ({
     // Invoke the key function like real swrv does, so the page's key builders
-    // (e.g. the `/users/${email}` lookup) are exercised rather than skipped.
+    // (e.g. the `/users/me` self lookup) are exercised rather than skipped.
     default: (keyFn?: unknown) => {
-        if (typeof keyFn === "function") keyFn();
+        if (typeof keyFn === "function") swrvKeys.push(keyFn());
 
         return {
             data: ref(null),
@@ -181,6 +184,19 @@ describe("MainLayout", () => {
             const wrapper = mountMainLayout();
 
             expect(wrapper.exists()).toBe(true);
+        });
+    });
+
+    describe("current user profile", () => {
+        it("subscribes to /users/me rather than a by-email lookup", () => {
+            swrvKeys.length = 0;
+
+            mountMainLayout();
+
+            expect(swrvKeys).toContain("/users/me");
+            // The header used to resolve the caller by putting their email in the path. That
+            // route is now admin-only, and addresses do not belong in URLs anyway (FLIP#907).
+            expect(swrvKeys.some(key => typeof key === "string" && /^\/users\/.+@/.test(key))).toBe(false);
         });
     });
 
