@@ -55,7 +55,7 @@ def can_access_project(user_id: UUID, project_id: UUID, db: Session) -> bool:
             LEFT JOIN project_user_access
                 ON project_user_access.project_id = projects.id
             WHERE (projects.owner_id = :userId
-                OR project_user_access.userid = :userId)
+                OR project_user_access.user_id = :userId)
             AND projects.id = :project_id
         """
         query = (
@@ -243,7 +243,7 @@ def can_access_model(user_id: UUID, model_id: UUID, db: Session) -> bool:
             LEFT JOIN project_user_access
                 ON project_user_access.project_id = projects.id
             WHERE (projects.owner_id = :user_id
-                OR project_user_access.userid = :user_id)
+                OR project_user_access.user_id = :user_id)
         """
         query = (
             select(Projects.id)
@@ -301,7 +301,7 @@ def can_access_cohort_query(user_id: UUID, query_id: UUID, db: Session) -> bool:
             LEFT JOIN project_user_access
                 ON project_user_access.project_id = projects.id
             WHERE (projects.owner_id = :userId
-                OR project_user_access.userid = :userId)`
+                OR project_user_access.user_id = :userId)`
         """
         query = (
             select(Projects.id)

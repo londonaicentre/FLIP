@@ -39,6 +39,14 @@ class TestWriteEnvFile:
 
         assert target.read_text() == "A=1\nB=2\n"
 
+    def test_empty_lines_write_an_empty_file_not_a_leading_blank_line(self, tmp_path):
+        """An empty list must not seed a lone newline — parity with trust_kit_lib.write_secure."""
+        target = tmp_path / ".env.test"
+
+        write_env_file(target, [])
+
+        assert target.read_text() == ""
+
     def test_restricts_a_new_file_to_owner_read_write(self, tmp_path):
         target = tmp_path / ".env.test"
 

@@ -106,7 +106,9 @@ def write_env_file(path: Path, lines: list[str]) -> None:
         raise
 
     with os.fdopen(fd, "w") as env_file:
-        env_file.write("\n".join(lines) + "\n")
+        # Guard the empty case so an empty list writes an empty file, not a lone "\n" that would
+        # leave a leading blank line — matching scripts/trust_kit_lib.write_secure exactly.
+        env_file.write("\n".join(lines) + "\n" if lines else "")
 
 
 if __name__ == "__main__":
