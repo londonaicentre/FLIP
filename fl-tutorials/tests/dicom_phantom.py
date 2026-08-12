@@ -128,8 +128,26 @@ def correlation(left: np.ndarray, right: np.ndarray) -> float:
     return abs(float(a @ b) / denominator)
 
 
+def _resize_nearest(image: np.ndarray, shape: tuple[int, int]) -> np.ndarray:
+    """Nearest-neighbour resize of a 2-D array onto ``shape``.
+
+    Deliberately hand-rolled rather than pulled from MONAI: this module is the reference the tests
+    are checked against, so it stays on numpy alone. Nearest-neighbour is sufficient — the question
+    asked of the result is only whether two orientations remain distinguishable.
+    """
+    rows = (np.arange(shape[0]) * image.shape[0] // shape[0]).clip(0, image.shape[0] - 1)
+    columns = (np.arange(shape[1]) * image.shape[1] // shape[1]).clip(0, image.shape[1] - 1)
+    return image[rows[:, None], columns[None, :]]
+
+
 def assert_dihedrally_asymmetric(image: np.ndarray, max_correlation: float = 0.9) -> None:
     """Fail unless ``image`` is distinguishable from every non-identity dihedral variant of itself.
+
+    Variants that a rotation or transpose leaves with swapped axes are compared **on a common
+    square grid**, not skipped for differing shape. Differing shape is a real distinction at the
+    loader, but the app chains all resize onto a square target, and past that point shape
+    distinguishes nothing — a transposed radiograph and an upright one are both ``(224, 224)``. So
+    this checks the property where the full-chain assertions actually need it.
 
     Args:
         image (np.ndarray): The 2-D fixture array to check.
@@ -144,17 +162,22 @@ def assert_dihedrally_asymmetric(image: np.ndarray, max_correlation: float = 0.9
         f"fixture is square {image.shape}: a transposed read would keep its shape, so any test "
         "built on it could pass on shape alone"
     )
+
+    side = max(image.shape)
+    square = (side, side)
+    resampled = _resize_nearest(image, square)
+
     for name, variant in dihedral_variants(image).items():
         if name == "identity":
             continue
-        if variant.shape != image.shape:
-            # A rotation/transpose of a non-square array already differs in shape — asymmetric by
-            # construction, and nothing to correlate against.
-            continue
-        score = correlation(image, variant)
+        if variant.shape == image.shape:
+            reference, candidate, grid = image, variant, "as loaded"
+        else:
+            reference, candidate, grid = resampled, _resize_nearest(variant, square), "resized square"
+        score = correlation(reference, candidate)
         assert score < max_correlation, (
-            f"fixture is nearly symmetric under {name} (|r| = {score:.4f}): a chain that applied "
-            f"{name} to it would pass the orientation assertions anyway"
+            f"fixture is nearly symmetric under {name} ({grid}: |r| = {score:.4f}): a chain that "
+            f"applied {name} to it would pass the orientation assertions anyway"
         )
 
 
