@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import zipfile
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -30,6 +31,23 @@ REQUIRED_PLUGIN_NAMES = (
 def _write_executable(path: Path, body: str) -> None:
     path.write_text(body)
     path.chmod(0o755)
+
+
+def _write_jar(path: Path) -> Path:
+    """Write a minimal but genuinely valid zip, standing in for a plugin jar.
+
+    The cache check validates archive structure, so a zero-byte file no longer counts as a present
+    plugin — which is the whole point of the guard these fixtures exercise.
+    """
+    with zipfile.ZipFile(path, "w") as archive:
+        archive.writestr("META-INF/MANIFEST.MF", "Manifest-Version: 1.0\n")
+    return path
+
+
+def _aws_stub_writing_jars(template: Path, names: tuple[str, ...]) -> str:
+    """Shell body for a fake `aws` that populates the sync destination with valid jars."""
+    copies = "; ".join(f'cp "{template}" "$dest/{name}"' for name in names)
+    return f'dest="$4"; mkdir -p "$dest"; {copies}'
 
 
 def _plugin_env(tmp_path: Path, aws_body: str) -> dict[str, str]:
@@ -53,7 +71,7 @@ def test_plugin_check_skips_aws_for_matching_complete_cache(tmp_path: Path) -> N
     plugin_dir = tmp_path / "plugins"
     plugin_dir.mkdir()
     for name in REQUIRED_PLUGIN_NAMES:
-        (plugin_dir / name).touch()
+        _write_jar(plugin_dir / name)
     (plugin_dir / ".s3-prefix").write_text(f"{PLUGIN_PREFIX}\n")
     env = _plugin_env(tmp_path, 'echo "AWS must not be called" >&2; exit 99')
 
@@ -65,10 +83,8 @@ def test_plugin_check_skips_aws_for_matching_complete_cache(tmp_path: Path) -> N
 
 def test_plugin_check_downloads_and_validates_fresh_cache(tmp_path: Path) -> None:
     plugin_dir = tmp_path / "plugins"
-    create_plugins = 'dest="$4"; mkdir -p "$dest"; touch ' + " ".join(
-        f'"$dest/{name}"' for name in REQUIRED_PLUGIN_NAMES
-    )
-    env = _plugin_env(tmp_path, create_plugins)
+    template = _write_jar(tmp_path / "template.jar")
+    env = _plugin_env(tmp_path, _aws_stub_writing_jars(template, REQUIRED_PLUGIN_NAMES))
 
     result = _run_plugin_check(plugin_dir, env)
 
@@ -84,15 +100,48 @@ def test_plugin_check_propagates_sync_failure(tmp_path: Path) -> None:
 
 def test_plugin_check_rejects_incomplete_download(tmp_path: Path) -> None:
     plugin_dir = tmp_path / "plugins"
+    template = _write_jar(tmp_path / "template.jar")
     env = _plugin_env(
         tmp_path,
-        'dest="$4"; mkdir -p "$dest"; touch "$dest/batch-launch-test.jar" "$dest/container-service-test.jar"',
+        _aws_stub_writing_jars(template, ("batch-launch-test.jar", "container-service-test.jar")),
     )
 
     result = _run_plugin_check(plugin_dir, env)
 
     assert result.returncode != 0
     assert "dicom-query-retrieve-" in result.stdout
+
+
+def test_plugin_check_resyncs_a_cache_holding_a_truncated_jar(tmp_path: Path) -> None:
+    """A zero-byte jar satisfies a filename check but boots an XNAT with no plugin routes.
+
+    Dev bind-mounts this directory into the running container, so accepting it would surface much
+    later as a readiness timeout blamed on the DQR plugin.
+    """
+    plugin_dir = tmp_path / "plugins"
+    plugin_dir.mkdir()
+    for name in REQUIRED_PLUGIN_NAMES:
+        _write_jar(plugin_dir / name)
+    (plugin_dir / REQUIRED_PLUGIN_NAMES[1]).write_bytes(b"")
+    (plugin_dir / ".s3-prefix").write_text(f"{PLUGIN_PREFIX}\n")
+    template = _write_jar(tmp_path / "template.jar")
+    env = _plugin_env(tmp_path, _aws_stub_writing_jars(template, REQUIRED_PLUGIN_NAMES))
+
+    result = _run_plugin_check(plugin_dir, env)
+
+    assert result.returncode == 0, result.stderr
+    assert "Skipping S3 sync" not in result.stdout, "a corrupt cached jar was accepted as present"
+
+
+def test_plugin_check_rejects_a_corrupt_download(tmp_path: Path) -> None:
+    plugin_dir = tmp_path / "plugins"
+    corrupt = 'dest="$4"; mkdir -p "$dest"; ' + "; ".join(
+        f': > "$dest/{name}"' for name in REQUIRED_PLUGIN_NAMES
+    )
+
+    result = _run_plugin_check(plugin_dir, _plugin_env(tmp_path, corrupt))
+
+    assert result.returncode != 0
 
 
 def _readiness_env(
