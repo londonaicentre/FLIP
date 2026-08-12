@@ -38,9 +38,14 @@ make -C fl-tutorials list-tutorials FL_BACKEND=flower
 For the NVFLARE X-ray example:
 
 ```bash
+make build-fl                     # once: the simulator runs on the local flare-fl-base image
 make -C fl-tutorials download-xray-data
 make -C fl-tutorials run-tutorial TUTORIAL=xray_classification
 ```
+
+`make build-fl` is a genuine prerequisite for the NVFLARE tutorials, not an optimisation: they run on the locally
+built `flare-fl-base` image and fail without it. The spleen examples take `download-spleen-data` in place of
+`download-xray-data`.
 
 The simulator requires Docker, and GPU-backed examples require the NVIDIA Container Toolkit. Dataset downloads and
 generated runs are kept in gitignored backend data/output directories. Run `make -C fl-tutorials run-all-tutorials`

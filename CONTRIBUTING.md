@@ -54,7 +54,7 @@ are provisioned in-tree (gitignored) under `fl-services/<backend>/provision/`. S
 - [Docker Engine](https://docs.docker.com/engine/install/) with Compose and Swarm mode
 - [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)
   on GPU hosts
-- GNU Make, `jq`, and the PostgreSQL client
+- GNU Make, `jq`, and `curl`
 - [Python 3.12+](https://www.python.org/downloads/) and [uv](https://docs.astral.sh/uv/)
 - The AWS CLI configured for SSO access to the development environment
 - [act](https://github.com/nektos/act) if you want to run GitHub Actions locally

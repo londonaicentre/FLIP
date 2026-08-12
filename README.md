@@ -66,7 +66,8 @@ docker login ghcr.io
 # Required once per Docker host.
 docker swarm init
 
-# Provision the two local NVFLARE networks used by the example Trusts.
+# Provision the two local NVFLARE networks used by the example Trusts. `make up` does not do
+# this for you, and the FL containers cannot start without it.
 make -C fl-services/nvflare provision-2-nets
 
 # Pull the published service images, start the hub, register GSTT and KCH,
@@ -92,10 +93,18 @@ Stop the local platform with:
 make down
 ```
 
-The default backend is NVFLARE. See the [Flower service guide](fl-services/flower/README.md) to provision and run the
-same topology with Flower. Use `make up BUILD=true` when dependency or Dockerfile changes require locally rebuilt
-images; ordinary source edits are bind-mounted for live reload. More detail is in
-[Running the stack](CONTRIBUTING.md#running-the-stack-pull-vs-build).
+The default backend is NVFLARE. To run the same topology with Flower, provision its per-net credentials instead —
+once per network, and again before `make up`:
+
+```bash
+make -C fl-services/flower provision NET_NUMBER=1
+make -C fl-services/flower provision NET_NUMBER=2
+make up FL_BACKEND=flower
+```
+
+See the [Flower service guide](fl-services/flower/README.md) for the full workflow. Use `make up BUILD=true` when
+dependency or Dockerfile changes require locally rebuilt images; ordinary source edits are bind-mounted for live
+reload. More detail is in [Running the stack](CONTRIBUTING.md#running-the-stack-pull-vs-build).
 
 ## Where to go next
 
@@ -109,6 +118,7 @@ images; ordinary source edits are bind-mounted for live reload. More detail is i
 | Deploy a Trust on premises | [Local provider](deploy/providers/local/README.md) |
 | Deploy a Trust on Kubernetes | [Kubernetes provider](deploy/providers/kubernetes/README.md) |
 | Operate Trust-side services | [Trust services](trust/README.md) |
+| Debug a service in VS Code | [DEBUG.md](DEBUG.md) |
 | Debug or test a particular service | That service's README and Makefile |
 
 ## Repository layout
