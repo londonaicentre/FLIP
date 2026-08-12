@@ -107,3 +107,51 @@ def test_cannot_dispatch_another_projects_query(
     assert untouched.queried_trust_ids == []
     assert untouched.query == VICTIM_SQL
     assert session.exec(select(TrustTask)).all() == []
+
+
+def test_dispatches_a_same_project_query_and_uses_the_persisted_sql(
+    session: Session, mock_request, attacker, trust_factory
+):
+    """Positive control: the caller's own query_id on their own project dispatches.
+
+    Without this the scoping is only pinned against *under*-scoping. An *over*-scoped predicate —
+    one that compares the wrong columns, e.g. ``Queries.project_id == cohort_query.query_id`` —
+    would 404 every legitimate submit while the negative test and the mocked unit tests all stay
+    green (they never exercise a real same-project lookup). This also pins, at the DB level, that
+    the SQL shipped to the trust is the persisted row's, not the request body's.
+    """
+    owner_id, project, query = attacker
+    trust = trust_factory.build()
+    session.add(trust)
+    session.commit()
+
+    # A body query that is neither a substring nor a superstring of the persisted SQL, so the
+    # payload assertions below can only pass if the persisted row — not the body — was dispatched.
+    divergent_body_sql = "SELECT 1 AS one"
+    payload = SubmitCohortQuery(
+        name="mine",
+        query=divergent_body_sql,
+        project_id=project.id,
+        query_id=query.id,
+        authenticationToken="Bearer test-token",
+    )
+
+    result = submit_cohort_query(mock_request, payload, session, owner_id)
+
+    # Dispatch happened — an over-scoped lookup would have 404'd before reaching here.
+    assert result.query_id == query.id
+
+    # `trust` is in conftest's _PRESERVED_TABLES, so other files' rows persist and the submit fans
+    # out to all of them. Filter by this query's id — those tasks are unambiguously ours.
+    tasks = session.exec(select(TrustTask).where(TrustTask.query_id == query.id)).all()
+    assert len(tasks) >= 1
+    assert trust.id in {t.trust_id for t in tasks}
+    for task in tasks:
+        # The persisted SQL is dispatched, never the divergent request body.
+        assert ATTACKER_SQL in task.payload
+        assert divergent_body_sql not in task.payload
+
+    session.expire_all()
+    refreshed = session.get(Queries, query.id)
+    assert refreshed is not None
+    assert {str(t) for t in refreshed.queried_trust_ids} == {str(task.trust_id) for task in tasks}
