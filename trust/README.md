@@ -159,11 +159,17 @@ ticked, a perfectly working server is simply absent from the viewer; that is the
 check when it "isn't showing up", followed by `GET /xapi/ohifaiaa/servers` returning the URL and
 that URL opening in the browser.
 
-One known viewer quirk: if every interactive model (`sam_2d`, `deepgrow_*`) starts failing with
-*"Empty mask was returned by the model run"* while `deepedit_seg` still works, the viewer tab's
-segment state has gone stale — **reload the tab**. The server is fine (its logs will show valid,
-non-empty masks for those very runs); the stock viewer zeroes the mask client-side when its
-active-segment state is wedged, which happens in long-lived tabs.
+Two known stock-viewer defects (both client-side — the server returns valid masks throughout,
+verifiable in the monailabel container's logs):
+
+- *"Empty mask was returned by the model run"* from every interactive model (`sam_2d`,
+  `deepgrow_*`) while `deepedit_seg` still works: the tab's segment state has gone stale —
+  **reload the tab**.
+- Interactive (DeepGrow-type) results always land in the **first segment**, regardless of which
+  segment is selected — the viewer routes the mask through an active-segment index that segment
+  selection does not update (present in viewer frontend 3.7.2; the 3.7.0 frontend did not have
+  the reworked segment store). Until fixed upstream, treat SAM/DeepGrow as single-target — rename
+  the first segment afterwards — and use `deepedit_seg` for multi-organ work.
 
 Notes:
 
