@@ -107,20 +107,27 @@ spec:
           ports:
             - name: http
               containerPort: {{ .Values.monailabel.port }}
+          # Probes hit /openapi.json (answers in ms), NOT /info/: with the XNAT datastore,
+          # /info/ enumerates every experiment on the trust — one XML request each — so on a
+          # populated trust it cannot answer inside any sane probe timeout, the pod never
+          # goes Ready, and the Service refuses connections while the server inside is
+          # actually up (found live on a 900-experiment trust).
           # Model load downloads pretrained weights on a cold volume (minutes, incl. the
           # ~900MB SAM checkpoint); the startup probe gives it half an hour before the
           # readiness probe takes over.
           startupProbe:
             httpGet:
-              path: /info/
+              path: /openapi.json
               port: http
             periodSeconds: 15
             failureThreshold: 120
+            timeoutSeconds: 5
           readinessProbe:
             httpGet:
-              path: /info/
+              path: /openapi.json
               port: http
             periodSeconds: 30
+            timeoutSeconds: 5
           resources:
             {{- if .Values.monailabel.gpu.enabled }}
             limits:
