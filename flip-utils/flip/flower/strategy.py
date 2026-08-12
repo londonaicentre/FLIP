@@ -30,9 +30,11 @@ package (present in the Flower fl-server images) — it subclasses the real
 """
 
 from collections.abc import Iterable
+from logging import INFO
+from typing import cast
 
 from flwr.app import ArrayRecord, Message, MetricRecord
-from flwr.common import ConfigRecord
+from flwr.common import ConfigRecord, log
 from flwr.serverapp import Grid
 from flwr.serverapp.strategy import FedAvg, Result
 
@@ -43,6 +45,7 @@ from flip.flower.progress import (
     report_round_aggregated,
     report_round_started,
 )
+from flip.flower.selection import BestModelSelector
 
 __all__ = ["FlipFedAvg"]
 
@@ -50,18 +53,42 @@ __all__ = ["FlipFedAvg"]
 class FlipFedAvg(FedAvg):
     """FedAvg with FLIP hub telemetry: status, metrics/exceptions, round events.
 
+    Optionally also tracks the best aggregated global model: when
+    ``best_model_metric`` is set, each evaluate round's aggregated metrics are
+    offered to a :class:`~flip.flower.selection.BestModelSelector` together with
+    the arrays that round evaluated (Flower's round loop evaluates the freshly
+    aggregated model, so the metric measures exactly the checkpoint being
+    considered). Unset, nothing changes and no best model is retained.
+
     Args:
         flip: FLIP instance used by the fl-server to reach the Central Hub.
         model_id: FLIP model ID (UUID) for the current run.
         *args: Passed through to ``FedAvg``.
+        best_model_metric: Aggregated evaluation-metric key to select the best
+            global model on; ``None`` disables selection.
+        best_model_metric_minimize: Whether lower values of that metric are
+            better (e.g. a loss).
         **kwargs: Passed through to ``FedAvg``.
     """
 
-    def __init__(self, flip: FLIP, model_id: str, *args, **kwargs):
+    def __init__(
+        self,
+        flip: FLIP,
+        model_id: str,
+        *args,
+        best_model_metric: str | None = None,
+        best_model_metric_minimize: bool = False,
+        **kwargs,
+    ):
         super().__init__(*args, **kwargs)
         self.flip = flip
         self.model_id = model_id
         self.num_rounds: int | None = None
+        self._best_selector = (
+            BestModelSelector(best_model_metric, minimize=best_model_metric_minimize) if best_model_metric else None
+        )
+        # The arrays configure_evaluate dispatched this round — what the replies measure.
+        self._arrays_under_evaluation: tuple[int, ArrayRecord] | None = None
         # Reply bookkeeping for crashed-client attribution: a crashed reply carries
         # neither content nor its sender's real node id, so the tracker names the
         # trust that fell out by elimination — per phase, since the evaluate arm may
@@ -72,11 +99,13 @@ class FlipFedAvg(FedAvg):
         # wires the FedAvg hooks to it.
         self._telemetry = RoundTelemetry()
 
-    def start(self, grid: Grid, initial_arrays: ArrayRecord, num_rounds: int = 3, **kwargs) -> Result:
+    def start(self, grid: Grid, initial_arrays: ArrayRecord, num_rounds: int = 3, *args, **kwargs) -> Result:
         """Capture the round total and mark the run as executing on the hub."""
+        # *args keeps FedAvg's optional params (timeout, …) passable positionally — a
+        # kwargs-only override silently breaks such callers.
         self.num_rounds = num_rounds
         self.flip.update_status(self.model_id, ModelStatus.RUNNING)
-        return super().start(grid, initial_arrays, num_rounds, **kwargs)
+        return super().start(grid, initial_arrays, num_rounds, *args, **kwargs)
 
     def configure_train(
         self, server_round: int, arrays: ArrayRecord, config: ConfigRecord, grid: Grid
@@ -88,7 +117,9 @@ class FlipFedAvg(FedAvg):
             report_round_started(self.flip, self.model_id, server_round, self.num_rounds)
         return messages
 
-    def aggregate_train(self, server_round: int, replies: Iterable[Message]) -> ArrayRecord | None:
+    def aggregate_train(
+        self, server_round: int, replies: Iterable[Message]
+    ) -> tuple[ArrayRecord | None, MetricRecord | None]:
         """Forward per-client telemetry, aggregate, then report the round aggregated."""
         replies = list(replies)
         returned = self._telemetry.forward_replies(replies, "train", server_round, self.model_id, self.flip)
@@ -108,6 +139,8 @@ class FlipFedAvg(FedAvg):
         # Always recorded — evaluate absences must resolve against the evaluate
         # roster even when the train phase owns the round events.
         self._telemetry.record_dispatch("evaluate", {msg.metadata.dst_node_id for msg in messages})
+        if messages and self._best_selector is not None:
+            self._arrays_under_evaluation = (server_round, arrays)
         if messages and not self._telemetry.dispatched_count("train"):
             report_round_started(self.flip, self.model_id, server_round, self.num_rounds)
         return messages
@@ -118,6 +151,18 @@ class FlipFedAvg(FedAvg):
         returned = self._telemetry.forward_replies(replies, "evaluate", server_round, self.model_id, self.flip)
 
         result = super().aggregate_evaluate(server_round, replies)
+        if self._best_selector is not None:
+            stashed = self._arrays_under_evaluation
+            evaluated_arrays = stashed[1] if stashed is not None and stashed[0] == server_round else None
+            if self._best_selector.consider(server_round, result, evaluated_arrays):
+                # flwr's own logger — a stdlib logger here never reaches the ServerApp output.
+                log(
+                    INFO,
+                    "New best global model at round %d: %s=%s",
+                    server_round,
+                    self._best_selector.metric,
+                    self._best_selector.best_metric,
+                )
         if not self._telemetry.dispatched_count("train") and self._telemetry.dispatched_count("evaluate"):
             # The dispatch count is the honest denominator: a client that fell out
             # without even a synthesised error reply must still deflate "k of m" —
@@ -127,3 +172,26 @@ class FlipFedAvg(FedAvg):
                 self.flip, self.model_id, server_round, returned, self._telemetry.dispatched_count("evaluate")
             )
         return result
+
+    @property
+    def best_model_selection_enabled(self) -> bool:
+        """Whether a best-model metric was configured for this run."""
+        return self._best_selector is not None
+
+    @property
+    def best_model_round(self) -> int | None:
+        """The round that produced the best global model so far, if any."""
+        return self._best_selector.best_round if self._best_selector is not None else None
+
+    @property
+    def best_model_metric_value(self) -> float | None:
+        """The best value of the selection metric so far, if any."""
+        return self._best_selector.best_metric if self._best_selector is not None else None
+
+    @property
+    def best_model_arrays(self) -> ArrayRecord | None:
+        """The arrays of the best global model so far, if a selection happened."""
+        if self._best_selector is None:
+            return None
+        # The selector holds arrays as an opaque object; this class only ever feeds it ArrayRecords.
+        return cast("ArrayRecord | None", self._best_selector.best_arrays)

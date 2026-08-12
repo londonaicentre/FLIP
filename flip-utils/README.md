@@ -87,9 +87,10 @@ flip/
 │   ├── runtime.py    # Runtime helpers for NVFLARE apps
 │   └── metrics.py    # Metrics collection and reporting
 └── flower/       # Flower-specific server-side helpers
-    ├── strategy.py   # Flower Strategy implementations (FedAvgWithClientMetrics)
     ├── metrics.py    # handle_client_metrics / handle_client_exception
-    └── progress.py   # Progress / status reporting helpers
+    ├── progress.py   # RoundTelemetry + typed round events
+    ├── selection.py  # BestModelSelector + best-model run-config parsing
+    └── strategy.py   # FlipFedAvg (hub telemetry + best-model wiring; needs flwr)
 ```
 
 The `FLIP()` factory selects `FLIPStandardDev` (local CSV/filesystem) or `FLIPStandardProd` (FLIP platform APIs) based
@@ -99,6 +100,21 @@ The `flip.flower` sub-package is intended **only for fl-server code**. Its helpe
 crashed-reply exceptions — extracted from Flower reply Messages in `Strategy.aggregate_train` /
 `aggregate_evaluate` — to the Central Hub. fl-client containers must never import it and must never hold the
 `INTERNAL_SERVICE_KEY` credential. For the NVFLARE equivalent, see `flip.nvflare.metrics`.
+
+`FlipFedAvg` also owns opt-in **best-global-model selection**: constructed with `best_model_metric` (and
+`best_model_metric_minimize` for loss-like metrics), it scores each round's freshly aggregated model on the
+aggregated evaluation metrics (`flip.flower.selection.BestModelSelector`) and retains the best-scoring arrays.
+The `fl-apps/flower/standard` template maps the `best-model-metric` / `best-model-metric-minimize` run-config
+keys onto it and saves `best_FL_global_model.pt` alongside `FL_global_model.pt` when a selection actually
+happened — unset, evaluation stays final-round-only and no best artefact is produced. NVFLARE reaches the same
+contract with the stock `IntimeModelSelector` (see `FlipFedAvgRecipe`).
+
+**The two backends aggregate the selection metric differently, deliberately.** On Flower the value the
+selector sees is whatever stock `FedAvg` produced — a **weighted average keyed on `num-examples`**, so a
+trust with more test samples pulls the score further. NVFLARE's `IntimeModelSelector` defaults to
+`weigh_by_local_iter=False` with no `aggregation_weights`, i.e. a plain **unweighted mean** across clients.
+Neither lets a single site dictate selection, but the same metric can pick a different round on each backend
+when trust cohort sizes are uneven; expect that rather than treating it as a bug.
 
 ### User Application Requirements
 
