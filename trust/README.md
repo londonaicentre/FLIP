@@ -159,6 +159,12 @@ ticked, a perfectly working server is simply absent from the viewer; that is the
 check when it "isn't showing up", followed by `GET /xapi/ohifaiaa/servers` returning the URL and
 that URL opening in the browser.
 
+One known viewer quirk: if every interactive model (`sam_2d`, `deepgrow_*`) starts failing with
+*"Empty mask was returned by the model run"* while `deepedit_seg` still works, the viewer tab's
+segment state has gone stale — **reload the tab**. The server is fine (its logs will show valid,
+non-empty masks for those very runs); the stock viewer zeroes the mask client-side when its
+active-segment state is wedged, which happens in long-lived tabs.
+
 Notes:
 
 - **SAM is always on**, independently of `MONAI_LABEL_MODELS`: the radiology app registers
