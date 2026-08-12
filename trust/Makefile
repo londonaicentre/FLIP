@@ -57,6 +57,10 @@ ifeq ($(ENV),development)
 export AES_KEY_BASE64 CENTRAL_HUB_API_URL TRUST_API_KEY_HEADER FL_BACKEND \
        FLOWER_KIT_DATE FLARE_KIT_DATE DOCKER_TAG DOCKER_REGISTRY \
        DOCKER_FL_TAG DOCKER_FL_REGISTRY NLB_SUBDOMAIN FL_SERVER_PORT
+# xnat/Makefile's dev-only plugin cache reads this to reach the artifacts bucket. Unexported it is
+# empty in the `make -C trust up-trust` path (the root Makefile blanket-exports the hub env, so only
+# a top-level `make up` would carry it), and the cache download fails on a bucket-less S3 URI.
+export FLIP_ARTIFACTS_BUCKET_NAME
 # UID/GID/UNAME come from the same hub .env and must be exported for the same reason:
 # the dev compose runs imaging-api, data-access-api and trust-api as `user: "${UID}:${GID}"`
 # so they can write host-owned bind mounts (notably BASE_IMAGES_DOWNLOAD_DIR, which this

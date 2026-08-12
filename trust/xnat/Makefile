@@ -111,13 +111,20 @@ export XNAT_DATA_DIR
 # Path to the dev XNAT folder on the Docker host (bind mounts resolve there, not locally).
 export XNAT_PATH=$(realpath .)
 
+# XNAT_PLUGINS_FROM_HOST tracks STACK_FILES deliberately: only the development stack bind-mounts
+# xnat/plugins over the image, so only development needs the host-side plugin cache (and the S3
+# bucket and AWS credentials that populate it). Production bakes plugins into the image, and a
+# trust host has neither FLIP_ARTIFACTS_BUCKET_NAME nor a reason to reach S3 for them.
 ifeq ($(PROD),true)
 STACK_FILES = -c docker-compose-stack.yml -c docker-compose-stack.production.yml
+XNAT_PLUGINS_FROM_HOST =
 else ifeq ($(PROD),stag)
 STACK_FILES = -c docker-compose-stack.yml -c docker-compose-stack.production.yml
+XNAT_PLUGINS_FROM_HOST =
 else
 # In development, mount plugins and config from the host for hot-reload
 STACK_FILES = -c docker-compose-stack.yml -c docker-compose-stack.development.yml
+XNAT_PLUGINS_FROM_HOST = 1
 endif
 
 # Guard: a KIT-selected target needs KIT set.
@@ -220,12 +227,17 @@ up:
 
 # Bring up the XNAT swarm stack for one trust (KIT=Trust_1 / Trust_2).
 # trust/Makefile's up-trust calls this so a trust comes up complete.
+#
+# In development, validate the version-matched, gitignored plugin cache before tearing down a
+# working XNAT: a fresh clone downloads it here, a warm cache skips AWS, and a failure leaves the
+# running stack untouched. Skipped outside development, where plugins come baked into the image
+# (see XNAT_PLUGINS_FROM_HOST above).
 up-xnat: create-xnat-network
 	$(require_kit)
 	$(require_xnat_passwords)
-	# Validate the version-matched, gitignored plugin cache before tearing down a
-	# working XNAT. A fresh clone downloads it here; a warm cache skips AWS.
+ifdef XNAT_PLUGINS_FROM_HOST
 	$(MAKE) xnat-plugins-download
+endif
 	$(MAKE) down-xnat KIT=$(KIT)
 	$(MAKE) xnat-reset KIT=$(KIT)
 	XNAT_PATH=${XNAT_PATH} \
@@ -291,6 +303,11 @@ xnat-war-download:
 # plugins/} — so different branches (e.g. main vs develop across an XNAT upgrade) can build against
 # different WAR + plugin rosters without clobbering each other.
 xnat-plugins-download:
+	@[ -n "$(FLIP_ARTIFACTS_BUCKET_NAME)" ] || { \
+	  echo "❌ FLIP_ARTIFACTS_BUCKET_NAME is unset — the host plugin cache cannot be filled."; \
+	  echo "   Set it in .env.development (see the 'S3 Buckets' block), or pass it on the command"; \
+	  echo "   line: make xnat-plugins-download FLIP_ARTIFACTS_BUCKET_NAME=<bucket>."; \
+	  exit 1; }
 	@./scripts/ensure_plugins.sh "xnat/plugins" "$(FLIP_ARTIFACTS_BUCKET_NAME)" "xnat-$(XNAT_VERSION)/plugins"
 
 # Creates the data-volume directory structure for one trust's XNAT stack and

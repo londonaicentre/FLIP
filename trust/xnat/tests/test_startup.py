@@ -16,6 +16,7 @@ import subprocess
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
+XNAT_DIR = REPO_ROOT / "trust" / "xnat"
 ENSURE_PLUGINS = REPO_ROOT / "trust" / "xnat" / "scripts" / "ensure_plugins.sh"
 WAIT_FOR_PLUGINS = REPO_ROOT / "trust" / "xnat" / "xnat" / "config" / "wait-for-xnat-plugins.sh"
 PLUGIN_PREFIX = "xnat-1.10.0/plugins"
@@ -94,7 +95,13 @@ def test_plugin_check_rejects_incomplete_download(tmp_path: Path) -> None:
     assert "dicom-query-retrieve-" in result.stdout
 
 
-def _readiness_env(tmp_path: Path, curl_body: str, timeout: str = "5") -> dict[str, str]:
+def _readiness_env(
+    tmp_path: Path,
+    curl_body: str,
+    timeout: str = "5",
+    initial_password: str = "test-password",
+    rotated_password: str = "test-password",
+) -> dict[str, str]:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     _write_executable(bin_dir / "curl", f"#!/bin/sh\nset -eu\n{curl_body}\n")
@@ -102,11 +109,31 @@ def _readiness_env(tmp_path: Path, curl_body: str, timeout: str = "5") -> dict[s
         **os.environ,
         "PATH": f"{bin_dir}:{os.environ['PATH']}",
         "XNAT_ADMIN_USER": "admin",
-        "XNAT_ADMIN_INITIAL_PASSWORD": "test-password",
-        "XNAT_ADMIN_PASSWORD": "test-password",
+        "XNAT_ADMIN_INITIAL_PASSWORD": initial_password,
+        "XNAT_ADMIN_PASSWORD": rotated_password,
         "XNAT_PLUGIN_READINESS_TIMEOUT_SECONDS": timeout,
         "XNAT_PLUGIN_READINESS_POLL_SECONDS": "0",
+        # The production backoff deliberately costs wall-clock time; zero it so the tests that
+        # exercise rejected logins stay instant.
+        "XNAT_PLUGIN_READINESS_AUTH_BACKOFF_SECONDS": "0",
     }
+
+
+def _run_readiness(env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+    """Run the readiness helper under a hard timeout.
+
+    The timeout is load-bearing: a regression in the script's own wall-clock guard makes the loop
+    unbounded, and without it pytest would hang until the CI job limit and report a runner timeout
+    instead of a red test.
+    """
+    return subprocess.run(
+        ["bash", str(WAIT_FOR_PLUGINS)],
+        check=False,
+        capture_output=True,
+        env=env,
+        text=True,
+        timeout=30,
+    )
 
 
 def test_readiness_waits_for_authenticated_plugin_route(tmp_path: Path) -> None:
@@ -117,31 +144,212 @@ def test_readiness_waits_for_authenticated_plugin_route(tmp_path: Path) -> None:
         'if [ "$count" -ge 2 ]; then printf "204"; else printf "404"; fi'
     )
 
-    result = subprocess.run(
-        ["bash", str(WAIT_FOR_PLUGINS)],
-        check=False,
-        capture_output=True,
-        env=_readiness_env(tmp_path, curl_body),
-        text=True,
-    )
+    result = _run_readiness(_readiness_env(tmp_path, curl_body))
 
     assert result.returncode == 0, result.stderr
     assert "ready (HTTP 204)" in result.stdout
 
 
 def test_readiness_fails_with_endpoint_and_status_on_timeout(tmp_path: Path) -> None:
-    result = subprocess.run(
-        ["bash", str(WAIT_FOR_PLUGINS)],
-        check=False,
-        capture_output=True,
-        env=_readiness_env(tmp_path, 'printf "404"', timeout="0"),
-        text=True,
-    )
+    result = _run_readiness(_readiness_env(tmp_path, 'printf "404"', timeout="0"))
 
     assert result.returncode != 0
     assert "/xapi/dqr/settings" in result.stderr
     assert "last HTTP status: 404" in result.stderr
     assert "test-password" not in result.stdout + result.stderr
+
+
+def test_readiness_probe_authenticates_against_the_plugin_route(tmp_path: Path) -> None:
+    """The gate is only meaningful authenticated — unauthenticated XNAT 401s whatever the plugin state."""
+    argv_log = tmp_path / "curl-argv"
+    result = _run_readiness(
+        _readiness_env(tmp_path, f'printf "%s\\n" "$*" >> "{argv_log}"; printf "200"')
+    )
+
+    assert result.returncode == 0, result.stderr
+    recorded = argv_log.read_text()
+    assert "-u admin:test-password" in recorded
+    assert "/xapi/dqr/settings" in recorded
+
+
+def test_readiness_keeps_polling_while_connection_is_refused(tmp_path: Path) -> None:
+    """`000` (curl could not connect) is the normal state for the first seconds of a boot."""
+    count_file = tmp_path / "curl-count"
+    curl_body = (
+        f'count=$(cat "{count_file}" 2>/dev/null || echo 0); count=$((count + 1)); '
+        f'printf "%s" "$count" > "{count_file}"; '
+        'if [ "$count" -ge 3 ]; then printf "200"; else exit 7; fi'
+    )
+
+    result = _run_readiness(_readiness_env(tmp_path, curl_body))
+
+    assert result.returncode == 0, result.stderr
+    assert "HTTP 000" in result.stdout
+
+
+def test_readiness_rejects_a_leading_zero_timeout(tmp_path: Path) -> None:
+    """`09` is an invalid octal literal to bash arithmetic, which would silently disable the timeout."""
+    result = _run_readiness(_readiness_env(tmp_path, 'printf "404"', timeout="09"))
+
+    assert result.returncode != 0
+    assert "timeout='09'" in result.stderr, "the rejection should name the offending value"
+
+
+def test_readiness_switches_once_to_the_rotated_password(tmp_path: Path) -> None:
+    """Re-running configuration against an already-rotated XNAT must still succeed."""
+    argv_log = tmp_path / "curl-argv"
+    curl_body = (
+        f'printf "%s\\n" "$*" >> "{argv_log}"; '
+        'case "$*" in *admin:rotated*) printf "200" ;; *) printf "401" ;; esac'
+    )
+
+    result = _run_readiness(
+        _readiness_env(tmp_path, curl_body, initial_password="initial", rotated_password="rotated")
+    )
+
+    assert result.returncode == 0, result.stderr
+    probes = argv_log.read_text().strip().splitlines()
+    assert sum("admin:initial" in line for line in probes) == 3, "should switch after a run, not a blip"
+    assert sum("admin:rotated" in line for line in probes) == 1, "the switch should be final"
+
+
+def test_readiness_forgives_a_transient_rejection_during_boot(tmp_path: Path) -> None:
+    """A lone 401 amid 404s must not permanently switch away from a working credential.
+
+    XNAT can reject a valid credential for a beat while its auth providers wire up. Switching on
+    that blip would strand the run on the wrong password for the rest of the wait.
+    """
+    argv_log = tmp_path / "curl-argv"
+    count_file = tmp_path / "curl-count"
+    curl_body = (
+        f'printf "%s\\n" "$*" >> "{argv_log}"; '
+        f'count=$(cat "{count_file}" 2>/dev/null || echo 0); count=$((count + 1)); '
+        f'printf "%s" "$count" > "{count_file}"; '
+        'case "$count" in 1) printf "404" ;; 2) printf "401" ;; 3) printf "404" ;; *) printf "200" ;; esac'
+    )
+
+    result = _run_readiness(
+        _readiness_env(tmp_path, curl_body, initial_password="initial", rotated_password="rotated")
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "admin:rotated" not in argv_log.read_text(), "a single 401 must not switch credentials"
+
+
+def test_readiness_does_not_replay_a_dead_credential_while_plugins_load(tmp_path: Path) -> None:
+    """A 404 means the plugin is still registering, so the *other* password must not be tried.
+
+    Probing both credentials on every poll sends one wrong-password login every few seconds, which
+    trips XNAT's 20-attempt account lockout long before the wait budget expires.
+    """
+    argv_log = tmp_path / "curl-argv"
+    result = _run_readiness(
+        _readiness_env(
+            tmp_path,
+            f'printf "%s\\n" "$*" >> "{argv_log}"; printf "404"',
+            timeout="0",
+            initial_password="initial",
+            rotated_password="rotated",
+        )
+    )
+
+    assert result.returncode != 0
+    assert "admin:rotated" not in argv_log.read_text()
+
+
+def test_readiness_stops_well_before_lockout_when_both_credentials_are_rejected(tmp_path: Path) -> None:
+    """Waiting cannot fix a wrong password, so fail fast instead of burning the whole budget."""
+    argv_log = tmp_path / "curl-argv"
+    result = _run_readiness(
+        _readiness_env(
+            tmp_path,
+            f'printf "%s\\n" "$*" >> "{argv_log}"; printf "401"',
+            timeout="900",
+            initial_password="initial",
+            rotated_password="rotated",
+        )
+    )
+
+    assert result.returncode != 0
+    assert "rejected every admin credential" in result.stderr
+    attempts = len(argv_log.read_text().strip().splitlines())
+    assert attempts <= 6, f"{attempts} rejected logins risks XNAT's 20-attempt lockout"
+
+
+def _dry_run_up_xnat(**overrides: str) -> subprocess.CompletedProcess[str]:
+    """Dry-run ``up-xnat`` from trust/xnat/ and return the recipe make would have executed."""
+    return subprocess.run(
+        ["make", "-n", "up-xnat", "KIT=Trust_1", *(f"{k}={v}" for k, v in overrides.items())],
+        cwd=XNAT_DIR,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+
+
+def test_dev_up_xnat_validates_the_plugin_cache_before_tearing_xnat_down() -> None:
+    """A failed download must not leave the trust with a torn-down XNAT and no replacement."""
+    stdout = _dry_run_up_xnat().stdout
+
+    assert "ensure_plugins.sh" in stdout
+    assert stdout.index("ensure_plugins.sh") < stdout.index("xnat-reset")
+
+
+def test_up_xnat_skips_the_host_plugin_cache_outside_development() -> None:
+    """Only the development stack bind-mounts plugins; elsewhere they are baked into the image.
+
+    Running the download unconditionally broke the documented on-prem bring-up, which has neither
+    FLIP_ARTIFACTS_BUCKET_NAME nor any need for the cache.
+    """
+    for prod in ("true", "stag"):
+        stdout = _dry_run_up_xnat(PROD=prod).stdout
+        assert "ensure_plugins.sh" not in stdout, f"PROD={prod} still reaches for the dev cache"
+
+
+def test_plugin_download_names_the_variable_it_needs() -> None:
+    result = subprocess.run(
+        ["make", "xnat-plugins-download", "FLIP_ARTIFACTS_BUCKET_NAME="],
+        cwd=XNAT_DIR,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+
+    assert result.returncode != 0
+    assert "FLIP_ARTIFACTS_BUCKET_NAME" in result.stdout
+    assert "Usage:" not in result.stdout, "leaked the script's usage line instead of naming the var"
+
+
+def test_trust_makefile_exports_the_artifacts_bucket_to_the_xnat_sub_make() -> None:
+    """`make -C trust up-trust` reaches up-xnat, which in development needs this in its env.
+
+    The bucket name is defined here as a *makefile* variable rather than on the command line,
+    because make exports command-line variables to sub-makes automatically — that route would pass
+    whether or not the export directive exists, and `trust/Makefile` gets its value from an
+    ``-include``d env file, which is not auto-exported.
+    """
+    result = subprocess.run(
+        [
+            "make",
+            "-C",
+            "trust",
+            # deploy/fl_backend.mk hard-fails on an unset backend, and a CI checkout has no
+            # .env.development to supply one.
+            "FL_BACKEND=nvflare",
+            "--eval=FLIP_ARTIFACTS_BUCKET_NAME=probe-bucket",
+            "--eval=__probe: ; @printenv FLIP_ARTIFACTS_BUCKET_NAME || echo NOT-EXPORTED",
+            "__probe",
+        ],
+        cwd=REPO_ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+
+    assert "probe-bucket" in result.stdout, result.stdout + result.stderr
 
 
 def test_root_smoke_target_resolves_relative_paths_from_repo_root() -> None:
