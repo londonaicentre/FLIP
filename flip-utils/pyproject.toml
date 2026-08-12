@@ -97,13 +97,6 @@ full = [
 [tool.uv]
 # 72h supply-chain cooldown; see CONTRIBUTING.md ("Dependency cooldown").
 exclude-newer = "3 days"
-# flwr pins cryptography<47.0.0 even in its latest release (GHSA-537c-gmf6-5ccf
-# needs >=48.0.1); override past that ceiling since flwr only uses cryptography
-# for TLS cert loading in secure aggregation, a stable surface across majors.
-# Same escape hatch as fl-api-flower/pyproject.toml and the fl-base Dockerfile's
-# pip-equivalent (#874); here it keeps the dev group's real-flwr test dependency
-# (test_privacy.py) resolvable against the cryptography floor below.
-override-dependencies = ["cryptography>=50.0.0"]
 # Security: minimum versions for transitive packages with open CVEs.
 constraint-dependencies = [
     "aiohttp>=3.14.3",           # CVE-2026-47265, CVE-2026-34993, CVE-2026-34525/16/15/14/13/12, CVE-2026-22815, CVE-2026-21860
@@ -122,6 +115,14 @@ constraint-dependencies = [
     "urllib3>=2.7.0",            # CVE-2026-44431, CVE-2025-66471/66418
     "werkzeug>=3.1.6",           # CVE-2026-27199, CVE-2026-21860, CVE-2025-66221, CVE-2024-49767/49766
 ]
+# flwr (dev-group only) pins cryptography<47.0.0 even in its latest release, which
+# collides with the constraint floor above (GHSA-537c-gmf6-5ccf needs >=48.0.1).
+# Override past that ceiling rather than lowering the floor: flwr uses cryptography
+# only for TLS cert loading in secure aggregation, a stable surface across majors.
+# Mirrors fl-services/flower/fl-api-flower/pyproject.toml and the fl-base Dockerfile's
+# pip-equivalent (#874); it also keeps the dev group's real-flwr test dependency
+# (test_privacy.py) resolvable against the cryptography floor.
+override-dependencies = ["cryptography>=50.0.0"]
 
 # Pull torch from PyTorch's cu128 wheel index instead of PyPI's default cu130
 # build. cu130 needs NVIDIA driver >=580; current dev hosts run 575.x and would
@@ -159,6 +160,11 @@ exclude = [
 
 [dependency-groups]
 dev = [
+    # Test-only: lets tests/mypy exercise flip/flower/strategy.py and flip/flower/privacy.py
+    # against the real FedAvg and DP primitives. Matches the fl-server images' floor
+    # (flwr/base:1.32.0, fl-api-flower). Deliberately NOT a runtime dep — the flwr runtime is
+    # owned by the Flower images and each app's own pyproject; see the module docstring in
+    # flip/flower/strategy.py.
     "flwr>=1.32.0",
     "huggingface-hub>=1.6.0",
     "matplotlib>=3.10.7",

@@ -110,6 +110,32 @@ that some FLIP-side behaviour driven by the import-time singleton will still
 reflect whatever env the superlink was born with. Don't do it for real work —
 use the compose stack above.
 
+## Best-model selection
+
+This tutorial keeps the **best-scoring global model**, not just the last one — a 30-round run has plenty of
+room to peak early and drift afterwards. Two run-config keys drive it, in `app/config.toml` for
+platform-submitted runs and `[tool.flwr.app.config]` in `pyproject.toml` for local `flwr run`:
+
+```toml
+best-model-metric = "test_dice"
+best-model-metric-minimize = false
+```
+
+`test_dice` is the aggregated test Dice that `app/client_app.py` already reports from its evaluate pass; the
+server weight-averages it across trusts by `num-examples` and keeps the round that scores highest.
+
+What changes when it is set:
+
+- The evaluate phase runs **every round** instead of only the last, so each round's freshly aggregated model
+  is actually measured — 30 test-split inference passes per client rather than 1. That is the cost of
+  selection here; drop the metric to `""` to go back to final-round-only evaluation.
+- The results zip gains `best_FL_global_model.pt` next to `FL_global_model.pt`, in the same format, and
+  `cross_val_results.json` gains `best_model` / `best_round` / `best_metric`. Nothing is fabricated: with no
+  selection, or if the best-model write fails, the file and those keys are simply absent.
+- The key must be one the clients actually report. Name a key nobody emits and the run completes with no
+  best model at all, logging a warning per round rather than failing — check the ServerApp log if the
+  artefact is missing.
+
 ## Differential privacy
 
 Training updates are privatised **on the SuperNode**, before the reply leaves the trust. The

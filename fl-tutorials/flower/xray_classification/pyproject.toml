@@ -62,7 +62,9 @@ serverapp = "app.server_app:app"
 clientapp = "app.client_app:app"
 
 [tool.flwr.app.config]
-num-server-rounds = 1
+# 3 rounds so best-model selection has checkpoints to choose between (a 1-round
+# job's best model is always the final model).
+num-server-rounds = 3
 # Client-side differential privacy (flip.flower.privacy). On by default; set dp-enabled = false
 # to run the same app with the mechanism off. See the README's "Differential privacy" section.
 dp-enabled = true
@@ -74,6 +76,11 @@ flip-model-id = "uuid"
 flip-project-id = "uuid"
 flip-cohort-query = "*"
 flip-job-dir = "job-dir"
+# Save the best aggregated global model by macro F1 across lesions (higher is better),
+# the same interpretable metric the NVFLARE chest-X-ray tutorial selects on (VAL-F1-SCORE).
+# Saves best_FL_global_model.pt alongside FL_global_model.pt in the results.
+best-model-metric = "test_f1-score"
+best-model-metric-minimize = false
 
 [tool.ruff]
 line-length = 120

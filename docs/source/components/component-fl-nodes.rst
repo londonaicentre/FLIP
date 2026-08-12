@@ -29,13 +29,16 @@ Due to security restrictions, FLIP users are not allowed to control what happens
 Although most adjustable aspects of machine learning training happen on the client side 
 (e.g. dataloading, training loop, model architecture), FLIP provides different job types
 that the user can choose based on their needs.
-Currently, these job types include federated averaging (job type `standard`),
-evaluation task (job type `evaluation`), federated optimisation (job type `fed_opt`)
-and diffusion model training (job type `diffusion_model`), which covers multi-stage federated training.
-For NVFLARE, three further job types drive the client code through the modern **NVFLARE Client API**
+Which job types are available depends on the backend.
+**Both backends** offer federated averaging (job type `standard`) and an evaluation task
+(job type `evaluation`) — for a Flower app, those two are the whole set.
+**NVFLARE** adds federated optimisation (job type `fed_opt`) and diffusion model training
+(job type `diffusion_model`), which covers multi-stage federated training, along with three further
+job types that drive the client code through the modern **NVFLARE Client API**
 (a plain training/evaluation script using ``nvflare.client`` instead of a class-based ``Executor``):
 federated averaging (job type `standard_client_api`), model evaluation (job type `evaluation_client_api`)
 and two-stage diffusion model training (job type `diffusion_model_client_api`).
+The manifests under :ref:`fl-required-files` are the authoritative list for each backend.
 More job types will be added in the future, adjusting to the community's needs.
 
 **How to choose a job type?**
@@ -56,9 +59,7 @@ Then, the Central Hub API will take care of bundling together:
 - The static (non-modifiable) files that are required for the specific job type.
 
 For more information about currently supported apps, see the per-job-type implementations under
-`fl-apps/ <https://github.com/londonaicentre/FLIP/tree/develop/fl-apps/nvflare>`_ (``standard``, ``evaluation``,
-``diffusion_model``, ``fed_opt``, ``standard_client_api``, ``evaluation_client_api``,
-``diffusion_model_client_api``).
+`fl-apps/ <https://github.com/londonaicentre/FLIP/tree/develop/fl-apps>`_.
 
 Examples of how the same job type (standard -> federated averaging) can run different user-uploaded applications are:
 
@@ -94,54 +95,29 @@ Required files per job type
 Each job type declares its own set of required files. A submission missing any of them is rejected
 before anything is shipped to a Trust, with a message naming the missing files.
 
-The lists below are reproduced from the manifests in the repository
-(``fl-apps/<backend>/<job_type>/required_files.json``, aggregated into
-``fl-apps/<backend>/required_files.json``), which are the source of truth. The FLIP UI reads the
-same manifests through the ``/model/job-types`` endpoint and shows the applicable list on the model
-page — so the UI, not this table, is what to trust if the two ever disagree.
+The manifests that decide this are included below **directly from the repository** rather than
+transcribed, so this page cannot fall out of step with the platform. Each key is a job type and its
+array is the exact set of files that job type requires.
 
-**NVFLARE job types**
+Each backend's manifest is generated from the per-template
+``fl-apps/<backend>/<job_type>/required_files.json`` files by ``fl-apps/check_required_files.sh``,
+which runs as a pre-commit hook and is enforced in CI — so adding a job type or changing its
+required set updates this page as a side effect of the change itself. The FLIP UI reads the same
+manifests through the ``/model/job-types`` endpoint and shows the applicable list on the model page.
 
-.. list-table::
-   :header-rows: 1
-   :widths: 32 68
+.. literalinclude:: ../../../fl-apps/nvflare/required_files.json
+   :language: json
+   :caption: ``fl-apps/nvflare/required_files.json`` — required files per NVFLARE job type
 
-   * - Job type
-     - Required files
-   * - ``standard``
-     - ``trainer.py``, ``validator.py``, ``models.py``, ``config.json``
-   * - ``standard_client_api``
-     - ``trainer.py``, ``models.py``, ``config.json`` (no ``validator.py`` — the Client API script
-       does its own validation)
-   * - ``fed_opt``
-     - ``trainer.py``, ``validator.py``, ``models.py``, ``config.json``
-   * - ``diffusion_model``
-     - ``trainer.py``, ``validator.py``, ``models.py``, ``config.json``
-   * - ``diffusion_model_client_api``
-     - ``trainer.py``, ``validator.py``, ``models.py``, ``config.json``
-   * - ``evaluation``
-     - ``evaluator.py``, ``config.json``
-   * - ``evaluation_client_api``
-     - ``evaluator.py``, ``models.py``, ``config.json``
-
-**Flower job types**
-
-.. list-table::
-   :header-rows: 1
-   :widths: 32 68
-
-   * - Job type
-     - Required files
-   * - ``standard``
-     - ``client_app.py``, ``models.py``
-   * - ``evaluation``
-     - ``client_app.py``, ``models.py``
+.. literalinclude:: ../../../fl-apps/flower/required_files.json
+   :language: json
+   :caption: ``fl-apps/flower/required_files.json`` — required files per Flower job type
 
 .. note::
 
-   ``config.json`` is a required file for every NVFLARE job type, because it carries ``job_type``
-   along with the training configuration below. It is *not* required for Flower job types, but
-   uploading one is still how a Flower app selects a job type other than ``standard``.
+   Every NVFLARE job type lists ``config.json``, which carries ``job_type`` along with the training
+   configuration below. The Flower job types do not require it, but uploading one is still how a
+   Flower app selects a job type other than ``standard``.
 
    ``pyproject.toml`` is **not** a file the researcher supplies for a Flower app. It is part of the
    platform's base template for the job type and is bundled automatically; a ``pyproject.toml``

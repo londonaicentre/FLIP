@@ -73,7 +73,7 @@ def _rollback_cognito_on_audit_failure(email: str, user_pool_id: str, original_e
 
 
 # TODO [#114] This endpoint was not defined in the old repo, it was run from the step function 'registerUser'.
-@router.post("/", response_model=IUserResponse)
+@router.post("", response_model=IUserResponse)
 def register_user(
     user_data: IRegisterUser,
     request: Request,

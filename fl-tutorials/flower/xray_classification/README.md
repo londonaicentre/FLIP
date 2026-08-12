@@ -139,6 +139,40 @@ use the compose stack above.
 | `value_to_numerical` | {0:"No",1:"Yes"} | Maps dataframe string values to binary labels |
 | `VALIDATE_EVERY`     | 1       | Validate every N epochs (currently always 1) |
 
+## Best-model selection
+
+This tutorial keeps the **best-scoring global model**, not just the last one. Two run-config keys drive it —
+`app/config.toml` for platform-submitted runs, `[tool.flwr.app.config]` in `pyproject.toml` for local
+`flwr run`:
+
+```toml
+best-model-metric = "test_f1-score"
+best-model-metric-minimize = false
+```
+
+`test_f1-score` is the **macro F1 across lesions** that `app/client_app.py` reports from its evaluate pass
+(`macro_mean` in `app/task.py`), matching the macro `VAL-F1-SCORE` the NVFLARE chest-X-ray tutorial selects
+on. The server weight-averages it across trusts by `num-examples` and keeps the round that scores highest.
+
+What changes when it is set:
+
+- The evaluate phase runs **every round** instead of only the last, so each round's freshly aggregated model
+  is actually measured. That is why `num-server-rounds` is 3 here (4 on the platform) — a one-round job's
+  "best" model is by definition its final one.
+- The results zip gains `best_FL_global_model.pt` next to `FL_global_model.pt`, in the same format, and
+  `cross_val_results.json` gains `best_model` / `best_round` / `best_metric`. Nothing is fabricated: with no
+  selection, or if the best-model write fails, the file and those keys are simply absent.
+
+Two things worth knowing before you change the metric:
+
+- **The key must be one the clients actually report.** Name a key nobody emits and the run completes with no
+  best model at all, logging a warning per round rather than failing — check the ServerApp log if the
+  artefact is missing.
+- **On Flower the metric is measured on the test split**, because that is what the evaluate phase uses here.
+  NVFLARE instead scores a pre-training pass over the *validation* split. Selecting on the test split is
+  convenient for a tutorial but is a mild form of selection-on-test; point `best-model-metric` at a
+  validation metric if you need the split kept clean.
+
 ## Differential privacy
 
 Training updates are privatised **on the SuperNode**, before the reply leaves the trust. The
