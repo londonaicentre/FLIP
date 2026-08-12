@@ -19,6 +19,7 @@ trust metadata — no secrets. Creating a trust (POST /admin/trusts) remains
 admin-only.
 """
 
+import json
 import uuid
 from datetime import datetime, timezone
 from unittest.mock import MagicMock
@@ -30,6 +31,7 @@ from fastapi.testclient import TestClient
 from flip_api.auth.dependencies import verify_token
 from flip_api.db.database import get_session
 from flip_api.db.models.main_models import Trust
+from flip_api.domain.schemas.private import ServiceHealthEntry, ServiceHealthStatus
 from flip_api.main import app
 from flip_api.trusts_services.get_trusts import _as_utc_iso, get_trusts
 
@@ -109,7 +111,7 @@ def test_get_trusts_tags_heartbeat_as_utc():
 
 
 def test_get_trusts_serialises_services_health():
-    """A reported snapshot is passed through verbatim, with a Z-tagged timestamp."""
+    """A reported snapshot round-trips as typed entries, with a Z-tagged timestamp."""
     trust = _make_trust("Healthy", "HL", "London")
     services = {
         "trust-api": {"status": "healthy", "version": "0.3.0", "response_ms": None},
@@ -121,8 +123,44 @@ def test_get_trusts_serialises_services_health():
 
     result = get_trusts(db=db, user_id=uuid.uuid4())
 
-    assert result[0].services == services
+    assert result[0].services == {key: ServiceHealthEntry(**entry) for key, entry in services.items()}
+    # The roster key stays free-form: the hub is roster-agnostic, so a trust can
+    # report a service the hub has never heard of without a hub deploy.
+    trust.services_health = {"brand-new-service": {"status": "healthy", "version": None, "response_ms": 12}}
+    db = _db_with_trusts_and_counts(trusts=[trust], count_rows=[])
+    assert get_trusts(db=db, user_id=uuid.uuid4())[0].services == {
+        "brand-new-service": ServiceHealthEntry(status=ServiceHealthStatus.HEALTHY, version=None, response_ms=12)
+    }
     assert result[0].services_updated_at == "2026-05-27T12:00:00.000Z"
+
+
+def test_services_contract_is_published_in_the_openapi_schema():
+    """`services` is typed rather than `dict[str, Any]` so a generated client sees
+    the {status, version, response_ms} contract instead of arbitrary JSON."""
+    entry = app.openapi()["components"]["schemas"]["ServiceHealthEntry"]["properties"]
+
+    assert set(entry) == {"status", "version", "response_ms"}
+    services = app.openapi()["components"]["schemas"]["ITrustStatus"]["properties"]["services"]
+    assert "ServiceHealthEntry" in json.dumps(services)
+
+
+def test_get_trusts_drops_a_stored_snapshot_that_no_longer_parses():
+    """Typing the field means an unparseable row could fail the whole response —
+    and this endpoint also backs every trust picker. The bad snapshot is dropped
+    to "no data" for that trust; the rest of the list is unaffected.
+    """
+    good = _make_trust("Good", "GD", "London")
+    good.services_health = {"trust-api": {"status": "healthy", "version": "0.3.0", "response_ms": 5}}
+    bad = _make_trust("Bad", "BD", "London")
+    # e.g. a hub rolled back past a status-vocabulary widening, or hand-edited JSONB.
+    bad.services_health = {"trust-api": {"status": "starting-up"}}
+    db = _db_with_trusts_and_counts(trusts=[good, bad], count_rows=[])
+
+    result = get_trusts(db=db, user_id=uuid.uuid4())
+
+    by_name = {r.name: r for r in result}
+    assert by_name["Good"].services is not None
+    assert by_name["Bad"].services is None
 
 
 def test_get_trusts_nulls_services_when_never_reported():

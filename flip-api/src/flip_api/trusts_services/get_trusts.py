@@ -14,6 +14,7 @@ from datetime import datetime
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import TypeAdapter, ValidationError
 from sqlalchemy import func
 from sqlmodel import Session, col, select
 
@@ -21,9 +22,12 @@ from flip_api.auth.dependencies import verify_token
 from flip_api.db.database import get_session
 from flip_api.db.models.main_models import ProjectTrustIntersect, Trust
 from flip_api.domain.interfaces.trust import ITrustStatus
+from flip_api.domain.schemas.private import ServiceHealthEntry
 from flip_api.utils.logger import logger
 
 router = APIRouter(prefix="/trust", tags=["trusts_services"])
+
+_service_entries_adapter = TypeAdapter(dict[str, ServiceHealthEntry])
 
 
 def _as_utc_iso(value: datetime | None) -> str | None:
@@ -45,6 +49,35 @@ def _as_utc_iso(value: datetime | None) -> str | None:
         return None
 
     return value.isoformat(timespec="milliseconds") + "Z"
+
+
+def _as_service_entries(raw: dict | None, trust_name: str) -> dict[str, ServiceHealthEntry] | None:
+    """Re-parse a stored health snapshot into the wire model it was written with.
+
+    The snapshot was validated by ``TrustHeartbeatInput`` (same entry model) on
+    receipt and persisted verbatim, so this normally always succeeds. It is
+    guarded anyway because the response field is typed: a row that no longer
+    parses — a hub rolled back past a vocabulary change, or hand-edited JSONB —
+    would otherwise fail the whole list, and this endpoint also backs every
+    trust picker. Dropping just that snapshot degrades the one row to the UI's
+    existing "No data" state.
+
+    Args:
+        raw (dict | None): The persisted ``trust.services_health`` JSONB value.
+        trust_name (str): Trust name, for the discard log line.
+
+    Returns:
+        dict[str, ServiceHealthEntry] | None: The parsed snapshot, or None when
+        the trust has never reported one or the stored value no longer parses.
+    """
+    if not raw:
+        return None
+
+    try:
+        return _service_entries_adapter.validate_python(raw)
+    except ValidationError:
+        logger.warning(f"Discarding unparseable services_health snapshot for trust '{trust_name}'", exc_info=True)
+        return None
 
 
 # [#114][#609] Single trust-list endpoint — authenticated, NOT admin-gated.
@@ -100,7 +133,7 @@ def get_trusts(
                 region=t.region,
                 last_heartbeat=_as_utc_iso(t.last_heartbeat),
                 project_count=counts.get(t.id, 0),
-                services=t.services_health,
+                services=_as_service_entries(t.services_health, t.name),
                 services_updated_at=_as_utc_iso(t.services_health_at),
             )
             for t in trusts
