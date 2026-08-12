@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import zipfile
 from pathlib import Path
@@ -421,9 +422,68 @@ def test_root_smoke_target_resolves_relative_paths_from_repo_root() -> None:
     assert f'QUERY_FILE="{REPO_ROOT}/fl-tutorials/example/query.sql"' in result.stdout
 
 
-def test_aggregate_startup_targets_propagate_child_failures() -> None:
-    trust_makefile = (REPO_ROOT / "trust" / "Makefile").read_text()
-    xnat_makefile = (REPO_ROOT / "trust" / "xnat" / "Makefile").read_text()
+def _kit_tree(tmp_path: Path) -> Path:
+    """Stage a fixture trust tree whose kit files drive the per-trust `up` loops.
 
-    assert '$(MAKE) up-trust KIT=$$kit || { echo "❌ Failed to start trust $$kit"; exit 1; }' in trust_makefile
-    assert '$(MAKE) up-xnat KIT=$$kit || { echo "❌ Failed to start XNAT for trust $$kit"; exit 1; }' in xnat_makefile
+    Kit files are gitignored, so a CI checkout has none and the loops would otherwise not run.
+    fl_backend.mk is copied rather than restated so the fixture cannot drift from the real one.
+    """
+    (tmp_path / "deploy").mkdir()
+    shutil.copy(REPO_ROOT / "deploy" / "fl_backend.mk", tmp_path / "deploy" / "fl_backend.mk")
+    trust_dir = tmp_path / "trust"
+    (trust_dir / "xnat").mkdir(parents=True)
+    for slot, code in enumerate(("AAA", "BBB"), start=1):
+        (trust_dir / f".env.{code}.development").write_text(f"FL_KIT_SLOT_NUMBER={slot}\n")
+    return trust_dir
+
+
+def _run_up_loop(makefile: Path, cwd: Path, tmp_path: Path, child_exit: int) -> tuple[int, int]:
+    """Drive an aggregate `up` target with every per-trust sub-make stubbed out.
+
+    Returns (aggregate exit status, number of sub-make invocations).
+    """
+    record = tmp_path / "sub-make-calls"
+    stub = tmp_path / "fake-make"
+    _write_executable(stub, f'#!/bin/sh\necho "$@" >> "{record}"\nexit {child_exit}\n')
+
+    result = subprocess.run(
+        ["make", "-f", str(makefile), "up", f"MAKE={stub}", "FL_BACKEND=nvflare"],
+        cwd=cwd,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    calls = len(record.read_text().splitlines()) if record.exists() else 0
+    return result.returncode, calls
+
+
+def test_up_loops_abort_on_the_first_failing_trust(tmp_path: Path) -> None:
+    """A failing per-trust sub-make must fail the aggregate target and stop the loop.
+
+    Asserted by execution rather than by matching the recipe text: prefixing the recipe with make's
+    ignore-errors marker, or rewording the message, leaves any string match intact while the
+    aggregate silently returns success.
+    """
+    trust_dir = _kit_tree(tmp_path)
+
+    for makefile, cwd in (
+        (REPO_ROOT / "trust" / "xnat" / "Makefile", trust_dir / "xnat"),
+        (REPO_ROOT / "trust" / "Makefile", trust_dir),
+    ):
+        status, calls = _run_up_loop(makefile, cwd, tmp_path, child_exit=1)
+        assert status != 0, f"{makefile.parent.name} up reported success despite a failing trust"
+        assert calls == 1, f"{makefile.parent.name} up kept going after a failure ({calls} calls)"
+        (tmp_path / "sub-make-calls").unlink()
+
+
+def test_up_loops_succeed_when_every_trust_starts(tmp_path: Path) -> None:
+    """Positive control: the abort assertion only means something if the loop can pass."""
+    trust_dir = _kit_tree(tmp_path)
+
+    status, calls = _run_up_loop(
+        REPO_ROOT / "trust" / "xnat" / "Makefile", trust_dir / "xnat", tmp_path, child_exit=0
+    )
+
+    assert status == 0
+    assert calls == 2, "both fixture kits should have been started"
