@@ -34,7 +34,7 @@ Orthanc, Imaging API, Data Access API and Trust API can be started using the Mak
 make up
 ```
 
-DICOMs can be uploaded to Orthanc at <http://localhost:8042>.
+DICOMs can be uploaded to Orthanc at <http://localhost:8042> — log in with `ORTHANC_USERNAME`/`ORTHANC_PASSWORD` from the trust kit file (`trust/.env.<CODE>.<env>`).
 
 The Trust API polls the Central Hub for tasks. In development, it connects to the hub over HTTP on the internal Docker network.
 
@@ -70,7 +70,15 @@ FL_KIT_SLOT_NUMBER=<from kit>
 EXPECTED_TRUST_ID=<from kit>
 ```
 
-plus the trust's identity (`TRUST_NAME` / `TRUST_CODE` / `TRUST_REGION`, read by `register-trust`) and its host-local ports and data directories. The optional `EXPECTED_TRUST_ID` lets trust-api self-check the hub-resolved id at startup. The same schema serves dev trusts (GSTT/KCH against a local hub), on-prem trusts (against a prod hub), and laptop-against-prod testing — operator picks the kit code (`trust/.env.<CODE>.<env>`) and `make -C trust up-trust KIT=<CODE> PROD=<env>` handles the rest.
+plus the trust's identity (`TRUST_NAME` / `TRUST_CODE` / `TRUST_REGION`, read by `register-trust`) and its host-local ports and data directories. The optional `EXPECTED_TRUST_ID` lets trust-api self-check the hub-resolved id at startup.
+
+The kit also carries the trust's **disclosure floor**:
+
+```sh
+COHORT_QUERY_THRESHOLD=10
+```
+
+This is the minimum cohort size the trust will release anything about. Cohort statistics below it are privacy-suppressed (a genuine zero and a small count are indistinguishable), and both row-level routes refuse outright — `/cohort/dataframe`, which supplies FL training data, and `/cohort/accession-ids`, which decides whose imaging is pulled into XNAT. Raise it to release less. It is the operator's setting, not the hub's: trusts need not agree on a value, and the hub cannot lower it. See [`data-access-api/README.md`](data-access-api/README.md#row-level-data-and-the-disclosure-threshold). The same schema serves dev trusts (GSTT/KCH against a local hub), on-prem trusts (against a prod hub), and laptop-against-prod testing — operator picks the kit code (`trust/.env.<CODE>.<env>`) and `make -C trust up-trust KIT=<CODE> PROD=<env>` handles the rest.
 
 ### 3. Start the trust against the hub
 
@@ -78,6 +86,11 @@ plus the trust's identity (`TRUST_NAME` / `TRUST_CODE` / `TRUST_REGION`, read by
 make -C trust down-trust KIT=GSTT   # if a previous GSTT stack is running
 make -C trust up-trust KIT=GSTT
 ```
+
+On an on-prem host provisioned by the local playbook, prefix these with `sudo -E` — the login
+user is deliberately not in the docker group (see
+[deploy/providers/local/README.md](../deploy/providers/local/README.md)). Dev workstations are
+unaffected.
 
 The trust-api container authenticates with its `TRUST_API_KEY` and posts a heartbeat to `POST /trust/heartbeat` (no name segment — the hub resolves the trust's identity from the API key). The Connection status page flips the row online within ~30s.
 
@@ -116,7 +129,11 @@ need only your trust's kit file (`trust/.env.<CODE>.<env>`).
    Grafana passwords) — these are your secrets, the hub never sees them.
 5. Start the stack:
    - EC2 trust: `make -C trust up-trust-ec2 KIT=<CODE> PROD=true`
-   - On-prem trust (or laptop-against-prod): `make -C trust up-trust KIT=<CODE> PROD=true`
+   - On-prem trust: `sudo -E env PROD=true make -C trust up-trust KIT=<CODE>`
+     (sudo: the provisioned login user is deliberately not in the docker group;
+     `-E` keeps `$HOME` so root's docker reuses your GHCR login)
+   - Laptop-against-prod: `make -C trust up-trust KIT=<CODE> PROD=true` (no sudo —
+     your workstation isn't provisioned by the on-prem playbook)
 
    The on-prem path skips the dev-only `update-omop-data` / `update-orthanc-data`
    steps (which pull test fixtures from S3 and need hub AWS credentials) —

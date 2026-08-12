@@ -98,10 +98,11 @@ services:
       # deployed to clients (mirrors the Flower backend's /app/src mount).
       - ${FL_JOBS_DIR}/net-1:/app/server-checkpoints
       # Mount the AWS credentials (needed to upload model results to S3).
-      # The image runs as root with HOME=/root, so the mount lands at
-      # /root/.aws/ — the SDK's default lookup path for that user.
-      - ~/.aws/config:/root/.aws/config:ro
-      - ~/.aws/sso/cache:/root/.aws/sso/cache:rw
+      # The image now runs as the non-root ${UNAME} user with
+      # HOME=/home/${UNAME} (GHSA-8465), so the mount lands under
+      # /home/${UNAME}/.aws/ — the SDK's default lookup path for that user.
+      - ~/.aws/config:/home/${UNAME}/.aws/config:ro
+      - ~/.aws/sso/cache:/home/${UNAME}/.aws/sso/cache:rw
     environment:
       - NET_ID=net-1
       - LOCAL_DEV=false
@@ -113,6 +114,7 @@ services:
       - INTERNAL_SERVICE_KEY=${INTERNAL_SERVICE_KEY}
       - AWS_PROFILE=${AWS_PROFILE}
       - SERVER_CHECKPOINT_ROOT=/app/server-checkpoints
+      - HOME=/home/${UNAME}
       # MLflow dual-write (FLIP#745): the flip package mirrors metrics/status to
       # MLflow over the hub-only mlflow-network below. Empty => sink disabled.
       - MLFLOW_TRACKING_URI=${MLFLOW_TRACKING_URI:-}
@@ -122,11 +124,12 @@ services:
       - ALL
     cap_add:
       - CHOWN
-      # The container runs as root, but its bind mounts (the provisioned NVFLARE kit
-      # with 0600 keys; on fl-server also the operator's 0600 AWS SSO token cache) are
-      # owned by the host uid. cap_drop: ALL strips root's implicit DAC bypass, so
-      # DAC_OVERRIDE is needed to read them; the entrypoint also chmods kit scripts it
-      # does not own (FOWNER). Without these the container crash-loops (FLIP#485).
+      # The container runs as the non-root ${UNAME} user (GHSA-8465), but its bind
+      # mounts (the provisioned NVFLARE kit with 0600 keys; on fl-server also the
+      # operator's 0600 AWS SSO token cache) are owned by the host uid. cap_drop: ALL
+      # strips the implicit DAC bypass root would otherwise have, so DAC_OVERRIDE is
+      # needed to read them; the entrypoint also chmods kit scripts it does not own
+      # (FOWNER). Without these the container crash-loops (FLIP#485).
       - DAC_OVERRIDE
       - FOWNER
     networks:
@@ -149,10 +152,11 @@ services:
       # deployed to clients (mirrors the Flower backend's /app/src mount).
       - ${FL_JOBS_DIR}/net-2:/app/server-checkpoints
       # Mount the AWS credentials (needed to upload model results to S3).
-      # The image runs as root with HOME=/root, so the mount lands at
-      # /root/.aws/ — the SDK's default lookup path for that user.
-      - ~/.aws/config:/root/.aws/config:ro
-      - ~/.aws/sso/cache:/root/.aws/sso/cache:rw
+      # The image now runs as the non-root ${UNAME} user with
+      # HOME=/home/${UNAME} (GHSA-8465), so the mount lands under
+      # /home/${UNAME}/.aws/ — the SDK's default lookup path for that user.
+      - ~/.aws/config:/home/${UNAME}/.aws/config:ro
+      - ~/.aws/sso/cache:/home/${UNAME}/.aws/sso/cache:rw
     environment:
       - NET_ID=net-2
       - LOCAL_DEV=false
@@ -164,6 +168,7 @@ services:
       - INTERNAL_SERVICE_KEY=${INTERNAL_SERVICE_KEY}
       - AWS_PROFILE=${AWS_PROFILE}
       - SERVER_CHECKPOINT_ROOT=/app/server-checkpoints
+      - HOME=/home/${UNAME}
       # MLflow dual-write (FLIP#745): see fl-server-net-1.
       - MLFLOW_TRACKING_URI=${MLFLOW_TRACKING_URI:-}
     security_opt:
@@ -172,11 +177,12 @@ services:
       - ALL
     cap_add:
       - CHOWN
-      # The container runs as root, but its bind mounts (the provisioned NVFLARE kit
-      # with 0600 keys; on fl-server also the operator's 0600 AWS SSO token cache) are
-      # owned by the host uid. cap_drop: ALL strips root's implicit DAC bypass, so
-      # DAC_OVERRIDE is needed to read them; the entrypoint also chmods kit scripts it
-      # does not own (FOWNER). Without these the container crash-loops (FLIP#485).
+      # The container runs as the non-root ${UNAME} user (GHSA-8465), but its bind
+      # mounts (the provisioned NVFLARE kit with 0600 keys; on fl-server also the
+      # operator's 0600 AWS SSO token cache) are owned by the host uid. cap_drop: ALL
+      # strips the implicit DAC bypass root would otherwise have, so DAC_OVERRIDE is
+      # needed to read them; the entrypoint also chmods kit scripts it does not own
+      # (FOWNER). Without these the container crash-loops (FLIP#485).
       - DAC_OVERRIDE
       - FOWNER
     networks:

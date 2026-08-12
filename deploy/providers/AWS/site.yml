@@ -259,6 +259,25 @@
         mode: "0755"
       when: fl_backend == "nvflare"
 
+    # The fl-client/fl-server images now run as a non-root uid (GHSA-8465;
+    # CI builds them at UID=1000, matching ubuntu on this host). Pre-create
+    # the leaf dirs owned by ubuntu, mirroring deploy/providers/local/
+    # site_local_trust.yml — otherwise the `mkdir -p` inside the shell task
+    # below runs under `become: true` (root) and the bind-mount source is
+    # root-owned, which the non-root container can't write into.
+    - name: pre-create NVFLARE Trust_1 kit subdirectories (owned by ubuntu)
+      file:
+        path: "{{ fl_kit_dir }}/net-1/services/Trust_1/{{ item }}"
+        state: directory
+        owner: ubuntu
+        group: ubuntu
+        mode: "0755"
+      loop:
+        - local
+        - startup
+        - transfer
+      when: fl_backend == "nvflare"
+
     - name: sync NVFLARE Trust_1 participant kit from S3
       # `aws s3 sync` skips files when source/dest size + mtime "look
       # equivalent", so a freshly regenerated kit can leave stale
@@ -273,6 +292,11 @@
       # trust/deploy/compose_trust.production.nvflare.yml is
       # ${FL_KIT_DIR}/net-1/services/${TRUST_NAME}/{local,startup,transfer},
       # which resolves to /opt/flip/fl-kit/net-1/services/Trust_1/...
+      #
+      # The sync (and the `find -delete` before it) run as root via
+      # `become: true`, so files land root-owned regardless of the
+      # pre-created parent's ownership above — the closing chown fixes that
+      # up for the non-root fl-client (GHSA-8465).
       shell: |
         set -euo pipefail
         dest="{{ fl_kit_dir }}/net-1/services/Trust_1"
@@ -281,6 +305,7 @@
         aws s3 sync \
           "{{ trust_s3_source }}" \
           "$dest"
+        chown -R ubuntu:ubuntu "$dest"
       args:
         executable: /bin/bash
       register: trust_sync
@@ -475,6 +500,137 @@
         chown -R 999:999 {{ omop_dir }}/db_data
         chmod 700 {{ omop_dir }}/db_data
       changed_when: false
+
+- name: load OMOP core vocabulary on Trust EC2
+  # The published pgdata tarballs are vocab-free (FLIP#842/#843): the licensed
+  # core vocabulary is streamed into the restored cluster here, via a throwaway
+  # container on a loopback-only port. The loader skips tables that already
+  # hold the core vocabulary, so re-runs are safe. Bundle comes from the org S3
+  # bucket via the instance role.
+  hosts: trust_ec2
+  become: true
+  tags: [data, omop, omop-vocab]
+  vars:
+    omop_dir: "/opt/flip/omop"
+    # The env's own bucket (passed by the Makefile as AICENTRE_BUCKET_NAME) —
+    # the instance role has no cross-account read on other envs' buckets.
+    vocab_s3_bucket: "{{ vocab_s3_bucket | default('flipdev-aicentre', true) }}"
+    vocab_core_bundle: "vocab_aicentre_core_20240916"
+    # Supplied by `make seed-trust-data` as the env's own DOCKER_TAG. The fallback
+    # only applies to a hand-run playbook: the container is a throwaway Postgres
+    # server over an already-restored volume, so the tag matters little here —
+    # 'stag' is simply the safer accident than the production image.
+    omop_db_image: "ghcr.io/londonaicentre/omop-db:{{ omop_db_tag | default('stag', true) }}"
+    vocab_load_port: "15499"
+    # Superuser credentials of the restored cluster — the kit's OMOP_POSTGRES_*
+    # values, passed as extra-vars by the Makefile seed-trust-data target.
+    omop_postgres_user: "{{ omop_postgres_user | default('postgres', true) }}"
+    omop_postgres_db: "{{ omop_postgres_db | default('trustomopdb', true) }}"
+  tasks:
+    - name: assert the cluster password extra-var is set
+      assert:
+        that:
+          - omop_postgres_password is defined
+          - omop_postgres_password | length > 0
+        fail_msg: "omop_postgres_password is required (the kit's OMOP_POSTGRES_PASSWORD; passed by make seed-trust-data)"
+
+    - name: install postgresql-client and unzip
+      apt:
+        name:
+          - postgresql-client
+          - unzip
+        state: present
+        update_cache: yes
+
+    # Everything from the S3 fetch onwards is wrapped so the `always:` cleanup runs
+    # even when the unzip, the container, the readiness wait or the loader fails.
+    # Without it a mid-play failure leaves the licensed bundle at rest on the host.
+    #
+    # Both stages stage into a dot-prefixed temp path and rename only on success,
+    # so an interrupted download or extraction is never mistaken for a present
+    # bundle by the next run's `creates:` guard. Same idiom as `fetch-vocab-core`
+    # in trust/omop-db/Makefile.
+    - name: load the core vocabulary, cleaning up whatever happens
+      block:
+        - name: download core vocabulary bundle from S3 (instance role)
+          shell: |
+            set -euo pipefail
+            aws s3 cp "s3://{{ vocab_s3_bucket }}/vocab/{{ vocab_core_bundle }}.zip" "{{ omop_dir }}/.{{ vocab_core_bundle }}.zip.tmp"
+            mv "{{ omop_dir }}/.{{ vocab_core_bundle }}.zip.tmp" "{{ omop_dir }}/{{ vocab_core_bundle }}.zip"
+          args:
+            creates: "{{ omop_dir }}/{{ vocab_core_bundle }}.zip"
+            executable: /bin/bash
+
+        - name: unzip core vocabulary bundle
+          shell: |
+            set -euo pipefail
+            rm -rf "{{ omop_dir }}/.{{ vocab_core_bundle }}.tmp"
+            unzip -q "{{ omop_dir }}/{{ vocab_core_bundle }}.zip" -d "{{ omop_dir }}/.{{ vocab_core_bundle }}.tmp"
+            mv "{{ omop_dir }}/.{{ vocab_core_bundle }}.tmp" "{{ omop_dir }}/{{ vocab_core_bundle }}"
+          args:
+            creates: "{{ omop_dir }}/{{ vocab_core_bundle }}"
+            executable: /bin/bash
+
+        - name: copy vocabulary loader and constraints from the repo checkout
+          copy:
+            src: "../../../trust/omop-db/files/{{ item }}"
+            dest: "{{ omop_dir }}/{{ item }}"
+            mode: "0755"
+          loop:
+            - load_core_vocab.sh
+            - OMOPCDM_postgresql_5.4_constraints.sql
+
+        - name: start throwaway database container on the restored volume
+          command: >
+            docker run -d --name omop-vocab-load
+            -v {{ omop_dir }}/db_data:/var/lib/postgresql/data
+            -p 127.0.0.1:{{ vocab_load_port }}:5432
+            {{ omop_db_image }}
+
+        - name: wait for the database to accept connections
+          command: docker exec omop-vocab-load pg_isready -U {{ omop_postgres_user }}
+          register: pg_ready
+          until: pg_ready.rc == 0
+          retries: 30
+          delay: 5
+          changed_when: false
+
+        - name: stream the core vocabulary and apply constraints
+          command: bash {{ omop_dir }}/load_core_vocab.sh {{ omop_dir }}/{{ vocab_core_bundle }} {{ omop_dir }}/OMOPCDM_postgresql_5.4_constraints.sql
+          environment:
+            OMOP_DB_HOST: "127.0.0.1"
+            OMOP_DB_PORT: "{{ vocab_load_port }}"
+            OMOP_POSTGRES_USER: "{{ omop_postgres_user }}"
+            OMOP_POSTGRES_PASSWORD: "{{ omop_postgres_password }}"
+            OMOP_POSTGRES_DB: "{{ omop_postgres_db }}"
+      always:
+        # Deleting the licensed content comes FIRST: a failing task in `always:`
+        # aborts the remaining `always:` tasks, so with the container removal
+        # ahead of it a `docker rm` against an unreachable daemon would leave
+        # ~3.6GB of licensed vocabulary at rest on the host — exactly what this
+        # task exists to prevent. The temp paths are included so an interrupted
+        # download or extraction leaves nothing behind either.
+        - name: remove the downloaded bundle (~3.6GB of licensed content does not belong at rest on the host)
+          file:
+            path: "{{ item }}"
+            state: absent
+          loop:
+            - "{{ omop_dir }}/{{ vocab_core_bundle }}.zip"
+            - "{{ omop_dir }}/{{ vocab_core_bundle }}"
+            - "{{ omop_dir }}/.{{ vocab_core_bundle }}.zip.tmp"
+            - "{{ omop_dir }}/.{{ vocab_core_bundle }}.tmp"
+
+        # This runs even when the container was never started. `docker rm -f`
+        # already exits 0 on a missing container (since Docker 23), so only the
+        # "No such container" case is tolerated explicitly — a genuine failure
+        # (unreachable daemon, un-removable container) must still fail the play:
+        # it would leave a Postgres container holding {{ omop_dir }}/db_data and
+        # the loopback port, which the real omop-db later mounts.
+        - name: stop the throwaway container
+          command: docker rm -f omop-vocab-load
+          register: vocab_rm
+          changed_when: false
+          failed_when: vocab_rm.rc != 0 and 'No such container' not in (vocab_rm.stderr | default(''))
 
 - name: restore Orthanc storage on Trust EC2
   hosts: trust_ec2

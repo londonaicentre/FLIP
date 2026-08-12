@@ -61,13 +61,14 @@ make submit APP=3d_spleen_segmentation
 ```
 
 The default stack publishes no host ports; `make submit` execs into the fl-api
-container. Use `make up-debug` if you want to POST from the host
-(`curl -X POST http://localhost:8000/submit_tutorial/3d_spleen_segmentation`) instead.
+container. To POST from the host instead, publish the fl-api port by editing
+the compose file and re-running `make up`.
 
-The compose file (`deploy/compose.yml`) wires everything correctly:
+The dev compose stack (`deploy/compose.development.yml` +
+`deploy/compose.development.flower.yml`) wires everything correctly:
 
 - `DEV_DATAFRAME`, `DEV_IMAGES_DIR`, `WORKING_DIR`
-  are resolved from `.env.flwr.development` (read by Docker Compose as the
+  are resolved from `.env.development` (read by Docker Compose as the
   `${VAR}` substitutions in each service's `volumes:` block) and bind-mounted
   into the SuperNode and SuperLink containers — one source of truth for paths.
 - Inside the containers the mounts always land at stable locations
@@ -108,6 +109,32 @@ absolute paths (`$(git rev-parse --show-toplevel)/data/...`), and (c) accept
 that some FLIP-side behaviour driven by the import-time singleton will still
 reflect whatever env the superlink was born with. Don't do it for real work —
 use the compose stack above.
+
+## Best-model selection
+
+This tutorial keeps the **best-scoring global model**, not just the last one — a 30-round run has plenty of
+room to peak early and drift afterwards. Two run-config keys drive it, in `app/config.toml` for
+platform-submitted runs and `[tool.flwr.app.config]` in `pyproject.toml` for local `flwr run`:
+
+```toml
+best-model-metric = "test_dice"
+best-model-metric-minimize = false
+```
+
+`test_dice` is the aggregated test Dice that `app/client_app.py` already reports from its evaluate pass; the
+server weight-averages it across trusts by `num-examples` and keeps the round that scores highest.
+
+What changes when it is set:
+
+- The evaluate phase runs **every round** instead of only the last, so each round's freshly aggregated model
+  is actually measured — 30 test-split inference passes per client rather than 1. That is the cost of
+  selection here; drop the metric to `""` to go back to final-round-only evaluation.
+- The results zip gains `best_FL_global_model.pt` next to `FL_global_model.pt`, in the same format, and
+  `cross_val_results.json` gains `best_model` / `best_round` / `best_metric`. Nothing is fabricated: with no
+  selection, or if the best-model write fails, the file and those keys are simply absent.
+- The key must be one the clients actually report. Name a key nobody emits and the run completes with no
+  best model at all, logging a warning per round rather than failing — check the ServerApp log if the
+  artefact is missing.
 
 ## Data Location
 

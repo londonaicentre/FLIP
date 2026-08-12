@@ -108,6 +108,23 @@ data "aws_iam_policy_document" "ecs_flip_api_task" {
     resources = [module.flip_api_secret.secret_arn]
   }
 
+  # ECS Exec transport (`aws ecs execute-command`, gated service-side by
+  # var.ecs_exec_enabled). Without these the ExecuteCommandAgent reports
+  # RUNNING but its SSM control channel never opens and every exec fails
+  # TargetNotConnected — needed e.g. for hub-side register_trust against the
+  # ECS hub (README "Registering trusts against the ECS hub"; FLIP#938).
+  # ssmmessages has no resource-level scoping.
+  statement {
+    sid = "EcsExecSsmMessages"
+    actions = [
+      "ssmmessages:CreateControlChannel",
+      "ssmmessages:CreateDataChannel",
+      "ssmmessages:OpenControlChannel",
+      "ssmmessages:OpenDataChannel",
+    ]
+    resources = ["*"]
+  }
+
   # Mint IAM auth tokens to connect through RDS Proxy (FLIP#556). Scoped to the
   # one proxy + the single DB user flip-api connects as — the proxy itself uses
   # the master secret to reach RDS, so no static DB password lives in the app.
@@ -217,12 +234,34 @@ resource "aws_iam_role_policy" "ecs_flip_api_task" {
 # fl-api is internal-only and orchestrates FL training jobs against fl-server.
 # It does not read application secrets and does not need S3, Cognito, or SES.
 # CloudWatch Logs is granted via the execution role (LogConfiguration writes
-# come from the agent, not the task role). Empty inline policy by design —
-# extended in PR 2 only if a runtime call needs it.
+# come from the agent, not the task role). The only task-role grant is the
+# ECS Exec transport (see EcsExecSsmMessages on flip-api) — without it
+# `aws ecs execute-command` into fl-api fails TargetNotConnected, so there
+# is no way to inspect a stuck FL run (e.g. read `flwr ls`/`flwr log`
+# against the SuperLink) on ECS.
+
+data "aws_iam_policy_document" "ecs_fl_api_task" {
+  statement {
+    sid = "EcsExecSsmMessages"
+    actions = [
+      "ssmmessages:CreateControlChannel",
+      "ssmmessages:CreateDataChannel",
+      "ssmmessages:OpenControlChannel",
+      "ssmmessages:OpenDataChannel",
+    ]
+    resources = ["*"]
+  }
+}
 
 resource "aws_iam_role" "ecs_fl_api_task" {
   name               = "ecs-fl-api-task-role"
   assume_role_policy = data.aws_iam_policy_document.ecs_tasks_assume.json
+}
+
+resource "aws_iam_role_policy" "ecs_fl_api_task" {
+  name   = "fl-api-task-policy"
+  role   = aws_iam_role.ecs_fl_api_task.id
+  policy = data.aws_iam_policy_document.ecs_fl_api_task.json
 }
 
 ############################
@@ -245,6 +284,20 @@ resource "aws_iam_role" "ecs_fl_server_task" {
 }
 
 data "aws_iam_policy_document" "ecs_fl_server_task" {
+  # ECS Exec transport (see EcsExecSsmMessages on flip-api) — without it
+  # `aws ecs execute-command` into fl-server fails TargetNotConnected, so a
+  # stuck SuperLink/ServerApp can't be inspected live on ECS.
+  statement {
+    sid = "EcsExecSsmMessages"
+    actions = [
+      "ssmmessages:CreateControlChannel",
+      "ssmmessages:CreateDataChannel",
+      "ssmmessages:OpenControlChannel",
+      "ssmmessages:OpenDataChannel",
+    ]
+    resources = ["*"]
+  }
+
   # The whole flip-fl-results bucket is dedicated to FL training output, so the
   # prefix-scoped condition that used to constrain access to
   # `${flip_bucket}/uploaded_federated_data/*` is no longer needed — bucket-wide
@@ -263,15 +316,18 @@ data "aws_iam_policy_document" "ecs_fl_server_task" {
     resources = [module.flip_fl_results_bucket.bucket_arn]
   }
 
-  # Read access to the NVFLARE participant kit on the AICENTRE bucket. Used
-  # by the one-shot efs-provision-certs task (which runs under this role and
-  # syncs the kit into EFS at boot). Runtime fl-server never reads from
-  # this prefix - the data lives on EFS by the time the service starts.
+  # Read access to the FL participant kits on the AICENTRE bucket — the
+  # NVFLARE kit prefix and the Flower creds prefix (#566). Used by the
+  # one-shot efs-provision-certs task (which runs under this role and syncs
+  # the backend's kit/creds into EFS at boot). Runtime fl-server never reads
+  # from these prefixes - the data lives on EFS by the time the service
+  # starts.
   statement {
-    sid     = "S3ReadFlareKit"
+    sid     = "S3ReadFlKit"
     actions = ["s3:GetObject", "s3:HeadObject"]
     resources = [
       "${aws_s3_bucket.aicentre_bucket.arn}/fl-flare-participant-kits/*",
+      "${aws_s3_bucket.aicentre_bucket.arn}/fl-flower-participant-kits/*",
     ]
   }
 
@@ -282,7 +338,10 @@ data "aws_iam_policy_document" "ecs_fl_server_task" {
     condition {
       test     = "StringLike"
       variable = "s3:prefix"
-      values   = ["fl-flare-participant-kits/*", "fl-flare-participant-kits"]
+      values = [
+        "fl-flare-participant-kits/*", "fl-flare-participant-kits",
+        "fl-flower-participant-kits/*", "fl-flower-participant-kits",
+      ]
     }
   }
 

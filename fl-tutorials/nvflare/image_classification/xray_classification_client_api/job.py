@@ -43,6 +43,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 from pathlib import Path
@@ -102,6 +103,11 @@ def main() -> None:
     project_id = os.environ.get("FLIP_PROJECT_ID", "")
     query = os.environ.get("FLIP_QUERY", "SELECT * FROM Table;")
 
+    # Best-model selection (FLIP#673): the config.json keys wire a server-side IntimeModelSelector
+    # keyed on the metric the trainer reports for the received global model (see
+    # trainer.evaluate_global_model). Absent keys → no selector, no best checkpoint.
+    config = json.loads((_APP_FILES_DIR / "config.json").read_text())
+
     recipe = FlipFedAvgRecipe(
         num_rounds=args.num_rounds,
         min_clients=args.n_clients,
@@ -109,6 +115,8 @@ def main() -> None:
         train_args="--project_id {project_id}",
         project_id=project_id,
         query=query,
+        best_model_metric=config.get("BEST_MODEL_METRIC"),
+        best_model_metric_minimize=config.get("BEST_MODEL_METRIC_MINIMIZE", False),
     )
 
     # Stage the user app files into the job's custom/ dirs *before* execute() — this is what makes the

@@ -17,8 +17,13 @@
 # tasks lose local state on every restart, so the cert/admin/transfer
 # directories must persist on EFS and be mounted via access points.
 #
-# Access points use posix_user uid/gid 1001 — never root. The FL service
-# Dockerfiles run as a non-root user that must match this uid.
+# Access points use posix_user uid/gid 1001 — never root. This is an
+# override, not a match requirement: NFSv4 access points remap every
+# reader/writer to 1001 regardless of the calling container's own uid, so the
+# FL service Dockerfiles (built non-root at UID=1000/GID=1000/UNAME=flip,
+# GHSA-8465 — 1000 to match the ubuntu uid EC2/on-prem trust hosts stage kits
+# as) don't need to match 1001 themselves; flare-fl-api already runs as uid
+# 1000 against these same access points in prod.
 
 ############################
 # File system
@@ -120,6 +125,16 @@ locals {
     fl_server_keys = {
       path  = "/fl-server-net-1/keys"
       perms = "0750"
+    }
+    # Flower shared jobs volume — the ECS analogue of compose's
+    # ${FL_JOBS_DIR}/net-1 bind: fl-api de-bundles uploaded apps (and eval
+    # checkpoints) into /app/src/<model_id>/, the SuperLink's ServerApp reads
+    # them back via the flip-job-dir run-config. Mounted RW on BOTH
+    # fl-api-net-1 and fl-server-net-1 when fl_backend=flower; 0775 for the
+    # same group-write reason as fl_checkpoints. Unused by NVFLARE.
+    fl_jobs = {
+      path  = "/fl-net-1/jobs"
+      perms = "0775"
     }
   }
 }

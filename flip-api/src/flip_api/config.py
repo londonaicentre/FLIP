@@ -10,10 +10,12 @@
 # limitations under the License.
 #
 
-from typing import Literal
+import json
+import logging
+from typing import Annotated, Literal
 
-from pydantic import EmailStr, SecretStr, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import EmailStr, SecretStr, ValidationInfo, field_validator
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 from flip_api.domain.schemas.types import FLBackend
 
@@ -79,6 +81,37 @@ class Settings(BaseSettings):
     # lower value; higher values are clamped (with the warning as audit trail).
     PRE_SIGNED_URL_EXPIRATION_SECONDS: int = 1800
 
+    # Extension whitelist for model-file uploads, enforced before minting the
+    # presigned POST policy so disallowed types never reach S3. Suffixes are
+    # matched case-insensitively against the end of the filename. Env format:
+    # JSON list or comma-separated string (NoDecode defers parsing to the
+    # validator below). Opaque archives (.zip/.tar) are deliberately excluded —
+    # their contents can't be gated by the scan pipeline.
+    ALLOWED_MODEL_FILE_EXTENSIONS: Annotated[list[str], NoDecode] = [
+        ".py",
+        ".json",
+        # Flower's per-app run config. `config.toml` sits beside the app code in
+        # every Flower template and tutorial; fl-api-flower feeds it to
+        # `flwr run --run-config` to override the bundle pyproject's
+        # [tool.flwr.app.config]. Omitting it would reject every Flower upload.
+        ".toml",
+        ".pt",
+        ".pth",
+        ".pkl",
+        ".txt",
+        ".yaml",
+        ".yml",
+        ".safetensors",
+    ]
+    # Suffixes given a structural picklescan before promotion to the scanned
+    # bucket: pickle-bearing formats where deserialisation is code execution
+    # by design. Subset of ALLOWED_MODEL_FILE_EXTENSIONS in practice, kept
+    # separate so widening the upload whitelist never silently skips scanning.
+    PICKLESCAN_FILE_SUFFIXES: Annotated[list[str], NoDecode] = [".pt", ".pth", ".pkl", ".pickle"]
+    # Hard wall-clock cap on a single picklescan run. A timeout is treated as
+    # a scan failure (fail-closed -> ERROR), never as clean.
+    PICKLESCAN_TIMEOUT_SECONDS: int = 120
+
     # Reimport imaging project studies
     PROJECT_REIMPORT_RATE: int = 60  # How often to reimport studies for a given project (in minutes)
     MAX_REIMPORT_COUNT: int = 5
@@ -96,6 +129,7 @@ class Settings(BaseSettings):
     SCHEDULER_REIMPORT_IMAGING_PROJECT_STUDIES_RATE: int = (
         30  # How often to check for projects with unimported studies (in minutes)
     )
+    SCHEDULER_MALWARE_SCAN_RECONCILE_RATE: int = 1  # How often to reconcile stuck SCANNING uploads (in minutes)
 
     # Database settings
     DB_PORT: int
@@ -179,6 +213,65 @@ class Settings(BaseSettings):
         """
         if v is None or v == "":
             return 1800
+        return v
+
+    @field_validator("PICKLESCAN_TIMEOUT_SECONDS", "SCHEDULER_MALWARE_SCAN_RECONCILE_RATE", mode="before")
+    @classmethod
+    def coerce_empty_scan_int(cls, v: object, info: ValidationInfo) -> object:
+        """Treat an empty-string scan-timing setting as the field default.
+
+        Same rationale as ``coerce_empty_max_model_file_bytes``: these arrive
+        as empty strings whenever the name appears in an env file at all —
+        including *commented out*, since the Makefile's
+        ``export $(shell sed 's/=.*//' ../.env.development)`` strips the value
+        from every line and exports the bare name. Pydantic treats that as a
+        real override and rejects it against ``int``.
+        """
+        if v is None or v == "":
+            return cls.model_fields[info.field_name].default  # type: ignore[index]
+        return v
+
+    @field_validator("ALLOWED_MODEL_FILE_EXTENSIONS", "PICKLESCAN_FILE_SUFFIXES", mode="before")
+    @classmethod
+    def parse_suffix_list(cls, v: object, info: ValidationInfo) -> object:
+        """Parse the suffix-list env vars and normalise every entry.
+
+        The fields carry ``NoDecode``, so env input arrives here as the raw
+        string: a JSON list (``[".py", ".pt"]``) or a comma-separated string
+        (``.py,.pt``) are both accepted, and empty/unset falls back to the
+        field default. Entries are lowercased and given a leading dot so
+        matching stays purely suffix-based regardless of how the operator
+        wrote them.
+
+        A value that contains only separators or whitespace (``",,,"``,
+        ``" , "``) normalises to nothing, and is treated exactly like the
+        empty case — it falls back to the default rather than yielding an
+        empty list. An empty list would fail *open* in the worst way for
+        ``PICKLESCAN_FILE_SUFFIXES``: no suffix would ever match, so every
+        upload would skip scanning silently. Never let a malformed value
+        disable the gate.
+        """
+        if v is None or v == "" or v == []:
+            v = cls.model_fields[info.field_name].default  # type: ignore[index]
+        if isinstance(v, str):
+            stripped = v.strip()
+            v = json.loads(stripped) if stripped.startswith("[") else stripped.split(",")
+        if isinstance(v, list):
+            normalised = [
+                entry if entry.startswith(".") else f".{entry}"
+                for entry in (str(raw).strip().lower() for raw in v)
+                if entry
+            ]
+            if not normalised:
+                default = cls.model_fields[info.field_name].default  # type: ignore[index]
+                # flip_api.utils.logger imports get_settings(), so it cannot be
+                # imported here without a cycle — use the same underlying logger.
+                logging.getLogger("uvicorn").warning(
+                    f"{info.field_name} resolved to an empty list from {v!r}; "
+                    f"falling back to the default {default}"
+                )
+                return default
+            return normalised
         return v
 
     # Trust task queue settings

@@ -42,6 +42,29 @@ def _aggregate(metrics: dict, lesions: LesionDict) -> dict:
     return out
 
 
+def macro_mean(aggregated: dict, kind: str, lesions: LesionDict) -> float:
+    """Average a per-lesion metric across lesions, ignoring lesions that scored NaN.
+
+    Mirrors the macro ``VAL-<METRIC>`` label the NVFLARE chest-X-ray tutorial reports
+    (mean across lesions) — the single interpretable number best-model selection scores
+    there. ``compute_precision_recall_f1`` returns NaN on a zero denominator, so a lesion
+    absent from the split is skipped rather than counted as zero.
+
+    Args:
+        aggregated (dict): Output of ``_aggregate`` — per-lesion scalars keyed ``<kind>-<lesion>``.
+        kind (str): Metric family, one of ``precision`` / ``recall`` / ``f1-score``.
+        lesions (LesionDict): The trainable lesion classes.
+
+    Returns:
+        float: Mean across the lesions that scored a finite value, or NaN when none did.
+        A NaN is deliberate and visible: the server-side selector refuses a non-finite
+        round with a warning rather than pinning "best" to a degenerate checkpoint.
+    """
+    values = [aggregated[f"{kind}-{name}"] for name in lesions.get_lesion_list()]
+    finite = [value for value in values if not np.isnan(value)]
+    return float(np.mean(finite)) if finite else float("nan")
+
+
 def train_func(
     model: torch.nn.Module,
     train_loader: DataLoader,

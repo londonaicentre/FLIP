@@ -56,6 +56,40 @@ export const getShortDateFromString = (dateString: string): string => {
     return format(new Date(dateString), "dd/MM/yyyy, HH:mm:ss");
 };
 
+/**
+ * Epoch milliseconds of an API timestamp, or null when missing/unparseable.
+ *
+ * The hub serialises naive-UTC datetimes with no offset suffix
+ * ("2026-06-01T12:00:00"), which `new Date()` would otherwise read as
+ * browser-local time — skewing displayed ages by the viewer's UTC offset.
+ * Offset-less date-times are therefore pinned to UTC before parsing.
+ */
+export const apiTimestampMs = (timestamp?: string | null): number | null => {
+    if (!timestamp) return null;
+    const hasOffset = /(Z|[+-]\d{2}:?\d{2})$/.test(timestamp);
+    const ms = new Date(timestamp.includes("T") && !hasOffset ? `${timestamp}Z` : timestamp).getTime();
+
+    return Number.isFinite(ms) ? ms : null;
+};
+
+/**
+ * "created 2h ago"-style meta label for a list row, from an API timestamp.
+ *
+ * Shared by the Projects and Models lists (owner · created … ago). Falls back
+ * to an em-dash when the timestamp is missing or unparseable; a future
+ * (clock-skewed) timestamp clamps to "created 0s ago".
+ */
+export const relativeCreatedLabel = (timestamp?: string | null): string => {
+    const created = apiTimestampMs(timestamp);
+    if (created === null) return "—";
+    const sec = (Date.now() - created) / 1000;
+    if (sec < 60) return `created ${Math.max(0, Math.floor(sec))}s ago`;
+    if (sec < 3_600) return `created ${Math.floor(sec / 60)}m ago`;
+    if (sec < 86_400) return `created ${Math.floor(sec / 3_600)}h ago`;
+
+    return `created ${Math.floor(sec / 86_400)}d ago`;
+};
+
 export const getOrderedLogs = (logs: ILog[] | undefined, reverse = false): ILog[] => {
     if (!logs) {
         return [];

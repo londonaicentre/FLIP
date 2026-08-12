@@ -370,6 +370,10 @@ class UploadedFiles(SQLModel, table=True):
     type: str = Field()
     tag: str | None = Field(default=None)
     model_id: UUID | None = Field(default=None, foreign_key="model.id")
+    # Last status/metadata write. The malware-scan sweep uses this to pick out
+    # SCANNING rows old enough to be orphans (app restart mid-reconcile) while
+    # leaving fresh in-flight reconciles alone. Nullable — rows predate the column.
+    updated_at: datetime | None = Field(default=None)
 
 
 class XNATProjectStatus(SQLModel, table=True):

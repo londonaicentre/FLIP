@@ -161,9 +161,10 @@ export TF_VAR_SES_VERIFIED_EMAIL=${SES_VERIFIED_EMAIL}
 export TF_VAR_flip_alb_subdomain=${ALB_SUBDOMAIN}
 export TF_VAR_flip_nlb_subdomain=${NLB_SUBDOMAIN}
 export TF_VAR_FLIP_UI_BUCKET_NAME=${FLIP_UI_BUCKET_NAME}
-# flip-api / fl-* env vars consumed by ECS task definitions (locals.tf).
-# These mirror compose.production.yml so the running container sees the same
-# values whether it runs on EC2+compose or ECS Fargate.
+# flip-api / fl-* env vars consumed by the ECS task definitions (locals.tf) —
+# the canonical definition of production container config (#936). The prod
+# compose files mirror a subset as the local prod-image harness only; the hub
+# no longer deploys on EC2+compose.
 export TF_VAR_TRUST_API_KEY_HEADER=${TRUST_API_KEY_HEADER}
 export TF_VAR_INTERNAL_SERVICE_KEY_HEADER=${INTERNAL_SERVICE_KEY_HEADER}
 export TF_VAR_FL_ADMIN_DIRECTORY=${FL_ADMIN_DIRECTORY}
@@ -443,7 +444,13 @@ ansible-init: ## Initialize Ansible configuration on EC2 instances (if failed tr
 	@[ -n "$(ORTHANC_DATA_VERSION)" ] || (echo "❌  trust/orthanc/.data_version not found"; exit 1)
 	@uv sync
 	@uv run ansible-galaxy install -r requirements.yml
+	@# --skip-tags omop-vocab: the vocabulary load needs the trust's OMOP cluster
+	@# credentials, which live in the kit file. This target runs BEFORE
+	@# register-trusts in every deploy chain, so it has no KIT in scope (hence
+	@# trust_num falling back to 1 above) and cannot supply them. The vocabulary
+	@# is seeded later by `make seed-trust-data KIT=<CODE>`, which does have them.
 	@unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_SECURITY_TOKEN; uv run ansible-playbook site.yml \
+		--skip-tags omop-vocab \
 		-e flip_aicentre_bucket=$(AICENTRE_BUCKET_NAME) \
 		-e fl_backend=$(FL_BACKEND) \
 		-e fl_kit_date=$(FL_KIT_DATE) \
@@ -470,7 +477,7 @@ provision-bastion: ssh-config ## Install the minimal operator tooling on the Cen
 # a pointer to the on-prem flow instead of an obscure SSH/inventory error.
 .PHONY: check-trust-ec2-enabled
 check-trust-ec2-enabled:
-	@[ "$(DEPLOY_TRUST_EC2)" != "false" ] || (echo "❌  DEPLOY_TRUST_EC2=false (hub-only deployment) — there is no cloud Trust EC2. On-prem trusts join via register-trusts + allow-local-trust-nlb and run 'make -C trust up-trust' on their own host."; exit 1)
+	@[ "$(DEPLOY_TRUST_EC2)" != "false" ] || (echo "❌  DEPLOY_TRUST_EC2=false (hub-only deployment) — there is no cloud Trust EC2. On-prem trusts join via register-trusts + allow-local-trust-nlb and run 'sudo -E make -C trust up-trust' on their own host."; exit 1)
 
 .PHONY: seed-trust-data
 seed-trust-data: check-trust-ec2-enabled ssh-config ## Load trust-specific OMOP + Orthanc mock data onto the Trust EC2 (re-run after data version bump; requires KIT=)
@@ -478,6 +485,7 @@ seed-trust-data: check-trust-ec2-enabled ssh-config ## Load trust-specific OMOP 
 	@[ -n "$(FL_KIT_SLOT_NUMBER)" ] || (echo "❌  FL_KIT_SLOT_NUMBER not found in trust/.env.$(KIT).$(KIT_ENV_SUFFIX) — run register-trusts first"; exit 1)
 	@[ -n "$(OMOP_DATA_VERSION)" ] || (echo "❌  trust/omop-db/.data_version not found"; exit 1)
 	@[ -n "$(ORTHANC_DATA_VERSION)" ] || (echo "❌  trust/orthanc/.data_version not found"; exit 1)
+	@[ -n "$(OMOP_POSTGRES_PASSWORD_KIT)" ] || (echo "❌  OMOP_POSTGRES_PASSWORD not found in trust/.env.$(KIT).$(KIT_ENV_SUFFIX) — the vocab-load play needs the cluster credentials"; exit 1)
 	@echo "🗄️  Seeding Trust EC2 with trust$(FL_KIT_SLOT_NUMBER) data (OMOP v$(OMOP_DATA_VERSION), Orthanc v$(ORTHANC_DATA_VERSION))..."
 	@uv run ansible-playbook site.yml \
 		--tags data \
@@ -485,7 +493,12 @@ seed-trust-data: check-trust-ec2-enabled ssh-config ## Load trust-specific OMOP 
 		-e fl_kit_date=$(FL_KIT_DATE) \
 		-e trust_num=$(FL_KIT_SLOT_NUMBER) \
 		-e omop_data_version=$(OMOP_DATA_VERSION) \
-		-e orthanc_data_version=$(ORTHANC_DATA_VERSION)
+		-e orthanc_data_version=$(ORTHANC_DATA_VERSION) \
+		-e omop_postgres_user=$(OMOP_POSTGRES_USER_KIT) \
+		-e omop_postgres_password=$(OMOP_POSTGRES_PASSWORD_KIT) \
+		-e omop_postgres_db=$(OMOP_POSTGRES_DB_KIT) \
+		-e vocab_s3_bucket=$(AICENTRE_BUCKET_NAME) \
+		-e omop_db_tag=$(DOCKER_TAG)
 	@echo "✅ Trust data seeding complete."
 
 .PHONY: deploy-centralhub
@@ -755,6 +768,12 @@ deploy-ui: ## Build flip-ui from the working tree and deploy it to S3 + invalida
 FL_KIT_SLOT := $(shell sed -n 's/^FL_KIT_SLOT=//p' ../../../trust/.env.$(KIT).$(KIT_ENV_SUFFIX) 2>/dev/null)
 FL_KIT_SLOT_NUMBER := $(shell sed -n 's/^FL_KIT_SLOT_NUMBER=//p' ../../../trust/.env.$(KIT).$(KIT_ENV_SUFFIX) 2>/dev/null)
 
+# Trust-local OMOP DB credentials from the kit — passed to the vocab-load play
+# (they must match the values the restored pgdata cluster was built with).
+OMOP_POSTGRES_USER_KIT := $(shell sed -n 's/^OMOP_POSTGRES_USER=//p' ../../../trust/.env.$(KIT).$(KIT_ENV_SUFFIX) 2>/dev/null)
+OMOP_POSTGRES_PASSWORD_KIT := $(shell sed -n 's/^OMOP_POSTGRES_PASSWORD=//p' ../../../trust/.env.$(KIT).$(KIT_ENV_SUFFIX) 2>/dev/null)
+OMOP_POSTGRES_DB_KIT := $(shell sed -n 's/^OMOP_POSTGRES_DB=//p' ../../../trust/.env.$(KIT).$(KIT_ENV_SUFFIX) 2>/dev/null)
+
 # Data versions read from the canonical .data_version files — these govern both
 # the local update-omop-data / update-orthanc-data scripts and the Ansible plays.
 OMOP_DATA_VERSION := $(shell cat ../../../trust/omop-db/.data_version 2>/dev/null | tr -d ' \n\r\t')
@@ -836,6 +855,9 @@ ifeq ($(FL_BACKEND),nvflare)
 	  echo "  sudo mkdir -p /opt/flip/services/$(FL_KIT_SLOT)/startup /opt/flip/services/$(FL_KIT_SLOT)/local /opt/flip/services/$(FL_KIT_SLOT)/transfer" && \
 	  echo "  sudo rsync -av --delete $$TRUST_KIT_DIR/startup/ /opt/flip/services/$(FL_KIT_SLOT)/startup/" && \
 	  echo "  sudo rsync -av --delete $$TRUST_KIT_DIR/local/ /opt/flip/services/$(FL_KIT_SLOT)/local/" && \
+	  echo "  # fl-client now runs as a non-root uid (GHSA-8465) — hand the rsync'd kit back to" && \
+	  echo "  # this shell's own user so the container can read/write it:" && \
+	  echo "  sudo chown -R \$$(id -u):\$$(id -g) /opt/flip/services/$(FL_KIT_SLOT)" && \
 	  echo "✅ $(FL_KIT_SLOT) NVFLARE kit staged"
 else
 	@TRUST_KIT_DIR=/tmp/$(KIT)_kit && \
@@ -854,7 +876,8 @@ endif
 	@echo ""
 	@echo "⚠️  REMAINING MANUAL STEPS:"
 	@echo "   1. Deploy the staged FL kit into /opt/flip (run the commands printed above)."
-	@echo "   2. Start the trust stack: cd ../../.. && env PROD=$(PROD) make -C trust up-trust KIT=$(KIT)"
+	@echo "   2. Start the trust stack (sudo: the login user is deliberately not in the docker group):"
+	@echo "      cd ../../.. && sudo -E env PROD=$(PROD) make -C trust up-trust KIT=$(KIT)"
 	@echo "   3. Report this host's public IP to the FLIP admin — they run:"
 	@echo "      make allow-local-trust-nlb LOCAL_TRUST_IP=<this-host-public-ip>"
 
@@ -1038,7 +1061,8 @@ full-deploy-hub-only: ## Hub-only deployment: no cloud Trust EC2 — every trust
 	##      make allow-local-trust-nlb PROD=$(PROD)
 	##   2. make new-trust TRUST_CODE=<CODE> ... PROD=<env> && make register-trusts KIT=<CODE> PROD=$(PROD)
 	##      (register-trusts in this chain already registers every kit present)
-	##   3. on the trust host: env PROD=<env> make -C trust up-trust KIT=<CODE>
+	##   3. on the trust host: sudo -E env PROD=<env> make -C trust up-trust KIT=<CODE>
+	##      (sudo: the provisioned login user is deliberately not in the docker group)
 	## Remember `make deploy-ui PROD=$(PROD)` — the UI ships separately, same as full-deploy.
 full-deploy-hub-only: DEPLOY_TRUST_EC2 := false
 full-deploy-hub-only: github-login aws-login init import-persistent generate-internal-service-key plan apply update-env ssh-config ansible-init deploy-centralhub register-trusts status
@@ -1057,7 +1081,8 @@ full-deploy-with-local-trust: ## Full AWS deployment (honours PROD) plus on-prem
 	## 7. register-trusts: register every live trust/.env.*.<env> kit on the hub and write kit files
 	## 8. deploy-trust + provision-local-trust + status: bring up cloud + on-prem trust hosts and verify
 	## NOTE: After this completes you must manually:
-	##   - Start the on-prem trust stack: cd ../../.. && env PROD=$(PROD) make -C trust up-trust KIT=$(KIT)
+	##   - Start the on-prem trust stack (sudo: the provisioned login user is deliberately not in
+	##     the docker group): cd ../../.. && sudo -E env PROD=$(PROD) make -C trust up-trust KIT=$(KIT)
 	@[ -n "$(LOCAL_TRUST_IP)" ] || (echo ""; echo "❌  ERROR: LOCAL_TRUST_IP is required."; echo "   Usage: make full-deploy-with-local-trust LOCAL_TRUST_IP=<public-ip>"; echo ""; exit 1)
 # The one on-prem trust IP this all-in-one run opens the NLB to — the chain's `apply`
 # step creates the SG rule. For multiple trusts use the async flow instead: set
@@ -1083,8 +1108,9 @@ full-deploy-hybrid: ## Full hybrid deployment including on-prem trust provisioni
 	$(MAKE) deploy-centralhub PROD=$(PROD) && \
 	echo "" && \
 	echo "✅ Hybrid deployment complete (PROD=$(PROD))." && \
-	echo "➡️  Final manual step: start the on-prem trust stack on the trust host:" && \
-	echo "   cd ../../.. && env PROD=$(PROD) make -C trust up-trust KIT=$(KIT)"
+	echo "➡️  Final manual step: start the on-prem trust stack on the trust host" && \
+	echo "   (sudo: the provisioned login user is deliberately not in the docker group):" && \
+	echo "   cd ../../.. && sudo -E env PROD=$(PROD) make -C trust up-trust KIT=$(KIT)"
 
 .PHONY: preflight-k8s-deploy
 preflight-k8s-deploy: ## Pre-flight checks for full-deploy-with-k8s (Trust_K8s slot, kubectl context, helm)

@@ -48,27 +48,28 @@ class FedAvgWithClientMetrics(FlipFedAvg):
     """FedAvg strategy that captures per-client train and evaluation metrics.
 
     All Central Hub telemetry (status, metric/exception forwarding, round
-    events) is inherited from ``FlipFedAvg``. This subclass only adds the
-    app-specific behaviour: capturing per-client metrics for output, and
-    running evaluation on the final round only.
+    events) is inherited from ``FlipFedAvg``, as is best-model selection. This
+    subclass only adds the app-specific behaviour: capturing per-client metrics
+    for output, and running evaluation on the final round only — unless
+    best-model selection is on, which needs every round evaluated.
     """
 
     def configure_evaluate(
         self, server_round: int, arrays: ArrayRecord, config: ConfigRecord, grid: Grid
     ) -> Iterable[Message]:
-        """Configure evaluation only on the final round."""
-        # Only evaluate on the last round
-        if server_round != self.num_rounds:
+        """Configure evaluation on the final round, or every round when selecting a best model."""
+        # Best-model selection scores each round's aggregated model, so it needs
+        # the evaluate phase every round; otherwise only the final round matters.
+        if server_round != self.num_rounds and not self.best_model_selection_enabled:
             return []
 
-        # Call parent method for final round evaluation
         return super().configure_evaluate(server_round, arrays, config, grid)
 
     def aggregate_train(
         self,
         server_round: int,
         replies: Iterable[Message],
-    ) -> ArrayRecord | None:
+    ) -> tuple[ArrayRecord | None, MetricRecord | None]:
         """Aggregate training results while capturing per-client metrics."""
         replies = list(replies)
 

@@ -1,0 +1,100 @@
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+# Standalone image build + populate pipeline (NOT the runtime trust stack — that
+# is trust/deploy/compose_trust.<env>.yml). Brings up one empty OMOP database
+# per trust so `make populate` can load each trust's slice of the canonical
+# dataset; the resulting volumes/Trust_<N>/db_data trees are what the trust
+# stack mounts (and what gets exported to the Hugging Face pgdata tarballs).
+# Config comes from .env.build (see .env.build.example).
+services:
+  omop-db-trust1:
+    image: ${OMOP_DB_IMAGE:-ghcr.io/londonaicentre/omop-db}:${OMOP_DB_TAG:-latest}
+    build:
+      context: .
+      dockerfile: Dockerfile
+    # Same hardening as the runtime service in trust/deploy/compose_trust.*.yml:
+    # the retained caps are exactly what the postgres entrypoint needs (chown of
+    # PGDATA to uid 999 + the gosu privilege drop). In normal operation initdb
+    # runs only here — runtime stacks mount pre-populated volumes.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETUID
+      - SETGID
+    ports:
+      - "${OMOP_DB_PORT_TRUST_1:-5434}:5432"
+    environment:
+      POSTGRES_USER: ${OMOP_POSTGRES_USER}
+      POSTGRES_PASSWORD: ${OMOP_POSTGRES_PASSWORD}
+      POSTGRES_DB: ${OMOP_POSTGRES_DB}
+      DATA_ACCESS_POSTGRES_PASSWORD: ${DATA_ACCESS_POSTGRES_PASSWORD}
+    volumes:
+      - ./volumes/Trust_1/db_data:/var/lib/postgresql/data
+    networks:
+      - omop-build-network
+
+  omop-db-trust2:
+    image: ${OMOP_DB_IMAGE:-ghcr.io/londonaicentre/omop-db}:${OMOP_DB_TAG:-latest}
+    build:
+      context: .
+      dockerfile: Dockerfile
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETUID
+      - SETGID
+    ports:
+      - "${OMOP_DB_PORT_TRUST_2:-5436}:5432"
+    environment:
+      POSTGRES_USER: ${OMOP_POSTGRES_USER}
+      POSTGRES_PASSWORD: ${OMOP_POSTGRES_PASSWORD}
+      POSTGRES_DB: ${OMOP_POSTGRES_DB}
+      DATA_ACCESS_POSTGRES_PASSWORD: ${DATA_ACCESS_POSTGRES_PASSWORD}
+    volumes:
+      - ./volumes/Trust_2/db_data:/var/lib/postgresql/data
+    networks:
+      - omop-build-network
+
+  # Optional DB browser; opt in with
+  # `docker compose -f compose.yml --env-file .env.build --profile pgadmin up -d`.
+  pgadmin:
+    image: dpage/pgadmin4:9
+    profiles: ["pgadmin"]
+    security_opt:
+      - no-new-privileges:true
+    ports:
+      - "${PG_ADMIN_PORT:-5050}:80"
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD}
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+    networks:
+      - omop-build-network
+
+volumes:
+  pgadmin_data:
+
+networks:
+  omop-build-network:
+    driver: bridge

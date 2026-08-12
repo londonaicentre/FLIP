@@ -41,6 +41,19 @@ def _cohort_payload(query: str) -> dict:
     }
 
 
+def _dataframe_payload(query: str) -> dict:
+    """Payload for the two row-level routes, which take ``DataframeQuery`` (two fields only).
+
+    ``encrypted_project_id`` is encrypted with the same AES key the container is configured
+    with, so the decrypt path stays real rather than mocked. The import is function-local for
+    the same reason it is in ``test_dataframe_endpoint_returns_seeded_columns``: the conftest
+    pins ``AES_KEY_BASE64`` before any ``data_access_api`` module builds its Settings singleton.
+    """
+    from data_access_api.utils.encryption import encrypt
+
+    return {"encrypted_project_id": encrypt("integration-project-1"), "query": query}
+
+
 def test_cohort_endpoint_returns_aggregates_for_image_occurrences(http_client):
     """All 24 image_occurrence rows clear the threshold and come back with the full aggregate set."""
     response = http_client.post(
@@ -148,3 +161,83 @@ def test_dataframe_endpoint_returns_seeded_columns(http_client):
     assert body["modality"].count("XR") == 4
     # accession_id is unique per row in the seed.
     assert len(set(body["accession_id"])) == 24
+
+
+def test_accession_ids_returns_seeded_ids(http_client):
+    """``/cohort/accession-ids`` projects the id column out of the caller's cohort.
+
+    The route wraps the caller's (re-emitted) SQL as ``SELECT accession_id FROM (...) AS
+    cohort_subquery``, so only that one column ever crosses the trust boundary regardless of
+    what the inner query selected.
+    """
+    response = http_client.post(
+        "/cohort/accession-ids",
+        json=_dataframe_payload("SELECT person_id, accession_id FROM omop.image_occurrence"),
+    )
+    assert response.status_code == 200, response.text
+
+    accession_ids = response.json()["accession_ids"]
+    assert len(accession_ids) == 24
+    # accession_id is unique per row in the seed (ACC-1001 … ACC-1024).
+    assert len(set(accession_ids)) == 24
+    assert "ACC-1001" in accession_ids
+
+
+def test_accession_ids_missing_column_surfaces_get_records_400(http_client):
+    """A cohort that does not project ``accession_id`` fails inside ``get_records``, not after it.
+
+    Pins which 400 actually reaches the caller. Because the route wraps the inner query in
+    ``SELECT accession_id FROM (...)``, Postgres raises ``UndefinedColumn`` while the query is
+    executing — so ``get_records`` converts it to a category 400 and the router's
+    ``except HTTPException: raise`` branch re-raises it before any DataFrame is returned. A
+    router-level "did the DataFrame come back with the column?" guard could never fire, which
+    is why there isn't one; this test is the standing proof of that. The cohort here is 16
+    rows — comfortably over the stack's threshold — so the refusal is about the column, not
+    the cohort size.
+    """
+    response = http_client.post(
+        "/cohort/accession-ids",
+        json=_dataframe_payload("SELECT person_id FROM omop.person"),
+    )
+    assert response.status_code == 400, response.text
+    assert response.json()["detail"] == "The column 'accession_id' does not exist."
+
+
+def test_accession_ids_below_threshold_is_refused(http_client):
+    """A below-threshold cohort is refused outright — no partial list, no count.
+
+    modality_concept_id 4013632 = 'XR'; the seed has 4 such rows, under the stack's
+    COHORT_QUERY_THRESHOLD of 5.
+    """
+    response = http_client.post(
+        "/cohort/accession-ids",
+        json=_dataframe_payload(
+            "SELECT accession_id FROM omop.image_occurrence WHERE modality_concept_id = 4013632"
+        ),
+    )
+    assert response.status_code == 403, response.text
+    assert response.json()["detail"] == "Cohort is too small for row-level data to be released."
+
+
+def test_accession_ids_zero_rows_indistinguishable_from_below_threshold(http_client):
+    """Privacy regression, against real Postgres rather than a mocked DataFrame.
+
+    A cohort matching nothing and a cohort of 1-4 rows must produce byte-identical refusals,
+    or the response itself becomes a row-count oracle: a caller could binary-search a
+    predicate and learn whether *any* patient matches it, one bit at a time.
+    """
+    below_threshold = http_client.post(
+        "/cohort/accession-ids",
+        json=_dataframe_payload(
+            "SELECT accession_id FROM omop.image_occurrence WHERE modality_concept_id = 4013632"
+        ),
+    )
+    genuine_zero = http_client.post(
+        "/cohort/accession-ids",
+        json=_dataframe_payload(
+            "SELECT accession_id FROM omop.image_occurrence WHERE accession_id = 'NONEXISTENT'"
+        ),
+    )
+
+    assert below_threshold.status_code == genuine_zero.status_code == 403
+    assert below_threshold.text == genuine_zero.text

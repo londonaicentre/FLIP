@@ -343,6 +343,7 @@ import CreateProjectModal from "@/partials/projects/CreateProjectModal.vue";
 import { getProjects, IProject, IProjectTrust, ProjectStatus } from "@/services/project-service";
 import { useAuthStore } from "@/store/auth";
 import { useModalsStore } from "@/store/modals";
+import { apiTimestampMs, relativeCreatedLabel } from "@/utils/helpers";
 
 const pageSize = 20;
 const authStore = useAuthStore();
@@ -436,8 +437,8 @@ const sortedProjects = computed<IProject[]>(() => {
     } else {
         // "created" — newest first; rows without a timestamp sink to the bottom.
         arr.sort((a, b) => {
-            const ta = a.creationtimestamp ? new Date(a.creationtimestamp).getTime() : 0;
-            const tb = b.creationtimestamp ? new Date(b.creationtimestamp).getTime() : 0;
+            const ta = apiTimestampMs(a.creationtimestamp) ?? 0;
+            const tb = apiTimestampMs(b.creationtimestamp) ?? 0;
 
             return tb - ta;
         });
@@ -556,15 +557,6 @@ const userCountLabel = (project: IProject): string => {
 
 // IProject has no `lastUpdated` — fall back to creation timestamp as a
 // proxy for the design's "updated 2h ago". Real updated-at tracking is a
-// separate backend change.
-const relativeUpdated = (project: IProject): string => {
-    if (!project.creationtimestamp) return "—";
-    const created = new Date(project.creationtimestamp).getTime();
-    const sec = (Date.now() - created) / 1000;
-    if (sec < 60) return `created ${Math.max(0, Math.floor(sec))}s ago`;
-    if (sec < 3_600) return `created ${Math.floor(sec / 60)}m ago`;
-    if (sec < 86_400) return `created ${Math.floor(sec / 3_600)}h ago`;
-
-    return `created ${Math.floor(sec / 86_400)}d ago`;
-};
+// separate backend change. Formatting is shared with the Models list.
+const relativeUpdated = (project: IProject): string => relativeCreatedLabel(project.creationtimestamp);
 </script>

@@ -17,6 +17,7 @@ import pytest
 
 from imaging_api.config import get_settings
 from imaging_api.services_external.data_access import get_accession_ids
+from imaging_api.utils.exceptions import CohortBelowThresholdError
 
 
 class TestGetAccessionIds:
@@ -74,6 +75,46 @@ class TestGetAccessionIds:
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
         mock_client_cls.return_value = mock_client
+
+        with pytest.raises(RuntimeError, match="HTTP error occurred"):
+            await get_accession_ids("encrypted-proj-id", "SELECT * FROM cohort")
+
+    @staticmethod
+    def _client_returning_status(mock_client_cls, status_code: int):
+        """Wires the mocked client so ``raise_for_status`` raises for ``status_code``."""
+        request = httpx.Request("POST", "http://data-access-api/cohort/accession-ids")
+        response = httpx.Response(status_code, request=request)
+
+        mock_response = MagicMock()
+        mock_response.raise_for_status = MagicMock(
+            side_effect=httpx.HTTPStatusError("error", request=request, response=response)
+        )
+
+        mock_client = AsyncMock()
+        mock_client.post.return_value = mock_response
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client_cls.return_value = mock_client
+
+    @pytest.mark.asyncio
+    @patch("imaging_api.services_external.data_access.httpx.AsyncClient")
+    async def test_403_raises_cohort_below_threshold(self, mock_client_cls):
+        """A 403 is the trust refusing to release identifiers for a too-small cohort.
+
+        It must be typed distinctly from a transport failure: callers report it as a settled
+        outcome rather than an error to retry, and retrying cannot change the answer.
+        """
+        self._client_returning_status(mock_client_cls, 403)
+
+        with pytest.raises(CohortBelowThresholdError, match="below the trust's minimum size"):
+            await get_accession_ids("encrypted-proj-id", "SELECT * FROM cohort")
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("status_code", [400, 401, 500, 503])
+    @patch("imaging_api.services_external.data_access.httpx.AsyncClient")
+    async def test_other_status_errors_still_raise_runtime_error(self, mock_client_cls, status_code):
+        """Only 403 is special-cased; every other non-2xx stays a RuntimeError."""
+        self._client_returning_status(mock_client_cls, status_code)
 
         with pytest.raises(RuntimeError, match="HTTP error occurred"):
             await get_accession_ids("encrypted-proj-id", "SELECT * FROM cohort")

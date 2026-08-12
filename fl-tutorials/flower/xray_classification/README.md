@@ -40,13 +40,14 @@ xray_classification/
     ├── transforms.py          # MONAI X-ray transforms
     ├── models.py              # DenseNet121
     ├── loss_and_metrics.py    # BCE loss + per-lesion P/R/F1
-    ├── server_app.py          # symlink → ../../../src/standard/app/server_app.py
-    └── strategy.py            # symlink → ../../../src/standard/app/strategy.py
+    ├── server_app.py          # copy of fl-apps/flower/standard/app/server_app.py
+    └── strategy.py            # copy of fl-apps/flower/standard/app/strategy.py
 ```
 
-`server_app.py` and `strategy.py` are symlinks to the canonical base bundle in
-`src/standard/app/`. They exist only so that `flwr run` from this tutorial
-can resolve `app.server_app` / `app.strategy` locally — FLIP's
+`server_app.py` and `strategy.py` are copies of the canonical `standard`
+Flower base bundle at [`fl-apps/flower/standard/app/`](../../../fl-apps/flower/standard/app).
+They live here so that `flwr run` from this tutorial can resolve
+`app.server_app` / `app.strategy` locally — FLIP's
 `bundle_flower_application` overlays the same base files at deploy time, so
 the upload flow is unaffected.
 
@@ -71,10 +72,11 @@ Then submit the run against the `fl-api` control plane:
 curl -X POST http://localhost:8000/submit_tutorial/xray_classification
 ```
 
-The compose file (`deploy/compose.yml`) wires everything correctly:
+The dev compose stack (`deploy/compose.development.yml` +
+`deploy/compose.development.flower.yml`) wires everything correctly:
 
 - `DEV_DATAFRAME`, `DEV_IMAGES_DIR`, `WORKING_DIR`
-  are resolved from `.env.flwr.development` (read by Docker Compose as the
+  are resolved from `.env.development` (read by Docker Compose as the
   `${VAR}` substitutions in each service's `volumes:` block) and bind-mounted
   into the SuperNode and SuperLink containers — one source of truth for paths.
 - Inside the containers the mounts always land at stable locations
@@ -136,6 +138,40 @@ use the compose stack above.
 | `LESIONS`            | Effusion / Edema / "Lungs in normal arrangement" | Multi-label heads + the normal-override column |
 | `value_to_numerical` | {0:"No",1:"Yes"} | Maps dataframe string values to binary labels |
 | `VALIDATE_EVERY`     | 1       | Validate every N epochs (currently always 1) |
+
+## Best-model selection
+
+This tutorial keeps the **best-scoring global model**, not just the last one. Two run-config keys drive it —
+`app/config.toml` for platform-submitted runs, `[tool.flwr.app.config]` in `pyproject.toml` for local
+`flwr run`:
+
+```toml
+best-model-metric = "test_f1-score"
+best-model-metric-minimize = false
+```
+
+`test_f1-score` is the **macro F1 across lesions** that `app/client_app.py` reports from its evaluate pass
+(`macro_mean` in `app/task.py`), matching the macro `VAL-F1-SCORE` the NVFLARE chest-X-ray tutorial selects
+on. The server weight-averages it across trusts by `num-examples` and keeps the round that scores highest.
+
+What changes when it is set:
+
+- The evaluate phase runs **every round** instead of only the last, so each round's freshly aggregated model
+  is actually measured. That is why `num-server-rounds` is 3 here (4 on the platform) — a one-round job's
+  "best" model is by definition its final one.
+- The results zip gains `best_FL_global_model.pt` next to `FL_global_model.pt`, in the same format, and
+  `cross_val_results.json` gains `best_model` / `best_round` / `best_metric`. Nothing is fabricated: with no
+  selection, or if the best-model write fails, the file and those keys are simply absent.
+
+Two things worth knowing before you change the metric:
+
+- **The key must be one the clients actually report.** Name a key nobody emits and the run completes with no
+  best model at all, logging a warning per round rather than failing — check the ServerApp log if the
+  artefact is missing.
+- **On Flower the metric is measured on the test split**, because that is what the evaluate phase uses here.
+  NVFLARE instead scores a pre-training pass over the *validation* split. Selecting on the test split is
+  convenient for a tutorial but is a mild form of selection-on-test; point `best-model-metric` at a
+  validation metric if you need the split kept clean.
 
 ## Data assumptions
 

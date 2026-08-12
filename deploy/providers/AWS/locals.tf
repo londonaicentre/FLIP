@@ -67,9 +67,14 @@ locals {
   # into the flip-api image from the repo's fl-apps/ tree and read locally via
   # FL_APP_BASE_DIR (FLIP#724). Only the completed bundle still lands in S3
   # (fl_app_destination_uri).
+  # The two model-file prefixes are the quarantine boundary (#52): researcher
+  # uploads land in `uploaded/` and only reach `scanned/` once flip-api's scan
+  # promotes them. Everything that consumes model files — the FL app bundler,
+  # downloads, listings — reads `scanned/` exclusively, so an unscanned or
+  # rejected file can never be shipped to a trust. They must stay distinct.
   uploaded_federated_data_uri = "${local.flip_fl_results_bucket_uri}/results"
   uploaded_model_files_uri    = "${local.flip_model_files_uploads_bucket_uri}/uploaded"
-  scanned_model_files_uri     = "${local.flip_model_files_uploads_bucket_uri}/uploaded"
+  scanned_model_files_uri     = "${local.flip_model_files_uploads_bucket_uri}/scanned"
   fl_app_destination_uri      = "${local.flip_app_bundles_bucket_uri}/app_destinations"
 
   # NET_ENDPOINTS tells flip-api how to reach each FL network's fl-api. On
@@ -89,13 +94,21 @@ locals {
   # disable MFA for stag-only testing (per TROUBLESHOOTING.md §4.3).
   enforce_mfa_env = var.ENFORCE_MFA == "" ? {} : { ENFORCE_MFA = var.ENFORCE_MFA }
 
-  # Env vars per service. Mirrors compose.production.yml +
-  # compose.production.nvflare.yml. ECS task definitions in ecs_tasks.tf read
-  # these so the deploy-time and runtime view are kept in sync.
+  # Env vars per service — the CANONICAL definition of production container
+  # config (#936; the compose.production*.yml files mirror a subset as the
+  # local prod-image harness). fl_server/fl_api are the NVFLARE maps
+  # (compose.production.nvflare.yml); fl_server_flower/fl_api_flower are the
+  # Flower maps (compose.production.flower.yml). ecs_tasks.tf selects by
+  # var.fl_backend (#566).
   ecs_task_env = {
     flip_api = merge(local.enforce_mfa_env, {
-      ENV                       = "production"
-      AWS_REGION                = var.AWS_REGION
+      ENV        = "production"
+      AWS_REGION = var.AWS_REGION
+      # Pin boto3 to the regional S3 endpoint: the legacy global endpoint's
+      # ~24h DNS lag on freshly created non-us-east-1 buckets caused the
+      # FLIP#24 500s. Same rationale as the matching block in
+      # deploy/compose.production.yml; was compose-only until #566.
+      AWS_ENDPOINT_URL_S3       = "https://s3.${var.AWS_REGION}.amazonaws.com"
       AWS_COGNITO_USER_POOL_ID  = module.cognito.user_pool_id
       AWS_COGNITO_APP_CLIENT_ID = module.cognito.app_client_id
       POSTGRES_USER             = var.POSTGRES_USER
@@ -170,6 +183,29 @@ locals {
       # CPU-only. Default 0; set via TF_VAR_JOB_RESOURCE_SPEC_* for GPU jobs.
       JOB_RESOURCE_SPEC_NUM_GPUS           = tostring(var.JOB_RESOURCE_SPEC_NUM_GPUS)
       JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB = tostring(var.JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB)
+    }
+    # Flower SuperLink (compose.production.flower.yml fl-server-net-1). TLS +
+    # SuperNode-auth flags travel as the container command (ecs_tasks.tf), not
+    # env. INTERNAL_SERVICE_KEY is injected via the secrets block.
+    fl_server_flower = {
+      LOCAL_DEV                      = "false"
+      NET_ID                         = "net-1"
+      MIN_CLIENTS                    = tostring(var.MIN_CLIENTS)
+      IMAGES_DIR                     = "/app/data/images"
+      UPLOADED_FEDERATED_DATA_BUCKET = local.uploaded_federated_data_uri
+      FLIP_API_INTERNAL_URL          = "http://${local.service_discovery_names.flip_api}:${local.api_container_port}/api"
+      INTERNAL_SERVICE_KEY_HEADER    = var.INTERNAL_SERVICE_KEY_HEADER
+    }
+    # Flower fl-api (compose.production.flower.yml fl-api-net-1). SuperLink
+    # addresses use the Cloud Map name — the provisioned server cert must
+    # carry it as a SAN (FLOWER_EXTRA_SERVER_SANS at provision time).
+    fl_api_flower = {
+      # Same reload-gating rationale as the NVFLARE map (FLIP#593 pt.1).
+      ENV                         = "production"
+      SUPERLINK_ADDRESS           = "${local.service_discovery_names.fl_server}:9093"
+      SUPERLINK_HEALTH_ADDRESS    = "${local.service_discovery_names.fl_server}:9097"
+      SUPERLINK_ROOT_CERTIFICATES = "/certs/ca.crt"
+      FLOWER_SRC_ROOT             = "/app/src"
     }
   }
 }

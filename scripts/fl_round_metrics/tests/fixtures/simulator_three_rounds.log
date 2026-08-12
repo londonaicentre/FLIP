@@ -1,0 +1,23 @@
+2026-07-10 14:00:00,000 - SimulatorRunner - INFO - Created the simulator server app runner.
+2026-07-10 14:00:00,500 - ScatterAndGather - INFO - [identity=simulator_server, run=simulate_job] - Initializing ScatterAndGather workflow.
+2026-07-10 14:00:01,100 - ScatterAndGather - INFO - [identity=simulator_server, run=simulate_job] - Round 0 started.
+2026-07-10 14:00:04,000 - FederatedClient - INFO - [identity=site-1] - Round 0: local training in progress, 12 batches done.
+2026-07-10 14:00:31,600 - ScatterAndGather - INFO - [identity=simulator_server, run=simulate_job] - Start aggregation.
+2026-07-10 14:00:32,850 - ScatterAndGather - INFO - [identity=simulator_server, run=simulate_job] - Contribution from site-1 ACCEPTED by the aggregator at round 0.
+2026-07-10 14:00:32,900 - ScatterAndGather - INFO - [identity=simulator_server, run=simulate_job] - Contribution from site-2 ACCEPTED by the aggregator at round 0.
+2026-07-10 14:00:33,200 - ScatterAndGather - INFO - [identity=simulator_server, run=simulate_job] - End aggregation.
+2026-07-10 14:00:33,450 - ScatterAndGather - INFO - [identity=simulator_server, run=simulate_job] - Round 0 finished.
+2026-07-10 14:00:35,000 - ScatterAndGather - INFO - [identity=simulator_server, run=simulate_job] - Round 1 started.
+2026-07-10 14:01:03,000 - ScatterAndGather - INFO - [identity=simulator_server, run=simulate_job] - Start aggregation.
+2026-07-10 14:01:03,700 - ScatterAndGather - INFO - [identity=simulator_server, run=simulate_job] - Contribution from site-1 ACCEPTED by the aggregator at round 1.
+2026-07-10 14:01:03,950 - ScatterAndGather - INFO - [identity=simulator_server, run=simulate_job] - Contribution from site-2 REJECTED by the aggregator at round 1.
+2026-07-10 14:01:04,250 - ScatterAndGather - INFO - [identity=simulator_server, run=simulate_job] - End aggregation.
+2026-07-10 14:01:05,500 - ScatterAndGather - INFO - [identity=simulator_server, run=simulate_job] - Round 1 finished.
+2026-07-10 14:01:07,000 - ScatterAndGather - INFO - [identity=simulator_server, run=simulate_job] - Round 2 started.
+2026-07-10 14:01:34,500 - ScatterAndGather - INFO - [identity=simulator_server, run=simulate_job] - Start aggregation.
+2026-07-10 14:01:35,100 - ScatterAndGather - INFO - [identity=simulator_server, run=simulate_job] - Contribution from site-1 ACCEPTED by the aggregator at round 2.
+2026-07-10 14:01:35,400 - ScatterAndGather - INFO - [identity=simulator_server, run=simulate_job] - Contribution from site-2 ACCEPTED by the aggregator at round 2.
+2026-07-10 14:01:35,900 - ScatterAndGather - INFO - [identity=simulator_server, run=simulate_job] - End aggregation.
+2026-07-10 14:01:36,750 - ScatterAndGather - INFO - [identity=simulator_server, run=simulate_job] - Round 2 finished.
+2026-07-10 14:01:36,800 - ScatterAndGather - INFO - [identity=simulator_server, run=simulate_job] - Contribution from site-1 ACCEPTED by the aggregator.
+2026-07-10 14:01:37,000 - ScatterAndGather - INFO - [identity=simulator_server, run=simulate_job] - Finished ScatterAndGather Training.

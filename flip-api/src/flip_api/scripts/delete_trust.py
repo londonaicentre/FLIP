@@ -20,19 +20,19 @@ trust.id and none of them declare ON DELETE CASCADE, so a naive
 script clears each dependent table in the right order before deleting the
 trust row.
 
-Dependent tables (from flip_api.db.models.main_models):
+Dependent tables (from flip_api.db.models.main_models)::
 
-| Table                    | FK field                  | Strategy        |
-|--------------------------|---------------------------|-----------------|
-| fl_kit_slot              | assigned_to_trust_id      | NULL the FK     |
-| fl_job_trust             | trust_id (PK part)        | DELETE rows     |
-| fl_metrics               | trust (NOT NULL)          | DELETE rows     |
-| fl_logs                  | trust (nullable)          | DELETE rows     |
-| model_trust_intersect    | trust_id (nullable)       | DELETE rows     |
-| project_trust_intersect  | trust_id (nullable)       | DELETE rows     |
-| query_result             | trust_id (nullable)       | DELETE rows     |
-| trust_task               | trust_id (NOT NULL)       | DELETE rows     |
-| xnat_project_status      | trust_id (nullable)       | DELETE rows     |
+    | Table                    | FK field                  | Strategy        |
+    |--------------------------|---------------------------|-----------------|
+    | fl_kit_slot              | assigned_to_trust_id      | NULL the FK     |
+    | fl_job_trust             | trust_id (PK part)        | DELETE rows     |
+    | fl_metrics               | trust (NOT NULL)          | DELETE rows     |
+    | fl_logs                  | trust (nullable)          | DELETE rows     |
+    | model_trust_intersect    | trust_id (nullable)       | DELETE rows     |
+    | project_trust_intersect  | trust_id (nullable)       | DELETE rows     |
+    | query_result             | trust_id (nullable)       | DELETE rows     |
+    | trust_task               | trust_id (NOT NULL)       | DELETE rows     |
+    | xnat_project_status      | trust_id (nullable)       | DELETE rows     |
 
 For the nullable FKs we could either NULL or DELETE — DELETE makes the
 intent clearer (a metric/log/result tied to a now-gone trust serves no

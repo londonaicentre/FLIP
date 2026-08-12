@@ -10,6 +10,12 @@
 # limitations under the License.
 #
 
+# ROLE (FLIP#936): local prod-image harness ONLY — `make up PROD=stag|true` runs the baked images with no
+# dev mounts. This file is NOT a deployment target: the Central Hub deploys on ECS Fargate, and the task
+# definitions in deploy/providers/AWS/ecs_tasks.tf (env maps in locals.tf) are the canonical definition of
+# production container config. When changing production config, change Terraform first; update this file
+# only as far as the local harness needs.
+
 # NOTE Important: any sections specified in base configs will be overridden if you specify the same sections in the
 # inheriting service configs below
 

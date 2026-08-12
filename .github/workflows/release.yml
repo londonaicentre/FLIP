@@ -60,10 +60,42 @@ jobs:
                   git tag "${{ steps.version.outputs.tag }}"
                   git push origin "${{ steps.version.outputs.tag }}"
 
+            # generate_release_notes lets GitHub choose the previous release itself, which is
+            # whatever was published most recently — including a flip-utils release cut seconds
+            # after ours on the same push. Pin the range to the previous *platform* tag instead,
+            # the way release-pypi.yml already does for its own artefact.
+            - name: Prepare release notes
+              if: steps.tag_check.outputs.exists == 'false'
+              id: notes
+              env:
+                  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+              run: |
+                  set -euo pipefail
+                  TAG="${{ steps.version.outputs.tag }}"
+                  # `|| true` is load-bearing under `set -o pipefail` — the tag for THIS release
+                  # was created by the step above, so when it is the only match grep exits 1.
+                  # Empty is a valid answer and is handled below.
+                  PREV_TAG=$(git tag --list 'v*.*.*' | sort -V | grep -v "^${TAG}$" | tail -n1 || true)
+
+                  API_ARGS=(-X POST
+                    -f "tag_name=${TAG}"
+                    -f "target_commitish=${{ github.sha }}")
+                  if [[ -n "$PREV_TAG" ]]; then
+                    API_ARGS+=(-f "previous_tag_name=${PREV_TAG}")
+                    echo "Generating notes for ${PREV_TAG}...${TAG}"
+                  else
+                    echo "No previous platform tag found — generating notes from the start."
+                  fi
+
+                  gh api "repos/${{ github.repository }}/releases/generate-notes" \
+                    "${API_ARGS[@]}" --jq '.body' > /tmp/release_notes.md
+
+                  echo "notes_file=/tmp/release_notes.md" >> "$GITHUB_OUTPUT"
+
             - name: Create GitHub Release
               if: steps.tag_check.outputs.exists == 'false'
-              uses: softprops/action-gh-release@v2
+              uses: softprops/action-gh-release@v3
               with:
                   tag_name: ${{ steps.version.outputs.tag }}
                   name: "Release ${{ steps.version.outputs.tag }}"
-                  generate_release_notes: true
+                  body_path: ${{ steps.notes.outputs.notes_file }}
