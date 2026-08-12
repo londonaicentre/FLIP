@@ -761,6 +761,61 @@ def test_validate_query_rejects_unqualified_table_functions_outside_the_allowlis
 @pytest.mark.parametrize(
     "query",
     [
+        # LATERAL before a function FROM-item is a noise word in Postgres — this is the exact
+        # call the FROM allowlist rejects — but sqlglot parses it as exp.Lateral, not exp.Table,
+        # so the scope walk never sees it.
+        "SELECT * FROM LATERAL pg_ls_dir('/')",
+        "SELECT * FROM omop.person, LATERAL query_to_xml('SELECT person_id FROM omop.person', true, false, '') q",
+        # Scalar position: pg_read_file returns text and query_to_xml executes its SQL argument,
+        # so the select list is as dangerous as the FROM clause for both.
+        "SELECT pg_read_file('/etc/passwd')",
+        "SELECT query_to_xml('SELECT person_id FROM omop.person', true, false, '')",
+        # A derived table hides the call one scope down.
+        "SELECT * FROM (SELECT pg_ls_dir('/')) t",
+        # Qualified calls parse as exp.Dot wrapping the same Anonymous node.
+        "SELECT pg_catalog.pg_read_file('/etc/passwd')",
+        # Postgres folds the unquoted name; the check must fold with it.
+        "SELECT PG_READ_FILE('/etc/passwd')",
+        # Any expression position will do — a predicate runs the function per row.
+        "SELECT person_id FROM omop.person WHERE pg_read_file('/etc/passwd') IS NOT NULL",
+    ],
+)
+def test_validate_query_rejects_unrecognised_functions_in_any_position(query: str):
+    """A catalog function is callable anywhere an expression is, not only as a FROM item.
+
+    The FROM-clause allowlist inspects ``scope.tables`` — ``exp.Table`` nodes only — so a
+    ``LATERAL`` function item (``exp.Lateral``), a select-list call, or a call inside a predicate
+    never reached it while Postgres still resolved all of them through the implicit ``pg_catalog``.
+    Every such spelling parses as ``exp.Anonymous`` (sqlglot models the SQL-standard functions as
+    typed nodes), so unrecognised functions are allowlisted tree-wide.
+    """
+    with pytest.raises(HTTPException, match="is not an allowed function"):
+        validate_query(query)
+
+
+def test_validate_query_allows_unrecognised_but_benign_scalar_functions():
+    """Benign Postgres functions sqlglot does not model must keep working in cohort SQL.
+
+    ``age`` is the canonical example — it is how a cohort query derives patient age — and it
+    parses as ``exp.Anonymous`` exactly like ``pg_read_file`` does, so it must be on the
+    unrecognised-function allowlist rather than collateral damage of it.
+    """
+    emitted = validate_query("SELECT age(CURRENT_DATE, p.birth_datetime) FROM person p")
+
+    assert "age(" in emitted.lower()
+    assert "omop.person" in emitted
+
+
+def test_validate_query_allows_lateral_over_an_allowed_table_function():
+    """``LATERAL generate_series(...)`` is ordinary row-expansion SQL and must stay allowed."""
+    emitted = validate_query("SELECT * FROM omop.person, LATERAL generate_series(1, 3) g")
+
+    assert "generate_series(1, 3)" in emitted.lower()
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
         # The exact pentest payload — bypass of the cohort minimum-size protection.
         "SELECT * FROM testlarge LIMIT CASE WHEN (substr('abcd', 2, 1))='b' THEN 6 ELSE 1 END",
         # Same shape with an OMOP table.

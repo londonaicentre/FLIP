@@ -135,9 +135,11 @@ It performs a single parse-validate-emit pass and enforces:
 
    A set-returning function in the `FROM` clause (`FROM generate_series(1, 10)`) is checked against
    an allowlist rather than pinned: it carries no name and no schema, and it resolves in
-   `pg_catalog`, not `omop`, so there is nothing to pin it to. Without that check the FROM-clause
-   function shape skipped every rule here — including `query_to_xml(...)`, which executes a SQL
-   string sqlglot never parses.
+   `pg_catalog`, not `omop`, so there is nothing to pin it to. The same allowlist is applied to any
+   *unrecognised* function wherever it appears — a `LATERAL` FROM item, the select list, a `WHERE`
+   predicate — since the schema pin only reaches `exp.Table` nodes and those positions reach
+   `pg_catalog` just the same. Without this the function shape skipped every rule here — including
+   `query_to_xml(...)`, which executes a SQL string sqlglot never parses.
 6. Literal-integer `LIMIT`/`OFFSET` (defeats blind extraction that makes the row count a function
    of a character value and reads it back through the cohort-size response).
 

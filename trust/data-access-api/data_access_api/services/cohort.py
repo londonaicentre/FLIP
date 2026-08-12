@@ -47,6 +47,23 @@ ALLOWED_SCHEMA = "omop"
 # next such function is one Postgres release away.
 _ALLOWED_TABLE_FUNCTIONS = frozenset({"generate_series", "unnest"})
 
+# Functions permitted anywhere an expression is — select list, WHERE, a LATERAL FROM item, a
+# subquery. A dangerous function is not confined to the FROM clause: the schema pin and the
+# FROM-clause allowlist above both key on exp.Table nodes, so ``FROM LATERAL query_to_xml(...)``
+# (an exp.Lateral, not an exp.Table), ``SELECT pg_read_file(...)`` and ``WHERE pg_ls_dir(...) IS
+# NOT NULL`` all slipped past while Postgres still resolved them through the implicit pg_catalog.
+# sqlglot models the ordinary cohort functions (COUNT, SUM, DATE_PART, COALESCE, SUBSTRING, ...) as
+# typed nodes and wraps everything it does not recognise in exp.Anonymous — and the dangerous
+# pg_catalog functions all land there: the query_to_xml family executes an unparsed SQL string,
+# pg_read_file / pg_ls_dir / pg_stat_file read the server filesystem, current_setting / dblink /
+# lo_import reach further still. So an unrecognised (Anonymous) function is rejected wherever it
+# appears unless it is on this allowlist. This stays an allowlist for the same reason the table one
+# does; the table functions are a subset (they are also legitimate in a lateral or scalar
+# position), and ``age`` is included because deriving patient age is an ordinary cohort filter and
+# sqlglot happens to leave it Anonymous. Every real cohort query in the tutorials uses only typed
+# nodes, so the false-positive surface is small.
+_ALLOWED_FUNCTIONS = _ALLOWED_TABLE_FUNCTIONS | frozenset({"age"})
+
 # Reject pathologically large queries before sqlglot does any work — cheap DoS guard
 # at the API layer. The DB role limits blast radius too, but rejecting here is
 # defence in depth and stops the parser allocating an arbitrarily large AST.
@@ -137,7 +154,12 @@ def validate_query(query: str) -> str:
        A set-returning function in the ``FROM`` clause is checked against an
        allowlist instead. It carries no name and no schema to pin, and it
        resolves in ``pg_catalog`` rather than ``omop``, so pinning cannot
-       express anything about it.
+       express anything about it. The same allowlist is applied to every
+       *unrecognised* function wherever it appears — a ``LATERAL`` function
+       item, the select list, a ``WHERE`` predicate — since those positions
+       reach ``pg_catalog`` too and are not ``exp.Table`` nodes for the pin to
+       act on. ``query_to_xml`` and friends are the reason: they execute an
+       unparsed SQL string and so bypass every other rule here.
     6. Every ``LIMIT`` and ``OFFSET`` is a literal integer (defeats the blind
        data-extraction technique that abuses
        ``LIMIT CASE WHEN <predicate> THEN n ELSE m END`` to make the row count
@@ -274,6 +296,23 @@ def validate_query(query: str) -> str:
             # the cohort queries researchers write, and rejecting them would break saved queries to
             # close a hole that pinning closes completely.
             table.set("db", exp.to_identifier(ALLOWED_SCHEMA))
+
+    # The scope walk above only reaches functions that sqlglot parsed into an exp.Table (a bare
+    # ``FROM func(...)`` item). A dangerous function reached any other way — ``FROM LATERAL
+    # func(...)`` parses as exp.Lateral, and select-list / WHERE / subquery calls parse as neither
+    # — never touched a Table node, so it resolved through the implicit pg_catalog unchecked. Walk
+    # every exp.Anonymous (sqlglot's node for an unrecognised function) tree-wide and allowlist it.
+    # Skip the ones an exp.Table owns: those are FROM-clause table-valued functions already handled
+    # above, and re-rejecting them here would only replace their specific message with this one.
+    for function in stmt.find_all(exp.Anonymous):
+        if isinstance(function.parent, exp.Table):
+            continue
+        function_name = function.name.lower()
+        if function_name not in _ALLOWED_FUNCTIONS:
+            raise _invalid_query(
+                f"'{function_name}' is not an allowed function. "
+                f"Allowed: {', '.join(sorted(_ALLOWED_FUNCTIONS))}."
+            )
 
     for clause_type, label in ((exp.Limit, "LIMIT"), (exp.Offset, "OFFSET")):
         for node in stmt.find_all(clause_type):
