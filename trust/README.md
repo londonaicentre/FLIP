@@ -161,6 +161,10 @@ that URL opening in the browser.
 
 Notes:
 
+- **SAM is always on**, independently of `MONAI_LABEL_MODELS`: the radiology app registers
+  `sam_2d` and `sam_3d` (interactive click-to-segment) whenever the `sam2` package is
+  importable. Their checkpoint is a further ~900 MB fetched from HuggingFace on first start,
+  into the same persisted model directory. Disable with `--conf sam2 false` if not wanted.
 - The server reads DICOM straight off this trust's XNAT archive (mounted read-only), falling
   back to HTTP downloads only for scans it cannot resolve there.
 - Pretrained weights are fetched on first start and persisted in the `monailabel-models`
