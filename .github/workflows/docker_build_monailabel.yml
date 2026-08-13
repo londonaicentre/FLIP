@@ -67,6 +67,16 @@ jobs:
             /opt/hostedtoolcache/CodeQL /usr/local/.ghcup /usr/local/share/boost
           sudo docker system prune -af --volumes >/dev/null 2>&1 || true
           df -h / | tail -1
+          # Assert the reclaim actually delivered. `rm -rf` on a path that no longer exists
+          # exits 0, so if a future runner image relocates these toolchains this step stays
+          # green and the build instead dies with an opaque ENOSPC deep into a torch layer.
+          # Fail here, where the cause is obvious. Floor is ~2x the finished image.
+          FREE_GB=$(df -BG --output=avail / | tail -1 | tr -dc '0-9')
+          echo "Free after reclaim: ${FREE_GB} GB"
+          if [[ "${FREE_GB}" -lt 25 ]]; then
+            echo "::error::Only ${FREE_GB} GB free after reclaim; the ~10.4 GB image needs ~25 GB of headroom for intermediate layers. The runner image's preinstalled toolchain paths have probably moved — update this step."
+            exit 1
+          fi
 
       - name: Determine tags
         id: tags

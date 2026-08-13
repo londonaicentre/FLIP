@@ -115,9 +115,18 @@ jobs:
             echo "::error::monailabel resources did not render with monailabel.enabled=true"
             exit 1
           fi
+          # Assert the guard fires AND fires for the right reason. Testing only "helm exited
+          # non-zero" would be satisfied by a typo'd chart path, an unrelated schema error, or
+          # any broken sibling template — a vacuous pass of exactly the kind this workflow
+          # calls out elsewhere. Capture stderr and match the guard's own message.
           if helm template trust-release deploy/providers/kubernetes/ \
-            --set monailabel.enabled=true > /dev/null 2>&1; then
+            --set monailabel.enabled=true > /tmp/monailabel-noguard.out 2>&1; then
             echo "::error::monailabel rendered without publicUrl — the required guard is gone"
+            exit 1
+          fi
+          if ! grep -q "monailabel.publicUrl is required" /tmp/monailabel-noguard.out; then
+            echo "::error::render without publicUrl failed, but not on the publicUrl guard:"
+            cat /tmp/monailabel-noguard.out
             exit 1
           fi
 
