@@ -62,12 +62,12 @@ resource "aws_security_group_rule" "ingress" {
   for_each          = { for rule in var.ingress_rules : rule.port => rule }
   security_group_id = aws_security_group.security_group.id
   type              = "ingress"
-  # Precedence: explicit cidr_blocks > explicit security group source >
-  # explicit prefix list source. The variable validation block in variables.tf
-  # requires exactly one non-empty source per rule at plan time, so this
-  # precedence only ever picks the single source the caller set — there is no
-  # longer a silent fall-open to 0.0.0.0/0 for a rule that names no source.
-  cidr_blocks              = each.value.cidr_blocks != null ? each.value.cidr_blocks : null
+  # Exactly one of these three is non-null on any given rule — the variable
+  # validation in variables.tf enforces that at plan time, so the other two pass
+  # through as null and the provider ignores them. There is deliberately no
+  # fall-open to 0.0.0.0/0 for a rule that names no source: such a rule is
+  # rejected rather than silently opened to the world.
+  cidr_blocks              = each.value.cidr_blocks
   source_security_group_id = each.value.source_security_group_id
   prefix_list_ids          = each.value.prefix_list_ids
   protocol                 = "tcp"
