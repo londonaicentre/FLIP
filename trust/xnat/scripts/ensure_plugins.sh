@@ -28,16 +28,26 @@ fi
 
 STAMP_FILE="${PLUGIN_DIR}/.s3-prefix"
 
-# NOTE: ohif-viewer is intentionally NOT installed. FLIP uses XNAT purely as a
-# DICOM store for FL training and never opens the OHIF viewer, but the plugin's
+# NOTE: ohif-viewer is intentionally NOT installed by default. FLIP uses XNAT purely
+# as a DICOM store for FL training and never opens the OHIF viewer, but the plugin's
 # per-session metadata-rebuild event listener is the dominant load on XNAT's
 # Reactor EventBus and materially drives the back-pressure livelock that wedges
 # bulk cohort imports (FLIP#662). It is excluded from the S3 sync below.
+#
+# MONAI_LABEL=true opts back in. AI-assisted annotation is delivered *through* the OHIF
+# viewer — the MONAI Label panel lives in the viewer's Masks panel and registration targets
+# the viewer's own /xapi/ohifaiaa endpoint — so without this plugin the MONAI Label server
+# starts, fails to register, and exits. A trust enabling MONAI Label is accepting the FLIP#662
+# trade-off knowingly (up-trust prints the warning); a trust that does not is unaffected.
 required_prefixes=(
   "batch-launch-"
   "container-service-"
   "dicom-query-retrieve-"
 )
+if [[ "${MONAI_LABEL:-false}" == "true" ]]; then
+  echo "🧠 MONAI_LABEL=true — including the ohif-viewer plugin (FLIP#662 trade-off accepted)."
+  required_prefixes+=("ohif-viewer-")
+fi
 expected_prefixes="$(printf '%s, ' "${required_prefixes[@]}")"
 expected_prefixes="${expected_prefixes%, }"
 
@@ -80,11 +90,18 @@ else
     echo "🔁 Local plugins were synced from '${synced_prefix:-<unknown>}' but this build needs '${S3_PREFIX}'."
   fi
   echo "📦 Syncing plugins from S3..."
-  # Exclude ohif-viewer: the trailing --exclude wins over --include for matching
-  # keys, so it is neither downloaded nor (with --delete) kept locally. See the
-  # required_prefixes note above (FLIP#662).
+  # Exclude ohif-viewer unless MONAI Label is on: the trailing --exclude wins over --include
+  # for matching keys, so it is neither downloaded nor (with --delete) kept locally. Dropping
+  # that trailing --exclude is what opts it back in. See the required_prefixes note above
+  # (FLIP#662). --delete means flipping MONAI_LABEL back to false also removes the jar again.
+  ohif_filter=(--exclude "ohif-viewer-*")
+  if [[ "${MONAI_LABEL:-false}" == "true" ]]; then
+    ohif_filter=()
+  fi
+  # ${a[@]+"${a[@]}"} rather than "${a[@]}": expanding an empty array under `set -u` is only
+  # safe from bash 4.4, and this runs on the operator's host bash, not a pinned image.
   aws s3 sync "s3://${S3_BUCKET}/${S3_PREFIX}/" "${PLUGIN_DIR}/" --delete \
-    --exclude "*" --include "*.jar" --exclude "ohif-viewer-*"
+    --exclude "*" --include "*.jar" ${ohif_filter[@]+"${ohif_filter[@]}"}
   printf '%s\n' "${S3_PREFIX}" > "${STAMP_FILE}"
 fi
 
