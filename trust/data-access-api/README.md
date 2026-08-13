@@ -88,8 +88,8 @@ Each trust has a distinct key. A trust's `TRUST_INTERNAL_SERVICE_KEY` is minted 
 (`make register-trusts`) and written into that trust's kit file (`trust/.env.<CODE>.<env>`), which
 `trust/Makefile` `-include`s so every trust-internal container inherits it.
 
-For the threat model, see the **Trust-internal Service Authentication** section in
-[`CLAUDE.md`](../../CLAUDE.md).
+For the threat model, see
+[Trust-internal service authentication](../../docs/source/security.rst#trust-internal-service-authentication).
 
 ## Cohort query validation
 

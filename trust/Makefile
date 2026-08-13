@@ -57,6 +57,10 @@ ifeq ($(ENV),development)
 export AES_KEY_BASE64 CENTRAL_HUB_API_URL TRUST_API_KEY_HEADER FL_BACKEND \
        FLOWER_KIT_DATE FLARE_KIT_DATE DOCKER_TAG DOCKER_REGISTRY \
        DOCKER_FL_TAG DOCKER_FL_REGISTRY NLB_SUBDOMAIN FL_SERVER_PORT
+# xnat/Makefile's dev-only plugin cache reads this to reach the artifacts bucket. Unexported it is
+# empty in the `make -C trust up-trust` path (the root Makefile blanket-exports the hub env, so only
+# a top-level `make up` would carry it), and the cache download fails on a bucket-less S3 URI.
+export FLIP_ARTIFACTS_BUCKET_NAME
 # UID/GID/UNAME come from the same hub .env and must be exported for the same reason:
 # the dev compose runs imaging-api, data-access-api and trust-api as `user: "${UID}:${GID}"`
 # so they can write host-owned bind mounts (notably BASE_IMAGES_DOWNLOAD_DIR, which this
@@ -351,7 +355,7 @@ up: create-networks
 	@found=0; for f in .env.*.$(ENV); do \
 	  [ -e "$$f" ] || continue; \
 	  kit=$${f#.env.}; kit=$${kit%.$(ENV)}; found=1; \
-	  $(MAKE) up-trust KIT=$$kit; \
+	  $(MAKE) up-trust KIT=$$kit || { echo "❌ Failed to start trust $$kit"; exit 1; }; \
 	done; \
 	[ "$$found" = 1 ] || echo "ℹ️  No trust/.env.*.$(ENV) kits found — run 'make register-trusts' (from repo root) first."
 
@@ -406,9 +410,9 @@ tests:
 
 create-networks-core:
 	@echo "🔧 Ensuring external Docker networks exist..."
-	@{ docker network inspect $(HUB_NET_PREFIX)central-hub-trust-apis-network >/dev/null 2>&1 || docker network create --driver bridge $(HUB_NET_PREFIX)central-hub-trust-apis-network || true; }
-	@{ docker network inspect $(HUB_NET_PREFIX)deploy_shared-net-1 >/dev/null 2>&1 || docker network create --driver bridge $(HUB_NET_PREFIX)deploy_shared-net-1 || true; }
-	@{ docker network inspect $(HUB_NET_PREFIX)deploy_shared-net-2 >/dev/null 2>&1 || docker network create --driver bridge $(HUB_NET_PREFIX)deploy_shared-net-2 || true; }
+	@{ docker network inspect $(HUB_NET_PREFIX)central-hub-trust-apis-network >/dev/null 2>&1 || docker network create --driver bridge $(HUB_NET_PREFIX)central-hub-trust-apis-network >/dev/null || docker network inspect $(HUB_NET_PREFIX)central-hub-trust-apis-network >/dev/null 2>&1 || { echo "❌ Could not create Docker network $(HUB_NET_PREFIX)central-hub-trust-apis-network — see the daemon error above."; exit 1; }; }
+	@{ docker network inspect $(HUB_NET_PREFIX)deploy_shared-net-1 >/dev/null 2>&1 || docker network create --driver bridge $(HUB_NET_PREFIX)deploy_shared-net-1 >/dev/null || docker network inspect $(HUB_NET_PREFIX)deploy_shared-net-1 >/dev/null 2>&1 || { echo "❌ Could not create Docker network $(HUB_NET_PREFIX)deploy_shared-net-1 — see the daemon error above."; exit 1; }; }
+	@{ docker network inspect $(HUB_NET_PREFIX)deploy_shared-net-2 >/dev/null 2>&1 || docker network create --driver bridge $(HUB_NET_PREFIX)deploy_shared-net-2 >/dev/null || docker network inspect $(HUB_NET_PREFIX)deploy_shared-net-2 >/dev/null 2>&1 || { echo "❌ Could not create Docker network $(HUB_NET_PREFIX)deploy_shared-net-2 — see the daemon error above."; exit 1; }; }
 
 create-networks-trust-1:
 	@{ docker network inspect deploy_trust-network-1 >/dev/null 2>&1 || docker network create --driver overlay --attachable deploy_trust-network-1; }

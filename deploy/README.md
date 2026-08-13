@@ -437,8 +437,8 @@ probes still work.
 
 Each trust gets a distinct key — a leak in `Trust_1` cannot drive operations on `Trust_2`'s APIs. The hub
 never sees these keys: they live only in trust-side env (the trust's kit file `trust/.env.<CODE>.<env>`, which
-`trust/Makefile` `-include`s so every trust-internal container inherits it). See the **Trust-internal Service
-Authentication** section in the repo-root [`CLAUDE.md`](../CLAUDE.md) for the full threat model.
+`trust/Makefile` `-include`s so every trust-internal container inherits it). See the
+[public security model](../docs/source/security.rst#trust-internal-service-authentication) for the full threat model.
 
 FL clients (trust side) **do not** have Central Hub API credentials. Only the fl-server communicates with flip-api.
 FL clients relay metrics and exceptions to the fl-server, which forwards them to the Central Hub.
