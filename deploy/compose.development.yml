@@ -146,7 +146,12 @@ services:
       - POSTGRES_USER=${POSTGRES_USER}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
       - DB_HOST=${DB_HOST}
-      - DB_PORT=${DB_PORT}
+      # The port flip-db listens on inside the docker network, not the published one.
+      # Fixed at 5432 by the postgres image, so it is a literal here rather than
+      # ${DB_PORT} — in dev DB_PORT is the *host* port (see the flip-db ports below),
+      # and reusing it here would point flip-api, and wait-for-postgres.sh, at a port
+      # nothing is listening on as soon as a second stack moved it (FLIP#957).
+      - DB_PORT=5432
       - POSTGRES_DB=${POSTGRES_DB}
       - TRUST_API_KEY_HEADER=${TRUST_API_KEY_HEADER}
       - INTERNAL_SERVICE_KEY_HEADER=${INTERNAL_SERVICE_KEY_HEADER}
@@ -192,17 +197,15 @@ services:
   flip-db:
     image: postgres:17
     ports:
-      # Container side is fixed: the postgres image always listens on 5432, the same
-      # way uvicorn always listens on 8000 behind ${API_PORT}. Only the host side is
-      # worth moving, so a second stack can publish elsewhere.
+      # DB_PORT is the host port; the container side is fixed at 5432 by the postgres
+      # image, exactly as uvicorn is fixed at 8000 behind ${API_PORT}.
       #
-      # This was previously ${DB_PORT}:${DB_PORT}, which made one variable mean two
-      # different things. DB_PORT is a *server* port — flip-api dials flip-db:${DB_PORT}
-      # over the docker network and uses it to mint the RDS IAM token in prod — so
-      # raising it to free the host port pointed flip-api at nothing, and leaving it
-      # pinned meant a second stack could not bind at all:
-      # "Bind for 0.0.0.0:5432 failed: port is already allocated" (FLIP#957).
-      - ${DB_HOST_PORT:-5432}:5432
+      # This was previously ${DB_PORT}:${DB_PORT}, one variable meaning two different
+      # things, which made a second stack impossible: raising it to free the host port
+      # pointed flip-api at a port nothing was listening on, and leaving it pinned
+      # failed outright with "Bind for 0.0.0.0:5432 failed: port is already allocated"
+      # (FLIP#957).
+      - ${DB_PORT}:5432
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
