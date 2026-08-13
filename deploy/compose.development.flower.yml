@@ -152,7 +152,13 @@ services:
     image: ${DOCKER_FL_REGISTRY}${DOCKER_FL_SERVER_NAME}:${DOCKER_FL_TAG}
     environment:
       - SUPERLINK_ADDRESS=fl-server-net-1:9093
-      - FL_API_ADDRESS=http://flip-fl-api-net-1:8000
+      # Service name, not the container name: container_name carries the FLIP_INSTANCE
+      # prefix, so `flip-fl-api-net-1` does not resolve in a secondary stack, while the
+      # service alias `fl-api-net-1` resolves in every stack. Getting this wrong fails
+      # SILENTLY — register-supernode-keys.sh swallows the DNS error and still exits 0,
+      # leaving SuperNode keys unlabelled and FL metrics attributed to unknown_client
+      # (FLIP#957).
+      - FL_API_ADDRESS=http://fl-api-net-1:8000
       # The script reads ${TRUST_NAMES} as a label list, but the underlying identity it's
       # labelling is the per-slot SuperNode key — one entry per provisioned slot. Feed
       # FL_KIT_SLOT_NAMES through so trusts admin-created later (and bound to a slot via
@@ -245,7 +251,8 @@ services:
     image: ${DOCKER_FL_REGISTRY}${DOCKER_FL_SERVER_NAME}:${DOCKER_FL_TAG}
     environment:
       - SUPERLINK_ADDRESS=fl-server-net-2:9093
-      - FL_API_ADDRESS=http://flip-fl-api-net-2:8000
+      # Service name — see net-1 above.
+      - FL_API_ADDRESS=http://fl-api-net-2:8000
       # See net-1 above — feed FL_KIT_SLOT_NAMES so all provisioned slots get labelled.
       - TRUST_NAMES=${FL_KIT_SLOT_NAMES}
     volumes:
