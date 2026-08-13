@@ -10,41 +10,32 @@
 # limitations under the License.
 #
 
+"""This service's own version, shared by the /health route and the health collector."""
+
 import tomllib
 from functools import lru_cache
 from pathlib import Path
 
-from fastapi import APIRouter
-
-router = APIRouter(prefix="/health", tags=["Health"])
+from trust_api.utils.logger import logger
 
 # The service is a uv "virtual" project (never installed as a distribution), so the
 # only version source shared by the repo checkout and the container image is the
-# pyproject.toml that sits next to the package (/app in the image).
+# pyproject.toml at the package root (/app in the image).
 _PYPROJECT_PATH = Path(__file__).resolve().parents[2] / "pyproject.toml"
 
 
 @lru_cache(maxsize=1)
-def _service_version() -> str | None:
-    """Look up the service version from the adjacent pyproject.toml.
+def service_version() -> str | None:
+    """Look up the service version from the project's pyproject.toml.
 
     Returns:
         str | None: The ``[project].version`` value, or None when the file is
-        missing or unparsable.
+        missing or unparsable — which means a broken image layout, so it is logged
+        (once, thanks to the cache) rather than silently rendering as "—" forever.
     """
     try:
         with _PYPROJECT_PATH.open("rb") as fh:
             return tomllib.load(fh)["project"]["version"]
-    except (OSError, KeyError, tomllib.TOMLDecodeError):
+    except (OSError, KeyError, tomllib.TOMLDecodeError) as e:
+        logger.warning(f"Could not read the service version from {_PYPROJECT_PATH}: {type(e).__name__}: {e}")
         return None
-
-
-@router.get("")
-async def health_check() -> dict[str, str | None]:
-    """
-    Health check endpoint for the Data Access API
-
-    Returns:
-        dict[str, str | None]: The status of the service and its installed package version.
-    """
-    return {"status": "ok", "version": _service_version()}
