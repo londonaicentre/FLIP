@@ -48,8 +48,21 @@ services:
       - MONAI_LABEL_MODELS=${MONAI_LABEL_MODELS:-deepedit}
       # Reached from the clinician's browser, NOT from inside the trust network.
       - MONAI_LABEL_PUBLIC_URL=${MONAI_LABEL_PUBLIC_URL:-http://localhost:${MONAI_LABEL_PORT:-8030}}
+      # Explicit, not inherited. MONAI Label's own default is False, and its RBAC dependencies
+      # are no-ops while it is — so every /datastore route is open to whoever can reach the
+      # port. Turning it on needs an OAuth realm (MONAI_LABEL_AUTH_REALM_URI et al) that FLIP
+      # does not run, so the containment here is the bind address below, not app auth. Stated
+      # rather than left implicit so the posture is visible at the point it is chosen.
+      - MONAI_LABEL_AUTH_ENABLE=${MONAI_LABEL_AUTH_ENABLE:-false}
     ports:
-      - "${MONAI_LABEL_PORT:-8030}:${MONAI_LABEL_PORT:-8030}"
+      # Loopback by default. The API is unauthenticated (above) and holds this trust's XNAT
+      # service-account credentials, so binding 0.0.0.0 would put an unauthenticated reader of
+      # every study — and an admin-credentialled writer — on the trust host's network, which is
+      # the one thing the trust deployment model rules out ("no inbound ports on trust hosts").
+      # For real clinician access set MONAI_LABEL_BIND_HOST to the interface you have
+      # deliberately firewalled, or front it through the XNAT nginx (which also resolves the
+      # mixed-content problem on an HTTPS XNAT). See trust/README.md#monai-label-optional.
+      - "${MONAI_LABEL_BIND_HOST:-127.0.0.1}:${MONAI_LABEL_PORT:-8030}:${MONAI_LABEL_PORT:-8030}"
     shm_size: ${MONAI_LABEL_SHM_SIZE:-8gb}
     # count tracks NUM_AVAILABLE_GPUS so the reservation stays in lockstep with the rest of
     # the trust stack, exactly as the fl-client GPU overlay does.
