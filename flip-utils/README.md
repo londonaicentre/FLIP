@@ -358,4 +358,8 @@ Please report security vulnerabilities responsibly. For details on how to report
 
 ## Contributing
 
-For information on how to contribute to this project, see [CONTRIBUTING.md](../CONTRIBUTING.md).
+For general contribution guidelines (coding style, testing, pull requests), see the
+[root CONTRIBUTING.md](../CONTRIBUTING.md).
+
+For anything specific to this package — versioning, the `develop` → `main` PR gates, how it is published to PyPI, and
+how the release notes are assembled — see [`CONTRIBUTING.md`](CONTRIBUTING.md) in this directory.
