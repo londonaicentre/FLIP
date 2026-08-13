@@ -86,7 +86,7 @@ async function bootstrap(): Promise<void> {
         window.AWS_BASE_URL = "/api";
         const { makeDemoServer } = await import("../mocks/demo-server");
         makeDemoServer();
-        seedDemoAuth();
+        await seedDemoAuth();
     }
     else if (import.meta.env.VITE_LOCAL === "true" && !isE2E) {
         console.info("Running locally, will use mocked API.");

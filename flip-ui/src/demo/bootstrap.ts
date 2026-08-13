@@ -22,8 +22,6 @@
  * value by Vite and these branches are dead-code-eliminated.
  */
 
-import { useAuthStore } from "@/store/auth";
-
 export const IS_DEMO = import.meta.env.VITE_DEMO === "true";
 
 /**
@@ -59,8 +57,18 @@ export const DEMO_MODEL_FILES_ZIP_URLS: Record<string, string> = {
  * usePermissions().isViewer true, which hides every create/edit/stage/train
  * control across the project and model pages. Call after pinia is installed.
  */
-export function seedDemoAuth(): void {
+export async function seedDemoAuth(): Promise<void> {
     if (!IS_DEMO) return;
+
+    // Imported lazily so this module stays a LEAF: `IS_DEMO` is read by the
+    // router, the file service and the user dropdown, and a static
+    // `@/store/auth` import here would drag the auth store — which itself
+    // imports `@/router` — into each of them. For the router that closes a
+    // genuine cycle (router -> bootstrap -> store/auth -> router), evaluating
+    // the store while the router module is still initialising. Keeping the
+    // dependency inside the one function that needs it means importing the
+    // demo flag costs nothing anywhere.
+    const { useAuthStore } = await import("@/store/auth");
 
     useAuthStore().user = {
         username: "flip-demo",

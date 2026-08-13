@@ -65,7 +65,10 @@ export const beforeEachGuard = (
     // they have requested real platform access (FLIP#794 review). Send them to
     // the demo's own landing page instead of a broken form.
     if (IS_DEMO && to.path.startsWith("/auth")) {
-        next({ path: "/projects", replace: true });
+        next({
+            path: "/projects",
+            replace: true
+        });
 
         return;
     }
