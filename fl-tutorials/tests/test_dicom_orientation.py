@@ -42,6 +42,7 @@ from dicom_phantom import (
     read_pixel_data,
 )
 from monai.data import PydicomReader
+from monai.utils import deprecated
 from tutorial_apps import DICOM_APPS, TUTORIALS_ROOT, find_load_transform, get_loader_prefix
 
 # How far ahead of the runner-up `identity` must correlate. Comfortably clear of the ~0.02 spread
@@ -153,22 +154,59 @@ def test_registry_covers_every_dicom_load_site() -> None:
     ``Orientationd``, never by weakening the suite.
     """
     registered = {app.path.resolve() for app in DICOM_APPS}
+    scanned = set()
     unaccounted = []
     for path in sorted(TUTORIALS_ROOT.rglob("*.py")):
         # Skip this suite itself and anything non-tree-owned (per-tutorial .venv/ uv environments).
-        if any(part.startswith(".") for part in path.parts) or TUTORIALS_ROOT / "tests" in path.parents:
+        # Match on the tree-relative parts, never on `path.parts`: those carry the absolute path, so
+        # a checkout under any dot component (~/.local/src/FLIP, a .worktrees/ worktree) would skip
+        # every file and pass this test without inspecting anything.
+        relative = path.relative_to(TUTORIALS_ROOT)
+        if any(part.startswith(".") for part in relative.parts) or relative.parts[0] == "tests":
             continue
+        scanned.add(path.resolve())
         text = path.read_text(encoding="utf-8")
         if "LoadImaged(" not in text:
             continue
         if path.resolve() in registered or "Orientationd(" in text:
             continue
-        unaccounted.append(str(path.relative_to(TUTORIALS_ROOT)))
+        unaccounted.append(str(relative))
+
+    # A walk that reaches nothing accounts for nothing. Requiring the registered apps themselves to
+    # have been scanned pins the filter above: no future skip rule can empty the walk and leave this
+    # test green, which is how a checkout path silently disabled it before (PR#942 review).
+    missed = sorted(str(path) for path in registered - scanned)
+    assert not missed, f"the walk never reached these registered apps — its skip filter is too broad: {missed}"
 
     assert not unaccounted, (
         "these files compose LoadImaged but are neither registered in DICOM_APPS nor on the "
         f"Orientationd NIfTI path — a DICOM-loading app here is untested for orientation: {unaccounted}"
     )
+
+
+def test_monai_deprecations_escalate_to_errors() -> None:
+    """A MONAI deprecation must fail this run, not scroll past it.
+
+    ``pytest.ini`` blanket-ignores ``DeprecationWarning``/``FutureWarning`` (torch and numpy are
+    noisy) and then re-escalates the ``monai`` ones, because MONAI's reader conventions are exactly
+    what this suite pins — a deprecation there is advance notice that the behaviour is about to
+    flip. That re-escalation rests on a mechanism worth pinning rather than asserting in a comment:
+    the third field of a warning filter matches the module the warning is *issued from*, and
+    ``monai.utils.deprecate_utils.warn_deprecated`` warns with ``stacklevel=2``, which lands on
+    MONAI's own decorator frame rather than on the caller. Were that to change — or were the
+    blanket ignores ever moved below the escalations — MONAI deprecations would silently rejoin the
+    ignored noise. This probe fails the day that happens.
+
+    ``removed=None`` keeps the probe version-proof: MONAI raises ``DeprecationError`` instead of
+    warning once the installed version reaches an announced removal.
+    """
+
+    @deprecated(since="0.0", removed=None, msg_suffix="probe for the suite's own warning filters")
+    def _probe() -> None:
+        return None
+
+    with pytest.raises(FutureWarning):
+        _probe()
 
 
 def test_loader_pins_its_reader(dicom_app) -> None:

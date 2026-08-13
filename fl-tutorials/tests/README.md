@@ -57,7 +57,8 @@ reconstructed here, so the test asserts on the shipped code.
 | `test_phantom_dicom_round_trips` | Each synthetic encoding decodes back to the phantom. |
 | `test_loader_prefix_matches_pixel_data` | The chain up to the first resampling transform is `np.array_equal` to `pydicom`'s `PixelData`. |
 | `test_full_chain_orientation_is_identity` | The full chain's output correlates best with the **unrotated, unflipped** reference, by a margin — for **both** the validation chain and the (seeded) training chain, so an orientation "fix" landing in the training-only branch fails too. |
-| `test_registry_covers_every_dicom_load_site` | Every `LoadImaged` site in the tree is either registered in `DICOM_APPS` or on the documented `Orientationd` NIfTI path — a new DICOM app cannot land silently uncovered. |
+| `test_registry_covers_every_dicom_load_site` | Every `LoadImaged` site in the tree is either registered in `DICOM_APPS` or on the documented `Orientationd` NIfTI path — a new DICOM app cannot land silently uncovered. The walk also asserts it reached the registered apps, so a skip filter that empties it fails rather than passing vacuously. |
+| `test_monai_deprecations_escalate_to_errors` | `pytest.ini`'s blanket `ignore::` lines still leave MONAI's own deprecations escalated to errors — the notice that a pinned reader convention is about to change must not rejoin the ignored torch/numpy noise. |
 | `test_loader_pins_its_reader` | The chain names `PydicomReader(swap_ij=False)` instead of inheriting a reader. |
 | `test_chain_composes` / `test_validation_chain_is_deterministic` | Both chains import, compose, run, and the validation chain is reproducible. |
 
