@@ -28,7 +28,8 @@ The trust-api acts as the local orchestrator at each Trust:
 
 1. **Cohort queries** — polls for and executes OMOP SQL queries from the Central Hub, delegates to [data-access-api](../data-access-api/), and returns aggregated statistics
 2. **Imaging projects** — creates projects in XNAT via [imaging-api](../imaging-api/) in response to approved FL studies
-3. **Audit** — logs all operations locally for governance purposes
+3. **Service health** — a background collector probes the trust stack every `HEALTH_COLLECT_INTERVAL_SECONDS` (imaging-api + data-access-api `/health`, XNAT via its anonymous `buildInfo` endpoint, the PACS connector transitively via imaging-api's `ping_pacs` DIMSE echo, the OMOP database via a raw TCP connect) and attaches the snapshot to the heartbeat; the hub surfaces it on the Connection Status page's per-container drawer
+4. **Audit** — logs all operations locally for governance purposes
 
 The trust-api polls the [flip-api](../../flip-api/) (Central Hub) for tasks. It does not accept inbound requests from the hub or expose an external user interface.
 
@@ -70,6 +71,11 @@ trust's kit file (`trust/.env.<CODE>.<env>`); hub-shared values (`AES_KEY_BASE64
 | `TRUST_API_KEY` | Per-trust API key for authenticating with the Central Hub. Lives in this trust's kit file (`trust/.env.<CODE>.<env>`), written by `make register-trust KIT=<CODE>` |
 | `AES_KEY_BASE64` | Base64-encoded AES-256 key shared with the hub, used to decrypt encrypted task payloads |
 | `POLL_INTERVAL_SECONDS` | Polling frequency in seconds (default: 5) |
+| `HEALTH_COLLECT_INTERVAL_SECONDS` | How often the health collector probes the trust services (default: 30) |
+| `HEALTH_PROBE_DEGRADED_MS` | A successful probe slower than this reports `degraded` (default: 1000) |
+| `XNAT_URL` | Internal URL of XNAT for the health probe (default `http://xnat-web:8080`) |
+| `PACS_ID` | XNAT DQR PACS id used for the `ping_pacs` deep probe (default: 1) |
+| `OMOP_DB_HOST` / `OMOP_DB_PORT` | OMOP PostgreSQL address for the TCP health probe (defaults `omop-db` / 5432) |
 | `TRUST_INTERNAL_SERVICE_KEY_HEADER` | Header name for trust-internal service auth (default `X-Trust-Internal-Service-Key`) |
 | `TRUST_INTERNAL_SERVICE_KEY` | Per-trust plaintext key. Forwarded outbound on every call to imaging-api and data-access-api so those services can authenticate the caller. Minted by `register_trust` (`make register-trust KIT=<CODE>`) into this trust's kit file (`trust/.env.<CODE>.<env>`). |
 

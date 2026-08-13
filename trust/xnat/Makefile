@@ -279,13 +279,16 @@ xnat-war-download:
 		echo "✅ XNAT WAR already exists locally."; \
 	else \
 		echo "📦 Downloading XNAT WAR from S3..."; \
-		aws s3 cp "s3://$(FLIP_ARTIFACTS_BUCKET_NAME)/xnat/xnat-web-$(XNAT_VERSION).war" \
+		aws s3 cp "s3://$(FLIP_ARTIFACTS_BUCKET_NAME)/xnat-$(XNAT_VERSION)/xnat-web-$(XNAT_VERSION).war" \
 			"xnat/build-artifacts/xnat-web-$(XNAT_VERSION).war"; \
 	fi
 
-# Ensure required XNAT plugins are present locally (skips S3 sync if all are available)
+# Ensure required XNAT plugins are present locally (skips S3 sync if all are available).
+# The S3 artifact set is keyed by XNAT version — s3://<bucket>/xnat-<version>/{xnat-web-<version>.war,
+# plugins/} — so different branches (e.g. main vs develop across an XNAT upgrade) can build against
+# different WAR + plugin rosters without clobbering each other.
 xnat-plugins-download:
-	@./scripts/ensure_plugins.sh "xnat/plugins" "$(FLIP_ARTIFACTS_BUCKET_NAME)"
+	@./scripts/ensure_plugins.sh "xnat/plugins" "$(FLIP_ARTIFACTS_BUCKET_NAME)" "xnat-$(XNAT_VERSION)/plugins"
 
 # Creates the data-volume directory structure for one trust's XNAT stack and
 # wipes any previous data. Docker Swarm requires host directories to exist

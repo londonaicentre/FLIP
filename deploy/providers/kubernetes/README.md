@@ -253,6 +253,58 @@ omopDb:
 When `enabled: false`, the chart creates an `ExternalName` Service pointing to
 the external host instead of deploying the service itself.
 
+### OMOP core vocabulary
+
+The `omop-db` image and the pgdata archive restored by `omopDb.initJob` are both
+**vocab-free** (FLIP#842/843). The licensed core vocabulary — SNOMED CT, LOINC,
+Read v2, dm+d — is streamed in afterwards by the `omop-vocab-load`
+post-install/post-upgrade hook.
+
+That bundle cannot be publicly mirrored, so unlike `initJob` there is **no
+anonymous fallback**. The hook runs only when `omopDb.vocabLoad.s3Bucket` names
+a bucket the cluster can read; the chart default is empty, so a default install
+succeeds with **no vocabulary loaded** (`helm install` prints a warning).
+
+> **Cohort queries that join `omop.concept` return nothing until the vocabulary
+> is loaded.** The stack passes every health check in this state — the only
+> symptom is empty cohorts.
+
+Two ways to load it:
+
+| You have… | Do this |
+| --- | --- |
+| Org S3 access | `make -C deploy/providers/kubernetes sync-kit KIT=<CODE> PROD=<env>` writes `omopDb.vocabLoad.s3Bucket` from the kit's `AICENTRE_BUCKET_NAME`, then `make -C deploy/providers/kubernetes deploy-trust-k8s KIT=<CODE>`. **Check the kit carries your own environment's bucket** — it is not a hub-managed key, so a kit scaffolded from `trust/.env.example` ships the dev one, and trust roles have no cross-account read. |
+| Your own licences | Build an equivalent bundle from [OHDSI Athena](https://athena.ohdsi.org/) / [NHS TRUD](https://isd.digital.nhs.uk/) (see `trust/omop-db/README.md`), put it in a bucket you control, and set `omopDb.vocabLoad.s3Bucket` / `bundleName`. Or run `trust/omop-db/files/load_core_vocab.sh` against the database directly. |
+
+Run both targets with `-C deploy/providers/kubernetes` (or from that directory):
+the repo-root `make sync-kit` does not exist, and the root `deploy-trust-k8s`
+forwards to the chart's plain `deploy` target, so `KIT=` never reaches the
+per-trust override file.
+
+AWS credentials for the fetch are shared with the init job:
+`omopDb.initJob.awsProfile` and `omopDb.initJob.hostAwsMount` (enable the host
+`~/.aws` mount for local clusters; use IRSA on EKS). Note `awsProfile` only
+reaches this Job when `hostAwsMount` is enabled.
+
+The hook probes before it fetches: `probe-vocab` asks the database what is
+missing, and only if something is does `fetch-bundle` download the bundle. This
+matters because the hook is on the critical path of *every* `helm upgrade` and a
+failed hook fails the whole release — so an upgrade that changes an unrelated
+image tag costs two queries per vocabulary table (the probe's guards, then the
+loader's) plus a pass over the constraint catalogue, not a multi-GB download. The
+download lands in an `emptyDir` sized by `omopDb.vocabLoad.workDirSize` (10Gi,
+enough for the zip and its unpacked contents together); lower it, and the
+matching `fetchResources` / `loadResources` requests, for a cluster with small
+nodes. Keep the container `ephemeral-storage` limits above `workDirSize` too:
+emptyDir usage is charged to the pod, whose ceiling is the regular containers'
+limits summed with each init container's taken as a max against that total — so
+here it is 12Gi, not 3 × 12Gi. Limits below the work dir size would evict the pod
+before it had finished filling it.
+
+An external OMOP database (`omopDb.enabled: false`) already skips this Job. Set
+`omopDb.vocabLoad.enabled: false` only to keep an in-cluster `omop-db` while
+loading the vocabulary by hand.
+
 ### FL Backend Configuration
 
 Switch between NVFLARE and Flower:
@@ -423,7 +475,7 @@ old install on the previous chart version.
 - **Pod Security & container hardening** (#530): the chart-created namespace
   carries Pod Security Standards labels (`enforce=baseline`, `warn`/`audit=restricted`
   by default — tune via `podSecurity.*`), and the stateless services
-  (trust-api, imaging-api, data-access-api, fl-client, imaging-import-worker)
+  (trust-api, imaging-api, data-access-api, fl-client)
   apply a container `securityContext` (`allowPrivilegeEscalation: false`, drop
   `ALL` capabilities, `seccompProfile: RuntimeDefault`) from `.Values.securityContext`.
   `runAsNonRoot` / `readOnlyRootFilesystem` are left opt-in (image-dependent).
@@ -519,6 +571,41 @@ Symptoms: trust-api can't reach imaging-api or data-access-api (connection timeo
 - PVC name must match the StatefulSet's `volumeClaimTemplates` — the Job expects a PVC named `<release-name>-omop-db-data`.
 - To re-run: `helm upgrade trust-release . --set omopDb.initJob.enabled=true` or delete the Job and let Helm re-create it.
 
+**OMOP vocabulary load** (`omop-vocab-load`):
+
+- Cohorts come back empty but every pod is healthy → the vocabulary was never loaded.
+  Check with `kubectl get job -n <ns> -l app.kubernetes.io/component=omop-vocab-load`.
+  **No Job at all** means `omopDb.vocabLoad.s3Bucket` is empty and the hook was skipped
+  by design — see "OMOP core vocabulary" above.
+- `aws s3 cp` denied in the `fetch-bundle` initContainer → wrong bucket for this
+  environment (each env reads its own; no cross-account read), or no credentials
+  (`omopDb.initJob.hostAwsMount` for local clusters, IRSA on EKS).
+- `/flip/omop/load_core_vocab.sh: No such file or directory` → the `omopDb.image.tag`
+  in use predates FLIP#842; repull a CI-published tag.
+- Re-running `helm upgrade` is safe *and* cheap. The Job runs three stages —
+  `probe-vocab` asks the database what is missing, `fetch-bundle` downloads the
+  bundle only if something is, then `load-vocab` loads it. On an upgrade where the
+  vocabulary is already loaded the probe logs `Core vocabulary already present in
+  every table`, the fetch logs `skipping bundle fetch`, and no multi-GB download
+  happens. The loader still runs (it re-applies the FK constraints, so a previous
+  run that died between the load and the constraints heals here).
+- `probe-vocab` fails with `omop-db not reachable after 60 attempts` → the database
+  never became ready within five minutes. This is a hard failure: the Pod fails,
+  and after `backoffLimit` so does the release. Check the `omop-db` pod and the
+  init Job that restores its PVC. (`load-vocab` waits the same way and fails the
+  same way, which is what stops a database restart during a long download from
+  discarding the bundle that was just fetched.)
+- A database that *is* reachable but cannot answer the probe — wrong password,
+  `omop` schema absent — is treated differently: the probe leaves its marker
+  unwritten and the Job falls through to a full fetch-and-load rather than
+  failing, because a needless download is recoverable and a wrongly-skipped load
+  is silent. The loader then reports the real error.
+- The Job reaches no host but S3. `fetch-bundle` only downloads the zip; the
+  loader unpacks it with the `unzip` baked into the `omop-db` image, so nothing
+  is installed at run time and no package mirror has to be on the egress
+  allowlist. `unzip: not found` in `load-vocab` means the `omopDb.image.tag` in
+  use predates this — repull a CI-published tag.
+
 ### Getting help
 
 If the above doesn't resolve your issue, please open a GitHub issue at:
@@ -533,20 +620,17 @@ Include:
 
 ## Known Limitations
 
-1. **XNAT Container Service — Job execution not yet wired**: The Container
-   Service plugin's native Kubernetes compute backend (available since plugin
-   3.2.0) is registered at init time and the `dcm2niix` command is available
-   for per-project event subscriptions. However, the storage path for spawned
-   container Jobs is not yet plumbed: XNAT's data PVC is `ReadWriteOnce`, so a
-   dcm2niix Job would need either `nodeAffinity` onto the XNAT pod's node or a
-   `ReadWriteMany` storage class (e.g. NFS/EFS) to mount the same archive/build
-   data. Subscriptions are created successfully, but DICOM-to-NIfTI conversion
-   will not yet run end-to-end on the K8s deployment until the PVC topology
-   for Jobs is finalised. **See [DCM2NIIX-K8S.md](DCM2NIIX-K8S.md) (#565)** for
-   the storage analysis, the RWX / single-node fixes (set
-   `xnat.web.persistence.accessMode: ReadWriteMany` for multi-node), and the
-   remaining chart work that must be validated against a live XNAT Container
-   Service.
+1. **XNAT Container Service — single-node by default**: DICOM-to-NIfTI
+   conversion runs end-to-end on Kubernetes (FLIP#565). The Container Service
+   spawns each `dcm2niix` Job with the `xnat-web` data PVC mounted, configured by
+   `combined-pvc-name` + `combined-path-translation` in the Kubernetes backend
+   entry of the `xnat-cs-config` ConfigMap. Because the Job mounts the *same* PVC
+   as `xnat-web`, the chart default `ReadWriteOnce` only works when the Job is
+   scheduled onto the node running `xnat-web` — true for a single-node cluster.
+   For multi-node, give the XNAT data volume a `ReadWriteMany` storage class
+   (`xnat.web.persistence.accessMode: ReadWriteMany`, e.g. NFS/EFS). See
+   [TROUBLESHOOTING.md §2.3b](TROUBLESHOOTING.md) for the failure modes,
+   including the trailing slash that `combined-path-translation` must keep.
 
 2. **Orthanc SQLite**: Orthanc uses an embedded SQLite database that cannot be
    shared across multiple pod replicas. The chart configures Orthanc with

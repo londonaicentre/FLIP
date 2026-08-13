@@ -15,6 +15,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
+from flip_api.domain.schemas.private import ServiceHealthEntry
 from flip_api.domain.schemas.users import CognitoUser
 
 # Interfaces
@@ -41,6 +42,18 @@ class ITrustStatus(BaseModel):
     # we just need to tag it on the wire.
     last_heartbeat: str | None = None
     project_count: int = 0
+    # Latest per-service health snapshot from the trust's health collector (issue
+    # #901). None for trusts on pre-collector trust-api builds. The entries reuse
+    # the same ServiceHealthEntry model the heartbeat validated them with on the
+    # way in, so the {status, version, response_ms} contract is published in
+    # OpenAPI rather than being an opaque JSON blob to generated clients. The
+    # roster keys stay free-form `str` — the hub is deliberately roster-agnostic,
+    # so a trust can report a new service without a hub deploy.
+    # services_updated_at is the hub-stamped receipt time (Z-tagged like
+    # last_heartbeat); the UI treats snapshots older than its staleness window as
+    # "no data".
+    services: dict[str, ServiceHealthEntry] | None = None
+    services_updated_at: str | None = None
 
 
 class ICreateTrust(BaseModel):

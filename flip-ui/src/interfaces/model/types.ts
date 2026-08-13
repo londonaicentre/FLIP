@@ -27,11 +27,24 @@ export enum FileUploadStatus {
     INFECTED = "INFECTED",
 }
 
+// One Bandit finding for a .py upload (#877). Advisory only — never changes
+// FileUploadStatus, so a file with findings can still be COMPLETED.
+export interface BanditFinding {
+    test_id: string | null;
+    issue_text: string | null;
+    severity: string | null;
+    confidence: string | null;
+    line_number: number | null;
+}
+
 export interface FileInfo {
     id: string;
     name: string;
     size: number;
     status: FileUploadStatus;
+    // Matches the backend's UploadedFiles field name verbatim (this response
+    // path serializes that model directly, with no camelCase alias).
+    bandit_findings?: BanditFinding[] | null;
 }
 
 export interface FileTableRow {
@@ -40,4 +53,5 @@ export interface FileTableRow {
     size: number;
     tag?: string;
     status: FileUploadStatus;
+    bandit_findings?: BanditFinding[] | null;
 }

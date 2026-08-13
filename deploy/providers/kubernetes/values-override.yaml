@@ -16,6 +16,11 @@ uploadedFederatedDataBucket: "s3://${FLIP_BUCKET_NAME}/uploaded_federated_data"
 omopDb:
   initJob:
     s3Bucket: flipstag-aicentre
+  # The licensed core vocabulary bundle — same bucket, same credentials as
+  # initJob. Chart default is empty; without this the release still installs,
+  # but with NO vocabulary (cohort queries joining omop.concept return nothing).
+  vocabLoad:
+    s3Bucket: flipstag-aicentre
 flClient:
   nvflare:
     kitFromS3:

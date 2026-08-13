@@ -22,7 +22,7 @@ The **imaging-api** is a Trust-side service that manages imaging data operations
 interfaces with [XNAT](https://www.xnat.org/) for imaging project management and [Orthanc](https://www.orthanc-server.com/)
 as the mock PACS source. It is called only by the [trust-api](../trust-api/).
 
-Tested with `XNAT version 1.9.3, build: 158`.
+Tested with `XNAT version 1.10.0, build: 246` (DQR 3.0.0, Container Service 3.8.1).
 
 ## Role in the FLIP Platform
 
@@ -107,7 +107,7 @@ Get import status or count for a project (queries the XNAT PostgreSQL database d
 
 ```
 project_id: 8ba38209-97f5-41b9-976e-dfe3c5c8dd94
-query: SELECT * FROM omop.radiology_occurrence
+query: SELECT * FROM omop.image_occurrence
 ```
 
 ### Upload

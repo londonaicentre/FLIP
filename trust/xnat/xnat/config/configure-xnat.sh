@@ -118,6 +118,9 @@ xnat_curl() {
 # by a prior run. Re-running the rest of the script would silently 401 on the
 # initial-password curls and then produce duplicate-key errors for the service
 # account, PACS registration, and PACS availability intervals — so skip it.
+# This never suppresses a configuration change on the Swarm path: `up-xnat` wipes XNAT_DATA_DIR on
+# every redeploy, so the script always meets a fresh instance — see "Every redeploy is a fresh
+# install" in ../../README.md.
 # NOTE: when the configured admin password equals the initial one (the dev
 # kits do this), this can never fire and the whole script re-runs on every
 # `make up-trust` — so the conflict-prone calls below (service account, PACS
@@ -140,12 +143,18 @@ fi
 echo "Configuring XNAT instance..."
 sleep 10 # Additional wait to ensure XNAT is fully up before proceeding
 
-# Activate XNAT instance
+# Activate XNAT instance. siteUrl must be non-empty on XNAT >= 1.10.0: the Restlet create
+# paths (e.g. POST /data/projects) resolve response references through the siteUrl preference
+# via URI.create(), which throws an uncaught NPE on null — the entity is created but the
+# request returns 500, so imaging-api treats every create as failed. The UI setup wizard
+# normally sets this; our headless configure must set it explicitly. Nothing in FLIP consumes
+# the rewritten references, so the Docker-internal base URL is the honest default; override
+# with XNAT_SITE_URL if an externally reachable URL is ever needed (e.g. for SMTP links).
 echo "Activating XNAT instance..."
 xnat_curl -X POST "$XNAT_URL/xapi/siteConfig" \
   -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_INITIAL_PASSWORD}" \
   -H "Content-Type: application/json" \
-  -d '{"initialized": true}'
+  -d "{\"initialized\": true, \"siteUrl\": \"${XNAT_SITE_URL:-$XNAT_URL}\"}"
 
 # Change admin password
 echo "Changing admin password..."
@@ -217,7 +226,10 @@ echo "Disabling guest account..."
 xnat_curl -X PUT "$XNAT_URL/xapi/users/guest/enabled/false" \
   -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_PASSWORD}"
 
-# Configure DQR plugin
+# Configure DQR plugin. allowAllUsersToUseDqr stays FALSE (FLIP#846): PACS query/retrieve is
+# restricted to site admins and holders of the DQR plugin's "Dqr" role — the service account is
+# granted both above, and it is the only account that legitimately drives imports (via imaging-api).
+# With the flag true, ANY XNAT account could pull arbitrary studies from the trust PACS.
 echo "Configuring DQR plugin..."
 xnat_curl -X POST "$XNAT_URL/xapi/dqr/settings" \
   -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_PASSWORD}" \
@@ -226,7 +238,7 @@ xnat_curl -X POST "$XNAT_URL/xapi/dqr/settings" \
     "pacsAvailabilityCheckFrequency": "1 minute",
     "dqrWaitToRetryRequestInSeconds": "300",
     "assumeSameSessionIfArrivedWithin": "30 minutes",
-    "allowAllUsersToUseDqr": true,
+    "allowAllUsersToUseDqr": false,
     "dqrCallingAe": "XNAT",
     "notifyAdminOnImport": false,
     "allowAllProjectsToUseDqr": true,
