@@ -237,53 +237,43 @@ services:
 volumes:
   pgadmin_data:
 
+# Every network here is created outside compose by `make create-networks` —
+# trust-network-* as swarm overlays (`--driver overlay --attachable`) because the
+# XNAT stack attaches to them via `docker stack deploy`, the rest as plain bridges.
+# They are therefore `external: true` and compose only looks them up by name.
+#
+# These blocks used to also carry `driver: bridge` and `driver_opts` pinning a
+# per-network bridge name plus a distinct host_binding_ipv4 (127.0.0.1, .10.0.1,
+# .20.0.1, .30.0.1, .40.0.1, .50.0.1). None of it has ever applied: compose ignores
+# driver options for external networks, and `create-networks` passes no `-o`, so
+# every network reports `opts=map[]` and published ports bind to 0.0.0.0. The
+# `driver: bridge` was additionally wrong for trust-network-*, which are overlay.
+# Removed rather than left standing as a description of behaviour that does not
+# happen. If loopback-only binding is wanted, it belongs on the `docker network
+# create` calls in `create-networks` as `-o`, not here (FLIP#959).
 networks:
   default:
     external: true
     name: ${FLIP_INSTANCE:+$FLIP_INSTANCE-}central-hub-network
-    driver: bridge
-    driver_opts:
-      com.docker.network.bridge.name: "central-hub-network"
-      com.docker.network.bridge.host_binding_ipv4: "127.0.0.1"
 
   # Shared network for trust-to-hub communication (outbound from trust only).
   # Trusts poll the hub for tasks and push results back — no inbound connections to trusts.
   central-hub-trust-apis-network:
     external: true
     name: ${FLIP_INSTANCE:+$FLIP_INSTANCE-}central-hub-trust-apis-network
-    driver: bridge
-    driver_opts:
-      com.docker.network.bridge.name: "central-hub-trust-apis-network"
-      com.docker.network.bridge.host_binding_ipv4: "127.10.0.1"
 
   trust-network-1:
     external: true
     name: deploy_trust-network-1
-    driver: bridge
-    driver_opts:
-      com.docker.network.bridge.name: "deploy_trust-network-1"
-      com.docker.network.bridge.host_binding_ipv4: "127.20.0.1"
 
   trust-network-2:
     external: true
     name: deploy_trust-network-2
-    driver: bridge
-    driver_opts:
-      com.docker.network.bridge.name: "deploy_trust-network-2"
-      com.docker.network.bridge.host_binding_ipv4: "127.30.0.1"
 
   shared-net-1:
     external: true
     name: ${FLIP_INSTANCE:+$FLIP_INSTANCE-}deploy_shared-net-1
-    driver: bridge
-    driver_opts:
-      com.docker.network.bridge.name: "deploy_shared-net-1"
-      com.docker.network.bridge.host_binding_ipv4: "127.40.0.1"
 
   shared-net-2:
     external: true
     name: ${FLIP_INSTANCE:+$FLIP_INSTANCE-}deploy_shared-net-2
-    driver: bridge
-    driver_opts:
-      com.docker.network.bridge.name: "deploy_shared-net-2"
-      com.docker.network.bridge.host_binding_ipv4: "127.50.0.1"
