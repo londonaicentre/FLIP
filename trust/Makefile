@@ -390,13 +390,22 @@ create-networks-trust-2:
 
 create-networks: create-networks-core create-networks-trust-1 create-networks-trust-2
 
+# deploy_trust-network-* are keyed by trust number, NOT by FLIP_INSTANCE, so every
+# instance shares them. Removing them while tearing down a secondary instance would
+# delete the default stack's trust networks — today docker happens to refuse (they
+# are in use), but that is luck, not a guard: with the trusts down it would succeed
+# and take the default stack's networks with it. Hence the prefix check below.
 remove-networks:
 	@echo "🗑️  Removing all trust networks..."
 	@docker network rm $(HUB_NET_PREFIX)central-hub-trust-apis-network 2>/dev/null || true
-	@docker network rm deploy_trust-network-1 2>/dev/null || true
-	@docker network rm deploy_trust-network-2 2>/dev/null || true
 	@docker network rm $(HUB_NET_PREFIX)deploy_shared-net-1 2>/dev/null || true
 	@docker network rm $(HUB_NET_PREFIX)deploy_shared-net-2 2>/dev/null || true
+	@if [ -z "$(HUB_NET_PREFIX)" ]; then \
+		docker network rm deploy_trust-network-1 2>/dev/null || true; \
+		docker network rm deploy_trust-network-2 2>/dev/null || true; \
+	else \
+		echo "  ↩️  keeping deploy_trust-network-{1,2} — shared across instances, not owned by '$(HUB_NET_PREFIX)'"; \
+	fi
 	@echo "✅ Trust networks removed!"
 
 recreate-networks: remove-networks create-networks
