@@ -126,6 +126,16 @@ locals {
       path  = "/fl-server-net-1/keys"
       perms = "0750"
     }
+    # Flower shared jobs volume — the ECS analogue of compose's
+    # ${FL_JOBS_DIR}/net-1 bind: fl-api de-bundles uploaded apps (and eval
+    # checkpoints) into /app/src/<model_id>/, the SuperLink's ServerApp reads
+    # them back via the flip-job-dir run-config. Mounted RW on BOTH
+    # fl-api-net-1 and fl-server-net-1 when fl_backend=flower; 0775 for the
+    # same group-write reason as fl_checkpoints. Unused by NVFLARE.
+    fl_jobs = {
+      path  = "/fl-net-1/jobs"
+      perms = "0775"
+    }
   }
 }
 

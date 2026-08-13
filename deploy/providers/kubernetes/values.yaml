@@ -51,7 +51,7 @@ podSecurity:
   audit: restricted
 
 # Container-level securityContext applied to the stateless services (the API
-# pods + fl-client + imaging-import-worker). The defaults are safe for any
+# pods + fl-client). The defaults are safe for any
 # image — they do NOT require a non-root image. runAsNonRoot and
 # readOnlyRootFilesystem are intentionally left unset because they depend on the
 # image; enable them per-deployment once validated against the image.
@@ -355,7 +355,11 @@ omopDb:
     port: 5432
   image:
     repository: ghcr.io/londonaicentre/omop-db
-    tag: latest
+    # Tracks the develop build like every other service in this file. The tag is
+    # load-bearing here, not cosmetic: the vocab-load Job below runs the image's
+    # own /flip/omop/load_core_vocab.sh, which only exists in CI-published
+    # (vocab-free, FLIP#842) images.
+    tag: stag
     pullPolicy: Always
   persistence:
     enabled: true
@@ -372,15 +376,99 @@ omopDb:
   credentials:
     user: postgres
     # password is supplied via secrets.data.omop-postgres-password
+  # Streams the licensed core vocabulary into the running database after
+  # install/upgrade (the published image and pgdata tarballs are vocab-free —
+  # FLIP#842/843).
+  #
+  # The bundle CANNOT be publicly mirrored (SNOMED CT / LOINC / Read v2 / dm+d
+  # licences — see trust/omop-db/README.md), so unlike initJob there is no
+  # credential-free fallback. The Job therefore runs only when s3Bucket names a
+  # bucket this cluster can read; left empty, the release installs cleanly with
+  # NO vocabulary loaded.
+  #
+  # ⚠️  With no vocabulary the stack looks healthy but cohort queries that join
+  # omop.concept return nothing. Either set s3Bucket, or load the bundle by hand
+  # (chart README → "OMOP core vocabulary").
+  #
+  # Use YOUR environment's own bucket — trust roles have no cross-account read
+  # on another environment's bucket. `make -C deploy/providers/kubernetes
+  # sync-kit KIT=<CODE> PROD=<env>` writes this from the kit's
+  # AICENTRE_BUCKET_NAME, so check that the kit carries the right one (it is not
+  # a hub-managed key — a kit scaffolded from trust/.env.example ships the dev
+  # bucket).
+  #
+  # AWS *credentials* are deliberately shared with initJob (initJob.awsProfile /
+  # initJob.hostAwsMount) — one place to configure auth, not two. Note the
+  # AWS_PROFILE/region env vars only reach this Job when initJob.hostAwsMount is
+  # enabled; on EKS it relies on IRSA. The bucket itself is a separate key per
+  # job, and sync-kit sets only this one.
+  #
+  # enabled: false is only for keeping an in-cluster omop-db while loading the
+  # vocabulary by hand — an external database (omopDb.enabled: false) already
+  # skips this Job.
+  vocabLoad:
+    enabled: true
+    s3Bucket: ""
+    bundleName: "vocab_aicentre_core_20240916"
+    # Scratch space for the downloaded bundle. Must hold the zip and its unpacked
+    # contents at the same time — for the 20240916 bundle that is ~3.6 GiB
+    # unpacked plus a ~600 MiB zip, so a peak near 4.2 GiB (both figures are in
+    # trust/omop-db/README.md, "The core vocabulary bundle"). The kubelet
+    # enforces this on the emptyDir directly; keep the pod's ephemeral-storage
+    # ceiling (below) above it, so that this limit is what bounds the work dir
+    # rather than the pod being evicted before it has finished filling it.
+    workDirSize: 10Gi
+    # The fetch initContainer downloads the zip and stops there — unpacking is
+    # the loader's, because unzip is in the omop-db image and not in the aws-cli
+    # one. Its request is small for that reason, though the pod's request is set
+    # by loadResources either way (see the max rule below); the zip itself lands
+    # in the emptyDir, which is charged to the pod and never to this container —
+    # a container's own ephemeral-storage accounting covers only its writable
+    # layer and logs.
+    fetchResources:
+      requests:
+        cpu: "250m"
+        memory: 512Mi
+        ephemeral-storage: 2Gi
+      limits:
+        cpu: "1"
+        memory: 1Gi
+        ephemeral-storage: 12Gi
+    # Shared by the probe and the loader. The work dir itself is bounded by
+    # workDirSize above, which the kubelet enforces on the emptyDir directly and
+    # independently of anything here. What the ephemeral-storage REQUEST buys is
+    # scheduling and eviction ranking: emptyDir usage counts against the pod, and
+    # the kubelet ranks eviction on usage OVER request, so a pod that requested
+    # nothing is picked first under node disk pressure — and an evicted run
+    # restarts from zero. Sized for the loader, which briefly holds the zip and
+    # its unpacked contents at once. The probe over-requests harmlessly: an
+    # ordinary init container's resources are taken as a max against the regular
+    # containers' total, never added to it (a restartable init container — a
+    # sidecar — WOULD be added, so do not convert the probe into one without
+    # revisiting these numbers).
+    #
+    # Limits follow that same max rule, not a sum: the pod's ceiling here is
+    # max(12Gi regular, 12Gi per init) = 12Gi, above workDirSize. Do not read it
+    # as 3 x 12Gi — setting all three to 4Gi on a sum reading would give a real
+    # ceiling of 4Gi and evict the pod less than halfway through the work dir.
+    loadResources:
+      requests:
+        cpu: "100m"
+        memory: 256Mi
+        ephemeral-storage: 6Gi
+      limits:
+        cpu: "500m"
+        memory: 512Mi
+        ephemeral-storage: 12Gi
   initJob:
     enabled: true
     s3Bucket: ""
     # Archive file name. When empty, derived from trust name + dataVersion:
     #   {trustName}_pgdata_{dataVersion}.tar.gz
     # Override to point at a different archive (e.g. reuse Trust_2's data):
-    #   archiveName: "trust2_pgdata_20260129.tar.gz"
+    #   archiveName: "trust2_pgdata_20260729.tar.gz"
     archiveName: ""
-    dataVersion: "20260129"
+    dataVersion: "20260729"
     # AWS profile to use for S3 authentication (uses SSO cached credentials)
     awsProfile: "default"
     # Mount host's ~/.aws directory for SSO-based S3 authentication
@@ -493,9 +581,19 @@ xnat:
     plugins:
       enabled: true
       image: python:3.12-slim
+      # These URLs are the single source of the plugin roster: the download
+      # init-container derives each jar's filename from the URL, so a version
+      # bump is a one-line change here. Keep them in step with the Swarm roster
+      # baked by trust/xnat/xnat/Dockerfile — the chart mounts an emptyDir over
+      # ${XNAT_HOME}/plugins, so these downloads REPLACE the image's plugins
+      # rather than adding to them, and the XNAT_VERSION compatibility matrices
+      # apply to whatever is listed here.
+      # XNAT 1.10.0 requires DQR 3.0.0 and Container Service 3.8.x:
+      #   https://wiki.xnat.org/xnat-tools/dqr-plugin-compatibility-matrix
+      #   https://wiki.xnat.org/container-service/container-service-compatibility-matrix
       urls:
-        container-service: "https://api.bitbucket.org/2.0/repositories/xnatdev/container-service/downloads/container-service-3.8.0-fat.jar"
-        dicom-query-retrieve: "https://api.bitbucket.org/2.0/repositories/xnatdev/dicom-query-retrieve/downloads/dicom-query-retrieve-2.3.2-xpl.jar"
+        container-service: "https://github.com/NrgXnat/container-service/releases/download/3.8.1/container-service-3.8.1-fat.jar"
+        dicom-query-retrieve: "https://api.bitbucket.org/2.0/repositories/xnatdev/dicom-query-retrieve/downloads/dicom-query-retrieve-3.0.0-xpl.jar"
         batch-launch: "https://api.bitbucket.org/2.0/repositories/xnatx/xnatx-batch-launch-plugin/downloads/batch-launch-0.9.0-xpl.jar"
         ohif-viewer: "https://xnat.org/files/ohif-viewer-xnat-plugin/ohif-viewer-3.7.2.jar"
     env:
@@ -661,36 +759,3 @@ networkPolicies:
       protocol: TCP
     - port: 443
       protocol: TCP
-
-# ---------------------------------------------------------------------------
-# Imaging Import Worker (DQR bypass)
-#
-# Runs a Python-based worker that C-MOVEs studies directly from Orthanc to
-# XNAT, bypassing the buggy DQR plugin (PacsNotStorableException).
-#
-# Can run as a one-shot Job (default) or a CronJob (if a schedule is set).
-# ---------------------------------------------------------------------------
-imagingImportWorker:
-  enabled: true
-  runOnce: false
-  replicas: 1
-  batchSize: 50
-  pollInterval: 60
-  workerAet: FLIPIMPORT
-  pacsId: 1
-  logLevel: INFO
-  prearchivePollSecs: 10
-  backoffLimit: 3
-  ttlSecondsAfterFinished: 86400
-  restartPolicy: Always
-  image:
-    repository: python
-    tag: "3.12-slim"
-    pullPolicy: IfNotPresent
-  resources:
-    requests:
-      memory: "256Mi"
-      cpu: "100m"
-    limits:
-      memory: "512Mi"
-      cpu: "500m"

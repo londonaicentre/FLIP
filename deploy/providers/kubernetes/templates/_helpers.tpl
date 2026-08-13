@@ -95,6 +95,28 @@ Namespace name
 {{- end }}
 
 {{/*
+OMOP database connection environment, shared by the vocab-load Job's probe and
+loader containers. Both talk to the same database with the same credentials —
+keeping one definition means a rename here cannot leave the probe reading a
+different database than the loader writes to.
+*/}}
+{{- define "flip-trust.omopVocabDbEnv" -}}
+- name: OMOP_DB_HOST
+  value: "omop-db"
+- name: OMOP_DB_PORT
+  value: "5432"
+- name: OMOP_POSTGRES_USER
+  value: {{ .Values.omopDb.credentials.user | quote }}
+- name: OMOP_POSTGRES_DB
+  value: {{ .Values.dataAccessApi.env.OMOP_POSTGRES_DB | quote }}
+- name: OMOP_POSTGRES_PASSWORD
+  valueFrom:
+    secretKeyRef:
+      name: {{ if .Values.secrets.create }}{{ include "flip-trust.fullname" . }}-secrets{{ else }}{{ .Values.secrets.existingName }}{{ end }}
+      key: omop-postgres-password
+{{- end }}
+
+{{/*
 FL client image name based on backend selection
 */}}
 {{- define "flip-trust.flClientImage" -}}

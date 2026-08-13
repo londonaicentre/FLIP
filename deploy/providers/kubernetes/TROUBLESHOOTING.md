@@ -13,10 +13,10 @@ services, with a focus on the XNAT DICOM import pipeline.
    - [2.2 Studies Received but Land in the Unassigned Prearchive](#22-studies-received-but-land-in-the-unassigned-prearchive)
    - [2.3 imaging-api Gets 401 from XNAT (flipServiceAccount)](#23-imaging-api-gets-401-from-xnat-flipserviceaccount)
    - [2.3a dcm2niix Never Registered (admin missing ContainerManager)](#23a-dcm2niix-never-registered-admin-missing-containermanager)
+   - [2.3b dcm2niix Runs but Produces No NIfTI (Container Service PVC mounts)](#23b-dcm2niix-runs-but-produces-no-nifti-container-service-pvc-mounts)
    - [2.4 Forcing a Re-pull (status stuck on "Processing")](#24-forcing-a-re-pull-status-stuck-on-processing)
-   - [2.5 Running the Imaging Import Worker Manually](#25-running-the-imaging-import-worker-manually)
-   - [2.6 C-MOVE Testing from the DCMTK Pod](#26-c-move-testing-from-the-dcmtk-pod)
-   - [2.7 Checking DICOM Connectivity](#27-checking-dicom-connectivity)
+   - [2.5 C-MOVE Testing from the DCMTK Pod](#25-c-move-testing-from-the-dcmtk-pod)
+   - [2.6 Checking DICOM Connectivity](#26-checking-dicom-connectivity)
 3. [OMOP Data Issues](#3-omop-data-issues)
 4. [Trust Registration and Heartbeat](#4-trust-registration-and-heartbeat)
 5. [XNAT HTTPS Issues](#5-xnat-https-issues)
@@ -219,15 +219,30 @@ re-pull (see §2.4).
 with an XNAT Tomcat 401 page (`Your login attempt failed...`) in the body. The
 hub marks the task FAILED.
 
-**Root Cause:** The XNAT init job creates `flipServiceAccount` at the DB layer
-with a **fixed bcrypt hash** that does not correspond to the
-`xnat-service-password` value in the chart Secret (which is what imaging-api
-sends as `XNAT_SERVICE_PASSWORD`). Repeated failures also lock the account for
-1 hour (20-attempt lockout).
+**Root Cause:** The XNAT init job used to create `flipServiceAccount` at the DB
+layer, INSERTing into `xdat_user` with a **fixed bcrypt hash** that does not
+correspond to the `xnat-service-password` value in the chart Secret (which is
+what imaging-api sends as `XNAT_SERVICE_PASSWORD`). Repeated failures also lock
+the account for 1 hour (20-attempt lockout).
 
-**Fix:** Sync the password via the REST API (idempotent; the chart's
-`xnat-init-job.yaml` `configure-xnat-web` container now does this on every
-install/upgrade):
+A DB-layer insert has a second, worse failure mode on **XNAT >= 1.10.0**: it
+writes no `xhbm_xdat_user_auth` "localdb" record, and without that record XNAT
+rejects every login 401 whatever `xdat_user.primary_password` holds. XNAT 1.9.3
+hid this by back-filling the record on the password PUT below; 1.10.0 does not,
+and the PUT still answers 200 — so the init job reported success on an XNAT
+whose service account could never authenticate. The chart therefore creates the
+account with `POST /xapi/users` (the only path that provisions the auth record)
+and no longer touches the database directly. Check for the record with:
+
+```bash
+kubectl exec -n flip-trust "$XNAT_DB_POD" -- \
+  psql -U xnat -d xnat -c \
+  "select xdat_username, auth_method from xhbm_xdat_user_auth;"
+```
+
+**Fix (for an account that exists and has an auth record):** sync the password
+via the REST API (idempotent; the chart's `xnat-init-job.yaml`
+`configure-xnat-web` container does this on every install/upgrade):
 
 ```bash
 kubectl exec -n flip-trust "$XNAT_POD" -- \
@@ -238,6 +253,18 @@ kubectl exec -n flip-trust "$XNAT_POD" -- \
 
 Verify: `curl -u flipServiceAccount:<pass> http://localhost:8080/xapi/users/flipServiceAccount`
 from inside the pod should return 200.
+
+**Fix (for an account with no auth record — the `xhbm_xdat_user_auth` query
+above lists every user *except* `flipServiceAccount`):** no password sync can
+repair it, because the record is what authentication reads. Delete the account
+so the init job recreates it through `POST /xapi/users`:
+
+```bash
+kubectl exec -n flip-trust "$XNAT_POD" -- \
+  curl -s -X DELETE -u admin:<admin-pass> \
+  "http://localhost:8080/xapi/users/flipServiceAccount?permanently=true"
+helm upgrade ...   # re-runs the init job, which recreates the account
+```
 
 ### 2.3a dcm2niix Never Registered (admin missing ContainerManager)
 
@@ -270,6 +297,63 @@ Verify: `curl -s -u admin:<pass> http://localhost:8080/xapi/users/admin/roles/`
 must include `ContainerManager`, and
 `curl -s -u admin:<pass> "http://localhost:8080/xapi/commands?name=dcm2niix"`
 must return a command with a `dcm2niix-scan` wrapper.
+
+### 2.3b dcm2niix Runs but Produces No NIfTI (Container Service PVC mounts)
+
+**Symptom:** the `dcm2niix` command is registered and enabled, scans archive
+normally, and `GET /xapi/containers` shows containers with status `Failed`. The
+container's own log (`GET /xapi/containers/<id>/logs/stdout`) reads:
+
+```
+Error: Unable to find any DICOM images in /input (or subfolders 5 deep)
+```
+
+The Job pod pulls its image, starts, and exits — so this is not RBAC, image
+pull, or scheduling.
+
+**Root Cause:** the Container Service must be told which PVC holds the archive
+and build directories. Left unset it falls back to "no PVC mount" and bind-mounts
+the scan path as a **node `hostPath`** at XNAT's own path (`/data/xnat/...`). That
+path exists only inside the `xnat-web` pod, so kubelet creates it *empty* on the
+node and dcm2niix converts nothing. Telltale: the node accumulates the scan
+directory tree with zero files in it —
+
+```bash
+docker exec <node> find /data/xnat/archive -type d | wc -l   # many
+docker exec <node> find /data/xnat/archive -type f | wc -l   # zero
+```
+
+**Fix:** the chart sets this in the Kubernetes backend entry of the
+`xnat-cs-config` ConfigMap (`combined-pvc-name` + `combined-path-translation`),
+since the single `xnat-web` data PVC holds both `archive/` and `build/` at its
+root. If you configure a backend by hand, mirror it:
+
+```json
+"combined-pvc-name": "<release>-flip-trust-xnat-web",
+"combined-path-translation": "/data/xnat/"
+```
+
+**Keep the trailing slash.** It is the prefix the plugin strips from XNAT's paths
+to build the volume's `subPath`; without it the `subPath` keeps a leading `/` and
+the Kubernetes API rejects the entire Job with HTTP 422 —
+`volumeMounts.subPath: Invalid value: "/archive/...": must be a relative path`.
+The launch then fails *before any pod exists*, so `GET /xapi/containers` gains no
+record at all and only `logs/containers.log` shows the error. Changing the backend
+config interrupts the plugin's Kubernetes informers; **restart `xnat-web`** after
+editing it or launches will keep failing with no pod.
+
+**Multi-node caveat:** the spawned Job mounts the *same* PVC as `xnat-web`. With
+the default `ReadWriteOnce` access mode that only works when the Job lands on the
+node running `xnat-web`. On a multi-node cluster give the XNAT data volume a
+`ReadWriteMany` storage class:
+
+```yaml
+xnat:
+  web:
+    persistence:
+      accessMode: ReadWriteMany
+      storageClassName: efs-sc        # any RWX-capable provisioner
+```
 
 ### 2.4 Forcing a Re-pull (status stuck on "Processing")
 
@@ -312,80 +396,7 @@ Expect `202 {"message": "Reimport queued", ...}`, then
 `All studies queued successfully` in the imaging-api logs, and archived
 sessions a few minutes later.
 
-### 2.5 Running the Imaging Import Worker
-
-> **Note:** The worker was originally written as a workaround when
-> `PacsNotStorableException` was believed to be a DQR plugin bug. The real
-> cause was the destination AE/port mismatch (§2.1) — with §§2.1–2.3 applied,
-> the DQR pipeline works end-to-end and the worker is **not needed** for
-> normal operation. It remains useful as a diagnostic fallback for moving
-> studies when DQR is unavailable, but it bypasses the DQR relabel map, so
-> sessions it imports are **not** relabelled (Subject UUID / Session=accession).
-
-The Imaging Import Worker is a Kubernetes Job that:
-1. Reads QUEUED PACS requests from the XNAT database
-2. C-FINDs Orthanc to locate each study
-3. C-MOVEs each study directly from Orthanc to XNAT
-4. Updates the XNAT database to reflect completion
-
-#### Enable the Worker
-
-The worker is disabled by default. Enable it in your values override:
-
-```yaml
-imagingImportWorker:
-  enabled: true
-  runOnce: true
-  batchSize: 100
-  pacsId: 1
-```
-
-Then deploy:
-```bash
-helm upgrade trust-release deploy/providers/kubernetes -n flip-trust \
-  -f deploy/providers/kubernetes/values.yaml \
-  -f deploy/providers/kubernetes/k8s-trust-Trust_K8s.yaml \
-  --set imageTag=stag \
-  --set imagingImportWorker.enabled=true
-```
-
-#### Monitor the Worker
-
-```bash
-# Check Job status
-kubectl get jobs -n flip-trust -l app.kubernetes.io/component=imaging-import-worker
-
-# View logs
-WORKER_POD=$(kubectl get pods -n flip-trust -l job-name -o jsonpath='{.items[0].metadata.name}')
-kubectl logs -n flip-trust "$WORKER_POD" --tail=50
-
-# Delete after completion (clean up)
-kubectl delete job -n flip-trust trust-release-flip-trust-imaging-import-worker
-```
-
-#### Manual Run (one-off from the dcmtk pod)
-
-The worker can also run directly from the DCMTK diagnostic pod:
-
-```bash
-# Copy the script to the pod
-dcmtk_pod=$(kubectl get pods -n flip-trust -l run=dcmtk -o jsonpath='{.items[0].metadata.name}')
-kubectl cp deploy/providers/kubernetes/scripts/imaging-import-worker.py \
-  "$dcmtk_pod":/tmp/imaging-import-worker.py
-
-# Install dependencies
-kubectl exec -n flip-trust "$dcmtk_pod" -- pip install pynetdicom psycopg2-binary -q
-
-# Run with custom settings
-kubectl exec -n flip-trust "$dcmtk_pod" -- \
-  python3 /tmp/imaging-import-worker.py
-
-# Or adjust batch size and logging:
-kubectl exec -n flip-trust "$dcmtk_pod" -- \
-  BATCH_SIZE=150 LOG_LEVEL=DEBUG python3 /tmp/imaging-import-worker.py
-```
-
-### 2.6 C-MOVE Testing from the DCMTK Pod
+### 2.5 C-MOVE Testing from the DCMTK Pod
 
 The DCMTK diagnostic pod (`dcmtk`) contains `movescu`, `findscu`, and `echoscu`
 for manual DICOM testing.
@@ -440,18 +451,7 @@ kubectl exec -n flip-trust "$dcmtk_pod" -- \
 
 The study data is sent to XNAT's prearchive.
 
-#### Bulk Import via Script
-
-A direct import script is available:
-```bash
-kubectl cp deploy/providers/kubernetes/scripts/imaging-import-worker.py \
-  "$dcmtk_pod":/tmp/imaging-import-worker.py
-kubectl exec -n flip-trust "$dcmtk_pod" -- pip install pynetdicom psycopg2-binary -q
-kubectl exec -n flip-trust "$dcmtk_pod" -- \
-  BATCH_SIZE=150 python3 /tmp/imaging-import-worker.py
-```
-
-### 2.7 Checking DICOM Connectivity
+### 2.6 Checking DICOM Connectivity
 
 #### DICOM Port Map
 
@@ -648,7 +648,6 @@ machine and in `deploy/providers/kubernetes/scripts/`. Key scripts:
 
 | Script | Purpose |
 |--------|---------|
-| `imaging-import-worker.py` | DQR bypass — direct C-MOVE import worker |
 | `sync_k8s_kit.py` | Sync a registered trust kit into the cluster (Secret + override) |
 
 ### Available Tools on DCMTK Pod

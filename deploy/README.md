@@ -229,6 +229,29 @@ This runbook is for the case where **you** have lost access to your TOTP device 
 
 ## Deployment Models
 
+### Central Hub
+
+The Central Hub has **one supported production deployment**: ECS Fargate via the Terraform root in
+[`deploy/providers/AWS/`](providers/AWS/README.md). The task definitions in `ecs_tasks.tf` (env maps in
+`locals.tf`) are the **canonical definition of production container config**. Deploying into an AWS
+LZA-governed account is an env-gated **mode** of that same root, not a separate path
+([FLIP#749](https://github.com/londonaicentre/FLIP/issues/749)). The ECS FL task definitions serve **both
+FL backends** ([FLIP#566](https://github.com/londonaicentre/FLIP/issues/566)): `FL_BACKEND` in the env file
+switches the same task families between NVFLARE and Flower (SuperLink ports/command/creds — Flower
+additionally needs `FLOWER_KIT_DATE` and provisioned creds uploaded via
+`make -C fl-services/flower provision upload-creds-to-s3`, with `FLOWER_EXTRA_SERVER_SANS` covering the
+Cloud Map + public FL hostnames).
+
+> **Deprecated — hub on EC2/compose** ([FLIP#936](https://github.com/londonaicentre/FLIP/issues/936)):
+> running the hub via `compose.production*.yml` on an EC2 or self-managed host is no longer a supported
+> deployment target (the former hub EC2 host was long since replaced by a minimal SSM bastion). The
+> `compose.production*.yml` files remain maintained **only** as the local prod-image harness
+> (`make up PROD=stag|true` — the baked images, no dev mounts). When changing production config, change
+> Terraform first and update the compose files only as far as the local harness needs. Remaining hub-EC2
+> material is removed once the LZA migration's legacy decommission lands (FLIP#749 WP6).
+
+### Trusts
+
 FLIP supports three trust deployment models:
 
 | Model | Location | Documentation |
@@ -445,24 +468,17 @@ outside the hub's Docker network.
 | `CENTRAL_HUB_API_URL` | flip-ui, trust-api | Public base URL of flip-api (in prod: CloudFront URL) |
 | `FLIP_API_INTERNAL_URL` | fl-server | Docker-network URL of flip-api on the Central Hub (e.g. `http://flip-api:8000/api`) |
 
-#### Note on the ECS migration
+#### Note on ECS networking
 
-The Central Hub is moving from EC2 + docker-compose to ECS Fargate; the foundation Terraform (cluster,
-EFS, IAM, parameter store, service discovery, VPC endpoints) has landed under `deploy/providers/AWS/`,
-but task definitions and services are still being rolled out. `FLIP_API_INTERNAL_URL` names the intent
-("flip-api's internal URL on the Central Hub"), not the mechanism, so the split survives the move. When
-migrating, point it at whichever in-VPC, header-preserving endpoint flip-api exposes:
-
-| ECS layout | `FLIP_API_INTERNAL_URL` |
-| --- | --- |
-| Sidecar (both containers in one task, awsvpc) | `http://localhost:8000/api` |
-| Separate services + ECS Service Connect | `http://flip-api:8000/api` |
-| Separate services + Cloud Map private DNS | `http://flip-api.<namespace>.local:8000/api` |
-| Separate services + internal ALB | `http://<internal-alb-dns>/api` |
+The Central Hub runs on ECS Fargate (see [Deployment Models](#deployment-models)).
+`FLIP_API_INTERNAL_URL` names the intent ("flip-api's internal URL on the Central Hub"), not the
+mechanism: on ECS, Terraform sets it to the Cloud Map private-DNS name
+(`http://flip-api.flip.local:8000/api`, built in `locals.tf`); on the local compose harness it is the
+Docker-network URL (`http://flip-api:8000/api`).
 
 What it must not be: the public CloudFront URL. That's orthogonal to compute — CloudFront strips
-`X-Internal-Service-Key` regardless of whether flip-api runs on EC2 or ECS. Internal ALBs preserve
-all request headers by default, so that option works; CloudFront doesn't.
+`X-Internal-Service-Key` at the edge. Internal ALBs preserve all request headers by default, so an
+internal-ALB value would also work; CloudFront doesn't.
 
 > **Note on troubleshooting**: AWS-deployment-specific failure modes (Terraform state drift, ECS
 > service stuck in `PENDING`, CloudFront cache invalidation, RDS connectivity) are documented in

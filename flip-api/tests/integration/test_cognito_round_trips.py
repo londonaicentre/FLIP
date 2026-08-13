@@ -45,7 +45,7 @@ def _admin_create_user(pool_id: str, email: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# POST /api/users/  (register_user)
+# POST /api/users  (register_user)
 # ---------------------------------------------------------------------------
 
 
@@ -57,7 +57,7 @@ def test_register_user_creates_user_in_pool_and_writes_audit(
     override_verify_token_as(admin_id)
 
     response = client.post(
-        "/api/users/",
+        "/api/users",
         json={
             "email": "newuser@example.com",
             "name": "New User",
@@ -94,7 +94,7 @@ def test_register_user_duplicate_email_returns_400(
     _admin_create_user(cognito_user_pool["pool_id"], "dupe@example.com")
 
     response = client.post(
-        "/api/users/",
+        "/api/users",
         json={
             "email": "dupe@example.com",
             "name": "Dupe User",
@@ -115,7 +115,7 @@ def test_register_user_403_for_non_admin(client: TestClient, session, cognito_us
     override_verify_token_as(user_id)
 
     response = client.post(
-        "/api/users/",
+        "/api/users",
         json={
             "email": "another@example.com",
             "name": "Another User",
