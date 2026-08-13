@@ -439,13 +439,28 @@ const downloadAllAsZip = async () => {
     // that size. Vite inlines IS_DEMO, so normal builds keep the JSZip path only.
     if (IS_DEMO) {
         const zipUrl = DEMO_MODEL_FILES_ZIP_URLS[props.modelId];
-        if (zipUrl) {
-            const link = document.createElement("a");
-            link.href = zipUrl;
-            document.body.appendChild(link);
-            link.click();
-            link.remove();
+        if (!zipUrl) {
+            // An id missing from the map means the bundle was never staged for
+            // this model. Say so: silently returning left the button looking
+            // broken, with no snackbar and no spinner, unlike the real path
+            // directly below (FLIP#794 review).
+            Snackbar.error({
+                title: "Download unavailable",
+                text: "No file bundle was staged for this model in the demo."
+            });
+
+            return;
         }
+
+        const link = document.createElement("a");
+        link.href = zipUrl;
+        // Without `download` the browser follows Content-Disposition, and any
+        // response served as HTML (e.g. a mis-provisioned behaviour falling
+        // through to the SPA rewrite) navigates the tab instead of downloading.
+        link.download = zipUrl.split("/").pop() ?? "model-files.zip";
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
 
         return;
     }

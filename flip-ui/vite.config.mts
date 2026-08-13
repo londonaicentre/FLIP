@@ -139,9 +139,27 @@ export default defineConfig(({ mode, command, isPreview }) => {
         },
         define: {
             ...envWithProcessPrefix,
-            // Inline the demo flag deterministically for `--mode demo`, independent
-            // of .env-file / process-env resolution quirks.
-            ...(isDemo ? { "import.meta.env.VITE_DEMO": JSON.stringify("true") } : {})
+            // Inline the demo flag deterministically in EVERY build, independent of
+            // .env-file / process-env resolution quirks — not just under
+            // `--mode demo`.
+            //
+            // Defining only the demo side is what leaked the recorded register into
+            // the public production bundle (FLIP#794 review). With no .env file
+            // supplying VITE_DEMO, a non-demo build left `import.meta.env.VITE_DEMO`
+            // as a runtime property lookup on the env object. Rolldown cannot fold a
+            // property access, so `if (import.meta.env.VITE_DEMO === "true")` stayed
+            // live, mocks/demo-server.ts stayed reachable, and all 24 recorded
+            // fixtures — production Cognito subs, OMOP cohort SQL, the full trust
+            // roster — shipped inside the entry chunk served to every anonymous
+            // visitor. Inlining the literal "false" here folds the branch and drops
+            // the whole module graph behind it.
+            //
+            // The gate must also be written as the in-module literal at each use
+            // site (see src/main.ts, src/App.vue): a const re-exported from another
+            // module does not propagate far enough for the fold, even with this
+            // define in place. scripts/assert-no-demo-artefacts.mjs checks the built
+            // artefact on every deploy build so neither half can silently regress.
+            "import.meta.env.VITE_DEMO": JSON.stringify(isDemo ? "true" : "false")
         },
         build: {
             sourcemap: false,

@@ -144,14 +144,131 @@ const byParam = (table: Record<string, unknown>, key?: string): Response => {
     return hit === undefined ? new Response(404) : new Response(200, undefined, hit as never);
 };
 
-export function makeDemoServer(): Server {
+/**
+ * The recorded roster with every `last_heartbeat` moved up to the moment of the
+ * request.
+ *
+ * Connection Status derives its state from `Date.now() - last_heartbeat`
+ * (see utils/connection-health.ts), so serving the captured timestamps verbatim
+ * made the public exhibit report the whole federation OFFLINE with "N incidents
+ * need attention" — worsening by a day for every day the snapshot stayed up,
+ * and contradicting trust_health.json, which the app header reads as online
+ * (FLIP#794 review). Every other field stays exactly as captured; only the
+ * clock-relative one is re-based, because it is the only field whose meaning
+ * depends on when it is read.
+ */
+const liveTrusts = (): unknown => {
+    const now = Date.now();
+
+    // Keep the recorded spread between trusts (a few hundred ms) rather than
+    // stamping them identically — the radial view animates off these deltas.
+    const recorded = trusts as { last_heartbeat: string }[];
+    const newest = Math.max(...recorded.map(t => new Date(t.last_heartbeat).getTime()));
+
+    return recorded.map(trust => ({
+        ...trust,
+        last_heartbeat: new Date(now - (newest - new Date(trust.last_heartbeat).getTime())).toISOString()
+    }));
+};
+
+/**
+ * The estate-wide Models list, derived from the two per-project model payloads
+ * rather than captured separately — one register, one source of truth.
+ *
+ * Models is a `canAccess: true` top-level nav item, so an unauthenticated
+ * visitor lands on it directly; with no route registered it rendered the
+ * generic "Something went wrong" error over a permanent spinner on the public
+ * exhibit (FLIP#794 review). The shape is IModelsPage (services/model-service.ts):
+ * a paginated IModelSummary list plus the per-status totals the filter tiles sum.
+ */
+const allModels = (): unknown => {
+    const rows = [
+        ...(projectModelsP1 as { data: Record<string, unknown>[] }).data.map(model => ({
+            model,
+            project: projectP1 as { id: string; name: string }
+        })),
+        ...(projectModelsP2 as { data: Record<string, unknown>[] }).data.map(model => ({
+            model,
+            project: projectP2 as { id: string; name: string }
+        }))
+    ];
+
+    // Every recorded run finished, so the trust list is the project's own — the
+    // real endpoint returns [] only for models that never reached dispatch.
+    const runTrusts = (trusts as { id: string; name: string; code: string }[])
+        .map(({ id, name, code }) => ({ id, name, code }));
+
+    const data: Record<string, unknown>[] = rows.map(({ model, project }) => ({
+        ...model,
+        projectId: project.id,
+        projectName: project.name,
+        ownerId: model.owner_id,
+        ownerName: DEMO_USER.name,
+        trusts: runTrusts
+    }));
+
+    const statusCounts = data.reduce<Record<string, number>>((counts, model) => {
+        const status = String(model.status);
+
+        return { ...counts, [status]: (counts[status] ?? 0) + 1 };
+    }, {});
+
+    return {
+        page: 1,
+        pageSize: 20,
+        totalPages: 1,
+        totalRecords: data.length,
+        data,
+        statusCounts
+    };
+};
+
+/**
+ * FL network status for the Connection Status page's nets card.
+ *
+ * Derived from the recorded roster so the client names match the trusts shown
+ * everywhere else. Without these routes the card span never resolved and sat on
+ * its spinner for every visitor (FLIP#794 review). `lastConnected` is re-based
+ * to now for the same reason as `liveTrusts` above.
+ */
+const flNets = (): unknown => {
+    const clients = (trusts as { code: string }[]).map(({ code }) => ({
+        name: code,
+        online: true,
+        lastConnected: new Date().toUTCString()
+    }));
+
+    return [{ name: "net-1", clients }];
+};
+
+/**
+ * @param options.timing Per-response delay in ms. Defaults to Mirage's 400ms
+ *   "production" latency, which is deliberate in the browser — it keeps the
+ *   demo's loading states visible rather than snapping instantly, so the
+ *   exhibit reads like the real platform. Tests pass 0: at ~60 requests a run
+ *   the default costs ~20s of CI for no signal.
+ */
+export function makeDemoServer(options: { timing?: number } = {}): Server {
     return createServer({
         environment: "production",
+        timing: options.timing ?? 400,
+
+        // Mirage's "production" environment still logs every intercepted
+        // request and its payload. On a public exhibit that means the browser
+        // console continuously dumps the register — the internal OMOP cohort
+        // SQL included — to anyone with devtools open (FLIP#794 review). It also
+        // sets timing: 400, so silencing this returns ~15s to every CI run of
+        // the demo-server spec.
+        logging: false,
 
         routes() {
             // ---- App-shell / site chrome --------------------------------------
             this.get(`${BASE}/trust/health`, () => new Response(200, undefined, trustHealth));
-            this.get(`${BASE}/trust`, () => new Response(200, undefined, trusts));
+            this.get(`${BASE}/trust`, () => new Response(200, undefined, liveTrusts() as never));
+
+            // ---- FL networks (Connection Status nets card) ---------------------
+            this.get(`${BASE}/fl/status`, () => new Response(200, undefined, flNets() as never));
+            this.get(`${BASE}/fl/:netName/status`, () => new Response(200, undefined, flNets() as never));
             this.get(`${BASE}/site/details`, () => new Response(200, undefined, siteDetails));
             this.get(`${BASE}/users/me/mfa/status`, () => new Response(200, undefined, {
                 enabled: true,
@@ -180,6 +297,10 @@ export function makeDemoServer(): Server {
             // ---- Cohort query results (the real OMOP counts) -------------------
             this.get(`${BASE}/cohort/:queryId`, (_schema, request) =>
                 byParam(cohortByQuery, request.params.queryId));
+
+            // ---- Estate-wide Models list --------------------------------------
+            // Registered before /model/:modelId/* so the literal path wins.
+            this.get(`${BASE}/models`, () => new Response(200, undefined, allModels() as never));
 
             // ---- Model dashboard ----------------------------------------------
             // POST / not GET: mirrors the real API (retrieve_model_step_function),

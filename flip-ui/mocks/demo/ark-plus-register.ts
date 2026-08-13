@@ -17,20 +17,32 @@
  * The register itself — every API payload the demo serves — is the *real*
  * platform record of the Ark+ chest X-ray federated fine-tuning experiment
  * (project f48850b7…, model 24985ec3…), captured verbatim from the production
- * API on 2026-07-17 and stored as JSON under ./data/. The only edits applied
- * at capture time were:
+ * API on 2026-07-17 and stored as JSON under ./data/. The edits applied to the
+ * capture were:
  *   1. every e-mail address replaced with demo@flip.local;
  *   2. every personal name (e.g. the query creator's) replaced with the
  *      demo identity "FLIP Demo" — the register is published
- *      unauthenticated, so it must carry no individual's identifiers; and
+ *      unauthenticated, so it must carry no individual's identifiers;
  *   3. the live presigned S3 URL in fl_results.json replaced with the
  *      CloudFront-served demo-assets URL (/ark_demo/assets/*, OAC-locked
  *      bucket behind the production distribution — a leaked presigned URL
- *      is a time-limited download capability; the demo must ship none).
+ *      is a time-limited download capability; the demo must ship none); and
+ *   4. every user id replaced with a synthetic
+ *      00000000-0000-4000-8000-0000000000NN value. A FLIP user id IS a Cognito
+ *      `sub` (see flip-api user_models.py) and the pool/client ids are already
+ *      public, so shipping the real ones published the actual principals used
+ *      for permissions and ownership lookups — rule 2 above was written to
+ *      cover exactly that and the original capture did not honour it
+ *      (FLIP#794 review). These ids are only opaque join keys inside the mock,
+ *      so any distinct values work; keep them obviously synthetic. The demo
+ *      viewer is …0001, the evaluation project's owner …0002.
  *
  * Institution names (King's College London, Bangkok Dusit Medical Services,
  * Guy's and St Thomas' Trust, AI Centre Private) are shown verbatim by
  * decision of the project owner.
+ *
+ * Re-capturing the register means re-applying all four rules. Project and model
+ * ids are deliberately NOT scrubbed: they are public URL path segments.
  */
 
 /** The real Ark+ experiment record (public URL path segments). */
@@ -55,7 +67,7 @@ export const DEMO_CAPTURE_DATE = "2026-07-17";
  * mutating control in the UI hides itself.
  */
 export const DEMO_USER = {
-    id: "c622c224-d0d1-704e-0b6d-711d8d4605ca",
+    id: "00000000-0000-4000-8000-000000000001",
     email: "demo@flip.local",
     name: "FLIP Demo",
     organisation: "FLIP",

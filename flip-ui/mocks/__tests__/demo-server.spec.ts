@@ -50,7 +50,9 @@ describe("makeDemoServer route coverage", () => {
     let client: ReturnType<typeof axios.create>;
 
     beforeEach(() => {
-        server = makeDemoServer();
+        // timing: 0 — the browser default of 400ms/response is a UX choice for
+        // the exhibit, not something this suite should pay ~20s a run for.
+        server = makeDemoServer({ timing: 0 });
         // A fresh, minimal axios instance rather than the app's `_http`
         // singleton — that one pulls in the Pinia auth store and Amplify
         // interceptors, which is more than this route-coverage check needs.
@@ -125,5 +127,100 @@ describe("makeDemoServer route coverage", () => {
             const res = await client.get(path);
             expect(res.status, path).toBe(200);
         }
+    });
+
+    // The route-coverage cases above walk the project and model pages. These
+    // cover the other two `canAccess: true` top-level nav destinations, which
+    // an unauthenticated visitor can reach directly from the header and which
+    // shipped unregistered — Models rendered the generic "Something went wrong"
+    // error over a permanent spinner for every visitor (FLIP#794 review).
+    it("answers the estate-wide Models list with the shape the page reads", async () => {
+        const res = await client.get("/models?pageNumber=1&pageSize=20");
+        expect(res.status).toBe(200);
+
+        // Three recorded models across the two recorded projects.
+        expect(res.data.data).toHaveLength(3);
+        expect(res.data.totalRecords).toBe(3);
+
+        // models.vue reads statusCounts to size its filter tiles; a bare
+        // paginated list would render every tile as 0.
+        expect(res.data.statusCounts).toEqual({ RESULTS_UPLOADED: 3 });
+
+        for (const model of res.data.data) {
+            // IModelSummary requires the project join and a status on every row.
+            expect(model.projectId, model.id).toBeTruthy();
+            expect(model.projectName, model.id).toBeTruthy();
+            expect(model.status, model.id).toBeTruthy();
+        }
+    });
+
+    it("answers the FL network status routes behind the Connection Status nets card", async () => {
+        for (const path of ["/fl/status", "/fl/net-1/status"]) {
+            const res = await client.get(path);
+            expect(res.status, path).toBe(200);
+            expect(res.data.length, path).toBeGreaterThan(0);
+        }
+    });
+
+    it("serves trust heartbeats relative to now, not the capture date", async () => {
+        const res = await client.get("/trust");
+        expect(res.status).toBe(200);
+
+        // ConnectionStatus derives OFFLINE/DEGRADED/ONLINE from
+        // Date.now() - last_heartbeat. Pinning the captured timestamps made the
+        // public exhibit report the whole federation offline, worsening daily
+        // (FLIP#794 review). Anything inside a minute is unambiguously "live"
+        // and leaves room for a slow CI machine.
+        for (const trust of res.data) {
+            const age = Date.now() - new Date(trust.last_heartbeat).getTime();
+            expect(age, `${trust.code} heartbeat age`).toBeLessThan(60_000);
+            expect(age, `${trust.code} heartbeat age`).toBeGreaterThanOrEqual(0);
+        }
+    });
+
+    it("serves a config.json body the job-type resolver can parse", async () => {
+        // Previously asserted only `status === 200`, which is why the response
+        // being the config *body* where file-service expected a presigned
+        // `{url, fileName}` envelope went unnoticed: every poll tick threw on
+        // fetch(undefined) and both evaluation models silently fell back to
+        // jobType "standard" (FLIP#794 review).
+        const res = await client.get(`/files/model/${p2m1.modelId}/config.json`);
+        expect(res.status).toBe(200);
+
+        const config = typeof res.data === "string"
+            ? JSON.parse(res.data) as { job_type?: string }
+            : res.data as { job_type?: string };
+
+        expect(config.job_type).toBeTruthy();
+    });
+
+    // The guarantee the whole design rests on: the published demo bundle cannot
+    // reach a real API, database or Cognito, which is what makes it safe to host
+    // unauthenticated. It holds only because demo-server.ts registers no
+    // passthrough — and nothing failed if someone added one (FLIP#794 review).
+    describe("zero egress", () => {
+        it("keeps an unregistered request inside Mirage instead of hitting the network", async () => {
+            // With a passthrough registered, Pretender hands the request to the
+            // native XHR and this rejects with a transport error (or resolves)
+            // rather than with Mirage's own "no route defined" refusal.
+            await expect(client.get("/not-a-registered-route"))
+                .rejects.toThrow(/there was no route defined to handle this request/);
+        });
+
+        it("passes no request through to the real network while serving the demo's own routes", async () => {
+            const paths = [
+                "/trust", "/trust/health", "/site/details", "/projects", "/models",
+                "/fl/status", "/model/job-types", `/projects/${p1.id}`, `/cohort/${p1.query.id}`
+            ];
+
+            for (const path of paths) {
+                await client.get(path);
+            }
+
+            // Pretender records every request it let escape to the network.
+            // Not in miragejs' published Server types, hence the narrowing.
+            const pretender = server.pretender as unknown as { passthroughRequests: unknown[] };
+            expect(pretender.passthroughRequests).toHaveLength(0);
+        });
     });
 });

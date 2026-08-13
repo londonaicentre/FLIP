@@ -2,7 +2,7 @@
   "id": "8e404e78-40f6-4dd9-8ab9-caa01f8c7b40",
   "name": "Ark+ Baseline Eval (2-trust)",
   "description": "Federated evaluation of chest X-ray classifiers on each site's held-out synthetic cohort (the 20% split withheld from the Ark+ fine-tuning project), covering the same five findings: pleural effusion, consolidation, infiltration, lung nodule or mass, and pneumothorax.\n\nCandidate models will be packaged behind a common inference interface so a single shared evaluator can score any of them without model-specific integration code. At each participating site the evaluator will compute per-class AUROC on the local holdout set for every configured model, and model pairs will be compared with two-sided DeLong tests under Benjamini-Hochberg false-discovery-rate correction, following the significance-ranking protocol of the Medical Segmentation Decathlon. Only aggregate scores and test statistics leave the trust; per-sample predictions are never exported. The project will first establish the pretrained Ark+ baseline and then extend the model list to the federated fine-tuned checkpoint, exercising FLIP's evaluation job type end to end on both sites.",
-  "ownerId": "b6a2a214-3011-70e9-4ed3-a52ee9391310",
+  "ownerId": "00000000-0000-4000-8000-000000000002",
   "ownerName": null,
   "userCount": 0,
   "deleted": false,
@@ -51,7 +51,7 @@
   "ownerEmail": "demo@flip.local",
   "users": [
     {
-      "id": "b6a2a214-3011-70e9-4ed3-a52ee9391310",
+      "id": "00000000-0000-4000-8000-000000000002",
       "email": "demo@flip.local",
       "name": "",
       "organisation": "",

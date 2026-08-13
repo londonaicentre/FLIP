@@ -759,6 +759,34 @@ deploy-ui: ## Build flip-ui from the working tree and deploy it to S3 + invalida
 
 .PHONY: deploy-ark-demo
 deploy-ark-demo: ## Build the public Ark+ demo SPA from the working tree and deploy it to S3 (ark_demo/ prefix) + invalidate CloudFront
+	@# Refuse to publish the demo into an environment that has no demo behaviour.
+	@# DEMO_ASSETS_BUCKET_NAME gates BOTH the /ark_demo/* cache behaviour and its
+	@# enforcing ark_demo_spa CSP (cloudfront.tf), but the spa_rewrite function's
+	@# /ark_demo/ branch is ungated — so on an environment where it is unset (the
+	@# documented stag posture) this target used to happily sync a fully working,
+	@# unauthenticated demo onto the same origin as real Cognito tokens, served by
+	@# the DEFAULT behaviour, whose CSP is report-only. That is precisely the
+	@# silent-detach the README warns about, and nothing detected it (FLIP#794
+	@# review). Fail fast instead: an operator who wants the demo must provision
+	@# its behaviour first.
+	@if [ -z "$$DEMO_ASSETS_BUCKET_NAME" ]; then \
+		echo "❌ DEMO_ASSETS_BUCKET_NAME is not set for this environment."; \
+		echo "   It gates the /ark_demo/* CloudFront behaviour and the demo's enforcing CSP."; \
+		echo "   Publishing without it would serve the demo unauthenticated on the same"; \
+		echo "   origin as real Cognito tokens, under the default behaviour's report-only"; \
+		echo "   CSP. Set it (and apply) before deploying the demo."; \
+		exit 1; \
+	fi
+	@# The variable being set is necessary but not sufficient — it must actually
+	@# be applied. Confirm the behaviour exists on the live distribution.
+	@DIST_ID=$$($(_AWS_ENV) terraform output -raw CloudfrontDistributionId); \
+	if ! $(_AWS_ENV) aws cloudfront get-distribution-config --id "$$DIST_ID" \
+		--query "DistributionConfig.CacheBehaviors.Items[?PathPattern=='/ark_demo/*'] | length(@)" \
+		--output text 2>/dev/null | grep -qv '^0$$'; then \
+		echo "❌ No /ark_demo/* cache behaviour on distribution $$DIST_ID."; \
+		echo "   DEMO_ASSETS_BUCKET_NAME is set but not applied — run a terraform apply first."; \
+		exit 1; \
+	fi
 	@echo "🖼️  Building flip-ui Ark+ demo bundle from working tree..."
 	@# npm run build:demo's postbuild hook regenerates dist/js/window.js itself
 	@# (scripts/generate-demo-window-js.sh) — no separate window.js step needed,

@@ -27,9 +27,29 @@
 # from flip-ui/ (the npm postbuild:demo hook's cwd), so both paths below are
 # relative to that.
 
+set -eu
+
+# Both provenance inputs are REQUIRED, not best-effort. They previously fell
+# back to "unknown" / swallowed git's stderr, which contradicted the "cannot
+# drift" claim above: a rename of DEMO_CAPTURE_DATE, or a build from a directory
+# that is not a git checkout, silently stamped an unidentifiable
+# RELEASE_VERSION onto a published snapshot — exactly when knowing which
+# snapshot is being served matters most (FLIP#794 review). Fail the build
+# instead; every legitimate caller (npm prebuild:demo / postbuild:demo, run from
+# flip-ui/ in a checkout) satisfies both.
 CAPTURE_DATE=$(sed -n 's/^export const DEMO_CAPTURE_DATE = "\(.*\)";$/\1/p' mocks/demo/ark-plus-register.ts)
-CAPTURE_DATE=${CAPTURE_DATE:-unknown}
-SHORT_SHA=$(git rev-parse --short HEAD 2>/dev/null || echo unknown)
+if [ -z "$CAPTURE_DATE" ]; then
+    echo "generate-demo-window-js: ERROR — DEMO_CAPTURE_DATE not found in mocks/demo/ark-plus-register.ts." >&2
+    echo "  The constant was renamed or reshaped; update this script's sed expression to match." >&2
+    exit 1
+fi
+
+SHORT_SHA=$(git rev-parse --short HEAD)
+if [ -z "$SHORT_SHA" ]; then
+    echo "generate-demo-window-js: ERROR — could not resolve the current commit." >&2
+    echo "  RELEASE_VERSION must identify the published snapshot; build from a git checkout." >&2
+    exit 1
+fi
 
 cat <<EOF
 window.AWS_BASE_URL = "/api";

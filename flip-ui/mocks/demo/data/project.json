@@ -2,7 +2,7 @@
   "id": "f48850b7-3101-46d1-8fa7-a00bf01d2597",
   "name": "Ark+ Finetuning (2-trust, 50r)",
   "description": "Cross-border federated fine-tuning and evaluation of the Ark+ chest X-ray foundation model across two FLIP trust nodes (UK and Thailand), using fully synthetic CXR cohorts held in each site's OMOP database. Each cohort covers five findings \u2014 pleural effusion, consolidation, infiltration, lung nodule or mass, and pneumothorax \u2014 with 20% withheld per site as a holdout set for a companion federated evaluation project.\n\nWe plan to keep the pretrained Ark+ encoder frozen and train a fresh 5-class classification head with FedAvg over 50 global rounds (5 local epochs per round), exchanging head-only parameter updates passed through a selective parameter-sharing privacy filter, so per-round payloads remain in the tens of kilobytes. Imaging data will be resolved from each site's PACS into its local XNAT cache and never leaves the trust; only model updates and aggregate metrics cross site boundaries. The trained global model will subsequently be scored against the pretrained baseline on each site's holdout cohort via the federated evaluation job type (per-class AUROC with DeLong significance testing). Each institution independently reviews and approves this project under its own governance before any data access occurs.",
-  "ownerId": "c622c224-d0d1-704e-0b6d-711d8d4605ca",
+  "ownerId": "00000000-0000-4000-8000-000000000001",
   "ownerName": null,
   "userCount": 0,
   "deleted": false,
@@ -44,12 +44,12 @@
     "emptyTrustIds": [],
     "totalCohort": 3782,
     "created": "2026-07-06T08:04:34.745Z",
-    "createdBy": "AI Centre Admin"
+    "createdBy": "FLIP Demo"
   },
   "ownerEmail": "demo@flip.local",
   "users": [
     {
-      "id": "c622c224-d0d1-704e-0b6d-711d8d4605ca",
+      "id": "00000000-0000-4000-8000-000000000001",
       "email": "demo@flip.local",
       "name": "",
       "organisation": "",
