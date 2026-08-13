@@ -192,14 +192,17 @@ services:
   flip-db:
     image: postgres:17
     ports:
-      # Host side is separately overridable; the container side must stay DB_PORT
-      # because that is what flip-api dials (DB_PORT is injected above) and what
-      # postgres listens on. They were previously the same variable, which meant a
-      # second stack could not move the published port without also telling flip-api
-      # to dial a port nothing was listening on — it just failed with
+      # Container side is fixed: the postgres image always listens on 5432, the same
+      # way uvicorn always listens on 8000 behind ${API_PORT}. Only the host side is
+      # worth moving, so a second stack can publish elsewhere.
+      #
+      # This was previously ${DB_PORT}:${DB_PORT}, which made one variable mean two
+      # different things. DB_PORT is a *server* port — flip-api dials flip-db:${DB_PORT}
+      # over the docker network and uses it to mint the RDS IAM token in prod — so
+      # raising it to free the host port pointed flip-api at nothing, and leaving it
+      # pinned meant a second stack could not bind at all:
       # "Bind for 0.0.0.0:5432 failed: port is already allocated" (FLIP#957).
-      # Unset, this renders exactly as before.
-      - ${DB_HOST_PORT:-$DB_PORT}:${DB_PORT}
+      - ${DB_HOST_PORT:-5432}:5432
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
