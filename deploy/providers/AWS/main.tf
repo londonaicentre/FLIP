@@ -85,14 +85,28 @@ resource "aws_ec2_tag" "ec2_security_group_flip_sg" {
 # NOTE: Trust API port removed — trusts now poll the hub outbound (no inbound connections needed).
 # XNAT and PACS UI ports kept for direct researcher access to imaging tools.
 
-# Egress allowlist for the trust EC2 (#876, GHSA-8465). Security groups can't match on hostname,
-# so CDN-fronted / dynamic-IP destinations (GHCR, Docker Hub, the Central Hub's CloudFront domain,
-# Hugging Face mock-data seeding, OS/package install sources) are scoped to 0.0.0.0/0 on port 443
-# as the practical floor for an SG-only design — accepted as a permanent, documented limitation,
-# not a gap slated for a domain-aware firewall follow-up. ssmmessages/ec2messages and CloudWatch
-# monitoring have no VPC endpoint provisioned at all (unlike ssm/secretsmanager/logs, gated by
-# var.enable_ecs_endpoints below) and get the same public-CIDR floor rather than three more
-# interface endpoints. See deploy/providers/AWS/README.md for the full rationale per destination.
+# Egress allowlist for the trust EC2 (#876, GHSA-8465). Security groups can't match on hostname, so
+# every CDN-fronted / dynamic-IP destination (GHCR, Docker Hub, the Central Hub's CloudFront domain,
+# Hugging Face mock-data seeding, PyPI + download.pytorch.org, OS/package install sources, and the
+# AWS services with no VPC endpoint — ssmmessages, ec2messages, monitoring) collapses into a single
+# 0.0.0.0/0 rule per port. That is the practical floor for an SG-only design — accepted as a
+# permanent, documented limitation, not a gap slated for a domain-aware firewall follow-up.
+#
+# ONE RULE PER AWS TUPLE. An EC2 security-group rule is identified by (direction, protocol, port
+# range, destination); the description is a mutable annotation, not part of that key — which is why
+# UpdateSecurityGroupRuleDescriptionsEgress exists as a separate API. Listing the same tuple once
+# per business reason does NOT produce several rules: AWS accepts the first and rejects the rest
+# with InvalidPermission.Duplicate, and which one wins is decided nondeterministically by
+# Terraform's parallelism, so the apply never converges. The per-destination story lives in the
+# README table instead, and `egress_rules` carries a validation that fails the plan if two rules
+# ever resolve to the same tuple again.
+#
+# SG RULES ARE A UNION, so the narrowly scoped rules below (the S3 prefix list, the ssm/logs peer
+# SG) are shadowed by the 0.0.0.0/0:443 floor and change effective permissions by exactly nothing.
+# They are kept as documentation of intent — don't delete them as dead weight, and don't read them
+# as enforcement. They become real controls only if the 443 floor is ever narrowed.
+#
+# See deploy/providers/AWS/README.md for the full rationale per destination.
 locals {
   # Every entry carries the full attribute set (unused selectors explicitly null) so Terraform's
   # object-type unification across this heterogeneous list — and across the two branches of the
@@ -107,71 +121,49 @@ locals {
   trust_egress_rules = concat(
     [
       for r in [
+        # The 443 floor. One rule, because every destination behind it is the same AWS tuple:
+        # Central Hub API (CloudFront), GHCR, Docker Hub, Hugging Face seeding, download.docker.com,
+        # awscli.amazonaws.com, apt/esm over HTTPS, PyPI + download.pytorch.org (Flower's per-run
+        # uv sync), the us-east-1 CloudWatch-agent .deb, and the AWS APIs with no VPC endpoint
+        # (ssmmessages, ec2messages, monitoring).
         {
           port        = 443
           cidr_blocks = ["0.0.0.0/0"]
-          description = "Central Hub API (CloudFront) - trust-api polling"
-        },
-        {
-          port        = 443
-          cidr_blocks = ["0.0.0.0/0"]
-          description = "GHCR - fl-client/trust-api/imaging-api/data-access-api/orthanc image pulls"
-        },
-        {
-          port        = 443
-          cidr_blocks = ["0.0.0.0/0"]
-          description = "Docker Hub - grafana loki/alloy/grafana image pulls"
-        },
-        {
-          port        = 443
-          cidr_blocks = ["0.0.0.0/0"]
-          description = "Hugging Face - trust mock OMOP/Orthanc data seeding (make seed-trust-data)"
-        },
-        {
-          port        = 443
-          cidr_blocks = ["0.0.0.0/0"]
-          description = "download.docker.com - Docker Engine install/upgrade (geerlingguy.docker role)"
-        },
-        {
-          port        = 443
-          cidr_blocks = ["0.0.0.0/0"]
-          description = "awscli.amazonaws.com - one-time AWS CLI v2 install"
+          description = "HTTPS to any destination: hub API (CloudFront), GHCR, Docker Hub, HF seeding, apt/esm, PyPI + download.pytorch.org, install mirrors, and AWS APIs with no VPC endpoint. See the README egress table."
         },
         {
           port        = 80
           cidr_blocks = ["0.0.0.0/0"]
-          description = "Ubuntu apt mirrors (HTTP) - package install/upgrade"
+          description = "HTTP to any destination: Ubuntu apt mirrors - package install/upgrade"
         },
-        {
-          port        = 443
-          cidr_blocks = ["0.0.0.0/0"]
-          description = "Ubuntu apt mirrors and esm.ubuntu.com (HTTPS) - package install/upgrade"
-        },
-        {
-          port        = 443
-          cidr_blocks = ["0.0.0.0/0"]
-          description = "CloudWatch metrics (monitoring) - no VPC endpoint provisioned"
-        },
-        {
-          port        = 443
-          cidr_blocks = ["0.0.0.0/0"]
-          description = "SSM Session Manager data channel (ssmmessages) - no VPC endpoint provisioned"
-        },
-        {
-          port        = 443
-          cidr_blocks = ["0.0.0.0/0"]
-          description = "SSM Session Manager EC2 channel (ec2messages) - no VPC endpoint provisioned"
-        },
+        # Shadowed by the 443 floor above (SG rules are a union) - documentation of intent, not
+        # enforcement. Kept so the intended scope survives if that floor is ever narrowed.
         {
           port            = 443
           prefix_list_ids = [data.aws_ec2_managed_prefix_list.s3.id]
           description     = "S3 (AI Centre FL kit sync) - AWS-managed prefix list, not a raw CIDR"
         },
+        # NOT shadowed by anything — this is the one destination the 443 floor does not cover, so
+        # it has to be 0.0.0.0/0 rather than the NLB's peer SG. The FL server NLB is
+        # internet-facing (public subnets, no `internal = true`), so its DNS resolves to PUBLIC IPs
+        # even from inside the VPC, and the trust EC2 (private subnet, no public IP) reaches them
+        # out through the NAT gateway — which is exactly what the NLB's own ingress rule
+        # allowlisting nat_public_ips[0]/32 attests. A peer-SG destination matches only the private
+        # IPs of ENIs carrying that SG, so it would match none of that traffic and silently drop
+        # every FL connection while image pulls, hub polling and SSM all stayed healthy. Narrow
+        # this only once the NLB itself becomes `internal` (see the TODO on that module), or by
+        # giving it static per-AZ EIPs via subnet_mapping and allowlisting those /32s.
         {
-          port                     = var.FL_SERVER_PORT
-          source_security_group_id = module.fl_server_nlb.security_group_id
-          description              = "FL server NLB - FL training traffic"
+          port        = var.FL_SERVER_PORT
+          cidr_blocks = ["0.0.0.0/0"]
+          description = "FL server NLB - FL training traffic (internet-facing NLB, reached via NAT)"
         },
+        # Inert in both directions: AWS documents that security groups cannot filter traffic to the
+        # Route 53 Resolver (the VPC+2 address / AmazonProvidedDNS), so these two neither permit
+        # nor restrict name resolution. Kept as documentation of intent. The control that actually
+        # satisfies #876's DNS criterion is the ABSENCE of a 0.0.0.0/0:53 rule, which does block
+        # third-party resolvers such as 8.8.8.8 — so don't debug a DNS fault against these rules,
+        # and don't "fix" one by widening them.
         {
           port        = 53
           protocol    = "tcp"
@@ -186,36 +178,19 @@ locals {
         },
       ] : merge(local.trust_egress_rule_defaults, r)
     ],
-    # ssm and logs interface endpoints only exist when var.enable_ecs_endpoints is true (the
-    # default) - scope tightly to the endpoint SG when they exist, otherwise fall back to the
-    # same public-CIDR floor already accepted above for the endpoints that never exist.
+    # ssm and logs share one interface-endpoint SG on one port, so they are a single AWS rule, not
+    # two — and it too is shadowed by the 443 floor (0.0.0.0/0 already matches the endpoint ENIs'
+    # private IPs), so it is documentation of intent rather than a control. When
+    # var.enable_ecs_endpoints is false the endpoints don't exist and this rule is omitted entirely:
+    # the 443 floor already carries that traffic, and re-stating it as a public rule here would
+    # collide with the floor on the same tuple.
     var.enable_ecs_endpoints ? [
-      for r in [
-        {
-          port                     = 443
-          source_security_group_id = aws_security_group.vpc_endpoints[0].id
-          description              = "SSM control plane (ssm) - via VPC interface endpoint"
-        },
-        {
-          port                     = 443
-          source_security_group_id = aws_security_group.vpc_endpoints[0].id
-          description              = "CloudWatch Logs (logs) - via VPC interface endpoint"
-        },
-      ] : merge(local.trust_egress_rule_defaults, r)
-      ] : [
-      for r in [
-        {
-          port        = 443
-          cidr_blocks = ["0.0.0.0/0"]
-          description = "SSM control plane (ssm) - no VPC endpoint provisioned (enable_ecs_endpoints=false)"
-        },
-        {
-          port        = 443
-          cidr_blocks = ["0.0.0.0/0"]
-          description = "CloudWatch Logs (logs) - no VPC endpoint provisioned (enable_ecs_endpoints=false)"
-        },
-      ] : merge(local.trust_egress_rule_defaults, r)
-    ]
+      merge(local.trust_egress_rule_defaults, {
+        port                     = 443
+        source_security_group_id = aws_security_group.vpc_endpoints[0].id
+        description              = "SSM control plane (ssm) and CloudWatch Logs (logs) - via the VPC interface endpoints"
+      })
+    ] : []
   )
 }
 

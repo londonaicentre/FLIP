@@ -894,32 +894,57 @@ The trust EC2's security group (`module.trust_security_group` in `main.tf`) sets
 `block_all_outbound = true` and an explicit `egress_rules` allowlist (`local.trust_egress_rules`) —
 previously it had no outbound restriction at all (`0.0.0.0/0`, every protocol/port, including
 DNS). Security groups can only match on CIDR, a peer security group, or an AWS-managed prefix
-list — never a hostname — so the allowlist necessarily has two tiers:
+list — never a hostname — so most destinations can only be expressed as a port.
 
-| Destination | Port | Scope | Why |
-|---|---|---|---|
-| Central Hub API (CloudFront) | 443 | `0.0.0.0/0` | trust-api polling the hub |
-| GHCR | 443 | `0.0.0.0/0` | fl-client / trust-api / imaging-api / data-access-api / orthanc image pulls |
-| Docker Hub | 443 | `0.0.0.0/0` | grafana / loki / alloy image pulls |
-| Hugging Face | 443 | `0.0.0.0/0` | mock OMOP/Orthanc data seeding (`make seed-trust-data`, part of the standard `deploy-trust` chain) |
-| download.docker.com | 443 | `0.0.0.0/0` | Docker Engine install/upgrade (`geerlingguy.docker` Ansible role) |
-| awscli.amazonaws.com | 443 | `0.0.0.0/0` | one-time AWS CLI v2 install |
-| Ubuntu apt mirrors + esm.ubuntu.com | 80, 443 | `0.0.0.0/0` | package install/upgrade |
-| CloudWatch metrics (`monitoring`) | 443 | `0.0.0.0/0` | no VPC endpoint provisioned for this service |
-| SSM `ssmmessages` / `ec2messages` | 443 | `0.0.0.0/0` | no VPC endpoint provisioned for these (only `ssm` is, below) |
-| S3 (AI Centre FL kit sync) | 443 | AWS-managed prefix list | `com.amazonaws.<region>.s3`, not a raw CIDR — S3's edge IPs rotate |
-| SSM control plane (`ssm`) / CloudWatch Logs (`logs`) | 443 | peer SG (`aws_security_group.vpc_endpoints`) | via the VPC interface endpoints, gated on `var.enable_ecs_endpoints` (default `true`); falls back to `0.0.0.0/0` if that's disabled |
-| FL server NLB | `FL_SERVER_PORT` | peer SG (`module.fl_server_nlb.security_group_id`) | FL training traffic |
-| VPC DNS resolver | 53 (tcp+udp) | `cidrhost(var.vpc_cidr, 2)/32` | name resolution, scoped to the VPC's own resolver rather than the internet |
+**Read the table below as a union, not as a set of per-destination controls.** A security group is
+a union of its rules: traffic is allowed if *any* rule matches. Because every hostname-less
+destination collapses onto `0.0.0.0/0:443`, the effective outbound policy is "**any destination on
+TCP 80, 443 and `FL_SERVER_PORT`, plus DNS to the VPC resolver — and nothing else**". Deleting the
+Hugging Face reason would not block Hugging Face, and the S3 prefix-list rule does not confine S3
+egress to that prefix list. Those narrower rules record intent — what the port is open *for*, and
+what would still have to work if the 443 floor were ever narrowed — and are shadowed by the floor
+today. The real, headline-worthy gain is the **port/protocol surface** (down from every port and
+every protocol to three TCP ports) plus **blocking third-party DNS resolvers**.
 
-The `0.0.0.0/0`-scoped destinations above are all third-party/CDN-fronted with no stable AWS-owned
-IP range — GHCR, Docker Hub, Hugging Face, the apt/Docker/AWS-CLI install mirrors, and the three
-AWS services with no VPC endpoint. This is the practical floor for a security-group-only design
-and is accepted as a permanent, documented limitation rather than a gap slated for a follow-up —
-closing it for real would mean a domain-aware layer (AWS Network Firewall domain rules, or a
-forward proxy), which is out of scope here. Every rule is still scoped to port 443 (or 80/53 where
-that's what the destination actually uses), so this is materially tighter than the previous
-allow-all-protocols-all-ports default even where it can't be hostname-precise.
+**One row per AWS rule.** An EC2 security-group rule is identified by (direction, protocol, port
+range, destination); the description is a mutable annotation, not part of that key. Rules differing
+only by description are the *same* rule to AWS, so the Terraform emits one rule per tuple and
+enumerates the reasons in the last column. `egress_rules` carries a validation that fails the plan
+if two rules ever resolve to the same tuple again — the apply error it prevents
+(`InvalidPermission.Duplicate`) picks its winner nondeterministically under Terraform's default
+parallelism and never converges on re-runs.
+
+| Rule (protocol/port → destination) | Scope | What it carries, and why |
+|---|---|---|
+| TCP 443 → `0.0.0.0/0` | any host | Central Hub API (CloudFront) for trust-api polling; GHCR image pulls (fl-client / trust-api / imaging-api / data-access-api / orthanc); Docker Hub (grafana / loki / alloy); Hugging Face mock OMOP/Orthanc seeding (`make seed-trust-data`, part of the standard `deploy-trust` chain); `download.docker.com` (Docker Engine install/upgrade, `geerlingguy.docker`); `awscli.amazonaws.com` (one-time AWS CLI v2 install); Ubuntu apt + `esm.ubuntu.com` over HTTPS; **PyPI and `download.pytorch.org`** (documented trust requirement in `admin-platform-support.rst`; also Flower's per-run `uv sync`); the **CloudWatch agent `.deb`** from `s3.amazonaws.com/amazoncloudwatch-agent/…` — us-east-1 S3, *outside* the regional prefix list, so it survives only on this floor; and the AWS APIs with no VPC endpoint provisioned (`ssmmessages`, `ec2messages`, `monitoring`). |
+| TCP 80 → `0.0.0.0/0` | any host | Ubuntu apt mirrors over HTTP (package install/upgrade). |
+| TCP 443 → S3 managed prefix list | `com.amazonaws.<region>.s3` | S3, for the AI Centre FL kit sync. A prefix list rather than a raw CIDR because S3's edge IPs rotate. Shadowed by the 443 floor — intent, not enforcement. |
+| TCP 443 → `aws_security_group.vpc_endpoints` | peer SG | SSM control plane (`ssm`) and CloudWatch Logs (`logs`) via the VPC interface endpoints — one rule, since both share an endpoint SG and port. Shadowed by the 443 floor — intent, not enforcement. Gated on `var.enable_ecs_endpoints` (default `true`); when it is `false` the endpoints do not exist and this rule is omitted entirely rather than restated as a public rule, which would collide with the floor on the same tuple. |
+| TCP `FL_SERVER_PORT` → `0.0.0.0/0` | any host | FL training traffic to the FL-server NLB. **The one destination the 443 floor does not cover**, and therefore the one that cannot be scoped to a peer SG: the NLB is internet-facing (public subnets, no `internal = true`), so its DNS resolves to public IPs even from inside the VPC, and the trust EC2 (private subnet, no public IP) reaches it out through the NAT gateway — which is precisely what the NLB's own ingress rule allowlisting the NAT public IP attests. A peer-SG destination matches only the private IPs of ENIs carrying that SG, so it would match none of this traffic and silently drop every FL connection while image pulls, hub polling and SSM all stayed healthy. Narrowable only once the NLB itself becomes `internal`, or by giving it static per-AZ EIPs via `subnet_mapping` and allowlisting those `/32`s. |
+| TCP + UDP 53 → `cidrhost(var.vpc_cidr, 2)/32` | VPC resolver | Name resolution. **Inert as a control**: AWS documents that security groups cannot filter traffic to the Route 53 Resolver (the VPC+2 address / AmazonProvidedDNS), so these two rules neither permit nor restrict resolution — do not debug a DNS fault against them, and do not "fix" one by widening them. The control that actually satisfies #876's DNS criterion is the **absence** of a `0.0.0.0/0:53` rule, which *does* block third-party resolvers such as `8.8.8.8`. |
+
+**NTP is deliberately absent and needs no rule.** Time sync runs against the AMI's default
+link-local Amazon Time Sync service (`169.254.169.123`), which security groups do not evaluate. If
+anyone repoints chrony at a public NTP pool, the failure is silent clock drift surfacing weeks
+later as TLS / SigV4 / SSM errors — not as a firewall error.
+
+The `0.0.0.0/0`-scoped rules are the practical floor for a security-group-only design and are
+accepted as a permanent, documented limitation rather than a gap slated for a follow-up — closing
+them for real would mean a domain-aware layer (AWS Network Firewall domain rules, or a forward
+proxy), which is out of scope here. Even so, this is materially tighter than the previous
+allow-all-protocols-all-ports default.
+
+**Egress is managed inline; ingress by standalone rules.** `modules/secgroup` renders the allowlist
+into the `aws_security_group` resource's inline `egress` attribute and attaches no
+`aws_security_group_rule` of type `egress`. The asymmetry with ingress is deliberate and must not
+be "tidied away": inline `ingress`/`egress` are attributes-as-blocks, so an explicit value —
+including `[]` — is authoritative rather than unmanaged, and mixing it with standalone rule
+resources on the same group is the combination the AWS provider documents as causing "rule
+conflicts, perpetual differences, and rules being overwritten". In practice the plan immediately
+after such an apply revokes the entire allowlist, SSM access included, and never converges.
+Ingress keeps the opposite mechanism (standalone rules, the inline attribute never set), which is
+what lets externally attached rules — such as the CloudFront VPC-origin rule in `cloudfront.tf` —
+coexist safely.
 
 ### Remote Access via SSM Session Manager
 
