@@ -39,7 +39,8 @@ The `flip-utils/`, `fl-services/`, `fl-apps/`, and `fl-tutorials/` trees hold th
 app templates, and tutorials for both NVFLARE and Flower. Both
 backends are also provisioned in-tree (gitignored): `deploy/fl_backend.mk` points `FL_PROVISIONED_DIR` per-backend at
 `fl-services/nvflare/provision/workspace-dev` (nvflare) or `fl-services/flower/provision/creds` (flower) — see
-[`README.md#federated-learning-setup`](README.md#federated-learning-setup).
+[`fl-services/nvflare/README.md`](fl-services/nvflare/README.md) and
+[`fl-services/flower/README.md`](fl-services/flower/README.md).
 
 ## Tech Stack
 
@@ -323,7 +324,7 @@ After changes, evaluate if docs need updating:
 | Changed env vars | `.env.development.example`, `CONTRIBUTING.md`, `docs/source/sys-admin.rst` |
 | New dependencies | `CONTRIBUTING.md`, service `README.md` |
 | Changed deployment config | `deploy/README.md`, `docs/source/sys-admin.rst` |
-| New Make targets | `README.md`, this file |
+| New Make targets | `CONTRIBUTING.md`, this file |
 | User-facing workflow changes | `docs/source/user-guides.rst` |
 | FL framework features | `docs/source/components/component-fl-nodes.rst` |
 | Trust service changes | `trust/README.md`, relevant `trust/*/README.md` |

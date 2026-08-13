@@ -18,28 +18,11 @@ the same **zero inbound trust** architecture as the Docker Compose deployment:
 trust services only make outbound connections to the Central Hub and the FL
 server; no inbound ports are exposed from the K8s cluster.
 
-> **⚠️  Early-access.**
-> The three blockers found in the original single-node k3s validation —
-> `xnat-nginx` exiting after entrypoint, `xnat-web` crash-looping on a DB
-> password mismatch, and the `fl-client` failing to hold its NVFLARE
-> connection — were fixed on branch `376_KubernetesHelmChartForTrust-sideDeployment`
-> (PR [#420](https://github.com/londonaicentre/FLIP/pull/420)). `Trust_K8s` now
-> connects to the stag Central Hub and runs healthy.
->
-> Remaining work before this chart is production-ready is tracked in:
->
-> - [#593](https://github.com/londonaicentre/FLIP/issues/593) — deployment
->   robustness: automated K8s-trust kit provisioning, egress-config persistence
->   across `make sync-kit`, and fl-api zombie hardening on the hub.
-> - [#516](https://github.com/londonaicentre/FLIP/issues/516) — NetworkPolicy
->   egress allowlist audit + threat model.
-> - [#530](https://github.com/londonaicentre/FLIP/issues/530) — RBAC and
->   PodSecurity hardening.
->
-> The kernel-7 gRPC issue ([#527](https://github.com/londonaicentre/FLIP/issues/527)),
-> sidecar FL-client mode ([#528](https://github.com/londonaicentre/FLIP/issues/528)),
-> and XNAT/Orthanc Ingress ([#529](https://github.com/londonaicentre/FLIP/issues/529))
-> were triaged and closed as out-of-scope / won't-fix.
+> **Deployment status.** The chart is validated on single-node k3s and includes
+> kit synchronisation, default-deny ingress, audited egress rules, least-privilege
+> service accounts, and stateless-workload hardening. Review the
+> [known limitations](#known-limitations), particularly storage and Pod Security
+> constraints, before selecting it for a production Trust.
 
 ## Prerequisites
 
@@ -128,23 +111,9 @@ helm upgrade --install trust-release ./deploy/providers/kubernetes/ \
   -f deploy/providers/kubernetes/k8s-trust-<CODE>.yaml
 ```
 
-> **⚠️ First-time / clean-install rough edges** (tracked in
-> [#595](https://github.com/londonaicentre/FLIP/issues/595)):
->
-> - `sync-kit` (step 3) creates the Secret via `kubectl`, so a *fresh* `helm
->   install` cannot adopt it (`missing key "app.kubernetes.io/managed-by"`). On a
->   clean namespace, delete it first so Helm owns it:
->   `kubectl delete secret trust-release-flip-trust-secrets -n flip-trust`.
-> - If the `xnat-init` post-install hook fails (see [#565](https://github.com/londonaicentre/FLIP/issues/565)),
->   `helm` reports the release failed and `patch-kit-secrets` is skipped, leaving
->   trust-api on the stale seed key (`401`). Re-run it manually:
->   `make -C deploy/providers/kubernetes patch-kit-secrets KIT=<CODE> PROD=stag`.
-> - For FL training, `sync-kit` regenerates the FL-server egress allowance on
->   every run (see [#593](https://github.com/londonaicentre/FLIP/issues/593)):
->   when the kit carries `FL_SERVER_PORT` it emits `networkPolicies.allowedEgressPorts`
->   into the override with a port-only rule for that port (alongside the chart's
->   default DNS/HTTP/HTTPS ports), so the fl-client → fl-server gRPC is allowed
->   without pinning the NLB's rotating IPs. No manual re-add is needed.
+`sync-kit` stamps a newly created Secret with Helm ownership metadata so the
+first install can adopt it. It also regenerates the FL-server egress port from
+the kit on every run, so upgrades do not lose the fl-client gRPC allowance.
 
 ### 5. Verify the trust is polling
 
@@ -410,7 +379,7 @@ networkPolicies:
 
 For the full audit of what egress is allowed and why, the residual risk (notably
 443-to-anywhere), and a hardening guide, see
-[NETWORK-POLICY.md](NETWORK-POLICY.md) (#516).
+[NETWORK-POLICY.md](NETWORK-POLICY.md).
 
 ## Secrets Reference
 
@@ -507,14 +476,14 @@ old install on the previous chart version.
 ### Security Model
 
 - **NetworkPolicies**: Default-deny-ingress, allow-intra-namespace, allow-egress
-  to Central Hub and FL server only (audit & threat model: [NETWORK-POLICY.md](NETWORK-POLICY.md), #516)
+  to Central Hub and FL server only (audit and threat model: [NETWORK-POLICY.md](NETWORK-POLICY.md))
 - **No LoadBalancer or NodePort** for application services (all ClusterIP)
 - **Secrets**: Separate from ConfigMaps; recommend External Secrets Operator
 - **FL clients**: No Central Hub credentials; connect outbound to FL server only
 - **ServiceAccounts**: each stateless service runs under its own ServiceAccount
   with no RBAC role bindings (none of the pods call the Kubernetes API — least
   privilege by default).
-- **Pod Security & container hardening** (#530): the chart-created namespace
+- **Pod Security & container hardening**: the chart-created namespace
   carries Pod Security Standards labels (`enforce=baseline`, `warn`/`audit=restricted`
   by default — tune via `podSecurity.*`), and the stateless services
   (trust-api, imaging-api, data-access-api, fl-client) plus `monailabel`
@@ -524,7 +493,7 @@ old install on the previous chart version.
   **Remaining for full `restricted` enforcement:** the images that own a
   PersistentVolume (`xnat-web`, `xnat-db`, `omop-db`, `orthanc`, and `monailabel`
   — whose weights PVC the server writes at model-load time) need `fsGroup`/chown
-  init containers before they can run non-root — tracked under #530.
+  init containers before they can run non-root.
 
 ## Development
 
@@ -663,7 +632,12 @@ Include:
 
 ## Known Limitations
 
-1. **XNAT Container Service — single-node by default**: DICOM-to-NIfTI
+1. **Pod Security for stateful services**: the namespace enforces the Baseline
+   profile and audits/warns against Restricted. The stateless APIs are hardened,
+   but `xnat-web`, `xnat-db`, `omop-db`, and `orthanc` still need image and
+   volume-permission work before the namespace can enforce Restricted.
+
+2. **XNAT Container Service — single-node by default**: DICOM-to-NIfTI
    conversion runs end-to-end on Kubernetes (FLIP#565). The Container Service
    spawns each `dcm2niix` Job with the `xnat-web` data PVC mounted, configured by
    `combined-pvc-name` + `combined-path-translation` in the Kubernetes backend
@@ -675,10 +649,10 @@ Include:
    [TROUBLESHOOTING.md §2.3b](TROUBLESHOOTING.md) for the failure modes,
    including the trailing slash that `combined-path-translation` must keep.
 
-2. **Orthanc SQLite**: Orthanc uses an embedded SQLite database that cannot be
+3. **Orthanc SQLite**: Orthanc uses an embedded SQLite database that cannot be
    shared across multiple pod replicas. The chart configures Orthanc with
    `replicas: 1` and a `ReadWriteOnce` PVC.
 
-3. **Alloy log collection**: In the K8s deployment, Alloy runs as a DaemonSet
+4. **Alloy log collection**: In the K8s deployment, Alloy runs as a DaemonSet
    reading pod log files from the host filesystem, replacing the Docker socket
    approach used in the compose deployment.

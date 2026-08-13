@@ -117,13 +117,20 @@ export XNAT_DATA_DIR
 # Path to the dev XNAT folder on the Docker host (bind mounts resolve there, not locally).
 export XNAT_PATH=$(realpath .)
 
+# XNAT_PLUGINS_FROM_HOST tracks STACK_FILES deliberately: only the development stack bind-mounts
+# xnat/plugins over the image, so only development needs the host-side plugin cache (and the S3
+# bucket and AWS credentials that populate it). Production bakes plugins into the image, and a
+# trust host has neither FLIP_ARTIFACTS_BUCKET_NAME nor a reason to reach S3 for them.
 ifeq ($(PROD),true)
 STACK_FILES = -c docker-compose-stack.yml -c docker-compose-stack.production.yml
+XNAT_PLUGINS_FROM_HOST =
 else ifeq ($(PROD),stag)
 STACK_FILES = -c docker-compose-stack.yml -c docker-compose-stack.production.yml
+XNAT_PLUGINS_FROM_HOST =
 else
 # In development, mount plugins and config from the host for hot-reload
 STACK_FILES = -c docker-compose-stack.yml -c docker-compose-stack.development.yml
+XNAT_PLUGINS_FROM_HOST = 1
 endif
 
 # Guard: a KIT-selected target needs KIT set.
@@ -220,15 +227,23 @@ up:
 	@found=0; for f in ../.env.*.$(ENV); do \
 	  [ -e "$$f" ] || continue; \
 	  kit=$${f#../.env.}; kit=$${kit%.$(ENV)}; found=1; \
-	  $(MAKE) up-xnat KIT=$$kit; \
+	  $(MAKE) up-xnat KIT=$$kit || { echo "❌ Failed to start XNAT for trust $$kit"; exit 1; }; \
 	done; \
 	[ "$$found" = 1 ] || echo "ℹ️  No trust/.env.*.$(ENV) kits found — run 'make register-trusts' (from repo root) first."
 
 # Bring up the XNAT swarm stack for one trust (KIT=Trust_1 / Trust_2).
 # trust/Makefile's up-trust calls this so a trust comes up complete.
+#
+# In development, validate the version-matched, gitignored plugin cache before tearing down a
+# working XNAT: a fresh clone downloads it here, a warm cache skips AWS, and a failure leaves the
+# running stack untouched. Skipped outside development, where plugins come baked into the image
+# (see XNAT_PLUGINS_FROM_HOST above).
 up-xnat: create-xnat-network
 	$(require_kit)
 	$(require_xnat_passwords)
+ifdef XNAT_PLUGINS_FROM_HOST
+	$(MAKE) xnat-plugins-download
+endif
 	$(MAKE) down-xnat KIT=$(KIT)
 	$(MAKE) xnat-reset KIT=$(KIT)
 	XNAT_PATH=${XNAT_PATH} \
@@ -293,7 +308,23 @@ xnat-war-download:
 # The S3 artifact set is keyed by XNAT version — s3://<bucket>/xnat-<version>/{xnat-web-<version>.war,
 # plugins/} — so different branches (e.g. main vs develop across an XNAT upgrade) can build against
 # different WAR + plugin rosters without clobbering each other.
+#
+# A copied-but-unedited .env leaves the `<your-...>` placeholder in place, and a placeholder is not
+# empty: an emptiness check passes it straight to the S3 sync, which dies on an opaque AWS
+# bucket-name validation error instead of the actionable message below. Reject the placeholder shape
+# too — the same idea as XNAT_CREDENTIAL_PLACEHOLDER above and unset_or_placeholder in
+# deploy/providers/AWS/Makefile.
 xnat-plugins-download:
+	@case "$(FLIP_ARTIFACTS_BUCKET_NAME)" in \
+	  "") reason="is unset" ;; \
+	  "<"*">") reason="is still the .env placeholder ($(FLIP_ARTIFACTS_BUCKET_NAME))" ;; \
+	  *) reason="" ;; \
+	esac; \
+	[ -z "$$reason" ] || { \
+	  echo "❌ FLIP_ARTIFACTS_BUCKET_NAME $$reason — the host plugin cache cannot be filled."; \
+	  echo "   Set it in .env.development (see the 'S3 Buckets' block), or pass it on the command"; \
+	  echo "   line: make xnat-plugins-download FLIP_ARTIFACTS_BUCKET_NAME=<bucket>."; \
+	  exit 1; }
 	@MONAI_LABEL="$(strip $(MONAI_LABEL))" ./scripts/ensure_plugins.sh "xnat/plugins" "$(FLIP_ARTIFACTS_BUCKET_NAME)" "xnat-$(XNAT_VERSION)/plugins"
 
 # Creates the data-volume directory structure for one trust's XNAT stack and

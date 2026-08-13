@@ -12,10 +12,11 @@
 
 import json
 from datetime import datetime
-from typing import Any
+from enum import StrEnum
+from typing import Annotated, Any
 from uuid import UUID
 
-from pydantic import BaseModel, Field, model_validator, validator
+from pydantic import BaseModel, Field, StringConstraints, model_validator, validator
 
 from flip_api.config import get_settings
 from flip_api.domain.schemas.status import TaskType
@@ -219,3 +220,49 @@ class TaskResultInput(BaseModel):
 
     success: bool
     result: str | None = Field(default=None, max_length=get_settings().MAX_TASK_RESULT_LENGTH)
+
+
+class ServiceHealthStatus(StrEnum):
+    """Wire vocabulary for a trust-internal service's probed state."""
+
+    HEALTHY = "healthy"
+    DEGRADED = "degraded"
+    DOWN = "down"
+    UNKNOWN = "unknown"
+
+
+class ServiceHealthEntry(BaseModel):
+    """One probed service inside a heartbeat snapshot.
+
+    Bounds are defence-in-depth: the payload originates inside a trust but is
+    persisted verbatim into JSONB and rendered on the Connection Status page, so
+    every free-text field is length-capped and numerics are range-capped.
+    """
+
+    status: ServiceHealthStatus
+    version: str | None = Field(default=None, max_length=64)
+    response_ms: int | None = Field(default=None, ge=0, le=1_000_000)
+
+
+# Roster keys are the trust collector's wire contract; the hub stays roster-agnostic
+# and only constrains the shape, so a trust can report a new service without a hub deploy.
+_ServiceKey = Annotated[str, StringConstraints(pattern=r"^[a-z0-9-]{1,32}$")]
+
+
+class TrustHeartbeatInput(BaseModel):
+    """Optional heartbeat body: the trust's per-service health snapshot (issue #901).
+
+    Older trust-api builds POST no body at all — the route treats an absent body as
+    "no snapshot" and only stamps ``last_heartbeat``. ``collected_at`` is accepted
+    (and discarded) so collector payloads stay self-describing on the wire; it is
+    never persisted or used for staleness — the hub stamps its own
+    ``services_health_at`` on receipt so a trust cannot backdate or postdate its
+    snapshot.
+    """
+
+    # Bounds declared on the field so they also surface in the OpenAPI schema;
+    # entry-level caps live on ServiceHealthEntry. min_length matters as much as
+    # max: an empty snapshot would overwrite a good one AND be stamped fresh,
+    # defeating the collector's drop-the-snapshot-on-failure design.
+    services: dict[_ServiceKey, ServiceHealthEntry] = Field(min_length=1, max_length=16)
+    collected_at: datetime | None = None

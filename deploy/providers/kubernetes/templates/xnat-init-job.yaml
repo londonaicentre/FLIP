@@ -159,6 +159,42 @@ spec:
                 exit 1
               fi
 
+              # The readiness loop above accepts 200 *or* 401 from a core route, so it proves only
+              # that Tomcat is answering — not that the plugins have registered their routes. Every
+              # plugin call below (container service, DICOM SCP, PACS, DQR) would otherwise race a
+              # still-registering webapp and 404, leaving XNAT half-configured. Gate on the DQR
+              # route the same way the Compose path does in
+              # trust/xnat/xnat/config/wait-for-xnat-plugins.sh. Authenticated via the session
+              # cookie, because an anonymous probe answers 401 whatever the plugin state.
+              echo "Waiting for XNAT plugin routes to register..."
+              PLUGINS_READY=false
+              HTTP_CODE=000
+              # Timed rather than assumed: 60 iterations of a 10s sleep plus a curl that can itself
+              # burn --max-time is a budget of at least 600s and up to roughly twice that, so a
+              # fixed "within 600s" in the failure line would mis-state how long XNAT was given.
+              PLUGIN_WAIT_START=$(date +%s)
+              for i in $(seq 1 60); do
+                # `|| HTTP_CODE=000` is load-bearing for the same reason as the loop above: `set -e`
+                # would abort on a failing command substitution and the loop could never wait.
+                HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+                  --connect-timeout 5 --max-time 10 \
+                  -H "Cookie: JSESSIONID=${JSESSION}" \
+                  "${XNAT_URL}/xapi/dqr/settings" 2>/dev/null) || HTTP_CODE=000
+                case "${HTTP_CODE}" in
+                  2*)
+                    echo "XNAT plugin routes are ready (HTTP ${HTTP_CODE})!"
+                    PLUGINS_READY=true
+                    break
+                    ;;
+                esac
+                sleep 10
+              done
+              if [ "$PLUGINS_READY" != "true" ]; then
+                echo "ERROR: XNAT plugin routes did not register within $(( $(date +%s) - PLUGIN_WAIT_START ))s (last HTTP ${HTTP_CODE})" >&2
+                echo "  endpoint: ${XNAT_URL}/xapi/dqr/settings" >&2
+                exit 1
+              fi
+
               # Activate XNAT site (idempotent — safe to call even if already initialized).
               # siteUrl must be non-empty on XNAT >= 1.10.0: the Restlet create paths NPE on a
               # null siteUrl while building the response (entity created, request 500s) — see
