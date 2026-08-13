@@ -88,12 +88,16 @@ provisioned kit directories to the new container uid is needed before the first 
 
 The trust-deployment `fl-client-net-*` services (`trust/deploy/compose_trust.{production,development}.nvflare.yml`)
 also set `security_opt: [no-new-privileges:true]` and `cap_drop: [ALL]`, matching every other trust-side
-service. Production needs no capability added back — the Ansible-provisioned `FL_KIT_DIR` is already owned
-by the container's UID. The development compose adds back `FOWNER` as a safety margin for when the
-`provision/workspace-dev/` output and the built image's baked-in UID diverge (see
-[`deploy/README.md`](../../deploy/README.md#linux-capability-restrictions) for the full rationale). This
-does **not** cover the standalone `fl-services/nvflare/compose.dev.yml` dev harness (`make -C fl-services/nvflare up`),
-which remains unhardened.
+service. Development adds nothing back: the image is non-root, and Docker makes a `cap_add` effective only
+for root, so a grant there would sit unused in the bounding set (`CapEff` stays `0`). A `provision/workspace-dev/`
+kit whose ownership doesn't match the image's baked-in UID is fixed by the `chown -R` above, not by a
+capability. Production adds back `DAC_OVERRIDE` and `FOWNER`, equally inert for the current non-root image
+but retained for legacy root-image compat — a trust pinning a pre-GHSA-8465 `DOCKER_FL_TAG` still runs that
+entrypoint as root, and `cap_drop: ALL` would strip the DAC bypass its unguarded kit writes rely on (see
+[`deploy/README.md`](../../deploy/README.md#linux-capability-restrictions) for the full rationale). None of
+this covers the standalone `fl-services/nvflare/compose.dev.yml` dev harness (`make -C fl-services/nvflare up`),
+which remains unhardened — it runs the same non-root image and kit dirs, so it can be hardened the same way
+whenever someone picks it up.
 
 ## Step-by-step provisioning
 

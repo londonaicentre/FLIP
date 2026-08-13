@@ -294,19 +294,22 @@ storage world-writable so a developer needs no `sudo` to re-seed it.
 ### Linux Capability Restrictions
 
 Every container drops **all** Linux capabilities (`cap_drop: [ALL]`) and only adds back what the
-service strictly requires. A few dev-only services (pgadmin, register-supernode-keys, and the
-standalone `fl-services/nvflare/compose.dev.yml` dev harness's `fl-client-1`/`fl-client-2` — used
-only by `make -C fl-services/nvflare up` for iterating on the backend outside the full trust
-stack) are deliberately exempted because their entrypoints depend on root capabilities that would
-crash-loop under `cap_drop: ALL`. The trust-deployment `fl-client-net-*` services (in
-`trust/deploy/compose_trust.*.yml`, what a real trust actually runs) are hardened — see the row
+service strictly requires. Two dev-only services (pgadmin, register-supernode-keys) are
+deliberately exempted because their entrypoints depend on root capabilities that would crash-loop
+under `cap_drop: ALL`. The standalone `fl-services/nvflare/compose.dev.yml` dev harness's
+`fl-client-1`/`fl-client-2` — used only by `make -C fl-services/nvflare up` for iterating on the
+backend outside the full trust stack — carry no `cap_drop` either, but for a different reason:
+they are simply **not hardened yet**, not blocked from it. They run the same non-root
+`flare-fl-client` image and the same kit dirs as the hardened `fl-client-net-*` services below, so
+a later pass can harden them the same way. The trust-deployment `fl-client-net-*` services (in
+`trust/deploy/compose_trust.*.yml`, what a real trust actually runs) are hardened — see the rows
 below. The per-service grants in the compose files are:
 
 | Service(s) | Granted capabilities | Reason |
 |------------|----------------------|--------|
 | flip-api, fl-api (Flower), trust-api, imaging-api, data-access-api, xnat-web, loki, alloy, grafana | `CHOWN` | In-container init/entrypoint fixes ownership on volume paths it owns. |
-| fl-client-net-* (NVFLARE, Flower — production, and Flower development) | *(none)* | Runs non-root (GHSA-8465). Flower's `flower-supernode` entrypoint does no chmod/chown at all. NVFLARE's entrypoint only `chmod +x`'s startup scripts it already owns — in production the bind-mounted `FL_KIT_DIR` is pre-chowned to the container's UID by the Ansible playbooks (`site.yml`, `site_local_trust.yml`); Flower's dev mounts are `:ro`. |
-| fl-client-net-* (NVFLARE, development only) | `FOWNER` | `provision/workspace-dev/` (gitignored) is written by `make provision` as the host user, and the image's non-root UID is baked in at build time from that same user's `.env.development` — so build+provision by the same developer already match. `FOWNER` is a safety margin for when they don't (CI, a shared devbox, a teammate's prebuilt `:dev` image), so the entrypoint's `chmod +x` on those bind-mounted scripts doesn't crash-loop. |
+| fl-client-net-* (Flower — production and development; NVFLARE development) | *(none)* | Runs non-root (GHSA-8465), and Docker grants effective capabilities only to root — a `cap_add` here would land in the bounding set with `CapEff` still `0`, so it would buy nothing. Flower's `flower-supernode` entrypoint does no chmod/chown at all and its dev mounts are `:ro`. NVFLARE's dev kit (`provision/workspace-dev/`) is written by `make provision` as the host user whose UID is baked into the `:dev` image, so ownership already matches; when it doesn't (CI, a shared devbox, a teammate's prebuilt image) the fix is to `chown` the kit dirs to the container UID, not to grant a capability. |
+| fl-client-net-* (NVFLARE, production) | `DAC_OVERRIDE`, `FOWNER` (production) | Inert for the current image, which runs non-root from PID 1 — the Ansible-provisioned `FL_KIT_DIR` is pre-chowned to the container's UID by `site.yml` / `site_local_trust.yml`. Kept for legacy root-image compat: trusts pin `DOCKER_FL_TAG` (an immutable `sha` tag is the documented norm), so `--pull always` cannot move a trust off a pre-GHSA-8465 **root** image, and under `cap_drop: ALL` such an image loses root's implicit DAC bypass on the `envsubst` write into the bind-mounted `local/` and `FOWNER` on the `chmod +x` of `startup/*.sh`. Its writes predate the `\|\| exit 1` guard, so it degrades to running NVFLARE against a stale/absent `resources.json` rather than crash-looping — a worse failure to diagnose. Same rationale as the orthanc row below. |
 | fl-api (NVFLARE) | `CHOWN` | The `flare-fl-api` image runs as user `flip` (UID 1001, non-root), so only the `CHOWN` baseline is needed; `DAC_OVERRIDE` and `FOWNER` are inert for non-root processes. |
 | fl-server (NVFLARE) | `CHOWN`, `DAC_OVERRIDE`, `FOWNER` | The container runs as root, but the provisioned NVFLARE kits are bind-mounted owned by the provisioning uid with 0600 keys. `cap_drop: ALL` strips root's implicit DAC bypass, so without `DAC_OVERRIDE` the fl-server crash-loops on `/app/startup/server.key`; the entrypoint also `chmod`s kit scripts it does not own (`FOWNER`). In dev, the same grant lets the root fl-server read the operator's 0600 AWS SSO token cache for the S3 results upload. |
 | fl-server (Flower, development only) | `CHOWN`, `DAC_OVERRIDE` | The dev compose runs the SuperLink as root (see the `user: "0:0"` comment in `compose.development.flower.yml`) to read the host-provisioned 0640 TLS keys and the operator's 0600 SSO token cache; `cap_drop: ALL` strips root's implicit DAC bypass, so `DAC_OVERRIDE` is granted back. Production runs the image's non-root user with instance-role AWS credentials and keeps the `CHOWN` baseline. |
