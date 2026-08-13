@@ -25,7 +25,9 @@ set -euo pipefail
 #
 # The two auth knobs bound wrong-password logins at AUTH_FAILURE_LIMIT per credential — 6 in total
 # against XNAT's 20-attempt lockout — while the backoff still buys ~45s of tolerance for a
-# transient rejection during boot.
+# transient rejection during boot. The first rejection also spends one attempt on the other
+# credential, which is what keeps a retry against an already-rotated XNAT from paying that whole
+# ~45s tolerance before it gets to the password that works.
 #
 # On credential handling, see the loop below: a not-yet-registered route answers 404, so 401/403 can
 # only mean the credentials are wrong — never "still loading". That distinction is what keeps this
@@ -69,16 +71,20 @@ last_status="000"
 
 # Probe with one credential at a time. This script runs before configure-xnat.sh rotates the admin
 # password, so the initial password is the right guess on a fresh instance; on a re-run against an
-# already-configured XNAT it is the rotated one. Switching on 401/403 (never on 404) means at most
-# one wrong-password login per credential, instead of one per poll for the whole timeout — the
-# latter trips XNAT's 20-attempt/1-hour account lockout in ~100s and bricks the deploy.
+# already-configured XNAT it is the rotated one. Reacting only to 401/403, never to 404, is what
+# bounds the wrong-password logins at AUTH_FAILURE_LIMIT per credential instead of one per poll for
+# the whole timeout — the latter trips XNAT's 20-attempt/1-hour account lockout in ~100s and bricks
+# the deploy.
 credential_label="initial"
 credential="$XNAT_ADMIN_INITIAL_PASSWORD"
+alternate_label="configured"
 alternate="$XNAT_ADMIN_PASSWORD"
 # Dev kits set both passwords to the same value: there is then no rotation to detect, and a
 # persistent 401 is a genuine credential fault rather than a signal to switch.
 [[ "$alternate" == "$credential" ]] && alternate=""
 auth_failures=0
+alternate_probed=""
+alternate_failures=0
 
 while true; do
   last_status=$(probe "$credential")
@@ -96,14 +102,42 @@ while true; do
       auth_failures=$((auth_failures + 1))
       sleep_for="$AUTH_BACKOFF_SECONDS"
 
+      # A rejection is the one moment the other password is worth spending an attempt on, so spend
+      # it here rather than after a full run. Re-running configuration against an already-rotated
+      # XNAT — the idempotent retry this whole script has to support, and the one repeated while
+      # debugging a stag deploy — starts on the wrong password by construction, and waiting out the
+      # run first costs AUTH_FAILURE_LIMIT rejected logins and the whole backoff tolerance before
+      # reaching the password that works.
+      #
+      # Only a 2xx acts on the result: whether the plugin route answers is the entire question this
+      # script asks, and which admin password proved it does not matter to configure-xnat.sh, which
+      # re-establishes its own credential immediately afterwards. Anything else is inconclusive —
+      # during a boot blip the route still 404s for both passwords — so the run-of-rejections logic
+      # below keeps the decision to switch, and the blip stays forgiven.
+      if [[ -n "$alternate" && -z "$alternate_probed" ]]; then
+        alternate_probed=1
+        alternate_status=$(probe "$alternate")
+        case "$alternate_status" in
+          2*)
+            echo "XNAT DQR plugin is ready (HTTP $alternate_status, $alternate_label admin password)."
+            exit 0
+            ;;
+          401 | 403)
+            # Charged to the credential it was spent on, and carried into the switch below, so both
+            # passwords still share one AUTH_FAILURE_LIMIT budget each however the failures fall.
+            alternate_failures=1
+            ;;
+        esac
+      fi
+
       if (( auth_failures >= 10#$AUTH_FAILURE_LIMIT )); then
         if [[ -n "$alternate" ]]; then
           echo "  XNAT rejected the $credential_label admin password ${auth_failures}x" \
-               "(HTTP $last_status) — switching to the configured one."
+               "(HTTP $last_status) — switching to the $alternate_label one."
           credential="$alternate"
-          credential_label="configured"
+          credential_label="$alternate_label"
           alternate=""
-          auth_failures=0
+          auth_failures=$alternate_failures
         else
           echo "ERROR: XNAT rejected every admin credential (HTTP $last_status)." >&2
           echo "  endpoint: $READINESS_URL" >&2

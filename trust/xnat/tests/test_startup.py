@@ -247,8 +247,13 @@ def test_readiness_rejects_a_leading_zero_timeout(tmp_path: Path) -> None:
     assert "timeout='09'" in result.stderr, "the rejection should name the offending value"
 
 
-def test_readiness_switches_once_to_the_rotated_password(tmp_path: Path) -> None:
-    """Re-running configuration against an already-rotated XNAT must still succeed."""
+def test_readiness_reaches_the_rotated_password_on_the_first_rejection(tmp_path: Path) -> None:
+    """Re-running configuration against an already-rotated XNAT must succeed, and succeed cheaply.
+
+    Waiting out a full run of rejections first would spend AUTH_FAILURE_LIMIT wrong-password logins
+    and the whole backoff tolerance (~45s at the shipped defaults) on every retry — on the path this
+    script exists to keep idempotent.
+    """
     argv_log = tmp_path / "curl-argv"
     curl_body = (
         f'printf "%s\\n" "$*" >> "{argv_log}"; '
@@ -261,8 +266,8 @@ def test_readiness_switches_once_to_the_rotated_password(tmp_path: Path) -> None
 
     assert result.returncode == 0, result.stderr
     probes = argv_log.read_text().strip().splitlines()
-    assert sum("admin:initial" in line for line in probes) == 3, "should switch after a run, not a blip"
-    assert sum("admin:rotated" in line for line in probes) == 1, "the switch should be final"
+    assert sum("admin:initial" in line for line in probes) == 1, "one rejection is enough evidence"
+    assert sum("admin:rotated" in line for line in probes) == 1
 
 
 def test_readiness_forgives_a_transient_rejection_during_boot(tmp_path: Path) -> None:
@@ -285,7 +290,12 @@ def test_readiness_forgives_a_transient_rejection_during_boot(tmp_path: Path) ->
     )
 
     assert result.returncode == 0, result.stderr
-    assert "admin:rotated" not in argv_log.read_text(), "a single 401 must not switch credentials"
+    probes = argv_log.read_text().strip().splitlines()
+    # The blip does spend one look at the other password — but the 404 it gets back is inconclusive
+    # (the route is not registered yet for either credential), so the run continues, and finishes,
+    # on the credential it started with.
+    assert sum("admin:rotated" in line for line in probes) == 1, "a single 401 must not switch"
+    assert "admin:initial" in probes[-1], "the successful probe must be the original credential"
 
 
 def test_readiness_does_not_replay_a_dead_credential_while_plugins_load(tmp_path: Path) -> None:
@@ -324,8 +334,14 @@ def test_readiness_stops_well_before_lockout_when_both_credentials_are_rejected(
 
     assert result.returncode != 0
     assert "rejected every admin credential" in result.stderr
-    attempts = len(argv_log.read_text().strip().splitlines())
-    assert attempts <= 6, f"{attempts} rejected logins risks XNAT's 20-attempt lockout"
+    probes = argv_log.read_text().strip().splitlines()
+    assert len(probes) <= 6, f"{len(probes)} rejected logins risks XNAT's 20-attempt lockout"
+    # Pinned per credential, not just in total: the early look at the other password on the first
+    # rejection is charged to that password's own allowance, so it buys the fast path to a rotated
+    # XNAT without widening the budget this bound exists to keep.
+    for password in ("initial", "rotated"):
+        spent = sum(f"admin:{password}" in line for line in probes)
+        assert spent <= 3, f"{spent} rejected logins spent on the {password} password"
 
 
 def _dry_run_up_xnat(**overrides: str) -> subprocess.CompletedProcess[str]:
