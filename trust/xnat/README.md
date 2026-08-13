@@ -128,10 +128,16 @@ roster, and keying the whole set by version lets branches on different XNAT vers
 `make build` download the set for the `XNAT_VERSION` in `.env` and bake it into the Docker image.
 
 Development additionally bind-mounts the gitignored `xnat/plugins/` directory over the image's plugins. Therefore a
-fresh checkout must set `FLIP_ARTIFACTS_BUCKET_NAME` and have AWS access for its first start. `make up` runs
-`xnat-plugins-download` before stopping any existing XNAT: a complete cache stamped with the current versioned S3
-prefix skips AWS, while a missing or mismatched cache is downloaded and revalidated. A failed download leaves the
-currently running XNAT untouched.
+fresh checkout must set `FLIP_ARTIFACTS_BUCKET_NAME` to a real bucket (the shipped `<your-...>` placeholder is
+rejected) and have AWS access for its first start. `make up` runs `xnat-plugins-download` before stopping any existing
+XNAT: a complete cache stamped with the current versioned S3 prefix skips AWS, while a missing or mismatched cache is
+downloaded and revalidated. A failed download leaves the currently running XNAT untouched.
+
+That automatic fill is **development-only**, because only the development stack mounts the directory. On stag, prod,
+EC2 and on-prem, `make up` neither needs nor fetches the host cache — those stacks run the plugins baked in at image
+build, which is where `make build` (above) puts them. An operator who wants a host-side cache there anyway — to
+inspect the jars, or to build offline later — populates it explicitly with
+`make -C trust/xnat xnat-plugins-download`, which needs `FLIP_ARTIFACTS_BUCKET_NAME` and AWS access.
 
 > The pre-1.10 flat layout (`xnat/xnat-web-1.9.3.war` + `xnat/plugins/`) is kept as-is while `main`
 > still builds 1.9.3; delete it once this upgrade reaches `main`.

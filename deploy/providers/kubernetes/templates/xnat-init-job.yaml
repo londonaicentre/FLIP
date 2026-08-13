@@ -169,6 +169,10 @@ spec:
               echo "Waiting for XNAT plugin routes to register..."
               PLUGINS_READY=false
               HTTP_CODE=000
+              # Timed rather than assumed: 60 iterations of a 10s sleep plus a curl that can itself
+              # burn --max-time is a budget of at least 600s and up to roughly twice that, so a
+              # fixed "within 600s" in the failure line would mis-state how long XNAT was given.
+              PLUGIN_WAIT_START=$(date +%s)
               for i in $(seq 1 60); do
                 # `|| HTTP_CODE=000` is load-bearing for the same reason as the loop above: `set -e`
                 # would abort on a failing command substitution and the loop could never wait.
@@ -186,7 +190,7 @@ spec:
                 sleep 10
               done
               if [ "$PLUGINS_READY" != "true" ]; then
-                echo "ERROR: XNAT plugin routes did not register within 600s (last HTTP ${HTTP_CODE})" >&2
+                echo "ERROR: XNAT plugin routes did not register within $(( $(date +%s) - PLUGIN_WAIT_START ))s (last HTTP ${HTTP_CODE})" >&2
                 echo "  endpoint: ${XNAT_URL}/xapi/dqr/settings" >&2
                 exit 1
               fi
