@@ -20,29 +20,87 @@ from fastapi.testclient import TestClient
 
 from trust_api import config, main
 from trust_api.main import lifespan
+from trust_api.utils.background import dead_background_tasks, reset_dead_background_tasks, watch_background_task
 
 
 @pytest.mark.asyncio
-async def test_lifespan_starts_and_cancels_poller():
-    """Lifespan should start run_poller as a background task and cancel it on shutdown."""
+async def test_lifespan_starts_and_cancels_poller_and_health_collector():
+    """Lifespan should start run_poller + run_health_collector as background tasks
+    and cancel both on shutdown."""
     mock_app = AsyncMock()
 
-    with patch("trust_api.main.run_poller", new_callable=AsyncMock) as mock_run_poller:
-        # Simulate a poller that runs until cancelled
-        async def fake_poller():
-            try:
-                await asyncio.sleep(3600)
-            except asyncio.CancelledError:
-                pass
+    async def runs_until_cancelled():
+        try:
+            await asyncio.sleep(3600)
+        except asyncio.CancelledError:
+            pass
 
-        mock_run_poller.side_effect = fake_poller
+    with (
+        patch("trust_api.main.run_poller", new_callable=AsyncMock) as mock_run_poller,
+        patch("trust_api.main.run_health_collector", new_callable=AsyncMock) as mock_run_collector,
+    ):
+        mock_run_poller.side_effect = runs_until_cancelled
+        mock_run_collector.side_effect = runs_until_cancelled
 
         async with lifespan(mock_app):
-            # Poller should be running
+            # Both background services should be running
             mock_run_poller.assert_called_once()
+            mock_run_collector.assert_called_once()
 
-        # After exiting lifespan, poller task should have been cancelled
+        # After exiting lifespan, both tasks should have been cancelled
         # (no exception means it was handled cleanly)
+
+
+class TestBackgroundTaskLiveness:
+    """A dead poller/collector must stop /health claiming everything is fine."""
+
+    def setup_method(self):
+        reset_dead_background_tasks()
+
+    def teardown_method(self):
+        reset_dead_background_tasks()
+
+    @pytest.mark.asyncio
+    async def test_records_and_logs_a_task_that_raised_an_error(self, caplog):
+        async def explode():
+            raise RuntimeError("client construction failed")
+
+        task = asyncio.create_task(explode(), name="health_collector")
+        with caplog.at_level("ERROR"):
+            task.add_done_callback(watch_background_task)
+            with pytest.raises(RuntimeError):
+                await task
+            await asyncio.sleep(0)  # let the done-callback run
+
+        assert dead_background_tasks() == {"health_collector"}
+        assert any("died" in r.message for r in caplog.records)
+
+    @pytest.mark.asyncio
+    async def test_records_a_task_that_returned_unexpectedly(self, caplog):
+        async def finishes():
+            return None
+
+        task = asyncio.create_task(finishes(), name="task_poller")
+        task.add_done_callback(watch_background_task)
+        with caplog.at_level("ERROR"):
+            await task
+            await asyncio.sleep(0)
+
+        assert dead_background_tasks() == {"task_poller"}
+
+    @pytest.mark.asyncio
+    async def test_ignores_cancellation_which_is_the_shutdown_path(self):
+        async def runs_forever():
+            await asyncio.sleep(3600)
+
+        task = asyncio.create_task(runs_forever(), name="task_poller")
+        task.add_done_callback(watch_background_task)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        await asyncio.sleep(0)
+
+        assert dead_background_tasks() == set()
 
 
 class TestDocsGating:

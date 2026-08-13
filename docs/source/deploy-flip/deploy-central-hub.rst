@@ -227,8 +227,7 @@ Flower) share a wire contract for training metrics and logs. The metrics and log
   training in the gap.
 
 This pairs with the ``flip-utils`` package that adds the trust-internal service-key header to the
-``flip`` client wrappers (see the **Trust-internal Service Authentication** section in the repo-root
-``CLAUDE.md``).
+``flip`` client wrappers (see :ref:`trust-internal-service-authentication`).
 
 ************
 Email setup

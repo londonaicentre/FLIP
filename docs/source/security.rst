@@ -111,6 +111,25 @@ Services within a trust authenticate to one another with a per-trust
 ``TRUST_INTERNAL_SERVICE_KEY`` that never reaches the Central Hub, compared in constant
 time. Credentials compromised at one trust cannot be replayed against another.
 
+.. _trust-internal-service-authentication:
+
+Trust-internal service authentication
+=====================================
+
+Trust-side APIs can retrieve cohorts and imaging, so Docker or Kubernetes network
+reachability alone is not treated as authorisation. Every call from ``trust-api``,
+``imaging-api``, or an FL client to ``imaging-api`` or ``data-access-api`` carries the
+per-trust ``TRUST_INTERNAL_SERVICE_KEY`` in the configured header. Receivers compare it
+in constant time before running the requested operation. Health endpoints remain
+unauthenticated so orchestrator liveness probes do not need access to the secret.
+
+The key is minted during trust registration and written only to that trust's deployment
+kit. It is shared by the services inside one trust, never stored by the Central Hub, and
+is distinct from both the trust-to-hub API key and the hub-internal FL-server key. Each
+trust receives a different value, limiting the effect of disclosure to one trust. Key
+rotation is performed by issuing a new trust kit and restarting the trust-side services
+together so callers and receivers change atomically.
+
 **************************
 The clinical data boundary
 **************************
@@ -149,9 +168,20 @@ the reverse.
 
 **Researcher-supplied training code runs on trust hardware with access to that trust's
 data.** That is the nature of federated learning, and it is why the surrounding controls
-matter. Model files are checked before use; the container that runs researcher code is
-hardened; FL clients deliberately hold **no Central Hub credentials**, so compromising
-one yields no access to the wider platform.
+matter. Model files are checked before use — Python source additionally gets a
+non-blocking static-analysis pass flagging common risky patterns — and the container
+that runs researcher code is hardened; FL clients deliberately hold **no Central Hub
+credentials**, so compromising one yields no access to the wider platform.
+
+**Arbitrary Python logic in uploaded training code is not sandboxed at runtime.** The
+static-analysis scan above is advisory, not a gate: it does not stop obfuscated or
+otherwise-undetected code from running. The accepted control for this class of risk is
+uploader self-review — supported by RBAC on who can upload — rather than a platform-enforced
+review process; there is no GitHub-review step in the upload path today. This is a
+deliberate decision (weighed against runtime enforcement options — an import allowlist,
+RestrictedPython, OS-level sandboxing — each rejected as either easily bypassed or a poor
+fit for legitimate ML code), not an oversight — see FLIP#877 (tracking GHSA-8465) for the
+full reasoning, so it does not need re-deciding the next time this class of finding comes up.
 
 **FL traffic is mutually authenticated.** Both supported backends — NVIDIA FLARE and
 Flower — run over TLS with per-participant certificates issued during network
