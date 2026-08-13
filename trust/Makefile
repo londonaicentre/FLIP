@@ -97,7 +97,14 @@ ORTHANC_CMD=make -C ./orthanc
 # (compose tolerates absence of --env-file just fine).
 __ENV_FILE_FLAG := $(if $(wildcard $(KIT_FILE)),--env-file $(KIT_FILE),)
 DOCKER_COMPOSE_CMD=docker compose $(__ENV_FILE_FLAG) --project-directory . -f $(COMMON_COMPOSE_FILE) -f $(FL_BACKEND_COMPOSE_FILE)
-DEBUG_OVERRIDE_COMPOSE_COMMAND=docker compose $(__ENV_FILE_FLAG) --project-directory . -f $(COMMON_COMPOSE_FILE) -f $(FL_BACKEND_COMPOSE_FILE) -f deploy/compose_trust.debug.override.yml
+# $(MONAILABEL_OVERRIDE) is load-bearing here even though nothing in the debug override
+# touches monailabel: the debug targets run `up --remove-orphans`, so a compose invocation
+# that omits this overlay sees the running monailabel container as an orphan and DELETES it.
+# GPU_OVERRIDE / TRUST_OVERRIDE only ever modify existing services, which is why omitting
+# them was harmless; MONAILABEL_OVERRIDE is the first overlay here that ADDS one. Defined
+# below at MONAILABEL_OVERRIDE — safe to reference here because this is a recursive (`=`)
+# assignment, expanded when the recipe runs.
+DEBUG_OVERRIDE_COMPOSE_COMMAND=docker compose $(__ENV_FILE_FLAG) --project-directory . -f $(COMMON_COMPOSE_FILE) -f $(FL_BACKEND_COMPOSE_FILE) $(MONAILABEL_OVERRIDE) -f deploy/compose_trust.debug.override.yml
 
 # UP_PULL_FLAGS controls the pull/build behaviour of the up-trust targets.
 #
@@ -312,7 +319,7 @@ up-trust: update-omop-data update-orthanc-data create-networks
 down-trust:
 	$(require_kit)
 	@echo "🛑 Stopping Trust services (KIT=$(KIT))..."
-	$(TRUST_VARS) ${DOCKER_COMPOSE_CMD} $(TRUST_OVERRIDE) -p $(TRUST_PROJECT) down --remove-orphans
+	$(TRUST_VARS) ${DOCKER_COMPOSE_CMD} $(MONAILABEL_OVERRIDE) $(TRUST_OVERRIDE) -p $(TRUST_PROJECT) down --remove-orphans
 	@echo "🩻 Stopping XNAT for $(KIT)..."
 	$(MAKE) -C xnat down-xnat KIT=$(KIT) PROD=$(PROD)
 
@@ -339,6 +346,16 @@ up-trust-ec2:
 	@echo "⚙️ Using kit file trust/$(KIT_FILE)"
 	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
 	@echo "🖥️  EC2 trust runs CPU-only by design — GPU overlay omitted + NUM_AVAILABLE_GPUS forced to 0 (t3.xlarge has no GPU)."
+	@# Refuse rather than silently drop the overlay. require_monailabel_supported is not
+	@# enough here: it keys off GPU_OVERRIDE, which a kit seeded with the template default
+	@# NUM_AVAILABLE_GPUS=1 leaves non-empty even though the t3.xlarge has no GPU. Without
+	@# this the kit says MONAI Label is on, the deploy says nothing, and no server ever runs.
+	@if [ "$(strip $(MONAI_LABEL))" = "true" ]; then \
+		echo "❌ MONAI_LABEL=true is not supported on the EC2 trust path — this instance type"; \
+		echo "   has no GPU (that is why the GPU overlay is omitted above). Set MONAI_LABEL=false"; \
+		echo "   in trust/$(KIT_FILE), or deploy this trust on a GPU host with up-trust."; \
+		exit 1; \
+	fi
 	$(TRUST_VARS) NUM_AVAILABLE_GPUS=0 DEBUG=${DEBUG} ${DOCKER_COMPOSE_CMD} -p $(TRUST_PROJECT) up -d --pull always
 	@echo "🩻 Starting XNAT for $(KIT)..."
 	$(MAKE) -C xnat up-xnat KIT=$(KIT) PROD=$(PROD)
