@@ -87,13 +87,22 @@ export TF_VAR_FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME=${FLIP_MODEL_FILES_UPLOADS_BU
 export TF_VAR_FLIP_FL_RESULTS_BUCKET_NAME=${FLIP_FL_RESULTS_BUCKET_NAME}
 export TF_VAR_FLIP_APP_BUNDLES_BUCKET_NAME=${FLIP_APP_BUNDLES_BUCKET_NAME}
 export TF_VAR_AICENTRE_BUCKET_NAME=${AICENTRE_BUCKET_NAME}
+# A copied-but-unedited .env leaves `<your-...>` placeholders in place. Those are non-empty, so an
+# emptiness check passes them straight through to Terraform, which fails much later with an opaque
+# AWS bucket-name error. Treat a placeholder as unset — same idea as XNAT_CREDENTIAL_PLACEHOLDER in
+# trust/xnat/Makefile.
+unset_or_placeholder = $(if $(1),$(if $(filter <%>,$(patsubst <%,<%>,$(1))),placeholder,),unset)
+
 # Fail fast with a useful message if the per-tenant bucket names are missing
 # from the env file. The variables are required (no default) so Terraform
 # would otherwise prompt mid-plan with a generic message that gives no hint
 # about where to set the value.
-$(if $(FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME),,$(error 🪶 FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME must be set in $(MAIN_ENV_FILE)))
-$(if $(FLIP_FL_RESULTS_BUCKET_NAME),,$(error 🪶 FLIP_FL_RESULTS_BUCKET_NAME must be set in $(MAIN_ENV_FILE)))
-$(if $(FLIP_APP_BUNDLES_BUCKET_NAME),,$(error 🪶 FLIP_APP_BUNDLES_BUCKET_NAME must be set in $(MAIN_ENV_FILE)))
+$(if $(call unset_or_placeholder,$(FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME)),$(error 🪶 FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME must be set to a real bucket name in $(MAIN_ENV_FILE)),)
+$(if $(call unset_or_placeholder,$(FLIP_FL_RESULTS_BUCKET_NAME)),$(error 🪶 FLIP_FL_RESULTS_BUCKET_NAME must be set to a real bucket name in $(MAIN_ENV_FILE)),)
+$(if $(call unset_or_placeholder,$(FLIP_APP_BUNDLES_BUCKET_NAME)),$(error 🪶 FLIP_APP_BUNDLES_BUCKET_NAME must be set to a real bucket name in $(MAIN_ENV_FILE)),)
+# AICENTRE_BUCKET_NAME is guarded on the same terms: `variable "AICENTRE_BUCKET_NAME"` has no
+# default, and it also names the bucket the FL participant-kit targets below read and write.
+$(if $(call unset_or_placeholder,$(AICENTRE_BUCKET_NAME)),$(error 🪶 AICENTRE_BUCKET_NAME must be set to a real bucket name in $(MAIN_ENV_FILE)),)
 export TF_VAR_flip_cognito_admin_email=aicentreflip@gmail.com
 export TF_VAR_flip_cognito_researcher_email=rafaelagd@gmail.com
 export TF_VAR_POSTGRES_DB=${POSTGRES_DB}

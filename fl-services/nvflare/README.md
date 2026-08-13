@@ -261,8 +261,8 @@ list has a single source per environment (`resolve_fl_kit_slot_names`):
 > `NoFreeKitSlotError`. Treat the `FL_KIT_SLOT_NAMES` list as append-only — `N` means
 > "N more live slots" only while that invariant holds.
 
-Then `make register-trust KIT=<CODE>` (see the
-[root README](../../README.md#trust-registration)) claims the slot — registration writes
+Then `make register-trust KIT=<CODE>` (see
+[Joining as a new trust](../../trust/README.md#joining-as-a-new-trust-dev-hub)) claims the slot — registration writes
 the claimed `FL_KIT_SLOT` / `FL_KIT_SLOT_NUMBER` into the trust's kit file, and the
 trust-host deploy pulls that kit from the S3 path above.
 
