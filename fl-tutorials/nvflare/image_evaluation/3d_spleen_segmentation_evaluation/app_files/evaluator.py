@@ -86,6 +86,7 @@ class FLIP_EVALUATOR(Executor):
             list[dict[str, str]]: List of dicts with keys "image" and "label" for every matched pair in the cohort.
         """
         datalist: list[dict[str, str]] = []
+        images_found = 0
 
         for accession_id in tqdm(
             dataframe["accession_id"],
@@ -108,6 +109,7 @@ class FLIP_EVALUATOR(Executor):
 
             # get all images in the accession folder that match the pattern "input_*.nii.gz"
             all_images = list(accession_folder_path.rglob("input_*.nii.gz"))
+            images_found += len(all_images)
 
             for img in all_images:
                 # for each image, find the corresponding segmentation mask
@@ -142,6 +144,17 @@ class FLIP_EVALUATOR(Executor):
                 datalist.append({"image": str(img), "label": seg})
 
         self.logger.info("Dataset ready: %d image/label pairs - evaluating all of them.", len(datalist))
+
+        # Fail here rather than letting an empty dataset surface downstream as torch's opaque
+        # "num_samples should be a positive integer value, but got num_samples=0".
+        if not datalist:
+            raise RuntimeError(
+                f"No image/label pairs found: {images_found} input_*.nii.gz image(s) across "
+                f"{len(dataframe['accession_id'])} accession(s), none with a matching label_*.nii.gz. "
+                "Supervised evaluation needs a label beside each image in XNAT — was the data-enrichment step "
+                "run, and did it run after DICOM-to-NIfTI conversion? See the Data Enrichment user guide."
+            )
+
         return datalist
 
     def _build_metrics(self):

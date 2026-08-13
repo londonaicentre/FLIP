@@ -89,6 +89,7 @@ class FLIP_BASE(Executor):
         """Returns a list of dicts, each dict containing the path to an image and its corresponding label."""
 
         datalist = []
+        images_found = 0
 
         # loop over each accession id in the train set
         for accession_id in tqdm(self.dataframe["accession_id"], desc="Preparing dataset", unit="accession"):
@@ -107,6 +108,7 @@ class FLIP_BASE(Executor):
 
             # get all images in the accession folder that match the pattern "input_*.nii.gz"
             all_images = list(accession_folder_path.rglob("input_*.nii.gz"))
+            images_found += len(all_images)
 
             for img in all_images:
                 # for each image, find the corresponding segmentation mask
@@ -142,6 +144,16 @@ class FLIP_BASE(Executor):
                 datalist.append({"image": str(img), "label": seg})
 
         self.logger.info("Dataset ready: %d image/label pairs", len(datalist))
+
+        # Fail here rather than letting an empty dataset surface downstream as torch's opaque
+        # "num_samples should be a positive integer value, but got num_samples=0".
+        if not datalist:
+            raise RuntimeError(
+                f"No image/label pairs found: {images_found} input_*.nii.gz image(s) across "
+                f"{len(self.dataframe['accession_id'])} accession(s), none with a matching label_*.nii.gz. "
+                "Supervised training needs a label beside each image in XNAT — was the data-enrichment step "
+                "run, and did it run after DICOM-to-NIfTI conversion? See the Data Enrichment user guide."
+            )
 
         # split into the training and testing data
         train_datalist, val_datalist = np.split(datalist, [int((1 - self._val_split) * len(datalist))])

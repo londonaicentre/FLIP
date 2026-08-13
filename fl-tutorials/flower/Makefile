@@ -17,6 +17,7 @@
 #
 #   make download-xray-data                    # FLIP-format x-ray data from HF
 #   make download-spleen-data                  # FLIP-format MSD-spleen data from HF
+#   make upload-spleen-labels FLIP_PROJECT_ID=<uuid>   # data enrichment: labels into a Trust's XNAT
 #   make list-tutorials
 #   make run-tutorial TUTORIAL=numpy           # self-contained, no data needed
 #   make run-tutorial TUTORIAL=3d_spleen_segmentation   # needs download-spleen-data
@@ -32,7 +33,19 @@ HF_DATA_REPO := aicentreflip/flip-fl-base-test-data
 # 3d_spleen_segmentation, 3d_spleen_segmentation_evaluation).
 TUTORIAL_DIRS := $(sort $(patsubst %/app/,%,$(dir $(wildcard */app/.))))
 
-.PHONY: list-tutorials run-tutorial run-all-tutorials download-xray-data download-spleen-data test-template
+.PHONY: list-tutorials run-tutorial run-all-tutorials download-xray-data download-spleen-data test-template upload-spleen-labels
+
+# Data enrichment: upload the MSD spleen labels into a real FLIP project's XNAT.
+#
+# Deliberately delegates to the NVFLARE tree rather than duplicating the script. Enrichment is a
+# one-time, backend-agnostic project step: the labels land in XNAT, and both backends then read
+# them through flip.get_by_accession_number. Only the local label directory differs — Flower pulls
+# a pre-built FLIP-format tree from HF, NVFLARE builds one from MSD — and both use the same
+# subject_N/scans/{input,label}_spleen_N.nii.gz layout, so pointing SPLEEN_LABELS_DIR at ours is
+# the whole difference.
+upload-spleen-labels:
+	@$(MAKE) --no-print-directory -C $(REPO_ROOT)/fl-tutorials/nvflare upload-spleen-labels \
+		SPLEEN_LABELS_DIR=$(abspath data/spleen/accession-resources)
 
 # Download the FLIP-format x-ray dataset from Hugging Face into data/xrays_mini_300/
 # (gitignored). Idempotent. Mirrors fl-tutorials/nvflare's download-xray-data.

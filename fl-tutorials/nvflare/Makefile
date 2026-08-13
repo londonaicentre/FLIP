@@ -16,6 +16,7 @@
 #
 #   make download-xray-data                       # fetch the x-ray dataset from HF
 #   make download-spleen-data                      # fetch + build the MSD spleen dataset
+#   make upload-spleen-labels FLIP_PROJECT_ID=<uuid>  # data enrichment: push labels into a Trust's XNAT
 #   make download-arkplus-finetuning-data          # fetch the Ark+ train splits from HF
 #   make download-arkplus-eval-data                # fetch the Ark+ hold-out splits from HF
 #   make list-tutorials
@@ -41,6 +42,12 @@ ARKPLUS_DATA_REPO := aicentreflip/tutorials-arkplus-cxr-classification
 # Number of MSD spleen cases to download for the spleen tutorials (1-41).
 NUM_CASES ?= 10
 SPLEEN_DIR := image_segmentation/3d_spleen_segmentation
+# Where download-spleen-data lands the subject_N/scans/{input,label}_spleen_N.nii.gz trees that
+# upload-spleen-labels reads. Flower's Makefile overrides this to its own spleen download.
+SPLEEN_LABELS_DIR ?= data/spleen/images
+# upload-spleen-labels runs against the in-tree flip-utils, not the PyPI release, so the enrichment
+# CLI always matches this checkout (flip.xnat may be newer here than the last published version).
+FLIP_UTILS_DIR ?= $(abspath ../../flip-utils)
 
 # Template smoke-test: which fl-apps/nvflare/<template> to exercise, and the tutorial whose
 # app_files + data drive it. fed_opt has no tutorial of its own, so it borrows the
@@ -48,7 +55,7 @@ SPLEEN_DIR := image_segmentation/3d_spleen_segmentation
 TEMPLATE ?= fed_opt
 TEMPLATE_TUTORIAL ?= image_segmentation/3d_spleen_segmentation
 
-.PHONY: list-tutorials run-tutorial run-all-tutorials download-xray-data download-spleen-data download-arkplus-finetuning-data download-arkplus-eval-data test-template
+.PHONY: list-tutorials run-tutorial run-all-tutorials download-xray-data download-spleen-data download-arkplus-finetuning-data download-arkplus-eval-data test-template upload-spleen-labels
 
 # Download the x-ray reference dataset from Hugging Face and normalise it into the
 # layout image_classification/xray_classification/.env.app expects (data/xrays_mini_300/,
@@ -103,6 +110,25 @@ download-spleen-data:
 	@cd $(SPLEEN_DIR) && uv run python utils/download_spleen_dataset.py --output_dir ../../data/spleen/images --num_cases $(NUM_CASES)
 	@cd $(SPLEEN_DIR) && uv run python utils/create_spleen_accession_csv.py --images_dir ../../data/spleen/images --output_csv ../../data/spleen/dataframe.csv
 	@echo "✅ spleen data ready at data/spleen/ — run: make run-tutorial TUTORIAL=3d_spleen_segmentation"
+
+# Data enrichment: upload the MSD spleen labels into a real FLIP project's XNAT, so the spleen
+# apps find a label_*.nii.gz beside each pulled input_*.nii.gz. Needs NUM_CASES=41 on the download
+# above to cover every mapped accession, and XNAT credentials (XNAT_HOST/XNAT_USER/XNAT_PASS, or
+# XNAT_CREDENTIALS_FILE) for the Trust you are targeting. Run once per Trust.
+#
+# The script is deliberately single-copy and backend-agnostic — enrichment happens once per FLIP
+# project, in XNAT, and both backends read the result. fl-tutorials/flower/Makefile delegates here.
+# It runs via `uv run --no-project --with <flip-utils>` rather than the spleen tutorial's env, so
+# uploading labels never drags in the simulator's MONAI/torch stack.
+upload-spleen-labels:
+	@[ -n "$(FLIP_PROJECT_ID)" ] || (echo "❌  FLIP_PROJECT_ID is required. Usage: make upload-spleen-labels FLIP_PROJECT_ID=<uuid> [TRUST=1] [DRY_RUN=1]"; exit 1)
+	@uv run --no-project --with $(FLIP_UTILS_DIR) python $(SPLEEN_DIR)/utils/upload_spleen_labels_to_xnat.py \
+		--flip-project-id $(FLIP_PROJECT_ID) \
+		--labels-dir $(SPLEEN_LABELS_DIR) \
+		$(if $(TRUST),--trust $(TRUST)) \
+		$(if $(XNAT_CREDENTIALS_FILE),--credentials-file $(XNAT_CREDENTIALS_FILE)) \
+		$(if $(OVERWRITE),--overwrite) \
+		$(if $(DRY_RUN),--dry-run)
 
 list-tutorials:
 	@echo "Available NVFLARE tutorials (pass the name to 'make run-tutorial TUTORIAL=…'):"

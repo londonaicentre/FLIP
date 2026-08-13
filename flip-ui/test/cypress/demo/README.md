@@ -46,8 +46,8 @@ bash scripts/assemble-demo-video.sh test/cypress/demo/videos test/cypress/demo/o
 # off-camera between the import and the model segments — same enrichment
 # contract as e2e_smoke, FLIP_PROJECT_ID exported; escape $ once per make):
 make -C flip-api demo_video DEMO_ARGS="--app spleen --publish-segmentations \
-  --data-enrichment-cwd <path-to>/flip_project_spleen_segmentation \
-  --data-enrichment-cmd 'uv run upload_labels_to_XNAT.py --flip-project-id \"\$\$FLIP_PROJECT_ID\"'"
+  --data-enrichment-cwd ../fl-tutorials/nvflare/image_segmentation/3d_spleen_segmentation \
+  --data-enrichment-cmd 'uv run --no-project --with ../../../../flip-utils python utils/upload_spleen_labels_to_xnat.py --flip-project-id \"\$\$FLIP_PROJECT_ID\" --labels-dir ../../data/spleen/images'"
 # → out/flip-demo-spleen.mp4
 ```
 

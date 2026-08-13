@@ -96,10 +96,66 @@ Useful targets:
 - `make down`: stop the simulator service
 - `make clean`: remove generated local simulator artifacts
 
+## Running on a real FLIP project: data enrichment
+
+Everything above runs the tutorial against **local** data in the simulator. On a real FLIP project the
+images come from each Trust's PACS — and PACS supply images only. A segmentation mask is a 3D volume
+with nowhere to live in OMOP, so the labels have to be uploaded into each Trust's XNAT before training.
+That upload is the platform's **data enrichment** stage.
+
+(Contrast the chest X-ray classification tutorial, whose labels *are* in OMOP: its `query.sql` projects
+them as dataframe columns and it needs no enrichment. See the Data Enrichment user guide.)
+
+Each label must land in the **same scan's `NIFTI` resource** as its image, named to match — the training
+code pairs them by filename, substituting `/input_` with `/label_`:
+
+```text
+NIFTI resource of one scan
+├── input_spleen_2.nii.gz   # pulled from PACS, converted by FLIP
+└── label_spleen_2.nii.gz   # uploaded by you
+```
+
+Run the upload **after the image pull and after DICOM-to-NIfTI conversion** — the target filename is
+derived from the converted image, so running earlier silently skips every scan.
+
+### Uploading the MSD labels
+
+First download all 41 cases (the default of 10 covers only part of the cohort):
+
+```bash
+make -C fl-tutorials download-spleen-data NUM_CASES=41
+```
+
+Then, with network access to the Trust's XNAT and credentials in the environment:
+
+```bash
+export XNAT_HOST=https://xnat.trust.example
+export XNAT_USER=your-username
+export XNAT_PASS=your-password
+
+make -C fl-tutorials upload-spleen-labels FLIP_PROJECT_ID=<project-uuid> TRUST=1 DRY_RUN=1
+```
+
+`DRY_RUN=1` reports what would happen without changing anything — do that first. Drop it to upload,
+then repeat with `TRUST=2` and the second Trust's credentials.
+
+The accession-to-case mapping is fetched at run time from the public `aicentreflip/trust-data` dataset
+(the same mock data the Trusts are seeded from), so nothing needs to be checked in. `TRUST=` selects
+which site's studies to upload using that dataset's `source_trust` column; omit it and the other
+Trust's accessions are simply reported as "no matching scan".
+
+Options: `OVERWRITE=1` to replace labels already in place, `XNAT_CREDENTIALS_FILE=<path>` to read
+credentials from a JSON file instead of the environment.
+
+This step is **backend-agnostic** — the labels live in XNAT, so a project enriched once can be trained
+by either the NVFLARE or the Flower spleen tutorial. `fl-tutorials/flower` delegates to this same script.
+
 ## Notes and troubleshooting
 
 - If you see `FL_BASE_IMAGE_TAG not set`, update `tutorials/testing/.env.testing`.
-- If no training samples are found, check:
+- If no training samples are found, training now fails with an explicit message reporting how many
+  images were found against how many image/label pairs. Check:
   - CSV has `accession_id`
   - each accession maps to `<subject>/scans/input_*.nii.gz` and corresponding `label_*.nii.gz`
+  - on a real FLIP project, that the data-enrichment upload above has run, **after** conversion
 - The dataset downloader refuses to write into an existing output folder. Delete or rename the target directory before re-running.

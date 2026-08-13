@@ -57,6 +57,11 @@ dependencies = [
     "tqdm>=4.67.1",
 ]
 
+[project.scripts]
+# Data-enrichment upload CLI (flip.xnat). Runs on the model developer's workstation inside the
+# Trust network, never in the FL client — see flip/xnat/__init__.py.
+flip-xnat = "flip.xnat.cli:main"
+
 [project.urls]
 Homepage = "https://github.com/londonaicentre/FLIP"
 Repository = "https://github.com/londonaicentre/FLIP"

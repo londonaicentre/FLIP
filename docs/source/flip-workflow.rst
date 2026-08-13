@@ -30,6 +30,8 @@ Image Enrichment
 
 Once the DICOM series have been cached in the local XNAT in each Secure Enclave, the Model Developer is notified and can begin the optional process of enriching the data. All users associated with the FLIP project are provided with XNAT accounts and can log in locally and segment, align, label or otherwise enrich the data prior to providing it to the algorithm for training. Only those users in the original FLIP project have access to the images in the XNAT repository.
 
+Enrichment is required when a model needs data that is **not already in OMOP** — chiefly segmentation masks and other image-derived annotations, which have nowhere to live in the cohort query. Labels that do exist in OMOP, such as a lab result or a coded report finding, reach the model as a column of the cohort query instead and need no enrichment. For both routes, and step-by-step instructions for uploading — by hand in the XNAT web UI or scripted across a whole cohort — see :ref:`data-enrichment`.
+
 .. figure:: assets/support/flip_walkthrough-enrich_images.drawio.png
    :align: center
 

@@ -20,3 +20,12 @@ class ResultsUploadError(Exception):
     of ``RESULTS_UPLOAD_FAILED`` (training succeeded, results upload did not)
     rather than a blanket ``ERROR``.
     """
+
+
+class XnatError(Exception):
+    """Raised when an XNAT operation in :mod:`flip.xnat` fails.
+
+    Covers missing credentials, unresolvable projects, and failed REST calls during the data
+    enrichment stage. Deliberately distinct from training-time errors: enrichment runs on the
+    model developer's workstation, not in the FL client.
+    """

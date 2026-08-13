@@ -69,6 +69,7 @@ def _build_image_label_pairs(
     """Walk all accession_ids in the dataframe and return matched
     image/segmentation pairs that pass QC."""
     pairs: list[dict[str, str]] = []
+    images_found = 0
     for accession_id in dataframe["accession_id"]:
         try:
             folder = flip.get_by_accession_number(
@@ -81,6 +82,7 @@ def _build_image_label_pairs(
             continue
 
         all_images = list(Path(folder).rglob("input_*.nii.gz"))
+        images_found += len(all_images)
         for img_path in all_images:
             seg_path = Path(str(img_path).replace("/input_", "/label_"))
             if not seg_path.exists():
@@ -100,6 +102,17 @@ def _build_image_label_pairs(
             pairs.append({"image": str(img_path), "label": str(seg_path)})
 
     print(f"[FLIP] Found {len(pairs)} valid image/segmentation pairs.")
+
+    # Fail here rather than letting an empty dataset surface downstream as torch's opaque
+    # "num_samples should be a positive integer value, but got num_samples=0".
+    if not pairs:
+        raise RuntimeError(
+            f"No image/label pairs found: {images_found} input_*.nii.gz image(s) across "
+            f"{len(dataframe['accession_id'])} accession(s), none with a matching label_*.nii.gz. "
+            "Supervised training needs a label beside each image in XNAT — was the data-enrichment step "
+            "run, and did it run after DICOM-to-NIfTI conversion? See the Data Enrichment user guide."
+        )
+
     return pairs
 
 

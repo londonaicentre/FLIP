@@ -18,7 +18,7 @@
 FL_BACKEND ?= nvflare
 
 TUTORIAL_TARGETS := list-tutorials run-tutorial run-all-tutorials \
-	download-xray-data download-spleen-data \
+	download-xray-data download-spleen-data upload-spleen-labels \
 	download-arkplus-finetuning-data download-arkplus-eval-data test-template
 
 .PHONY: $(TUTORIAL_TARGETS)

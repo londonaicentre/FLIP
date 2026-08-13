@@ -142,41 +142,54 @@ or fl-api change) without re-creating the project and re-pulling DICOM (~6 min/b
 
 **Smoking the spleen segmentation app requires a data-enrichment step (it needs labels).** *Data enrichment*
 is the platform stage where a model developer adds whatever an app needs on top of the pulled imaging data in
-XNAT (`docs/source/user-guides/user-common.rst` — a project cannot start training until enrichment is
-confirmed complete, even when nothing was added). **Segmentation apps need one:** the trust PACS supplies CT
-*images* only, while the spleen apps (`fl-tutorials/<backend>/3d_spleen_segmentation*`) pair each converted
-`input_*.nii.gz` with a sibling `label_*.nii.gz`. Skip it and the smoke pulls, converts, starts training and
-then dies with `num_samples=0` (preceded by `⚠️ No matching segmentation for input_*.nii.gz`) — which reads
-like an app or data-pull bug.
+XNAT (`docs/source/user-guides/user-data-enrichment.rst` — a project cannot start training until enrichment is
+confirmed complete, even when nothing was added).
+
+**Which supervised apps need it:** only those whose labels are **not in OMOP**. A segmentation mask is a 3D
+volume with nowhere to live in the cohort query, so the spleen apps
+(`fl-tutorials/<backend>/3d_spleen_segmentation*`) pair each converted `input_*.nii.gz` with a sibling
+`label_*.nii.gz` that has to be uploaded to XNAT. The xray classification tutorial is the counter-example: its
+labels *are* in OMOP, projected as dataframe columns by `query.sql` (`image_feature` → `observation`), and it
+needs no enrichment. Skip a required enrichment and the smoke pulls, converts, starts training and then fails
+with `No image/label pairs found: N image(s) …, none with a matching label_*.nii.gz` — which names the actual
+cause. (Older app copies die with torch's opaque `num_samples=0` instead.)
 
 `e2e_smoke` has a hook for exactly this: `--data-enrichment-cwd` + `--data-enrichment-cmd` run a shell command
-**between the image pull and training**, with `FLIP_PROJECT_ID` exported. For spleen the enrichment is
-`upload_labels_to_XNAT.py` from the **private** repo `londonaicentre/flip_project_spleen_segmentation` (needs
-its `.xnat1.cfg` / `.xnat2.cfg` — one per trust XNAT — and its MSD labels); it resolves each trust's XNAT
-project by `secondary_ID == <FLIP project_id>` and writes each label into the scan's existing `NIFTI` resource,
-renaming `input_` → `label_`. Invoke the smoke **directly** rather than through `make`, because `make` mangles
-the `$` in `EXTRA_ARGS` before the enrichment command reaches the shell:
+**between the image pull and training**, with `FLIP_PROJECT_ID` exported. Since FLIP#776 the spleen uploader is
+in-tree at `fl-tutorials/nvflare/image_segmentation/3d_spleen_segmentation/utils/upload_spleen_labels_to_xnat.py`
+— **no private repo required**. It resolves each trust's XNAT project by `secondary_ID == <FLIP project_id>`,
+fetches the accession→MSD-case mapping at run time from the public `aicentreflip/trust-data` dataset
+(`omop-csv/<version>/spleen_project/image_occurrence.csv`, which also carries `source_trust`), and writes each
+label into the scan's existing `NIFTI` resource, renaming `input_` → `label_`. The XNAT protocol work lives in
+`flip.xnat` (`flip-utils/flip/xnat/`), also exposed as the `flip-xnat` CLI.
+
+Prereqs: `make -C fl-tutorials download-spleen-data NUM_CASES=41` and `XNAT_HOST`/`XNAT_USER`/`XNAT_PASS` (or
+`--credentials-file`) for the trust being enriched. Standalone, outside the smoke:
+
+```bash
+make -C fl-tutorials upload-spleen-labels FLIP_PROJECT_ID=<uuid> TRUST=1 DRY_RUN=1   # then drop DRY_RUN
+```
+
+Through the smoke, `make -C flip-api e2e_smoke_spleen` (or `e2e_smoke_spleen_evaluation`) now carries the
+in-tree command already. To invoke it directly instead:
 
 ```bash
 cd flip-api && uv run python -m tests.e2e_smoke \
   --model-files-dir ../fl-tutorials/nvflare/image_segmentation/3d_spleen_segmentation/app_files \
   --query-file ../fl-tutorials/nvflare/image_segmentation/3d_spleen_segmentation/query.sql \
-  --data-enrichment-cwd <path-to>/flip_project_spleen_segmentation \
-  --data-enrichment-cmd 'uv run upload_labels_to_XNAT.py --flip-project-id "$FLIP_PROJECT_ID"'
+  --data-enrichment-cwd ../fl-tutorials/nvflare/image_segmentation/3d_spleen_segmentation \
+  --data-enrichment-cmd 'uv run --no-project --with ../../../../flip-utils python utils/upload_spleen_labels_to_xnat.py --flip-project-id "$FLIP_PROJECT_ID" --labels-dir ../../data/spleen/images'
 ```
 
-(Through `make` there are two working forms: `make -C flip-api e2e_smoke_spleen`, whose in-Makefile
-`EXTRA_ARGS` carries `$$FLIP_PROJECT_ID` — a `$$` escape survives the single make expansion; or the root
-`make e2e_smoke` with the id passed literally — `--flip-project-id <uuid>` — when reusing a project via
-`--project-id`. The root wrapper re-expands `EXTRA_ARGS` through a second make and shell, so no `$`-escape
-survives it: `$$` lands empty and `$$$$` injects the recipe shell's PID.)
+(The `$`-escaping trap still applies to any hand-written `EXTRA_ARGS`: `make -C flip-api …` expands once, so
+`$$FLIP_PROJECT_ID` survives; the **root** `make e2e_smoke` re-expands through a second make and shell, so no
+`$`-escape survives it — `$$` lands empty and `$$$$` injects the recipe shell's PID. Pass the id literally
+there. The in-Makefile targets handle this for you.)
 
 Enrichment must land **after** the pull and after DICOM→NIfTI conversion; the hook's position guarantees that.
 The uploader derives each target filename from the converted `input_*.nii.gz`, so with no `NIFTI` resource it
-silently skips every scan (`-> skipped: no NIFTI resource`) and you get the same opaque `num_samples=0` — i.e.
-a broken XNAT Container Service surfaces as "no labels". Removing the private-repo dependency (so spleen is
-runnable outside the org and in CI) is tracked in FLIP#776. The xray classification tutorial reads DICOM
-directly and needs no enrichment.
+skips every scan (reported as *skipped (no image in resource)*) — i.e. a broken XNAT Container Service surfaces
+as "no labels".
 
 **Testing a change on BOTH FL backends in one sitting (the backend switch).** The pulled DICOM lives in
 each trust's Orthanc/XNAT, which `make restart-fl` leaves untouched — so you can pull once on the first

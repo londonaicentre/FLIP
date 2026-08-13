@@ -136,6 +136,38 @@ What changes when it is set:
   best model at all, logging a warning per round rather than failing — check the ServerApp log if the
   artefact is missing.
 
+## Running on a real FLIP project: data enrichment
+
+Everything above runs against **local** data. On a real FLIP project the images come from each Trust's
+PACS — and PACS supply images only. A segmentation mask is a 3D volume with nowhere to live in OMOP, so
+the labels must be uploaded into each Trust's XNAT before training. That is the platform's **data
+enrichment** stage.
+
+(Contrast the chest X-ray classification tutorial, whose labels *are* in OMOP: its cohort query projects
+them as dataframe columns and it needs no enrichment. See the Data Enrichment user guide.)
+
+Each label must land in the **same scan's `NIFTI` resource** as its image, named to match — the app
+pairs them by filename, substituting `/input_` with `/label_`. Run the upload **after the image pull and
+after DICOM-to-NIfTI conversion**.
+
+```bash
+make -C fl-tutorials download-spleen-data FL_BACKEND=flower
+
+export XNAT_HOST=https://xnat.trust.example
+export XNAT_USER=your-username
+export XNAT_PASS=your-password
+
+make -C fl-tutorials upload-spleen-labels FL_BACKEND=flower FLIP_PROJECT_ID=<project-uuid> TRUST=1 DRY_RUN=1
+```
+
+`DRY_RUN=1` reports what would happen without changing anything — do that first. Drop it to upload, then
+repeat with `TRUST=2` and the second Trust's credentials.
+
+Enrichment is **backend-agnostic**: the labels live in XNAT, so a project enriched once can be trained by
+either backend. This target deliberately delegates to the single copy of the upload script in
+`fl-tutorials/nvflare/image_segmentation/3d_spleen_segmentation/utils/`, passing this tutorial's own data
+directory — see that tutorial's README for the full walkthrough and options.
+
 ## Data Location
 
 By default, the app reads from:

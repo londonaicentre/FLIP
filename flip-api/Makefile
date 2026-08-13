@@ -139,18 +139,25 @@ e2e_smoke:
 
 # Spleen-segmentation variant of e2e_smoke: same recipe, with the spleen tutorial
 # defaults plus a data-enrichment step that uploads segmentation labels to each
-# trust's XNAT (via flip_project_spleen_segmentation/upload_labels_to_XNAT.py)
-# between image pull and training. Target-specific vars override the e2e_smoke
-# defaults; e2e_smoke runs as a prerequisite with this target's vars applied.
+# trust's XNAT between image pull and training. Target-specific vars override the
+# e2e_smoke defaults; e2e_smoke runs as a prerequisite with this target's vars applied.
 #
-# Prereq: requires the internal `flip_project_spleen_segmentation` repo checked
-# out alongside FLIP at ../../flip_project_spleen_segmentation. Not yet in the
-# public CLAUDE.md "Related Repositories" list -- ask the team for access if you
-# don't already have it. Without it, both e2e_smoke_spleen and
-# e2e_smoke_spleen_evaluation will fail in the data-enrichment step.
+# Segmentation apps need this step: the trust PACS supplies CT images only, while the
+# spleen apps pair each converted input_*.nii.gz with a sibling label_*.nii.gz. Skip it
+# and training dies with "No image/label pairs found" after a full pull cycle.
+#
+# Prereqs: the MSD labels downloaded locally (`make -C fl-tutorials download-spleen-data
+# NUM_CASES=41`) and XNAT credentials for the trust in the environment (XNAT_HOST /
+# XNAT_USER / XNAT_PASS). The accession-to-case mapping is fetched at run time from the
+# public aicentreflip/trust-data dataset, so no private repo is required (FLIP#776).
+# Absolute paths: the command runs with cwd=SPLEEN_ENRICHMENT_CWD (four levels below the repo
+# root), so relative paths written from flip-api/ would not resolve there.
+SPLEEN_ENRICHMENT_CWD := ../fl-tutorials/nvflare/image_segmentation/3d_spleen_segmentation
+SPLEEN_ENRICHMENT_CMD := uv run --no-project --with $(abspath ../flip-utils) python utils/upload_spleen_labels_to_xnat.py --flip-project-id $$FLIP_PROJECT_ID --labels-dir $(abspath ../fl-tutorials/nvflare/data/spleen/images)
+
 e2e_smoke_spleen: MODEL_FILES_DIR := ../fl-tutorials/flower/3d_spleen_segmentation/app
 e2e_smoke_spleen: QUERY_FILE := ../fl-tutorials/flower/3d_spleen_segmentation/query.sql
-e2e_smoke_spleen: EXTRA_ARGS := --data-enrichment-cwd ../../flip_project_spleen_segmentation --data-enrichment-cmd 'uv run upload_labels_to_XNAT.py --flip-project-id $$FLIP_PROJECT_ID'
+e2e_smoke_spleen: EXTRA_ARGS := --data-enrichment-cwd $(SPLEEN_ENRICHMENT_CWD) --data-enrichment-cmd '$(SPLEEN_ENRICHMENT_CMD)'
 e2e_smoke_spleen: e2e_smoke
 
 # Spleen-segmentation evaluation variant of e2e_smoke_spleen: same cohort query
@@ -161,7 +168,7 @@ e2e_smoke_spleen: e2e_smoke
 # mount; the evaluation ServerApp reads it via flip-job-dir at submit time.
 e2e_smoke_spleen_evaluation: MODEL_FILES_DIR := ../fl-tutorials/flower/3d_spleen_segmentation_evaluation/app
 e2e_smoke_spleen_evaluation: QUERY_FILE := ../fl-tutorials/flower/3d_spleen_segmentation/query.sql
-e2e_smoke_spleen_evaluation: EXTRA_ARGS := --data-enrichment-cwd ../../flip_project_spleen_segmentation --data-enrichment-cmd 'uv run upload_labels_to_XNAT.py --flip-project-id $$FLIP_PROJECT_ID'
+e2e_smoke_spleen_evaluation: EXTRA_ARGS := --data-enrichment-cwd $(SPLEEN_ENRICHMENT_CWD) --data-enrichment-cmd '$(SPLEEN_ENRICHMENT_CMD)'
 e2e_smoke_spleen_evaluation: e2e_smoke
 
 generate-internal-service-key:
