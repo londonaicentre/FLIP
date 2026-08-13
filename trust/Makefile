@@ -263,12 +263,40 @@ build:
 # root Makefile and inherited here): pulls fresh FL images when
 # DOCKER_FL_REGISTRY is set, builds from source on BUILD=true, no-op
 # otherwise.
+# Refuse to start when the compose project this kit resolves to is already running a
+# DIFFERENT trust. TRUST_PROJECT is trust$(FL_KIT_SLOT_NUMBER), and slots are handed
+# out by the hub from its own database — so a second hub (FLIP_INSTANCE, FLIP#957)
+# starts again at 1 and its first trust lands on a slot the default stack is already
+# using. Without this, compose treats the running containers as part of the project it
+# was asked to bring up and recreates them, destroying a live trust.
+#
+# The owning kit is read off compose's own environment_file label, compared by file
+# name so re-running for the SAME kit (the normal restart/update path) still works,
+# including from another checkout.
+define check_slot_not_taken
+	@occupied=$$(docker ps --filter "label=com.docker.compose.project=$(TRUST_PROJECT)" \
+		--format '{{.Label "com.docker.compose.project.environment_file"}}' 2>/dev/null | head -1); \
+	if [ -n "$$occupied" ] && [ "$$(basename "$$occupied")" != "$(KIT_FILE)" ]; then \
+		echo "❌ FL kit slot $(TRUST_NUM) is already in use on this host."; \
+		echo "   Compose project '$(TRUST_PROJECT)' is running trust $$(basename "$$occupied"),"; \
+		echo "   but you asked to start $(KIT_FILE). Bringing this up would hand those"; \
+		echo "   containers to the wrong kit and recreate them, taking the running trust down."; \
+		echo ""; \
+		echo "   Slots are assigned per-hub, so a second stack (FLIP_INSTANCE) restarts at 1"; \
+		echo "   and collides with the default stack. Pick a free slot:"; \
+		echo "       docker ps --format '{{.Label \"com.docker.compose.project\"}}' | sort -u"; \
+		echo "   then set FL_KIT_SLOT_NUMBER=<free> in trust/$(KIT_FILE) and re-run."; \
+		exit 1; \
+	fi
+endef
+
 up-trust: update-omop-data update-orthanc-data create-networks
 	$(require_kit_file)
 	@echo "🚢 Starting Trust services (KIT=$(KIT))..."
 	@echo "⚙️ Using kit file trust/$(KIT_FILE)"
 	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
 	$(call check_omop_data_dir,$(or $(OMOP_DATA_DIR),./omop-db/volumes/Trust_$(TRUST_NUM)/db_data))
+	$(check_slot_not_taken)
 	mkdir -p $(or $(BASE_IMAGES_DOWNLOAD_DIR),./data/$(KIT))
 	@echo "$(GPU_STATUS_MSG)"
 	$(TRUST_VARS) DEBUG=${DEBUG} ${DOCKER_COMPOSE_CMD} $(GPU_OVERRIDE) $(TRUST_OVERRIDE) -p $(TRUST_PROJECT) up -d $(UP_PULL_FLAGS)
