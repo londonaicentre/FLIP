@@ -22,6 +22,12 @@ set -euo pipefail
 # the format FL training consumes. Nothing upstream does this — see the XNAT discussion list
 # thread on MONAI Label + OHIF, where the missing DICOM-SEG -> NIfTI step is the open problem.
 #
+# Run ONLY on trusts that enable MONAI Label — `make xnat-configure` gates this on
+# MONAI_LABEL=true (see xnat-configure-export-mask in trust/xnat/Makefile). A trust without
+# MONAI Label has no OHIF viewer plugin, so it can never create the assessors this reacts to;
+# registering the converter command and a site-wide subscription there would be pure blast
+# radius. Turning MONAI Label on later requires re-running `make xnat-configure`.
+#
 # Must run AFTER configure-dcm2niix.sh, which registers the Docker backend and verifies the
 # socket proxy. The subscription created here is deliberately site-wide: a DICOM-SEG can be
 # created in any project by anyone using the OHIF viewer, and there is no per-project opt-in
@@ -143,10 +149,40 @@ if [ "$WRAPPER_ENABLED" != "true" ]; then
   exit 1
 fi
 
-SUB_COUNT=$(xnat_curl "$XNAT_URL/xapi/events/subscriptions" \
+SUBSCRIPTIONS=$(xnat_curl "$XNAT_URL/xapi/events/subscriptions")
+
+SUB_COUNT=$(printf '%s' "$SUBSCRIPTIONS" \
   | jq -r --arg name "$EXPORT_MASK_SUBSCRIPTION_NAME" '[.[] | select(.name == $name)] | length')
 if [ "$SUB_COUNT" != "1" ]; then
   echo "ERROR: expected exactly 1 '$EXPORT_MASK_SUBSCRIPTION_NAME' subscription, found $SUB_COUNT" >&2
+  exit 1
+fi
+
+# Counting by name alone is not enough. XNAT accepts a subscription whose event-selector names
+# a class it cannot resolve, and stores it happily — the subscription then simply never fires,
+# so DICOM-SEG assessors are created and silently never converted. Nothing surfaces in the
+# viewer, and the only trace is the absence of entries in Command History. Assert the selector
+# actually round-tripped as an ImageAssessorEvent, and that the subscription is active.
+SUB_SELECTOR=$(printf '%s' "$SUBSCRIPTIONS" \
+  | jq -r --arg name "$EXPORT_MASK_SUBSCRIPTION_NAME" '.[] | select(.name == $name) | .["event-selector"] // empty')
+SUB_ACTIVE=$(printf '%s' "$SUBSCRIPTIONS" \
+  | jq -r --arg name "$EXPORT_MASK_SUBSCRIPTION_NAME" '.[] | select(.name == $name) | .active')
+
+echo "  event-selector: $SUB_SELECTOR"
+# Substring rather than equality: XNAT is free to normalise the stored form, and a spurious
+# bring-up failure over cosmetic drift would be worse than the bug this guards against.
+case "$SUB_SELECTOR" in
+  *ImageAssessorEvent*) ;;
+  *)
+    echo "ERROR: subscription event-selector is '$SUB_SELECTOR', expected an ImageAssessorEvent." >&2
+    echo "       XNAT event classes carry the 'Event' suffix; a selector it cannot resolve is" >&2
+    echo "       stored without complaint and then never fires." >&2
+    exit 1
+    ;;
+esac
+
+if [ "$SUB_ACTIVE" != "true" ]; then
+  echo "ERROR: '$EXPORT_MASK_SUBSCRIPTION_NAME' subscription is not active (got '$SUB_ACTIVE')" >&2
   exit 1
 fi
 
