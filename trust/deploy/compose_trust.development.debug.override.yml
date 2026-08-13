@@ -10,21 +10,26 @@
 # limitations under the License.
 #
 
+# Debugpy listeners are published on loopback only. An open debugger port is
+# arbitrary code execution for anyone who can reach it, and docker's iptables rules
+# sit ahead of most host firewalls. This is what the network driver_opts added
+# alongside these ports in nhsflame#311 were meant to achieve; they never applied,
+# because compose ignores driver options on external networks (FLIP#959).
 services:
   trust-api:
     environment:
       - DEBUG=${DEBUG}
     ports:
-      - "${TRUST_DEBUG_PORT}:${TRUST_DEBUG_PORT}"
+      - "127.0.0.1:${TRUST_DEBUG_PORT}:${TRUST_DEBUG_PORT}"
 
   imaging-api:
     environment:
       - DEBUG=${DEBUG}
     ports:
-      - "${IMAGING_DEBUG_PORT}:${IMAGING_DEBUG_PORT}"
+      - "127.0.0.1:${IMAGING_DEBUG_PORT}:${IMAGING_DEBUG_PORT}"
 
   data-access-api:
     environment:
       - DEBUG=${DEBUG}
     ports:
-      - "${DATA_ACCESS_DEBUG_PORT}:${DATA_ACCESS_DEBUG_PORT}"
+      - "127.0.0.1:${DATA_ACCESS_DEBUG_PORT}:${DATA_ACCESS_DEBUG_PORT}"

@@ -30,7 +30,12 @@ services:
       - FLOWER_SRC_ROOT=/app/src
     ports:
       - "${FL_API_PORT}:8000"
-      - "${FL_API_DEBUG_PORT:-5679}:5679"
+      # Bound to loopback: an open debugpy port is arbitrary code execution for
+      # anyone who can reach it, and docker's iptables rules sit ahead of most host
+      # firewalls. This was the intent behind the network driver_opts added with the
+      # debugger in nhsflame#311, which never applied because the networks are
+      # external — compose ignores driver options there (FLIP#959).
+      - "127.0.0.1:${FL_API_DEBUG_PORT:-5679}:5679"
     depends_on:
       - fl-server-net-1
     security_opt:
