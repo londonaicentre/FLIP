@@ -74,12 +74,20 @@ monailabel start_server \
 server_pid=$!
 
 # --- Wait for it to be serving ------------------------------------------------------
-# Poll the app's own info endpoint instead of sleeping: loading models downloads pretrained
-# weights, which takes minutes on a cold volume and seconds on a warm one.
+# Poll instead of sleeping: loading models downloads pretrained weights, which takes minutes
+# on a cold volume and seconds on a warm one.
+#
+# Probe /openapi.json, NOT /info/. With the XNAT datastore, /info/ enumerates every experiment
+# on the trust — one XML request each — so on a populated trust it cannot answer inside any
+# sane timeout (found live on a 900-experiment trust). Each probe would then abandon at
+# --max-time, the loop would run to the deadline, and this script would exit 1 on a server that
+# is up and working, without ever reaching the XNAT registration below. /openapi.json answers
+# in milliseconds and proves the HTTP server is serving, which is all this gate needs to
+# assert. Mirrors the k8s probes in deploy/providers/kubernetes/templates/monailabel.yaml.
 echo "Waiting for MONAI Label to finish loading models..."
 deadline=$((SECONDS + 1800))
 until curl --output /dev/null --silent --fail \
-  --connect-timeout 5 --max-time 10 "${SERVER_URL}/info/"; do
+  --connect-timeout 5 --max-time 10 "${SERVER_URL}/openapi.json"; do
   if ! kill -0 "$server_pid" 2>/dev/null; then
     echo "ERROR: MONAI Label server exited during startup" >&2
     wait "$server_pid"
@@ -115,7 +123,15 @@ if [[ "$register_status" != 2* ]]; then
   exit 1
 fi
 echo "Registered. NOTE: each user must also enable it in the viewer under"
-echo "  Options -> Preferences -> Experimental -> MONAI Label"
+echo "  Options -> Preferences -> Experimental -> MONAILabel Tools"
 
 # Hand the container's lifetime back to the server process.
+#
+# The trap is load-bearing: this script is PID 1, and a bare `wait` does not forward signals.
+# Without it `docker stop` (and a k8s pod termination) delivers SIGTERM to bash only, bash
+# exits, and the server is SIGKILLed when the grace period expires — killed mid-inference,
+# with nothing in the log explaining the hard stop. Forward the signal so it shuts down
+# cleanly. Exiting 143 on SIGTERM is the normal, expected result of a clean stop.
+trap 'echo "Received termination signal — stopping the MONAI Label server..."; \
+      kill -TERM "$server_pid" 2>/dev/null || true' TERM INT
 wait "$server_pid"
