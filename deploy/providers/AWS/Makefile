@@ -100,6 +100,9 @@ unset_or_placeholder = $(if $(1),$(if $(filter <%>,$(patsubst <%,<%>,$(1))),plac
 $(if $(call unset_or_placeholder,$(FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME)),$(error 🪶 FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME must be set to a real bucket name in $(MAIN_ENV_FILE)),)
 $(if $(call unset_or_placeholder,$(FLIP_FL_RESULTS_BUCKET_NAME)),$(error 🪶 FLIP_FL_RESULTS_BUCKET_NAME must be set to a real bucket name in $(MAIN_ENV_FILE)),)
 $(if $(call unset_or_placeholder,$(FLIP_APP_BUNDLES_BUCKET_NAME)),$(error 🪶 FLIP_APP_BUNDLES_BUCKET_NAME must be set to a real bucket name in $(MAIN_ENV_FILE)),)
+# AICENTRE_BUCKET_NAME is guarded on the same terms: `variable "AICENTRE_BUCKET_NAME"` has no
+# default, and it also names the bucket the FL participant-kit targets below read and write.
+$(if $(call unset_or_placeholder,$(AICENTRE_BUCKET_NAME)),$(error 🪶 AICENTRE_BUCKET_NAME must be set to a real bucket name in $(MAIN_ENV_FILE)),)
 export TF_VAR_flip_cognito_admin_email=aicentreflip@gmail.com
 export TF_VAR_flip_cognito_researcher_email=rafaelagd@gmail.com
 export TF_VAR_POSTGRES_DB=${POSTGRES_DB}

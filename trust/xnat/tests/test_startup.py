@@ -17,6 +17,8 @@ import subprocess
 import zipfile
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parents[3]
 XNAT_DIR = REPO_ROOT / "trust" / "xnat"
 ENSURE_PLUGINS = REPO_ROOT / "trust" / "xnat" / "scripts" / "ensure_plugins.sh"
@@ -357,9 +359,19 @@ def test_up_xnat_skips_the_host_plugin_cache_outside_development() -> None:
         assert "ensure_plugins.sh" not in stdout, f"PROD={prod} still reaches for the dev cache"
 
 
-def test_plugin_download_names_the_variable_it_needs() -> None:
+@pytest.mark.parametrize(
+    "bucket",
+    [
+        pytest.param("", id="unset"),
+        # .env.development.example ships this value, so a fresh clone reaches the download with it
+        # still in place. It is non-empty, so an emptiness check passes it through to `aws s3 sync`,
+        # which fails on bucket-name validation instead of naming the variable to set.
+        pytest.param("<your-xnat-artifacts-bucket-name>", id="placeholder"),
+    ],
+)
+def test_plugin_download_names_the_variable_it_needs(bucket: str) -> None:
     result = subprocess.run(
-        ["make", "xnat-plugins-download", "FLIP_ARTIFACTS_BUCKET_NAME="],
+        ["make", "xnat-plugins-download", f"FLIP_ARTIFACTS_BUCKET_NAME={bucket}"],
         cwd=XNAT_DIR,
         check=False,
         capture_output=True,
@@ -369,7 +381,9 @@ def test_plugin_download_names_the_variable_it_needs() -> None:
 
     assert result.returncode != 0
     assert "FLIP_ARTIFACTS_BUCKET_NAME" in result.stdout
+    assert ".env.development" in result.stdout, "should say where to set it"
     assert "Usage:" not in result.stdout, "leaked the script's usage line instead of naming the var"
+    assert "aws" not in result.stderr.lower(), "reached the S3 sync instead of failing at the guard"
 
 
 def test_trust_makefile_exports_the_artifacts_bucket_to_the_xnat_sub_make() -> None:

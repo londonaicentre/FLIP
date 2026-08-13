@@ -302,9 +302,20 @@ xnat-war-download:
 # The S3 artifact set is keyed by XNAT version — s3://<bucket>/xnat-<version>/{xnat-web-<version>.war,
 # plugins/} — so different branches (e.g. main vs develop across an XNAT upgrade) can build against
 # different WAR + plugin rosters without clobbering each other.
+#
+# A copied-but-unedited .env leaves the `<your-...>` placeholder in place, and a placeholder is not
+# empty: an emptiness check passes it straight to the S3 sync, which dies on an opaque AWS
+# bucket-name validation error instead of the actionable message below. Reject the placeholder shape
+# too — the same idea as XNAT_CREDENTIAL_PLACEHOLDER above and unset_or_placeholder in
+# deploy/providers/AWS/Makefile.
 xnat-plugins-download:
-	@[ -n "$(FLIP_ARTIFACTS_BUCKET_NAME)" ] || { \
-	  echo "❌ FLIP_ARTIFACTS_BUCKET_NAME is unset — the host plugin cache cannot be filled."; \
+	@case "$(FLIP_ARTIFACTS_BUCKET_NAME)" in \
+	  "") reason="is unset" ;; \
+	  "<"*">") reason="is still the .env placeholder ($(FLIP_ARTIFACTS_BUCKET_NAME))" ;; \
+	  *) reason="" ;; \
+	esac; \
+	[ -z "$$reason" ] || { \
+	  echo "❌ FLIP_ARTIFACTS_BUCKET_NAME $$reason — the host plugin cache cannot be filled."; \
 	  echo "   Set it in .env.development (see the 'S3 Buckets' block), or pass it on the command"; \
 	  echo "   line: make xnat-plugins-download FLIP_ARTIFACTS_BUCKET_NAME=<bucket>."; \
 	  exit 1; }
