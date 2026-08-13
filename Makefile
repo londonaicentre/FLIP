@@ -66,11 +66,19 @@ FL_BACKEND_COMPOSE_FILE := deploy/compose.$(__DCKR_SUFFIX).$(FL_BACKEND).yml
 export HUB_NET_PREFIX := $(if $(FLIP_INSTANCE),$(FLIP_INSTANCE)-,)
 COMPOSE_PROJECT ?= $(HUB_NET_PREFIX)deploy
 
-# Resolve FL_PROVISIONED_DIR (from .env) to an absolute path relative to this Makefile
-# Docker requires absolute paths for volume mounts; the .env value may be relative
+# Resolve FL_PROVISIONED_DIR / FL_JOBS_DIR (from .env, or overridden at the CLI) to
+# absolute paths, since docker requires those for volume mounts.
+#
+# Only prepend MAKEFILE_DIR when the value is not already absolute. $(abspath) merely
+# normalises the string it is given — it does not notice the operand was already
+# rooted — so joining unconditionally welded two absolute paths together:
+#   FL_PROVISIONED_DIR=/opt/kits  ->  /path/to/repo/opt/kits
+# which surfaced as a misleading "workspace not provisioned" naming a path the caller
+# never asked for, even though CLAUDE.md advertises the CLI override.
 MAKEFILE_DIR := $(dir $(abspath $(firstword $(MAKEFILE_LIST))))
-override FL_PROVISIONED_DIR := $(abspath $(MAKEFILE_DIR)/$(FL_PROVISIONED_DIR))
-override FL_JOBS_DIR := $(abspath $(MAKEFILE_DIR)/$(FL_JOBS_DIR))
+abs_or_relative_to_repo = $(abspath $(if $(filter /%,$(1)),$(1),$(MAKEFILE_DIR)/$(1)))
+override FL_PROVISIONED_DIR := $(call abs_or_relative_to_repo,$(FL_PROVISIONED_DIR))
+override FL_JOBS_DIR := $(call abs_or_relative_to_repo,$(FL_JOBS_DIR))
 
 # Service configuration
 define SERVICE_CONFIG
