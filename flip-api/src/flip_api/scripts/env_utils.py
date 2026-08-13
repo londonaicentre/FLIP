@@ -97,15 +97,9 @@ def write_env_file(path: Path, lines: list[str]) -> None:
     # Do not use Path.write_text followed by chmod: an existing 0644 file, or a new file created
     # under umask 022, would contain fresh credentials before its mode is tightened. Opening
     # without O_TRUNC lets fchmod run first; truncate and write only after the descriptor is 0600.
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT, KIT_FILE_MODE)
-    try:
-        os.fchmod(fd, KIT_FILE_MODE)
-        os.ftruncate(fd, 0)
-    except Exception:
-        os.close(fd)
-        raise
-
-    with os.fdopen(fd, "w") as env_file:
+    with os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT, KIT_FILE_MODE), "w") as env_file:
+        os.fchmod(env_file.fileno(), KIT_FILE_MODE)
+        env_file.truncate(0)
         # Guard the empty case so an empty list writes an empty file, not a lone "\n" that would
         # leave a leading blank line — matching scripts/trust_kit_lib.write_secure exactly.
         env_file.write("\n".join(lines) + "\n" if lines else "")

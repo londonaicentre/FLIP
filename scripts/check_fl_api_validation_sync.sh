@@ -31,8 +31,12 @@ cd "$(dirname "$0")/.." || exit 1
 NVFLARE_FILE="fl-services/nvflare/fl-api-base/fl_api/utils/validation.py"
 FLOWER_FILE="fl-services/flower/fl-api-flower/fl_api/utils/validation.py"
 
-# Functions that must stay identical between the two copies.
-SHARED_FUNCTIONS=("safe_join" "validate_bundle_url")
+# The guards that must be shared today. This is a floor, not the comparison set: the set actually
+# compared is computed below as every top-level function present in BOTH copies, so the next shared
+# guard is covered the moment it is copied across rather than when someone remembers to edit this
+# list -- which is the FLIP#893 failure mode one function later. Naming them here still catches the
+# opposite direction: a rename or deletion that quietly empties the computed set.
+REQUIRED_SHARED_FUNCTIONS=("safe_join" "validate_bundle_url")
 
 status=0
 
@@ -40,6 +44,20 @@ for file in "$NVFLARE_FILE" "$FLOWER_FILE"; do
     if [ ! -f "$file" ]; then
         echo "ERROR: $file not found"
         exit 1
+    fi
+done
+
+# Top-level `def` names in a file, sorted for comm(1).
+top_level_functions() {
+    sed -n 's/^def \([A-Za-z_][A-Za-z0-9_]*\).*/\1/p' "$1" | sort -u
+}
+
+mapfile -t SHARED_FUNCTIONS < <(comm -12 <(top_level_functions "$NVFLARE_FILE") <(top_level_functions "$FLOWER_FILE"))
+
+for required in "${REQUIRED_SHARED_FUNCTIONS[@]}"; do
+    if ! printf '%s\n' "${SHARED_FUNCTIONS[@]}" | grep -qx "$required"; then
+        echo "ERROR: '$required' is no longer a top-level function in both fl-api copies."
+        status=1
     fi
 done
 
@@ -51,7 +69,7 @@ extract_function() {
     # while mawk accepts it — so the obvious name passes locally and fails in CI.
     awk -v fname="$fname" '
         $0 ~ "^def " fname "\\(" { inside = 1 }
-        inside && NR > 1 && /^[^ \t#)]/ && $0 !~ "^def " fname "\\(" && started { inside = 0 }
+        inside && started && /^[^ \t#)]/ && $0 !~ "^def " fname "\\(" { inside = 0 }
         inside { print; started = 1 }
     ' "$file"
 }

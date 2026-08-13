@@ -83,7 +83,7 @@ def initiate_training(
     # fails later, in the scheduler — where it used to sit at the head of a shared queue and block
     # FL training for every project on every net (FLIP#894). Reject at the boundary so the caller
     # gets a 400 in hand and nothing is enqueued.
-    if not validate_trust_ids(model_id, list(payload.trust_ids), db):
+    if not validate_trust_ids(model_id, payload.trust_ids, db):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="One or more of the selected trusts are not approved for this model",

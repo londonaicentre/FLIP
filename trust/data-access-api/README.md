@@ -153,6 +153,7 @@ The role bounds *writes*, not *reads*, and its read scope differs by deployment:
 chart grants it `pg_read_all_data` (every table in every schema), while the Compose path grants
 only `omop`. Rule 5 is therefore the sole barrier keeping a caller inside `omop` on a Kubernetes
 trust — it is not a redundant layer over a narrow grant, and must not be weakened as though it were.
+Narrowing the chart's grant to match Compose is tracked in [FLIP#904](https://github.com/londonaicentre/FLIP/issues/904).
 
 Emitting from `validate_query` rather than from a second helper is deliberate: it keeps one parse
 and one policy, so there is no second copy of the single-statement and SELECT-shape rules to drift

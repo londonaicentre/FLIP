@@ -164,14 +164,11 @@ def write_secure(target: Path, lines: list[str]) -> None:
     Returns:
         None
     """
-    fd = os.open(target, os.O_WRONLY | os.O_CREAT, KIT_FILE_MODE)
-    try:
-        os.fchmod(fd, KIT_FILE_MODE)
-        os.ftruncate(fd, 0)
-    except OSError:
-        os.close(fd)
-        raise
-    with os.fdopen(fd, "w") as handle:
+    with os.fdopen(os.open(target, os.O_WRONLY | os.O_CREAT, KIT_FILE_MODE), "w") as handle:
+        os.fchmod(handle.fileno(), KIT_FILE_MODE)
+        handle.truncate(0)
+        # Guard the empty case so an empty list writes an empty file, not a lone "\n" that would
+        # leave a leading blank line — matching flip_api.scripts.env_utils.write_env_file exactly.
         handle.write("\n".join(lines) + "\n" if lines else "")
 
 

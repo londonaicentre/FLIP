@@ -514,6 +514,54 @@ def check_for_available_net(session: Session) -> ISchedulerResponse | None:
         raise DatabaseError("Error checking for available net") from e
 
 
+def _retire_job_with_unapproved_trusts(job: FLJob, scheduler_id: UUID, session: Session) -> None:
+    """Retire a queued job whose trusts are not approved for its model, and free the scheduler.
+
+    Args:
+        job (FLJob): The queued job at the head of the queue, already loaded in this session.
+        scheduler_id (UUID): The scheduler that picked the job up.
+        session (Session): The database session.
+
+    Returns:
+        None
+    """
+    logger.error(
+        f"Job {job.id} references trust ids not approved for model {job.model_id}; "
+        "retiring it so it cannot block the queue"
+    )
+    job.status = JobStatus.DELETED
+
+    # Commit the retirement on its own, before the bookkeeping below. Everything after this
+    # point can raise — add_log rolls the session back and re-raises on failure — and a
+    # rollback would discard an uncommitted DELETED, returning the job to QUEUED. It is the
+    # globally-earliest queued job, so the next tick would select it again: the FLIP#894
+    # wedge, restored by the code meant to end it. Committing here also stops the
+    # self-exclusion in the query below depending on autoflush.
+    session.commit()
+
+    # A model can have been retried while this older job was waiting in the queue. Do not
+    # transition the model to ERROR in that case: update_model_status(ERROR) releases the
+    # latest non-deleted job for the model, which would silently complete the valid retry.
+    active_job = session.exec(
+        select(FLJob.id)
+        .where(
+            FLJob.model_id == job.model_id,
+            col(FLJob.status).in_((JobStatus.QUEUED, JobStatus.IN_PROGRESS)),
+        )
+        .limit(1)
+    ).first()
+    if not active_job:
+        update_model_status(job.model_id, ModelStatus.ERROR, session)
+    add_log(
+        job.model_id,
+        "Training could not start: the selected trusts are not approved for this model.",
+        session,
+        success=False,
+    )
+    session.commit()
+    revert_scheduler_pickup(scheduler_id, session)
+
+
 def check_for_queued_jobs(scheduler_id: UUID, session: Session) -> IJobResponse | None:
     """
     Checks for any queued jobs for a given scheduler.
@@ -565,41 +613,7 @@ def check_for_queued_jobs(scheduler_id: UUID, session: Session) -> IJobResponse 
         # rejects these at the boundary, so reaching this branch means a job predating that check
         # or one whose model approvals changed after it was queued.
         if not validate_trust_ids(job.model_id, job_trust_ids, session):
-            logger.error(
-                f"Job {job.id} references trust ids not approved for model {job.model_id}; "
-                "retiring it so it cannot block the queue"
-            )
-            job.status = JobStatus.DELETED
-
-            # Commit the retirement on its own, before the bookkeeping below. Everything after this
-            # point can raise — add_log rolls the session back and re-raises on failure — and a
-            # rollback would discard an uncommitted DELETED, returning the job to QUEUED. It is the
-            # globally-earliest queued job, so the next tick would select it again: the FLIP#894
-            # wedge, restored by the code meant to end it. Committing here also stops the
-            # self-exclusion in the query below depending on autoflush.
-            session.commit()
-
-            # A model can have been retried while this older job was waiting in the queue. Do not
-            # transition the model to ERROR in that case: update_model_status(ERROR) releases the
-            # latest non-deleted job for the model, which would silently complete the valid retry.
-            active_job = session.exec(
-                select(FLJob.id)
-                .where(
-                    FLJob.model_id == job.model_id,
-                    col(FLJob.status).in_((JobStatus.QUEUED, JobStatus.IN_PROGRESS)),
-                )
-                .limit(1)
-            ).first()
-            if not active_job:
-                update_model_status(job.model_id, ModelStatus.ERROR, session)
-            add_log(
-                job.model_id,
-                "Training could not start: the selected trusts are not approved for this model.",
-                session,
-                success=False,
-            )
-            session.commit()
-            revert_scheduler_pickup(scheduler_id, session)
+            _retire_job_with_unapproved_trusts(job, scheduler_id, session)
             return None
 
         # Assign job to scheduler

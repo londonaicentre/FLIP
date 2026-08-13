@@ -12,9 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# scripts/tests/test_trust_kit_lib.py had no CI job, so its assertions — including the one proving
-# a kit file is restricted to 0600 *before* the trust credentials are written into it (FLIP#889) —
-# only ran when someone remembered to run them by hand. Stdlib only, no services, ~1s.
+# scripts/tests/ had no CI job at all, so its assertions — including the one proving a kit file is
+# restricted to 0600 *before* the trust credentials are written into it (FLIP#889) — only ran when
+# someone remembered to run them by hand. Every file in that directory is stdlib-only, needs no
+# services and shares the same `if __name__ == "__main__": main()` contract, so the whole directory
+# runs here rather than one named file: a new script test is then covered by existing there.
 
 name: Trust kit scripts
 
@@ -22,14 +24,12 @@ on:
   push:
     branches: [develop]
     paths:
-      - "scripts/trust_kit_lib.py"
-      - "scripts/tests/test_trust_kit_lib.py"
+      - "scripts/**"
       - ".github/workflows/test_trust_kit_scripts.yml"
   pull_request:
     branches: [develop]
     paths:
-      - "scripts/trust_kit_lib.py"
-      - "scripts/tests/test_trust_kit_lib.py"
+      - "scripts/**"
       - ".github/workflows/test_trust_kit_scripts.yml"
 
 permissions:
@@ -45,5 +45,9 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Run trust_kit_lib tests
-        run: python scripts/tests/test_trust_kit_lib.py
+      - name: Run scripts/ tests
+        run: |
+          for test_file in scripts/tests/test_*.py; do
+            echo "== $test_file"
+            python "$test_file" || exit 1
+          done

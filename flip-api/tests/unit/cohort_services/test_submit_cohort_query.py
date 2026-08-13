@@ -93,15 +93,20 @@ def _db(row: MagicMock | None = None, trusts: list | None = None) -> MagicMock:
     return db
 
 
-@pytest.fixture
+@pytest.fixture(autouse=True)
 def mock_unstaged():
-    """Default the project to UNSTAGED — submit now enforces the same gate save does."""
+    """Default every test's project to UNSTAGED — submit now enforces the same gate save does.
+
+    Autouse: only the staged-rejection test below cares about the handle, and without the
+    default every other test in this module would 400 on the gate instead of the behaviour it
+    is actually asserting.
+    """
     with patch("flip_api.cohort_services.submit_cohort_query.has_project_status", return_value=True) as mock:
         yield mock
 
 
 def test_submit_cohort_query_queues_task(
-    mock_request, sample_query, mock_encrypt, mock_can_modify, mock_unstaged
+    mock_request, sample_query, mock_encrypt, mock_can_modify
 ):
     """Submitting a cohort query should create a TrustTask for each trust."""
     mock_trust = MagicMock(id="trust_1", name="Trust A", endpoint="http://trust-a.com")
@@ -129,7 +134,7 @@ def test_submit_cohort_query_queues_task(
 
 
 def test_submit_cohort_query_with_multiple_trusts(
-    mock_request, sample_query, mock_encrypt, mock_can_modify, mock_unstaged
+    mock_request, sample_query, mock_encrypt, mock_can_modify
 ):
     """Should create one task per trust."""
     mock_trust_a = MagicMock(id="trust_1", name="Trust A", endpoint="http://trust-a.com")
@@ -147,7 +152,7 @@ def test_submit_cohort_query_with_multiple_trusts(
 
 
 def test_submit_cohort_query_persists_queried_trust_ids(
-    mock_request, sample_query, mock_encrypt, mock_can_modify, mock_unstaged
+    mock_request, sample_query, mock_encrypt, mock_can_modify
 ):
     """The dispatched trust IDs must land on Queries.queried_trust_ids so the
     per-trust UI can render trusts that errored or never responded — otherwise
@@ -170,7 +175,7 @@ def test_submit_cohort_query_persists_queried_trust_ids(
 
 
 def test_submit_cohort_query_404s_when_query_row_missing(
-    mock_request, sample_query, mock_encrypt, mock_can_modify, mock_unstaged
+    mock_request, sample_query, mock_encrypt, mock_can_modify
 ):
     """A query_id that resolves to no row of this project is refused before any work.
 
@@ -188,7 +193,7 @@ def test_submit_cohort_query_404s_when_query_row_missing(
 
 
 def test_submit_cohort_query_scopes_the_query_lookup_to_the_project(
-    mock_request, sample_query, mock_encrypt, mock_can_modify, mock_unstaged
+    mock_request, sample_query, mock_encrypt, mock_can_modify
 ):
     """The Queries lookup must filter on project_id, not just id.
 
@@ -224,7 +229,7 @@ def test_submit_cohort_query_rejected_once_the_project_is_staged(
 
 
 def test_submit_cohort_query_dispatches_the_persisted_query_not_the_body(
-    mock_request, sample_query, mock_encrypt, mock_can_modify, mock_unstaged
+    mock_request, sample_query, mock_encrypt, mock_can_modify
 ):
     """The SQL sent to the trusts is the SQL of record, even when the body disagrees.
 
@@ -255,60 +260,29 @@ def _query(sql: str) -> SubmitCohortQuery:
     )
 
 
+@pytest.mark.parametrize(
+    ("sql", "expected_detail"),
+    [
+        pytest.param("DROP TABLE patients;", "select", id="non-select"),
+        pytest.param("$$$$ not sql at all !!!", None, id="unparseable"),
+        pytest.param("SELECT 1; DROP TABLE patients", None, id="stacked-statements"),
+        pytest.param(f"SELECT {'a' * (MAX_QUERY_LENGTH + 1)} FROM omop.person", "length", id="oversized"),
+    ],
+)
 @patch("flip_api.cohort_services.submit_cohort_query.can_modify_project", return_value=True)
-def test_submit_cohort_query_rejects_non_select(mock_can_modify, mock_auth_request, mock_unstaged):
-    """Statements that are not SELECT-shaped are rejected by the hub pre-check."""
-    with pytest.raises(HTTPException) as exc_info:
-        submit_cohort_query(
-            mock_auth_request, _query("DROP TABLE patients;"), _db(row=_persisted_row("DROP TABLE patients;")), user_id
-        )
+def test_submit_cohort_query_rejects_invalid_sql(mock_can_modify, mock_auth_request, sql, expected_detail):
+    """The hub pre-check rejects the *persisted* SQL before anything is dispatched to the trusts.
 
-    assert exc_info.value.status_code == 400
-    assert "SELECT" in str(exc_info.value.detail)
-
-
-@patch("flip_api.cohort_services.submit_cohort_query.can_modify_project", return_value=True)
-def test_submit_cohort_query_rejects_unparseable_sql(mock_can_modify, mock_auth_request, mock_unstaged):
-    """Input that is not SQL at all is rejected.
-
-    The previous sqlparse-based check accepted this: ``sqlparse.parse`` is a
-    non-validating tokenizer and returns a truthy result for arbitrary text.
+    ``unparseable`` is the case the previous sqlparse-based check let through: ``sqlparse.parse``
+    is a non-validating tokenizer and returns a truthy result for arbitrary text. ``oversized`` is
+    rejected before the parser allocates an AST.
     """
     with pytest.raises(HTTPException) as exc_info:
-        submit_cohort_query(
-            mock_auth_request,
-            _query("$$$$ not sql at all !!!"),
-            _db(row=_persisted_row("$$$$ not sql at all !!!")),
-            user_id,
-        )
+        submit_cohort_query(mock_auth_request, _query(sql), _db(row=_persisted_row(sql)), user_id)
 
     assert exc_info.value.status_code == 400
-
-
-@patch("flip_api.cohort_services.submit_cohort_query.can_modify_project", return_value=True)
-def test_submit_cohort_query_rejects_stacked_statements(mock_can_modify, mock_auth_request, mock_unstaged):
-    """Query stacking is rejected — only one statement may be submitted."""
-    with pytest.raises(HTTPException) as exc_info:
-        submit_cohort_query(
-            mock_auth_request,
-            _query("SELECT 1; DROP TABLE patients"),
-            _db(row=_persisted_row("SELECT 1; DROP TABLE patients")),
-            user_id,
-        )
-
-    assert exc_info.value.status_code == 400
-
-
-@patch("flip_api.cohort_services.submit_cohort_query.can_modify_project", return_value=True)
-def test_submit_cohort_query_rejects_oversized_query(mock_can_modify, mock_auth_request, mock_unstaged):
-    """Pathologically large queries are rejected before the parser allocates an AST."""
-    oversized = f"SELECT {'a' * (MAX_QUERY_LENGTH + 1)} FROM omop.person"
-
-    with pytest.raises(HTTPException) as exc_info:
-        submit_cohort_query(mock_auth_request, _query(oversized), _db(row=_persisted_row(oversized)), user_id)
-
-    assert exc_info.value.status_code == 400
-    assert "length" in str(exc_info.value.detail).lower()
+    if expected_detail:
+        assert expected_detail in str(exc_info.value.detail).lower()
 
 
 def test_validate_query_accepts_substring_function():
@@ -331,7 +305,7 @@ def test_validate_query_accepts_cte_with_set_operation():
 
 
 @patch("flip_api.cohort_services.submit_cohort_query.can_modify_project", return_value=True)
-def test_submit_cohort_query_invalid_sql(mock_can_modify, monkeypatch, mock_request, sample_query, mock_unstaged):
+def test_submit_cohort_query_invalid_sql(mock_can_modify, monkeypatch, mock_request, sample_query):
     """Invalid SQL should be rejected."""
     monkeypatch.setattr(
         "flip_api.cohort_services.submit_cohort_query.validate_query",
@@ -346,7 +320,7 @@ def test_submit_cohort_query_invalid_sql(mock_can_modify, monkeypatch, mock_requ
 
 
 @patch("flip_api.cohort_services.submit_cohort_query.can_modify_project", return_value=True)
-def test_submit_cohort_query_no_trusts(mock_can_modify, mock_request, sample_query, mock_unstaged):
+def test_submit_cohort_query_no_trusts(mock_can_modify, mock_request, sample_query):
     """No trusts in the database should return 404."""
     mock_db = _db(trusts=[])
 
@@ -358,7 +332,7 @@ def test_submit_cohort_query_no_trusts(mock_can_modify, mock_request, sample_que
 
 
 def test_submit_cohort_query_task_payload_contains_query(
-    mock_request, sample_query, mock_encrypt, mock_can_modify, mock_unstaged
+    mock_request, sample_query, mock_encrypt, mock_can_modify
 ):
     """The task payload should contain the query details."""
     mock_trust = MagicMock(id="trust_1", name="Trust A", endpoint="http://trust-a.com")

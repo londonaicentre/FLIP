@@ -719,14 +719,14 @@ def test_validate_query_pins_when_a_quoted_cte_name_cannot_bind_the_reference(qu
 
 
 @pytest.mark.parametrize(
-    "query",
+    ("query", "cte_name"),
     [
-        "WITH cohort AS (SELECT person_id FROM omop.person) SELECT COUNT(*) FROM COHORT",
-        "WITH COHORT AS (SELECT person_id FROM omop.person) SELECT COUNT(*) FROM cohort",
-        'WITH "Mixed" AS (SELECT 1 AS x) SELECT x FROM "Mixed"',
+        ("WITH cohort AS (SELECT person_id FROM omop.person) SELECT COUNT(*) FROM COHORT", "cohort"),
+        ("WITH COHORT AS (SELECT person_id FROM omop.person) SELECT COUNT(*) FROM cohort", "cohort"),
+        ('WITH "Mixed" AS (SELECT 1 AS x) SELECT x FROM "Mixed"', "mixed"),
     ],
 )
-def test_validate_query_exempts_a_cte_the_reference_can_actually_bind(query: str):
+def test_validate_query_exempts_a_cte_the_reference_can_actually_bind(query: str, cte_name: str):
     """Case-differing references to an unquoted CTE bind to it in Postgres, so must stay unpinned.
 
     Pinning them rewrites a working query to ``omop.<name>``. For the most likely CTE name in this
@@ -735,7 +735,8 @@ def test_validate_query_exempts_a_cte_the_reference_can_actually_bind(query: str
     """
     emitted = validate_query(query)
 
-    assert f"{ALLOWED_SCHEMA}." not in emitted.lower().replace(f"{ALLOWED_SCHEMA}.person", "")
+    # Quotes are stripped so a pinned *quoted* reference (omop."Mixed") is caught too.
+    assert f"{ALLOWED_SCHEMA}.{cte_name}" not in emitted.lower().replace('"', "")
 
 
 @pytest.mark.parametrize(

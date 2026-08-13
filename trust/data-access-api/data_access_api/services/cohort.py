@@ -121,7 +121,8 @@ def validate_query(query: str) -> str:
     in every schema — while the Compose path grants only ``USAGE`` on ``omop`` plus
     ``SELECT`` on its tables. So rule 5 below is the *only* thing keeping a caller
     inside ``omop`` on a Kubernetes trust, not a redundant second layer over a narrow
-    grant. Do not weaken it on the assumption the role is scoped.
+    grant. Do not weaken it on the assumption the role is scoped. Narrowing that grant
+    to match Compose is tracked separately in FLIP#904; until it lands, this is the barrier.
 
     What this function enforces
     ---------------------------

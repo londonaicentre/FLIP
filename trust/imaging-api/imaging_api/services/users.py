@@ -64,11 +64,9 @@ def to_create_imaging_user(user: CentralHubUser, headers: dict[str, str]) -> Cre
     Raises:
         Exception: If fetching existing XNAT users fails.
     """
-    # Extract username from email (part before @)
-    base_username = user.email.split("@")[0]
-
-    # Replace all non-alphanumeric characters as they're not supported
-    sanitised_stem = re.sub(r"[^a-zA-Z0-9 \-]", "", base_username)
+    # Extract the username from the email (part before @), dropping every character XNAT does not
+    # support.
+    sanitised_stem = re.sub(r"[^a-zA-Z0-9 \-]", "", user.email.split("@")[0])
     username = sanitised_stem
 
     # Get existing users to check for uniqueness

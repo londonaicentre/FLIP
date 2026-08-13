@@ -60,28 +60,14 @@ def get_site_details(db: Session) -> ISiteDetails:
                 # fall back to a safe, disabled default banner.
                 logger.warning("Stored site banner is unusable even without its link; serving a default")
                 validated_banner = ISiteBanner(message="", link=None, enabled=False)
-
-        return ISiteDetails(
-            banner=ISiteBanner(
-                message=validated_banner.message,
-                # The empty-string sentinel is already normalised to None by ISiteBanner's
-                # validator, so no second emptiness check is needed here.
-                link=validated_banner.link,
-                enabled=validated_banner.enabled,
-            ),
-            deploymentMode=config.value,
-            maxReimportCount=get_settings().MAX_REIMPORT_COUNT,
-        )
     else:
-        return ISiteDetails(
-            banner=ISiteBanner(
-                message="This is a default banner message.",
-                link=None,
-                enabled=False,
-            ),
-            deploymentMode=config.value,
-            maxReimportCount=get_settings().MAX_REIMPORT_COUNT,
-        )
+        validated_banner = ISiteBanner(message="This is a default banner message.", link=None, enabled=False)
+
+    return ISiteDetails(
+        banner=validated_banner,
+        deploymentMode=config.value,
+        maxReimportCount=get_settings().MAX_REIMPORT_COUNT,
+    )
 
 
 def update_site_details(site_details: ISiteDetails, db: Session) -> None:
