@@ -124,18 +124,27 @@ class XnatClient:
 
         return cls(server=config["server"], user=config["user"], password=config["password"], **kwargs)
 
-    def _get_result_rows(self, path: str, params: dict[str, str] | None = None) -> list[dict[str, Any]]:
+    def _get_result_rows(
+        self,
+        path: str,
+        params: dict[str, str] | None = None,
+        not_found_ok: bool = False,
+    ) -> list[dict[str, Any]]:
         """GET an XNAT listing endpoint and return its ``ResultSet.Result`` rows.
 
         Args:
             path (str): Server-relative path, e.g. ``/data/projects``.
             params (dict[str, str] | None): Extra query parameters; ``format=json`` is always added.
+            not_found_ok (bool): Treat a 404 as an empty result instead of an error. Only 404 —
+                every other status still raises, so an expired session or a server fault can never
+                masquerade as "this resource is empty".
 
         Returns:
             list[dict[str, Any]]: The result rows, empty if XNAT returned none.
 
         Raises:
-            XnatError: If the request fails or returns a non-200 status.
+            XnatError: If the request fails, or returns a non-200 status that ``not_found_ok``
+                does not cover.
         """
         query = {"format": "json", **(params or {})}
         url = f"{self.server}{path}"
@@ -144,6 +153,8 @@ class XnatClient:
         except requests.RequestException as err:
             raise XnatError(f"XNAT request to {url} failed: {err}") from err
 
+        if response.status_code == 404 and not_found_ok:
+            return []
         if response.status_code != 200:
             raise XnatError(f"XNAT request to {url} returned {response.status_code}: {response.text}")
 
@@ -214,22 +225,28 @@ class XnatClient:
     def list_resource_files(self, scan: XnatScan, resource: str) -> list[str]:
         """List the filenames held in one of a scan's resources.
 
+        A missing resource (404) is an expected, non-fatal state — the scan was never converted —
+        and callers report it as a skip. Every other failure propagates: swallowing a 401 or a 500
+        here would surface as "no image in resource", which reads as a benign
+        conversion-not-run-yet skip and would hide an expired session or a broken server behind a
+        clean-looking summary.
+
         Args:
             scan (XnatScan): The scan to inspect.
             resource (str): Resource name, e.g. ``NIFTI``.
 
         Returns:
             list[str]: Filenames, empty if the resource does not exist or holds nothing.
+
+        Raises:
+            XnatError: If the request fails for any reason other than the resource being absent.
         """
-        try:
-            rows = self._get_result_rows(
-                f"/data/experiments/{scan.experiment_id}/scans/{scan.scan_id}/resources/{resource}/files"
-            )
-        except XnatError:
-            # A missing resource is an expected, non-fatal state (the scan was never converted),
-            # and callers report it as a skip rather than a failure.
-            logger.debug(f"No {resource} resource for scan {scan.scan_id} of {scan.accession_id}")
-            return []
+        rows = self._get_result_rows(
+            f"/data/experiments/{scan.experiment_id}/scans/{scan.scan_id}/resources/{resource}/files",
+            not_found_ok=True,
+        )
+        if not rows:
+            logger.debug(f"No {resource} files for scan {scan.scan_id} of {scan.accession_id}")
 
         return [str(row.get("Name", "")) for row in rows if row.get("Name")]
 

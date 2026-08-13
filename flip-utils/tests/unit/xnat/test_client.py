@@ -170,6 +170,29 @@ class TestListResourceFiles:
 
         assert client.list_resource_files(scan, "NIFTI") == []
 
+    def test_auth_failure_is_not_reported_as_an_empty_resource(self):
+        """A 401 must not masquerade as 'no image in resource' — that reads as a benign skip."""
+        client = make_client({"/resources/NIFTI/files": FakeResponse(status_code=401, text="unauthorised")})
+        scan = XnatScan("FAK001", "SUBJ_1", "EXP_1", "1")
+
+        with pytest.raises(XnatError, match="401"):
+            client.list_resource_files(scan, "NIFTI")
+
+    def test_server_error_is_not_reported_as_an_empty_resource(self):
+        client = make_client({"/resources/NIFTI/files": FakeResponse(status_code=500, text="boom")})
+        scan = XnatScan("FAK001", "SUBJ_1", "EXP_1", "1")
+
+        with pytest.raises(XnatError, match="500"):
+            client.list_resource_files(scan, "NIFTI")
+
+    def test_transport_failure_is_not_reported_as_an_empty_resource(self):
+        client = make_client({})
+        client._session.get_error = requests.ConnectionError("refused")
+        scan = XnatScan("FAK001", "SUBJ_1", "EXP_1", "1")
+
+        with pytest.raises(XnatError, match="failed"):
+            client.list_resource_files(scan, "NIFTI")
+
 
 class TestUploadScanResourceFile:
     """Uploads target the project-scoped scan resource path used by imaging-api."""

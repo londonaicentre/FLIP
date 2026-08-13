@@ -202,6 +202,33 @@ class TestUploadEnrichmentFiles:
         assert [accession for accession, _ in summary.failed] == ["FAK001", "FAK002"]
         assert summary.uploaded == []
 
+    def test_multi_scan_accession_records_one_entry_per_scan(self, tmp_path):
+        """Counts describe files written, so an accession spanning 2 scans counts twice."""
+        client = XnatClient(server="http://xnat.example", user="u", password="p")
+        routes = project_routes(["input_spleen_2.nii.gz"])
+        # Give EXP_1 a second scan; the accession FAK001 now maps to two destination scans.
+        routes["/data/experiments/EXP_1/scans"] = FakeResponse(
+            payload={"ResultSet": {"Result": [{"ID": "1"}, {"ID": "2"}]}}
+        )
+        client._session = FakeSession(routes)  # type: ignore[assignment]
+
+        summary = upload_enrichment_files(client, "PROJ", [EnrichmentItem("FAK001", _label(tmp_path))])
+
+        assert summary.uploaded == ["FAK001", "FAK001"]
+        assert len(client._session.puts) == 2
+        assert "/scans/1/" in client._session.puts[0]
+        assert "/scans/2/" in client._session.puts[1]
+
+    def test_resource_listing_error_aborts_rather_than_reporting_a_skip(self, tmp_path):
+        """An auth/server fault must not land in skipped_no_resource — that hides it."""
+        client = XnatClient(server="http://xnat.example", user="u", password="p")
+        routes = project_routes(["input_spleen_2.nii.gz"])
+        routes["/resources/NIFTI/files"] = FakeResponse(status_code=401, text="unauthorised")
+        client._session = FakeSession(routes)  # type: ignore[assignment]
+
+        with pytest.raises(XnatError, match="401"):
+            upload_enrichment_files(client, "PROJ", [EnrichmentItem("FAK001", _label(tmp_path))])
+
     def test_identical_rename_prefixes_are_refused(self, tmp_path):
         """Swapping a prefix for itself would target the image and destroy it."""
         client = _client(["input_spleen_2.nii.gz"])

@@ -59,11 +59,18 @@ class EnrichmentItem:
 class EnrichmentSummary:
     """Outcome of an :func:`upload_enrichment_files` run.
 
+    Entries are recorded **per destination scan**, not per accession, and each list holds the
+    accession id of the scan concerned. An accession that maps to several scans therefore
+    contributes one entry per scan — and can appear under two different outcomes if, say, one of
+    its scans already had the file and another did not. That is deliberate: the counts describe
+    files written, which is the work actually done, and collapsing them to one entry per accession
+    would under-report a multi-scan upload and hide the mixed outcome.
+
     Attributes:
-        uploaded (list[str]): Accessions whose file was uploaded (or would be, on a dry run).
+        uploaded (list[str]): One entry per scan whose file was uploaded (or would be, on a dry run).
         skipped_no_scan (list[str]): Accessions with no matching scan in the XNAT project.
-        skipped_no_resource (list[str]): Accessions whose scan has no image to derive a name from.
-        skipped_exists (list[str]): Accessions where the target file was already present.
+        skipped_no_resource (list[str]): One entry per scan with no image to derive a name from.
+        skipped_exists (list[str]): One entry per scan where the target file was already present.
         failed (list[tuple[str, str]]): ``(accession, reason)`` for each failure.
         dry_run (bool): Whether the run was a dry run.
     """
@@ -87,11 +94,13 @@ class EnrichmentSummary:
             str: The rendered summary.
         """
         verb = "would upload" if self.dry_run else "uploaded"
+        # Counts are per destination scan (see the class docstring), so name the unit rather than
+        # leaving the reader to assume one line per accession.
         lines = [
-            f"  {verb}: {len(self.uploaded)}",
-            f"  skipped (no matching scan): {len(self.skipped_no_scan)}",
-            f"  skipped (no image in resource): {len(self.skipped_no_resource)}",
-            f"  skipped (already present): {len(self.skipped_exists)}",
+            f"  {verb}: {len(self.uploaded)} file(s)",
+            f"  skipped (no matching scan): {len(self.skipped_no_scan)} accession(s)",
+            f"  skipped (no image in resource): {len(self.skipped_no_resource)} scan(s)",
+            f"  skipped (already present): {len(self.skipped_exists)} scan(s)",
             f"  failed: {len(self.failed)}",
         ]
         lines.extend(f"    ✗ {accession}: {reason}" for accession, reason in self.failed)
