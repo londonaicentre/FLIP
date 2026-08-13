@@ -137,6 +137,8 @@ The trust's kit file carries the rest of the settings:
 | `MONAI_LABEL_PROJECTS` | *(empty)* | XNAT projects the server may read. Empty means **every** project on this trust. |
 | `MONAI_LABEL_PUBLIC_URL` | `http://localhost:$MONAI_LABEL_PORT` | See below — this one matters. |
 | `MONAI_LABEL_SHM_SIZE` | `8gb` | Shared memory for dataloader workers. |
+| `MONAI_LABEL_BIND_HOST` | `127.0.0.1` | Host interface `MONAI_LABEL_PORT` is published on. Loopback by default — see below. |
+| `MONAI_LABEL_AUTH_ENABLE` | `false` | MONAI Label's own auth. Upstream default; enabling it needs an OAuth realm FLIP does not run. |
 
 **`MONAI_LABEL_PUBLIC_URL` is the setting people get wrong.** XNAT stores this URL and hands it
 to the OHIF viewer, which calls it **from the clinician's browser** — XNAT never proxies the
@@ -148,8 +150,21 @@ further consequences on a real trust:
   mixed content. Terminate TLS in front of MONAI Label, or serve it through the XNAT nginx so
   it is same-origin.
 - The MONAI Label API is **unauthenticated** and holds this trust's XNAT service-account
-  credentials. Restrict who can reach `MONAI_LABEL_PORT`; do not expose it beyond the
-  clinical network.
+  credentials. Anyone who can reach the port can enumerate every study the server can see,
+  download identifiable DICOM, and write labels back to XNAT as an admin. `MONAI_LABEL_AUTH_ENABLE`
+  is upstream's own switch, but turning it on requires an OAuth realm FLIP does not run — so
+  the containment is the network, not the app.
+
+  Because of that, **`MONAI_LABEL_BIND_HOST` defaults to `127.0.0.1`**: out of the box the port
+  is published on loopback only, and the trust host gains no listener reachable from the
+  network (the trust deployment model is otherwise strictly outbound — see
+  [Deployment Architecture](../CLAUDE.md)). That default is deliberately *not* browser-usable
+  from another machine. To give clinicians access, pick one:
+
+  1. **Serve it through the XNAT nginx** (recommended) — same-origin with XNAT, so it also
+     resolves the mixed-content problem above, and it inherits XNAT's TLS.
+  2. **Set `MONAI_LABEL_BIND_HOST`** to an interface you have explicitly firewalled to the
+     clinical network, and set `MONAI_LABEL_PUBLIC_URL` to match.
 
 **Each user must switch the panel on themselves**, once per browser: in the viewer, *Options →
 Preferences → Experimental*, tick **MONAILabel Tools**. A **MONAI Label** entry then appears in
@@ -167,16 +182,41 @@ verifiable in the monailabel container's logs):
   **reload the tab**.
 - Interactive (DeepGrow-type) results always land in the **first segment**, regardless of which
   segment is selected — the viewer routes the mask through an active-segment index that segment
-  selection does not update (present in viewer frontend 3.7.2; the 3.7.0 frontend did not have
-  the reworked segment store). Until fixed upstream, treat SAM/DeepGrow as single-target — rename
-  the first segment afterwards — and use `deepedit_seg` for multi-organ work.
+  selection does not update (observed in the OHIF **viewer frontend** 3.7.2 that ships inside
+  XNAT OHIF **plugin** 3.8.0; the 3.7.0 frontend did not have the reworked segment store —
+  note the frontend and plugin carry separate version numbers). Until fixed upstream, treat
+  SAM/DeepGrow as single-target — rename the first segment afterwards — and use `deepedit_seg`
+  for multi-organ work.
+
+### Getting labels back out: the `export_mask` pipeline
+
+A mask saved in the viewer lands in XNAT as a **DICOM-SEG assessor**, which FL training cannot
+read — it consumes NIfTI. `trust/xnat/xnat/config/configure-export-mask.sh` closes that gap: it
+registers an `export_mask` container-service command plus a site-wide event subscription on
+image-assessor creation, so every saved segmentation is converted to NIfTI and uploaded back to
+the session automatically. Nothing upstream does this step.
+
+Two things to know:
+
+- **It is registered only when `MONAI_LABEL=true`.** `make xnat-configure` gates it (see
+  `xnat-configure-export-mask` in `trust/xnat/Makefile`), so a trust without MONAI Label gets
+  neither the converter command nor the subscription. **If you enable MONAI Label on a trust
+  that was already up, re-run `make -C trust/xnat xnat-configure KIT=<CODE>`** (or bring XNAT
+  up again) — otherwise the annotation UI works but masks are never converted.
+- **The converter image is currently `atriaybagur/aic-ohif-dicomseg-to-nifti:latest`** — a
+  personal Docker Hub namespace on a mutable tag, pulled and run on the trust network with
+  XNAT admin credentials injected by the container service. Moving it to
+  `ghcr.io/londonaicentre` on an immutable digest is outstanding; until then, treat enabling
+  MONAI Label as also trusting that image.
 
 Notes:
 
 - **SAM is always on**, independently of `MONAI_LABEL_MODELS`: the radiology app registers
   `sam_2d` and `sam_3d` (interactive click-to-segment) whenever the `sam2` package is
   importable. Their checkpoint is a further ~900 MB fetched from HuggingFace on first start,
-  into the same persisted model directory. Disable with `--conf sam2 false` if not wanted.
+  into the same persisted model directory. Upstream's `--conf sam2 false` would disable them,
+  but `entrypoint.sh` passes only `--conf models`, so there is currently no way to turn SAM off
+  from the kit file — it would need an entrypoint change.
 - The server reads DICOM straight off this trust's XNAT archive (mounted read-only), falling
   back to HTTP downloads only for scans it cannot resolve there.
 - Pretrained weights are fetched on first start and persisted in the `monailabel-models`
