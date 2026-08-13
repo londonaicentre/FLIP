@@ -55,7 +55,7 @@ services:
     restart: unless-stopped
     networks:
       - default
-    container_name: flip-ui
+    container_name: ${FLIP_INSTANCE:+$FLIP_INSTANCE-}flip-ui
 
   flip-api:
     platform: linux/x86_64
@@ -86,7 +86,7 @@ services:
       target: development
     ports:
       - "${API_PORT}:8000"
-      - 5678:5678
+      - ${API_DEBUG_PORT:-5678}:5678
     depends_on:
       - flip-db
     volumes:
@@ -187,7 +187,7 @@ services:
     cap_add:
       - CHOWN
     restart: unless-stopped
-    container_name: flip-api
+    container_name: ${FLIP_INSTANCE:+$FLIP_INSTANCE-}flip-api
 
   flip-db:
     image: postgres:17
@@ -209,7 +209,7 @@ services:
       - SETGID
     networks:
       - default
-    container_name: flip-db
+    container_name: ${FLIP_INSTANCE:+$FLIP_INSTANCE-}flip-db
 
   #################### PGADMIN ####################
 
@@ -232,7 +232,7 @@ services:
       - default
       - trust-network-1
       - trust-network-2
-    container_name: flip-pgadmin
+    container_name: ${FLIP_INSTANCE:+$FLIP_INSTANCE-}flip-pgadmin
 
 volumes:
   pgadmin_data:
@@ -240,7 +240,7 @@ volumes:
 networks:
   default:
     external: true
-    name: central-hub-network
+    name: ${FLIP_INSTANCE:+$FLIP_INSTANCE-}central-hub-network
     driver: bridge
     driver_opts:
       com.docker.network.bridge.name: "central-hub-network"
@@ -250,7 +250,7 @@ networks:
   # Trusts poll the hub for tasks and push results back — no inbound connections to trusts.
   central-hub-trust-apis-network:
     external: true
-    name: central-hub-trust-apis-network
+    name: ${FLIP_INSTANCE:+$FLIP_INSTANCE-}central-hub-trust-apis-network
     driver: bridge
     driver_opts:
       com.docker.network.bridge.name: "central-hub-trust-apis-network"
@@ -274,7 +274,7 @@ networks:
 
   shared-net-1:
     external: true
-    name: deploy_shared-net-1
+    name: ${FLIP_INSTANCE:+$FLIP_INSTANCE-}deploy_shared-net-1
     driver: bridge
     driver_opts:
       com.docker.network.bridge.name: "deploy_shared-net-1"
@@ -282,7 +282,7 @@ networks:
 
   shared-net-2:
     external: true
-    name: deploy_shared-net-2
+    name: ${FLIP_INSTANCE:+$FLIP_INSTANCE-}deploy_shared-net-2
     driver: bridge
     driver_opts:
       com.docker.network.bridge.name: "deploy_shared-net-2"

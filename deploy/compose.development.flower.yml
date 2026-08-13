@@ -17,7 +17,7 @@ services:
   #################### CENTRAL HUB FL ####################
 
   fl-api-net-1:
-    container_name: flip-fl-api-net-1
+    container_name: ${FLIP_INSTANCE:+$FLIP_INSTANCE-}flip-fl-api-net-1
     image: ${DOCKER_FL_REGISTRY}${DOCKER_FL_API_NAME}:${DOCKER_FL_TAG}
     volumes:
       - ${FL_PROVISIONED_DIR}/net-1/certificates:/certs:ro
@@ -30,7 +30,7 @@ services:
       - FLOWER_SRC_ROOT=/app/src
     ports:
       - "${FL_API_PORT}:8000"
-      - "5679:5679"
+      - "${FL_API_DEBUG_PORT:-5679}:5679"
     depends_on:
       - fl-server-net-1
     security_opt:
@@ -51,7 +51,7 @@ services:
       start_period: 10s
 
   fl-api-net-2:
-    container_name: flip-fl-api-net-2
+    container_name: ${FLIP_INSTANCE:+$FLIP_INSTANCE-}flip-fl-api-net-2
     image: ${DOCKER_FL_REGISTRY}${DOCKER_FL_API_NAME}:${DOCKER_FL_TAG}
     volumes:
       - ${FL_PROVISIONED_DIR}/net-2/certificates:/certs:ro
@@ -82,7 +82,7 @@ services:
       start_period: 10s
 
   fl-server-net-1:
-    container_name: fl-server-net-1
+    container_name: ${FLIP_INSTANCE:+$FLIP_INSTANCE-}fl-server-net-1
     image: ${DOCKER_FL_REGISTRY}${DOCKER_FL_SERVER_NAME}:${DOCKER_FL_TAG}
     # Dev-only: run as root so the server can read BOTH the host-provisioned
     # 0640 TLS keys AND the host operator's AWS SSO cache. The app user (uid
@@ -129,7 +129,7 @@ services:
       - --health-server-address
       - 0.0.0.0:9097
     ports:
-      - 9093:9093
+      - ${FLOWER_SUPERLINK_NET_1_PORT:-9093}:9093
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -147,7 +147,7 @@ services:
 
   # One-shot service to register SuperNode public keys with the SuperLink
   register-supernode-keys-net-1:
-    container_name: register-supernode-keys-net-1
+    container_name: ${FLIP_INSTANCE:+$FLIP_INSTANCE-}register-supernode-keys-net-1
     # It doesn't really matter if we use FL server or FL base image here since register-supernode-keys.sh is in both
     image: ${DOCKER_FL_REGISTRY}${DOCKER_FL_SERVER_NAME}:${DOCKER_FL_TAG}
     environment:
@@ -175,7 +175,7 @@ services:
       - shared-net-1
 
   fl-server-net-2:
-    container_name: fl-server-net-2
+    container_name: ${FLIP_INSTANCE:+$FLIP_INSTANCE-}fl-server-net-2
     image: ${DOCKER_FL_REGISTRY}${DOCKER_FL_SERVER_NAME}:${DOCKER_FL_TAG}
     # Dev-only: run as root so the server can read BOTH the host-provisioned
     # 0640 TLS keys AND the host operator's AWS SSO cache. The app user (uid
@@ -222,7 +222,7 @@ services:
       - --health-server-address
       - 0.0.0.0:9097
     ports:
-      - 9095:9093
+      - ${FLOWER_SUPERLINK_NET_2_PORT:-9095}:9093
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -240,7 +240,7 @@ services:
 
   # One-shot service to register SuperNode public keys with the SuperLink
   register-supernode-keys-net-2:
-    container_name: register-supernode-keys-net-2
+    container_name: ${FLIP_INSTANCE:+$FLIP_INSTANCE-}register-supernode-keys-net-2
     # It doesn't really matter if we use FL server or FL base image here since register-supernode-keys.sh is in both
     image: ${DOCKER_FL_REGISTRY}${DOCKER_FL_SERVER_NAME}:${DOCKER_FL_TAG}
     environment:

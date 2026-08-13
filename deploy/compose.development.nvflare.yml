@@ -17,7 +17,7 @@ services:
   #################### CENTRAL HUB FL ####################
 
   fl-api-net-1:
-    container_name: flip-fl-api-net-1
+    container_name: ${FLIP_INSTANCE:+$FLIP_INSTANCE-}flip-fl-api-net-1
     image: ${DOCKER_FL_REGISTRY}${DOCKER_FL_API_NAME}:${DOCKER_FL_TAG}
     environment:
       - FL_ADMIN_DIRECTORY=${FL_ADMIN_DIRECTORY}
@@ -31,7 +31,7 @@ services:
       - JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB=${JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB:-0}
     ports:
       - "${FL_API_PORT}:8000"
-      - "5679:5679"
+      - "${FL_API_DEBUG_PORT:-5679}:5679"
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -54,7 +54,7 @@ services:
     restart: unless-stopped
 
   fl-api-net-2:
-    container_name: flip-fl-api-net-2
+    container_name: ${FLIP_INSTANCE:+$FLIP_INSTANCE-}flip-fl-api-net-2
     image: ${DOCKER_FL_REGISTRY}${DOCKER_FL_API_NAME}:${DOCKER_FL_TAG}
     environment:
       - FL_ADMIN_DIRECTORY=${FL_ADMIN_DIRECTORY}
@@ -86,7 +86,7 @@ services:
     restart: unless-stopped
 
   fl-server-net-1:
-    container_name: fl-server-net-1
+    container_name: ${FLIP_INSTANCE:+$FLIP_INSTANCE-}fl-server-net-1
     image: ${DOCKER_FL_REGISTRY}${DOCKER_FL_SERVER_NAME}:${DOCKER_FL_TAG}
     volumes:
       # Provisioned NVFLARE secrets (certificates, fed_server.json)
@@ -135,7 +135,7 @@ services:
     init: true
 
   fl-server-net-2:
-    container_name: fl-server-net-2
+    container_name: ${FLIP_INSTANCE:+$FLIP_INSTANCE-}fl-server-net-2
     image: ${DOCKER_FL_REGISTRY}${DOCKER_FL_SERVER_NAME}:${DOCKER_FL_TAG}
     volumes:
       # Provisioned NVFLARE secrets (certificates, fed_server.json)

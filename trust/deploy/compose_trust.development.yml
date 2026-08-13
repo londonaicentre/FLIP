@@ -304,9 +304,16 @@ networks:
   default:
     external: true
     name: ${TRUST_NETWORK_NAME}
+  # Hub-shared networks. The keys stay stable (services reference them by key);
+  # only the real network name carries the FLIP_INSTANCE prefix, so a trust
+  # attaches to the hub instance it was launched for. Unset → the original
+  # names, i.e. no change for existing deployments (FLIP#957).
   central-hub-trust-apis-network:
     external: true
+    name: ${FLIP_INSTANCE:+$FLIP_INSTANCE-}central-hub-trust-apis-network
   deploy_shared-net-1:
     external: true
+    name: ${FLIP_INSTANCE:+$FLIP_INSTANCE-}deploy_shared-net-1
   deploy_shared-net-2:
     external: true
+    name: ${FLIP_INSTANCE:+$FLIP_INSTANCE-}deploy_shared-net-2

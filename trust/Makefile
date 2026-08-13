@@ -69,6 +69,13 @@ endif
 
 include ../deploy/fl_backend.mk
 
+# Prefix for the hub-shared network names, derived from FLIP_INSTANCE (FLIP#957).
+# `?=` so the root Makefile's exported value wins when invoked as `make -C trust`,
+# while a standalone `make -C trust ...` still resolves it from FLIP_INSTANCE.
+# Unset → empty → the original network names.
+HUB_NET_PREFIX ?= $(if $(FLIP_INSTANCE),$(FLIP_INSTANCE)-,)
+export HUB_NET_PREFIX
+
 # Host gid for group_add on FL containers reading host-provisioned 640 certs/keys (dev).
 export DOCKER_GID := $(shell id -g)
 
@@ -371,9 +378,9 @@ tests:
 
 create-networks-core:
 	@echo "🔧 Ensuring external Docker networks exist..."
-	@{ docker network inspect central-hub-trust-apis-network >/dev/null 2>&1 || docker network create --driver bridge central-hub-trust-apis-network || true; }
-	@{ docker network inspect deploy_shared-net-1 >/dev/null 2>&1 || docker network create --driver bridge deploy_shared-net-1 || true; }
-	@{ docker network inspect deploy_shared-net-2 >/dev/null 2>&1 || docker network create --driver bridge deploy_shared-net-2 || true; }
+	@{ docker network inspect $(HUB_NET_PREFIX)central-hub-trust-apis-network >/dev/null 2>&1 || docker network create --driver bridge $(HUB_NET_PREFIX)central-hub-trust-apis-network || true; }
+	@{ docker network inspect $(HUB_NET_PREFIX)deploy_shared-net-1 >/dev/null 2>&1 || docker network create --driver bridge $(HUB_NET_PREFIX)deploy_shared-net-1 || true; }
+	@{ docker network inspect $(HUB_NET_PREFIX)deploy_shared-net-2 >/dev/null 2>&1 || docker network create --driver bridge $(HUB_NET_PREFIX)deploy_shared-net-2 || true; }
 
 create-networks-trust-1:
 	@{ docker network inspect deploy_trust-network-1 >/dev/null 2>&1 || docker network create --driver overlay --attachable deploy_trust-network-1; }
@@ -385,11 +392,11 @@ create-networks: create-networks-core create-networks-trust-1 create-networks-tr
 
 remove-networks:
 	@echo "🗑️  Removing all trust networks..."
-	@docker network rm central-hub-trust-apis-network 2>/dev/null || true
+	@docker network rm $(HUB_NET_PREFIX)central-hub-trust-apis-network 2>/dev/null || true
 	@docker network rm deploy_trust-network-1 2>/dev/null || true
 	@docker network rm deploy_trust-network-2 2>/dev/null || true
-	@docker network rm deploy_shared-net-1 2>/dev/null || true
-	@docker network rm deploy_shared-net-2 2>/dev/null || true
+	@docker network rm $(HUB_NET_PREFIX)deploy_shared-net-1 2>/dev/null || true
+	@docker network rm $(HUB_NET_PREFIX)deploy_shared-net-2 2>/dev/null || true
 	@echo "✅ Trust networks removed!"
 
 recreate-networks: remove-networks create-networks

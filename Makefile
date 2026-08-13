@@ -49,6 +49,23 @@ export DOCKER_GID := $(shell id -g)
 COMMON_COMPOSE_FILE := deploy/compose.$(__DCKR_SUFFIX).yml
 FL_BACKEND_COMPOSE_FILE := deploy/compose.$(__DCKR_SUFFIX).$(FL_BACKEND).yml
 
+# ── Parallel dev stacks (FLIP#957) ────────────────────────────────────────
+# FLIP_INSTANCE names a hub instance so a second dev stack can run alongside the
+# default one. Unset (the norm) every derived name is byte-identical to what it
+# was before this knob existed, so existing deployments are untouched.
+#
+# HUB_NET_PREFIX is also read by trust/Makefile's network targets — it is
+# exported so `$(MAKE) -C trust` sees the same value.
+#
+# COMPOSE_PROJECT matters as much as the names themselves: compose derives the
+# project from the directory of the first -f file, which is always `deploy/`,
+# so without this BOTH stacks would land in one project (`deploy`) regardless of
+# which checkout they were launched from, and `up` on one would reconcile — and
+# tear down — the other's containers. `-p deploy` is exactly the implicit value
+# used today, so pinning it changes nothing for the default stack.
+export HUB_NET_PREFIX := $(if $(FLIP_INSTANCE),$(FLIP_INSTANCE)-,)
+COMPOSE_PROJECT ?= $(HUB_NET_PREFIX)deploy
+
 # Resolve FL_PROVISIONED_DIR (from .env) to an absolute path relative to this Makefile
 # Docker requires absolute paths for volume mounts; the .env value may be relative
 MAKEFILE_DIR := $(dir $(abspath $(firstword $(MAKEFILE_LIST))))
@@ -71,9 +88,9 @@ get_service_type = $(word 2,$(subst :, ,$(filter $1:%,$(SERVICE_CONFIG))))
 get_service_name = $(subst -api,, $(subst flip-,central hub ,$(subst fl-,central FL ,$1)))
 
 export COMPOSE_BAKE=true
-DOCKER_COMMAND=docker compose -f $(COMMON_COMPOSE_FILE) -f $(FL_BACKEND_COMPOSE_FILE)
-DEBUG_OVERRIDE_COMPOSE_COMMAND=docker compose -f $(COMMON_COMPOSE_FILE) -f $(FL_BACKEND_COMPOSE_FILE) -f deploy/compose.development.debug.override.yml
-SHOW_LOGS_CENTRAL_HUB=docker logs -f flip-api --tail 100 --timestamps --follow
+DOCKER_COMMAND=docker compose -p $(COMPOSE_PROJECT) -f $(COMMON_COMPOSE_FILE) -f $(FL_BACKEND_COMPOSE_FILE)
+DEBUG_OVERRIDE_COMPOSE_COMMAND=docker compose -p $(COMPOSE_PROJECT) -f $(COMMON_COMPOSE_FILE) -f $(FL_BACKEND_COMPOSE_FILE) -f deploy/compose.development.debug.override.yml
+SHOW_LOGS_CENTRAL_HUB=docker logs -f $(HUB_NET_PREFIX)flip-api --tail 100 --timestamps --follow
 GENERIC_LOGS=docker logs -f --tail 100 --timestamps --follow
 
 # UP_PULL_FLAGS controls the pull/build behaviour of the `up` targets.
@@ -314,14 +331,14 @@ debug-off-all:
 	$(MAKE) -C trust debug-off
 
 create-networks-centralhub:
-	@{ docker network inspect central-hub-network >/dev/null 2>&1 || docker network create --driver bridge central-hub-network || true; }
+	@{ docker network inspect $(HUB_NET_PREFIX)central-hub-network >/dev/null 2>&1 || docker network create --driver bridge $(HUB_NET_PREFIX)central-hub-network || true; }
 
 create-networks: create-networks-centralhub
 	$(MAKE) -C trust create-networks
 
 remove-networks:
 	@echo "🗑️  Removing all networks..."
-	@docker network rm central-hub-network 2>/dev/null || true
+	@docker network rm $(HUB_NET_PREFIX)central-hub-network 2>/dev/null || true
 	$(MAKE) -C trust remove-networks
 	@echo "✅ All networks removed!"
 
