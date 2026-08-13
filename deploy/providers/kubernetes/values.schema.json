@@ -737,6 +737,15 @@
             }
           }
         },
+        "allowedIngressCIDRs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "authEnable": {
+          "type": "boolean"
+        },
         "persistence": {
           "type": "object",
           "properties": {

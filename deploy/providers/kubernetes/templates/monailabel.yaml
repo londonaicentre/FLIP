@@ -73,6 +73,18 @@ spec:
         - name: monailabel
           image: "{{ .Values.monailabel.image.repository }}:{{ .Values.monailabel.image.tag }}"
           imagePullPolicy: {{ .Values.monailabel.image.pullPolicy }}
+          {{- /*
+            Same chart-global container hardening the other network-facing services apply
+            (allowPrivilegeEscalation: false, drop ALL, seccompProfile: RuntimeDefault).
+            These defaults are image-agnostic — they do not require a non-root image, so they
+            are safe here even though this image still runs as root. runAsNonRoot for the
+            PVC-holding services is FLIP#530 work (needs fsGroup/chown), and MONAI Label is
+            listed there with the other stateful images.
+          */}}
+          {{- with .Values.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
           env:
             - name: MONAI_LABEL_PORT
               value: {{ .Values.monailabel.port | quote }}
@@ -104,6 +116,12 @@ spec:
             # cannot derive, so it is required rather than defaulted.
             - name: MONAI_LABEL_PUBLIC_URL
               value: {{ required "monailabel.publicUrl is required when monailabel.enabled — the URL the clinician's browser uses to reach the MONAI Label service (e.g. http://<node>:<nodePort>)" .Values.monailabel.publicUrl | quote }}
+            # Explicit, not inherited. MONAI Label defaults this to False and its RBAC
+            # dependencies are no-ops while it is, so every /datastore route is open to
+            # whoever can reach the port. Enabling it needs an OAuth realm FLIP does not run,
+            # so containment is monailabel.allowedIngressCIDRs on the NetworkPolicy below.
+            - name: MONAI_LABEL_AUTH_ENABLE
+              value: {{ .Values.monailabel.authEnable | quote }}
           ports:
             - name: http
               containerPort: {{ .Values.monailabel.port }}
@@ -128,14 +146,22 @@ spec:
               port: http
             periodSeconds: 30
             timeoutSeconds: 5
+          {{- /*
+            Merge the GPU reservation INTO the operator's resources rather than emitting a
+            second `limits:` block. Emitting both produces two sibling `limits:` keys under
+            `resources:`, and YAML resolves duplicates last-wins — so any operator who sets
+            monailabel.resources.limits (e.g. a memory cap, near-mandatory for a torch server
+            this size) would silently lose nvidia.com/gpu. The pod still tolerates the GPU
+            taint, so it lands on the GPU node looking correct and runs on CPU.
+            merge's dest wins, so an explicit operator nvidia.com/gpu overrides gpu.count.
+          */}}
+          {{- $resources := deepCopy (.Values.monailabel.resources | default dict) }}
+          {{- if .Values.monailabel.gpu.enabled }}
+          {{- $gpuLimit := dict "nvidia.com/gpu" (.Values.monailabel.gpu.count | toString) }}
+          {{- $_ := set $resources "limits" (merge ($resources.limits | default dict) $gpuLimit) }}
+          {{- end }}
           resources:
-            {{- if .Values.monailabel.gpu.enabled }}
-            limits:
-              nvidia.com/gpu: {{ .Values.monailabel.gpu.count | quote }}
-            {{- end }}
-            {{- with .Values.monailabel.resources }}
-            {{- toYaml . | nindent 12 }}
-            {{- end }}
+            {{- toYaml $resources | nindent 12 }}
           volumeMounts:
             - name: xnat-data
               mountPath: /workspace/xnat-data/archive
@@ -224,6 +250,21 @@ spec:
     - ports:
         - port: {{ .Values.monailabel.port }}
           protocol: TCP
+      {{- /*
+        An ingress rule with no `from:` allows EVERY source, in and out of cluster. That is
+        the fallback when allowedIngressCIDRs is empty, because the clinician's browser calls
+        this pod directly and the chart cannot know where from. Set allowedIngressCIDRs to the
+        subnets your clinicians actually browse from and the rule scopes to them instead —
+        strongly recommended, since the API behind it is unauthenticated and holds the XNAT
+        service-account credentials.
+      */}}
+      {{- with .Values.monailabel.allowedIngressCIDRs }}
+      from:
+        {{- range . }}
+        - ipBlock:
+            cidr: {{ . | quote }}
+        {{- end }}
+      {{- end }}
   policyTypes:
     - Ingress
 {{- end }}

@@ -687,6 +687,18 @@ monailabel:
     # Adds a NetworkPolicy opening the service port on this pod through the namespace's
     # default-deny ingress — required for browser access when networkPolicies.enabled.
     allowExternalIngress: true
+  # Sources allowed through that NetworkPolicy, as CIDRs. EMPTY MEANS EVERY SOURCE, in and
+  # out of cluster — a NetworkPolicy ingress rule with no `from:` matches all. That is the
+  # fallback because the clinician's browser calls this pod directly and the chart cannot
+  # know where from, but it is not a good default to leave in place: the API behind it is
+  # unauthenticated (see authEnable) and holds the XNAT service-account credentials. Set the
+  # subnets your clinicians browse from, e.g. ["10.0.0.0/8"].
+  allowedIngressCIDRs: []
+  # MONAI Label's own auth. Its default is False and its RBAC dependencies are no-ops while
+  # it is, so every /datastore route is open to whoever reaches the port. Enabling it needs
+  # an OAuth realm (MONAI_LABEL_AUTH_REALM_URI et al) that FLIP does not run — so treat
+  # allowedIngressCIDRs, not this, as the control until such a realm exists.
+  authEnable: false
   persistence:
     # Pretrained weights (incl. the ~900MB SAM checkpoint).
     size: 20Gi
