@@ -45,6 +45,11 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      # test_sync_trust_kit.py drives sync_trust_kit.py through `uv run --no-config` and hard-exits
+      # (rather than skipping) when uv is absent, so the runner needs it even though the tests
+      # themselves are stdlib-only.
+      - name: Install uv
+        run: pip install uv
       - name: Run scripts/ tests
         run: |
           for test_file in scripts/tests/test_*.py; do
