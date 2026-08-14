@@ -249,17 +249,9 @@ const flNets = (): unknown => {
  *   the default costs ~20s of CI for no signal.
  */
 export function makeDemoServer(options: { timing?: number } = {}): Server {
-    return createServer({
+    const server = createServer({
         environment: "production",
         timing: options.timing ?? 400,
-
-        // Mirage's "production" environment still logs every intercepted
-        // request and its payload. On a public exhibit that means the browser
-        // console continuously dumps the register — the internal OMOP cohort
-        // SQL included — to anyone with devtools open (FLIP#794 review). It also
-        // sets timing: 400, so silencing this returns ~15s to every CI run of
-        // the demo-server spec.
-        logging: false,
 
         routes() {
             // ---- App-shell / site chrome --------------------------------------
@@ -336,4 +328,25 @@ export function makeDemoServer(options: { timing?: number } = {}): Server {
             // reaches the network. This is deliberate — do not add passthrough here.
         }
     });
+
+    // Silence Mirage's request logging. Under `environment: "production"` it
+    // prints every intercepted request AND its full response body to the
+    // console, so on a public exhibit the browser console continuously dumps
+    // the register — the internal OMOP cohort SQL included — to anyone with
+    // devtools open (FLIP#794 review).
+    //
+    // This MUST be an assignment on the instance, not `logging: false` in the
+    // config object above: miragejs 0.1.48 has its ternary branches swapped
+    // when it reads the option (dist/mirage-esm.js, `Server.prototype.config`):
+    //
+    //     this.logging = _config.logging !== undefined ? this.logging : undefined;
+    //
+    // Passing the option selects `this.logging`, which is still unset at that
+    // point, so the value is discarded either way and `shouldLog()` falls back
+    // to `!this.isTest()` — true here. Assigning afterwards works because
+    // `shouldLog()` reads the property at call time. Do not "tidy" this back
+    // into the config object; the egress spec pins the behaviour.
+    server.logging = false;
+
+    return server;
 }

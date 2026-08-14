@@ -26,7 +26,7 @@
 
 import axios from "axios";
 import type { Server } from "miragejs";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { DEMO_USER } from "../demo/ark-plus-register";
 import p2Step1 from "../demo/data/p2_m1_step.json";
@@ -221,6 +221,39 @@ describe("makeDemoServer route coverage", () => {
             // Not in miragejs' published Server types, hence the narrowing.
             const pretender = server.pretender as unknown as { passthroughRequests: unknown[] };
             expect(pretender.passthroughRequests).toHaveLength(0);
+        });
+    });
+    // Mirage's `environment: "production"` logs every intercepted request and
+    // its FULL response body to the console, which on a public exhibit means
+    // the browser console dumps the register — internal OMOP cohort SQL and
+    // all — to any visitor with devtools open (FLIP#794 review).
+    //
+    // Asserted on behaviour, not on the config object: `logging: false` passed
+    // to createServer is silently discarded by miragejs 0.1.48 (see the comment
+    // in demo-server.ts), so a config-shaped assertion would have passed while
+    // the console kept logging.
+    describe("console silence", () => {
+        it("logs nothing while serving a request", async () => {
+            const methods = ["log", "info", "groupCollapsed"] as const;
+            const spies = methods.map(name =>
+                vi.spyOn(console, name).mockImplementation(() => undefined));
+
+            try {
+                await client.get(`/projects/${p2.id}`);
+
+                methods.forEach((name, i) => {
+                    expect(spies[i], `console.${name}`).not.toHaveBeenCalled();
+                });
+            }
+            finally {
+                spies.forEach(spy => spy.mockRestore());
+            }
+        });
+
+        it("reports shouldLog() false, the predicate Mirage actually consults", () => {
+            const mirage = server as unknown as { shouldLog: () => boolean };
+
+            expect(mirage.shouldLog()).toBe(false);
         });
     });
 });
