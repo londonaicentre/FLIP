@@ -30,12 +30,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { DEMO_USER } from "../demo/ark-plus-register";
 import cohortP1 from "../demo/data/cohort.json";
+import imageStatusP1 from "../demo/data/image_status.json";
 import cohortP2 from "../demo/data/p2_cohort.json";
+import imageStatusP2 from "../demo/data/p2_image_status.json";
 import p2Step1 from "../demo/data/p2_m1_step.json";
 import p2Step2 from "../demo/data/p2_m2_step.json";
 import p2Project from "../demo/data/p2_project.json";
 import project from "../demo/data/project.json";
 import stepModel from "../demo/data/step_model.json";
+import trustHealth from "../demo/data/trust_health.json";
+import trusts from "../demo/data/trusts.json";
 import { makeDemoServer } from "../demo-server";
 
 interface IProjectFixture {
@@ -237,6 +241,20 @@ describe("makeDemoServer route coverage", () => {
         }
     });
 
+    // Sanitisation rule 6, the other half. userCount is only populated by the
+    // project LIST endpoint (get_projects.py `_load_user_counts`, counting
+    // ProjectUserAccess rows, owner included); the DETAIL payloads this register
+    // was captured from leave it at 0. demo-server serves those on /projects,
+    // where the UI reads the list shape — so the grid view rendered "0 users"
+    // for a project that has an owner.
+    it("counts each project's users to match the users it lists", async () => {
+        const res = await client.get("/projects");
+
+        for (const proj of res.data.data) {
+            expect(proj.userCount, `${proj.name} userCount`).toBe(proj.users.length);
+        }
+    });
+
     it("serves a config.json body the job-type resolver can parse", async () => {
         // Previously asserted only `status === 200`, which is why the response
         // being the config *body* where file-service expected a presigned
@@ -352,5 +370,56 @@ describe.each([
 
         expect(cohort.recordCount).toBe(summed);
         expect(proj.query.totalCohort).toBe(summed);
+    });
+});
+
+// Sanitisation rule 7. A cohort aggregate freezes the trust name it joined at
+// aggregation time (receive_cohort_results.py), so a trust renamed between two
+// projects' queries leaves the register describing one id under two names —
+// which is what P1's cohort did, calling KCL "Guy's and St Thomas' Trust".
+// Walks every fixture rather than a route list: the failure is in the data, and
+// a payload served by a route added later would escape a route-shaped check.
+describe("register names every trust consistently", () => {
+    const roster = new Map((trusts as { id: string; name: string }[]).map(t => [t.id, t.name]));
+
+    /** Every {id-ish, name-ish} pair in a fixture whose id is a known trust. */
+    function trustNamePairs(node: unknown, path: string, out: { path: string; id: string; name: string }[]) {
+        if (Array.isArray(node)) {
+            node.forEach((v, i) => trustNamePairs(v, `${path}[${i}]`, out));
+
+            return;
+        }
+
+        if (node === null || typeof node !== "object") return;
+
+        const obj = node as Record<string, unknown>;
+        const id = obj["trustId"] ?? obj["id"];
+        const name = obj["trustName"] ?? obj["name"];
+
+        if (typeof id === "string" && typeof name === "string" && roster.has(id)) {
+            out.push({
+                path,
+                id,
+                name
+            });
+        }
+
+        for (const [k, v] of Object.entries(obj)) trustNamePairs(v, `${path}.${k}`, out);
+    }
+
+    it.each([
+        ["cohort.json", cohortP1], ["p2_cohort.json", cohortP2],
+        ["image_status.json", imageStatusP1], ["p2_image_status.json", imageStatusP2],
+        ["project.json", project], ["p2_project.json", p2Project],
+        ["step_model.json", stepModel], ["p2_m1_step.json", p2Step1], ["p2_m2_step.json", p2Step2],
+        ["trust_health.json", trustHealth], ["trusts.json", trusts]
+    ])("%s agrees with the roster", (_file, fixture) => {
+        const pairs: { path: string; id: string; name: string }[] = [];
+
+        trustNamePairs(fixture, "", pairs);
+
+        for (const { path, id, name } of pairs) {
+            expect(name, `${_file}${path}`).toBe(roster.get(id));
+        }
     });
 });

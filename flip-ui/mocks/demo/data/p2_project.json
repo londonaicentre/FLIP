@@ -4,7 +4,7 @@
   "description": "Federated evaluation of chest X-ray classifiers on each site's held-out synthetic cohort (the 20% split withheld from the Ark+ fine-tuning project), covering the same five findings: pleural effusion, consolidation, infiltration, lung nodule or mass, and pneumothorax.\n\nCandidate models will be packaged behind a common inference interface so a single shared evaluator can score any of them without model-specific integration code. At each participating site the evaluator will compute per-class AUROC on the local holdout set for every configured model, and model pairs will be compared with two-sided DeLong tests under Benjamini-Hochberg false-discovery-rate correction, following the significance-ranking protocol of the Medical Segmentation Decathlon. Only aggregate scores and test statistics leave the trust; per-sample predictions are never exported. The project will first establish the pretrained Ark+ baseline and then extend the model list to the federated fine-tuned checkpoint, exercising FLIP's evaluation job type end to end on both sites.",
   "ownerId": "00000000-0000-4000-8000-000000000002",
   "ownerName": null,
-  "userCount": 0,
+  "userCount": 1,
   "deleted": false,
   "approved": null,
   "creationtimestamp": "2026-07-17T16:36:39.549Z",

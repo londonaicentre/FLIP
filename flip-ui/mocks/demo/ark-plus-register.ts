@@ -64,23 +64,50 @@
  *      region, id — and left its PROJECTS column reading 1 against a project
  *      that appears nowhere in the exhibit. Two trusts everywhere is both the
  *      smaller disclosure and the consistent story.
- *   6. every count that describes the live platform rather than the recorded
- *      register recomputed against the register. So far that is `project_count`
- *      in trusts.json, which the capture carried as the production figure —
- *      KCL 41, BDMS 34, i.e. each trust's real project load, published on an
- *      unauthenticated page and contradicting an exhibit that contains two
- *      projects. It is the count of `project_trust_intersect` rows
- *      (flip-api trusts_services/get_trusts.py), so against this register it is
- *      the number of recorded projects whose `approvedTrusts` name the trust:
- *      2 for both. Rendered three times on Connection Status — the PROJECTS
- *      column, the trust card, and the topology node label, whose radius it
- *      also scales.
+ *   6. every count recomputed so it equals what the register itself contains,
+ *      whichever way the capture got it wrong:
  *
- * Institution names (King's College London, Bangkok Dusit Medical Services,
- * Guy's and St Thomas' Trust) are shown verbatim by decision of the project
- * owner.
+ *        * `project_count` (trusts.json) was the live production figure — KCL
+ *          41, BDMS 34, each trust's real project load — published on an
+ *          unauthenticated page and contradicting an exhibit that holds two
+ *          projects. It counts `project_trust_intersect` rows (flip-api
+ *          trusts_services/get_trusts.py), so against this register it is the
+ *          number of recorded projects whose `approvedTrusts` name the trust:
+ *          2 for both. Rendered three times on Connection Status — the
+ *          PROJECTS column, the trust card, and the topology node label, whose
+ *          radius it also scales.
+ *        * `userCount` (project.json, p2_project.json) was 0 on projects that
+ *          each list one user, because the capture came from the project
+ *          DETAIL endpoint, which never populates it — only the list endpoint
+ *          does (project_services/get_projects.py `_load_user_counts`, which
+ *          counts ProjectUserAccess rows and includes the owner). demo-server
+ *          serves those detail payloads on /projects, where the UI reads the
+ *          list shape, so the projects page rendered "0 users" for a project
+ *          that has an owner. It is 1 for both.
  *
- * Re-capturing the register means re-applying all six rules. Project and model
+ *   7. every entity named consistently across the register. P1's cohort
+ *      results called trust 16f5b300… "Guy's and St Thomas' Trust" while every
+ *      other payload — including the same project's approvedTrusts — called it
+ *      "King's College London". Not a capture error: `query_result` stores only
+ *      `trust_id`, and private_services/receive_cohort_results.py joins
+ *      `Trust.name` at AGGREGATION time and freezes it into the QueryStats
+ *      blob. So a cohort aggregate carries the trust's name as of the day it
+ *      was aggregated (6 Jul for P1) while everything else joins the live trust
+ *      row (17 Jul), and the trust was renamed in between. The register is
+ *      presented as a single snapshot dated DEMO_CAPTURE_DATE, so the later
+ *      name wins. Latent rather than visible today — AiCohortChart labels from
+ *      the roster (`trust?.code || trustName`) and only falls back to the
+ *      payload name for a trust the roster does not have, which rule 5 already
+ *      forbids — but two names for one id is a contradiction the register
+ *      should not carry.
+ *
+ * Institution names are shown verbatim by decision of the project owner: the
+ * two participating trusts (King's College London, Bangkok Dusit Medical
+ * Services), and Guy's and St Thomas' NHS Foundation Trust, which after rule 7
+ * appears only as a copyright holder in the licence header of the cohort SQL —
+ * rendered on the cohort page — rather than as the name of any trust.
+ *
+ * Re-capturing the register means re-applying all seven rules. Project and model
  * ids are deliberately NOT scrubbed: they are public URL path segments.
  */
 
