@@ -222,6 +222,21 @@ describe("makeDemoServer route coverage", () => {
         }
     });
 
+    // Sanitisation rule 6. project_count is the number of project_trust_intersect
+    // rows (flip-api trusts_services/get_trusts.py), so against this register it
+    // is the number of recorded projects that approved the trust. The capture
+    // carried the production figures instead — KCL 41, BDMS 34 — publishing each
+    // trust's real project load next to an exhibit holding two projects.
+    it("counts each trust's projects from the register, not the live platform", async () => {
+        const res = await client.get("/trust");
+
+        for (const trust of res.data) {
+            const recorded = [p1, p2].filter(p => p.approvedTrusts.some(t => t.id === trust.id)).length;
+
+            expect(trust.project_count, `${trust.code} project_count`).toBe(recorded);
+        }
+    });
+
     it("serves a config.json body the job-type resolver can parse", async () => {
         // Previously asserted only `status === 200`, which is why the response
         // being the config *body* where file-service expected a presigned

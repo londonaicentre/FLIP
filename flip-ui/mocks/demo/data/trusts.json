@@ -5,7 +5,7 @@
     "code": "KCL",
     "region": "London",
     "last_heartbeat": "2026-07-17T14:33:14.208Z",
-    "project_count": 41
+    "project_count": 2
   },
   {
     "id": "f43abcd0-be77-4dc8-89c6-4b8aa98b6183",
@@ -13,6 +13,6 @@
     "code": "BDMS",
     "region": "Thailand",
     "last_heartbeat": "2026-07-17T14:33:14.470Z",
-    "project_count": 34
+    "project_count": 2
   }
 ]

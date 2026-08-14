@@ -64,12 +64,23 @@
  *      region, id — and left its PROJECTS column reading 1 against a project
  *      that appears nowhere in the exhibit. Two trusts everywhere is both the
  *      smaller disclosure and the consistent story.
+ *   6. every count that describes the live platform rather than the recorded
+ *      register recomputed against the register. So far that is `project_count`
+ *      in trusts.json, which the capture carried as the production figure —
+ *      KCL 41, BDMS 34, i.e. each trust's real project load, published on an
+ *      unauthenticated page and contradicting an exhibit that contains two
+ *      projects. It is the count of `project_trust_intersect` rows
+ *      (flip-api trusts_services/get_trusts.py), so against this register it is
+ *      the number of recorded projects whose `approvedTrusts` name the trust:
+ *      2 for both. Rendered three times on Connection Status — the PROJECTS
+ *      column, the trust card, and the topology node label, whose radius it
+ *      also scales.
  *
  * Institution names (King's College London, Bangkok Dusit Medical Services,
  * Guy's and St Thomas' Trust) are shown verbatim by decision of the project
  * owner.
  *
- * Re-capturing the register means re-applying all five rules. Project and model
+ * Re-capturing the register means re-applying all six rules. Project and model
  * ids are deliberately NOT scrubbed: they are public URL path segments.
  */
 
