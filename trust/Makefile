@@ -101,7 +101,7 @@ ORTHANC_CMD=make -C ./orthanc
 # (compose tolerates absence of --env-file just fine).
 __ENV_FILE_FLAG := $(if $(wildcard $(KIT_FILE)),--env-file $(KIT_FILE),)
 DOCKER_COMPOSE_CMD=docker compose $(__ENV_FILE_FLAG) --project-directory . -f $(COMMON_COMPOSE_FILE) -f $(FL_BACKEND_COMPOSE_FILE)
-DEBUG_OVERRIDE_COMPOSE_COMMAND=docker compose $(__ENV_FILE_FLAG) --project-directory . -f $(COMMON_COMPOSE_FILE) -f $(FL_BACKEND_COMPOSE_FILE) -f deploy/compose_trust.debug.override.yml
+DEBUG_OVERRIDE_COMPOSE_COMMAND=docker compose $(__ENV_FILE_FLAG) --project-directory . -f $(COMMON_COMPOSE_FILE) -f $(FL_BACKEND_COMPOSE_FILE) -f deploy/compose_trust.development.debug.override.yml
 
 # UP_PULL_FLAGS controls the pull/build behaviour of the up-trust targets.
 #

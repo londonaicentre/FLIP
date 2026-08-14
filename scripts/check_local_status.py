@@ -733,7 +733,7 @@ def main(
                 )
 
         # Check Trust endpoints. Only the trust assigned FL slot Trust_1 publishes
-        # its APIs on the host (deploy/compose_trust-1_override.yml); the rest are
+        # its APIs on the host (trust/deploy/compose_trust-1_override.yml); the rest are
         # internal-only, so we check the slot-1 trust's kit ports.
         print_section("Trust Service Endpoint Checks")
 
