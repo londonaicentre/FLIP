@@ -73,21 +73,31 @@ export const apiTimestampMs = (timestamp?: string | null): number | null => {
 };
 
 /**
+ * Bare "2h ago"-style label from an age in seconds (clamped at 0 for
+ * clock-skewed future timestamps).
+ *
+ * Shared ladder for relativeCreatedLabel and the Connection Status heartbeat
+ * column (connection-health.ts) — one home for the s/m/h/d thresholds.
+ */
+export const relativeAgeLabel = (sec: number): string => {
+    if (sec < 60) return `${Math.max(0, Math.floor(sec))}s ago`;
+    if (sec < 3_600) return `${Math.floor(sec / 60)}m ago`;
+    if (sec < 86_400) return `${Math.floor(sec / 3_600)}h ago`;
+
+    return `${Math.floor(sec / 86_400)}d ago`;
+};
+
+/**
  * "created 2h ago"-style meta label for a list row, from an API timestamp.
  *
  * Shared by the Projects and Models lists (owner · created … ago). Falls back
- * to an em-dash when the timestamp is missing or unparseable; a future
- * (clock-skewed) timestamp clamps to "created 0s ago".
+ * to an em-dash when the timestamp is missing or unparseable.
  */
 export const relativeCreatedLabel = (timestamp?: string | null): string => {
     const created = apiTimestampMs(timestamp);
     if (created === null) return "—";
-    const sec = (Date.now() - created) / 1000;
-    if (sec < 60) return `created ${Math.max(0, Math.floor(sec))}s ago`;
-    if (sec < 3_600) return `created ${Math.floor(sec / 60)}m ago`;
-    if (sec < 86_400) return `created ${Math.floor(sec / 3_600)}h ago`;
 
-    return `created ${Math.floor(sec / 86_400)}d ago`;
+    return `created ${relativeAgeLabel((Date.now() - created) / 1000)}`;
 };
 
 export const getOrderedLogs = (logs: ILog[] | undefined, reverse = false): ILog[] => {

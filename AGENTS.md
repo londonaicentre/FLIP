@@ -39,7 +39,8 @@ The `flip-utils/`, `fl-services/`, `fl-apps/`, and `fl-tutorials/` trees hold th
 app templates, and tutorials for both NVFLARE and Flower. Both
 backends are also provisioned in-tree (gitignored): `deploy/fl_backend.mk` points `FL_PROVISIONED_DIR` per-backend at
 `fl-services/nvflare/provision/workspace-dev` (nvflare) or `fl-services/flower/provision/creds` (flower) — see
-[`README.md#federated-learning-setup`](README.md#federated-learning-setup).
+[`fl-services/nvflare/README.md`](fl-services/nvflare/README.md) and
+[`fl-services/flower/README.md`](fl-services/flower/README.md).
 
 ## Tech Stack
 
@@ -323,7 +324,7 @@ After changes, evaluate if docs need updating:
 | Changed env vars | `.env.development.example`, `CONTRIBUTING.md`, `docs/source/sys-admin.rst` |
 | New dependencies | `CONTRIBUTING.md`, service `README.md` |
 | Changed deployment config | `deploy/README.md`, `docs/source/sys-admin.rst` |
-| New Make targets | `README.md`, this file |
+| New Make targets | `CONTRIBUTING.md`, this file |
 | User-facing workflow changes | `docs/source/user-guides.rst` |
 | FL framework features | `docs/source/components/component-fl-nodes.rst` |
 | Trust service changes | `trust/README.md`, relevant `trust/*/README.md` |
@@ -387,6 +388,7 @@ After changes, evaluate if docs need updating:
 - `UPLOADED_MODEL_FILES_BUCKET` / `SCANNED_MODEL_FILES_BUCKET` — the two model-file prefixes, and the platform's quarantine boundary (FLIP#52). Researcher uploads are written to the `uploaded/` staging prefix by the presigned POST policy; `POST /files/process-scanned-file/{model_id}/{file}` registers the row as `SCANNING` and schedules the scan, which promotes clean files into `scanned/` and deletes rejected ones. Every consumer — the FL app bundler (`fl_services/services/fl_service.py`), model-file downloads, and listings — reads `scanned/` only, so an unscanned or rejected file can never be bundled to a trust. **They must point at distinct prefixes**: pointed at the same location the promote step degrades to a no-op (logged) and the boundary disappears.
 - `ALLOWED_MODEL_FILE_EXTENSIONS` — extension whitelist enforced before a presigned POST policy is minted, so a disallowed type never reaches S3. JSON list or comma-separated string, matched case-insensitively; default `.py .json .toml .pt .pth .pkl .txt .yaml .yml .safetensors`. `.toml` is **required by the Flower backend** — every Flower app and tutorial ships a `config.toml` run-config that fl-api-flower feeds to `flwr run --run-config`, so dropping it rejects every Flower upload. Opaque archives (`.zip`/`.tar`) are excluded — the scan pipeline cannot gate their contents. A value that normalises to nothing (`",,,"`) falls back to the default rather than an empty list, which would otherwise reject everything (or, for `PICKLESCAN_FILE_SUFFIXES`, silently skip all scanning). A rejection returns 400 with the allowed set, which the UI surfaces verbatim.
 - `PICKLESCAN_FILE_SUFFIXES` / `PICKLESCAN_TIMEOUT_SECONDS` — which uploads get a structural picklescan before promotion (default `.pt .pth .pkl .pickle`) and the wall-clock cap per scan (default 120s). Dangerous globals mark the file `INFECTED` and delete the object; a scan that errors or times out fails closed to `ERROR`. Signature-based AV (GuardDuty Malware Protection for S3) is tracked separately in FLIP#838.
+- `BANDIT_TIMEOUT_SECONDS` — wall-clock cap (default 60s) on the non-blocking Bandit pass over `.py` uploads (FLIP#877, GHSA-8465). Unlike `PICKLESCAN_TIMEOUT_SECONDS` a timeout here just means no findings are recorded (fail-open, never `ERROR`) — Bandit is advisory only and never gates promotion. Findings land on `UploadedFiles.bandit_findings` (`[]` = scanned clean, `NULL` = never scanned) and surface in the UI as an amber indicator. `bandit` is a dependency baked into the `flip-api` image, not the mounted `src/`: under the dev pull-by-default sourcing above, running without `BUILD=true` after picking up this dependency serves an image with no `bandit` binary, so every upload silently records `NULL` findings while the UI and docs still claim a scan ran.
 - `SCHEDULER_MALWARE_SCAN_RECONCILE_RATE` — how often (minutes, default 1) the sweep re-checks uploads left `SCANNING` by an app restart mid-scan.
 
 ## Deployment Architecture
