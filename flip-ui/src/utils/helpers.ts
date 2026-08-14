@@ -135,7 +135,7 @@ export const getRandomId = (): string => crypto.randomUUID();
 
 
 /**
- * Return `url` only when it is an absolute http(s) URL, otherwise `undefined`.
+ * Return `url` only when it resolves to an http(s) URL, otherwise `undefined`.
  *
  * The site banner's link is admin-supplied and rendered into an `href` that every user sees, so a
  * `javascript:` URL would execute in the visitor's session. The scheme is allow-listed rather than

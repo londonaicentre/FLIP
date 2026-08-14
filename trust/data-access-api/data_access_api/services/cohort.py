@@ -150,7 +150,9 @@ def validate_query(query: str) -> str:
        never can be. The exemption is determined from each lexical SQL scope, so
        a CTE in a nested query cannot exempt a table reference in its parent, and
        from Postgres-folded identifiers rather than raw text, so a quoted CTE
-       name cannot exempt a reference that would not bind to it.
+       name cannot exempt a reference that would not bind to it, and a quoted
+       ``"OMOP"`` — a schema Postgres holds distinct from ``omop`` — is not
+       read as the allowed one.
 
        A set-returning function in the ``FROM`` clause is checked against an
        allowlist instead. It carries no name and no schema to pin, and it
@@ -243,8 +245,12 @@ def validate_query(query: str) -> str:
             schema_node = table.args.get("db")
             if schema_node is not None:
                 # exp.Table.args["db"] is always None or an Identifier in sqlglot's schema, so
-                # .name is safe here.
-                schema_name = schema_node.name.lower()
+                # .name is safe here. Compare it as-is: ``normalize_identifiers`` above already
+                # folded it the way Postgres does. Lowering here instead would re-open the same
+                # gap the normalisation closes — ``"OMOP".person`` is a quoted identifier Postgres
+                # keeps distinct from ``omop``, so a lowered comparison calls it allowed and then
+                # emits it untouched, approving one schema while the engine reads another.
+                schema_name = schema_node.name
                 if schema_name != ALLOWED_SCHEMA:
                     raise _invalid_query(
                         f"Schema '{schema_name}' is not accessible. Only the '{ALLOWED_SCHEMA}' schema is allowed."

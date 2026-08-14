@@ -596,6 +596,33 @@ def test_validate_query_rejects_cross_database_references():
 
 
 @pytest.mark.parametrize(
+    "query",
+    [
+        'SELECT * FROM "OMOP".person',
+        'SELECT * FROM "Omop".person',
+        'SELECT person_id FROM omop.person UNION SELECT person_id FROM "OMOP".person',
+    ],
+)
+def test_validate_query_rejects_a_quoted_schema_that_is_not_omop(query: str):
+    """Postgres holds ``"OMOP"`` distinct from ``omop``, so the schema check must not fold it.
+
+    Quoted identifiers survive ``normalize_identifiers`` with their case intact -- that is what
+    makes the CTE exemption agree with the engine. Lowering the schema name before the allowlist
+    comparison undid it here: ``"OMOP"`` compared equal to ``omop``, passed, and was emitted
+    untouched, so the validator approved one schema while the engine read another.
+    """
+    with pytest.raises(HTTPException, match="is not accessible"):
+        validate_query(query)
+
+
+def test_validate_query_allows_a_quoted_omop_schema():
+    """The rejection above is about case, not quoting -- ``"omop"`` binds to the allowed schema."""
+    emitted = validate_query('SELECT * FROM "omop".person')
+
+    assert '"omop".person' in emitted
+
+
+@pytest.mark.parametrize(
     ("query", "expected_fragment"),
     [
         # Postgres searches pg_catalog implicitly and first, so dropping the schema qualifier
