@@ -193,10 +193,12 @@ async def handle_delete_imaging(payload: dict[str, Any]) -> dict[str, Any]:
     try:
         validated = DeleteImagingInput(**payload)
         imaging_project_id = validated.imaging_project_id
+        # imaging-api exposes DELETE /projects/{project_id} as a PATH parameter. Passing it as a
+        # query parameter against /projects/ matched no route and returned 405, so the deletion
+        # silently never happened while the hub recorded it as done. See FLIP#963.
         await make_request(
             method="DELETE",
-            url=f"{IMAGING_API_URL}/projects/",
-            params={"project_id": imaging_project_id},
+            url=f"{IMAGING_API_URL}/projects/{imaging_project_id}",
             headers=trust_internal_headers(),
         )
 

@@ -16,7 +16,7 @@ from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
 from sqlalchemy.exc import SQLAlchemyError
-from sqlmodel import Session, col, select, update
+from sqlmodel import Session, col, select
 
 from flip_api.db.models.main_models import ProjectTrustIntersect, TrustTask, XNATProjectStatus
 from flip_api.db.models.main_models import Trust as DBTrust
@@ -149,14 +149,23 @@ def get_imaging_projects(project_id: UUID, db: Session) -> list[ImagingProject]:
 
 def delete_imaging_project(imaging_project: ImagingProject, db: Session) -> bool:
     """
-    Queue a task to delete an imaging project and update its status in the database.
+    Queue a task asking a Trust to delete an imaging project.
+
+    Not called when a project is soft-deleted — that deliberately leaves Trust imaging intact,
+    because enrichment (segmentations, annotations) cannot be re-derived from PACS. This exists
+    for an explicit purge path. See FLIP#963.
+
+    The status is **not** marked ``DELETED`` here: queuing a task is a request, not a result, and
+    the Trust may fail to carry it out. Recording the outcome is the responsibility of whatever
+    processes the Trust's response, so the hub never claims imaging is gone while it is still
+    present in XNAT.
 
     Args:
         imaging_project (ImagingProject): The imaging project to delete.
         db (Session): The database session for executing queries.
 
     Returns:
-        bool: True if the task was queued and status updated successfully, False otherwise.
+        bool: True if the task was queued successfully, False otherwise.
     """
     try:
         # Queue deletion task for the trust
@@ -166,17 +175,10 @@ def delete_imaging_project(imaging_project: ImagingProject, db: Session) -> bool
             payload=json.dumps({"imaging_project_id": str(imaging_project.xnat_project_id)}),
         )
         db.add(task)
-
-        statement = (
-            update(XNATProjectStatus)
-            .where(col(XNATProjectStatus.id) == imaging_project.id)
-            .values(retrieve_image_status=XNATImageStatus.DELETED)
-        )
-        db.execute(statement)
         db.commit()
         logger.info(
-            f"Queued deletion task and marked imaging project {imaging_project.xnat_project_id} "
-            f"(ID: {imaging_project.id}) as DELETED."
+            f"Queued deletion task for imaging project {imaging_project.xnat_project_id} "
+            f"(ID: {imaging_project.id}); status unchanged until the Trust confirms."
         )
         return True
     except Exception as e:

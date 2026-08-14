@@ -50,16 +50,12 @@ def override_dependencies():
 def mock_services(monkeypatch):
     mocks = {
         "can_modify_project": MagicMock(return_value=True),
-        "get_imaging_projects": MagicMock(return_value=[]),
-        "delete_imaging_project": MagicMock(),
         "get_project_models_service": MagicMock(return_value=(MagicMock(data=[]), None)),
         "abort_model_training": MagicMock(),
         "delete_project": MagicMock(),
     }
 
     monkeypatch.setattr(delete_project_module, "can_modify_project", mocks["can_modify_project"])
-    monkeypatch.setattr(delete_project_module, "get_imaging_projects", mocks["get_imaging_projects"])
-    monkeypatch.setattr(delete_project_module, "delete_imaging_project", mocks["delete_imaging_project"])
     monkeypatch.setattr(delete_project_module, "get_project_models_service", mocks["get_project_models_service"])
     monkeypatch.setattr(delete_project_module, "abort_model_training", mocks["abort_model_training"])
     monkeypatch.setattr(delete_project_module, "delete_project", mocks["delete_project"])
@@ -71,6 +67,22 @@ def test_delete_project_success(override_dependencies, mock_services):
     project_id = uuid4()
 
     response = client.delete(f"/api/projects/{project_id}")
+
+    assert response.status_code == status.HTTP_204_NO_CONTENT
+    mock_services["delete_project"].assert_called_once()
+
+
+def test_delete_project_leaves_trust_imaging_intact(override_dependencies, mock_services):
+    """A soft delete must not touch Trust imaging (FLIP#963).
+
+    Removing the Trust's XNAT project is irreversible — images can be re-pulled from PACS, but the
+    segmentations and annotations added during data enrichment cannot. The endpoint must therefore
+    not reach for the imaging-delete machinery at all.
+    """
+    assert not hasattr(delete_project_module, "delete_imaging_project")
+    assert not hasattr(delete_project_module, "get_imaging_projects")
+
+    response = client.delete(f"/api/projects/{uuid4()}")
 
     assert response.status_code == status.HTTP_204_NO_CONTENT
     mock_services["delete_project"].assert_called_once()

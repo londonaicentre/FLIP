@@ -19,7 +19,6 @@ from flip_api.auth.access_manager import can_modify_project
 from flip_api.auth.dependencies import verify_token
 from flip_api.db.database import get_session
 from flip_api.fl_services.services.fl_service import abort_model_training
-from flip_api.project_services.services.image_service import delete_imaging_project, get_imaging_projects
 from flip_api.project_services.services.project_services import delete_project, get_project_models_service
 from flip_api.utils.logger import logger
 
@@ -63,11 +62,12 @@ def delete_project_endpoint(
             detail=f"User with ID: {user_id} is not allowed to modify this project",
         )
 
-    # Get imaging projects from trusts and delete them
-    trusts_imaging_projects = get_imaging_projects(project_id, db)
-
-    for imaging_project in trusts_imaging_projects:
-        delete_imaging_project(imaging_project, db)
+    # Trust imaging is deliberately left in place. Deleting a project is a *soft* delete on the hub
+    # (the row is retained and audited), but removing the Trust's XNAT project would be
+    # irreversible: images could be re-pulled from PACS, while the segmentations, contours and
+    # annotations added during data enrichment could not. Imaging removal, when it is wanted,
+    # belongs in an explicit purge with its own confirmation — not as a silent cascade off a
+    # soft delete. See FLIP#963.
 
     # Get the project models and abort training if necessary
     project_models, _ = get_project_models_service(project_id, db, all_results=True)
