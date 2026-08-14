@@ -57,6 +57,13 @@ const p1m1 = stepModel as unknown as IStepFixture;
 const p2m1 = p2Step1 as unknown as IStepFixture;
 const p2m2 = p2Step2 as unknown as IStepFixture;
 
+// The union of both recorded projects' approved trusts: the only trusts the
+// register may name anywhere, on any route (sanitisation rule 5 in
+// mocks/demo/ark-plus-register.ts).
+const participants = [...p1.approvedTrusts, ...p2.approvedTrusts];
+const PARTICIPANT_IDS = new Set(participants.map(t => t.id));
+const PARTICIPANT_CODES = new Set(participants.map(t => t.code));
+
 describe("makeDemoServer route coverage", () => {
     let server: Server;
     let client: ReturnType<typeof axios.create>;
@@ -187,6 +194,31 @@ describe("makeDemoServer route coverage", () => {
             const age = Date.now() - new Date(trust.last_heartbeat).getTime();
             expect(age, `${trust.code} heartbeat age`).toBeLessThan(60_000);
             expect(age, `${trust.code} heartbeat age`).toBeGreaterThanOrEqual(0);
+        }
+    });
+
+    // Sanitisation rule 5, estate half. The cohort fixtures are checked
+    // directly at the bottom of this file; these are the routes that read the
+    // roster, where a stray trust surfaces as a Connection Status row, a node
+    // in its topology view, and a client of net-1 on the FL nets card.
+    it("names no non-participating trust on any estate-wide route", async () => {
+        const roster = await client.get("/trust");
+        for (const trust of roster.data) {
+            expect(PARTICIPANT_IDS, `/trust → ${trust.name}`).toContain(trust.id);
+        }
+
+        const health = await client.get("/trust/health");
+        for (const trust of health.data) {
+            expect(PARTICIPANT_IDS, `/trust/health → ${trust.trustName}`).toContain(trust.trustId);
+        }
+
+        // flNets() derives its client list from the roster, so this fails for
+        // the same underlying reason rather than needing its own fixture edit.
+        const nets = await client.get("/fl/status");
+        for (const net of nets.data) {
+            for (const netClient of net.clients) {
+                expect(PARTICIPANT_CODES, `/fl/status ${net.name} → ${netClient.name}`).toContain(netClient.name);
+            }
         }
     });
 

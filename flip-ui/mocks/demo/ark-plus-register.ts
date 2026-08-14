@@ -37,9 +37,11 @@
  *      so any distinct values work; keep them obviously synthetic. The demo
  *      viewer is …0001, the evaluation project's owner …0002.
  *   5. every trust that took no part in a recorded project — i.e. absent from
- *      that project's `approvedTrusts` — removed from its cohort query and
- *      cohort results, with the derived totals (`recordCount`,
- *      `query.totalCohort`) recomputed from what remains.
+ *      every project's `approvedTrusts` — removed from the register entirely:
+ *      the cohort query and cohort results, with the derived totals
+ *      (`recordCount`, `query.totalCohort`) recomputed from what remains, AND
+ *      the estate roster (trusts.json, trust_health.json) that Connection
+ *      Status, its topology view and the FL nets card all read.
  *
  *      This is not cosmetic. flip-api broadcasts every cohort query to EVERY
  *      registered trust (`select(Trust)` with no filter, see
@@ -55,15 +57,17 @@
  *      that only added up by counting the non-participant. It is now 946
  *      (FLIP#794 review).
  *
- *      Scoped to the project-level record. The estate-wide roster (trusts.json,
- *      trust_health.json) still lists every registered trust, because
- *      Connection Status is deliberately an estate view rather than a
- *      project-scoped one, and reporting it truthfully is the point of that
- *      page.
+ *      The roster goes with it. Keeping an estate view "truthful" is a
+ *      semantic borrowed from the live app, and this is a curated snapshot of
+ *      two projects rather than a live estate: leaving the node listed there
+ *      published exactly the identity the cohort edit removed — name, code,
+ *      region, id — and left its PROJECTS column reading 1 against a project
+ *      that appears nowhere in the exhibit. Two trusts everywhere is both the
+ *      smaller disclosure and the consistent story.
  *
  * Institution names (King's College London, Bangkok Dusit Medical Services,
- * Guy's and St Thomas' Trust, AI Centre Private) are shown verbatim by
- * decision of the project owner.
+ * Guy's and St Thomas' Trust) are shown verbatim by decision of the project
+ * owner.
  *
  * Re-capturing the register means re-applying all five rules. Project and model
  * ids are deliberately NOT scrubbed: they are public URL path segments.
