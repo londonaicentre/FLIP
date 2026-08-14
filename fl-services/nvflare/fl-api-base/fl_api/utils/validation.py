@@ -64,7 +64,9 @@ def validate_bundle_url(url: str) -> str:
     ``http://169.254.169.254`` metadata fetch and non-http schemes (flip-api presigns S3
     over https in every environment); an optional comma-separated ``BUNDLE_URL_ALLOWED_HOSTS``
     pins fetches to the expected object-store origin when configured. DNS names are not
-    resolved here — the redirect-disabled fetch and the optional allow-list cover the rest.
+    resolved here — the redirect-disabled fetch and the optional allow-list cover the rest —
+    with one named exception: ``localhost`` is a literal loopback alias, so it is rejected
+    outright rather than left to resolution.
 
     Args:
         url (str): A bundle download URL from the request body.
@@ -74,7 +76,8 @@ def validate_bundle_url(url: str) -> str:
 
     Raises:
         HTTPException: 400 if the URL is not https, has no host, uses a non-443 port, names a
-            private/loopback/link-local IP literal, or is not on the host allow-list.
+            private/loopback/link-local IP literal (in any spelling, root-label included) or
+            ``localhost``, or is not on the host allow-list.
     """
     parsed = urlparse(url)
     if parsed.scheme != "https":
@@ -83,11 +86,25 @@ def validate_bundle_url(url: str) -> str:
             detail=f"Bundle URL must use https: {url!r}.",
         )
 
-    hostname = parsed.hostname
+    # Strip any root label (trailing dots) before the emptiness check and both parsers below. DNS
+    # treats "127.0.0.1." as absolute and glibc resolvers reach loopback, while both IP parsers
+    # reject the trailing dot — so the unstripped spelling skipped every range check: the same
+    # parsers-disagree failure mode as the numeric spellings. Stripping first also keeps a
+    # dot-only host on the no-host rejection instead of the "not an IP literal" branch.
+    hostname = (parsed.hostname or "").rstrip(".")
     if not hostname:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Bundle URL has no host: {url!r}.",
+        )
+
+    # "localhost" is a literal loopback alias, not a name that needs resolving — the range checks
+    # below cover the numeric spellings, this covers the named one. urlparse lowercases .hostname,
+    # so one comparison catches every case variant.
+    if hostname == "localhost":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Bundle URL host not allowed: {hostname!r}.",
         )
 
     # Presigned S3 URLs are always served on 443; a custom port points at an internal service.

@@ -63,6 +63,10 @@ def test_validate_bundle_url_enforces_host_allow_list(monkeypatch):
         "https://127.0.0.1/x",  # loopback IP literal
         "https://10.0.0.5/x",  # private IP literal
         "https://169.254.169.254/x",  # link-local IP literal (metadata endpoint over https)
+        "https://127.0.0.1./x",  # root-label spelling: both parsers reject it, the resolver accepts it
+        "https://169.254.169.254./x",  # root-label link-local (metadata endpoint over https)
+        "https://localhost/x",  # literal loopback alias
+        "https://./x",  # dot-only host strips to empty -> no host
         "https://[::1]/x",  # IPv6 loopback literal
         "https://s3.eu-west-2.amazonaws.com:8080/bucket/key",  # non-443 port
         "https://s3.eu-west-2.amazonaws.com:bad/bucket/key",  # non-numeric port -> clean 400, not 500
