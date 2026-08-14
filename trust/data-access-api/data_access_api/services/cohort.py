@@ -102,6 +102,30 @@ def _invalid_query(detail: str) -> HTTPException:
     return HTTPException(status_code=400, detail=detail)
 
 
+def _reject_disallowed_table_function(table: exp.Table) -> None:
+    """Reject a function-shaped ``exp.Table`` whose function is not on the allowlist.
+
+    Takes the name from the rendered call rather than the node: sqlglot models some functions as
+    typed nodes whose ``.name`` is empty and whose ``sql_name()`` is an internal label
+    (``generate_series`` renders from ExplodingGenerateSeries), while unrecognised ones are
+    exp.Anonymous. Rendering gives the real Postgres name for both.
+
+    Args:
+        table (exp.Table): A FROM-clause item with an empty ``.name`` — the shape sqlglot gives a
+            table-valued function call, qualified or not.
+
+    Raises:
+        HTTPException: 400 if the rendered function name is not in ``_ALLOWED_TABLE_FUNCTIONS``.
+    """
+    rendered = table.this.sql(dialect="postgres") if table.this else ""
+    function_name = rendered.split("(", 1)[0].strip().lower()
+    if function_name not in _ALLOWED_TABLE_FUNCTIONS:
+        raise _invalid_query(
+            f"'{function_name}' is not an allowed table-valued function. "
+            f"Allowed: {', '.join(sorted(_ALLOWED_TABLE_FUNCTIONS))}."
+        )
+
+
 def validate_query(query: str) -> str:
     """
     Validates that an inbound SQL query is structurally safe to run against OMOP.
@@ -266,6 +290,14 @@ def validate_query(query: str) -> str:
                 if table.args.get("catalog") is not None:
                     raise _invalid_query("Cross-database table references are not allowed.")
 
+                # An empty name here is an *omop*-qualified table-valued function
+                # (``FROM omop.pg_ls_dir('/')``): it passes the schema check by construction, and
+                # the tree-wide exp.Anonymous walk below deliberately skips nodes an exp.Table
+                # owns — so without this check it was the one spelling that reached the emit
+                # without touching either allowlist.
+                if not table.name:
+                    _reject_disallowed_table_function(table)
+
                 # Already qualified to omop — nothing to pin.
                 continue
 
@@ -277,18 +309,7 @@ def validate_query(query: str) -> str:
                 # not omop — so the allowlist is the only control available here. Skipping instead
                 # would leave the FROM-clause function shape as a hole straight through every rule
                 # above (FLIP#879).
-                # Take the name from the rendered call rather than the node: sqlglot models some
-                # functions as typed nodes whose ``.name`` is empty and whose ``sql_name()`` is an
-                # internal label (``generate_series`` renders from ExplodingGenerateSeries), while
-                # unrecognised ones are exp.Anonymous. Rendering gives the real Postgres name for
-                # both.
-                rendered = table.this.sql(dialect="postgres") if table.this else ""
-                function_name = rendered.split("(", 1)[0].strip().lower()
-                if function_name not in _ALLOWED_TABLE_FUNCTIONS:
-                    raise _invalid_query(
-                        f"'{function_name}' is not an allowed table-valued function. "
-                        f"Allowed: {', '.join(sorted(_ALLOWED_TABLE_FUNCTIONS))}."
-                    )
+                _reject_disallowed_table_function(table)
                 continue
 
             if table_name in scope.cte_sources:

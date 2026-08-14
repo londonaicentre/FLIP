@@ -724,6 +724,25 @@ def test_validate_query_rejects_schema_qualified_table_functions(query: str):
         validate_query(query)
 
 
+@pytest.mark.parametrize(
+    "query",
+    [
+        "SELECT * FROM omop.pg_ls_dir('/')",
+        "SELECT * FROM omop.pg_read_file('/etc/passwd')",
+    ],
+)
+def test_validate_query_rejects_omop_qualified_table_functions(query: str):
+    """An *omop*-qualified table-valued function must still face the function allowlist.
+
+    It passes the schema check by construction, and the tree-wide ``exp.Anonymous`` walk skips
+    nodes an ``exp.Table`` owns — so this was the one spelling that reached the emit without
+    touching either allowlist. Not exploitable while nothing is installed in ``omop``, but the
+    control is an allowlist in every other position and must be one here too.
+    """
+    with pytest.raises(HTTPException, match="not an allowed table-valued function"):
+        validate_query(query)
+
+
 def test_validate_query_pins_across_lexical_cte_scopes():
     """A CTE bound in one scope must not exempt a physical table in another.
 
