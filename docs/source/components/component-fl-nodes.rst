@@ -299,6 +299,13 @@ The server will also use the package to update the status, as well as to upload 
 Privacy filters on shared model updates
 ---------------------------------------
 
+Both backends privatise a client's training result before it leaves the site, but with different
+mechanisms: NVFLARE sparsifies and clips without noise, while Flower clips and adds calibrated
+Gaussian noise for a formal ``(epsilon, delta)`` guarantee.
+
+NVFLARE: percentile sparsification
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
 Before a client's training result leaves a site, the NVFLARE training job types (`standard`, `fed_opt`,
 `diffusion_model`, `standard_client_api`, `diffusion_model_client_api`) pass it through a percentile-based
 privacy filter (``PercentilePrivacy``, following Shokri & Shmatikov, "Privacy-preserving deep learning",
@@ -323,6 +330,42 @@ run with ``off: true``. Two caveats for anyone changing them:
   update bounds what a single round reveals, but adds no calibrated noise and carries no
   ``(epsilon, delta)`` guarantee. It complements — rather than replaces — FLIP's primary output controls
   (review of the uploaded app code and aggregate-only results).
+
+Flower: local differential privacy
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The Flower counterpart is ``flip.flower.privacy.flip_local_dp_mod``, a Flower *mod* that runs on the
+SuperNode. It clips the local update to a fixed L2 norm and adds Gaussian noise scaled to the configured
+budget, so the fl-server only ever receives a privatised update:
+
+.. code-block:: text
+
+   sigma = dp-sensitivity * sqrt(2 * ln(1.25 / dp-delta)) / dp-epsilon
+
+The maths is Flower's own (``compute_clip_model_update`` and ``add_gaussian_noise_inplace``); FLIP adds a
+config toggle and an integer-buffer carve-out. Parameters come from ``[tool.flwr.app.config]`` —
+``dp-enabled`` (default ``true``), ``dp-clipping-norm``, ``dp-sensitivity``, ``dp-epsilon``, ``dp-delta`` —
+and can be overridden per run with ``flwr run . --run-config "dp-enabled=false"``. ``dp-enabled: false``
+makes the mod a pass-through, mirroring the NVFLARE filter's ``off`` flag so DP-on and DP-off runs use an
+identical app.
+
+Three things to know:
+
+- **It applies to training rounds only.** The mod is registered as ``@app.train(mods=[flip_local_dp_mod])``,
+  leaving ``@app.evaluate`` untouched, which mirrors the ``train``-task scope of the NVFLARE filter.
+- **Integer buffers pass through unprivatised.** BatchNorm's ``num_batches_tracked`` counters and similar
+  integer entries are step counts rather than learned parameters, and Flower's clipping scales each array
+  in place by a float, which numpy cannot write back into an integer array. Excluding them is what keeps
+  the mod from crashing the client the first time clipping engages on a real model.
+- **Enforcement is by code review, not by the platform.** Unlike NVFLARE — where the filter is a
+  ``task_result_filters`` entry in the FLIP-owned ``config_fed_client.json`` — a Flower app's
+  ``client_app.py`` is uploaded by the model developer, so the template cannot register the mod on the
+  developer's behalf. An uploaded app that omits it shares raw updates. The shipped tutorials
+  (``numpy``, ``xray_classification``, ``3d_spleen_segmentation``) wire it as worked examples.
+
+The shipped parameter defaults are utility-first demonstration values, not a defensible privacy budget: a
+real budget calibrates ``dp-sensitivity`` to the local dataset and accounts for composition across rounds,
+which this mod does not do — every round spends the budget again.
 
 
 Disclaimer: some things are still under construction!

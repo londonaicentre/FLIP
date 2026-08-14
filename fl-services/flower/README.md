@@ -83,10 +83,19 @@ so confirm the running container carries your change by inspecting the file you 
 
 > ⚠️ The pin lives in the **fl-apps templates**, so it covers hub-stack runs (flip-api bundles every
 > uploaded app with a template). The standalone stacks below submit apps straight from
-> `fl-tutorials/flower/`, whose pyprojects do **not** pin flip-utils — a tutorial submitted there
-> runtime-installs its declared `flip-utils` from PyPI (the plain Flower model). To exercise an
-> unpublished flip-utils via `make submit`, temporarily add the same `[tool.uv.sources]` pin to the
-> tutorial's pyproject — the images bake `/opt/flip-utils` in-container.
+> `fl-tutorials/flower/`, bypassing the templates — and a tutorial pyproject **cannot** carry the
+> same pin, because `/opt/flip-utils` does not exist on a workstation and `uv sync` then fails
+> outright (breaking local linting of the tutorial). The tutorials therefore **do not declare
+> flip-utils at all**: with nothing to install, the per-run environment has no `flip`, and
+> `import flip` falls through the prepended per-run path to the image's baked-in copy — the same
+> flip-utils the platform runs.
+>
+> Declaring it is the trap: `uv sync` would resolve `flip-utils` from **PyPI** (currently 0.1.8,
+> against the repo's 0.4.0) into the per-run environment, which is prepended to `sys.path` and so
+> shadows the image copy. PyPI 0.1.8 has no `flip/flower/strategy.py`, so a declared dependency
+> breaks `from flip.flower.strategy import FlipFedAvg` before training starts. Either way, a
+> flip-utils change reaches the tutorials only via an image rebuild
+> (`make build-fl FL_BACKEND=flower`).
 
 ## Step-by-step provisioning
 
