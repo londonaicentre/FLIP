@@ -26,6 +26,7 @@
                             v-if="safeLink"
                             :href="safeLink"
                             target="_blank"
+                            rel="noopener noreferrer"
                             data-test="banner-link"
                             class="flex items-center justify-center px-4 py-2 text-white hover:text-primary-200 grow"
                         >

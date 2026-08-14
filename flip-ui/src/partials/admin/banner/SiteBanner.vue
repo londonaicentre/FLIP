@@ -77,6 +77,7 @@
                                             <a
                                                 :href="safeExternalUrl(values.link)"
                                                 target="_blank"
+                                                rel="noopener noreferrer"
                                                 class="flex items-center justify-center px-4 py-2 text-white group"
                                             >
                                                 Learn more
