@@ -151,6 +151,20 @@ missing_prefixes="$(find_missing_prefixes)"
 if [[ -n "${missing_prefixes}" ]]; then
   echo "❌ ERROR: Missing required plugin families after sync: ${missing_prefixes//$'\n'/ }"
   echo "   Expected plugin prefixes: ${expected_prefixes}"
+  # The ohif-viewer jar is a known gap rather than a mistake, so name the remedy instead of
+  # leaving the operator to work out why the one plugin they just opted into is not published.
+  # It is absent from the version-keyed prefix this script syncs (verified against
+  # s3://flipdev-artifacts/xnat-1.10.0/plugins/); only the legacy s3://<bucket>/xnat/plugins/
+  # prefix has one, at 3.7.1 — too old for XNAT 1.10, which is why the k8s chart pins 3.8.0.
+  if [[ "${missing_prefixes}" == *"ohif-viewer-"* ]]; then
+    echo
+    echo "   ohif-viewer is required because MONAI_LABEL=true, but it is not published under"
+    echo "   s3://${S3_BUCKET}/${S3_PREFIX}/. Publish it there once, matching this XNAT version:"
+    echo "     curl -LO https://xnat.org/files/ohif-viewer-xnat-plugin/ohif-viewer-3.8.0-fat.jar"
+    echo "     aws s3 cp ohif-viewer-3.8.0-fat.jar s3://${S3_BUCKET}/${S3_PREFIX}/"
+    echo "   (the k8s chart fetches that same 3.8.0 jar directly — see xnat.web.plugins.urls)."
+    echo "   Or set MONAI_LABEL=false to bring this trust up without AI-assisted annotation."
+  fi
   exit 1
 fi
 

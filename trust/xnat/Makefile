@@ -400,8 +400,9 @@ xnat-configure:
 # viewer plugin installed, so it can never produce the assessors this reacts to — registering
 # it there would add a converter image and a site-wide event subscription that trust never
 # asked for. Gating also keeps the unconditional bring-up path free of a new failure point:
-# the config dir is baked into the xnat-web image (xnat/Dockerfile `ADD config`), not mounted,
-# so on an xnat-web image predating this feature the script simply does not exist.
+# in stag/prod the config dir comes from the image (xnat/Dockerfile `ADD config`) — only the
+# development stack bind-mounts it from the host (docker-compose-stack.development.yml) — so
+# against an xnat-web image predating this feature the script simply does not exist there.
 #
 # Consequence of gating (documented in trust/README.md): a trust that turns MONAI Label on
 # later must re-run `make -C trust/xnat xnat-configure KIT=<CODE>` (or bring XNAT up again)
