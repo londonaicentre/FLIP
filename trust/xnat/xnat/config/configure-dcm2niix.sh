@@ -198,11 +198,25 @@ xnat_curl -X PUT "$XNAT_URL/xapi/events/prefs" \
 # subscription, or the export_mask one from configure-export-mask.sh — with no indication
 # that it had happened. Both historical spellings are matched: the retired site-wide JSON
 # used "DICOM-NifTi Conversion", imaging-api uses "DICOM-NIfTI Conversion".
+#
+# The `project-ids` test is what actually distinguishes site-wide from per-project, and it is
+# load-bearing: XNAT does NOT echo a top-level `project-id` for imaging-api's per-project
+# subscriptions — the key is absent entirely, so `.["project-id"] == null` is true for them.
+# Verified against four live trusts: all 12 subscriptions present were per-project, and both
+# this filter without the project-ids test AND develop's unscoped version selected every one
+# of them. Re-running xnat-configure would have deleted every project's live DICOM->NIfTI
+# conversion, silently, leaving imports that never convert. Scoping by name alone did not help
+# because imaging-api's per-project name is one of the two names matched here.
+#
+# A genuinely site-wide subscription carries no project scope: the retired dcm2niix_event.json
+# had no `project-ids` key at all, which `// []` normalises to empty.
 echo "Cleaning up legacy site-wide dcm2niix event subscriptions..."
 SUBS=$(xnat_curl "$XNAT_URL/xapi/events/subscriptions")
 SITE_SUB_IDS=$(echo "$SUBS" | jq -r \
   --argjson names '["DICOM-NifTi Conversion","DICOM-NIfTI Conversion"]' \
-  '.[] | select(.["project-id"] == null or .["project-id"] == "") | select(.name as $n | $names | index($n)) | .id')
+  '.[] | select(.["project-id"] == null or .["project-id"] == "")
+       | select((.["event-filter"]["project-ids"] // []) | length == 0)
+       | select(.name as $n | $names | index($n)) | .id')
 for SUB_ID in $SITE_SUB_IDS; do
   echo "Deleting site-wide subscription $SUB_ID..."
   xnat_curl -X DELETE "$XNAT_URL/xapi/events/subscription/$SUB_ID" >/dev/null
