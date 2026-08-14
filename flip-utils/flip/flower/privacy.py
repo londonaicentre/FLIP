@@ -113,13 +113,17 @@ class LocalDpConfig:
         Raises:
             ValueError: If any parameter is outside its permitted range.
         """
-        if self.clipping_norm <= 0:
-            raise ValueError(f"{CONFIG_CLIPPING_NORM} must be positive, got {self.clipping_norm}.")
-        if self.sensitivity < 0:
-            raise ValueError(f"{CONFIG_SENSITIVITY} must be non-negative, got {self.sensitivity}.")
+        # The isfinite guards are load-bearing: NaN compares False against everything, so a bare
+        # range check would wave `nan` through and poison the noise stddev; inf would silently
+        # disable clipping (clipping_norm) or zero the noise (epsilon). Delta needs no guard —
+        # NaN and inf both fail its interval comparison already.
+        if not math.isfinite(self.clipping_norm) or self.clipping_norm <= 0:
+            raise ValueError(f"{CONFIG_CLIPPING_NORM} must be positive and finite, got {self.clipping_norm}.")
+        if not math.isfinite(self.sensitivity) or self.sensitivity < 0:
+            raise ValueError(f"{CONFIG_SENSITIVITY} must be non-negative and finite, got {self.sensitivity}.")
         # Stricter than Flower's LocalDpMod, which permits epsilon == 0 and then divides by it.
-        if self.epsilon <= 0:
-            raise ValueError(f"{CONFIG_EPSILON} must be positive, got {self.epsilon}.")
+        if not math.isfinite(self.epsilon) or self.epsilon <= 0:
+            raise ValueError(f"{CONFIG_EPSILON} must be positive and finite, got {self.epsilon}.")
         if not 0 < self.delta < 1:
             raise ValueError(f"{CONFIG_DELTA} must lie in (0, 1), got {self.delta}.")
 

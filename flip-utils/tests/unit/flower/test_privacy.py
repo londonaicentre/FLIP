@@ -158,10 +158,23 @@ class TestLocalDpConfig:
             ({"epsilon": 0.0}, CONFIG_EPSILON),
             ({"delta": 0.0}, CONFIG_DELTA),
             ({"delta": 1.0}, CONFIG_DELTA),
+            ({"clipping_norm": math.nan}, CONFIG_CLIPPING_NORM),
+            ({"clipping_norm": math.inf}, CONFIG_CLIPPING_NORM),
+            ({"sensitivity": math.nan}, CONFIG_SENSITIVITY),
+            ({"sensitivity": math.inf}, CONFIG_SENSITIVITY),
+            ({"epsilon": math.nan}, CONFIG_EPSILON),
+            ({"epsilon": math.inf}, CONFIG_EPSILON),
+            ({"delta": math.nan}, CONFIG_DELTA),
+            ({"delta": math.inf}, CONFIG_DELTA),
         ],
     )
     def test_invalid_parameters_are_rejected(self, kwargs, expected_key):
-        """epsilon == 0 is rejected here though Flower's LocalDpMod allows it and then divides by it."""
+        """epsilon == 0 is rejected here though Flower's LocalDpMod allows it and then divides by it.
+
+        NaN and inf must be rejected too: NaN compares False against every bound, so a plain range
+        check would accept `dp-epsilon = nan` from a run config (valid TOML) and poison the noise
+        stddev downstream.
+        """
         with pytest.raises(ValueError, match=expected_key):
             LocalDpConfig(**kwargs)
 
