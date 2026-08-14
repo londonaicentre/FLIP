@@ -285,7 +285,9 @@ class TestS3Client:
             with pytest.raises(Exception, match="Error listing objects") as exc_info:
                 s3_client.list_objects(test_bucket)
 
-            assert f"Error listing objects under '{test_bucket}'" in str(exc_info.value)
+            # Bucket + error code only — the prefix is hashed (logging policy).
+            assert "Error listing objects under bucket=test-bucket" in str(exc_info.value)
+            assert "error_code=NoSuchBucket" in str(exc_info.value)
 
     def test_get_presigned_url_success(self):
         """Test successful generation of presigned URL."""

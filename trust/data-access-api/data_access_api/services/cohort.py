@@ -29,6 +29,7 @@ from data_access_api.config import get_settings
 from data_access_api.db.database import engine
 from data_access_api.routers.schema import CohortQueryInput, StatisticsResponse
 from data_access_api.services.query_cache import get_cached_result, set_cached_result
+from data_access_api.utils.log_hygiene import hash_query
 from data_access_api.utils.logger import logger
 from data_access_api.utils.sql_parsers import extract_missing_identifier
 
@@ -66,9 +67,25 @@ _DATA_MODIFYING_TYPES: tuple[type[exp.Expression], ...] = (
 )
 
 
-def _invalid_query(detail: str) -> HTTPException:
-    logger.warning(f"Query validation failed: {detail}")
+def _invalid_query(detail: str, log_detail: str | None = None) -> HTTPException:
+    logger.warning(f"Query validation failed: {log_detail or detail}")
     return HTTPException(status_code=400, detail=detail)
+
+
+def _describe_db_error(exc: BaseException | None) -> str:
+    """Category-only description of a driver error, safe to log.
+
+    Driver error text interpolates the statement — psycopg2 appends the offending
+    line as ``LINE 1: ...`` context and SQLAlchemy appends a full ``[SQL: ...]``
+    suffix — and the statement here is the caller's cohort SQL, which the logging
+    policy keeps out of logs entirely. Log the error class and SQLSTATE instead;
+    the query fingerprint logged alongside identifies which query failed.
+    ``None`` is accepted because ``DBAPIError.orig`` is optional in SQLAlchemy's types.
+    """
+    if exc is None:
+        return "UnknownDriverError"
+    pgcode = getattr(exc, "pgcode", None)
+    return f"{type(exc).__name__} (sqlstate={pgcode})" if pgcode else type(exc).__name__
 
 
 def validate_query(query: str) -> str:
@@ -138,7 +155,17 @@ def validate_query(query: str) -> str:
         # SqlglotError is the parent of both ParseError (e.g. "SELECT FROM") and
         # TokenError (e.g. unterminated string literals); catch the parent so a
         # tokenizer failure can't bubble up as an unhandled 500.
-        raise _invalid_query(f"Could not parse SQL query: {e}") from e
+        #
+        # Neither the detail nor the log carries the parser's message: sqlglot
+        # interpolates the offending SQL fragment into it, and SQL stays out of
+        # logs (and out of bodies the trust forwards) per the logging policy.
+        # Friendly parse feedback is the hub pre-check's job — a parse-invalid
+        # query normally fails there before it ever reaches a trust, so this
+        # branch only fires for callers that bypassed or outran the hub.
+        raise _invalid_query(
+            "Could not parse SQL query.",
+            log_detail=f"could not parse SQL ({type(e).__name__}, query sha256:{hash_query(query)})",
+        ) from e
 
     # sqlglot returns ``None`` for empty/whitespace input and for stray semicolons
     # (e.g. ``SELECT 1; ;`` parses to ``[Select, None]``). Reject if the result is
@@ -229,8 +256,13 @@ def get_records(
     # Error responses are deliberately category-only (S-8): the trust forwards
     # this HTTPException detail to the central hub, which surfaces it through
     # the cohort UI to every project member. Raw psycopg / SQLAlchemy text can
-    # leak row values, constraint names, and connection-pool internals — so we
-    # log the full error here for ops and return only a category to the caller.
+    # leak row values, constraint names, and connection-pool internals.
+    # The LOG is category-only too: driver error text interpolates the statement
+    # (psycopg2's ``LINE 1: ...`` context, SQLAlchemy's ``[SQL: ...]`` suffix),
+    # and the statement here is the caller's cohort SQL, which the logging
+    # policy keeps out of logs. Ops diagnostics keep the error class, SQLSTATE,
+    # and a query fingerprint (``hash_query``) that the hub-stored SQL can be
+    # re-hashed against to identify the failing query.
     # UndefinedTable / UndefinedColumn are an intentional exception: they echo
     # back identifiers the OPERATOR typed in their own SQL (against the public
     # OMOP CDM schema), so they leak no data while remaining a useful diagnostic.
@@ -240,47 +272,49 @@ def get_records(
     # __cause__. We unwrap the cause here so the UndefinedTable / UndefinedColumn
     # diagnostic path still works when pd.read_sql is used directly.
     except PandasDatabaseError as e:
+        query_ref = f"query sha256:{hash_query(query)}"
         cause = e.__cause__
         if isinstance(cause, DBAPIError):
             orig = cause.orig
             error_msg = str(orig).strip()
             if isinstance(orig, pg_errors.UndefinedTable):
                 table_name = extract_missing_identifier(error_msg, r'relation "([^"]+)" does not exist')
-                logger.error(f"UndefinedTable: {error_msg}")
+                logger.error(f"UndefinedTable: relation '{table_name}' does not exist ({query_ref})")
                 raise HTTPException(status_code=400, detail=f"The table '{table_name}' does not exist.") from e
             elif isinstance(orig, pg_errors.UndefinedColumn):
                 column_name = extract_missing_identifier(error_msg, r'column "([^"]+)" does not exist')
-                logger.error(f"UndefinedColumn: {error_msg}")
+                logger.error(f"UndefinedColumn: column '{column_name}' does not exist ({query_ref})")
                 raise HTTPException(status_code=400, detail=f"The column '{column_name}' does not exist.") from e
             else:
-                logger.error(f"Database error (via pandas): {error_msg}")
+                logger.error(f"Database error (via pandas): {_describe_db_error(orig)} ({query_ref})")
                 raise HTTPException(status_code=500, detail="query_failed") from e
-        logger.error(f"Pandas database error: {str(e)}")
+        logger.error(f"Pandas database error: {type(e).__name__} ({query_ref})")
         raise HTTPException(status_code=500, detail="internal_error") from e
 
     except DBAPIError as e:
+        query_ref = f"query sha256:{hash_query(query)}"
         orig = e.orig
         error_msg = str(orig).strip()
 
         if isinstance(orig, pg_errors.UndefinedTable):
             table_name = extract_missing_identifier(error_msg, r'relation "([^"]+)" does not exist')
-            logger.error(f"UndefinedTable: {error_msg}")
+            logger.error(f"UndefinedTable: relation '{table_name}' does not exist ({query_ref})")
             raise HTTPException(status_code=400, detail=f"The table '{table_name}' does not exist.") from e
 
         elif isinstance(orig, pg_errors.UndefinedColumn):
             column_name = extract_missing_identifier(error_msg, r'column "([^"]+)" does not exist')
-            logger.error(f"UndefinedColumn: {error_msg}")
+            logger.error(f"UndefinedColumn: column '{column_name}' does not exist ({query_ref})")
             raise HTTPException(status_code=400, detail=f"The column '{column_name}' does not exist.") from e
 
         else:
-            logger.error(f"Database error: {error_msg}")
+            logger.error(f"Database error: {_describe_db_error(orig)} ({query_ref})")
             raise HTTPException(status_code=500, detail="query_failed") from e
 
     except SQLAlchemyError as e:
-        logger.error(f"SQLAlchemy error: {str(e)}")
+        logger.error(f"SQLAlchemy error: {type(e).__name__} (query sha256:{hash_query(query)})")
         raise HTTPException(status_code=500, detail="internal_error") from e
     except Exception as e:
-        logger.error(f"Unexpected error executing query: {str(e)}")
+        logger.error(f"Unexpected error executing query: {type(e).__name__} (query sha256:{hash_query(query)})")
         raise HTTPException(status_code=500, detail="internal_error") from e
 
 

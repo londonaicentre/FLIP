@@ -25,6 +25,7 @@ from flip.constants import ModelStatus, ResourceType
 from flip.core.standard import FLIPStandardDev, FLIPStandardProd
 from flip.exceptions import ResultsUploadError
 from flip.schemas import FLLogEvent
+from flip.utils.utils import Utils
 
 
 class TestFLIPStandardDevGetDataframe:
@@ -832,7 +833,9 @@ class TestFLIPStandardProdCleanup:
         cleanup_dir = tmp_path / "to_cleanup"
 
         with patch("flip.core.standard.shutil.rmtree", side_effect=OSError("permission denied")) as mock_rmtree:
-            with pytest.raises(Exception, match="Failed to clean up path"):
+            # The message names no path: cleanup paths are accession-named and the
+            # exception can surface in FL run logs (logging policy).
+            with pytest.raises(Exception, match="Failed to clean up downloaded data"):
                 flip_prod.cleanup(cleanup_dir)
 
             mock_rmtree.assert_called_once_with(cleanup_dir)
@@ -862,3 +865,80 @@ class TestFLIPStandardDevUploadAndCleanup:
         flip_dev.cleanup(cleanup_dir)
 
         assert cleanup_dir.exists()
+
+
+class TestFLIPStandardProdLogHygiene:
+    """FL run logs can leave the trust, so patient-level values stay out of them (logging policy).
+
+    The package logger sets ``propagate = False``, so these tests patch the
+    instance logger and inspect its call args instead of using ``caplog``.
+    """
+
+    @pytest.fixture
+    def flip_prod(self):
+        """Create a FLIPStandardProd instance."""
+        return FLIPStandardProd()
+
+    @staticmethod
+    def _logged_text(mock_logger):
+        calls = mock_logger.info.call_args_list + mock_logger.error.call_args_list
+        return " | ".join(str(arg) for call in calls for arg in call.args)
+
+    def test_get_by_accession_number_log_omits_accession_id(self, flip_prod, tmp_path):
+        """Logs carry the accession fingerprint, never the accession number itself."""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"path": str(tmp_path / "data")}
+
+        with (
+            patch("flip.core.standard.FlipConstants") as mock_constants,
+            patch("flip.core.standard.requests.post", return_value=mock_response),
+            patch.object(flip_prod, "logger") as mock_logger,
+        ):
+            mock_constants.IMAGING_API_URL = "https://imaging.example.com"
+            mock_constants.NET_ID = "net-1"
+            mock_constants.TRUST_INTERNAL_SERVICE_KEY_HEADER = "x-trust-internal-service-key"
+            mock_constants.TRUST_INTERNAL_SERVICE_KEY = "test-trust-internal-key"
+
+            flip_prod.get_by_accession_number(
+                project_id="proj-1", accession_id="ACC001", resource_type=ResourceType.DICOM
+            )
+
+        logged = self._logged_text(mock_logger)
+        assert "ACC001" not in logged
+        assert f"sha256:{Utils.hash_for_log('ACC001')}" in logged
+
+    def test_get_dataframe_log_omits_response_body(self, flip_prod):
+        """The row-level cohort body never reaches the log — status code only."""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.text = json.dumps({"accession_id": ["ACC001"], "condition": ["sensitive_condition"]})
+
+        with (
+            patch("flip.core.standard.FlipConstants") as mock_constants,
+            patch("flip.core.standard.requests.post", return_value=mock_response),
+            patch.object(flip_prod, "logger") as mock_logger,
+        ):
+            mock_constants.DATA_ACCESS_API_URL = "https://data.example.com"
+            mock_constants.TRUST_INTERNAL_SERVICE_KEY_HEADER = "x-trust-internal-service-key"
+            mock_constants.TRUST_INTERNAL_SERVICE_KEY = "test-trust-internal-key"
+
+            df = flip_prod.get_dataframe(project_id="proj-1", query="SELECT * FROM omop.person")
+
+        assert list(df["accession_id"]) == ["ACC001"]
+        logged = self._logged_text(mock_logger)
+        assert "ACC001" not in logged
+        assert "sensitive_condition" not in logged
+
+    def test_cleanup_log_omits_path(self, flip_prod, tmp_path):
+        """Cleanup logs a path fingerprint — the path itself is accession-named."""
+        cleanup_dir = tmp_path / "ACC001"
+        cleanup_dir.mkdir()
+
+        with patch.object(flip_prod, "logger") as mock_logger:
+            flip_prod.cleanup(cleanup_dir)
+
+        assert not cleanup_dir.exists()
+        logged = self._logged_text(mock_logger)
+        assert "ACC001" not in logged
+        assert f"sha256:{Utils.hash_for_log(cleanup_dir)}" in logged

@@ -52,6 +52,11 @@ pre-provisioned datasource.
 Application Logging
 *******************
 
+.. seealso::
+
+   What may appear in a log line — and what never may — is governed by the
+   platform :ref:`logging-policy`.
+
 Shared library: ``log_config``
 ================================
 

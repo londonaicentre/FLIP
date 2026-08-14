@@ -80,7 +80,10 @@ def receive_cohort_query(query_input: CohortQueryInput) -> StatisticsResponse:
         # drop duplicate columns
         df = df.loc[:, ~df.columns.duplicated()]
     except Exception as e:
-        logger.error(f"Error executing query: {str(e)}")
+        # Class-only: get_records has already logged the categorised driver error
+        # with a query fingerprint, and raw exception text on this path can embed
+        # the cohort SQL (logging policy).
+        logger.error(f"Error executing query: {type(e).__name__}")
         raise e
 
     try:

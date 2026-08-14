@@ -107,7 +107,9 @@ def query_by_accession_number(accession_number: str, headers: dict[str, str]) ->
         headers=headers,
         json=study_query.model_dump(by_alias=True),
     )
-    logger.debug(f"Query response: {response.text} - {response.status_code} - {response.reason}")
+    # Status only: the DQR response body is patient-level study metadata for the
+    # queried accession and must never be logged (logging policy).
+    logger.debug(f"Query response: {response.status_code} - {response.reason}")
 
     if response.status_code == 200:
         logger.info("Successfully queried PACS via DQR")

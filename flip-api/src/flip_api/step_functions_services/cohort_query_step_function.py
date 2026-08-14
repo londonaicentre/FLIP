@@ -91,7 +91,10 @@ def cohort_query_step_function_endpoint(
         # Re-raise HTTP exceptions
         raise
     except Exception as e:
-        logger.exception(f"Unhandled error in cohort_query: {str(e)}")
+        # No ``str(e)`` in the message: the traceback logger.exception emits
+        # already carries the detail, and the hub engine's ``hide_parameters``
+        # keeps the cohort SQL bound into DB statements out of it (logging policy).
+        logger.exception("Unhandled error in cohort_query")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to process cohort query: {str(e)}"
         )

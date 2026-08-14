@@ -34,7 +34,8 @@ from data_access_api.services.cohort import (
     validate_query,
     verify_cardinality,
 )
-from data_access_api.services.query_cache import clear_cache
+from data_access_api.services.query_cache import _make_cache_key, clear_cache
+from data_access_api.utils.log_hygiene import hash_query
 
 
 @pytest.fixture(autouse=True)
@@ -228,9 +229,10 @@ def test_get_records_other_dbapi_error(mock_read_sql):
 
     query = "SELECT * FROM test_table"
 
-    # S-8: error details are category-only — raw psycopg text stays in trust
-    # logs but never reaches the HTTPException body (which the hub forwards
-    # to every project member via the cohort UI).
+    # S-8: error details are category-only — never reaching the HTTPException
+    # body (which the hub forwards to every project member via the cohort UI).
+    # The trust log is category-only too: error class + SQLSTATE + query
+    # fingerprint, never the raw driver text (logging policy).
     with pytest.raises(HTTPException) as exc_info:
         get_records(query)
     assert exc_info.value.detail == "query_failed"
@@ -240,7 +242,8 @@ def test_get_records_other_dbapi_error(mock_read_sql):
 @patch("pandas.read_sql")
 def test_get_records_sqlalchemy_error(mock_read_sql):
     """SQLAlchemy errors collapse to ``internal_error`` — the raw text
-    (which can include connection strings, pool internals) stays in logs.
+    (which can include connection strings, pool internals, and the statement)
+    reaches neither the body nor the log (logging policy).
     """
     mock_sqlalchemy_error = SQLAlchemyError("SQLAlchemy connection error")
     mock_read_sql.side_effect = mock_sqlalchemy_error
@@ -1299,3 +1302,100 @@ def test_get_statistics_with_person_id_and_low_count_categories(mock_read_sql):
     other_sex = next((item for item in sex_data["results"] if item["value"] == "Other"), None)
     assert other_sex is not None
     assert other_sex["count"] == 8
+
+
+# ---------------------------------------------------------------------------
+# Logging policy: SQL never appears in logs (docs/source/sys-admin.rst,
+# "Logging policy"). Errors log the exception class + a query fingerprint.
+# ---------------------------------------------------------------------------
+
+
+@patch("pandas.read_sql")
+def test_get_records_db_error_log_omits_sql(mock_read_sql, caplog):
+    """A driver error whose text embeds the statement must not reach the log.
+
+    psycopg2 appends the offending line as ``LINE 1: ...`` context; the log must
+    carry only the error class, SQLSTATE, and a query fingerprint.
+    """
+    query = "SELECT secret_criterion FROM omop.person WHERE person_id = 42"
+
+    mock_pg_error = Exception(f"syntax error at or near \"secret_criterion\"\nLINE 1: {query}")
+    mock_dbapi_error = DBAPIError("statement", "params", mock_pg_error)
+    mock_dbapi_error.orig = mock_pg_error
+
+    mock_read_sql.side_effect = mock_dbapi_error
+
+    with caplog.at_level("ERROR"), pytest.raises(HTTPException):
+        get_records(query)
+
+    assert "secret_criterion" not in caplog.text
+    assert "LINE 1" not in caplog.text
+    assert f"query sha256:{hash_query(query)}" in caplog.text
+
+
+@patch("pandas.read_sql")
+def test_get_records_undefined_table_log_identifier_only(mock_read_sql, caplog):
+    """UndefinedTable logs the extracted identifier, not the raw driver text.
+
+    The identifier is an operator-echo diagnostic (it names a table the operator
+    typed against the public OMOP CDM schema); the psycopg2 ``LINE 1: ...``
+    context around it embeds the rest of the query and must be dropped.
+    """
+    query = "SELECT sensitive_condition FROM missing_table"
+
+    mock_pg_error = pg_errors.UndefinedTable()
+    mock_pg_error.args = (f'relation "missing_table" does not exist\nLINE 1: {query}',)
+    mock_dbapi_error = DBAPIError("statement", "params", mock_pg_error)
+    mock_dbapi_error.orig = mock_pg_error
+
+    mock_read_sql.side_effect = mock_dbapi_error
+
+    with caplog.at_level("ERROR"), pytest.raises(HTTPException, match="The table 'missing_table' does not exist"):
+        get_records(query)
+
+    assert "missing_table" in caplog.text
+    assert "sensitive_condition" not in caplog.text
+    assert "LINE 1" not in caplog.text
+    assert f"query sha256:{hash_query(query)}" in caplog.text
+
+
+@patch("pandas.read_sql")
+def test_get_records_sqlalchemy_error_log_omits_sql(mock_read_sql, caplog):
+    """The SQLAlchemyError fallback logs class + fingerprint, not ``str(e)``."""
+    query = "SELECT secret_criterion FROM omop.person"
+    mock_read_sql.side_effect = SQLAlchemyError(f"statement failed: {query}")
+
+    with caplog.at_level("ERROR"), pytest.raises(HTTPException):
+        get_records(query)
+
+    assert "secret_criterion" not in caplog.text
+    assert "SQLAlchemyError" in caplog.text
+    assert f"query sha256:{hash_query(query)}" in caplog.text
+
+
+def test_validate_query_parse_error_is_scrubbed(caplog):
+    """A parse failure keeps the SQL out of both the 400 detail and the log.
+
+    sqlglot interpolates the offending fragment into its message, the trust
+    forwards details to the hub, and trust-api logs error bodies — so the
+    detail is a fixed string and the log carries class + fingerprint only.
+    Friendly parse feedback is the hub pre-check's job.
+    """
+    query = "SELECT secret_criterion FRO omop.person WHERE"
+
+    with caplog.at_level("WARNING"), pytest.raises(HTTPException) as exc_info:
+        validate_query(query)
+
+    assert exc_info.value.detail == "Could not parse SQL query."
+    assert "secret_criterion" not in str(exc_info.value.detail)
+    assert "secret_criterion" not in caplog.text
+    assert f"query sha256:{hash_query(query)}" in caplog.text
+
+
+def test_hash_query_normalises_whitespace_and_case():
+    """The fingerprint is stable across whitespace/case variants and matches the cache-key prefix."""
+    a = hash_query("SELECT *   FROM omop.person")
+    b = hash_query("  select *\nfrom OMOP.person  ")
+    assert a == b
+    assert len(a) == 12
+    assert a == _make_cache_key("SELECT * FROM omop.person")[:12]

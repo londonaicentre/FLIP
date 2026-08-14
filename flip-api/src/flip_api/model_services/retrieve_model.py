@@ -149,13 +149,14 @@ def retrieve_model(
             ModelStatus(result["status"]) if result["status"] in ModelStatus.__members__ else ModelStatus.ERROR
         )
 
-        # Parse query from SQL result
+        # Parse query from SQL result. Log id-only: the IQuery repr carries the
+        # raw cohort SQL (logging policy).
         query = parse_query_from_result(result.get("query")) if result.get("query") else None
-        logger.debug(f"Parsed query: {query}")
+        logger.debug(f"Parsed query: {query.id if query else None}")
 
         # Parse files from SQL result
         files = parse_files_from_result(result.get("files"), model_id) if result.get("files") else []
-        logger.debug(f"Parsed files: {files}")
+        logger.debug(f"Parsed {len(files)} files")
 
         # Lifecycle timestamps — one tiny query for creation_timestamp, one for
         # the tracked audit dates. Cheap; the raw SQL was already opinionated

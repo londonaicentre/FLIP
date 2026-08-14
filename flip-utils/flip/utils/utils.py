@@ -12,6 +12,7 @@
 
 """Utility functions for FLIP."""
 
+import hashlib
 from typing import Any
 from uuid import UUID
 
@@ -48,3 +49,26 @@ class Utils:
             bool: True if empty or whitespace-only, False otherwise
         """
         return val.strip() == ""
+
+    @staticmethod
+    def hash_for_log(value: Any) -> str:
+        """
+        Return a short, stable fingerprint of a sensitive value for log correlation.
+
+        Accession numbers are patient-level linkage identifiers and download paths
+        are named after them, so the platform logging policy (FLIP docs,
+        sys-admin "Logging policy") keeps them out of logs — including the FL run
+        logs this package writes, which can leave the trust. Log this fingerprint
+        instead: the SHA-256 of the whitespace-normalised, lower-cased value,
+        truncated to 12 hex chars. Anyone holding the original value (e.g. a model
+        developer with their cohort's accession list) can re-derive it to find
+        matching log lines.
+
+        Args:
+            value: The sensitive value (will be converted to string).
+
+        Returns:
+            str: A 12-hex-char fingerprint of the value.
+        """
+        normalised = " ".join(str(value).strip().lower().split())
+        return hashlib.sha256(normalised.encode()).hexdigest()[:12]
