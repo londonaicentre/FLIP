@@ -378,7 +378,10 @@ def test_upload_file_wraps_s3_upload_failed_error(s3_client_with_mock_boto):
     s3, boto_instance = s3_client_with_mock_boto
     boto_instance.upload_file.side_effect = S3UploadFailedError("Failed to upload: AccessDenied")
 
-    with pytest.raises(Exception, match="Unable to upload file /local/f.py to s3://dest-bucket/k"):
+    # The wrapped message names the bucket and the error class but not the key:
+    # S3UploadFailedError's own text interpolates the destination key, and S3
+    # keys stay out of logs and error messages (logging policy).
+    with pytest.raises(Exception, match="Unable to upload file /local/f.py to bucket dest-bucket"):
         s3.upload_file("/local/f.py", "s3://dest-bucket/k")
 
 

@@ -96,3 +96,24 @@ class TestUtilsIsStringEmpty:
         """Should raise AttributeError for None value."""
         with pytest.raises(AttributeError):
             Utils.is_string_empty(None)
+
+
+class TestUtilsHashForLog:
+    """Test Utils.hash_for_log static method."""
+
+    def test_stable_across_whitespace_and_case(self):
+        """The fingerprint normalises whitespace and case before hashing."""
+        assert Utils.hash_for_log("ACC001") == Utils.hash_for_log("  acc001\n")
+
+    def test_is_short_hex(self):
+        """The fingerprint is a 12-char hex string, not the original value."""
+        fingerprint = Utils.hash_for_log("ACC001")
+        assert len(fingerprint) == 12
+        assert "ACC001" not in fingerprint
+        int(fingerprint, 16)  # raises if not hex
+
+    def test_accepts_non_string_values(self):
+        """Path-like and other objects hash via their string form."""
+        from pathlib import Path
+
+        assert Utils.hash_for_log(Path("/data/ACC001")) == Utils.hash_for_log("/data/acc001")

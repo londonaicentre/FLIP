@@ -152,7 +152,9 @@ class FLIPStandardProd(FLIPBase):
             headers=_trust_internal_headers(),
         )
 
-        self.logger.info(f"Received response status code: {response.status_code}, response text: {response.text}")
+        # Status only: this body IS the row-level cohort dataframe — patient rows
+        # including accession IDs — and FL run logs can leave the trust (logging policy).
+        self.logger.info(f"Received response status code: {response.status_code}")
 
         response.raise_for_status()
 
@@ -188,7 +190,10 @@ class FLIPStandardProd(FLIPBase):
         self.check_accession_id(accession_id)
         resources = self.check_resource_type(resource_type)
 
-        self.logger.info(f"Attempting to download {resources} images for {accession_id}")
+        # Fingerprint only: accession numbers are patient-level identifiers and FL
+        # run logs can leave the trust (logging policy).
+        accession_ref = f"accession sha256:{Utils.hash_for_log(accession_id)}"
+        self.logger.info(f"Attempting to download {resources} images for {accession_ref}")
 
         payload = {
             "encrypted_central_hub_project_id": project_id,
@@ -212,11 +217,12 @@ class FLIPStandardProd(FLIPBase):
                 },
                 headers=_trust_internal_headers(),
             )
-            self.logger.info(f"Received response status code: {response.status_code}, response text: {response.text}")
+            # Status only: response bodies stay out of logs (logging policy).
+            self.logger.info(f"Received response status code: {response.status_code}")
 
             response.raise_for_status()
 
-            self.logger.info(f"Successfully downloaded {resource} images for {accession_id}")
+            self.logger.info(f"Successfully downloaded {resource} images for {accession_ref}")
 
             imaging_service_response_json = response.json()
 
@@ -307,7 +313,8 @@ class FLIPStandardProd(FLIPBase):
                 headers=_hub_internal_headers(),
                 timeout=_HUB_POST_TIMEOUT_SECONDS,
             )
-            self.logger.info(f"Received response status code: {response.status_code}, response text: {response.text}")
+            # Status only: response bodies stay out of logs (logging policy).
+            self.logger.info(f"Received response status code: {response.status_code}")
             response.raise_for_status()
 
             self.logger.info(f"Successfully updated model status to [{new_model_status}]")
@@ -373,7 +380,8 @@ class FLIPStandardProd(FLIPBase):
                 headers=_hub_internal_headers(),
                 timeout=_HUB_POST_TIMEOUT_SECONDS,
             )
-            self.logger.info(f"Received response status code: {response.status_code}, response text: {response.text}")
+            # Status only: response bodies stay out of logs (logging policy).
+            self.logger.info(f"Received response status code: {response.status_code}")
             response.raise_for_status()
 
             self.logger.info(f"Successfully sent metrics for {client_name}")
@@ -428,7 +436,8 @@ class FLIPStandardProd(FLIPBase):
                 headers=_hub_internal_headers(),
                 timeout=_HUB_POST_TIMEOUT_SECONDS,
             )
-            self.logger.info(f"Received response status code: {response.status_code}, response text: {response.text}")
+            # Status only: response bodies stay out of logs (logging policy).
+            self.logger.info(f"Received response status code: {response.status_code}")
             response.raise_for_status()
 
             self.logger.info(f"Successfully sent the exception raised by {client_name}")
@@ -495,7 +504,8 @@ class FLIPStandardProd(FLIPBase):
                 # and then stalls would freeze result acceptance mid-round.
                 timeout=_HUB_POST_TIMEOUT_SECONDS,
             )
-            self.logger.info(f"Received response status code: {response.status_code}, response text: {response.text}")
+            # Status only: response bodies stay out of logs (logging policy).
+            self.logger.info(f"Received response status code: {response.status_code}")
             response.raise_for_status()
 
             self.logger.info(f"Successfully sent {event_type} for round {global_round}")
@@ -570,13 +580,15 @@ class FLIPStandardProd(FLIPBase):
     @override
     def cleanup(self, path: Path) -> None:
         """Cleans up local files by deleting the specified path."""
-        self.logger.info(f"Cleaning up path: {path}")
+        # Fingerprint only: the download path is named after the accession it
+        # holds, and rmtree error text names the files it failed on (logging policy).
+        path_ref = f"path sha256:{Utils.hash_for_log(path)}"
+        self.logger.info(f"Cleaning up downloaded data ({path_ref})")
         try:
             shutil.rmtree(path)
         except Exception as e:
-            self.logger.error(f"Failed to clean up path: {path}, see exception below")
-            self.logger.exception(e)
-            raise Exception(f"Failed to clean up path: {path}") from e
+            self.logger.error(f"Failed to clean up downloaded data ({path_ref}): {type(e).__name__}")
+            raise Exception("Failed to clean up downloaded data") from e
 
 
 class FLIPStandardDev(FLIPBase):

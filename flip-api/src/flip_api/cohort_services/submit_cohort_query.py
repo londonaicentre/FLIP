@@ -31,6 +31,7 @@ from flip_api.domain.schemas.cohort import (
 )
 from flip_api.domain.schemas.status import TaskType
 from flip_api.utils.encryption import encrypt
+from flip_api.utils.log_hygiene import hash_query
 from flip_api.utils.logger import logger
 
 router = APIRouter(prefix="/cohort", tags=["cohort_services"])
@@ -101,8 +102,13 @@ def validate_query(query: str) -> None:
     except SqlglotError as e:
         # SqlglotError covers both ParseError and TokenError (e.g. an
         # unterminated string literal), so a tokenizer failure cannot bubble up
-        # as an unhandled 500.
-        logger.info({"message": "Cohort query rejected: could not be parsed as SQL.", "error": str(e)})
+        # as an unhandled 500. Class + fingerprint only: sqlglot interpolates
+        # the offending SQL fragment into its message (logging policy).
+        logger.info({
+            "message": "Cohort query rejected: could not be parsed as SQL.",
+            "error": type(e).__name__,
+            "query_sha256": hash_query(query),
+        })
         raise ValueError("Query could not be parsed as SQL.") from e
 
     # sqlglot yields None for empty input and for stray semicolons (``SELECT 1; ;``
@@ -242,5 +248,7 @@ def submit_cohort_query(
         raise
     except Exception as e:
         db.rollback()
-        logger.error(f"Error submitting cohort query: {str(e)}")
+        # Class-only: a DB error on this path renders the INSERT whose bound
+        # parameters include the raw cohort SQL (logging policy).
+        logger.error(f"Error submitting cohort query: {type(e).__name__}")
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")

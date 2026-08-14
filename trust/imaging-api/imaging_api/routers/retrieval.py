@@ -26,6 +26,7 @@ from imaging_api.services.retrieval import get_import_status, retry_retrieve_ima
 from imaging_api.utils.auth import get_xnat_auth_headers
 from imaging_api.utils.exceptions import NotFoundError
 from imaging_api.utils.internal_auth import authenticate_internal_service
+from imaging_api.utils.log_hygiene import hash_query
 from imaging_api.utils.logger import logger
 
 router = APIRouter(prefix="/retrieval", tags=["Retrieval"], dependencies=[Depends(authenticate_internal_service)])
@@ -75,7 +76,8 @@ async def get_import_status_count(project_id: str, encoded_query: str, headers: 
 
     # Decode the query
     query = base64_url_decode(encoded_query)
-    logger.info(f"Decoded query: {query}")
+    # Fingerprint only: cohort SQL never appears in logs (logging policy).
+    logger.info(f"Decoded cohort query (sha256:{hash_query(query)})")
 
     # Get import status
     import_status = await get_import_status(project_id, query, headers)
@@ -128,7 +130,8 @@ async def reimport_imaging_project_studies(
 
     # Decode the query
     query = base64_url_decode(encoded_query)
-    logger.info(f"Decoded query: {query}")
+    # Fingerprint only: cohort SQL never appears in logs (logging policy).
+    logger.info(f"Decoded cohort query (sha256:{hash_query(query)})")
 
     # queue the actual retry work in the background (non-blocking)
     background_tasks.add_task(retry_retrieve_images_for_project, project_id, query, headers)

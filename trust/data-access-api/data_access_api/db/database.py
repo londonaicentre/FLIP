@@ -17,4 +17,8 @@ from data_access_api.config import get_settings
 engine = create_engine(
     get_settings().OMOP_DATABASE_URL.get_secret_value(),
     echo=False,
+    # Keep bind-parameter values (e.g. person_id lists from the statistics
+    # queries) out of SQLAlchemy error text, which otherwise renders them in a
+    # ``[parameters: ...]`` suffix on every wrapped driver error (logging policy).
+    hide_parameters=True,
 )

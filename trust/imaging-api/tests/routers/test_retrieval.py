@@ -16,6 +16,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from imaging_api.routers.retrieval import base64_url_decode
 from imaging_api.routers.schemas import ImportStatus
 from imaging_api.utils.exceptions import NotFoundError
+from imaging_api.utils.log_hygiene import hash_query
 
 
 def test_base64_url_decode():
@@ -121,3 +122,48 @@ def test_reimport_disabled(client):
 
     assert response.status_code == 418
     assert "not enabled" in response.json()["detail"]
+
+
+def test_import_status_count_log_omits_sql(client, caplog):
+    """The decoded cohort SQL never reaches the log — only its fingerprint does (logging policy)."""
+    query = "SELECT secret_criterion FROM cohort"
+
+    mock_status = ImportStatus(successful=[], failed=[], processing=[], queued=[], queue_failed=[])
+    with (
+        patch("imaging_api.routers.retrieval.get_project", return_value=MagicMock()),
+        patch(
+            "imaging_api.routers.retrieval.get_import_status",
+            new_callable=AsyncMock,
+            return_value=mock_status,
+        ),
+        caplog.at_level("INFO"),
+    ):
+        response = client.get(
+            "/retrieval/import_status_count/PROJ1",
+            params={"encoded_query": _encode_query(query)},
+        )
+
+    assert response.status_code == 200
+    assert "secret_criterion" not in caplog.text
+    assert f"sha256:{hash_query(query)}" in caplog.text
+
+
+def test_reimport_log_omits_sql(client, caplog):
+    """The reimport route logs the query fingerprint, never the SQL (logging policy)."""
+    query = "SELECT secret_criterion FROM cohort"
+
+    with (
+        patch("imaging_api.routers.retrieval.get_settings") as mock_settings,
+        patch("imaging_api.routers.retrieval.retry_retrieve_images_for_project", new_callable=AsyncMock),
+        caplog.at_level("INFO"),
+    ):
+        mock_settings.return_value = MagicMock(REIMPORT_STUDIES_ENABLED=True)
+
+        response = client.put(
+            "/retrieval/reimport_imaging_project_studies/PROJ1",
+            params={"encoded_query": _encode_query(query)},
+        )
+
+    assert response.status_code == 202
+    assert "secret_criterion" not in caplog.text
+    assert f"sha256:{hash_query(query)}" in caplog.text

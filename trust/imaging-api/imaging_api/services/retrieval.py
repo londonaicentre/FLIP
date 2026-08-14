@@ -114,7 +114,12 @@ async def retrieve_images_for_project(project_id: str, query: str, headers: XNAT
         try:
             studies_found = query_by_accession_number(accession_number, headers)
         except Exception as e:
-            logger.error(f"Unexpected error querying PACS for accession number {idx}/{total_accessions}: {e}")
+            # Class-only: exception text here can embed the accession number or
+            # study metadata (e.g. a pydantic ValidationError renders its input,
+            # a requests error renders the full URL) — logging policy.
+            logger.error(
+                f"Unexpected error querying PACS for accession number {idx}/{total_accessions}: {type(e).__name__}"
+            )
             continue
 
         # TODO What if multiple studies are found here for a given accession number?
@@ -350,7 +355,11 @@ async def retry_retrieve_images_for_project(project_id: str, query: str, headers
         try:
             studies_found = query_by_accession_number(accession_number, headers)
         except Exception as e:
-            logger.error(f"Unexpected error querying PACS for accession number {idx}/{total_retries}: {e}")
+            # Class-only: exception text here can embed the accession number or
+            # study metadata (logging policy).
+            logger.error(
+                f"Unexpected error querying PACS for accession number {idx}/{total_retries}: {type(e).__name__}"
+            )
             continue
 
         # TODO What if multiple studies are found here for a given accession number?

@@ -24,6 +24,7 @@ from flip_api.cohort_services.submit_cohort_query import (
 from flip_api.db.models.main_models import TrustTask
 from flip_api.domain.schemas.cohort import SubmitCohortQuery
 from flip_api.domain.schemas.status import TaskType
+from flip_api.utils.log_hygiene import hash_query
 
 # Mocking the project ID for the test
 project_id = uuid.uuid4()
@@ -191,6 +192,23 @@ def test_submit_cohort_query_rejects_unparseable_sql(mock_can_modify, mock_auth_
         submit_cohort_query(mock_auth_request, _query("$$$$ not sql at all !!!"), MagicMock(), user_id)
 
     assert exc_info.value.status_code == 400
+
+
+@patch("flip_api.cohort_services.submit_cohort_query.can_modify_project", return_value=True)
+def test_submit_cohort_query_parse_reject_log_omits_sql(mock_can_modify, mock_auth_request, caplog):
+    """The parse-reject log carries class + fingerprint, never the SQL.
+
+    sqlglot interpolates the offending fragment into its error message, and
+    cohort SQL stays out of logs (logging policy).
+    """
+    bad_query = "SELECT secret_criterion FRO omop.person WHERE"
+
+    with caplog.at_level("INFO"), pytest.raises(HTTPException) as exc_info:
+        submit_cohort_query(mock_auth_request, _query(bad_query), MagicMock(), user_id)
+
+    assert exc_info.value.status_code == 400
+    assert "secret_criterion" not in caplog.text
+    assert hash_query(bad_query) in caplog.text
 
 
 @patch("flip_api.cohort_services.submit_cohort_query.can_modify_project", return_value=True)

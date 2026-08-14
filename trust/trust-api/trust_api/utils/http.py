@@ -49,7 +49,11 @@ async def make_request(
     params = params or {}
     headers = dict(headers or {})  # copy so we don't mutate callers
 
-    logger.debug(f"Making {method} request to {url} with json_body={json_body}, params={params}, headers={headers}")
+    # Method + URL only (the url argument carries no query string — params are
+    # passed separately). Never log headers (they carry the trust-internal
+    # service key and XNAT credentials), the body (cohort SQL rides in task
+    # payloads), or params (``encoded_query`` is base64-wrapped SQL) — logging policy.
+    logger.debug(f"Making {method} request to {url}")
 
     try:
         async with httpx.AsyncClient(
@@ -79,11 +83,13 @@ async def make_request(
 
     except httpx.RequestError as e:
         # This covers DNS errors, connect timeouts, connection refused, TLS errors, etc.
+        # Render the target as host + path only: e.request.url carries the merged
+        # query string (``encoded_query`` is base64-wrapped cohort SQL), and str(e)
+        # can interpolate the same URL — logging policy.
         cause = repr(getattr(e, "__cause__", None))
-        msg = (
-            f"{e.__class__.__name__} when calling {method} {getattr(e, 'request', None) and e.request.url}: {e}. "
-            f"Cause={cause}"
-        )
+        request = getattr(e, "request", None)
+        target = f"{request.url.host}{request.url.path}" if request is not None else "<unknown>"
+        msg = f"{e.__class__.__name__} when calling {method} {target}. Cause={cause}"
         logger.error(msg)
         # Map transport layer failures to 502 for upstream callers.
-        raise HTTPException(status_code=502, detail=f"Failed to connect to remote service: {e}")
+        raise HTTPException(status_code=502, detail=f"Failed to connect to remote service: {e.__class__.__name__}")

@@ -229,10 +229,13 @@ class S3Client:
         try:
             bucket, key = parse_s3_path(s3_path)
             self.client.delete_object(Bucket=bucket, Key=key)
-            logger.info(f"Deleted object {key} from bucket {bucket}")
+            logger.info(f"Deleted object bucket={bucket} key_hash={hash_s3_key(key)}")
         except ClientError as e:
-            logger.error(f"Error deleting object {key} from bucket {bucket}: {e}")
-            raise Exception(f"Unable to delete object {key} from bucket {bucket}")
+            error_code = e.response.get("Error", {}).get("Code", "Unknown")
+            logger.error(
+                f"Error deleting object bucket={bucket} key_hash={hash_s3_key(key)} error_code={error_code}"
+            )
+            raise Exception(f"Unable to delete object from bucket {bucket}")
 
     def delete_object_if_match(self, s3_path: str, etag: str) -> None:
         """
@@ -254,14 +257,21 @@ class S3Client:
         bucket, key = parse_s3_path(s3_path)
         try:
             self.client.delete_object(Bucket=bucket, Key=key, IfMatch=etag)
-            logger.info(f"Deleted object {key} from bucket {bucket} (ETag-pinned)")
+            logger.info(f"Deleted object bucket={bucket} key_hash={hash_s3_key(key)} (ETag-pinned)")
         except ClientError as e:
             error_code = e.response.get("Error", {}).get("Code", "Unknown")
             if error_code in ("PreconditionFailed", "412"):
-                logger.warning(f"ETag precondition failed deleting {s3_path}: object changed since it was scanned")
-                raise S3PreconditionFailedError(f"Object changed: {s3_path}") from e
-            logger.error(f"Error deleting object {key} from bucket {bucket}: {error_code}")
-            raise Exception(f"Unable to delete object {key} from bucket {bucket}") from e
+                logger.warning(
+                    f"ETag precondition failed deleting bucket={bucket} key_hash={hash_s3_key(key)}: "
+                    "object changed since it was scanned"
+                )
+                raise S3PreconditionFailedError(
+                    f"Object changed: bucket={bucket} key_hash={hash_s3_key(key)}"
+                ) from e
+            logger.error(
+                f"Error deleting object bucket={bucket} key_hash={hash_s3_key(key)} error_code={error_code}"
+            )
+            raise Exception(f"Unable to delete object from bucket {bucket}") from e
 
     def delete_objects(self, s3_paths: list[str]) -> dict[str, Any]:
         """
@@ -282,7 +292,7 @@ class S3Client:
             for s3_path in s3_paths:
                 bucket, key = parse_s3_path(s3_path)
                 if not bucket:
-                    logger.error(f"Invalid S3 path: {s3_path}")
+                    logger.error(f"Invalid S3 path (path_hash={hash_s3_key(s3_path)})")
                     continue
                 bucket_objects[bucket].append({"Key": key})
 
@@ -297,7 +307,10 @@ class S3Client:
                         },
                     )
                     deleted = [obj["Key"] for obj in response.get("Deleted", [])]
-                    errors = [f"{err['Key']} - {err['Code']}: {err['Message']}" for err in response.get("Errors", [])]
+                    errors = [
+                        f"key_hash={hash_s3_key(err['Key'])} - {err['Code']}: {err['Message']}"
+                        for err in response.get("Errors", [])
+                    ]
 
                     if errors:
                         logger.warning(f"Partial success deleting objects from bucket {bucket}. Errors: {errors}")
@@ -307,7 +320,8 @@ class S3Client:
                     all_responses[bucket] = response
 
                 except ClientError as e:
-                    logger.error(f"Error batch deleting objects from bucket {bucket}: {e}")
+                    error_code = e.response.get("Error", {}).get("Code", "Unknown")
+                    logger.error(f"Error batch deleting objects from bucket {bucket}: error_code={error_code}")
                     raise Exception(f"Unable to delete objects from bucket {bucket}: {str(e)}")
 
             return all_responses
@@ -334,9 +348,12 @@ class S3Client:
             response = self.client.get_object(Bucket=bucket, Key=key)
             return response
         except ClientError as e:
-            logger.error(f"Error getting object {key} from bucket {bucket}: {e}")
+            error_code = e.response.get("Error", {}).get("Code", "Unknown")
+            logger.error(
+                f"Error getting object bucket={bucket} key_hash={hash_s3_key(key)} error_code={error_code}"
+            )
             raise EndpointConnectionError(
-                endpoint_url=f"https://{bucket}.s3.your-region.amazonaws.com/{key}",
+                endpoint_url=f"https://{bucket}.s3.your-region.amazonaws.com/{hash_s3_key(key)}",
                 error=e,
             )
 
@@ -358,8 +375,12 @@ class S3Client:
             response = self.client.head_object(Bucket=bucket, Key=key)
             return response
         except ClientError as e:
-            logger.error(f"Error getting object metadata for {key} from bucket {bucket}: {e}")
-            raise Exception(f"Unable to get object metadata for {key} from bucket {bucket}")
+            error_code = e.response.get("Error", {}).get("Code", "Unknown")
+            logger.error(
+                f"Error getting object metadata bucket={bucket} key_hash={hash_s3_key(key)} "
+                f"error_code={error_code}"
+            )
+            raise Exception(f"Unable to get object metadata from bucket {bucket}")
 
     def object_exists(self, s3_path: str) -> bool:
         """
@@ -382,7 +403,10 @@ class S3Client:
         except ClientError as e:
             if e.response["Error"]["Code"] == "404":
                 return False
-            logger.error(f"Error checking if object {key} exists in bucket {bucket}: {e}")
+            logger.error(
+                f"Error checking object existence bucket={bucket} key_hash={hash_s3_key(key)} "
+                f"error_code={e.response['Error']['Code']}"
+            )
             raise
 
     def upload_file(self, local_path: str, s3_path: str) -> None:
@@ -407,10 +431,16 @@ class S3Client:
             # S3UploadFailedError — a boto3.exceptions type, not a botocore ClientError — so it must
             # be caught explicitly alongside ClientError; OSError covers a local-file read failure.
             self.client.upload_file(local_path, bucket, key)
-            logger.info(f"Successfully uploaded {local_path} to {s3_path}")
+            logger.info(f"Successfully uploaded {local_path} to bucket={bucket} key_hash={hash_s3_key(key)}")
         except (S3UploadFailedError, ClientError, OSError) as e:
-            logger.error(f"Error uploading {local_path} to {s3_path}: {e}")
-            raise Exception(f"Unable to upload file {local_path} to {s3_path}: {e}") from e
+            # Class-only: S3UploadFailedError's message interpolates the full
+            # destination key (logging policy). local_path is a hub-local
+            # template/temp path, which the policy allows.
+            logger.error(
+                f"Error uploading {local_path} to bucket={bucket} key_hash={hash_s3_key(key)}: "
+                f"{type(e).__name__}"
+            )
+            raise Exception(f"Unable to upload file {local_path} to bucket {bucket}: {type(e).__name__}") from e
 
     def copy_object(self, source_s3_path: str, dest_s3_path: str) -> None:
         """
@@ -429,10 +459,17 @@ class S3Client:
 
             copy_source = {"Bucket": source_bucket, "Key": source_key}
             self.client.copy_object(CopySource=copy_source, Bucket=dest_bucket, Key=dest_key)
-            logger.info(f"Successfully copied {source_s3_path} to {dest_s3_path}")
+            logger.info(
+                f"Successfully copied src_bucket={source_bucket} src_key_hash={hash_s3_key(source_key)} "
+                f"to dest_bucket={dest_bucket} dest_key_hash={hash_s3_key(dest_key)}"
+            )
         except ClientError as e:
-            logger.error(f"Error copying {source_s3_path} to {dest_s3_path}: {e}")
-            raise Exception(f"Unable to copy object: {e}")
+            error_code = e.response.get("Error", {}).get("Code", "Unknown")
+            logger.error(
+                f"Error copying src_bucket={source_bucket} src_key_hash={hash_s3_key(source_key)} "
+                f"to dest_bucket={dest_bucket} dest_key_hash={hash_s3_key(dest_key)} error_code={error_code}"
+            )
+            raise Exception(f"Unable to copy object: {error_code}")
 
     def copy_object_if_match(self, source_s3_path: str, dest_s3_path: str, etag: str) -> None:
         """
@@ -464,17 +501,25 @@ class S3Client:
                 dest_key,
                 ExtraArgs={"CopySourceIfMatch": etag},
             )
-            logger.info(f"Successfully copied {source_s3_path} to {dest_s3_path} (ETag-pinned)")
+            logger.info(
+                f"Successfully copied src_bucket={source_bucket} src_key_hash={hash_s3_key(source_key)} "
+                f"to dest_bucket={dest_bucket} dest_key_hash={hash_s3_key(dest_key)} (ETag-pinned)"
+            )
         except ClientError as e:
             error_code = e.response.get("Error", {}).get("Code", "Unknown")
             if error_code in ("PreconditionFailed", "412"):
                 logger.warning(
-                    f"ETag precondition failed copying {source_s3_path} to {dest_s3_path}: "
-                    "source object changed since it was scanned"
+                    f"ETag precondition failed copying src_bucket={source_bucket} "
+                    f"src_key_hash={hash_s3_key(source_key)}: source object changed since it was scanned"
                 )
-                raise S3PreconditionFailedError(f"Source object changed: {source_s3_path}") from e
-            logger.error(f"Error copying {source_s3_path} to {dest_s3_path}: {e}")
-            raise Exception(f"Unable to copy object: {e}") from e
+                raise S3PreconditionFailedError(
+                    f"Source object changed: bucket={source_bucket} key_hash={hash_s3_key(source_key)}"
+                ) from e
+            logger.error(
+                f"Error copying src_bucket={source_bucket} src_key_hash={hash_s3_key(source_key)} "
+                f"to dest_bucket={dest_bucket} dest_key_hash={hash_s3_key(dest_key)} error_code={error_code}"
+            )
+            raise Exception(f"Unable to copy object: {error_code}") from e
 
     def download_file(self, s3_path: str, local_path: str) -> None:
         """
@@ -494,10 +539,12 @@ class S3Client:
         try:
             bucket, key = parse_s3_path(s3_path)
             self.client.download_file(bucket, key, local_path)
-            logger.info(f"Successfully downloaded {s3_path} to local disk")
+            logger.info(f"Successfully downloaded bucket={bucket} key_hash={hash_s3_key(key)} to local disk")
         except (ClientError, OSError) as e:
-            logger.error(f"Error downloading {s3_path}: {e}")
-            raise Exception(f"Unable to download file {s3_path}: {e}") from e
+            logger.error(
+                f"Error downloading bucket={bucket} key_hash={hash_s3_key(key)}: {type(e).__name__}"
+            )
+            raise Exception(f"Unable to download file from bucket {bucket}: {type(e).__name__}") from e
 
     def list_objects(self, s3_path: str, delimiter: str = "") -> list[str]:
         """
@@ -535,7 +582,11 @@ class S3Client:
             return full_s3_paths
 
         except ClientError as e:
-            error_message = f"Error listing objects under '{s3_path}': {e}"
+            error_code = e.response.get("Error", {}).get("Code", "Unknown")
+            error_message = (
+                f"Error listing objects under bucket={bucket} prefix_hash={hash_s3_key(prefix)}: "
+                f"error_code={error_code}"
+            )
             logger.error(error_message, exc_info=True)
             raise Exception(error_message)
         except ValueError as ve:

@@ -105,5 +105,7 @@ def save_cohort_query(
         # Re-raise HTTP exceptions
         raise
     except Exception as e:
-        logger.error(f"Error saving cohort query: {str(e)}")
+        # Class-only: a DB error on this path renders the INSERT whose bound
+        # parameters include the raw cohort SQL (logging policy).
+        logger.error(f"Error saving cohort query: {type(e).__name__}")
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")

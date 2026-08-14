@@ -125,6 +125,11 @@ def _build_engine() -> Engine:
         engine = create_engine(
             db_url,
             echo=False,
+            # Keep bound parameter values (cohort SQL, user emails, ...) out of
+            # SQLAlchemy error text, which otherwise renders them in a
+            # ``[parameters: ...]`` suffix on every wrapped driver error
+            # (logging policy).
+            hide_parameters=True,
             pool_pre_ping=True,
             pool_recycle=_POOL_RECYCLE_SECONDS,
             connect_args={"sslmode": "require"},
@@ -140,7 +145,8 @@ def _build_engine() -> Engine:
     # encoded, which the default quote(safe="/") would not.
     encoded_password = quote(stt.POSTGRES_PASSWORD.strip(), safe="")
     db_url = f"postgresql+psycopg2://{stt.POSTGRES_USER}:{encoded_password}@{stt.DB_HOST}:{stt.DB_PORT}/{stt.POSTGRES_DB}"
-    return create_engine(db_url, echo=False)
+    # hide_parameters for the same reason as the production engine above.
+    return create_engine(db_url, echo=False, hide_parameters=True)
 
 
 # Lazily-created, reused engine. Built on first use rather than at import time
