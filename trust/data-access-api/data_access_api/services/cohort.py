@@ -85,12 +85,15 @@ _ALLOWED_QUERY_TYPES: tuple[type[exp.Expression], ...] = (
 # Data-modifying nodes rejected anywhere in the tree, not just at the top level.
 # Postgres allows a writable CTE — ``WITH x AS (DELETE ... RETURNING *) SELECT * FROM x``
 # — which sqlglot parses with a top-level ``exp.Select``, so the SELECT-shape check
-# alone passes it through.
+# alone passes it through. ``exp.Into`` is the ``INTO`` clause of ``SELECT ... INTO t``
+# — ``CREATE TABLE AS`` in Postgres, but still an ``exp.Select`` carrying none of the
+# four DML node types, so it needs its own entry here.
 _DATA_MODIFYING_TYPES: tuple[type[exp.Expression], ...] = (
     exp.Insert,
     exp.Update,
     exp.Delete,
     exp.Merge,
+    exp.Into,
 )
 
 

@@ -497,6 +497,26 @@ def test_validate_query_still_accepts_read_only_cte():
 @pytest.mark.parametrize(
     "query",
     [
+        "SELECT * INTO newtbl FROM omop.person",
+        # Nested inside a CTE body — the walk must reach it there too.
+        "WITH x AS (SELECT * INTO t FROM omop.person) SELECT * FROM x",
+    ],
+)
+def test_validate_query_rejects_select_into(query: str):
+    """``SELECT ... INTO`` is ``CREATE TABLE AS`` in Postgres but parses as a plain ``Select``.
+
+    It satisfies the SELECT-shape check and carries no INSERT/UPDATE/DELETE/MERGE node, so only
+    the ``exp.Into`` entry in ``_DATA_MODIFYING_TYPES`` rejects it structurally. Without that,
+    the write reached the engine and failed as an opaque permission error instead of the clear
+    400 the docstring promises (plain ``CREATE TABLE AS`` is already caught by the shape check).
+    """
+    with pytest.raises(HTTPException, match="Data-modifying statements are not allowed"):
+        validate_query(query)
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
         "",                  # empty input → sqlglot returns [None]
         "   ",               # whitespace only → [None]
         "; ;",               # multiple Nones
