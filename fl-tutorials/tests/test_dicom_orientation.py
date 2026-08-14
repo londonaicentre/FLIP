@@ -70,7 +70,15 @@ def _resample_to(image: np.ndarray, spatial_size: tuple[int, ...]) -> np.ndarray
 
 def _describe_orientation(actual: np.ndarray, reference: np.ndarray) -> str:
     """Return a message naming which dihedral variant of ``reference`` ``actual`` looks like."""
-    lines = [f"output {actual.shape} does not match the reference {reference.shape} as loaded."]
+    # The two failures this message serves look nothing alike: a transposed load changes the shape,
+    # a mirrored one keeps it. One header for both would print two identical shapes under "does not
+    # match" for every mirror or 180° rotation — contradicting the table below it, which names the
+    # matching variant exactly.
+    if actual.shape == reference.shape:
+        header = f"output and the reference as loaded share shape {actual.shape} but differ pixel for pixel."
+    else:
+        header = f"output {actual.shape} does not match the shape of the reference as loaded {reference.shape}."
+    lines = [header]
     for name, variant in dihedral_variants(reference).items():
         if variant.shape != actual.shape:
             lines.append(f"  {name:<16} shape {variant.shape} (not comparable)")
@@ -96,6 +104,28 @@ def test_phantom_dicom_round_trips(dicom_path, phantom: np.ndarray) -> None:
     assert decoded.dtype == np.uint16
     assert decoded.shape == phantom.shape
     assert np.array_equal(decoded, phantom)
+
+
+def test_orientation_report_names_the_discrepancy_it_found(phantom: np.ndarray) -> None:
+    """The failure report must tell a wrong shape apart from wrong pixels at the right shape.
+
+    Both assertions in :func:`test_loader_prefix_matches_pixel_data` share one message, and the
+    same-shape case is the one this module exists for: a mirror or a 180° rotation is upright,
+    correctly shaped and still wrong. Reporting it as a shape mismatch prints the same shape twice
+    and contradicts the table underneath, which names the matching variant exactly.
+    """
+    mirrored = np.ascontiguousarray(phantom[:, ::-1])
+    report = _describe_orientation(mirrored, phantom)
+    header = report.splitlines()[0]
+    assert "does not match" not in header, f"header reports a shape mismatch that did not happen: {header}"
+    assert str(phantom.shape) in header, header
+    exact = [line.split()[0] for line in report.splitlines() if "(exact match)" in line]
+    assert exact == ["flip_horizontal"], report
+
+    transposed = np.ascontiguousarray(phantom.T)
+    header = _describe_orientation(transposed, phantom).splitlines()[0]
+    assert str(transposed.shape) in header, header
+    assert str(phantom.shape) in header, header
 
 
 def test_loader_prefix_matches_pixel_data(dicom_app, dicom_path) -> None:
