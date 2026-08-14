@@ -29,6 +29,11 @@ services:
       - XNAT_HOME=${XNAT_HOME}
       - XNAT_ROOT=${XNAT_ROOT}
       - XNAT_EMAIL=${XNAT_EMAIL}
+      # Site branding for the enclave XNAT login page. TRUST_NAME comes from the trust kit
+      # (exported by trust/xnat/Makefile); configure-xnat.sh turns it into the site description
+      # ("Welcome to FLIP's XNAT at <trust>"). XNAT_SITE_DESCRIPTION overrides the whole string.
+      - TRUST_NAME=${TRUST_NAME:-}
+      - XNAT_SITE_DESCRIPTION=${XNAT_SITE_DESCRIPTION:-}
       - XNAT_ADMIN_USER=${XNAT_ADMIN_USER}
       - XNAT_ADMIN_INITIAL_PASSWORD=${XNAT_ADMIN_INITIAL_PASSWORD}
       - XNAT_ADMIN_PASSWORD=${XNAT_ADMIN_PASSWORD}

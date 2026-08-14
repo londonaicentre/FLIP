@@ -331,6 +331,28 @@ xnat_curl -X POST "$XNAT_URL/xapi/siteConfig" \
   -H "Content-Type: application/json" \
   -d '{"addOhifViewLinkToProjectListingDefaults": true }'
 
+# Configure FLIP site branding on the login page: a trust-named welcome description and the FLIP
+# FLIP logo (baked into the webapp image at /images/flip-logo.png). XNAT is enclave-only and this is a
+# mocked site, so the branding tells users which trust's XNAT they are on. TRUST_NAME is passed
+# through from the trust kit (trust/xnat/Makefile exports it); XNAT_SITE_DESCRIPTION overrides the
+# whole string. The JSON is built with jq so a trust name containing quotes/apostrophes stays valid.
+echo "Configuring FLIP site branding..."
+site_description="${XNAT_SITE_DESCRIPTION:-}"
+if [[ -z "$site_description" && -n "${TRUST_NAME:-}" ]]; then
+  site_description="Welcome to FLIP's XNAT at ${TRUST_NAME}"
+fi
+if [[ -n "$site_description" ]]; then
+  branding_json=$(jq -n --arg d "$site_description" \
+    '{siteDescriptionType: "Text", siteDescriptionText: $d, siteLogoPath: "/images/flip-logo.png"}')
+else
+  echo "  No TRUST_NAME/XNAT_SITE_DESCRIPTION set — applying FLIP logo only, leaving description as-is."
+  branding_json='{"siteLogoPath": "/images/flip-logo.png"}'
+fi
+xnat_curl -X POST "$XNAT_URL/xapi/siteConfig" \
+  -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_PASSWORD}" \
+  -H "Content-Type: application/json" \
+  -d "$branding_json"
+
 # Register PACS
 # queryRetrievePort is the port XNAT dials Orthanc on over the Docker network
 # (the "host" below is the orthanc service name), so Orthanc's fixed container
