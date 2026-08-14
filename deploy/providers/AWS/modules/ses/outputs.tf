@@ -21,7 +21,7 @@ output "template_names" {
   description = "Map of logical name -> rendered SES template name, useful for callers that need to invoke the templates."
   value = {
     access_request        = aws_ses_template.flip_access_request.name
-    xnat_credentials      = aws_ses_template.flip_xnat_credentials.name
+    xnat_invite           = aws_ses_template.flip_xnat_invite.name
     xnat_added_to_project = aws_ses_template.flip_xnat_added_to_project.name
   }
 }

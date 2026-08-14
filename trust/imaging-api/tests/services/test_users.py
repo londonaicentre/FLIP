@@ -22,6 +22,7 @@ from imaging_api.services.users import (
     create_user_from_central_hub_user,
     get_user_profile_by,
     get_xnat_users,
+    issue_setup_token,
     to_create_imaging_user,
     user_exists,
 )
@@ -255,12 +256,38 @@ def test_create_user_server_error(mock_post, headers):
 
 
 # ---------------------------------------------------------------------------
+# issue_setup_token
+# ---------------------------------------------------------------------------
+@patch("imaging_api.services.users.requests.get")
+def test_issue_setup_token_builds_hostless_path(mock_get, headers):
+    """Mints an alias token and returns a host-less set-password path with url-encoded secret."""
+    mock_get.return_value = MagicMock(
+        status_code=200,
+        json=lambda: {"alias": "al-123", "secret": "sek ret"},
+    )
+
+    path = issue_setup_token("alice", headers)
+
+    # No scheme/host leaks into the emailed link (XNAT is enclave-only — FLIP-PT-079); secret is encoded.
+    assert path == "/app/template/XDATScreen_UpdateUser.vm?a=al-123&s=sek%20ret"
+    assert not path.startswith("http")
+
+
+@patch("imaging_api.services.users.requests.get")
+def test_issue_setup_token_raises_on_error(mock_get, headers):
+    mock_get.return_value = MagicMock(status_code=500, text="boom")
+    with pytest.raises(Exception, match="setup-token issuance failed"):
+        issue_setup_token("alice", headers)
+
+
+# ---------------------------------------------------------------------------
 # create_user_from_central_hub_user
 # ---------------------------------------------------------------------------
-@patch("imaging_api.services.users.encrypt", return_value="encrypted_pwd")
+@patch("imaging_api.services.users.encrypt", return_value="encrypted_setup")
+@patch("imaging_api.services.users.issue_setup_token", return_value="/app/template/XDATScreen_UpdateUser.vm?a=al&s=se")
 @patch("imaging_api.services.users.create_user")
 @patch("imaging_api.services.users.to_create_imaging_user")
-def test_create_user_from_central_hub_user(mock_to_create, mock_create, mock_encrypt, headers):
+def test_create_user_from_central_hub_user(mock_to_create, mock_create, mock_issue, mock_encrypt, headers):
     mock_to_create.return_value = CreateUser(
         username="alice", password="secret", firstName="Alice",
         lastName="A", email="alice@test.com",
@@ -271,8 +298,11 @@ def test_create_user_from_central_hub_user(mock_to_create, mock_create, mock_enc
     created_user, user_profile = create_user_from_central_hub_user(hub_user, headers)
 
     assert created_user.username == "alice"
-    assert created_user.encrypted_password == "encrypted_pwd"
+    # No password is returned — only the encrypted host-less set-password link (FLIP-PT-079).
+    assert created_user.encrypted_setup_path == "encrypted_setup"
     assert user_profile.username == "alice"
+    mock_issue.assert_called_once_with(user_profile.username, headers)
+    mock_encrypt.assert_called_once_with("/app/template/XDATScreen_UpdateUser.vm?a=al&s=se")
 
 
 # ---------------------------------------------------------------------------

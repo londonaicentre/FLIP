@@ -65,10 +65,14 @@ class CreateUser(BaseModel):
 
 
 class CreatedUser(BaseModel):
-    """Represents a user created on XNAT."""
+    """Represents a user created on XNAT.
+
+    Carries the AES-encrypted, host-less setup path (an XNAT alias-token link) the new user
+    follows to set their own password — never a password. See FLIP-PT-079.
+    """
 
     username: str
-    encrypted_password: str
+    encrypted_setup_path: str
     email: EmailStr
 
 

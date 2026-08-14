@@ -84,8 +84,8 @@ def mock_insert_status():
 def test_sends_email_to_each_created_user(mock_ses, mock_decrypt, mock_settings, mock_insert_status):
     """Should send one SES email per created user with correct template data."""
     users = [
-        {"username": "user1", "encrypted_password": "enc1", "email": "user1@test.com"},
-        {"username": "user2", "encrypted_password": "enc2", "email": "user2@test.com"},
+        {"username": "user1", "encrypted_setup_path": "enc1", "email": "user1@test.com"},
+        {"username": "user2", "encrypted_setup_path": "enc2", "email": "user2@test.com"},
     ]
     task = _make_task(users)
 
@@ -108,7 +108,7 @@ def test_sends_email_to_each_created_user(mock_ses, mock_decrypt, mock_settings,
     assert template_data["trust_name"] == "Trust_1"
     assert template_data["project_name"] == "Test Imaging Project"
     assert template_data["username"] == "user1"
-    assert template_data["password"] == "decrypted_enc1"
+    assert template_data["setup_path"] == "decrypted_enc1"
 
     # Verify second user's email
     second_call = mock_ses.send_email.call_args_list[1]
@@ -120,7 +120,7 @@ def test_inserts_xnat_project_status(mock_ses, mock_decrypt, mock_settings, mock
     from flip_api.db.models.main_models import XNATImageStatus
 
     users = [
-        {"username": "user1", "encrypted_password": "enc1", "email": "user1@test.com"},
+        {"username": "user1", "encrypted_setup_path": "enc1", "email": "user1@test.com"},
     ]
     task = _make_task(users)
 
@@ -149,7 +149,7 @@ def test_inserts_xnat_project_status(mock_ses, mock_decrypt, mock_settings, mock
 def test_inserts_status_with_no_query(mock_ses, mock_decrypt, mock_settings, mock_insert_status):
     """Should pass query_id=None when project has no queries."""
     users = [
-        {"username": "user1", "encrypted_password": "enc1", "email": "user1@test.com"},
+        {"username": "user1", "encrypted_setup_path": "enc1", "email": "user1@test.com"},
     ]
     task = _make_task(users)
 
@@ -187,8 +187,8 @@ def test_no_emails_when_no_users_at_all(mock_ses, mock_decrypt, mock_settings, m
 def test_ses_failure_for_one_user_continues_to_next(mock_ses, mock_decrypt, mock_settings, mock_insert_status):
     """Should continue sending to remaining users if SES fails for one."""
     users = [
-        {"username": "user1", "encrypted_password": "enc1", "email": "user1@test.com"},
-        {"username": "user2", "encrypted_password": "enc2", "email": "user2@test.com"},
+        {"username": "user1", "encrypted_setup_path": "enc1", "email": "user1@test.com"},
+        {"username": "user2", "encrypted_setup_path": "enc2", "email": "user2@test.com"},
     ]
     task = _make_task(users)
 
@@ -209,8 +209,8 @@ def test_ses_failure_for_one_user_continues_to_next(mock_ses, mock_decrypt, mock
 def test_decryption_failure_continues_to_next_user(mock_ses, mock_settings, mock_insert_status):
     """Should continue to next user if decryption fails for one."""
     users = [
-        {"username": "user1", "encrypted_password": "enc1", "email": "user1@test.com"},
-        {"username": "user2", "encrypted_password": "enc2", "email": "user2@test.com"},
+        {"username": "user1", "encrypted_setup_path": "enc1", "email": "user1@test.com"},
+        {"username": "user2", "encrypted_setup_path": "enc2", "email": "user2@test.com"},
     ]
     task = _make_task(users)
 
@@ -292,7 +292,7 @@ def test_sends_project_access_email_to_added_users(mock_ses, mock_decrypt, mock_
 
     assert mock_ses.send_email.call_count == 2
 
-    # Verify correct template is used (not credentials template)
+    # Verify correct template is used (not invite template)
     first_call = mock_ses.send_email.call_args_list[0]
     assert first_call.kwargs["Destination"] == {"ToAddresses": ["existing1@test.com"]}
     assert first_call.kwargs["Content"]["Template"]["TemplateName"] == "flip-xnat-added-to-project"
@@ -301,13 +301,13 @@ def test_sends_project_access_email_to_added_users(mock_ses, mock_decrypt, mock_
     assert template_data["trust_name"] == "Trust_1"
     assert template_data["project_name"] == "Test Imaging Project"
     assert template_data["username"] == "existing1"
-    assert "password" not in template_data
+    assert "setup_path" not in template_data
 
 
-def test_sends_both_credential_and_access_emails(mock_ses, mock_decrypt, mock_settings, mock_insert_status):
-    """Should send credential emails to created users AND access emails to added users."""
+def test_sends_both_invite_and_access_emails(mock_ses, mock_decrypt, mock_settings, mock_insert_status):
+    """Should send invite emails to created users AND access emails to added users."""
     created_users = [
-        {"username": "new1", "encrypted_password": "enc1", "email": "new1@test.com"},
+        {"username": "new1", "encrypted_setup_path": "enc1", "email": "new1@test.com"},
     ]
     added_users = [
         {"username": "existing1", "email": "existing1@test.com"},
@@ -325,9 +325,9 @@ def test_sends_both_credential_and_access_emails(mock_ses, mock_decrypt, mock_se
 
     assert mock_ses.send_email.call_count == 2
 
-    # First call: credentials email to new user
+    # First call: invite email to new user
     cred_call = mock_ses.send_email.call_args_list[0]
-    assert cred_call.kwargs["Content"]["Template"]["TemplateName"] == "flip-xnat-credentials"
+    assert cred_call.kwargs["Content"]["Template"]["TemplateName"] == "flip-xnat-invite"
     assert cred_call.kwargs["Destination"] == {"ToAddresses": ["new1@test.com"]}
 
     # Second call: access email to existing user

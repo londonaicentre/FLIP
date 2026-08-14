@@ -1185,8 +1185,10 @@ deploy/providers/AWS/
 │   └── ses/
 │       ├── flip-access-request.html         # Access request notification
 │       ├── flip-access-request.txt          # Plain-text fallback
-│       ├── flip-xnat-credentials.html       # XNAT credential notification
-│       └── flip-xnat-credentials.txt        # Plain-text fallback
+│       ├── flip-xnat-invite.html            # XNAT set-your-own-password invite link (FLIP-PT-079)
+│       ├── flip-xnat-invite.txt             # Plain-text fallback
+│       ├── flip-xnat-added-to-project.html  # Existing-user added-to-project notification
+│       └── flip-xnat-added-to-project.txt   # Plain-text fallback
 ├── services.tf                              # Cognito config - loads cognito/ templates via file()
 ├── main.tf                                  # SES config - loads ses/ templates via file()
 └── tests/

@@ -813,11 +813,6 @@ moved {
 }
 
 moved {
-  from = aws_ses_template.flip_xnat_credentials
-  to   = module.ses.aws_ses_template.flip_xnat_credentials
-}
-
-moved {
   from = aws_ses_template.flip_xnat_added_to_project
   to   = module.ses.aws_ses_template.flip_xnat_added_to_project
 }

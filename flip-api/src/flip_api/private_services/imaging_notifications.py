@@ -26,7 +26,7 @@ from flip_api.domain.interfaces.trust import (
     ISesTemplateData,
 )
 from flip_api.private_services.project_images_helpers import insert_status
-from flip_api.utils.constants import IMAGING_CREDENTIALS_TEMPLATE_NAME, IMAGING_PROJECT_ACCESS_TEMPLATE_NAME
+from flip_api.utils.constants import IMAGING_INVITE_TEMPLATE_NAME, IMAGING_PROJECT_ACCESS_TEMPLATE_NAME
 from flip_api.utils.encryption import decrypt
 from flip_api.utils.logger import logger
 
@@ -87,17 +87,19 @@ def handle_imaging_task_completed(task: TrustTask, db: Session) -> None:
     sesv2 = boto3.client("sesv2", region_name=get_settings().AWS_REGION)
     sender_email = get_settings().AWS_SES_SENDER_EMAIL_ADDRESS
 
-    # Send credential emails to newly created users
+    # Send invite emails to newly created users. The email carries a host-less "set your own
+    # password" link (an XNAT alias-token path), never a password (FLIP-PT-079). The link is
+    # decrypted here only to place it in the email — no standing credential is ever transmitted.
     for user in imaging_project.created_users:
         try:
-            decrypted_password = decrypt(user.encrypted_password)
+            setup_path = decrypt(user.encrypted_setup_path)
 
             template_data = ISesTemplateData(
                 trust_name=trust_name,
                 project_name=imaging_project.name,
                 project_id=project_id,
                 username=user.username,
-                password=decrypted_password,
+                setup_path=setup_path,
             )
 
             sesv2.send_email(
@@ -105,15 +107,15 @@ def handle_imaging_task_completed(task: TrustTask, db: Session) -> None:
                 Destination={"ToAddresses": [user.email]},
                 Content={
                     "Template": {
-                        "TemplateName": IMAGING_CREDENTIALS_TEMPLATE_NAME,
+                        "TemplateName": IMAGING_INVITE_TEMPLATE_NAME,
                         "TemplateData": json.dumps(template_data.model_dump(mode="json"), default=str),
                     }
                 },
             )
-            logger.info(f"Sent XNAT credentials email to {user.email} for project '{imaging_project.name}'")
+            logger.info(f"Sent XNAT invite email to {user.email} for project '{imaging_project.name}'")
 
         except Exception as e:
-            logger.error(f"Failed to send credentials email to {user.email}: {e}")
+            logger.error(f"Failed to send invite email to {user.email}: {e}")
 
     # Send project access notifications to existing users (no password)
     for added_user in imaging_project.added_users:
