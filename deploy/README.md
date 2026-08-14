@@ -13,6 +13,37 @@
 
 # Pre-configurations needed for FLIP Deployment
 
+## Where things live
+
+Deployment artifacts are **not** all under `deploy/`. Two different concerns share the word "deploy", and
+they are filed by two different rules:
+
+1. **Application composition** — which containers form a stack. A compose file lives **next to the source
+   tree whose images it builds**, so most of them are outside this directory.
+2. **Infrastructure provisioning** — accounts, hosts, clusters. That is `deploy/providers/`.
+
+| I want to… | Go to |
+| ---------- | ----- |
+| Run/change the **Central Hub** container stack | `deploy/compose.*.yml` |
+| Run/change the **trust** container stack | [`trust/deploy/`](../trust/deploy/README.md) |
+| Run/change the **XNAT** swarm stack | `trust/xnat/docker-compose-stack*.yml` |
+| Build/populate the mock **OMOP** database | `trust/omop-db/compose.yml` |
+| Run the **FL** services standalone | `fl-services/<backend>/compose*.yml` |
+| Provision **AWS** (hub ECS + optional cloud trust EC2) | [`deploy/providers/AWS/`](providers/AWS/README.md) |
+| Provision an **on-prem** trust host | [`deploy/providers/local/`](providers/local/README.md) |
+| Deploy a trust to **Kubernetes** | [`deploy/providers/kubernetes/`](providers/kubernetes/README.md) |
+
+Every compose file in **this** directory is Central-Hub-only — `flip-ui`, `flip-api`, `flip-db`, `pgadmin`,
+and the `fl-api-net-*` / `fl-server-net-*` FL server side. No trust service is defined here. The one place
+hub compose touches "trust" is **networking**: `compose.development.yml` declares
+`central-hub-trust-apis-network`, `trust-network-1/2` and `shared-net-1/2`, which the trust composes then
+join as `external: true`.
+
+Only **trusts** have more than one deployment target (AWS EC2, on-prem Ubuntu, Kubernetes), which is why
+`providers/` looks trust-heavy: the abstraction exists because trusts vary. The hub has exactly one
+supported production target — AWS ECS Fargate — so it needs no provider of its own. See
+[`providers/README.md`](providers/README.md) for the per-provider scope.
+
 ## Supported PostgreSQL Versions
 
 FLIP uses AWS RDS PostgreSQL with the following version support policy:

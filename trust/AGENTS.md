@@ -95,6 +95,7 @@ GHCR login from `~/.docker/config.json`.
 | File | Purpose |
 |------|---------|
 | `Makefile` | Trust stack orchestration (parameterized `up-trust KIT=<name>`) |
+| `deploy/README.md` | Compose file matrix, the `--project-directory` rule these files depend on, and the external networks they join |
 | `deploy/compose_trust.development.yml` | Dev Docker Compose (pulls repo-built services from GHCR by default via `pull_policy: always`; `BUILD=true` rebuilds from the `build:` block instead) |
 | `deploy/compose_trust.production.yml` | Prod Docker Compose (GHCR images; declares the `trust-local-{loki,grafana}-data` named volumes as defaults) |
 | `deploy/compose_trust.{env}.{flower\|nvflare}.yml` | FL backend variants |
