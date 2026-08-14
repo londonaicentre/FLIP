@@ -211,7 +211,26 @@ def validate_query(query: str) -> str:
         database, never the caller's original string.
 
     Raises:
-        HTTPException(400): When any of the rules above is violated.
+        HTTPException(400): When any of the rules above is violated, or when the validation
+            pass itself fails on an input shape it does not handle.
+    """
+    try:
+        return _validate_query_ast(query)
+    except HTTPException:
+        raise
+    except Exception as e:
+        # This function feeds adversarial input through a third-party parser; a shape the pass
+        # mishandles must fail closed as a clean 400, not escape as an unhandled 500. Escaping
+        # would also skip the re-emit at the end of the pass, so nothing is lost by rejecting.
+        logger.exception("Query validation crashed on an unexpected input shape")
+        raise _invalid_query("Could not validate query.") from e
+
+
+def _validate_query_ast(query: str) -> str:
+    """Single parse-validate-emit pass behind :func:`validate_query`.
+
+    Kept separate so the public wrapper can convert anything unexpected escaping this pass into
+    a fail-closed 400; the rule set is documented on :func:`validate_query`.
     """
     if len(query) > MAX_QUERY_LENGTH:
         raise _invalid_query(f"Query exceeds maximum length of {MAX_QUERY_LENGTH} characters.")
@@ -271,24 +290,32 @@ def validate_query(query: str) -> str:
             # this check would step straight over it and admit a qualified non-omop reference.
             schema_node = table.args.get("db")
             if schema_node is not None:
-                # exp.Table.args["db"] is always None or an Identifier in sqlglot's schema, so
-                # .name is safe here. Compare it as-is: ``normalize_identifiers`` above already
-                # folded it the way Postgres does. Lowering here instead would re-open the same
-                # gap the normalisation closes — ``"OMOP".person`` is a quoted identifier Postgres
-                # keeps distinct from ``omop``, so a lowered comparison calls it allowed and then
-                # emits it untouched, approving one schema while the engine reads another.
+                # ``catalog`` holds the leading part of a three-part db.schema.table reference,
+                # which the schema check below does not see — ``otherdb.omop.person`` has db=omop
+                # and passes it. Postgres has no cross-database references, so this can only be an
+                # attempt to confuse the check; reject it rather than emit it. Checked first
+                # because ``otherdb..person`` parses with catalog=otherdb and an *empty* ``db``,
+                # and this is the rejection that actually describes that shape.
+                if table.args.get("catalog") is not None:
+                    raise _invalid_query("Cross-database table references are not allowed.")
+
+                # ``db`` is usually an Identifier, but not always: sqlglot hands back a bare
+                # ``str`` for degenerate shapes such as the empty schema slot above, so reading
+                # ``.name`` unguarded used to escape as an AttributeError. Reject anything that
+                # is not a plain Identifier outright.
+                if not isinstance(schema_node, exp.Identifier):
+                    raise _invalid_query("Malformed table reference.")
+
+                # Compare the name as-is: ``normalize_identifiers`` above already folded it the
+                # way Postgres does. Lowering here instead would re-open the same gap the
+                # normalisation closes — ``"OMOP".person`` is a quoted identifier Postgres keeps
+                # distinct from ``omop``, so a lowered comparison calls it allowed and then emits
+                # it untouched, approving one schema while the engine reads another.
                 schema_name = schema_node.name
                 if schema_name != ALLOWED_SCHEMA:
                     raise _invalid_query(
                         f"Schema '{schema_name}' is not accessible. Only the '{ALLOWED_SCHEMA}' schema is allowed."
                     )
-
-                # ``catalog`` holds the leading part of a three-part db.schema.table reference,
-                # which the schema check above does not see — ``otherdb.omop.person`` has db=omop
-                # and passes it. Postgres has no cross-database references, so this can only be an
-                # attempt to confuse the check; reject it rather than emit it.
-                if table.args.get("catalog") is not None:
-                    raise _invalid_query("Cross-database table references are not allowed.")
 
                 # An empty name here is an *omop*-qualified table-valued function
                 # (``FROM omop.pg_ls_dir('/')``): it passes the schema check by construction, and

@@ -615,6 +615,33 @@ def test_validate_query_rejects_cross_database_references():
         validate_query("SELECT * FROM otherdb.omop.person")
 
 
+def test_validate_query_rejects_empty_schema_slot_cleanly():
+    """``otherdb..person`` parses with catalog=otherdb and a bare-``str`` empty ``db``.
+
+    Reading ``.name`` on that ``str`` used to raise AttributeError — an unhandled exception
+    from the security validator, surfaced as a 500. The catalog check runs first now, so the
+    shape gets the rejection that actually describes it.
+    """
+    with pytest.raises(HTTPException, match="Cross-database table references are not allowed"):
+        validate_query("SELECT * FROM otherdb..person")
+
+
+def test_validate_query_fails_closed_when_the_validator_crashes(monkeypatch):
+    """Any non-HTTPException escaping the validation pass must become a clean 400.
+
+    The validator feeds adversarial input through a third-party parser; a shape it mishandles
+    must reject in-hand rather than surface as a 500. Escaping would also skip the re-emit at
+    the end of the pass, so failing closed here loses nothing.
+    """
+
+    def _boom(*args, **kwargs):
+        raise RuntimeError("parser surprise")
+
+    monkeypatch.setattr("data_access_api.services.cohort.normalize_identifiers", _boom)
+    with pytest.raises(HTTPException, match="Could not validate query"):
+        validate_query("SELECT * FROM omop.person")
+
+
 @pytest.mark.parametrize(
     "query",
     [
