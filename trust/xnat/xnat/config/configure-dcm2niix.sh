@@ -189,38 +189,23 @@ xnat_curl -X PUT "$XNAT_URL/xapi/events/prefs" \
 # controlled by the dicom_to_nifti flag. This ensures dcm2niix only auto-triggers
 # for projects that have opted in to DICOM-to-NIfTI conversion.
 
-# Clean up this command's own legacy SITE-WIDE subscriptions. Earlier versions of this script
-# created one; dcm2niix subscriptions are now per-project, made by imaging-api from the
-# project's dicom_to_nifti flag, so a site-wide one is stale and would double-trigger.
+# This script deliberately DELETES NO EVENT SUBSCRIPTIONS. Do not add a cleanup step here.
 #
-# Scoped to dcm2niix by name. It previously deleted EVERY site-wide subscription it found,
-# which silently removed anything else registered on the site — an operator's own
-# subscription, or the export_mask one from configure-export-mask.sh — with no indication
-# that it had happened. Both historical spellings are matched: the retired site-wide JSON
-# used "DICOM-NifTi Conversion", imaging-api uses "DICOM-NIfTI Conversion".
+# It used to carry one, to remove the site-wide subscription that earlier versions of this
+# script created. That subscription stopped being created in 88adb78b (2026-03-24), when
+# dcm2niix moved to per-project subscriptions — so the cleanup had nothing legitimate left to
+# find, while remaining perfectly capable of deleting the wrong thing.
 #
-# The `project-ids` test is what actually distinguishes site-wide from per-project, and it is
-# load-bearing: XNAT does NOT echo a top-level `project-id` for imaging-api's per-project
-# subscriptions — the key is absent entirely, so `.["project-id"] == null` is true for them.
-# Verified against four live trusts: all 12 subscriptions present were per-project, and both
-# this filter without the project-ids test AND develop's unscoped version selected every one
-# of them. Re-running xnat-configure would have deleted every project's live DICOM->NIfTI
-# conversion, silently, leaving imports that never convert. Scoping by name alone did not help
-# because imaging-api's per-project name is one of the two names matched here.
+# And it did. XNAT does not echo a top-level `project-id` for imaging-api's per-project
+# subscriptions (the key is absent entirely), and imaging-api names them "DICOM-NIfTI
+# Conversion" — one of the two names the cleanup matched. So both of its tests for "is this the
+# old site-wide one?" answered yes for live, in-use subscriptions. Checked against four running
+# trusts: it selected 12 of 12, every one of them a project's live conversion rule, and not one
+# genuine site-wide leftover among them. Deleting one is silent — imports keep succeeding and
+# simply never convert, surfacing much later as training with no data.
 #
-# A genuinely site-wide subscription carries no project scope: the retired dcm2niix_event.json
-# had no `project-ids` key at all, which `// []` normalises to empty.
-echo "Cleaning up legacy site-wide dcm2niix event subscriptions..."
-SUBS=$(xnat_curl "$XNAT_URL/xapi/events/subscriptions")
-SITE_SUB_IDS=$(echo "$SUBS" | jq -r \
-  --argjson names '["DICOM-NifTi Conversion","DICOM-NIfTI Conversion"]' \
-  '.[] | select(.["project-id"] == null or .["project-id"] == "")
-       | select((.["event-filter"]["project-ids"] // []) | length == 0)
-       | select(.name as $n | $names | index($n)) | .id')
-for SUB_ID in $SITE_SUB_IDS; do
-  echo "Deleting site-wide subscription $SUB_ID..."
-  xnat_curl -X DELETE "$XNAT_URL/xapi/events/subscription/$SUB_ID" >/dev/null
-done
+# Removed rather than repaired: a cleanup for a thing nothing creates can only ever misfire.
+# Pinned by trust/xnat/tests/test_dcm2niix_subscription_cleanup.py.
 
 # ----------------------------------------------------------------
 # VALIDATION

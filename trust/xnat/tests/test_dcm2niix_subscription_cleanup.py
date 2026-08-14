@@ -10,215 +10,108 @@
 # limitations under the License.
 #
 """
-Behavioural tests for ``configure-dcm2niix.sh``'s legacy-subscription cleanup.
+``configure-dcm2niix.sh`` must never delete an event subscription.
 
-The cleanup deletes *site-wide* dcm2niix subscriptions left by earlier versions of
-the script. dcm2niix subscriptions are now **per-project**, created by imaging-api
-from the project's ``dicom_to_nifti`` flag, and deleting one of those silently
-stops DICOM->NIfTI conversion for that project: imports keep succeeding and simply
-never produce NIfTI. Nothing surfaces in the UI.
+dcm2niix subscriptions are per-project, created by imaging-api from the project's
+``dicom_to_nifti`` flag. Deleting one silently stops DICOM->NIfTI conversion for
+that project: imports keep succeeding and simply never convert, which surfaces
+much later as training with no data, pointing nowhere near the cause.
 
-Telling the two apart is subtler than it looks, which is why this is pinned:
+The script used to carry a cleanup step for the site-wide subscription that older
+versions of it created. That subscription stopped being created in 88adb78b
+(2026-03-24), so the cleanup had nothing legitimate left to find — but it could
+still match live per-project subscriptions, because:
 
-- XNAT does **not** echo a top-level ``project-id`` for imaging-api's per-project
-  subscriptions. The key is absent entirely, so ``.["project-id"] == null`` is true
-  for them as well as for genuinely site-wide ones.
-- Scoping by name does not separate them either: imaging-api names its per-project
-  subscriptions ``DICOM-NIfTI Conversion``, one of the two names the cleanup matches.
+- XNAT does not echo a top-level ``project-id`` for them (the key is absent), so
+  any "is this site-wide?" test based on that field says yes; and
+- imaging-api names them ``DICOM-NIfTI Conversion``, which was one of the names the
+  cleanup matched.
 
-So the only reliable discriminator is the project scope inside ``event-filter``.
-Verified against four live trusts: every subscription present was per-project, and
-a filter without the ``project-ids`` test selected all 12 of them for deletion.
+Checked against four running trusts: it selected 12 of 12 subscriptions, all of them
+live per-project rules, with no genuine leftover among them. The step was removed
+rather than repaired — a cleanup for something nothing creates can only misfire.
 
-The filter is extracted from the script rather than restated, so a change to the
-script that drops the ``project-ids`` test fails here instead of on a real trust.
+This test exists so it does not come back. It reads the script rather than any
+snapshot of it, so re-adding a delete in any form fails here.
 """
 
 from __future__ import annotations
 
-import json
 import re
-import shutil
-import subprocess
 from pathlib import Path
-
-import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 CONFIGURE_DCM2NIIX = REPO_ROOT / "trust/xnat/xnat/config/configure-dcm2niix.sh"
+CONFIGURE_EXPORT_MASK = REPO_ROOT / "trust/xnat/xnat/config/configure-export-mask.sh"
 
-# The two historical spellings the cleanup matches: the retired site-wide JSON used
-# "DICOM-NifTi Conversion", imaging-api uses "DICOM-NIfTI Conversion".
-NAMES = ["DICOM-NifTi Conversion", "DICOM-NIfTI Conversion"]
-
-# jq is not a test-only convenience — configure-dcm2niix.sh itself shells out to it,
-# so a machine that cannot run jq cannot run the script under test either. Fail
-# loudly rather than skip: a silently skipped guard test is indistinguishable from
-# a passing one.
-JQ = shutil.which("jq")
-
-
-def _extract_cleanup_filter() -> str:
-    """Pull the jq program out of the ``SITE_SUB_IDS=`` assignment in the script.
-
-    Returns:
-        The jq filter source, exactly as the script passes it.
-    """
-    source = CONFIGURE_DCM2NIIX.read_text()
-    match = re.search(
-        r"SITE_SUB_IDS=\$\(echo \"\$SUBS\" \| jq -r \\\n"
-        r"\s*--argjson names '.*?' \\\n"
-        r"\s*'(?P<filter>.*?)'\)",
-        source,
-        re.DOTALL,
-    )
-    assert match, (
-        "Could not locate the SITE_SUB_IDS jq filter in configure-dcm2niix.sh. "
-        "If the assignment was reformatted, update this extractor — do not delete "
-        "the test: it is the only thing standing between a filter change and every "
-        "project's conversion subscription."
-    )
-    return match.group("filter")
+# Matches a DELETE aimed at the event-subscription endpoint, however it is spelled:
+# `-X DELETE "$XNAT_URL/xapi/events/subscription/$ID"`, `--request DELETE …`, or with
+# the URL built up in a variable first.
+_SUBSCRIPTION_DELETE = re.compile(
+    r"(-X\s+DELETE|--request\s+DELETE)(?!.*\n?.*xapi/commands)", re.IGNORECASE
+)
+_SUBSCRIPTION_ENDPOINT = re.compile(r"xapi/events/subscription", re.IGNORECASE)
 
 
-def _selected_ids(subscriptions: list[dict]) -> list[int]:
-    """Run the script's own cleanup filter over a subscription listing.
+def _strip_comments(script: str) -> str:
+    """Drop comment lines so prose about deletion does not trip the scan.
 
     Args:
-        subscriptions: The payload XNAT's ``/xapi/events/subscriptions`` returns.
+        script: Full shell-script source.
 
     Returns:
-        The subscription ids the cleanup would DELETE.
+        The source with whole-line comments removed.
     """
-    assert JQ, "jq is required (configure-dcm2niix.sh itself depends on it)"
-    result = subprocess.run(
-        [JQ, "-r", "--argjson", "names", json.dumps(NAMES), _extract_cleanup_filter()],
-        input=json.dumps(subscriptions),
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-    assert result.returncode == 0, f"jq failed: {result.stderr}"
-    return [int(line) for line in result.stdout.split() if line.strip()]
+    return "\n".join(line for line in script.splitlines() if not line.lstrip().startswith("#"))
 
 
-def _per_project_subscription(sub_id: int, project_id: str) -> dict:
-    """Build a subscription in the exact shape XNAT returns for a per-project one.
+def test_dcm2niix_script_deletes_no_event_subscription() -> None:
+    """The guard: no executable line may DELETE an event subscription."""
+    code = _strip_comments(CONFIGURE_DCM2NIIX.read_text())
 
-    Captured from four live trusts: no top-level ``project-id`` key at all, and the
-    project scope carried in ``event-filter.project-ids``.
-
-    Args:
-        sub_id: Subscription id.
-        project_id: The FLIP project UUID the subscription is scoped to.
-
-    Returns:
-        The subscription dict.
-    """
-    return {
-        "id": sub_id,
-        "name": "DICOM-NIfTI Conversion",
-        "active": True,
-        "event-filter": {
-            "event-type": "org.nrg.xnat.eventservice.events.ScanEvent",
-            "status": "CREATED",
-            "project-ids": [project_id],
-        },
-    }
-
-
-def test_per_project_subscriptions_are_never_deleted() -> None:
-    """The live shape — no ``project-id`` key, project scope in ``event-filter``."""
-    subscriptions = [
-        _per_project_subscription(1, "baf8ac77-51ec-41d6-bd1c-f2fbd5e4fe2c"),
-        _per_project_subscription(2, "9d8d2bba-5be2-4fb4-88a5-49d020070282"),
-        _per_project_subscription(3, "2209de0f-f0c9-448f-bdc6-632bdbe15a33"),
+    offending = [
+        line
+        for line in code.splitlines()
+        if _SUBSCRIPTION_ENDPOINT.search(line) and re.search(r"DELETE", line, re.IGNORECASE)
     ]
 
-    assert _selected_ids(subscriptions) == [], (
-        "The cleanup selected per-project subscriptions. On a populated trust this "
-        "deletes every project's DICOM->NIfTI conversion; imports then succeed and "
-        "silently never convert."
+    assert not offending, (
+        "configure-dcm2niix.sh deletes an event subscription again:\n"
+        + "\n".join(f"  {line.strip()}" for line in offending)
+        + "\n\nPer-project subscriptions are indistinguishable from the retired site-wide one "
+        "by name or by project-id (XNAT omits that key for them), so any such delete removes "
+        "live conversion rules. Nothing has created a site-wide subscription since 2026-03-24."
     )
 
 
-def test_legacy_site_wide_subscription_is_still_deleted() -> None:
-    """The thing the cleanup exists for: the retired site-wide subscription.
+def test_dcm2niix_script_does_not_enumerate_subscriptions_for_deletion() -> None:
+    """Belt and braces: it should not even fetch the subscription list.
 
-    Shaped as the retired ``dcm2niix_event.json`` was — ``project-id`` an empty
-    string and no ``project-ids`` key anywhere in ``event-filter``.
+    The removed cleanup started by GETting ``/xapi/events/subscriptions``. Nothing
+    else in this script has any reason to, so a reappearing read is the first step
+    of a reappearing delete and worth catching on its own.
     """
-    subscriptions = [
-        {
-            "id": 99,
-            "name": "DICOM-NifTi Conversion",
-            "project-id": "",
-            "event-filter": {
-                "event-type": "org.nrg.xnat.eventservice.events.ScanEvent",
-                "status": "CREATED",
-                "payload-filter": '(@.resources.length() > 0 && "DICOM" in @.resources[*].label)',
-            },
-        }
-    ]
+    code = _strip_comments(CONFIGURE_DCM2NIIX.read_text())
 
-    assert _selected_ids(subscriptions) == [99]
-
-
-def test_foreign_site_wide_subscriptions_are_left_alone() -> None:
-    """Name scoping still holds: only dcm2niix's own subscriptions are cleaned up.
-
-    Covers the export_mask subscription from ``configure-export-mask.sh`` and an
-    operator's own — both site-wide, neither this script's business.
-    """
-    subscriptions = [
-        {
-            "id": 10,
-            "name": "Convert exported OHIF masks to NIfTI",
-            "project-id": "",
-            "event-filter": {"event-type": "org.nrg.xnat.eventservice.events.ImageAssessorEvent"},
-        },
-        {
-            "id": 11,
-            "name": "Operator's own thing",
-            "project-id": "",
-            "event-filter": {"event-type": "org.nrg.xnat.eventservice.events.ScanEvent"},
-        },
-    ]
-
-    assert _selected_ids(subscriptions) == []
-
-
-def test_mixed_listing_deletes_only_the_legacy_site_wide_one() -> None:
-    """The realistic re-run case: a populated trust that also carries the legacy row."""
-    subscriptions = [
-        _per_project_subscription(1, "b2103a25-2452-464a-8b8d-a3d33b0c5522"),
-        {
-            "id": 99,
-            "name": "DICOM-NifTi Conversion",
-            "project-id": "",
-            "event-filter": {"event-type": "org.nrg.xnat.eventservice.events.ScanEvent"},
-        },
-        _per_project_subscription(2, "4beda198-1e20-46e2-89a8-2a7621ba4c70"),
-        {
-            "id": 10,
-            "name": "Convert exported OHIF masks to NIfTI",
-            "project-id": "",
-            "event-filter": {"event-type": "org.nrg.xnat.eventservice.events.ImageAssessorEvent"},
-        },
-    ]
-
-    assert _selected_ids(subscriptions) == [99]
-
-
-@pytest.mark.parametrize("missing", ["project-ids-test"])
-def test_filter_still_contains_the_project_scope_test(missing: str) -> None:
-    """Guard the extractor itself: the filter must test ``project-ids``.
-
-    If the assignment is reformatted such that the extractor silently matches a
-    filter without the project-scope test, the behavioural tests above would still
-    pass only by luck. Pin the discriminator explicitly.
-    """
-    assert "project-ids" in _extract_cleanup_filter(), (
-        f"The cleanup filter no longer tests {missing}; per-project subscriptions "
-        "are indistinguishable from site-wide ones without it."
+    assert "xapi/events/subscriptions" not in code, (
+        "configure-dcm2niix.sh reads the event-subscription list again. This script "
+        "creates and enables a command; it has no business enumerating subscriptions."
     )
+
+
+def test_export_mask_script_still_manages_only_its_own_subscription() -> None:
+    """The contrast case — deleting is fine when it is your own, matched by name.
+
+    ``configure-export-mask.sh`` legitimately replaces its own subscription so a
+    re-run does not accumulate duplicates. That delete is name-matched to the
+    export_mask subscription it just created, never a blanket sweep, and this test
+    documents the difference rather than forbidding deletion outright.
+    """
+    code = _strip_comments(CONFIGURE_EXPORT_MASK.read_text())
+
+    assert "EXPORT_MASK_SUBSCRIPTION_NAME" in code, (
+        "configure-export-mask.sh no longer scopes its subscription delete by name; "
+        "an unscoped delete there would sweep up per-project dcm2niix subscriptions."
+    )
+    deletes = [line for line in code.splitlines() if _SUBSCRIPTION_ENDPOINT.search(line) and "DELETE" in line]
+    assert deletes, "configure-export-mask.sh should still replace its own subscription on re-run."
