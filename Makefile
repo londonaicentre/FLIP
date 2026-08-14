@@ -314,7 +314,7 @@ debug-off-all:
 	$(MAKE) -C trust debug-off
 
 create-networks-centralhub:
-	@{ docker network inspect central-hub-network >/dev/null 2>&1 || docker network create --driver bridge central-hub-network || true; }
+	@{ docker network inspect central-hub-network >/dev/null 2>&1 || docker network create --driver bridge central-hub-network >/dev/null || docker network inspect central-hub-network >/dev/null 2>&1 || { echo "❌ Could not create Docker network central-hub-network — see the daemon error above."; exit 1; }; }
 
 create-networks: create-networks-centralhub
 	$(MAKE) -C trust create-networks
@@ -407,7 +407,7 @@ lock:
 # Useful for sanity-checking PRs without manually clicking through the UI.
 # See flip-api/Makefile for overrides (MODEL_FILES_DIR, QUERY_FILE, EXTRA_ARGS).
 e2e_smoke:
-	$(MAKE) -C flip-api e2e_smoke $(if $(FL_BACKEND),FL_BACKEND=$(FL_BACKEND)) $(if $(MODEL_FILES_DIR),MODEL_FILES_DIR=$(MODEL_FILES_DIR)) $(if $(QUERY_FILE),QUERY_FILE=$(QUERY_FILE)) $(if $(EXTRA_ARGS),EXTRA_ARGS="$(EXTRA_ARGS)")
+	$(MAKE) -C flip-api e2e_smoke $(if $(FL_BACKEND),FL_BACKEND=$(FL_BACKEND)) $(if $(MODEL_FILES_DIR),MODEL_FILES_DIR="$(abspath $(MODEL_FILES_DIR))") $(if $(QUERY_FILE),QUERY_FILE="$(abspath $(QUERY_FILE))") $(if $(EXTRA_ARGS),EXTRA_ARGS="$(EXTRA_ARGS)")
 
 # Record the end-to-end demo video against the running dev stack: six
 # Dockerised Cypress segments over the live UI (real Cognito, trusts, S3,
