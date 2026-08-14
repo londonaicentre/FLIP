@@ -12,6 +12,7 @@
 -->
 
 <template>
+    <DemoBanner v-if="isDemoBuild" />
     <AiRouteProgress />
     <router-view />
     <AiSnackbar />
@@ -26,12 +27,20 @@ import AiRouteProgress from "@/components/AiRouteProgress/AiRouteProgress.vue";
 import AiSnackbar from "@/components/AiSnackbar/AiSnackbar.vue";
 import useThemeColorMeta from "@/composables/useThemeColorMeta";
 
+import DemoBanner from "./demo/DemoBanner.vue";
 import { getHealth } from "./services/health-service";
 import { getSiteDetails } from "./services/site-service";
 import { getTrusts } from "./services/trust-service";
 import { useHealthcheckStore } from "./store/healthcheck";
 import { useSiteDetailsStore } from "./store/siteDetailsStore";
 import { useTrustStore } from "./store/trusts";
+
+// The literal, not the cross-module `IS_DEMO` — same tree-shaking contract as
+// src/main.ts. DemoBanner statically imports mocks/demo/ark-plus-register.ts
+// for DEMO_CAPTURE_DATE, so a gate rolldown cannot fold keeps the demo identity
+// constants in the public production bundle. Enforced by
+// scripts/assert-no-demo-artefacts.mjs.
+const isDemoBuild = import.meta.env.VITE_DEMO === "true";
 
 const healthStore = useHealthcheckStore();
 const trustStore = useTrustStore();

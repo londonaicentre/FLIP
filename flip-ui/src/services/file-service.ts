@@ -16,6 +16,7 @@
 
 import { type AxiosResponse, isAxiosError } from "axios";
 
+import { IS_DEMO } from "@/demo/bootstrap";
 import { FileUploadStatus } from "@/interfaces/model/types";
 
 import { _http } from "./api";
@@ -69,6 +70,23 @@ export const getModelFileDownloadUrl = async (url: string): Promise<IPresignedDo
  * `getModelFileDownloadUrl(...).url` instead.
  */
 export const downloadModelFile = async (url: string): Promise<Blob> => {
+    // The public demo has no S3 and no network: the two-step presigned flow
+    // cannot work there twice over. The demo API returns the file body itself
+    // rather than a `{url, fileName}` envelope, so the presign step yielded
+    // `undefined` and `fetch(undefined)` threw on every poll tick — leaving both
+    // evaluation models silently falling back to jobType "standard" (FLIP#794
+    // review); and even a well-formed URL would be blocked by the demo's
+    // `connect-src 'none'` CSP, which is what makes "zero egress" true.
+    // Requesting the body through the shared axios client instead keeps it
+    // inside Mirage's XHR interception, where the response interceptor in
+    // services/api.ts wraps the string body back into a Blob so this function's
+    // contract is identical in both builds.
+    if (IS_DEMO) {
+        const demoResponse = await _http.get<Blob>(url, { responseType: "blob" });
+
+        return demoResponse.data;
+    }
+
     const presigned = await getModelFileDownloadUrl(url);
     const response = await fetch(presigned.url);
 
