@@ -29,6 +29,8 @@ import type { Server } from "miragejs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { DEMO_USER } from "../demo/ark-plus-register";
+import cohortP1 from "../demo/data/cohort.json";
+import cohortP2 from "../demo/data/p2_cohort.json";
 import p2Step1 from "../demo/data/p2_m1_step.json";
 import p2Step2 from "../demo/data/p2_m2_step.json";
 import p2Project from "../demo/data/p2_project.json";
@@ -36,7 +38,17 @@ import project from "../demo/data/project.json";
 import stepModel from "../demo/data/step_model.json";
 import { makeDemoServer } from "../demo-server";
 
-interface IProjectFixture { id: string; query: { id: string } }
+interface IProjectFixture {
+    id: string;
+    name: string;
+    approvedTrusts: { id: string; code: string }[];
+    query: { id: string; queriedTrustIds: string[]; respondedTrustIds: string[]; totalCohort: number };
+}
+interface ICohortFixture {
+    recordCount: number;
+    trustsResults: { name: string; results: { trustName: string; trustId: string }[] }[];
+    trustRecordCounts: Record<string, number>;
+}
 interface IStepFixture { modelId: string }
 
 const p1 = project as unknown as IProjectFixture;
@@ -223,6 +235,7 @@ describe("makeDemoServer route coverage", () => {
             expect(pretender.passthroughRequests).toHaveLength(0);
         });
     });
+
     // Mirage's `environment: "production"` logs every intercepted request and
     // its FULL response body to the console, which on a public exhibit means
     // the browser console dumps the register — internal OMOP cohort SQL and
@@ -255,5 +268,42 @@ describe("makeDemoServer route coverage", () => {
 
             expect(mirage.shouldLog()).toBe(false);
         });
+    });
+});
+
+// Sanitisation rule 5 in mocks/demo/ark-plus-register.ts. flip-api broadcasts
+// every cohort query to EVERY registered trust, so a raw capture carries
+// trusts that never joined the project — publishing an uninvolved node's
+// per-finding record counts, and inflating the project's headline cohort
+// beyond what its own approved trusts contributed (FLIP#794 review).
+// Documented in the register; enforced here, because the failure mode is a
+// re-capture silently reintroducing it.
+describe.each([
+    ["fine-tuning", project as unknown as IProjectFixture, cohortP1 as unknown as ICohortFixture],
+    ["evaluation", p2Project as unknown as IProjectFixture, cohortP2 as unknown as ICohortFixture]
+])("%s project: cohort names only participating trusts", (_label, proj, cohort) => {
+    const approved = new Set(proj.approvedTrusts.map(t => t.id));
+
+    it("names no non-participating trust anywhere in the query or its results", () => {
+        for (const group of cohort.trustsResults) {
+            for (const row of group.results) {
+                expect(approved, `${group.name} → ${row.trustName}`).toContain(row.trustId);
+            }
+        }
+
+        for (const trustId of Object.keys(cohort.trustRecordCounts)) {
+            expect(approved, `trustRecordCounts → ${trustId}`).toContain(trustId);
+        }
+
+        for (const trustId of [...proj.query.queriedTrustIds, ...proj.query.respondedTrustIds]) {
+            expect(approved, `query trust ids → ${trustId}`).toContain(trustId);
+        }
+    });
+
+    it("totals add up from the per-trust counts that remain", () => {
+        const summed = Object.values(cohort.trustRecordCounts).reduce((a, b) => a + b, 0);
+
+        expect(cohort.recordCount).toBe(summed);
+        expect(proj.query.totalCohort).toBe(summed);
     });
 });

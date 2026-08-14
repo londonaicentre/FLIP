@@ -36,12 +36,36 @@
  *      (FLIP#794 review). These ids are only opaque join keys inside the mock,
  *      so any distinct values work; keep them obviously synthetic. The demo
  *      viewer is …0001, the evaluation project's owner …0002.
+ *   5. every trust that took no part in a recorded project — i.e. absent from
+ *      that project's `approvedTrusts` — removed from its cohort query and
+ *      cohort results, with the derived totals (`recordCount`,
+ *      `query.totalCohort`) recomputed from what remains.
+ *
+ *      This is not cosmetic. flip-api broadcasts every cohort query to EVERY
+ *      registered trust (`select(Trust)` with no filter, see
+ *      cohort_services/submit_cohort_query.py) — answering one is a discovery
+ *      step that happens before trust approval and implies no involvement in
+ *      the project. The evaluation capture therefore carried AI Centre Private,
+ *      an internal node approved for neither demo project: it was registered on
+ *      the hub between the two captures, which is the only reason the
+ *      fine-tuning project (queried 6 Jul) has two trusts and the evaluation
+ *      project (queried 17 Jul) had three. Publishing that put a private node's
+ *      per-finding record counts on an unauthenticated page, and made a project
+ *      named "(2-trust)" with two approved trusts advertise a cohort of 1,414
+ *      that only added up by counting the non-participant. It is now 946
+ *      (FLIP#794 review).
+ *
+ *      Scoped to the project-level record. The estate-wide roster (trusts.json,
+ *      trust_health.json) still lists every registered trust, because
+ *      Connection Status is deliberately an estate view rather than a
+ *      project-scoped one, and reporting it truthfully is the point of that
+ *      page.
  *
  * Institution names (King's College London, Bangkok Dusit Medical Services,
  * Guy's and St Thomas' Trust, AI Centre Private) are shown verbatim by
  * decision of the project owner.
  *
- * Re-capturing the register means re-applying all four rules. Project and model
+ * Re-capturing the register means re-applying all five rules. Project and model
  * ids are deliberately NOT scrubbed: they are public URL path segments.
  */
 

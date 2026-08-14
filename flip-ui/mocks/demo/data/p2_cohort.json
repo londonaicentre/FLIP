@@ -1,5 +1,5 @@
 {
-  "recordCount": 1414,
+  "recordCount": 946,
   "trustsResults": [
     {
       "name": "Counts",
@@ -47,52 +47,6 @@
             {
               "value": "Lungs in normal arrangement",
               "count": 478
-            }
-          ]
-        },
-        {
-          "trustName": "AI Centre Private",
-          "trustId": "d63b1455-5a58-47c9-b549-957fca17b061",
-          "data": [
-            {
-              "value": "accession\nid",
-              "count": 468
-            },
-            {
-              "value": "Image date",
-              "count": 468
-            },
-            {
-              "value": "Modality",
-              "count": 468
-            },
-            {
-              "value": "Effusion",
-              "count": 468
-            },
-            {
-              "value": "Edema",
-              "count": 468
-            },
-            {
-              "value": "Consolidation",
-              "count": 468
-            },
-            {
-              "value": "Infiltration",
-              "count": 468
-            },
-            {
-              "value": "Lung Nodule or Mass",
-              "count": 468
-            },
-            {
-              "value": "Pneumothorax",
-              "count": 468
-            },
-            {
-              "value": "Lungs in normal arrangement",
-              "count": 468
             }
           ]
         },
@@ -194,52 +148,6 @@
           ]
         },
         {
-          "trustName": "AI Centre Private",
-          "trustId": "d63b1455-5a58-47c9-b549-957fca17b061",
-          "data": [
-            {
-              "value": "accession\nid",
-              "count": 0
-            },
-            {
-              "value": "Image date",
-              "count": 0
-            },
-            {
-              "value": "Modality",
-              "count": 0
-            },
-            {
-              "value": "Effusion",
-              "count": 0
-            },
-            {
-              "value": "Edema",
-              "count": 0
-            },
-            {
-              "value": "Consolidation",
-              "count": 0
-            },
-            {
-              "value": "Infiltration",
-              "count": 0
-            },
-            {
-              "value": "Lung Nodule or Mass",
-              "count": 0
-            },
-            {
-              "value": "Pneumothorax",
-              "count": 0
-            },
-            {
-              "value": "Lungs in normal arrangement",
-              "count": 0
-            }
-          ]
-        },
-        {
           "trustName": "Bangkok Dusit Medical Services",
           "trustId": "f43abcd0-be77-4dc8-89c6-4b8aa98b6183",
           "data": [
@@ -290,7 +198,6 @@
   ],
   "trustRecordCounts": {
     "16f5b300-8ff4-4f1a-9a60-1989b3b54489": 478,
-    "d63b1455-5a58-47c9-b549-957fca17b061": 468,
     "f43abcd0-be77-4dc8-89c6-4b8aa98b6183": 468
   },
   "trustErrors": {},
