@@ -47,9 +47,10 @@ This example of Flower uses a small MONAI UNet based on FLIP's implementation an
 
 ### Recommended: Docker Compose
 
-From the repository root:
+From the Flower service directory:
 
 ```bash
+cd fl-services/flower
 make build                # build the fl-base / superlink / supernode images
 make up                   # start fl-api, superlink, supernode-1, supernode-2
 ```
@@ -57,7 +58,7 @@ make up                   # start fl-api, superlink, supernode-1, supernode-2
 Then submit the run against the `fl-api` control plane:
 
 ```bash
-make submit APP=3d_spleen_segmentation
+make submit APP=3d_spleen_segmentation    # from fl-services/flower/
 ```
 
 The default stack publishes no host ports; `make submit` execs into the fl-api

@@ -780,7 +780,7 @@ def bundle_flower_application(model_id: UUID, job_type: str = DEFAULT_JOB_TYPE) 
 
 def verify_bundle_paths(
     *,
-    s3: "S3Client",
+    s3: S3Client,
     base_rel_paths: list[str],
     model_files: list[str],
     app_folders: set[str],

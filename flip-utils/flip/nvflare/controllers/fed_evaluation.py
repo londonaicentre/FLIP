@@ -48,17 +48,17 @@ class ModelEval(CrossSiteModelEval):
 
     def __init__(
         self,
-        task_check_period=0.5,
-        submit_model_timeout=600,
+        task_check_period: float = 0.5,
+        submit_model_timeout: int = 600,
         validation_timeout: int = 6000,
-        model_locator_id="",
-        formatter_id="",
-        submit_model_task_name=AppConstants.TASK_SUBMIT_MODEL,
-        evaluation_task_name=PTConstants.EvalTaskName,
-        cleanup_models=False,
-        participating_clients=None,
-        wait_for_clients_timeout=300,
-    ):
+        model_locator_id: str = "",
+        formatter_id: str = "",
+        submit_model_task_name: str = AppConstants.TASK_SUBMIT_MODEL,
+        evaluation_task_name: str = PTConstants.EvalTaskName,
+        cleanup_models: bool = False,
+        participating_clients: list[str] | None = None,
+        wait_for_clients_timeout: int = 300,
+    ) -> None:
         """Model-collection evaluation workflow.
 
         All arguments are validated and stored by the FLIP/stock base; the evaluation task is named
@@ -87,7 +87,7 @@ class ModelEval(CrossSiteModelEval):
         self._eval_results: dict = {}
         self._all_models_dxo = None
 
-    def start_controller(self, fl_ctx: FLContext):
+    def start_controller(self, fl_ctx: FLContext) -> None:
         engine = fl_ctx.get_engine()
         if not engine:
             self.system_panic("Engine not found. Workflow exiting.", fl_ctx)
@@ -136,7 +136,7 @@ class ModelEval(CrossSiteModelEval):
             self._client_models[c_name] = None
             self._eval_results[c_name] = {}
 
-    def control_flow(self, abort_signal: Signal, fl_ctx: FLContext):
+    def control_flow(self, abort_signal: Signal, fl_ctx: FLContext) -> None:
         try:
             engine = fl_ctx.get_engine()
             start_time = time.time()
@@ -256,7 +256,7 @@ class ModelEval(CrossSiteModelEval):
             self._eval_results[client_name] = os.path.join(self._eval_results_dir, client_name)
             self.log_info(fl_ctx, f"Client {client_name} sent results for validating model.")
 
-    def handle_event(self, event_type: str, fl_ctx: FLContext):
+    def handle_event(self, event_type: str, fl_ctx: FLContext) -> None:
         # Bypass stock CrossSiteModelEval.handle_event (it reports the unused, nested
         # self._val_results); run the base controller event handling, then report ModelEval's own
         # flat self._eval_results to the stats collector.
