@@ -11,61 +11,109 @@
     limitations under the License.
 -->
 
-# Evaluation of a model with FLIP
+# Client API model evaluation
 
-This job type is to test one or more models on different sites.
+## Overview
+
+This is the NVFLARE **Client API** evaluation job type (`JOB_TYPE=evaluation`). It evaluates
+a single uploaded model across every site and reports aggregate metrics. It replaced the retired
+Executor-based `evaluation` template, which paired the `RUN_EVALUATOR` executor with the bespoke
+`ModelEval` + `EvaluationPTModelLocator` (multi-model `COLLECTION`) server flow.
+
+Here the server reuses the same cross-site validation path as the
+[`standard`](../standard/README.md) training template:
+`InitEvaluation` → stock `GlobalModelEval` → `BroadcastTask` cleanup.
+Only the server-provided model is validated. The model is sourced
+by the single-model `EvaluationModelLocator` and broadcast to clients as one `FLModel`.
+
+The base configs (`app/config/config_fed_server.json`, `app/config/config_fed_client.json`) and
+`meta.json` are **recipe-generated** from `flip.nvflare.recipes.FlipEvalRecipe`. Do not hand-edit them —
+regenerate via `recipe.py` after any recipe change and commit the result.
 
 ## What's the logic?
 
-The evaluation pipeline loads the model weights in the server side, and then sends the models to every site.
-The custom-code `evaluator.py` is used to then obtain the metrics, which are saved under `evaluation_results.json`
-file in the server evaluation folder.
+1. `InitEvaluation` reports evaluation start to the Central Hub, runs the client image-cleanup task,
+   and validates that `config.json` declares the model(s) to evaluate.
+2. `GlobalModelEval` loads the uploaded checkpoint via `EvaluationModelLocator` and broadcasts it to
+   every site as a single `FLModel` (`validate` task).
+3. Each site runs the user's `evaluator.py` via `InProcessClientAPIExecutor`, using the NVFLARE Client
+   API `is_evaluate()` path (`flare.receive()` / `flare.send()`) to receive the model and return
+   **aggregate-only** metrics (`DataKind.METRICS`).
+4. `EvaluationJsonGenerator` collects the metrics into `evaluation_results.json` and every failed
+   `validate` task into `evaluation_failures.json`, and `PersistToS3AndCleanup` zips + uploads the
+   run directory to S3.
+
+There is **no `validator.py`** and no client model submission — the evaluator only scores the
+server-provided model.
+
+## Outputs
+
+Both files land in `evaluation_results/` inside the results zip.
+
+`evaluation_results.json` is keyed by data site, then by the validated model's name (`GlobalModelEval`
+sends one `validate` task per (model, client), so each model gets its own entry):
+
+```json
+{
+  "Trust_1": {
+    "SRV_arkplus_pretrained": { "auroc": 0.839 },
+    "SRV_arkplus_finetuned": { "auroc": 0.871 }
+  }
+}
+```
+
+`evaluation_failures.json` lists every `validate` task that did not return metrics. It is always
+written, so an empty list `[]` positively means "no task failed" rather than "this FLIP version
+didn't record them":
+
+```json
+[{ "model": "SRV_arkplus_pretrained", "client": "Trust_1", "return_code": "TASK_ABORTED" }]
+```
+
+When **every** `validate` task fails the model ends in `ERROR`, not `RESULTS_UPLOADED`. The results
+are still uploaded either way — the zip is what carries `evaluation_failures.json` and `error_log.txt`.
+A partial failure (some tasks succeeded) uploads the successful metrics and reports `RESULTS_UPLOADED`,
+with the failed tasks recorded in `evaluation_failures.json`.
 
 ## Execution sequence
 
 **Server — `config_fed_server.json` `workflows` (run in order):**
 
-1. `init_evaluation` — `flip.nvflare.controllers.InitEvaluation`
-2. `site_validate` — `flip.nvflare.controllers.ModelEval`
+1. `flip.nvflare.controllers.InitEvaluation`
+2. `nvflare.app_common.workflows.global_model_eval.GlobalModelEval`
+3. `flip.nvflare.controllers.BroadcastTask`
 
-**Client — `config_fed_client.json` `executors` (by task):**
+**Client — `config_fed_client.json` `executors`:**
 
-- `init_task`, `post_task` → `flip.nvflare.components.CleanupImages`
-- `evaluation` → `flip.nvflare.executors.RUN_EVALUATOR`
+- `init_task`, `post_validation` → `flip.nvflare.components.CleanupImages`
+- `validate` → `nvflare.app_common.executors.InProcessClientAPIExecutor`
+- Event handler: `ClientEventHandler`
 
 ## What does the user upload?
 
-The user uploads:
+The required files (see [`required_files.json`](./required_files.json)) are:
 
-- `evaluator.py`: this contains the testing pipeline. The method `execute` is called by the parent of this class,
-and retrieves a DXO with the metrics.
-- `models.py`: this contains the code to instance the model(s) that are to be tested.
-- [checkpoints]: any model has to have its checkpoint uploaded under `pt` format.
-- `transforms.py`: support file to define data transforms and other data related thing.
-- `config.json`: configuration for the model. The following field is required in this pipeline:
-  - `models`. For each element of this class, `checkpoint` and `path` are mandatory. Checkpoint is the name of the
-    pt file for this specific model. 'path' is the key to the function that defines this model in `models.py`
-    (in dictionary `model_paths`).
+- `evaluator.py` — the Client-API evaluation loop. Receive the global model (`flare.receive()`), score
+  it on the local cohort, and return aggregate metrics via `flare.send(FLModel(metrics=...))`.
+- `models.py` — defines the model; `models.get_model` is what the server persistor instantiates.
+- `config.json` — evaluation configuration consumed by the custom code (e.g. `num_classes`, the
+  `models` checkpoint mapping, the cohort `query`).
 
-  `evaluator.py` may return any JSON-serialisable metrics (for example a dict of floats and/or lists of floats);
-  they are saved verbatim into `evaluation_results.json`, keyed by data site (then by the model name your
-  evaluator returns), so there is no output schema to declare.
+Helper modules (e.g. `transforms.py`) and the model checkpoint are uploaded alongside these.
 
-  Every `validate` task that does not return metrics is recorded alongside it in
-  `evaluation_failures.json` as `{"model": ..., "client": ..., "return_code": ...}` (`model` is `null`
-  here — this job type sends all models in one task, so failures are per client). The file is always
-  written, so an empty list `[]` positively means no task failed. If **every** task fails, the model
-  ends in `ERROR` rather than `RESULTS_UPLOADED`; the results are still uploaded so the zip can carry
-  `evaluation_failures.json` and `error_log.txt`.
+## Regenerating the committed configs
 
-## Test it with the spleen MSD dataset
-
-The evaluation tutorial (`evaluation` job type) runs on the local NVFLARE simulator via:
+After any change to `FlipEvalRecipe` (in `flip-utils/flip/nvflare/recipes/`), regenerate the committed
+JSONs by running from the `flip-utils` venv:
 
 ```bash
-make -C fl-tutorials run-tutorial TUTORIAL=3d_spleen_segmentation_evaluation
+cd flip-utils && uv run --no-sync python - <<'PY'
+import sys, types, torch, runpy
+m = types.ModuleType("models"); m.get_model = lambda: torch.nn.Linear(1, 1); sys.modules["models"] = m
+sys.argv = ["recipe.py", "--output", "../fl-apps/nvflare/evaluation"]
+runpy.run_path("../fl-apps/nvflare/evaluation/recipe.py", run_name="__main__")
+PY
 ```
 
-Download the spleen MSD dataset first (see
-`fl-tutorials/nvflare/image_evaluation/3d_spleen_segmentation_evaluation/README.md`). This runs
-the code with a pre-trained U-Net network on the MSD dataset.
+Then commit all three updated files: `app/config/config_fed_server.json`,
+`app/config/config_fed_client.json`, and `meta.json`.

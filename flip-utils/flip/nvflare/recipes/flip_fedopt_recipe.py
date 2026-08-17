@@ -1,0 +1,99 @@
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Recipe for the FLIP FedOpt job type — server-side optimizer aggregation over client diffs.
+
+FedOpt (Reddi et al., "Adaptive Federated Optimization") replaces FedAvg's plain
+weight-replace with a **server-side optimizer step**: the aggregator averages the clients'
+``WEIGHT_DIFF`` updates directly (no reconstruction into full weights — FLIP's
+:class:`~flip.nvflare.controllers.ScatterAndGather` skips its DIFF→WEIGHTS conversion when the
+aggregator expects ``WEIGHT_DIFF``), and the shareable generator treats the averaged diff as a
+pseudo-gradient, applying it to the global model through a configurable ``torch.optim``
+optimizer (+ optional LR scheduler).
+
+The client contract is identical to the ``standard`` job type: a Client API ``trainer.py``
+that sends its update as ``FLModel(params=diff, params_type="DIFF")`` — every ``standard``
+tutorial app is FedOpt-compatible as-is.
+
+Defaults follow stock NVFLARE FedOpt (``fedopt_ctl`` / the official ``FedOptRecipe``): server
+SGD at ``lr=1.0`` with ``momentum=0.6`` and no LR scheduler, on a CPU-held copy of the model.
+(The retired hand-written template declared server Adam at ``lr=0.5`` — but its aggregation never
+actually ran due to the ScatterAndGather guard bug fixed alongside this recipe, and once live that
+setting destroys the global model in one step, so it was not carried forward.)
+"""
+
+from __future__ import annotations
+
+from nvflare.apis.dxo import DataKind
+
+from flip.nvflare.components import FlipFedOptShareableGenerator
+from flip.nvflare.recipes.flip_fedavg_recipe import FlipFedAvgRecipe
+
+_DEFAULT_OPTIMIZER_ARGS = {
+    "path": "torch.optim.SGD",
+    "args": {"lr": 1.0, "momentum": 0.6},
+    "config_type": "dict",
+}
+
+
+class FlipFedOptRecipe(FlipFedAvgRecipe):
+    """FLIP FedOpt recipe — :class:`FlipFedAvgRecipe` with a server-optimizer aggregation scheme.
+
+    Args:
+        optimizer_args: ``torch.optim`` component config for the server optimizer
+            (``{"path": ..., "args": {...}}``). Defaults to SGD at ``lr=1.0`` with
+            ``momentum=0.6`` (stock NVFLARE FedOpt).
+        lr_scheduler_args: Optional ``torch.optim.lr_scheduler`` component config for the server
+            optimizer's schedule. Defaults to ``None`` (no schedule).
+        device: Device the server-side model copy lives on for the optimizer step.
+        **kwargs: Everything :class:`FlipFedAvgRecipe` takes (rounds, timeouts, best-model
+            selection, DP filter, …) applies unchanged.
+    """
+
+    job_name = "flip_fedopt"
+
+    def __init__(
+        self,
+        *,
+        optimizer_args: dict | None = None,
+        lr_scheduler_args: dict | None = None,
+        device: str = "cpu",
+        **kwargs,
+    ):
+        # Set before super().__init__: the base constructor builds the FedJob, which calls the
+        # _make_shareable_generator hook below.
+        self.optimizer_args = optimizer_args or _DEFAULT_OPTIMIZER_ARGS
+        self.lr_scheduler_args = lr_scheduler_args
+        self.device = device
+        super().__init__(**kwargs)
+
+    def _make_shareable_generator(self) -> FlipFedOptShareableGenerator:
+        """Build the FedOpt generator, sourcing the model from the user's ``models.get_model``.
+
+        Returns:
+            FlipFedOptShareableGenerator: Applies the aggregated ``WEIGHT_DIFF`` to the global
+            model through the configured server optimizer.
+        """
+        return FlipFedOptShareableGenerator(
+            device=self.device,
+            source_model={"path": "models.get_model"},
+            optimizer_args=self.optimizer_args,
+            lr_scheduler_args=self.lr_scheduler_args,
+        )
+
+    def _aggregator_data_kind(self) -> DataKind:
+        """FedOpt aggregates the raw client diffs.
+
+        Returns:
+            DataKind: ``WEIGHT_DIFF`` — which also tells FLIP's ``ScatterAndGather`` to skip its
+            DIFF→WEIGHTS reconstruction.
+        """
+        return DataKind.WEIGHT_DIFF

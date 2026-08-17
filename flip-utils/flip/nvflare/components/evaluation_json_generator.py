@@ -38,7 +38,7 @@ class EvaluationJsonGenerator(ValidationJsonGenerator):
     **Results shape.** Each entry is keyed by data site, then by model name. Which controller drives
     the run decides where the model name comes from:
 
-    - ``GlobalModelEval`` (``evaluation_client_api``) sends one ``validate`` task per (model, client)
+    - ``GlobalModelEval`` (``evaluation``) sends one ``validate`` task per (model, client)
       and sets ``AppConstants.MODEL_OWNER``, so results nest under it. Keying on the client alone
       would let each model's metrics overwrite the previous model's (FLIP#754).
     - FLIP's own ``ModelEval`` (``evaluation``) sends every model in one task and sets no

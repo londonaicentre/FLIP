@@ -378,6 +378,8 @@ def test_bundle_nvflare_application_success(
     )
 
 
+# "evaluation_client_api" is the pre-rename alias kept for models created before the Client-API
+# templates took over the plain names (see fl_service.py).
 @pytest.mark.parametrize("job_type", ["evaluation", "evaluation_client_api"])
 @patch("flip_api.fl_services.services.fl_service.JobRequiredFiles.is_valid_job_type", return_value=True)
 @patch("flip_api.fl_services.services.fl_service.verify_bundle_paths")

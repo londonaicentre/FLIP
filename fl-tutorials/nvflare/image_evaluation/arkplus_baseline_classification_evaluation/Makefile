@@ -110,8 +110,8 @@ sim:
 
 # --- Tutorial-harness entrypoint ---
 # The shared harness (fl-tutorials/nvflare/Makefile) auto-discovers any dir with a .env.app and invokes
-# `make run`. The Client API variant has no legacy testing/ harness path, so `run` prepares the checkpoint
-# and delegates to `sim` (the recipe/simulator path via job.py).
+# `make run`, which prepares the checkpoint and delegates to `sim` (the recipe/simulator path
+# via job.py).
 run: prepare-checkpoint sim
 
 clean:

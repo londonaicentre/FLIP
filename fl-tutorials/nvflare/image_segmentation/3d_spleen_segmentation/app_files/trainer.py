@@ -9,396 +9,325 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import argparse
 import json
 import logging
-import os.path
 from pathlib import Path
 
 import nibabel as nib
 import numpy as np
+import nvflare.client as flare
+import pandas as pd
 import torch
 from flip import FLIP
-from flip.constants import PTConstants, ResourceType
-from flip.nvflare.metrics import send_metrics_value
-from flip.utils import get_model_weights_diff
+from flip.constants import ResourceType
 from models import get_model
 from monai.data import DataLoader, Dataset, decollate_batch
 from monai.losses import DiceCELoss
 from monai.metrics import DiceMetric
-from monai.transforms import Activations, AsDiscrete, Compose
-from nvflare.apis.dxo import DataKind, from_shareable
-from nvflare.apis.executor import Executor
-from nvflare.apis.fl_constant import ReservedKey, ReturnCode
-from nvflare.apis.fl_context import FLContext
-from nvflare.apis.shareable import Shareable, make_reply
-from nvflare.apis.signal import Signal
-from nvflare.app_common.abstract.model import make_model_learnable, model_learnable_to_dxo
-from nvflare.app_common.app_constant import AppConstants
-from nvflare.app_opt.pt.model_persistence_format_manager import PTModelPersistenceFormatManager
+from monai.transforms import AsDiscrete
+from nvflare.client.tracking import SummaryWriter
 from tqdm import tqdm
 from transforms import get_sliding_window_inferer, get_train_transforms, get_val_transforms
 
+logger = logging.getLogger(__name__)
 
-class FLIP_BASE(Executor):
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--project_id", type=str, default="")
+    return parser.parse_args()
+
+
+def load_query() -> str:
+    """Read the cohort query from the client app config.
+
+    NVFlare's TaskScriptRunner does a naive whitespace split on task_script_args,
+    so the SQL query (which can contain spaces) is plumbed via the top-level
+    ``query`` key in ``config/config_fed_client.json`` rather than as a CLI flag.
+    In dev/simulator mode this is ignored by ``flip.get_dataframe``.
     """
-    Shares common functionality for both trainer and validator (e.g. get_image_and_label_list)
+    client_cfg = Path(__file__).parent.parent / "config" / "config_fed_client.json"
+    if client_cfg.exists():
+        try:
+            return json.loads(client_cfg.read_text()).get("query", "")
+        except Exception:
+            return ""
+    return ""
+
+
+def load_config() -> dict:
+    """Load the user-supplied config.json that sits next to this script."""
+    config_path = Path(__file__).parent.resolve() / "config.json"
+    with open(config_path) as f:
+        return json.load(f)
+
+
+def build_datalist(flip: FLIP, dataframe: pd.DataFrame, project_id: str) -> list[dict[str, str]]:
+    """Walk every accession in the cohort and return the QC-passing image/label pairs.
+
+    Each converted ``input_*.nii.gz`` must have a sibling ``label_*.nii.gz`` (added
+    during the data-enrichment stage on the platform, or shipped with the dev dataset).
+
+    Args:
+        flip (FLIP): The FLIP client instance.
+        dataframe (pd.DataFrame): The cohort dataframe containing accession IDs.
+        project_id (str): The FLIP project ID.
+
+    Returns:
+        list[dict[str, str]]: MONAI-compatible items with ``image`` and ``label`` paths.
     """
+    datalist: list[dict[str, str]] = []
+    n_images = 0
 
-    def __init__(self):
-        super().__init__()
+    for accession_id in tqdm(dataframe["accession_id"], desc="Preparing dataset", unit="accession"):
+        try:
+            accession_folder_path = flip.get_by_accession_number(
+                project_id, accession_id, resource_type=[ResourceType.NIFTI]
+            )
+        except Exception as err:
+            logger.info("⚠️ Could not fetch images for accession_id=%s: %s", accession_id, err)
+            continue
 
-        # --- Core FLIP object ---
-        self.flip = FLIP()
+        all_images = list(accession_folder_path.rglob("input_*.nii.gz"))
+        n_images += len(all_images)
 
-        # --- Logging setup ---
-        self.logger = logging.getLogger(self.__class__.__name__)
-        self.logger.setLevel(logging.INFO)
-
-        # --- Config ---
-        self.config = {}
-        with open(str(Path(__file__).parent.resolve() / "config.json")) as file:
-            self.config = json.load(file)
-            self._epochs = self.config["LOCAL_ROUNDS"]
-            self._lr = self.config["LEARNING_RATE"]
-            self._val_split = self.config["VAL_SPLIT"]
-
-        # --- Device setup ---
-        self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-
-        # --- Common transforms (shared utilities) ---
-        self._train_transforms = get_train_transforms()
-        self._val_transforms = get_val_transforms()
-        self.inferer = get_sliding_window_inferer(self.device)
-
-        # --- Model setup ---
-        self.model = get_model()
-        self.model.to(self.device)
-
-        # --- Common MONAI postprocessing and metrics ---
-        self.post_sigmoid = Activations(softmax=True)
-        self.post_pred = AsDiscrete(argmax=True, to_onehot=2)
-        self.post_pred_gt = AsDiscrete(to_onehot=2)
-        self.dice_acc = DiceMetric(include_background=False, reduction="mean")
-
-        # These will be set in the child classes
-        self.project_id = ""
-        self.query = ""
-        self.dataframe = None
-
-    def get_image_and_label_list(self):
-        """Returns a list of dicts, each dict containing the path to an image and its corresponding label."""
-
-        datalist = []
-
-        # loop over each accession id in the train set
-        for accession_id in tqdm(self.dataframe["accession_id"], desc="Preparing dataset", unit="accession"):
-            try:
-                accession_folder_path = self.flip.get_by_accession_number(
-                    self.project_id,
-                    accession_id,
-                    resource_type=[
-                        ResourceType.NIFTI,
-                        # ResourceType.SEGMENTATION,
-                    ],
-                )
-            except Exception as err:
-                self.logger.info("⚠️ Could not fetch images for accession_id=%s: %s", accession_id, err)
+        for img in all_images:
+            # For each image, find the corresponding segmentation mask.
+            seg = str(img).replace("/input_", "/label_")
+            if not Path(seg).exists():
+                logger.info("⚠️ No matching segmentation for %s", img.name)
                 continue
 
-            # get all images in the accession folder that match the pattern "input_*.nii.gz"
-            all_images = list(accession_folder_path.rglob("input_*.nii.gz"))
+            try:
+                img_header = nib.load(str(img))
+                seg_header = nib.load(seg)
+            except nib.filebasedimages.ImageFileError as err:
+                logger.info("⚠️ Invalid image pair for %s: %s", img.name, err)
+                continue
 
-            for img in all_images:
-                # for each image, find the corresponding segmentation mask
-                seg = str(img).replace("/input_", "/label_")
+            # QC: 3D image whose segmentation has the same shape.
+            if len(img_header.shape) != 3:
+                logger.info("⚠️ Skipping non-3D image %s", img.name)
+                continue
+            if img_header.shape != seg_header.shape:
+                logger.info(
+                    "⚠️ Shape mismatch for %s: image=%s label=%s", img.name, img_header.shape, seg_header.shape
+                )
+                continue
 
-                if not Path(seg).exists():
-                    self.logger.info("⚠️ No matching segmentation for %s", img.name)
-                    continue
+            datalist.append({"image": str(img), "label": seg})
 
-                try:
-                    img_header = nib.load(str(img))
-                    seg_header = nib.load(seg)
-                except nib.filebasedimages.ImageFileError as err:
-                    self.logger.info("⚠️ Invalid image pair for %s: %s", img.name, err)
-                    continue
+    if not datalist:
+        # Fail loudly: torch's downstream num_samples=0 error reads like an app bug, when the usual
+        # cause is a missing data-enrichment step (no label_*.nii.gz uploaded next to the images).
+        raise ValueError(
+            f"No image/label pairs found: {n_images} image(s) across {len(dataframe)} accession(s), "
+            "none with a matching label_*.nii.gz. Was the data-enrichment (label upload) step run?"
+        )
 
-                # Some QC checks to ensure the image and segmentation are valid and match
-                # check is 3D and at least 128x128x128 in size and seg is the same shape as the image
-                if len(img_header.shape) != 3:
-                    self.logger.info("⚠️ Skipping non-3D image %s", img.name)
-                    continue
+    logger.info("Dataset ready: %d image/label pairs", len(datalist))
+    return datalist
 
-                if img_header.shape != seg_header.shape:
-                    self.logger.info(
-                        "⚠️ Shape mismatch for %s: image=%s label=%s",
-                        img.name,
-                        img_header.shape,
-                        seg_header.shape,
+
+def split_datalist(datalist: list, val_split: float) -> tuple:
+    """Deterministic train/validation split — no shuffling, matching the legacy trainer."""
+    train_items, val_items = np.split(datalist, [int((1 - val_split) * len(datalist))])
+    logger.info("Split → train=%d, val=%d", len(train_items), len(val_items))
+    return train_items, val_items
+
+
+def train_one_epoch(
+    model: torch.nn.Module,
+    loader: DataLoader,
+    loss_fn: torch.nn.Module,
+    optimizer: torch.optim.Optimizer,
+    device: torch.device,
+) -> tuple[float, int]:
+    """Run one local training epoch. Returns (per-image average loss, batch count)."""
+    model.train()
+    running_loss = 0.0
+    num_images = 0
+    for i, batch in enumerate(loader):
+        images = batch["image"].to(device)
+        labels = batch["label"].to(device)
+
+        optimizer.zero_grad()
+        predictions = model(images)
+        cost = loss_fn(predictions, labels)
+        cost.backward()
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+        optimizer.step()
+
+        batch_size = images.shape[0]
+        running_loss += cost.cpu().detach().numpy() * batch_size
+        num_images += batch_size
+        logger.info("Iteration: %d, Loss: %s", i + 1, cost.cpu().item())
+
+    return (running_loss / num_images if num_images > 0 else 0.0, len(loader))
+
+
+@torch.inference_mode()
+def validate(
+    model: torch.nn.Module,
+    loader: DataLoader,
+    loss_fn: torch.nn.Module,
+    inferer,
+    device: torch.device,
+    post_pred: AsDiscrete,
+    post_pred_gt: AsDiscrete,
+    dice_acc: DiceMetric,
+) -> tuple[float, float]:
+    """Run a validation pass with sliding-window inference. Returns (average loss, mean Dice).
+
+    The metric is reset once and aggregated once over the whole pass: ``DiceMetric.aggregate``
+    returns the running mean over every sample fed since ``reset()``, so calling it per batch
+    and averaging the per-batch values would double-count earlier batches.
+    """
+    model.eval()
+    dice_acc.reset()
+    running_loss = 0.0
+    num_batches = 0
+
+    for batch in loader:
+        images = batch["image"].to(device)
+        labels = batch["label"].to(device)
+
+        predictions = inferer(images, model)
+        cost = loss_fn(predictions, labels)
+        running_loss += cost.cpu().item()
+
+        preds_d = decollate_batch(predictions)
+        preds_d = torch.stack([post_pred(i) for i in preds_d], 0)
+        labels_d = torch.stack([post_pred_gt(i) for i in labels], 0)
+        dice_acc(y_pred=preds_d, y=labels_d)
+        num_batches += 1
+
+    avg_loss = running_loss / max(num_batches, 1)
+    avg_dice = float(dice_acc.aggregate().item()) if num_batches > 0 else 0.0
+    return avg_loss, avg_dice
+
+
+def main() -> None:
+    args = parse_args()
+    config = load_config()
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    logger.info("Device: %s", device)
+
+    model = get_model().to(device)
+    loss_fn = DiceCELoss(
+        to_onehot_y=True, softmax=True, squared_pred=False, batch=True, lambda_ce=0.2, lambda_dice=0.8
+    )
+    # The optimizer is created once and persists across the whole flare.is_running() loop (never
+    # reset per global round), matching the legacy executor's optimizer lifecycle.
+    optimizer = torch.optim.Adam(model.parameters(), lr=config["LEARNING_RATE"])
+
+    post_pred = AsDiscrete(argmax=True, to_onehot=2)
+    post_pred_gt = AsDiscrete(to_onehot=2)
+    dice_acc = DiceMetric(include_background=False, reduction="mean")
+    inferer = get_sliding_window_inferer(device)
+
+    flip = FLIP()
+    query = load_query()
+    dataframe = flip.get_dataframe(args.project_id, query)
+    if "accession_id" not in dataframe.columns:
+        raise ValueError("The dataframe must contain 'accession_id' column.")
+
+    datalist = build_datalist(flip, dataframe, args.project_id)
+    train_items, val_items = split_datalist(datalist, config["VAL_SPLIT"])
+
+    train_loader = DataLoader(
+        Dataset(train_items, transform=get_train_transforms()),
+        batch_size=config["BATCH_SIZE"],
+        shuffle=True,
+        num_workers=1,
+    )
+    val_loader = DataLoader(
+        Dataset(val_items, transform=get_val_transforms()), batch_size=1, shuffle=False, num_workers=1
+    )
+
+    flare.init()
+    writer = SummaryWriter()
+
+    while flare.is_running():
+        input_model = flare.receive()
+        if input_model is None:
+            break
+
+        if flare.is_train():
+            global_round = input_model.current_round or 0
+            torch_weights = {k: torch.as_tensor(v) for k, v in input_model.params.items()}
+            model.load_state_dict(torch_weights)
+
+            # Best-model selection (FLIP#673): evaluate the received global model before local
+            # training mutates it. The metrics ride back on the returned FLModel (DXO meta
+            # INITIAL_METRICS) and drive the server-side IntimeModelSelector. Gated on
+            # BEST_MODEL_METRIC so runs without selection skip the extra validation pass.
+            global_val_metrics = None
+            if config.get("BEST_MODEL_METRIC"):
+                g_loss, g_dice = validate(
+                    model, val_loader, loss_fn, inferer, device, post_pred, post_pred_gt, dice_acc
+                )
+                global_val_metrics = {"VAL_LOSS": g_loss, "VAL_DICE": g_dice}
+                logger.info("Global model validation — loss: %.4f, dice: %.4f", g_loss, g_dice)
+
+            n_iterations = 0
+            last_val_loss = 0.0
+            last_val_dice = 0.0
+            for epoch in range(config["LOCAL_ROUNDS"]):
+                train_loss, n_batches = train_one_epoch(model, train_loader, loss_fn, optimizer, device)
+                n_iterations += n_batches
+
+                if epoch % config.get("VALIDATE_EVERY", 1) == 0:
+                    last_val_loss, last_val_dice = validate(
+                        model, val_loader, loss_fn, inferer, device, post_pred, post_pred_gt, dice_acc
                     )
-                    continue
+                    logger.info(
+                        "Validation — Epoch: %d, Loss: %.4f, Mean Dice: %.4f",
+                        epoch + 1,
+                        last_val_loss,
+                        last_val_dice,
+                    )
 
-                # defines keys for image and segmentation
-                datalist.append({"image": str(img), "label": seg})
+                # Per-epoch points: the "@epoch" tag suffix names the x-axis (the FLIP analytics
+                # bridge parses "<label>[@<x_label>]" — see FLIP#148) and the cumulative epoch is
+                # the coordinate. Non-validation epochs re-send the previous validation values,
+                # matching the legacy trainer.
+                cumulative_epoch = global_round * config["LOCAL_ROUNDS"] + epoch + 1
+                writer.add_scalar("TRAIN_LOSS@epoch", float(train_loss), global_step=cumulative_epoch)
+                writer.add_scalar("VAL_LOSS@epoch", float(last_val_loss), global_step=cumulative_epoch)
+                writer.add_scalar("VAL_DICE@epoch", float(last_val_dice), global_step=cumulative_epoch)
 
-        self.logger.info("Dataset ready: %d image/label pairs", len(datalist))
-
-        # split into the training and testing data
-        train_datalist, val_datalist = np.split(datalist, [int((1 - self._val_split) * len(datalist))])
-
-        return train_datalist, val_datalist
-
-    def get_train_datalist(self):
-        """Returns a list of dicts, each dict containing the path to an image and its corresponding label."""
-        train_datalist, _ = self.get_image_and_label_list()
-        self.logger.info("Found %d files in train.", len(train_datalist))
-        return train_datalist
-
-    def get_val_datalist(self):
-        """Returns a list of dicts, each dict containing the path to an image and its corresponding label."""
-        _, val_datalist = self.get_image_and_label_list()
-        self.logger.info("Found %d files in validation.", len(val_datalist))
-        return val_datalist
-
-
-class FLIP_TRAINER(FLIP_BASE):
-    def __init__(
-        self,
-        train_task_name=AppConstants.TASK_TRAIN,
-        submit_model_task_name=AppConstants.TASK_SUBMIT_MODEL,
-        exclude_vars=None,
-        project_id="",
-        query="",
-    ):
-        """This CT Spleen  Trainer handles train and submit_model tasks. During train_task, it trains a
-        3D Unet on paired CT images and segmentation labels. For submit_model task, it sends the locally trained model
-        (if present) to the server.
-
-        Args:
-            train_task_name (str, optional): Task name for train task. Defaults to "train".
-            submit_model_task_name (str, optional): Task name for submit model. Defaults to "submit_model".
-            exclude_vars (list): List of variables to exclude during model loading.
-        """
-        super(FLIP_TRAINER, self).__init__()
-
-        self._train_task_name = train_task_name
-        self._submit_model_task_name = submit_model_task_name
-        self._exclude_vars = exclude_vars
-
-        self.loss = DiceCELoss(
-            to_onehot_y=True, softmax=True, squared_pred=False, batch=True, lambda_ce=0.2, lambda_dice=0.8
-        )
-        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self._lr)
-
-        self.validation_step = 1
-
-        # Setup the dataset
-        self.project_id = project_id
-        self.query = query
-        self.dataframe = self.flip.get_dataframe(self.project_id, self.query)
-
-        # Setup the persistence manager to save PT model.
-        # The default training configuration is used by persistence manager
-        # in case no initial model is found.
-        self._default_train_conf = {"train": {"model": type(self.model).__name__}}
-        self.persistence_manager = PTModelPersistenceFormatManager(
-            data=self.model.state_dict(), default_train_conf=self._default_train_conf
-        )
-
-    def get_num_epochs(self):
-        """Returns the number of epochs for training."""
-        return self._epochs
-
-    def local_train(self, fl_ctx: FLContext, weights, abort_signal, global_round):
-        # Set the model weights
-        self.model.load_state_dict(state_dict=weights)
-
-        # Metrics
-        last_val_loss = 0.0
-        last_val_dice = 0.0
-
-        # Basic training
-        self.model.train()
-        self.log_info(fl_ctx, f"Starting local train on device {self.device}")
-        for epoch in range(self._epochs):
-            running_loss = 0.0
-            num_images = 0
-            for i, batch in enumerate(self._train_loader):
-                if abort_signal.triggered:
-                    # If abort_signal is triggered, we simply return.
-                    # The outside function will check it again and decide steps to take.
-                    return
-
-                images, labels = (
-                    batch["image"].to(self.device),
-                    batch["label"].to(self.device),
+            # Send back DIFF: FLIP's ScatterAndGather reconstructs full WEIGHTS from the diff
+            # server-side before the WEIGHTS aggregator accepts it.
+            new_state = {k: v.detach().cpu().numpy() for k, v in model.state_dict().items()}
+            diff = {k: new_state[k] - torch_weights[k].detach().cpu().numpy() for k in new_state}
+            flare.send(
+                flare.FLModel(
+                    params=diff,
+                    params_type="DIFF",
+                    # metrics of the *received* global model — the framework treats params+metrics
+                    # as "evaluation on the global model" and carries them as INITIAL_METRICS for
+                    # IntimeModelSelector.
+                    metrics=global_val_metrics,
+                    meta={"NUM_STEPS_CURRENT_ROUND": n_iterations},
                 )
-                self.optimizer.zero_grad()
-
-                predictions = self.model(images)
-                cost = self.loss(predictions, labels)
-                cost.backward()
-                torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
-                self.optimizer.step()
-                batch_size = images.shape[0]
-                num_images += batch_size
-                running_loss += cost.cpu().detach().numpy() * batch_size
-
-                self.log_info(
-                    fl_ctx,
-                    f"Epoch: {epoch + 1}, Iteration: {i + 1}, Loss: {cost.cpu().item()}",
-                )
-
-            average_loss = running_loss / num_images
-
-            self.log_info(fl_ctx, f"Epoch: {epoch + 1}, Finished, Average loss: {average_loss}")
-
-            # Per-epoch point: plot on an "epoch" axis at the cumulative epoch count; the FL global
-            # round is recorded alongside as provenance.
-            cumulative_epoch = global_round * (self._epochs) + epoch + 1
-            send_metrics_value(
-                label="TRAIN_LOSS",
-                value=average_loss,
-                fl_ctx=fl_ctx,
-                x_value=cumulative_epoch,
-                x_label="epoch",
-                flip=self.flip,
             )
 
-            # Validation loop
-            if epoch % self.validation_step == 0:
-                val_dice = []
-                self.model.eval()
-
-                with torch.no_grad():
-                    running_loss = 0.0
-                    for i, batch in enumerate(self._val_loader):
-                        images, labels = (
-                            batch["image"].to(self.device),
-                            batch["label"].to(self.device),
-                        )
-
-                        # For validation, we use the Sliding Window Inferer
-                        predictions = self.inferer(images, self.model)
-
-                        # predictions = self.model(images)
-                        cost = self.loss(predictions, labels)
-
-                        self.dice_acc.reset()
-                        # We need to decollate predictions and labels
-                        predictions = decollate_batch(predictions)
-                        predictions = torch.stack([self.post_pred(i) for i in predictions], 0)
-                        labels = torch.stack([self.post_pred_gt(i) for i in labels], 0)
-                        self.dice_acc(y_pred=predictions, y=labels)
-                        acc = self.dice_acc.aggregate()
-                        val_dice.append(acc.item())
-                        running_loss += cost.cpu().item()
-
-                last_val_loss = running_loss / len(self._val_loader)
-                last_val_dice = np.mean(val_dice)
-
-                self.log_info(
-                    fl_ctx=fl_ctx,
-                    msg=f"Validation - Epoch: {epoch + 1}, Loss: {last_val_loss}\nMean Dice: {last_val_dice}",
-                )
-
-            # Report the latest validation metrics every epoch (non-validation epochs re-send the
-            # previous values) at this epoch's coordinate.
-            send_metrics_value(
-                label="VAL_LOSS",
-                value=last_val_loss,
-                fl_ctx=fl_ctx,
-                x_value=cumulative_epoch,
-                x_label="epoch",
-                flip=self.flip,
+        elif flare.is_evaluate():
+            model.load_state_dict({k: torch.as_tensor(v) for k, v in input_model.params.items()})
+            test_loss, test_dice = validate(
+                model, val_loader, loss_fn, inferer, device, post_pred, post_pred_gt, dice_acc
             )
-            send_metrics_value(
-                label="VAL_DICE",
-                value=last_val_dice,
-                fl_ctx=fl_ctx,
-                x_value=cumulative_epoch,
-                x_label="epoch",
-                flip=self.flip,
-            )
+            logger.info("Model evaluation — loss: %.4f, dice: %.4f", test_loss, test_dice)
+            writer.add_scalar("TEST_DICE", test_dice, global_step=0)
+            # val_acc lands in the cross-validation results.json via ValidationJsonGenerator,
+            # matching the legacy validator's reply payload.
+            flare.send(flare.FLModel(metrics={"val_acc": test_dice}))
 
-            self.model.train()
-
-    def execute(
-        self,
-        task_name: str,
-        shareable: Shareable,
-        fl_ctx: FLContext,
-        abort_signal: Signal,
-    ) -> Shareable:
-        global_round = shareable.get_header(AppConstants.CURRENT_ROUND)
-
-        train_dict, val_dict = self.get_image_and_label_list()
-
-        self._train_dataset = Dataset(train_dict, transform=Compose(self._train_transforms))
-        self._val_dataset = Dataset(val_dict, transform=Compose(self._val_transforms))
-        self._train_loader = DataLoader(self._train_dataset, batch_size=3, shuffle=True, num_workers=1)
-        self._val_loader = DataLoader(self._val_dataset, batch_size=1, shuffle=False, num_workers=1)
-        self._n_iterations = len(self._train_loader)
-
-        if task_name == self._train_task_name:
-            # Get model weights
-            dxo = from_shareable(shareable)
-
-            # Ensure data kind is weights.
-            if not dxo.data_kind == DataKind.WEIGHTS:
-                self.log_error(
-                    fl_ctx,
-                    f"data_kind expected WEIGHTS but got {dxo.data_kind} instead.",
-                )
-                return make_reply(ReturnCode.BAD_TASK_DATA)
-
-            # Convert weights to tensor. Run training
-            torch_weights = {k: torch.as_tensor(v) for k, v in dxo.data.items()}
-            self.local_train(fl_ctx, torch_weights, abort_signal, global_round)
-
-            # Check the abort_signal after training.
-            # local_train returns early if abort_signal is triggered.
-            if abort_signal.triggered:
-                return make_reply(ReturnCode.TASK_ABORTED)
-
-            # Save the local model after training.
-            self.save_local_model(fl_ctx)
-
-            # Get the new state dict and send as weights
-            new_weights = self.model.state_dict()
-            outgoing_dxo = get_model_weights_diff(dxo.data, new_weights, self._n_iterations)
-            return outgoing_dxo.to_shareable()
-
-        elif task_name == self._submit_model_task_name:
-            # Load local model
-            ml = self.load_local_model(fl_ctx)
-
-            # Get the model parameters and create dxo from it
-            dxo = model_learnable_to_dxo(ml)
-            return dxo.to_shareable()
         else:
-            return make_reply(ReturnCode.TASK_UNKNOWN)
+            logger.warning("Received unknown task; ignoring.")
 
-    def save_local_model(self, fl_ctx: FLContext):
-        run_dir = fl_ctx.get_engine().get_workspace().get_run_dir(fl_ctx.get_prop(ReservedKey.RUN_NUM))
-        models_dir = os.path.join(run_dir, PTConstants.PTModelsDir)
-        if not os.path.exists(models_dir):
-            os.makedirs(models_dir)
-        model_path = os.path.join(models_dir, PTConstants.PTLocalModelName)
 
-        ml = make_model_learnable(self.model.state_dict(), {})
-        self.persistence_manager.update(ml)
-        torch.save(self.persistence_manager.to_persistence_dict(), model_path)
-
-    def load_local_model(self, fl_ctx: FLContext):
-        run_dir = fl_ctx.get_engine().get_workspace().get_run_dir(fl_ctx.get_prop(ReservedKey.RUN_NUM))
-        models_dir = os.path.join(run_dir, PTConstants.PTModelsDir)
-        if not os.path.exists(models_dir):
-            return None
-        model_path = os.path.join(models_dir, PTConstants.PTLocalModelName)
-
-        self.persistence_manager = PTModelPersistenceFormatManager(
-            data=torch.load(model_path), default_train_conf=self._default_train_conf
-        )
-        ml = self.persistence_manager.to_model_learnable(exclude_vars=self._exclude_vars)
-        return ml
+if __name__ == "__main__":
+    main()

@@ -9,35 +9,58 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""NVFLARE Client API script for the FLIP latent diffusion tutorial.
+
+One script serves all four ML task names of the two-phase latent-diffusion job — the two training
+phases (``train_ae``: autoencoder + GAN discriminator; ``train_dm``: diffusion model over the frozen
+autoencoder's latent space) and their cross-site validation passes (``validate_ae`` /
+``validate_dm``). The single-name ``flare.is_train()`` / ``flare.is_evaluate()`` predicates cannot
+distinguish the two train phases, so dispatch is on ``get_task_name()``.
+
+Training tasks send back a full-model weight **diff** (``params_type="DIFF"``; the FLIP
+ScatterAndGather controller rebuilds full weights server-side before aggregation) stamped with the
+``FlipMetaKey.STAGE`` meta that scopes the ``StagePercentilePrivacy`` DP filter to the modules the
+phase actually trains. Validation tasks send back aggregate metrics only.
+
+Ported from the legacy Executor-based ``FLIP_TRAINER`` / ``FLIP_VALIDATOR`` pair — the training and
+validation maths are unchanged; only the NVFLARE plumbing moved to the Client API.
+"""
+
+import argparse
 import json
-import os.path
+import logging
 from pathlib import Path
 
 import einops
 import nibabel as nib
 import numpy as np
+import nvflare.client as flare
 import torch
+from flip import FLIP
+from flip.constants import FlipMetaKey, ResourceType
 from models import get_model
 from monai.data import DataLoader, Dataset
-from monai.inferers import LatentDiffusionInferer
 from monai.losses import PatchAdversarialLoss, PerceptualLoss
 from monai.networks.schedulers import DDPMScheduler
-from nvflare.apis.dxo import DataKind, from_shareable
-from nvflare.apis.executor import Executor
-from nvflare.apis.fl_constant import FLContextKey, ReservedKey, ReturnCode
-from nvflare.apis.fl_context import FLContext
-from nvflare.apis.shareable import Shareable, make_reply
-from nvflare.apis.signal import Signal
-from nvflare.app_common.abstract.model import make_model_learnable, model_learnable_to_dxo
-from nvflare.app_common.app_constant import AppConstants
-from nvflare.app_common.pt.pt_fed_utils import PTModelPersistenceFormatManager
+from nvflare.client.api import get_task_name
+from nvflare.client.tracking import SummaryWriter
 from torch.amp import GradScaler, autocast
 from transforms import get_train_transforms, get_val_transforms
+from validator import build_inferer, validate_ae, validate_dm
 
-from flip import FLIP
-from flip.constants import FlipConstants, PTConstants, ResourceType
-from flip.nvflare.metrics import send_metrics_value
-from flip.utils import get_model_weights_diff
+logger = logging.getLogger(__name__)
+
+TRAIN_AE_TASK = "train_ae"
+TRAIN_DM_TASK = "train_dm"
+VALIDATE_AE_TASK = "validate_ae"
+VALIDATE_DM_TASK = "validate_dm"
+
+# Module prefixes trained by each phase — stamped as FlipMetaKey.STAGE on the outgoing update so
+# the StagePercentilePrivacy filter computes its percentile cutoff over exactly the trained params.
+STAGE_MODULES = {
+    TRAIN_AE_TASK: [["autoencoder", "discriminator"]],
+    TRAIN_DM_TASK: [["diffusion_model"]],
+}
 
 
 class KLDivergenceLoss:
@@ -60,49 +83,62 @@ class KLDivergenceLoss:
         return kl_loss
 
 
-class FLIP_TRAINER(Executor):
-    def __init__(
-        self,
-        epochs_ae=5,
-        epochs_dm=5,
-        train_task_name=AppConstants.TASK_TRAIN,
-        submit_model_task_name=AppConstants.TASK_SUBMIT_MODEL,
-        exclude_vars=None,
-        project_id="",
-        query="",
-    ):
-        """ """
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--project_id", type=str, default="")
+    return parser.parse_args()
 
-        super(FLIP_TRAINER, self).__init__()
 
-        self._train_task_name = train_task_name
-        self._submit_model_task_name = submit_model_task_name
-        self._exclude_vars = exclude_vars
-        self.config = {}
-        working_dir = Path(__file__).parent.resolve()
-        self.working_dir = working_dir
-        self.flip = FLIP()
+def load_query() -> str:
+    """Read the cohort query from the client app config.
+
+    NVFlare's TaskScriptRunner does a naive whitespace split on task_script_args, so the SQL query
+    (which can contain spaces) is plumbed via the top-level ``query`` key in
+    ``config/config_fed_client.json`` rather than as a CLI flag. In dev/simulator mode this is
+    ignored by ``flip.get_dataframe``.
+    """
+    client_cfg = Path(__file__).parent.parent / "config" / "config_fed_client.json"
+    if client_cfg.exists():
+        try:
+            return json.loads(client_cfg.read_text()).get("query", "")
+        except Exception:
+            return ""
+    return ""
+
+
+def load_config() -> dict:
+    """Load the user-supplied config.json that sits next to this script."""
+    config_path = Path(__file__).parent.resolve() / "config.json"
+    with open(config_path) as f:
+        return json.load(f)
+
+
+def batch_accumulation_step(batch_size: int) -> int:
+    """Accumulate gradients up to an effective batch of 8 when the configured batch is smaller."""
+    if batch_size < 8:
+        return 8 // batch_size
+    return 1
+
+
+class DiffusionTrainer:
+    """Holds the model, losses, optimizers, and data for both training phases.
+
+    One instance lives for the whole ``flare.is_running()`` loop, so — as with the legacy per-phase
+    executor instances — each phase's optimizer state persists across that phase's global rounds.
+    """
+
+    def __init__(self, config: dict, project_id: str, query: str):
+        self.config = config
         self.project_id = project_id
-        self.query = query
-
-        # Load config parameters
-        with open(str(working_dir / "config.json")) as file:
-            self.config = json.load(file)
-
-        if "LOCAL_ROUNDS_AE" in self.config.keys():
-            epochs_ae_ = self.config["LOCAL_ROUNDS_AE"]
-        else:
-            epochs_ae_ = epochs_ae
-        if "LOCAL_ROUNDS_DM" in self.config.keys():
-            epochs_dm_ = self.config["LOCAL_ROUNDS_DM"]
-        else:
-            epochs_dm_ = epochs_dm
+        working_dir = Path(__file__).parent.resolve()
 
         #  Training parameters for the autoencoder and the diffusion model
-        self.params_autoencoder = {"lr_g": self.config["LR_G"], "lr_d": self.config["LR_D"], "epochs": epochs_ae_}
-        self.trained_autoencoder = False
-        self.params_diffusion = {"lr": self.config["LR_DM"], "epochs": epochs_dm_}
-        self.trained_discriminator = False
+        self.params_autoencoder = {
+            "lr_g": config["LR_G"],
+            "lr_d": config["LR_D"],
+            "epochs": config.get("LOCAL_ROUNDS_AE", 5),
+        }
+        self.params_diffusion = {"lr": config["LR_DM"], "epochs": config.get("LOCAL_ROUNDS_DM", 5)}
 
         # Model creation
         self.model = get_model()
@@ -119,10 +155,10 @@ class FLIP_TRAINER(Executor):
         self.perceptual_slices = 12
         self.losses_dm = {"loss": torch.nn.functional.mse_loss}
         self.weights_ae = {
-            "w_reconstruction_loss": self.config["w_reconstruction_loss"],
-            "w_perceptual_loss": self.config["w_perceptual_loss"],
-            "w_kl_loss": self.config["w_kl_loss"],
-            "w_gan_loss": self.config["w_gan_loss"],
+            "w_reconstruction_loss": config["w_reconstruction_loss"],
+            "w_perceptual_loss": config["w_perceptual_loss"],
+            "w_kl_loss": config["w_kl_loss"],
+            "w_gan_loss": config["w_gan_loss"],
         }
 
         self.optimizers_ae = {
@@ -151,35 +187,29 @@ class FLIP_TRAINER(Executor):
         }
 
         # Data loading
-        self.axial_anisotropy = None
-        self.dataframe = self.flip.get_dataframe(project_id=self.project_id, query=self.query)
-        self.train_dict, self.val_dict = self.get_image_and_label_list(self.dataframe)
+        self.flip = FLIP()
+        self.axial_anisotropy: bool | None = None
+        dataframe = self.flip.get_dataframe(project_id=project_id, query=query)
+        self.train_items, self.val_items = self.get_image_list(dataframe)
 
-        # Get transforms
-        self._transforms = get_train_transforms(self.config["spatial_shape"])
-        self._val_transforms = get_val_transforms(self.config["spatial_shape"])
-        self._default_train_conf = {"train": {"model": type(self.model).__name__}}
-        self.persistence_manager = PTModelPersistenceFormatManager(
-            data=self.model.state_dict(), default_train_conf=self._default_train_conf
-        )
+        # Per-site split for local/simulator runs where every client reads the same DEV dataset;
+        # in production each trust's data-access API already scopes the cohort to its own data.
+        site_name = flare.get_site_name()
+        if site_name == "site1":
+            self.train_items = self.train_items[: len(self.train_items) // 2]
+        elif site_name == "site2":
+            self.train_items = self.train_items[len(self.train_items) // 2 :]
 
-        self.plot_images_every_local = 5
+        self._train_dataset = Dataset(self.train_items, transform=get_train_transforms(config["spatial_shape"]))
+        self._val_dataset = Dataset(self.val_items, transform=get_val_transforms(config["spatial_shape"]))
 
-    def get_num_epochs(self):
-        """Returns the maximum number of epochs for either training phase."""
-        return max(self.params_autoencoder["epochs"], self.params_diffusion["epochs"])
+    def get_image_list(self, dataframe) -> tuple[list, list]:
+        """Fetch each accession's converted NIfTI images and split into train/validation lists.
 
-    def config_batch_accumulation(self, phase: str):
-        # Set batch accumulation
-        if self.config[phase] < 8:
-            self.batch_accumulation_step = 8 // self.config[phase]
-        else:
-            self.batch_accumulation_step = 1
-
-    def get_image_and_label_list(self, dataframe, get_val: bool = False):
-        """Returns a list of dicts, each dict containing the path to an image and its corresponding label."""
-
-        datalist = []
+        Also detects axial anisotropy (thick-slice data) from the first readable image, which
+        switches the perceptual loss to its 2D sliced form.
+        """
+        datalist: list[dict[str, str]] = []
 
         for accession_id in dataframe["accession_id"]:
             try:
@@ -191,10 +221,12 @@ class FLIP_TRAINER(Executor):
                     ],
                 )
             except Exception as err:
-                print(f"Could not get image data folder path for {accession_id}: {err}")
+                logger.info(f"Could not get image data folder path for {accession_id}: {err}")
                 continue
 
             all_images = list(accession_folder_path.rglob("input_*.nii.gz"))
+            if not all_images:
+                continue
             if self.axial_anisotropy is None:
                 try:
                     nib_image = np.asarray(nib.load(str(all_images[0])).dataobj)
@@ -202,27 +234,26 @@ class FLIP_TRAINER(Executor):
                     ip_2_op = nib_image.shape[0] / nib_image.shape[-1]
                     if ip_2_op > 1.5:
                         self.axial_anisotropy = True
-                        print(f"Found axial anisotropy (in-plane to out-plane ratio is {ip_2_op}).")
+                        logger.info(f"Found axial anisotropy (in-plane to out-plane ratio is {ip_2_op}).")
                         self.reset_perceptual_to_anisotropic()
                         if self.config["net_config"]["discriminator"]["spatial_dims"] == 3:
-                            print(
-                                "Warning: your data is anisotropic on the axial plane"
+                            logger.warning(
+                                "Warning: your data is anisotropic on the axial plane "
                                 "but the discriminator is still 3D. This might lead to low performance."
                             )
                     else:
                         self.axial_anisotropy = False
-
                 except Exception as e:
-                    print(f"Error loading NIfTI image for {accession_id}: {e}")
+                    logger.info(f"Error loading NIfTI image for {accession_id}: {e}")
 
-            datalist.append({"image": str(i) for i in all_images})
+            for image in all_images:
+                datalist.append({"image": str(image)})
 
-        print(f"Found {len(datalist)} files in total.")
+        logger.info(f"Found {len(datalist)} files in total.")
 
         # Validation / train splits:
-        return datalist[int(self.config["VAL_SPLIT"] * len(datalist)) :], datalist[
-            : int(self.config["VAL_SPLIT"] * len(datalist))
-        ]
+        val_size = int(self.config["VAL_SPLIT"] * len(datalist))
+        return datalist[val_size:], datalist[:val_size]
 
     def reset_perceptual_to_anisotropic(self):
         """If we spot axial anisotropy, we reset the perceptual loss to 2D if it was 3D to have better results."""
@@ -231,28 +262,23 @@ class FLIP_TRAINER(Executor):
             if self.weights_ae["w_perceptual_loss"] <= 1.0:
                 self.weights_ae["w_perceptual_loss"] = 10
                 # This perceptual loss tends to have very low values.
-            print("Resetting perceptual loss to 2D versions due to axial anisotropy.")
+            logger.info("Resetting perceptual loss to 2D versions due to axial anisotropy.")
 
-    def derive_new_latent_shape(self, input_shape: list, num_downsamplings: int) -> list:
-        """
-        For diffusion model, adjusts the stage 1 latent space so that the latent space input to the
-        diffusion model can be downsampled as many times as needed without errors due to odd dimensions.
-        """
-        output_shape = []
-        for shape_el in input_shape:
-            new_shape = shape_el
-            remainder_0 = shape_el % 2**num_downsamplings
-            while remainder_0 != 0:
-                new_shape += 1
-                remainder_0 = new_shape % 2**num_downsamplings
+    def make_loaders(self, batch_size: int, shuffle: bool = True) -> tuple[DataLoader, DataLoader]:
+        train_loader = DataLoader(self._train_dataset, batch_size=batch_size, shuffle=shuffle, num_workers=1)
+        val_loader = DataLoader(self._val_dataset, batch_size=batch_size, shuffle=shuffle, num_workers=1)
+        return train_loader, val_loader
 
-            output_shape.append(new_shape)
-        return [int(i) for i in output_shape]
+    def val_loader(self, batch_size: int) -> DataLoader:
+        return DataLoader(self._val_dataset, batch_size=batch_size, shuffle=False, num_workers=1)
 
-    def local_train_ae(self, fl_ctx, weights, abort_signal, global_round: int = 0):
-        self.config_batch_accumulation(phase="BATCH_SIZE_AE")
-        # This implies loading the autoencoder and discriminator weights.
+    def load_weights(self, weights: dict[str, torch.Tensor]) -> None:
         self.model.load_state_dict(state_dict=weights, strict=False)
+
+    def train_ae(self, writer: SummaryWriter, global_round: int) -> int:
+        """One ``train_ae`` round: local AE + discriminator epochs. Returns the iteration count."""
+        accumulation_step = batch_accumulation_step(self.config["BATCH_SIZE_AE"])
+        train_loader, val_loader = self.make_loaders(self.config["BATCH_SIZE_AE"])
         self.model.autoencoder.to(device=self.device)
         self.model.discriminator.to(device=self.device)
         self.losses_ae["perceptual_loss"].to(self.device)
@@ -261,24 +287,11 @@ class FLIP_TRAINER(Executor):
         scaler_g = GradScaler(enabled=True)
         scaler_d = GradScaler(enabled=True)
 
-        # Plot dir
-        if FlipConstants.LOCAL_DEV:
-            os.makedirs(os.path.join(os.path.join(os.getcwd(), fl_ctx.get_job_id()), "saved_images_ae"), exist_ok=True)
-
         # Basic training
         self.model.autoencoder.train()
         self.model.discriminator.train()
-        val_loss_total = []
-        nan_signal = False
-        for epoch in range(self.params_autoencoder["epochs"]):
-            if nan_signal:
-                abort_signal.trigger()
-                self.log_info(
-                    fl_ctx,
-                    "Stopping training on site due to NaN loss values.",
-                )
-                break
-
+        epochs = self.params_autoencoder["epochs"]
+        for epoch in range(epochs):
             train_g_loss = 0
             train_d_loss = 0
             train_g_l1loss = 0
@@ -287,10 +300,7 @@ class FLIP_TRAINER(Executor):
             train_g_klloss = 0
 
             batch_acc_counter = 0
-            for ind, batch in enumerate(self._train_loader):
-                if abort_signal.triggered:
-                    return
-
+            for ind, batch in enumerate(train_loader):
                 images = batch["image"].to(self.device)
                 perceptual_slices = None  # Just in case!
 
@@ -298,9 +308,8 @@ class FLIP_TRAINER(Executor):
                 with autocast(enabled=True, device_type=self.device.type):
                     reconstruction, z_mu, z_sigma = self.model.autoencoder(images)
                     if True in torch.isnan(reconstruction):
-                        abort_signal.trigger()
-                        nan_signal = True
-                        break
+                        logger.error("Found NaN in the autoencoder reconstruction; stopping training on site.")
+                        raise RuntimeError("NaN in autoencoder reconstruction during train_ae")
                     kl_loss = self.weights_ae["w_kl_loss"] * self.losses_ae["kld_loss"](z_mu, z_sigma)
                     l1_loss = self.weights_ae["w_reconstruction_loss"] * self.losses_ae["reconstruction_loss"](
                         reconstruction.float(), images.float()
@@ -339,15 +348,11 @@ class FLIP_TRAINER(Executor):
                     # Loss generator
                     train_g_loss_ = l1_loss + kl_loss + p_loss + gan_loss
 
-                if nan_signal:
-                    break
-
                 # Scale and backprop
                 scaler_g.scale(train_g_loss_).backward()
-                # scaler_g.unscale_(self.optimizers_ae["optimizer_g"])
 
                 batch_acc_counter += 1
-                if batch_acc_counter % self.batch_accumulation_step == 0 or ind == (len(self._train_loader) - 1):
+                if batch_acc_counter % accumulation_step == 0 or ind == (len(train_loader) - 1):
                     scaler_g.step(self.optimizers_ae["optimizer_g"])
                     scaler_g.update()
                     self.optimizers_ae["optimizer_g"].zero_grad(set_to_none=True)
@@ -381,9 +386,8 @@ class FLIP_TRAINER(Executor):
                 loss_d_real = self.losses_ae["gan_loss"](logits_real, target_is_real=True, for_discriminator=True)
                 d_loss = self.weights_ae["w_gan_loss"] * (loss_d_fake + loss_d_real) * 0.5
                 scaler_d.scale(d_loss).backward()
-                # scaler_d.unscale_(self.optimizers_ae["optimizer_d"])
 
-                if batch_acc_counter % self.batch_accumulation_step == 0 or ind == (len(self._train_loader) - 1):
+                if batch_acc_counter % accumulation_step == 0 or ind == (len(train_loader) - 1):
                     scaler_d.step(self.optimizers_ae["optimizer_d"])
                     scaler_d.update()
 
@@ -405,23 +409,17 @@ class FLIP_TRAINER(Executor):
                     torch.cuda.synchronize()
 
             # Aggregate at the end
-            train_g_loss /= max(1, len(self._train_loader))
-            train_g_ganloss /= max(1, len(self._train_loader))
-            train_g_percloss /= max(1, len(self._train_loader))
-            train_g_l1loss /= max(1, len(self._train_loader))
-            train_g_klloss /= max(1, len(self._train_loader))
-            train_d_loss /= max(1, len(self._train_loader))
+            train_g_loss /= max(1, len(train_loader))
+            train_g_ganloss /= max(1, len(train_loader))
+            train_g_percloss /= max(1, len(train_loader))
+            train_g_l1loss /= max(1, len(train_loader))
+            train_g_klloss /= max(1, len(train_loader))
+            train_d_loss /= max(1, len(train_loader))
 
             # Validation
             val_loss = 0
             self.model.autoencoder.eval()
-            # plot_index = np.random.randint(0, len(self._val_loader))
-            for ind, batch in enumerate(self._val_loader):
-                if abort_signal.triggered:
-                    # If abort_signal is triggered, we simply return.
-                    # The outside function will check it again and decide steps to take.
-                    return
-
+            for batch in val_loader:
                 images = batch["image"].to(self.device)
                 with autocast(enabled=True, device_type=self.device.type):
                     with torch.no_grad():
@@ -432,123 +430,70 @@ class FLIP_TRAINER(Executor):
                         self.weights_ae["w_reconstruction_loss"]
                         * self.losses_ae["reconstruction_loss"](reconstruction.float(), images.float()).item()
                     )
-                # if ind == plot_index and FlipConstants.LOCAL_DEV:
-                #     from utils_plot import plot_ae_images
 
-                #     # We plot autoencoder images just to check them
-                #     plot_ae_images(
-                #         torch.stack([reconstruction.detach().cpu(), images.detach().cpu()], dim=0),
-                #         save_path=os.path.join(
-                #             os.path.join(os.getcwd(), fl_ctx.get_job_id()), "saved_images_ae", f"AE_TR_{epoch}.png"
-                #         ),
-                #     )
-
-            val_loss /= max(1, len(self._val_loader))
-            val_loss_total.append(val_loss)
+            val_loss /= max(1, len(val_loader))
             self.model.autoencoder.train()
 
-            # To print
-            to_print = [
-                f"Epoch {epoch + 1} / {self.params_autoencoder['epochs']};\n ",
-                f"Total loss G: {train_g_loss}, GAN: {train_g_ganloss} ",
-                f"Perceptual: {train_g_percloss}, L1: {train_g_l1loss} ",
-                f"KLD: {train_g_klloss} \n",
-                f"Total loss D: {train_d_loss},Validation loss (L1): {val_loss}",
-            ]
-
-            to_print = "".join(to_print)
-            self.log_info(
-                fl_ctx,
-                to_print,
+            logger.info(
+                f"Epoch {epoch + 1} / {epochs};\n "
+                f"Total loss G: {train_g_loss}, GAN: {train_g_ganloss} "
+                f"Perceptual: {train_g_percloss}, L1: {train_g_l1loss} "
+                f"KLD: {train_g_klloss} \n"
+                f"Total loss D: {train_d_loss},Validation loss (L1): {val_loss}"
             )
 
-            # Send metrics to flip
-            send_metrics_value(label="Train loss (G)", value=train_g_loss, fl_ctx=fl_ctx, flip=self.flip)
-            send_metrics_value(label="Train loss (D)", value=train_d_loss, fl_ctx=fl_ctx, flip=self.flip)
-            send_metrics_value(label="Perceptual loss (G)", value=train_g_percloss, fl_ctx=fl_ctx, flip=self.flip)
-            send_metrics_value(label="KLD loss (G)", value=train_g_klloss, fl_ctx=fl_ctx, flip=self.flip)
-            send_metrics_value(label="Reconstruction loss (G)", value=train_g_l1loss, fl_ctx=fl_ctx, flip=self.flip)
-            send_metrics_value(label="GAN loss (G)", value=train_g_ganloss, fl_ctx=fl_ctx, flip=self.flip)
-            send_metrics_value(label="Validation loss (L1)", value=val_loss, fl_ctx=fl_ctx, flip=self.flip)
+            # Send metrics to FLIP. Labels match the legacy tutorial's series names; the "@epoch"
+            # suffix names the x-axis and `step` (cumulative local epoch) is the coordinate.
+            step = global_round * epochs + epoch + 1
+            writer.add_scalar("Train loss (G)@epoch", train_g_loss, global_step=step)
+            writer.add_scalar("Train loss (D)@epoch", train_d_loss, global_step=step)
+            writer.add_scalar("Perceptual loss (G)@epoch", train_g_percloss, global_step=step)
+            writer.add_scalar("KLD loss (G)@epoch", train_g_klloss, global_step=step)
+            writer.add_scalar("Reconstruction loss (G)@epoch", train_g_l1loss, global_step=step)
+            writer.add_scalar("GAN loss (G)@epoch", train_g_ganloss, global_step=step)
+            writer.add_scalar("Validation loss (L1)@epoch", val_loss, global_step=step)
 
-        return np.mean(val_loss_total)
+        return epochs * len(train_loader)
 
-    def local_train_dm(self, fl_ctx, weights, abort_signal, global_round: int = 0):
-        self.config_batch_accumulation(phase="BATCH_SIZE_DM")
-        # This implies loading the autoencoder and discriminator weights.
-        self.model.load_state_dict(state_dict=weights, strict=False)
+    def train_dm(self, writer: SummaryWriter, global_round: int) -> int:
+        """One ``train_dm`` round: local diffusion-model epochs. Returns the iteration count."""
+        accumulation_step = batch_accumulation_step(self.config["BATCH_SIZE_DM"])
+        train_loader, val_loader = self.make_loaders(self.config["BATCH_SIZE_DM"])
         self.model.diffusion_model.to(device=self.device)
         self.model.autoencoder.to(device=self.device)
 
-        if FlipConstants.LOCAL_DEV:
-            os.makedirs(os.path.join(os.path.join(os.getcwd(), fl_ctx.get_job_id()), "saved_images_dm"), exist_ok=True)
-
-        # Infer the latent shape of the autoencoder
-        autoencoder_latent_shape = [
-            i / (2 ** (len(self.model.autoencoder.decoder.channels) - 1)) for i in self.config["spatial_shape"]
-        ]
-
-        ldm_latent_shape = self.derive_new_latent_shape(
-            autoencoder_latent_shape, len(self.model.diffusion_model.block_out_channels) - 1
-        )
-
-        # Infer scale factor
-        with torch.no_grad():
-            with autocast(enabled=True, device_type=self.device.type):
-                sample_z = self.model.autoencoder.encode_stage_2_inputs(
-                    next(iter(self._train_loader))["image"].to(self.device)
-                )
-                scale_factor = 1 / torch.std(sample_z)
-                del sample_z
-
-        # Create GradScalers
-        inferer = LatentDiffusionInferer(
-            scheduler=self.optimizers_dm["scheduler"],
-            ldm_latent_shape=ldm_latent_shape,
-            autoencoder_latent_shape=autoencoder_latent_shape,
-            scale_factor=scale_factor.item(),
+        inferer, ldm_latent_shape = build_inferer(
+            self.model,
+            self.optimizers_dm["scheduler"],
+            self.config["spatial_shape"],
+            next(iter(train_loader))["image"],
+            self.device,
         )
         scaler = GradScaler()
 
         # Basic training
-        nan_signal = False
         train_loss = []
         val_loss = []
-        for epoch in range(self.params_diffusion["epochs"]):
+        epochs = self.params_diffusion["epochs"]
+        for epoch in range(epochs):
             self.model.diffusion_model.train()
-            if nan_signal:
-                abort_signal.trigger()
-                self.log_info(
-                    fl_ctx,
-                    "Stopping training on site due to NaN loss values.",
-                )
-                break
             batch_acc_counter = 0
             train_loss_epoch = 0
 
-            for ind, batch in enumerate(self._train_loader):
-                if abort_signal.triggered:
-                    # If abort_signal is triggered, we simply return.
-                    # The outside function will check it again and decide steps to take.
-                    return
-
+            for batch in train_loader:
                 images = batch["image"].to(self.device)
-                if ind == 0:
-                    with torch.no_grad():
-                        reconstruction, _, _ = self.model.autoencoder(images)
-                        reconstruction = reconstruction.detach().cpu()
-
-                # conditioning = self.get_slice_no(images).to(self.device)
-                # if ind == conditioning_save_ind:
-                #     conditioning_save = conditioning.detach().cpu()
-                # TRAIN GENERATOR
 
                 with autocast(enabled=False, device_type=self.device.type):
                     noise = torch.randn(
-                        [images.shape[0]] + [self.model.autoencoder.encoder.blocks[-1].out_channels] + ldm_latent_shape
+                        [images.shape[0]]
+                        + [self.model.autoencoder.encoder.blocks[-1].out_channels]
+                        + ldm_latent_shape
                     ).to(self.device)
                     timesteps = torch.randint(
-                        0, self.optimizers_dm["scheduler"].num_train_timesteps, (images.shape[0],), device=self.device
+                        0,
+                        self.optimizers_dm["scheduler"].num_train_timesteps,
+                        (images.shape[0],),
+                        device=self.device,
                     ).long()
                     noise_pred = inferer(
                         inputs=images,
@@ -562,39 +507,36 @@ class FLIP_TRAINER(Executor):
                     loss = self.losses_dm["loss"](noise.float(), noise_pred.float())
 
                 if True in torch.isnan(loss) or True in torch.isnan(noise_pred):
-                    abort_signal.trigger()
-                    nan_signal = True
-                    self.log_info(fl_ctx, "Found NaN on training loss.")
-                    break
+                    logger.error("Found NaN on training loss; stopping training on site.")
+                    raise RuntimeError("NaN loss during train_dm")
 
                 scaler.scale(loss).backward()
-                if batch_acc_counter == self.batch_accumulation_step:
+                batch_acc_counter += 1
+                if batch_acc_counter == accumulation_step:
                     scaler.step(self.optimizers_dm["optimizer"])
                     scaler.update()
                     batch_acc_counter = 0
                     self.optimizers_dm["optimizer"].zero_grad(set_to_none=True)
                 train_loss_epoch += loss.item()
 
-            train_loss.append(train_loss_epoch / max(1, len(self._train_loader)))
-            # Validation  loss
-            val_loss_epoch = 0
-            for ind, batch in enumerate(self._val_loader):
-                if abort_signal.triggered:
-                    # If abort_signal is triggered, we simply return.
-                    # The outside function will check it again and decide steps to take.
-                    return
+            train_loss.append(train_loss_epoch / max(1, len(train_loader)))
 
+            # Validation loss
+            val_loss_epoch = 0
+            for batch in val_loader:
                 images = batch["image"].to(self.device)
-                # conditioning = self.get_slice_no(images).to(self.device)
-                # if ind == conditioning_save_ind:
-                #    conditioning_save = conditioning.detach().cpu()
                 self.model.diffusion_model.eval()
                 with autocast(enabled=False, device_type=self.device.type):
                     noise = torch.randn(
-                        [images.shape[0]] + [self.model.autoencoder.encoder.blocks[-1].out_channels] + ldm_latent_shape
+                        [images.shape[0]]
+                        + [self.model.autoencoder.encoder.blocks[-1].out_channels]
+                        + ldm_latent_shape
                     ).to(self.device)
                     timesteps = torch.randint(
-                        0, self.optimizers_dm["scheduler"].num_train_timesteps, (images.shape[0],), device=self.device
+                        0,
+                        self.optimizers_dm["scheduler"].num_train_timesteps,
+                        (images.shape[0],),
+                        device=self.device,
                     ).long()
                     noise_pred = inferer(
                         inputs=images,
@@ -602,179 +544,102 @@ class FLIP_TRAINER(Executor):
                         autoencoder_model=self.model.autoencoder,
                         noise=noise,
                         timesteps=timesteps,
-                        condition=None,  # conditioning,
+                        condition=None,
                         mode="crossattn",
                     )
                     val_loss_epoch += self.losses_dm["loss"](noise.float(), noise_pred.float()).item()
 
-            val_loss.append(val_loss_epoch / max(1, len(self._val_loader)))
+            val_loss.append(val_loss_epoch / max(1, len(val_loader)))
 
-            # Sample
-            if FlipConstants.LOCAL_DEV:
-                self.model.diffusion_model.eval()
-                # We sample
-                noise = torch.randn(
-                    [self.config["BATCH_SIZE_DM"]]
-                    + [self.model.autoencoder.encoder.blocks[-1].out_channels]
-                    + ldm_latent_shape
-                ).to(self.device)
-                sampled_images, _ = inferer.sample(
-                    input_noise=noise,
-                    conditioning=None,
-                    diffusion_model=self.model.diffusion_model,
-                    scheduler=self.optimizers_dm["scheduler"],
-                    save_intermediates=True,
-                    autoencoder_model=self.model.autoencoder,
-                )
-                sampled_images = sampled_images.detach().cpu().numpy()
-                # from utils_plot import plot_dm_images
+            logger.info(f"Epoch {epoch + 1} / {epochs};\n Total loss DM: {np.mean(train_loss)}")
 
-                # plot_dm_images(
-                #     sampled_images,
-                #     save_path=os.path.join(os.getcwd(), fl_ctx.get_job_id(), "saved_images_dm", f"DM_TR_{epoch}.png"),
-                # )
+            step = global_round * epochs + epoch + 1
+            writer.add_scalar("Total loss DM@epoch", float(np.mean(train_loss)), global_step=step)
+            writer.add_scalar("Validation loss DM@epoch", float(np.mean(val_loss)), global_step=step)
 
-            # To printtotal_val_loss
-            to_print = [
-                f"Epoch {epoch + 1} / {self.params_diffusion['epochs']};\n ",
-                f"Total loss DM: {np.mean(train_loss)}",
-            ]
-            to_print = "".join(to_print)
-            self.log_info(
-                fl_ctx,
-                to_print,
+        return epochs * len(train_loader)
+
+
+def to_torch_weights(input_model: flare.FLModel) -> dict[str, torch.Tensor]:
+    return {k: torch.as_tensor(v) for k, v in input_model.params.items()}
+
+
+def send_weight_diff(original_params: dict, model: torch.nn.Module, n_iterations: int, task_name: str) -> None:
+    """Send the full-model weight diff for a completed training round.
+
+    Built one tensor at a time to avoid holding a second full copy of the model in RAM (mirrors
+    ``flip.utils.get_model_weights_diff``). The ``STAGE`` meta scopes the DP filter's percentile
+    cutoff to the modules this phase trained.
+    """
+    diff = {}
+    for k, v in model.state_dict().items():
+        new_arr = v.detach().cpu().numpy()
+        diff[k] = new_arr - np.asarray(original_params[k])
+        del new_arr
+
+    flare.send(
+        flare.FLModel(
+            params=diff,
+            params_type="DIFF",
+            meta={
+                "NUM_STEPS_CURRENT_ROUND": n_iterations,
+                FlipMetaKey.STAGE.value: STAGE_MODULES[task_name],
+            },
+        )
+    )
+
+
+def main() -> None:
+    logging.basicConfig(level=logging.INFO)
+    args = parse_args()
+    config = load_config()
+
+    flare.init()
+    writer = SummaryWriter()
+
+    trainer = DiffusionTrainer(config, project_id=args.project_id, query=load_query())
+
+    while flare.is_running():
+        input_model = flare.receive()
+        if input_model is None:
+            break
+
+        task_name = get_task_name()
+        logger.info(f"[LDM trainer] received task '{task_name}' (round {input_model.current_round})")
+        weights = to_torch_weights(input_model)
+        global_round = input_model.current_round or 0
+
+        if task_name == TRAIN_AE_TASK:
+            trainer.load_weights(weights)
+            n_iterations = trainer.train_ae(writer, global_round)
+            send_weight_diff(input_model.params, trainer.model, n_iterations, task_name)
+
+        elif task_name == TRAIN_DM_TASK:
+            trainer.load_weights(weights)
+            n_iterations = trainer.train_dm(writer, global_round)
+            send_weight_diff(input_model.params, trainer.model, n_iterations, task_name)
+
+        elif task_name == VALIDATE_AE_TASK:
+            trainer.model.load_state_dict({k: v.to(trainer.device) for k, v in weights.items()})
+            test_loader = trainer.val_loader(config["BATCH_SIZE_AE"])
+            val_loss, val_ssim = validate_ae(trainer.model, test_loader, trainer.device, writer)
+            logger.info(f"Validating the aggregated autoencoder on {flare.get_site_name()}'s data: SSIM {val_ssim}")
+            flare.send(flare.FLModel(metrics={f"metrics_{task_name}": {"val_loss": val_loss, "val_ssim": val_ssim}}))
+
+        elif task_name == VALIDATE_DM_TASK:
+            trainer.model.load_state_dict(
+                {k: v.to(trainer.device) for k, v in weights.items()}, strict=False
             )
+            test_loader = trainer.val_loader(config["BATCH_SIZE_DM"])
+            val_loss = validate_dm(
+                trainer.model, test_loader, trainer.optimizers_dm["scheduler"], config, trainer.device, writer
+            )
+            logger.info(f"Validating the aggregated diffusion model on {flare.get_site_name()}'s data: {val_loss}")
+            flare.send(flare.FLModel(metrics={f"metrics_{task_name}": {"val_loss": val_loss}}))
 
-            send_metrics_value(label="Total loss DM", value=np.mean(train_loss), fl_ctx=fl_ctx, flip=self.flip)
-            send_metrics_value(label="Validation loss DM", value=np.mean(val_loss), fl_ctx=fl_ctx, flip=self.flip)
-
-        return np.mean(val_loss)
-
-    def execute(
-        self,
-        task_name: str,
-        shareable: Shareable,
-        fl_ctx: FLContext,
-        abort_signal: Signal,
-    ) -> Shareable:
-        # Diagnostic logging: confirm this trainer file and what task it's handling
-        self.log_info(
-            fl_ctx,
-            f"[FLIP_TRAINER] Loaded from {__file__}; configured _train_task_name='{self._train_task_name}', "
-            f"_submit_model_task_name='{self._submit_model_task_name}'; incoming task_name='{task_name}'",
-        )
-
-        site_name = fl_ctx.get_prop(FLContextKey.CLIENT_NAME, "")
-        if "site1" == site_name:
-            train_dict = self.train_dict[: int(len(self.train_dict) // 2)]
-        elif "site2" == site_name:
-            train_dict = self.train_dict[int(len(self.train_dict) // 2) :]
         else:
-            train_dict = self.train_dict
+            logger.warning(f"Received unknown task '{task_name}'; ignoring.")
 
-        self._train_dataset = Dataset(train_dict, transform=self._transforms)
-        self._val_dataset = Dataset(self.val_dict, transform=self._val_transforms)
 
-        # Accept either the exact configured task name (e.g. "train_ae"/"train_dm")
-        # or a more generic "train*" task name coming from the controller.
-        if task_name == self._train_task_name or (
-            task_name.startswith("train") and str(self._train_task_name).startswith("train")
-        ):
-            # Get model weights
-            dxo = from_shareable(shareable)
-
-            # Ensure data kind is weights.
-            if not dxo.data_kind == DataKind.WEIGHTS:
-                self.log_error(
-                    fl_ctx,
-                    f"data_kind expected WEIGHTS but got {dxo.data_kind} instead.",
-                )
-                return make_reply(ReturnCode.BAD_TASK_DATA)
-
-            # Convert weights to tensor. Run training
-            torch_weights = {k: torch.as_tensor(v) for k, v in dxo.data.items()}
-            self.log_info(fl_ctx, "Set to start the local training.")
-            global_round = shareable.get_header(AppConstants.CURRENT_ROUND)
-
-            if self._train_task_name == "train_ae":
-                self._train_loader = DataLoader(
-                    self._train_dataset, batch_size=self.config["BATCH_SIZE_AE"], shuffle=True, num_workers=1
-                )
-                self._val_loader = DataLoader(
-                    self._val_dataset, batch_size=self.config["BATCH_SIZE_AE"], shuffle=True, num_workers=1
-                )
-                self._n_iterations = len(self._train_loader)
-                _ = self.local_train_ae(fl_ctx, torch_weights, abort_signal, global_round=global_round)
-            elif self._train_task_name == "train_dm":
-                self._train_loader = DataLoader(
-                    self._train_dataset, batch_size=self.config["BATCH_SIZE_DM"], shuffle=True, num_workers=1
-                )
-                self._val_loader = DataLoader(
-                    self._val_dataset, batch_size=self.config["BATCH_SIZE_DM"], shuffle=True, num_workers=1
-                )
-                self._n_iterations = len(self._train_loader)
-                _ = self.local_train_dm(fl_ctx, torch_weights, abort_signal, global_round=global_round)
-
-            # Check the abort_signal after training.
-            # local_train returns early if abort_signal is triggered.
-            if abort_signal.triggered:
-                return make_reply(ReturnCode.TASK_ABORTED)
-
-            # Save the local model after training.
-            self.save_local_model(fl_ctx)
-
-            # Get the new state dict and send as weights
-            new_weights = self.model.state_dict()
-            outgoing_dxo = get_model_weights_diff(dxo.data, new_weights, self._n_iterations)
-
-            # outgoing_dxo_metrics = DXO(
-            #     data_kind=DataKind.METRICS,
-            #     data={'val_loss': total_val_loss},
-            #     meta={MetaKey.NUM_STEPS_CURRENT_ROUND: self._n_iterations}
-            # )
-
-            # outgoing_dxo = DXO(
-            #     data = {"weights": outgoing_dxo_model, "metrics": outgoing_dxo_metrics},
-            #     data_kind=DataKind.COLLECTION,
-            #     meta={MetaKey.NUM_STEPS_CURRENT_ROUND: self._n_iterations})
-
-            return outgoing_dxo.to_shareable()
-
-        elif task_name == self._submit_model_task_name:
-            # Load local model
-            ml = self.load_local_model(fl_ctx)
-
-            # Get the model parameters and create dxo from it
-            dxo = model_learnable_to_dxo(ml)
-            return dxo.to_shareable()
-        else:
-            return make_reply(ReturnCode.TASK_UNKNOWN)
-
-    def save_local_model(self, fl_ctx: FLContext):
-        run_dir = fl_ctx.get_engine().get_workspace().get_run_dir(fl_ctx.get_prop(ReservedKey.RUN_NUM))
-        models_dir = os.path.join(run_dir, PTConstants.PTModelsDir)
-        if not os.path.exists(models_dir):
-            os.makedirs(models_dir)
-        model_path = os.path.join(models_dir, PTConstants.PTLocalModelName)
-
-        ml = make_model_learnable(self.model.state_dict(), {})
-        self.persistence_manager.update(ml)
-        torch.save(self.persistence_manager.to_persistence_dict(), model_path)
-
-    def load_local_model(self, fl_ctx: FLContext):
-        run_dir = fl_ctx.get_engine().get_workspace().get_run_dir(fl_ctx.get_prop(ReservedKey.RUN_NUM))
-        models_dir = os.path.join(run_dir, PTConstants.PTModelsDir)
-        if not os.path.exists(models_dir):
-            return None
-        model_path = os.path.join(models_dir, PTConstants.PTLocalModelName)
-
-        self.persistence_manager = PTModelPersistenceFormatManager(
-            data=torch.load(model_path), default_train_conf=self._default_train_conf
-        )
-        ml = self.persistence_manager.to_model_learnable(exclude_vars=self._exclude_vars)
-        return ml
-        return ml
-        return ml
-        return ml
-        return ml
-        return ml
+if __name__ == "__main__":
+    main()

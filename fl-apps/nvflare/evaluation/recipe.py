@@ -9,7 +9,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Driver script: regenerate the committed evaluation_client_api app/config JSONs and meta.json.
+"""Driver script: regenerate the committed evaluation app/config JSONs and meta.json.
 
 Run from the flip-utils venv (needs flip + nvflare + torch); PTFileModelPersistor's
 ``model={"path": "models.get_model"}`` triggers a ``models`` import, so stub it first:
@@ -17,8 +17,8 @@ Run from the flip-utils venv (needs flip + nvflare + torch); PTFileModelPersisto
     cd flip-utils && uv run --no-sync python - <<'PY'
     import sys, types, torch, runpy
     m = types.ModuleType("models"); m.get_model = lambda: torch.nn.Linear(1, 1); sys.modules["models"] = m
-    sys.argv = ["recipe.py", "--output", "../fl-apps/nvflare/evaluation_client_api"]
-    runpy.run_path("../fl-apps/nvflare/evaluation_client_api/recipe.py", run_name="__main__")
+    sys.argv = ["recipe.py", "--output", "../fl-apps/nvflare/evaluation"]
+    runpy.run_path("../fl-apps/nvflare/evaluation/recipe.py", run_name="__main__")
     PY
 
 Do NOT hand-edit the generated JSON files — regenerate them via this script after any recipe change
@@ -41,9 +41,9 @@ def _copy_json_2space(src: Path, dest: Path) -> None:
 
 
 def main() -> None:
-    """Export FlipEvalRecipe configs into the evaluation_client_api template directory."""
+    """Export FlipEvalRecipe configs into the evaluation template directory."""
     parser = argparse.ArgumentParser(
-        description="Regenerate the evaluation_client_api app/config JSONs and meta.json from FlipEvalRecipe."
+        description="Regenerate the evaluation app/config JSONs and meta.json from FlipEvalRecipe."
     )
     parser.add_argument(
         "--output",

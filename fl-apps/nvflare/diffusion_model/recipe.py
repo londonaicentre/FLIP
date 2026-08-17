@@ -9,13 +9,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Driver script: regenerate the committed diffusion_model_client_api app/config JSONs and meta.json.
+"""Driver script: regenerate the committed diffusion_model app/config JSONs and meta.json.
 
 Run from the flip-utils venv (needs the ``full`` extra — flip + nvflare + torch):
 
     cd flip-utils && uv run --no-sync python \\
-        ../fl-apps/nvflare/diffusion_model_client_api/recipe.py \\
-        --output ../fl-apps/nvflare/diffusion_model_client_api
+        ../fl-apps/nvflare/diffusion_model/recipe.py \\
+        --output ../fl-apps/nvflare/diffusion_model
 
 Do NOT hand-edit the generated JSON files — regenerate them via this script after any
 recipe change and commit the result.
@@ -65,9 +65,9 @@ def _copy_json(src: Path, dest: Path) -> None:
 
 
 def main() -> None:
-    """Export FlipDiffusionRecipe configs into the diffusion_model_client_api template directory."""
+    """Export FlipDiffusionRecipe configs into the diffusion_model template directory."""
     parser = argparse.ArgumentParser(
-        description="Regenerate the diffusion_model_client_api app/config JSONs and meta.json from FlipDiffusionRecipe."
+        description="Regenerate the diffusion_model app/config JSONs and meta.json from FlipDiffusionRecipe."
     )
     parser.add_argument(
         "--output",

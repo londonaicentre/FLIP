@@ -11,29 +11,33 @@
     limitations under the License.
 -->
 
-# Standard federated training (FedAvg)
+# Client API federated training (FedAvg)
 
 ## Overview
 
-This is the baseline job type (`JOB_TYPE=standard`) and the default for most FLIP models. It performs
-supervised **Federated Averaging**: each site trains the model locally on its own data, and the server
-aggregates the returned weights into a new global model by weighted averaging. The other templates build
-on this one — for example [`fed_opt`](../fed_opt/README.md) swaps the server-side aggregation for an
-adaptive optimizer.
+This is the NVFLARE **Client API** federated-training job type (`JOB_TYPE=standard`). It performs a
+**Federated Averaging** round-trip, driving client training through the NVFLARE Client API
+(`InProcessClientAPIExecutor`). It replaced the retired Executor-based `standard` template, which
+drove the clients through the legacy `RUN_TRAINER`/`RUN_VALIDATOR` executor pair.
+The server side is: `InitTraining` → `ScatterAndGather` → stock `GlobalModelEval` → `BroadcastTask` cleanup.
+
+The base configs (`app/config/config_fed_server.json`, `app/config/config_fed_client.json`) and
+`meta.json` are **recipe-generated** from `flip.nvflare.recipes.FlipFedAvgRecipe`. Do not
+hand-edit them — regenerate via `recipe.py` after any recipe change and commit the result.
 
 ## What's the logic?
 
-For each global round (`global_rounds` in `config_fed_server.json`):
+For each global round (`num_rounds` in the recipe / `ScatterAndGather` args):
 
 1. The server sends the current global model to every site.
-2. Each site runs the user's `trainer.py` for `local_rounds` (via `flip.nvflare.executors.RUN_TRAINER`),
-   then evaluates with `validator.py` (via `flip.nvflare.executors.RUN_VALIDATOR`).
-3. Sites return their updated weights (`DataKind.WEIGHTS`).
-4. The server aggregates them with the `InTimeAccumulateWeightedAggregator` (weighted by each site's number
-   of samples) and persists the new global model with `PTFileModelPersistor`.
+2. Each site runs the user's `trainer.py` via `InProcessClientAPIExecutor`, using the NVFLARE
+   Client API (`flare.get()` / `flare.send()`) to receive and return model params.
+3. Sites return their updated weights (`DataKind.WEIGHTS`), filtered through `PercentilePrivacy`.
+4. The server aggregates them with `InTimeAccumulateWeightedAggregator` (weighted by samples) and
+   persists the global model with `PTFileModelPersistor`.
 
-Orchestration is the standard NVFLARE Scatter-and-Gather workflow; the privileged image cleanup runs via
-`flip.nvflare.components.CleanupImages` on the `init_training` / `post_validation` tasks.
+There is **no `validator.py`** — validation is orchestrated server-side via `GlobalModelEval` and
+`ValidationJsonGenerator`. The `PercentilePrivacy` filter applies on training task results only.
 
 ## Execution sequence
 
@@ -41,60 +45,45 @@ Orchestration is the standard NVFLARE Scatter-and-Gather workflow; the privilege
 
 1. `init_training` — `flip.nvflare.controllers.InitTraining`
 2. `scatter_and_gather` — `flip.nvflare.controllers.ScatterAndGather`
-3. `cross_site_validate` — stock `nvflare.app_common.workflows.global_model_eval.GlobalModelEval`
-4. `post_validation_cleanup` — `flip.nvflare.controllers.BroadcastTask`
+3. `controller2` — stock `nvflare.app_common.workflows.global_model_eval.GlobalModelEval`
+4. `controller3` — `flip.nvflare.controllers.BroadcastTask`
 
-**Client — `config_fed_client.json` `executors` (by task):**
+**Client — `config_fed_client.json` `executors` / `filters`:**
 
 - `init_training`, `post_validation` → `flip.nvflare.components.CleanupImages`
-- `train` → `flip.nvflare.executors.RUN_TRAINER`
-- `validate` → `flip.nvflare.executors.RUN_VALIDATOR`
+- `train`, `validate` → `nvflare.app_common.executors.InProcessClientAPIExecutor`
+- `train` result → `flip.nvflare.components.PercentilePrivacy` (DP noise filter)
+- Event handlers: `ClientEventHandler`, `FlipAnalyticsBridge`
 
-Post-training evaluation broadcasts only the aggregated global model to each participating trust. Client-local
-models are not returned to the server or evaluated against other sites.
+Post-training evaluation sends only the aggregated global model to each trust. The default template does not
+request or redistribute client-local models; callers constructing `FlipFedAvgRecipe` directly can explicitly
+set `submit_model_task_name="submit_model"` to restore full cross-site evaluation.
 
 ## What does the user upload?
 
 The required files (see [`required_files.json`](./required_files.json)) are:
 
-- `trainer.py` — the local training loop. Return the trained weights as `DataKind.WEIGHTS`.
-- `validator.py` — the local validation/test loop, returning metrics to the server.
+- `trainer.py` — the local training loop using the NVFLARE Client API (`flare.get()` /
+  `flare.send()`). Return trained weights as `DataKind.WEIGHTS`.
 - `models.py` — defines the model; `models.get_model` is what the server persistor instantiates.
-- `config.json` — model/training configuration consumed by the custom code (e.g. `global_rounds`,
-  hyper-parameters, the cohort `query`).
+- `config.json` — model/training configuration consumed by the custom code (e.g. hyper-parameters,
+  the cohort `query`).
 
-The base config (`app/config/config_fed_server.json`, `app/config/config_fed_client.json`) ships with the
-template; the files above are merged in on top at job-assembly time.
+Note: there is no `validator.py` for this job type — validation runs server-side.
 
-## Config placeholders (populated at job-assembly)
+## Regenerating the committed configs
 
-Several top-level keys in the base config are **placeholders** — the committed values are dummies, and the
-fl-server (`fl-services/nvflare/fl-api-base`, in `utils/prepare_config.py`) overwrites them with the real
-per-submission values when it assembles the job, *before* NVFLARE loads the config:
-
-| File | Key | Committed placeholder | Populated by | Source value |
-| --- | --- | --- | --- | --- |
-| `config_fed_client.json` | `project_id` | `""` | `configure_client()` | the model's project id |
-| `config_fed_client.json` | `query` | `"SELECT * FROM Table;"` | `configure_client()` | the project's cohort SQL |
-| `config_fed_server.json` | `model_id` | a dummy UUID | `configure_server()` | the model id (`app_name`); nested `"{model_id}"` references in the components' args resolve to it |
-| `config_fed_server.json` | `global_rounds`, `min_clients` | defaults | `configure_server()` / `configure_config()` | the model's round count + participating-trust count |
-
-So a site's `trainer.py` reaches its cohort via `flip.get_dataframe(project_id, query)` — `query` is read
-straight from `config_fed_client.json`, and `project_id` is passed to the trainer (in the Client API
-`standard_client_api` template it's the `{project_id}` reference in the executor's `task_script_args`, which
-resolves against the top-level `project_id` key). In `LOCAL_DEV` / SimEnv these are ignored: data comes from
-the `DEV_DATAFRAME` / `DEV_IMAGES_DIR` env instead. `local_rounds` is the per-round local-epoch count read by
-the trainer/executor. (The `standard_client_api` template is recipe-generated but emits the same
-placeholders, so it behaves identically here.)
-
-## Run it
-
-The xray-classification and 3D spleen-segmentation tutorials both use this job type. Run one on the local
-NVFLARE simulator:
+After any change to `FlipFedAvgRecipe` (in `flip-utils/flip/nvflare/recipes/`), regenerate the
+committed JSONs by running from the `flip-utils` venv:
 
 ```bash
-make -C fl-tutorials download-xray-data
-make -C fl-tutorials run-tutorial TUTORIAL=xray_classification
+cd flip-utils && uv run --no-sync python - <<'PY'
+import sys, types, torch, runpy
+m = types.ModuleType("models"); m.get_model = lambda: torch.nn.Linear(1, 1); sys.modules["models"] = m
+sys.argv = ["recipe.py", "--output", "../fl-apps/nvflare/standard"]
+runpy.run_path("../fl-apps/nvflare/standard/recipe.py", run_name="__main__")
+PY
 ```
 
-See [`fl-tutorials/`](../../fl-tutorials/) for the available tutorials and their datasets.
+Then commit all three updated files: `app/config/config_fed_server.json`,
+`app/config/config_fed_client.json`, and `meta.json`.

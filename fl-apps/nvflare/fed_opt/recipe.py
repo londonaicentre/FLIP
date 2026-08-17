@@ -9,13 +9,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Driver script: regenerate the committed standard_client_api app/config JSONs and meta.json.
+"""Driver script: regenerate the committed fed_opt app/config JSONs and meta.json.
 
 Run from the flip-utils venv (needs the ``full`` extra — flip + nvflare + torch):
 
     cd flip-utils && uv run --no-sync python \\
-        ../fl-apps/nvflare/standard_client_api/recipe.py \\
-        --output ../fl-apps/nvflare/standard_client_api
+        ../fl-apps/nvflare/fed_opt/recipe.py \\
+        --output ../fl-apps/nvflare/fed_opt
 
 Do NOT hand-edit the generated JSON files — regenerate them via this script after any
 recipe change and commit the result.
@@ -37,7 +37,7 @@ if os.environ.get("PYTHONHASHSEED") != "0":
     os.environ["PYTHONHASHSEED"] = "0"
     os.execv(sys.executable, [sys.executable, *sys.argv])
 
-from flip.nvflare.recipes import FlipFedAvgRecipe  # noqa: E402  (imported after the hash-seed pin)
+from flip.nvflare.recipes import FlipFedOptRecipe  # noqa: E402  (imported after the hash-seed pin)
 
 
 def _copy_json(src: Path, dest: Path) -> None:
@@ -54,9 +54,9 @@ def _copy_json(src: Path, dest: Path) -> None:
 
 
 def main() -> None:
-    """Export FlipFedAvgRecipe configs into the standard_client_api template directory."""
+    """Export FlipFedOptRecipe configs into the fed_opt template directory."""
     parser = argparse.ArgumentParser(
-        description="Regenerate the standard_client_api app/config JSONs and meta.json from FlipFedAvgRecipe."
+        description="Regenerate the fed_opt app/config JSONs and meta.json from FlipFedOptRecipe."
     )
     parser.add_argument(
         "--output",
@@ -70,7 +70,7 @@ def main() -> None:
     dest_config.mkdir(parents=True, exist_ok=True)
 
     with tempfile.TemporaryDirectory() as tmp:
-        recipe = FlipFedAvgRecipe()
+        recipe = FlipFedOptRecipe()
         recipe.export(tmp)
         exported_root = Path(tmp) / recipe.job.name
         exported_config = exported_root / "app" / "config"

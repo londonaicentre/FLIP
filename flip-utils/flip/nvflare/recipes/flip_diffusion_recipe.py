@@ -285,6 +285,6 @@ class FlipDiffusionRecipe(Recipe):
         config = json.loads(client_cfg.read_text())
         config.setdefault("project_id", self.project_id)
         config.setdefault("query", self.query)
-        # Trailing newline: keeps the committed diffusion_model_client_api template stable across
+        # Trailing newline: keeps the committed diffusion_model template stable across
         # regenerations and satisfies the end-of-file-fixer pre-commit hook.
         client_cfg.write_text(json.dumps(config, indent=2) + "\n")

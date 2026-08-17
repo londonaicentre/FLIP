@@ -24,7 +24,6 @@ from nvflare.apis.shareable import Shareable
 from nvflare.app_common.abstract.aggregator import Aggregator
 from nvflare.app_common.app_constant import AppConstants
 from nvflare.app_common.workflows.scatter_and_gather import ScatterAndGather as NVFlareScatterAndGather
-from nvflare.app_opt.pt.fedopt import PTFedOptModelShareableGenerator
 
 from flip.constants import FlipEvents, FlipProps
 from flip.nvflare.controllers.scatter_and_gather import ScatterAndGather
@@ -157,13 +156,20 @@ class TestAcceptTrainResult:
         assert sent_dxo.data_kind == DataKind.WEIGHT_DIFF  # not converted
         assert sent_dxo.data == {"w1": 0.1}
 
-    def test_keeps_weight_diff_for_fedopt_aggregator(self):
-        class _FedOptAggregatorStub(PTFedOptModelShareableGenerator):
-            def __init__(self):
-                self.accept = MagicMock(return_value=True)
-
+    def test_keeps_weight_diff_for_weight_diff_aggregator(self):
+        """A FedOpt-style server (the ``fed_opt`` job type) wires an aggregator that consumes
+        WEIGHT_DIFF directly; the conversion must be skipped or the server optimizer step is
+        silently bypassed. The old guard isinstance-checked the aggregator against the FedOpt
+        *shareable generator* class — which no real config ever satisfies, so the conversion ran
+        unconditionally; the fixed guard keys on the aggregator's ``expected_data_kind``."""
         controller = self._controller()
-        controller.aggregator = _FedOptAggregatorStub()
+        aggregator = MagicMock()
+        # The runtime shape: InTimeAccumulateWeightedAggregator normalises a single expected kind
+        # into the {dxo_name: DataKind} dict form ({"" : kind}) — the guard must match it, not just
+        # the plain enum a hand-constructed aggregator carries.
+        aggregator.expected_data_kind = {"": DataKind.WEIGHT_DIFF}
+        aggregator.accept = MagicMock(return_value=True)
+        controller.aggregator = aggregator
         controller._current_round = 4
         controller._global_weights = {"weights": {"w1": 10.0}}
 

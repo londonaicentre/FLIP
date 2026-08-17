@@ -43,6 +43,7 @@ from flip.nvflare.components.cleanup import CleanupImages
 from flip.nvflare.components.client_exception_reporter import ClientExceptionReporter
 from flip.nvflare.components.custom_percentile_privacy import PercentilePrivacy
 from flip.nvflare.components.evaluation_json_generator import EvaluationJsonGenerator
+from flip.nvflare.components.fedopt_shareable_generator import FlipFedOptShareableGenerator
 from flip.nvflare.components.flip_analytics_bridge import FlipAnalyticsBridge
 from flip.nvflare.components.flip_client_event_handler import ClientEventHandler
 from flip.nvflare.components.flip_server_event_handler import ServerEventHandler
@@ -61,6 +62,7 @@ from flip.nvflare.components.validation_json_generator import ValidationJsonGene
 
 __all__ = [
     "ClientEventHandler",
+    "FlipFedOptShareableGenerator",
     "ServerEventHandler",
     "PTModelLocator",
     "InitialPTModelLocator",

@@ -16,7 +16,6 @@ from nvflare.apis.fl_context import FLContext
 from nvflare.apis.shareable import Shareable
 from nvflare.apis.signal import Signal
 from nvflare.app_common.workflows.scatter_and_gather import ScatterAndGather as NVFlareScatterAndGather
-from nvflare.app_opt.pt.fedopt import PTFedOptModelShareableGenerator
 
 from flip import FLIP
 from flip.constants import FlipEvents, FlipProps
@@ -85,7 +84,19 @@ class ScatterAndGather(NVFlareScatterAndGather):
         """
         try:
             dxo = from_shareable(result)
-            if isinstance(self.aggregator, PTFedOptModelShareableGenerator):
+            # FedOpt-style server (the `fed_opt` job type): the aggregator consumes the diff
+            # directly and the shareable generator applies it through the server optimizer —
+            # reconstructing full WEIGHTS here would silently bypass the optimizer step. The old
+            # guard tested `isinstance(self.aggregator, PTFedOptModelShareableGenerator)`, which
+            # can never be true (the FedOpt component is a shareable *generator*, not an
+            # aggregator), so the conversion ran unconditionally and fed the WEIGHT_DIFF
+            # aggregator full WEIGHTS it then rejected.
+            # expected_data_kind is a plain DataKind when constructed directly but is normalised
+            # to a {dxo_name: DataKind} dict at runtime ({"": kind} for the single-DXO case), so
+            # check membership across both shapes.
+            expected = getattr(self.aggregator, "expected_data_kind", None)
+            expected_kinds = set(expected.values()) if isinstance(expected, dict) else {expected}
+            if DataKind.WEIGHT_DIFF in expected_kinds:
                 return result
             if dxo.data_kind == DataKind.WEIGHT_DIFF:
                 global_weights = self._global_weights["weights"]

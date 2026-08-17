@@ -32,12 +32,12 @@ that the user can choose based on their needs.
 Which job types are available depends on the backend.
 **Both backends** offer federated averaging (job type `standard`) and an evaluation task
 (job type `evaluation`) — for a Flower app, those two are the whole set.
-**NVFLARE** adds federated optimisation (job type `fed_opt`) and diffusion model training
-(job type `diffusion_model`), which covers multi-stage federated training, along with three further
-job types that drive the client code through the modern **NVFLARE Client API**
-(a plain training/evaluation script using ``nvflare.client`` instead of a class-based ``Executor``):
-federated averaging (job type `standard_client_api`), model evaluation (job type `evaluation_client_api`)
-and two-stage diffusion model training (job type `diffusion_model_client_api`).
+**NVFLARE** adds two-stage diffusion model training (job type `diffusion_model`) and federated
+optimisation (job type `fed_opt`, which shares `standard`'s client contract and differs only in
+the server-side optimizer aggregation). Every NVFLARE job type drives the client code through the
+modern **NVFLARE Client API** — a plain training/evaluation script using ``nvflare.client``
+(these Client-API templates took over the plain names from the retired Executor-based ones, which
+briefly lived alongside them under `*_client_api` names).
 The manifests under :ref:`fl-required-files` are the authoritative list for each backend.
 More job types will be added in the future, adjusting to the community's needs.
 
@@ -61,23 +61,19 @@ Then, the Central Hub API will take care of bundling together:
 For more information about currently supported apps, see the per-job-type implementations under
 `fl-apps/ <https://github.com/londonaicentre/FLIP/tree/develop/fl-apps>`_.
 
-Examples of how the same job type (standard -> federated averaging) can run different user-uploaded applications are:
+The NVFLARE tutorials (all Client-API apps):
 
-- `xray_classification <https://github.com/londonaicentre/FLIP/tree/develop/fl-tutorials/nvflare/image_classification/xray_classification>`_
-- `3d_spleen_segmentation <https://github.com/londonaicentre/FLIP/tree/develop/fl-tutorials/nvflare/image_segmentation/3d_spleen_segmentation>`_
+- `xray_classification <https://github.com/londonaicentre/FLIP/tree/develop/fl-tutorials/nvflare/image_classification/xray_classification>`_ (job type `standard`)
+- `3d_spleen_segmentation <https://github.com/londonaicentre/FLIP/tree/develop/fl-tutorials/nvflare/image_segmentation/3d_spleen_segmentation>`_ (job type `standard`)
+- `3d_spleen_segmentation_evaluation <https://github.com/londonaicentre/FLIP/tree/develop/fl-tutorials/nvflare/image_evaluation/3d_spleen_segmentation_evaluation>`_ (job type `evaluation`)
+- `latent_diffusion_model <https://github.com/londonaicentre/FLIP/tree/develop/fl-tutorials/nvflare/image_synthesis/latent_diffusion_model>`_ (job type `diffusion_model`)
 
-Both cases perform a supervised federated averaging training, but the data, architecture and training configuration are different.
-
-The NVFLARE Client API job types have their own tutorials:
-
-- `xray_classification_client_api <https://github.com/londonaicentre/FLIP/tree/develop/fl-tutorials/nvflare/image_classification/xray_classification_client_api>`_ (job type `standard_client_api`)
-- `3d_spleen_segmentation_client_api <https://github.com/londonaicentre/FLIP/tree/develop/fl-tutorials/nvflare/image_segmentation/3d_spleen_segmentation_client_api>`_ (job type `standard_client_api`)
-- `3d_spleen_segmentation_evaluation_client_api <https://github.com/londonaicentre/FLIP/tree/develop/fl-tutorials/nvflare/image_evaluation/3d_spleen_segmentation_evaluation_client_api>`_ (job type `evaluation_client_api`)
-- `latent_diffusion_model_client_api <https://github.com/londonaicentre/FLIP/tree/develop/fl-tutorials/nvflare/image_synthesis/latent_diffusion_model_client_api>`_ (job type `diffusion_model_client_api`)
+The two `standard` examples show how the same job type runs different user-uploaded
+applications: both perform a supervised federated averaging training, but the data, architecture
+and training configuration are different.
 
 These tutorials run on the local NVFLARE simulator from the repo root — e.g.
-``make -C fl-tutorials run-tutorial TUTORIAL=xray_classification`` (requires a GPU and the
-``flare-fl-base`` image; see the
+``make -C fl-tutorials run-tutorial TUTORIAL=xray_classification`` (requires a GPU; see the
 `fl-tutorials/ <https://github.com/londonaicentre/FLIP/tree/develop/fl-tutorials/nvflare>`_ README).
 
 
@@ -308,7 +304,7 @@ NVFLARE: percentile sparsification
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Before a client's training result leaves a site, the NVFLARE training job types (`standard`, `fed_opt`,
-`diffusion_model`, `standard_client_api`, `diffusion_model_client_api`) pass it through a percentile-based
+`diffusion_model`) pass it through a percentile-based
 privacy filter (``PercentilePrivacy``, following Shokri & Shmatikov, "Privacy-preserving deep learning",
 CCS '15; the diffusion job types use the stage-aware ``StagePercentilePrivacy`` subclass, which computes
 the cutoff per training stage):
@@ -375,10 +371,10 @@ Disclaimer: some things are still under construction!
 There are currently some elements that are still under construction, and might not adjust exactly to 
 the description above:
 
-- for the class-based NVFLARE job types (``standard``, ``evaluation``, ``fed_opt``, ``diffusion_model``) the user upload is intentionally minimal — see :ref:`fl-required-files` for the per-job-type set — and the rest of the app is filled in from
+- for every NVFLARE job type the user upload is intentionally minimal — see :ref:`fl-required-files` for the per-job-type set — and the rest of the app is filled in from
   the static (non-modifiable) templates baked into the flip-api image at `FL_APP_BASE_DIR` (`fl-apps/`, see FLIP#724).
   These templates used to be published to an S3 bucket; that path has been removed. You can check what a fully bundled app looks like by consulting
   the per-job-type implementations under `fl-apps/ <https://github.com/londonaicentre/FLIP/tree/develop/fl-apps/nvflare>`_.
-- the modern NVFLARE Client API job types (`standard_client_api`, `evaluation_client_api`, `diffusion_model_client_api`) instead let the user upload a plain training/evaluation script that calls
-  ``nvflare.client`` directly. Over time, more job types will migrate to this recipe-driven model.
+- every NVFLARE job type takes a plain training/evaluation script that calls
+  ``nvflare.client`` directly (`fed_opt` reuses `standard`'s trainer contract unchanged).
 

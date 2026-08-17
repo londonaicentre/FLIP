@@ -23,7 +23,7 @@ legacy Executor API to the Client API. The job is defined entirely in Python via
 
 ## Compatible job type
 
-`config.json["job_type"] = "standard_client_api"`. Each client runs [`app_files/trainer.py`](app_files/trainer.py)
+`config.json["job_type"] = "standard"`. Each client runs [`app_files/trainer.py`](app_files/trainer.py)
 as an in-process Client-API script (`flare.init()` → `flare.receive()`/`flare.send()` round loop) via
 NVFLARE's `InProcessClientAPIExecutor`. There is **no `validator.py`** — the held-out validation folds
 into the trainer's `flare.is_evaluate()` branch (server-driven cross-site evaluation).
