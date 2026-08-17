@@ -31,10 +31,13 @@ For each global round (`num_rounds` in the recipe / `ScatterAndGather` args):
 
 1. The server sends the current global model to every site.
 2. Each site runs the user's `trainer.py` via `InProcessClientAPIExecutor`, using the NVFLARE
-   Client API (`flare.get()` / `flare.send()`) to receive and return model params.
-3. Sites return their updated weights (`DataKind.WEIGHTS`), filtered through `PercentilePrivacy`.
-4. The server aggregates them with `InTimeAccumulateWeightedAggregator` (weighted by samples) and
-   persists the global model with `PTFileModelPersistor`.
+   Client API (`flare.receive()` / `flare.send()`) to receive and return model params.
+3. Sites return their update as a weight **diff** — `FLModel(params=<local minus global>,
+   params_type="DIFF")` → `DataKind.WEIGHT_DIFF` (a `WEIGHTS` return is rejected by the
+   aggregator) — filtered through `PercentilePrivacy`.
+4. The server averages the diffs with `InTimeAccumulateWeightedAggregator` (weighted by samples),
+   `FullModelShareableGenerator` adds the averaged diff onto the global model, and
+   `PTFileModelPersistor` persists it.
 
 There is **no `validator.py`** — validation is orchestrated server-side via `GlobalModelEval` and
 `ValidationJsonGenerator`. The `PercentilePrivacy` filter applies on training task results only.
@@ -43,8 +46,8 @@ There is **no `validator.py`** — validation is orchestrated server-side via `G
 
 **Server — `config_fed_server.json` `workflows` (run in order):**
 
-1. `init_training` — `flip.nvflare.controllers.InitTraining`
-2. `scatter_and_gather` — `flip.nvflare.controllers.ScatterAndGather`
+1. `controller` — `flip.nvflare.controllers.InitTraining`
+2. `controller1` — `flip.nvflare.controllers.ScatterAndGather`
 3. `controller2` — stock `nvflare.app_common.workflows.global_model_eval.GlobalModelEval`
 4. `controller3` — `flip.nvflare.controllers.BroadcastTask`
 
@@ -63,8 +66,9 @@ set `submit_model_task_name="submit_model"` to restore full cross-site evaluatio
 
 The required files (see [`required_files.json`](./required_files.json)) are:
 
-- `trainer.py` — the local training loop using the NVFLARE Client API (`flare.get()` /
-  `flare.send()`). Return trained weights as `DataKind.WEIGHTS`.
+- `trainer.py` — the local training loop using the NVFLARE Client API (`flare.receive()` /
+  `flare.send()`). Return the update as a diff: `FLModel(params=<local minus global>,
+  params_type="DIFF")` → `DataKind.WEIGHT_DIFF`.
 - `models.py` — defines the model; `models.get_model` is what the server persistor instantiates.
 - `config.json` — model/training configuration consumed by the custom code (e.g. hyper-parameters,
   the cohort `query`).

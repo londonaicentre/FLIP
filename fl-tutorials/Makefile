@@ -10,7 +10,7 @@
 # limitations under the License.
 
 # Backend-aware entrypoint for the FL tutorial runners. The actual runner + harness live
-# per-backend under fl-tutorials/<backend>/ (NVFLARE today; Flower lands via #622). This thin
+# per-backend under fl-tutorials/<backend>/ (fl-tutorials/nvflare/ and fl-tutorials/flower/). This thin
 # Makefile forwards every target to fl-tutorials/$(FL_BACKEND)/ so the documented entrypoint
 #   make -C fl-tutorials <target> [TUTORIAL=... NUM_CASES=...]
 # keeps working and selects the backend via FL_BACKEND (default nvflare). Command-line

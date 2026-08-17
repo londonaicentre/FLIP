@@ -9,7 +9,7 @@ NVFLARE tutorials); the differences from that legacy flow, for anyone migrating 
 | | Legacy Executor flow | This tutorial (`evaluation`) |
 |---|---|---|
 | Client code | `evaluator.py` is a `class FLIP_EVALUATOR(Executor)` | `evaluator.py` is a plain `nvflare.client` script (`flare.init/receive/send`) |
-| Server flow | bespoke `ModelEval` + `EvaluationPTModelLocator` (multi-model `COLLECTION`) | shared `CrossSiteModelEval` validate path + single-model `EvaluationModelLocator` |
+| Server flow | bespoke `ModelEval` + `EvaluationPTModelLocator` (multi-model `COLLECTION`) | shared `CrossSiteModelEval` validate path + `EvaluationModelLocator` (one single-model validate task per entry in `config['models']`) |
 | Job definition | job-type template + harness | a Python `FlipEvalRecipe` driven by `job.py` |
 
 The recipe loads the uploaded checkpoint on the server and broadcasts it to every client as a single

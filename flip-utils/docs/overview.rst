@@ -72,7 +72,6 @@ The ``flip`` package is organized into logical modules:
 ``flip.nvflare``
    NVFLARE-specific components:
 
-   - ``executors/`` — RUN_TRAINER, RUN_VALIDATOR, RUN_EVALUATOR wrappers
    - ``controllers/`` — Workflow controllers (ScatterAndGather, CrossSiteModelEval, etc.)
    - ``components/`` — Event handlers, persistors, privacy filters, model locators, etc.
    - ``recipes/`` — High-level NVFLARE job recipes
@@ -120,10 +119,10 @@ Type                         Description
 ``fed_opt``                  Custom federated optimization with flexible aggregation strategies
 ===========================  ====================================================================================
 
-The NVFLARE backend additionally ships template directories under
-``fl-apps/nvflare/`` for the Client-API templates (``standard``,
-``evaluation``, ``diffusion_model``); these are selected as app templates and are not
-``JobType`` enum values. The Flower backend ships its own ``standard`` and
+The NVFLARE backend additionally ships a template directory under
+``fl-apps/nvflare/`` for each Client-API job type (``standard``,
+``evaluation``, ``diffusion_model``, ``fed_opt``); the template names match the
+``JobType`` enum values above. The Flower backend ships its own ``standard`` and
 ``evaluation`` templates under ``fl-apps/flower/`` — selected at the deploy
 layer by ``FL_BACKEND=flower``.
 
@@ -136,8 +135,7 @@ The job components dynamically import user-provided code from the job's
 API, which merges the uploaded app files onto the matching
 ``fl-apps/nvflare/<template>/app`` template; in local SimEnv runs the
 tutorial's ``job.py`` stages its ``app_files/`` into the job's ``custom/``
-directly. The ``diffusion_model`` template additionally carries a git-tracked
-``custom/`` with baseline files that the merge extends.
+directly.
 
 ====================  ================================================================
 File                  Description

@@ -36,8 +36,8 @@ Which job types are available depends on the backend.
 optimisation (job type `fed_opt`, which shares `standard`'s client contract and differs only in
 the server-side optimizer aggregation). Every NVFLARE job type drives the client code through the
 modern **NVFLARE Client API** — a plain training/evaluation script using ``nvflare.client``
-(these Client-API templates took over the plain names from the retired Executor-based ones, which
-briefly lived alongside them under `*_client_api` names).
+(these Client-API templates briefly lived under `*_client_api` names alongside the Executor-based
+ones, then took over the plain names when those were retired).
 The manifests under :ref:`fl-required-files` are the authoritative list for each backend.
 More job types will be added in the future, adjusting to the community's needs.
 

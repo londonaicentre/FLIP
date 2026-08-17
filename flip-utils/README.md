@@ -80,7 +80,6 @@ flip/
 ├── constants/    # FlipConstants (pydantic-settings), enums, PTConstants
 ├── utils/        # General utilities: Utils, model weight helpers
 ├── nvflare/      # NVFLARE-specific logic and components
-│   ├── executors/    # RUN_TRAINER, RUN_VALIDATOR, RUN_EVALUATOR wrappers
 │   ├── controllers/  # FLIP workflows (ScatterAndGather, BroadcastTask, …)
 │   ├── components/   # Event handlers, persistors, privacy filters, locators, …
 │   ├── recipes/      # High-level NVFLARE job recipes
@@ -122,8 +121,7 @@ The job components dynamically import user-provided files from the job's `custom
 directory. On the platform that directory is assembled by the FL API, which merges the
 uploaded app files onto the matching `fl-apps/nvflare/<JOB_TYPE>/app` template; in local
 SimEnv runs the tutorial's `job.py` stages its `app_files/` into the job's `custom/`
-directly. The `diffusion_model` template additionally carries a git-tracked `custom/`
-with baseline files that the merge extends.
+directly.
 
 | File | Description |
 | ------ | ------------- |
@@ -229,9 +227,9 @@ Paths below are relative to `../fl-tutorials/nvflare/` (the NVFLARE tutorials tr
 | `evaluation` | `image_evaluation/3d_spleen_segmentation_evaluation` |
 | `diffusion_model` | `image_synthesis/latent_diffusion_model` |
 
-The legacy Executor job types (`standard`, `evaluation`, `diffusion_model`, `fed_opt`) remain
-supported for uploaded apps but no longer have in-tree tutorials — the tutorials above were
-migrated to the NVFLARE Client API.
+The plain job-type names (`standard`, `evaluation`, `diffusion_model`, `fed_opt`) are the
+Client-API templates — the legacy Executor syntax (`FLIP_TRAINER`-style classes) is retired and
+such apps can no longer run.
 
 ---
 

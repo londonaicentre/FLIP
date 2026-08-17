@@ -102,7 +102,7 @@ Where the boundary sits
 
    FLIP (training)                          MONAI Deploy (inference)
    ─────────────────────────────────        ────────────────────────────────────
-   trainer.py / validator.py                DICOM series selection
+   trainer.py                               DICOM series selection
    models.py :: get_model()          ──▶    preprocessing (must match training!)
    FL_global_model.pt (aggregated)          inference on the exported weights
                                             postprocessing

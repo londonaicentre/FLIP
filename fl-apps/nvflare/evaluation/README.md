@@ -16,15 +16,17 @@
 ## Overview
 
 This is the NVFLARE **Client API** evaluation job type (`JOB_TYPE=evaluation`). It evaluates
-a single uploaded model across every site and reports aggregate metrics. It replaced the retired
+every uploaded model listed in `config.json['models']` across every site and reports aggregate
+metrics. It replaced the retired
 Executor-based `evaluation` template, which paired the `RUN_EVALUATOR` executor with the bespoke
 `ModelEval` + `EvaluationPTModelLocator` (multi-model `COLLECTION`) server flow.
 
 Here the server reuses the same cross-site validation path as the
 [`standard`](../standard/README.md) training template:
 `InitEvaluation` → stock `GlobalModelEval` → `BroadcastTask` cleanup.
-Only the server-provided model is validated. The model is sourced
-by the single-model `EvaluationModelLocator` and broadcast to clients as one `FLModel`.
+Only server-provided models are validated. `EvaluationModelLocator` serves every entry in
+`config.json['models']` (multi-model works, e.g. the Ark+ multimodel eval), and each is broadcast
+as its own single-model validate task per (model, client) — one `FLModel` at a time.
 
 The base configs (`app/config/config_fed_server.json`, `app/config/config_fed_client.json`) and
 `meta.json` are **recipe-generated** from `flip.nvflare.recipes.FlipEvalRecipe`. Do not hand-edit them —

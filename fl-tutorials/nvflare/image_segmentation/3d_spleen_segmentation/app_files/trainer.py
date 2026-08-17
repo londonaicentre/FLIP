@@ -310,6 +310,7 @@ def main() -> None:
                     # as "evaluation on the global model" and carries them as INITIAL_METRICS for
                     # IntimeModelSelector.
                     metrics=global_val_metrics,
+                    # Batches across ALL local epochs this round (as in the xray app); the DP clip bound scales with it.
                     meta={"NUM_STEPS_CURRENT_ROUND": n_iterations},
                 )
             )

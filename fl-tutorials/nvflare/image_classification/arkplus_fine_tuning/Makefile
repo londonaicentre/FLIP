@@ -36,10 +36,9 @@ endif
 NUM_ROUNDS ?= 3
 N_CLIENTS ?= 2
 
-# Simulator workspace + metrics output. WORKSPACE matches job.py's default and is deliberately NOT
-# the workspace: `make round-metrics` auto-discovers the log with
-# the most round events under the workspace tree, and the shared dir accumulates round logs from
-# other tutorials' runs, so a stale log could be picked up instead of this tutorial's.
+# Simulator workspace + metrics output. WORKSPACE matches job.py's default and is deliberately
+# per-tutorial: `make round-metrics` auto-discovers the log with the most round events under the
+# workspace tree, so a dir shared with other tutorials would risk picking up a stale log of theirs.
 WORKSPACE ?= /tmp/nvflare/arkplus_finetuning
 METRICS_OUT ?= $(APP_DIR)/round_metrics
 
