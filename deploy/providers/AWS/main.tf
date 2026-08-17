@@ -189,8 +189,10 @@ locals {
     # private IPs), so it is documentation of intent rather than a control. When
     # var.enable_ecs_endpoints is false the endpoints don't exist and this rule is omitted entirely:
     # the 443 floor already carries that traffic, and re-stating it as a public rule here would
-    # collide with the floor on the same tuple.
-    var.enable_ecs_endpoints ? [
+    # collide with the floor on the same tuple. Same on LZA (the gate mirrors the SG's own count in
+    # vpc_endpoints.tf): endpoints are centralised in the Network account there, so no local
+    # endpoint SG exists to reference.
+    var.enable_ecs_endpoints && !var.lza_managed_network ? [
       merge(local.trust_egress_rule_defaults, {
         port                     = 443
         source_security_group_id = aws_security_group.vpc_endpoints[0].id
