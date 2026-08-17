@@ -25,8 +25,8 @@
 #
 # Datasets land (gitignored) under data/ where each tutorial's .env.app expects them:
 #   - xray_classification: reference dataset from Hugging Face (download-xray-data)
-#   - the three spleen tutorials (segmentation / evaluation / synthesis) share the MSD
-#     spleen dataset (download-spleen-data); override case count with NUM_CASES=<n>.
+#   - the spleen tutorials (segmentation legacy + client_api / evaluation / synthesis) share
+#     the MSD spleen dataset (download-spleen-data); override case count with NUM_CASES=<n>.
 #   - the three Ark+ tutorials share aicentreflip/tutorials-arkplus-cxr-classification:
 #     arkplus_fine_tuning uses download-arkplus-finetuning-data (data/arkplus/site{1,2}/); the two
 #     Ark+ evaluation tutorials use download-arkplus-eval-data (data/arkplus/site{1,2}_holdoff/).

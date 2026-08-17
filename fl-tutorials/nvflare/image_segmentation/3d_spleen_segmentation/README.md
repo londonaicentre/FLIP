@@ -5,8 +5,8 @@ FLIP tutorial for training a 3D spleen segmentation model using CT scans from th
 The training code is adapted from the MONAI spleen example:
 <https://github.com/Project-MONAI/tutorials/blob/main/3d_segmentation/spleen_segmentation_3d.ipynb>
 
-For a more advanced setup (Client API + FedAvg recipe), see:
-<https://github.com/NVIDIA/NVFlare/tree/main/examples/advanced/monai/spleen_ct_segmentation>
+This is the legacy Executor-API variant. For the NVFLARE Client API + `FlipFedAvgRecipe` setup,
+see the sibling tutorial `../3d_spleen_segmentation_client_api/`.
 
 ## Compatible job type
 

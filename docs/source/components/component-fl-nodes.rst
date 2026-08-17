@@ -71,6 +71,7 @@ Both cases perform a supervised federated averaging training, but the data, arch
 The NVFLARE Client API job types have their own tutorials:
 
 - `xray_classification_client_api <https://github.com/londonaicentre/FLIP/tree/develop/fl-tutorials/nvflare/image_classification/xray_classification_client_api>`_ (job type `standard_client_api`)
+- `3d_spleen_segmentation_client_api <https://github.com/londonaicentre/FLIP/tree/develop/fl-tutorials/nvflare/image_segmentation/3d_spleen_segmentation_client_api>`_ (job type `standard_client_api`)
 - `3d_spleen_segmentation_evaluation_client_api <https://github.com/londonaicentre/FLIP/tree/develop/fl-tutorials/nvflare/image_evaluation/3d_spleen_segmentation_evaluation_client_api>`_ (job type `evaluation_client_api`)
 - `latent_diffusion_model_client_api <https://github.com/londonaicentre/FLIP/tree/develop/fl-tutorials/nvflare/image_synthesis/latent_diffusion_model_client_api>`_ (job type `diffusion_model_client_api`)
 

@@ -1,0 +1,14 @@
+{
+  "job_type": "standard_client_api",
+  "LOCAL_ROUNDS": 4,
+  "GLOBAL_ROUNDS": 2,
+  "LEARNING_RATE": 5e-5,
+  "VAL_SPLIT": 0.1,
+  "BATCH_SIZE": 3,
+  "VALIDATE_EVERY": 1,
+  "BEST_MODEL_METRIC": "VAL_DICE",
+  "BEST_MODEL_METRIC_MINIMIZE": false,
+  "net_config": {
+    "spatial_dims": 3
+  }
+}
