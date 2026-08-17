@@ -752,10 +752,12 @@ revert by flipping `MANAGE_DNS=true` + `make plan`/`apply` once the zone lands:
 
 **Not yet on LZA** (tracked on #749):
 
-- The multi-AZ `-b` subnets have landed (lza#38), unblocking the ALB and the RDS subnet group — but as of 2026-08-11
-  the platform TGW attachment was still AZ-a-only, which **blackholes TGW-routed traffic from the `-b` subnets**
-  (central endpoints, image pulls; reported on PR#830). Until the attachment spans both AZs, workloads that need the
-  TGW must stay pinned to `-a` subnets — the e2e-lza stack (FLIP#829) shows the pinning pattern.
+- Multi-AZ is only partially landed (verified against the live account 2026-08-17): `prod-app-b` exists (lza#38), so
+  the **ALB is unblocked**, but there is **no `prod-data-b`** — the RDS subnet group still fails its ≥2-AZ
+  requirement — and **no `prod-tgw-b`**, so the TGW attachment rides the lone `tgw-a` subnet and **TGW-routed
+  traffic from `-b` subnets blackholes** (central endpoints, image pulls; reported on PR#830). Until `data-b`/`tgw-b`
+  land and the attachment spans both AZs, workloads that need the TGW must stay pinned to `-a` subnets — the e2e-lza
+  stack (FLIP#829) shows the pinning pattern.
 - No FL inbound path (see the NLB gating above). The ingress architecture itself is settled and proven end-to-end
   with dummy services — internet → networking-account edge NLB → TGW → central firewall → workload NLB → ECS
   (FLIP#829 / PR#830) — but wiring the real `fl-server-net-1` behind that chain (internal NLB + target group in this
