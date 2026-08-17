@@ -101,6 +101,15 @@ copy of that command, and imaging-api's `Settings.DCM2NIIX_IMAGE` — bump all t
 Dockerfile's `DCM2NIIX_VERSION` (see FLIP#980: the Docker Hub `xnat/dcm2niix:latest` it replaces was
 a stale 2021 build that silently dropped slices from valid series).
 
+Because the image now lives on a registry other than Docker Hub, `configure-dcm2niix.sh` also
+registers `ghcr.io` as a credential-less Container Service **image host**. This is load-bearing on
+the swarm backend: container-service 3.8.1 resolves the launch's registry auth by matching an
+image-host `url` against the bare registry hostname parsed from the image string, and with no match
+the null result reaches docker-java's `withAuthConfig` unguarded — every conversion then fails with
+`NullPointerException: authConfig was not specified` even though the public image needs no
+credentials at all. (Found live: a full platform image pull converted nothing until the host entry
+existed. The Kubernetes backend is unaffected — kubelet does the pulling there.)
+
 ### Run XNAT
 
 Run both configured development XNAT instances with:

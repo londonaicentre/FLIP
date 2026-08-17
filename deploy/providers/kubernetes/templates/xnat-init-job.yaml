@@ -550,6 +550,10 @@ spec:
                 exit 1
               fi
 
+              # No image-host (registry) registration here, unlike configure-dcm2niix.sh: the
+              # Kubernetes compute backend pulls images via kubelet (public ghcr.io images need no
+              # pull secret), not via the Container Service's docker client, so the swarm-only
+              # null-AuthConfig NPE that registration works around cannot occur on this path.
               echo "Registering Kubernetes backend with the Container Service plugin..."
               CS_HTTP=$(curl -s -o /tmp/cs_resp.txt -w "%{http_code}" \
                 --connect-timeout 10 --max-time 120 \

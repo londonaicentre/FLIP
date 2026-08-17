@@ -357,7 +357,11 @@ proxy at all. The Container Service is pointed at that endpoint by
 `trust/xnat/xnat/config/container-service-backend-configuration.json`, which
 `configure-dcm2niix.sh` POSTs to `/xapi/docker/server` — and the configure run now hard-fails if
 `/xapi/docker/server/ping` cannot reach Docker through the proxy, instead of leaving a
-registered-but-unlaunchable dcm2niix command behind.
+registered-but-unlaunchable dcm2niix command behind. The same script registers `ghcr.io` as a
+credential-less Container Service image host: swarm-mode launches resolve registry auth from the
+image-host list, and with no entry matching the image's registry hostname they NPE before any
+service is created — even though the public image needs no credentials (see
+`trust/xnat/README.md`).
 
 The proxy allowlists only what a swarm-mode Container Service launch needs — `SERVICES`
 (+ `POST` for the mutating calls), `TASKS`, `NODES`, `IMAGES` (pull-on-init), `INFO`, `SWARM`

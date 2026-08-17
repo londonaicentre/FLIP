@@ -200,7 +200,7 @@ The following XNAT anonymize-api endpoints are used by FLIP:
 DICOM to NIfTI Conversion
 ****************************
 
-XNAT can automatically convert DICOM images to NIfTI format using the ``dcm2niix`` tool via the Container Service plugin. The converter runs from FLIP's version-pinned image ``ghcr.io/londonaicentre/xnat-dcm2niix`` (built from ``trust/xnat/dcm2niix/``; never a mutable ``latest`` tag — the previously used Docker Hub ``xnat/dcm2niix:latest`` resolved to a stale 2021 build that silently dropped slices from valid series). FLIP controls this conversion on a per-project basis through two XNAT mechanisms:
+XNAT can automatically convert DICOM images to NIfTI format using the ``dcm2niix`` tool via the Container Service plugin. The converter runs from FLIP's version-pinned image ``ghcr.io/londonaicentre/xnat-dcm2niix`` (built from ``trust/xnat/dcm2niix/``; never a mutable ``latest`` tag — the previously used Docker Hub ``xnat/dcm2niix:latest`` resolved to a stale 2021 build that silently dropped slices from valid series). On the Docker/swarm backend the setup script also registers ``ghcr.io`` as a credential-less Container Service *image host*: without an image-host entry matching the image's registry hostname, container-service 3.8.1's swarm launch path fails with a ``NullPointerException`` before any container exists, even for a public image (the Kubernetes backend pulls via kubelet and does not need the entry). FLIP controls this conversion on a per-project basis through two XNAT mechanisms:
 
 Commands vs Event Subscriptions
 ================================
