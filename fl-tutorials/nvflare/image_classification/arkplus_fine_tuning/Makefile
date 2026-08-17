@@ -37,7 +37,7 @@ NUM_ROUNDS ?= 3
 N_CLIENTS ?= 2
 
 # Simulator workspace + metrics output. WORKSPACE matches job.py's default and is deliberately NOT
-# the shared harness dir (../../testing/runs/workspace): `make round-metrics` auto-discovers the log with
+# the workspace: `make round-metrics` auto-discovers the log with
 # the most round events under the workspace tree, and the shared dir accumulates round logs from
 # other tutorials' runs, so a stale log could be picked up instead of this tutorial's.
 WORKSPACE ?= /tmp/nvflare/arkplus_finetuning
