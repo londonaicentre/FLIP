@@ -673,9 +673,10 @@ configuration is identical to before — the legacy environments are never touch
   targets and the EC2 hosts go to the TGW-routed **app** subnets (they need the central endpoints / image pulls);
 - **gates off**: the SG-drift CloudTrail→EventBridge→Lambda stack (`security.tf` — the org baseline of Control Tower
   org trail, GuardDuty, Security Hub and Config covers it) and the public FL-server NLB + target group + DNS record +
-  SG rules (no IGW and VPC Block Public Access make an internet-facing NLB impossible; the FL inbound architecture is
-  the open #749 WP2 decision). The `fl-server-net-1` / `fl-api-net-1` ECS services themselves still deploy — they just
-  have no inbound FL path yet.
+  SG rules (no IGW and VPC Block Public Access make an internet-facing NLB impossible; FL ingress instead comes
+  through the networking account's edge NLB over TGW — proven end-to-end in FLIP#829/PR#830, wired up for the real
+  fl-server as follow-up #749 work). The `fl-server-net-1` / `fl-api-net-1` ECS services themselves still deploy —
+  they just have no inbound FL path yet.
 
 Everything else (ECS Fargate, RDS + Proxy, Cognito, S3 + CMK, Secrets Manager, SES, EFS, Cloud Map, internal ALB,
 CloudFront + WAF + ACM) remains FLIP-managed exactly as on legacy prod.
@@ -749,9 +750,14 @@ revert by flipping `MANAGE_DNS=true` + `make plan`/`apply` once the zone lands:
 
 **Not yet on LZA** (tracked on #749):
 
-- `make apply` will fail on the ALB and RDS subnet group until the platform team lands the multi-AZ `-b` subnets
-  (both need ≥2 AZs) — the hard WP2 platform blocker.
-- No FL inbound path (see the NLB gating above) — FL training across trusts waits on the WP2 ingress decision.
+- The multi-AZ `-b` subnets have landed (lza#38), unblocking the ALB and the RDS subnet group — but as of 2026-08-11
+  the platform TGW attachment was still AZ-a-only, which **blackholes TGW-routed traffic from the `-b` subnets**
+  (central endpoints, image pulls; reported on PR#830). Until the attachment spans both AZs, workloads that need the
+  TGW must stay pinned to `-a` subnets — the e2e-lza stack (FLIP#829) shows the pinning pattern.
+- No FL inbound path (see the NLB gating above). The ingress architecture itself is settled and proven end-to-end
+  with dummy services — internet → networking-account edge NLB → TGW → central firewall → workload NLB → ECS
+  (FLIP#829 / PR#830) — but wiring the real `fl-server-net-1` behind that chain (internal NLB + target group in this
+  stack, edge listener registration on the platform side) is follow-up #749 work.
 - The `full-deploy*` chains, `make status`/`check_status.py`, `update_env.py` and `make destroy` are untested against
   `PROD=lza` — WP3 exercises the `init`/`plan`/`apply` (+ `deploy-centralhub`/`deploy-ui`) loop first and fixes up the
   auxiliary tooling as findings come in.
