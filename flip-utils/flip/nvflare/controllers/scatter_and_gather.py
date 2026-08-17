@@ -10,7 +10,7 @@
 # limitations under the License.
 #
 
-from nvflare.apis.dxo import DXO, DataKind, from_shareable
+from nvflare.apis.dxo import from_shareable
 from nvflare.apis.fl_constant import FLContextKey, ReturnCode
 from nvflare.apis.fl_context import FLContext
 from nvflare.apis.shareable import Shareable
@@ -38,10 +38,14 @@ class ScatterAndGather(NVFlareScatterAndGather):
         re-serialises the full global model every round; for a ~759 MiB model that re-introduces the
         very per-round memory churn ``memory_gc_rounds`` exists to bound. FLIP never snapshotted, so
         ``0`` also preserves prior behaviour. It stays configurable for callers that want resilience.
-      * :meth:`_accept_train_result` — reports a client-side execution exception to the hub,
-        converts a (possibly partial, frozen-backbone) ``WEIGHT_DIFF`` head update into full
-        ``WEIGHTS`` before aggregation, since FLIP's aggregator expects ``WEIGHTS`` (FLIP#684),
-        and relays each genuinely accepted result to the hub as a ``CLIENT_RESULT_RECEIVED`` fact.
+      * :meth:`_accept_train_result` — reports a client-side execution exception to the hub and
+        relays each genuinely accepted result to the hub as a ``CLIENT_RESULT_RECEIVED`` fact.
+        Client ``WEIGHT_DIFF`` updates reach the aggregator untouched — stock NVFLARE semantics:
+        the aggregator averages the diffs and ``FullModelShareableGenerator`` (or the FedOpt
+        generator) applies the average to the global model. This is natively partial-safe for
+        frozen-backbone head-only updates (keys absent from the diff keep their global value),
+        which is what the removed DIFF→WEIGHTS reconstruction existed to guarantee (FLIP#684)
+        against the legacy templates' ``WEIGHTS``-expecting aggregator.
       * :meth:`handle_event` — relays FLIP metrics on ``FlipEvents.SEND_RESULT``.
       * :meth:`_check_abort_signal` — fires ``FlipEvents.ABORTED`` so downstream components (e.g.
         ``PersistToS3AndCleanup``) can persist results on an aborted run.
@@ -72,48 +76,6 @@ class ScatterAndGather(NVFlareScatterAndGather):
             self._model_id = get_flip_model_id(fl_ctx, fallback=self._model_id_fallback)
         return self._model_id
 
-    def _diff_to_weights(self, result: Shareable, fl_ctx: FLContext) -> Shareable:
-        """Convert a client ``WEIGHT_DIFF`` update into full ``WEIGHTS`` for the WEIGHTS aggregator.
-
-        FedAvg here aggregates ``WEIGHTS`` while clients return a ``WEIGHT_DIFF``; rebuild the full
-        weights by adding the diff onto the current global model. Partial-safe (FLIP#684): a
-        frozen-backbone fine-tune sends only its trainable head, and keys absent from the diff keep
-        their global value, so a head-only update reconstructs correctly. FedOpt (which aggregates
-        ``WEIGHT_DIFF`` directly) is left untouched. On any error the original result is returned so
-        the base class can apply its own handling.
-        """
-        try:
-            dxo = from_shareable(result)
-            # FedOpt-style server (the `fed_opt` job type): the aggregator consumes the diff
-            # directly and the shareable generator applies it through the server optimizer —
-            # reconstructing full WEIGHTS here would silently bypass the optimizer step. The old
-            # guard tested `isinstance(self.aggregator, PTFedOptModelShareableGenerator)`, which
-            # can never be true (the FedOpt component is a shareable *generator*, not an
-            # aggregator), so the conversion ran unconditionally and fed the WEIGHT_DIFF
-            # aggregator full WEIGHTS it then rejected.
-            # expected_data_kind is a plain DataKind when constructed directly but is normalised
-            # to a {dxo_name: DataKind} dict at runtime ({"": kind} for the single-DXO case), so
-            # check membership across both shapes.
-            expected = getattr(self.aggregator, "expected_data_kind", None)
-            expected_kinds = set(expected.values()) if isinstance(expected, dict) else {expected}
-            if DataKind.WEIGHT_DIFF in expected_kinds:
-                return result
-            if dxo.data_kind == DataKind.WEIGHT_DIFF:
-                global_weights = self._global_weights["weights"]
-                diff = dxo.data
-                new_weights = {
-                    key: (global_weights[key] + diff[key] if key in diff else global_weights[key])
-                    for key in global_weights
-                }
-                new_dxo = DXO(data_kind=DataKind.WEIGHTS, data=new_weights, meta=dxo.meta)
-                return new_dxo.update_shareable(result)
-            self.log_error(
-                fl_ctx, f"The returned weights are not of type WEIGHT_DIFF. Received data kind: {dxo.data_kind}"
-            )
-        except Exception as e:
-            self.log_error(fl_ctx, f"Error while adding client WEIGHT_DIFF to global weights at server: {e}")
-        return result
-
     def _accept_train_result(
         self, client_name: str, result: Shareable, fl_ctx: FLContext, is_unknown_task: bool = False
     ) -> bool:
@@ -132,12 +94,9 @@ class ScatterAndGather(NVFlareScatterAndGather):
                     )
             return bool(super()._accept_train_result(client_name, result, fl_ctx, is_unknown_task))
 
-        # Size the client's actual (possibly partial, head-only) update now — reconstruction
-        # below rewrites the shareable into the full model.
+        # Size the client's actual (possibly partial, head-only) update.
         size_bytes = self._client_update_size(result, fl_ctx)
 
-        # OK result: reconstruct full WEIGHTS from the (partial) WEIGHT_DIFF before the base aggregates.
-        result = self._diff_to_weights(result, fl_ctx)
         accepted = bool(super()._accept_train_result(client_name, result, fl_ctx, is_unknown_task))
 
         # Relay only what the base class genuinely accepted: an aggregator-rejected result

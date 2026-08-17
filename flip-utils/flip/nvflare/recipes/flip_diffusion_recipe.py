@@ -48,7 +48,6 @@ from pathlib import Path
 from typing import Any
 
 from nvflare import FedJob
-from nvflare.apis.dxo import DataKind
 from nvflare.app_common.aggregators import InTimeAccumulateWeightedAggregator
 from nvflare.app_common.executors.in_process_client_api_executor import InProcessClientAPIExecutor
 from nvflare.app_common.shareablegenerators.full_model_shareable_generator import FullModelShareableGenerator
@@ -197,7 +196,8 @@ class FlipDiffusionRecipe(Recipe):
         # persistor is what carries the trained autoencoder from phase 1 into phase 2).
         job.to_server(PTFileModelPersistor(model={"path": "models.get_model"}), id="persistor")
         job.to_server(FullModelShareableGenerator(), id="shareable_generator")
-        job.to_server(InTimeAccumulateWeightedAggregator(expected_data_kind=DataKind.WEIGHTS), id="aggregator")
+        # Stock: aggregate the clients' WEIGHT_DIFF updates directly (see FlipFedAvgRecipe).
+        job.to_server(InTimeAccumulateWeightedAggregator(), id="aggregator")
 
         # Server: FLIP components (locators, JSON generator, event handler, S3 persistor). The
         # initial-model locator mirrors the legacy template's ``model_locator_initial`` wiring for

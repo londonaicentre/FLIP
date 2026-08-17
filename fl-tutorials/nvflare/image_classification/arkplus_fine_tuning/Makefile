@@ -40,7 +40,7 @@ N_CLIENTS ?= 2
 # the shared harness dir (../../testing/runs/workspace): `make round-metrics` auto-discovers the log with
 # the most round events under the workspace tree, and the shared dir accumulates round logs from
 # other tutorials' runs, so a stale log could be picked up instead of this tutorial's.
-WORKSPACE ?= /tmp/nvflare/arkplus_finetuning_client_api
+WORKSPACE ?= /tmp/nvflare/arkplus_finetuning
 METRICS_OUT ?= $(APP_DIR)/round_metrics
 
 # Round count for the one-shot `make reproduce-overhead` replica — matches the deployed run's

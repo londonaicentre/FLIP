@@ -298,8 +298,8 @@ def main() -> None:
                 writer.add_scalar("VAL_LOSS@epoch", float(last_val_loss), global_step=cumulative_epoch)
                 writer.add_scalar("VAL_DICE@epoch", float(last_val_dice), global_step=cumulative_epoch)
 
-            # Send back DIFF: FLIP's ScatterAndGather reconstructs full WEIGHTS from the diff
-            # server-side before the WEIGHTS aggregator accepts it.
+            # Send back DIFF: the server aggregates the diffs directly and applies the average
+            # to the global model (stock NVFLARE semantics).
             new_state = {k: v.detach().cpu().numpy() for k, v in model.state_dict().items()}
             diff = {k: new_state[k] - torch_weights[k].detach().cpu().numpy() for k in new_state}
             flare.send(

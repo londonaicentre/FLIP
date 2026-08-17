@@ -12,12 +12,10 @@
 """Recipe for the FLIP FedOpt job type — server-side optimizer aggregation over client diffs.
 
 FedOpt (Reddi et al., "Adaptive Federated Optimization") replaces FedAvg's plain
-weight-replace with a **server-side optimizer step**: the aggregator averages the clients'
-``WEIGHT_DIFF`` updates directly (no reconstruction into full weights — FLIP's
-:class:`~flip.nvflare.controllers.ScatterAndGather` skips its DIFF→WEIGHTS conversion when the
-aggregator expects ``WEIGHT_DIFF``), and the shareable generator treats the averaged diff as a
-pseudo-gradient, applying it to the global model through a configurable ``torch.optim``
-optimizer (+ optional LR scheduler).
+apply-the-average with a **server-side optimizer step**: the aggregator averages the clients'
+``WEIGHT_DIFF`` updates directly (as in every FLIP job type — stock NVFLARE semantics), and the
+shareable generator treats the averaged diff as a pseudo-gradient, applying it to the global
+model through a configurable ``torch.optim`` optimizer (+ optional LR scheduler).
 
 The client contract is identical to the ``standard`` job type: a Client API ``trainer.py``
 that sends its update as ``FLModel(params=diff, params_type="DIFF")`` — every ``standard``
@@ -31,8 +29,6 @@ setting destroys the global model in one step, so it was not carried forward.)
 """
 
 from __future__ import annotations
-
-from nvflare.apis.dxo import DataKind
 
 from flip.nvflare.components import FlipFedOptShareableGenerator
 from flip.nvflare.recipes.flip_fedavg_recipe import FlipFedAvgRecipe
@@ -88,12 +84,3 @@ class FlipFedOptRecipe(FlipFedAvgRecipe):
             optimizer_args=self.optimizer_args,
             lr_scheduler_args=self.lr_scheduler_args,
         )
-
-    def _aggregator_data_kind(self) -> DataKind:
-        """FedOpt aggregates the raw client diffs.
-
-        Returns:
-            DataKind: ``WEIGHT_DIFF`` — which also tells FLIP's ``ScatterAndGather`` to skip its
-            DIFF→WEIGHTS reconstruction.
-        """
-        return DataKind.WEIGHT_DIFF

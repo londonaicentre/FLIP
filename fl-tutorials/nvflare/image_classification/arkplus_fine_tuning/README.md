@@ -193,7 +193,7 @@ make round-metrics COMPARE=/path/to/platform/rounds.tsv   # adds a platform − 
 this same app; the summary then includes a side-by-side steady-state table (round duration,
 aggregation time, inter-round gap), i.e. a baseline for the overhead the platform adds over bare
 local training. Knobs: `WORKSPACE` (simulator workspace parsed for logs; defaults to `job.py`'s
-`/tmp/nvflare/arkplus_finetuning_client_api`) and `METRICS_OUT` (output base directory).
+`/tmp/nvflare/arkplus_finetuning`) and `METRICS_OUT` (output base directory).
 
 > **Interpretation caveat.** Both simulated clients share one host and one GPU
 > (`num_threads = num_clients`), so simulator round durations bundle GPU contention between the two

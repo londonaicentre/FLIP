@@ -86,12 +86,20 @@ class TestAcceptTrainResult:
         controller._current_round = 2
         return controller
 
-    def test_converts_weight_diff_to_weights_for_non_fedopt(self):
+    def test_weight_diff_reaches_aggregator_untouched(self):
+        """Stock semantics: the client's (possibly partial, head-only) WEIGHT_DIFF is aggregated
+        directly — the fork must not transform it. The old DIFF→WEIGHTS reconstruction existed to
+        bridge the legacy templates' WEIGHTS-expecting aggregator (FLIP#684) and silently broke
+        FedOpt (which consumes the diff through the server optimizer); with every template now
+        aggregating diffs (the stock aggregator default), any transformation here is a bug."""
         controller = self._controller()
-        controller._global_weights = {"weights": {"w1": 1.0, "w2": 2.0}}
+        aggregator = MagicMock()
+        aggregator.expected_data_kind = {"": DataKind.WEIGHT_DIFF}
+        aggregator.accept = MagicMock(return_value=True)
+        controller.aggregator = aggregator
 
         result = DXO(
-            data_kind=DataKind.WEIGHT_DIFF, data={"w1": 0.25, "w2": -0.5}, meta={"origin": "client"}
+            data_kind=DataKind.WEIGHT_DIFF, data={"head.w": 0.25}, meta={"origin": "client"}
         ).to_shareable()
         result.add_cookie(AppConstants.CONTRIBUTION_ROUND, 2)
 
@@ -99,89 +107,8 @@ class TestAcceptTrainResult:
 
         assert accepted is True
         sent_dxo = from_shareable(controller.aggregator.accept.call_args[0][0])
-        assert sent_dxo.data_kind == DataKind.WEIGHTS
-        assert sent_dxo.data == {"w1": 1.25, "w2": 1.5}
-        assert sent_dxo.meta == {"origin": "client"}
-        controller.log_error.assert_not_called()
-
-    def test_partial_weight_diff_is_partial_safe(self):
-        # A head-only diff (frozen-backbone fine-tune, FLIP#684): missing keys keep their global value.
-        controller = self._controller()
-        controller._current_round = 3
-        controller._global_weights = {"weights": {"w1": 1.0, "w2": 2.0}}
-
-        result = DXO(data_kind=DataKind.WEIGHT_DIFF, data={"w1": 0.1}).to_shareable()
-        result.add_cookie(AppConstants.CONTRIBUTION_ROUND, 3)
-
-        accepted = controller._accept_train_result(client_name="site-1", result=result, fl_ctx=_ctx())
-
-        assert accepted is True
-        assert not any(
-            "Error while adding client WEIGHT_DIFF" in call.args[1] for call in controller.log_error.call_args_list
-        )
-        reconstructed = from_shareable(result).data
-        assert reconstructed["w1"] == 1.1  # updated
-        assert reconstructed["w2"] == 2.0  # frozen key preserved from global
-
-    def test_logs_error_when_data_kind_is_not_weight_diff(self):
-        controller = self._controller()
-        controller._current_round = 1
-        controller._global_weights = {"weights": {"w1": 1.0}}
-
-        result = DXO(data_kind=DataKind.WEIGHTS, data={"w1": 1.0}).to_shareable()
-        result.add_cookie(AppConstants.CONTRIBUTION_ROUND, 1)
-
-        controller._accept_train_result(client_name="site-1", result=result, fl_ctx=_ctx())
-
-        controller.log_error.assert_called_once()
-        assert "not of type WEIGHT_DIFF" in controller.log_error.call_args[0][1]
-
-    def test_reconstruction_error_passes_original_result_through_and_logs(self):
-        # Corrupt global weights (no "weights" entry) → the reconstruction raises; the original
-        # WEIGHT_DIFF result must be passed through unchanged so the base class applies its own
-        # handling, with the failure logged rather than swallowed.
-        controller = self._controller()
-        controller._current_round = 5
-        controller._global_weights = {}
-
-        result = DXO(data_kind=DataKind.WEIGHT_DIFF, data={"w1": 0.1}).to_shareable()
-        result.add_cookie(AppConstants.CONTRIBUTION_ROUND, 5)
-
-        accepted = controller._accept_train_result(client_name="site-1", result=result, fl_ctx=_ctx())
-
-        assert accepted is True
-        controller.log_error.assert_called_once()
-        assert "Error while adding client WEIGHT_DIFF" in controller.log_error.call_args[0][1]
-        sent_dxo = from_shareable(controller.aggregator.accept.call_args[0][0])
-        assert sent_dxo.data_kind == DataKind.WEIGHT_DIFF  # not converted
-        assert sent_dxo.data == {"w1": 0.1}
-
-    def test_keeps_weight_diff_for_weight_diff_aggregator(self):
-        """A FedOpt-style server (the ``fed_opt`` job type) wires an aggregator that consumes
-        WEIGHT_DIFF directly; the conversion must be skipped or the server optimizer step is
-        silently bypassed. The old guard isinstance-checked the aggregator against the FedOpt
-        *shareable generator* class — which no real config ever satisfies, so the conversion ran
-        unconditionally; the fixed guard keys on the aggregator's ``expected_data_kind``."""
-        controller = self._controller()
-        aggregator = MagicMock()
-        # The runtime shape: InTimeAccumulateWeightedAggregator normalises a single expected kind
-        # into the {dxo_name: DataKind} dict form ({"" : kind}) — the guard must match it, not just
-        # the plain enum a hand-constructed aggregator carries.
-        aggregator.expected_data_kind = {"": DataKind.WEIGHT_DIFF}
-        aggregator.accept = MagicMock(return_value=True)
-        controller.aggregator = aggregator
-        controller._current_round = 4
-        controller._global_weights = {"weights": {"w1": 10.0}}
-
-        result = DXO(data_kind=DataKind.WEIGHT_DIFF, data={"w1": -0.75}, meta={"origin": "client"}).to_shareable()
-        result.add_cookie(AppConstants.CONTRIBUTION_ROUND, 4)
-
-        accepted = controller._accept_train_result(client_name="site-1", result=result, fl_ctx=_ctx())
-
-        assert accepted is True
-        sent_dxo = from_shareable(controller.aggregator.accept.call_args[0][0])
-        assert sent_dxo.data_kind == DataKind.WEIGHT_DIFF  # not converted
-        assert sent_dxo.data == {"w1": -0.75}
+        assert sent_dxo.data_kind == DataKind.WEIGHT_DIFF
+        assert sent_dxo.data == {"head.w": 0.25}
         controller.log_error.assert_not_called()
 
     def test_reports_handled_execution_exception_to_hub(self):

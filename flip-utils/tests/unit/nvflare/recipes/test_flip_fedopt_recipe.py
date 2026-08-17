@@ -21,8 +21,6 @@ _stub_models = types.ModuleType("models")
 _stub_models.get_model = lambda: object()
 sys.modules.setdefault("models", _stub_models)
 
-from nvflare.apis.dxo import DataKind  # noqa: E402
-
 from flip.nvflare.recipes import FlipFedAvgRecipe, FlipFedOptRecipe  # noqa: E402
 
 
@@ -37,7 +35,6 @@ class TestFlipFedOptRecipe:
         assert recipe.optimizer_args["args"] == {"lr": 1.0, "momentum": 0.6}
         assert recipe.lr_scheduler_args is None
         assert recipe.device == "cpu"
-        assert recipe._aggregator_data_kind() == DataKind.WEIGHT_DIFF
 
     def test_export_wires_fedopt_server_components(self, tmp_path: Path):
         """The exported server config carries the FedOpt shareable generator (sourcing the model
