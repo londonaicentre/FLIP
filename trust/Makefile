@@ -266,7 +266,7 @@ up-trust: update-omop-data update-orthanc-data create-networks
 	@echo "⚙️ Using kit file trust/$(KIT_FILE)"
 	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
 	$(call check_omop_data_dir,$(or $(OMOP_DATA_DIR),./omop-db/volumes/Trust_$(TRUST_NUM)/db_data))
-	mkdir -p $(or $(BASE_IMAGES_DOWNLOAD_DIR),./data/$(KIT))
+	mkdir -p $(or $(BASE_IMAGES_DOWNLOAD_DIR),./data/$(KIT))/net-1 $(or $(BASE_IMAGES_DOWNLOAD_DIR),./data/$(KIT))/net-2
 	@echo "$(GPU_STATUS_MSG)"
 	$(TRUST_VARS) DEBUG=${DEBUG} ${DOCKER_COMPOSE_CMD} $(GPU_OVERRIDE) $(TRUST_OVERRIDE) -p $(TRUST_PROJECT) up -d $(UP_PULL_FLAGS)
 	@echo "🩻 Starting XNAT for $(KIT)..."
@@ -348,6 +348,7 @@ up-fl-clients:
 up-fl-clients-kit:
 	$(require_kit_file)
 	@echo "$(GPU_STATUS_MSG)"
+	mkdir -p $(or $(BASE_IMAGES_DOWNLOAD_DIR),./data/$(KIT))/net-1 $(or $(BASE_IMAGES_DOWNLOAD_DIR),./data/$(KIT))/net-2
 	$(TRUST_VARS) DEBUG=${DEBUG} ${DOCKER_COMPOSE_CMD} $(GPU_OVERRIDE) $(TRUST_OVERRIDE) -p $(TRUST_PROJECT) up -d --no-deps $(UP_PULL_FLAGS) fl-client-net-1 fl-client-net-2
 
 down-fl-clients:

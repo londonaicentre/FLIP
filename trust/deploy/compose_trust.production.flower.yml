@@ -22,10 +22,18 @@ services:
     cap_drop:
       - ALL
     volumes:
-      # Mount the base images download directory to share images downloaded from XNAT with FL clients.
-      # Unset in the prod kit → /opt/flip/data/trust-${FL_KIT_SLOT_NUMBER} (see imaging-api in
-      # compose_trust.production.yml for the full rationale; mirrors ORTHANC_STORAGE_DIR's default).
-      - ${BASE_IMAGES_DOWNLOAD_DIR:-/opt/flip/data/trust-${FL_KIT_SLOT_NUMBER}}:/app/data/images
+      # Share images downloaded from XNAT with this FL client — sliced to this
+      # net's subdirectory only (least privilege: imaging-api's returned paths
+      # all live under <IMAGES_DIR>/<NET_ID>/, and mounting the whole tree
+      # would let training code read every other net's cached studies). The
+      # container path keeps the net-1 suffix so imaging-api's absolute paths
+      # still resolve unchanged inside the client. The host net-1 dir must be
+      # pre-created with the right owner (site.yml / `make up-trust` do this) —
+      # a Docker-created root-owned source dir breaks imaging-api's writes.
+      # Unset BASE_IMAGES_DOWNLOAD_DIR in the prod kit → /opt/flip/data/trust-${FL_KIT_SLOT_NUMBER}
+      # (see imaging-api in compose_trust.production.yml for the full rationale;
+      # mirrors ORTHANC_STORAGE_DIR's default).
+      - ${BASE_IMAGES_DOWNLOAD_DIR:-/opt/flip/data/trust-${FL_KIT_SLOT_NUMBER}}/net-1:/app/data/images/net-1
       # Provisioned Flower secrets (certificates, keys).
       # FL_KIT_DIR is the kit root on the trust host — Ansible-managed
       # /opt/flip/fl-kit on the AWS EC2 trust (see site.yml), or wherever

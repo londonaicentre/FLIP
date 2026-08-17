@@ -196,8 +196,17 @@
         # `[Errno 13] Permission denied: '/app/data/images/net-1'`, and the
         # FL training run fails downstream with `num_samples=0` because the
         # whole cohort's image fetches errored out.
+        # The net-N children must be pre-created too: each fl-client now
+        # bind-mounts only its own net's slice (<base>/net-N — least
+        # privilege, so training code can't read another net's cached
+        # studies), and a Docker-created root-owned net-N would break
+        # imaging-api's writes into it exactly the same way.
         - /opt/flip/data/trust-1
+        - /opt/flip/data/trust-1/net-1
+        - /opt/flip/data/trust-1/net-2
         - /opt/flip/data/trust-2
+        - /opt/flip/data/trust-2/net-1
+        - /opt/flip/data/trust-2/net-2
 
     # XNAT containers run as the in-image `xnat` user (UID 1001) after the
     # Docker-hardening pass on `trust/xnat/xnat/Dockerfile`. Bind-mounted host

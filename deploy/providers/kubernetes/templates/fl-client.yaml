@@ -92,8 +92,27 @@ spec:
           operator: Exists
           effect: NoSchedule
       {{- end }}
-      {{- if or (and (eq .Values.flBackend "nvflare") .Values.flClient.nvflare.kitFromS3.enabled) (and (eq .Values.flBackend "flower") .Values.flClient.flower.kitFromS3.enabled) }}
       initContainers:
+        # Pre-create this net's slice of the shared images volume, owned by the
+        # uid imaging-api writes as (1000, the image-baked `flip` user): the
+        # fl-client container below mounts only <imagesDir>/<netId> via subPath
+        # — least privilege, so training code cannot read another net's cached
+        # studies — and kubelet creates a missing subPath dir as root, which
+        # imaging-api could then never write into (every download would 500
+        # with EACCES). Runs unconditionally, unlike kit-init below.
+        - name: images-init
+          image: amazon/aws-cli:2.22.0
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -eu
+              mkdir -p "{{ .Values.flClient.imagesDir }}/{{ .Values.flClient.netId }}"
+              chown 1000:1000 "{{ .Values.flClient.imagesDir }}/{{ .Values.flClient.netId }}"
+          volumeMounts:
+            - name: images
+              mountPath: {{ .Values.flClient.imagesDir }}
+      {{- if or (and (eq .Values.flBackend "nvflare") .Values.flClient.nvflare.kitFromS3.enabled) (and (eq .Values.flBackend "flower") .Values.flClient.flower.kitFromS3.enabled) }}
         - name: kit-init
           image: amazon/aws-cli:2.22.0
           command:
@@ -231,8 +250,12 @@ spec:
                   name: {{ if .Values.secrets.create }}{{ include "flip-trust.fullname" . }}-secrets{{ else }}{{ .Values.secrets.existingName }}{{ end }}
                   key: trust-internal-service-key
           volumeMounts:
+            # Only this net's slice of the shared images volume, at the
+            # unchanged container path so imaging-api's returned paths still
+            # resolve (see images-init above).
             - name: images
-              mountPath: {{ .Values.flClient.imagesDir }}
+              mountPath: {{ .Values.flClient.imagesDir }}/{{ .Values.flClient.netId }}
+              subPath: {{ .Values.flClient.netId }}
             - name: dshm
               mountPath: /dev/shm
           {{- if eq .Values.flBackend "nvflare" }}

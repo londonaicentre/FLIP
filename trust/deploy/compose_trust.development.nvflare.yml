@@ -33,8 +33,10 @@ services:
     # write into the bind-mounted local/ (guarded by `|| exit 1`); the `chmod +x` calls
     # on startup/*.sh are unguarded and do not crash-loop.
     volumes:
-      # Mount the base images download directory to share images downloaded from XNAT with FL clients
-      - ${BASE_IMAGES_DOWNLOAD_DIR}:/app/data/images
+      # This net's slice of the images download directory, at the unchanged container
+      # path — see compose_trust.production.nvflare.yml for the least-privilege
+      # rationale; `make up-trust` pre-creates the host net dirs.
+      - ${BASE_IMAGES_DOWNLOAD_DIR}/net-1:/app/data/images/net-1
       # Provisioned NVFLARE secrets (certificates, fed_client.json) — mounted from the
       # FL kit slot assigned by the hub, NOT the trust's friendly name. The slot dir's
       # fed_client.json baked-in CN is the identity the FL server sees on registration.
@@ -71,8 +73,8 @@ services:
       - ALL
     # No capability added back — see fl-client-net-1 above.
     volumes:
-      # Mount the base images download directory to share images downloaded from XNAT with FL clients
-      - ${BASE_IMAGES_DOWNLOAD_DIR}:/app/data/images
+      # This net's slice of the images download directory (see fl-client-net-1 above)
+      - ${BASE_IMAGES_DOWNLOAD_DIR}/net-2:/app/data/images/net-2
       # Provisioned NVFLARE secrets (certificates, fed_client.json)
       - ${FL_PROVISIONED_DIR}/net-2/services/${FL_KIT_SLOT}/local:/app/local
       - ${FL_PROVISIONED_DIR}/net-2/services/${FL_KIT_SLOT}/startup:/app/startup
