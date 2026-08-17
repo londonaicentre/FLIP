@@ -17,6 +17,7 @@ from pathlib import Path
 import requests
 
 from imaging_api.config import get_settings
+from imaging_api.services.image_cache import remove_sentinel, sentinel_path, write_sentinel
 from imaging_api.services.projects import (
     get_experiment,
     get_project_from_central_hub_project_id,
@@ -37,6 +38,7 @@ async def download_and_unzip_images(
     assessor_type: str,
     resource_type: str,
     headers: dict[str, str],
+    force_refresh: bool = False,
 ) -> str:
     """
     Downloads XNAT experiment image data corresponding to a given accession ID and encrypted central hub project id.
@@ -46,6 +48,15 @@ async def download_and_unzip_images(
     All data is downloaded in a single .zip file. Once the file download is complete, this method will then attempt
     to unzip the folder and delete the existing .zip file.
 
+    Downloads are cached on disk per (net, project, accession): extraction lands in
+    ``<BASE_IMAGES_DOWNLOAD_DIR>/<net_id>/<central_hub_project_id>/<accession_id>/`` and a completeness
+    sentinel per (assessor_type, resource_type) is written there after successful extraction. When the
+    sentinel is present the cached folder is returned without contacting XNAT — FL training code calls
+    this once per accession per round, and without the cache each of those calls is a full study
+    re-download of bytes already on local disk (FLIP#953). The per-project path segment keeps projects
+    that share an accession from being served each other's copies (their XNAT content can differ, e.g.
+    per-project label enrichment).
+
     Args:
         central_hub_project_id (str): Central Hub project ID. Corresponds to XNAT secondary ID.
         accession_id (str): The unique value for a study stored in PACS. Corresponds to XNAT experiment label.
@@ -54,6 +65,9 @@ async def download_and_unzip_images(
         resource_type (str): XNAT resource type e.g DICOM/NIFTI. ALL will download all resources. Custom value is
         allowed if researcher has added their own custom XNAT resource type into scans.
         headers (dict[str, str]): XNAT authentication headers.
+        force_refresh (bool): Re-download even when a completed cached copy exists. The sentinel is
+        removed before the re-download starts, so a crash mid-refresh can never leave a stale
+        completeness marker, and rewritten on success.
 
     Returns:
         str: The path to the unzipped folder containing the downloaded images.
@@ -62,7 +76,8 @@ async def download_and_unzip_images(
         imaging_api.utils.exceptions.NotFoundError: If the project with the given ID is not found, if no experiments are
         found for the given accession ID, if no data is found at the download URL, or if the ZIP file is not found after
         download.
-        ValueError: If the net ID attempts path traversal outside the base images directory.
+        ValueError: If the net ID, central hub project ID, accession ID, assessor type, or resource type attempts
+        path traversal outside its directory level.
         Exception: If there is an error during any of the requests to XNAT, during the download process, or during the
         unzipping process.
     """
@@ -73,15 +88,42 @@ async def download_and_unzip_images(
     if not download_dir_abs.startswith(base_images_download_dir_abs + os.sep):
         raise ValueError(f"Path traversal detected in net ID: {net_id}")
 
-    # Ensure the per-net download directory exists before we try to write into it.
-    # A missing net_id subdir is a deployment/misconfiguration issue (the bind
-    # mount was never provisioned for this net), not a "remote resource not
-    # found" — surface it as LocalStorageError so the router returns 500.
+    # The cache path segments are user-controlled too; guard each level the same way.
+    project_dir_abs = os.path.realpath(os.path.join(download_dir_abs, central_hub_project_id))
+    if not project_dir_abs.startswith(download_dir_abs + os.sep):
+        raise ValueError(f"Path traversal detected in central hub project ID: {central_hub_project_id!r}")
+    accession_dir_abs = os.path.realpath(os.path.join(project_dir_abs, accession_id))
+    if not accession_dir_abs.startswith(project_dir_abs + os.sep):
+        raise ValueError(f"Path traversal detected in accession_id: {accession_id!r}")
+
+    # Cache short-circuit, before any XNAT round-trip. The sentinel (written only after a fully
+    # successful extraction) is the completeness marker — the mere presence of image files is not
+    # trusted, because extraction merges member-by-member and a crash can leave a partial folder.
+    sentinel = sentinel_path(accession_dir_abs, assessor_type, resource_type)
+    if not force_refresh and os.path.isfile(sentinel):
+        size_mb = sum(f.stat().st_size for f in Path(accession_dir_abs).glob("**/*") if f.is_file()) / 1e6
+        logger.info(
+            f"Cache hit for net={net_id} project={central_hub_project_id} accession={accession_id} "
+            f"({assessor_type}/{resource_type}): reusing {accession_dir_abs} (~{size_mb:.1f} MB, "
+            f"skipping XNAT download)"
+        )
+        return accession_dir_abs
+    if force_refresh:
+        remove_sentinel(accession_dir_abs, assessor_type, resource_type)
+        logger.info(
+            f"force_refresh: invalidated cached download of accession {accession_id} "
+            f"({assessor_type}/{resource_type}) ahead of re-download"
+        )
+
+    # Ensure the per-net/per-project download directory exists before we try to
+    # write into it. A missing net_id subdir is a deployment/misconfiguration
+    # issue (the bind mount was never provisioned for this net), not a "remote
+    # resource not found" — surface it as LocalStorageError so the router returns 500.
     try:
-        os.makedirs(download_dir_abs, exist_ok=True)
+        os.makedirs(project_dir_abs, exist_ok=True)
     except OSError as e:
         raise LocalStorageError(
-            f"Cannot create image download directory {download_dir_abs!r} on the trust host: {e}"
+            f"Cannot create image download directory {project_dir_abs!r} on the trust host: {e}"
         ) from e
 
     # Get project ID from central hub project ID
@@ -119,14 +161,14 @@ async def download_and_unzip_images(
     )
     logger.info(f"Download URL: {download_url}")
 
-    # Define download and extraction paths. net_id was validated above; we
-    # still have to guard the final zip path because accession_id and
-    # resource_type are user-controlled and could smuggle `..` segments that
-    # would escape download_dir_abs into a sibling net's directory or out of
-    # BASE_IMAGES_DOWNLOAD_DIR entirely.
-    zip_file_path = os.path.join(download_dir_abs, f"{accession_id}-scans-{resource_type}.zip")
+    # Define download and extraction paths. net_id and the project segment were
+    # validated above; we still have to guard the final zip path because
+    # accession_id and resource_type are user-controlled and could smuggle `..`
+    # segments that would escape project_dir_abs into a sibling directory or out
+    # of BASE_IMAGES_DOWNLOAD_DIR entirely.
+    zip_file_path = os.path.join(project_dir_abs, f"{accession_id}-scans-{resource_type}.zip")
     zip_file_path_abs = os.path.realpath(zip_file_path)
-    if not zip_file_path_abs.startswith(download_dir_abs + os.sep):
+    if not zip_file_path_abs.startswith(project_dir_abs + os.sep):
         raise ValueError(
             f"Path traversal detected in accession_id or resource_type: "
             f"accession_id={accession_id!r} resource_type={resource_type!r}"
@@ -149,7 +191,7 @@ async def download_and_unzip_images(
     logger.info(f"Downloaded file: {downloaded_file}")
 
     # Unzip file and rename the folder
-    extracted_folder = unzip_file(downloaded_file, download_dir_abs, accession_id)
+    extracted_folder = unzip_file(downloaded_file, project_dir_abs, accession_id)
     logger.debug(f"Extracted folder: {extracted_folder}")
 
     # List contents of the extracted folder recursively
@@ -158,6 +200,14 @@ async def download_and_unzip_images(
             logger.debug(f"File: {os.path.join(root, name)}")
         for name in dirs:
             logger.debug(f"Directory: {os.path.join(root, name)}")
+
+    # Only now — after a fully successful extraction — mark this (assessor, resource)
+    # download complete, so future calls short-circuit before touching XNAT.
+    write_sentinel(accession_dir_abs, assessor_type, resource_type)
+    logger.info(
+        f"Marked download complete for net={net_id} project={central_hub_project_id} "
+        f"accession={accession_id} ({assessor_type}/{resource_type})"
+    )
 
     return extracted_folder
 
