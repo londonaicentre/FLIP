@@ -286,7 +286,7 @@ def test_get_command_info_success(mock_get, headers):
         json=MagicMock(return_value=[{"id": 1, "xnat": [{"name": "dcm2niix-scan"}]}]),
     )
 
-    command_id, wrapper_name = get_command_info("xnat/dcm2niix:latest", headers)
+    command_id, wrapper_name = get_command_info("ghcr.io/londonaicentre/xnat-dcm2niix:v1.0.20260724", headers)
 
     assert command_id == 1
     assert wrapper_name == "dcm2niix-scan"
@@ -297,7 +297,7 @@ def test_get_command_info_fetch_failure(mock_get, headers):
     mock_get.return_value = MagicMock(status_code=500, text="Internal Server Error")
 
     with pytest.raises(Exception, match="XNAT command fetch failed"):
-        get_command_info("xnat/dcm2niix:latest", headers)
+        get_command_info("ghcr.io/londonaicentre/xnat-dcm2niix:v1.0.20260724", headers)
 
 
 # ===========================================================================
@@ -311,7 +311,7 @@ def test_create_project_event_subscription_active(mock_cmd_info, mock_put, mock_
     mock_put.return_value = MagicMock(status_code=200)
     mock_post.return_value = MagicMock(status_code=200)
 
-    create_project_event_subscription("TEST", "xnat/dcm2niix:latest", True, headers)
+    create_project_event_subscription("TEST", "ghcr.io/londonaicentre/xnat-dcm2niix:v1.0.20260724", True, headers)
 
     mock_put.assert_called_once()
     assert "/commands/1/wrappers/dcm2niix-scan/enabled" in mock_put.call_args[0][0]
@@ -331,7 +331,7 @@ def test_create_project_event_subscription_inactive(mock_cmd_info, mock_put, moc
     mock_put.return_value = MagicMock(status_code=200)
     mock_post.return_value = MagicMock(status_code=200)
 
-    create_project_event_subscription("TEST", "xnat/dcm2niix:latest", False, headers)
+    create_project_event_subscription("TEST", "ghcr.io/londonaicentre/xnat-dcm2niix:v1.0.20260724", False, headers)
 
     mock_post.assert_called_once()
     call_payload = mock_post.call_args[1]["json"]
@@ -345,7 +345,7 @@ def test_create_project_event_subscription_enable_command_failure(mock_cmd_info,
     mock_put.return_value = MagicMock(status_code=500, text="Internal Server Error")
 
     with pytest.raises(Exception, match="Enabling command"):
-        create_project_event_subscription("TEST", "xnat/dcm2niix:latest", True, headers)
+        create_project_event_subscription("TEST", "ghcr.io/londonaicentre/xnat-dcm2niix:v1.0.20260724", True, headers)
 
 
 @patch("imaging_api.services.projects.requests.post")
@@ -357,7 +357,7 @@ def test_create_project_event_subscription_failure(mock_cmd_info, mock_put, mock
     mock_post.return_value = MagicMock(status_code=500, text="Internal Server Error")
 
     with pytest.raises(Exception, match="Creating event subscription"):
-        create_project_event_subscription("TEST", "xnat/dcm2niix:latest", True, headers)
+        create_project_event_subscription("TEST", "ghcr.io/londonaicentre/xnat-dcm2niix:v1.0.20260724", True, headers)
 
 
 # ===========================================================================

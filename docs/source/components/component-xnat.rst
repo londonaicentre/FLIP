@@ -200,7 +200,7 @@ The following XNAT anonymize-api endpoints are used by FLIP:
 DICOM to NIfTI Conversion
 ****************************
 
-XNAT can automatically convert DICOM images to NIfTI format using the ``dcm2niix`` tool via the Container Service plugin. FLIP controls this conversion on a per-project basis through two XNAT mechanisms:
+XNAT can automatically convert DICOM images to NIfTI format using the ``dcm2niix`` tool via the Container Service plugin. The converter runs from FLIP's version-pinned image ``ghcr.io/londonaicentre/xnat-dcm2niix`` (built from ``trust/xnat/dcm2niix/``; never a mutable ``latest`` tag — the previously used Docker Hub ``xnat/dcm2niix:latest`` resolved to a stale 2021 build that silently dropped slices from valid series). FLIP controls this conversion on a per-project basis through two XNAT mechanisms:
 
 Commands vs Event Subscriptions
 ================================

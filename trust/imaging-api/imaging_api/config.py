@@ -79,6 +79,14 @@ class Settings(BaseSettings):
     #
     DATA_ACCESS_API_URL: str = "http://data-access-api:8000"
 
+    # Container Service image for automatic DICOM→NIfTI conversion. The per-project
+    # event subscription looks the XNAT command up by this exact image string, so it
+    # must match what trust/xnat/xnat/config/dcm2niix_command.json (and the K8s
+    # init-job's inline copy) registers at deploy time. Pinned by version tag, never
+    # `latest`: Docker Hub's mutable `xnat/dcm2niix:latest` resolved to a 2021 build
+    # that silently dropped slices from valid series (FLIP#980).
+    DCM2NIIX_IMAGE: str = "ghcr.io/londonaicentre/xnat-dcm2niix:v1.0.20260724"
+
     #
     BASE_IMAGES_DOWNLOAD_DIR: str
 

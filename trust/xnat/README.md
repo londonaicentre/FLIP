@@ -93,6 +93,14 @@ make build
 
 This downloads the XNAT WAR and plugins from S3, then builds all three images (`xnat-web`, `xnat-db`, `xnat-nginx`) tagged as `${DOCKER_REGISTRY}xnat-<service>:${DOCKER_TAG}`.
 
+The DICOM→NIfTI converter the Container Service launches is a fourth, standalone image —
+`ghcr.io/londonaicentre/xnat-dcm2niix` (built from [`dcm2niix/`](dcm2niix/), published by its own
+GitHub workflow). It is referenced by an immutable version tag from
+[`xnat/config/dcm2niix_command.json`](xnat/config/dcm2niix_command.json), the K8s init-job's inline
+copy of that command, and imaging-api's `Settings.DCM2NIIX_IMAGE` — bump all three together with the
+Dockerfile's `DCM2NIIX_VERSION` (see FLIP#980: the Docker Hub `xnat/dcm2niix:latest` it replaces was
+a stale 2021 build that silently dropped slices from valid series).
+
 ### Run XNAT
 
 Run both configured development XNAT instances with:

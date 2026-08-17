@@ -268,7 +268,7 @@ def get_command_info(container: str, headers: dict[str, str]) -> tuple[int, str]
     Fetches the XNAT command ID and wrapper name for a given container image.
 
     Args:
-        container (str): Container image name, e.g. "xnat/dcm2niix:latest".
+        container (str): Container image name (the configured ``Settings.DCM2NIIX_IMAGE``).
         headers (dict[str, str]): XNAT authentication headers.
 
     Returns:
@@ -301,7 +301,7 @@ def create_project_event_subscription(project_id: str, container: str, active: b
 
     Args:
         project_id (str): XNAT project ID to scope the subscription to.
-        container (str): Container image name, e.g. "xnat/dcm2niix:latest".
+        container (str): Container image name (the configured ``Settings.DCM2NIIX_IMAGE``).
         headers (dict[str, str]): XNAT authentication headers.
         active (bool): If True, the subscription is active immediately. If False, it is created
             but deactivated (can be toggled later via the XNAT API).

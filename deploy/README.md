@@ -339,9 +339,10 @@ container.
 
 ### Docker Socket Isolation (XNAT Container Service)
 
-XNAT's Container Service plugin launches processing containers — currently `xnat/dcm2niix`,
-which every project created with DICOM→NIfTI conversion enabled triggers automatically on scan
-archive. It used to do this through `/var/run/docker.sock` mounted straight into `xnat-web`,
+XNAT's Container Service plugin launches processing containers — currently
+`ghcr.io/londonaicentre/xnat-dcm2niix` (a version-pinned build of dcm2niix; see
+`trust/xnat/dcm2niix/`), which every project created with DICOM→NIfTI conversion enabled
+triggers automatically on scan archive. It used to do this through `/var/run/docker.sock` mounted straight into `xnat-web`,
 which is a root-equivalent capability: anything that compromises XNAT can exec into any container
 on the host, start privileged containers, or mount arbitrary host paths.
 
