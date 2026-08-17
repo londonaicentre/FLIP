@@ -11,9 +11,10 @@
 #
 
 # FLIP's ScatterAndGather is a thin subclass of NVFLARE's stock ScatterAndGather; these tests cover
-# only the FLIP-specific overrides (model_id + snapshot default, the WEIGHT_DIFF->WEIGHTS
-# reconstruction, metrics relay, and the ABORTED event). Stock's own behaviour (round loop, arg
-# validation, component wiring, memory_gc_rounds) is exercised by NVFLARE's own tests, not here.
+# only the FLIP-specific overrides (model_id + snapshot default, hub relays for failed and accepted
+# client results, the data-kind mismatch report, the zero-acceptance abort, metrics relay, and the
+# ABORTED event). Stock's own behaviour (round loop, arg validation, component wiring,
+# memory_gc_rounds) is exercised by NVFLARE's own tests, not here.
 
 from unittest.mock import MagicMock, patch
 
@@ -23,6 +24,7 @@ from nvflare.apis.fl_constant import FLContextKey, ReturnCode
 from nvflare.apis.shareable import Shareable
 from nvflare.app_common.abstract.aggregator import Aggregator
 from nvflare.app_common.app_constant import AppConstants
+from nvflare.app_common.app_event_type import AppEventType
 from nvflare.app_common.workflows.scatter_and_gather import ScatterAndGather as NVFlareScatterAndGather
 
 from flip.constants import FlipEvents, FlipProps
@@ -74,7 +76,7 @@ class TestResolveModelId:
 
 
 class TestAcceptTrainResult:
-    """The FLIP-specific WEIGHT_DIFF->WEIGHTS reconstruction + client-exception reporting."""
+    """The FLIP-specific pass-through-to-aggregator semantics + failed-task reporting."""
 
     def _controller(self):
         controller = ScatterAndGather(model_id=_VALID_MODEL_ID)
@@ -130,6 +132,125 @@ class TestAcceptTrainResult:
         # FLIP forwards the client-side traceback to the hub with the resolved model_id.
         controller.flip.send_handled_exception.assert_called_once()
         assert controller.flip.send_handled_exception.call_args.kwargs["model_id"] == _VALID_MODEL_ID
+
+    def test_non_ok_result_without_header_relays_pointed_fallback(self):
+        """A Client-API script that dies pre-flare.init returns a bare TASK_ABORTED with no
+        "exception" header (only the retired legacy executors ever set one). The researcher must
+        still get a hub-visible pointer at the trust-side logs, not just a generic panic."""
+        controller = ScatterAndGather(model_id=_VALID_MODEL_ID, ignore_result_error=False)
+        controller.flip = MagicMock()
+        controller.system_panic = MagicMock()
+        controller.log_error = MagicMock()
+        controller.log_warning = MagicMock()
+        controller._current_failed_clients = set()
+        controller._current_num_targets = 1
+
+        result = Shareable()
+        result.set_return_code(ReturnCode.TASK_ABORTED)
+
+        controller._accept_train_result(client_name="site-1", result=result, fl_ctx=_ctx())
+
+        controller.flip.send_handled_exception.assert_called_once()
+        relayed = controller.flip.send_handled_exception.call_args.kwargs["formatted_exception"]
+        assert ReturnCode.TASK_ABORTED in relayed
+        assert "fl-client" in relayed
+
+    def test_full_weights_update_reports_actionable_mismatch(self):
+        """A trainer sending params_type="FULL" (NVFLARE's default when omitted) produces WEIGHTS,
+        which the WEIGHT_DIFF-expecting aggregator rejects with one server-log line. FLIP relays
+        an actionable message to the hub naming the params_type='DIFF' fix."""
+        controller = self._controller()
+        controller.flip = MagicMock()
+        controller.aggregator.expected_data_kind = {"": DataKind.WEIGHT_DIFF}
+        controller.aggregator.accept = MagicMock(return_value=False)
+
+        result = DXO(data_kind=DataKind.WEIGHTS, data={"w": np.ones(2)}).to_shareable()
+        controller._accept_train_result(client_name="site-1", result=result, fl_ctx=_ctx())
+
+        controller.flip.send_handled_exception.assert_called_once()
+        message = controller.flip.send_handled_exception.call_args.kwargs["formatted_exception"]
+        assert "params_type='DIFF'" in message
+        assert str(DataKind.WEIGHTS) in message
+        controller.log_error.assert_called()
+        assert 2 in controller._round_kind_mismatches
+
+    def test_mismatch_reported_once_per_round(self):
+        controller = self._controller()
+        controller.flip = MagicMock()
+        controller.aggregator.expected_data_kind = DataKind.WEIGHT_DIFF
+        controller.aggregator.accept = MagicMock(return_value=False)
+
+        result = DXO(data_kind=DataKind.WEIGHTS, data={"w": np.ones(2)}).to_shareable()
+        controller._accept_train_result(client_name="site-1", result=result, fl_ctx=_ctx())
+        controller._accept_train_result(client_name="site-2", result=result, fl_ctx=_ctx())
+
+        controller.flip.send_handled_exception.assert_called_once()
+
+    def test_matching_diff_reports_no_mismatch(self):
+        controller = self._controller()
+        controller.flip = MagicMock()
+        controller.aggregator.expected_data_kind = {"": DataKind.WEIGHT_DIFF}
+
+        result = DXO(data_kind=DataKind.WEIGHT_DIFF, data={"w": np.ones(2)}).to_shareable()
+        result.add_cookie(AppConstants.CONTRIBUTION_ROUND, 2)
+        controller._accept_train_result(client_name="site-1", result=result, fl_ctx=_ctx())
+
+        controller.flip.send_handled_exception.assert_not_called()
+        assert controller._round_kind_mismatches == set()
+
+
+class TestZeroAcceptancePanic:
+    """A training round about to aggregate zero accepted results must abort the job loudly —
+    stock applies the empty aggregate as a no-op and completes with an untrained model."""
+
+    def _controller(self, round_no=1, targets=2):
+        controller = ScatterAndGather(model_id=_VALID_MODEL_ID)
+        controller.flip = MagicMock()
+        controller.system_panic = MagicMock()
+        controller.log_error = MagicMock()
+        controller._current_round = round_no
+        controller._current_num_targets = targets
+        return controller
+
+    def test_panics_and_relays_when_round_accepted_nothing(self):
+        controller = self._controller()
+        with patch.object(NVFlareScatterAndGather, "handle_event"):
+            controller.handle_event(AppEventType.BEFORE_AGGREGATION, _ctx())
+        controller.system_panic.assert_called_once()
+        controller.flip.send_handled_exception.assert_called_once()
+        reason = controller.system_panic.call_args.args[0]
+        assert "accepted 0 of 2" in reason
+
+    def test_panic_names_the_data_kind_cause_when_recorded(self):
+        controller = self._controller()
+        controller._round_kind_mismatches.add(1)
+        with patch.object(NVFlareScatterAndGather, "handle_event"):
+            controller.handle_event(AppEventType.BEFORE_AGGREGATION, _ctx())
+        assert "data kind" in controller.system_panic.call_args.args[0]
+
+    def test_no_panic_when_round_has_acceptances(self):
+        controller = self._controller()
+        controller._round_acceptances[1] = {"site-1"}
+        with patch.object(NVFlareScatterAndGather, "handle_event"):
+            controller.handle_event(AppEventType.BEFORE_AGGREGATION, _ctx())
+        controller.system_panic.assert_not_called()
+
+    def test_no_panic_for_a_not_yet_started_sibling_controller(self):
+        """Multi-phase jobs broadcast every event to every controller; one whose control_flow has
+        not started (_current_round is None, stock's init value) must not panic on the active
+        controller's rounds."""
+        controller = self._controller(round_no=1)
+        controller._current_round = None
+        with patch.object(NVFlareScatterAndGather, "handle_event"):
+            controller.handle_event(AppEventType.BEFORE_AGGREGATION, _ctx())
+        controller.system_panic.assert_not_called()
+
+    def test_relay_failure_still_panics(self):
+        controller = self._controller()
+        controller.flip.send_handled_exception.side_effect = RuntimeError("hub down")
+        with patch.object(NVFlareScatterAndGather, "handle_event"):
+            controller.handle_event(AppEventType.BEFORE_AGGREGATION, _ctx())
+        controller.system_panic.assert_called_once()
 
 
 class TestHandleEvent:
@@ -315,9 +436,9 @@ class TestClientResultTelemetry:
         controller.flip.send_event.assert_not_called()
         assert FlipProps.ROUND_RETURNED not in {call.args[0] for call in fl_ctx.set_prop.call_args_list}
 
-    def test_reported_size_is_the_original_diff_not_the_reconstruction(self):
-        """A head-only partial diff must report its own size, not the full model's —
-        the size is probed before _diff_to_weights rewrites the shareable."""
+    def test_reported_size_is_the_partial_diff_itself(self):
+        """A head-only partial diff must report its own bytes, not the full model's — the size
+        probe reads the client's shareable as sent (nothing rewrites it on the way in)."""
         controller = self._controller()
         controller._global_weights = {
             "weights": {"w1": np.zeros(4, dtype=np.float32), "w2": np.zeros(4, dtype=np.float32)}
