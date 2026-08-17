@@ -86,11 +86,13 @@ def mock_job_types_file():
     ``JobRequiredFiles.is_valid_job_type`` from this mapping so a name absent from it (e.g.
     "invalid") is rejected with ``UnknownJobTypeError``.
     """
+    # Mirrors the real fl-apps/nvflare/required_files.json contract (post Client-API rename:
+    # no validator.py outside diffusion_model; evaluation requires models.py + evaluator.py).
     return {
-        "standard": ["trainer.py", "validator.py", "models.py", "config.json"],
-        "diffusion_model": ["trainer.py", "validator.py", "models.py", "config.json"],
-        "fed_opt": ["trainer.py", "validator.py", "models.py", "config.json"],
-        "evaluation": ["trainer.py", "validator.py", "models.py", "config.json"],
+        "standard": ["trainer.py", "config.json", "models.py"],
+        "diffusion_model": ["trainer.py", "validator.py", "config.json", "models.py"],
+        "fed_opt": ["trainer.py", "config.json", "models.py"],
+        "evaluation": ["evaluator.py", "config.json", "models.py"],
     }
 
 
@@ -378,8 +380,9 @@ def test_bundle_nvflare_application_success(
     )
 
 
-# "evaluation_client_api" is the pre-rename alias kept for models created before the Client-API
-# templates took over the plain names (see fl_service.py).
+# "evaluation_client_api" is the pre-rename alias: _normalise_job_type resolves it to
+# "evaluation" BEFORE manifest validation and the base-dir lookup, so a pre-rename model bundles
+# from the plain-name template — the alias directory no longer exists.
 @pytest.mark.parametrize("job_type", ["evaluation", "evaluation_client_api"])
 @patch("flip_api.fl_services.services.fl_service.JobRequiredFiles.is_valid_job_type", return_value=True)
 @patch("flip_api.fl_services.services.fl_service.verify_bundle_paths")
@@ -388,14 +391,15 @@ def test_bundle_nvflare_application_success(
 def test_bundle_nvflare_application_diverts_eval_checkpoint(
     mock_s3, mock_required, mock_verify, mock_is_valid, job_type, model_id, mocked_settings
 ):
-    """Evaluation checkpoints (legacy and Client-API job types) are copied once to a server-only
-    ``server_checkpoints/`` prefix, NOT into any ``app*/custom/`` — so NVFLARE's deploy_map never
-    ships them to clients."""
+    """Evaluation checkpoints (plain and pre-rename-alias job types) are copied once to a
+    server-only ``server_checkpoints/`` prefix, NOT into any ``app*/custom/`` — so NVFLARE's
+    deploy_map never ships them to clients."""
     base_dir = mocked_settings.FL_APP_BASE_DIR
     model_bucket = mocked_settings.SCANNED_MODEL_FILES_BUCKET
     dest_bucket = mocked_settings.FL_APP_DESTINATION_BUCKET
 
-    write_base_tree(base_dir, "nvflare", job_type, ["app/custom/flip.py"])
+    # The tree lives under the RESOLVED name only — proving the alias path reads it from there.
+    write_base_tree(base_dir, "nvflare", "evaluation", ["app/custom/flip.py"])
 
     eval_config = {
         "job_type": job_type,
@@ -626,7 +630,7 @@ def test_bundle_nvflare_application_file_wrong_job_type_in_config(
 
     if job_type == "invalid":
         with pytest.raises(
-            fl_service.UnknownJobTypeError, match=f"Unknown job_type argument found in config.json: {job_type}"
+            fl_service.UnknownJobTypeError, match=f"Unknown job_type in config.json: {job_type}"
         ):
             _ = fl_service.bundle_nvflare_application(model_id)
     else:
@@ -826,7 +830,7 @@ def test_bundle_flower_application_file_wrong_job_type_in_config(
 
     if job_type == "invalid":
         with pytest.raises(
-            fl_service.UnknownJobTypeError, match=f"Unknown job_type argument found in config.json: {job_type}"
+            fl_service.UnknownJobTypeError, match=f"Unknown job_type in config.json: {job_type}"
         ):
             _ = fl_service.bundle_flower_application(model_id)
     else:
@@ -1700,3 +1704,50 @@ def test_bundle_nvflare_application_propagates_upload_failure(
 
     with pytest.raises(Exception, match="S3 upload boom"):
         fl_service.bundle_nvflare_application(model_id)
+
+
+class TestNormaliseJobType:
+    """The pre-rename alias contract, exercised against the REAL in-repo manifest — no mocks.
+
+    The manifest dropped every ``*_client_api`` key when the Client-API templates took over the
+    plain names, so validation alone would reject every pre-rename model at training start.
+    ``_normalise_job_type`` is what keeps the documented "aliases survive for models created
+    before the rename" contract true — these tests pin that unmocked, so a future cleanup of
+    either half (the alias map or the manifest) cannot silently break it again.
+    """
+
+    REPO_FL_APPS = Path(__file__).resolve().parents[5] / "fl-apps"
+
+    @pytest.fixture
+    def real_manifest_settings(self):
+        mock = Settings(FL_APP_BASE_DIR=str(self.REPO_FL_APPS))
+        with patch("flip_api.domain.interfaces.fl.get_settings", return_value=mock):
+            yield mock
+
+    @pytest.mark.parametrize(
+        ("alias", "resolved"),
+        [
+            ("standard_client_api", "standard"),
+            ("evaluation_client_api", "evaluation"),
+            ("diffusion_model_client_api", "diffusion_model"),
+        ],
+    )
+    def test_pre_rename_aliases_resolve_against_the_real_manifest(self, real_manifest_settings, alias, resolved):
+        assert fl_service._normalise_job_type(alias, FLBackend.NVFLARE) == resolved
+
+    @pytest.mark.parametrize("job_type", ["standard", "evaluation", "diffusion_model", "fed_opt"])
+    def test_plain_names_pass_through_against_the_real_manifest(self, real_manifest_settings, job_type):
+        assert fl_service._normalise_job_type(job_type, FLBackend.NVFLARE) == job_type
+
+    def test_retired_names_are_absent_from_the_real_manifest(self, real_manifest_settings):
+        """The breaking manifest change itself: the *_client_api keys are gone — only the alias
+        map keeps those uploads working."""
+        for alias in fl_service.JOB_TYPE_ALIASES:
+            assert not fl_service.JobRequiredFiles.is_valid_job_type(alias, FLBackend.NVFLARE)
+
+    def test_unknown_type_error_names_the_valid_set_and_the_fix(self, real_manifest_settings):
+        with pytest.raises(fl_service.UnknownJobTypeError) as excinfo:
+            fl_service._normalise_job_type("not_a_job_type", FLBackend.NVFLARE)
+        message = str(excinfo.value)
+        assert "standard" in message
+        assert "re-upload" in message
