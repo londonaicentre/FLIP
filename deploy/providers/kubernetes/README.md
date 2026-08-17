@@ -450,7 +450,13 @@ old install on the previous chart version.
   `runAsNonRoot` / `readOnlyRootFilesystem` are left opt-in (image-dependent).
   **Remaining for full `restricted` enforcement:** the stateful images
   (`xnat-web`, `xnat-db`, `omop-db`, `orthanc`) need `fsGroup`/chown init
-  containers before they can run non-root.
+  containers before they can run non-root, and the fl-client pod's init
+  containers (`images-init` — pre-creates the pod's per-net slice of the shared
+  images volume with the ownership imaging-api and the client need — and
+  `kit-init`) run as root by design: `images-init` declares an explicit
+  `securityContext` scoped to `CHOWN`/`DAC_OVERRIDE`/`FOWNER` with everything
+  else dropped, but root init containers are still rejected under
+  `enforce=restricted`.
 
 ## Development
 

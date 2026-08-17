@@ -41,3 +41,16 @@ Check the stack is up:
 
     See deploy/providers/kubernetes/README.md → "OMOP core vocabulary".
 {{- end }}
+{{- if and .Values.flClient.enabled (not .Values.sharedImagesPvc.enabled) }}
+
+⚠️  fl-client and imaging-api do NOT share an images volume
+
+    sharedImagesPvc.enabled is false, so the `images` volume is a per-pod
+    emptyDir: imaging-api "successfully" downloads studies into its own pod
+    while the fl-client's copy of {{ .Values.flClient.imagesDir }}/{{ .Values.flClient.netId }}
+    stays empty. Nothing errors — training just finds no data and dies with
+    num_samples=0.
+
+    For a functional FL trust, set sharedImagesPvc.enabled=true (RWX-capable
+    storage class) and re-run `helm upgrade`.
+{{- end }}

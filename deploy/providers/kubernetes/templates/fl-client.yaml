@@ -93,22 +93,54 @@ spec:
           effect: NoSchedule
       {{- end }}
       initContainers:
-        # Pre-create this net's slice of the shared images volume, owned by the
-        # uid imaging-api writes as (1000, the image-baked `flip` user): the
-        # fl-client container below mounts only <imagesDir>/<netId> via subPath
-        # — least privilege, so training code cannot read another net's cached
-        # studies — and kubelet creates a missing subPath dir as root, which
-        # imaging-api could then never write into (every download would 500
-        # with EACCES). Runs unconditionally, unlike kit-init below.
+        # Pre-create this net's slice of the shared images volume: the fl-client
+        # container below mounts only <imagesDir>/<netId> via subPath — least
+        # privilege, so training code cannot read another net's cached studies —
+        # and kubelet creates a missing subPath dir as root, which the writers
+        # could then never use. Owner is the uid imaging-api writes as (1000,
+        # the image-baked `flip` user — GHSA-8465, same anchor as kit-init's
+        # chown below); on Flower the group is the SuperNode's `app` uid (49999)
+        # with group-write, because the client itself must also write inside the
+        # net dir (`flip.add_resource` stages files under <netId>/upload/;
+        # NVFLARE's CleanupImages deletes the dir's children — both need write,
+        # read-only is NOT sufficient for the client). Without this, every
+        # imaging-api download would 500 with EACCES and training would die
+        # later with a misleading num_samples=0.
+        # Runs unconditionally, unlike kit-init below. Reuses the fl-client's
+        # own image (already required by this pod — no extra registry
+        # dependency) with an explicit root securityContext: chown/chmod need
+        # root, but privilege is scoped to exactly the three file capabilities.
         - name: images-init
-          image: amazon/aws-cli:2.22.0
+          image: {{ include "flip-trust.flClientImage" . }}
+          securityContext:
+            runAsUser: 0
+            runAsNonRoot: false
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+              add:
+                - CHOWN
+                - DAC_OVERRIDE
+                - FOWNER
+            seccompProfile:
+              type: RuntimeDefault
           command:
             - /bin/sh
             - -c
             - |
               set -eu
-              mkdir -p "{{ .Values.flClient.imagesDir }}/{{ .Values.flClient.netId }}"
-              chown 1000:1000 "{{ .Values.flClient.imagesDir }}/{{ .Values.flClient.netId }}"
+              NET_DIR="{{ .Values.flClient.imagesDir }}/{{ .Values.flClient.netId }}"
+              echo "Pre-creating ${NET_DIR} for imaging-api (uid 1000) — a root-owned dir here breaks every image download."
+              mkdir -p "${NET_DIR}"
+              {{- if eq .Values.flBackend "flower" }}
+              chown 1000:49999 "${NET_DIR}"
+              chmod 0775 "${NET_DIR}"
+              {{- else }}
+              chown 1000:1000 "${NET_DIR}"
+              chmod 0755 "${NET_DIR}"
+              {{- end }}
+              echo "Images net dir ready: $(ls -ld "${NET_DIR}")"
           volumeMounts:
             - name: images
               mountPath: {{ .Values.flClient.imagesDir }}

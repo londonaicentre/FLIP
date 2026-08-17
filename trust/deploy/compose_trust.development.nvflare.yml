@@ -35,8 +35,10 @@ services:
     volumes:
       # This net's slice of the images download directory, at the unchanged container
       # path — see compose_trust.production.nvflare.yml for the least-privilege
-      # rationale; `make up-trust` pre-creates the host net dirs.
-      - ${BASE_IMAGES_DOWNLOAD_DIR}/net-1:/app/data/images/net-1
+      # rationale; `make up-trust` / `up-fl-clients` pre-create the host net dirs.
+      # The :? guard keeps an unset var loud — a bare ${VAR}/net-1 would silently
+      # mount a root-created /net-1 from the host's filesystem root.
+      - ${BASE_IMAGES_DOWNLOAD_DIR:?set in the trust kit file}/net-1:/app/data/images/net-1
       # Provisioned NVFLARE secrets (certificates, fed_client.json) — mounted from the
       # FL kit slot assigned by the hub, NOT the trust's friendly name. The slot dir's
       # fed_client.json baked-in CN is the identity the FL server sees on registration.
@@ -74,7 +76,7 @@ services:
     # No capability added back — see fl-client-net-1 above.
     volumes:
       # This net's slice of the images download directory (see fl-client-net-1 above)
-      - ${BASE_IMAGES_DOWNLOAD_DIR}/net-2:/app/data/images/net-2
+      - ${BASE_IMAGES_DOWNLOAD_DIR:?set in the trust kit file}/net-2:/app/data/images/net-2
       # Provisioned NVFLARE secrets (certificates, fed_client.json)
       - ${FL_PROVISIONED_DIR}/net-2/services/${FL_KIT_SLOT}/local:/app/local
       - ${FL_PROVISIONED_DIR}/net-2/services/${FL_KIT_SLOT}/startup:/app/startup
