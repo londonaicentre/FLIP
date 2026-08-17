@@ -20,7 +20,6 @@ Exports:
     - ServerEventHandler: Server-side event handler
     - PTModelLocator: PyTorch model locator
     - InitialPTModelLocator: PyTorch model locator for initial models with safehouse fallback
-    - EvaluationPTModelLocator: PyTorch model locator for evaluation workflows (multi-model COLLECTION)
     - EvaluationModelLocator: Single-model checkpoint locator for Client-API evaluation (standard interface)
     - InitialCheckpointPTModelPersistor: Seeds the initial global model from a server-side backbone checkpoint
     - KeepOnlyVars: Include-only DXO filter (keep matching weights) — head-only per-round updates
@@ -51,7 +50,6 @@ from flip.nvflare.components.keep_vars_filter import KeepOnlyVars
 from flip.nvflare.components.persist_and_cleanup import PersistToS3AndCleanup
 from flip.nvflare.components.pt_model_locator import (
     EvaluationModelLocator,
-    EvaluationPTModelLocator,
     InitialPTModelLocator,
     PTModelLocator,
 )
@@ -66,7 +64,6 @@ __all__ = [
     "ServerEventHandler",
     "PTModelLocator",
     "InitialPTModelLocator",
-    "EvaluationPTModelLocator",
     "EvaluationModelLocator",
     "InitialCheckpointPTModelPersistor",
     "KeepOnlyVars",
