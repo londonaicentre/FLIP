@@ -179,7 +179,9 @@ resource "aws_security_group_rule" "alb_ingress_https_from_cloudfront" {
 ############################
 
 resource "aws_s3_bucket" "cloudfront_logs" {
-  bucket = "flip-cf-logs-${var.flip_alb_subdomain}"
+  # Derived-name-with-override, same rationale as access_logs_bucket_name in
+  # s3_logging.tf (global bucket names vs the shared subdomain, FLIP#749).
+  bucket = var.CF_LOGS_BUCKET_NAME != "" ? var.CF_LOGS_BUCKET_NAME : "flip-cf-logs-${var.flip_alb_subdomain}"
 
   tags = {
     Name = "flip-cloudfront-logs"

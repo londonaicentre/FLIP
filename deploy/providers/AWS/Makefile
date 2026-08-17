@@ -117,6 +117,9 @@ export TF_VAR_FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME=${FLIP_MODEL_FILES_UPLOADS_BU
 export TF_VAR_FLIP_FL_RESULTS_BUCKET_NAME=${FLIP_FL_RESULTS_BUCKET_NAME}
 export TF_VAR_FLIP_APP_BUNDLES_BUCKET_NAME=${FLIP_APP_BUNDLES_BUCKET_NAME}
 export TF_VAR_AICENTRE_BUCKET_NAME=${AICENTRE_BUCKET_NAME}
+# Optional log-bucket name overrides (empty = derived from flip_alb_subdomain; see variables.tf)
+export TF_VAR_ACCESS_LOGS_BUCKET_NAME=${ACCESS_LOGS_BUCKET_NAME}
+export TF_VAR_CF_LOGS_BUCKET_NAME=${CF_LOGS_BUCKET_NAME}
 # A copied-but-unedited .env leaves `<your-...>` placeholders in place. Those are non-empty, so an
 # emptiness check passes them straight through to Terraform, which fails much later with an opaque
 # AWS bucket-name error. Treat a placeholder as unset — same idea as XNAT_CREDENTIAL_PLACEHOLDER in

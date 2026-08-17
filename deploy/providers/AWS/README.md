@@ -717,6 +717,12 @@ FLIP_FL_RESULTS_BUCKET_NAME=flip-lza-fl-results
 FLIP_APP_BUNDLES_BUCKET_NAME=flip-lza-app-bundles
 AICENTRE_BUCKET_NAME=flip-lza-aicentre
 FLIP_UI_BUCKET_NAME=flip-lza-ui
+# The two log buckets default to subdomain-derived names
+# (flip-access-logs-/flip-cf-logs-<ALB_SUBDOMAIN>) — but ALB_SUBDOMAIN keeps its
+# post-cutover value here, so those derived names are still owned by legacy
+# prod. Bucket names are global: override them into the flip-lza-* namespace.
+ACCESS_LOGS_BUCKET_NAME=flip-lza-access-logs
+CF_LOGS_BUCKET_NAME=flip-lza-cf-logs
 
 # No Route53 hosted zone in the account yet (its move is a platform-side DNS
 # line item) — first bring-up runs on the default CloudFront domain. Flip to

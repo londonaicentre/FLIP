@@ -242,6 +242,18 @@ variable "enable_service_discovery" {
   default     = true
 }
 
+variable "ACCESS_LOGS_BUCKET_NAME" {
+  description = "Override for the S3 server-access-logs bucket name; empty derives flip-access-logs-<flip_alb_subdomain>. Bucket names are global, so set this where the derived name is already owned by another account — e.g. the LZA env, whose flip_alb_subdomain deliberately keeps its post-cutover value while legacy prod still owns the derived name (FLIP#749)."
+  type        = string
+  default     = ""
+}
+
+variable "CF_LOGS_BUCKET_NAME" {
+  description = "Override for the CloudFront standard-logs bucket name; empty derives flip-cf-logs-<flip_alb_subdomain>. Same global-name rationale as ACCESS_LOGS_BUCKET_NAME (FLIP#749)."
+  type        = string
+  default     = ""
+}
+
 variable "FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME" {
   description = "Globally-unique S3 bucket name for researcher-uploaded model files (browser presigned-PUT surface today; narrows to presigned POST once PR #438 lands). Required, no default — must be set per environment in the matching .env.*."
   type        = string
