@@ -120,7 +120,7 @@ ghcr/ecr-public; irrelevant for the Docker-Hub-hosted echo image).
 1. An Identity Center profile for the LZA workload account
    (`aws configure sso`; sso-session separate from the legacy accounts).
    The Makefile refuses the legacy `dev`/`stag`/`prod` profiles and expects
-   `FLIPAdminAccess-893493035022` (override via `E2E_AWS_PROFILE`).
+   `lza-prod` (override via `E2E_AWS_PROFILE`).
 2. Terraform >= 1.13.1.
 3. Docker on the workstation (for the image push).
 

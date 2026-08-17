@@ -37,7 +37,7 @@ PROD_AWS_PROFILE ?= prod
 
 # Expected LZA workload-account profile (Identity Center). Override
 # E2E_AWS_PROFILE in $(ENV_FILE) if your local profile name differs.
-E2E_AWS_PROFILE ?= FLIPAdminAccess-893493035022
+E2E_AWS_PROFILE ?= lza-prod
 
 ifeq ($(AWS_PROFILE),$(PROD_AWS_PROFILE))
 $(error AWS_PROFILE is the legacy PROD account — the e2e-lza stack targets the LZA workload account only)
