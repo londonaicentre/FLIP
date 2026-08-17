@@ -58,15 +58,25 @@ def sentinel_path(accession_dir_abs: str, assessor_type: str, resource_type: str
         resource_type (str): XNAT resource type e.g. DICOM/NIFTI/ALL, or a custom value.
 
     Returns:
-        str: Absolute path of the sentinel file, always a direct child of the accession directory.
+        str: Absolute (resolved) path of the sentinel file, always a direct child of the accession
+        directory.
 
     Raises:
         ValueError: If assessor_type or resource_type contains a path separator — both are
-        user-controlled and must stay literal fragments of the sentinel filename.
+        user-controlled and must stay literal fragments of the sentinel filename — or if the
+        resolved path escapes the accession directory.
     """
     _validate_component("assessor_type", assessor_type)
     _validate_component("resource_type", resource_type)
-    return os.path.join(accession_dir_abs, f"{SENTINEL_PREFIX}{assessor_type}-{resource_type}")
+    # Second layer: even if component validation were bypassed, the resolved path must stay
+    # inside the accession directory before any caller touches the filesystem with it.
+    accession_dir_real = os.path.realpath(accession_dir_abs)
+    sentinel_abs = os.path.realpath(
+        os.path.join(accession_dir_real, f"{SENTINEL_PREFIX}{assessor_type}-{resource_type}")
+    )
+    if not sentinel_abs.startswith(accession_dir_real + os.sep):
+        raise ValueError(f"Path traversal detected in sentinel name: {assessor_type!r}-{resource_type!r}")
+    return sentinel_abs
 
 
 def write_sentinel(accession_dir_abs: str, assessor_type: str, resource_type: str) -> None:

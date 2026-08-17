@@ -51,6 +51,14 @@ class TestSentinelPath:
         with pytest.raises(ValueError, match="Path traversal detected in"):
             sentinel_path(str(tmp_path), assessor_type, resource_type)
 
+    def test_resolved_path_guard_holds_if_component_validation_is_bypassed(self, tmp_path, monkeypatch):
+        """The second (resolved-path) layer must refuse escapes even without the component check."""
+        from imaging_api.services import image_cache
+
+        monkeypatch.setattr(image_cache, "_validate_component", lambda name, value: None)
+        with pytest.raises(ValueError, match="Path traversal detected in sentinel name"):
+            sentinel_path(str(tmp_path), "../" * 20 + "etc", "passwd")
+
 
 # ── write_sentinel / remove_sentinel ──
 
