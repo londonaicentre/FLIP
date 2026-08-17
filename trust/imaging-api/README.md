@@ -57,6 +57,19 @@ Download and unzip a XNAT dataset to a local folder.
 }
 ```
 
+Query parameters: `assessor_type` (`scan`, default, or `assessor`), `resource_type` (`NIFTI` default; `DICOM`, `ALL`,
+or a custom XNAT resource label) and `force_refresh` (default `false`).
+
+Downloads are cached on the trust host. Extraction lands in
+`<BASE_IMAGES_DOWNLOAD_DIR>/<net_id>/<central_hub_project_id>/<accession_id>/` and a completeness sentinel
+(`.flip_complete-<assessor_type>-<resource_type>`) is written there only after successful extraction. When the
+sentinel is present the cached folder is returned without contacting XNAT, so FL training code that fetches the
+cohort every round stops re-downloading bytes already on disk. Sentinels match exactly per
+(assessor, resource); the per-project path segment keeps projects that share an accession from being served each
+other's copies. The cache is invalidated when an upload changes the accession's XNAT content (see Upload), by
+`force_refresh=true` (the sentinel is removed before the re-download starts and rewritten on success), and — on the
+NVFLARE backend — by `CleanupImages`, which empties the whole net directory at job start and end.
+
 ### Imaging
 
 Interfaces with XNAT's DICOM Query-Retrieve (DQR) plugin. Full DQR API docs available at
