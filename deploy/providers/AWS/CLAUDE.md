@@ -28,8 +28,8 @@
 | ------- | ------------- | --------- |
 | `stag` | Staging | `flipstag` |
 | `prod` | Production | `flipprod` |
-| `FLIPAdminAccess-893493035022` | LZA FLIPProduction (`PROD=lza`, FLIP#749) | `893493035022` |
-| `FlipDeveloperAccess-080369786334` | Developer access | — |
+| `lza-prod` | LZA FLIPProduction (`PROD=lza`, FLIP#749; `FLIPAdminAccess` permission set) | `893493035022` |
+| `dev` | Development (the `dev/` root: Cognito + SES; `FlipDeveloperAccess` permission set) | `flipdev` |
 
 ## Key Deploy Commands
 

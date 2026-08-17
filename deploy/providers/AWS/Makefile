@@ -61,9 +61,9 @@ $(if $(FL_KIT_DATE),,$(error 🧠 $(if $(filter nvflare,$(FL_BACKEND)),FLARE_KIT
 PROD_AWS_PROFILE ?= prod
 STAG_AWS_PROFILE ?= stag
 # The LZA FLIPProduction account (893493035022) is reached via the Identity
-# Center `FLIPAdminAccess` permission set; the default matches the profile name
-# `aws configure sso` generates for it (FLIP#749).
-LZA_AWS_PROFILE ?= FLIPAdminAccess-893493035022
+# Center `FLIPAdminAccess` permission set; like prod/stag above, the default is
+# a short local alias for it in ~/.aws/config (FLIP#749).
+LZA_AWS_PROFILE ?= lza-prod
 
 # Refuse to operate against an unintended AWS account. Profile name is the safety
 # guard because Make has no easy way to read the account ID without an `aws` call.

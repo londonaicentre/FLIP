@@ -652,7 +652,7 @@ configuration is identical to before — the legacy environments are never touch
 | Concern | Value |
 | --- | --- |
 | Env file | root `.env.lza-prod` (gitignored, like the other env files) |
-| Profile guard | `AWS_PROFILE=FLIPAdminAccess-893493035022` (override via `LZA_AWS_PROFILE`) |
+| Profile guard | `AWS_PROFILE=lza-prod` — a short local alias for the `FLIPAdminAccess` permission set on `893493035022`, per the same convention as `prod`/`stag` (override via `LZA_AWS_PROFILE`) |
 | `TF_VAR_environment` | `prod` — LZA is a production estate, so all prod-only hardening (RDS deletion protection, final snapshot) stays on |
 | `TF_VAR_lza_managed_network` | `true` — the platform-managed-network toggle, orthogonal to `environment` (see below) |
 | Trust kit suffix | `trust/.env.<CODE>.lza-prod` — a separate namespace so legacy prod kits are never overwritten |
@@ -691,7 +691,9 @@ CloudFront + WAF + ACM) remains FLIP-managed exactly as on legacy prod.
   mirroring `public.ecr.aws` (used for the EFS-provision utility image). The execution role's
   `ecr:BatchImportUpstreamImage`/`ecr:CreateRepository` grant for first-pull imports IS Terraform-managed
   (`iam_ecs.tf`, LZA-gated).
-- The Identity Center `FLIPAdminAccess` profile in `~/.aws/config` (an `aws configure sso` against the account).
+- An `lza-prod` profile in `~/.aws/config` for the account's Identity Center `FLIPAdminAccess` permission set (an
+  `aws configure sso` against the account, then rename the generated profile — same short-alias convention as
+  `prod`/`stag`; override the expected name via `LZA_AWS_PROFILE`).
 
 **`.env.lza-prod`.** Carries the same keys as `.env.production` (start from that shape); the values that MUST differ,
 plus the LZA-only keys:
