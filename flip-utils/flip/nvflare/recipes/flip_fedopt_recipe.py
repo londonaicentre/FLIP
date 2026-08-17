@@ -21,14 +21,20 @@ The client contract is identical to the ``standard`` job type: a Client API ``tr
 that sends its update as ``FLModel(params=diff, params_type="DIFF")`` — every ``standard``
 tutorial app is FedOpt-compatible as-is.
 
-Defaults follow stock NVFLARE FedOpt (``fedopt_ctl`` / the official ``FedOptRecipe``): server
-SGD at ``lr=1.0`` with ``momentum=0.6`` and no LR scheduler, on a CPU-held copy of the model.
-(The retired hand-written template declared server Adam at ``lr=0.5`` — but its aggregation never
-actually ran due to the ScatterAndGather guard bug fixed alongside this recipe, and once live that
-setting destroys the global model in one step, so it was not carried forward.)
+Optimizer defaults follow stock NVFLARE FedOpt (``fedopt_ctl`` / the official ``FedOptRecipe``):
+server SGD at ``lr=1.0`` with ``momentum=0.6`` and no LR scheduler. The ``device="cpu"`` default
+is FLIP's own (stock defaults to cuda-if-available; the hub's fl-server has no GPU). The retired
+hand-written template wired server Adam — its README cited ``lr=0.5``, though the config's ``lr``
+was an unsubstituted ``{lr}`` placeholder — but its aggregation never actually ran due to the
+ScatterAndGather guard bug fixed alongside this recipe, and once live an Adam step at that scale
+destroys the global model in one round, so it was not carried forward.
 """
 
 from __future__ import annotations
+
+import copy
+
+from nvflare.recipe.utils import ensure_config_type_dict
 
 from flip.nvflare.components import FlipFedOptShareableGenerator
 from flip.nvflare.recipes.flip_fedavg_recipe import FlipFedAvgRecipe
@@ -64,10 +70,20 @@ class FlipFedOptRecipe(FlipFedAvgRecipe):
         device: str = "cpu",
         **kwargs,
     ):
+        if optimizer_args is not None and not any(k in optimizer_args for k in ("path", "class_path", "name")):
+            raise ValueError(
+                "optimizer_args must be a component config with a 'path', e.g. "
+                "{'path': 'torch.optim.SGD', 'args': {'lr': 1.0}}"
+            )
         # Set before super().__init__: the base constructor builds the FedJob, which calls the
-        # _make_shareable_generator hook below.
-        self.optimizer_args = optimizer_args or _DEFAULT_OPTIMIZER_ARGS
-        self.lr_scheduler_args = lr_scheduler_args
+        # _make_shareable_generator hook below. deepcopy isolates instances from the shared module
+        # default AND from the caller's dict — stock's generator mutates optimizer_args["args"] in
+        # place at START_RUN (it inserts the live params generator). ensure_config_type_dict is the
+        # stock FedOptRecipe normalisation this recipe must mirror: without config_type="dict" the
+        # server ComponentBuilder instantiates torch.optim.* at config-load time (sans params) and
+        # the job dies with an opaque failed-to-instantiate error.
+        self.optimizer_args = ensure_config_type_dict(copy.deepcopy(optimizer_args or _DEFAULT_OPTIMIZER_ARGS))
+        self.lr_scheduler_args = ensure_config_type_dict(copy.deepcopy(lr_scheduler_args))
         self.device = device
         super().__init__(**kwargs)
 

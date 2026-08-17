@@ -223,12 +223,13 @@ class FlipFedAvgRecipe(Recipe):
 
         super().__init__(self._build_fed_job())
 
-    def _make_shareable_generator(self):
-        """Build the server's shareable generator — the FedAvg full-model replace by default.
+    def _make_shareable_generator(self) -> FullModelShareableGenerator:
+        """Build the server's shareable generator — the FedAvg diff-apply by default.
 
         Returns:
-            FullModelShareableGenerator: Applies the aggregated ``WEIGHTS`` as the new global model.
-            Subclasses override this (with :meth:`_aggregator_data_kind`) to change the aggregation
+            FullModelShareableGenerator: Adds the aggregated ``WEIGHT_DIFF`` average onto the
+            global model (the aggregator's stock output kind — see the aggregator comment in
+            :meth:`_build_fed_job`). Subclasses override this hook to change the aggregation
             scheme — see :class:`~flip.nvflare.recipes.flip_fedopt_recipe.FlipFedOptRecipe`.
         """
         return FullModelShareableGenerator()
