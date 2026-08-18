@@ -53,7 +53,6 @@ from pathlib import Path
 from typing import Any
 
 from nvflare import FedJob
-from nvflare.apis.dxo import DataKind
 from nvflare.app_common.aggregators import InTimeAccumulateWeightedAggregator
 from nvflare.app_common.executors.in_process_client_api_executor import InProcessClientAPIExecutor
 from nvflare.app_common.shareablegenerators.full_model_shareable_generator import FullModelShareableGenerator
@@ -111,7 +110,7 @@ class FlipFedAvgRecipe(Recipe):
 
     Head-only (frozen-backbone) aggregation is canonically driven in production by the fl-server's
     deploy-time injection from ``config.json``'s ``AGGREGATE_ONLY_REGEX`` (FLIP#730/#733), so the
-    shipped ``standard_client_api`` template bakes no head-only filters. The ``aggregate_only_regex``
+    shipped ``standard`` template bakes no head-only filters. The ``aggregate_only_regex``
     constructor arg below wires an equivalent recipe-baked chain only for SimEnv/PocEnv runs, where no
     deploy step exists to inject one.
 
@@ -141,7 +140,7 @@ class FlipFedAvgRecipe(Recipe):
             filter) and TrimBroadcastVars (server data filter) — so only params matching the regex are
             aggregated per round and, after round 0, broadcast. Empty (default) wires none. Mirrors the
             fl-server's deploy-time injection from config.json's ``AGGREGATE_ONLY_REGEX``, which is the
-            canonical path for production jobs (the shipped ``standard_client_api`` template bakes no
+            canonical path for production jobs (the shipped ``standard`` template bakes no
             head-only filters): the fl-server folds any recipe-baked chains into its own — a single
             ``["train", "validate"]`` ``ReconstructFullModelForEval`` chain that also extends the
             head-only broadcast to cross-site validation, superseding the recipe's train-only
@@ -163,6 +162,10 @@ class FlipFedAvgRecipe(Recipe):
         best_model_metric_minimize: True negates the key metric for selection, for loss-like
             metrics where lower is better. Defaults to False (higher is better).
     """
+
+    #: FedJob name — subclasses (e.g. :class:`FlipFedOptRecipe`) override it so their exported
+    #: job directory is distinguishable; the platform replaces it with the model id at submit.
+    job_name = "flip_fedavg"
 
     def __init__(
         self,
@@ -220,6 +223,17 @@ class FlipFedAvgRecipe(Recipe):
 
         super().__init__(self._build_fed_job())
 
+    def _make_shareable_generator(self) -> FullModelShareableGenerator:
+        """Build the server's shareable generator — the FedAvg diff-apply by default.
+
+        Returns:
+            FullModelShareableGenerator: Adds the aggregated ``WEIGHT_DIFF`` average onto the
+            global model (the aggregator's stock output kind — see the aggregator comment in
+            :meth:`_build_fed_job`). Subclasses override this hook to change the aggregation
+            scheme — see :class:`~flip.nvflare.recipes.flip_fedopt_recipe.FlipFedOptRecipe`.
+        """
+        return FullModelShareableGenerator()
+
     def _build_fed_job(self) -> FedJob:
         """Construct the FedJob NVFLARE's Recipe uses for ``execute(env)``.
 
@@ -227,7 +241,7 @@ class FlipFedAvgRecipe(Recipe):
         exported ``meta.json`` so the lazily-resolving components can find it.
         """
         job = FedJob(
-            name="flip_fedavg",
+            name=self.job_name,
             min_clients=self.min_clients,
             meta_props={FLIP_CUSTOM_PROPS_KEY: {FLIP_MODEL_ID_KEY: self.model_id}},
         )
@@ -241,10 +255,13 @@ class FlipFedAvgRecipe(Recipe):
             InitialCheckpointPTModelPersistor(model={"path": "models.get_model"}),
             id="persistor",
         )
-        shareable_generator_id = job.to_server(FullModelShareableGenerator(), id="shareable_generator")
-        aggregator_id = job.to_server(
-            InTimeAccumulateWeightedAggregator(expected_data_kind=DataKind.WEIGHTS), id="aggregator"
-        )
+        shareable_generator_id = job.to_server(self._make_shareable_generator(), id="shareable_generator")
+        # Stock NVFLARE semantics: the aggregator averages the clients' WEIGHT_DIFF updates directly
+        # (its stock default expected kind) and the shareable generator applies the average to the
+        # global model — FedAvg adds it (FullModelShareableGenerator), FedOpt feeds it through the
+        # server optimizer. Partial (frozen-backbone head-only) diffs are natively safe: keys absent
+        # from the averaged diff keep their global value.
+        aggregator_id = job.to_server(InTimeAccumulateWeightedAggregator(), id="aggregator")
 
         # Server: FLIP components (locator, JSON generator, event handler, S3 persistor).
         job.to_server(PTModelLocator(model={"path": "models.get_model"}), id="model_locator")
@@ -403,6 +420,6 @@ class FlipFedAvgRecipe(Recipe):
         config.setdefault("project_id", self.project_id)
         config.setdefault("query", self.query)
         config.setdefault("local_rounds", self.local_rounds)
-        # Trailing newline: keeps the committed standard_client_api template stable across
+        # Trailing newline: keeps the committed standard template stable across
         # regenerations and satisfies the end-of-file-fixer pre-commit hook.
         client_cfg.write_text(json.dumps(config, indent=2) + "\n")

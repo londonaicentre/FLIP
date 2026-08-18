@@ -22,7 +22,7 @@ pip-installable `flip` Python package (published as `flip-utils` on PyPI) that s
 image and is imported as `from flip import ...` by user-uploaded training code. Sibling FL trees in the same mono-repo:
 
 - **[`flip-utils/flip/`](./flip/)** — pip-installable Python package with platform logic, NVFLARE components, Flower helpers and utilities (this directory)
-- **[`../fl-apps/`](../fl-apps/)** — FL job-type implementations / app templates per backend (`nvflare/{standard,standard_client_api,evaluation,evaluation_client_api,diffusion_model,diffusion_model_client_api,fed_opt}`, `flower/{standard,evaluation}`)
+- **[`../fl-apps/`](../fl-apps/)** — FL job-type implementations / app templates per backend (`nvflare/{standard,evaluation,diffusion_model,fed_opt}`, `flower/{standard,evaluation}`)
 - **[`../fl-tutorials/`](../fl-tutorials/)** — runnable end-to-end tutorial examples per backend (`nvflare/`, `flower/`)
 - **[`../fl-services/`](../fl-services/)** — Docker images and network provisioning for FL networks per backend (`nvflare/`, `flower/`); each backend's `Makefile` owns build / provision / up / down / submit
 
@@ -80,7 +80,6 @@ flip/
 ├── constants/    # FlipConstants (pydantic-settings), enums, PTConstants
 ├── utils/        # General utilities: Utils, model weight helpers
 ├── nvflare/      # NVFLARE-specific logic and components
-│   ├── executors/    # RUN_TRAINER, RUN_VALIDATOR, RUN_EVALUATOR wrappers
 │   ├── controllers/  # FLIP workflows (ScatterAndGather, BroadcastTask, …)
 │   ├── components/   # Event handlers, persistors, privacy filters, locators, …
 │   ├── recipes/      # High-level NVFLARE job recipes
@@ -118,16 +117,16 @@ when trust cohort sizes are uneven; expect that rather than treating it as a bug
 
 ### User Application Requirements
 
-The executor wrappers dynamically import user-provided files from the job's `custom/`
-directory. For most templates that directory is materialised at run time by the tutorial
-harness (`fl-tutorials/nvflare/testing/app_organiser.sh`), which copies each file from
-the tutorial's `app_files/` into `./tmp/app/custom/`; the `diffusion_model` template
-already carries a git-tracked `custom/` with baseline files that the same overlay extends.
+The job components dynamically import user-provided files from the job's `custom/`
+directory. On the platform that directory is assembled by the FL API, which merges the
+uploaded app files onto the matching `fl-apps/nvflare/<JOB_TYPE>/app` template; in local
+SimEnv runs the tutorial's `job.py` stages its `app_files/` into the job's `custom/`
+directly.
 
 | File | Description |
 | ------ | ------------- |
-| `trainer.py` | Training logic — must export `FLIP_TRAINER` class |
-| `validator.py` | Validation logic — must export `FLIP_VALIDATOR` class |
+| `trainer.py` | Training logic — a plain `nvflare.client` script (`flare.init`/`receive`/`send`) |
+| `validator.py` | Extra validation module where the job type requires one (`diffusion_model`) |
 | `models.py` | Model definitions — must export `get_model()` function |
 | `config.json` | Hyperparameters — must include `LOCAL_ROUNDS` and `LEARNING_RATE`; optional `BEST_MODEL_METRIC` / `BEST_MODEL_METRIC_MINIMIZE` enable best-model selection (see below) |
 | `transforms.py` | Data transforms (optional) |
@@ -155,7 +154,7 @@ loss-like metrics, `BEST_MODEL_METRIC_MINIMIZE: true`) wires NVFLARE's stock
 
 The metric label must be one the trainer reports (e.g. the client-API x-ray tutorial reports
 `VAL_LOSS`, per-lesion `VAL-<METRIC>-<lesion>` and macro `VAL-<METRIC>` labels). Wired for both
-supported paths: the `standard_client_api` recipe (`FlipFedAvgRecipe(best_model_metric=...)`) and
+supported paths: the `standard` recipe (`FlipFedAvgRecipe(best_model_metric=...)`) and
 platform-submitted jobs, where fl-api-base's job-assembly step (`prepare_config.validate_config` /
 `configure_server`) reads `BEST_MODEL_METRIC` / `BEST_MODEL_METRIC_MINIMIZE` straight from the
 uploaded `config.json` and injects the same selector. On the platform path, a `config.json` that
@@ -174,26 +173,25 @@ Pass the job type to the `FLIP()` factory (`FLIP(job_type=...)`). The `JobType` 
 | `diffusion_model` | Two-stage training (VAE encoder + diffusion) |
 | `fed_opt` | Custom federated optimization |
 
-The NVFLARE backend additionally ships template directories under `fl-apps/nvflare/` for
-the Client-API variants (`standard_client_api`, `evaluation_client_api`,
-`diffusion_model_client_api`); these are selected as app templates and are not `JobType`
-enum members. The corresponding configs live in `fl-apps/nvflare/<template>/app/config/`.
+The NVFLARE templates under `fl-apps/nvflare/` (`standard`, `evaluation`, `diffusion_model`,
+`fed_opt`) are all Client-API apps with recipe-generated configs. The corresponding configs live
+in `fl-apps/nvflare/<template>/app/config/`.
 
 ### Development Mode
 
 DEV mode lets you run an FL application locally on the NVFLARE simulator before
 deploying. The runnable tutorials live in [`../fl-tutorials/`](../fl-tutorials/); each
-carries a `.env.app` (`JOB_TYPE`, `PATH_TO_APP`, `DEV_IMAGES_DIR`, `DEV_DATAFRAME`) and
-delegates to the shared harness in `fl-tutorials/nvflare/testing/`.
+carries a `.env.app` (`JOB_TYPE`, `DEV_IMAGES_DIR`, `DEV_DATAFRAME`) and a `job.py` that
+drives a FLIP recipe on the NVFLARE simulator (SimEnv) from the flip-utils venv.
 
 1. Get the tutorial's dataset. The xray tutorial pulls a reference dataset from Hugging
    Face (`make -C fl-tutorials download-xray-data`); the spleen tutorials generate their
-   own data via their `utils/` scripts (see each tutorial's README).
+   own data via the segmentation tutorial's `utils/` scripts (see each tutorial's README).
 
-2. Place any custom application files under the tutorial's `app_files/`; at run time
-   they are merged onto the matching `fl-apps/nvflare/<JOB_TYPE>/app` template.
+2. Adapt the tutorial's `app_files/` as needed; on the platform they are merged onto the
+   matching `fl-apps/nvflare/<JOB_TYPE>/app` template at submit time.
 
-3. Run a tutorial on the simulator (requires GPUs + the `flare-fl-base` image):
+3. Run a tutorial on the simulator (requires a GPU):
 
    ```bash
    make -C fl-tutorials download-xray-data                       # xray dataset (one-off)
@@ -224,14 +222,14 @@ Paths below are relative to `../fl-tutorials/nvflare/` (the NVFLARE tutorials tr
 
 | App | Tutorial |
 |-----|----------|
-| `standard` | `image_segmentation/3d_spleen_segmentation` |
 | `standard` | `image_classification/xray_classification` |
-| `diffusion_model` | `image_synthesis/latent_diffusion_model` |
-| `fed_opt` | `image_segmentation/3d_spleen_segmentation` |
+| `standard` | `image_segmentation/3d_spleen_segmentation` |
 | `evaluation` | `image_evaluation/3d_spleen_segmentation_evaluation` |
-| `standard_client_api` | `image_classification/xray_classification_client_api` |
-| `evaluation_client_api` | `image_evaluation/3d_spleen_segmentation_evaluation_client_api` |
-| `diffusion_model_client_api` | `image_synthesis/latent_diffusion_model_client_api` |
+| `diffusion_model` | `image_synthesis/latent_diffusion_model` |
+
+The plain job-type names (`standard`, `evaluation`, `diffusion_model`, `fed_opt`) are the
+Client-API templates — the legacy Executor syntax (`FLIP_TRAINER`-style classes) is retired and
+such apps can no longer run.
 
 ---
 

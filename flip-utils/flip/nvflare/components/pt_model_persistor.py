@@ -36,7 +36,7 @@ class InitialCheckpointPTModelPersistor(PTFileModelPersistor):
          FL API staged on the hub-local shared volume (production). Read straight from disk;
          the checkpoint is intentionally NOT shipped in the app bundle, so it never reaches
          the clients. Mirrors the Flower backend's ``/app/src`` shared mount and the eval
-         ``EvaluationPTModelLocator``.
+         ``EvaluationModelLocator``.
 
     The resolved checkpoint is loaded (``strict=False``) into the ``get_model()`` architecture
     so the round-0 global model that ScatterAndGather broadcasts carries the backbone **plus**
