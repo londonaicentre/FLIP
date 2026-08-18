@@ -27,10 +27,9 @@ list() { for d in "$HERE"/*/app; do basename "$(dirname "$d")"; done; }
 if [ -z "$TUTORIAL" ]; then echo "Set TUTORIAL=<name>. Available:"; list | sed 's/^/  - /'; exit 1; fi
 if [ ! -d "$HERE/$TUTORIAL/app" ]; then echo "❌ Unknown tutorial '$TUTORIAL'. Available:"; list | sed 's/^/  - /'; exit 1; fi
 
-# Per-tutorial dev data (LOCAL_DEV reads DEV_IMAGES_DIR / DEV_DATAFRAME). numpy is
-# self-contained; spleen + xray need their HF dataset downloaded first.
+# Per-tutorial dev data (LOCAL_DEV reads DEV_IMAGES_DIR / DEV_DATAFRAME). Spleen and xray
+# both need their HF dataset downloaded first.
 case "$TUTORIAL" in
-  numpy) : ;;
   3d_spleen_segmentation|3d_spleen_segmentation_evaluation)
     export DEV_IMAGES_DIR="$HERE/data/spleen/accession-resources"
     export DEV_DATAFRAME="$HERE/data/spleen/sample_get_dataframe_response.csv" ;;

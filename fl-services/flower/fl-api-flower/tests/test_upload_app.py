@@ -167,11 +167,13 @@ def test_upload_app_injects_min_clients_from_trust_count(trusts, expected, clien
     The NVFLARE adapter already does this (``config["min_clients"] = len(trusts)`` in
     prepare_config.configure_server). Without the Flower equivalent the strategy inherits
     flwr's ``min_*_nodes=2`` default, so a single-trust run waits for a second node that
-    never arrives — silently, until ``start()``'s 3600s timeout.
+    never arrives, in an unbounded poll loop that never times out.
     """
     model_id = str(uuid4())
 
-    mock_requests_get({f"https://example.com/{model_id}/app/config.toml": b""})
+    # Seeded, not empty: config.toml is researcher-uploadable and the templates ship none, so a
+    # supplied flip-min-clients must lose to the trust count rather than cap the federation.
+    mock_requests_get({f"https://example.com/{model_id}/app/config.toml": b"flip-min-clients = 1\n"})
 
     body = UploadAppRequest(
         project_id="project-123",

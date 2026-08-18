@@ -408,7 +408,7 @@ def submit_run(job_folder: UUID) -> str:
 @app.post("/submit_tutorial/{tutorial_name}", status_code=status.HTTP_200_OK, response_model=str)
 def submit_tutorial(tutorial_name: str) -> str:
     # Tutorial path: pre-baked tutorial folders are submitted by name (not a UUID), e.g.
-    # `numpy` / `xray_classification`. Charset/traversal-guarded, contained under the src root.
+    # `xray_classification`. Charset/traversal-guarded, contained under the src root.
     return _submit_from_job_dir(_validate_tutorial_folder(tutorial_name), tutorial_name)
 
 

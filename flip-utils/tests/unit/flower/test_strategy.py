@@ -182,7 +182,8 @@ class TestMinClients:
     """min_clients pins every node threshold to the participating-trust count.
 
     flwr's FedAvg defaults all three to 2, so a single-trust FLIP run would otherwise
-    wait for a second node that never arrives (silently, until start()'s 3600s timeout).
+    wait for a second node that never arrives — in an unbounded poll loop, so it hangs for
+    good rather than timing out.
     Pinning them also stops a multi-trust run beginning before every expected trust has
     connected, which would train on part of the federation without saying so.
     """
@@ -194,6 +195,19 @@ class TestMinClients:
         assert strategy.min_train_nodes == min_clients
         assert strategy.min_evaluate_nodes == min_clients
         assert strategy.min_available_nodes == min_clients
+
+    def test_evaluation_shape_keeps_the_thresholds_flwr_does_not_zero(self):
+        """FedAvg zeroes min_train_nodes when fraction_train == 0.0 — that is flwr's doing.
+
+        The evaluation templates pass fraction_train=0.0, so only two of the three thresholds
+        can carry the trust count there. Pinned so a change to the setdefault block (or to
+        flwr's zeroing) cannot quietly drop the two that matter.
+        """
+        strategy = _strategy(min_clients=3, fraction_train=0.0, fraction_evaluate=1.0)
+
+        assert strategy.min_train_nodes == 0
+        assert strategy.min_evaluate_nodes == 3
+        assert strategy.min_available_nodes == 3
 
     def test_explicit_thresholds_win_over_min_clients(self):
         strategy = _strategy(min_clients=2, min_available_nodes=5)
@@ -214,7 +228,7 @@ class TestMinClientsFromRunConfig:
 
     Absence must yield ``None`` (leave flwr's own defaults alone) rather than a made-up
     number: the key is only injected on the deployed FLIP path, and inventing a low value
-    on the paths where nothing injects would silently shrink the quorum.
+    on the paths where nothing injects would let a round start short-handed.
     """
 
     def test_reads_the_injected_trust_count(self):

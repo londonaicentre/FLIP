@@ -121,7 +121,7 @@ Wrap your training entry point with four ``update_status`` calls. These drive th
 Full minimal example
 =====================
 
-Reproduced from ``fl-apps/flower/standard/app/server_app.py``:
+Schematic, based on ``fl-apps/flower/standard/app/server_app.py`` — simplified to the lifecycle calls. See the template for the full version, including the ``min_clients`` wiring described under *Strategy considerations* below, which a real app must not omit:
 
 .. code-block:: python
 
@@ -179,7 +179,7 @@ If you subclass a strategy to add custom aggregation or post-round hooks, the ``
 
 .. warning::
 
-   Set the strategy's node thresholds from ``flip-min-clients``. Flower defaults ``min_train_nodes``, ``min_evaluate_nodes`` and ``min_available_nodes`` to **2**, so a strategy left on those defaults never starts a round on a single-trust project: it waits for a second node that never arrives, silently, until ``start()``'s 3600s timeout. FLIP's FL API injects ``flip-min-clients`` with the participating-trust count, the same value the NVFLARE adapter puts in ``min_clients``.
+   Set the strategy's node thresholds from ``flip-min-clients``. Flower defaults ``min_train_nodes``, ``min_evaluate_nodes`` and ``min_available_nodes`` to **2**, so a strategy left on those defaults never starts a round on a single-trust project: ``sample_nodes`` waits for a second node in an **unbounded** ``sleep(1)`` loop, so the job hangs for good rather than timing out (``start()``'s ``timeout`` bounds only ``send_and_receive``, which is never reached). The only trace is flwr's per-second ``Waiting for nodes to connect`` INFO line in the ServerApp log, which the platform does not surface — from the UI it is indistinguishable from slow training. FLIP's FL API injects ``flip-min-clients`` with the participating-trust count, the same value the NVFLARE adapter puts in ``min_clients``.
 
    FLIP's strategies take it as one argument, read via the helper so your app carries no parsing:
 
@@ -193,9 +193,9 @@ If you subclass a strategy to add custom aggregation or post-round hooks, the ``
           min_clients=min_clients_from_run_config(run_config),
       )
 
-   Building on flwr's ``FedAvg`` directly? Pass the same value to ``min_train_nodes``, ``min_evaluate_nodes`` and ``min_available_nodes``.
+   Building on flwr's ``FedAvg`` directly? Pass the same value to ``min_train_nodes``, ``min_evaluate_nodes`` and ``min_available_nodes`` — but only when it is not ``None``, since ``FedAvg`` types those three as ``int``.
 
-   Do not substitute a constant when the key is absent. ``min_clients_from_run_config`` returns ``None`` there, which leaves flwr's own defaults alone — the right answer, because nothing injects the key on the simulator or ``submit_tutorial`` paths, and a low constant would let a round close on whichever trust replies first and silently drop the slower ones.
+   Do not substitute a constant when the key is absent. ``min_clients_from_run_config`` returns ``None`` there, which leaves flwr's own defaults alone — the right answer, because nothing injects the key on a local ``flwr run .`` or the ``submit_tutorial`` path, and a low constant would let a round start before every participating trust has connected, training on part of the federation without saying so.
 
 ****************************************
 ClientApp: fetching the FLIP DataFrame
@@ -432,5 +432,5 @@ Common pitfalls
 
 - **Missing ``RESULTS_UPLOADED``.** Forgetting the final ``flip.update_status(model_id, ModelStatus.RESULTS_UPLOADED)`` call leaves the model stuck on "training" in the UI.
 - **Wrong ``SUPERNODE_NAME``.** ``SUPERNODE_NAME`` must be the trust's **FL kit slot** (``Trust_1``, ``Trust_2``, ...), not the trust display name — metrics pushed with any other value land under ``unknown_client`` and will not appear on the per-site chart.
-- **Undeclared run-config keys.** ``flwr run`` (and therefore FLIP's FL API) can only override keys already declared in ``[tool.flwr.app.config]``. Declaring ``flip-model-id``, ``flip-project-id``, ``flip-cohort-query`` and ``flip-min-clients`` with placeholder values is mandatory even though the real values are injected by FLIP.
+- **Undeclared run-config keys.** ``flwr run`` (and therefore FLIP's FL API) can only override keys already declared in ``[tool.flwr.app.config]``. Declaring ``flip-model-id``, ``flip-project-id``, ``flip-cohort-query`` and ``flip-min-clients`` with placeholder values is mandatory even though the real values are injected by FLIP. This matters in two places: your own ``pyproject.toml``, so a local ``flwr run .`` works; and — for the on-platform run — the base template's ``pyproject.toml`` under ``fl-apps/flower/<job_type>/``, which is the config FLIP's overrides are validated against, since an uploaded ``pyproject.toml`` does not become the app's project file.
 - **Missing ``ResourceType``.** If a trust does not have the resource type you requested for a given accession, ``get_by_accession_number`` will raise. Always wrap the call in ``try / except`` and skip the accession on failure so a single bad study does not abort the whole round.

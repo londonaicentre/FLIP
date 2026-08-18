@@ -25,7 +25,7 @@ Standalone FastAPI service for Flower deployment runtime.
 - `GET /list_runs`
 - `POST /upload_app/{model_id}`
 - `POST /submit_run/{job_folder}` — submit a previously uploaded application; `job_folder` is the Central Hub `model_id` (UUID). flip-api's production path (also exposed as the hidden `/submit_job` alias)
-- `POST /submit_tutorial/{tutorial_name}` — submit a pre-baked tutorial folder by name (e.g. `numpy`, `xray_classification`); the local tutorial harness targets this
+- `POST /submit_tutorial/{tutorial_name}` — submit a pre-baked tutorial folder by name (e.g. `xray_classification`); the local tutorial harness targets this
 - `DELETE /abort_run/{run_id}`
 
 ## API docs
