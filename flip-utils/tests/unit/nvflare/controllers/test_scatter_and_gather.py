@@ -198,6 +198,23 @@ class TestAcceptTrainResult:
         controller.flip.send_handled_exception.assert_not_called()
         assert controller._round_kind_mismatches == set()
 
+    def test_kind_probe_failure_never_blocks_acceptance(self):
+        """The mismatch probe is best-effort: an OK result it cannot parse (no DXO payload, so
+        from_shareable raises) is still handed to the aggregator — which remains the authority on
+        rejection — with the probe failure demoted to a debug log, not a hub-visible error."""
+        controller = self._controller()
+        controller.flip = MagicMock()
+        controller.log_debug = MagicMock()
+        controller.aggregator.expected_data_kind = {"": DataKind.WEIGHT_DIFF}
+
+        accepted = controller._accept_train_result(client_name="site-1", result=Shareable(), fl_ctx=_ctx())
+
+        assert accepted is True
+        controller.flip.send_handled_exception.assert_not_called()
+        assert controller._round_kind_mismatches == set()
+        debug_messages = [call.args[1] for call in controller.log_debug.call_args_list]
+        assert any(m.startswith("Could not probe the client update's data kind") for m in debug_messages)
+
 
 class TestZeroAcceptancePanic:
     """A training round about to aggregate zero accepted results must abort the job loudly —
