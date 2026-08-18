@@ -188,8 +188,11 @@ async def test_handle_delete_imaging_success(mock_make_request):
     result = await handle_delete_imaging({"imaging_project_id": "img-123"})
 
     assert result["success"] is True
+    mock_make_request.assert_awaited_once()
     call_args = mock_make_request.call_args
     assert call_args.kwargs["method"] == "DELETE"
+    assert call_args.kwargs["url"].endswith("/projects/img-123")
+    assert "params" not in call_args.kwargs
     _assert_trust_internal_auth_header(call_args)
 
 

@@ -53,12 +53,16 @@ def mock_services(monkeypatch):
         "get_project_models_service": MagicMock(return_value=(MagicMock(data=[]), None)),
         "abort_model_training": MagicMock(),
         "delete_project": MagicMock(),
+        "get_imaging_projects": MagicMock(),
+        "delete_imaging_project": MagicMock(),
     }
 
     monkeypatch.setattr(delete_project_module, "can_modify_project", mocks["can_modify_project"])
     monkeypatch.setattr(delete_project_module, "get_project_models_service", mocks["get_project_models_service"])
     monkeypatch.setattr(delete_project_module, "abort_model_training", mocks["abort_model_training"])
     monkeypatch.setattr(delete_project_module, "delete_project", mocks["delete_project"])
+    monkeypatch.setattr(delete_project_module, "get_imaging_projects", mocks["get_imaging_projects"], raising=False)
+    monkeypatch.setattr(delete_project_module, "delete_imaging_project", mocks["delete_imaging_project"], raising=False)
 
     return mocks
 
@@ -79,12 +83,11 @@ def test_delete_project_leaves_trust_imaging_intact(override_dependencies, mock_
     segmentations and annotations added during data enrichment cannot. The endpoint must therefore
     not reach for the imaging-delete machinery at all.
     """
-    assert not hasattr(delete_project_module, "delete_imaging_project")
-    assert not hasattr(delete_project_module, "get_imaging_projects")
-
     response = client.delete(f"/api/projects/{uuid4()}")
 
     assert response.status_code == status.HTTP_204_NO_CONTENT
+    mock_services["get_imaging_projects"].assert_not_called()
+    mock_services["delete_imaging_project"].assert_not_called()
     mock_services["delete_project"].assert_called_once()
 
 
