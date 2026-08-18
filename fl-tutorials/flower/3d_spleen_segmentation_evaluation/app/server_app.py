@@ -22,6 +22,7 @@ from pathlib import Path
 import torch
 from flip import FLIP
 from flip.constants.flip_constants import ModelStatus
+from flip.flower.strategy import min_clients_from_run_config
 from flwr.app import ArrayRecord, Context
 from flwr.common import log
 from flwr.serverapp import Grid, ServerApp
@@ -88,9 +89,20 @@ def main(grid: Grid, context: Context, flip: FLIP = FLIP()) -> None:
     # clients return in their MetricRecord (weighted by num-examples); the hub
     # forwarding lives in FlipFedAvg, and EvaluationStrategy adds only the
     # per-client metric breakdown.
+    # A malformed flip-min-clients must fail the run, not escape from the strategy constructor:
+    # an unhandled raise leaves the model at its last status and the net BUSY. ERROR is the only
+    # channel the researcher can actually see — the ServerApp log stream is not surfaced.
+    try:
+        min_clients = min_clients_from_run_config(run_config)
+    except ValueError as err:
+        log(INFO, f"✗ {err}")
+        flip.update_status(model_id, ModelStatus.ERROR)
+        raise
+
     strategy = EvaluationStrategy(
         flip=flip,
         model_id=model_id,
+        min_clients=min_clients,
         fraction_train=0.0,  # No training
         fraction_evaluate=1.0,  # All clients evaluate
     )

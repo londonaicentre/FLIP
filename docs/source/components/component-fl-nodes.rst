@@ -359,7 +359,7 @@ Three things to know:
   ``task_result_filters`` entry in the FLIP-owned ``config_fed_client.json`` — a Flower app's
   ``client_app.py`` is uploaded by the model developer, so the template cannot register the mod on the
   developer's behalf. An uploaded app that omits it shares raw updates. The shipped tutorials
-  (``numpy``, ``xray_classification``, ``3d_spleen_segmentation``) wire it as worked examples.
+  (``xray_classification``, ``3d_spleen_segmentation``) wire it as worked examples.
 
 The shipped parameter defaults are utility-first demonstration values, not a defensible privacy budget: a
 real budget calibrates ``dp-sensitivity`` to the local dataset and accounts for composition across rounds,

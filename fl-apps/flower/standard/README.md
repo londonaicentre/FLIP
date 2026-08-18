@@ -58,7 +58,6 @@ The mod clips the local update to `dp-clipping-norm` and adds Gaussian noise cal
 (`dp-epsilon`, `dp-delta`) before the reply leaves the SuperNode, and is toggled by `dp-enabled` in
 `[tool.flwr.app.config]`. See [`flip.flower.privacy`](../../../flip-utils/flip/flower/privacy.py)
 for the mechanism and the shipped tutorials for worked examples:
-[`numpy`](../../../fl-tutorials/flower/numpy/README.md),
 [`xray_classification`](../../../fl-tutorials/flower/xray_classification/README.md) and
 [`3d_spleen_segmentation`](../../../fl-tutorials/flower/3d_spleen_segmentation/README.md).
 

@@ -143,7 +143,7 @@ a participant slot.
 ```bash
 make -C fl-services/flower up                 # INSECURE stack (1 SuperLink + 2 SuperNodes + fl-api)
 make -C fl-services/flower up-secure          # SECURE stack (TLS + SuperNode auth); needs `provision` first
-make -C fl-services/flower submit APP=numpy   # submit a job to the running stack
+make -C fl-services/flower submit APP=xray_classification   # submit a job to the running stack
 make -C fl-services/flower down
 ```
 

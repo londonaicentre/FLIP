@@ -160,6 +160,36 @@ accuracy = true
     assert "metrics" in config_doc
 
 
+@pytest.mark.parametrize(("trusts", "expected"), [(["trust1"], 1), (["trust1", "trust2"], 2)])
+def test_upload_app_injects_min_clients_from_trust_count(trusts, expected, client, upload_dir, mock_requests_get):
+    """flip-min-clients carries the participating-trust count into the Flower run config.
+
+    The NVFLARE adapter already does this (``config["min_clients"] = len(trusts)`` in
+    prepare_config.configure_server). Without the Flower equivalent the strategy inherits
+    flwr's ``min_*_nodes=2`` default, so a single-trust run waits for a second node that
+    never arrives, in an unbounded poll loop that never times out.
+    """
+    model_id = str(uuid4())
+
+    # Seeded, not empty: config.toml is researcher-uploadable and the templates ship none, so a
+    # supplied flip-min-clients must lose to the trust count rather than cap the federation.
+    mock_requests_get({f"https://example.com/{model_id}/app/config.toml": b"flip-min-clients = 1\n"})
+
+    body = UploadAppRequest(
+        project_id="project-123",
+        cohort_query="*",
+        trusts=trusts,
+        bundle_urls=[f"https://example.com/{model_id}/app/config.toml"],
+    )
+
+    response = client.post(f"/upload_app/{model_id}", json=body.model_dump())
+
+    assert response.status_code == 200
+
+    config_doc = parse((upload_dir / model_id / "app" / "config.toml").read_text())
+    assert config_doc["flip-min-clients"] == expected
+
+
 def test_upload_app_places_checkpoint_in_job_dir(client, upload_dir, mock_requests_get):
     """Checkpoint files are downloaded into the job dir alongside the sources.
 

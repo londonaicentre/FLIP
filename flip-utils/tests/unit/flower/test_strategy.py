@@ -29,10 +29,11 @@ import logging
 from unittest.mock import MagicMock
 
 import numpy as np
+import pytest
 from flwr.app import ArrayRecord, Message, MetricRecord, RecordDict
 from flwr.common import ConfigRecord
 
-from flip.flower.strategy import FlipFedAvg
+from flip.flower.strategy import MIN_CLIENTS_KEY, FlipFedAvg, min_clients_from_run_config
 from flip.schemas import FLLogEvent
 
 
@@ -175,3 +176,66 @@ class TestTrainPhaseWiring:
             call for call in flip.send_event.call_args_list if call.kwargs["event_type"] == FLLogEvent.ROUND_AGGREGATED
         )
         assert aggregated_event.kwargs["details"] == {"returned": 2, "expected": 2}
+
+
+class TestMinClients:
+    """min_clients pins every node threshold to the participating-trust count.
+
+    flwr's FedAvg defaults all three to 2, so a single-trust FLIP run would otherwise
+    wait for a second node that never arrives — in an unbounded poll loop, so it hangs for
+    good rather than timing out.
+    Pinning them also stops a multi-trust run beginning before every expected trust has
+    connected, which would train on part of the federation without saying so.
+    """
+
+    @pytest.mark.parametrize("min_clients", [1, 3])
+    def test_min_clients_pins_all_three_node_thresholds(self, min_clients):
+        strategy = _strategy(min_clients=min_clients)
+
+        assert strategy.min_train_nodes == min_clients
+        assert strategy.min_evaluate_nodes == min_clients
+        assert strategy.min_available_nodes == min_clients
+
+    def test_evaluation_shape_keeps_the_thresholds_flwr_does_not_zero(self):
+        """FedAvg zeroes min_train_nodes when fraction_train == 0.0 — that is flwr's doing.
+
+        The evaluation templates pass fraction_train=0.0, so only two of the three thresholds
+        can carry the trust count there. Pinned so a change to the setdefault block (or to
+        flwr's zeroing) cannot quietly drop the two that matter.
+        """
+        strategy = _strategy(min_clients=3, fraction_train=0.0, fraction_evaluate=1.0)
+
+        assert strategy.min_train_nodes == 0
+        assert strategy.min_evaluate_nodes == 3
+        assert strategy.min_available_nodes == 3
+
+    def test_explicit_thresholds_win_over_min_clients(self):
+        strategy = _strategy(min_clients=2, min_available_nodes=5)
+
+        assert strategy.min_available_nodes == 5
+        assert strategy.min_train_nodes == 2
+
+    def test_omitting_min_clients_leaves_flwr_defaults_untouched(self):
+        strategy = _strategy()
+
+        assert strategy.min_train_nodes == 2
+        assert strategy.min_evaluate_nodes == 2
+        assert strategy.min_available_nodes == 2
+
+
+class TestMinClientsFromRunConfig:
+    """The one place the ``flip-min-clients`` key is read, so app templates carry no parsing.
+
+    Absence must yield ``None`` (leave flwr's own defaults alone) rather than a made-up
+    number: the key is only injected on the deployed FLIP path, and inventing a low value
+    on the paths where nothing injects would let a round start short-handed.
+    """
+
+    def test_reads_the_injected_trust_count(self):
+        assert min_clients_from_run_config({MIN_CLIENTS_KEY: 3}) == 3
+
+    def test_absent_key_yields_none_so_flwr_defaults_stand(self):
+        assert min_clients_from_run_config({}) is None
+
+    def test_coerces_a_quoted_toml_value(self):
+        assert min_clients_from_run_config({MIN_CLIENTS_KEY: "2"}) == 2

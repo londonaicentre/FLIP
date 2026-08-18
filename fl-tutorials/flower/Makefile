@@ -18,7 +18,7 @@
 #   make download-xray-data                    # FLIP-format x-ray data from HF
 #   make download-spleen-data                  # FLIP-format MSD-spleen data from HF
 #   make list-tutorials
-#   make run-tutorial TUTORIAL=numpy           # self-contained, no data needed
+#   make run-tutorial TUTORIAL=xray_classification   # run 'make download-xray-data' first
 #   make run-tutorial TUTORIAL=3d_spleen_segmentation   # needs download-spleen-data
 #   make run-all-tutorials
 #
@@ -28,7 +28,7 @@
 REPO_ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST)))/../..)
 HF_DATA_REPO := aicentreflip/flip-fl-base-test-data
 
-# Tutorials = immediate subdirs carrying an app/ (numpy, xray_classification,
+# Tutorials = immediate subdirs carrying an app/ (xray_classification,
 # 3d_spleen_segmentation, 3d_spleen_segmentation_evaluation).
 TUTORIAL_DIRS := $(sort $(patsubst %/app/,%,$(dir $(wildcard */app/.))))
 
@@ -60,7 +60,7 @@ list-tutorials:
 	@for d in $(TUTORIAL_DIRS); do echo "  - $$d"; done
 
 # Run one tutorial on the standalone Flower stack (up → submit → wait → down).
-# numpy is self-contained; spleen/xray need 'make download-<spleen|xray>-data' first.
+# Every tutorial needs its dataset: run 'make download-<spleen|xray>-data' first.
 run-tutorial:
 	@bash $(REPO_ROOT)/fl-tutorials/flower/run-tutorial.sh "$(TUTORIAL)"
 

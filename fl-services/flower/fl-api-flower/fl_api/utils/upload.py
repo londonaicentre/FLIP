@@ -31,7 +31,9 @@ def _key_after_model_id(url: str, model_id: str) -> Path:
     return Path(*parts[index + 1 :])
 
 
-def upsert_flwr_run_config(config_path: Path, model_id: str, project_id: str, cohort_query: str) -> None:
+def upsert_flwr_run_config(
+    config_path: Path, model_id: str, project_id: str, cohort_query: str, trusts: list[str]
+) -> None:
     """Insert or update the FLIP runtime parameters as top-level keys in config.toml.
 
     config.toml is the Flower ``--run-config`` override file: Flower reads the full app
@@ -46,6 +48,7 @@ def upsert_flwr_run_config(config_path: Path, model_id: str, project_id: str, co
         model_id: Model ID to inject as ``flip-model-id``.
         project_id: Project ID to inject as ``flip-project-id``.
         cohort_query: Cohort query to inject as ``flip-cohort-query``.
+        trusts: Participating trusts; their count is injected as ``flip-min-clients``.
     """
     doc = parse(config_path.read_text()) if config_path.exists() else parse("")
 
@@ -53,6 +56,13 @@ def upsert_flwr_run_config(config_path: Path, model_id: str, project_id: str, co
     doc["flip-model-id"] = model_id
     doc["flip-project-id"] = project_id
     doc["flip-cohort-query"] = cohort_query
+    # The trust count drives FedAvg's node thresholds (see FlipFedAvg's min_clients). flwr
+    # defaults them to 2, so without this a single-trust run never starts a round: sample_nodes
+    # polls in an UNBOUNDED sleep(1) loop, so the job hangs for good rather than timing out, and
+    # the only trace is flwr's per-second "Waiting for nodes to connect" INFO line in the
+    # ServerApp log, which the platform does not surface. The NVFLARE adapter has always done
+    # the equivalent (config["min_clients"] = len(trusts) in configure_server).
+    doc["flip-min-clients"] = len(trusts)
 
     config_path.write_text(dumps(doc))
 
@@ -133,7 +143,7 @@ def upload_application(model_id: str, body: UploadAppRequest, upload_dir: Path) 
         config_toml.write_text("")
 
     # Now we add FLIP configuration as top-level run-config key/value pairs in config.toml
-    upsert_flwr_run_config(config_toml, model_id, body.project_id, body.cohort_query)
+    upsert_flwr_run_config(config_toml, model_id, body.project_id, body.cohort_query, body.trusts)
 
     logger.info("config.toml updated with FLIP runtime parameters")
 

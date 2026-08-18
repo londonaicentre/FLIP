@@ -29,11 +29,11 @@ Like ``flip.flower.privacy``, importing this module requires the ``flwr`` packag
 Keep logic in the helpers; this class is wiring.
 """
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from logging import INFO
 from typing import cast
 
-from flwr.app import ArrayRecord, Message, MetricRecord
+from flwr.app import ArrayRecord, Message, MetricRecord, UserConfigValue
 from flwr.common import ConfigRecord, log
 from flwr.serverapp import Grid
 from flwr.serverapp.strategy import FedAvg, Result
@@ -47,7 +47,48 @@ from flip.flower.progress import (
 )
 from flip.flower.selection import BestModelSelector
 
-__all__ = ["FlipFedAvg"]
+__all__ = ["MIN_CLIENTS_KEY", "FlipFedAvg", "min_clients_from_run_config"]
+
+# Run-config key carrying the participating-trust count, injected by fl-api-flower at submit
+# time (the Flower analogue of the NVFLARE adapter's ``config["min_clients"] = len(trusts)``).
+# Declared under ``[tool.flwr.app.config]`` in each app's pyproject.toml, as the other
+# ``flip-*`` keys are — flwr rejects a ``--run-config`` override it has not been declared.
+MIN_CLIENTS_KEY = "flip-min-clients"
+
+
+def min_clients_from_run_config(run_config: Mapping[str, UserConfigValue]) -> int | None:
+    """Read the participating-trust count from a Flower run config.
+
+    Kept here rather than in each app template for the same reason as
+    :func:`~flip.flower.selection.parse_best_model_run_config`: the templates should carry no
+    run-config parsing.
+
+    Args:
+        run_config (Mapping[str, UserConfigValue]): The app's run config (``Context.run_config``).
+
+    Returns:
+        int | None: The trust count, or ``None`` when the key is absent — meaning "leave
+        ``FedAvg``'s own thresholds alone", never a stand-in for 1. No shipped FLIP app reaches
+        that branch: each declares a ``flip-min-clients`` placeholder under
+        ``[tool.flwr.app.config]``, and flwr fuses declared defaults into the run config, so the
+        placeholder (not this branch) is what protects the simulator and ``submit_tutorial``
+        paths. The branch exists so a caller without the declaration inherits flwr's defaults
+        rather than a made-up quorum.
+
+    Raises:
+        ValueError: If the value is not a TOML integer. ``int()`` would otherwise coerce
+            ``true`` to 1 and ``2.9`` to 2, setting the quorum to something other than the
+            participating-trust count.
+    """
+    value = run_config.get(MIN_CLIENTS_KEY)
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int | str):
+        raise ValueError(
+            f"{MIN_CLIENTS_KEY} must be a TOML integer, got {value!r} — a coerced value sets the "
+            "node quorum to something other than the participating-trust count"
+        )
+    return int(value)
 
 
 class FlipFedAvg(FedAvg):
@@ -68,6 +109,9 @@ class FlipFedAvg(FedAvg):
             global model on; ``None`` disables selection.
         best_model_metric_minimize: Whether lower values of that metric are
             better (e.g. a loss).
+        min_clients: Number of participating trusts. Pins ``min_train_nodes``,
+            ``min_evaluate_nodes`` and ``min_available_nodes`` unless the caller sets
+            them explicitly by keyword. ``None`` leaves ``FedAvg``'s own defaults (2) in place.
         **kwargs: Passed through to ``FedAvg``.
     """
 
@@ -78,8 +122,26 @@ class FlipFedAvg(FedAvg):
         *args,
         best_model_metric: str | None = None,
         best_model_metric_minimize: bool = False,
+        min_clients: int | None = None,
         **kwargs,
     ):
+        # flwr defaults all three node thresholds to 2, so a single-trust run waits for a second
+        # node that never arrives — and flwr's sample_nodes polls in an UNBOUNDED sleep(1) loop,
+        # so the job hangs for good rather than failing. Deriving them from the trust count also
+        # stops a multi-trust run starting before every trust has connected.
+        if min_clients is not None:
+            if min_clients < 1:
+                # Reachable: slot_names is a DB lookup that returns [] when a participating trust
+                # has no assigned FL kit slot, and validate_client_availability passes an empty
+                # list. len([]) == 0 would zero every threshold, and flwr's sample_size is
+                # max(n, 0) — so the round would start against no one.
+                raise ValueError(
+                    f"min_clients must be >= 1, got {min_clients} — a zero or negative quorum "
+                    "lets a round start without waiting for any trust"
+                )
+            kwargs.setdefault("min_train_nodes", min_clients)
+            kwargs.setdefault("min_evaluate_nodes", min_clients)
+            kwargs.setdefault("min_available_nodes", min_clients)
         super().__init__(*args, **kwargs)
         self.flip = flip
         self.model_id = model_id

@@ -13,9 +13,10 @@ limitations under the License.
 
 # fl-tutorials tests
 
-CPU-only pytest suite over the tutorial apps' transform chains. No GPU, no dataset download, no FL
-image, no network — the fixtures are synthetic DICOMs built in-process, and the whole suite runs in
-a couple of seconds.
+CPU-only pytest suite over the tutorial apps: their transform chains, plus a static drift guard on
+the Flower apps' `min_clients` wiring (which also covers `fl-apps/flower/`, the templates that
+actually deploy). No GPU, no dataset download, no FL image, no network — the fixtures are synthetic
+DICOMs built in-process, and the whole suite runs in a couple of seconds.
 
 ```bash
 make -C fl-tutorials test        # ruff over fl-tutorials/ + this suite
@@ -23,9 +24,9 @@ make -C fl-tutorials pytest      # this suite only
 make -C fl-tutorials lint        # ruff only
 ```
 
-CI runs the same two commands on every pull request touching `fl-tutorials/**` or the flip-utils
-source/environment, and on pushes to main/develop (`.github/workflows/fl-tutorials-tests.yml`),
-for both backends.
+CI runs the same two commands on every pull request touching `fl-tutorials/**`, `fl-apps/flower/**`
+or the flip-utils source/environment, and on pushes to main/develop
+(`.github/workflows/fl-tutorials-tests.yml`), for both backends.
 
 ## Why this exists
 
@@ -53,6 +54,10 @@ reconstructed here, so the test asserts on the shipped code.
 
 | Test | Asserts |
 | --- | --- |
+| `test_discovery_actually_finds_the_flip_flower_apps` | Both `fl-apps` and `fl-tutorials` contribute apps, so a moved tree cannot leave the rest silently green. |
+| `test_fl_api_writes_the_key_the_apps_read` | fl-api-flower writes the same `flip-min-clients` key the apps read — the two live in different packages. |
+| `test_strategy_gets_min_clients_from_the_injected_trust_count` | Every FLIP Flower app passes `min_clients` sourced from `min_clients_from_run_config(run_config)`, not a constant. |
+| `test_app_config_declares_flip_min_clients` | Each app declares the key in `[tool.flwr.app.config]` (flwr rejects undeclared overrides) at flwr's default of 2 or more. |
 | `test_phantom_has_no_dihedral_symmetry` | The fixture is non-square **and** distinguishable from all eight of its dihedral variants. |
 | `test_phantom_dicom_round_trips` | Each synthetic encoding decodes back to the phantom. |
 | `test_loader_prefix_matches_pixel_data` | The chain up to the first resampling transform is `np.array_equal` to `pydicom`'s `PixelData`. |
