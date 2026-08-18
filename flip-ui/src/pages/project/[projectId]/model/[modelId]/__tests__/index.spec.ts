@@ -1016,3 +1016,41 @@ describe("pages/project/[projectId]/model/[modelId] — job types unavailable", 
         consoleError.mockRestore();
     });
 });
+
+describe("pages/project/[projectId]/model/[modelId] — retry is guarded against double clicks", () => {
+    it("ignores a second Retry while the first is still in flight", async () => {
+        // AiAlert renders its action as a bare <span> with no disabled state, so without the
+        // in-flight guard an impatient second click fires a second request.
+        fetchJobTypesMock.mockRejectedValueOnce(new Error("503"));
+        const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+        mockSwrvData.value = makeModel(
+            [{
+                name: "config.json",
+                status: FileUploadStatus.COMPLETED
+            }],
+            { status: "PENDING" }
+        );
+
+        const wrapper = await mountPage();
+        await flushPromises();
+        expect(fetchJobTypesMock).toHaveBeenCalledTimes(1);
+
+        // Hold the retry's request open so the second click lands mid-flight.
+        let release: (value: unknown) => void = () => {};
+        fetchJobTypesMock.mockImplementationOnce(() => new Promise(resolve => {
+            release = resolve;
+        }));
+
+        const retry = wrapper.find("[data-test='training-retry']");
+        await retry.trigger("click");
+        await retry.trigger("click");
+
+        expect(fetchJobTypesMock).toHaveBeenCalledTimes(2);
+        expect(clearJobTypesCacheMock).toHaveBeenCalledTimes(1);
+
+        release(jobTypes);
+        await flushPromises();
+        expect(wrapper.find("[data-test='training']").attributes("data-job-types-error")).toBe("false");
+        consoleError.mockRestore();
+    });
+});
