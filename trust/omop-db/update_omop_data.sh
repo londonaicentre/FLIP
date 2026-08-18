@@ -45,6 +45,25 @@ if [[ "${TRUST}" != "1" && "${TRUST}" != "2" && "${TRUST}" != "all" ]]; then
   exit 1
 fi
 
+# Where each trust's db_data is extracted. Defaults reproduce the historic in-repo
+# location, so an unset environment behaves exactly as before; `up-trust` passes the
+# kit file's OMOP_DATA_DIR so the dir this script populates is the same one
+# check_omop_data_dir inspects and the compose file mounts. Without that, pointing a
+# trust at an out-of-tree data dir populated one path and started the container on
+# another — the container came up with no schema (FLIP#994).
+: "${OMOP_DATA_DIR_TRUST_1:=omop-db/volumes/Trust_1/db_data}"
+: "${OMOP_DATA_DIR_TRUST_2:=omop-db/volumes/Trust_2/db_data}"
+
+# Resolve OMOP_DATA_DIR_TRUST_<N> against trust/ — the base Docker Compose uses
+# (--project-directory ., invoked from trust/) — independent of this script's CWD
+# (trust/omop-db). Absolute paths are honored as-is. Mirrors update_orthanc_data.sh.
+TRUST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+resolve_data_dir() {
+  local p="$1"
+  [[ "$p" = /* ]] && printf '%s\n' "$p" || printf '%s/%s\n' "${TRUST_DIR}" "$p"
+}
+
 # --- read desired data version from repo file ---
 DATA_VERSION="$(tr -d ' \n\r\t' < "${REPO_DATA_VERSION_FILE}")"
 
@@ -60,7 +79,8 @@ update_trust() {
   local archive="trust${trust_num}_pgdata_${DATA_VERSION}.tar"
   local hf_url="${HF_BASE_URL}/trust${trust_num}/${archive}"
   local local_archive="${VOLUMES_DIR}/${archive}"
-  local dest_dir="${VOLUMES_DIR}/Trust_${trust_num}/db_data"
+  local dest_dir_var="OMOP_DATA_DIR_TRUST_${trust_num}"
+  local dest_dir; dest_dir="$(resolve_data_dir "${!dest_dir_var}")"
 
   local local_version=""
   if [[ -f "${local_version_file}" ]]; then
