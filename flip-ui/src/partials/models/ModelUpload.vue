@@ -89,8 +89,10 @@
                                         <!-- Its own mark, not the upload spinner: the bytes are safely
                                              stored, what's pending is the release check (#52). Worded as
                                              "checked" rather than "scanned for malware" because only
-                                             pickle-bearing files are content-scanned — Python source is
-                                             released uninspected, so a malware claim here would be false. -->
+                                             pickle-bearing files get a scan that can block release —
+                                             Python source instead gets a non-blocking Bandit pass (#877)
+                                             that never gates promotion, so a malware claim here would
+                                             still be false. -->
                                         <icon-ph-magnifying-glass-duotone
                                             v-else-if="file.status === FileUploadStatus.SCANNING"
                                             class="text-amber-600 dark:text-amber-400 animate-pulse"
@@ -120,6 +122,15 @@
                                 <div class="text-xs font-mono text-gray-500 dark:text-gray-300 shrink-0">
                                     {{ formatBytes(file.size) }}
                                 </div>
+                                <!-- Advisory only (#877) — the file is still COMPLETED and usable;
+                                     this is a signal for the reviewer, not a rejection. -->
+                                <icon-ph-warning-fill
+                                    v-if="file.bandit_findings?.length"
+                                    class="text-amber-500 dark:text-amber-400 shrink-0 w-4 h-4"
+                                    data-test="file-bandit-findings-indicator"
+                                    :aria-label="`${file.bandit_findings.length} static-analysis finding(s)`"
+                                    :title="banditFindingsTooltip(file.bandit_findings)"
+                                />
                             </div>
                             <div class="flex gap-2 shrink-0">
                                 <Transition name="fade">
@@ -170,7 +181,8 @@ import AiCard from "@/components/AiCard/AiCard.vue";
 import AiLoader from "@/components/AiLoader/AiLoader.vue";
 import AiConfirmModal from "@/components/AiModal/AiConfirmModal.vue";
 import { usePermissions } from "@/composables/usePermissions";
-import { FileInfo, FileUploadStatus } from "@/interfaces/model/types";
+import { DEMO_MODEL_FILES_ZIP_URLS, IS_DEMO } from "@/demo/bootstrap";
+import { BanditFinding, FileInfo, FileUploadStatus } from "@/interfaces/model/types";
 import { deleteModelFile,
     downloadModelFile,
     getModelFileDownloadUrl,
@@ -214,6 +226,19 @@ const DELETABLE_STATUSES = [
     FileUploadStatus.ERROR,
     FileUploadStatus.INFECTED
 ];
+
+// Advisory-only summary of a .py upload's Bandit findings (#877) — never
+// gates use, so this is purely informational: visible to the uploader and to
+// anyone else who later opens the model's file list.
+const banditFindingsTooltip = (findings: BanditFinding[]): string => {
+    const lines = findings.map(f => {
+        const where = f.line_number ? ` (line ${f.line_number})` : "";
+
+        return `${f.test_id ?? "?"} [${f.severity ?? "?"}]${where}: ${f.issue_text ?? "no detail"}`;
+    });
+
+    return `Static analysis flagged ${findings.length} advisory finding(s) — does not block use:\n${lines.join("\n")}`;
+};
 
 // "Download all" is offered only when every visible file finished uploading
 // + scanning. Any in-flight or errored file would either be missing from S3
@@ -407,6 +432,38 @@ const DOWNLOAD_ALL_CONCURRENCY = 3;
 
 const downloadAllAsZip = async () => {
     if (downloadingAll.value) return;
+
+    // Public Ark+ demo: each recorded run's file bundle (including the ~795 MB
+    // checkpoints) is a pre-built zip served through the CloudFront
+    // demo-assets behaviour — the in-browser mock can't stream file bodies of
+    // that size. Vite inlines IS_DEMO, so normal builds keep the JSZip path only.
+    if (IS_DEMO) {
+        const zipUrl = DEMO_MODEL_FILES_ZIP_URLS[props.modelId];
+        if (!zipUrl) {
+            // An id missing from the map means the bundle was never staged for
+            // this model. Say so: silently returning left the button looking
+            // broken, with no snackbar and no spinner, unlike the real path
+            // directly below (FLIP#794 review).
+            Snackbar.error({
+                title: "Download unavailable",
+                text: "No file bundle was staged for this model in the demo."
+            });
+
+            return;
+        }
+
+        const link = document.createElement("a");
+        link.href = zipUrl;
+        // Without `download` the browser follows Content-Disposition, and any
+        // response served as HTML (e.g. a mis-provisioned behaviour falling
+        // through to the SPA rewrite) navigates the tab instead of downloading.
+        link.download = zipUrl.split("/").pop() ?? "model-files.zip";
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+
+        return;
+    }
     downloadingAll.value = true;
     try {
         const all = internalFiles.value.concat(uploadingFiles.value);

@@ -182,7 +182,7 @@ Users can apply a filters to view only projects based on, for example, the curre
 Cohort Query
 ============
 
-Cohort data is stored within a `PostgreSQL <https://www.postgresql.org/>`_ database conforming to the `standard OMOP data model <http://omop-erd.surge.sh/omop_cdm/index.html>`_, with the `R-CDM radiology tables <https://www.ncbi.nlm.nih.gov/pmc/articles/PMC8790584/>`_ included. The radiology_occurrence table has been modified to include an ``accession_id`` field which contains the reference to the associated DICOM series. As this is the field that XNAT will read from when retrieving the associated DICOM series from PACS, the 'accession_id' needs to be included in all queries if relevant images are to be made available.
+Cohort data is stored within a `PostgreSQL <https://www.postgresql.org/>`_ database conforming to the `standard OMOP data model <http://omop-erd.surge.sh/omop_cdm/index.html>`_, extended with the `MI-CDM medical imaging tables <https://www.ncbi.nlm.nih.gov/pmc/articles/PMC11031512/>`_ (``image_occurrence``, ``image_feature`` — successors of the earlier R-CDM radiology tables). The ``image_occurrence`` table has been modified to include an ``accession_id`` field which contains the reference to the associated DICOM series. As this is the field that XNAT will read from when retrieving the associated DICOM series from PACS, the 'accession_id' needs to be included in all queries if relevant images are to be made available.
 
 .. _create-cohort-query:
 
@@ -190,17 +190,13 @@ Create Cohort Query
 -------------------
 
 .. note::
-    A number of keywords are restricted and the cohort query will not be run in the instance that any of these keywords are entered, such as:
-
-        - ``alter user``
-        - ``alter table``
-        - ``alter database``
-        - ``drop table``
-        - ``drop user``
-        - ``drop role``
-        - ``drop database``
-        - ``create table``
-        - ``substring``
+    Cohort queries must be a single ``SELECT`` statement against the ``omop`` schema. The query is
+    parsed and validated on the trust side (not by keyword matching), so only read-only ``SELECT``
+    shapes are accepted — ``INSERT``, ``UPDATE``, ``DELETE``, ``MERGE`` and DDL (``CREATE``,
+    ``ALTER``, ``DROP``) are rejected wherever they appear in the query tree, and only literal
+    integer ``LIMIT``/``OFFSET`` values are allowed. There is no keyword denylist, so ordinary
+    read-only functions such as ``SUBSTRING()`` are permitted. Trust-side execution runs as a
+    read-only database role, so anything that slips past the parser cannot mutate the database.
 
 1. Click the 'Create Cohort Query' button in the bottom left corner of the project page
 2. Enter a query in SQL format, for example:
@@ -208,7 +204,7 @@ Create Cohort Query
    .. code-block:: sql
 
        SELECT accession_id, concept_name, year_of_birth FROM omop.person p
-       JOIN omop.radiology_occurrence r ON r.Person_Id = p.Person_Id
+       JOIN omop.image_occurrence r ON r.Person_Id = p.Person_Id
        JOIN omop.concept c ON p.gender_concept_id = c.concept_id
        WHERE year_of_birth < 1980
 
@@ -407,9 +403,16 @@ Upload Files
 
    .. warning::
 
-      **Your Python source is not analysed for malicious code.** ``.py`` files are checked for type
-      and released like any other file, then executed as-is on every participating trust. Only upload
-      code you have written or reviewed yourself, and treat code from third parties as untrusted.
+      **Your Python source is not blocked on the basis of what it does.** ``.py`` files are checked
+      for type and released like any other file, then executed as-is on every participating trust.
+      A non-blocking scan flags common risky patterns (``subprocess``, ``os.system``, ``eval``,
+      hardcoded credentials — and, since the scan uses Bandit's default rule set, some routine
+      patterns in ML code such as ``torch.load`` or ``assert``) as an amber indicator on the
+      model's file list, visible to you as the uploader and to anyone else who later opens the
+      model page. This is an advisory signal, not a gate — it does not stop obfuscated or
+      otherwise-undetected code from running, and an indicator does not by itself mean the file is
+      unsafe. Only upload code you have written or reviewed yourself, and treat code from third
+      parties as untrusted.
 
    Only recognised file types may be uploaded (by default ``.py``, ``.json``, ``.toml``, ``.pt``,
    ``.pth``, ``.pkl``, ``.txt``, ``.yaml``, ``.yml`` and ``.safetensors``). Anything else — including
@@ -569,7 +572,15 @@ Hovering over the graphs at various points will display the values.
 Connection Status
 *****************
 
-The Connection Status page shows the live state of the federation. Each participating Trust is shown as online, degraded or offline based on its most recent heartbeat, and can be viewed as a list or as a radial topology.
+The Connection Status page shows the live state of the federation. Each participating Trust reports the health of its core platform services (trust-api, data-access-api, imaging-api, XNAT, OMOP and the PACS/DICOM link), and its state is derived from those reports: Offline when the Trust has stopped sending heartbeats, Degraded when any other service is down or degraded, otherwise Online. The list can also be viewed as a radial topology.
+
+The Services column shows one status dot per container. Clicking a Trust row opens a detail drawer listing each container's status, running version and probe response time — so you can see *why* a Trust is degraded without access to the Trust's own network. The page and the drawer are available to every signed-in user, not only administrators: if a project stalls, you can check whether the Trust holding your data is reporting a failing service before raising it with the platform team. A Trust that has not reported container health (or whose report has gone stale) shows grey "No data" markers and falls back to heartbeat-only state.
+
+.. figure:: ../assets/flip/connection-status-drawer.png
+   :width: 600
+   :align: center
+
+   The Trust detail drawer: this Trust is Degraded because its XNAT is unreachable.
 
 The FL nets card reports the FL client-to-server connectivity for each net — that is, whether each Trust's FL client is connected. No training requests can be sent to a Trust whose FL client is offline.
 
@@ -577,4 +588,4 @@ The FL nets card reports the FL client-to-server connectivity for each net — t
    :width: 600
    :align: center
 
-   Viewing the federation connection status.
+   Viewing the federation connection status and a Trust's container health.

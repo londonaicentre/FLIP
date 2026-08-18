@@ -11,7 +11,7 @@
  * limitations under the License.
  */
 
-import { apiTimestampMs, getRandomId, relativeCreatedLabel } from "@/utils/helpers";
+import { apiTimestampMs, getRandomId, relativeCreatedLabel, safeExternalUrl } from "@/utils/helpers";
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -87,5 +87,36 @@ describe("relativeCreatedLabel", () => {
         expect(relativeCreatedLabel(undefined)).toBe("—");
         expect(relativeCreatedLabel(null)).toBe("—");
         expect(relativeCreatedLabel("not-a-date")).toBe("—");
+    });
+});
+
+describe("safeExternalUrl", () => {
+    it.each([
+        "javascript:alert(1)",
+        "JaVaScRiPt:alert(1)",
+        "\tjavascript:alert(1)",
+        " javascript:alert(1)",
+        "data:text/html,<script>alert(1)</script>",
+        "vbscript:msgbox(1)"
+    ])("rejects %s", (url) => {
+        expect(safeExternalUrl(url)).toBeUndefined();
+    });
+
+    it.each([
+        "https://example.nhs.uk/guidance",
+        "http://example.nhs.uk/guidance",
+        "HTTPS://example.nhs.uk/guidance"
+    ])("allows %s", (url) => {
+        expect(safeExternalUrl(url)).toBe(url);
+    });
+
+    it("returns undefined for empty and nullish input", () => {
+        expect(safeExternalUrl("")).toBeUndefined();
+        expect(safeExternalUrl(undefined)).toBeUndefined();
+        expect(safeExternalUrl(null)).toBeUndefined();
+    });
+
+    it("accepts a relative path, which resolves against the app origin", () => {
+        expect(safeExternalUrl("/projects")).toBe("/projects");
     });
 });

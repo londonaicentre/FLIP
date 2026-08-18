@@ -1,0 +1,200 @@
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# The published omop-db image and pgdata tarballs are vocab-free (FLIP#842/843):
+# this Job streams the licensed core vocabulary bundle into the running database
+# after install/upgrade, using the image's own loader.
+#
+# It runs in three stages, and the order is load-bearing: PROBE the database,
+# FETCH the bundle only if the probe says something is missing, then LOAD. The
+# loader is a cheap no-op when the vocabulary is already there, but the fetch is
+# a multi-GB download into a per-pod emptyDir — and this is a post-upgrade HOOK,
+# so an unconditional fetch would put that download on the critical path of every
+# `helm upgrade` (a failed hook fails the WHOLE release). Probing first makes a
+# routine upgrade cost two round-trips per vocabulary table — the probe's guards
+# and the loader's — plus a pass over the constraint catalogue.
+#
+# The loader still runs when the probe finds everything present: it re-checks the
+# same guards, loads nothing, and applies the FK constraints — which is how a
+# previous run that loaded every table and then died before applying them heals
+# on the next upgrade.
+#
+# Gated on s3Bucket as well as enabled — deliberately UNLIKE the sibling
+# omop-db-init-job, which renders unconditionally because it can fall back to an
+# anonymous Hugging Face download when its bucket is empty. The licensed bundle
+# has no such mirror, so with no bucket there is nothing this Job could do: no
+# bucket ⇒ no Job ⇒ the release installs cleanly. NOTES.txt announces the skip so
+# it is not silent.
+{{- if and .Values.omopDb.enabled .Values.omopDb.vocabLoad.enabled .Values.omopDb.vocabLoad.s3Bucket }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "flip-trust.fullname" . }}-omop-vocab-load
+  namespace: {{ include "flip-trust.namespace" . }}
+  labels:
+    {{- include "flip-trust.labels" . | nindent 4 }}
+    app.kubernetes.io/component: omop-vocab-load
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "5"
+    # No `hook-succeeded`, unlike omop-db-init-job: the failure mode of a missing
+    # vocabulary is silence (cohort queries return nothing), so the completed Job
+    # is the operator's evidence that the load ran and what it skipped. Exactly
+    # one lingers — the next upgrade replaces it.
+    "helm.sh/hook-delete-policy": before-hook-creation
+spec:
+  backoffLimit: 2
+  template:
+    metadata:
+      labels:
+        {{- include "flip-trust.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: omop-vocab-load
+    spec:
+      restartPolicy: Never
+      enableServiceLinks: false
+      {{- if .Values.imagePullSecrets }}
+      imagePullSecrets:
+{{ include "flip-trust.imagePullSecrets" . | nindent 8 }}
+      {{- end }}
+      initContainers:
+        - name: probe-vocab
+          image: "{{ .Values.omopDb.image.repository }}:{{ .Values.omopDb.image.tag }}"
+          imagePullPolicy: {{ .Values.omopDb.image.pullPolicy }}
+          command:
+            - /bin/bash
+            - -c
+            - |
+              set -euo pipefail
+              # Timing out here fails the Pod, and after backoffLimit the whole
+              # release — deliberately: a database that never comes up is not a
+              # state this Job can load into.
+              attempts=0
+              until pg_isready -h "${OMOP_DB_HOST}" -p "${OMOP_DB_PORT}" > /dev/null 2>&1; do
+                attempts=$((attempts + 1))
+                if [ "${attempts}" -ge 60 ]; then
+                  echo "omop-db not reachable after ${attempts} attempts" >&2
+                  exit 1
+                fi
+                sleep 5
+              done
+              # --check exits 0 only when every table already holds the core
+              # vocabulary. Anything else — including a database that cannot be
+              # queried — leaves the marker unwritten, so the fetch goes ahead:
+              # a needless download is recoverable, a skipped load is silent.
+              # The else branch only logs: this container reports Completed
+              # either way, so without it "the vocabulary is genuinely absent"
+              # and "the probe could not reach the database" look identical in
+              # `kubectl get pods` and differ only in stderr nobody reads.
+              if /flip/omop/load_core_vocab.sh --check; then
+                touch /vocab-work/.vocab-present
+              else
+                echo "probe could not confirm the vocabulary (status $?) — falling through to a full fetch and load" >&2
+              fi
+          env:
+            {{- include "flip-trust.omopVocabDbEnv" . | nindent 12 }}
+          resources:
+            {{- toYaml .Values.omopDb.vocabLoad.loadResources | nindent 12 }}
+          volumeMounts:
+            - name: vocab-work
+              mountPath: /vocab-work
+        - name: fetch-bundle
+          image: amazon/aws-cli:2.22.0
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -euo pipefail
+              if [ -f /vocab-work/.vocab-present ]; then
+                echo "Core vocabulary already loaded — skipping bundle fetch."
+                exit 0
+              fi
+              # Download only. Unpacking is the loader's job because unzip lives
+              # in the omop-db image and not in this one — which is what keeps
+              # this step free of any package install, and therefore of any
+              # dependency on egress to a package mirror. S3 is the only host it
+              # has to reach.
+              # Nothing to resume from on a retry: restartPolicy is Never, so a
+              # failed attempt is replaced by a new pod with a new emptyDir. The
+              # skip that saves the download is the probe above.
+              aws s3 cp "s3://{{ .Values.omopDb.vocabLoad.s3Bucket }}/vocab/{{ .Values.omopDb.vocabLoad.bundleName }}.zip" /vocab-work/bundle.zip
+          {{- if .Values.omopDb.initJob.hostAwsMount.enabled }}
+          env:
+            - name: AWS_DEFAULT_REGION
+              value: {{ default "eu-west-2" .Values.awsRegion | quote }}
+            - name: AWS_PROFILE
+              value: {{ .Values.omopDb.initJob.awsProfile | quote }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.omopDb.vocabLoad.fetchResources | nindent 12 }}
+          volumeMounts:
+            - name: vocab-work
+              mountPath: /vocab-work
+            {{- if .Values.omopDb.initJob.hostAwsMount.enabled }}
+            - name: host-aws
+              mountPath: /root/.aws
+              readOnly: true
+            {{- end }}
+      containers:
+        - name: load-vocab
+          image: "{{ .Values.omopDb.image.repository }}:{{ .Values.omopDb.image.tag }}"
+          imagePullPolicy: {{ .Values.omopDb.image.pullPolicy }}
+          command:
+            - /bin/bash
+            - -c
+            - |
+              set -euo pipefail
+              # Waits again rather than trusting the probe's gate: on the path
+              # where this container does real work, the fetch between them was a
+              # multi-GB download, so minutes can have passed — long enough for
+              # omop-db to be rescheduled or to finish a rolling update. The
+              # release's own rollout may still be in flight in any case, because
+              # the chart deploys with `helm upgrade --install` and no --wait.
+              # Costs one round-trip when the database is already up, and what it
+              # protects is the most expensive artifact in the Job: failing here
+              # discards the Pod, and with it the emptyDir holding the bundle.
+              attempts=0
+              until pg_isready -h "${OMOP_DB_HOST}" -p "${OMOP_DB_PORT}" > /dev/null 2>&1; do
+                attempts=$((attempts + 1))
+                if [ "${attempts}" -ge 60 ]; then
+                  echo "omop-db not reachable after ${attempts} attempts" >&2
+                  exit 1
+                fi
+                sleep 5
+              done
+              BUNDLE="{{ .Values.omopDb.vocabLoad.bundleName }}"
+              # No zip means the probe found the vocabulary already loaded and
+              # the fetch skipped itself. The bundle directory is then absent
+              # too, which is fine: the loader only reads it for tables it is
+              # actually loading, so this run still applies the constraints.
+              if [ -f /vocab-work/bundle.zip ]; then
+                unzip -q /vocab-work/bundle.zip -d "/vocab-work/${BUNDLE}"
+                rm -f /vocab-work/bundle.zip
+              fi
+              /flip/omop/load_core_vocab.sh "/vocab-work/${BUNDLE}" /flip/omop/constraints.sql
+          env:
+            {{- include "flip-trust.omopVocabDbEnv" . | nindent 12 }}
+          resources:
+            {{- toYaml .Values.omopDb.vocabLoad.loadResources | nindent 12 }}
+          volumeMounts:
+            - name: vocab-work
+              mountPath: /vocab-work
+      volumes:
+        - name: vocab-work
+          emptyDir:
+            sizeLimit: {{ .Values.omopDb.vocabLoad.workDirSize }}
+        {{- if .Values.omopDb.initJob.hostAwsMount.enabled }}
+        - name: host-aws
+          hostPath:
+            path: {{ required "omopDb.initJob.hostAwsMount.hostPath is required when hostAwsMount is enabled — set it to the AWS config dir ON THE NODE (on kind, the path an extraMount maps ~/.aws to), e.g. --set omopDb.initJob.hostAwsMount.hostPath=$HOME/.aws" .Values.omopDb.initJob.hostAwsMount.hostPath | quote }}
+            type: Directory
+        {{- end }}
+{{- end }}

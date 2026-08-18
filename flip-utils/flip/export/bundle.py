@@ -49,6 +49,8 @@ METADATA_CONFIG_NAME = "metadata.json"
 #: Job types that produce a new model and are therefore worth exporting. A job type outside this
 #: set is warned about rather than rejected: this runs as a deliberate, manual step, so refusing
 #: to package a checkpoint the caller has explicitly pointed at would be unhelpful.
+# "standard_client_api" is the pre-rename alias of the standard job type, kept for models
+# created before the Client-API templates took over the plain names.
 EXPORTABLE_JOB_TYPES = frozenset({"standard", "standard_client_api", "fed_opt"})
 
 

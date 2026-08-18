@@ -1,0 +1,15 @@
+{
+  "page": 1,
+  "pageSize": 50,
+  "totalPages": 1,
+  "totalRecords": 1,
+  "data": [
+    {
+      "id": "24985ec3-3349-435b-afcd-f38972d8695d",
+      "name": "Ark+ Finetuning 50r client_api (arkplus-apps 8a188867)",
+      "description": "Federated fine-tuning of the pretrained Ark+ (Swin-Large, 768px) chest X-ray foundation model for 5-finding classification. The encoder stays frozen; a fresh 5-class linear head is trained with FedAvg over 50 global rounds of 5 local epochs (batch size 4, Adam, exponential LR decay 1.5e-3 to 1.5e-4 during round 0, fixed thereafter; mean per-logit BCE loss). Only head parameter updates are exchanged, passed through a selective parameter-sharing privacy filter (10% quantile threshold), keeping per-round payloads in the tens of kilobytes after the round-0 checkpoint broadcast. The resulting global model will be compared against the pretrained baseline on each site's holdout cohort in a separate federated evaluation job.",
+      "status": "RESULTS_UPLOADED",
+      "owner_id": "00000000-0000-4000-8000-000000000001"
+    }
+  ]
+}

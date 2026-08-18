@@ -10,13 +10,13 @@
 # limitations under the License.
 #
 
-from nvflare.apis.dxo import DXO, DataKind, from_shareable
+from nvflare.apis.dxo import DataKind, from_shareable
 from nvflare.apis.fl_constant import FLContextKey, ReturnCode
 from nvflare.apis.fl_context import FLContext
 from nvflare.apis.shareable import Shareable
 from nvflare.apis.signal import Signal
+from nvflare.app_common.app_event_type import AppEventType
 from nvflare.app_common.workflows.scatter_and_gather import ScatterAndGather as NVFlareScatterAndGather
-from nvflare.app_opt.pt.fedopt import PTFedOptModelShareableGenerator
 
 from flip import FLIP
 from flip.constants import FlipEvents, FlipProps
@@ -39,11 +39,24 @@ class ScatterAndGather(NVFlareScatterAndGather):
         re-serialises the full global model every round; for a ~759 MiB model that re-introduces the
         very per-round memory churn ``memory_gc_rounds`` exists to bound. FLIP never snapshotted, so
         ``0`` also preserves prior behaviour. It stays configurable for callers that want resilience.
-      * :meth:`_accept_train_result` — reports a client-side execution exception to the hub,
-        converts a (possibly partial, frozen-backbone) ``WEIGHT_DIFF`` head update into full
-        ``WEIGHTS`` before aggregation, since FLIP's aggregator expects ``WEIGHTS`` (FLIP#684),
-        and relays each genuinely accepted result to the hub as a ``CLIENT_RESULT_RECEIVED`` fact.
-      * :meth:`handle_event` — relays FLIP metrics on ``FlipEvents.SEND_RESULT``.
+      * :meth:`_accept_train_result` — reports every failed client task to the hub (the
+        ``"exception"`` header when the client attached one, a pointed fallback naming the return
+        code and the trust-side logs otherwise) and relays each genuinely accepted result to the
+        hub as a ``CLIENT_RESULT_RECEIVED`` fact. Client ``WEIGHT_DIFF`` updates reach the
+        aggregator untouched — stock NVFLARE semantics: the aggregator averages the diffs and
+        ``FullModelShareableGenerator`` (or the FedOpt generator) applies the average to the
+        global model. This is natively partial-safe for frozen-backbone head-only updates (keys
+        absent from the diff keep their global value), which is what the removed DIFF→WEIGHTS
+        reconstruction existed to guarantee (FLIP#684) against the legacy templates'
+        ``WEIGHTS``-expecting aggregator. A result whose data kind cannot match the aggregator's
+        expectation (e.g. a trainer sending ``params_type="FULL"`` → ``WEIGHTS`` — NVFLARE's
+        default when ``params_type`` is omitted) is reported to the hub with an actionable
+        message instead of stock's server-log-only rejection.
+      * :meth:`handle_event` — relays FLIP metrics on ``FlipEvents.SEND_RESULT``, and panics on
+        ``BEFORE_AGGREGATION`` when a training round accepted **zero** client results: stock
+        would aggregate an empty diff, apply it as a no-op, and march every remaining round to a
+        COMPLETED job whose "trained" model is bit-identical to round 0. There is no legitimate
+        run where every client's update is rejected, so that state aborts loudly instead.
       * :meth:`_check_abort_signal` — fires ``FlipEvents.ABORTED`` so downstream components (e.g.
         ``PersistToS3AndCleanup``) can persist results on an aborted run.
     """
@@ -67,66 +80,46 @@ class ScatterAndGather(NVFlareScatterAndGather):
         # Accepted client names per 0-based round, feeding the "k of m returned"
         # counts relayed on ROUND_DONE (see _report_client_result).
         self._round_acceptances: dict[int, set[str]] = {}
+        # Rounds where a client sent an aggregator-incompatible weights kind (reported once per
+        # round); enriches the zero-acceptance abort with its likely cause.
+        self._round_kind_mismatches: set[int] = set()
 
     def _resolve_model_id(self, fl_ctx: FLContext) -> str:
         if self._model_id is None:
             self._model_id = get_flip_model_id(fl_ctx, fallback=self._model_id_fallback)
         return self._model_id
 
-    def _diff_to_weights(self, result: Shareable, fl_ctx: FLContext) -> Shareable:
-        """Convert a client ``WEIGHT_DIFF`` update into full ``WEIGHTS`` for the WEIGHTS aggregator.
-
-        FedAvg here aggregates ``WEIGHTS`` while clients return a ``WEIGHT_DIFF``; rebuild the full
-        weights by adding the diff onto the current global model. Partial-safe (FLIP#684): a
-        frozen-backbone fine-tune sends only its trainable head, and keys absent from the diff keep
-        their global value, so a head-only update reconstructs correctly. FedOpt (which aggregates
-        ``WEIGHT_DIFF`` directly) is left untouched. On any error the original result is returned so
-        the base class can apply its own handling.
-        """
-        try:
-            dxo = from_shareable(result)
-            if isinstance(self.aggregator, PTFedOptModelShareableGenerator):
-                return result
-            if dxo.data_kind == DataKind.WEIGHT_DIFF:
-                global_weights = self._global_weights["weights"]
-                diff = dxo.data
-                new_weights = {
-                    key: (global_weights[key] + diff[key] if key in diff else global_weights[key])
-                    for key in global_weights
-                }
-                new_dxo = DXO(data_kind=DataKind.WEIGHTS, data=new_weights, meta=dxo.meta)
-                return new_dxo.update_shareable(result)
-            self.log_error(
-                fl_ctx, f"The returned weights are not of type WEIGHT_DIFF. Received data kind: {dxo.data_kind}"
-            )
-        except Exception as e:
-            self.log_error(fl_ctx, f"Error while adding client WEIGHT_DIFF to global weights at server: {e}")
-        return result
-
     def _accept_train_result(
         self, client_name: str, result: Shareable, fl_ctx: FLContext, is_unknown_task: bool = False
     ) -> bool:
         rc = result.get_return_code()
         if rc and rc != ReturnCode.OK:
-            # FLIP: surface a client-side execution exception to the hub before the base class applies
-            # its ignore/panic policy for the non-OK result.
-            if rc == ReturnCode.EXECUTION_EXCEPTION:
-                formatted_exception = result.get_header("exception")
-                if formatted_exception is not None:
-                    self.log_error(fl_ctx, formatted_exception)
-                    self.flip.send_handled_exception(
-                        formatted_exception=formatted_exception,
-                        client_name=client_name,
-                        model_id=self._resolve_model_id(fl_ctx),
-                    )
+            # FLIP: surface every failed client task to the hub before the base class applies its
+            # ignore/panic policy. The "exception" header carries the client's own formatted
+            # traceback when something attached one; the Client-API executors return bare replies
+            # (e.g. TASK_ABORTED when the training script died pre-flare.init), so without the
+            # fallback the researcher gets a generic hub error and the actual cause — a missing
+            # enrichment step, an OOM, a typo — exists only in a trust-side container log they
+            # cannot read.
+            formatted_exception = result.get_header("exception")
+            if formatted_exception is None:
+                formatted_exception = (
+                    f"Client task failed with return code {rc} before reporting a traceback — "
+                    "the full error is in the fl-client container logs at the trust."
+                )
+            self.log_error(fl_ctx, formatted_exception)
+            self.flip.send_handled_exception(
+                formatted_exception=formatted_exception,
+                client_name=client_name,
+                model_id=self._resolve_model_id(fl_ctx),
+            )
             return bool(super()._accept_train_result(client_name, result, fl_ctx, is_unknown_task))
 
-        # Size the client's actual (possibly partial, head-only) update now — reconstruction
-        # below rewrites the shareable into the full model.
+        # Size the client's actual (possibly partial, head-only) update.
         size_bytes = self._client_update_size(result, fl_ctx)
 
-        # OK result: reconstruct full WEIGHTS from the (partial) WEIGHT_DIFF before the base aggregates.
-        result = self._diff_to_weights(result, fl_ctx)
+        self._report_data_kind_mismatch(client_name, result, fl_ctx)
+
         accepted = bool(super()._accept_train_result(client_name, result, fl_ctx, is_unknown_task))
 
         # Relay only what the base class genuinely accepted: an aggregator-rejected result
@@ -136,6 +129,80 @@ class ScatterAndGather(NVFlareScatterAndGather):
         if accepted and not is_unknown_task:
             self._report_client_result(client_name, size_bytes, fl_ctx)
         return accepted
+
+    def _report_data_kind_mismatch(self, client_name: str, result: Shareable, fl_ctx: FLContext) -> None:
+        """Report an aggregator-incompatible weights kind to the hub with an actionable message.
+
+        Stock's rejection of a wrong-kind DXO is one ``log_error`` line inside the fl-server
+        container ("expected WEIGHT_DIFF but got WEIGHTS") and an INFO "REJECTED" — invisible to
+        the researcher, whose local metrics keep streaming while the global model never moves.
+        The overwhelmingly likely cause is a trainer sending ``params_type="FULL"`` (NVFLARE's
+        default when omitted), so name that fix outright. Best-effort: probing failures must
+        never block acceptance (the aggregator remains the authority on rejection).
+        """
+        try:
+            round_num = self._current_round
+            if round_num is None or round_num in self._round_kind_mismatches:
+                return
+            dxo = from_shareable(result)
+            expected = getattr(self.aggregator, "expected_data_kind", None)
+            if expected is None:
+                # An aggregator without the attribute is not this check's business.
+                return
+            # Runtime shape is the {dxo_name: kind} dict form; hand-constructed aggregators carry
+            # the plain enum. Only weights-family kinds are probed — anything else is out of this
+            # check's scope and left to the aggregator.
+            expected_kinds = set(expected.values()) if isinstance(expected, dict) else {expected}
+            if dxo.data_kind in (DataKind.WEIGHTS, DataKind.WEIGHT_DIFF) and dxo.data_kind not in expected_kinds:
+                self._round_kind_mismatches.add(round_num)
+                message = (
+                    f"{client_name}'s training update was sent as {dxo.data_kind}, but the aggregator expects "
+                    f"{', '.join(sorted(str(k) for k in expected_kinds))} — every such contribution is rejected. "
+                    "A FLIP Client-API trainer must send its update as a diff: "
+                    "FLModel(params=<local minus global>, params_type='DIFF'). Note params_type='FULL' is "
+                    "NVFLARE's default when params_type is omitted."
+                )
+                self.log_error(fl_ctx, message)
+                self.flip.send_handled_exception(
+                    formatted_exception=message,
+                    client_name=client_name,
+                    model_id=self._resolve_model_id(fl_ctx),
+                )
+        except Exception as e:
+            self.log_debug(fl_ctx, f"Could not probe the client update's data kind: {e}")
+
+    def _panic_if_round_accepted_nothing(self, fl_ctx: FLContext) -> None:
+        """Abort the job when a training round is about to aggregate zero accepted results.
+
+        Fired on ``BEFORE_AGGREGATION``, when every client has responded: acceptance counts are
+        final, and the empty aggregate has not yet been applied. Without this, stock aggregates
+        an empty diff, applies it as a no-op, and completes every remaining round — the job ends
+        COMPLETED with a "trained" model bit-identical to round 0.
+        """
+        round_num = self._current_round
+        if round_num is None:
+            return
+        expected = getattr(self, "_current_num_targets", None)
+        if not expected or self._round_acceptances.get(round_num):
+            return
+        reason = (
+            f"Training round {round_num + 1} accepted 0 of {expected} client results — aborting instead of "
+            "applying an empty aggregate (the run would otherwise complete with an untrained global model)."
+        )
+        if round_num in self._round_kind_mismatches:
+            reason += (
+                " Cause on record this round: client updates were sent with an aggregator-incompatible "
+                "data kind — see the earlier data-kind error for the fix."
+            )
+        try:
+            self.flip.send_handled_exception(
+                formatted_exception=reason,
+                client_name=None,
+                model_id=self._resolve_model_id(fl_ctx),
+            )
+        except Exception as e:
+            self.log_error(fl_ctx, f"Failed to relay the zero-acceptance abort to the hub: {e}")
+        self.system_panic(reason, fl_ctx)
 
     def _client_update_size(self, result: Shareable, fl_ctx: FLContext) -> int | None:
         """Best-effort byte size of the client's update; ``None`` when it cannot be sized."""
@@ -181,6 +248,11 @@ class ScatterAndGather(NVFlareScatterAndGather):
 
     def handle_event(self, event_type: str, fl_ctx: FLContext) -> None:
         super().handle_event(event_type, fl_ctx)
+        if event_type == AppEventType.BEFORE_AGGREGATION:
+            # Every controller receives every fired event; the _current_round guard inside keeps
+            # a not-yet-started sibling controller (multi-phase jobs) from panicking on the
+            # active one's rounds, and a finished sibling's last round always has acceptances.
+            self._panic_if_round_accepted_nothing(fl_ctx)
         if event_type == FlipEvents.SEND_RESULT:
             event_data = fl_ctx.get_prop(FLContextKey.EVENT_DATA, None)
             if event_data is None:

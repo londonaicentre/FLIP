@@ -109,7 +109,7 @@ describe("model-service", () => {
 
             const result = await fetchJobTypes();
 
-            expect(result).toEqual({ [DEFAULT_JOB_TYPE]: ["trainer.py", "validator.py", "models.py", "config.json"] });
+            expect(result).toEqual({ [DEFAULT_JOB_TYPE]: ["trainer.py", "config.json", "models.py"] });
             expect(consoleError).toHaveBeenCalled();
             consoleError.mockRestore();
         });

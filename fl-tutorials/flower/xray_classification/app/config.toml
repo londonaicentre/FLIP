@@ -13,3 +13,8 @@
 # Flower run-config overrides, passed to `flwr run --run-config` by fl-api-flower's
 # submit_run. Keys here override the base bundle pyproject.toml [tool.flwr.app.config].
 num-server-rounds = 4
+# Save the best aggregated global model by macro F1 across lesions (higher is better),
+# the same interpretable metric the NVFLARE chest-X-ray tutorial selects on (VAL-F1-SCORE).
+# Ships best_FL_global_model.pt alongside FL_global_model.pt in the results.
+best-model-metric = "test_f1-score"
+best-model-metric-minimize = false

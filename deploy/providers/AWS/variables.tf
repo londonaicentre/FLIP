@@ -160,6 +160,7 @@ variable "fl_backend" {
   default     = "nvflare"
 }
 
+
 variable "flare_kit_date" {
   description = "Date stamp for the NVFLARE provisioned kit (e.g. 20260429), used to construct the S3 path for cert syncing"
   type        = string
@@ -245,6 +246,19 @@ variable "AICENTRE_BUCKET_NAME" {
 variable "FLIP_UI_BUCKET_NAME" {
   description = "S3 bucket name for flip-ui static assets served by CloudFront. Must be globally unique."
   type        = string
+}
+
+variable "DEMO_ASSETS_BUCKET_NAME" {
+  description = <<-EOT
+    S3 bucket holding the public Ark+ demo download bundles (results + model
+    files zips), served through CloudFront at /ark_demo/assets/* via OAC.
+    The bucket itself is NOT Terraform-managed (objects are staged manually);
+    Terraform manages only its public-access block, its OAC bucket policy,
+    and the CloudFront origin/behavior. Leave empty (the default) to disable
+    all demo-assets resources — e.g. on stag, which hosts no public demo.
+  EOT
+  type        = string
+  default     = ""
 }
 
 variable "flip_user_pool_name" {

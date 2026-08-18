@@ -28,7 +28,7 @@ import secrets
 import sys
 from pathlib import Path
 
-from flip_api.scripts.env_utils import read_env_value, update_or_append
+from flip_api.scripts.env_utils import read_env_value, update_or_append, write_env_file
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 
@@ -70,7 +70,7 @@ def main() -> None:
         # Key exists but hash is stale — re-sync the hash
         print(f"Key exists but hash is out of sync — updating hash in {env_file.name}")
         lines = update_or_append(lines, "INTERNAL_SERVICE_KEY_HASH", expected_hash)
-        env_file.write_text("\n".join(lines) + "\n")
+        write_env_file(env_file, lines)
         print(f"  INTERNAL_SERVICE_KEY_HASH updated in {env_file.name}")
         return
 
@@ -80,7 +80,7 @@ def main() -> None:
 
     lines = update_or_append(lines, "INTERNAL_SERVICE_KEY", key)
     lines = update_or_append(lines, "INTERNAL_SERVICE_KEY_HASH", key_hash)
-    env_file.write_text("\n".join(lines) + "\n")
+    write_env_file(env_file, lines)
 
     print("Generated internal service key:")
     print(f"  INTERNAL_SERVICE_KEY and INTERNAL_SERVICE_KEY_HASH updated in {env_file.name}")
