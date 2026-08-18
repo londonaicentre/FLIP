@@ -41,14 +41,15 @@ if [ -n "$data" ]; then
   printf '%s\n' "=== $method $url" >> "$PAYLOADS"
   printf '%s\n' "$data" >> "$PAYLOADS"
 fi
+[ "$method" = "DELETE" ] && printf '%s\n' "=== DELETE $url" >> "$PAYLOADS"
 body='{}'
 case "$url" in
-  *"/xapi/dicomscp"*) body='[{"id":1,"aeTitle":"XNAT","port":8104}]' ;;
+  *"/xapi/dicomscp"*) body="${STUB_SCP_JSON}" ;;
   *"/xapi/pacs")
     if [ -f "$REGISTERED" ]; then
       body='[{"id":'"$STUB_PACS_ID"',"aeTitle":"'"$STUB_PACS_AET"'","host":"'"$STUB_PACS_HOST"'","queryRetrievePort":'"$STUB_PACS_PORT"'}]'
     else
-      body='[]'
+      body="${STUB_PACS_JSON:-[]}"
     fi
     [ "$method" = "POST" ] && touch "$REGISTERED"
     ;;
@@ -89,6 +90,8 @@ def run_configure(tmp_path, env_overrides=None, pacs_already_registered=False):
         "REGISTERED": str(registered),
         # What the stub reports as registered. Defaults to the mock; when a test configures a
         # different PACS the stub echoes that back, mimicking XNAT after the POST succeeded.
+        "STUB_SCP_JSON": '[{"id":1,"aeTitle":"XNAT","port":8104}]',
+        "STUB_PACS_JSON": "[]",
         "STUB_PACS_ID": "7",
         "STUB_PACS_AET": (env_overrides or {}).get("PACS_AETITLE", "ORTHANC"),
         "STUB_PACS_HOST": "orthanc" if pacs_already_registered else (env_overrides or {}).get("PACS_HOST", "orthanc"),
@@ -227,3 +230,35 @@ def test_empty_values_fail_loudly(tmp_path, var):
     code, _, output = run_configure(tmp_path, {var: ""})
     assert code != 0, f"empty {var} should abort the run"
     assert var in output
+
+
+def deletes(payloads: str) -> list[str]:
+    """URLs the script issued a DELETE against."""
+    return [b.partition("\n")[0].split()[-1] for b in payloads.split("=== ") if b.startswith("DELETE ")]
+
+
+def test_receiver_on_our_port_is_reclaimed_whatever_it_is_called(tmp_path):
+    """Renaming the AE title must not strand the old receiver fighting for the same port."""
+    code, payloads, output = run_configure(
+        tmp_path,
+        {"STUB_SCP_JSON": '[{"id":3,"aeTitle":"FLIPXNAT","port":8104}]'},
+    )
+    assert code == 0, output
+    assert "Removing SCP receiver 'FLIPXNAT' (id 3)" in output
+    assert any(u.endswith("/xapi/dicomscp/3") for u in deletes(payloads))
+
+
+def test_foreign_pacs_registrations_are_removed(tmp_path):
+    """A trust XNAT retrieves from one PACS; a stale entry would leave DQR's choice ambiguous."""
+    code, payloads, output = run_configure(
+        tmp_path,
+        {
+            "PACS_AETITLE": "SECTRA_QR",
+            "PACS_HOST": "10.0.0.10",
+            "PACS_QR_PORT": "8059",
+            "STUB_PACS_JSON": '[{"id":1,"aeTitle":"ORTHANC","host":"orthanc","queryRetrievePort":4242}]',
+        },
+    )
+    assert code == 0, output
+    assert "Removing PACS 'ORTHANC' at orthanc:4242 (id 1)" in output
+    assert any(u.endswith("/xapi/pacs/1") for u in deletes(payloads))

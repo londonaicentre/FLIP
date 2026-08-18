@@ -27,7 +27,6 @@ from imaging_api.utils.exceptions import NotFoundError
 from imaging_api.utils.logger import logger
 
 PACS_ID = get_settings().PACS_ID
-PACS_AETITLE = get_settings().PACS_AETITLE
 XNAT_URL = get_settings().XNAT_URL
 
 # Cache for resolve_pacs_id(). XNAT assigns PACS ids at registration time, so the mapping from AE
@@ -36,19 +35,20 @@ XNAT_URL = get_settings().XNAT_URL
 _resolved_pacs_id: int | None = None
 
 
-def resolve_pacs_id(headers: dict[str, str], ae_title: str = PACS_AETITLE) -> int:
+def resolve_pacs_id(headers: dict[str, str]) -> int:
     """
-    Resolves the XNAT PACS id for the configured PACS AE title.
+    Resolves the id of the PACS registered in XNAT.
 
-    XNAT numbers PACS registrations in creation order. Historically FLIP registered exactly one, so
-    the id was always 1 and was hardcoded; a trust that has re-registered its PACS, or that carries
-    the mocked Orthanc alongside a real PACS, breaks that assumption (FLIP#993). Falls back to the
-    configured ``PACS_ID`` when XNAT cannot be reached or the AE title is not registered, so a
+    A trust XNAT retrieves from exactly one PACS, and ``configure-xnat.sh`` enforces that by removing
+    any other registration. The id itself cannot be assumed: XNAT numbers registrations in creation
+    order, so an XNAT that carried the mocked Orthanc before the real PACS was configured does not
+    have it at id 1 (FLIP#993).
+
+    Falls back to the configured ``PACS_ID`` when XNAT cannot be reached or reports no PACS, so a
     transient XNAT failure degrades to the previous behaviour rather than failing the import.
 
     Args:
         headers (dict[str, str]): XNAT authentication headers.
-        ae_title (str): AE title to look up. Defaults to the configured PACS AE title.
 
     Returns:
         int: The id of the registered PACS, or the configured ``PACS_ID`` fallback.
@@ -60,14 +60,21 @@ def resolve_pacs_id(headers: dict[str, str], ae_title: str = PACS_AETITLE) -> in
     try:
         response = requests.get(f"{XNAT_URL}/xapi/pacs", headers=headers)
         response.raise_for_status()
-        for pacs in response.json():
-            if pacs.get("aeTitle") == ae_title:
-                _resolved_pacs_id = int(pacs["id"])
-                logger.info(f"Resolved PACS '{ae_title}' to id {_resolved_pacs_id}")
-                return _resolved_pacs_id
-        logger.warning(f"No PACS registered with AE title '{ae_title}'; falling back to id {PACS_ID}")
+        registrations = response.json()
+        if registrations:
+            if len(registrations) > 1:
+                # configure-xnat.sh should have removed the others; if one reappeared, DQR's choice
+                # of PACS is ambiguous and the operator needs to know.
+                logger.warning(
+                    f"XNAT has {len(registrations)} PACS registrations; expected one. "
+                    f"Using '{registrations[0].get('aeTitle')}'."
+                )
+            _resolved_pacs_id = int(registrations[0]["id"])
+            logger.info(f"Resolved PACS '{registrations[0].get('aeTitle')}' to id {_resolved_pacs_id}")
+            return _resolved_pacs_id
+        logger.warning(f"XNAT reports no registered PACS; falling back to id {PACS_ID}")
     except Exception as e:
-        logger.warning(f"Could not resolve PACS id for '{ae_title}' ({e}); falling back to id {PACS_ID}")
+        logger.warning(f"Could not resolve the PACS id ({e}); falling back to id {PACS_ID}")
 
     return PACS_ID
 

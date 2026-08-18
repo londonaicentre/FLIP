@@ -44,11 +44,9 @@ class Settings(BaseSettings):
     # the C-MOVE destination handed to the PACS and DQR matches it against a registered SCP receiver
     # by exact AE title and port (FLIP#993).
     XNAT_AETITLE: str = "XNAT"
-    # AE title of the upstream PACS. The PACS id is resolved from this at runtime, so a deployment
-    # whose PACS is not id 1 — an extra registration, or a re-registered entry — still works.
-    PACS_AETITLE: str = "ORTHANC"
-    # Fallback used only when the AE-title lookup cannot reach XNAT. Historically XNAT registered
-    # exactly one PACS and assigned it id 1.
+    # A trust XNAT retrieves from exactly one PACS, and configure-xnat.sh enforces that, so the id
+    # is resolved at runtime as "the registered one" rather than assumed. This value is only the
+    # fallback for when XNAT cannot be reached: historically XNAT registered one PACS as id 1.
     PACS_ID: int = 1
 
     # Internal trust-network URLs: docker service name + the service's container

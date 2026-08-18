@@ -316,29 +316,33 @@ xnat_curl -X PUT "$XNAT_URL/xapi/anonymize/site/enabled" \
   -H "Content-Type: application/json" \
   -d 'true'
 
-# Remove any pre-existing SCP receiver we are about to replace. Two titles matter: XNAT's stock
-# default receiver (always "XNAT", created by the webapp on first boot) and the receiver under our
-# configured title, so a re-run with changed settings replaces rather than duplicates. When
-# XNAT_AETITLE is the default they are the same entry and the loop deduplicates.
+# Remove any pre-existing SCP receiver we are about to replace, matched on **the port we bind**
+# rather than only on AE title. The receiver this script owns is defined by that port, so anything
+# else listening on it has to go regardless of what it is called — including a receiver left behind
+# by an earlier run under a different XNAT_AETITLE. Matching on title alone orphaned the old entry
+# on a rename, leaving two receivers fighting over one port. Also removes XNAT's stock default
+# receiver (always "XNAT", created by the webapp on first boot) wherever it is bound.
+#
+# `--arg`/`--argjson` keep the values as data rather than splicing them into the filter, so a title
+# containing jq syntax cannot change what is selected.
 response=$(xnat_curl -u "$XNAT_ADMIN_USER:$XNAT_ADMIN_PASSWORD" "$XNAT_URL/xapi/dicomscp")
 
 if [[ -z "$response" || "$response" == "[]" ]]; then
     echo "No SCP receivers found."
 else
-    for ae in $(printf '%s\n' "XNAT" "${XNAT_AETITLE}" | sort -u); do
-        # `--arg` keeps the AE title as data rather than splicing it into the filter, so a title
-        # containing jq syntax cannot change what is selected.
-        scp_receiver_id=$(printf '%s' "$response" | jq -r --arg ae "$ae" \
-            'map(select(.aeTitle == $ae)) | .[0].id // empty')
+    stale_ids=$(printf '%s' "$response" | jq -r --argjson port "${XNAT_PORT}" --arg ae "${XNAT_AETITLE}" \
+        'map(select(.port == $port or .aeTitle == $ae or .aeTitle == "XNAT")) | .[] | "\(.id):\(.aeTitle)"')
 
-        if [[ -n "$scp_receiver_id" ]]; then
-            echo "Removing SCP receiver '$ae' (id $scp_receiver_id)..."
+    if [[ -z "$stale_ids" ]]; then
+        echo "No SCP receiver to replace on port ${XNAT_PORT}."
+    else
+        while IFS=: read -r scp_receiver_id scp_receiver_ae; do
+            [[ -n "$scp_receiver_id" ]] || continue
+            echo "Removing SCP receiver '${scp_receiver_ae}' (id ${scp_receiver_id})..."
             xnat_curl -u "$XNAT_ADMIN_USER:$XNAT_ADMIN_PASSWORD" \
                 -X DELETE "$XNAT_URL/xapi/dicomscp/$scp_receiver_id" >/dev/null
-        else
-            echo "No SCP receiver with aeTitle='$ae' found."
-        fi
-    done
+        done <<< "$stale_ids"
+    fi
 fi
 
 # Configure SCP receiver to have dqrObjectIdentifier as the identifier (the default is not)
@@ -378,11 +382,17 @@ xnat_curl -X POST "$XNAT_URL/xapi/siteConfig" \
 # registration (FLIP#822 / FLIP#862) — hence PACS_QR_PORT is guarded non-empty above and documented
 # as the reachable port.
 #
-# A duplicate registration surfaces as an unspecific 500 (DB unique-constraint violation), so
-# idempotency is a lookup by aeTitle. Unlike the previous check-then-create, an existing entry whose
-# host or port has drifted from the configured values is *updated*: leaving it untouched meant a kit
-# change was silently ignored on redeploy, and the operator had no signal that DQR was still
-# pointing at the old PACS.
+# A trust XNAT talks to exactly one PACS, so this script owns the registration list: the configured
+# PACS is created or updated in place, and any *other* registration is removed. Two things make that
+# the right behaviour rather than merely tidy. A duplicate surfaces as an unspecific 500 (DB
+# unique-constraint violation) if we re-POST, and — more importantly — we set
+# defaultQueryRetrievePacs on ours, so a leftover entry claiming the same default leaves DQR's
+# choice of PACS ambiguous. Changing PACS_AETITLE would otherwise strand the old entry exactly as a
+# changed XNAT_AETITLE used to strand the old SCP receiver.
+#
+# Updating in place rather than delete-and-recreate keeps the PACS id stable, and means a kit change
+# actually takes effect: the previous check-then-create silently ignored a drifted host or port on
+# redeploy, leaving DQR pointing at the old PACS with no signal to the operator.
 pacs_payload="{
       \"aeTitle\": \"${PACS_AETITLE}\",
       \"defaultQueryRetrievePacs\": true,
@@ -399,6 +409,21 @@ pacs_payload="{
 existing_pacs=$(xnat_curl -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_PASSWORD}" "$XNAT_URL/xapi/pacs")
 pacs_entry=$(printf '%s' "$existing_pacs" | jq -c --arg ae "${PACS_AETITLE}" \
   'map(select(.aeTitle == $ae)) | .[0] // empty')
+
+# Remove every registration that is not the configured one, so exactly one survives. Logged per
+# entry: this deletes configuration an administrator may have added through the XNAT UI, and that
+# should be visible in the deploy output rather than silent.
+foreign_pacs=$(printf '%s' "$existing_pacs" | jq -r --arg ae "${PACS_AETITLE}" \
+  'map(select(.aeTitle != $ae)) | .[] | "\(.id):\(.aeTitle):\(.host):\(.queryRetrievePort)"')
+if [[ -n "$foreign_pacs" ]]; then
+  while IFS=: read -r stale_id stale_ae stale_host stale_port; do
+    [[ -n "$stale_id" ]] || continue
+    echo "Removing PACS '${stale_ae}' at ${stale_host}:${stale_port} (id ${stale_id}):" \
+         "a trust XNAT retrieves from one PACS, and '${PACS_AETITLE}' is the configured one."
+    xnat_curl -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_PASSWORD}" \
+      -X DELETE "$XNAT_URL/xapi/pacs/${stale_id}" >/dev/null
+  done <<< "$foreign_pacs"
+fi
 
 if [[ -z "$pacs_entry" ]]; then
   echo "Registering PACS '${PACS_AETITLE}' at ${PACS_HOST}:${PACS_QR_PORT}..."

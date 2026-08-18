@@ -399,19 +399,13 @@ def _clear_resolved_pacs_id():
 
 
 @patch("imaging_api.services.imaging.requests.get")
-def test_resolve_pacs_id_matches_ae_title(mock_get, headers):
-    """The id comes from the registration whose AE title matches, not from the list order."""
+def test_resolve_pacs_id_uses_the_registered_pacs(mock_get, headers):
+    """The id is read from XNAT, not assumed to be 1: an XNAT that carried the mock first won't be."""
     from imaging_api.services.imaging import resolve_pacs_id
 
-    mock_get.return_value = MagicMock(
-        status_code=200,
-        json=lambda: [
-            {"id": 1, "aeTitle": "ORTHANC"},
-            {"id": 7, "aeTitle": "SECTRA_QR"},
-        ],
-    )
+    mock_get.return_value = MagicMock(status_code=200, json=lambda: [{"id": 7, "aeTitle": "SECTRA_QR"}])
 
-    assert resolve_pacs_id(headers, ae_title="SECTRA_QR") == 7
+    assert resolve_pacs_id(headers) == 7
 
 
 @patch("imaging_api.services.imaging.requests.get")
@@ -421,19 +415,19 @@ def test_resolve_pacs_id_is_cached(mock_get, headers):
 
     mock_get.return_value = MagicMock(status_code=200, json=lambda: [{"id": 4, "aeTitle": "ORTHANC"}])
 
-    assert resolve_pacs_id(headers, ae_title="ORTHANC") == 4
-    assert resolve_pacs_id(headers, ae_title="ORTHANC") == 4
+    assert resolve_pacs_id(headers) == 4
+    assert resolve_pacs_id(headers) == 4
     assert mock_get.call_count == 1
 
 
 @patch("imaging_api.services.imaging.requests.get")
-def test_resolve_pacs_id_falls_back_when_ae_title_absent(mock_get, headers):
-    """An unregistered AE title degrades to the configured fallback rather than failing the import."""
+def test_resolve_pacs_id_falls_back_when_none_registered(mock_get, headers):
+    """No registration degrades to the configured fallback rather than failing the import."""
     from imaging_api.services.imaging import PACS_ID, resolve_pacs_id
 
-    mock_get.return_value = MagicMock(status_code=200, json=lambda: [{"id": 9, "aeTitle": "SOMETHING_ELSE"}])
+    mock_get.return_value = MagicMock(status_code=200, json=lambda: [])
 
-    assert resolve_pacs_id(headers, ae_title="ORTHANC") == PACS_ID
+    assert resolve_pacs_id(headers) == PACS_ID
 
 
 @patch("imaging_api.services.imaging.requests.get", side_effect=Exception("XNAT unreachable"))
@@ -441,7 +435,7 @@ def test_resolve_pacs_id_falls_back_when_xnat_unreachable(mock_get, headers):
     """A transient XNAT failure must not take out retrieval; it falls back to the configured id."""
     from imaging_api.services.imaging import PACS_ID, resolve_pacs_id
 
-    assert resolve_pacs_id(headers, ae_title="ORTHANC") == PACS_ID
+    assert resolve_pacs_id(headers) == PACS_ID
 
 
 def test_import_request_ae_title_follows_settings():
