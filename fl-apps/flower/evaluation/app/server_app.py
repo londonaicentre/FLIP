@@ -22,6 +22,7 @@ from pathlib import Path
 import torch
 from flip import FLIP
 from flip.constants.flip_constants import ModelStatus
+from flip.flower.strategy import min_clients_from_run_config
 from flwr.app import ArrayRecord, Context
 from flwr.common import log
 from flwr.serverapp import Grid, ServerApp
@@ -39,9 +40,6 @@ def main(grid: Grid, context: Context, flip: FLIP = FLIP()) -> None:
 
     run_config = context.run_config
     num_rounds = int(run_config.get("num-server-rounds", 1))
-    # Participating-trust count, injected into the run config by fl-api; see FlipFedAvg's
-    # min_clients. The 1 fallback keeps a local simulator run (no fl-api, no injection) working.
-    min_clients = int(run_config.get("flip-min-clients", 1))
     model_id = run_config.get("flip-model-id", "monai-flower-evaluation-model")
 
     flip.update_status(model_id, ModelStatus.INITIATED)
@@ -94,7 +92,7 @@ def main(grid: Grid, context: Context, flip: FLIP = FLIP()) -> None:
     strategy = EvaluationStrategy(
         flip=flip,
         model_id=model_id,
-        min_clients=min_clients,
+        min_clients=min_clients_from_run_config(run_config),
         fraction_train=0.0,  # No training
         fraction_evaluate=1.0,  # All clients evaluate
     )

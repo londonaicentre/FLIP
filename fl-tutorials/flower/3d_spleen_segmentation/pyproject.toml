@@ -87,10 +87,9 @@ flip-model-id = "uuid"
 flip-project-id = "uuid"
 flip-cohort-query = "*"
 flip-job-dir = "job-dir"
-# Declared so fl-api can override it at submit time with the participating-trust count
-# (flwr rejects a --run-config key that the app config does not declare). Drives FedAvg's
-# node thresholds; see FlipFedAvg's min_clients.
-flip-min-clients = 1
+# Placeholder matching flwr's own default; fl-api overrides it with the participating-trust
+# count at submit time (flwr rejects a --run-config key the app config does not declare).
+flip-min-clients = 2
 # Best-model selection: save best_FL_global_model.pt alongside the final model, chosen by
 # the aggregated test Dice (higher is better) that client_app.py reports each round. Set
 # the metric to "" to disable, and -minimize to true for a loss-like metric. Selection

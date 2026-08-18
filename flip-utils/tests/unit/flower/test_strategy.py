@@ -29,10 +29,11 @@ import logging
 from unittest.mock import MagicMock
 
 import numpy as np
+import pytest
 from flwr.app import ArrayRecord, Message, MetricRecord, RecordDict
 from flwr.common import ConfigRecord
 
-from flip.flower.strategy import FlipFedAvg
+from flip.flower.strategy import MIN_CLIENTS_KEY, FlipFedAvg, min_clients_from_run_config
 from flip.schemas import FLLogEvent
 
 
@@ -186,19 +187,13 @@ class TestMinClients:
     connected, which would train on part of the federation without saying so.
     """
 
-    def test_min_clients_pins_all_three_node_thresholds(self):
-        strategy = _strategy(min_clients=1)
+    @pytest.mark.parametrize("min_clients", [1, 3])
+    def test_min_clients_pins_all_three_node_thresholds(self, min_clients):
+        strategy = _strategy(min_clients=min_clients)
 
-        assert strategy.min_train_nodes == 1
-        assert strategy.min_evaluate_nodes == 1
-        assert strategy.min_available_nodes == 1
-
-    def test_min_clients_uses_the_trust_count_not_a_constant(self):
-        strategy = _strategy(min_clients=3)
-
-        assert strategy.min_train_nodes == 3
-        assert strategy.min_evaluate_nodes == 3
-        assert strategy.min_available_nodes == 3
+        assert strategy.min_train_nodes == min_clients
+        assert strategy.min_evaluate_nodes == min_clients
+        assert strategy.min_available_nodes == min_clients
 
     def test_explicit_thresholds_win_over_min_clients(self):
         strategy = _strategy(min_clients=2, min_available_nodes=5)
@@ -212,3 +207,21 @@ class TestMinClients:
         assert strategy.min_train_nodes == 2
         assert strategy.min_evaluate_nodes == 2
         assert strategy.min_available_nodes == 2
+
+
+class TestMinClientsFromRunConfig:
+    """The one place the ``flip-min-clients`` key is read, so app templates carry no parsing.
+
+    Absence must yield ``None`` (leave flwr's own defaults alone) rather than a made-up
+    number: the key is only injected on the deployed FLIP path, and inventing a low value
+    on the paths where nothing injects would silently shrink the quorum.
+    """
+
+    def test_reads_the_injected_trust_count(self):
+        assert min_clients_from_run_config({MIN_CLIENTS_KEY: 3}) == 3
+
+    def test_absent_key_yields_none_so_flwr_defaults_stand(self):
+        assert min_clients_from_run_config({}) is None
+
+    def test_coerces_a_quoted_toml_value(self):
+        assert min_clients_from_run_config({MIN_CLIENTS_KEY: "2"}) == 2

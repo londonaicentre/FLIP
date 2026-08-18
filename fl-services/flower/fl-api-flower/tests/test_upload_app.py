@@ -160,8 +160,8 @@ accuracy = true
     assert "metrics" in config_doc
 
 
-@pytest.mark.parametrize("trusts", [["trust1"], ["trust1", "trust2"]])
-def test_upload_app_injects_min_clients_from_trust_count(trusts, client, upload_dir, mock_requests_get):
+@pytest.mark.parametrize(("trusts", "expected"), [(["trust1"], 1), (["trust1", "trust2"], 2)])
+def test_upload_app_injects_min_clients_from_trust_count(trusts, expected, client, upload_dir, mock_requests_get):
     """flip-min-clients carries the participating-trust count into the Flower run config.
 
     The NVFLARE adapter already does this (``config["min_clients"] = len(trusts)`` in
@@ -185,7 +185,7 @@ def test_upload_app_injects_min_clients_from_trust_count(trusts, client, upload_
     assert response.status_code == 200
 
     config_doc = parse((upload_dir / model_id / "app" / "config.toml").read_text())
-    assert config_doc["flip-min-clients"] == len(trusts)
+    assert config_doc["flip-min-clients"] == expected
 
 
 def test_upload_app_places_checkpoint_in_job_dir(client, upload_dir, mock_requests_get):

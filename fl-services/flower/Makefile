@@ -44,7 +44,7 @@ SECURE_COMPOSE   := docker compose -f $(REPO_ROOT)/fl-services/flower/compose.se
 PROVISION_SCRIPT := $(REPO_ROOT)/fl-services/flower/provision/scripts/generate-tls-certificates.sh
 LOCAL_DEV        ?= false
 NET_NUMBER       ?= 1
-APP              ?= numpy
+APP              ?= xray_classification
 # Host dir bind-mounted as /app/runs (Flower run state); gitignored.
 export WORKING_DIR := $(REPO_ROOT)/fl-services/flower/runs
 

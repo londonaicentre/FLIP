@@ -181,18 +181,21 @@ If you subclass a strategy to add custom aggregation or post-round hooks, the ``
 
    Set the strategy's node thresholds from ``flip-min-clients``. Flower defaults ``min_train_nodes``, ``min_evaluate_nodes`` and ``min_available_nodes`` to **2**, so a strategy left on those defaults never starts a round on a single-trust project: it waits for a second node that never arrives, silently, until ``start()``'s 3600s timeout. FLIP's FL API injects ``flip-min-clients`` with the participating-trust count, the same value the NVFLARE adapter puts in ``min_clients``.
 
+   FLIP's strategies take it as one argument, read via the helper so your app carries no parsing:
+
    .. code-block:: python
 
-      min_clients = int(run_config.get("flip-min-clients", 1))
-      strategy = FedAvg(
-          min_train_nodes=min_clients,
-          min_evaluate_nodes=min_clients,
-          min_available_nodes=min_clients,
+      from flip.flower.strategy import min_clients_from_run_config
+
+      strategy = FedAvgWithClientMetrics(
+          flip=flip,
+          model_id=model_id,
+          min_clients=min_clients_from_run_config(run_config),
       )
 
-   FLIP's own strategies (``FlipFedAvg``, and the app templates that subclass it) take this as a single ``min_clients=`` argument instead. Declare ``flip-min-clients`` in ``[tool.flwr.app.config]`` alongside the other ``flip-*`` keys, or flwr rejects the injected override.
+   Building on flwr's ``FedAvg`` directly? Pass the same value to ``min_train_nodes``, ``min_evaluate_nodes`` and ``min_available_nodes``.
 
-   Take the value from the run config rather than hardcoding it: pinned to 1, a multi-trust run can begin before every trust has connected and train on part of the federation without saying so.
+   Do not substitute a constant when the key is absent. ``min_clients_from_run_config`` returns ``None`` there, which leaves flwr's own defaults alone — the right answer, because nothing injects the key on the simulator or ``submit_tutorial`` paths, and a low constant would let a round close on whichever trust replies first and silently drop the slower ones.
 
 ****************************************
 ClientApp: fetching the FLIP DataFrame
@@ -368,6 +371,7 @@ Abridged from ``fl-tutorials/flower/3d_spleen_segmentation/pyproject.toml``:
    flip-model-id = "uuid"
    flip-project-id = "uuid"
    flip-cohort-query = "*"
+   flip-min-clients = 2  # placeholder matching flwr's default; FLIP injects the trust count
 
 .. note::
 
@@ -396,7 +400,8 @@ Once your app runs locally (see the next section), upload it through the FLIP UI
 
 At submit time, the FLIP FL API:
 
-- Injects ``flip-model-id``, ``flip-project-id``, and ``flip-cohort-query`` into your app's run config.
+- Injects ``flip-model-id``, ``flip-project-id``, ``flip-cohort-query`` and ``flip-min-clients``
+  (the participating-trust count) into your app's run config.
 - Sets ``SUPERNODE_NAME`` on each participating trust's SuperNode container to the trust's assigned FL kit slot (e.g. ``Trust_1``).
 - Starts the ``ServerApp`` on the Central Hub's SuperLink and the ``ClientApp`` on each approved trust's SuperNode.
 
@@ -427,5 +432,5 @@ Common pitfalls
 
 - **Missing ``RESULTS_UPLOADED``.** Forgetting the final ``flip.update_status(model_id, ModelStatus.RESULTS_UPLOADED)`` call leaves the model stuck on "training" in the UI.
 - **Wrong ``SUPERNODE_NAME``.** ``SUPERNODE_NAME`` must be the trust's **FL kit slot** (``Trust_1``, ``Trust_2``, ...), not the trust display name — metrics pushed with any other value land under ``unknown_client`` and will not appear on the per-site chart.
-- **Undeclared run-config keys.** ``flwr run`` (and therefore FLIP's FL API) can only override keys already declared in ``[tool.flwr.app.config]``. Declaring ``flip-model-id``, ``flip-project-id``, and ``flip-cohort-query`` with placeholder values is mandatory even though the real values are injected by FLIP.
+- **Undeclared run-config keys.** ``flwr run`` (and therefore FLIP's FL API) can only override keys already declared in ``[tool.flwr.app.config]``. Declaring ``flip-model-id``, ``flip-project-id``, ``flip-cohort-query`` and ``flip-min-clients`` with placeholder values is mandatory even though the real values are injected by FLIP.
 - **Missing ``ResourceType``.** If a trust does not have the resource type you requested for a given accession, ``get_by_accession_number`` will raise. Always wrap the call in ``try / except`` and skip the accession on failure so a single bad study does not abort the whole round.
