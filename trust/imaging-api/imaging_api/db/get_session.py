@@ -14,6 +14,7 @@ from collections.abc import AsyncGenerator
 from typing import Annotated
 
 from fastapi import Depends
+from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from imaging_api.config import get_settings
@@ -22,9 +23,10 @@ from imaging_api.utils.logger import logger
 
 XNATAuthHeaders = Annotated[dict[str, str], Depends(get_xnat_auth_headers)]
 
-# Database connection
+# Database connection. The URL carries the minted per-trust DB password
+# (FLIP-PT-056), so log it with the password masked.
 XNAT_DATABASE_URL = get_settings().XNAT_DATABASE_URL
-logger.info(f"Database URL: {XNAT_DATABASE_URL}")
+logger.info(f"Database URL: {make_url(XNAT_DATABASE_URL).render_as_string(hide_password=True)}")
 engine = create_async_engine(XNAT_DATABASE_URL, echo=True)
 SessionLocal = async_sessionmaker(engine, expire_on_commit=False)
 

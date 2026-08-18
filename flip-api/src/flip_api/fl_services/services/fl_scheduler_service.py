@@ -40,6 +40,7 @@ from flip_api.domain.schemas.status import (
 )
 from flip_api.domain.schemas.types import FLBackend, FLLogEvent
 from flip_api.fl_services.services.fl_service import (
+    _raise_if_job_aborted,
     bundle_flower_application,
     bundle_nvflare_application,
     get_bundle_urls,
@@ -47,7 +48,7 @@ from flip_api.fl_services.services.fl_service import (
     validate_client_availability,
 )
 from flip_api.model_services.services.model_service import add_log, update_model_status, validate_trust_ids
-from flip_api.utils.exceptions import DatabaseError, NotFoundError
+from flip_api.utils.exceptions import DatabaseError, JobAbortedError, NotFoundError
 from flip_api.utils.logger import logger
 
 
@@ -269,6 +270,43 @@ def revert_scheduler_pickup(scheduler_id: UUID, session: Session) -> None:
         raise DatabaseError("Error reverting scheduler pickup") from e
 
 
+def release_scheduler_for_model(model_id: UUID, session: Session) -> int:
+    """
+    Free any BUSY scheduler still pinned to one of this model's FL jobs.
+
+    ``FLScheduler.job_id`` survives a job's flip to ``DELETED`` (``remove_job`` /
+    ``remove_job_from_queue`` only change ``FLJob.status``), so the scheduler is found by joining
+    through the model's job rows — no need to capture job ids before dequeueing. Only BUSY
+    schedulers are touched, so a scheduler already reassigned to another model's job is never
+    released by mistake. Idempotent: no matching scheduler is a no-op.
+
+    Args:
+        model_id (UUID): The model whose scheduler pickup should be reverted.
+        session (Session): SQLModel session.
+
+    Returns:
+        int: Number of schedulers released.
+
+    Raises:
+        DatabaseError: If the lookup or the release fails at the DB layer.
+    """
+    try:
+        statement = (
+            select(FLScheduler)
+            .join(FLJob)
+            .where(FLJob.model_id == model_id, FLScheduler.status == NetStatus.BUSY)
+        )
+        schedulers = session.exec(statement).all()
+    except SQLAlchemyError as e:
+        logger.error(f"Error looking up BUSY scheduler for model {model_id}: {e}")
+        raise DatabaseError("Error looking up BUSY scheduler for model") from e
+
+    for scheduler in schedulers:
+        revert_scheduler_pickup(scheduler.id, session)
+
+    return len(schedulers)
+
+
 def get_net_by_model_id(model_id: UUID, session: Session) -> INetDetails:
     """
     Get information for a net by model ID.
@@ -476,6 +514,54 @@ def check_for_available_net(session: Session) -> ISchedulerResponse | None:
         raise DatabaseError("Error checking for available net") from e
 
 
+def _retire_job_with_unapproved_trusts(job: FLJob, scheduler_id: UUID, session: Session) -> None:
+    """Retire a queued job whose trusts are not approved for its model, and free the scheduler.
+
+    Args:
+        job (FLJob): The queued job at the head of the queue, already loaded in this session.
+        scheduler_id (UUID): The scheduler that picked the job up.
+        session (Session): The database session.
+
+    Returns:
+        None
+    """
+    logger.error(
+        f"Job {job.id} references trust ids not approved for model {job.model_id}; "
+        "retiring it so it cannot block the queue"
+    )
+    job.status = JobStatus.DELETED
+
+    # Commit the retirement on its own, before the bookkeeping below. Everything after this
+    # point can raise — add_log rolls the session back and re-raises on failure — and a
+    # rollback would discard an uncommitted DELETED, returning the job to QUEUED. It is the
+    # globally-earliest queued job, so the next tick would select it again: the FLIP#894
+    # wedge, restored by the code meant to end it. Committing here also stops the
+    # self-exclusion in the query below depending on autoflush.
+    session.commit()
+
+    # A model can have been retried while this older job was waiting in the queue. Do not
+    # transition the model to ERROR in that case: update_model_status(ERROR) releases the
+    # latest non-deleted job for the model, which would silently complete the valid retry.
+    active_job = session.exec(
+        select(FLJob.id)
+        .where(
+            FLJob.model_id == job.model_id,
+            col(FLJob.status).in_((JobStatus.QUEUED, JobStatus.IN_PROGRESS)),
+        )
+        .limit(1)
+    ).first()
+    if not active_job:
+        update_model_status(job.model_id, ModelStatus.ERROR, session)
+    add_log(
+        job.model_id,
+        "Training could not start: the selected trusts are not approved for this model.",
+        session,
+        success=False,
+    )
+    session.commit()
+    revert_scheduler_pickup(scheduler_id, session)
+
+
 def check_for_queued_jobs(scheduler_id: UUID, session: Session) -> IJobResponse | None:
     """
     Checks for any queued jobs for a given scheduler.
@@ -485,12 +571,13 @@ def check_for_queued_jobs(scheduler_id: UUID, session: Session) -> IJobResponse 
         session (Session): The database session.
 
     Returns:
-        IJobResponse | None: The job response if a queued job is found, otherwise None.
+        IJobResponse | None: The job response if a queued job is found, otherwise None. Also None
+            when the job at the head of the queue is retired for referencing trusts that are not
+            approved for its model — it is removed rather than raised on, so the queue drains.
 
     Raises:
         flip_api.utils.exceptions.NotFoundError: If the scheduler referenced by ``scheduler_id`` cannot be found.
         DatabaseError: If the query or update fails at the DB layer.
-        Exception: If the job references invalid trusts.
     """
     logger.info("Checking for any queued jobs...")
 
@@ -518,9 +605,16 @@ def check_for_queued_jobs(scheduler_id: UUID, session: Session) -> IJobResponse 
         job.started = datetime.utcnow()
 
         job_trust_ids = [t.id for t in job.trusts]
-        # Validate trusts
+        # Validate trusts. A job that references trusts not approved for its model can never run,
+        # so retire it here rather than raising: the raise left the job QUEUED (the status write
+        # above rolls back with the transaction), and because this query always picks the
+        # globally-earliest queued job, the same unrunnable job was re-selected on every tick and
+        # blocked every job behind it, on every net, indefinitely (FLIP#894). initiate_training now
+        # rejects these at the boundary, so reaching this branch means a job predating that check
+        # or one whose model approvals changed after it was queued.
         if not validate_trust_ids(job.model_id, job_trust_ids, session):
-            raise Exception(f"Job {job.id} references trust ids not approved for model {job.model_id}")
+            _retire_job_with_unapproved_trusts(job, scheduler_id, session)
+            return None
 
         # Assign job to scheduler
         scheduler = session.get(FLScheduler, scheduler_id)
@@ -541,7 +635,7 @@ def check_for_queued_jobs(scheduler_id: UUID, session: Session) -> IJobResponse 
         raise DatabaseError("Error checking for queued jobs") from e
 
 
-def prepare_and_start_training(model_id: UUID, fl_job_id: UUID, trust_ids: list[UUID], session: Session) -> None:
+def prepare_and_start_training(model_id: UUID, fl_job_id: UUID, trust_ids: list[UUID], session: Session) -> bool:
     """
     Prepares and starts the training process for a given model.
 
@@ -554,19 +648,34 @@ def prepare_and_start_training(model_id: UUID, fl_job_id: UUID, trust_ids: list[
         session (Session): The database session.
 
     Returns:
-        None
+        bool: True when the job was submitted to the fl-server; False when a concurrent abort
+            (#787) deleted the job before or during prepare — an abort gate at the top of the
+            function catches aborts landed since the pickup commit — in which case submission
+            was skipped and the net released.
 
     Raises:
         Exception: If the FL backend is unsupported, the net endpoint cannot be resolved, client
             availability validation fails, or training fails to start. On failure the job is
-            removed, the model is marked as errored, and the original exception is re-raised.
+            removed, the model is marked as errored, the net is released, and the original
+            exception is re-raised.
     """
     try:
         logger.debug("Attempting to prepare and start training...")
 
+        # Abort gate (#787): a user abort between the job pickup commit and this tick has
+        # already DELETEd the job and released the net — take the clean aborted branch below
+        # instead of surfacing the unpinned net as a "Failed to start training" false alarm.
+        _raise_if_job_aborted(fl_job_id, session)
+
         # Resolve the backend from the net this job is pinned to. The value is the net's
         # canonical seeded backend (FLNets.fl_backend), read from the DB, never a boot-time env var.
-        net_details = get_net_by_model_id(model_id, session)
+        try:
+            net_details = get_net_by_model_id(model_id, session)
+        except NotFoundError:
+            # The abort can land between the gate above and this lookup and unpin the net;
+            # reclassify if so, otherwise a missing net is a genuine error.
+            _raise_if_job_aborted(fl_job_id, session)
+            raise
         if not net_details.endpoint:
             raise Exception("Failed to get the net endpoint")
 
@@ -614,6 +723,15 @@ def prepare_and_start_training(model_id: UUID, fl_job_id: UUID, trust_ids: list[
         )
 
         add_log(model_id, f"Model training assigned to '{net_details.name}'", session)
+        return True
+
+    except JobAbortedError:
+        # A user abort deleted the job while it was being prepared (#787): not a scheduler
+        # error. The job is already DELETED and the model STOPPED — just make sure the net is
+        # free (the abort usually released it already; this is an idempotent belt-and-braces).
+        logger.info(f"Job {fl_job_id} for model {model_id} was aborted mid-prepare; skipping submission.")
+        release_scheduler_for_model(model_id, session)
+        return False
 
     except Exception as e:
         logger.error(f"Failed to start training: {e}")
@@ -622,8 +740,11 @@ def prepare_and_start_training(model_id: UUID, fl_job_id: UUID, trust_ids: list[
         remove_job(fl_job_id, session)
         add_log(model_id, error_message, session, success=False)
         update_model_status(model_id, ModelStatus.ERROR, session)
+        # update_model_status(ERROR) can't free the net (its scheduler lookup only considers
+        # non-DELETED jobs and remove_job just DELETEd this one), so release it explicitly.
+        release_scheduler_for_model(model_id, session)
 
-        logger.debug("Reverted job and scheduler pickup")
+        logger.debug("Reverted job and released scheduler pickup")
         raise e
 
 

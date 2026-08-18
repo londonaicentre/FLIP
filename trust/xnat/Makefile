@@ -15,10 +15,12 @@
 	create-xnat-network test unit_test local_test
 
 # Mirrors trust/Makefile: no hub `.env.*` include. Runtime config (DOCKER_REGISTRY,
-# DOCKER_TAG, XNAT_PORT, XNAT_ADMIN_*, XNAT_SERVICE_*, XNAT_DATABASE_URL) is
-# pulled from the kit file via `-include $(KIT_FILE)` below; XNAT-internal
-# build args (XNAT_VERSION, XNAT_DATASOURCE_*, XNAT_SMTP_*, heap, paths) come
-# from trust/xnat/.env. The dev-admin build path (xnat-war-download /
+# DOCKER_TAG, XNAT_PORT, XNAT_ADMIN_*, XNAT_SERVICE_*, XNAT_DATABASE_URL) and the
+# XNAT stack passwords (XNAT_DATASOURCE_PASSWORD, XNAT_DATASOURCE_ADMIN_PASSWORD,
+# XNAT_ACTIVEMQ_PASSWORD — minted by `make register-trust`) are pulled from the
+# kit file via `-include $(KIT_FILE)` below; non-secret XNAT-internal config
+# (XNAT_VERSION, datasource driver/URL/usernames, XNAT_SMTP_*, heap, paths) comes
+# from trust/xnat/.env. Passwords are runtime env only — never build args. The dev-admin build path (xnat-war-download /
 # xnat-plugins-download) needs FLIP_ARTIFACTS_BUCKET_NAME — pass it on the
 # CLI if invoking those targets directly.
 
@@ -109,13 +111,20 @@ export XNAT_DATA_DIR
 # Path to the dev XNAT folder on the Docker host (bind mounts resolve there, not locally).
 export XNAT_PATH=$(realpath .)
 
+# XNAT_PLUGINS_FROM_HOST tracks STACK_FILES deliberately: only the development stack bind-mounts
+# xnat/plugins over the image, so only development needs the host-side plugin cache (and the S3
+# bucket and AWS credentials that populate it). Production bakes plugins into the image, and a
+# trust host has neither FLIP_ARTIFACTS_BUCKET_NAME nor a reason to reach S3 for them.
 ifeq ($(PROD),true)
 STACK_FILES = -c docker-compose-stack.yml -c docker-compose-stack.production.yml
+XNAT_PLUGINS_FROM_HOST =
 else ifeq ($(PROD),stag)
 STACK_FILES = -c docker-compose-stack.yml -c docker-compose-stack.production.yml
+XNAT_PLUGINS_FROM_HOST =
 else
 # In development, mount plugins and config from the host for hot-reload
 STACK_FILES = -c docker-compose-stack.yml -c docker-compose-stack.development.yml
+XNAT_PLUGINS_FROM_HOST = 1
 endif
 
 # Guard: a KIT-selected target needs KIT set.
@@ -130,21 +139,46 @@ endef
 # silently brings up a broken/insecure XNAT — admin auth 401s ("Site has not
 # yet been configured" forever, see the export note above) and Postgres comes
 # up with a blank superuser password — instead of failing. Refuse to deploy if
-# any are empty. Covers both sources: XNAT_DATASOURCE_* (trust/xnat/.env) and
-# XNAT_ADMIN_*/XNAT_SERVICE_* (the kit file). Checks the exported process env
-# (the same values `docker stack deploy` substitutes), not just Make vars.
+# any are empty. All of these come from the kit file: XNAT_ADMIN_*/XNAT_SERVICE_*
+# are operator-set, XNAT_DATASOURCE_* are minted by `make register-trust` /
+# `make generate-xnat-credentials`. Checks the exported process env (the same
+# values `docker stack deploy` substitutes), not just Make vars.
+# Beyond emptiness: refuse the committed kit-template placeholder for any of
+# them, and the historical weak defaults for the minted XNAT_DATASOURCE_* pair
+# (XNAT_ADMIN_*/XNAT_SERVICE_* are operator-set and legitimately simple in dev
+# kits, so only the placeholder is rejected there). A skipped mint would
+# otherwise reach the stock Postgres entrypoint as POSTGRES_PASSWORD — applied
+# silently at first initdb, leaving the superuser password set to a literal
+# committed across this public repo. xnat-web re-checks
+# XNAT_DATASOURCE_PASSWORD at container start (wait-for-postgres.sh) and the
+# xnat-db image guards both DB passwords itself (guard-xnat-db-passwords.sh,
+# covering non-make deploys such as the K8s chart); this check just fails
+# earliest, before a half-configured stack is deployed.
 XNAT_REQUIRED_PASSWORDS := XNAT_ADMIN_INITIAL_PASSWORD XNAT_ADMIN_PASSWORD \
 	XNAT_SERVICE_PASSWORD XNAT_DATASOURCE_PASSWORD XNAT_DATASOURCE_ADMIN_PASSWORD
+XNAT_MINTED_PASSWORDS := XNAT_DATASOURCE_PASSWORD XNAT_DATASOURCE_ADMIN_PASSWORD
+XNAT_CREDENTIAL_PLACEHOLDER := <run-make-generate-xnat-credentials>
 define require_xnat_passwords
-	@missing=""; \
+	@missing=""; weak=""; \
 	for v in $(XNAT_REQUIRED_PASSWORDS); do \
-		if [ -z "$$(printenv $$v 2>/dev/null)" ]; then missing="$$missing $$v"; fi; \
+		val="$$(printenv $$v 2>/dev/null)"; \
+		if [ -z "$$val" ]; then missing="$$missing $$v"; \
+		elif [ "$$val" = "$(XNAT_CREDENTIAL_PLACEHOLDER)" ]; then weak="$$weak $$v"; fi; \
 	done; \
-	if [ -n "$$missing" ]; then \
-		echo "❌ Refusing to deploy XNAT for KIT=$(KIT): empty password(s):$$missing"; \
-		echo "   These are substituted into the compose stack with no default, so an empty"; \
-		echo "   value yields a broken/insecure XNAT. Set XNAT_DATASOURCE_* in trust/xnat/.env"; \
-		echo "   and XNAT_ADMIN_*/XNAT_SERVICE_* in the kit file ($(KIT_FILE)), then retry."; \
+	for v in $(XNAT_MINTED_PASSWORDS); do \
+		case "$$(printenv $$v 2>/dev/null)" in \
+			xnat|password|admin|postgres) weak="$$weak $$v";; \
+		esac; \
+	done; \
+	if [ -n "$$missing$$weak" ]; then \
+		echo "❌ Refusing to deploy XNAT for KIT=$(KIT):"; \
+		if [ -n "$$missing" ]; then echo "   empty password(s):$$missing"; fi; \
+		if [ -n "$$weak" ]; then echo "   placeholder/weak password(s):$$weak"; fi; \
+		echo "   These are substituted into the compose stack with no default, so an empty or"; \
+		echo "   placeholder value yields a broken/insecure XNAT (Postgres applies its passwords"; \
+		echo "   silently at first initdb). Set XNAT_ADMIN_*/XNAT_SERVICE_* in the kit file"; \
+		echo "   ($(KIT_FILE)); mint XNAT_DATASOURCE_*/XNAT_ACTIVEMQ_PASSWORD into it"; \
+		echo "   with 'make register-trust KIT=$(KIT)' or 'make generate-xnat-credentials'."; \
 		exit 1; \
 	fi
 endef
@@ -158,15 +192,9 @@ build:
 	@echo "🐳 Building xnat-web image..."
 	docker build \
 		--build-arg XNAT_VERSION=${XNAT_VERSION} \
-		--build-arg XNAT_SMTP_ENABLED=${XNAT_SMTP_ENABLED} \
-		--build-arg XNAT_DATASOURCE_DRIVER=${XNAT_DATASOURCE_DRIVER} \
-		--build-arg XNAT_DATASOURCE_USERNAME=${XNAT_DATASOURCE_USERNAME} \
-		--build-arg XNAT_DATASOURCE_PASSWORD=${XNAT_DATASOURCE_PASSWORD} \
-		--build-arg XNAT_DATASOURCE_URL=${XNAT_DATASOURCE_URL} \
 		--build-arg TOMCAT_XNAT_FOLDER=${TOMCAT_XNAT_FOLDER} \
 		--build-arg XNAT_ROOT=${XNAT_ROOT} \
 		--build-arg XNAT_HOME=${XNAT_HOME} \
-		--build-arg XNAT_EMAIL=${XNAT_EMAIL} \
 		-t ${DOCKER_REGISTRY}xnat-web:${DOCKER_TAG} \
 		xnat/
 	@echo "🐳 Building xnat-db image..."
@@ -193,15 +221,23 @@ up:
 	@found=0; for f in ../.env.*.$(ENV); do \
 	  [ -e "$$f" ] || continue; \
 	  kit=$${f#../.env.}; kit=$${kit%.$(ENV)}; found=1; \
-	  $(MAKE) up-xnat KIT=$$kit; \
+	  $(MAKE) up-xnat KIT=$$kit || { echo "❌ Failed to start XNAT for trust $$kit"; exit 1; }; \
 	done; \
 	[ "$$found" = 1 ] || echo "ℹ️  No trust/.env.*.$(ENV) kits found — run 'make register-trusts' (from repo root) first."
 
 # Bring up the XNAT swarm stack for one trust (KIT=Trust_1 / Trust_2).
 # trust/Makefile's up-trust calls this so a trust comes up complete.
+#
+# In development, validate the version-matched, gitignored plugin cache before tearing down a
+# working XNAT: a fresh clone downloads it here, a warm cache skips AWS, and a failure leaves the
+# running stack untouched. Skipped outside development, where plugins come baked into the image
+# (see XNAT_PLUGINS_FROM_HOST above).
 up-xnat: create-xnat-network
 	$(require_kit)
 	$(require_xnat_passwords)
+ifdef XNAT_PLUGINS_FROM_HOST
+	$(MAKE) xnat-plugins-download
+endif
 	$(MAKE) down-xnat KIT=$(KIT)
 	$(MAKE) xnat-reset KIT=$(KIT)
 	XNAT_PATH=${XNAT_PATH} \
@@ -258,13 +294,32 @@ xnat-war-download:
 		echo "✅ XNAT WAR already exists locally."; \
 	else \
 		echo "📦 Downloading XNAT WAR from S3..."; \
-		aws s3 cp "s3://$(FLIP_ARTIFACTS_BUCKET_NAME)/xnat/xnat-web-$(XNAT_VERSION).war" \
+		aws s3 cp "s3://$(FLIP_ARTIFACTS_BUCKET_NAME)/xnat-$(XNAT_VERSION)/xnat-web-$(XNAT_VERSION).war" \
 			"xnat/build-artifacts/xnat-web-$(XNAT_VERSION).war"; \
 	fi
 
-# Ensure required XNAT plugins are present locally (skips S3 sync if all are available)
+# Ensure required XNAT plugins are present locally (skips S3 sync if all are available).
+# The S3 artifact set is keyed by XNAT version — s3://<bucket>/xnat-<version>/{xnat-web-<version>.war,
+# plugins/} — so different branches (e.g. main vs develop across an XNAT upgrade) can build against
+# different WAR + plugin rosters without clobbering each other.
+#
+# A copied-but-unedited .env leaves the `<your-...>` placeholder in place, and a placeholder is not
+# empty: an emptiness check passes it straight to the S3 sync, which dies on an opaque AWS
+# bucket-name validation error instead of the actionable message below. Reject the placeholder shape
+# too — the same idea as XNAT_CREDENTIAL_PLACEHOLDER above and unset_or_placeholder in
+# deploy/providers/AWS/Makefile.
 xnat-plugins-download:
-	@./scripts/ensure_plugins.sh "xnat/plugins" "$(FLIP_ARTIFACTS_BUCKET_NAME)"
+	@case "$(FLIP_ARTIFACTS_BUCKET_NAME)" in \
+	  "") reason="is unset" ;; \
+	  "<"*">") reason="is still the .env placeholder ($(FLIP_ARTIFACTS_BUCKET_NAME))" ;; \
+	  *) reason="" ;; \
+	esac; \
+	[ -z "$$reason" ] || { \
+	  echo "❌ FLIP_ARTIFACTS_BUCKET_NAME $$reason — the host plugin cache cannot be filled."; \
+	  echo "   Set it in .env.development (see the 'S3 Buckets' block), or pass it on the command"; \
+	  echo "   line: make xnat-plugins-download FLIP_ARTIFACTS_BUCKET_NAME=<bucket>."; \
+	  exit 1; }
+	@./scripts/ensure_plugins.sh "xnat/plugins" "$(FLIP_ARTIFACTS_BUCKET_NAME)" "xnat-$(XNAT_VERSION)/plugins"
 
 # Creates the data-volume directory structure for one trust's XNAT stack and
 # wipes any previous data. Docker Swarm requires host directories to exist
@@ -312,6 +367,11 @@ xnat-reset:
 
 # Configure an XNAT instance with initial settings and run dcm2niix setup.
 # Usage: make xnat-configure XNAT_PROJECT=<stack-name>
+# The `rm -f` before each tee: /data/xnat/config is a host bind mount, and log
+# files left by pre-hardening deploys (root-running xnat-web) are root-owned —
+# the non-root xnat user can't open them for truncation (tee still streams but
+# exits non-zero under pipefail, aborting the configure chain). It can unlink
+# them, though: the config dir itself is xnat-writable.
 xnat-configure:
 	@[ -n "$(XNAT_PROJECT)" ] || (echo "❌ XNAT_PROJECT is required"; exit 1)
 	@echo "⏳ Waiting for $(XNAT_PROJECT)_xnat-web container to be ready..."
@@ -321,8 +381,8 @@ xnat-configure:
 	done
 	CONTAINER=$$(docker ps --filter "name=$(XNAT_PROJECT)_xnat-web" -q); \
 	[ -n "$$CONTAINER" ] || { echo "❌ ERROR: $(XNAT_PROJECT)_xnat-web container not found at configure time"; exit 1; }; \
-	docker exec $$CONTAINER bash -c 'set -o pipefail; cd /data/xnat/config && LOG_FILE="configure-xnat-$(XNAT_PROJECT).log" && bash configure-xnat.sh 2>&1 | tee "$$LOG_FILE"' && \
-	docker exec $$CONTAINER bash -c 'set -o pipefail; cd /data/xnat/config && LOG_FILE="configure-dcm2niix-$(XNAT_PROJECT).log" && bash configure-dcm2niix.sh 2>&1 | tee "$$LOG_FILE"'
+	docker exec $$CONTAINER bash -c 'set -o pipefail; cd /data/xnat/config && LOG_FILE="configure-xnat-$(XNAT_PROJECT).log" && rm -f "$$LOG_FILE" && bash configure-xnat.sh 2>&1 | tee "$$LOG_FILE"' && \
+	docker exec $$CONTAINER bash -c 'set -o pipefail; cd /data/xnat/config && LOG_FILE="configure-dcm2niix-$(XNAT_PROJECT).log" && rm -f "$$LOG_FILE" && bash configure-dcm2niix.sh 2>&1 | tee "$$LOG_FILE"'
 
 create-xnat-network:
 	$(require_kit)

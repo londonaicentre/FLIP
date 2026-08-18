@@ -67,6 +67,38 @@ make up DOCKER_FL_REGISTRY= DOCKER_FL_TAG=dev
 [`deploy/fl_backend.mk`](../../deploy/fl_backend.mk)). Note `make build` does **not** build these — the deploy
 compose pulls FL images by tag, so their build definitions live only in [`compose.dev.yml`](./compose.dev.yml).
 
+### Containers run as a non-root user (GHSA-8465)
+
+`fl-server`, `fl-client`, and `fl-base` run as a non-root user created from the `UID`/`GID`/`UNAME` build
+args (default `1000`/`1000`/`flip`; the dev compose overrides them with the host user so bind-mounted
+provision directories stay writable). Anywhere one of these containers bind-mounts a host path — a
+provisioned startup kit, the AWS SSO credential cache — that host path must already be owned by a uid the
+container can write, or the entrypoint fails (loudly, since the entrypoint scripts now exit non-zero when
+they can't write their generated config). Letting Docker auto-create the bind source leaves it root-owned
+and silently breaks the container. See `deploy/providers/AWS/TROUBLESHOOTING.md` for the failure mode and
+`deploy/providers/AWS/site.yml` / `deploy/providers/local/site_local_trust.yml` for how the provisioning
+Ansible pre-creates these paths with the right owner.
+
+**Upgrading an existing environment:** hosts that already ran the previous (root) images may have
+root-owned files under the kit's `local/` directory (e.g. `resources.json`, `log_config.json`), written by
+the old containers. The non-root entrypoint can't overwrite those in place — a one-time `chown -R` of the
+provisioned kit directories to the new container uid is needed before the first non-root run.
+
+### Container capability hardening
+
+The trust-deployment `fl-client-net-*` services (`trust/deploy/compose_trust.{production,development}.nvflare.yml`)
+also set `security_opt: [no-new-privileges:true]` and `cap_drop: [ALL]`, matching every other trust-side
+service. Development adds nothing back: the image is non-root, and Docker makes a `cap_add` effective only
+for root, so a grant there would sit unused in the bounding set (`CapEff` stays `0`). A `provision/workspace-dev/`
+kit whose ownership doesn't match the image's baked-in UID is fixed by the `chown -R` above, not by a
+capability. Production adds back `DAC_OVERRIDE` and `FOWNER`, equally inert for the current non-root image
+but retained for legacy root-image compat — a trust pinning a pre-GHSA-8465 `DOCKER_FL_TAG` still runs that
+entrypoint as root, and `cap_drop: ALL` would strip the DAC bypass its unguarded kit writes rely on (see
+[`deploy/README.md`](../../deploy/README.md#linux-capability-restrictions) for the full rationale). None of
+this covers the standalone `fl-services/nvflare/compose.dev.yml` dev harness (`make -C fl-services/nvflare up`),
+which remains unhardened — it runs the same non-root image and kit dirs, so it can be hardened the same way
+whenever someone picks it up.
+
 ## Step-by-step provisioning
 
 ### Project yml file
@@ -244,8 +276,8 @@ list has a single source per environment (`resolve_fl_kit_slot_names`):
 > `NoFreeKitSlotError`. Treat the `FL_KIT_SLOT_NAMES` list as append-only — `N` means
 > "N more live slots" only while that invariant holds.
 
-Then `make register-trust KIT=<CODE>` (see the
-[root README](../../README.md#trust-registration)) claims the slot — registration writes
+Then `make register-trust KIT=<CODE>` (see
+[Joining as a new trust](../../trust/README.md#joining-as-a-new-trust-dev-hub)) claims the slot — registration writes
 the claimed `FL_KIT_SLOT` / `FL_KIT_SLOT_NUMBER` into the trust's kit file, and the
 trust-host deploy pulls that kit from the S3 path above.
 

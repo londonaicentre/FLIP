@@ -53,10 +53,10 @@ from pathlib import Path
 from typing import Any
 
 from nvflare import FedJob
-from nvflare.apis.dxo import DataKind
 from nvflare.app_common.aggregators import InTimeAccumulateWeightedAggregator
 from nvflare.app_common.executors.in_process_client_api_executor import InProcessClientAPIExecutor
 from nvflare.app_common.shareablegenerators.full_model_shareable_generator import FullModelShareableGenerator
+from nvflare.app_common.widgets.intime_model_selector import IntimeModelSelector
 from nvflare.app_common.workflows.cross_site_model_eval import CrossSiteModelEval
 from nvflare.app_common.workflows.global_model_eval import GlobalModelEval
 from nvflare.job_config.defs import FilterType
@@ -110,7 +110,7 @@ class FlipFedAvgRecipe(Recipe):
 
     Head-only (frozen-backbone) aggregation is canonically driven in production by the fl-server's
     deploy-time injection from ``config.json``'s ``AGGREGATE_ONLY_REGEX`` (FLIP#730/#733), so the
-    shipped ``standard_client_api`` template bakes no head-only filters. The ``aggregate_only_regex``
+    shipped ``standard`` template bakes no head-only filters. The ``aggregate_only_regex``
     constructor arg below wires an equivalent recipe-baked chain only for SimEnv/PocEnv runs, where no
     deploy step exists to inject one.
 
@@ -140,13 +140,32 @@ class FlipFedAvgRecipe(Recipe):
             filter) and TrimBroadcastVars (server data filter) — so only params matching the regex are
             aggregated per round and, after round 0, broadcast. Empty (default) wires none. Mirrors the
             fl-server's deploy-time injection from config.json's ``AGGREGATE_ONLY_REGEX``, which is the
-            canonical path for production jobs (the shipped ``standard_client_api`` template bakes no
+            canonical path for production jobs (the shipped ``standard`` template bakes no
             head-only filters): the fl-server folds any recipe-baked chains into its own — a single
             ``["train", "validate"]`` ``ReconstructFullModelForEval`` chain that also extends the
             head-only broadcast to cross-site validation, superseding the recipe's train-only
             ``ReconstructFullModel`` (FLIP#730/#733). This arg stands alone only where that deploy step
             doesn't run (SimEnv/PocEnv), so the ``validate`` broadcast stays full-model there.
+        best_model_metric: when set, wire stock ``IntimeModelSelector`` keyed on this metric so the
+            best global model is saved alongside the final one (FLIP#673). Clients must report the
+            metric — evaluated on the *received* global model, before local training — via
+            ``FLModel(metrics={...})``; the selector averages it across clients each round (an
+            unweighted mean — stock defaults: no ``aggregation_weights``, ``weigh_by_local_iter``
+            off) and fires ``GLOBAL_BEST_MODEL_AVAILABLE`` on improvement, which the persistor
+            answers by saving ``best_FL_global_model.pt`` in the same format as the final model.
+            Round 0 is skipped (there is no aggregated model yet), so this requires
+            ``num_rounds >= 2`` — a single-round job raises ``ValueError`` at construction,
+            mirroring the fl-api's ``BEST_MODEL_METRIC`` upload guard. The *final* aggregated
+            model is never re-broadcast and therefore never evaluated for selection: "best" means
+            best among the intermediate global models, and the final model may in fact outperform
+            it. Empty/None (default) wires no selector and no best model is saved.
+        best_model_metric_minimize: True negates the key metric for selection, for loss-like
+            metrics where lower is better. Defaults to False (higher is better).
     """
+
+    #: FedJob name — subclasses (e.g. :class:`FlipFedOptRecipe`) override it so their exported
+    #: job directory is distinguishable; the platform replaces it with the model id at submit.
+    job_name = "flip_fedavg"
 
     def __init__(
         self,
@@ -169,7 +188,18 @@ class FlipFedAvgRecipe(Recipe):
         params_exchange_format: str = "numpy",
         params_transfer_type: str = "FULL",
         aggregate_only_regex: str = "",
+        best_model_metric: str | None = None,
+        best_model_metric_minimize: bool = False,
     ):
+        # IntimeModelSelector always skips round 0, so a single-round job could never fire it: the
+        # job would run fine but silently never save a best model. Fail fast instead, mirroring
+        # fl-api's validate_config guard on the platform path.
+        if best_model_metric and num_rounds <= 1:
+            raise ValueError(
+                "best_model_metric requires num_rounds >= 2: the best-model selector skips "
+                "round 0, so a single-round job can never save a best model"
+            )
+
         self.num_rounds = num_rounds
         self.min_clients = min_clients
         self.train_script = train_script if train_script.startswith("custom/") else f"custom/{train_script}"
@@ -188,8 +218,21 @@ class FlipFedAvgRecipe(Recipe):
         self.params_exchange_format = params_exchange_format
         self.params_transfer_type = params_transfer_type
         self.aggregate_only_regex = aggregate_only_regex
+        self.best_model_metric = best_model_metric
+        self.best_model_metric_minimize = best_model_metric_minimize
 
         super().__init__(self._build_fed_job())
+
+    def _make_shareable_generator(self) -> FullModelShareableGenerator:
+        """Build the server's shareable generator — the FedAvg diff-apply by default.
+
+        Returns:
+            FullModelShareableGenerator: Adds the aggregated ``WEIGHT_DIFF`` average onto the
+            global model (the aggregator's stock output kind — see the aggregator comment in
+            :meth:`_build_fed_job`). Subclasses override this hook to change the aggregation
+            scheme — see :class:`~flip.nvflare.recipes.flip_fedopt_recipe.FlipFedOptRecipe`.
+        """
+        return FullModelShareableGenerator()
 
     def _build_fed_job(self) -> FedJob:
         """Construct the FedJob NVFLARE's Recipe uses for ``execute(env)``.
@@ -198,7 +241,7 @@ class FlipFedAvgRecipe(Recipe):
         exported ``meta.json`` so the lazily-resolving components can find it.
         """
         job = FedJob(
-            name="flip_fedavg",
+            name=self.job_name,
             min_clients=self.min_clients,
             meta_props={FLIP_CUSTOM_PROPS_KEY: {FLIP_MODEL_ID_KEY: self.model_id}},
         )
@@ -212,16 +255,33 @@ class FlipFedAvgRecipe(Recipe):
             InitialCheckpointPTModelPersistor(model={"path": "models.get_model"}),
             id="persistor",
         )
-        shareable_generator_id = job.to_server(FullModelShareableGenerator(), id="shareable_generator")
-        aggregator_id = job.to_server(
-            InTimeAccumulateWeightedAggregator(expected_data_kind=DataKind.WEIGHTS), id="aggregator"
-        )
+        shareable_generator_id = job.to_server(self._make_shareable_generator(), id="shareable_generator")
+        # Stock NVFLARE semantics: the aggregator averages the clients' WEIGHT_DIFF updates directly
+        # (its stock default expected kind) and the shareable generator applies the average to the
+        # global model — FedAvg adds it (FullModelShareableGenerator), FedOpt feeds it through the
+        # server optimizer. Partial (frozen-backbone head-only) diffs are natively safe: keys absent
+        # from the averaged diff keep their global value.
+        aggregator_id = job.to_server(InTimeAccumulateWeightedAggregator(), id="aggregator")
 
         # Server: FLIP components (locator, JSON generator, event handler, S3 persistor).
         job.to_server(PTModelLocator(model={"path": "models.get_model"}), id="model_locator")
         job.to_server(ValidationJsonGenerator(), id="json_generator")
         job.to_server(ServerEventHandler(), id="flip_server_event_handler")
         job.to_server(PersistToS3AndCleanup(persistor_id=persistor_id), id="persist_and_cleanup")
+
+        # Server: best-global-model selection (FLIP#673). Stock IntimeModelSelector averages the
+        # client-reported key metric (DXO meta INITIAL_METRICS, i.e. FLModel.metrics — evaluated by
+        # each client on the received global model before local training) and fires
+        # GLOBAL_BEST_MODEL_AVAILABLE on improvement; the persistor saves best_FL_global_model.pt.
+        # No selector wired when unset → no best checkpoint is ever written.
+        if self.best_model_metric:
+            job.to_server(
+                IntimeModelSelector(
+                    key_metric=self.best_model_metric,
+                    negate_key_metric=self.best_model_metric_minimize,
+                ),
+                id="model_selector",
+            )
 
         # Server workflows: init → train → model evaluation → post-validation cleanup.
         job.to_server(InitTraining(min_clients=self.min_clients))
@@ -360,6 +420,6 @@ class FlipFedAvgRecipe(Recipe):
         config.setdefault("project_id", self.project_id)
         config.setdefault("query", self.query)
         config.setdefault("local_rounds", self.local_rounds)
-        # Trailing newline: keeps the committed standard_client_api template stable across
+        # Trailing newline: keeps the committed standard template stable across
         # regenerations and satisfies the end-of-file-fixer pre-commit hook.
         client_cfg.write_text(json.dumps(config, indent=2) + "\n")

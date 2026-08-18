@@ -18,37 +18,29 @@ the same **zero inbound trust** architecture as the Docker Compose deployment:
 trust services only make outbound connections to the Central Hub and the FL
 server; no inbound ports are exposed from the K8s cluster.
 
-> **⚠️  Early-access.**
-> The three blockers found in the original single-node k3s validation —
-> `xnat-nginx` exiting after entrypoint, `xnat-web` crash-looping on a DB
-> password mismatch, and the `fl-client` failing to hold its NVFLARE
-> connection — were fixed on branch `376_KubernetesHelmChartForTrust-sideDeployment`
-> (PR [#420](https://github.com/londonaicentre/FLIP/pull/420)). `Trust_K8s` now
-> connects to the stag Central Hub and runs healthy.
->
-> Remaining work before this chart is production-ready is tracked in:
->
-> - [#593](https://github.com/londonaicentre/FLIP/issues/593) — deployment
->   robustness: automated K8s-trust kit provisioning, egress-config persistence
->   across `make sync-kit`, and fl-api zombie hardening on the hub.
-> - [#516](https://github.com/londonaicentre/FLIP/issues/516) — NetworkPolicy
->   egress allowlist audit + threat model.
-> - [#530](https://github.com/londonaicentre/FLIP/issues/530) — RBAC and
->   PodSecurity hardening.
->
-> The kernel-7 gRPC issue ([#527](https://github.com/londonaicentre/FLIP/issues/527)),
-> sidecar FL-client mode ([#528](https://github.com/londonaicentre/FLIP/issues/528)),
-> and XNAT/Orthanc Ingress ([#529](https://github.com/londonaicentre/FLIP/issues/529))
-> were triaged and closed as out-of-scope / won't-fix.
+> **Deployment status.** The chart is validated on single-node k3s and includes
+> kit synchronisation, default-deny ingress, audited egress rules, least-privilege
+> service accounts, and stateless-workload hardening. Review the
+> [known limitations](#known-limitations), particularly storage and Pod Security
+> constraints, before selecting it for a production Trust.
 
 ## Prerequisites
 
 - **Kubernetes cluster** 1.28+ (EKS, AKS, or on-prem)
-- **Helm** 3.16+
+- **Helm** 4.x (the CI-tested version; 3.16+ also works)
 - **kubectl** configured with cluster access
 - **NVIDIA GPU Operator** (if GPU workloads are enabled)
 - **External Secrets Operator** or **Secrets Store CSI Driver** (recommended for
   production secrets management)
+
+> **Helm 4 readiness semantics.** Helm 4 reimplemented `--wait` on top of
+> [kstatus](https://github.com/kubernetes-sigs/cli-utils/tree/master/pkg/kstatus),
+> which is stricter than Helm 3's readiness check — an install that Helm 3 called
+> ready can now block until the workloads genuinely settle, and time out if they
+> never do. `make deploy` does **not** pass `--wait` (it relies on `--timeout 20m`
+> alone), so this only bites if you add `--wait` to your own `helm upgrade`
+> invocation; if you do, size `--timeout` for the slowest service to become ready
+> rather than for the API call to return.
 
 ## Quickstart
 
@@ -119,23 +111,9 @@ helm upgrade --install trust-release ./deploy/providers/kubernetes/ \
   -f deploy/providers/kubernetes/k8s-trust-<CODE>.yaml
 ```
 
-> **⚠️ First-time / clean-install rough edges** (tracked in
-> [#595](https://github.com/londonaicentre/FLIP/issues/595)):
->
-> - `sync-kit` (step 3) creates the Secret via `kubectl`, so a *fresh* `helm
->   install` cannot adopt it (`missing key "app.kubernetes.io/managed-by"`). On a
->   clean namespace, delete it first so Helm owns it:
->   `kubectl delete secret trust-release-flip-trust-secrets -n flip-trust`.
-> - If the `xnat-init` post-install hook fails (see [#565](https://github.com/londonaicentre/FLIP/issues/565)),
->   `helm` reports the release failed and `patch-kit-secrets` is skipped, leaving
->   trust-api on the stale seed key (`401`). Re-run it manually:
->   `make -C deploy/providers/kubernetes patch-kit-secrets KIT=<CODE> PROD=stag`.
-> - For FL training, `sync-kit` regenerates the FL-server egress allowance on
->   every run (see [#593](https://github.com/londonaicentre/FLIP/issues/593)):
->   when the kit carries `FL_SERVER_PORT` it emits `networkPolicies.allowedEgressPorts`
->   into the override with a port-only rule for that port (alongside the chart's
->   default DNS/HTTP/HTTPS ports), so the fl-client → fl-server gRPC is allowed
->   without pinning the NLB's rotating IPs. No manual re-add is needed.
+`sync-kit` stamps a newly created Secret with Helm ownership metadata so the
+first install can adopt it. It also regenerates the FL-server egress port from
+the kit on every run, so upgrades do not lose the fl-client gRPC allowance.
 
 ### 5. Verify the trust is polling
 
@@ -244,6 +222,58 @@ omopDb:
 When `enabled: false`, the chart creates an `ExternalName` Service pointing to
 the external host instead of deploying the service itself.
 
+### OMOP core vocabulary
+
+The `omop-db` image and the pgdata archive restored by `omopDb.initJob` are both
+**vocab-free** (FLIP#842/843). The licensed core vocabulary — SNOMED CT, LOINC,
+Read v2, dm+d — is streamed in afterwards by the `omop-vocab-load`
+post-install/post-upgrade hook.
+
+That bundle cannot be publicly mirrored, so unlike `initJob` there is **no
+anonymous fallback**. The hook runs only when `omopDb.vocabLoad.s3Bucket` names
+a bucket the cluster can read; the chart default is empty, so a default install
+succeeds with **no vocabulary loaded** (`helm install` prints a warning).
+
+> **Cohort queries that join `omop.concept` return nothing until the vocabulary
+> is loaded.** The stack passes every health check in this state — the only
+> symptom is empty cohorts.
+
+Two ways to load it:
+
+| You have… | Do this |
+| --- | --- |
+| Org S3 access | `make -C deploy/providers/kubernetes sync-kit KIT=<CODE> PROD=<env>` writes `omopDb.vocabLoad.s3Bucket` from the kit's `AICENTRE_BUCKET_NAME`, then `make -C deploy/providers/kubernetes deploy-trust-k8s KIT=<CODE>`. **Check the kit carries your own environment's bucket** — it is not a hub-managed key, so a kit scaffolded from `trust/.env.example` ships the dev one, and trust roles have no cross-account read. |
+| Your own licences | Build an equivalent bundle from [OHDSI Athena](https://athena.ohdsi.org/) / [NHS TRUD](https://isd.digital.nhs.uk/) (see `trust/omop-db/README.md`), put it in a bucket you control, and set `omopDb.vocabLoad.s3Bucket` / `bundleName`. Or run `trust/omop-db/files/load_core_vocab.sh` against the database directly. |
+
+Run both targets with `-C deploy/providers/kubernetes` (or from that directory):
+the repo-root `make sync-kit` does not exist, and the root `deploy-trust-k8s`
+forwards to the chart's plain `deploy` target, so `KIT=` never reaches the
+per-trust override file.
+
+AWS credentials for the fetch are shared with the init job:
+`omopDb.initJob.awsProfile` and `omopDb.initJob.hostAwsMount` (enable the host
+`~/.aws` mount for local clusters; use IRSA on EKS). Note `awsProfile` only
+reaches this Job when `hostAwsMount` is enabled.
+
+The hook probes before it fetches: `probe-vocab` asks the database what is
+missing, and only if something is does `fetch-bundle` download the bundle. This
+matters because the hook is on the critical path of *every* `helm upgrade` and a
+failed hook fails the whole release — so an upgrade that changes an unrelated
+image tag costs two queries per vocabulary table (the probe's guards, then the
+loader's) plus a pass over the constraint catalogue, not a multi-GB download. The
+download lands in an `emptyDir` sized by `omopDb.vocabLoad.workDirSize` (10Gi,
+enough for the zip and its unpacked contents together); lower it, and the
+matching `fetchResources` / `loadResources` requests, for a cluster with small
+nodes. Keep the container `ephemeral-storage` limits above `workDirSize` too:
+emptyDir usage is charged to the pod, whose ceiling is the regular containers'
+limits summed with each init container's taken as a max against that total — so
+here it is 12Gi, not 3 × 12Gi. Limits below the work dir size would evict the pod
+before it had finished filling it.
+
+An external OMOP database (`omopDb.enabled: false`) already skips this Job. Set
+`omopDb.vocabLoad.enabled: false` only to keep an in-cluster `omop-db` while
+loading the vocabulary by hand.
+
 ### FL Backend Configuration
 
 Switch between NVFLARE and Flower:
@@ -307,7 +337,7 @@ networkPolicies:
 
 For the full audit of what egress is allowed and why, the residual risk (notably
 443-to-anywhere), and a hardening guide, see
-[NETWORK-POLICY.md](NETWORK-POLICY.md) (#516).
+[NETWORK-POLICY.md](NETWORK-POLICY.md).
 
 ## Secrets Reference
 
@@ -322,17 +352,49 @@ with `secrets.create=true` or pre-created externally):
 | `trust-internal-service-key` | trust-api, imaging-api, data-access-api | Secret key for trust-internal auth |
 | `omop-postgres-password` | omop-db | PostgreSQL password |
 | `data-access-postgres-password` | data-access-api | Data reader DB password |
-| `orthanc-registered-users` | orthanc | Orthanc registered users (JSON) |
+| `orthanc-registered-users` | orthanc | Orthanc registered users, JSON user map e.g. `{"admin": "<password>"}`. Required when `orthanc.enabled` — the env ref is non-optional (asserted on every chart render by the `Helm Template` CI job) and the image refuses to start without users (FLIP-PT-091). Populated from the `ORTHANC_REGISTERED_USERS` env var by `scripts/generate_values.py` |
 | `xnat-admin-password` | xnat-web | XNAT admin password |
 | `xnat-service-user` | xnat-web, imaging-api | XNAT service account username |
 | `xnat-service-password` | xnat-web, imaging-api | XNAT service account password |
-| `xnat-datasource-password` | xnat-web, xnat-db | XNAT database password |
+| `xnat-datasource-password` | xnat-web, xnat-db, imaging-api | Password of the `xnat` **application role** — mint via `make generate-xnat-credentials KIT=<CODE>` and fill from the kit with `scripts/generate_values.py`; xnat-web and xnat-db refuse to start on the shipped placeholder or weak values, and imaging-api splices it into its `XNAT_DATABASE_URL` (FLIP-PT-056) |
+| `xnat-datasource-admin-password` | xnat-db | Password of the Postgres **superuser** (`POSTGRES_PASSWORD`). Minted by the same command, from the kit's `XNAT_DATASOURCE_ADMIN_PASSWORD`. Must differ from `xnat-datasource-password` — xnat-db's entrypoint refuses to start when the two match (FLIP-PT-056) |
 | `grafana-admin-password` | grafana | Grafana admin password |
 | `s3-access-key-id` | fl-client (init container) | AWS access key for S3 kit sync |
 | `s3-secret-access-key` | fl-client (init container) | AWS secret key for S3 kit sync |
 
 For production, use [External Secrets Operator](https://external-secrets.io/) to
 sync secrets from AWS Secrets Manager or HashiCorp Vault.
+
+### xnat-db roles and credential rotation
+
+xnat-db runs two Postgres roles, mirroring the swarm deployment: the `postgres`
+superuser (`xnat-datasource-admin-password`) and the non-superuser `xnat`
+application role (`xnat-datasource-password`) that xnat-web, imaging-api and the
+imaging-import worker authenticate with. The `xnat` role is created by the
+image's baked `XNAT.sql`, which runs from `/docker-entrypoint-initdb.d`.
+
+> **Do not mount a ConfigMap over `/docker-entrypoint-initdb.d`.** A directory
+> mount replaces the directory, hiding `XNAT.sql`, and the two roles silently
+> collapse into one. Per-file mounts need an explicit `subPath`.
+
+**Both passwords apply only at the first initdb of an empty PVC.** A StatefulSet
+PVC survives `helm upgrade` and `helm uninstall`, so changing either secret
+afterwards leaves the database on the old credential while the pods start using
+the new one, and authentication fails. To rotate on a live install, update the
+database to match the secret:
+
+```bash
+kubectl exec -it <xnat-db-pod> -- \
+  psql -U postgres -c "ALTER ROLE xnat WITH PASSWORD '<xnat-datasource-password>'"
+kubectl exec -it <xnat-db-pod> -- \
+  psql -U postgres -c "ALTER ROLE postgres WITH PASSWORD '<xnat-datasource-admin-password>'"
+```
+
+**Upgrading an install created before the roles were split:** those deployments
+set `POSTGRES_USER=xnat`, so their single role is a superuser named `xnat` and
+there is no `postgres` role to authenticate as. Either re-initialise the xnat-db
+PVC (destroys the XNAT database — export anything you need first), or keep the
+old install on the previous chart version.
 
 ## Architecture
 
@@ -372,23 +434,23 @@ sync secrets from AWS Secrets Manager or HashiCorp Vault.
 ### Security Model
 
 - **NetworkPolicies**: Default-deny-ingress, allow-intra-namespace, allow-egress
-  to Central Hub and FL server only (audit & threat model: [NETWORK-POLICY.md](NETWORK-POLICY.md), #516)
+  to Central Hub and FL server only (audit and threat model: [NETWORK-POLICY.md](NETWORK-POLICY.md))
 - **No LoadBalancer or NodePort** for application services (all ClusterIP)
 - **Secrets**: Separate from ConfigMaps; recommend External Secrets Operator
 - **FL clients**: No Central Hub credentials; connect outbound to FL server only
 - **ServiceAccounts**: each stateless service runs under its own ServiceAccount
   with no RBAC role bindings (none of the pods call the Kubernetes API — least
   privilege by default).
-- **Pod Security & container hardening** (#530): the chart-created namespace
+- **Pod Security & container hardening**: the chart-created namespace
   carries Pod Security Standards labels (`enforce=baseline`, `warn`/`audit=restricted`
   by default — tune via `podSecurity.*`), and the stateless services
-  (trust-api, imaging-api, data-access-api, fl-client, imaging-import-worker)
+  (trust-api, imaging-api, data-access-api, fl-client)
   apply a container `securityContext` (`allowPrivilegeEscalation: false`, drop
   `ALL` capabilities, `seccompProfile: RuntimeDefault`) from `.Values.securityContext`.
   `runAsNonRoot` / `readOnlyRootFilesystem` are left opt-in (image-dependent).
   **Remaining for full `restricted` enforcement:** the stateful images
   (`xnat-web`, `xnat-db`, `omop-db`, `orthanc`) need `fsGroup`/chown init
-  containers before they can run non-root — tracked under #530.
+  containers before they can run non-root.
 
 ## Development
 
@@ -478,6 +540,41 @@ Symptoms: trust-api can't reach imaging-api or data-access-api (connection timeo
 - PVC name must match the StatefulSet's `volumeClaimTemplates` — the Job expects a PVC named `<release-name>-omop-db-data`.
 - To re-run: `helm upgrade trust-release . --set omopDb.initJob.enabled=true` or delete the Job and let Helm re-create it.
 
+**OMOP vocabulary load** (`omop-vocab-load`):
+
+- Cohorts come back empty but every pod is healthy → the vocabulary was never loaded.
+  Check with `kubectl get job -n <ns> -l app.kubernetes.io/component=omop-vocab-load`.
+  **No Job at all** means `omopDb.vocabLoad.s3Bucket` is empty and the hook was skipped
+  by design — see "OMOP core vocabulary" above.
+- `aws s3 cp` denied in the `fetch-bundle` initContainer → wrong bucket for this
+  environment (each env reads its own; no cross-account read), or no credentials
+  (`omopDb.initJob.hostAwsMount` for local clusters, IRSA on EKS).
+- `/flip/omop/load_core_vocab.sh: No such file or directory` → the `omopDb.image.tag`
+  in use predates FLIP#842; repull a CI-published tag.
+- Re-running `helm upgrade` is safe *and* cheap. The Job runs three stages —
+  `probe-vocab` asks the database what is missing, `fetch-bundle` downloads the
+  bundle only if something is, then `load-vocab` loads it. On an upgrade where the
+  vocabulary is already loaded the probe logs `Core vocabulary already present in
+  every table`, the fetch logs `skipping bundle fetch`, and no multi-GB download
+  happens. The loader still runs (it re-applies the FK constraints, so a previous
+  run that died between the load and the constraints heals here).
+- `probe-vocab` fails with `omop-db not reachable after 60 attempts` → the database
+  never became ready within five minutes. This is a hard failure: the Pod fails,
+  and after `backoffLimit` so does the release. Check the `omop-db` pod and the
+  init Job that restores its PVC. (`load-vocab` waits the same way and fails the
+  same way, which is what stops a database restart during a long download from
+  discarding the bundle that was just fetched.)
+- A database that *is* reachable but cannot answer the probe — wrong password,
+  `omop` schema absent — is treated differently: the probe leaves its marker
+  unwritten and the Job falls through to a full fetch-and-load rather than
+  failing, because a needless download is recoverable and a wrongly-skipped load
+  is silent. The loader then reports the real error.
+- The Job reaches no host but S3. `fetch-bundle` only downloads the zip; the
+  loader unpacks it with the `unzip` baked into the `omop-db` image, so nothing
+  is installed at run time and no package mirror has to be on the egress
+  allowlist. `unzip: not found` in `load-vocab` means the `omopDb.image.tag` in
+  use predates this — repull a CI-published tag.
+
 ### Getting help
 
 If the above doesn't resolve your issue, please open a GitHub issue at:
@@ -492,25 +589,27 @@ Include:
 
 ## Known Limitations
 
-1. **XNAT Container Service — Job execution not yet wired**: The Container
-   Service plugin's native Kubernetes compute backend (available since plugin
-   3.2.0) is registered at init time and the `dcm2niix` command is available
-   for per-project event subscriptions. However, the storage path for spawned
-   container Jobs is not yet plumbed: XNAT's data PVC is `ReadWriteOnce`, so a
-   dcm2niix Job would need either `nodeAffinity` onto the XNAT pod's node or a
-   `ReadWriteMany` storage class (e.g. NFS/EFS) to mount the same archive/build
-   data. Subscriptions are created successfully, but DICOM-to-NIfTI conversion
-   will not yet run end-to-end on the K8s deployment until the PVC topology
-   for Jobs is finalised. **See [DCM2NIIX-K8S.md](DCM2NIIX-K8S.md) (#565)** for
-   the storage analysis, the RWX / single-node fixes (set
-   `xnat.web.persistence.accessMode: ReadWriteMany` for multi-node), and the
-   remaining chart work that must be validated against a live XNAT Container
-   Service.
+1. **Pod Security for stateful services**: the namespace enforces the Baseline
+   profile and audits/warns against Restricted. The stateless APIs are hardened,
+   but `xnat-web`, `xnat-db`, `omop-db`, and `orthanc` still need image and
+   volume-permission work before the namespace can enforce Restricted.
 
-2. **Orthanc SQLite**: Orthanc uses an embedded SQLite database that cannot be
+2. **XNAT Container Service — single-node by default**: DICOM-to-NIfTI
+   conversion runs end-to-end on Kubernetes (FLIP#565). The Container Service
+   spawns each `dcm2niix` Job with the `xnat-web` data PVC mounted, configured by
+   `combined-pvc-name` + `combined-path-translation` in the Kubernetes backend
+   entry of the `xnat-cs-config` ConfigMap. Because the Job mounts the *same* PVC
+   as `xnat-web`, the chart default `ReadWriteOnce` only works when the Job is
+   scheduled onto the node running `xnat-web` — true for a single-node cluster.
+   For multi-node, give the XNAT data volume a `ReadWriteMany` storage class
+   (`xnat.web.persistence.accessMode: ReadWriteMany`, e.g. NFS/EFS). See
+   [TROUBLESHOOTING.md §2.3b](TROUBLESHOOTING.md) for the failure modes,
+   including the trailing slash that `combined-path-translation` must keep.
+
+3. **Orthanc SQLite**: Orthanc uses an embedded SQLite database that cannot be
    shared across multiple pod replicas. The chart configures Orthanc with
    `replicas: 1` and a `ReadWriteOnce` PVC.
 
-3. **Alloy log collection**: In the K8s deployment, Alloy runs as a DaemonSet
+4. **Alloy log collection**: In the K8s deployment, Alloy runs as a DaemonSet
    reading pod log files from the host filesystem, replacing the Docker socket
    approach used in the compose deployment.

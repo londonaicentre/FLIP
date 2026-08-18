@@ -26,6 +26,7 @@ from fastapi.testclient import TestClient
 from flip_api.auth.access_manager import authenticate_trust
 from flip_api.db.database import get_session
 from flip_api.db.models.main_models import Trust, TrustTask
+from flip_api.domain.schemas.private import TrustHeartbeatInput
 from flip_api.domain.schemas.status import TaskStatus, TaskType
 from flip_api.main import app
 
@@ -278,6 +279,123 @@ def test_heartbeat_updates_timestamp_and_returns_identity(mock_auth, mock_trust)
     app.dependency_overrides.pop(get_session, None)
 
 
+def _snapshot_body():
+    """A valid heartbeat body as sent by a collector-enabled trust-api."""
+    return {
+        "services": {
+            "trust-api": {"status": "healthy", "version": "0.3.0", "response_ms": None},
+            "xnat": {"status": "down", "version": None, "response_ms": None},
+            "imaging-api": {"status": "degraded", "version": "0.3.0", "response_ms": 1500},
+            # `unknown` is what the collector emits for every prober-chain failure —
+            # the hub must accept it or those trusts 422 and lose their telemetry.
+            "dicom": {"status": "unknown", "version": None, "response_ms": None},
+        },
+        "collected_at": "2020-01-01T00:00:00+00:00",
+    }
+
+
+def test_heartbeat_without_body_leaves_services_health_untouched(mock_auth, mock_trust):
+    """A bodyless heartbeat (pre-collector trust-api) must behave exactly as before —
+    stamp last_heartbeat, never touch the services columns."""
+    mock_trust.services_health = {"sentinel": True}
+    mock_trust.services_health_at = "sentinel-ts"
+    mock_db = MagicMock()
+    app.dependency_overrides[get_session] = lambda: mock_db
+
+    response = client.post("/api/trust/heartbeat")
+
+    assert response.status_code == 200
+    assert mock_trust.services_health == {"sentinel": True}
+    assert mock_trust.services_health_at == "sentinel-ts"
+    assert mock_db.commit.called
+
+    app.dependency_overrides.pop(get_session, None)
+
+
+def test_heartbeat_with_body_persists_services_and_stamps_server_time(mock_auth, mock_trust):
+    """A snapshot body lands in services_health; services_health_at is stamped
+    server-side (the payload's collected_at — year 2020 here — is never trusted)."""
+    mock_db = MagicMock()
+    app.dependency_overrides[get_session] = lambda: mock_db
+    before = datetime.now(timezone.utc)
+
+    response = client.post("/api/trust/heartbeat", json=_snapshot_body())
+
+    assert response.status_code == 200
+    assert mock_trust.services_health == _snapshot_body()["services"]
+    assert mock_trust.services_health_at >= before
+    assert mock_trust.last_heartbeat is not None
+    assert mock_db.commit.called
+
+    app.dependency_overrides.pop(get_session, None)
+
+
+@pytest.mark.parametrize(
+    ("mutate", "reason"),
+    [
+        (lambda b: b["services"]["xnat"].update(status="sideways"), "unknown status value"),
+        (
+            lambda b: b.update(services={f"svc-{i:02d}": {"status": "healthy"} for i in range(17)}),
+            "over 16 services (exactly 17, so a cap of 17 would fail this)",
+        ),
+        (lambda b: b["services"].update({"Bad_Key!": {"status": "healthy"}}), "key with invalid characters"),
+        (lambda b: b["services"].update({"k" * 33: {"status": "healthy"}}), "key over 32 chars"),
+        (lambda b: b["services"]["xnat"].update(version="v" * 65), "version over 64 chars"),
+        (lambda b: b["services"]["xnat"].update(response_ms=-1), "negative response_ms"),
+        (lambda b: b["services"]["xnat"].update(response_ms=1_000_001), "response_ms over cap"),
+        (lambda b: b.pop("services"), "body present but services missing"),
+        (lambda b: b.update(services={}), "empty snapshot (would overwrite a good one and stamp it fresh)"),
+    ],
+)
+def test_heartbeat_rejects_invalid_body(mutate, reason, mock_auth, mock_trust, caplog):
+    """Malformed snapshots are rejected loudly (422) — nothing is persisted, and the
+    rejection is logged HUB-side naming the trust. The sender is an unattended
+    process in another institution, so a hub operator otherwise cannot tell a
+    rejected snapshot from a trust that never reported."""
+    body = _snapshot_body()
+    mutate(body)
+    mock_db = MagicMock()
+    app.dependency_overrides[get_session] = lambda: mock_db
+
+    with caplog.at_level("ERROR"):
+        response = client.post("/api/trust/heartbeat", json=body)
+
+    assert response.status_code == 422, reason
+    assert not mock_db.commit.called
+    assert any("Rejected health snapshot" in r.message and TRUST_NAME in r.message for r in caplog.records)
+
+    app.dependency_overrides.pop(get_session, None)
+
+
+@pytest.mark.parametrize(
+    ("mutate", "reason"),
+    [
+        (
+            lambda b: b.update(services={f"svc-{i:02d}": {"status": "healthy"} for i in range(16)}),
+            "exactly 16 services",
+        ),
+        (lambda b: b["services"].update({"k" * 32: {"status": "healthy"}}), "key at 32 chars"),
+        (lambda b: b["services"]["xnat"].update(version="v" * 64), "version at 64 chars"),
+        (lambda b: b["services"]["xnat"].update(response_ms=0), "response_ms at zero"),
+        (lambda b: b["services"]["imaging-api"].update(response_ms=1_000_000), "response_ms at cap"),
+    ],
+)
+def test_heartbeat_accepts_values_at_the_caps(mutate, reason, mock_auth, mock_trust):
+    """Boundary payloads exactly at the documented caps are legitimate — tightening
+    any bound by one would reject real snapshots with no failing test otherwise."""
+    body = _snapshot_body()
+    mutate(body)
+    mock_db = MagicMock()
+    app.dependency_overrides[get_session] = lambda: mock_db
+
+    response = client.post("/api/trust/heartbeat", json=body)
+
+    assert response.status_code == 200, reason
+    assert mock_db.commit.called
+
+    app.dependency_overrides.pop(get_session, None)
+
+
 # ---- Email notification on CREATE_IMAGING result ----
 
 
@@ -329,3 +447,13 @@ def test_email_failure_does_not_fail_task_submission(mock_send_emails, trust_id,
     assert mock_task.status == TaskStatus.COMPLETED
     assert mock_db.commit.called
     app.dependency_overrides.pop(get_session, None)
+
+
+def test_snapshot_bounds_surface_in_the_openapi_schema():
+    """The declarative bounds exist so a generated client sees them too — an
+    imperative validator enforced the same rules but published nothing."""
+    schema = TrustHeartbeatInput.model_json_schema()["properties"]["services"]
+
+    assert schema["maxProperties"] == 16
+    assert schema["minProperties"] == 1
+    assert "^[a-z0-9-]{1,32}$" in schema["patternProperties"]

@@ -26,10 +26,19 @@ version = "1.0.0"
 description = "Tutorial for medical image segmentation of spleen images using MONAI and Flower."
 license = "Apache-2.0"
 # Dependencies for your Flower App
+# flip-utils is deliberately NOT declared here. Flower runtime-installs an app's declared
+# dependencies (`uv sync`) into a per-run environment that it PREPENDS to sys.path, so declaring
+# flip-utils resolves it from PyPI and shadows the in-repo copy baked into the FL images at
+# /opt/flip-utils — the tutorial-side half of FLIP#767. PyPI currently serves 0.1.8 against the
+# repo's 0.4.0, and 0.1.8 has no flip/flower/strategy.py, so a declared dependency breaks
+# `from flip.flower.strategy import FlipFedAvg` outright. Undeclared, `import flip` falls through
+# to the image's copy, which is what the platform runs. The fl-apps templates solve the same
+# problem with `[tool.uv.sources] flip-utils = { path = "/opt/flip-utils" }`; that pin cannot be
+# used here because it makes `uv sync` unresolvable on a workstation, where the path does not
+# exist. Pick up flip-utils changes with `make build-fl FL_BACKEND=flower`.
 dependencies = [
-    "flip-utils>=0.1.8",
     "flwr[simulation]>=1.32.0",
-    "monai>=1.5.2",
+    "monai>=1.6.0",
     "nibabel>=5.3.3",
     "numpy>=2.4.2",
     "pandas>=3.0.0",
@@ -63,6 +72,13 @@ learning-rate = 1e-4
 val-split = 0.3
 test-split = 0.3
 batch-size = 2
+# Client-side differential privacy (flip.flower.privacy). On by default; set dp-enabled = false
+# to run the same app with the mechanism off. See the README's "Differential privacy" section.
+dp-enabled = true
+dp-clipping-norm = 1.0
+dp-sensitivity = 1e-4
+dp-epsilon = 10.0
+dp-delta = 1e-5
 # Model configuration
 spatial-dims = 3 # This is currently unused but can be passed to get_model()
 # FLIP configuration - needs to be set here so it can be overridden by flwr run command
@@ -71,6 +87,12 @@ flip-model-id = "uuid"
 flip-project-id = "uuid"
 flip-cohort-query = "*"
 flip-job-dir = "job-dir"
+# Best-model selection: save best_FL_global_model.pt alongside the final model, chosen by
+# the aggregated test Dice (higher is better) that client_app.py reports each round. Set
+# the metric to "" to disable, and -minimize to true for a loss-like metric. Selection
+# makes the evaluate phase run every round instead of only the last one.
+best-model-metric = "test_dice"
+best-model-metric-minimize = false
 
 # Linter
 [tool.ruff]

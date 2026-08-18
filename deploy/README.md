@@ -177,7 +177,7 @@ SMS MFA is intentionally disabled — it would introduce an SNS dependency and r
 
 The MFA gate is controlled by `flip-api`'s `ENFORCE_MFA` setting. The Settings default is `true` — when active, `verify_token` returns 403 for any signed-in user without an active TOTP and the UI's router guard redirects them through enrolment.
 
-The dev override lives in `deploy/compose.development.yml` (`ENFORCE_MFA=false`) so local development doesn't force enrolment on a burner authenticator. **The flag is intentionally not exposed in `.env.development.example` or AWS Secrets Manager** — the dev compose override is the only place it should appear, and stag/prod leave it untouched so the gate stays on. Adding `ENFORCE_MFA` to a stag/prod environment file would silently disable MFA for the entire deployment.
+The dev override lives in `deploy/compose.development.yml` (`ENFORCE_MFA=false`) so local development doesn't force enrolment on a burner authenticator. **The flag is intentionally not exposed in `.env.development.example` or AWS Secrets Manager** — the Settings default (`true`) is the canonical secure anchor. `deploy/compose.production.yml` passes `ENFORCE_MFA=${ENFORCE_MFA:-true}` so operators can override it from `.env.stag`/`.env.production` for testing (e.g. `ENFORCE_MFA=false`), but it falls back to the secure `true` default when unset — do not commit an override into either env file for a real deployment.
 
 The flag is mirrored to the UI via `/users/me/mfa/status` (`required: bool`) so the router guard knows when to skip the enrolment redirect.
 
@@ -229,6 +229,29 @@ This runbook is for the case where **you** have lost access to your TOTP device 
 
 ## Deployment Models
 
+### Central Hub
+
+The Central Hub has **one supported production deployment**: ECS Fargate via the Terraform root in
+[`deploy/providers/AWS/`](providers/AWS/README.md). The task definitions in `ecs_tasks.tf` (env maps in
+`locals.tf`) are the **canonical definition of production container config**. Deploying into an AWS
+LZA-governed account is an env-gated **mode** of that same root, not a separate path
+([FLIP#749](https://github.com/londonaicentre/FLIP/issues/749)). The ECS FL task definitions serve **both
+FL backends** ([FLIP#566](https://github.com/londonaicentre/FLIP/issues/566)): `FL_BACKEND` in the env file
+switches the same task families between NVFLARE and Flower (SuperLink ports/command/creds — Flower
+additionally needs `FLOWER_KIT_DATE` and provisioned creds uploaded via
+`make -C fl-services/flower provision upload-creds-to-s3`, with `FLOWER_EXTRA_SERVER_SANS` covering the
+Cloud Map + public FL hostnames).
+
+> **Deprecated — hub on EC2/compose** ([FLIP#936](https://github.com/londonaicentre/FLIP/issues/936)):
+> running the hub via `compose.production*.yml` on an EC2 or self-managed host is no longer a supported
+> deployment target (the former hub EC2 host was long since replaced by a minimal SSM bastion). The
+> `compose.production*.yml` files remain maintained **only** as the local prod-image harness
+> (`make up PROD=stag|true` — the baked images, no dev mounts). When changing production config, change
+> Terraform first and update the compose files only as far as the local harness needs. Remaining hub-EC2
+> material is removed once the LZA migration's legacy decommission lands (FLIP#749 WP6).
+
+### Trusts
+
 FLIP supports three trust deployment models:
 
 | Model | Location | Documentation |
@@ -271,18 +294,27 @@ storage world-writable so a developer needs no `sudo` to re-seed it.
 ### Linux Capability Restrictions
 
 Every container drops **all** Linux capabilities (`cap_drop: [ALL]`) and only adds back what the
-service strictly requires. A few dev-only services (pgadmin, register-supernode-keys, fl-clients)
-are deliberately exempted because their entrypoints depend on root capabilities that would
-crash-loop under `cap_drop: ALL`. The per-service grants in the compose files are:
+service strictly requires. Two dev-only services (pgadmin, register-supernode-keys) are
+deliberately exempted because their entrypoints depend on root capabilities that would crash-loop
+under `cap_drop: ALL`. The standalone `fl-services/nvflare/compose.dev.yml` dev harness's
+`fl-client-1`/`fl-client-2` — used only by `make -C fl-services/nvflare up` for iterating on the
+backend outside the full trust stack — carry no `cap_drop` either, but for a different reason:
+they are simply **not hardened yet**, not blocked from it. They run the same non-root
+`flare-fl-client` image and the same kit dirs as the hardened `fl-client-net-*` services below, so
+a later pass can harden them the same way. The trust-deployment `fl-client-net-*` services (in
+`trust/deploy/compose_trust.*.yml`, what a real trust actually runs) are hardened — see the rows
+below. The per-service grants in the compose files are:
 
 | Service(s) | Granted capabilities | Reason |
 |------------|----------------------|--------|
 | flip-api, fl-api (Flower), trust-api, imaging-api, data-access-api, xnat-web, loki, alloy, grafana | `CHOWN` | In-container init/entrypoint fixes ownership on volume paths it owns. |
+| fl-client-net-* (Flower — production and development; NVFLARE development) | *(none)* | Runs non-root (GHSA-8465), and Docker grants effective capabilities only to root — a `cap_add` here would land in the bounding set with `CapEff` still `0`, so it would buy nothing. Flower's `flower-supernode` entrypoint does no chmod/chown at all and its dev mounts are `:ro`. NVFLARE's dev kit (`provision/workspace-dev/`) is written by `make provision` as the host user whose UID is baked into the `:dev` image, so ownership already matches; when it doesn't (CI, a shared devbox, a teammate's prebuilt image) the fix is to `chown` the kit dirs to the container UID, not to grant a capability. |
+| fl-client-net-* (NVFLARE, production) | `DAC_OVERRIDE`, `FOWNER` (production) | Inert for the current image, which runs non-root from PID 1 — the Ansible-provisioned `FL_KIT_DIR` is pre-chowned to the container's UID by `site.yml` / `site_local_trust.yml`. Kept for legacy root-image compat: trusts pin `DOCKER_FL_TAG` (an immutable `sha` tag is the documented norm), so `--pull always` cannot move a trust off a pre-GHSA-8465 **root** image, and under `cap_drop: ALL` such an image loses root's implicit DAC bypass on the `envsubst` write into the bind-mounted `local/` and `FOWNER` on the `chmod +x` of `startup/*.sh`. Its writes predate the `\|\| exit 1` guard, so it degrades to running NVFLARE against a stale/absent `resources.json` rather than crash-looping — a worse failure to diagnose. Same rationale as the orthanc row below. |
 | fl-api (NVFLARE) | `CHOWN` | The `flare-fl-api` image runs as user `flip` (UID 1001, non-root), so only the `CHOWN` baseline is needed; `DAC_OVERRIDE` and `FOWNER` are inert for non-root processes. |
 | fl-server (NVFLARE) | `CHOWN`, `DAC_OVERRIDE`, `FOWNER` | The container runs as root, but the provisioned NVFLARE kits are bind-mounted owned by the provisioning uid with 0600 keys. `cap_drop: ALL` strips root's implicit DAC bypass, so without `DAC_OVERRIDE` the fl-server crash-loops on `/app/startup/server.key`; the entrypoint also `chmod`s kit scripts it does not own (`FOWNER`). In dev, the same grant lets the root fl-server read the operator's 0600 AWS SSO token cache for the S3 results upload. |
 | fl-server (Flower, development only) | `CHOWN`, `DAC_OVERRIDE` | The dev compose runs the SuperLink as root (see the `user: "0:0"` comment in `compose.development.flower.yml`) to read the host-provisioned 0640 TLS keys and the operator's 0600 SSO token cache; `cap_drop: ALL` strips root's implicit DAC bypass, so `DAC_OVERRIDE` is granted back. Production runs the image's non-root user with instance-role AWS credentials and keeps the `CHOWN` baseline. |
 | flip-db, omop-db, xnat-db | `CHOWN`, `DAC_OVERRIDE`, `FOWNER`, `SETUID`, `SETGID` | The official postgres entrypoint runs as root and `gosu`-drops to the `postgres` user (`SETUID`/`SETGID`). On every start it re-runs `chmod 00700 $PGDATA` and a `chown` sweep over the persisted data dir, which on subsequent boots is already owned by `postgres` with mode `0700` — `chmod` on a dir owned by another uid needs `FOWNER` and traversing it needs `DAC_OVERRIDE`. Without them the container exits 1 on a persisted volume (see commit history, FLIP#485). |
-| orthanc | `CHOWN` | Runs non-root (UID 999) from PID 1, so no capabilities survive into the process anyway; the storage bind mount is made 999-writable at the provisioning layer rather than fixed up with in-container caps. `CHOWN` is kept only as the shared baseline. |
+| orthanc | `CHOWN`, `DAC_OVERRIDE`, `FOWNER` (production) | Runs non-root (UID 999) from PID 1, so `DAC_OVERRIDE`/`FOWNER` are inert for the current image — they're kept for legacy root-image compat, since a pre-hardening orthanc image runs its entrypoint as root and crash-loops under `cap_drop: ALL` without them (hostid write, plugin symlink fixup). The storage bind mount is made 999-writable at the provisioning layer rather than fixed up with in-container caps; `CHOWN` is kept as the shared baseline. |
 | xnat-nginx | `CHOWN`, `NET_BIND_SERVICE` | `NET_BIND_SERVICE` lets the non-root `nginx` user bind port 80 (Docker sets `net.ipv4.ip_unprivileged_port_start=0`, but capabilities are still checked). |
 | xnat-socket-proxy | *(none)* | HAProxy runs as root, which owns the mounted Docker socket, so it connects with an empty capability set — nothing needs adding back on top of `cap_drop: ALL`. See [Docker Socket Isolation](#docker-socket-isolation-xnat-container-service). |
 | flip-ui (development only) | `CHOWN`, `DAC_OVERRIDE`, `SETUID`, `SETGID`, `NET_BIND_SERVICE` | Vite dev server with bind-mounted source; not present in production where the UI ships as static files served by CloudFront. |
@@ -414,8 +446,8 @@ probes still work.
 
 Each trust gets a distinct key — a leak in `Trust_1` cannot drive operations on `Trust_2`'s APIs. The hub
 never sees these keys: they live only in trust-side env (the trust's kit file `trust/.env.<CODE>.<env>`, which
-`trust/Makefile` `-include`s so every trust-internal container inherits it). See the **Trust-internal Service
-Authentication** section in the repo-root [`CLAUDE.md`](../CLAUDE.md) for the full threat model.
+`trust/Makefile` `-include`s so every trust-internal container inherits it). See the
+[public security model](../docs/source/security.rst#trust-internal-service-authentication) for the full threat model.
 
 FL clients (trust side) **do not** have Central Hub API credentials. Only the fl-server communicates with flip-api.
 FL clients relay metrics and exceptions to the fl-server, which forwards them to the Central Hub.
@@ -439,24 +471,17 @@ outside the hub's Docker network.
 | `CENTRAL_HUB_API_URL` | flip-ui, trust-api | Public base URL of flip-api (in prod: CloudFront URL) |
 | `FLIP_API_INTERNAL_URL` | fl-server | Docker-network URL of flip-api on the Central Hub (e.g. `http://flip-api:8000/api`) |
 
-#### Note on the ECS migration
+#### Note on ECS networking
 
-The Central Hub is moving from EC2 + docker-compose to ECS Fargate; the foundation Terraform (cluster,
-EFS, IAM, parameter store, service discovery, VPC endpoints) has landed under `deploy/providers/AWS/`,
-but task definitions and services are still being rolled out. `FLIP_API_INTERNAL_URL` names the intent
-("flip-api's internal URL on the Central Hub"), not the mechanism, so the split survives the move. When
-migrating, point it at whichever in-VPC, header-preserving endpoint flip-api exposes:
-
-| ECS layout | `FLIP_API_INTERNAL_URL` |
-| --- | --- |
-| Sidecar (both containers in one task, awsvpc) | `http://localhost:8000/api` |
-| Separate services + ECS Service Connect | `http://flip-api:8000/api` |
-| Separate services + Cloud Map private DNS | `http://flip-api.<namespace>.local:8000/api` |
-| Separate services + internal ALB | `http://<internal-alb-dns>/api` |
+The Central Hub runs on ECS Fargate (see [Deployment Models](#deployment-models)).
+`FLIP_API_INTERNAL_URL` names the intent ("flip-api's internal URL on the Central Hub"), not the
+mechanism: on ECS, Terraform sets it to the Cloud Map private-DNS name
+(`http://flip-api.flip.local:8000/api`, built in `locals.tf`); on the local compose harness it is the
+Docker-network URL (`http://flip-api:8000/api`).
 
 What it must not be: the public CloudFront URL. That's orthogonal to compute — CloudFront strips
-`X-Internal-Service-Key` regardless of whether flip-api runs on EC2 or ECS. Internal ALBs preserve
-all request headers by default, so that option works; CloudFront doesn't.
+`X-Internal-Service-Key` at the edge. Internal ALBs preserve all request headers by default, so an
+internal-ALB value would also work; CloudFront doesn't.
 
 > **Note on troubleshooting**: AWS-deployment-specific failure modes (Terraform state drift, ECS
 > service stuck in `PENDING`, CloudFront cache invalidation, RDS connectivity) are documented in

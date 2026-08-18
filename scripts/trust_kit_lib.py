@@ -32,7 +32,11 @@ in-place upsert in scripts/sync_trust_kit.py.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
+
+# Mode for any file holding trust credentials: owner read/write only.
+KIT_FILE_MODE = 0o600
 
 # Sentinel comment marking the start of the managed Hub-shared block. Must stay
 # byte-identical to the sentinel emitted historically so an existing kit's block
@@ -187,6 +191,37 @@ def comment_out(lines: list[str], key: str) -> list[str]:
     return out
 
 
+def write_secure(target: Path, lines: list[str]) -> None:
+    """Write ``lines`` to ``target``, restricting it to 0600 before any content lands.
+
+    Do not use ``Path.write_text`` followed by ``chmod``: ``write_text`` does not change the mode of
+    an existing file, so a kit file already at 0644 — hand-created, or seeded under a stock umask 022
+    — holds the freshly minted ``TRUST_API_KEY`` and ``TRUST_INTERNAL_SERVICE_KEY`` world-readable
+    for the window between the two calls, and permanently if the process is interrupted between
+    them. Opening without ``O_TRUNC`` lets ``fchmod`` run first; truncate and write only once the
+    descriptor is 0600.
+
+    ``flip_api.scripts.env_utils.write_env_file`` is the same routine for the two generator scripts
+    that run inside flip-api's package and virtual environment. This module sits at the repository
+    root and is imported by the plain ``make register-trust`` scripts, so it cannot import that one.
+
+    Args:
+        target (Path): The env file to write.
+        lines (list[str]): Lines to write, without trailing newlines. Empty writes an empty file,
+            not a lone newline — the seeding call passes ``[]`` when there is no example to copy,
+            and a stray newline there becomes a leading blank line in the finished kit.
+
+    Returns:
+        None
+    """
+    with os.fdopen(os.open(target, os.O_WRONLY | os.O_CREAT, KIT_FILE_MODE), "w") as handle:
+        os.fchmod(handle.fileno(), KIT_FILE_MODE)
+        handle.truncate(0)
+        # Guard the empty case so an empty list writes an empty file, not a lone "\n" that would
+        # leave a leading blank line — matching flip_api.scripts.env_utils.write_env_file exactly.
+        handle.write("\n".join(lines) + "\n" if lines else "")
+
+
 def write_kit(target: Path, kit: dict, example: Path | None = None, hub_shared_commented: bool = False) -> None:
     """Merge a registration kit into ``target`` in place, preserving operator edits.
 
@@ -207,7 +242,7 @@ def write_kit(target: Path, kit: dict, example: Path | None = None, hub_shared_c
         None
     """
     if not target.exists():
-        target.write_text(example.read_text() if example and example.exists() else "")
+        write_secure(target, (example.read_text() if example and example.exists() else "").splitlines())
 
     lines = target.read_text().splitlines()
 
@@ -241,5 +276,4 @@ def write_kit(target: Path, kit: dict, example: Path | None = None, hub_shared_c
             for key, value in hub_shared.items():
                 lines = upsert(lines, key, str(value))
 
-    target.write_text("\n".join(lines) + "\n")
-    target.chmod(0o600)
+    write_secure(target, lines)

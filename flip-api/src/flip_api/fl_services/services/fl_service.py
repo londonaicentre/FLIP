@@ -13,11 +13,12 @@
 import json
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from uuid import UUID
 
 from fastapi import Request
-from sqlmodel import Session, select
+from sqlalchemy import Column
+from sqlmodel import Session, col, select
 
 from flip_api.config import get_settings
 from flip_api.db.database import get_engine
@@ -30,9 +31,10 @@ from flip_api.domain.interfaces.fl import (
     IStartTrainingBody,
     JobRequiredFiles,
 )
-from flip_api.domain.schemas.status import FLJobStatus, FLTargets
+from flip_api.domain.schemas.status import FLJobStatus, FLTargets, JobStatus
 from flip_api.domain.schemas.types import FLBackend
 from flip_api.utils.encryption import encrypt
+from flip_api.utils.exceptions import JobAbortedError, NotFoundError
 from flip_api.utils.http import http_delete, http_get, http_post
 from flip_api.utils.logger import logger
 from flip_api.utils.s3_client import S3Client
@@ -42,6 +44,45 @@ class UnknownJobTypeError(Exception):
     """Custom exception for unknown job types in FL"""
 
     pass
+
+
+# Pre-rename aliases: the Client-API templates originally lived under ``*_client_api`` names and
+# took over the plain names when the legacy Executor templates were retired. Models created before
+# the rename still carry the old string in their uploaded config.json, so the bundlers normalise it
+# here — BEFORE manifest validation, which knows only the plain names — keeping those models
+# trainable without a config edit and re-upload.
+JOB_TYPE_ALIASES = {
+    "standard_client_api": "standard",
+    "evaluation_client_api": "evaluation",
+    "diffusion_model_client_api": "diffusion_model",
+}
+
+
+def _normalise_job_type(job_type: str, fl_backend: FLBackend) -> str:
+    """Resolve a pre-rename job-type alias to its plain name and validate against the manifest.
+
+    Args:
+        job_type (str): The job type as declared in the model's uploaded config.json.
+        fl_backend (FLBackend): The backend whose manifest defines the valid set.
+
+    Returns:
+        str: The manifest-valid job type (alias-resolved when applicable).
+
+    Raises:
+        UnknownJobTypeError: If the (resolved) job type is not in the backend's manifest. The
+            message names the valid set and the fix, since this surfaces at training start —
+            long after upload, scanning and approval all succeeded.
+    """
+    resolved = JOB_TYPE_ALIASES.get(job_type, job_type)
+    if resolved != job_type:
+        logger.info(f"job_type '{job_type}' is a pre-rename alias — normalised to '{resolved}'.")
+    if not JobRequiredFiles.is_valid_job_type(resolved, fl_backend):
+        valid = sorted(JobRequiredFiles.get_all_job_types_with_files(fl_backend))
+        raise UnknownJobTypeError(
+            f"Unknown job_type in config.json: {job_type}. Valid {fl_backend} job types: "
+            f"{', '.join(valid)}. Update job_type in the model's config.json and re-upload it."
+        )
+    return resolved
 
 
 def list_local_base_files(base_dir: Path) -> list[str]:
@@ -111,6 +152,12 @@ def get_fl_backend_job_id_by_model_id(model_id: UUID, session: Session) -> str:
     """
     Get the FL backend job ID associated with a given model ID
 
+    A re-queued model (STOPPED → INITIATED, #787) keeps its earlier DELETED job rows, so the
+    lookup reads only the newest job by ``created`` — the current training attempt (mirrors
+    ``update_fl_scheduler``). Deliberately no status filter: ``abort_model_training`` calls this
+    right after the dequeue flipped the current job to DELETED, and that job's backend id is
+    exactly the one to abort.
+
     Args:
         model_id (UUID): The ID of the model
         session (Session): SQLModel session object
@@ -119,11 +166,16 @@ def get_fl_backend_job_id_by_model_id(model_id: UUID, session: Session) -> str:
         str: The FL backend job ID associated with the model ID
 
     Raises:
-        ValueError: If the model ID is not found in the database
+        ValueError: If the model has no job, or its newest job was never submitted to the FL
+            backend (``fl_backend_job_id`` still NULL).
     """
-    statement = select(FLJob.fl_backend_job_id).where(FLJob.model_id == model_id)
-    result = session.exec(statement)
-    fl_backend_job_id = result.one_or_none()
+    statement = (
+        select(FLJob.fl_backend_job_id)
+        .where(FLJob.model_id == model_id)
+        .order_by(cast(Column, FLJob.created).desc())
+        .limit(1)
+    )
+    fl_backend_job_id = session.exec(statement).first()
 
     if fl_backend_job_id is None:
         raise ValueError(f"No backend job ID found for model_id {model_id}")
@@ -330,6 +382,25 @@ def abort_job(endpoint: str, job_id: str) -> dict:
     return response
 
 
+def _raise_if_job_aborted(fl_job_id: UUID, session: Session) -> None:
+    """
+    Abort gate for the prepare window: raise if the FL job was DELETED mid-prepare.
+
+    Selects the status column (not the entity) so the check bypasses the session identity map
+    and sees the latest committed value from a concurrent abort (READ COMMITTED).
+
+    Args:
+        fl_job_id (UUID): The ID of the FL job to check.
+        session (Session): SQLModel session.
+
+    Raises:
+        JobAbortedError: If the job no longer exists or was DELETED by a concurrent abort.
+    """
+    job_status = session.exec(select(col(FLJob.status)).where(FLJob.id == fl_job_id)).one_or_none()
+    if job_status is None or job_status == JobStatus.DELETED:
+        raise JobAbortedError(f"FL job {fl_job_id} was aborted before submission")
+
+
 def start_training(
     model_id: UUID,
     fl_job_id: UUID,
@@ -370,7 +441,12 @@ def start_training(
         bundle_urls=bundle_urls,
     )
 
+    # Gate before the (up to 900s) app transfer, and again right before submission: submit_job
+    # is the side effect that creates the backend run, so a job aborted mid-prepare (#787) must
+    # never reach it.
+    _raise_if_job_aborted(fl_job_id, session)
     upload_app(model_id, training_details, endpoint)
+    _raise_if_job_aborted(fl_job_id, session)
     logger.info(f"Submitting job for training for model {model_id} with FL job ID {fl_job_id}")
     submit_job(fl_job_id, endpoint, model_id, session)
 
@@ -484,9 +560,7 @@ def bundle_nvflare_application(model_id: UUID, job_type: str = DEFAULT_JOB_TYPE)
         if not jt:
             logger.info("No 'job_type' found in config.json. Using job_type=standard.")
         else:
-            if not JobRequiredFiles.is_valid_job_type(jt, FLBackend.NVFLARE):
-                raise UnknownJobTypeError(f"Unknown job_type argument found in config.json: {jt}")
-            job_type = jt
+            job_type = _normalise_job_type(jt, FLBackend.NVFLARE)
             logger.info(f"job_type in config.json: {job_type}. Using it to select base application.")
 
     # Locate the base application for this job_type on the local FL_APP_BASE_DIR tree. This
@@ -541,7 +615,7 @@ def bundle_nvflare_application(model_id: UUID, job_type: str = DEFAULT_JOB_TYPE)
         s3.copy_object(src_meta_path, dest_meta_path)
 
     # Some jobs load a large model checkpoint SERVER-SIDE and don't need it on the clients:
-    #   - evaluation jobs: the models[*].checkpoint files, loaded by EvaluationPTModelLocator;
+    #   - evaluation jobs: the models[*].checkpoint files, loaded by EvaluationModelLocator;
     #   - training jobs: a pretrained backbone declared via top-level SERVER_CHECKPOINT (str or
     #     list), loaded by InitialCheckpointPTModelPersistor and broadcast as the round-0 model.
     # Divert those to a server-only `server_checkpoints/` prefix so they are staged for the
@@ -549,7 +623,8 @@ def bundle_nvflare_application(model_id: UUID, job_type: str = DEFAULT_JOB_TYPE)
     # app*/custom/ and shipped to every client by NVFLARE's deploy_map (a large bundled file
     # collapses app-deploy). Mirrors the Flower backend, which keeps the checkpoint server-side.
     server_checkpoints: set[str] = set()
-    if job_type in ("evaluation", "evaluation_client_api"):
+    # job_type is already alias-normalised (_normalise_job_type), so the plain name is exhaustive.
+    if job_type == "evaluation":
         server_checkpoints = {
             m["checkpoint"]
             for m in input_config.get("models", {}).values()
@@ -690,9 +765,7 @@ def bundle_flower_application(model_id: UUID, job_type: str = DEFAULT_JOB_TYPE) 
         if not jt:
             logger.info("No 'job_type' found in config.json. Using job_type=standard.")
         else:
-            if not JobRequiredFiles.is_valid_job_type(jt, FLBackend.FLOWER):
-                raise UnknownJobTypeError(f"Unknown job_type argument found in config.json: {jt}")
-            job_type = jt
+            job_type = _normalise_job_type(jt, FLBackend.FLOWER)
             logger.info(f"job_type in config.json: {job_type}. Using it to select base application.")
 
     # Locate the base application for this job_type on the local FL_APP_BASE_DIR tree. This
@@ -747,7 +820,7 @@ def bundle_flower_application(model_id: UUID, job_type: str = DEFAULT_JOB_TYPE) 
 
 def verify_bundle_paths(
     *,
-    s3: "S3Client",
+    s3: S3Client,
     base_rel_paths: list[str],
     model_files: list[str],
     app_folders: set[str],
@@ -919,12 +992,16 @@ def abort_model_training(request: Request, model_id: UUID, session: Session) -> 
 
     Raises:
         ValueError: If the FL server is not running, or if ``target`` is invalid.
+        DatabaseError: If the dequeue or a scheduler lookup fails at the DB layer — surfaced
+            rather than swallowed, so a failed abort is never reported as a success.
     """
     logger.debug(f"Checking if model {model_id} is currently running...")
 
-    try:
-        from flip_api.fl_services.services import fl_scheduler_service
+    # Imported locally to avoid the fl_service -> model_service -> fl_scheduler_service cycle.
+    from flip_api.fl_services.services import fl_scheduler_service
+    from flip_api.model_services.services.model_service import add_log
 
+    try:
         # Always try to remove the job from queue
         fl_scheduler_service.remove_job_from_queue(model_id, session)
 
@@ -935,8 +1012,19 @@ def abort_model_training(request: Request, model_id: UUID, session: Session) -> 
 
         logger.info(f"Net info for model {model_id}: endpoint={net_endpoint}, name={net_name}")
 
-    except Exception as e:
-        logger.info(f"Model {model_id} not currently running training; removed from queue. Reason: {e}")
+    except (NotFoundError, ValueError) as e:
+        # Pre-running window (#787): the job was dequeued but was never submitted to the
+        # fl-server (fl_backend_job_id still NULL → ValueError) or no net is pinned to it yet
+        # (NotFoundError), so there is nothing to abort — but the net may already be BUSY with
+        # this job's pickup. Release it now rather than leaving it to the stale-BUSY watchdog on
+        # the next scheduler tick. Deliberately narrow: a DatabaseError here means the dequeue
+        # or lookup itself failed, and must surface as an error — not as a successful abort.
+        released = fl_scheduler_service.release_scheduler_for_model(model_id, session)
+        logger.info(
+            f"Model {model_id} not currently running training; removed from queue "
+            f"(released {released} scheduler(s)). Reason: {e}"
+        )
+        add_log(model_id, "Training job aborted before start; training slot released.", session)
         return
 
     server_status = fetch_server_status(net_endpoint)
@@ -948,8 +1036,10 @@ def abort_model_training(request: Request, model_id: UUID, session: Session) -> 
         raise ValueError(error_msg)
 
     # If there is no running job for this model, it is already terminal — abort is an
-    # idempotent no-op.
+    # idempotent no-op. The jobs were just dequeued above, so free the net promptly instead of
+    # leaving it to the stale-BUSY watchdog.
     if extract_current_job_data(net_endpoint, fl_backend_job_id) is None:
+        fl_scheduler_service.release_scheduler_for_model(model_id, session)
         logger.info(
             f"No running FL job for model {model_id} (job ID {fl_backend_job_id}); "
             f"already stopped — nothing to abort."
@@ -971,6 +1061,11 @@ def abort_model_training(request: Request, model_id: UUID, session: Session) -> 
     response = abort_job(net_endpoint, fl_backend_job_id)
 
     logger.info(f"Abort job response ({target=}, {clients=}): {response}")
+
+    # The dequeue above DELETEd the model's jobs, so update_fl_scheduler (which only considers
+    # non-DELETED jobs) can no longer free the net — release it here now the abort is delivered.
+    released = fl_scheduler_service.release_scheduler_for_model(model_id, session)
+    logger.info(f"Released {released} scheduler(s) for model {model_id} after abort")
 
 
 def add_fl_job(model_id: UUID, trusts: list[Trust], session: Session) -> None:

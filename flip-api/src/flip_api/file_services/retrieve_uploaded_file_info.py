@@ -75,6 +75,7 @@ def _serialize_files(files: list[UploadedFiles]) -> list[dict[str, Any]]:
             "modelId": str(file.model_id) if file.model_id else None,
             "created": file.created.isoformat() if hasattr(file, "created") and file.created else None,
             "modified": file.modified.isoformat() if hasattr(file, "modified") and file.modified else None,
+            "bandit_findings": file.bandit_findings,
         }
         for file in files
     ]
@@ -158,7 +159,7 @@ def get_uploaded_files_info(
 
 # TODO [#114] This endpoint was not defined in the old repo.
 # Alternative implementation with a POST request and request body
-@router.post("/", response_model=list[dict[str, Any]])
+@router.post("", response_model=list[dict[str, Any]])
 def get_uploaded_files_info_post(
     id_list: IdList,
     db: Session = Depends(get_session),

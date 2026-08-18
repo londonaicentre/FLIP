@@ -14,6 +14,7 @@ from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
 import pytest
+from sqlalchemy.exc import SQLAlchemyError
 
 from flip_api.db.models.main_models import FLJob
 from flip_api.domain.interfaces.fl import (
@@ -25,7 +26,7 @@ from flip_api.domain.interfaces.fl import (
 from flip_api.domain.schemas.status import JobStatus, ModelStatus, NetStatus
 from flip_api.domain.schemas.types import FLBackend, FLLogEvent
 from flip_api.fl_services.services import fl_scheduler_service
-from flip_api.utils.exceptions import NotFoundError
+from flip_api.utils.exceptions import DatabaseError, JobAbortedError, NotFoundError
 
 
 @pytest.fixture
@@ -66,13 +67,14 @@ def test_prepare_and_start_training_success(fake_session, model_id, fl_job_id):
         # without touching the DB or any boot-time env var.
         mock_get_net.return_value = INetDetails(endpoint="endpoint", name="net-name", fl_backend=FLBackend.NVFLARE)
 
-        fl_scheduler_service.prepare_and_start_training(
+        started = fl_scheduler_service.prepare_and_start_training(
             model_id=model_id,
             fl_job_id=fl_job_id,
             trust_ids=[uuid4()],
             session=fake_session,
         )
 
+        assert started is True
         mock_bundle.assert_called_once_with(model_id)
         mock_validate_clients.assert_called_once()
         mock_start.assert_called_once()
@@ -92,7 +94,12 @@ def test_prepare_and_start_training_failure(fake_session, model_id, fl_job_id):
     ):
         # Net reports nvflare so the nvflare bundler (patched to raise) is the path taken.
         mock_get_net.return_value = INetDetails(endpoint="endpoint", name="net-name", fl_backend=FLBackend.NVFLARE)
-        with pytest.raises(Exception, match="bundle failed"):
+        with (
+            patch(
+                "flip_api.fl_services.services.fl_scheduler_service.release_scheduler_for_model"
+            ) as mock_release,
+            pytest.raises(Exception, match="bundle failed"),
+        ):
             fl_scheduler_service.prepare_and_start_training(
                 model_id=model_id,
                 fl_job_id=fl_job_id,
@@ -103,6 +110,141 @@ def test_prepare_and_start_training_failure(fake_session, model_id, fl_job_id):
         mock_remove.assert_called_once_with(fl_job_id, fake_session)
         mock_status.assert_called_once_with(model_id, ModelStatus.ERROR, fake_session)
         mock_log.assert_called_once_with(model_id, "bundle failed", fake_session, success=False)
+        # The failure handler must actually free the BUSY net, not leave it to the watchdog.
+        mock_release.assert_called_once_with(model_id, fake_session)
+
+
+def test_prepare_and_start_training_aborted_mid_prepare_returns_false(fake_session, model_id, fl_job_id):
+    with (
+        patch(
+            "flip_api.fl_services.services.fl_scheduler_service.bundle_nvflare_application",
+            return_value="s3://dest/model",
+        ),
+        patch("flip_api.fl_services.services.fl_scheduler_service.get_net_by_model_id") as mock_get_net,
+        patch("flip_api.fl_services.services.fl_scheduler_service.validate_client_availability"),
+        patch("flip_api.fl_services.services.fl_scheduler_service.get_bundle_urls", return_value=["url1"]),
+        patch(
+            "flip_api.fl_services.services.fl_scheduler_service.start_training",
+            side_effect=JobAbortedError("aborted"),
+        ),
+        patch("flip_api.fl_services.services.fl_scheduler_service.release_scheduler_for_model") as mock_release,
+        patch("flip_api.fl_services.services.fl_scheduler_service.remove_job") as mock_remove,
+        patch("flip_api.fl_services.services.fl_scheduler_service.update_model_status") as mock_status,
+    ):
+        mock_get_net.return_value = INetDetails(endpoint="endpoint", name="net-name", fl_backend=FLBackend.NVFLARE)
+
+        started = fl_scheduler_service.prepare_and_start_training(
+            model_id=model_id,
+            fl_job_id=fl_job_id,
+            trust_ids=[uuid4()],
+            session=fake_session,
+        )
+
+    # A user abort mid-prepare is not a scheduler error: no re-raise, no ERROR status, and the
+    # job is already DELETED so remove_job must not run (it would also null `started`).
+    assert started is False
+    mock_remove.assert_not_called()
+    mock_status.assert_not_called()
+    mock_release.assert_called_once_with(model_id, fake_session)
+
+
+def test_prepare_and_start_training_aborted_before_prepare_returns_false(fake_session, model_id, fl_job_id):
+    """An abort landed between the pickup commit and this tick takes the clean aborted branch.
+
+    Before the gate, the abort's net release made the first ``get_net_by_model_id`` raise
+    ``NotFoundError`` into the generic failure handler: a "Failed to start training: Net not
+    found" false-alarm log for what was a normal abort.
+    """
+    with (
+        patch(
+            "flip_api.fl_services.services.fl_scheduler_service._raise_if_job_aborted",
+            side_effect=JobAbortedError("aborted"),
+        ),
+        patch("flip_api.fl_services.services.fl_scheduler_service.get_net_by_model_id") as mock_get_net,
+        patch("flip_api.fl_services.services.fl_scheduler_service.release_scheduler_for_model") as mock_release,
+        patch("flip_api.fl_services.services.fl_scheduler_service.remove_job") as mock_remove,
+        patch("flip_api.fl_services.services.fl_scheduler_service.add_log") as mock_log,
+        patch("flip_api.fl_services.services.fl_scheduler_service.update_model_status") as mock_status,
+    ):
+        started = fl_scheduler_service.prepare_and_start_training(
+            model_id=model_id,
+            fl_job_id=fl_job_id,
+            trust_ids=[uuid4()],
+            session=fake_session,
+        )
+
+    assert started is False
+    mock_get_net.assert_not_called()
+    mock_remove.assert_not_called()
+    mock_status.assert_not_called()
+    mock_log.assert_not_called()
+    mock_release.assert_called_once_with(model_id, fake_session)
+
+
+def test_prepare_and_start_training_net_unpinned_by_concurrent_abort_reclassified(fake_session, model_id, fl_job_id):
+    """An abort landing between the gate and the net lookup is reclassified, not a failure.
+
+    The gate passes (job still alive), the abort then unpins the net so the lookup raises
+    ``NotFoundError``, and the re-gate sees the now-DELETED job → clean aborted branch.
+    """
+    with (
+        patch(
+            "flip_api.fl_services.services.fl_scheduler_service._raise_if_job_aborted",
+            side_effect=[None, JobAbortedError("aborted")],
+        ) as mock_gate,
+        patch(
+            "flip_api.fl_services.services.fl_scheduler_service.get_net_by_model_id",
+            side_effect=NotFoundError("Net not found"),
+        ),
+        patch("flip_api.fl_services.services.fl_scheduler_service.release_scheduler_for_model") as mock_release,
+        patch("flip_api.fl_services.services.fl_scheduler_service.remove_job") as mock_remove,
+        patch("flip_api.fl_services.services.fl_scheduler_service.add_log") as mock_log,
+        patch("flip_api.fl_services.services.fl_scheduler_service.update_model_status") as mock_status,
+    ):
+        started = fl_scheduler_service.prepare_and_start_training(
+            model_id=model_id,
+            fl_job_id=fl_job_id,
+            trust_ids=[uuid4()],
+            session=fake_session,
+        )
+
+    assert started is False
+    assert mock_gate.call_count == 2
+    mock_remove.assert_not_called()
+    mock_status.assert_not_called()
+    mock_log.assert_not_called()
+    mock_release.assert_called_once_with(model_id, fake_session)
+
+
+def test_prepare_and_start_training_genuine_net_not_found_still_errors(fake_session, model_id, fl_job_id):
+    """A NotFoundError from the net lookup with the job still alive keeps the failure path.
+
+    Pins that the abort reclassification did not swallow real net-resolution failures: the
+    error is re-raised with the job removed, a failure log written, and ERROR status set.
+    """
+    with (
+        patch("flip_api.fl_services.services.fl_scheduler_service._raise_if_job_aborted", return_value=None),
+        patch(
+            "flip_api.fl_services.services.fl_scheduler_service.get_net_by_model_id",
+            side_effect=NotFoundError("Net not found"),
+        ),
+        patch("flip_api.fl_services.services.fl_scheduler_service.release_scheduler_for_model") as mock_release,
+        patch("flip_api.fl_services.services.fl_scheduler_service.remove_job") as mock_remove,
+        patch("flip_api.fl_services.services.fl_scheduler_service.add_log") as mock_log,
+        patch("flip_api.fl_services.services.fl_scheduler_service.update_model_status") as mock_status,
+        pytest.raises(NotFoundError, match="Net not found"),
+    ):
+        fl_scheduler_service.prepare_and_start_training(
+            model_id=model_id,
+            fl_job_id=fl_job_id,
+            trust_ids=[uuid4()],
+            session=fake_session,
+        )
+
+    mock_remove.assert_called_once_with(fl_job_id, fake_session)
+    mock_log.assert_called_once_with(model_id, "Net not found", fake_session, success=False)
+    mock_status.assert_called_once_with(model_id, ModelStatus.ERROR, fake_session)
+    mock_release.assert_called_once_with(model_id, fake_session)
 
 
 def test_update_fl_scheduler_success(fake_session, model_id, fl_job_id):
@@ -184,6 +326,39 @@ def test_revert_scheduler_pickup_not_found(fake_session):
     missing_scheduler_id = "missing-id"
     with pytest.raises(NotFoundError, match=f"FLScheduler with id {missing_scheduler_id} not found"):
         fl_scheduler_service.revert_scheduler_pickup(missing_scheduler_id, fake_session)
+
+
+def test_release_scheduler_for_model_releases_busy_scheduler(fake_session, model_id):
+    scheduler = MagicMock()
+    fake_session.exec.return_value.all.return_value = [scheduler]
+
+    with patch("flip_api.fl_services.services.fl_scheduler_service.revert_scheduler_pickup") as mock_revert:
+        released = fl_scheduler_service.release_scheduler_for_model(model_id, fake_session)
+
+    mock_revert.assert_called_once_with(scheduler.id, fake_session)
+    assert released == 1
+
+
+def test_release_scheduler_for_model_none_found(fake_session, model_id):
+    fake_session.exec.return_value.all.return_value = []
+
+    with patch("flip_api.fl_services.services.fl_scheduler_service.revert_scheduler_pickup") as mock_revert:
+        released = fl_scheduler_service.release_scheduler_for_model(model_id, fake_session)
+
+    mock_revert.assert_not_called()
+    assert released == 0
+
+
+def test_release_scheduler_for_model_lookup_db_error(fake_session, model_id):
+    fake_session.exec.side_effect = SQLAlchemyError("connection lost")
+
+    with (
+        patch("flip_api.fl_services.services.fl_scheduler_service.revert_scheduler_pickup") as mock_revert,
+        pytest.raises(DatabaseError, match="Error looking up BUSY scheduler for model"),
+    ):
+        fl_scheduler_service.release_scheduler_for_model(model_id, fake_session)
+
+    mock_revert.assert_not_called()
 
 
 def test_get_net_by_model_id(fake_session, model_id):
@@ -283,6 +458,110 @@ def test_check_for_queued_jobs_success(fake_session, scheduler_id, model_id):
     assert result.trust_ids == [trust_id]
     v.assert_called_once_with(model_id, [trust_id], fake_session)
     fake_session.commit.assert_called()
+
+
+def test_check_for_queued_jobs_retires_a_job_with_unapproved_trusts(fake_session, scheduler_id, model_id):
+    """A job that can never run must be retired, not re-raised.
+
+    It previously raised a bare Exception, which check_for_queued_jobs does not catch (its only
+    handler is SQLAlchemyError). The status write above the raise rolled back with the
+    transaction, so the job went back to QUEUED — and because the dequeue always picks the
+    globally-earliest queued job, the same unrunnable job was re-selected on every tick and
+    blocked FL training on every net indefinitely (FLIP#894).
+    """
+    trust = MagicMock(id=uuid4())
+    job = MagicMock()
+    job.id = uuid4()
+    job.model_id = model_id
+    job.trusts = [trust]
+
+    fake_session.exec.side_effect = [
+        MagicMock(first=MagicMock(return_value=job)),
+        MagicMock(first=MagicMock(return_value=None)),
+    ]
+
+    with (
+        patch("flip_api.fl_services.services.fl_scheduler_service.validate_trust_ids", return_value=False),
+        patch("flip_api.fl_services.services.fl_scheduler_service.update_model_status") as mock_status,
+        patch("flip_api.fl_services.services.fl_scheduler_service.add_log") as mock_add_log,
+        patch("flip_api.fl_services.services.fl_scheduler_service.revert_scheduler_pickup") as mock_revert,
+    ):
+        result = fl_scheduler_service.check_for_queued_jobs(scheduler_id, fake_session)
+
+    # No job dispatched, and the tick ends cleanly rather than propagating.
+    assert result is None
+    # Retired, so the next tick reaches the job behind it.
+    assert job.status == JobStatus.DELETED
+    # The retirement is committed — an uncommitted status change would roll back and the job
+    # would be picked again, which is the whole bug.
+    fake_session.commit.assert_called()
+    mock_status.assert_called_once_with(model_id, ModelStatus.ERROR, fake_session)
+    # The researcher needs to know why their training never started.
+    assert mock_add_log.call_args.kwargs["success"] is False
+    mock_revert.assert_called_once()
+
+
+def test_check_for_queued_jobs_preserves_a_newer_valid_retry_when_retiring_an_invalid_job(
+    fake_session, scheduler_id, model_id
+):
+    """Retiring an old invalid job must not complete a later valid retry for the same model."""
+    invalid_trust = MagicMock(id=uuid4())
+    invalid_job = MagicMock(id=uuid4(), model_id=model_id, trusts=[invalid_trust])
+    valid_retry = MagicMock(id=uuid4(), model_id=model_id, status=JobStatus.QUEUED)
+
+    fake_session.exec.side_effect = [
+        MagicMock(first=MagicMock(return_value=invalid_job)),
+        MagicMock(first=MagicMock(return_value=valid_retry)),
+    ]
+
+    with (
+        patch("flip_api.fl_services.services.fl_scheduler_service.validate_trust_ids", return_value=False),
+        patch("flip_api.fl_services.services.fl_scheduler_service.update_model_status") as mock_status,
+        patch("flip_api.fl_services.services.fl_scheduler_service.add_log"),
+        patch("flip_api.fl_services.services.fl_scheduler_service.revert_scheduler_pickup") as mock_revert,
+    ):
+        result = fl_scheduler_service.check_for_queued_jobs(scheduler_id, fake_session)
+
+    assert result is None
+    assert invalid_job.status == JobStatus.DELETED
+    mock_status.assert_not_called()
+    mock_revert.assert_called_once()
+
+
+def test_check_for_queued_jobs_commits_the_retirement_before_any_bookkeeping(
+    fake_session, scheduler_id, model_id
+):
+    """The retirement must be durable before anything that can roll the session back runs.
+
+    On the valid-retry branch update_model_status is deliberately skipped, so add_log used to be
+    the first thing to commit — and add_log rolls back and re-raises on failure. That rollback
+    discarded the uncommitted DELETED, the job returned to QUEUED, and the next tick selected the
+    same globally-earliest unrunnable job: the FLIP#894 wedge, restored by its own fix.
+    """
+    invalid_job = MagicMock(id=uuid4(), model_id=model_id, trusts=[MagicMock(id=uuid4())])
+    valid_retry = MagicMock(id=uuid4(), model_id=model_id, status=JobStatus.QUEUED)
+
+    fake_session.exec.side_effect = [
+        MagicMock(first=MagicMock(return_value=invalid_job)),
+        MagicMock(first=MagicMock(return_value=valid_retry)),
+    ]
+    commits_before_add_log = []
+
+    with (
+        patch("flip_api.fl_services.services.fl_scheduler_service.validate_trust_ids", return_value=False),
+        patch("flip_api.fl_services.services.fl_scheduler_service.update_model_status"),
+        patch(
+            "flip_api.fl_services.services.fl_scheduler_service.add_log",
+            side_effect=lambda *a, **kw: commits_before_add_log.append(fake_session.commit.call_count),
+        ),
+        patch("flip_api.fl_services.services.fl_scheduler_service.revert_scheduler_pickup"),
+    ):
+        fl_scheduler_service.check_for_queued_jobs(scheduler_id, fake_session)
+
+    assert invalid_job.status == JobStatus.DELETED
+    # The load-bearing assertion: at least one commit had already happened by the time add_log ran,
+    # so a rollback inside it cannot resurrect the job.
+    assert commits_before_add_log == [1]
 
 
 def test_check_for_queued_jobs_none(fake_session, scheduler_id):

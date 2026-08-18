@@ -15,7 +15,9 @@ Recipes replace hand-written ``config_fed_server.json`` / ``config_fed_client.js
 templates with a Python class that produces the same JSON layout via ``export()``.
 """
 
+from flip.nvflare.recipes.flip_diffusion_recipe import FlipDiffusionRecipe
 from flip.nvflare.recipes.flip_eval_recipe import FlipEvalRecipe
 from flip.nvflare.recipes.flip_fedavg_recipe import FlipFedAvgRecipe
+from flip.nvflare.recipes.flip_fedopt_recipe import FlipFedOptRecipe
 
-__all__ = ["FlipFedAvgRecipe", "FlipEvalRecipe"]
+__all__ = ["FlipFedAvgRecipe", "FlipFedOptRecipe", "FlipEvalRecipe", "FlipDiffusionRecipe"]

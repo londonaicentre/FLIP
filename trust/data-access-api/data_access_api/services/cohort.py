@@ -24,6 +24,8 @@ from sqlalchemy.exc import DBAPIError, SQLAlchemyError
 from sqlalchemy.sql.elements import TextClause
 from sqlglot import exp
 from sqlglot.errors import SqlglotError
+from sqlglot.optimizer.normalize_identifiers import normalize_identifiers
+from sqlglot.optimizer.scope import traverse_scope
 
 from data_access_api.config import get_settings
 from data_access_api.db.database import engine
@@ -32,23 +34,105 @@ from data_access_api.services.query_cache import get_cached_result, set_cached_r
 from data_access_api.utils.logger import logger
 from data_access_api.utils.sql_parsers import extract_missing_identifier
 
-COHORT_QUERY_THRESHOLD = get_settings().COHORT_QUERY_THRESHOLD
-
 # OMOP schema is the only schema callers may reference. Any qualified
 # reference to a different schema is rejected by validate_query.
 ALLOWED_SCHEMA = "omop"
+
+# Set-returning functions permitted in a FROM clause. An unqualified table-valued function carries
+# no name and no schema on its exp.Table node, so the schema pin cannot reach it — and Postgres
+# resolves it through the implicit pg_catalog, the same route the pin exists to close. There is no
+# schema to pin it to (these live in pg_catalog, not omop), so the only available control is an
+# allowlist. Keep it an allowlist, never a denylist of dangerous names: ``query_to_xml`` executes a
+# SQL string that sqlglot never parses, so it bypasses every other rule in validate_query, and the
+# next such function is one Postgres release away.
+_ALLOWED_TABLE_FUNCTIONS = frozenset({"generate_series", "unnest"})
+
+# Functions permitted anywhere an expression is — select list, WHERE, a LATERAL FROM item, a
+# subquery. A dangerous function is not confined to the FROM clause: the schema pin and the
+# FROM-clause allowlist above both key on exp.Table nodes, so ``FROM LATERAL query_to_xml(...)``
+# (an exp.Lateral, not an exp.Table), ``SELECT pg_read_file(...)`` and ``WHERE pg_ls_dir(...) IS
+# NOT NULL`` all slipped past while Postgres still resolved them through the implicit pg_catalog.
+# sqlglot models the ordinary cohort functions (COUNT, SUM, DATE_PART, COALESCE, SUBSTRING, ...) as
+# typed nodes and wraps everything it does not recognise in exp.Anonymous — and the dangerous
+# pg_catalog functions all land there: the query_to_xml family executes an unparsed SQL string,
+# pg_read_file / pg_ls_dir / pg_stat_file read the server filesystem, current_setting / dblink /
+# lo_import reach further still. So an unrecognised (Anonymous) function is rejected wherever it
+# appears unless it is on this allowlist. This stays an allowlist for the same reason the table one
+# does; the table functions are a subset (they are also legitimate in a lateral or scalar
+# position), and ``age`` is included because deriving patient age is an ordinary cohort filter and
+# sqlglot happens to leave it Anonymous. Every real cohort query in the tutorials uses only typed
+# nodes, so the false-positive surface is small.
+_ALLOWED_FUNCTIONS = _ALLOWED_TABLE_FUNCTIONS | frozenset({"age"})
+
+# Cheapest possible "is the vocabulary there?" test: an existence probe, not a count. On a
+# loaded trust concept_ancestor holds ~33M rows, so COUNT(*) would be a seq scan on the very
+# path we are trying not to slow down.
+_VOCABULARY_PROBE = text("SELECT 1 FROM omop.concept_ancestor LIMIT 1")
+
+
+def _warn_if_vocabulary_missing() -> None:
+    """Log an ERROR when a zero-row cohort is explained by an unloaded OMOP vocabulary.
+
+    The published OMOP pgdata tarballs are vocabulary-free; loading it is a separate,
+    credentialed, ~25-minute step. Until it runs, ``concept_ancestor`` is empty and every
+    cohort query matches nothing while the imaging tables look perfectly healthy — so the
+    failure reads as a bad query or a broken import rather than a missing seed step.
+
+    Deliberately best-effort and side-effect-free: this runs on a path that has already
+    decided its response, so a failure here must never turn a valid privacy-suppressed answer
+    into an error. Only called for a genuine zero — a below-threshold but non-zero cohort
+    proves the vocabulary is fine.
+    """
+    try:
+        with engine.connect() as connection:
+            if connection.execute(_VOCABULARY_PROBE).first() is not None:
+                return
+    except SQLAlchemyError as exc:
+        # Never escalate: the caller's response is already correct without this diagnosis.
+        logger.debug(f"Could not check whether the OMOP vocabulary is loaded: {exc}")
+        return
+
+    logger.error(
+        "Cohort query returned 0 records AND the OMOP vocabulary is not loaded "
+        "(omop.concept_ancestor is empty). Cohort queries resolve concept sets through the "
+        "vocabulary, so every query on this trust will match nothing until it is loaded. "
+        "The published OMOP tarballs ship without it — run: "
+        "make -C trust/omop-db load-omop-vocab OMOP_DB_PORT=<this trust's port>. "
+        "Restart this service afterwards: query results are cached, so the 0-row answer would "
+        "otherwise be replayed."
+    )
+
 
 # Reject pathologically large queries before sqlglot does any work — cheap DoS guard
 # at the API layer. The DB role limits blast radius too, but rejecting here is
 # defence in depth and stops the parser allocating an arbitrarily large AST.
 MAX_QUERY_LENGTH = 10_240  # 10 KiB
 
-# Top-level statement shapes that count as SELECT-like for the cohort API.
+# Top-level statement shapes that count as SELECT-like for the cohort API. This is an
+# allowlist and must stay one — never add ``exp.Command``, sqlglot's catch-all for syntax it
+# does not model (``EXPLAIN`` lands there, as does anything a future sqlglot stops
+# understanding). A Command node round-trips the raw text verbatim and exposes no children,
+# so the DML, schema and LIMIT/OFFSET walks below would all traverse nothing and pass it
+# through unchecked.
 _ALLOWED_QUERY_TYPES: tuple[type[exp.Expression], ...] = (
     exp.Select,
     exp.Union,
     exp.Intersect,
     exp.Except,
+)
+
+# Data-modifying nodes rejected anywhere in the tree, not just at the top level.
+# Postgres allows a writable CTE — ``WITH x AS (DELETE ... RETURNING *) SELECT * FROM x``
+# — which sqlglot parses with a top-level ``exp.Select``, so the SELECT-shape check
+# alone passes it through. ``exp.Into`` is the ``INTO`` clause of ``SELECT ... INTO t``
+# — ``CREATE TABLE AS`` in Postgres, but still an ``exp.Select`` carrying none of the
+# four DML node types, so it needs its own entry here.
+_DATA_MODIFYING_TYPES: tuple[type[exp.Expression], ...] = (
+    exp.Insert,
+    exp.Update,
+    exp.Delete,
+    exp.Merge,
+    exp.Into,
 )
 
 
@@ -57,19 +141,54 @@ def _invalid_query(detail: str) -> HTTPException:
     return HTTPException(status_code=400, detail=detail)
 
 
-def validate_query(query: str) -> bool:
+def _reject_disallowed_table_function(table: exp.Table) -> None:
+    """Reject a function-shaped ``exp.Table`` whose function is not on the allowlist.
+
+    Takes the name from the rendered call rather than the node: sqlglot models some functions as
+    typed nodes whose ``.name`` is empty and whose ``sql_name()`` is an internal label
+    (``generate_series`` renders from ExplodingGenerateSeries), while unrecognised ones are
+    exp.Anonymous. Rendering gives the real Postgres name for both.
+
+    Args:
+        table (exp.Table): A FROM-clause item with an empty ``.name`` — the shape sqlglot gives a
+            table-valued function call, qualified or not.
+
+    Raises:
+        HTTPException: 400 if the rendered function name is not in ``_ALLOWED_TABLE_FUNCTIONS``.
+    """
+    rendered = table.this.sql(dialect="postgres") if table.this else ""
+    function_name = rendered.split("(", 1)[0].strip().lower()
+    if function_name not in _ALLOWED_TABLE_FUNCTIONS:
+        raise _invalid_query(
+            f"'{function_name}' is not an allowed table-valued function. "
+            f"Allowed: {', '.join(sorted(_ALLOWED_TABLE_FUNCTIONS))}."
+        )
+
+
+def validate_query(query: str) -> str:
     """
     Validates that an inbound SQL query is structurally safe to run against OMOP.
 
     Database-layer protections already in place
     -------------------------------------------
     The data-access-api connects as ``data_analyst_reader`` (see
-    ``flip-omop-db/files/create_readonly_users.sql``), a Postgres role granted
-    only ``CONNECT`` + ``USAGE`` on schema ``omop`` + ``SELECT`` on its tables
-    and sequences, with ``INSERT``, ``UPDATE``, ``DELETE``, ``TRUNCATE``, and
-    ``CREATE`` explicitly REVOKEd. Any DDL or DML is therefore rejected by
-    Postgres itself, so this function does NOT keyword-filter for ``DROP`` /
-    ``INSERT`` / ``UPDATE`` / etc. — those are already covered at the DB layer.
+    ``trust/omop-db/files/create_readonly_users.sql``), a Postgres role with no write
+    privileges: ``INSERT`` / ``UPDATE`` / ``DELETE`` / ``TRUNCATE`` / ``CREATE`` are
+    never granted, and are explicitly REVOKEd on top. Any DDL or DML is therefore
+    rejected by Postgres itself, so this function does NOT keyword-filter for ``DROP``
+    / ``INSERT`` / ``UPDATE`` / etc. Rules 3 and 4 below still reject writes
+    *structurally*, from the parsed tree rather than from a keyword scan, so a write
+    fails in-hand with a clear 400 instead of as an opaque permission error from the
+    engine.
+
+    **Read scope is NOT guaranteed by the database role, and differs by deployment.**
+    The Kubernetes trust chart grants the role ``pg_read_all_data``
+    (``deploy/providers/kubernetes/templates/omop-db.yaml``) — SELECT on every table
+    in every schema — while the Compose path grants only ``USAGE`` on ``omop`` plus
+    ``SELECT`` on its tables. So rule 5 below is the *only* thing keeping a caller
+    inside ``omop`` on a Kubernetes trust, not a redundant second layer over a narrow
+    grant. Do not weaken it on the assumption the role is scoped. Narrowing that grant
+    to match Compose is tracked separately in FLIP#904; until it lands, this is the barrier.
 
     What this function enforces
     ---------------------------
@@ -79,25 +198,78 @@ def validate_query(query: str) -> bool:
     2. The query parses as exactly one non-empty statement (defeats query stacking,
        stray semicolons that bypass the count check, and empty inputs).
     3. The top-level statement is SELECT-shaped (rejects ``COPY``, ``EXPLAIN``,
-       and any DDL/DML the DB would also reject — fail fast at the API).
-    4. Any schema-qualified table reference targets only the ``omop`` schema
-       (blocks enumeration of ``information_schema``, ``pg_catalog``,
-       ``pg_class`` etc., which Postgres makes readable to role ``public``
-       by default).
-    5. Every ``LIMIT`` and ``OFFSET`` is a literal integer (defeats the blind
+       and top-level DDL/DML — fail fast at the API rather than at the DB).
+    4. No ``INSERT`` / ``UPDATE`` / ``DELETE`` / ``MERGE`` node appears *anywhere*
+       in the tree. Rule 3 inspects only the top-level node, and Postgres allows a
+       writable CTE — ``WITH x AS (DELETE FROM t RETURNING *) SELECT * FROM x``
+       parses as a ``Select`` and would otherwise pass. The read-only role rejects
+       the write regardless, so this is defence in depth, not the only barrier.
+    5. Every table reference is pinned to the ``omop`` schema. A qualified
+       reference to any other schema is rejected, as is a three-part
+       ``db.schema.table`` reference; an *unqualified* reference is rewritten to
+       ``omop.<table>`` in the AST before emission. Rewriting rather than
+       trusting ``search_path`` is the load-bearing part: Postgres searches
+       ``pg_catalog`` implicitly and first, whatever ``search_path`` says, so an
+       unqualified ``pg_class`` would otherwise read the catalog — and on a
+       Kubernetes trust the role can read every schema (see above). Names bound
+       by a ``WITH`` clause are exempt because they are not schema-qualified and
+       never can be. The exemption is determined from each lexical SQL scope, so
+       a CTE in a nested query cannot exempt a table reference in its parent, and
+       from Postgres-folded identifiers rather than raw text, so a quoted CTE
+       name cannot exempt a reference that would not bind to it, and a quoted
+       ``"OMOP"`` — a schema Postgres holds distinct from ``omop`` — is not
+       read as the allowed one.
+
+       A set-returning function in the ``FROM`` clause is checked against an
+       allowlist instead. It carries no name and no schema to pin, and it
+       resolves in ``pg_catalog`` rather than ``omop``, so pinning cannot
+       express anything about it. The same allowlist is applied to every
+       *unrecognised* function wherever it appears — a ``LATERAL`` function
+       item, the select list, a ``WHERE`` predicate — since those positions
+       reach ``pg_catalog`` too and are not ``exp.Table`` nodes for the pin to
+       act on. ``query_to_xml`` and friends are the reason: they execute an
+       unparsed SQL string and so bypass every other rule here.
+    6. Every ``LIMIT`` and ``OFFSET`` is a literal integer (defeats the blind
        data-extraction technique that abuses
        ``LIMIT CASE WHEN <predicate> THEN n ELSE m END`` to make the row count
        a function of a single character value, then reads it back via the
        cohort-size error message).
 
+    This function is the **authority** on cohort-query safety. The central hub
+    runs its own pre-check before fanning a query out
+    (``flip_api.cohort_services.submit_cohort_query.validate_query``), but that
+    one exists purely for fast feedback and is deliberately weaker: the hub is a
+    separate administrative domain, so nothing here may be relaxed on the
+    assumption that the hub filtered first.
+
     Args:
         query: The SQL query string from the caller.
 
     Returns:
-        ``True`` when the query is structurally safe.
+        The validated query re-emitted from its parsed AST — pass *this* to the
+        database, never the caller's original string.
 
     Raises:
-        HTTPException(400): When any of the rules above is violated.
+        HTTPException(400): When any of the rules above is violated, or when the validation
+            pass itself fails on an input shape it does not handle.
+    """
+    try:
+        return _validate_query_ast(query)
+    except HTTPException:
+        raise
+    except Exception as e:
+        # This function feeds adversarial input through a third-party parser; a shape the pass
+        # mishandles must fail closed as a clean 400, not escape as an unhandled 500. Escaping
+        # would also skip the re-emit at the end of the pass, so nothing is lost by rejecting.
+        logger.exception("Query validation crashed on an unexpected input shape")
+        raise _invalid_query("Could not validate query.") from e
+
+
+def _validate_query_ast(query: str) -> str:
+    """Single parse-validate-emit pass behind :func:`validate_query`.
+
+    Kept separate so the public wrapper can convert anything unexpected escaping this pass into
+    a fail-closed 400; the rule set is documented on :func:`validate_query`.
     """
     if len(query) > MAX_QUERY_LENGTH:
         raise _invalid_query(f"Query exceeds maximum length of {MAX_QUERY_LENGTH} characters.")
@@ -122,20 +294,121 @@ def validate_query(query: str) -> bool:
     if not isinstance(stmt, _ALLOWED_QUERY_TYPES):
         raise _invalid_query("Only SELECT statements are allowed.")
 
-    # Walk the whole AST so subqueries, CTEs, and set-operation arms are checked.
-    for table in stmt.find_all(exp.Table):
-        schema_node = table.args.get("db")
-        if schema_node is None:
-            # Unqualified — Postgres resolves via search_path, which is set to
-            # the omop schema in the OMOP DB image, so unqualified references
-            # can only resolve to omop tables.
+    # The check above only inspects the top-level node, and Postgres lets a write
+    # hide inside a CTE body while the outer statement still parses as a SELECT.
+    # Walk the whole tree for data-modifying nodes.
+    if any(stmt.find_all(*_DATA_MODIFYING_TYPES)):
+        raise _invalid_query("Data-modifying statements are not allowed.")
+
+    # Fold identifiers the way Postgres does — unquoted lowered, quoted left alone — before any
+    # name comparison below. The CTE exemption matches ``scope.cte_sources`` keys against the
+    # reference's literal text, and raw text is not what Postgres binds on, in both directions:
+    #
+    #   WITH "PG_CLASS" AS (...) SELECT relname FROM PG_CLASS
+    #       raw text matches, so the reference was exempted -- but Postgres binds the CTE as
+    #       PG_CLASS and folds the reference to pg_class, which it cannot bind, so the reference
+    #       resolved through the implicit pg_catalog and skipped the pin entirely.
+    #   WITH cohort AS (...) SELECT count(*) FROM COHORT
+    #       raw text differs, so the reference was pinned to omop.COHORT -- but Postgres binds it
+    #       to the CTE. omop.cohort is a real, empty OMOP CDM table, so this did not even fail
+    #       loudly: the caller silently got a count of zero.
+    #
+    # Normalising first makes both sides agree with the engine. It is identity-preserving for
+    # Postgres (an unquoted identifier is folded at parse time anyway), so the emitted SQL means
+    # exactly what the caller wrote.
+    stmt = normalize_identifiers(stmt, dialect="postgres")
+
+    # A CTE reference and an unqualified physical table have the same exp.Table shape. Walk each
+    # lexical scope so only a CTE visible from that exact SELECT is exempted; a flat set of every
+    # CTE name would let an inner CTE exempt a physical table in an enclosing query.
+    for scope in traverse_scope(stmt):
+        for table in scope.tables:
+            # Validate the schema FIRST, before any name-based skip. A schema-qualified
+            # table-valued function — ``FROM pg_catalog.pg_ls_dir('/')`` — parses as an exp.Table
+            # with an empty ``.name`` but a populated ``.db``, so skipping empty names ahead of
+            # this check would step straight over it and admit a qualified non-omop reference.
+            schema_node = table.args.get("db")
+            if schema_node is not None:
+                # ``catalog`` holds the leading part of a three-part db.schema.table reference,
+                # which the schema check below does not see — ``otherdb.omop.person`` has db=omop
+                # and passes it. Postgres has no cross-database references, so this can only be an
+                # attempt to confuse the check; reject it rather than emit it. Checked first
+                # because ``otherdb..person`` parses with catalog=otherdb and an *empty* ``db``,
+                # and this is the rejection that actually describes that shape.
+                if table.args.get("catalog") is not None:
+                    raise _invalid_query("Cross-database table references are not allowed.")
+
+                # ``db`` is usually an Identifier, but not always: sqlglot hands back a bare
+                # ``str`` for degenerate shapes such as the empty schema slot above, so reading
+                # ``.name`` unguarded used to escape as an AttributeError. Reject anything that
+                # is not a plain Identifier outright.
+                if not isinstance(schema_node, exp.Identifier):
+                    raise _invalid_query("Malformed table reference.")
+
+                # Compare the name as-is: ``normalize_identifiers`` above already folded it the
+                # way Postgres does. Lowering here instead would re-open the same gap the
+                # normalisation closes — ``"OMOP".person`` is a quoted identifier Postgres keeps
+                # distinct from ``omop``, so a lowered comparison calls it allowed and then emits
+                # it untouched, approving one schema while the engine reads another.
+                schema_name = schema_node.name
+                if schema_name != ALLOWED_SCHEMA:
+                    raise _invalid_query(
+                        f"Schema '{schema_name}' is not accessible. Only the '{ALLOWED_SCHEMA}' schema is allowed."
+                    )
+
+                # An empty name here is an *omop*-qualified table-valued function
+                # (``FROM omop.pg_ls_dir('/')``): it passes the schema check by construction, and
+                # the tree-wide exp.Anonymous walk below deliberately skips nodes an exp.Table
+                # owns — so without this check it was the one spelling that reached the emit
+                # without touching either allowlist.
+                if not table.name:
+                    _reject_disallowed_table_function(table)
+
+                # Already qualified to omop — nothing to pin.
+                continue
+
+            table_name = table.name
+            if not table_name:
+                # An empty name with no schema is an unqualified table-valued function
+                # (``FROM generate_series(1, 10)``), which sqlglot wraps in an exp.Table carrying
+                # no name and no schema. There is nothing to pin — these resolve in pg_catalog,
+                # not omop — so the allowlist is the only control available here. Skipping instead
+                # would leave the FROM-clause function shape as a hole straight through every rule
+                # above (FLIP#879).
+                _reject_disallowed_table_function(table)
+                continue
+
+            if table_name in scope.cte_sources:
+                continue
+
+            # Unqualified. Postgres always searches pg_catalog — implicitly ahead of the
+            # search_path schemas unless search_path names it explicitly, in which case at that
+            # position. Either way it is always on the effective path, so ``FROM pg_class`` reads
+            # the catalog however the database is configured (FLIP#879). Pin the reference to omop
+            # in the tree rather than trusting resolution order: the SQL that reaches the engine is
+            # emitted from this same tree at the end of this function, so a pinned node is a pinned
+            # query. ``omop.pg_class`` does not exist and fails as a clean undefined-table error.
+            #
+            # Pinning rather than rejecting is deliberate — unqualified references are ordinary in
+            # the cohort queries researchers write, and rejecting them would break saved queries to
+            # close a hole that pinning closes completely.
+            table.set("db", exp.to_identifier(ALLOWED_SCHEMA))
+
+    # The scope walk above only reaches functions that sqlglot parsed into an exp.Table (a bare
+    # ``FROM func(...)`` item). A dangerous function reached any other way — ``FROM LATERAL
+    # func(...)`` parses as exp.Lateral, and select-list / WHERE / subquery calls parse as neither
+    # — never touched a Table node, so it resolved through the implicit pg_catalog unchecked. Walk
+    # every exp.Anonymous (sqlglot's node for an unrecognised function) tree-wide and allowlist it.
+    # Skip the ones an exp.Table owns: those are FROM-clause table-valued functions already handled
+    # above, and re-rejecting them here would only replace their specific message with this one.
+    for function in stmt.find_all(exp.Anonymous):
+        if isinstance(function.parent, exp.Table):
             continue
-        # exp.Table.args["db"] is always None or an Identifier in sqlglot's
-        # schema, so .name is safe here.
-        schema_name = schema_node.name.lower()
-        if schema_name != ALLOWED_SCHEMA:
+        function_name = function.name.lower()
+        if function_name not in _ALLOWED_FUNCTIONS:
             raise _invalid_query(
-                f"Schema '{schema_name}' is not accessible. Only the '{ALLOWED_SCHEMA}' schema is allowed."
+                f"'{function_name}' is not an allowed function. "
+                f"Allowed: {', '.join(sorted(_ALLOWED_FUNCTIONS))}."
             )
 
     for clause_type, label in ((exp.Limit, "LIMIT"), (exp.Offset, "OFFSET")):
@@ -144,7 +417,14 @@ def validate_query(query: str) -> bool:
             if not isinstance(value, exp.Literal) or not value.is_int:
                 raise _invalid_query(f"{label} must be a literal integer.")
 
-    return True
+    # Re-emit from the AST we just validated rather than handing the caller's
+    # original string to the engine. The string that reaches the database is
+    # therefore generated by sqlglot from a checked tree, which breaks the
+    # injection taint chain and incidentally normalises trailing semicolons and
+    # whitespace. Emitting here — instead of in a second helper that re-parses —
+    # keeps one parse and one policy: there is no second copy of the
+    # single-statement and SELECT-shape rules to drift out of step with these.
+    return stmt.sql(dialect="postgres")
 
 
 def get_records(
@@ -373,7 +653,7 @@ def verify_cardinality(df: pd.DataFrame, threshold: float = 0.05) -> bool:
         percentage_unique = unique_count / len(df) if len(df) > 0 else 0
         logger.info(f"Column '{col}' has {unique_count} unique values ({percentage_unique:.2%} of total)")
         if all([
-            unique_count < COHORT_QUERY_THRESHOLD,  # Absolute threshold
+            unique_count < get_settings().COHORT_QUERY_THRESHOLD,  # Absolute threshold
             percentage_unique < threshold,  # Relative threshold
         ]):
             logger.info(f"Column '{col}' has insufficient unique values ({threshold=}, {unique_count=})")
@@ -381,17 +661,22 @@ def verify_cardinality(df: pd.DataFrame, threshold: float = 0.05) -> bool:
     return True
 
 
-def make_other_category(results: list[dict], min_count: int = COHORT_QUERY_THRESHOLD) -> list[dict]:
+def make_other_category(results: list[dict], min_count: int | None = None) -> list[dict]:
     """
     Groups entries in the results list with counts less than min_count into an "Other" category.
 
     Args:
-        results (list of dict): List of dictionaries with 'value' and 'count' keys.
-        min_count (int): Minimum count threshold to avoid grouping into "Other".
+        results (list[dict]): List of dictionaries with 'value' and 'count' keys.
+        min_count (int | None): Minimum count threshold to avoid grouping into "Other".
+            Defaults to ``COHORT_QUERY_THRESHOLD``, resolved at call time — a default
+            argument would bind the setting at import and ignore a per-trust override.
 
     Returns:
-        list of dict: Updated list with low-count entries grouped into "Other".
+        list[dict]: Updated list with low-count entries grouped into "Other".
     """
+    if min_count is None:
+        min_count = get_settings().COHORT_QUERY_THRESHOLD
+
     other_count = sum(item["count"] for item in results if item["count"] < min_count)
     filtered_results = [item for item in results if item["count"] >= min_count]
 
@@ -421,23 +706,36 @@ def get_statistics(df: pd.DataFrame, query_input: CohortQueryInput, threshold: i
     Args:
         df (pd.DataFrame): Query results dataframe.
         query_input (data_access_api.routers.schema.CohortQueryInput): Input object containing the query and metadata.
-        threshold (int): Minimum number of records required to return results.
+        threshold (int): Minimum number of records the caller requires. ``COHORT_QUERY_THRESHOLD``
+            is applied as a floor underneath it, so a caller can raise the bar but never
+            lower it below the trust's configured disclosure threshold.
 
     Returns:
         StatisticsResponse: Contains the aggregated statistics, or a 0-count empty response
-        when below ``COHORT_QUERY_THRESHOLD``.
+        when below the effective threshold.
     """
     record_count = len(df)
+    # The configured threshold is a floor, not a default: a caller passing a smaller value
+    # must not be able to weaken suppression. Read live rather than at import so a per-trust
+    # override actually applies.
+    threshold = max(threshold, get_settings().COHORT_QUERY_THRESHOLD)
 
-    if record_count < COHORT_QUERY_THRESHOLD:
+    if record_count < threshold:
         # Privacy-suppress every below-threshold count, INCLUDING a genuine zero: a true
         # zero and a small (1..threshold-1) count return identically (record_count=0,
         # suppressed=True) so the response can't reveal that >=1 patient matched.
         # Distinguishing them would leak membership/existence (issue #519, security review).
         logger.info(
-            f"Query returned {record_count} records (< {COHORT_QUERY_THRESHOLD});"
+            f"Query returned {record_count} records (< {threshold});"
             " returning privacy-suppressed 0-count response"
         )
+        if record_count == 0:
+            # Trust-side only, and deliberately AFTER the response has been decided — this
+            # cannot and must not change what goes on the wire (see above). It exists because
+            # the honest refusal is, by design, indistinguishable and therefore undiagnosable:
+            # a vocabulary-less trust answers every cohort query with 0 rows, and the operator
+            # sees only "no cohort records" from the hub. See FLIP#967.
+            _warn_if_vocabulary_missing()
         return StatisticsResponse(
             query_id=query_input.query_id,
             trust_id=query_input.trust_id,
@@ -459,10 +757,10 @@ def get_statistics(df: pd.DataFrame, query_input: CohortQueryInput, threshold: i
     if "person_id" in df.columns:
         logger.info("person_id column found in the query results; including age and sex distribution calculations.")
         age = get_age_distribution(df)
-        age["results"] = make_other_category(age["results"], min_count=COHORT_QUERY_THRESHOLD)
+        age["results"] = make_other_category(age["results"], min_count=threshold)
 
         sex = get_sex_distribution(df)
-        sex["results"] = make_other_category(sex["results"], min_count=COHORT_QUERY_THRESHOLD)
+        sex["results"] = make_other_category(sex["results"], min_count=threshold)
 
         stats.data += [age, sex]
     return stats

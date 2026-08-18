@@ -53,7 +53,8 @@ SELECT
             'status', status,
             'size', size,
             'type', type,
-            'tag', tag
+            'tag', tag,
+            'bandit_findings', bandit_findings
         ))
         FROM uploaded_files
         WHERE model_id = model.id

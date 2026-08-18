@@ -25,10 +25,18 @@ def get_xray_transforms(is_validation: bool = False) -> mt.Compose:
         mt.Compose: Composed transform pipeline keyed on "image".
     """
     transforms = [
-        mt.LoadImaged(keys=["image"]),
+        # The reader is pinned rather than left to MONAI's auto-detection. LoadImaged tries its
+        # registered readers last-registered-first, so which one wins depends on which optional
+        # backends happen to be installed: adding `itk` to the environment promotes ITKReader and
+        # silently changes the array's axis order. PydicomReader(swap_ij=False) returns the pixel
+        # array exactly as DICOM PixelData stores it, indexed (row, column). MONAI's default
+        # swap_ij=True returns it transposed, i.e. the model is fed sideways radiographs, and no
+        # rotation or flip undoes a transpose: a Rotate90d(k=-1) leaves the radiograph upright but
+        # mirrored, which looks entirely correct and silently swaps the patient's left and right.
+        # fl-tutorials/tests/ pins this against the raw PixelData for every app on this path.
+        mt.LoadImaged(keys=["image"], reader="PydicomReader", swap_ij=False),
         mt.EnsureChannelFirstd(keys=["image"], channel_dim="no_channel"),
         mt.Resized(keys=["image"], spatial_size=[224, 224]),
-        mt.Rotate90d(keys=["image"], k=-1),
         mt.ScaleIntensityd(keys=["image"]),
     ]
     if not is_validation:

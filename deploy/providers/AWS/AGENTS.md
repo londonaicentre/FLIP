@@ -10,13 +10,15 @@
 | `ecs.tf` | ECS cluster, capacity providers, ECS CloudWatch log groups (ALB / NLB / target groups / listener rules live in `main.tf`) |
 | `ecs_services.tf` | ECS Fargate services (flip-api, FL services) |
 | `ecs_tasks.tf` | ECS task definitions for Central Hub services (flip-api + FL) |
-| `ecs_efs_provision.tf` | EFS access points + ECS provisioning task for FL workspace |
+| `efs.tf` | EFS file system, mount targets, and access points (FL workspace) |
+| `ecs_efs_provision.tf` | ECS provisioning task that pre-populates the FL EFS workspace (NVFLARE kit or Flower creds, by `fl_backend`) |
+| `ecs_flower.tf` | Flower-only register-supernode-keys one-shot task + run-task trigger (FLIP#566) |
 | `ecs_sg.tf` | ECS security groups |
 | `certificate.tf` | ACM certificates (ALB + CloudFront) |
 | `cloudfront.tf` | CloudFront distribution for flip-ui |
 | `iam_ecs.tf` | IAM roles, instance profiles, SSM policies |
 | `parameter_store.tf` | SSM Parameter Store entries |
-| `backend.tf` | S3 backend + DynamoDB lock |
+| `backend.tf` | S3 backend with S3 native locking (`use_lockfile`) |
 | `variables.tf` | All Terraform variables with defaults |
 
 ## AWS Profiles
@@ -38,7 +40,8 @@ make init/plan/apply                          # Terraform workflow
 make deploy-centralhub                        # ECS deploy at env branch tip via sha-<short7> task-def revisions + CloudFront UI (FLIP#751; TAG= to pin). Prints an FL quiesce reminder (FLIP#770): enable Deployment Mode (pauses FL job pickup) + wait for the running job before deploying; GET /fl/quiesce reports deployment_mode + fl_quiesced. PROD=true additionally asks "Are you sure you want to continue?" (stag stays non-interactive)
 make rollback-centralhub                      # Repoint ECS services at the previous ACTIVE task-def revision + deregister the rolled-away one
 make deploy-trust                             # Deploy trust stack to EC2
-make deploy-ui                                # Build + sync UI to S3 + invalidate CloudFront
+make deploy-ui                                # Build + sync UI to S3 + invalidate CloudFront (excludes ark_demo/*)
+make deploy-ark-demo                          # Build the public Ark+ demo SPA + sync to S3 under ark_demo/ + invalidate /ark_demo/*
 make status                                   # Health checks
 make ssh-config                               # Generate SSH config with SSM ProxyCommand
 make forward-trust                            # SSM port forward all trust UIs
@@ -55,7 +58,7 @@ make aws-login                                # AWS SSO login
 ## Infrastructure
 
 - **VPC**: 10.0.0.0/16, 2 AZs, public + private subnets
-- **ECS Fargate**: Central Hub services (flip-api, fl-api-net-1, fl-server-net-1)
+- **ECS Fargate**: Central Hub services (flip-api, fl-api-net-1, fl-server-net-1). The FL task families serve **both FL backends** (FLIP#566): `FL_BACKEND` switches image/ports/command/env/mounts — NVFLARE (single port `FL_SERVER_PORT`, EFS kit from `fl-flare-participant-kits/<FLARE_KIT_DATE>`) vs Flower (SuperLink 9092 Fleet/9093 Exec/9097 health, TLS + SuperNode auth, creds from `fl-flower-participant-kits/<FLOWER_KIT_DATE>`, shared `fl_jobs` EFS volume, register-supernode-keys one-shot). The NLB listener stays on `FL_SERVER_PORT` for both; only the target-side port changes.
 - **EC2**: Trust host (t3.xlarge, private subnet, SSM-only access)
 - **RDS**: PostgreSQL in private subnets. In production flip-api connects through **RDS Proxy** using **IAM auth** (short-lived per-connection tokens); the proxy uses the RDS-managed master secret to reach the DB, so secret rotation no longer takes flip-api down (FLIP#556). No `rds_iam` Postgres grant is needed.
 - **ALB**: Internal (`internal = true`, private subnets); HTTPS termination for `/api/*` reached via CloudFront VPC origin (no public IP)
@@ -75,6 +78,6 @@ An FL redeploy is `make deploy-centralhub` (branch-tip resolution, or `TAG=sha-<
 
 ## State Management
 
-- Remote state in S3 (`FLIP_TFSTATE_BUCKET_NAME`) with DynamoDB locking
+- Remote state in S3 (`FLIP_TFSTATE_BUCKET_NAME`) with S3 native locking (`use_lockfile = true` in `backend.tf`; no DynamoDB lock table)
 - Persistent resources (S3, Secrets, Cognito) preserved during destroy
 - `make import-persistent` to import pre-existing resources

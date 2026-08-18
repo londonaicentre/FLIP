@@ -775,7 +775,9 @@ def main(
                 check_http_endpoint(xnat_url, f"XNAT {kit.name}{slot} Web UI", [200, 302])
             if kit.pacs_ui_port:
                 pacs_url = f"http://localhost:{kit.pacs_ui_port}"
-                check_http_endpoint(pacs_url, f"Orthanc PACS {kit.name}{slot}", [200, 401])
+                # Auth is always enforced (FLIP-PT-091): a 200 without
+                # credentials means an unauthenticated PACS — fail.
+                check_http_endpoint(pacs_url, f"Orthanc PACS {kit.name}{slot}", [401])
 
     # Database connectivity check
     print_section("Database Connectivity")

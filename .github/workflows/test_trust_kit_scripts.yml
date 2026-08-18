@@ -1,0 +1,58 @@
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# scripts/tests/ had no CI job at all, so its assertions — including the one proving a kit file is
+# restricted to 0600 *before* the trust credentials are written into it (FLIP#889) — only ran when
+# someone remembered to run them by hand. Every file in that directory is stdlib-only, needs no
+# services and shares the same `if __name__ == "__main__": main()` contract, so the whole directory
+# runs here rather than one named file: a new script test is then covered by existing there.
+
+name: Trust kit scripts
+
+on:
+  push:
+    branches: [develop]
+    paths:
+      - "scripts/**"
+      - ".github/workflows/test_trust_kit_scripts.yml"
+  pull_request:
+    branches: [develop]
+    paths:
+      - "scripts/**"
+      - ".github/workflows/test_trust_kit_scripts.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  test-trust-kit-lib:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # test_sync_trust_kit.py drives sync_trust_kit.py through `uv run --no-config` and hard-exits
+      # (rather than skipping) when uv is absent, so the runner needs it even though the tests
+      # themselves are stdlib-only.
+      - name: Install uv
+        run: pip install uv
+      - name: Run scripts/ tests
+        run: |
+          for test_file in scripts/tests/test_*.py; do
+            echo "== $test_file"
+            python "$test_file" || exit 1
+          done

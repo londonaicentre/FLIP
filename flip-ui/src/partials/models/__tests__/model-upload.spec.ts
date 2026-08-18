@@ -17,6 +17,7 @@ import { beforeEach, describe, expect, test, vi } from "vitest";
 
 import { FileInfo, FileUploadStatus } from "@/interfaces/model/types";
 import ModelUpload from "@/partials/models/ModelUpload.vue";
+import { ModelUploadModal } from "@/partials/models/selectors";
 import { useAuthStore } from "@/store/auth";
 
 // The component uses route.params.modelId inside uploadFile. Reactive
@@ -260,6 +261,106 @@ describe("ModelUpload", () => {
         });
     });
 
+    describe("file status rendering", () => {
+        // The four states must be visually distinguishable: a researcher
+        // needs to tell "still uploading" from "uploaded, being scanned"
+        // (#52), and INFECTED from a generic ERROR.
+        const fileWith = (status: FileUploadStatus, name = "weights.pt"): FileInfo => ({
+            id: `id-${status}`,
+            name,
+            size: 2048,
+            status
+        });
+
+        test("renders a distinct icon for SCANNING vs UPLOADING", async () => {
+            const uploading = mountModelUpload({ files: [fileWith(FileUploadStatus.UPLOADING)] });
+            const scanning = mountModelUpload({ files: [fileWith(FileUploadStatus.SCANNING)] });
+            await flushPromises();
+
+            expect(uploading.find(ModelUploadModal.uploadingStatusLabel).exists()).toBe(true);
+            expect(uploading.find(ModelUploadModal.scanningStatusLabel).exists()).toBe(false);
+
+            expect(scanning.find(ModelUploadModal.scanningStatusLabel).exists()).toBe(true);
+            expect(scanning.find(ModelUploadModal.uploadingStatusLabel).exists()).toBe(false);
+        });
+
+        test("labels the SCANNING state without overstating what was inspected", async () => {
+            // The state covers every file type, but only pickle-bearing files
+            // get a scan that can block release. Python source also gets a
+            // Bandit pass (#877), but it is advisory only and never gates
+            // release — the label must not imply the file was vetted for
+            // malicious behaviour (#52).
+            const wrapper = mountModelUpload({ files: [fileWith(FileUploadStatus.SCANNING)] });
+            await flushPromises();
+            const icon = wrapper.find(ModelUploadModal.scanningStatusLabel);
+
+            expect(icon.exists()).toBe(true);
+            expect(icon.attributes("aria-label")?.toLowerCase()).toContain("check");
+            expect(icon.attributes("aria-label")?.toLowerCase()).not.toContain("unsafe");
+        });
+
+        test("renders a dedicated INFECTED icon, distinct from ERROR", async () => {
+            const infected = mountModelUpload({ files: [fileWith(FileUploadStatus.INFECTED)] });
+            await flushPromises();
+
+            expect(infected.find(ModelUploadModal.infectedStatusLabel).exists()).toBe(true);
+            expect(infected.find(ModelUploadModal.errorStatusLabel).exists()).toBe(false);
+            expect(
+                infected.find(ModelUploadModal.infectedStatusLabel).attributes("aria-label")?.toLowerCase()
+            ).toContain("unsafe");
+        });
+
+        test("offers delete but not download for an INFECTED file", async () => {
+            // The object is already gone from S3, so downloading is
+            // meaningless; deleting clears the row so the user can re-upload.
+            const wrapper = mountModelUpload({ files: [fileWith(FileUploadStatus.INFECTED)] });
+            await flushPromises();
+
+            expect(wrapper.find("[aria-label='Delete weights.pt']").exists()).toBe(true);
+            expect(wrapper.find("[aria-label='Download weights.pt']").exists()).toBe(false);
+        });
+
+        test("shows an advisory indicator for a COMPLETED file with Bandit findings, but still allows download", async () => {
+            // Bandit findings are advisory only (#877) — the file is still
+            // COMPLETED and usable, unlike INFECTED which removes the object.
+            const flagged: FileInfo = {
+                ...fileWith(FileUploadStatus.COMPLETED, "trainer.py"),
+                bandit_findings: [
+                    {
+                        test_id: "B602",
+                        issue_text: "subprocess call with shell=True",
+                        severity: "HIGH",
+                        confidence: "HIGH",
+                        line_number: 3
+                    }
+                ]
+            };
+            const wrapper = mountModelUpload({ files: [flagged] });
+            await flushPromises();
+
+            const indicator = wrapper.find(ModelUploadModal.banditFindingsIndicator);
+            expect(indicator.exists()).toBe(true);
+            expect(indicator.attributes("title")).toContain("B602");
+            expect(wrapper.find("[aria-label='Download trainer.py']").exists()).toBe(true);
+        });
+
+        test("hides the advisory indicator for a file with no Bandit findings", async () => {
+            const clean = mountModelUpload({ files: [fileWith(FileUploadStatus.COMPLETED, "trainer.py")] });
+            await flushPromises();
+
+            expect(clean.find(ModelUploadModal.banditFindingsIndicator).exists()).toBe(false);
+        });
+
+        test("hides 'Download all' when any file is INFECTED or SCANNING", async () => {
+            const infected = mountModelUpload({ files: [fileWith(FileUploadStatus.COMPLETED, "a.py"), fileWith(FileUploadStatus.INFECTED, "b.pt")] });
+            const scanning = mountModelUpload({ files: [fileWith(FileUploadStatus.COMPLETED, "a.py"), fileWith(FileUploadStatus.SCANNING, "b.pt")] });
+            await flushPromises();
+
+            expect(infected.find("[data-test='download-all-files-btn']").exists()).toBe(false);
+            expect(scanning.find("[data-test='download-all-files-btn']").exists()).toBe(false);
+        });
+    });
+
     describe("props.files handling", () => {
         test("gives the icon-only file action buttons accessible names", async () => {
             const wrapper = mountModelUpload({
@@ -471,21 +572,17 @@ describe("ModelUpload", () => {
     });
 
     describe("uploadFile — happy path", () => {
-        test("obtains a presigned policy, uploads, marks SCANNING, then processes the file", async () => {
+        test("obtains a presigned policy, uploads, marks SCANNING, then registers the file", async () => {
             const policy = policyFor();
             mockCreatePreSignedUrl.mockResolvedValue(policy);
             mockUploadFileService.mockResolvedValue(undefined);
             mockProcessScannedFile.mockResolvedValue(undefined);
 
-            vi.useFakeTimers();
             const wrapper = mountModelUpload();
             wrapper.findComponent({ name: "FileUpload" }).vm.$emit(
                 "new-files",
                 makeFileList([makeFile("model.py")])
             );
-
-            // Drain microtasks so createPreSignedUrl + uploadFileService resolve.
-            await vi.advanceTimersByTimeAsync(0);
             await flushPromises();
 
             expect(mockCreatePreSignedUrl).toHaveBeenCalledWith(
@@ -501,34 +598,43 @@ describe("ModelUpload", () => {
                 expect.objectContaining({ title: "File Uploaded!" })
             );
 
-            // Advance past the 3s scan-wait so processScannedFile runs.
-            await vi.advanceTimersByTimeAsync(3_500);
-            await flushPromises();
-
+            // No client-side scan wait: registration happens as soon as the
+            // bytes are in S3, and the server owns the scan from there (#52).
             expect(mockProcessScannedFile).toHaveBeenCalledWith(
                 "/files/process-scanned-file/model-under-test/model.py"
             );
         });
 
-        test("emits 'uploaded' 10s after the upload batch completes", async () => {
+        test("shows the file as SCANNING once registered", async () => {
             mockCreatePreSignedUrl.mockResolvedValue(policyFor());
             mockUploadFileService.mockResolvedValue(undefined);
             mockProcessScannedFile.mockResolvedValue(undefined);
 
-            vi.useFakeTimers();
             const wrapper = mountModelUpload();
             wrapper.findComponent({ name: "FileUpload" }).vm.$emit(
                 "new-files",
                 makeFileList([makeFile("model.py")])
             );
-
-            await vi.advanceTimersByTimeAsync(3_500);
             await flushPromises();
-            // Not yet — the emit is behind a 10s setTimeout.
-            expect(wrapper.emitted("uploaded")).toBeFalsy();
 
-            await vi.advanceTimersByTimeAsync(10_500);
+            expect(wrapper.find(ModelUploadModal.scanningStatusLabel).exists()).toBe(true);
+        });
+
+        test("emits 'uploaded' as soon as the batch is registered", async () => {
+            // The server-side scan outcome arrives via the parent's polling,
+            // so there is nothing to wait for here — the old fixed delay only
+            // deferred the first refresh.
+            mockCreatePreSignedUrl.mockResolvedValue(policyFor());
+            mockUploadFileService.mockResolvedValue(undefined);
+            mockProcessScannedFile.mockResolvedValue(undefined);
+
+            const wrapper = mountModelUpload();
+            wrapper.findComponent({ name: "FileUpload" }).vm.$emit(
+                "new-files",
+                makeFileList([makeFile("model.py")])
+            );
             await flushPromises();
+
             expect(wrapper.emitted("uploaded")).toEqual([[true]]);
         });
     });
@@ -539,14 +645,12 @@ describe("ModelUpload", () => {
             // the upload cannot proceed without somewhere to POST the bytes.
             mockCreatePreSignedUrl.mockResolvedValue(null);
 
-            vi.useFakeTimers();
             const wrapper = mountModelUpload();
             wrapper.findComponent({ name: "FileUpload" }).vm.$emit(
                 "new-files",
                 makeFileList([makeFile("model.py")])
             );
 
-            await vi.advanceTimersByTimeAsync(0);
             await flushPromises();
 
             expect(mockUploadFileService).not.toHaveBeenCalled();
@@ -559,14 +663,12 @@ describe("ModelUpload", () => {
             mockCreatePreSignedUrl.mockResolvedValue(policyFor());
             mockUploadFileService.mockRejectedValue(new Error("network blip"));
 
-            vi.useFakeTimers();
             const wrapper = mountModelUpload();
             wrapper.findComponent({ name: "FileUpload" }).vm.$emit(
                 "new-files",
                 makeFileList([makeFile("model.py")])
             );
 
-            await vi.advanceTimersByTimeAsync(0);
             await flushPromises();
 
             expect(mockSnackbarError).toHaveBeenCalledWith(
@@ -583,14 +685,12 @@ describe("ModelUpload", () => {
             // reject the upload after bytes have already been streamed.
             mockCreatePreSignedUrl.mockResolvedValue(policyFor({ maxBytes: 8 }));
 
-            vi.useFakeTimers();
             const wrapper = mountModelUpload();
             wrapper.findComponent({ name: "FileUpload" }).vm.$emit(
                 "new-files",
                 makeFileList([makeFile("model.py", 1024)])
             );
 
-            await vi.advanceTimersByTimeAsync(0);
             await flushPromises();
 
             expect(mockUploadFileService).not.toHaveBeenCalled();
@@ -599,6 +699,32 @@ describe("ModelUpload", () => {
                 12_000
             );
             expect(mockProcessScannedFile).not.toHaveBeenCalled();
+        });
+
+        test("surfaces the server's rejection reason when the file type is not allowed", async () => {
+            // flip-api refuses non-whitelisted extensions with a 400 whose
+            // detail names the offending suffix and the allowed set (#52).
+            // A generic "please try again" would leave the user guessing.
+            const detail = "File type '.exe' is not allowed. Allowed extensions: .py, .json, .pt";
+            mockCreatePreSignedUrl.mockRejectedValue({
+                response: {
+                    status: 400,
+                    data: { detail }
+                }
+            });
+
+            const wrapper = mountModelUpload();
+            wrapper.findComponent({ name: "FileUpload" }).vm.$emit(
+                "new-files",
+                makeFileList([makeFile("payload.exe")])
+            );
+            await flushPromises();
+
+            expect(mockUploadFileService).not.toHaveBeenCalled();
+            expect(mockSnackbarError).toHaveBeenCalledWith(
+                expect.objectContaining({ text: detail }),
+                12_000
+            );
         });
     });
 

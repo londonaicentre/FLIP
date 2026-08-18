@@ -43,42 +43,21 @@ FLIP is developed by the [London AI Centre](https://www.aicentre.co.uk/) in coll
 
 The FLIP repository is a mono-repo: it consolidates the Central Hub API, Trust APIs, UI, Docker deployment, **and**
 the federated learning code (base library, FL services, and tutorials) for both NVFLARE and Flower. Both backends
-are also provisioned in-tree (gitignored) under `fl-services/<backend>/provision/` (see
-[`README.md#federated-learning-setup`](README.md#federated-learning-setup)).
-
-```bash
-FLIP/
-├── deploy/             # Docker deployment files
-│   └── providers/
-│       ├── AWS/            # Terraform for Central Hub + cloud trust (EC2)
-│       ├── kubernetes/     # Helm chart for K8s trust deployment
-│       └── local/          # Ansible for on-premises trust deployment
-├── docs/               # Sphinx documentation
-├── flip-api/           # Central Hub API service
-├── flip-ui/            # UI service
-├── trust/              # Services deployed in individual trust environments
-│   ├── data-access-api/    # Data access API
-│   ├── imaging-api/        # Imaging API
-│   ├── observability/      # Observability stack (Grafana, Loki, Alloy)
-│   ├── omop-db/            # Mocked OMOP database
-│   ├── orthanc/            # Mocked PACS service (Orthanc)
-│   ├── trust-api/          # Trust API
-│   └── xnat/               # Mocked XNAT service
-├── flip-utils/         # `flip` Python package — platform logic, NVFLARE components, Flower helpers
-├── fl-services/        # Docker images for FL networks, per backend: fl-services/nvflare/{fl-server,fl-client,fl-api-base,fl-base}, fl-services/flower/{superlink,supernode,fl-api-flower,fl-base}
-├── fl-apps/            # FL app templates per backend: fl-apps/nvflare/{standard,standard_client_api,evaluation,evaluation_client_api,diffusion_model,fed_opt}, fl-apps/flower/{standard,evaluation} (+ check_required_files.sh)
-└── fl-tutorials/       # End-to-end tutorial examples per backend: fl-tutorials/nvflare/ (xray classification, spleen seg/eval, diffusion), fl-tutorials/flower/ (xray classification, 3D spleen seg, numpy)
-```
+are provisioned in-tree (gitignored) under `fl-services/<backend>/provision/`. See the single canonical
+[repository layout](README.md#repository-layout) in the root README and the README within each area for details.
 
 ## Setting up the development environment
 
 ### Prerequisites
 
-In addition to the [deployment prerequisites](README.md#prerequisites), you'll need the following for development:
-
-- [Python 3.12+](https://www.python.org/downloads/)
-- [UV](https://docs.astral.sh/uv) - Python environment management tool (`curl -LsSf https://astral.sh/uv/install.sh | sh`)
-- [act](https://github.com/nektos/act) - Run GitHub Actions locally (install via [Homebrew](https://brew.sh/): `brew install act`)
+- A Linux development host; a CUDA-capable GPU is required for GPU-backed tutorials and training
+- [Docker Engine](https://docs.docker.com/engine/install/) with Compose and Swarm mode
+- [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)
+  on GPU hosts
+- GNU Make, `jq`, and `curl`
+- [Python 3.12+](https://www.python.org/downloads/) and [uv](https://docs.astral.sh/uv/)
+- The AWS CLI configured for SSO access to the development environment
+- [act](https://github.com/nektos/act) if you want to run GitHub Actions locally
 - **GHCR login** — `make up` pulls the repo-built service images from GitHub Container Registry by default, so authenticate once with a PAT that has `read:packages`:
   ```bash
   echo "$GHCR_PAT" | docker login ghcr.io -u <your-github-username> --password-stdin
@@ -203,6 +182,21 @@ make generate-internal-service-key
 This writes `INTERNAL_SERVICE_KEY` with `INTERNAL_SERVICE_KEY_HASH` into `.env.development` for
 fl-server-to-hub authentication.
 
+For the full local stack, replace every placeholder in these minimum groups before running `make up`:
+
+| Group | Required development values |
+| --- | --- |
+| AWS session | `AWS_PROFILE`, `AWS_REGION` |
+| Central Hub auth | `AWS_COGNITO_USER_POOL_ID`, `AWS_COGNITO_APP_CLIENT_ID`, `ADMIN_USER_PASSWORD` |
+| Email | an SES-verified `SES_VERIFIED_EMAIL` |
+| Local secrets | `POSTGRES_PASSWORD`, a base64-encoded 32-byte `AES_KEY_BASE64` |
+| Runtime S3 | `FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME`, `FLIP_FL_RESULTS_BUCKET_NAME`, `FLIP_APP_BUNDLES_BUCKET_NAME`, `AICENTRE_BUCKET_NAME` |
+| XNAT artifacts | `FLIP_ARTIFACTS_BUCKET_NAME`, containing the versioned WAR and plugin set described in [`trust/xnat/README.md`](trust/xnat/README.md#plugins) |
+
+Development uses these configured AWS services directly; there is no LocalStack fallback. Authorised FLIP developers
+can use the shared development values. Other deployers should create their own resources with the
+[Central Hub deployment guide](docs/source/deploy-flip/deploy-central-hub.rst).
+
 Trusts are registered on the **running hub** with `make register-trusts` (shipped dev roster) or
 `make register-trust KIT=<CODE>` (one trust), which inserts each `trust` row (with its
 `api_key_hash`), claims an FL kit slot, and fills that trust's kit file `trust/.env.<CODE>.<env>`
@@ -226,7 +220,7 @@ compose file — avoid hardcoding values in Dockerfiles or compose files directl
 - `TRUST_INTERNAL_SERVICE_KEY` — single per-trust plaintext key, in that trust's kit file
   (`trust/.env.<CODE>.<env>`), minted by `register_trust`. Read by every trust-internal container. The hub
   never sees it. Distinct from `INTERNAL_SERVICE_KEY*` (which protects fl-server → flip-api on the
-  Central Hub). See [`CLAUDE.md`](CLAUDE.md#trust-internal-service-authentication) for the threat model.
+  Central Hub). See the [public security model](docs/source/security.rst#trust-internal-service-authentication).
 
 FL clients (trust side) intentionally do **not** receive Central Hub API credentials. Only the fl-server (on the Central
 Hub) communicates with flip-api. FL clients relay metrics and exceptions to the fl-server, which forwards them.
@@ -465,6 +459,14 @@ FastAPI `TestClient` on its own does **not** make a test "integration" — what 
 
 This rule applies across all services: `flip-api/tests/`, `trust/trust-api/tests/`, `trust/imaging-api/tests/`, `trust/data-access-api/tests/`, etc.
 
+##### Tests for FL tutorials and app templates
+
+Two trees sit outside any service and have their own home:
+
+- **`fl-tutorials/tests/`** — the CPU-only suite over the tutorial apps' transform chains (`make -C fl-tutorials test`, and `.github/workflows/fl-tutorials-tests.yml` on every PR touching `fl-tutorials/**`). A test belongs here if it can assert on tutorial code with **no GPU, no dataset download, no FL image and no network** — transform composition, import-time correctness, and what the preprocessing chain actually feeds the model. Fixtures are synthesised in-process (see `fl-tutorials/tests/dicom_phantom.py`), never committed as data. Anything that needs real training to observe — convergence, metric values, multi-round behaviour — belongs instead with the GPU simulator harness (`make -C fl-tutorials run-tutorial`), which is not run in CI.
+  The suite runs in **flip-utils' environment** (`flip-utils[full]`), which is what the FL images give these apps at runtime; it deliberately has no `pyproject.toml` of its own, and the per-tutorial `uv` environments are the wrong target (`arkplus_fine_tuning/pyproject.toml` does not declare `monai`, so that environment cannot import its own `data_utils.py`).
+- **`fl-apps/`** — has no pytest suite; its invariant is the required-files manifest, checked by `fl-apps/check_required_files.sh` (pre-commit + `.github/workflows/fl-apps-check-required-files.yml`). Files that must stay byte-identical to another file — the Flower tutorial copies of the `fl-apps/flower/` templates, and the shared Ark+ evaluation sources — are pinned in `scripts/check_tutorial_sync.sh`.
+
 ##### flip-api: real-Postgres integration tests via Testcontainers
 
 `flip-api/tests/integration/` boots a throwaway `postgres:16-alpine` container per pytest session via [testcontainers-python](https://github.com/testcontainers/testcontainers-python) (`tests/integration/conftest.py`). The fixture builds the schema by running the **Alembic migrations** (`alembic upgrade head`) — the same DDL dev/prod apply at boot — then seeds permissions / roles / role-permissions once, and truncates per-test tables between tests. Both the existing `session` fixture and FastAPI's `Depends(get_session)` are rewired at the throwaway DB, so a new test only needs to request `session` (raw SQL access) and/or `client` (`TestClient` against the same DB) — no per-test setup required.
@@ -517,9 +519,26 @@ The new branch should be based on the latest `develop` branch.
 
 Releases are cut from `main`. The version is set in the root `pyproject.toml`, and merging to `main` triggers [`.github/workflows/release.yml`](.github/workflows/release.yml), which reads that version, creates a `v<MAJOR.MINOR.PATCH>` git tag, and publishes a GitHub Release with auto-generated notes. On the same merge, the per-service `.github/workflows/docker_build_*.yml` workflows rebuild every service and push the `:prod` image tag (alongside `:<sha>`) to GHCR. There is no separate release-publishing step beyond merging to `main`.
 
+### Two release trains, two tag namespaces
+
+A push to `main` cuts **two independent releases**, from two independently-versioned artefacts. They must never share a tag namespace: each workflow skips its own release when it finds its tag already present, so a version number claimed by one artefact would silently suppress the other's release — or, for flip-utils, its PyPI publish.
+
+| Artefact | Version source | Workflow | Tag | Release title |
+| --- | --- | --- | --- | --- |
+| FLIP platform | root [`pyproject.toml`](pyproject.toml) | [`release.yml`](.github/workflows/release.yml) | `v<X.Y.Z>` | `Release v<X.Y.Z>` |
+| flip-utils (PyPI `flip-utils`) | [`flip-utils/flip/__init__.py`](flip-utils/flip/__init__.py) | [`release-pypi.yml`](.github/workflows/release-pypi.yml) | `flip-utils-v<X.Y.Z>` | `flip-utils v<X.Y.Z>` |
+
+The `flip-utils-` prefix is what keeps them apart: every `git tag --list 'v*.*.*'` lookup in the release and preview workflows matches platform tags only, so each train's changelog spans its own history. **Do not drop the prefix or widen those globs** — the two version sequences advance independently and will overlap.
+
+> **Historical note:** flip-utils 0.4.1 was released just before this split and originally tagged `v0.4.1`, in the platform namespace. It was retro-tagged as `flip-utils-v0.4.1` (same commit, `c55f79e8`) and the old tag deleted, so the two namespaces are clean from `v0.4.0` / `flip-utils-v0.4.1` onwards. The published PyPI artefact was never affected.
+
+See [flip-utils and the PyPI release path](#flip-utils-and-the-pypi-release-path) below and [`flip-utils/CONTRIBUTING.md`](flip-utils/CONTRIBUTING.md) for the flip-utils train in detail.
+
 ### Versioning
 
 FLIP follows [Semantic Versioning](https://semver.org/). The version in the **root** [`pyproject.toml`](pyproject.toml) is the FLIP release version — it is what `release.yml` reads to create the git tag.
+
+Separately, [`flip-utils/flip/__init__.py`](flip-utils/flip/__init__.py) carries `__version__`, the version of the published `flip-utils` package. It is what `release-pypi.yml` reads, and it is **not** required to track the root version.
 
 Each service has its own version string:
 
@@ -538,20 +557,39 @@ Before opening the release PR from `develop` to `main`:
 - `develop` is green in [CI](https://github.com/londonaicentre/FLIP/actions).
 - All PRs intended for this release are merged into `develop` and carry an appropriate label. The release-notes categories come from [`.github/release.yml`](.github/release.yml): `enhancement` / `feature`, `bug` / `fix`, `documentation` / `docs`, `ci` / `build`, `chore` / `dependencies`. PRs labelled `ignore-for-release` are excluded.
 - Bump the `version` in the root `pyproject.toml` to the new release version. Additionally bump the `version` in any service file (`flip-api/pyproject.toml`, `flip-ui/package.json`, `trust/*/pyproject.toml`) whose code changed in this release, per the independent-SemVer rule above. Leave unchanged services alone.
+- If `flip-utils/**` changed in this release, bump `__version__` in [`flip-utils/flip/__init__.py`](flip-utils/flip/__init__.py) — [`check-version-bump.yml`](.github/workflows/check-version-bump.yml) fails the `develop` → `main` PR unless it is valid semver and strictly higher than the latest `v*.*.*` tag. It need not match — or differ from — the root version; the two trains tag in separate namespaces (see [flip-utils and the PyPI release path](#flip-utils-and-the-pypi-release-path)).
+- Curate the release-notes header in [`.github/RELEASE_NOTES_TEMPLATE.md`](.github/RELEASE_NOTES_TEMPLATE.md) — Highlights, Breaking Changes, New Features, Bug Fixes. Editing the file is the only way to change those sections; the preview comment on the PR is regenerated from it on every push.
 - Run `make unit_test` and `make integration_test` locally.
 
 ### Cutting the release
 
 1. From a branch off `develop`, commit the version bumps above and open a PR targeting `develop` with title `Release v<X.Y.Z>`.
-1. Once that merges and CI is green, open a PR from `develop` to `main`.
+1. Once that merges and CI is green, open a PR from `develop` to `main`. [`validate_branch_origin.yml`](.github/workflows/validate_branch_origin.yml) rejects any PR to `main` that does not come from `develop`.
+1. On that PR, check the automated gates before merging:
+   - [`pr-release-notes-preview.yml`](.github/workflows/pr-release-notes-preview.yml) posts a **release-notes preview** comment — the rendered template header plus the generated changelog — and updates it in place on every push. Read it as the last check that the notes are right.
+   - [`check-version-bump.yml`](.github/workflows/check-version-bump.yml) and [`check-package-metadata.yml`](.github/workflows/check-package-metadata.yml) run when `flip-utils/**` changed.
 1. On merge to `main`:
-   - [`release.yml`](.github/workflows/release.yml) creates the `v<X.Y.Z>` git tag and publishes the GitHub Release with auto-generated notes.
+   - [`release.yml`](.github/workflows/release.yml) reads the root `pyproject.toml`, creates the `v<X.Y.Z>` git tag, and publishes the GitHub Release named `Release v<X.Y.Z>` with auto-generated notes.
+   - [`release-pypi.yml`](.github/workflows/release-pypi.yml) reads `flip-utils/flip/__init__.py` and, if that version is not yet tagged, lints + tests + builds the package, publishes it to PyPI via OIDC trusted publishing, tags it, and publishes a GitHub Release named `flip v<X.Y.Z>` with the template header, the generated changelog, and the build artifacts attached.
    - Every `docker_build_*.yml` workflow under [`.github/workflows/`](.github/workflows/) rebuilds its service and pushes the `:prod` and `:<sha>` tags to GHCR.
-1. Verify on the [Releases page](https://github.com/londonaicentre/FLIP/releases) that the new release exists and the notes look right. Verify on [GHCR](https://github.com/orgs/londonaicentre/packages) that the `:prod` tags on `flip-api`, `trust-api`, `imaging-api`, and `data-access-api` were updated by the latest build.
+1. Verify on the [Releases page](https://github.com/londonaicentre/FLIP/releases) that the new release exists and the notes look right. Verify on [GHCR](https://github.com/orgs/londonaicentre/packages) that the `:prod` tags on `flip-api`, `trust-api`, `imaging-api`, and `data-access-api` were updated by the latest build. If the package was released, verify it on [PyPI](https://pypi.org/project/flip-utils/).
 
 ### Release notes
 
-There is no `CHANGELOG.md` — the GitHub Releases page is the changelog. Release notes are generated automatically from PR titles and labels via [`.github/release.yml`](.github/release.yml). To curate the notes for a release, ensure each PR going into `develop` has the right label before it is merged.
+There is no `CHANGELOG.md` — the GitHub Releases page is the changelog. Release notes come from two pieces:
+
+- **The generated changelog** — GitHub's release-notes API lists every PR merged since the previous `v*.*.*` tag, plus a contributors section, categorised by PR label according to [`.github/release.yml`](.github/release.yml): `enhancement` / `feature`, `bug` / `fix`, `documentation` / `docs`, `ci` / `build`, `chore` / `dependencies`, then Other Changes. PRs labelled `ignore-for-release` are excluded. Curating this means labelling each PR correctly **before** it merges into `develop` — it cannot be fixed at release time.
+- **The hand-written header** — [`.github/RELEASE_NOTES_TEMPLATE.md`](.github/RELEASE_NOTES_TEMPLATE.md), with `{{VERSION}}`, `{{TAG}}`, and `{{PREV_TAG}}` substituted. Edit this file on the release branch to fill in Highlights and the Breaking Changes / New Features / Bug Fixes summaries.
+
+Both are rendered into the preview comment on the `develop` → `main` PR, and both go into the release published by `release-pypi.yml`. The release published by `release.yml` carries the generated changelog only, without the template header.
+
+### flip-utils and the PyPI release path
+
+`flip-utils` is the only component published as a package ([`flip-utils` on PyPI](https://pypi.org/project/flip-utils/)), so it has a release path of its own driven by `__version__` in [`flip-utils/flip/__init__.py`](flip-utils/flip/__init__.py) rather than the root `pyproject.toml`.
+
+The two paths use **separate tag namespaces** — `v<X.Y.Z>` for the platform, `flip-utils-v<X.Y.Z>` for the package (see [Two release trains, two tag namespaces](#two-release-trains-two-tag-namespaces) above) — and each skips when its own tag already exists. Bump only the root version and you cut a platform release; bump only `__version__` and you cut a package release. Because the namespaces no longer collide, bumping both in the same release PR is safe: the two workflows tag independently and neither can suppress the other, even when the version numbers happen to match.
+
+Full detail — the per-PR gates, the trusted-publishing setup, and the `release.sh` manual fallback — is in [`flip-utils/CONTRIBUTING.md`](flip-utils/CONTRIBUTING.md).
 
 ### Deploying the release
 

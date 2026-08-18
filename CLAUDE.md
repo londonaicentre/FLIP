@@ -15,13 +15,13 @@ FLIP/
 ├── flip-ui/            # Frontend UI (Vue 3 / TypeScript / TailwindCSS)
 ├── flip-utils/         # FLIP Python library (pip-installable flip-utils)
 ├── fl-services/        # FL Docker services + network provisioning, per backend (Makefile owns build/provision/up/down/submit; flower also up-secure): fl-services/nvflare/{fl-base,fl-server,fl-client,fl-api-base, provision/{net-*_project_*.yml, scripts/, workspace-{dev,stag,prod}/ gitignored}}, fl-services/flower/{fl-base,superlink,supernode,fl-api-flower, provision/{scripts/, creds/ gitignored}} (#622)
-├── fl-apps/            # FL app templates per backend: fl-apps/nvflare/{standard,standard_client_api,fed_opt,evaluation,evaluation_client_api,diffusion_model}, fl-apps/flower/{standard,evaluation} + check_required_files.sh (cross-backend CI validator at root)
-├── fl-tutorials/       # FL tutorials per backend: fl-tutorials/nvflare/{image_*,testing}, fl-tutorials/flower/{xray_classification,3d_spleen_segmentation*,numpy} (root Makefile forwards by FL_BACKEND); xray classification, spleen seg/eval, diffusion
+├── fl-apps/            # FL app templates per backend: fl-apps/nvflare/{standard,evaluation,diffusion_model,fed_opt} (all Client-API), fl-apps/flower/{standard,evaluation} + check_required_files.sh (cross-backend CI validator at root)
+├── fl-tutorials/       # FL tutorials per backend (all NVFLARE ones are Client-API apps): fl-tutorials/nvflare/{image_*}, fl-tutorials/flower/{xray_classification,3d_spleen_segmentation*,numpy} (root Makefile forwards by FL_BACKEND); xray classification, spleen seg/eval, diffusion. Plus fl-tutorials/tests/ — CPU-only pytest over the tutorial transform chains (#871), run by `make -C fl-tutorials test`
 ├── trust/
 │   ├── trust-api/      # Trust API gateway (Python/FastAPI)
 │   ├── data-access-api/# OMOP database queries (Python/FastAPI)
 │   ├── imaging-api/    # DICOM image retrieval (Python/FastAPI)
-│   ├── omop-db/        # Mocked OMOP database (PostgreSQL)
+│   ├── omop-db/        # Mocked OMOP database (PostgreSQL) + omop-db image build source & populate tooling (#834)
 │   ├── orthanc/        # Mocked PACS server
 │   └── xnat/           # Mocked XNAT neuroimaging service
 ├── deploy/             # Docker Compose files (dev/prod, flower/nvflare); FL network provisioning now lives under fl-services/<backend>/, not here
@@ -39,7 +39,8 @@ The `flip-utils/`, `fl-services/`, `fl-apps/`, and `fl-tutorials/` trees hold th
 app templates, and tutorials for both NVFLARE and Flower. Both
 backends are also provisioned in-tree (gitignored): `deploy/fl_backend.mk` points `FL_PROVISIONED_DIR` per-backend at
 `fl-services/nvflare/provision/workspace-dev` (nvflare) or `fl-services/flower/provision/creds` (flower) — see
-[`README.md#federated-learning-setup`](README.md#federated-learning-setup).
+[`fl-services/nvflare/README.md`](fl-services/nvflare/README.md) and
+[`fl-services/flower/README.md`](fl-services/flower/README.md).
 
 ## Tech Stack
 
@@ -106,6 +107,7 @@ change, since those live in the image layer, not the mounted `src/`.
 make unit_test             # All unit tests across all services (from root)
 make integration_test      # flip-api + trust integration tests (from root)
 make tests                 # flip-ui unit + e2e tests, then flip-api test suite (from root)
+make -C fl-tutorials test  # ruff over fl-tutorials/ + the CPU-only transform-chain suite (no GPU/dataset/FL image)
 make e2e_smoke             # End-to-end smoke against a running stack (see below)
 # From a service directory (e.g., flip-api/):
 make test                  # ruff + mypy + pytest (unit + integration)
@@ -169,7 +171,10 @@ cd flip-api && uv run python -m tests.e2e_smoke \
 `EXTRA_ARGS` carries `$$FLIP_PROJECT_ID` — a `$$` escape survives the single make expansion; or the root
 `make e2e_smoke` with the id passed literally — `--flip-project-id <uuid>` — when reusing a project via
 `--project-id`. The root wrapper re-expands `EXTRA_ARGS` through a second make and shell, so no `$`-escape
-survives it: `$$` lands empty and `$$$$` injects the recipe shell's PID.)
+survives it: `$$` lands empty and `$$$$` injects the recipe shell's PID. Note that `e2e_smoke_spleen`
+currently targets the **Flower** tutorial (`../fl-tutorials/flower/3d_spleen_segmentation/{app,query.sql}`),
+not the NVFLARE paths shown in the direct-invocation example above; pair it with `FL_BACKEND=flower`
+or invoke `tests.e2e_smoke` directly with the NVFLARE paths shown above for the NVFLARE tutorial.)
 
 Enrichment must land **after** the pull and after DICOM→NIfTI conversion; the hook's position guarantees that.
 The uploader derives each target filename from the converted `input_*.nii.gz`, so with no `NIFTI` resource it
@@ -197,19 +202,20 @@ runs old images otherwise): `docker exec flip-fl-api-net-1 cat fl_api/utils/uplo
 
 ### Running FL Tutorials Locally
 
-The NVFLARE tutorials live in `fl-tutorials/` and run on the local NVFLARE simulator (needs a GPU +
-the `flare-fl-base` image). Each tutorial carries a `.env.app` and delegates to the shared harness in
-`fl-tutorials/nvflare/testing/`. From the repo root:
+The NVFLARE tutorials live in `fl-tutorials/` and are all **Client-API** apps (the legacy Executor
+tutorials, templates and their Docker `testing/` harness are removed; the pre-rename `*_client_api`
+job-type names survive only as accepted aliases for models created before the rename). Each tutorial carries a `.env.app` and a `job.py` driving a FLIP recipe;
+`make run` delegates to `make sim`, which runs the NVFLARE simulator (SimEnv) in the flip-utils venv
+with the `full` ML extra (needs a GPU; per-tutorial `make export` builds the full job config with no
+GPU). From the repo root:
 
 ```bash
 make -C fl-tutorials list-tutorials
 make -C fl-tutorials download-xray-data                  # xray dataset (HF); spleen: download-spleen-data
 make -C fl-tutorials run-tutorial TUTORIAL=xray_classification
-make -C fl-tutorials run-all-tutorials                   # all four (heavy; stops on first failure)
-make -C fl-tutorials test-template TEMPLATE=fed_opt      # smoke-test a template that has no tutorial
+make -C fl-tutorials run-all-tutorials                   # every tutorial (heavy; stops on first failure)
 ```
 
-The simulator GPU id defaults to `0`; override with `SIM_GPU` in `fl-tutorials/nvflare/testing/.env.testing`.
 To iterate on the FL images, `make build-fl` builds them locally as `:dev` (see `fl-services/nvflare/README.md`);
 run the stack on them with `make up DOCKER_FL_REGISTRY= DOCKER_FL_TAG=dev`.
 
@@ -233,7 +239,32 @@ make debug-off SERVICE=flip-api    # Stop debug mode
 ```bash
 make -C flip-api create_testing_projects   # Create test projects
 make -C flip-api delete_testing_projects   # Clean up test data
+make seed-demo-projects                    # Curated radiology catalogue in honest lifecycle states
+                                           # (EXTRA_ARGS="--cleanup" removes it again)
 ```
+
+### Demo Video Recorder
+
+`make demo-video` records the full end-to-end walkthrough (researcher creates project + cohort → admin checks
+Connection Status, stages + approves → XNAT/OHIF DICOM view at a trust → model + app upload → training → results
+download) against the **live dev stack** and assembles one mp4. Local dev tool, not run in CI. Six Cypress segments
+(`flip-ui/test/cypress/demo/`, config `flip-ui/cypress.demo.config.ts` — a live-wired fork of the docs-GIF harness
+with a `demoCaption` subtitle verb) run in Docker (`cypress/included`, `--network host`); the slow platform waits
+(cohort responses, ~6 min imaging import, FL training) happen **off-camera** between segments via
+`flip-api/tests/demo_video.py`, which reuses `tests/e2e_smoke.py`'s wait functions and finally calls
+`flip-ui/scripts/assemble-demo-video.sh` (same crop constants as `videos-to-gifs.sh`). Prerequisites: stack up,
+live AWS SSO session, and ideally the demo Cognito users — `make demo-users` (reads `DEMO_RESEARCHER_PASSWORD` /
+`DEMO_ADMIN_PASSWORD` from env, never committed) then restart flip-api so seeding grants their roles; without them
+the recorder falls back to the well-known admin for both parts. Useful `DEMO_ARGS`: `--app spleen` (record the 3D
+spleen segmentation tutorial instead of chest X-ray; pair with `--data-enrichment-cwd/-cmd` for the off-camera
+label upload, same contract as `e2e_smoke`), `--publish-segmentations` (republish those NIfTI labels as DICOM-SEG
+ROI collections via `flip-api/tests/xnat_seg_upload.py` so segment 3 shows the segmentation overlaid in OHIF —
+dcmqi in Docker for the conversion, the viewer's own `PUT /xapi/roi/…?type=SEG` for the upload; `--seg-limit`
+caps how many sessions per trust are converted), `--skip-xnat`, `--project-id <uuid> --from-segment <n>` (iterate
+on later segments without re-running the pull), `--trusts GSTT`, `--fl-backend flower`, `--video-scale 1` (fast
+drafts; the default 3 renders the browser at 3× device pixels so the 1280x800 viewport is captured at 3840x2400 —
+4K-class). Segment mp4s + the final video land under `flip-ui/test/cypress/demo/` (gitignored). The final mp4 is
+named for the recorded app (`flip-demo-xray.mp4` / `flip-demo-spleen.mp4`).
 
 ### Database migrations (flip-api)
 
@@ -298,7 +329,7 @@ After changes, evaluate if docs need updating:
 | Changed env vars | `.env.development.example`, `CONTRIBUTING.md`, `docs/source/sys-admin.rst` |
 | New dependencies | `CONTRIBUTING.md`, service `README.md` |
 | Changed deployment config | `deploy/README.md`, `docs/source/sys-admin.rst` |
-| New Make targets | `README.md`, this file |
+| New Make targets | `CONTRIBUTING.md`, this file |
 | User-facing workflow changes | `docs/source/user-guides.rst` |
 | FL framework features | `docs/source/components/component-fl-nodes.rst` |
 | Trust service changes | `trust/README.md`, relevant `trust/*/README.md` |
@@ -312,7 +343,7 @@ After changes, evaluate if docs need updating:
 - Line length: 120. Linter: Ruff (`select = ['I', 'F', 'E', 'W', 'PT', 'UP006', 'UP007', 'UP035', 'UP042', 'UP045']`; `UP042` enforces `StrEnum` over the legacy `(str, Enum)` pattern). Type checker: mypy.
 - Docstrings: Google style. Naming: snake_case. Imports: alphabetically sorted.
 - Source layout: `src/[service_name]/`. Tests: `tests/unit/`, `tests/integration/`.
-- Test placement: a test goes in `tests/integration/` if and only if it touches a real backing service (Postgres via `session` fixture, real AWS, a running sibling API, real Orthanc/XNAT/OMOP). If every external dependency is mocked, it's a unit test in `tests/unit/`. FastAPI `TestClient` alone does not make a test "integration". See `CONTRIBUTING.md` ("Where does my test go?") for the canonical rule.
+- Test placement: a test goes in `tests/integration/` if and only if it touches a real backing service (Postgres via `session` fixture, real AWS, a running sibling API, real Orthanc/XNAT/OMOP). If every external dependency is mocked, it's a unit test in `tests/unit/`. FastAPI `TestClient` alone does not make a test "integration". Tests for the tutorial tree live outside any service, in `fl-tutorials/tests/` — CPU-only, running in flip-utils' env (`flip-utils[full]`), with fixtures synthesised in-process; anything needing real training stays with the GPU simulator harness. See `CONTRIBUTING.md` ("Where does my test go?") for the canonical rule.
 - Dependency injection: FastAPI `Depends()`. DB: sync SQLModel `Session` via `get_session()` — the `with Session(...)` block is load-bearing on error paths (FLIP#773). Prod authenticates through RDS Proxy with a per-connection IAM token (SQLAlchemy `do_connect` hook, passwordless engine URL).
 
 ### JavaScript/TypeScript (flip-ui)
@@ -359,6 +390,11 @@ After changes, evaluate if docs need updating:
 - `ENFORCE_MFA` — `true` (the `Settings` default; do **not** set in `.env*` files for stag/prod) gates every authenticated route on TOTP enrolment via the app-layer MFA check in `verify_token`. The dev override lives in `deploy/compose.development.yml` (`ENFORCE_MFA=false`) so local development doesn't force enrolment on a burner authenticator app. Production compose (`compose.production.yml`) passes `ENFORCE_MFA=${ENFORCE_MFA:-true}` so the env var can be overridden from `.env.stag`/`.env.prod` for testing, but falls back to the secure `true` default when unset. Intentionally not in `.env.development.example` or AWS Secrets Manager — the Settings default (`true`) is the canonical secure anchor. The UI mirrors this flag from `/users/me/mfa/status` and skips the enrolment redirect when it's false.
 - `MAX_MODEL_FILE_BYTES` — Hard cap on the file size of a single model-file upload, in bytes. Bound on the presigned POST policy so S3 rejects oversized payloads at the edge — the hub never sees them. Default `5368709120` (5 GiB) — raised from 100 MiB so large evaluation checkpoints (e.g. the ~759 MiB Ark+ weights, ~1.5 GiB for the multimodel variant) can be uploaded; such checkpoints are staged server-side by the FL API and loaded by the fl-server, not bundled into the app deployed to clients. The S3 policy condition allows a small fixed overhead above this for multipart/form-data framing (see `_MULTIPART_OVERHEAD_BUFFER_BYTES` in `flip_api/utils/s3_client.py`); the UI guard at `flip-ui/src/utils/file.ts` compares against this raw value so a file at exactly the cap is accepted on both sides.
 - `PRE_SIGNED_URL_EXPIRATION_SECONDS` — Setting default for presigned-URL TTLs, in seconds: the model-file presigned POST policy (upload) and the presigned GET URLs for model-file downloads (FLIP#784). The hub silently clamps to the 1800s (30 min) security ceiling encoded as `MAX_PRESIGNED_URL_TTL_SECONDS` in `flip_api/utils/s3_client.py` (a leaked URL is a capability against the bucket in either direction — writable for POST, readable for GET — so the leak window must stay tight). The ceiling is 1800s rather than the original 600s to give larger transfers (up to the `MAX_MODEL_FILE_BYTES` cap) enough time to complete. Setting default equals the ceiling (1800) so default-configured deployments never trip the clamp; over-ceiling operator values leave a warning in the logs and are clamped.
+- `UPLOADED_MODEL_FILES_BUCKET` / `SCANNED_MODEL_FILES_BUCKET` — the two model-file prefixes, and the platform's quarantine boundary (FLIP#52). Researcher uploads are written to the `uploaded/` staging prefix by the presigned POST policy; `POST /files/process-scanned-file/{model_id}/{file}` registers the row as `SCANNING` and schedules the scan, which promotes clean files into `scanned/` and deletes rejected ones. Every consumer — the FL app bundler (`fl_services/services/fl_service.py`), model-file downloads, and listings — reads `scanned/` only, so an unscanned or rejected file can never be bundled to a trust. **They must point at distinct prefixes**: pointed at the same location the promote step degrades to a no-op (logged) and the boundary disappears.
+- `ALLOWED_MODEL_FILE_EXTENSIONS` — extension whitelist enforced before a presigned POST policy is minted, so a disallowed type never reaches S3. JSON list or comma-separated string, matched case-insensitively; default `.py .json .toml .pt .pth .pkl .txt .yaml .yml .safetensors`. `.toml` is **required by the Flower backend** — every Flower app and tutorial ships a `config.toml` run-config that fl-api-flower feeds to `flwr run --run-config`, so dropping it rejects every Flower upload. Opaque archives (`.zip`/`.tar`) are excluded — the scan pipeline cannot gate their contents. A value that normalises to nothing (`",,,"`) falls back to the default rather than an empty list, which would otherwise reject everything (or, for `PICKLESCAN_FILE_SUFFIXES`, silently skip all scanning). A rejection returns 400 with the allowed set, which the UI surfaces verbatim.
+- `PICKLESCAN_FILE_SUFFIXES` / `PICKLESCAN_TIMEOUT_SECONDS` — which uploads get a structural picklescan before promotion (default `.pt .pth .pkl .pickle`) and the wall-clock cap per scan (default 120s). Dangerous globals mark the file `INFECTED` and delete the object; a scan that errors or times out fails closed to `ERROR`. Signature-based AV (GuardDuty Malware Protection for S3) is tracked separately in FLIP#838.
+- `BANDIT_TIMEOUT_SECONDS` — wall-clock cap (default 60s) on the non-blocking Bandit pass over `.py` uploads (FLIP#877, GHSA-8465). Unlike `PICKLESCAN_TIMEOUT_SECONDS` a timeout here just means no findings are recorded (fail-open, never `ERROR`) — Bandit is advisory only and never gates promotion. Findings land on `UploadedFiles.bandit_findings` (`[]` = scanned clean, `NULL` = never scanned) and surface in the UI as an amber indicator. `bandit` is a dependency baked into the `flip-api` image, not the mounted `src/`: under the dev pull-by-default sourcing above, running without `BUILD=true` after picking up this dependency serves an image with no `bandit` binary, so every upload silently records `NULL` findings while the UI and docs still claim a scan ran.
+- `SCHEDULER_MALWARE_SCAN_RECONCILE_RATE` — how often (minutes, default 1) the sweep re-checks uploads left `SCANNING` by an app restart mid-scan.
 
 ## Deployment Architecture
 
@@ -369,11 +405,11 @@ After changes, evaluate if docs need updating:
 
 ## CI/CD
 
-GitHub Actions: `test_flip_api.yml`, `test_flip_ui.yml`, `test_trust_*.yml`, `docker_build_*.yml`, `validate_terraform.yml`, `secret-scanning.yml`, `docs.yml`, `pr_acceptance_criteria.yml`. Run locally: `make ci` (uses `act`).
+GitHub Actions: `test_flip_api.yml`, `test_flip_ui.yml`, `test_trust_*.yml`, `fl-tutorials-tests.yml`, `docker_build_*.yml`, `validate_terraform.yml`, `secret-scanning.yml`, `docs.yml`, `pr_acceptance_criteria.yml`. Run locally: `make ci` (uses `act`).
 
 ### Docker image builds: gated on tests, manual trigger for branches
 
-**The application `docker_build_*.yml` workflows (`flip_api`, `trust_trust_api`, `trust_imaging_api`, `trust_data_access_api`) auto-publish to GHCR only after their service's test workflow passes on `develop` or `main`.** They trigger via `workflow_run` on the matching test workflow (`FLIP API CI`, `Trust - Trust API CI`, etc.) and a job-level `if` gates on `workflow_run.conclusion == 'success'` — a red test suite never publishes. Path filtering is inherited from the test workflow, so a build still only fires when that service changed. (`orthanc`, `xnat_*` keep their direct push trigger — they have no test suite to gate on; `flip-ui` is a CI smoke test that never publishes.)
+**The application `docker_build_*.yml` workflows (`flip_api`, `trust_trust_api`, `trust_imaging_api`, `trust_data_access_api`, `omop_db`) auto-publish to GHCR only after their service's test workflow passes on `develop` or `main`.** They trigger via `workflow_run` on the matching test workflow (`FLIP API CI`, `Trust - Trust API CI`, etc.) and a job-level `if` gates on `workflow_run.conclusion == 'success'` — a red test suite never publishes. Path filtering is inherited from the test workflow, so a build still only fires when that service changed. (`orthanc`, `xnat_*` keep their direct push trigger — they have no separate test workflow to gate on; `orthanc` instead runs an in-job auth smoke test between build and push, and also on PRs touching `trust/orthanc/**`, so a red smoke never publishes — FLIP-PT-091; `flip-ui` is a CI smoke test that never publishes.)
 
 Every publish also pushes an immutable **`sha-<short7>`** tag (first 7 chars of the built commit) alongside the mutable `:stag`/`:prod` tags. Hub ECS deploys pin these sha tags via task-definition revisions — `make deploy-centralhub` resolves the env branch tip's tag, `make rollback-centralhub` repoints at the previous revision (FLIP#751; see `deploy/providers/AWS/README.md` "Central Hub deploys and rollback"). `deploy-centralhub` also prints an **FL quiesce reminder** (FLIP#770; on `PROD=true` it adds an interactive are-you-sure confirmation, stag stays non-interactive): replacing `fl-server-net-1` kills any in-flight training run, so enable deployment mode first — it pauses FL job pickup (queued jobs hold; the running job finishes and frees its net) — and wait until the hub's `GET /fl/quiesce` reports deployment mode ON and no BUSY net, making "enable mode → wait → deploy → disable" the standard redeploy workflow.
 
@@ -404,6 +440,8 @@ TruffleHog, detect-secrets, large file check (max 1000KB), merge conflict marker
 - Internal service key for fl-server-to-hub auth (separate from trust keys).
 - Trust-internal service key for trust-api / imaging-api / fl-client → imaging-api / data-access-api auth (per-trust, never leaves trust env). See **Trust-internal Service Authentication** below.
 - FL clients intentionally have no Central Hub credentials.
+- Cohort-query validation is three-layer and **deliberately asymmetric — do not "sync" the layers**. Only the trust-side `data_access_api.services.cohort.validate_query` is authoritative (single parse-validate-emit; length, single-statement, SELECT-only, no `INSERT`/`UPDATE`/`DELETE`/`MERGE` anywhere in the tree — a writable CTE parses as a top-level `Select`, so the shape check alone misses it — `omop`-schema pin, literal `LIMIT`/`OFFSET`; re-emits from the checked AST; backed by the read-only `data_analyst_reader` role — pass its return value to the engine, never the caller's raw string). The hub-side `flip_api.cohort_services.submit_cohort_query.validate_query` is a *fast-feedback validity pre-check only, not a security control*: it exists so a malformed query fails in-hand instead of after an async fan-out to every trust, and enforces only what every trust would reject anyway. The flip-ui cohort form validates required-field only. A trust must stay safe regardless of what the hub checked, so hub drift is safe by construction. **No layer uses a keyword denylist** — the removed one blocked legitimate `SUBSTRING()` while stopping nothing; blind extraction is defeated by the literal-`LIMIT` rule and DDL/DML by the read-only role. See [`trust/data-access-api/README.md`](trust/data-access-api/README.md#cohort-query-validation).
+- Row-level cohort egress is gated on `COHORT_QUERY_THRESHOLD` at **both** row-level routes — `/cohort/dataframe` (FL training data) and `/cohort/accession-ids` (the accession list that decides whose imaging is pulled into XNAT) — sharing one fixed refusal string so a below-threshold cohort is indistinguishable from an empty one. The threshold is the trust's own disclosure floor (default 10, set per trust in its kit file), enforced trust-side rather than relying on the hub's staging guard. Both gates evaluate the **live** cohort on every call: FLIP stores the cohort only as a SQL string and re-runs it against OMOP at every stage, so a project can import cleanly and later start refusing (FLIP#857).
 - Do not hardcode env values in Dockerfiles or compose files.
 - 72-hour supply-chain cooldown on Python/npm package installs — enforced by uv `exclude-newer` (`[tool.uv]` in every `pyproject.toml`) and npm `min-release-age` (`flip-ui/.npmrc`, requires npm >= 11.10 which Node 24 LTS ships), backstopped by a `uv lock --check` CI gate in `secret-scanning.yml`. See CONTRIBUTING.md ("Dependency cooldown").
 

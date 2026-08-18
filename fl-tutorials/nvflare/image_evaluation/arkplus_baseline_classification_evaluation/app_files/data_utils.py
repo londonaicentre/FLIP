@@ -380,11 +380,19 @@ def _ensure_image_channel_first(image):
 
 def get_xray_transforms(input_size: int = 768):
     transforms = [
-        mt.LoadImaged(keys=["image"]),
+        # The reader is pinned rather than left to MONAI's auto-detection. LoadImaged tries its
+        # registered readers last-registered-first, so which one wins depends on which optional
+        # backends happen to be installed: adding `itk` to the environment promotes ITKReader and
+        # silently changes the array's axis order. PydicomReader(swap_ij=False) returns the pixel
+        # array exactly as DICOM PixelData stores it, indexed (row, column). MONAI's default
+        # swap_ij=True returns it transposed, i.e. the model is fed sideways radiographs, and no
+        # rotation or flip undoes a transpose: a Rotate90d(k=-1) leaves the radiograph upright but
+        # mirrored, and a Flipd leaves it lying on its side. Loading in the right order removes the
+        # question of where a corrective Transposed belongs relative to Resized.
+        # fl-tutorials/tests/ pins this against the raw PixelData for every app on this path.
+        mt.LoadImaged(keys=["image"], reader="PydicomReader", swap_ij=False),
         mt.Lambdad(keys=["image"], func=_ensure_image_channel_first),
         mt.Resized(keys=["image"], spatial_size=[input_size, input_size]),
-        # mt.Rotate90d(keys=["image"], k=-1),
-        mt.Flipd(keys=["image"], spatial_axis=1),
         mt.ScaleIntensityd(keys=["image"], channel_wise=True),
         mt.EnsureTyped(keys=["image"]),
         RepeatChannelImageNetNormalized(keys=["image"]),

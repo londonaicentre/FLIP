@@ -68,9 +68,9 @@ pip install -e .
 From the repository root:
 
 ```bash
-make build                # build the fl-base / superlink / supernode images
-make -C tutorials/3d_spleen_segmentation_evaluation download-checkpoints  # fetch model.pt into the app
-make up                   # start fl-api, superlink, supernode-1, supernode-2
+make -C fl-tutorials/flower/3d_spleen_segmentation_evaluation download-checkpoints  # fetch model.pt into the app
+make -C fl-services/flower build   # build the fl-base / superlink / supernode images
+make -C fl-services/flower up      # start fl-api, superlink, supernode-1, supernode-2
 ```
 
 `download-checkpoints` places `model.pt` in the `app/` folder, where the
@@ -79,13 +79,13 @@ evaluation ServerApp reads it (via the `flip-job-dir` run-config value).
 Submit the evaluation run against the `fl-api` control plane:
 
 ```bash
-make submit APP=3d_spleen_segmentation_evaluation
+make -C fl-services/flower submit APP=3d_spleen_segmentation_evaluation
 ```
 
 The default stack publishes no host ports; `make submit` execs into the fl-api
-container and POSTs to its loopback API. Use `make up-debug` instead if you want
-to POST from the host (`curl -X POST http://localhost:8000/submit_tutorial/3d_spleen_segmentation_evaluation`)
-or open the Swagger UI.
+container and POSTs to its loopback API. To POST from the host or open the
+Swagger UI, publish the fl-api port by editing the compose file and re-running
+`make up`.
 
 The FLIP API will:
 
@@ -96,10 +96,11 @@ The FLIP API will:
 5. Upload results to S3 (unless `LOCAL_DEV="true"`)
 6. Update job status via FLIP API
 
-The compose file (`deploy/compose.yml`) wires everything correctly:
+The dev compose stack (`deploy/compose.development.yml` +
+`deploy/compose.development.flower.yml`) wires everything correctly:
 
 - `DEV_DATAFRAME`, `DEV_IMAGES_DIR`, `WORKING_DIR`
-  are resolved from `.env.flwr.development` via `${VAR}` substitutions in each
+  are resolved from `.env.development` via `${VAR}` substitutions in each
   service's `volumes:` block and bind-mounted into the containers.
 - Inside the containers the mounts land at stable locations
   (`/images`, `/dataframe_file`, `/app/runs`), and

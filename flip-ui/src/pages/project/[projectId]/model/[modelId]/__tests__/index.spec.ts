@@ -886,4 +886,38 @@ describe("pages/project/[projectId]/model/[modelId] — Initiate Training needs 
 
         expect(wrapper.find("[data-test='initiate-training-btn']").attributes("disabled")).toBeUndefined();
     });
+
+    it.each([
+        ["INFECTED", FileUploadStatus.INFECTED],
+        ["SCANNING", FileUploadStatus.SCANNING]
+    ])("stays disabled while a file is %s", async (_label, status) => {
+        // Training must never start on files that failed the scan or whose
+        // scan has not finished — only COMPLETED files exist in the bucket
+        // the FL bundler reads from (#52).
+        resolveModelConfigStateMock.mockResolvedValue({
+            changed: true,
+            configStatus: FileUploadStatus.COMPLETED,
+            jobType: "standard",
+            requiredFiles: jobTypes.standard
+        });
+        mockSwrvData.value = makeModel(
+            [
+                {
+                    name: "trainer.py",
+                    status
+                },
+                {
+                    name: "config.json",
+                    status: FileUploadStatus.COMPLETED
+                }
+            ],
+            { status: "PENDING" }
+        );
+        const wrapper = await mountPage();
+        await flushPromises();
+        await wrapper.vm.$nextTick();
+        await flushPromises();
+
+        expect(wrapper.find("[data-test='initiate-training-btn']").attributes("disabled")).toBeDefined();
+    });
 });
