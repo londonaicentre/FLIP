@@ -17,6 +17,10 @@ import einops
 import nibabel as nib
 import numpy as np
 import torch
+from flip import FLIP
+from flip.constants import FlipConstants, PTConstants, ResourceType
+from flip.nvflare.metrics import send_metrics_value
+from flip.utils import get_model_weights_diff
 from models import get_model
 from monai.data import DataLoader, Dataset
 from monai.inferers import LatentDiffusionInferer
@@ -33,11 +37,6 @@ from nvflare.app_common.app_constant import AppConstants
 from nvflare.app_common.pt.pt_fed_utils import PTModelPersistenceFormatManager
 from torch.amp import GradScaler, autocast
 from transforms import get_train_transforms, get_val_transforms
-
-from flip import FLIP
-from flip.constants import FlipConstants, PTConstants, ResourceType
-from flip.nvflare.metrics import send_metrics_value
-from flip.utils import get_model_weights_diff
 
 
 class KLDivergenceLoss:

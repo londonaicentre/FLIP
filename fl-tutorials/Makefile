@@ -45,3 +45,21 @@ lint:
 format:
 	$(RUFF) format .
 	$(RUFF) check --fix .
+
+# ---------------------------------------------------------------------------
+# CPU-only pytest suite over the tutorial transform chains (fl-tutorials/tests/).
+# No GPU, no dataset, no FL image — unlike run-tutorial, which needs all three.
+#
+# It runs in flip-utils' environment (`flip-utils[full]`: monai, pydicom, torch),
+# which is what the FL images give these apps at runtime, rather than in a
+# per-tutorial venv — arkplus_fine_tuning/pyproject.toml does not even declare
+# monai, so that env cannot import its own data_utils.py. See tests/README.md.
+PYTEST ?= uv run --project ../flip-utils --extra full --group dev pytest
+
+.PHONY: pytest test unit_test
+pytest:
+	$(PYTEST) tests
+
+test: lint pytest
+
+unit_test: test

@@ -13,6 +13,7 @@
 
 import numpy as np
 import torch
+from flip.nvflare.metrics import send_metrics_value
 from monai.data import DataLoader, Dataset, decollate_batch
 from nvflare.apis.dxo import DXO, DataKind, from_shareable
 from nvflare.apis.fl_constant import ReturnCode
@@ -21,8 +22,6 @@ from nvflare.apis.shareable import Shareable, make_reply
 from nvflare.apis.signal import Signal
 from nvflare.app_common.app_constant import AppConstants
 from trainer import FLIP_BASE
-
-from flip.nvflare.metrics import send_metrics_value
 
 
 class FLIP_VALIDATOR(FLIP_BASE):

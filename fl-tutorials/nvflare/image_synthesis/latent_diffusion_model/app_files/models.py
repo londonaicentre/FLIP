@@ -10,8 +10,9 @@
 # limitations under the License.
 
 import json
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 
 from monai.networks.nets import AutoencoderKL, DiffusionModelUNet, PatchDiscriminator
 from torch import nn
