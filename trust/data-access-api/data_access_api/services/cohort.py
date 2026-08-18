@@ -468,13 +468,13 @@ def make_other_category(results: list[dict], min_count: int | None = None) -> li
     Groups entries in the results list with counts less than min_count into an "Other" category.
 
     Args:
-        results (list of dict): List of dictionaries with 'value' and 'count' keys.
+        results (list[dict]): List of dictionaries with 'value' and 'count' keys.
         min_count (int | None): Minimum count threshold to avoid grouping into "Other".
             Defaults to ``COHORT_QUERY_THRESHOLD``, resolved at call time — a default
             argument would bind the setting at import and ignore a per-trust override.
 
     Returns:
-        list of dict: Updated list with low-count entries grouped into "Other".
+        list[dict]: Updated list with low-count entries grouped into "Other".
     """
     if min_count is None:
         min_count = get_settings().COHORT_QUERY_THRESHOLD

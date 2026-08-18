@@ -26,7 +26,7 @@ from flip.nvflare.runtime import get_flip_model_id
 
 
 class PTModelLocator(ModelLocator):
-    def __init__(self, exclude_vars=None, model=None) -> None:
+    def __init__(self, exclude_vars: list[str] | None = None, model: torch.nn.Module | None = None) -> None:
         super(PTModelLocator, self).__init__()
 
         if model is None:
@@ -79,7 +79,7 @@ class PTModelLocator(ModelLocator):
 
 
 class InitialPTModelLocator(ModelLocator):
-    def __init__(self, exclude_vars=None, model=None) -> None:
+    def __init__(self, exclude_vars: list[str] | None = None, model: torch.nn.Module | None = None) -> None:
         super(InitialPTModelLocator, self).__init__()
 
         if model is None:

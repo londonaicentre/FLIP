@@ -48,7 +48,7 @@ class InitialCheckpointPTModelPersistor(PTFileModelPersistor):
     object), so it is a safe drop-in for the shared standard base app.
     """
 
-    def __init__(self, model=None, model_id: str = "", **kwargs) -> None:
+    def __init__(self, model: torch.nn.Module | None = None, model_id: str = "", **kwargs) -> None:
         super().__init__(model=model, **kwargs)
         self._model_id_arg = model_id
 
