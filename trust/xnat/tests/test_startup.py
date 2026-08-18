@@ -456,10 +456,13 @@ def _kit_tree(tmp_path: Path) -> Path:
     """Stage a fixture trust tree whose kit files drive the per-trust `up` loops.
 
     Kit files are gitignored, so a CI checkout has none and the loops would otherwise not run.
-    fl_backend.mk is copied rather than restated so the fixture cannot drift from the real one.
+    The shared .mk fragments trust/Makefile includes are copied rather than restated so the fixture
+    cannot drift from the real ones; make resolves those includes against the CWD, so one missing
+    here aborts the parse and reads as a loop that never ran.
     """
     (tmp_path / "deploy").mkdir()
-    shutil.copy(REPO_ROOT / "deploy" / "fl_backend.mk", tmp_path / "deploy" / "fl_backend.mk")
+    for fragment in ("fl_backend.mk", "instance.mk"):
+        shutil.copy(REPO_ROOT / "deploy" / fragment, tmp_path / "deploy" / fragment)
     trust_dir = tmp_path / "trust"
     (trust_dir / "xnat").mkdir(parents=True)
     for slot, code in enumerate(("AAA", "BBB"), start=1):
