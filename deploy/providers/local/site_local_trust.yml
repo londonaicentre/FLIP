@@ -60,6 +60,13 @@
       loop:
         - "{{ flip_dir }}"
         - "{{ flip_dir }}/data/images"
+        # Per-net fl-client bind sources — each fl-client mounts only its own
+        # net's slice, so these must exist ubuntu-owned before first `up-trust`
+        # (which runs under sudo on-prem): a root-created net-N dir is
+        # unwritable by imaging-api (uid 1000) and every image download 500s.
+        # Keep in sync with deploy/providers/AWS/site.yml's net-N entries.
+        - "{{ flip_dir }}/data/images/net-1"
+        - "{{ flip_dir }}/data/images/net-2"
 
     # XNAT containers run as the in-image `xnat` user (UID 1001) after the
     # Docker-hardening pass on `trust/xnat/xnat/Dockerfile`. Bind-mounted host

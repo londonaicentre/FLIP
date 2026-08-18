@@ -89,6 +89,28 @@ endif
 
 OMOP_DB_CMD=make -C ./omop-db
 ORTHANC_CMD=make -C ./orthanc
+
+# Images bind-source base for this kit: the kit's BASE_IMAGES_DOWNLOAD_DIR, or this
+# environment's compose default — the prod composes fall back to
+# /opt/flip/data/trust-<slot> (see compose_trust.production.yml), dev to ./data/<KIT>.
+# Must mirror the compose fallbacks exactly: pre-creating any other path leaves the real
+# mount source for Docker to root-create.
+IMAGES_BASE = $(or $(BASE_IMAGES_DOWNLOAD_DIR),$(if $(PROD),/opt/flip/data/trust-$(TRUST_NUM),./data/$(KIT)))
+
+# Pre-create the per-net images bind sources (keep in lockstep with the fl-client-net-*
+# compose services) owned like their base dir. A plain `mkdir -p` is not enough: the
+# documented on-prem bring-up runs this Makefile under sudo, and Docker root-creates any
+# missing source dir — either way a root-owned net-N means imaging-api (uid 1000,
+# CapDrop ALL) cannot write inside it, every download 500s, and training dies much later
+# with a misleading num_samples=0. The base dir's owner is authoritative (set by the
+# provisioning playbooks in prod, by this mkdir as the host user in dev).
+define ensure_net_dirs
+	@base="$(IMAGES_BASE)"; \
+	mkdir -p "$$base/net-1" "$$base/net-2"; \
+	owner="$$(stat -c '%u:%g' "$$base")"; \
+	chown "$$owner" "$$base/net-1" "$$base/net-2" 2>/dev/null || \
+	  echo "⚠️  Could not align $$base/net-{1,2} ownership with $$base ($$owner) — imaging-api may be unable to write there (downloads would 500 and training would fail with num_samples=0). Fix: sudo chown -R $$owner $$base"
+endef
 # --project-directory . keeps relative paths inside the compose files (./trust-api,
 # ./observability/, ./omop-db/volumes/, …) resolving from trust/ even though the compose
 # files now live in trust/deploy/. Avoids having to rewrite every ./X to ../X.
@@ -266,7 +288,7 @@ up-trust: update-omop-data update-orthanc-data create-networks
 	@echo "⚙️ Using kit file trust/$(KIT_FILE)"
 	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
 	$(call check_omop_data_dir,$(or $(OMOP_DATA_DIR),./omop-db/volumes/Trust_$(TRUST_NUM)/db_data))
-	mkdir -p $(or $(BASE_IMAGES_DOWNLOAD_DIR),./data/$(KIT))
+	$(ensure_net_dirs)
 	@echo "$(GPU_STATUS_MSG)"
 	$(TRUST_VARS) DEBUG=${DEBUG} ${DOCKER_COMPOSE_CMD} $(GPU_OVERRIDE) $(TRUST_OVERRIDE) -p $(TRUST_PROJECT) up -d $(UP_PULL_FLAGS)
 	@echo "🩻 Starting XNAT for $(KIT)..."
@@ -296,6 +318,10 @@ restart-trust: down-trust up-trust
 # Together these defend the deploy against a kit seeded NUM_AVAILABLE_GPUS=1 (the
 # template default). A GPU-equipped EC2 instance would drop the override and add
 # $(GPU_OVERRIDE) back.
+# Deliberately no $(ensure_net_dirs) here: this recipe runs on the operator's
+# workstation against a remote docker context, so a local mkdir cannot touch the
+# EC2 host — the per-net images dirs there are pre-created (ubuntu-owned) by the
+# AWS provisioning playbook (deploy/providers/AWS/site.yml).
 up-trust-ec2:
 	$(require_kit_file)
 	@echo "🚢 Starting Trust services on EC2 (KIT=$(KIT))..."
@@ -348,6 +374,7 @@ up-fl-clients:
 up-fl-clients-kit:
 	$(require_kit_file)
 	@echo "$(GPU_STATUS_MSG)"
+	$(ensure_net_dirs)
 	$(TRUST_VARS) DEBUG=${DEBUG} ${DOCKER_COMPOSE_CMD} $(GPU_OVERRIDE) $(TRUST_OVERRIDE) -p $(TRUST_PROJECT) up -d --no-deps $(UP_PULL_FLAGS) fl-client-net-1 fl-client-net-2
 
 down-fl-clients:

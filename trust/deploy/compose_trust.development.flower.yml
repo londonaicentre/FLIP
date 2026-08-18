@@ -24,8 +24,12 @@ services:
     cap_drop:
       - ALL
     volumes:
-      # Mount the base images download directory to share images downloaded from XNAT with FL clients
-      - ${BASE_IMAGES_DOWNLOAD_DIR}:/app/data/images
+      # This net's slice of the images download directory, at the unchanged container
+      # path — see compose_trust.production.flower.yml for the least-privilege
+      # rationale; `make up-trust` / `up-fl-clients` pre-create the host net dirs.
+      # The :? guard keeps an unset var loud — a bare ${VAR}/net-1 would silently
+      # mount a root-created /net-1 from the host's filesystem root.
+      - ${BASE_IMAGES_DOWNLOAD_DIR:?set in the trust kit file}/net-1:/app/data/images/net-1
       # Provisioned Flower secrets (certificates, keys)
       - ${FL_PROVISIONED_DIR}/net-1/certificates:/certs:ro
       - ${FL_PROVISIONED_DIR}/net-1/keys:/keys:ro
@@ -74,8 +78,8 @@ services:
     cap_drop:
       - ALL
     volumes:
-      # Mount the base images download directory to share images downloaded from XNAT with FL clients
-      - ${BASE_IMAGES_DOWNLOAD_DIR}:/app/data/images
+      # This net's slice of the images download directory (see fl-client-net-1 above)
+      - ${BASE_IMAGES_DOWNLOAD_DIR:?set in the trust kit file}/net-2:/app/data/images/net-2
       # Provisioned Flower secrets (certificates, keys)
       - ${FL_PROVISIONED_DIR}/net-2/certificates:/certs:ro
       - ${FL_PROVISIONED_DIR}/net-2/keys:/keys:ro

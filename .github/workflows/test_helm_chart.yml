@@ -79,6 +79,20 @@ jobs:
       - name: Render template (flower backend)
         run: helm template trust-release deploy/providers/kubernetes/ --set flBackend=flower > /dev/null
 
+      # The kind E2E installs with flClient.enabled=false (no GPU/S3 in CI), so
+      # nothing at runtime exercises the fl-client's per-net images slice — these
+      # renders are the only guard on the subPath mount and the images-init
+      # ownership handoff (root-created net dir => imaging-api EACCES on every
+      # download). Assert the load-bearing lines render per backend.
+      - name: Assert fl-client per-net images mount renders (both backends)
+        run: |
+          render_nvflare=$(helm template trust-release deploy/providers/kubernetes/)
+          echo "$render_nvflare" | grep -qF 'subPath: net-1' || { echo "nvflare render lost the per-net subPath images mount"; exit 1; }
+          echo "$render_nvflare" | grep -qF 'chown 1000:1000 "${NET_DIR}"' || { echo "nvflare render lost images-init's uid-1000 ownership handoff"; exit 1; }
+          render_flower=$(helm template trust-release deploy/providers/kubernetes/ --set flBackend=flower)
+          echo "$render_flower" | grep -qF 'subPath: net-1' || { echo "flower render lost the per-net subPath images mount"; exit 1; }
+          echo "$render_flower" | grep -qF 'chown 1000:49999 "${NET_DIR}"' || { echo "flower render lost images-init's 1000:49999 (imaging-api:supernode) ownership handoff"; exit 1; }
+
       - name: Render template (all services disabled)
         run: |
           helm template trust-release deploy/providers/kubernetes/ \
