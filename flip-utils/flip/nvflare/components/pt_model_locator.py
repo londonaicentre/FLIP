@@ -15,7 +15,7 @@ import os
 
 import torch
 import torch.cuda
-from nvflare.apis.dxo import DXO, DataKind
+from nvflare.apis.dxo import DXO
 from nvflare.apis.fl_context import FLContext
 from nvflare.app_common.abstract.model import model_learnable_to_dxo
 from nvflare.app_common.abstract.model_locator import ModelLocator
@@ -146,133 +146,20 @@ class InitialPTModelLocator(ModelLocator):
             return None
 
 
-class EvaluationPTModelLocator(ModelLocator):
-    def __init__(self, exclude_vars=None, model_id: str = "") -> None:
-        super(EvaluationPTModelLocator, self).__init__()
-        self.models = None
-        self.exclude_vars = exclude_vars
-        self.model_id = model_id
-
-    def _resolve_checkpoint_path(self, fl_ctx: FLContext, app_dir: str, name: str, model_checkpoint: str):
-        """Locate a model checkpoint for server-side loading.
-
-        Resolution order:
-          1. ``<app_dir>/custom/<checkpoint>`` — a checkpoint bundled in the app. Used by
-             the local simulator (which copies the ``.pt`` into ``custom/``) and any legacy
-             bundling.
-          2. ``<SERVER_CHECKPOINT_ROOT>/<model_id>/<checkpoint>`` — the de-bundled checkpoint
-             the FL API staged on the hub-local shared volume (production). Read straight from
-             disk; the checkpoint is intentionally NOT shipped in the app bundle, so it never
-             reaches the clients. This mirrors the Flower backend's ``/app/src`` shared mount.
-
-        Returns the resolved path, or ``None`` (after logging an error) when neither exists.
-        """
-        bundled_path = os.path.join(app_dir, "custom", model_checkpoint)
-        if os.path.isfile(bundled_path):
-            return bundled_path
-
-        if not FlipConstants.LOCAL_DEV:
-            shared_path = os.path.join(FlipConstants.SERVER_CHECKPOINT_ROOT, self.model_id, model_checkpoint)
-            if os.path.isfile(shared_path):
-                self.log_info(fl_ctx, f"Loading checkpoint for model '{name}' from shared volume: {shared_path}")
-                return shared_path
-            self.log_error(
-                fl_ctx,
-                f"Checkpoint for model '{name}' not found. Tried bundled path '{bundled_path}' and "
-                f"shared-volume path '{shared_path}'.",
-                fire_event=True,
-            )
-            return None
-
-        self.log_error(
-            fl_ctx,
-            f"Checkpoint for model '{name}' not found at '{bundled_path}' "
-            f"(LOCAL_DEV; shared-volume fetch skipped).",
-            fire_event=True,
-        )
-        return None
-
-    def locate_model(self, fl_ctx: FLContext) -> DXO | None:
-        if self.models is None:
-            # Load config from workspace
-            app_dir = fl_ctx.get_engine().get_workspace().get_app_dir(fl_ctx.get_job_id())
-            config_path = os.path.join(app_dir, "custom", "config.json")
-
-            with open(config_path, "r") as file:
-                self.config = json.load(file)
-
-            if "models" not in self.config.keys():
-                self.log_error(
-                    fl_ctx,
-                    "In this pipeline, there must be a models key-element object in the config.json file, "
-                    "pointing to the getter function as well the architecture.",
-                    fire_event=True,
-                )
-            else:
-                models_config = self.config["models"]
-                self.model_names = models_config.keys()
-                self.models = {}
-
-            from models import model_paths
-
-            for name in self.model_names:
-                model_checkpoint = models_config[name]["checkpoint"]
-                checkpoint_path = self._resolve_checkpoint_path(fl_ctx, app_dir, name, model_checkpoint)
-                if checkpoint_path is None:
-                    # Resolution already logged the failure (fire_event=True); skip this model.
-                    continue
-
-                net = model_paths[models_config[name]["path"]]
-                self.models[name] = torch.load(
-                    checkpoint_path,
-                    weights_only=True,
-                    map_location="cuda" if torch.cuda.is_available() else "cpu",
-                )
-                try:
-                    # Validate against the same weights that are sent to clients
-                    # below: a bare state_dict is used as-is, while an NVFLARE
-                    # persistence-format checkpoint nests them under a "model" key
-                    # (alongside "train_conf"/"meta_props"). PTModelPersistenceFormatManager
-                    # normalises both, so the probe matches what is actually delivered
-                    # instead of false-failing on persistence-format checkpoints.
-                    var_dict = PTModelPersistenceFormatManager(
-                        self.models[name], default_train_conf=None
-                    ).var_dict
-                    net.load_state_dict(var_dict, strict=True)
-                except Exception as e:
-                    self.log_error(
-                        fl_ctx,
-                        f"The weights for network {name} could not be loaded into the object: {e}",
-                        fire_event=True,
-                    )
-
-        all_model_dxo = {}
-        for model_name, weight in self.models.items():
-            # We convert this into a DXO
-            persistence_manager = PTModelPersistenceFormatManager(weight, default_train_conf=None)
-            # Model learnable to DXO:
-            ml = persistence_manager.to_model_learnable(exclude_vars=None)
-            # We convert this into a DXO:
-            all_model_dxo[model_name] = model_learnable_to_dxo(ml)
-
-        # Create dxo and return
-        return DXO(data_kind=DataKind.COLLECTION, data=all_model_dxo)
-
-
 class EvaluationModelLocator(ModelLocator):
     """Locate uploaded checkpoint(s) for Client-API evaluation under the *standard* ModelLocator interface.
 
-    Unlike :class:`EvaluationPTModelLocator` — which returns a single ``DataKind.COLLECTION`` DXO for the
-    bespoke ``ModelEval`` controller — this exposes the stock ``get_model_names`` + ``locate_model(model_name,
+    Unlike the retired legacy locator (``EvaluationPTModelLocator``, deleted with the Executor
+    syntax) — which returned a single ``DataKind.COLLECTION`` DXO for the equally retired
+    ``ModelEval`` controller — this exposes the stock ``get_model_names`` + ``locate_model(model_name,
     fl_ctx)`` contract so it drives NVFLARE's stock ``CrossSiteModelEval`` validate
     workflow directly. Each model named in ``config.json['models']`` becomes one ``DataKind.WEIGHTS`` DXO that
     the server broadcasts to clients as a single ``FLModel`` for the Client-API ``is_evaluate()`` path.
 
     The checkpoints are loaded server-side only — from the app's ``custom/`` directory when bundled
     (simulator / legacy bundling), else from the FL API's de-bundled staging volume at
-    ``<SERVER_CHECKPOINT_ROOT>/<model_id>/`` (production; same resolution order as
-    :class:`EvaluationPTModelLocator`). Clients never read the ``.pt`` files — they receive the
-    weights over the ``validate`` task. ``model_id`` is resolved lazily from
+    ``<SERVER_CHECKPOINT_ROOT>/<model_id>/`` (production). Clients never read the ``.pt`` files —
+    they receive the weights over the ``validate`` task. ``model_id`` is resolved lazily from
     ``meta.json['custom_props']`` (recipe-built job types carry no component args).
     """
 

@@ -282,7 +282,13 @@ export const mockModelDashboard: IModelDashboard = {
         },
         {
             id: v4(),
-            name: "validator.py",
+            name: "config.json",
+            size: 2048,
+            status: FileUploadStatus.COMPLETED
+        },
+        {
+            id: v4(),
+            name: "models.py",
             size: 8048576,
             status: FileUploadStatus.COMPLETED
         }

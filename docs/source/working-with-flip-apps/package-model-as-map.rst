@@ -102,7 +102,7 @@ Where the boundary sits
 
    FLIP (training)                          MONAI Deploy (inference)
    ─────────────────────────────────        ────────────────────────────────────
-   trainer.py / validator.py                DICOM series selection
+   trainer.py                               DICOM series selection
    models.py :: get_model()          ──▶    preprocessing (must match training!)
    FL_global_model.pt (aggregated)          inference on the exported weights
                                             postprocessing
@@ -176,8 +176,8 @@ a ``model`` key holding the state dict, alongside ``train_conf`` and optionally 
 
 .. warning::
 
-   FLIP persists the **last** global model, not the best one. The ``standard`` and
-   ``standard_client_api`` job types wire no model selector, so
+   FLIP persists the **last** global model by default. The ``standard`` job type wires a model
+   selector only when ``config.json`` sets ``BEST_MODEL_METRIC`` — without it,
    ``best_FL_global_model.pt`` is never written. If your run's final round is not its best round,
    the exported model will reflect the final round.
 

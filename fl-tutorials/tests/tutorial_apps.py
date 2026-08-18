@@ -127,18 +127,13 @@ class TutorialApp:
         return factory()
 
 
-# Every app on the MONAI LoadImaged DICOM path, both backends. Adding a seventh app that loads
+# Every app on the MONAI LoadImaged DICOM path, both backends. Adding a sixth app that loads
 # DICOM this way means adding it here — that is the intended maintenance burden.
 DICOM_APPS: tuple[TutorialApp, ...] = (
     TutorialApp(
         app_id="nvflare_xray_classification",
         backend="nvflare",
         module_path="nvflare/image_classification/xray_classification/app_files/transforms.py",
-    ),
-    TutorialApp(
-        app_id="nvflare_xray_classification_client_api",
-        backend="nvflare",
-        module_path="nvflare/image_classification/xray_classification_client_api/app_files/transforms.py",
     ),
     TutorialApp(
         app_id="nvflare_arkplus_fine_tuning",

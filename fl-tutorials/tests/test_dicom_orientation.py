@@ -175,7 +175,7 @@ def test_full_chain_orientation_is_identity(dicom_app, dicom_path, is_validation
 def test_registry_covers_every_dicom_load_site() -> None:
     """Every ``LoadImaged`` call site in the tutorial tree is registered or on the NIfTI path.
 
-    ``DICOM_APPS`` is hand-maintained, and a seventh DICOM app that nobody registers would be
+    ``DICOM_APPS`` is hand-maintained, and a sixth DICOM app that nobody registers would be
     silently uncovered — the drift mode this suite exists to end. This walk makes the registry's
     completeness a test: a file composing ``LoadImaged`` must either be a registered entry or read
     3-D NIfTI through ``Orientationd`` (the documented exclusion — those chains orient from image

@@ -15,8 +15,8 @@ FLIP/
 ├── flip-ui/            # Frontend UI (Vue 3 / TypeScript / TailwindCSS)
 ├── flip-utils/         # FLIP Python library (pip-installable flip-utils)
 ├── fl-services/        # FL Docker services + network provisioning, per backend (Makefile owns build/provision/up/down/submit; flower also up-secure): fl-services/nvflare/{fl-base,fl-server,fl-client,fl-api-base, provision/{net-*_project_*.yml, scripts/, workspace-{dev,stag,prod}/ gitignored}}, fl-services/flower/{fl-base,superlink,supernode,fl-api-flower, provision/{scripts/, creds/ gitignored}} (#622)
-├── fl-apps/            # FL app templates per backend: fl-apps/nvflare/{standard,standard_client_api,fed_opt,evaluation,evaluation_client_api,diffusion_model,diffusion_model_client_api}, fl-apps/flower/{standard,evaluation} + check_required_files.sh (cross-backend CI validator at root)
-├── fl-tutorials/       # FL tutorials per backend: fl-tutorials/nvflare/{image_*,testing}, fl-tutorials/flower/{xray_classification,3d_spleen_segmentation*,numpy} (root Makefile forwards by FL_BACKEND); xray classification, spleen seg/eval, diffusion. Plus fl-tutorials/tests/ — CPU-only pytest over the tutorial transform chains (#871), run by `make -C fl-tutorials test`
+├── fl-apps/            # FL app templates per backend: fl-apps/nvflare/{standard,evaluation,diffusion_model,fed_opt} (all Client-API), fl-apps/flower/{standard,evaluation} + check_required_files.sh (cross-backend CI validator at root)
+├── fl-tutorials/       # FL tutorials per backend (all NVFLARE ones are Client-API apps): fl-tutorials/nvflare/{image_*}, fl-tutorials/flower/{xray_classification,3d_spleen_segmentation*,numpy} (root Makefile forwards by FL_BACKEND); xray classification, spleen seg/eval, diffusion. Plus fl-tutorials/tests/ — CPU-only pytest over the tutorial transform chains (#871), run by `make -C fl-tutorials test`
 ├── trust/
 │   ├── trust-api/      # Trust API gateway (Python/FastAPI)
 │   ├── data-access-api/# OMOP database queries (Python/FastAPI)
@@ -199,19 +199,20 @@ runs old images otherwise): `docker exec flip-fl-api-net-1 cat fl_api/utils/uplo
 
 ### Running FL Tutorials Locally
 
-The NVFLARE tutorials live in `fl-tutorials/` and run on the local NVFLARE simulator (needs a GPU +
-the `flare-fl-base` image). Each tutorial carries a `.env.app` and delegates to the shared harness in
-`fl-tutorials/nvflare/testing/`. From the repo root:
+The NVFLARE tutorials live in `fl-tutorials/` and are all **Client-API** apps (the legacy Executor
+tutorials, templates and their Docker `testing/` harness are removed; the pre-rename `*_client_api`
+job-type names survive only as accepted aliases for models created before the rename). Each tutorial carries a `.env.app` and a `job.py` driving a FLIP recipe;
+`make run` delegates to `make sim`, which runs the NVFLARE simulator (SimEnv) in the flip-utils venv
+with the `full` ML extra (needs a GPU; per-tutorial `make export` builds the full job config with no
+GPU). From the repo root:
 
 ```bash
 make -C fl-tutorials list-tutorials
 make -C fl-tutorials download-xray-data                  # xray dataset (HF); spleen: download-spleen-data
 make -C fl-tutorials run-tutorial TUTORIAL=xray_classification
-make -C fl-tutorials run-all-tutorials                   # all four (heavy; stops on first failure)
-make -C fl-tutorials test-template TEMPLATE=fed_opt      # smoke-test a template that has no tutorial
+make -C fl-tutorials run-all-tutorials                   # every tutorial (heavy; stops on first failure)
 ```
 
-The simulator GPU id defaults to `0`; override with `SIM_GPU` in `fl-tutorials/nvflare/testing/.env.testing`.
 To iterate on the FL images, `make build-fl` builds them locally as `:dev` (see `fl-services/nvflare/README.md`);
 run the stack on them with `make up DOCKER_FL_REGISTRY= DOCKER_FL_TAG=dev`.
 

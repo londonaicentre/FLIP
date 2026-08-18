@@ -100,4 +100,3 @@ def get_model() -> nn.Module:
     configuration of your model, for example loaded from a config file, do it when instantiating the model above.
     """
     return _net
-    return _net

@@ -47,7 +47,7 @@ here: the per-tutorial `uv` environments are the wrong target (`arkplus_fine_tun
 does not even declare `monai`, so that environment cannot import its own `data_utils.py`), and one
 shared environment matching the runtime is both cheaper and more faithful.
 
-Every app on the MONAI `LoadImaged` DICOM path is covered, both backends — the six entries in
+Every app on the MONAI `LoadImaged` DICOM path is covered, both backends — the five entries in
 `DICOM_APPS` (`tutorial_apps.py`). Each app's chain is fetched from the app's own factory, not
 reconstructed here, so the test asserts on the shipped code.
 
