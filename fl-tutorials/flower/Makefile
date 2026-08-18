@@ -33,7 +33,7 @@ HF_DATA_REPO := aicentreflip/flip-fl-base-test-data
 # 3d_spleen_segmentation, 3d_spleen_segmentation_evaluation).
 TUTORIAL_DIRS := $(sort $(patsubst %/app/,%,$(dir $(wildcard */app/.))))
 
-.PHONY: list-tutorials run-tutorial run-all-tutorials download-xray-data download-spleen-data test-template upload-spleen-labels
+.PHONY: list-tutorials run-tutorial run-all-tutorials download-xray-data download-spleen-data upload-spleen-labels
 
 # Data enrichment: upload the MSD spleen labels into a real FLIP project's XNAT.
 #
@@ -81,8 +81,3 @@ run-all-tutorials:
 	@for d in $(TUTORIAL_DIRS); do \
 		bash $(REPO_ROOT)/fl-tutorials/flower/run-tutorial.sh "$$d" || { echo "❌ tutorial $$d failed"; exit 1; }; \
 	done
-
-# Flower's templates (fl-apps/flower/{standard,evaluation}) back the tutorials directly
-# (run-tutorial exercises them), so there's no separate simulator template smoke-test.
-test-template:
-	@echo "ℹ️  Flower templates (standard/evaluation) are exercised by run-tutorial; no separate test-template."

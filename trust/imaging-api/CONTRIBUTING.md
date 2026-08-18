@@ -27,15 +27,19 @@ Ensure both XNAT and Orthanc are running before starting the imaging-api:
 
 ### Running the service locally
 
+The containerised `make up` is the local dev flow (there is no separate
+`make dev` target):
+
 ```bash
-uv sync
-make dev   # starts the API with live-reload, loading environment variables correctly
+uv sync   # populate the local venv for IDE type-checks / running tests
+make up
 ```
 
-To run in Docker:
+To iterate without Docker (host-side reload), run `uvicorn` directly against the
+already-running sibling services (XNAT + Orthanc):
 
 ```bash
-make up
+uv run uvicorn imaging_api.main:app --reload --port "${IMAGING_API_PORT:-8001}"
 ```
 
 ### Running tests
@@ -44,5 +48,6 @@ make up
 make test
 ```
 
-Ensure XNAT is fully configured (run `make xnat-configure` in the `xnat/` directory) and the test data is available
+Ensure XNAT is fully configured (run `make xnat-configure XNAT_PROJECT=<stack-name>`
+in the `xnat/` directory — e.g. `XNAT_PROJECT=xnat1`) and the test data is available
 before running integration tests.

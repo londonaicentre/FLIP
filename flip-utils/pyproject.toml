@@ -121,9 +121,12 @@ constraint-dependencies = [
     "werkzeug>=3.1.6",           # CVE-2026-27199, CVE-2026-21860, CVE-2025-66221, CVE-2024-49767/49766
 ]
 # flwr (dev-group only) pins cryptography<47.0.0 even in its latest release, which
-# collides with the constraint floor above. Override past that ceiling rather than
-# lowering the floor: flwr uses cryptography only for TLS cert loading, a stable
-# surface across majors. Mirrors fl-services/flower/fl-api-flower/pyproject.toml.
+# collides with the constraint floor above (GHSA-537c-gmf6-5ccf needs >=48.0.1).
+# Override past that ceiling rather than lowering the floor: flwr uses cryptography
+# only for TLS cert loading in secure aggregation, a stable surface across majors.
+# Mirrors fl-services/flower/fl-api-flower/pyproject.toml and the fl-base Dockerfile's
+# pip-equivalent (#874); it also keeps the dev group's real-flwr test dependency
+# (test_privacy.py) resolvable against the cryptography floor.
 override-dependencies = ["cryptography>=50.0.0"]
 
 # Pull torch from PyTorch's cu128 wheel index instead of PyPI's default cu130
@@ -162,10 +165,11 @@ exclude = [
 
 [dependency-groups]
 dev = [
-    # Test-only: lets tests/mypy exercise flip/flower/strategy.py against the real
-    # FedAvg. Matches the fl-server images' floor (flwr/base:1.32.0, fl-api-flower).
-    # Deliberately NOT a runtime dep — the flwr runtime is owned by the Flower images
-    # and each app's own pyproject; see the module docstring in flip/flower/strategy.py.
+    # Test-only: lets tests/mypy exercise flip/flower/strategy.py and flip/flower/privacy.py
+    # against the real FedAvg and DP primitives. Matches the fl-server images' floor
+    # (flwr/base:1.32.0, fl-api-flower). Deliberately NOT a runtime dep — the flwr runtime is
+    # owned by the Flower images and each app's own pyproject; see the module docstring in
+    # flip/flower/strategy.py.
     "flwr>=1.32.0",
     "huggingface-hub>=1.6.0",
     "matplotlib>=3.10.7",

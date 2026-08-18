@@ -72,7 +72,6 @@ The ``flip`` package is organized into logical modules:
 ``flip.nvflare``
    NVFLARE-specific components:
 
-   - ``executors/`` — RUN_TRAINER, RUN_VALIDATOR, RUN_EVALUATOR wrappers
    - ``controllers/`` — Workflow controllers (ScatterAndGather, CrossSiteModelEval, etc.)
    - ``components/`` — Event handlers, persistors, privacy filters, model locators, etc.
    - ``recipes/`` — High-level NVFLARE job recipes
@@ -120,10 +119,10 @@ Type                         Description
 ``fed_opt``                  Custom federated optimization with flexible aggregation strategies
 ===========================  ====================================================================================
 
-The NVFLARE backend additionally ships template directories under
-``fl-apps/nvflare/`` for the Client-API variants (``standard_client_api``,
-``evaluation_client_api``); these are selected as app templates and are not
-``JobType`` enum values. The Flower backend ships its own ``standard`` and
+The NVFLARE backend additionally ships a template directory under
+``fl-apps/nvflare/`` for each Client-API job type (``standard``,
+``evaluation``, ``diffusion_model``, ``fed_opt``); the template names match the
+``JobType`` enum values above. The Flower backend ships its own ``standard`` and
 ``evaluation`` templates under ``fl-apps/flower/`` — selected at the deploy
 layer by ``FL_BACKEND=flower``.
 
@@ -178,19 +177,18 @@ every scan.
 User Application Requirements
 -----------------------------
 
-The executor wrappers dynamically import user-provided code from the job's
-``custom/`` directory. For most templates that directory is materialised at
-run time by the tutorial harness
-(``fl-tutorials/nvflare/testing/app_organiser.sh``), which copies each file
-from the tutorial's ``app_files/`` into ``./tmp/app/custom/``; the
-``diffusion_model`` template already carries a git-tracked ``custom/`` with
-baseline files that the same overlay extends.
+The job components dynamically import user-provided code from the job's
+``custom/`` directory. On the platform that directory is assembled by the FL
+API, which merges the uploaded app files onto the matching
+``fl-apps/nvflare/<template>/app`` template; in local SimEnv runs the
+tutorial's ``job.py`` stages its ``app_files/`` into the job's ``custom/``
+directly.
 
 ====================  ================================================================
 File                  Description
 ====================  ================================================================
-``trainer.py``        Training logic — must export ``FLIP_TRAINER`` class
-``validator.py``      Validation logic — must export ``FLIP_VALIDATOR`` class
+``trainer.py``        Training logic — a plain ``nvflare.client`` script
+``validator.py``      Extra validation module where the job type requires one
 ``models.py``         Model definitions — must export ``get_model()`` function
 ``config.json``       Hyperparameters — must include ``LOCAL_ROUNDS`` and ``LEARNING_RATE``
 ``transforms.py``     Data transforms *(optional)*
@@ -212,8 +210,8 @@ To test FL applications locally before deploying to production:
 
 2. Place your application files in the tutorial's ``app_files/`` directory
    (e.g. ``fl-tutorials/nvflare/image_classification/xray_classification/app_files/``).
-   At run time the harness copies them into ``./tmp/app/custom/`` on top of the
-   matching ``fl-apps/nvflare/<template>/app/`` template.
+   On the platform they are merged onto the matching
+   ``fl-apps/nvflare/<template>/app/`` template at submit time.
 
 3. Run one of the shipped tutorials against the NVFLARE simulator from the repository root:
 
@@ -223,9 +221,9 @@ To test FL applications locally before deploying to production:
       # list every available tutorial with:
       make -C fl-tutorials list-tutorials
 
-   The simulator harness is documented in ``fl-tutorials/nvflare/testing/`` and is driven per-tutorial
-   via that tutorial's ``.env.app``. See ``fl-services/nvflare/README.md`` for building the local
-   ``:dev`` FL images the harness uses.
+   Each tutorial's ``make run`` delegates to ``make sim`` — its ``job.py`` driving a FLIP recipe on
+   the NVFLARE simulator (SimEnv) from the flip-utils venv — configured per-tutorial via that
+   tutorial's ``.env.app``.
 
 
 Running Tests

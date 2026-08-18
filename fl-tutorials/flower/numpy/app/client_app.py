@@ -13,6 +13,7 @@
 """quickstart-numpy: A Flower / NumPy app."""
 
 import numpy as np
+from flip.flower.privacy import flip_local_dp_mod
 from flwr.app import ArrayRecord, Context, Message, MetricRecord, RecordDict
 from flwr.clientapp import ClientApp
 
@@ -20,7 +21,10 @@ from flwr.clientapp import ClientApp
 app = ClientApp()
 
 
-@app.train()
+# The DP mod clips this update to `dp-clipping-norm` and adds Gaussian noise calibrated to
+# (dp-epsilon, dp-delta) before the reply leaves the SuperNode — see pyproject.toml's
+# [tool.flwr.app.config]. It is applied to @app.train only; @app.evaluate below is untouched.
+@app.train(mods=[flip_local_dp_mod])
 def train(msg: Message, context: Context):
     """Train the model on local data."""
 
@@ -45,8 +49,9 @@ def train(msg: Message, context: Context):
 def evaluate(msg: Message, context: Context):
     """Evaluate the model on local data."""
 
-    # The model is the global arrays
-    ndarrays = msg.content["arrays"].to_numpy_ndarrays()
+    # The model is the global arrays. This toy app reports a random metric instead of evaluating,
+    # so the unpacked arrays go unused - the line stays as the worked example of how to reach them.
+    _ndarrays = msg.content["arrays"].to_numpy_ndarrays()
 
     # Return reply Message
     metrics = {

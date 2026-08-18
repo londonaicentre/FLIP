@@ -25,34 +25,40 @@ const confirmModalStub = {
     template: "<div data-test=\"confirm-modal-stub\" :data-dialog=\"dialog\"><slot name=\"confirmation\" /></div>"
 };
 
-const stubs = {
-    AiConfirmModal: confirmModalStub,
-    AiLoader: { template: "<div data-test=\"loader\" />" },
-    AiButton: {
-        props: ["loading"],
-        inheritAttrs: false,
-        template: "<button v-bind=\"$attrs\" :disabled=\"loading\" @click=\"$emit('click', $event)\"><slot /></button>"
-    },
-    AiTextArea: { template: "<textarea />" },
-    AiInput: {
-        name: "AiInput",
-        template: "<div data-test=\"ai-input\"><slot name=\"inputButton\" /></div>"
-    },
-    AiSkeleton: { template: "<div />" },
-    transition: false,
-    Transition: false,
-    Form: {
-        name: "Form",
-        emits: ["submit"],
-        template: "<form data-test=\"banner-form\" @submit.prevent=\"$emit('submit', { message: 'Updated', link: 'https://x' })\"><slot :values=\"{}\" /></form>"
-    }
-};
+// The Form stub exposes `formValues` as its slot values, so a test can render the
+// live-preview branch (gated on `values.link`) by passing a link in.
+function makeStubs(formValues: Record<string, unknown> = {}) {
+    return {
+        AiConfirmModal: confirmModalStub,
+        AiLoader: { template: "<div data-test=\"loader\" />" },
+        AiButton: {
+            props: ["loading"],
+            inheritAttrs: false,
+            template: "<button v-bind=\"$attrs\" :disabled=\"loading\" @click=\"$emit('click', $event)\"><slot /></button>"
+        },
+        AiTextArea: { template: "<textarea />" },
+        AiInput: {
+            name: "AiInput",
+            template: "<div data-test=\"ai-input\"><slot name=\"inputButton\" /></div>"
+        },
+        AiSkeleton: { template: "<div />" },
+        transition: false,
+        Transition: false,
+        Form: {
+            name: "Form",
+            emits: ["submit"],
+            data: () => ({ slotValues: formValues }),
+            template: "<form data-test=\"banner-form\" @submit.prevent=\"$emit('submit', { message: 'Updated', link: 'https://x' })\"><slot :values=\"slotValues\" /></form>"
+        }
+    };
+}
 
 function mountBanner(options: {
     enabled?: boolean;
     bannerOverride?: { enabled: boolean; message: string; link?: string } | null;
+    formValues?: Record<string, unknown>;
 } = {}) {
-    const { enabled = false, bannerOverride } = options;
+    const { enabled = false, bannerOverride, formValues } = options;
     const banner = bannerOverride === null
         ? null
         : (bannerOverride ?? {
@@ -73,7 +79,7 @@ function mountBanner(options: {
                     }
                 }
             })],
-            stubs
+            stubs: makeStubs(formValues)
         }
     });
 }
@@ -158,6 +164,18 @@ describe("SiteBanner", () => {
             link: "https://x",
             enabled: true
         });
+    });
+
+    it("preview anchor opens in a new tab without opener access or a referrer", () => {
+        // The live-preview anchor hand-copies AiBanner's markup, so it needs the same rel:
+        // "noopener" denies the admin-configured target a window handle back into FLIP, and
+        // "noreferrer" keeps the FLIP URL (project UUIDs included) out of its Referer header.
+        const wrapper = mountBanner({ formValues: { link: "https://example.nhs.uk" } });
+
+        const link = wrapper.findAll("a").find(a => a.attributes("href") === "https://example.nhs.uk");
+        expect(link).toBeDefined();
+        expect(link!.attributes("target")).toBe("_blank");
+        expect(link!.attributes("rel")).toBe("noopener noreferrer");
     });
 
     it("toggleBanner() short-circuits when details.banner is null", async () => {

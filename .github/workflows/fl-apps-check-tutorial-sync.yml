@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-name: Check flower tutorial sync with fl-apps templates
+name: Check tutorial file sync
 
 on:
   push:
@@ -20,6 +20,8 @@ on:
     paths:
       - "fl-apps/flower/**"
       - "fl-tutorials/flower/**"
+      # The Ark+ evaluation pairs are nvflare-only, so the filter cannot stay flower-only.
+      - "fl-tutorials/nvflare/image_evaluation/**"
       - "scripts/check_tutorial_sync.sh"
       - ".github/workflows/fl-apps-check-tutorial-sync.yml"
   pull_request:
@@ -27,6 +29,8 @@ on:
     paths:
       - "fl-apps/flower/**"
       - "fl-tutorials/flower/**"
+      # The Ark+ evaluation pairs are nvflare-only, so the filter cannot stay flower-only.
+      - "fl-tutorials/nvflare/image_evaluation/**"
       - "scripts/check_tutorial_sync.sh"
       - ".github/workflows/fl-apps-check-tutorial-sync.yml"
 

@@ -135,7 +135,7 @@ QUERY_FILE ?= $(MODEL_FILES_DIR)/../query.sql
 endif
 e2e_smoke:
 	@echo "🚀 Running e2e smoke (model files: $(MODEL_FILES_DIR), query: $(QUERY_FILE))..."
-	env DB_HOST=localhost uv run python -m tests.e2e_smoke --model-files-dir $(MODEL_FILES_DIR) --query-file $(QUERY_FILE) $(EXTRA_ARGS)
+	env DB_HOST=localhost uv run python -m tests.e2e_smoke --model-files-dir "$(MODEL_FILES_DIR)" --query-file "$(QUERY_FILE)" $(EXTRA_ARGS)
 
 # Spleen-segmentation variant of e2e_smoke: same recipe, with the spleen tutorial
 # defaults plus a data-enrichment step that uploads segmentation labels to each

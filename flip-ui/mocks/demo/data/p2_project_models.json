@@ -1,0 +1,22 @@
+{
+  "page": 1,
+  "pageSize": 50,
+  "totalPages": 1,
+  "totalRecords": 2,
+  "data": [
+    {
+      "id": "fcf8cb36-5685-4085-abc1-14bd25151566",
+      "name": "Ark+ Multimodel Eval client_api (finetune 24985ec3) ",
+      "description": "Multi-model run of the federated evaluation application, comparing the pretrained Ark+ baseline against the federated fine-tuned checkpoint produced by the companion training project (model 24985ec3). Both models are packaged behind the shared inference interface; the evaluator broadcasts each checkpoint as a named validation task, computes per-class AUROC on each site's holdout cohort, and reports pairwise two-sided DeLong tests with Benjamini-Hochberg FDR correction to determine the best model per class-site pairing. Results are written to a structured evaluation_results.json per site; per-sample predictions never leave the trust.",
+      "status": "RESULTS_UPLOADED",
+      "owner_id": "00000000-0000-4000-8000-000000000002"
+    },
+    {
+      "id": "db780699-61a9-4701-990f-8f43ac03f4ab",
+      "name": "Baseline evaluation",
+      "description": "Single-model baseline run of the federated evaluation application: score the pretrained Ark+ (Swin-Large, 768px) checkpoint on each site's holdout cohort. The ChestX-ray14 classifier-head outputs are remapped to the five downstream findings - 'Nodule' and 'Mass' probabilities are combined into 'Nodule or Mass' by pairwise maximisation, the remaining four classes taken directly from their corresponding heads, and all other upstream classes discarded. Per-class AUROC is computed locally at each site; this run establishes the pre-adaptation reference the fine-tuned model will later be compared against.",
+      "status": "RESULTS_UPLOADED",
+      "owner_id": "00000000-0000-4000-8000-000000000002"
+    }
+  ]
+}

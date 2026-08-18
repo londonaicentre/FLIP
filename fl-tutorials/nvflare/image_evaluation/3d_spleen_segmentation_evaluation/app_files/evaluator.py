@@ -9,283 +9,220 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Description: This file contains the FLIP_EVALUATOR class which is responsible for validating the model.
+"""Client-API evaluator for the 3D spleen segmentation evaluation tutorial.
+
+This is the NVFLARE Client-API counterpart of the legacy ``FLIP_EVALUATOR(Executor)``. The server
+(``CrossSiteModelEval`` + ``EvaluationModelLocator``, wired by ``FlipEvalRecipe``) loads the uploaded
+checkpoint and broadcasts it to every client as a single ``FLModel``; this script implements the
+canonical ``is_evaluate()`` loop — receive the global model, score it on the local cohort, and send back
+**aggregate-only** metrics. There is no ``Executor``/``Shareable`` plumbing and no multi-model
+``COLLECTION`` unwrapping; the weights arrive as ``input_model.params``.
+
+Only cohort-mean metrics are returned (``mean_dice``, ``mean_hausdorff_95``, ``mean_surface_dice``,
+``mean_iou``). Per-sample (row-level) scores are deliberately never produced or sent: a per-patient list
+would leak the exact evaluation cohort size and be linkable to individual patients.
+"""
+
+import argparse
 import json
 import logging
 from pathlib import Path
 
 import nibabel as nib
-import pandas as pd
+import nvflare.client as flare
 import torch
 from flip import FLIP
-from flip.constants import PTConstants, ResourceType
-from models import model_paths
+from flip.constants import ResourceType
+from models import get_model
 from monai.data import DataLoader, Dataset, decollate_batch
 from monai.metrics import DiceMetric, HausdorffDistanceMetric, MeanIoU, SurfaceDiceMetric
 from monai.networks.utils import one_hot
 from monai.transforms import AsDiscrete
-from nvflare.apis.dxo import DXO, DataKind, from_shareable
-from nvflare.apis.executor import Executor
-from nvflare.apis.fl_constant import ReturnCode
-from nvflare.apis.fl_context import FLContext
-from nvflare.apis.shareable import Shareable, make_reply
-from nvflare.apis.signal import Signal
 from tqdm import tqdm
 from transforms import get_eval_transforms, get_sliding_window_inferer
 
-# Surface tolerance in voxels for the normalized Surface Dice metric: the boundary deviation treated
-# as acceptable, one entry per foreground class (spleen). Tune per dataset/voxel spacing.
+logger = logging.getLogger(__name__)
+
+# Surface tolerance in voxels for the normalized Surface Dice metric: the boundary deviation treated as
+# acceptable, one entry per foreground class (spleen). Tune per dataset/voxel spacing.
 SURFACE_DICE_TOLERANCE_VOXELS = 1.0
 
 
-class FLIP_EVALUATOR(Executor):
-    def __init__(self, evaluate_task_name=PTConstants.EvalTaskName, project_id="", query=""):
-        """
-        Evaluation executor for the FLIP project. This executor is responsible for validating the model.
-        """
-        super(FLIP_EVALUATOR, self).__init__()
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--project_id", type=str, default="")
+    return parser.parse_args()
 
-        self._evaluate_task_name = evaluate_task_name
 
-        # Logger
-        self.logger = logging.getLogger(self.__class__.__name__)
-        self.logger.setLevel(logging.INFO)
+def load_query() -> str:
+    """Read the cohort query from the client app config.
 
-        # Load the config
-        self.config = {}
-        working_dir = Path(__file__).parent.resolve()
-        with open(str(working_dir / "config.json")) as file:
-            self.config = json.load(file)
-            self.num_classes = self.config["num_classes"]
+    NVFlare's TaskScriptRunner whitespace-splits ``task_script_args``, so the SQL query (which can
+    contain spaces) is plumbed via the top-level ``query`` key in ``config/config_fed_client.json``
+    rather than as a CLI flag. In dev/simulator mode this is ignored by ``flip.get_dataframe``.
+    """
+    client_cfg = Path(__file__).parent.parent / "config" / "config_fed_client.json"
+    if client_cfg.exists():
+        try:
+            return json.loads(client_cfg.read_text()).get("query", "")
+        except Exception:
+            return ""
+    return ""
 
-        # Setup the model
-        self.device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
-        self.models = {}
-        for model_name, model_values in self.config["models"].items():
-            self.models[model_name] = model_paths[model_values["path"]]
 
-        # NB val transforms differ from the train transforms. No random affine augmentation is applied and the data is
-        # not cropped into patches.
-        self.val_transforms = get_eval_transforms()
-        # Setup the training dataset
-        self.flip = FLIP()
-        self.project_id = project_id
-        self.query = query
-        self.dataframe = self.flip.get_dataframe(self.project_id, self.query)
-        self.post_pred = AsDiscrete(argmax=True, to_onehot=self.num_classes)
-        self.swi = get_sliding_window_inferer(sw_device=self.device)
+def load_config() -> dict:
+    """Load the user-supplied config.json that sits next to this script."""
+    config_path = Path(__file__).parent.resolve() / "config.json"
+    with open(config_path) as f:
+        return json.load(f)
 
-    def get_image_and_label_list(self, dataframe: pd.DataFrame) -> list[dict[str, str]]:
-        """
-        Returns a list of dicts, each dict containing the path to an image and its corresponding label.
 
-        Args:
-            dataframe (pd.DataFrame): DataFrame containing accession IDs to fetch images and labels for.
+def build_datalist(flip: FLIP, dataframe, project_id: str) -> list[dict]:
+    """Return MONAI-compatible {image, label} items for every matched input/label pair in the cohort.
 
-        Returns:
-            list[dict[str, str]]: List of dicts with keys "image" and "label" for every matched pair in the cohort.
-        """
-        datalist: list[dict[str, str]] = []
-        images_found = 0
+    Evaluation-only: every matched image/label pair in this client's cohort is scored (no held-out split).
+    """
+    datalist: list[dict] = []
+    images_found = 0
 
-        for accession_id in tqdm(
-            dataframe["accession_id"],
-            total=len(dataframe),
-            desc="Processing cohort",
-            unit="accession",
-        ):
-            try:
-                accession_folder_path = self.flip.get_by_accession_number(
-                    self.project_id,
-                    accession_id,
-                    resource_type=[
-                        ResourceType.NIFTI,
-                        # ResourceType.SEGMENTATION,
-                    ],
-                )
-            except Exception as err:
-                self.logger.info("⚠️ Could not fetch images for accession_id=%s: %s", accession_id, err)
+    for accession_id in tqdm(dataframe["accession_id"], desc="Preparing dataset", unit="accession"):
+        try:
+            accession_folder_path = flip.get_by_accession_number(
+                project_id, accession_id, resource_type=[ResourceType.NIFTI]
+            )
+        except Exception as err:
+            logger.info("⚠️ Could not fetch images for accession_id=%s: %s", accession_id, err)
+            continue
+
+        # get all images in the accession folder that match the pattern "input_*.nii.gz"
+        all_images = list(accession_folder_path.rglob("input_*.nii.gz"))
+        images_found += len(all_images)
+
+        for img in all_images:
+            seg = str(img).replace("/input_", "/label_")
+
+            if not Path(seg).exists():
+                logger.info("⚠️ No matching segmentation for %s", img.name)
                 continue
 
-            # get all images in the accession folder that match the pattern "input_*.nii.gz"
-            all_images = list(accession_folder_path.rglob("input_*.nii.gz"))
-            images_found += len(all_images)
+            try:
+                img_header = nib.load(str(img))
+                seg_header = nib.load(seg)
+            except nib.filebasedimages.ImageFileError as err:
+                logger.info("⚠️ Invalid image pair for %s: %s", img.name, err)
+                continue
 
-            for img in all_images:
-                # for each image, find the corresponding segmentation mask
-                seg = str(img).replace("/input_", "/label_")
+            # Some QC checks to ensure the image and segmentation are valid and match
+            # check is 3D and at least 128x128x128 in size and seg is the same shape as the image
+            if len(img_header.shape) != 3:
+                logger.info("⚠️ Skipping non-3D image %s", img.name)
+                continue
 
-                if not Path(seg).exists():
-                    self.logger.info("⚠️ No matching segmentation for %s", img.name)
-                    continue
-
-                try:
-                    img_header = nib.load(str(img))
-                    seg_header = nib.load(seg)
-                except nib.filebasedimages.ImageFileError as err:
-                    self.logger.info("⚠️ Invalid image pair for %s: %s", img.name, err)
-                    continue
-
-                # Some QC checks to ensure the image and segmentation are valid and match
-                # check is 3D and at least 128x128x128 in size and seg is the same shape as the image
-                if len(img_header.shape) != 3:
-                    self.logger.info("⚠️ Skipping non-3D image %s", img.name)
-                    continue
-
-                if img_header.shape != seg_header.shape:
-                    self.logger.info(
-                        "⚠️ Shape mismatch for %s: image=%s label=%s",
-                        img.name,
-                        img_header.shape,
-                        seg_header.shape,
-                    )
-                    continue
-
-                datalist.append({"image": str(img), "label": seg})
-
-        self.logger.info("Dataset ready: %d image/label pairs - evaluating all of them.", len(datalist))
-
-        # Fail here rather than letting an empty dataset surface downstream as torch's opaque
-        # "num_samples should be a positive integer value, but got num_samples=0".
-        if not datalist:
-            raise RuntimeError(
-                f"No image/label pairs found: {images_found} input_*.nii.gz image(s) across "
-                f"{len(dataframe['accession_id'])} accession(s), none with a matching label_*.nii.gz. "
-                "Supervised evaluation needs a label beside each image in XNAT — was the data-enrichment step "
-                "run, and did it run after DICOM-to-NIfTI conversion? See the Data Enrichment user guide."
-            )
-
-        return datalist
-
-    def _build_metrics(self):
-        """Build the aggregate (cohort-mean) evaluation metrics for one model.
-
-        Returns:
-            dict[str, monai.metrics.Metric]: metric name -> MONAI metric, each with
-                include_background=False (score the foreground spleen class) and reduction='mean',
-                so aggregate() yields a single cohort-level scalar. No per-sample (row-level)
-                values are produced or exported.
-        """
-        return {
-            "mean_dice": DiceMetric(include_background=False, reduction="mean"),
-            "mean_hausdorff_95": HausdorffDistanceMetric(include_background=False, percentile=95, reduction="mean"),
-            "mean_surface_dice": SurfaceDiceMetric(
-                class_thresholds=[SURFACE_DICE_TOLERANCE_VOXELS], include_background=False, reduction="mean"
-            ),
-            "mean_iou": MeanIoU(include_background=False, reduction="mean"),
-        }
-
-    def _aggregate_results(self, metrics: dict) -> dict:
-        """Aggregate each model's accumulated metrics into a cohort-level results dict.
-
-        Args:
-            metrics (dict): model name -> {metric name -> accumulated MONAI metric}.
-
-        Returns:
-            dict: model name -> {'spleen': {metric name -> float}}. Only aggregate (cohort-mean)
-                values are emitted — per-sample (row-level) scores are an individual-level
-                disclosure (membership inference, cohort-size leak) and are not returned.
-        """
-        output_results = {}
-        for model_name, metric_map in metrics.items():
-            output_results[model_name] = {
-                "spleen": {name: float(metric.aggregate().item()) for name, metric in metric_map.items()}
-            }
-        return output_results
-
-    def do_validation(self, fl_ctx, abort_signal):
-        metrics = {}
-        for model_name in self.models:
-            self.models[model_name].eval()
-            metrics[model_name] = self._build_metrics()
-
-        num_images = 0
-        self.logger.info("Test loader length: %d", len(self.test_loader))
-
-        with torch.no_grad():
-            for i, batch in enumerate(self.test_loader):
-                if abort_signal.triggered:
-                    return 0
-
-                images, labels = (
-                    batch["image"].to(self.device),
-                    batch["label"].to(self.device),
+            if img_header.shape != seg_header.shape:
+                logger.info(
+                    "⚠️ Shape mismatch for %s: image=%s label=%s",
+                    img.name,
+                    img_header.shape,
+                    seg_header.shape,
                 )
+                continue
 
-                for model_name in self.models:
-                    self.models[model_name].to(self.device)
-                    # perform sliding window inference to get a prediction for the whole volume.
-                    output = self.swi(inputs=images, network=self.models[model_name])
+            datalist.append({"image": str(img), "label": seg})
 
-                    # Softmax
-                    output = torch.softmax(output, dim=1)
-                    # Ensure labels are one-hot encoded
-                    output = decollate_batch(output)
-                    output = torch.stack([self.post_pred(i) for i in output], 0)
-                    labels_one_hot = one_hot(labels, num_classes=self.num_classes)
+    logger.info("Dataset ready: %d image/label pairs - evaluating all of them.", len(datalist))
 
-                    # Accumulate every metric for this batch (Dice, HD95, Surface Dice, IoU).
-                    for metric in metrics[model_name].values():
-                        metric(output, labels_one_hot)
-                    self.models[model_name].cpu()
+    # Fail here rather than letting an empty dataset surface downstream as torch's opaque
+    # "num_samples should be a positive integer value, but got num_samples=0".
+    if not datalist:
+        raise RuntimeError(
+            f"No image/label pairs found: {images_found} input_*.nii.gz image(s) across "
+            f"{len(dataframe['accession_id'])} accession(s), none with a matching label_*.nii.gz. "
+            "Supervised evaluation needs a label beside each image in XNAT — was the data-enrichment step "
+            "run, and did it run after DICOM-to-NIfTI conversion? See the Data Enrichment user guide."
+        )
 
-                batch_size = images.shape[0]
-                num_images += batch_size
-                self.logger.info("Validator Iteration: %d, Num Images: %d", i, num_images)
+    return datalist
 
-            # Aggregate each metric to a single cohort-level scalar, then reset for the next run.
-            json_results = self._aggregate_results(metrics)
-            for metric_map in metrics.values():
-                for metric in metric_map.values():
-                    metric.reset()
 
-            message = ""
-            for model_name in self.models:
-                scores = json_results[model_name]["spleen"]
-                metrics_str = ", ".join(f"{name}={value:.4f}" for name, value in scores.items())
-                message += f"[{model_name}] {metrics_str} "
-            self.log_info(fl_ctx, f"Validator finished on the client side: {message}")
+def build_metrics() -> dict:
+    """Build the aggregate (cohort-mean) evaluation metrics.
 
-        return json_results
+    Each MONAI metric uses ``include_background=False`` (score the foreground spleen class) and
+    ``reduction='mean'``, so ``aggregate()`` yields a single cohort-level scalar. No per-sample
+    (row-level) values are produced or exported.
+    """
+    return {
+        "mean_dice": DiceMetric(include_background=False, reduction="mean"),
+        "mean_hausdorff_95": HausdorffDistanceMetric(include_background=False, percentile=95, reduction="mean"),
+        "mean_surface_dice": SurfaceDiceMetric(
+            class_thresholds=[SURFACE_DICE_TOLERANCE_VOXELS], include_background=False, reduction="mean"
+        ),
+        "mean_iou": MeanIoU(include_background=False, reduction="mean"),
+    }
 
-    def execute(
-        self,
-        task_name: str,
-        shareable: Shareable,
-        fl_ctx: FLContext,
-        abort_signal: Signal,
-    ) -> Shareable:
-        # Get images and labels and create dataset.
-        test_dict = self.get_image_and_label_list(self.dataframe)
-        self._test_dataset = Dataset(test_dict, transform=self.val_transforms)
-        self.test_loader = DataLoader(self._test_dataset, batch_size=1, shuffle=False)
 
-        self.log_info(fl_ctx, f"Received task name: {task_name}")
-        if task_name == self._evaluate_task_name:
-            dxo = from_shareable(shareable)
+def evaluate(model: torch.nn.Module, loader: DataLoader, device: torch.device, num_classes: int) -> dict:
+    """Score the model over the local cohort and return aggregate (cohort-mean) metrics only."""
+    model.eval()
+    metrics = build_metrics()
+    post_pred = AsDiscrete(argmax=True, to_onehot=num_classes)
+    swi = get_sliding_window_inferer(sw_device=device)
 
-            # Process data kind.
-            for model_name, _ in self.models.items():
-                self.log_info(fl_ctx, f"Loading model {model_name} at client {fl_ctx.get_identity_name()}...")
-                dxo_model = dxo.data.get(model_name)
-                if not dxo_model.data_kind == DataKind.WEIGHTS:
-                    self.log_exception(
-                        fl_ctx,
-                        f"DXO for model {model_name} is of type {dxo_model.data_kind} but expected type WEIGHTS.",
-                    )
-                    return make_reply(ReturnCode.BAD_TASK_DATA)
+    num_images = 0
+    with torch.no_grad():
+        for i, batch in enumerate(loader):
+            images, labels = batch["image"].to(device), batch["label"].to(device)
+            # Sliding-window inference over the whole volume, then softmax + one-hot for metric input.
+            output = swi(inputs=images, network=model)
+            output = torch.softmax(output, dim=1)
+            output = torch.stack([post_pred(o) for o in decollate_batch(output)], 0)
+            labels_one_hot = one_hot(labels, num_classes=num_classes)
+            for metric in metrics.values():
+                metric(output, labels_one_hot)
+            num_images += images.shape[0]
+            logger.info(f"Evaluation iteration {i}, images seen: {num_images}")
 
-                # Extract weights and ensure they are tensor.
-                weights = {k: torch.as_tensor(v, device=self.device) for k, v in dxo_model.data.items()}
-                self.models[model_name].load_state_dict(weights)
+    # Aggregate each metric to a single cohort-level scalar (aggregate-only — never per-sample).
+    results = {name: float(metric.aggregate().item()) for name, metric in metrics.items()}
+    logger.info("Evaluation finished: " + ", ".join(f"{k}={v:.4f}" for k, v in results.items()))
+    return results
 
-            # Get validation results:
-            json_results = self.do_validation(fl_ctx, abort_signal)
-            if abort_signal.triggered:
-                return make_reply(ReturnCode.TASK_ABORTED)
 
-            dxo = DXO(data_kind=DataKind.METRICS, data=json_results)
-            return dxo.to_shareable()
+def load_global_weights(model: torch.nn.Module, input_model: flare.FLModel) -> None:
+    """Load the server-provided weights (sent over the validate task) onto the local model."""
+    torch_weights = {k: torch.as_tensor(v) for k, v in input_model.params.items()}
+    model.load_state_dict(torch_weights)
 
+
+def main() -> None:
+    args = parse_args()
+    config = load_config()
+    num_classes = config["num_classes"]
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+
+    model = get_model().to(device)
+
+    flip = FLIP()
+    dataframe = flip.get_dataframe(args.project_id, load_query())
+    if "accession_id" not in dataframe.columns:
+        raise ValueError("The dataframe must contain an 'accession_id' column.")
+
+    datalist = build_datalist(flip, dataframe, args.project_id)
+    loader = DataLoader(Dataset(datalist, transform=get_eval_transforms()), batch_size=1, shuffle=False)
+
+    flare.init()
+    while flare.is_running():
+        input_model = flare.receive()
+        if input_model is None:
+            break
+
+        if flare.is_evaluate():
+            load_global_weights(model, input_model)
+            metrics = evaluate(model, loader, device, num_classes)
+            flare.send(flare.FLModel(metrics=metrics))
         else:
-            return make_reply(ReturnCode.TASK_UNKNOWN)
+            logger.warning("Received a non-evaluation task; ignoring.")
+
+
+if __name__ == "__main__":
+    main()
