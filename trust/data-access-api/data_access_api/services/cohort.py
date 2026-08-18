@@ -64,6 +64,45 @@ _ALLOWED_TABLE_FUNCTIONS = frozenset({"generate_series", "unnest"})
 # nodes, so the false-positive surface is small.
 _ALLOWED_FUNCTIONS = _ALLOWED_TABLE_FUNCTIONS | frozenset({"age"})
 
+# Cheapest possible "is the vocabulary there?" test: an existence probe, not a count. On a
+# loaded trust concept_ancestor holds ~33M rows, so COUNT(*) would be a seq scan on the very
+# path we are trying not to slow down.
+_VOCABULARY_PROBE = text("SELECT 1 FROM omop.concept_ancestor LIMIT 1")
+
+
+def _warn_if_vocabulary_missing() -> None:
+    """Log an ERROR when a zero-row cohort is explained by an unloaded OMOP vocabulary.
+
+    The published OMOP pgdata tarballs are vocabulary-free; loading it is a separate,
+    credentialed, ~25-minute step. Until it runs, ``concept_ancestor`` is empty and every
+    cohort query matches nothing while the imaging tables look perfectly healthy — so the
+    failure reads as a bad query or a broken import rather than a missing seed step.
+
+    Deliberately best-effort and side-effect-free: this runs on a path that has already
+    decided its response, so a failure here must never turn a valid privacy-suppressed answer
+    into an error. Only called for a genuine zero — a below-threshold but non-zero cohort
+    proves the vocabulary is fine.
+    """
+    try:
+        with engine.connect() as connection:
+            if connection.execute(_VOCABULARY_PROBE).first() is not None:
+                return
+    except SQLAlchemyError as exc:
+        # Never escalate: the caller's response is already correct without this diagnosis.
+        logger.debug(f"Could not check whether the OMOP vocabulary is loaded: {exc}")
+        return
+
+    logger.error(
+        "Cohort query returned 0 records AND the OMOP vocabulary is not loaded "
+        "(omop.concept_ancestor is empty). Cohort queries resolve concept sets through the "
+        "vocabulary, so every query on this trust will match nothing until it is loaded. "
+        "The published OMOP tarballs ship without it — run: "
+        "make -C trust/omop-db load-omop-vocab OMOP_DB_PORT=<this trust's port>. "
+        "Restart this service afterwards: query results are cached, so the 0-row answer would "
+        "otherwise be replayed."
+    )
+
+
 # Reject pathologically large queries before sqlglot does any work — cheap DoS guard
 # at the API layer. The DB role limits blast radius too, but rejecting here is
 # defence in depth and stops the parser allocating an arbitrarily large AST.
@@ -690,6 +729,13 @@ def get_statistics(df: pd.DataFrame, query_input: CohortQueryInput, threshold: i
             f"Query returned {record_count} records (< {threshold});"
             " returning privacy-suppressed 0-count response"
         )
+        if record_count == 0:
+            # Trust-side only, and deliberately AFTER the response has been decided — this
+            # cannot and must not change what goes on the wire (see above). It exists because
+            # the honest refusal is, by design, indistinguishable and therefore undiagnosable:
+            # a vocabulary-less trust answers every cohort query with 0 rows, and the operator
+            # sees only "no cohort records" from the hub. See FLIP#967.
+            _warn_if_vocabulary_missing()
         return StatisticsResponse(
             query_id=query_input.query_id,
             trust_id=query_input.trust_id,

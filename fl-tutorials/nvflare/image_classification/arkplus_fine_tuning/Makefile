@@ -36,11 +36,10 @@ endif
 NUM_ROUNDS ?= 3
 N_CLIENTS ?= 2
 
-# Simulator workspace + metrics output. WORKSPACE matches job.py's default and is deliberately NOT
-# the shared harness dir (../../testing/runs/workspace): `make round-metrics` auto-discovers the log with
-# the most round events under the workspace tree, and the shared dir accumulates round logs from
-# other tutorials' runs, so a stale log could be picked up instead of this tutorial's.
-WORKSPACE ?= /tmp/nvflare/arkplus_finetuning_client_api
+# Simulator workspace + metrics output. WORKSPACE matches job.py's default and is deliberately
+# per-tutorial: `make round-metrics` auto-discovers the log with the most round events under the
+# workspace tree, so a dir shared with other tutorials would risk picking up a stale log of theirs.
+WORKSPACE ?= /tmp/nvflare/arkplus_finetuning
 METRICS_OUT ?= $(APP_DIR)/round_metrics
 
 # Round count for the one-shot `make reproduce-overhead` replica — matches the deployed run's
@@ -229,8 +228,8 @@ package-overhead-bundle:
 
 # --- Tutorial-harness entrypoint ---
 # The shared harness (fl-tutorials/nvflare/Makefile) auto-discovers any dir with a .env.app and invokes
-# `make run`. This Client API tutorial has no legacy testing/ harness path, so `run` prepares the checkpoint
-# and delegates to `sim` (the recipe/simulator path via job.py).
+# `make run`, which prepares the checkpoint and delegates to `sim` (the recipe/simulator path
+# via job.py).
 run: prepare-checkpoint sim
 
 clean:

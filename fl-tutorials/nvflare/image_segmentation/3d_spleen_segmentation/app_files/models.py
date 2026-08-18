@@ -9,7 +9,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Description: This file defines the SegmentationNetwork class with a UNet model for segmentation.
+# Description: Defines the SegmentationNetwork (MONAI UNet) used for spleen segmentation training.
 
 import json
 from pathlib import Path
@@ -19,29 +19,20 @@ from monai.networks.nets import UNet
 from torch import nn
 
 
-# Here is where we can load the config file with network params if necessary, for example:
-def load_net_config():
+def load_net_config() -> dict:
+    """Load the network params (e.g. spatial_dims) from config.json next to this module."""
     config_path = Path(__file__).parent / "config.json"
-    with open(config_path, "r") as f:
+    with open(config_path) as f:
         config = json.load(f)
-    net_config = config.get("net_config", {})
-    print(f"Loaded network config: {net_config}")
-    return net_config
+    return config.get("net_config", {})
 
 
 class SegmentationNetwork(nn.Module):
-    """
-    Wraps a MONAI BasicUNet allowing the choice of returning the logits or sigmoided logits. This is useful
-    because we train on patches, but evaluate on full images using a sliding window approach. We need to return
-    logits for the sliding window approach, but sigmoided logits for the patch training approach.
-    """
+    """MONAI UNet for spleen segmentation. Returns logits (sliding-window inference applies softmax)."""
 
     def __init__(self, num_classes: int = 1):
         super().__init__()
-
-        # For example
         net_config = load_net_config()
-
         self.net = UNet(
             spatial_dims=net_config["spatial_dims"],
             in_channels=1,
@@ -52,18 +43,11 @@ class SegmentationNetwork(nn.Module):
             strides=(2, 2, 2, 2),
         )
 
-    def forward(self, x: torch.Tensor):
-        logits = self.net(x)
-        return logits
-
-
-_net = SegmentationNetwork()
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.net(x)
 
 
 def get_model() -> nn.Module:
-    """
-    Returns the model defined in this file.
-    NOTE: This function needs to exist and cannot take any input arguments. If you would like to parameterize the
-    configuration of your model, for example loaded from a config file, do it when instantiating the model above.
-    """
-    return _net
+    """Return the model architecture. Referenced by the recipe's persistor (``models.get_model``) and by
+    the trainer to receive the server-provided weights."""
+    return SegmentationNetwork()

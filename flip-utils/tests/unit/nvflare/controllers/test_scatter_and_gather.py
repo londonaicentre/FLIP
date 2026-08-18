@@ -11,9 +11,10 @@
 #
 
 # FLIP's ScatterAndGather is a thin subclass of NVFLARE's stock ScatterAndGather; these tests cover
-# only the FLIP-specific overrides (model_id + snapshot default, the WEIGHT_DIFF->WEIGHTS
-# reconstruction, metrics relay, and the ABORTED event). Stock's own behaviour (round loop, arg
-# validation, component wiring, memory_gc_rounds) is exercised by NVFLARE's own tests, not here.
+# only the FLIP-specific overrides (model_id + snapshot default, hub relays for failed and accepted
+# client results, the data-kind mismatch report, the zero-acceptance abort, metrics relay, and the
+# ABORTED event). Stock's own behaviour (round loop, arg validation, component wiring,
+# memory_gc_rounds) is exercised by NVFLARE's own tests, not here.
 
 from unittest.mock import MagicMock, patch
 
@@ -23,8 +24,8 @@ from nvflare.apis.fl_constant import FLContextKey, ReturnCode
 from nvflare.apis.shareable import Shareable
 from nvflare.app_common.abstract.aggregator import Aggregator
 from nvflare.app_common.app_constant import AppConstants
+from nvflare.app_common.app_event_type import AppEventType
 from nvflare.app_common.workflows.scatter_and_gather import ScatterAndGather as NVFlareScatterAndGather
-from nvflare.app_opt.pt.fedopt import PTFedOptModelShareableGenerator
 
 from flip.constants import FlipEvents, FlipProps
 from flip.nvflare.controllers.scatter_and_gather import ScatterAndGather
@@ -75,7 +76,7 @@ class TestResolveModelId:
 
 
 class TestAcceptTrainResult:
-    """The FLIP-specific WEIGHT_DIFF->WEIGHTS reconstruction + client-exception reporting."""
+    """The FLIP-specific pass-through-to-aggregator semantics + failed-task reporting."""
 
     def _controller(self):
         controller = ScatterAndGather(model_id=_VALID_MODEL_ID)
@@ -87,12 +88,20 @@ class TestAcceptTrainResult:
         controller._current_round = 2
         return controller
 
-    def test_converts_weight_diff_to_weights_for_non_fedopt(self):
+    def test_weight_diff_reaches_aggregator_untouched(self):
+        """Stock semantics: the client's (possibly partial, head-only) WEIGHT_DIFF is aggregated
+        directly — the fork must not transform it. The old DIFF→WEIGHTS reconstruction existed to
+        bridge the legacy templates' WEIGHTS-expecting aggregator (FLIP#684) and silently broke
+        FedOpt (which consumes the diff through the server optimizer); with every template now
+        aggregating diffs (the stock aggregator default), any transformation here is a bug."""
         controller = self._controller()
-        controller._global_weights = {"weights": {"w1": 1.0, "w2": 2.0}}
+        aggregator = MagicMock()
+        aggregator.expected_data_kind = {"": DataKind.WEIGHT_DIFF}
+        aggregator.accept = MagicMock(return_value=True)
+        controller.aggregator = aggregator
 
         result = DXO(
-            data_kind=DataKind.WEIGHT_DIFF, data={"w1": 0.25, "w2": -0.5}, meta={"origin": "client"}
+            data_kind=DataKind.WEIGHT_DIFF, data={"head.w": 0.25}, meta={"origin": "client"}
         ).to_shareable()
         result.add_cookie(AppConstants.CONTRIBUTION_ROUND, 2)
 
@@ -100,82 +109,8 @@ class TestAcceptTrainResult:
 
         assert accepted is True
         sent_dxo = from_shareable(controller.aggregator.accept.call_args[0][0])
-        assert sent_dxo.data_kind == DataKind.WEIGHTS
-        assert sent_dxo.data == {"w1": 1.25, "w2": 1.5}
-        assert sent_dxo.meta == {"origin": "client"}
-        controller.log_error.assert_not_called()
-
-    def test_partial_weight_diff_is_partial_safe(self):
-        # A head-only diff (frozen-backbone fine-tune, FLIP#684): missing keys keep their global value.
-        controller = self._controller()
-        controller._current_round = 3
-        controller._global_weights = {"weights": {"w1": 1.0, "w2": 2.0}}
-
-        result = DXO(data_kind=DataKind.WEIGHT_DIFF, data={"w1": 0.1}).to_shareable()
-        result.add_cookie(AppConstants.CONTRIBUTION_ROUND, 3)
-
-        accepted = controller._accept_train_result(client_name="site-1", result=result, fl_ctx=_ctx())
-
-        assert accepted is True
-        assert not any(
-            "Error while adding client WEIGHT_DIFF" in call.args[1] for call in controller.log_error.call_args_list
-        )
-        reconstructed = from_shareable(result).data
-        assert reconstructed["w1"] == 1.1  # updated
-        assert reconstructed["w2"] == 2.0  # frozen key preserved from global
-
-    def test_logs_error_when_data_kind_is_not_weight_diff(self):
-        controller = self._controller()
-        controller._current_round = 1
-        controller._global_weights = {"weights": {"w1": 1.0}}
-
-        result = DXO(data_kind=DataKind.WEIGHTS, data={"w1": 1.0}).to_shareable()
-        result.add_cookie(AppConstants.CONTRIBUTION_ROUND, 1)
-
-        controller._accept_train_result(client_name="site-1", result=result, fl_ctx=_ctx())
-
-        controller.log_error.assert_called_once()
-        assert "not of type WEIGHT_DIFF" in controller.log_error.call_args[0][1]
-
-    def test_reconstruction_error_passes_original_result_through_and_logs(self):
-        # Corrupt global weights (no "weights" entry) → the reconstruction raises; the original
-        # WEIGHT_DIFF result must be passed through unchanged so the base class applies its own
-        # handling, with the failure logged rather than swallowed.
-        controller = self._controller()
-        controller._current_round = 5
-        controller._global_weights = {}
-
-        result = DXO(data_kind=DataKind.WEIGHT_DIFF, data={"w1": 0.1}).to_shareable()
-        result.add_cookie(AppConstants.CONTRIBUTION_ROUND, 5)
-
-        accepted = controller._accept_train_result(client_name="site-1", result=result, fl_ctx=_ctx())
-
-        assert accepted is True
-        controller.log_error.assert_called_once()
-        assert "Error while adding client WEIGHT_DIFF" in controller.log_error.call_args[0][1]
-        sent_dxo = from_shareable(controller.aggregator.accept.call_args[0][0])
-        assert sent_dxo.data_kind == DataKind.WEIGHT_DIFF  # not converted
-        assert sent_dxo.data == {"w1": 0.1}
-
-    def test_keeps_weight_diff_for_fedopt_aggregator(self):
-        class _FedOptAggregatorStub(PTFedOptModelShareableGenerator):
-            def __init__(self):
-                self.accept = MagicMock(return_value=True)
-
-        controller = self._controller()
-        controller.aggregator = _FedOptAggregatorStub()
-        controller._current_round = 4
-        controller._global_weights = {"weights": {"w1": 10.0}}
-
-        result = DXO(data_kind=DataKind.WEIGHT_DIFF, data={"w1": -0.75}, meta={"origin": "client"}).to_shareable()
-        result.add_cookie(AppConstants.CONTRIBUTION_ROUND, 4)
-
-        accepted = controller._accept_train_result(client_name="site-1", result=result, fl_ctx=_ctx())
-
-        assert accepted is True
-        sent_dxo = from_shareable(controller.aggregator.accept.call_args[0][0])
-        assert sent_dxo.data_kind == DataKind.WEIGHT_DIFF  # not converted
-        assert sent_dxo.data == {"w1": -0.75}
+        assert sent_dxo.data_kind == DataKind.WEIGHT_DIFF
+        assert sent_dxo.data == {"head.w": 0.25}
         controller.log_error.assert_not_called()
 
     def test_reports_handled_execution_exception_to_hub(self):
@@ -197,6 +132,142 @@ class TestAcceptTrainResult:
         # FLIP forwards the client-side traceback to the hub with the resolved model_id.
         controller.flip.send_handled_exception.assert_called_once()
         assert controller.flip.send_handled_exception.call_args.kwargs["model_id"] == _VALID_MODEL_ID
+
+    def test_non_ok_result_without_header_relays_pointed_fallback(self):
+        """A Client-API script that dies pre-flare.init returns a bare TASK_ABORTED with no
+        "exception" header (only the retired legacy executors ever set one). The researcher must
+        still get a hub-visible pointer at the trust-side logs, not just a generic panic."""
+        controller = ScatterAndGather(model_id=_VALID_MODEL_ID, ignore_result_error=False)
+        controller.flip = MagicMock()
+        controller.system_panic = MagicMock()
+        controller.log_error = MagicMock()
+        controller.log_warning = MagicMock()
+        controller._current_failed_clients = set()
+        controller._current_num_targets = 1
+
+        result = Shareable()
+        result.set_return_code(ReturnCode.TASK_ABORTED)
+
+        controller._accept_train_result(client_name="site-1", result=result, fl_ctx=_ctx())
+
+        controller.flip.send_handled_exception.assert_called_once()
+        relayed = controller.flip.send_handled_exception.call_args.kwargs["formatted_exception"]
+        assert ReturnCode.TASK_ABORTED in relayed
+        assert "fl-client" in relayed
+
+    def test_full_weights_update_reports_actionable_mismatch(self):
+        """A trainer sending params_type="FULL" (NVFLARE's default when omitted) produces WEIGHTS,
+        which the WEIGHT_DIFF-expecting aggregator rejects with one server-log line. FLIP relays
+        an actionable message to the hub naming the params_type='DIFF' fix."""
+        controller = self._controller()
+        controller.flip = MagicMock()
+        controller.aggregator.expected_data_kind = {"": DataKind.WEIGHT_DIFF}
+        controller.aggregator.accept = MagicMock(return_value=False)
+
+        result = DXO(data_kind=DataKind.WEIGHTS, data={"w": np.ones(2)}).to_shareable()
+        controller._accept_train_result(client_name="site-1", result=result, fl_ctx=_ctx())
+
+        controller.flip.send_handled_exception.assert_called_once()
+        message = controller.flip.send_handled_exception.call_args.kwargs["formatted_exception"]
+        assert "params_type='DIFF'" in message
+        assert str(DataKind.WEIGHTS) in message
+        controller.log_error.assert_called()
+        assert 2 in controller._round_kind_mismatches
+
+    def test_mismatch_reported_once_per_round(self):
+        controller = self._controller()
+        controller.flip = MagicMock()
+        controller.aggregator.expected_data_kind = DataKind.WEIGHT_DIFF
+        controller.aggregator.accept = MagicMock(return_value=False)
+
+        result = DXO(data_kind=DataKind.WEIGHTS, data={"w": np.ones(2)}).to_shareable()
+        controller._accept_train_result(client_name="site-1", result=result, fl_ctx=_ctx())
+        controller._accept_train_result(client_name="site-2", result=result, fl_ctx=_ctx())
+
+        controller.flip.send_handled_exception.assert_called_once()
+
+    def test_matching_diff_reports_no_mismatch(self):
+        controller = self._controller()
+        controller.flip = MagicMock()
+        controller.aggregator.expected_data_kind = {"": DataKind.WEIGHT_DIFF}
+
+        result = DXO(data_kind=DataKind.WEIGHT_DIFF, data={"w": np.ones(2)}).to_shareable()
+        result.add_cookie(AppConstants.CONTRIBUTION_ROUND, 2)
+        controller._accept_train_result(client_name="site-1", result=result, fl_ctx=_ctx())
+
+        controller.flip.send_handled_exception.assert_not_called()
+        assert controller._round_kind_mismatches == set()
+
+    def test_kind_probe_failure_never_blocks_acceptance(self):
+        """The mismatch probe is best-effort: an OK result it cannot parse (no DXO payload, so
+        from_shareable raises) is still handed to the aggregator — which remains the authority on
+        rejection — with the probe failure demoted to a debug log, not a hub-visible error."""
+        controller = self._controller()
+        controller.flip = MagicMock()
+        controller.log_debug = MagicMock()
+        controller.aggregator.expected_data_kind = {"": DataKind.WEIGHT_DIFF}
+
+        accepted = controller._accept_train_result(client_name="site-1", result=Shareable(), fl_ctx=_ctx())
+
+        assert accepted is True
+        controller.flip.send_handled_exception.assert_not_called()
+        assert controller._round_kind_mismatches == set()
+        debug_messages = [call.args[1] for call in controller.log_debug.call_args_list]
+        assert any(m.startswith("Could not probe the client update's data kind") for m in debug_messages)
+
+
+class TestZeroAcceptancePanic:
+    """A training round about to aggregate zero accepted results must abort the job loudly —
+    stock applies the empty aggregate as a no-op and completes with an untrained model."""
+
+    def _controller(self, round_no=1, targets=2):
+        controller = ScatterAndGather(model_id=_VALID_MODEL_ID)
+        controller.flip = MagicMock()
+        controller.system_panic = MagicMock()
+        controller.log_error = MagicMock()
+        controller._current_round = round_no
+        controller._current_num_targets = targets
+        return controller
+
+    def test_panics_and_relays_when_round_accepted_nothing(self):
+        controller = self._controller()
+        with patch.object(NVFlareScatterAndGather, "handle_event"):
+            controller.handle_event(AppEventType.BEFORE_AGGREGATION, _ctx())
+        controller.system_panic.assert_called_once()
+        controller.flip.send_handled_exception.assert_called_once()
+        reason = controller.system_panic.call_args.args[0]
+        assert "accepted 0 of 2" in reason
+
+    def test_panic_names_the_data_kind_cause_when_recorded(self):
+        controller = self._controller()
+        controller._round_kind_mismatches.add(1)
+        with patch.object(NVFlareScatterAndGather, "handle_event"):
+            controller.handle_event(AppEventType.BEFORE_AGGREGATION, _ctx())
+        assert "data kind" in controller.system_panic.call_args.args[0]
+
+    def test_no_panic_when_round_has_acceptances(self):
+        controller = self._controller()
+        controller._round_acceptances[1] = {"site-1"}
+        with patch.object(NVFlareScatterAndGather, "handle_event"):
+            controller.handle_event(AppEventType.BEFORE_AGGREGATION, _ctx())
+        controller.system_panic.assert_not_called()
+
+    def test_no_panic_for_a_not_yet_started_sibling_controller(self):
+        """Multi-phase jobs broadcast every event to every controller; one whose control_flow has
+        not started (_current_round is None, stock's init value) must not panic on the active
+        controller's rounds."""
+        controller = self._controller(round_no=1)
+        controller._current_round = None
+        with patch.object(NVFlareScatterAndGather, "handle_event"):
+            controller.handle_event(AppEventType.BEFORE_AGGREGATION, _ctx())
+        controller.system_panic.assert_not_called()
+
+    def test_relay_failure_still_panics(self):
+        controller = self._controller()
+        controller.flip.send_handled_exception.side_effect = RuntimeError("hub down")
+        with patch.object(NVFlareScatterAndGather, "handle_event"):
+            controller.handle_event(AppEventType.BEFORE_AGGREGATION, _ctx())
+        controller.system_panic.assert_called_once()
 
 
 class TestHandleEvent:
@@ -382,9 +453,9 @@ class TestClientResultTelemetry:
         controller.flip.send_event.assert_not_called()
         assert FlipProps.ROUND_RETURNED not in {call.args[0] for call in fl_ctx.set_prop.call_args_list}
 
-    def test_reported_size_is_the_original_diff_not_the_reconstruction(self):
-        """A head-only partial diff must report its own size, not the full model's —
-        the size is probed before _diff_to_weights rewrites the shareable."""
+    def test_reported_size_is_the_partial_diff_itself(self):
+        """A head-only partial diff must report its own bytes, not the full model's — the size
+        probe reads the client's shareable as sent (nothing rewrites it on the way in)."""
         controller = self._controller()
         controller._global_weights = {
             "weights": {"w1": np.zeros(4, dtype=np.float32), "w2": np.zeros(4, dtype=np.float32)}

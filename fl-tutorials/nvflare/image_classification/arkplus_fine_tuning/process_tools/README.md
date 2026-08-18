@@ -8,8 +8,9 @@ NVFLARE app itself — they are run ahead of time to prepare assets.
 
 ### `preprocess_checkpoints.py`
 
-Converts raw Ark+ checkpoint files into clean state dicts that pass
-`EvaluationPTModelLocator`'s ``strict=True`` validation on the server side.
+Converts raw Ark+ checkpoint files into clean state dicts that match the raw
+architecture exactly, so the evaluator's strict ``load_state_dict`` on the
+client side accepts the broadcast weights.
 Run this **before** deploying the evaluation job.
 
 #### Processor keys

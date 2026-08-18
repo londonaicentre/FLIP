@@ -81,6 +81,16 @@ learning-rate = 1e-4
 val-split = 0.3
 test-split = 0.3
 batch-size = 2
+# Client-side differential privacy, applied by `flip.flower.privacy.flip_local_dp_mod` when the
+# uploaded client_app.py registers it on @app.train (see README.md — the template cannot wire it
+# itself, because client_app.py is uploaded rather than templated). Declared here so the knobs
+# exist for every uploaded app and can be overridden per run; the mod falls back to these same
+# defaults when a key is absent.
+dp-enabled = true
+dp-clipping-norm = 1.0
+dp-sensitivity = 1e-4
+dp-epsilon = 10.0
+dp-delta = 1e-5
 # Model configuration
 spatial-dims = 3 # This is currently unused but can be passed to get_model()
 # FLIP configuration - needs to be set here so it can be overridden by flwr run command

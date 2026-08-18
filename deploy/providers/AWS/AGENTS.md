@@ -40,7 +40,8 @@ make init/plan/apply                          # Terraform workflow
 make deploy-centralhub                        # ECS deploy at env branch tip via sha-<short7> task-def revisions + CloudFront UI (FLIP#751; TAG= to pin). Prints an FL quiesce reminder (FLIP#770): enable Deployment Mode (pauses FL job pickup) + wait for the running job before deploying; GET /fl/quiesce reports deployment_mode + fl_quiesced. PROD=true additionally asks "Are you sure you want to continue?" (stag stays non-interactive)
 make rollback-centralhub                      # Repoint ECS services at the previous ACTIVE task-def revision + deregister the rolled-away one
 make deploy-trust                             # Deploy trust stack to EC2
-make deploy-ui                                # Build + sync UI to S3 + invalidate CloudFront
+make deploy-ui                                # Build + sync UI to S3 + invalidate CloudFront (excludes ark_demo/*)
+make deploy-ark-demo                          # Build the public Ark+ demo SPA + sync to S3 under ark_demo/ + invalidate /ark_demo/*
 make status                                   # Health checks
 make ssh-config                               # Generate SSH config with SSM ProxyCommand
 make forward-trust                            # SSM port forward all trust UIs

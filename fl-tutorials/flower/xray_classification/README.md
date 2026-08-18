@@ -173,6 +173,50 @@ Two things worth knowing before you change the metric:
   convenient for a tutorial but is a mild form of selection-on-test; point `best-model-metric` at a
   validation metric if you need the split kept clean.
 
+## Differential privacy
+
+Training updates are privatised **on the SuperNode**, before the reply leaves the trust. The
+`flip_local_dp_mod` mod from
+[`flip.flower.privacy`](../../../flip-utils/flip/flower/privacy.py) clips the local update to a
+fixed L2 norm and adds Gaussian noise scaled to the configured budget:
+
+```
+sigma = dp-sensitivity * sqrt(2 * ln(1.25 / dp-delta)) / dp-epsilon
+```
+
+It is wired in `app/client_app.py` as `@app.train(mods=[flip_local_dp_mod])`, so it covers training
+rounds only — `@app.evaluate` is untouched. That mirrors the scope of the NVFLARE apps'
+`PercentilePrivacy` result filter, though the mechanism is stronger: NVFLARE sparsifies by
+percentile and adds no noise, while this is a real (epsilon, delta) mechanism built on Flower's own
+`compute_clip_model_update` / `add_gaussian_noise_inplace`.
+
+| Key                | Default | Meaning |
+|--------------------|---------|---------|
+| `dp-enabled`       | `true`  | Master switch. `false` makes the mod a pass-through, so DP-on / DP-off runs use an identical app |
+| `dp-clipping-norm` | `1.0`   | L2 norm the update is clipped to before noise |
+| `dp-sensitivity`   | `1e-4`  | How much one training example can move the update |
+| `dp-epsilon`       | `10.0`  | Privacy budget — smaller means more privacy and more noise |
+| `dp-delta`         | `1e-5`  | Probability the guarantee fails outright |
+
+Override per run without editing the app:
+
+```bash
+flwr run . --run-config "dp-enabled=false"
+flwr run . --run-config "dp-epsilon=1.0 dp-clipping-norm=0.5"
+```
+
+> ⚠️ **The defaults are demonstration values, chosen utility-first** so this tutorial still
+> converges with the mechanism live (they give sigma ≈ 4.8e-5). They are **not** a defensible
+> privacy budget. A real one calibrates `dp-sensitivity` to the local dataset — roughly
+> `2 * dp-clipping-norm / |D|` for an average-of-examples update — and accounts for composition
+> across rounds, which this mod does not do: every round spends the budget again. With only a
+> handful of trusts the noise also does not average down the way central DP's does.
+
+Integer entries in the state dict (BatchNorm's `num_batches_tracked` counters) pass through
+unprivatised. They are step counts rather than learned parameters, and Flower's clipping scales
+each array in place by a float, which numpy refuses to write back into an int array — so the mod
+excludes them rather than crashing the client the first time clipping engages.
+
 ## Data assumptions
 
 - `query.sql` resolves chest-X-ray accession IDs labeled with effusion / edema
