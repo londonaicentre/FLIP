@@ -35,8 +35,11 @@
                     </AiButton>
                 </div>
                 <div class="flex flex-col flex-1 min-h-0 border-t border-gray-200 dark:border-dark-border">
+                    <!-- Suppressed while the job types are unknown: `jobType` is still the
+                         "standard" default then, so stating it would be a guess. Training.vue
+                         carries the explanation and the retry. -->
                     <AiAlert
-                        v-if="canUpload"
+                        v-if="canUpload && !jobTypesError"
                         variant="info"
                         class="w-full"
                         :rounded="false"
@@ -201,9 +204,12 @@ interface IModelUploadProps {
     modelId: string;
     requiredFiles: string[];
     jobType: JobType;
+    // True when the job-types map could not be loaded, so `jobType` is a default rather than this
+    // model's actual job type.
+    jobTypesError?: boolean;
 }
 
-const props = defineProps<IModelUploadProps>();
+const props = withDefaults(defineProps<IModelUploadProps>(), { jobTypesError: false });
 
 const emits = defineEmits(["uploaded", "deletedFile"]);
 

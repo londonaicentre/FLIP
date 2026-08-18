@@ -350,9 +350,9 @@ Model Files
 There is no single list of required files. What a model must contain depends on its **job type**
 — the kind of federated job it runs, such as federated averaging or evaluation — and on which FL
 backend your platform is running. An app declares its job type with the ``job_type`` key in
-``config.json``. Every NVFLARE app carries a ``config.json``, because it is itself a required file
-for those job types; a Flower app only needs one in order to run a job type other than the default.
-Where the key — or the file itself — is absent, the ``standard`` job type is assumed.
+``config.json``. Every app carries a ``config.json``, on either backend, because it is itself a
+required file for every job type. Where the key — or the file itself — is absent, the ``standard``
+job type is assumed.
 
 **You do not need to look this up.** FLIP tells you which files your model needs, in two places on
 the model page:
@@ -446,8 +446,9 @@ Where that configuration lives, and which settings are available, depends on the
 - **NVIDIA FLARE apps** are configured through ``config.json``, which is one of the required files
   for every NVFLARE job type. As well as declaring ``job_type``, it may set platform-recognised
   keys such as ``GLOBAL_ROUNDS`` and ``LOCAL_ROUNDS``.
-- **Flower apps** take their run configuration from the platform's app template, which your app
-  can override with a ``config.toml`` file. Flower apps do not use the NVFLARE keys.
+- **Flower apps** also carry a ``config.json``, but it is read only for ``job_type`` — the run
+  configuration comes from the platform's app template, which your app can override with a
+  ``config.toml`` file. Flower apps do not use the NVFLARE keys.
 
 For NVFLARE apps, any key the platform does not recognise is passed through untouched, for your own
 code to read at runtime — which is how the tutorials carry app-specific settings such as learning

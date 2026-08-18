@@ -16,7 +16,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const httpGet = vi.fn();
 const httpDelete = vi.fn();
 const httpPost = vi.fn();
-const fetchJobTypesMock = vi.fn();
 
 vi.mock("@/services/api", () => ({
     _http: {
@@ -25,17 +24,6 @@ vi.mock("@/services/api", () => ({
         post: (...args: unknown[]) => httpPost(...args)
     }
 }));
-
-vi.mock("@/services/model-service", async () => {
-    const actual = await vi.importActual<typeof import("@/services/model-service")>(
-        "@/services/model-service"
-    );
-
-    return {
-        ...actual,
-        fetchJobTypes: (...args: unknown[]) => fetchJobTypesMock(...args)
-    };
-});
 
 import { FileUploadStatus } from "@/interfaces/model/types";
 import { deleteModelFile,
@@ -89,14 +77,12 @@ const mockConfigJson = (payload: unknown) => {
 describe("getJobTypeFromConfig", () => {
     beforeEach(() => {
         httpGet.mockReset();
-        fetchJobTypesMock.mockReset();
     });
 
     it("returns the job_type from config.json when it is valid", async () => {
         mockConfigJson({ job_type: "diffusion" });
         const result = await getJobTypeFromConfig("model-1", jobTypes);
         expect(result).toBe("diffusion");
-        expect(fetchJobTypesMock).not.toHaveBeenCalled();
     });
 
     it("falls back to DEFAULT_JOB_TYPE when job_type is not in the job types map", async () => {
@@ -134,19 +120,11 @@ describe("getJobTypeFromConfig", () => {
         await expect(getJobTypeFromConfig("model-5b", jobTypes)).rejects.toThrow("bad gateway");
     });
 
-    it("fetches job types from the API when none are provided", async () => {
-        fetchJobTypesMock.mockResolvedValueOnce(jobTypes);
-        mockConfigJson({ job_type: "diffusion" });
-        const result = await getJobTypeFromConfig("model-6");
-        expect(fetchJobTypesMock).toHaveBeenCalledTimes(1);
-        expect(result).toBe("diffusion");
-    });
 });
 
 describe("resolveModelConfigState", () => {
     beforeEach(() => {
         httpGet.mockReset();
-        fetchJobTypesMock.mockReset();
     });
 
     it("reports no change when config.json status matches previous status", async () => {

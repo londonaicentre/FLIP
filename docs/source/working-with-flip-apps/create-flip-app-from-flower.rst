@@ -30,8 +30,12 @@ A Flower app that FLIP can run is just a standard Flower project with a ``pyproj
    ├── app/
    │   ├── __init__.py
    │   ├── client_app.py
+   │   ├── config.json
+   │   ├── models.py
    │   └── server_app.py
    └── pyproject.toml
+
+``client_app.py``, ``config.json`` and ``models.py`` are the files you upload — see :ref:`fl-required-files`. ``server_app.py`` is shown here because you need it to run the app locally; on-platform it comes from the FLIP template and an uploaded copy is ignored.
 
 The ``pyproject.toml`` wires the two entry points together:
 

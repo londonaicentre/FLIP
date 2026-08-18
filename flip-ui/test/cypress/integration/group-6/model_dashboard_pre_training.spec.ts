@@ -40,10 +40,9 @@ describe("Model Dashboard - Pre Training", () => {
         cy.intercept("GET", "https://fake-presigned.example.com/config.json", {
             fixture: "model/configJsonStandard.json"
         }).as("getConfigJsonBytes");
-        // The page calls /model/job-types in onBeforeMount and again from
-        // file-service.getJobTypeFromConfig; without a stub the request
-        // hangs/404s, jobTypes stays empty, and the watcher that gates
-        // `requiredFiles` / `allFilesUploaded` / `readyToTrain` never
+        // The page calls /model/job-types once, in onBeforeMount. globalIntercepts stubs it for
+        // every spec; this overrides that with the list these tests assert on. Without a usable
+        // map the watcher that gates `requiredFiles` / `allFilesUploaded` / `readyToTrain` never
         // unlocks the initiate-training-btn.
         cy.intercept("GET", "/model/job-types", {
             standard: ["trainer.py", "validator.py", "models.py", "config.json"]

@@ -1,10 +1,12 @@
 {
   "evaluation": [
     "client_app.py",
+    "config.json",
     "models.py"
   ],
   "standard": [
     "client_app.py",
+    "config.json",
     "models.py"
   ]
 }

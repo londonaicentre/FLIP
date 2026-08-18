@@ -26,6 +26,9 @@ per-client metrics for the results JSON and to evaluate on the final round only.
 The required files (see [`required_files.json`](./required_files.json)) are:
 
 - `client_app.py` — the Flower `ClientApp`, defining `@app.train` and `@app.evaluate`.
+- `config.json` — declares `job_type`. The Central Hub reads this key and nothing else from the
+  file, to pick which base application to bundle; omit the key and you get `standard`, but the file
+  itself is required. Run configuration lives in `config.toml`, not here.
 - `models.py` — defines the model; `models.get_model` is what `server_app.py` instantiates to seed
   the initial global arrays.
 

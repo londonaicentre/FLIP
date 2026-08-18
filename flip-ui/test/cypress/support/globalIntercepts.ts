@@ -15,6 +15,17 @@ beforeEach(() => {
 
     cy.intercept("http://localhost:8080/**", { statusCode: 200 }).as("catchAllGlobal");
 
+    // The catch-all answers 200 with an empty body, which `fetchJobTypes` rejects as unusable —
+    // so every spec that opens a model page needs a real map here, not just the ones asserting on
+    // required files. Specs that care about a particular job type override this locally.
+    cy.intercept(
+        "GET",
+        "/model/job-types", {
+        statusCode: 200,
+        body: { standard: ["trainer.py", "config.json", "models.py"] }
+    }
+    ).as("jobTypesGlobal");
+
     cy.intercept(
         "POST",
         "https://cognito-idp.eu-west-2.amazonaws.com/", {

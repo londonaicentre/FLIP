@@ -14,7 +14,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { _http } from "@/services/api";
-import { buildModelSteps, clearJobTypesCache, createModel, DEFAULT_JOB_TYPE, deleteModel, editModel, fetchJobTypes, getAllModels, getDownloadUrlForResults, getLogsForModel, getModel, getModelFileStatus, getModelMetrics, getModels, getPreSignedUrl, getRequiredFilesForJobType, getStatusEnumValue, initialiseTraining, isValidJobType, type ModelStatus, ModelStatusEnum, modelStatusLabelWithQueue, stopTraining, uploadModelFile } from "@/services/model-service";
+import { buildModelSteps, clearJobTypesCache, createModel, deleteModel, editModel, fetchJobTypes, getAllModels, getDownloadUrlForResults, getLogsForModel, getModel, getModelFileStatus, getModelMetrics, getModels, getPreSignedUrl, getRequiredFilesForJobType, getStatusEnumValue, initialiseTraining, isValidJobType, JobTypesUnavailableError, type ModelStatus, ModelStatusEnum, modelStatusLabelWithQueue, stopTraining, uploadModelFile } from "@/services/model-service";
 
 vi.mock("@/services/api", () => ({
     _http: {
@@ -100,17 +100,58 @@ describe("model-service", () => {
             expect(_http.get).toHaveBeenCalledTimes(2);
         });
 
-        it("falls back to a minimal default on API failure", async () => {
-            // Falling back to a sensible default keeps the upload UI usable
-            // while the backend is unreachable, instead of leaving the
-            // required-files list empty.
+        it("throws on API failure rather than guessing a required-files list", async () => {
+            // The required files differ per FL backend, so any default we invented would be the
+            // other backend's list on half of all deployments — and a wrong list makes the
+            // training gate permanently unsatisfiable. The page surfaces this instead.
             vi.mocked(_http.get).mockRejectedValue(new Error("503"));
             const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
 
-            const result = await fetchJobTypes();
-
-            expect(result).toEqual({ [DEFAULT_JOB_TYPE]: ["trainer.py", "config.json", "models.py"] });
+            await expect(fetchJobTypes()).rejects.toThrow(JobTypesUnavailableError);
             expect(consoleError).toHaveBeenCalled();
+            consoleError.mockRestore();
+        });
+
+        it("throws when the map has no standard job type, rather than unlocking an empty gate", async () => {
+            // Every consumer falls back to the standard list, and stringArrayContainsAll(names, [])
+            // is true — so accepting this map would mark every model as fully uploaded and enable
+            // training against a required-files check with nothing in it.
+            vi.mocked(_http.get).mockResolvedValue({ data: { evaluation: ["evaluator.py"] } } as never);
+            const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+
+            await expect(fetchJobTypes()).rejects.toThrow(JobTypesUnavailableError);
+            consoleError.mockRestore();
+        });
+
+        it.each([
+            ["an empty body", ""],
+            ["a null body", null],
+            ["an array", []],
+            ["an object with no job types", {}],
+            ["a job type whose files are not a list", { standard: "trainer.py" }],
+            ["a job type whose files are not strings", { standard: [1, 2] }]
+        ])("throws when the response carries %s", async (_label, data) => {
+            // A proxy or test harness answering 200 with nothing usable would otherwise be cached
+            // as "this deployment has no job types", which is indistinguishable downstream from a
+            // deployment that genuinely requires no files.
+            vi.mocked(_http.get).mockResolvedValue({ data } as never);
+            const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+
+            await expect(fetchJobTypes()).rejects.toThrow(JobTypesUnavailableError);
+            consoleError.mockRestore();
+        });
+
+        it("does not cache a failure, so the next call retries the API", async () => {
+            const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+            vi.mocked(_http.get).mockRejectedValueOnce(new Error("503"));
+
+            await expect(fetchJobTypes()).rejects.toThrow(JobTypesUnavailableError);
+
+            const jobTypes = { standard: ["client_app.py", "config.json", "models.py"] };
+            vi.mocked(_http.get).mockResolvedValue({ data: jobTypes } as never);
+
+            await expect(fetchJobTypes()).resolves.toEqual(jobTypes);
+            expect(_http.get).toHaveBeenCalledTimes(2);
             consoleError.mockRestore();
         });
     });

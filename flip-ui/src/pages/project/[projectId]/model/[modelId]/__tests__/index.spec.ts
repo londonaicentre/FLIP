@@ -93,13 +93,18 @@ const jobTypes = {
 };
 
 const mockEditModel = vi.fn();
+// Hoisted so individual tests can make the job-types load fail and assert what the page does
+// about it; beforeEach restores the resolving default.
+const fetchJobTypesMock = vi.fn();
+const clearJobTypesCacheMock = vi.fn();
 
 vi.mock("@/services/model-service", async (importOriginal) => {
     const actual = await importOriginal<typeof import("@/services/model-service")>();
 
     return {
         ...actual,
-        fetchJobTypes: vi.fn().mockResolvedValue(jobTypes),
+        fetchJobTypes: (...args: unknown[]) => fetchJobTypesMock(...args),
+        clearJobTypesCache: (...args: unknown[]) => clearJobTypesCacheMock(...args),
         getModel: vi.fn(),
         editModel: (...args: unknown[]) => mockEditModel(...args)
     };
@@ -127,8 +132,9 @@ const stubs = {
     ModelDetails: { template: "<div />" },
     ModelUpload: {
         name: "ModelUpload",
-        props: ["canUpload"],
-        template: "<div data-test='model-upload' :data-can-upload='canUpload' />",
+        props: ["canUpload", "jobTypesError"],
+        template: "<div data-test='model-upload' :data-can-upload='canUpload'" +
+            " :data-job-types-error='jobTypesError' />",
         emits: ["uploaded", "deleted-file"]
     },
     QueryDetails: { template: "<div />" },
@@ -142,9 +148,11 @@ const stubs = {
     },
     Training: {
         name: "Training",
-        props: ["flBackendLabel", "view", "runTrusts"],
+        props: ["flBackendLabel", "view", "runTrusts", "jobTypesError", "jobTypesLoading"],
+        emits: ["retryJobTypes"],
         template: "<div data-test='training' :data-fl-backend-label='flBackendLabel' :data-view='view'" +
-            " :data-run-trusts='(runTrusts ?? []).join()' />",
+            " :data-job-types-error='jobTypesError' :data-run-trusts='(runTrusts ?? []).join()'>" +
+            "<button data-test='training-retry' @click=\"$emit('retryJobTypes')\" /></div>",
         setup: () => ({
             initiateTraining: initiateTrainingSpy,
             isSubmitting: false,
@@ -251,6 +259,9 @@ beforeEach(() => {
     mockSnackbarSuccess.mockReset();
     mockSnackbarWarning.mockReset();
     initiateTrainingSpy.mockReset();
+    fetchJobTypesMock.mockReset();
+    fetchJobTypesMock.mockResolvedValue(jobTypes);
+    clearJobTypesCacheMock.mockReset();
     resolveModelConfigStateMock.mockReset();
     resolveModelConfigStateMock.mockResolvedValue({
         changed: true,
@@ -919,5 +930,89 @@ describe("pages/project/[projectId]/model/[modelId] — Initiate Training needs 
         await flushPromises();
 
         expect(wrapper.find("[data-test='initiate-training-btn']").attributes("disabled")).toBeDefined();
+    });
+});
+
+describe("pages/project/[projectId]/model/[modelId] — job types unavailable", () => {
+    const failingModel = () => makeModel(
+        [
+            {
+                name: "trainer.py",
+                status: FileUploadStatus.COMPLETED
+            },
+            {
+                name: "config.json",
+                status: FileUploadStatus.COMPLETED
+            }
+        ],
+        { status: "PENDING" }
+    );
+
+    it("flags the failure to both cards and keeps training disabled", async () => {
+        // The required-files list is per-backend, so there is no safe list to assume. Note the
+        // model below has every file the real map would ask for — the gate stays shut because we
+        // do not know what to check, not because something is missing.
+        fetchJobTypesMock.mockRejectedValue(new Error("503"));
+        const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+        mockSwrvData.value = failingModel();
+
+        const wrapper = await mountPage();
+        await flushPromises();
+        await wrapper.vm.$nextTick();
+
+        expect(wrapper.find("[data-test='training']").attributes("data-job-types-error")).toBe("true");
+        expect(wrapper.find("[data-test='model-upload']").attributes("data-job-types-error")).toBe("true");
+        expect(wrapper.find("[data-test='initiate-training-btn']").attributes("disabled")).toBeDefined();
+        consoleError.mockRestore();
+    });
+
+    it("surfaces the failure inline only — no snackbar", async () => {
+        // Deliberate: the blocked state persists, so a 12s toast would vanish long before the
+        // condition it describes. The alert in the Training card is the whole signal.
+        fetchJobTypesMock.mockRejectedValue(new Error("503"));
+        const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+        mockSwrvData.value = failingModel();
+
+        await mountPage();
+        await flushPromises();
+
+        expect(mockSnackbarError).not.toHaveBeenCalled();
+        consoleError.mockRestore();
+    });
+
+    it("retry clears the cache, refetches, and recovers", async () => {
+        fetchJobTypesMock.mockRejectedValueOnce(new Error("503"));
+        const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+        mockSwrvData.value = failingModel();
+
+        const wrapper = await mountPage();
+        await flushPromises();
+        expect(wrapper.find("[data-test='training']").attributes("data-job-types-error")).toBe("true");
+
+        await wrapper.find("[data-test='training-retry']").trigger("click");
+        await flushPromises();
+        await wrapper.vm.$nextTick();
+
+        expect(clearJobTypesCacheMock).toHaveBeenCalledTimes(1);
+        expect(fetchJobTypesMock).toHaveBeenCalledTimes(2);
+        expect(wrapper.find("[data-test='training']").attributes("data-job-types-error")).toBe("false");
+        consoleError.mockRestore();
+    });
+
+    it("a retry that fails again leaves the failure state in place", async () => {
+        fetchJobTypesMock.mockRejectedValue(new Error("503"));
+        const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+        mockSwrvData.value = failingModel();
+
+        const wrapper = await mountPage();
+        await flushPromises();
+
+        await wrapper.find("[data-test='training-retry']").trigger("click");
+        await flushPromises();
+        await wrapper.vm.$nextTick();
+
+        expect(wrapper.find("[data-test='training']").attributes("data-job-types-error")).toBe("true");
+        expect(mockSnackbarError).not.toHaveBeenCalled();
+        consoleError.mockRestore();
     });
 });
