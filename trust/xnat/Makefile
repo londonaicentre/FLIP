@@ -93,7 +93,9 @@ XNAT_NETWORK := deploy_trust-network-$(TRUST_NUM)
 # DICOM receiver's 8104 is an unpublished container port (FLIP#993). The web default is unchanged so
 # existing kits, docs and SSM port-forwards keep working.
 XNAT_PORT_EFFECTIVE := $(or $(XNAT_PORT),8104)
-XNAT_WEB_PORT_EFFECTIVE := $(or $(XNAT_WEB_PORT),8104)
+XNAT_WEB_PORT_EFFECTIVE := $(or $(XNAT_WEB_PORT),$(XNAT_PORT_EFFECTIVE))
+# XNAT's AE title, applied to the SCP receiver, dqrCallingAe and the C-MOVE destination.
+XNAT_AETITLE_EFFECTIVE := $(or $(XNAT_AETITLE),XNAT)
 PACS_UI_PORT_EFFECTIVE := $(or $(PACS_UI_PORT),8042)
 
 # Host path that backs this trust's XNAT bind mounts (parent of xnat-data/
@@ -257,7 +259,7 @@ endif
 	XNAT_PATH=${XNAT_PATH} \
 	XNAT_PORT=$(XNAT_PORT_EFFECTIVE) \
 	XNAT_WEB_PORT=$(XNAT_WEB_PORT_EFFECTIVE) \
-	XNAT_AETITLE=$(XNAT_AETITLE) \
+	XNAT_AETITLE=$(XNAT_AETITLE_EFFECTIVE) \
 	PACS_UI_PORT=$(PACS_UI_PORT_EFFECTIVE) \
 	DOCKER_NETWORK_NAME=$(XNAT_NETWORK) \
 	docker stack deploy --with-registry-auth --detach=false ${STACK_FILES} $(XNAT_STACK)

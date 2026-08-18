@@ -135,6 +135,58 @@ XNAT retrieves imaging from the trust's PACS on demand, for the studies belongin
 project cohort. This section describes what has to be configured, and what the trust's PACS and
 network teams need to provide.
 
+DICOM Networking in Brief
+=========================
+
+Three ideas are enough to follow the rest of this section.
+
+**AE Title.** A DICOM system's *name* on the network — like a hostname, but specific to DICOM, and
+at most 16 characters. When one system connects to another it announces "I am *X*, calling *Y*". The
+receiver checks that *Y* is its own name and that *X* is one it has been told to accept. Names are
+separate from addresses: the IP and port are configured alongside the AE title, not derived from it.
+
+**SCU and SCP.** Client and server. An SCU (Service Class *User*) opens connections; an SCP (Service
+Class *Provider*) listens for them. XNAT is both, at different moments — an SCU when it queries the
+PACS, an SCP when it receives the images.
+
+**The four operations**, in the order FLIP uses them:
+
+.. list-table::
+   :widths: 15 55 30
+   :header-rows: 1
+
+   * - Operation
+     - What it does
+     - Direction
+   * - ``C-ECHO``
+     - A DICOM ping. Confirms two systems can reach and accept each other
+     - either way, for testing
+   * - ``C-FIND``
+     - Search — "which study has accession number ABC123?"
+     - XNAT to PACS
+   * - ``C-MOVE``
+     - "Send that study to the system called ``FLIPXNAT``"
+     - XNAT to PACS
+   * - ``C-STORE``
+     - The image transfer itself
+     - **PACS to XNAT**
+
+.. important::
+
+   C-MOVE does not return the images on the connection that asked for them. XNAT names a
+   destination, the PACS looks that name up in its *own* table to find an address, and opens a
+   **new connection in the opposite direction** to deliver the study.
+
+   Three consequences follow, and each has caused a failed integration in practice:
+
+   * The destination must be registered on the PACS in advance — a name it does not know cannot be
+     delivered to.
+   * The AE title and port XNAT advertises must match that registration exactly. XNAT rejects an
+     association addressed to a different name, and the DQR plugin refuses to issue a C-MOVE whose
+     destination does not correspond to one of its own configured receivers.
+   * The return connection needs its own firewall rule. Every other FLIP connection is outbound, so
+     this is the one reviewers overlook.
+
 How Retrieval Works
 ===================
 
@@ -202,8 +254,22 @@ Configuration
      - Hostname or IP of the trust PACS
      - ``orthanc``
    * - ``PACS_QR_PORT``
-     - Query/retrieve port on the trust PACS
+     - Query/retrieve port on the trust PACS. Must be reachable *from the XNAT container* — this is
+       not a host-published port
      - ``4242``
+   * - ``XNAT_WEB_PORT``
+     - Host-published port for XNAT's web UI and REST API. Unrelated to DICOM; separate from
+       ``XNAT_PORT`` so the DICOM receiver can be published independently. Defaults to ``XNAT_PORT``
+     - ``XNAT_PORT``
+   * - ``PACS_AVAILABILITY_DAYS`` / ``_START`` / ``_END``
+     - When retrieval may run, as a comma-separated day list and a daily window
+     - all week, ``00:00``–``24:00``
+   * - ``PACS_THREADS`` / ``PACS_UTILIZATION_PERCENT``
+     - How hard to drive the PACS during that window
+     - ``1`` / ``100``
+   * - ``DQR_MAX_PACS_REQUEST_ATTEMPTS`` / ``DQR_RETRY_WAIT_SECONDS``
+     - How many times, and how far apart, to retry a study the PACS did not deliver
+     - ``100`` / ``300``
 
 The defaults describe the mocked PACS that ships with FLIP for development, described below.
 
@@ -296,6 +362,14 @@ carries an availability schedule with a per-day window, a thread count and a uti
 
 Where a trust has a test or pre-production PACS, connecting FLIP to that first is recommended, and
 is usually raised as a separate service request.
+
+.. note::
+
+   The availability schedule is applied when the PACS is first registered. The DQR plugin pre-creates
+   the intervals, and rejects a later write to a day that already has one, so changing the window on
+   an already-configured instance requires deleting the existing intervals through XNAT's
+   administration UI first. The values above therefore take effect on a fresh deployment; on a
+   running one, check what is actually configured rather than assuming the setting was applied.
 
 Verification
 ============

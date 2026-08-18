@@ -25,6 +25,21 @@ Glossary
     **PACS**
       Picture Archiving and Communication System (PACS), the clinical system used to store and retrieve medical imaging studies (such as DICOM series).
 
+    **AE Title**
+      Application Entity Title. A DICOM system's name on the network, at most 16 characters. When one system connects to another it announces which AE title it is calling and which it is calling from, and the receiver accepts the connection only if the called title is its own. AE titles are names rather than addresses: the IP and port are configured alongside them. See :doc:`components/component-xnat`.
+
+    **SCU / SCP**
+      Service Class User and Service Class Provider — DICOM's terms for client and server. An SCU opens connections; an SCP listens for them. A system is often both: XNAT acts as an SCU when it queries a PACS, and as an SCP when it receives the resulting images.
+
+    **DIMSE**
+      DICOM Message Service Element, the classic DICOM network protocol (as opposed to the newer HTTP-based DICOMweb). FLIP retrieves imaging over DIMSE.
+
+    **C-ECHO / C-FIND / C-MOVE / C-STORE**
+      The DIMSE operations FLIP uses. ``C-ECHO`` is a connectivity check. ``C-FIND`` searches a PACS, in FLIP's case by accession number. ``C-MOVE`` asks the PACS to send a study to a named destination. ``C-STORE`` is the image transfer itself — and because C-MOVE names a destination rather than returning data inline, the C-STORE arrives on a *new* connection opened by the PACS back to that destination.
+
+    **DQR**
+      DICOM Query-Retrieve, the XNAT plugin that performs the C-FIND and C-MOVE operations against a trust PACS on FLIP's behalf.
+
     **RBAC**
       Role Based Access Control (RBAC) defines what users are able to access within the FLIP platform.
 
