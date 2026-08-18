@@ -435,7 +435,9 @@ old install on the previous chart version.
 
 - **NetworkPolicies**: Default-deny-ingress, allow-intra-namespace, allow-egress
   to Central Hub and FL server only (audit and threat model: [NETWORK-POLICY.md](NETWORK-POLICY.md))
-- **No LoadBalancer or NodePort** for application services (all ClusterIP)
+- **No LoadBalancer or NodePort** for application services (all ClusterIP), with one opt-in
+  exception: `xnat.web.dicomNodePort` with `service.type: NodePort` exposes XNAT's DICOM SCP
+  receiver so a trust PACS can complete the C-STORE leg of a retrieval. Off by default.
 - **Secrets**: Separate from ConfigMaps; recommend External Secrets Operator
 - **FL clients**: No Central Hub credentials; connect outbound to FL server only
 - **ServiceAccounts**: each stateless service runs under its own ServiceAccount

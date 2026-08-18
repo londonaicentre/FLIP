@@ -40,362 +40,40 @@ spec:
       # POST /xapi/users instead — see the comment at that call.
       containers:
         - name: configure-xnat-web
-          image: alpine:3.20
+          # Runs the same configure-xnat.sh the Compose deployment runs, from the same image that
+          # ships it (trust/xnat/xnat/Dockerfile ADDs config/ to ${XNAT_ROOT}/config). This used to
+          # be ~380 lines of shell inlined here plus a third copy in a ConfigMap, and the three had
+          # drifted: the inlined copy hardcoded the mocked Orthanc and ignored the chart's own
+          # orthanc.dicomHost / dicomPort / dicomAet values, which is why the external-PACS override
+          # never actually redirected DQR (FLIP#993). One script, one place, covered by
+          # trust/xnat/tests/.
+          #
+          # configure-xnat.sh is self-contained: it waits for XNAT, waits for the DQR plugin routes
+          # via wait-for-xnat-plugins.sh, then applies site, user, DQR, SCP receiver and PACS
+          # configuration. It short-circuits when the site is already initialised, so re-running on
+          # helm upgrade is safe.
+          image: "{{ .Values.xnat.web.image.repository }}:{{ .Values.xnat.web.image.tag }}"
+          imagePullPolicy: {{ .Values.xnat.web.image.pullPolicy }}
           command:
-            - /bin/sh
+            - /bin/bash
             - -c
             - |
               set -euo pipefail
-              apk add --no-cache curl jq >/dev/null 2>&1
-              XNAT_URL="http://xnat-web:8080"
-              ADMIN_USER="{{ .Values.xnat.web.adminUser }}"
-              ADMIN_PASS="${XNAT_ADMIN_PASS}"
-
-              # Scrub secrets out of anything echoed on failure: the value
-              # following -u (credentials) or -d/--data-binary (payloads carry
-              # the admin and service passwords) must never reach the pod log,
-              # and neither must a live JSESSIONID.
-              scrub_args() {
-                local redact_next=""
-                local arg
-                local out=""
-                for arg in "$@"; do
-                  if [ -n "$redact_next" ]; then
-                    out="$out <redacted>"
-                    redact_next=""
-                  elif [ "$arg" = "-u" ] || [ "$arg" = "-d" ] || [ "$arg" = "--data-binary" ]; then
-                    out="$out $arg"
-                    redact_next=1
-                  else
-                    out="$out $arg"
-                  fi
-                done
-                printf '%s' "${out# }" | sed 's/JSESSIONID=[^ ]*/JSESSIONID=<redacted>/g'
-              }
-
-              # Fail-loud wrapper for XNAT's REST API — the Kubernetes
-              # counterpart of xnat_curl in trust/xnat/xnat/config/configure-xnat.sh
-              # (FLIP#862). Bare `curl -s` exits 0 on HTTP errors, so every
-              # configuration call below used to be swallowed by `|| true` and
-              # this Job reported success on a half-configured XNAT — the same
-              # silent-failure class as the unregistered-PACS bug (FLIP#822).
-              # On 2xx, emits the response body on stdout. On anything else —
-              # or a curl transport failure — reports the (scrubbed) request and
-              # the response body on stderr and returns non-zero, which `set -e`
-              # turns into an abort at the call site.
-              xnat_curl() {
-                local response
-                local status
-                local body
-                local curl_exit=0
-                response=$(curl -sS --connect-timeout 10 --max-time 120 -w '\n%{http_code}' "$@") || curl_exit=$?
-                if [ "$curl_exit" -ne 0 ]; then
-                  echo "ERROR: curl transport failure (exit $curl_exit)" >&2
-                  echo "  args: $(scrub_args "$@")" >&2
-                  return 1
-                fi
-                # Strip CRs so a middlebox emitting \r\n line endings cannot
-                # make the status guard fail on an invisible character.
-                status=$(printf '%s' "$response" | tail -n1 | tr -d '\r')
-                body=$(printf '%s' "$response" | sed '$d' | tr -d '\r')
-                # Fail closed: anything other than a literal 2xx status line
-                # (including an empty or non-numeric one) is an error.
-                case "$status" in
-                  2[0-9][0-9]) ;;
-                  *)
-                    echo "ERROR: XNAT request failed with HTTP $status" >&2
-                    echo "  args: $(scrub_args "$@")" >&2
-                    echo "  body: $body" >&2
-                    return 1
-                    ;;
-                esac
-                if [ -n "$body" ]; then
-                  printf '%s\n' "$body"
-                fi
-              }
-
-              echo "Waiting for XNAT to be ready..."
-              XNAT_READY=false
-              HTTP_CODE=000
-              for i in $(seq 1 60); do
-                # `|| HTTP_CODE=000` is load-bearing: `set -e` aborts on a
-                # failing command substitution, so without it the first probe
-                # against a still-booting Tomcat (curl exit 7) kills this
-                # container and the loop can never wait.
-                HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
-                  --connect-timeout 5 --max-time 10 "${XNAT_URL}/xapi/siteConfig" 2>/dev/null) || HTTP_CODE=000
-                if [ "$HTTP_CODE" = "200" ] || [ "$HTTP_CODE" = "401" ]; then
-                  echo "XNAT is ready (HTTP ${HTTP_CODE})!"
-                  XNAT_READY=true
-                  break
-                fi
-                sleep 10
-              done
-              if [ "$XNAT_READY" != "true" ]; then
-                echo "ERROR: XNAT did not become ready within 600s (last HTTP ${HTTP_CODE})" >&2
-                exit 1
-              fi
-
-              # Login: try configured password first, fall back to XNAT default (admin:admin pre-init)
-              _xnat_login() {
-                local PASS="$1"
-                local RESP
-                RESP=$(curl -s -D - -X POST "${XNAT_URL}/data/JSESSION" -u "${ADMIN_USER}:${PASS}" 2>/dev/null)
-                local SID
-                SID=$(echo "$RESP" | tail -1 | tr -d '[:space:]')
-                if [ -z "$SID" ] || echo "$SID" | grep -qi '<html'; then
-                  SID=$(echo "$RESP" | grep -i 'Set-Cookie: JSESSIONID=' | sed 's/.*JSESSIONID=\([^;]*\).*/\1/' | tr -d '\r')
-                fi
-                echo "$SID"
-              }
-              JSESSION=$(_xnat_login "${ADMIN_PASS}")
-              if [ -z "$JSESSION" ]; then
-                echo "Configured password failed, trying XNAT default (admin:admin)..."
-                JSESSION=$(_xnat_login "admin")
-              fi
-              if [ -z "$JSESSION" ]; then
-                echo "Failed to login to XNAT with any credential"
-                exit 1
-              fi
-              # Never print the session id itself. It is a live XNAT admin session, reused as a
-              # Cookie header on every call below, and pod logs are shipped to Loki and outlive
-              # the Job — which is the same reason scrub_args() redacts it from failure output.
-              echo "XNAT login succeeded (admin session acquired)."
-
-              # The readiness loop above accepts 200 *or* 401 from a core route, so it proves only
-              # that Tomcat is answering — not that the plugins have registered their routes. Every
-              # plugin call below (container service, DICOM SCP, PACS, DQR) would otherwise race a
-              # still-registering webapp and 404, leaving XNAT half-configured. Gate on the DQR
-              # route the same way the Compose path does in
-              # trust/xnat/xnat/config/wait-for-xnat-plugins.sh. Authenticated via the session
-              # cookie, because an anonymous probe answers 401 whatever the plugin state.
-              echo "Waiting for XNAT plugin routes to register..."
-              PLUGINS_READY=false
-              HTTP_CODE=000
-              # Timed rather than assumed: 60 iterations of a 10s sleep plus a curl that can itself
-              # burn --max-time is a budget of at least 600s and up to roughly twice that, so a
-              # fixed "within 600s" in the failure line would mis-state how long XNAT was given.
-              PLUGIN_WAIT_START=$(date +%s)
-              for i in $(seq 1 60); do
-                # `|| HTTP_CODE=000` is load-bearing for the same reason as the loop above: `set -e`
-                # would abort on a failing command substitution and the loop could never wait.
-                HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
-                  --connect-timeout 5 --max-time 10 \
-                  -H "Cookie: JSESSIONID=${JSESSION}" \
-                  "${XNAT_URL}/xapi/dqr/settings" 2>/dev/null) || HTTP_CODE=000
-                case "${HTTP_CODE}" in
-                  2*)
-                    echo "XNAT plugin routes are ready (HTTP ${HTTP_CODE})!"
-                    PLUGINS_READY=true
-                    break
-                    ;;
-                esac
-                sleep 10
-              done
-              if [ "$PLUGINS_READY" != "true" ]; then
-                echo "ERROR: XNAT plugin routes did not register within $(( $(date +%s) - PLUGIN_WAIT_START ))s (last HTTP ${HTTP_CODE})" >&2
-                echo "  endpoint: ${XNAT_URL}/xapi/dqr/settings" >&2
-                exit 1
-              fi
-
-              # Activate XNAT site (idempotent — safe to call even if already initialized).
-              # siteUrl must be non-empty on XNAT >= 1.10.0: the Restlet create paths NPE on a
-              # null siteUrl while building the response (entity created, request 500s) — see
-              # trust/xnat/xnat/config/configure-xnat.sh for the full explanation.
-              echo "Activating XNAT site..."
-              xnat_curl -X POST "${XNAT_URL}/xapi/siteConfig" \
-                -H "Cookie: JSESSIONID=${JSESSION}" \
-                -H "Content-Type: application/json" \
-                -d "{\"initialized\": true, \"siteUrl\": \"${XNAT_URL}\"}" >/dev/null
-
-              # Set admin password to configured value if it differs from default
-              echo "Setting admin password..."
-              xnat_curl -X PUT "${XNAT_URL}/xapi/users/${ADMIN_USER}" \
-                -H "Cookie: JSESSIONID=${JSESSION}" \
-                -H "Content-Type: application/json" \
-                -d "{\"password\": \"${ADMIN_PASS}\"}" >/dev/null
-
-              # Grant the admin account the ContainerManager role. Mirrors
-              # trust/xnat/xnat/config/configure-xnat.sh — the sibling
-              # configure-dcm2niix container authenticates as admin, and since
-              # Container Service 3.7.0 both /xapi/docker/server and
-              # /xapi/commands require this role. Without it those calls fail
-              # with 401/403 and, because they were `|| true`, the Job still
-              # reported success with dcm2niix silently unregistered.
-              echo "Assigning role 'ContainerManager' to ${ADMIN_USER}..."
-              xnat_curl -X PUT "${XNAT_URL}/xapi/users/${ADMIN_USER}/roles/ContainerManager" \
-                -H "Cookie: JSESSIONID=${JSESSION}" \
-                -H "accept: application/json" >/dev/null
-
-              # Assign roles to service account
-              SERVICE_USER="${XNAT_SERVICE_USER:-flipServiceAccount}"
-
-              # Create the service account through the REST API, never with a raw
-              # INSERT into xdat_user: XNAT only provisions the account's matching
-              # xhbm_xdat_user_auth "localdb" record on this path, and without that
-              # record every login is rejected 401 no matter what
-              # xdat_user.primary_password holds. XNAT 1.9.3 masked a DB-layer
-              # insert by back-filling the record on the password PUT below; 1.10.0
-              # does not, and since the PUT still answers 200 the job would report
-              # success on an XNAT whose service account can never authenticate —
-              # imaging-api then 401s on every call (TROUBLESHOOTING.md §2.3).
-              echo "Ensuring service account ${SERVICE_USER} exists..."
-              existing_users=$(xnat_curl "${XNAT_URL}/xapi/users" \
-                -H "Cookie: JSESSIONID=${JSESSION}")
-              if printf '%s' "$existing_users" | jq -e --arg u "${SERVICE_USER}" 'index($u)' >/dev/null; then
-                echo "  ${SERVICE_USER} already exists — leaving as-is."
-              else
-                xnat_curl -X POST "${XNAT_URL}/xapi/users" \
-                  -H "Cookie: JSESSIONID=${JSESSION}" \
-                  -H "Content-Type: application/json" \
-                  -d "{\"username\": \"${SERVICE_USER}\",
-                       \"password\": \"${SERVICE_PASS}\",
-                       \"firstName\": \"FLIP\",
-                       \"lastName\": \"Service\",
-                       \"email\": \"flip@gstt.nhs.uk\",
-                       \"enabled\": true,
-                       \"verified\": true}" >/dev/null
-                echo "  ${SERVICE_USER} created."
-              fi
-
-              # Sync service-account password from the chart secret so it always
-              # matches XNAT_SERVICE_PASSWORD in imaging-api, even after a backup
-              # restore that carries an older password hash.
-              echo "Setting ${SERVICE_USER} password..."
-              xnat_curl -X PUT "${XNAT_URL}/xapi/users/${SERVICE_USER}" \
-                -H "Cookie: JSESSIONID=${JSESSION}" \
-                -H "Content-Type: application/json" \
-                -d "{\"password\": \"${SERVICE_PASS}\"}" >/dev/null
-              echo "Assigning roles to ${SERVICE_USER}..."
-              xnat_curl -X PUT "${XNAT_URL}/xapi/users/${SERVICE_USER}/groups/" \
-                -H "Cookie: JSESSIONID=${JSESSION}" \
-                -H "Content-Type: application/json" \
-                -d '["ALL_DATA_ADMIN"]' >/dev/null
-              xnat_curl -X PUT "${XNAT_URL}/xapi/users/${SERVICE_USER}/roles/" \
-                -H "Cookie: JSESSIONID=${JSESSION}" \
-                -H "Content-Type: application/json" \
-                -d '["ContainerManager","DataManager","SiteUser","Administrator","Dqr","non_expiring"]' >/dev/null
-
-              # Apply + enable the site-wide anonymization script (mirrors
-              # trust/xnat/xnat/config/configure-xnat.sh in the Compose deploy).
-              echo "Applying site-wide anonymization script..."
-              xnat_curl -X PUT "${XNAT_URL}/xapi/anonymize/site" \
-                -H "Cookie: JSESSIONID=${JSESSION}" \
-                -H "Content-Type: text/plain" \
-                --data-binary @/cs-config/anon_script.das >/dev/null
-              xnat_curl -X PUT "${XNAT_URL}/xapi/anonymize/site/enabled" \
-                -H "Cookie: JSESSIONID=${JSESSION}" \
-                -H "Content-Type: application/json" \
-                -d 'true' >/dev/null
-
-              # Replace the default DICOM SCP receiver with the DQR-aware one.
-              # The stock receiver uses identifier=dicomObjectIdentifier with
-              # customProcessing=false, which leaves DQR-pulled studies in the
-              # Unassigned prearchive ("Cannot build session. 0 prearchive
-              # sessions found"). DQR needs identifier=dqrObjectIdentifier +
-              # customProcessing so received studies are routed to the
-              # requesting project and the relabel map (Subject UUID /
-              # Session=accession) is applied.
-              echo "Replacing DICOM SCP receiver with DQR-aware config..."
-              scp_list=$(xnat_curl "${XNAT_URL}/xapi/dicomscp" \
-                -H "Cookie: JSESSIONID=${JSESSION}")
-              for SCP_ID in $(printf '%s' "$scp_list" | jq -r '.[] | select(.aeTitle == "XNAT") | .id'); do
-                echo "  Removing existing SCP receiver id=${SCP_ID}..."
-                xnat_curl -X DELETE "${XNAT_URL}/xapi/dicomscp/${SCP_ID}" \
-                  -H "Cookie: JSESSIONID=${JSESSION}" >/dev/null
-              done
-              xnat_curl -X POST "${XNAT_URL}/xapi/dicomscp" \
-                -H "Cookie: JSESSIONID=${JSESSION}" \
-                -H "Content-Type: application/json" \
-                -d '{
-                  "aeTitle": "XNAT",
-                  "port": 8104,
-                  "enabled": true,
-                  "customProcessing": true,
-                  "directArchive": true,
-                  "identifier": "dqrObjectIdentifier",
-                  "anonymizationEnabled": true,
-                  "whitelistEnabled": false,
-                  "whitelistText": "",
-                  "routingExpressionsEnabled": false,
-                  "projectRoutingExpression": "",
-                  "subjectRoutingExpression": "",
-                  "sessionRoutingExpression": ""
-                }' >/dev/null
-
-              # Register PACS. Check-then-create by aeTitle: a duplicate
-              # registration surfaces as an unspecific 500 (DB unique-constraint
-              # violation), so re-run idempotency has to be a lookup rather than
-              # a tolerated status code (FLIP#862).
-              existing_pacs=$(xnat_curl "${XNAT_URL}/xapi/pacs" \
-                -H "Cookie: JSESSIONID=${JSESSION}")
-              if printf '%s' "$existing_pacs" | grep -q '"aeTitle":"ORTHANC"'; then
-                echo "PACS 'ORTHANC' already registered — leaving as-is."
-              else
-                echo "Registering PACS..."
-                xnat_curl -X POST "${XNAT_URL}/xapi/pacs" \
-                  -H "Cookie: JSESSIONID=${JSESSION}" \
-                  -H "Content-Type: application/json" \
-                  -d '{
-                    "aeTitle": "ORTHANC",
-                    "defaultQueryRetrievePacs": true,
-                    "defaultStoragePacs": true,
-                    "host": "orthanc",
-                    "label": "Orthanc PACS",
-                    "ormStrategySpringBeanId": "dicomOrmStrategy",
-                    "queryRetrievePort": 4242,
-                    "queryable": true,
-                    "storable": true,
-                    "supportsExtendedNegotiations": true
-                  }' >/dev/null
-              fi
-
-              # Configure DQR settings
-              echo "Configuring DQR settings..."
-              xnat_curl -X POST "${XNAT_URL}/xapi/dqr/settings" \
-                -H "Cookie: JSESSIONID=${JSESSION}" \
-                -H "Content-Type: application/json" \
-                -d '{
-                  "pacsAvailabilityCheckFrequency": "1 minute",
-                  "dqrWaitToRetryRequestInSeconds": "300",
-                  "assumeSameSessionIfArrivedWithin": "30 minutes",
-                  "allowAllUsersToUseDqr": false,
-                  "dqrCallingAe": "XNAT",
-                  "notifyAdminOnImport": false,
-                  "allowAllProjectsToUseDqr": true,
-                  "leavePacsAuditTrail": false,
-                  "dqrMaxPacsRequestAttempts": "100"
-                }' >/dev/null
-
-              # Configure PACS availability for all days. DQR pre-creates
-              # availability intervals when the PACS is registered, so this POST
-              # returns 400 "probable overlap with existing interval" for an
-              # already-scheduled day — treated as "already configured" rather
-              # than a failure. Anything else non-2xx is a real error.
-              echo "Configuring PACS availability..."
-              for DAY in MONDAY TUESDAY WEDNESDAY THURSDAY FRIDAY SATURDAY SUNDAY; do
-                avail_status=$(curl -s -o /tmp/pacs-availability-response.json \
-                  --connect-timeout 10 --max-time 120 -w '%{http_code}' \
-                  -X POST "${XNAT_URL}/xapi/pacs/1/availability" \
-                  -H "Cookie: JSESSIONID=${JSESSION}" \
-                  -H "Content-Type: application/json" \
-                  -d "{\"availabilityEnd\":\"23:59\",\"availabilityStart\":\"00:00\",\"availableNow\":true,\"dayOfWeek\":\"$DAY\",\"enabled\":true,\"pacsId\":1,\"threads\":4,\"utilizationPercent\":100}") || avail_status="000"
-                case "$avail_status" in
-                  2[0-9][0-9]) ;;
-                  400)
-                    echo "  Availability interval for $DAY already exists (HTTP 400 overlap) — leaving as-is."
-                    ;;
-                  *)
-                    echo "ERROR: setting PACS availability for $DAY failed (HTTP $avail_status)" >&2
-                    cat /tmp/pacs-availability-response.json >&2 || true
-                    exit 1
-                    ;;
-                esac
-              done
-
-              echo "XNAT web configuration complete."
+              cd /data/xnat/config
+              bash configure-xnat.sh
           env:
-            - name: XNAT_ADMIN_PASS
+            - name: XNAT_URL
+              value: "http://xnat-web:8080"
+            - name: XNAT_ADMIN_USER
+              value: {{ .Values.xnat.web.adminUser | quote }}
+            # Both map to the same secret key, matching the xnat-web deployment: on a fresh install
+            # XNAT is seeded with this password, and configure-xnat.sh rotates from it to itself.
+            - name: XNAT_ADMIN_INITIAL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ if .Values.secrets.create }}{{ include "flip-trust.fullname" . }}-secrets{{ else }}{{ .Values.secrets.existingName }}{{ end }}
+                  key: xnat-admin-password
+            - name: XNAT_ADMIN_PASSWORD
               valueFrom:
                 secretKeyRef:
                   name: {{ if .Values.secrets.create }}{{ include "flip-trust.fullname" . }}-secrets{{ else }}{{ .Values.secrets.existingName }}{{ end }}
@@ -405,27 +83,48 @@ spec:
                 secretKeyRef:
                   name: {{ if .Values.secrets.create }}{{ include "flip-trust.fullname" . }}-secrets{{ else }}{{ .Values.secrets.existingName }}{{ end }}
                   key: xnat-service-user
-            - name: SERVICE_PASS
+            - name: XNAT_SERVICE_PASSWORD
               valueFrom:
                 secretKeyRef:
                   name: {{ if .Values.secrets.create }}{{ include "flip-trust.fullname" . }}-secrets{{ else }}{{ .Values.secrets.existingName }}{{ end }}
                   key: xnat-service-password
-          volumeMounts:
-            - name: cs-config
-              mountPath: /cs-config
+            # DICOM SCP receiver: the port XNAT binds and registers, and the AE title the PACS
+            # addresses its C-STORE association to. Must match what the PACS has registered.
+            - name: XNAT_PORT
+              value: {{ .Values.xnat.web.dicomPort | default 8104 | quote }}
+            - name: XNAT_AETITLE
+              value: {{ .Values.xnat.web.dicomAet | default "XNAT" | quote }}
+            # Upstream PACS. Defaults are the mocked Orthanc; a real trust overrides them.
+            - name: PACS_HOST
+              value: {{ .Values.pacs.host | quote }}
+            - name: PACS_AETITLE
+              value: {{ .Values.pacs.aeTitle | quote }}
+            - name: PACS_QR_PORT
+              value: {{ .Values.pacs.qrPort | quote }}
+            - name: PACS_LABEL
+              value: {{ .Values.pacs.label | quote }}
+            # Throttle: a production PACS may refuse further associations after a certain volume.
+            - name: PACS_AVAILABILITY_DAYS
+              value: {{ .Values.pacs.availability.days | quote }}
+            - name: PACS_AVAILABILITY_START
+              value: {{ .Values.pacs.availability.start | quote }}
+            - name: PACS_AVAILABILITY_END
+              value: {{ .Values.pacs.availability.end | quote }}
+            - name: PACS_THREADS
+              value: {{ .Values.pacs.availability.threads | quote }}
+            - name: PACS_UTILIZATION_PERCENT
+              value: {{ .Values.pacs.availability.utilizationPercent | quote }}
+            - name: DQR_MAX_PACS_REQUEST_ATTEMPTS
+              value: {{ .Values.pacs.dqr.maxRequestAttempts | quote }}
+            - name: DQR_RETRY_WAIT_SECONDS
+              value: {{ .Values.pacs.dqr.retryWaitSeconds | quote }}
           resources:
             requests:
-              memory: "64Mi"
+              memory: "128Mi"
               cpu: "100m"
             limits:
-              memory: "128Mi"
+              memory: "256Mi"
               cpu: "200m"
-        # Configures the XNAT Container Service plugin to use the native
-        # Kubernetes compute backend (available since container-service 3.2.0),
-        # registers the dcm2niix command, and enables the Event Service so
-        # imaging-api can create per-project event subscriptions. Mirrors what
-        # configure-dcm2niix.sh does in the Compose deployment, but speaks to
-        # the K8s backend instead of the Docker socket.
         - name: configure-dcm2niix
           image: alpine:3.20
           command:
@@ -844,142 +543,4 @@ data:
         "generic-resources": {},
         "ulimits": {}
     }
----
-# ConfigMap with helper scripts for XNAT configuration
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: {{ include "flip-trust.fullname" . }}-xnat-scripts
-  namespace: {{ include "flip-trust.namespace" . }}
-  labels:
-    {{- include "flip-trust.labels" . | nindent 4 }}
-    app.kubernetes.io/component: xnat-init
-data:
-  configure-xnat.sh: |
-    #!/bin/sh
-    # XNAT Configuration Script
-    # This script configures XNAT after initial deployment.
-    # It can be run manually if the automated init job is disabled.
-    set -euo pipefail
-
-    XNAT_URL="${1:-http://xnat-web:8080}"
-    ADMIN_USER="${2:-admin}"
-    ADMIN_PASS="${3:-}"
-    SERVICE_USER="${4:-flipServiceAccount}"
-    SERVICE_PASS="${5:-}"
-    ORTHANC_HOST="${6:-orthanc}"
-    PACS_DICOM_PORT="${7:-4242}"
-
-    if [ -z "$ADMIN_PASS" ] || [ -z "$SERVICE_PASS" ]; then
-      echo "Usage: configure-xnat.sh <xnat_url> <admin_user> <admin_pass> [service_user] [service_pass] [orthanc_host] [pacs_port]"
-      exit 1
-    fi
-
-    echo "Configuring XNAT at ${XNAT_URL}..."
-
-    wait_for_xnat() {
-      echo "Waiting for XNAT to be available..."
-      for i in $(seq 1 120); do
-        if wget -q --spider "${XNAT_URL}/app/template/Login.vm" 2>/dev/null; then
-          echo "XNAT is up!"
-          return 0
-        fi
-        sleep 5
-      done
-      echo "XNAT did not become available within timeout"
-      return 1
-    }
-
-    wait_for_xnat
-
-    # The session id is written to disk on the way through, so remove it whenever this script
-    # exits. It is a live XNAT admin session and the file would otherwise outlive its use inside
-    # the container's filesystem.
-    trap 'rm -f /tmp/jsession.txt' EXIT
-
-    # Login and get JSESSIONID
-    login() {
-      local u="$1" p="$2"
-      wget -q -O /tmp/jsession.txt --post-data="" \
-        --header="Authorization: Basic $(printf '%s:%s' "$u" "$p" | base64)" \
-        "${XNAT_URL}/data/JSESSION" 2>/dev/null || true
-      cat /tmp/jsession.txt 2>/dev/null || echo ""
-    }
-
-    JSESSION=$(login "${ADMIN_USER}" "${ADMIN_PASS}")
-
-    if [ -z "$JSESSION" ]; then
-      echo "Trying initial admin password..."
-      JSESSION=$(login "${ADMIN_USER}" "${ADMIN_PASS}")
-      if [ -z "$JSESSION" ]; then
-        echo "Failed to authenticate with XNAT"
-        exit 1
-      fi
-    fi
-
-    COOKIE="Cookie: JSESSIONID=${JSESSION}"
-
-    # Activate XNAT site. siteUrl must be non-empty on XNAT >= 1.10.0 (Restlet create paths
-    # NPE on null siteUrl while building the response) — see configure-xnat.sh.
-    echo "Activating XNAT site..."
-    wget -q -O /dev/null --header="${COOKIE}" --header="Content-Type: application/json" \
-      --post-data="{\"initialized\": true, \"siteUrl\": \"${XNAT_URL}\"}" "${XNAT_URL}/xapi/siteConfig"
-
-    # Register PACS (Orthanc)
-    echo "Registering PACS..."
-    wget -q -O /dev/null --header="${COOKIE}" --header="Content-Type: application/json" \
-      --post-data="{
-        \"aeTitle\": \"ORTHANC\",
-        \"defaultQueryRetrievePacs\": true,
-        \"defaultStoragePacs\": true,
-        \"host\": \"${ORTHANC_HOST}\",
-        \"label\": \"Orthanc PACS\",
-        \"ormStrategySpringBeanId\": \"dicomOrmStrategy\",
-        \"queryRetrievePort\": ${PACS_DICOM_PORT},
-        \"queryable\": true,
-        \"storable\": true,
-        \"supportsExtendedNegotiations\": true
-      }" "${XNAT_URL}/xapi/pacs"
-
-    # Assign roles to service account
-    echo "Assigning roles to service account..."
-    wget -q -O /dev/null --header="${COOKIE}" --header="Content-Type: application/json" \
-      --post-data='["ALL_DATA_ADMIN"]' \
-      "${XNAT_URL}/xapi/users/${SERVICE_USER}/groups/"
-    wget -q -O /dev/null --header="${COOKIE}" --header="Content-Type: application/json" \
-      --post-data='["ContainerManager","DataManager","SiteUser","Administrator","Dqr","non_expiring"]' \
-      "${XNAT_URL}/xapi/users/${SERVICE_USER}/roles/"
-
-    # Configure DQR settings
-    echo "Configuring DQR settings..."
-    wget -q -O /dev/null --header="${COOKIE}" --header="Content-Type: application/json" \
-      --post-data='{
-        "pacsAvailabilityCheckFrequency": "1 minute",
-        "dqrWaitToRetryRequestInSeconds": "300",
-        "assumeSameSessionIfArrivedWithin": "30 minutes",
-        "allowAllUsersToUseDqr": false,
-        "dqrCallingAe": "XNAT",
-        "notifyAdminOnImport": false,
-        "allowAllProjectsToUseDqr": true,
-        "leavePacsAuditTrail": false,
-        "dqrMaxPacsRequestAttempts": "100"
-      }' "${XNAT_URL}/xapi/dqr/settings"
-
-    # Configure PACS availability for all days
-    echo "Configuring PACS availability..."
-    for DAY in MONDAY TUESDAY WEDNESDAY THURSDAY FRIDAY SATURDAY SUNDAY; do
-      wget -q -O /dev/null --header="${COOKIE}" --header="Content-Type: application/json" \
-        --post-data="{
-          \"availabilityEnd\": \"23:59\",
-          \"availabilityStart\": \"00:00\",
-          \"availableNow\": true,
-          \"dayOfWeek\": \"$DAY\",
-          \"enabled\": true,
-          \"pacsId\": 1,
-          \"threads\": 4,
-          \"utilizationPercent\": 100
-        }" "${XNAT_URL}/xapi/pacs/1/availability"
-    done
-
-    echo "XNAT configuration complete."
 {{- end }}

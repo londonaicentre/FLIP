@@ -459,7 +459,7 @@ The study data is sent to XNAT's prearchive.
 |---------|---------|------|------|---------|
 | XNAT SCP | `XNAT` | xnat-web | 8104 | Receives C-STORE from PACS |
 | Orthanc | `ORTHANC` | orthanc | 4242 | PACS — stores DICOM studies |
-| Imaging Worker | `FLIPIMPORT` | (any) | — | C-MOVE source AE |
+| Imaging Worker | `XNAT (configurable via `xnat.web.dicomAet`)` | (any) | — | C-MOVE source AE |
 
 #### XNAT SCP Receiver Configuration
 

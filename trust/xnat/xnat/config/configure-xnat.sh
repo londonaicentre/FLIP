@@ -28,6 +28,10 @@ set -euo pipefail
 : "${XNAT_ADMIN_USER:?}" "${XNAT_ADMIN_INITIAL_PASSWORD:?}" "${XNAT_ADMIN_PASSWORD:?}"
 : "${XNAT_SERVICE_USER:?}" "${XNAT_SERVICE_PASSWORD:?}" "${XNAT_PORT:?}"
 
+# ${VAR-default} rather than ${VAR:-default} throughout: an *unset* variable takes the default,
+# but one set to the empty string stays empty and trips the guard below. An operator who writes
+# PACS_HOST= in a kit file must get a loud failure, not a silent fallback to the mocked PACS.
+#
 # XNAT's own identity and the upstream PACS. Defaults reproduce the mocked Orthanc that ships for
 # development, so an unconfigured deployment behaves exactly as before; a real trust overrides them
 # from its kit file (Compose) or Helm values (Kubernetes).
@@ -37,21 +41,21 @@ set -euo pipefail
 # C-STORE association addressed to the AE title it has registered, so a receiver configured under a
 # different title rejects it.
 XNAT_URL="${XNAT_URL:-http://xnat-web:8080}" # internal to the container network
-XNAT_AETITLE="${XNAT_AETITLE:-XNAT}"
-PACS_HOST="${PACS_HOST:-orthanc}"            # service name in compose / k8s, or a real PACS host
-PACS_AETITLE="${PACS_AETITLE:-ORTHANC}"
-PACS_QR_PORT="${PACS_QR_PORT:-4242}"
-PACS_LABEL="${PACS_LABEL:-Test PACS instance}"
+XNAT_AETITLE="${XNAT_AETITLE-XNAT}"
+PACS_HOST="${PACS_HOST-orthanc}"            # service name in compose / k8s, or a real PACS host
+PACS_AETITLE="${PACS_AETITLE-ORTHANC}"
+PACS_QR_PORT="${PACS_QR_PORT-4242}"
+PACS_LABEL="${PACS_LABEL-Test PACS instance}"
 
 # DQR retry behaviour and the PACS availability schedule — the throttle for a production PACS, which
 # may refuse further associations after a certain volume (FLIP#993). Defaults are today's values.
-DQR_MAX_PACS_REQUEST_ATTEMPTS="${DQR_MAX_PACS_REQUEST_ATTEMPTS:-100}"
-DQR_RETRY_WAIT_SECONDS="${DQR_RETRY_WAIT_SECONDS:-300}"
-PACS_AVAILABILITY_DAYS="${PACS_AVAILABILITY_DAYS:-MONDAY,TUESDAY,WEDNESDAY,THURSDAY,FRIDAY,SATURDAY,SUNDAY}"
-PACS_AVAILABILITY_START="${PACS_AVAILABILITY_START:-00:00}"
-PACS_AVAILABILITY_END="${PACS_AVAILABILITY_END:-24:00}"
-PACS_THREADS="${PACS_THREADS:-1}"
-PACS_UTILIZATION_PERCENT="${PACS_UTILIZATION_PERCENT:-100}"
+DQR_MAX_PACS_REQUEST_ATTEMPTS="${DQR_MAX_PACS_REQUEST_ATTEMPTS-100}"
+DQR_RETRY_WAIT_SECONDS="${DQR_RETRY_WAIT_SECONDS-300}"
+PACS_AVAILABILITY_DAYS="${PACS_AVAILABILITY_DAYS-MONDAY,TUESDAY,WEDNESDAY,THURSDAY,FRIDAY,SATURDAY,SUNDAY}"
+PACS_AVAILABILITY_START="${PACS_AVAILABILITY_START-00:00}"
+PACS_AVAILABILITY_END="${PACS_AVAILABILITY_END-24:00}"
+PACS_THREADS="${PACS_THREADS-1}"
+PACS_UTILIZATION_PERCENT="${PACS_UTILIZATION_PERCENT-100}"
 
 # Same fail-loud contract as the credentials above: a default must never resolve to empty, or the
 # interpolated JSON is malformed and XNAT rejects it silently (FLIP#822 / FLIP#862).

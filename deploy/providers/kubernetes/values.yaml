@@ -484,9 +484,6 @@ omopDb:
 orthanc:
   enabled: true
   host: orthanc
-  dicomHost: orthanc
-  dicomPort: 4242
-  dicomAet: ORTHANC
   external:
     host: ""
     port: 8042
@@ -546,10 +543,20 @@ xnat:
   web:
     enabled: true
     adminUser: "admin"
-    # DICOM SCP (Service Class Provider) configuration
-    # XNAT listens as AE 'XNAT' on this port to receive C-STORE requests
+    # DICOM SCP (Service Class Provider) configuration.
+    # XNAT binds this port, registers it on its dicomscp receiver, and advertises it as the C-MOVE
+    # destination. DQR matches that destination against a registered receiver by exact AE title and
+    # port, so these must equal what the PACS has registered for us — no translation is possible on
+    # that leg (FLIP#993).
     dicomAet: XNAT
     dicomPort: 8104
+    # Fixed NodePort for the DICOM receiver, used with service.type: NodePort. Required when the
+    # PACS is outside the cluster: after XNAT issues C-MOVE the PACS opens a *new* association back
+    # to XNAT to C-STORE the studies, so that port must be reachable. Leave empty for the mocked
+    # Orthanc, which reaches the receiver over the cluster network.
+    # Must be inside the API server's --service-node-port-range (default 30000-32767), or the range
+    # widened to admit the DICOM port. Set it equal to dicomPort so one number is true end to end.
+    dicomNodePort: ""
     image:
       repository: ghcr.io/londonaicentre/xnat-web
       tag: stag
@@ -733,12 +740,45 @@ podDisruptionBudget:
 # ---------------------------------------------------------------------------
 # Network policies — zero inbound trust model
 # ---------------------------------------------------------------------------
+# Upstream PACS that XNAT retrieves imaging from, via the DQR plugin.
+#
+# Defaults describe the mocked Orthanc deployed by this chart. A trust points these at its own PACS;
+# see docs/source/components/component-xnat.rst "Connecting to a Trust PACS". These replace the
+# former orthanc.dicomHost / dicomPort / dicomAet values, which no template ever read — which is why
+# setting orthanc.enabled: false with an external.host never actually redirected DQR.
+pacs:
+  host: orthanc
+  aeTitle: ORTHANC
+  qrPort: 4242
+  label: Test PACS instance
+  # Throttle. A production PACS may refuse further associations after a certain volume, and a trust
+  # may want retrieval confined to out-of-hours. Agree the window with the PACS manager.
+  availability:
+    days: MONDAY,TUESDAY,WEDNESDAY,THURSDAY,FRIDAY,SATURDAY,SUNDAY
+    start: "00:00"
+    end: "24:00"
+    threads: 1
+    utilizationPercent: 100
+  dqr:
+    maxRequestAttempts: 100
+    retryWaitSeconds: 300
+
 networkPolicies:
   enabled: true
   # When true, allows ingress from kube-system namespace (kubelet health checks,
   # metrics scraping). Set to true if your CNI requires explicit carve-outs for
   # kubelet probes or cluster-internal monitoring.
   allowKubeSystemIngress: false
+  # CIDRs allowed inbound on a specific port, in addition to the default-deny above.
+  # The only intended use is the DICOM C-STORE return leg: FLIP retrieves by pull, so after XNAT
+  # issues C-MOVE the PACS opens a new association back to XNAT. That is inbound, and without an
+  # allowance here it is dropped — queries succeed and retrievals silently time out (FLIP#993).
+  # Scope this to the PACS itself, not the whole trust network.
+  # Each entry: cidrs (list of CIDR strings) + port (int) + optional protocol (default TCP).
+  allowedIngressCIDRsWithPorts: []
+  # - cidrs:
+  #     - 10.0.0.10/32
+  #   port: 8104
   # CIDRs allowed for all-ports egress (in addition to intra-namespace)
   allowedEgressCIDRs: []
   #   - 10.0.0.0/8

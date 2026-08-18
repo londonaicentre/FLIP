@@ -101,6 +101,40 @@ jobs:
             --set omopDb.external.host=test.example.com \
             > /dev/null
 
+      # The real-PACS path is entirely opt-in: with the defaults the chart deploys the mocked
+      # Orthanc, keeps the Service ClusterIP and leaves ingress default-denied. None of the
+      # NodePort or NetworkPolicy-ingress bodies render at all unless configured, so without this
+      # step a broken .Values path in either would merge green and only fail for the first trust
+      # that connects a real PACS (FLIP#993).
+      - name: Render template (real PACS)
+        run: |
+          helm template trust-release deploy/providers/kubernetes/ \
+            --set xnat.web.service.type=NodePort \
+            --set xnat.web.dicomNodePort=8104 \
+            --set xnat.web.dicomAet=FLIPXNAT \
+            --set pacs.host=10.0.0.10 \
+            --set pacs.aeTitle=SECTRA_QR \
+            --set pacs.qrPort=8059 \
+            --set 'networkPolicies.allowedIngressCIDRsWithPorts[0].cidrs[0]=10.0.0.10/32' \
+            --set 'networkPolicies.allowedIngressCIDRsWithPorts[0].port=8104' > /tmp/real-pacs.yaml
+          for want in "nodePort: 8104" "allow-pacs-ingress" "cidr: \"10.0.0.10/32\"" \
+                      "value: \"SECTRA_QR\"" "value: \"FLIPXNAT\""; do
+            if ! grep -q "$want" /tmp/real-pacs.yaml; then
+              echo "::error::real-PACS render is missing: $want"
+              exit 1
+            fi
+          done
+
+      # Default-deny must survive: the ingress allowance is the one inbound path into a trust, so a
+      # chart that opened it without being asked would silently widen every existing deployment.
+      - name: Render template (default keeps ingress denied)
+        run: |
+          helm template trust-release deploy/providers/kubernetes/ > /tmp/default.yaml
+          if grep -q "allow-pacs-ingress" /tmp/default.yaml; then
+            echo "::error::the PACS ingress NetworkPolicy rendered without being configured"
+            exit 1
+          fi
+
       # omopDb.vocabLoad.s3Bucket defaults to "" (the licensed bundle has no public
       # mirror — FLIP#842/843), so every other render in this job skips the
       # vocab-load Job. Without this step its ~110-line body is never rendered in

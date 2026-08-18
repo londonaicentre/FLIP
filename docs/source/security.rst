@@ -24,13 +24,21 @@ automated checks that run against every change are publicly inspectable.
 Network and perimeter
 *********************
 
-**Trust systems accept no inbound connections.** Each participating trust runs FLIP
-services that reach *out* to the Central Hub to collect work and report results.
-Nothing on the internet can open a connection to a trust's FLIP services. This is
-enforced in the infrastructure definitions themselves — the security groups permit no
-inbound traffic at all — rather than depending on configuration discipline.
-Operator access is via AWS Systems Manager Session Manager, so port 22 is never
-opened.
+**Nothing outside the trust can open a connection to a trust's FLIP services.** Each
+participating trust runs FLIP services that reach *out* to the Central Hub to collect
+work and report results. Nothing on the internet, and nothing on the Central Hub, can
+open a connection inward. This is enforced in the infrastructure definitions themselves —
+the security groups permit no inbound traffic at all — rather than depending on
+configuration discipline. Operator access is via AWS Systems Manager Session Manager, so
+port 22 is never opened.
+
+Stated precisely, there is one inbound path, and it is inside the trust's own network.
+FLIP retrieves imaging by *pull*: XNAT queries the trust PACS and requests a study, and
+the PACS then opens a connection back to XNAT to deliver it. That return connection is
+inbound by protocol rather than by design, it originates from the trust's own PACS, and
+it is restricted to that PACS on the DICOM port alone. It never crosses the boundary
+between the trust and the Central Hub, and it does not weaken the guarantee above: no
+route exists from the internet, or from the hub, into a trust's network.
 
 **Only the Central Hub is internet-facing.** It sits behind CloudFront with modern TLS,
 HSTS, AWS WAF managed rules, and an internal-only Application Load Balancer. Nothing

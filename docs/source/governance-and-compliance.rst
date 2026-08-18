@@ -75,10 +75,12 @@ Network architecture as a governance guarantee
 **********************************************
 
 The network design is why the guarantees above are structural rather than procedural.
-Trust systems accept no inbound connections: each trust polls the Central Hub outbound,
-there are no inbound firewall rules to open, and there is no route from the internet — or
+Each trust polls the Central Hub outbound, and there is no route from the internet — or
 from the hub — into a trust's network. For a trust's own network team, onboarding FLIP
-requires no inbound exposure at all. A site-to-site VPN can be provisioned on request
+requires no inbound exposure to the outside world at all. The one inbound rule is
+internal to the trust: retrieval from the trust's PACS is a pull, so the PACS opens a
+connection back to XNAT to deliver the studies it was asked for, scoped to that PACS on
+the DICOM port. A site-to-site VPN can be provisioned on request
 where a trust's policy calls for network-layer separation as well.
 
 The practical governance point: a trust does not have to rely on the Central Hub's access

@@ -54,6 +54,11 @@ spec:
       targetPort: {{ .Values.xnat.web.dicomPort | default 8104 }}
       protocol: TCP
       name: dicom-scp
+      {{- if and .Values.xnat.web.dicomNodePort (eq .Values.xnat.web.service.type "NodePort") }}
+      # Pinned so the PACS has a stable destination port. Without this Kubernetes allocates one at
+      # random, and the C-MOVE destination XNAT advertises would not match what the PACS can reach.
+      nodePort: {{ .Values.xnat.web.dicomNodePort }}
+      {{- end }}
   selector:
     {{- include "flip-trust.selectorLabels" . | nindent 4 }}
     app.kubernetes.io/component: xnat-web

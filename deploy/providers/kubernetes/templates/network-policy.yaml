@@ -49,6 +49,43 @@ spec:
   policyTypes:
     - Ingress
 ---
+{{- if .Values.networkPolicies.allowedIngressCIDRsWithPorts }}
+# Allow inbound DICOM from the trust PACS.
+#
+# The default-deny above models FLIP's zero-inbound posture, which holds for the internet and for
+# the Central Hub: neither can open a connection to a trust. Retrieval from a trust PACS is the one
+# exception, and it is inbound by protocol rather than by choice — FLIP pulls, so after XNAT issues
+# C-MOVE the PACS opens a *new* association back to XNAT to C-STORE the studies (FLIP#993).
+#
+# This stays default-deny until an operator lists the PACS CIDRs, and the allowance is scoped to
+# those CIDRs on that port only. It does not open anything to the internet or to the hub.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "flip-trust.fullname" . }}-allow-pacs-ingress
+  namespace: {{ include "flip-trust.namespace" . }}
+  labels:
+    {{- include "flip-trust.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "flip-trust.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: xnat-web
+  ingress:
+{{- range .Values.networkPolicies.allowedIngressCIDRsWithPorts }}
+    - from:
+  {{- range .cidrs }}
+        - ipBlock:
+            cidr: {{ . | quote }}
+  {{- end }}
+      ports:
+        - port: {{ .port }}
+          protocol: {{ .protocol | default "TCP" }}
+{{- end }}
+  policyTypes:
+    - Ingress
+{{- end }}
+---
 # Allow egress to specific destinations (Central Hub, FL server, DNS, IMDS)
 # All other egress is denied
 apiVersion: networking.k8s.io/v1
