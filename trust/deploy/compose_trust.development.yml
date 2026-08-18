@@ -72,7 +72,7 @@ services:
       ORTHANC__REGISTERED_USERS: |
           {"${ORTHANC_USERNAME}": "${ORTHANC_PASSWORD}"}
       ORTHANC__DICOM_MODALITIES: |
-          {"XNAT": {"AET": "XNAT", "Host": "xnat-web", "Port": "${XNAT_PORT}"}}
+          {"XNAT": {"AET": "${XNAT_AETITLE:-XNAT}", "Host": "xnat-web", "Port": "${XNAT_PORT}"}}
 
   imaging-api:
     # Pull from GHCR by default; local imaging_api/ bind-mount overlays it for
@@ -106,6 +106,10 @@ services:
       # default in imaging_api/config.py — do not inject them (an empty ${VAR}
       # from a kit that omits them would override the code default).
       XNAT_PORT: ${XNAT_PORT}
+      # Must match what configure-xnat.sh registered: this becomes the C-MOVE
+      # destination, and the PACS id is resolved from the PACS AE title.
+      XNAT_AETITLE: ${XNAT_AETITLE:-XNAT}
+      PACS_AETITLE: ${PACS_AETITLE:-ORTHANC}
       XNAT_SERVICE_USER: ${XNAT_SERVICE_USER}
       XNAT_SERVICE_PASSWORD: ${XNAT_SERVICE_PASSWORD}
       # Minted per-trust XNAT DB password (FLIP-PT-056): imaging_api/config.py

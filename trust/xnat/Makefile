@@ -87,7 +87,13 @@ XNAT_STACK := xnat$(TRUST_NUM)
 XNAT_NETWORK := deploy_trust-network-$(TRUST_NUM)
 # Defaults are the Trust_1 allocation, so a single-trust host (EC2 / on-prem)
 # needs no XNAT port entries in its kit file.
+# XNAT_PORT is the DICOM SCP receiver port: the port XNAT binds, registers on its dicomscp
+# receiver, and advertises as the C-MOVE destination. XNAT_WEB_PORT is the host-published web UI
+# port. They were historically the same variable, which is why host 8104 serves Tomcat while the
+# DICOM receiver's 8104 is an unpublished container port (FLIP#993). The web default is unchanged so
+# existing kits, docs and SSM port-forwards keep working.
 XNAT_PORT_EFFECTIVE := $(or $(XNAT_PORT),8104)
+XNAT_WEB_PORT_EFFECTIVE := $(or $(XNAT_WEB_PORT),8104)
 PACS_UI_PORT_EFFECTIVE := $(or $(PACS_UI_PORT),8042)
 
 # Host path that backs this trust's XNAT bind mounts (parent of xnat-data/
@@ -125,6 +131,14 @@ else
 # In development, mount plugins and config from the host for hot-reload
 STACK_FILES = -c docker-compose-stack.yml -c docker-compose-stack.development.yml
 XNAT_PLUGINS_FROM_HOST = 1
+endif
+
+# REAL_PACS=true publishes XNAT's DICOM SCP receiver on the host, so a PACS outside the host can
+# complete the C-STORE leg of a DQR retrieval. Off by default: the mocked Orthanc reaches
+# xnat-web:$(XNAT_PORT_EFFECTIVE) over the container network and needs no published port, and
+# publishing one would collide with the web UI while both default to 8104.
+ifeq ($(REAL_PACS),true)
+STACK_FILES += -c docker-compose-stack.real-pacs.yml
 endif
 
 # Guard: a KIT-selected target needs KIT set.
@@ -242,6 +256,8 @@ endif
 	$(MAKE) xnat-reset KIT=$(KIT)
 	XNAT_PATH=${XNAT_PATH} \
 	XNAT_PORT=$(XNAT_PORT_EFFECTIVE) \
+	XNAT_WEB_PORT=$(XNAT_WEB_PORT_EFFECTIVE) \
+	XNAT_AETITLE=$(XNAT_AETITLE) \
 	PACS_UI_PORT=$(PACS_UI_PORT_EFFECTIVE) \
 	DOCKER_NETWORK_NAME=$(XNAT_NETWORK) \
 	docker stack deploy --with-registry-auth --detach=false ${STACK_FILES} $(XNAT_STACK)
@@ -334,6 +350,14 @@ xnat-reset:
 	esac
 	@if ! echo "$(XNAT_PORT_EFFECTIVE)" | grep -qE '^[0-9]+$$'; then \
 		echo "ERROR: XNAT_PORT must be numeric for KIT=$(KIT), got '$(XNAT_PORT_EFFECTIVE)'"; exit 1; \
+	fi
+	@if ! echo "$(XNAT_WEB_PORT_EFFECTIVE)" | grep -qE '^[0-9]+$$'; then \
+		echo "ERROR: XNAT_WEB_PORT must be numeric for KIT=$(KIT), got '$(XNAT_WEB_PORT_EFFECTIVE)'"; exit 1; \
+	fi
+	@if [ "$(REAL_PACS)" = "true" ] && [ "$(XNAT_PORT_EFFECTIVE)" = "$(XNAT_WEB_PORT_EFFECTIVE)" ]; then \
+		echo "ERROR: REAL_PACS=true publishes both the web UI and the DICOM receiver on the host,"; \
+		echo "       so XNAT_WEB_PORT ($(XNAT_WEB_PORT_EFFECTIVE)) and XNAT_PORT ($(XNAT_PORT_EFFECTIVE)) must differ."; \
+		exit 1; \
 	fi
 	@echo "Deleting previous XNAT data and creating new directories for $(KIT) ..."; \
 	if [ "$(PROD)" = "true" ] || [ "$(PROD)" = "stag" ]; then \

@@ -1,0 +1,29 @@
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Opt-in overlay: publish XNAT's DICOM SCP receiver on the host.
+#
+# Applied by `make up-xnat ... REAL_PACS=true` (trust/xnat/Makefile). Needed only when the PACS is
+# outside this host: FLIP retrieves by DQR, so after XNAT issues C-FIND/C-MOVE the PACS opens a
+# *new* association back to XNAT to C-STORE the studies. That return leg is inbound, and without a
+# published port it never arrives — queries succeed and retrievals silently time out (FLIP#993).
+#
+# The mocked Orthanc that ships for development does not need this: it reaches xnat-web:${XNAT_PORT}
+# over the container network.
+#
+# XNAT_PORT is used on both sides of the mapping deliberately. DQR matches the C-MOVE destination
+# against a registered SCP receiver by exact AE title and port, so the port the PACS connects to must
+# be the same number XNAT binds — no translation is possible on this leg. The Makefile refuses to
+# deploy if XNAT_WEB_PORT and XNAT_PORT collide.
+services:
+  xnat-web:
+    ports:
+      - ${XNAT_PORT}:${XNAT_PORT}

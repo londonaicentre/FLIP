@@ -28,10 +28,42 @@ set -euo pipefail
 : "${XNAT_ADMIN_USER:?}" "${XNAT_ADMIN_INITIAL_PASSWORD:?}" "${XNAT_ADMIN_PASSWORD:?}"
 : "${XNAT_SERVICE_USER:?}" "${XNAT_SERVICE_PASSWORD:?}" "${XNAT_PORT:?}"
 
-# The below are fixed values for now
-XNAT_URL="http://xnat-web:8080" # internal to Docker network
-ORTHANC_HOST="orthanc" # name of the service (container) in docker-compose
-ORTHANC_AETITLE="ORTHANC"
+# XNAT's own identity and the upstream PACS. Defaults reproduce the mocked Orthanc that ships for
+# development, so an unconfigured deployment behaves exactly as before; a real trust overrides them
+# from its kit file (Compose) or Helm values (Kubernetes).
+#
+# XNAT_AETITLE is XNAT's AE title in three places that must agree: the DICOM SCP receiver, the DQR
+# calling AE, and the C-MOVE destination that imaging-api hands to the PACS. The PACS opens the
+# C-STORE association addressed to the AE title it has registered, so a receiver configured under a
+# different title rejects it.
+XNAT_URL="${XNAT_URL:-http://xnat-web:8080}" # internal to the container network
+XNAT_AETITLE="${XNAT_AETITLE:-XNAT}"
+PACS_HOST="${PACS_HOST:-orthanc}"            # service name in compose / k8s, or a real PACS host
+PACS_AETITLE="${PACS_AETITLE:-ORTHANC}"
+PACS_QR_PORT="${PACS_QR_PORT:-4242}"
+PACS_LABEL="${PACS_LABEL:-Test PACS instance}"
+
+# DQR retry behaviour and the PACS availability schedule — the throttle for a production PACS, which
+# may refuse further associations after a certain volume (FLIP#993). Defaults are today's values.
+DQR_MAX_PACS_REQUEST_ATTEMPTS="${DQR_MAX_PACS_REQUEST_ATTEMPTS:-100}"
+DQR_RETRY_WAIT_SECONDS="${DQR_RETRY_WAIT_SECONDS:-300}"
+PACS_AVAILABILITY_DAYS="${PACS_AVAILABILITY_DAYS:-MONDAY,TUESDAY,WEDNESDAY,THURSDAY,FRIDAY,SATURDAY,SUNDAY}"
+PACS_AVAILABILITY_START="${PACS_AVAILABILITY_START:-00:00}"
+PACS_AVAILABILITY_END="${PACS_AVAILABILITY_END:-24:00}"
+PACS_THREADS="${PACS_THREADS:-1}"
+PACS_UTILIZATION_PERCENT="${PACS_UTILIZATION_PERCENT:-100}"
+
+# Same fail-loud contract as the credentials above: a default must never resolve to empty, or the
+# interpolated JSON is malformed and XNAT rejects it silently (FLIP#822 / FLIP#862).
+: "${XNAT_URL:?}" "${XNAT_AETITLE:?}" "${PACS_HOST:?}" "${PACS_AETITLE:?}" "${PACS_QR_PORT:?}"
+: "${PACS_LABEL:?}" "${DQR_MAX_PACS_REQUEST_ATTEMPTS:?}" "${DQR_RETRY_WAIT_SECONDS:?}"
+: "${PACS_AVAILABILITY_DAYS:?}" "${PACS_AVAILABILITY_START:?}" "${PACS_AVAILABILITY_END:?}"
+: "${PACS_THREADS:?}" "${PACS_UTILIZATION_PERCENT:?}"
+
+# jq parses the /xapi/dicomscp and /xapi/pacs listings below. It ships in the xnat-web image
+# (trust/xnat/xnat/Dockerfile), but fail loudly here rather than let a missing binary degrade into a
+# silently-empty lookup that would re-register a PACS that already exists.
+command -v jq >/dev/null || { echo "ERROR: jq is required by configure-xnat.sh" >&2; exit 1; }
 
 # Wait for XNAT to be available (wall-clock bounded, and each probe carries
 # its own timeout, so a dead or wedged XNAT fails the deploy loudly instead
@@ -254,17 +286,17 @@ echo "Configuring DQR plugin..."
 xnat_curl -X POST "$XNAT_URL/xapi/dqr/settings" \
   -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_PASSWORD}" \
   -H "Content-Type: application/json" \
-  -d '{
-    "pacsAvailabilityCheckFrequency": "1 minute",
-    "dqrWaitToRetryRequestInSeconds": "300",
-    "assumeSameSessionIfArrivedWithin": "30 minutes",
-    "allowAllUsersToUseDqr": false,
-    "dqrCallingAe": "XNAT",
-    "notifyAdminOnImport": false,
-    "allowAllProjectsToUseDqr": true,
-    "leavePacsAuditTrail": false,
-    "dqrMaxPacsRequestAttempts": "100"
-  }'
+  -d "{
+    \"pacsAvailabilityCheckFrequency\": \"1 minute\",
+    \"dqrWaitToRetryRequestInSeconds\": \"${DQR_RETRY_WAIT_SECONDS}\",
+    \"assumeSameSessionIfArrivedWithin\": \"30 minutes\",
+    \"allowAllUsersToUseDqr\": false,
+    \"dqrCallingAe\": \"${XNAT_AETITLE}\",
+    \"notifyAdminOnImport\": false,
+    \"allowAllProjectsToUseDqr\": true,
+    \"leavePacsAuditTrail\": false,
+    \"dqrMaxPacsRequestAttempts\": \"${DQR_MAX_PACS_REQUEST_ATTEMPTS}\"
+  }"
 
 # Configure site-wide anonymization script
 echo "Configuring site-wide anonymization script..."
@@ -280,47 +312,38 @@ xnat_curl -X PUT "$XNAT_URL/xapi/anonymize/site/enabled" \
   -H "Content-Type: application/json" \
   -d 'true'
 
-# Get SCP receivers
+# Remove any pre-existing SCP receiver we are about to replace. Two titles matter: XNAT's stock
+# default receiver (always "XNAT", created by the webapp on first boot) and the receiver under our
+# configured title, so a re-run with changed settings replaces rather than duplicates. When
+# XNAT_AETITLE is the default they are the same entry and the loop deduplicates.
 response=$(xnat_curl -u "$XNAT_ADMIN_USER:$XNAT_ADMIN_PASSWORD" "$XNAT_URL/xapi/dicomscp")
 
-# Debug: Print Raw Response
-echo "Raw API Response: $response"
-
-# Check if response is empty or invalid
 if [[ -z "$response" || "$response" == "[]" ]]; then
     echo "No SCP receivers found."
 else
-    # Extract the SCP receiver ID with "aeTitle": "XNAT" using grep and sed
-    scp_receiver_data=$(echo "$response" | grep -o '{[^}]*"aeTitle"[^}]*}' | grep '"aeTitle":"XNAT"')
-    echo "SCP Receiver Data: $scp_receiver_data"
-
-    if [[ -n "$scp_receiver_data" ]]; then
-        # Extract the "id" field of the SCP receiver
-        scp_receiver_id=$(echo "$scp_receiver_data" | sed -n 's/.*"id":\([0-9]\+\).*/\1/p')
+    for ae in $(printf '%s\n' "XNAT" "${XNAT_AETITLE}" | sort -u); do
+        # `--arg` keeps the AE title as data rather than splicing it into the filter, so a title
+        # containing jq syntax cannot change what is selected.
+        scp_receiver_id=$(printf '%s' "$response" | jq -r --arg ae "$ae" \
+            'map(select(.aeTitle == $ae)) | .[0].id // empty')
 
         if [[ -n "$scp_receiver_id" ]]; then
-            echo "Removing SCP Receiver with ID: $scp_receiver_id..."
-
-            # Send DELETE request to remove the SCP receiver
-            delete_response=$(xnat_curl -u "$XNAT_ADMIN_USER:$XNAT_ADMIN_PASSWORD" -X DELETE "$XNAT_URL/xapi/dicomscp/$scp_receiver_id")
-
-            echo "Delete Response: $delete_response"
-            echo "SCP Receiver removed successfully."
+            echo "Removing SCP receiver '$ae' (id $scp_receiver_id)..."
+            xnat_curl -u "$XNAT_ADMIN_USER:$XNAT_ADMIN_PASSWORD" \
+                -X DELETE "$XNAT_URL/xapi/dicomscp/$scp_receiver_id" >/dev/null
         else
-            echo "Failed to extract SCP receiver ID."
+            echo "No SCP receiver with aeTitle='$ae' found."
         fi
-    else
-        echo "No SCP receiver with aeTitle='XNAT' found."
-    fi
+    done
 fi
 
 # Configure SCP receiver to have dqrObjectIdentifier as the identifier (the default is not)
-echo "Configuring SCP receiver..."
+echo "Configuring SCP receiver '${XNAT_AETITLE}' on port ${XNAT_PORT}..."
 xnat_curl -X POST "$XNAT_URL/xapi/dicomscp" \
   -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_PASSWORD}" \
   -H "Content-Type: application/json" \
   -d "{
-    \"aeTitle\": \"XNAT\",
+    \"aeTitle\": \"${XNAT_AETITLE}\",
     \"port\": ${XNAT_PORT},
     \"enabled\": true,
     \"customProcessing\": true,
@@ -342,59 +365,90 @@ xnat_curl -X POST "$XNAT_URL/xapi/siteConfig" \
   -H "Content-Type: application/json" \
   -d '{"addOhifViewLinkToProjectListingDefaults": true }'
 
-# Register PACS
-# queryRetrievePort is the port XNAT dials Orthanc on over the Docker network
-# (the "host" below is the orthanc service name), so Orthanc's fixed container
-# port 4242 is the only correct value. The old ${PACS_DICOM_PORT} indirection
-# was nominally the *host-published* DICOM port — its "${PACS_DICOM_PORT}:4242"
-# mappings are commented out in every compose file — so a kit setting it to
-# anything but 4242 silently broke registration (FLIP#822 / FLIP#862).
-# Check-then-create: a duplicate registration surfaces as an unspecific 500
-# (DB unique-constraint violation), so re-run idempotency is a lookup by
-# aeTitle rather than a tolerated status code.
-existing_pacs=$(xnat_curl -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_PASSWORD}" "$XNAT_URL/xapi/pacs")
-if printf '%s' "$existing_pacs" | grep -q "\"aeTitle\":\"${ORTHANC_AETITLE}\""; then
-  echo "PACS '${ORTHANC_AETITLE}' already registered — leaving as-is."
-else
-  echo "Registering PACS..."
-  xnat_curl -X POST "$XNAT_URL/xapi/pacs" \
-    -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_PASSWORD}" \
-    -H "Content-Type: application/json" \
-    -d "{
-      \"aeTitle\": \"${ORTHANC_AETITLE}\",
+# Register the upstream PACS.
+#
+# queryRetrievePort is the port XNAT dials the PACS on and must be the port that is actually
+# reachable from the XNAT container: the mock Orthanc's fixed container port 4242 over the container
+# network, or the trust PACS's real query/retrieve port. The retired ${PACS_DICOM_PORT} variable
+# meant the *host-published* port, which is not the same thing, so a kit setting it silently broke
+# registration (FLIP#822 / FLIP#862) — hence PACS_QR_PORT is guarded non-empty above and documented
+# as the reachable port.
+#
+# A duplicate registration surfaces as an unspecific 500 (DB unique-constraint violation), so
+# idempotency is a lookup by aeTitle. Unlike the previous check-then-create, an existing entry whose
+# host or port has drifted from the configured values is *updated*: leaving it untouched meant a kit
+# change was silently ignored on redeploy, and the operator had no signal that DQR was still
+# pointing at the old PACS.
+pacs_payload="{
+      \"aeTitle\": \"${PACS_AETITLE}\",
       \"defaultQueryRetrievePacs\": true,
       \"defaultStoragePacs\": true,
-      \"host\": \"${ORTHANC_HOST}\",
-      \"label\": \"Test PACS instance\",
+      \"host\": \"${PACS_HOST}\",
+      \"label\": \"${PACS_LABEL}\",
       \"ormStrategySpringBeanId\": \"dicomOrmStrategy\",
-      \"queryRetrievePort\": 4242,
+      \"queryRetrievePort\": ${PACS_QR_PORT},
       \"queryable\": true,
       \"storable\": true,
       \"supportsExtendedNegotiations\": true
     }"
+
+existing_pacs=$(xnat_curl -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_PASSWORD}" "$XNAT_URL/xapi/pacs")
+pacs_entry=$(printf '%s' "$existing_pacs" | jq -c --arg ae "${PACS_AETITLE}" \
+  'map(select(.aeTitle == $ae)) | .[0] // empty')
+
+if [[ -z "$pacs_entry" ]]; then
+  echo "Registering PACS '${PACS_AETITLE}' at ${PACS_HOST}:${PACS_QR_PORT}..."
+  xnat_curl -X POST "$XNAT_URL/xapi/pacs" \
+    -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_PASSWORD}" \
+    -H "Content-Type: application/json" \
+    -d "$pacs_payload"
+else
+  PACS_ID=$(printf '%s' "$pacs_entry" | jq -r '.id')
+  current_host=$(printf '%s' "$pacs_entry" | jq -r '.host // empty')
+  current_port=$(printf '%s' "$pacs_entry" | jq -r '.queryRetrievePort // empty')
+
+  if [[ "$current_host" == "${PACS_HOST}" && "$current_port" == "${PACS_QR_PORT}" ]]; then
+    echo "PACS '${PACS_AETITLE}' already registered at ${PACS_HOST}:${PACS_QR_PORT} — leaving as-is."
+  else
+    echo "PACS '${PACS_AETITLE}' registered at ${current_host}:${current_port}," \
+         "updating to ${PACS_HOST}:${PACS_QR_PORT}..."
+    xnat_curl -X PUT "$XNAT_URL/xapi/pacs/${PACS_ID}" \
+      -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_PASSWORD}" \
+      -H "Content-Type: application/json" \
+      -d "$pacs_payload"
+  fi
 fi
 
-# Configure PACS availability schedule (all days). DQR appears to pre-create
-# availability intervals when the PACS is registered: on XNAT 1.10 + DQR 3.0.0
-# this POST returns 400 "probable overlap with existing interval" for an
-# already-scheduled day, so 400 is treated as "already configured" rather than
-# a failure. Anything else non-2xx is a real error and fails the deploy.
-for DAY in MONDAY TUESDAY WEDNESDAY THURSDAY FRIDAY SATURDAY SUNDAY; do
+# The availability schedule below is written against the registered PACS, so resolve its id whether
+# it was just created or already existed.
+PACS_ID=$(xnat_curl -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_PASSWORD}" "$XNAT_URL/xapi/pacs" \
+  | jq -r --arg ae "${PACS_AETITLE}" 'map(select(.aeTitle == $ae)) | .[0].id // empty')
+: "${PACS_ID:?PACS '${PACS_AETITLE}' is not registered after configuration}"
+
+# Configure the PACS availability schedule — the throttle for a production PACS, which may refuse
+# further associations after a certain volume, and which a trust may want restricted to out-of-hours
+# (FLIP#993). Defaults are all week, all day, one thread.
+#
+# DQR appears to pre-create availability intervals when the PACS is registered: on XNAT 1.10 +
+# DQR 3.0.0 this POST returns 400 "probable overlap with existing interval" for an already-scheduled
+# day, so 400 is treated as "already configured" rather than a failure. Anything else non-2xx is a
+# real error and fails the deploy.
+for DAY in ${PACS_AVAILABILITY_DAYS//,/ }; do
   echo "Setting PACS availability for $DAY..."
   avail_body=/tmp/pacs-availability-response.json
   avail_status=$(curl -s -o "$avail_body" --connect-timeout 10 --max-time 120 -w '%{http_code}' \
-    -X POST "$XNAT_URL/xapi/pacs/1/availability" \
+    -X POST "$XNAT_URL/xapi/pacs/${PACS_ID}/availability" \
     -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_PASSWORD}" \
     -H "Content-Type: application/json" \
     -d "{
-      \"availabilityEnd\": \"24:00\",
-      \"availabilityStart\": \"00:00\",
+      \"availabilityEnd\": \"${PACS_AVAILABILITY_END}\",
+      \"availabilityStart\": \"${PACS_AVAILABILITY_START}\",
       \"availableNow\": true,
       \"dayOfWeek\": \"$DAY\",
       \"enabled\": true,
-      \"pacsId\": 1,
-      \"threads\": 1,
-      \"utilizationPercent\": 100
+      \"pacsId\": ${PACS_ID},
+      \"threads\": ${PACS_THREADS},
+      \"utilizationPercent\": ${PACS_UTILIZATION_PERCENT}
     }") || avail_status="000"
   if [[ "$avail_status" == 2* ]]; then
     continue

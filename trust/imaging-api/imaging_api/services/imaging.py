@@ -27,7 +27,49 @@ from imaging_api.utils.exceptions import NotFoundError
 from imaging_api.utils.logger import logger
 
 PACS_ID = get_settings().PACS_ID
+PACS_AETITLE = get_settings().PACS_AETITLE
 XNAT_URL = get_settings().XNAT_URL
+
+# Cache for resolve_pacs_id(). XNAT assigns PACS ids at registration time, so the mapping from AE
+# title to id is fixed for the life of the registration; re-resolving on every query would add an
+# XNAT round-trip per accession number.
+_resolved_pacs_id: int | None = None
+
+
+def resolve_pacs_id(headers: dict[str, str], ae_title: str = PACS_AETITLE) -> int:
+    """
+    Resolves the XNAT PACS id for the configured PACS AE title.
+
+    XNAT numbers PACS registrations in creation order. Historically FLIP registered exactly one, so
+    the id was always 1 and was hardcoded; a trust that has re-registered its PACS, or that carries
+    the mocked Orthanc alongside a real PACS, breaks that assumption (FLIP#993). Falls back to the
+    configured ``PACS_ID`` when XNAT cannot be reached or the AE title is not registered, so a
+    transient XNAT failure degrades to the previous behaviour rather than failing the import.
+
+    Args:
+        headers (dict[str, str]): XNAT authentication headers.
+        ae_title (str): AE title to look up. Defaults to the configured PACS AE title.
+
+    Returns:
+        int: The id of the registered PACS, or the configured ``PACS_ID`` fallback.
+    """
+    global _resolved_pacs_id
+    if _resolved_pacs_id is not None:
+        return _resolved_pacs_id
+
+    try:
+        response = requests.get(f"{XNAT_URL}/xapi/pacs", headers=headers)
+        response.raise_for_status()
+        for pacs in response.json():
+            if pacs.get("aeTitle") == ae_title:
+                _resolved_pacs_id = int(pacs["id"])
+                logger.info(f"Resolved PACS '{ae_title}' to id {_resolved_pacs_id}")
+                return _resolved_pacs_id
+        logger.warning(f"No PACS registered with AE title '{ae_title}'; falling back to id {PACS_ID}")
+    except Exception as e:
+        logger.warning(f"Could not resolve PACS id for '{ae_title}' ({e}); falling back to id {PACS_ID}")
+
+    return PACS_ID
 
 
 def ping_pacs(pacs_id: int, headers: dict[str, str]) -> PacsStatus:
@@ -100,7 +142,7 @@ def query_by_accession_number(accession_number: str, headers: dict[str, str]) ->
         Exception: If there is an error during the query request.
     """
     # Construct DQR Query
-    study_query = StudyQuery(accessionNumber=accession_number, pacsId=PACS_ID)
+    study_query = StudyQuery(accessionNumber=accession_number, pacsId=resolve_pacs_id(headers))
 
     response = requests.post(
         f"{XNAT_URL}/xapi/dqr/query/studies",
@@ -159,6 +201,11 @@ def queue_image_import_request(
     # Check if the project exists before queuing the import request.
     # Check if project exists
     get_project(import_request.project_id, headers=headers)
+
+    # Retrieve against the same PACS the C-FIND queried. The model default is the static fallback,
+    # so resolve here rather than leaving the import pointing at a different registration than the
+    # query used (FLIP#993).
+    import_request.pacs_id = resolve_pacs_id(headers)
 
     # Check PACS
     check_pacs(headers=headers, pacs_id=import_request.pacs_id)

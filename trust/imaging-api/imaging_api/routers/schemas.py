@@ -20,6 +20,7 @@ from imaging_api.config import get_settings
 
 PACS_ID = get_settings().PACS_ID
 XNAT_PORT = get_settings().XNAT_PORT
+XNAT_AETITLE = get_settings().XNAT_AETITLE
 
 # Blocks the three characters most likely to enable structural XML injection
 # in the XNAT projectData payload built by imaging_api.services.projects. This
@@ -236,7 +237,9 @@ class ImportStudyRequest(BaseModel):
     """Represents an image import request for DQR."""
 
     pacs_id: int = Field(default=PACS_ID, alias="pacsId")
-    ae_title: str = Field(default="XNAT", alias="aeTitle")  # XNAT
+    # The C-MOVE destination the PACS is told to send to. DQR matches this against a registered
+    # SCP receiver by exact AE title and port, so it must equal what configure-xnat.sh registered.
+    ae_title: str = Field(default=XNAT_AETITLE, alias="aeTitle")
     port: int = Field(default=XNAT_PORT, alias="port")
     project_id: str = Field(..., alias="projectId")
     force_import: bool = Field(default=True, alias="forceImport")

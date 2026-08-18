@@ -383,3 +383,74 @@ def test_queue_image_import_request_partial_failure(mock_get_project, mock_post,
     response = queue_image_import_request(import_request, headers)
     assert response[0].status == "QUEUED"
     assert response[1].status == "FAILED"
+
+
+# --- PACS id resolution by AE title (FLIP#993) ---------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _clear_resolved_pacs_id():
+    """Resets the module-level PACS id cache so each test resolves independently."""
+    import imaging_api.services.imaging as imaging_module
+
+    imaging_module._resolved_pacs_id = None
+    yield
+    imaging_module._resolved_pacs_id = None
+
+
+@patch("imaging_api.services.imaging.requests.get")
+def test_resolve_pacs_id_matches_ae_title(mock_get, headers):
+    """The id comes from the registration whose AE title matches, not from the list order."""
+    from imaging_api.services.imaging import resolve_pacs_id
+
+    mock_get.return_value = MagicMock(
+        status_code=200,
+        json=lambda: [
+            {"id": 1, "aeTitle": "ORTHANC"},
+            {"id": 7, "aeTitle": "SECTRA_QR"},
+        ],
+    )
+
+    assert resolve_pacs_id(headers, ae_title="SECTRA_QR") == 7
+
+
+@patch("imaging_api.services.imaging.requests.get")
+def test_resolve_pacs_id_is_cached(mock_get, headers):
+    """XNAT is queried once; ids are fixed for the life of a registration."""
+    from imaging_api.services.imaging import resolve_pacs_id
+
+    mock_get.return_value = MagicMock(status_code=200, json=lambda: [{"id": 4, "aeTitle": "ORTHANC"}])
+
+    assert resolve_pacs_id(headers, ae_title="ORTHANC") == 4
+    assert resolve_pacs_id(headers, ae_title="ORTHANC") == 4
+    assert mock_get.call_count == 1
+
+
+@patch("imaging_api.services.imaging.requests.get")
+def test_resolve_pacs_id_falls_back_when_ae_title_absent(mock_get, headers):
+    """An unregistered AE title degrades to the configured fallback rather than failing the import."""
+    from imaging_api.services.imaging import PACS_ID, resolve_pacs_id
+
+    mock_get.return_value = MagicMock(status_code=200, json=lambda: [{"id": 9, "aeTitle": "SOMETHING_ELSE"}])
+
+    assert resolve_pacs_id(headers, ae_title="ORTHANC") == PACS_ID
+
+
+@patch("imaging_api.services.imaging.requests.get", side_effect=Exception("XNAT unreachable"))
+def test_resolve_pacs_id_falls_back_when_xnat_unreachable(mock_get, headers):
+    """A transient XNAT failure must not take out retrieval; it falls back to the configured id."""
+    from imaging_api.services.imaging import PACS_ID, resolve_pacs_id
+
+    assert resolve_pacs_id(headers, ae_title="ORTHANC") == PACS_ID
+
+
+def test_import_request_ae_title_follows_settings():
+    """The C-MOVE destination AE title is configuration, not a hardcoded literal."""
+    from imaging_api.config import get_settings
+
+    request = ImportStudyRequest(
+        projectId="project-1",
+        studies=[{"studyInstanceUid": "1.2.3", "accessionNumber": "ACC1"}],
+    )
+
+    assert request.ae_title == get_settings().XNAT_AETITLE
