@@ -28,11 +28,10 @@
 FROM debian:13-slim
 
 # The source label associates the GHCR package with this repo, so it is listed
-# under github.com/londonaicentre/FLIP/packages alongside the other FLIP images.
-# The sibling images get that link implicitly (their packages were first created
-# by a GITHUB_TOKEN push from this repo's workflows); this one's package already
-# exists from the FLIP#980 pathway test's manual push, so it needs the label to
-# be linked on the next publish.
+# under github.com/londonaicentre/FLIP/packages alongside the other FLIP images
+# instead of standing alone under the org. The siblings inherit that link from
+# having been first published by a GITHUB_TOKEN push from this repo's workflows;
+# the label states it explicitly, so the link holds however the image is pushed.
 LABEL org.opencontainers.image.source="https://github.com/londonaicentre/FLIP" \
       org.opencontainers.image.description="dcm2niix for the FLIP trust XNAT Container Service, pinned to a \
 current upstream release (see trust/xnat/dcm2niix/)" \
