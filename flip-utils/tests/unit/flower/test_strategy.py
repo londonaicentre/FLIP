@@ -222,6 +222,14 @@ class TestMinClients:
         assert strategy.min_evaluate_nodes == 2
         assert strategy.min_available_nodes == 2
 
+    @pytest.mark.parametrize("min_clients", [0, -1])
+    def test_a_quorum_below_one_is_rejected(self, min_clients):
+        """Zero is reachable, not defensive: slot_names is a DB lookup that returns [] when a
+        participating trust has no assigned FL kit slot. Every threshold would be zeroed and
+        flwr's sample_size is max(n, 0), so the round would start against nobody."""
+        with pytest.raises(ValueError, match="min_clients must be >= 1"):
+            _strategy(min_clients=min_clients)
+
 
 class TestMinClientsFromRunConfig:
     """The one place the ``flip-min-clients`` key is read, so app templates carry no parsing.
@@ -239,3 +247,17 @@ class TestMinClientsFromRunConfig:
 
     def test_coerces_a_quoted_toml_value(self):
         assert min_clients_from_run_config({MIN_CLIENTS_KEY: "2"}) == 2
+
+    @pytest.mark.parametrize(
+        ("label", "value"),
+        [
+            # int() would take each of these silently: True -> 1, 2.9 -> 2, setting the quorum to
+            # something other than the participating-trust count.
+            ("a bool", True),
+            ("a float", 2.9),
+            ("a list", [2]),
+        ],
+    )
+    def test_a_non_integer_is_rejected_rather_than_coerced(self, label, value):
+        with pytest.raises(ValueError, match=f"{MIN_CLIENTS_KEY} must be a TOML integer"):
+            min_clients_from_run_config({MIN_CLIENTS_KEY: value})
