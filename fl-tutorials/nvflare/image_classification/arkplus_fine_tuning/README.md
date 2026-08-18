@@ -133,6 +133,14 @@ It runs in the tutorial-local env with the `docs` extra (`matplotlib` + `pydicom
 it checks each panel's lesion against `config.json` and each accession's labels against its split's
 cohort dataframe, so a mislabelled figure fails rather than ships.
 
+> **What this figure is and is not evidence of.** The panels are drawn from `pydicom`'s `PixelData`,
+> not by running the app's transform chain. It once showed perfectly upright radiographs while the
+> model was being fed the transpose of them (FLIP#821), so a figure that looks right is not by
+> itself evidence that the model sees the same thing. The two are now tied together deliberately:
+> `get_xray_transforms()` pins its reader to `PydicomReader(swap_ij=False)`, which returns the array
+> exactly as `PixelData` stores it, and `fl-tutorials/tests/` asserts that bit-for-bit on every app
+> on this path. **That test suite — not this figure — is what makes the panels representative.**
+
 ## Checkpoint setup
 
 `make run`/`make export` require the backbone checkpoint at `app_files/pretrained_weights.pt`, produced

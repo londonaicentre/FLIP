@@ -51,6 +51,20 @@ The simulator requires Docker, and GPU-backed examples require the NVIDIA Contai
 generated runs are kept in gitignored backend data/output directories. Run `make -C fl-tutorials run-all-tutorials`
 only when you intentionally want the full, heavyweight suite.
 
+## Check the sources without a GPU
+
+The tutorial sources also carry a **CPU-only** check that needs none of the above — no GPU, no dataset, no FL image —
+and runs in CI on every PR touching `fl-tutorials/**`:
+
+```bash
+make -C fl-tutorials test        # ruff over fl-tutorials/ + the transform-chain suite
+make -C fl-tutorials pytest      # the suite only (fl-tutorials/tests/)
+make -C fl-tutorials lint        # ruff only
+```
+
+It pins what each app's preprocessing chain actually feeds its model against the raw DICOM `PixelData` — see
+[`tests/README.md`](tests/README.md) for what it does and does not cover.
+
 For network provisioning and standalone service operation, use the
 [`fl-services/nvflare/`](../fl-services/nvflare/README.md) or
 [`fl-services/flower/`](../fl-services/flower/README.md) guide. For the files a user uploads through FLIP, see
