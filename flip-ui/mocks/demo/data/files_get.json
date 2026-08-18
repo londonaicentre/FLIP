@@ -1,0 +1,82 @@
+[
+  {
+    "id": "31b9cc93-5a54-4bc4-8731-3351d2bf987c",
+    "name": "arkplus_flat_models.py",
+    "size": 9062.0,
+    "type": "text/x-python",
+    "status": "COMPLETED",
+    "modelId": "24985ec3-3349-435b-afcd-f38972d8695d",
+    "created": null,
+    "modified": null
+  },
+  {
+    "id": "46c33051-6b47-40e4-8cda-a578eb8ed2d7",
+    "name": "arkplus_flat_utils.py",
+    "size": 11873.0,
+    "type": "text/x-python",
+    "status": "COMPLETED",
+    "modelId": "24985ec3-3349-435b-afcd-f38972d8695d",
+    "created": null,
+    "modified": null
+  },
+  {
+    "id": "f968beab-bb86-46a8-8125-d92c697f5110",
+    "name": "config.json",
+    "size": 1024.0,
+    "type": "application/json",
+    "status": "COMPLETED",
+    "modelId": "24985ec3-3349-435b-afcd-f38972d8695d",
+    "created": null,
+    "modified": null
+  },
+  {
+    "id": "fb5a79ed-0d4f-4abe-aeda-2fa558da3f51",
+    "name": "data_utils.py",
+    "size": 17353.0,
+    "type": "text/x-python",
+    "status": "COMPLETED",
+    "modelId": "24985ec3-3349-435b-afcd-f38972d8695d",
+    "created": null,
+    "modified": null
+  },
+  {
+    "id": "be6f11f5-a400-4a8f-a00c-6d7180a74128",
+    "name": "loss_and_metrics.py",
+    "size": 2600.0,
+    "type": "text/x-python",
+    "status": "COMPLETED",
+    "modelId": "24985ec3-3349-435b-afcd-f38972d8695d",
+    "created": null,
+    "modified": null
+  },
+  {
+    "id": "67bc1689-d853-409c-aa0b-9c922846eb8c",
+    "name": "models.py",
+    "size": 7245.0,
+    "type": "text/x-python",
+    "status": "COMPLETED",
+    "modelId": "24985ec3-3349-435b-afcd-f38972d8695d",
+    "created": null,
+    "modified": null
+  },
+  {
+    "id": "86939f21-9c4b-4791-b8c0-190a711867d8",
+    "name": "pretrained_weights.pt",
+    "size": 795507300.0,
+    "type": "application/vnd.snesdev-page-table",
+    "status": "COMPLETED",
+    "modelId": "24985ec3-3349-435b-afcd-f38972d8695d",
+    "created": null,
+    "modified": null
+  },
+  {
+    "id": "13442780-3f44-461a-abe0-21d85525d80a",
+    "name": "trainer.py",
+    "size": 22096.0,
+    "type": "text/x-python",
+    "status": "COMPLETED",
+    "modelId": "24985ec3-3349-435b-afcd-f38972d8695d",
+    "created": null,
+    "modified": null
+  }
+]

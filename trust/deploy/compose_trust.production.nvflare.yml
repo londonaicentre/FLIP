@@ -17,6 +17,26 @@ services:
 
   fl-client-net-1:
     image: ghcr.io/londonaicentre/${DOCKER_FL_CLIENT_NAME}:${DOCKER_FL_TAG}
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      # Legacy root-image compat: a pre-GHSA-8465 flare-fl-client image runs its
+      # entrypoint as root, and cap_drop: ALL strips root's implicit DAC bypass
+      # (the envsubst writes into the bind-mounted local/ kit dir) and FOWNER
+      # (the chmod +x on startup/*.sh). Trusts pin DOCKER_FL_TAG in their kit and
+      # an immutable sha tag is the documented norm, so `up-trust --pull always`
+      # cannot move a trust off such an image — without these two, that entrypoint
+      # does not crash-loop cleanly: its writes were unguarded before the
+      # `|| exit 1` landed, so it starts NVFLARE against a stale/absent
+      # resources.json instead. Inert for the current image, which runs USER flip
+      # (non-root) from PID 1 — capabilities are only effective for root — see
+      # deploy/README.md ("Linux Capability Restrictions") and the orthanc service
+      # in compose_trust.production.yml, which carries the same grant for the same
+      # reason.
+      - DAC_OVERRIDE
+      - FOWNER
     volumes:
       # Mount the base images download directory to share images downloaded from XNAT with FL clients.
       # Unset in the prod kit → /opt/flip/data/trust-${FL_KIT_SLOT_NUMBER} (see imaging-api in
@@ -58,6 +78,15 @@ services:
   # TODO add second FL network when needed
   # fl-client-net-2:
   #   image: ghcr.io/londonaicentre/${DOCKER_FL_CLIENT_NAME}:${DOCKER_FL_TAG}
+  #   security_opt:
+  #     - no-new-privileges:true
+  #   cap_drop:
+  #     - ALL
+  #   cap_add:
+  #     # See fl-client-net-1 above — legacy root-image compat, inert for the
+  #     # current non-root image.
+  #     - DAC_OVERRIDE
+  #     - FOWNER
   #   volumes:
   #     # Mount the base images download directory to share images downloaded from XNAT with FL clients
   #     - ${BASE_IMAGES_DOWNLOAD_DIR}:/app/data/images

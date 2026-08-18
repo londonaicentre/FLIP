@@ -153,11 +153,14 @@ spec:
                 echo "Configured password failed, trying XNAT default (admin:admin)..."
                 JSESSION=$(_xnat_login "admin")
               fi
-              echo "JSESSIONID: ${JSESSION}"
               if [ -z "$JSESSION" ]; then
                 echo "Failed to login to XNAT with any credential"
                 exit 1
               fi
+              # Never print the session id itself. It is a live XNAT admin session, reused as a
+              # Cookie header on every call below, and pod logs are shipped to Loki and outlive
+              # the Job — which is the same reason scrub_args() redacts it from failure output.
+              echo "XNAT login succeeded (admin session acquired)."
 
               # The readiness loop above accepts 200 *or* 401 from a core route, so it proves only
               # that Tomcat is answering — not that the plugins have registered their routes. Every
@@ -888,6 +891,11 @@ data:
     }
 
     wait_for_xnat
+
+    # The session id is written to disk on the way through, so remove it whenever this script
+    # exits. It is a live XNAT admin session and the file would otherwise outlive its use inside
+    # the container's filesystem.
+    trap 'rm -f /tmp/jsession.txt' EXIT
 
     # Login and get JSESSIONID
     login() {

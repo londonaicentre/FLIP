@@ -1,0 +1,12 @@
+[
+  {
+    "trustId": "16f5b300-8ff4-4f1a-9a60-1989b3b54489",
+    "trustName": "King's College London",
+    "online": true
+  },
+  {
+    "trustId": "f43abcd0-be77-4dc8-89c6-4b8aa98b6183",
+    "trustName": "Bangkok Dusit Medical Services",
+    "online": true
+  }
+]

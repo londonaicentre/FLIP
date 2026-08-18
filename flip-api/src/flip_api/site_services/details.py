@@ -44,10 +44,15 @@ def get_details(db: Session = Depends(get_session), user_id: UUID = Depends(veri
     """
     try:
         return get_site_details(db)
+    except HTTPException:
+        # Pass the service's own status and detail through unchanged (e.g. its 404), rather than
+        # re-wrapping every one into a 500 that embeds the original message.
+        raise
     except Exception as e:
-        error_message = f"Error fetching site details: {str(e)}"
-        logger.error(error_message)
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=error_message)
+        logger.exception("Error fetching site details")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error"
+        ) from e
 
 
 # [#114] ✅
@@ -80,7 +85,10 @@ def update_details(
     try:
         update_site_details(site_details, db)
         return get_site_details(db)
+    except HTTPException:
+        raise
     except Exception as e:
-        error_message = f"Error updating site details: {str(e)}"
-        logger.error(error_message)
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=error_message)
+        logger.exception("Error updating site details")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error"
+        ) from e

@@ -1,4 +1,4 @@
-JOB_TYPE=standard_client_api
+JOB_TYPE=standard
 SITE1_IMAGES_DIR=../../data/arkplus/site1/accession-resources
 SITE1_DATAFRAME=../../data/arkplus/site1/sample_get_dataframe_response.csv
 SITE2_IMAGES_DIR=../../data/arkplus/site2/accession-resources

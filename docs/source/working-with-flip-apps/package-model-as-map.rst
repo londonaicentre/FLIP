@@ -102,7 +102,7 @@ Where the boundary sits
 
    FLIP (training)                          MONAI Deploy (inference)
    ─────────────────────────────────        ────────────────────────────────────
-   trainer.py / validator.py                DICOM series selection
+   trainer.py                               DICOM series selection
    models.py :: get_model()          ──▶    preprocessing (must match training!)
    FL_global_model.pt (aggregated)          inference on the exported weights
                                             postprocessing
@@ -176,8 +176,8 @@ a ``model`` key holding the state dict, alongside ``train_conf`` and optionally 
 
 .. warning::
 
-   FLIP persists the **last** global model, not the best one. The ``standard`` and
-   ``standard_client_api`` job types wire no model selector, so
+   FLIP persists the **last** global model by default. The ``standard`` job type wires a model
+   selector only when ``config.json`` sets ``BEST_MODEL_METRIC`` — without it,
    ``best_FL_global_model.pt`` is never written. If your run's final round is not its best round,
    the exported model will reflect the final round.
 
@@ -343,25 +343,32 @@ it may not.
    reach the pixels through different loaders, and the orientation step is the one that is
    calibrated to its loader rather than to the model.
 
-   MONAI's ``LoadImaged`` returns a DICOM's pixel array **transposed** — indexed
-   ``(column, row)``, where ``PixelData`` is ``(row, column)``. Training chains routinely carry a
-   rotation that exists to undo that transpose. The MAP's ``DICOMSeriesToVolumeOperator`` does not
-   transpose, so copying the rotation across applies a correction to something that was never
-   wrong, and you end up with a differently-wrong orientation.
+   By default MONAI's ``LoadImaged`` returns a DICOM's pixel array **transposed** — indexed
+   ``(column, row)``, where ``PixelData`` is ``(row, column)`` — because it falls through to
+   ``PydicomReader(swap_ij=True)``. Training chains routinely carry a rotation that exists to undo
+   that transpose. The MAP's ``DICOMSeriesToVolumeOperator`` does not transpose, so copying the
+   rotation across applies a correction to something that was never wrong, and you end up with a
+   differently-wrong orientation.
 
    The xray tutorial is a worked example of getting this wrong. It applied ``Rotate90d(k=-1)``
    after ``LoadImaged`` — which does produce an upright radiograph, because the loaded image is
    sideways. But a transpose composed with a rotation is algebraically a **mirror**, so the chain
    was training on left-right flipped radiographs: anatomically plausible, visually undetectable,
-   and wrong. It now uses ``Transposed(keys=["image"], indices=(0, 2, 1))``, which undoes the
-   loader and nothing more. Because both paths then agree on the image as DICOM stores it,
-   ``map-apps/classification/classifier_operator.py`` needs no orientation transform at all.
+   and wrong. The tutorials now correct nothing after the fact: they load with
+   ``LoadImaged(keys=["image"], reader="PydicomReader", swap_ij=False)``, which returns the array
+   exactly as ``PixelData`` stores it. Pinning the reader also matters in its own right — MONAI
+   tries its registered readers last-registered-first and takes the first that can read the file,
+   so installing ``itk`` would otherwise promote ``ITKReader`` and change the axis order silently.
+   Because both paths then agree on the
+   image as DICOM stores it, ``map-apps/classification/classifier_operator.py`` needs no
+   orientation transform at all.
 
    Derive yours empirically — dump both arrays for one study and search the eight rotation/flip
    combinations for the one that matches, as ``map-apps/classification/README.md`` describes. Use a
    non-square image: on a square one, a transpose and a rotation cannot be told apart by shape.
    Nothing about this failure is loud. The MAP runs, the SR is written, and the numbers are simply
-   worse than they should be.
+   worse than they should be. ``fl-tutorials/tests/`` is the committed form of that empirical
+   check for the tutorial apps, and CI runs it on every change to the tree.
 
 
 .. _map-package:

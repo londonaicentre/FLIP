@@ -11,13 +11,33 @@
 #
 
 
-from pydantic import BaseModel
+from typing import Any
+
+from pydantic import BaseModel, HttpUrl, field_validator
 
 
 class ISiteBanner(BaseModel):
     message: str
-    link: str | None = None
+    # HttpUrl restricts the scheme to http/https, which is what matters here: this value is
+    # rendered into an href that every user sees, so a `javascript:` (or `data:`) URL would
+    # execute in the visitor's session. Defence in depth behind the frontend's own guard — the
+    # API is reachable directly, so the UI check alone protects nothing.
+    link: HttpUrl | None = None
     enabled: bool
+
+    @field_validator("link", mode="before")
+    @classmethod
+    def _empty_string_is_no_link(cls, v: Any) -> Any:
+        """Treat an empty or whitespace-only link as absent.
+
+        ``update_site_details`` persists ``""`` rather than NULL when a banner has no link, so
+        every such row would otherwise fail ``HttpUrl`` validation on read. Coercing here keeps
+        those rows valid instead of routing them through the read path's error fallback.
+        """
+        if isinstance(v, str) and v.strip() == "":
+            return None
+
+        return v
 
 
 class ISiteDetails(BaseModel):

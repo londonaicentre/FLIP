@@ -405,10 +405,22 @@ def test_plugin_download_names_the_variable_it_needs(bucket: str) -> None:
 def test_trust_makefile_exports_the_artifacts_bucket_to_the_xnat_sub_make() -> None:
     """`make -C trust up-trust` reaches up-xnat, which in development needs this in its env.
 
-    The bucket name is defined here as a *makefile* variable rather than on the command line,
-    because make exports command-line variables to sub-makes automatically — that route would pass
-    whether or not the export directive exists, and `trust/Makefile` gets its value from an
-    ``-include``d env file, which is not auto-exported.
+    The bucket name is seeded as a *makefile* variable rather than on the command line, because
+    make auto-exports command-line variables — that route would pass whether or not the export
+    directive exists, so it would prove nothing. ``trust/Makefile`` gets its real value from an
+    ``-include``d env file, which is likewise not auto-exported.
+
+    The assertion is on *presence*, not on the seeded value. Asserting the value fails on any
+    checkout with a populated ``.env.development``, because the real bucket name from that file
+    wins over the seed — so the test used to pass in CI (clean checkout, no env file) and fail on
+    a configured developer machine, which is exactly backwards (FLIP#970).
+
+    Presence alone is still a real assertion. Verified against GNU Make: neither an ``-include``d
+    nor an ``--eval``'d variable is exported on its own, so *whichever* value arrives, it can only
+    have got there through the ``export`` directive under test::
+
+        -include'd + export  -> from-env-file      -include'd, no export  -> NOT-EXPORTED
+        --eval'd   + export  -> probe-bucket       --eval'd,   no export  -> NOT-EXPORTED
     """
     result = subprocess.run(
         [
@@ -418,6 +430,8 @@ def test_trust_makefile_exports_the_artifacts_bucket_to_the_xnat_sub_make() -> N
             # deploy/fl_backend.mk hard-fails on an unset backend, and a CI checkout has no
             # .env.development to supply one.
             "FL_BACKEND=nvflare",
+            # Seeds a value for the CI case, where no env file supplies one. On a configured
+            # checkout the env file's real value arrives instead — either proves the export.
             "--eval=FLIP_ARTIFACTS_BUCKET_NAME=probe-bucket",
             "--eval=__probe: ; @printenv FLIP_ARTIFACTS_BUCKET_NAME || echo NOT-EXPORTED",
             "__probe",
@@ -429,7 +443,15 @@ def test_trust_makefile_exports_the_artifacts_bucket_to_the_xnat_sub_make() -> N
         timeout=60,
     )
 
-    assert "probe-bucket" in result.stdout, result.stdout + result.stderr
+    combined = result.stdout + result.stderr
+    assert "NOT-EXPORTED" not in result.stdout, (
+        "FLIP_ARTIFACTS_BUCKET_NAME did not reach the sub-make environment — the "
+        "`export FLIP_ARTIFACTS_BUCKET_NAME` directive in trust/Makefile is missing. Without it "
+        f"the dev XNAT plugin download runs against a bucket-less S3 URI.\n{combined}"
+    )
+    # Guards the guard: a make failure that printed neither the value nor NOT-EXPORTED would
+    # otherwise satisfy the assertion above by saying nothing at all.
+    assert result.stdout.strip(), f"the probe target produced no output at all\n{combined}"
 
 
 def test_root_smoke_target_resolves_relative_paths_from_repo_root() -> None:
