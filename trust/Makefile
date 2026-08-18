@@ -72,13 +72,10 @@ export UID GID UNAME
 endif
 
 include ../deploy/fl_backend.mk
-
-# Prefix for the hub-shared network names, derived from FLIP_INSTANCE (FLIP#957).
-# `?=` so the root Makefile's exported value wins when invoked as `make -C trust`,
-# while a standalone `make -C trust ...` still resolves it from FLIP_INSTANCE.
-# Unset → empty → the original network names.
-HUB_NET_PREFIX ?= $(if $(FLIP_INSTANCE),$(FLIP_INSTANCE)-,)
-export HUB_NET_PREFIX
+# INSTANCE_PREFIX + the export of FLIP_INSTANCE that the trust compose files interpolate.
+# Must follow the kit / ../.env.development includes above, which is where FLIP_INSTANCE
+# comes from on the standalone `make -C trust ...` path.
+include ../deploy/instance.mk
 
 # Host gid for group_add on FL containers reading host-provisioned 640 certs/keys (dev).
 export DOCKER_GID := $(shell id -g)
@@ -86,13 +83,12 @@ export DOCKER_GID := $(shell id -g)
 COMMON_COMPOSE_FILE := deploy/compose_trust.$(__DCKR_SUFFIX).yml
 FL_BACKEND_COMPOSE_FILE := deploy/compose_trust.$(__DCKR_SUFFIX).$(FL_BACKEND).yml
 
-# Resolve FL_PROVISIONED_DIR (from .env) to an absolute path relative to the repo root.
-# Docker requires absolute paths for volume mounts; the .env value may be relative.
-# Skip if already absolute (the parent Makefile resolves it before invoking sub-make).
+# Resolve FL_PROVISIONED_DIR (from .env) to an absolute path against the repo root — see
+# abs_or_relative_to in ../deploy/fl_backend.mk. Already-absolute values pass through
+# unchanged, which is the normal case here: the parent Makefile resolves it before
+# invoking this sub-make.
 MAKEFILE_DIR := $(dir $(abspath $(firstword $(MAKEFILE_LIST))))
-ifeq ($(patsubst /%,,$(FL_PROVISIONED_DIR)),$(FL_PROVISIONED_DIR))
-override FL_PROVISIONED_DIR := $(abspath $(MAKEFILE_DIR)/../$(FL_PROVISIONED_DIR))
-endif
+override FL_PROVISIONED_DIR := $(call abs_or_relative_to,$(FL_PROVISIONED_DIR),$(MAKEFILE_DIR)/..)
 
 OMOP_DB_CMD=make -C ./omop-db
 ORTHANC_CMD=make -C ./orthanc
@@ -256,19 +252,8 @@ define require_kit_file
 	fi
 endef
 
-build:
-	$(TRUST_VARS) $(TRUST_BUILD_VARS) ${DOCKER_COMPOSE_CMD} -p $(or $(TRUST_PROJECT),trust) build
-
-# Bring up the trust stack selected by KIT (e.g. KIT=Trust_1). Reads
-# trust/.env.<KIT> for that trust's ports / dirs / credentials. The
-# update-omop-data / update-orthanc-data prereqs pull mock OMOP / Orthanc
-# fixtures from the dev source — fine for dev / hybrid testing.
-# Pull/build behaviour is governed by $(UP_PULL_FLAGS) (defined in the
-# root Makefile and inherited here): pulls fresh FL images when
-# DOCKER_FL_REGISTRY is set, builds from source on BUILD=true, no-op
-# otherwise.
-# Refuse to start when the compose project this kit resolves to is already running a
-# DIFFERENT trust. TRUST_PROJECT is trust$(FL_KIT_SLOT_NUMBER), and slots are handed
+# Guard: refuse to start when the compose project this kit resolves to is already running
+# a DIFFERENT trust. TRUST_PROJECT is trust$(FL_KIT_SLOT_NUMBER), and slots are handed
 # out by the hub from its own database — so a second hub (FLIP_INSTANCE, FLIP#957)
 # starts again at 1 and its first trust lands on a slot the default stack is already
 # using. Without this, compose treats the running containers as part of the project it
@@ -294,6 +279,17 @@ define check_slot_not_taken
 	fi
 endef
 
+build:
+	$(TRUST_VARS) $(TRUST_BUILD_VARS) ${DOCKER_COMPOSE_CMD} -p $(or $(TRUST_PROJECT),trust) build
+
+# Bring up the trust stack selected by KIT (e.g. KIT=Trust_1). Reads
+# trust/.env.<KIT> for that trust's ports / dirs / credentials. The
+# update-omop-data / update-orthanc-data prereqs pull mock OMOP / Orthanc
+# fixtures from the dev source — fine for dev / hybrid testing.
+# Pull/build behaviour is governed by $(UP_PULL_FLAGS) (defined in the
+# root Makefile and inherited here): pulls fresh FL images when
+# DOCKER_FL_REGISTRY is set, builds from source on BUILD=true, no-op
+# otherwise.
 up-trust: update-omop-data update-orthanc-data create-networks
 	$(require_kit_file)
 	@echo "🚢 Starting Trust services (KIT=$(KIT))..."
@@ -410,9 +406,9 @@ tests:
 
 create-networks-core:
 	@echo "🔧 Ensuring external Docker networks exist..."
-	@{ docker network inspect $(HUB_NET_PREFIX)central-hub-trust-apis-network >/dev/null 2>&1 || docker network create --driver bridge $(HUB_NET_PREFIX)central-hub-trust-apis-network >/dev/null || docker network inspect $(HUB_NET_PREFIX)central-hub-trust-apis-network >/dev/null 2>&1 || { echo "❌ Could not create Docker network $(HUB_NET_PREFIX)central-hub-trust-apis-network — see the daemon error above."; exit 1; }; }
-	@{ docker network inspect $(HUB_NET_PREFIX)deploy_shared-net-1 >/dev/null 2>&1 || docker network create --driver bridge $(HUB_NET_PREFIX)deploy_shared-net-1 >/dev/null || docker network inspect $(HUB_NET_PREFIX)deploy_shared-net-1 >/dev/null 2>&1 || { echo "❌ Could not create Docker network $(HUB_NET_PREFIX)deploy_shared-net-1 — see the daemon error above."; exit 1; }; }
-	@{ docker network inspect $(HUB_NET_PREFIX)deploy_shared-net-2 >/dev/null 2>&1 || docker network create --driver bridge $(HUB_NET_PREFIX)deploy_shared-net-2 >/dev/null || docker network inspect $(HUB_NET_PREFIX)deploy_shared-net-2 >/dev/null 2>&1 || { echo "❌ Could not create Docker network $(HUB_NET_PREFIX)deploy_shared-net-2 — see the daemon error above."; exit 1; }; }
+	$(call ensure_bridge_network,$(INSTANCE_PREFIX)central-hub-trust-apis-network)
+	$(call ensure_bridge_network,$(INSTANCE_PREFIX)deploy_shared-net-1)
+	$(call ensure_bridge_network,$(INSTANCE_PREFIX)deploy_shared-net-2)
 
 create-networks-trust-1:
 	@{ docker network inspect deploy_trust-network-1 >/dev/null 2>&1 || docker network create --driver overlay --attachable deploy_trust-network-1; }
@@ -429,14 +425,11 @@ create-networks: create-networks-core create-networks-trust-1 create-networks-tr
 # and take the default stack's networks with it. Hence the prefix check below.
 remove-networks:
 	@echo "🗑️  Removing all trust networks..."
-	@docker network rm $(HUB_NET_PREFIX)central-hub-trust-apis-network 2>/dev/null || true
-	@docker network rm $(HUB_NET_PREFIX)deploy_shared-net-1 2>/dev/null || true
-	@docker network rm $(HUB_NET_PREFIX)deploy_shared-net-2 2>/dev/null || true
-	@if [ -z "$(HUB_NET_PREFIX)" ]; then \
-		docker network rm deploy_trust-network-1 2>/dev/null || true; \
-		docker network rm deploy_trust-network-2 2>/dev/null || true; \
+	@docker network rm $(INSTANCE_PREFIX)central-hub-trust-apis-network $(INSTANCE_PREFIX)deploy_shared-net-1 $(INSTANCE_PREFIX)deploy_shared-net-2 2>/dev/null || true
+	@if [ -z "$(INSTANCE_PREFIX)" ]; then \
+		docker network rm deploy_trust-network-1 deploy_trust-network-2 2>/dev/null || true; \
 	else \
-		echo "  ↩️  keeping deploy_trust-network-{1,2} — shared across instances, not owned by '$(HUB_NET_PREFIX)'"; \
+		echo "  ↩️  keeping deploy_trust-network-{1,2} — shared across instances, not owned by '$(INSTANCE_PREFIX)'"; \
 	fi
 	@echo "✅ Trust networks removed!"
 

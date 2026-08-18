@@ -42,6 +42,7 @@ export $(shell sed 's/=.*//' $(MAIN_ENV_FILE))
 endif
 
 include deploy/fl_backend.mk
+include deploy/instance.mk
 
 # Host gid for group_add on FL containers reading host-provisioned 640 certs/keys (dev).
 export DOCKER_GID := $(shell id -g)
@@ -49,36 +50,11 @@ export DOCKER_GID := $(shell id -g)
 COMMON_COMPOSE_FILE := deploy/compose.$(__DCKR_SUFFIX).yml
 FL_BACKEND_COMPOSE_FILE := deploy/compose.$(__DCKR_SUFFIX).$(FL_BACKEND).yml
 
-# ── Parallel dev stacks (FLIP#957) ────────────────────────────────────────
-# FLIP_INSTANCE names a hub instance so a second dev stack can run alongside the
-# default one. Unset (the norm) every derived name is byte-identical to what it
-# was before this knob existed, so existing deployments are untouched.
-#
-# HUB_NET_PREFIX is also read by trust/Makefile's network targets — it is
-# exported so `$(MAKE) -C trust` sees the same value.
-#
-# COMPOSE_PROJECT matters as much as the names themselves: compose derives the
-# project from the directory of the first -f file, which is always `deploy/`,
-# so without this BOTH stacks would land in one project (`deploy`) regardless of
-# which checkout they were launched from, and `up` on one would reconcile — and
-# tear down — the other's containers. `-p deploy` is exactly the implicit value
-# used today, so pinning it changes nothing for the default stack.
-export HUB_NET_PREFIX := $(if $(FLIP_INSTANCE),$(FLIP_INSTANCE)-,)
-COMPOSE_PROJECT ?= $(HUB_NET_PREFIX)deploy
-
 # Resolve FL_PROVISIONED_DIR / FL_JOBS_DIR (from .env, or overridden at the CLI) to
-# absolute paths, since docker requires those for volume mounts.
-#
-# Only prepend MAKEFILE_DIR when the value is not already absolute. $(abspath) merely
-# normalises the string it is given — it does not notice the operand was already
-# rooted — so joining unconditionally welded two absolute paths together:
-#   FL_PROVISIONED_DIR=/opt/kits  ->  /path/to/repo/opt/kits
-# which surfaced as a misleading "workspace not provisioned" naming a path the caller
-# never asked for, even though CLAUDE.md advertises the CLI override.
+# absolute paths against the repo root — see abs_or_relative_to in deploy/fl_backend.mk.
 MAKEFILE_DIR := $(dir $(abspath $(firstword $(MAKEFILE_LIST))))
-abs_or_relative_to_repo = $(abspath $(if $(filter /%,$(1)),$(1),$(MAKEFILE_DIR)/$(1)))
-override FL_PROVISIONED_DIR := $(call abs_or_relative_to_repo,$(FL_PROVISIONED_DIR))
-override FL_JOBS_DIR := $(call abs_or_relative_to_repo,$(FL_JOBS_DIR))
+override FL_PROVISIONED_DIR := $(call abs_or_relative_to,$(FL_PROVISIONED_DIR),$(MAKEFILE_DIR))
+override FL_JOBS_DIR := $(call abs_or_relative_to,$(FL_JOBS_DIR),$(MAKEFILE_DIR))
 
 # Service configuration
 define SERVICE_CONFIG
@@ -98,7 +74,7 @@ get_service_name = $(subst -api,, $(subst flip-,central hub ,$(subst fl-,central
 export COMPOSE_BAKE=true
 DOCKER_COMMAND=docker compose -p $(COMPOSE_PROJECT) -f $(COMMON_COMPOSE_FILE) -f $(FL_BACKEND_COMPOSE_FILE)
 DEBUG_OVERRIDE_COMPOSE_COMMAND=docker compose -p $(COMPOSE_PROJECT) -f $(COMMON_COMPOSE_FILE) -f $(FL_BACKEND_COMPOSE_FILE) -f deploy/compose.development.debug.override.yml
-SHOW_LOGS_CENTRAL_HUB=docker logs -f $(HUB_NET_PREFIX)flip-api --tail 100 --timestamps --follow
+SHOW_LOGS_CENTRAL_HUB=docker logs -f $(INSTANCE_PREFIX)flip-api --tail 100 --timestamps --follow
 GENERIC_LOGS=docker logs -f --tail 100 --timestamps --follow
 
 # UP_PULL_FLAGS controls the pull/build behaviour of the `up` targets.
@@ -339,14 +315,14 @@ debug-off-all:
 	$(MAKE) -C trust debug-off
 
 create-networks-centralhub:
-	@{ docker network inspect $(HUB_NET_PREFIX)central-hub-network >/dev/null 2>&1 || docker network create --driver bridge $(HUB_NET_PREFIX)central-hub-network >/dev/null || docker network inspect $(HUB_NET_PREFIX)central-hub-network >/dev/null 2>&1 || { echo "❌ Could not create Docker network $(HUB_NET_PREFIX)central-hub-network — see the daemon error above."; exit 1; }; }
+	$(call ensure_bridge_network,$(INSTANCE_PREFIX)central-hub-network)
 
 create-networks: create-networks-centralhub
 	$(MAKE) -C trust create-networks
 
 remove-networks:
 	@echo "🗑️  Removing all networks..."
-	@docker network rm $(HUB_NET_PREFIX)central-hub-network 2>/dev/null || true
+	@docker network rm $(INSTANCE_PREFIX)central-hub-network 2>/dev/null || true
 	$(MAKE) -C trust remove-networks
 	@echo "✅ All networks removed!"
 
