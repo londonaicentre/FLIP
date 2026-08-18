@@ -73,6 +73,16 @@ class Settings(BaseSettings):
     # Timeout for cohort query requests to data-access-api (seconds)
     COHORT_QUERY_TIMEOUT_SECONDS: int = 300
 
+    # Health collector (per-container status attached to the heartbeat, surfaced on
+    # the hub's Connection Status page). URLs/ports are fixed by the compose topology —
+    # default here instead of being required kit fields.
+    HEALTH_COLLECT_INTERVAL_SECONDS: int = 30  # How often to probe the trust services (seconds)
+    HEALTH_PROBE_DEGRADED_MS: int = 1000  # Successful probe slower than this reports "degraded"
+    XNAT_URL: str = "http://xnat-web:8080"
+    PACS_ID: int = 1  # XNAT DQR PACS id used for the ping_pacs deep probe (matches imaging-api's default)
+    OMOP_DB_HOST: str = "omop-db"
+    OMOP_DB_PORT: int = 5432
+
 
 # Eager load once (for app use)
 _settings = Settings()  # type: ignore

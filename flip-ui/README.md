@@ -57,6 +57,40 @@ make deploy-ui PROD=stag    # or PROD=true for prod
 This runs `npm ci && npm run build:deploy`, regenerates `public/js/window.js` with the target environment's values,
 syncs the build to S3, and invalidates CloudFront.
 
+### Public Ark+ demo build (`/ark_demo`)
+
+A read-only, fully-offline demo of the Ark+ chest X-ray experiment register, safe to host
+unauthenticated. It is the real SPA built with `--mode demo` (`VITE_DEMO` inlined to `true`): the
+auth guard is bypassed, no Amplify/Cognito call is ever made, and every API request is answered by
+an in-browser MirageJS server ([`mocks/demo-server.ts`](mocks/demo-server.ts)) with **no
+passthrough** — a published demo bundle cannot reach a real backend. The replayed payloads live
+under [`mocks/demo/data/`](mocks/demo/data/); capture provenance and sanitisation rules are
+documented in [`mocks/demo/ark-plus-register.ts`](mocks/demo/ark-plus-register.ts).
+
+```bash
+npm run demo          # dev server at http://localhost:4174/ (base "/")
+npm run build:demo    # production bundle under dist/ with base "/ark_demo/"
+npm run serve:demo    # preview the built bundle at /ark_demo/
+```
+
+The build regenerates `dist/js/window.js` from
+[`scripts/generate-demo-window-js.sh`](scripts/generate-demo-window-js.sh), which reads no
+environment and points at no real backend. Host the bundle as a CloudFront behaviour (or any
+static prefix) at `/ark_demo/` next to the real app.
+
+The demo is a point-in-time capture, not a live system, and says so twice: `window.RELEASE_VERSION`
+is stamped `ark-demo/<capture-date>+<git-short-sha>` (the date is grepped out of
+`DEMO_CAPTURE_DATE` in `ark-plus-register.ts` so it can't drift from the provenance note there),
+and every page renders a small, non-dismissible banner
+([`src/demo/DemoBanner.vue`](src/demo/DemoBanner.vue), mounted in `App.vue` outside
+`<router-view>` so it survives every route) reading the same capture date in human form.
+
+The large download bundles (results + model files, several hundred MB each) are not part of the
+bundle: they are served by the production CloudFront distribution at `/ark_demo/assets/*` from a
+private, OAC-locked S3 bucket with the WAF in the request path (Terraform:
+`deploy/providers/AWS/cloudfront.tf`, "Public Ark+ demo download assets"; bucket name via
+`DEMO_ASSETS_BUCKET_NAME`). Nothing in the demo is fetched from a public S3 URL.
+
 ## Configuration
 
 The flip-ui reads its runtime configuration from `window.*` globals set by
@@ -83,17 +117,18 @@ stack, so there is no VITE_-prefixed duplication to keep in sync.
 | `CENTRAL_HUB_API_URL` | Full base URL of the flip-api backend, including `/api` |
 | `BLACKLISTED_MODEL_FILES` | Comma-separated file names to reject in model uploads |
 | `VITE_LOCAL` | Set to `true` for local mock mode (bypasses Cognito). **Local dev only — see warning below.** |
+| `VITE_DEMO` | Selects the public Ark+ demo bundle (bypasses Cognito, offline Mirage API). **Never set this in the environment — see warning below**; it is inlined automatically by `npm run build:demo` / `npm run demo` (`--mode demo`). |
 
 Authentication is handled through [AWS Cognito](https://docs.aws.amazon.com/cognito/). A valid Cognito User Pool and
 Client ID are required for a production deployment.
 
-> **`VITE_LOCAL=true` must never reach a production build.** The flag is inlined by Vite at build time and
-> short-circuits the Cognito session check in [`src/utils/auth.ts`](src/utils/auth.ts) plus enables the MirageJS
-> mock in [`src/main.ts`](src/main.ts) — so a build carrying it ships an unauthenticated app. `npm run build` and
-> `npm run build:deploy` therefore refuse to proceed if `VITE_LOCAL=true` is set in the environment (enforced by
+> **`VITE_LOCAL=true` and `VITE_DEMO=true` must never reach a production build.** Both flags are inlined by Vite at
+> build time and short-circuit the Cognito session check in [`src/utils/auth.ts`](src/utils/auth.ts) plus enable a
+> MirageJS mock in [`src/main.ts`](src/main.ts) — so a build carrying either ships an unauthenticated app. Every
+> `npm run build*` therefore refuses to proceed if either flag is set to `true` in the environment (enforced by
 > [`scripts/check-build-flags.mjs`](scripts/check-build-flags.mjs) and a belt-and-braces check in
-> [`vite.config.mts`](vite.config.mts)). Use it only with `npm run dev` against a mocked API; keep it out of
-> CI and deploy environments.
+> [`vite.config.mts`](vite.config.mts)). Use `VITE_LOCAL` only with `npm run dev` against a mocked API, and never
+> set `VITE_DEMO` at all — the demo build gets it from `--mode demo`. Keep both out of CI and deploy environments.
 
 ## Testing
 
@@ -179,7 +214,7 @@ container reaches it via `--network host`.
 
 ```bash
 cd flip-ui
-make e2e_test_docker        # full suite, end-to-end (boots Vite, runs cypress in docker)
+make e2e_test               # full suite, end-to-end (boots Vite, runs cypress in docker)
 
 # Or, if you already have npm run test:start running in another shell:
 docker run --rm --network host \

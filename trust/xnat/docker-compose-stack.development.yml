@@ -14,6 +14,11 @@ services:
           memory: 8G
     environment:
       - DATA_PATH=${XNAT_DATA_DIR}/xnat-data
+      # Shorten the plugin-readiness wait for development. The 900s default suits an unattended
+      # deploy, where waiting out a slow cold start beats failing; at a developer's terminal a
+      # wrong plugin cache or a broken registration is better reported in minutes, and re-running
+      # `make up` is cheap. Still generous — the plugins are already on disk by this point.
+      - XNAT_PLUGIN_READINESS_TIMEOUT_SECONDS=${XNAT_PLUGIN_READINESS_TIMEOUT_SECONDS:-300}
     volumes:
       - ${XNAT_PATH}/xnat/plugins:${XNAT_HOME}/plugins
       - ${XNAT_PATH}/xnat/config:${XNAT_ROOT}/config

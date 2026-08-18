@@ -25,6 +25,7 @@ import { createRouter,
 const routes = setupLayouts(generatedRoutes);
 
 // import { routes } from "@/router/routes";
+import { IS_DEMO } from "@/demo/bootstrap";
 import { doneRouteProgress, startRouteProgress } from "@/router/progress";
 import { authCheck } from "@/utils/auth";
 
@@ -32,7 +33,9 @@ import { authCheck } from "@/utils/auth";
 const CHUNK_RELOAD_KEY = "flip:chunk-reload";
 
 const router = createRouter({
-    history: createWebHistory(),
+    // BASE_URL is "/" for normal/dev builds and "/ark_demo/" for the demo build
+    // (vite.config sets `base`), so deep links resolve under the hosting prefix.
+    history: createWebHistory(import.meta.env.BASE_URL),
     routes,
     scrollBehavior(to) {
         if (to.hash) {
@@ -55,6 +58,21 @@ export const beforeEachGuard = (
     next: NavigationGuardNext
 ): void => {
     startRouteProgress();
+
+    // The public demo has no Cognito and no backend, so every /auth/* page is a
+    // dead end there. Access Request is the one that matters: it renders a form
+    // that always fails, and a visitor who fills it in could reasonably believe
+    // they have requested real platform access (FLIP#794 review). Send them to
+    // the demo's own landing page instead of a broken form.
+    if (IS_DEMO && to.path.startsWith("/auth")) {
+        next({
+            path: "/projects",
+            replace: true
+        });
+
+        return;
+    }
+
     /** Ensure the user is logged in */
     authCheck(to, from, next);
 };

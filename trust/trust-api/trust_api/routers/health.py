@@ -12,15 +12,30 @@
 
 from fastapi import APIRouter
 
+from trust_api.utils.background import dead_background_tasks
+from trust_api.utils.version import service_version
+
 router = APIRouter(prefix="/health", tags=["Health"])
 
 
 @router.get("")
-async def health_check() -> dict[str, str]:
+async def health_check() -> dict[str, object]:
     """
     Health check endpoint for the Trust API
 
+    Reports ``degraded`` when a background service (task poller, health collector)
+    has died: the process still answers HTTP, but it has stopped polling the hub
+    and/or collecting container health, and a plain "ok" would keep the container
+    in rotation while it does nothing.
+
     Returns:
-        dict[str, str]: A dictionary with the status of the service.
+        dict[str, object]: The service status, its version (the same contract as
+        the sibling trust services' /health), and any dead background tasks.
     """
-    return {"status": "ok"}
+    dead = dead_background_tasks()
+
+    return {
+        "status": "degraded" if dead else "ok",
+        "version": service_version(),
+        "dead_tasks": sorted(dead),
+    }

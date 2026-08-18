@@ -15,8 +15,8 @@ FLIP/
 ├── flip-ui/            # Frontend UI (Vue 3 / TypeScript / TailwindCSS)
 ├── flip-utils/         # FLIP Python library (pip-installable flip-utils)
 ├── fl-services/        # FL Docker services + network provisioning, per backend (Makefile owns build/provision/up/down/submit; flower also up-secure): fl-services/nvflare/{fl-base,fl-server,fl-client,fl-api-base, provision/{net-*_project_*.yml, scripts/, workspace-{dev,stag,prod}/ gitignored}}, fl-services/flower/{fl-base,superlink,supernode,fl-api-flower, provision/{scripts/, creds/ gitignored}} (#622)
-├── fl-apps/            # FL app templates per backend: fl-apps/nvflare/{standard,standard_client_api,fed_opt,evaluation,evaluation_client_api,diffusion_model,diffusion_model_client_api}, fl-apps/flower/{standard,evaluation} + check_required_files.sh (cross-backend CI validator at root)
-├── fl-tutorials/       # FL tutorials per backend: fl-tutorials/nvflare/{image_*,testing}, fl-tutorials/flower/{xray_classification,3d_spleen_segmentation*,numpy} (root Makefile forwards by FL_BACKEND); xray classification, spleen seg/eval, diffusion
+├── fl-apps/            # FL app templates per backend: fl-apps/nvflare/{standard,evaluation,diffusion_model,fed_opt} (all Client-API), fl-apps/flower/{standard,evaluation} + check_required_files.sh (cross-backend CI validator at root)
+├── fl-tutorials/       # FL tutorials per backend (all NVFLARE ones are Client-API apps): fl-tutorials/nvflare/{image_*}, fl-tutorials/flower/{xray_classification,3d_spleen_segmentation*,numpy} (root Makefile forwards by FL_BACKEND); xray classification, spleen seg/eval, diffusion. Plus fl-tutorials/tests/ — CPU-only pytest over the tutorial transform chains (#871), run by `make -C fl-tutorials test`
 ├── trust/
 │   ├── trust-api/      # Trust API gateway (Python/FastAPI)
 │   ├── data-access-api/# OMOP database queries (Python/FastAPI)
@@ -39,7 +39,8 @@ The `flip-utils/`, `fl-services/`, `fl-apps/`, and `fl-tutorials/` trees hold th
 app templates, and tutorials for both NVFLARE and Flower. Both
 backends are also provisioned in-tree (gitignored): `deploy/fl_backend.mk` points `FL_PROVISIONED_DIR` per-backend at
 `fl-services/nvflare/provision/workspace-dev` (nvflare) or `fl-services/flower/provision/creds` (flower) — see
-[`README.md#federated-learning-setup`](README.md#federated-learning-setup).
+[`fl-services/nvflare/README.md`](fl-services/nvflare/README.md) and
+[`fl-services/flower/README.md`](fl-services/flower/README.md).
 
 ## Tech Stack
 
@@ -107,6 +108,7 @@ change, since those live in the image layer, not the mounted `src/`.
 make unit_test             # All unit tests across all services (from root)
 make integration_test      # flip-api + trust integration tests (from root)
 make tests                 # flip-ui unit + e2e tests, then flip-api test suite (from root)
+make -C fl-tutorials test  # ruff over fl-tutorials/ + the CPU-only transform-chain suite (no GPU/dataset/FL image)
 make e2e_smoke             # End-to-end smoke against a running stack (see below)
 # From a service directory (e.g., flip-api/):
 make test                  # ruff + mypy + pytest (unit + integration)
@@ -170,7 +172,10 @@ cd flip-api && uv run python -m tests.e2e_smoke \
 `EXTRA_ARGS` carries `$$FLIP_PROJECT_ID` — a `$$` escape survives the single make expansion; or the root
 `make e2e_smoke` with the id passed literally — `--flip-project-id <uuid>` — when reusing a project via
 `--project-id`. The root wrapper re-expands `EXTRA_ARGS` through a second make and shell, so no `$`-escape
-survives it: `$$` lands empty and `$$$$` injects the recipe shell's PID.)
+survives it: `$$` lands empty and `$$$$` injects the recipe shell's PID. Note that `e2e_smoke_spleen`
+currently targets the **Flower** tutorial (`../fl-tutorials/flower/3d_spleen_segmentation/{app,query.sql}`),
+not the NVFLARE paths shown in the direct-invocation example above; pair it with `FL_BACKEND=flower`
+or invoke `tests.e2e_smoke` directly with the NVFLARE paths shown above for the NVFLARE tutorial.)
 
 Enrichment must land **after** the pull and after DICOM→NIfTI conversion; the hook's position guarantees that.
 The uploader derives each target filename from the converted `input_*.nii.gz`, so with no `NIFTI` resource it
@@ -198,19 +203,20 @@ runs old images otherwise): `docker exec flip-fl-api-net-1 cat fl_api/utils/uplo
 
 ### Running FL Tutorials Locally
 
-The NVFLARE tutorials live in `fl-tutorials/` and run on the local NVFLARE simulator (needs a GPU +
-the `flare-fl-base` image). Each tutorial carries a `.env.app` and delegates to the shared harness in
-`fl-tutorials/nvflare/testing/`. From the repo root:
+The NVFLARE tutorials live in `fl-tutorials/` and are all **Client-API** apps (the legacy Executor
+tutorials, templates and their Docker `testing/` harness are removed; the pre-rename `*_client_api`
+job-type names survive only as accepted aliases for models created before the rename). Each tutorial carries a `.env.app` and a `job.py` driving a FLIP recipe;
+`make run` delegates to `make sim`, which runs the NVFLARE simulator (SimEnv) in the flip-utils venv
+with the `full` ML extra (needs a GPU; per-tutorial `make export` builds the full job config with no
+GPU). From the repo root:
 
 ```bash
 make -C fl-tutorials list-tutorials
 make -C fl-tutorials download-xray-data                  # xray dataset (HF); spleen: download-spleen-data
 make -C fl-tutorials run-tutorial TUTORIAL=xray_classification
-make -C fl-tutorials run-all-tutorials                   # all four (heavy; stops on first failure)
-make -C fl-tutorials test-template TEMPLATE=fed_opt      # smoke-test a template that has no tutorial
+make -C fl-tutorials run-all-tutorials                   # every tutorial (heavy; stops on first failure)
 ```
 
-The simulator GPU id defaults to `0`; override with `SIM_GPU` in `fl-tutorials/nvflare/testing/.env.testing`.
 To iterate on the FL images, `make build-fl` builds them locally as `:dev` (see `fl-services/nvflare/README.md`);
 run the stack on them with `make up DOCKER_FL_REGISTRY= DOCKER_FL_TAG=dev`.
 
@@ -324,7 +330,7 @@ After changes, evaluate if docs need updating:
 | Changed env vars | `.env.development.example`, `CONTRIBUTING.md`, `docs/source/sys-admin.rst` |
 | New dependencies | `CONTRIBUTING.md`, service `README.md` |
 | Changed deployment config | `deploy/README.md`, `docs/source/sys-admin.rst` |
-| New Make targets | `README.md`, this file |
+| New Make targets | `CONTRIBUTING.md`, this file |
 | User-facing workflow changes | `docs/source/user-guides.rst` |
 | FL framework features | `docs/source/components/component-fl-nodes.rst` |
 | Trust service changes | `trust/README.md`, relevant `trust/*/README.md` |
@@ -338,7 +344,7 @@ After changes, evaluate if docs need updating:
 - Line length: 120. Linter: Ruff (`select = ['I', 'F', 'E', 'W', 'PT', 'UP006', 'UP007', 'UP035', 'UP042', 'UP045']`; `UP042` enforces `StrEnum` over the legacy `(str, Enum)` pattern). Type checker: mypy.
 - Docstrings: Google style. Naming: snake_case. Imports: alphabetically sorted.
 - Source layout: `src/[service_name]/`. Tests: `tests/unit/`, `tests/integration/`.
-- Test placement: a test goes in `tests/integration/` if and only if it touches a real backing service (Postgres via `session` fixture, real AWS, a running sibling API, real Orthanc/XNAT/OMOP). If every external dependency is mocked, it's a unit test in `tests/unit/`. FastAPI `TestClient` alone does not make a test "integration". See `CONTRIBUTING.md` ("Where does my test go?") for the canonical rule.
+- Test placement: a test goes in `tests/integration/` if and only if it touches a real backing service (Postgres via `session` fixture, real AWS, a running sibling API, real Orthanc/XNAT/OMOP). If every external dependency is mocked, it's a unit test in `tests/unit/`. FastAPI `TestClient` alone does not make a test "integration". Tests for the tutorial tree live outside any service, in `fl-tutorials/tests/` — CPU-only, running in flip-utils' env (`flip-utils[full]`), with fixtures synthesised in-process; anything needing real training stays with the GPU simulator harness. See `CONTRIBUTING.md` ("Where does my test go?") for the canonical rule.
 - Dependency injection: FastAPI `Depends()`. DB: sync SQLModel `Session` via `get_session()` — the `with Session(...)` block is load-bearing on error paths (FLIP#773). Prod authenticates through RDS Proxy with a per-connection IAM token (SQLAlchemy `do_connect` hook, passwordless engine URL).
 
 ### JavaScript/TypeScript (flip-ui)
@@ -389,6 +395,7 @@ After changes, evaluate if docs need updating:
 - `UPLOADED_MODEL_FILES_BUCKET` / `SCANNED_MODEL_FILES_BUCKET` — the two model-file prefixes, and the platform's quarantine boundary (FLIP#52). Researcher uploads are written to the `uploaded/` staging prefix by the presigned POST policy; `POST /files/process-scanned-file/{model_id}/{file}` registers the row as `SCANNING` and schedules the scan, which promotes clean files into `scanned/` and deletes rejected ones. Every consumer — the FL app bundler (`fl_services/services/fl_service.py`), model-file downloads, and listings — reads `scanned/` only, so an unscanned or rejected file can never be bundled to a trust. **They must point at distinct prefixes**: pointed at the same location the promote step degrades to a no-op (logged) and the boundary disappears.
 - `ALLOWED_MODEL_FILE_EXTENSIONS` — extension whitelist enforced before a presigned POST policy is minted, so a disallowed type never reaches S3. JSON list or comma-separated string, matched case-insensitively; default `.py .json .toml .pt .pth .pkl .txt .yaml .yml .safetensors`. `.toml` is **required by the Flower backend** — every Flower app and tutorial ships a `config.toml` run-config that fl-api-flower feeds to `flwr run --run-config`, so dropping it rejects every Flower upload. Opaque archives (`.zip`/`.tar`) are excluded — the scan pipeline cannot gate their contents. A value that normalises to nothing (`",,,"`) falls back to the default rather than an empty list, which would otherwise reject everything (or, for `PICKLESCAN_FILE_SUFFIXES`, silently skip all scanning). A rejection returns 400 with the allowed set, which the UI surfaces verbatim.
 - `PICKLESCAN_FILE_SUFFIXES` / `PICKLESCAN_TIMEOUT_SECONDS` — which uploads get a structural picklescan before promotion (default `.pt .pth .pkl .pickle`) and the wall-clock cap per scan (default 120s). Dangerous globals mark the file `INFECTED` and delete the object; a scan that errors or times out fails closed to `ERROR`. Signature-based AV (GuardDuty Malware Protection for S3) is tracked separately in FLIP#838.
+- `BANDIT_TIMEOUT_SECONDS` — wall-clock cap (default 60s) on the non-blocking Bandit pass over `.py` uploads (FLIP#877, GHSA-8465). Unlike `PICKLESCAN_TIMEOUT_SECONDS` a timeout here just means no findings are recorded (fail-open, never `ERROR`) — Bandit is advisory only and never gates promotion. Findings land on `UploadedFiles.bandit_findings` (`[]` = scanned clean, `NULL` = never scanned) and surface in the UI as an amber indicator. `bandit` is a dependency baked into the `flip-api` image, not the mounted `src/`: under the dev pull-by-default sourcing above, running without `BUILD=true` after picking up this dependency serves an image with no `bandit` binary, so every upload silently records `NULL` findings while the UI and docs still claim a scan ran.
 - `SCHEDULER_MALWARE_SCAN_RECONCILE_RATE` — how often (minutes, default 1) the sweep re-checks uploads left `SCANNING` by an app restart mid-scan.
 
 ## Deployment Architecture
@@ -400,7 +407,7 @@ After changes, evaluate if docs need updating:
 
 ## CI/CD
 
-GitHub Actions: `test_flip_api.yml`, `test_flip_ui.yml`, `test_trust_*.yml`, `docker_build_*.yml`, `validate_terraform.yml`, `secret-scanning.yml`, `docs.yml`, `pr_acceptance_criteria.yml`. Run locally: `make ci` (uses `act`).
+GitHub Actions: `test_flip_api.yml`, `test_flip_ui.yml`, `test_trust_*.yml`, `fl-tutorials-tests.yml`, `docker_build_*.yml`, `validate_terraform.yml`, `secret-scanning.yml`, `docs.yml`, `pr_acceptance_criteria.yml`. Run locally: `make ci` (uses `act`).
 
 ### Docker image builds: gated on tests, manual trigger for branches
 

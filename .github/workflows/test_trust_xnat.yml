@@ -21,8 +21,15 @@ on:
     branches: [main, develop]
     paths:
       - "trust/xnat/xnat/config/anon_script.das"
+      - "trust/xnat/xnat/config/configure-xnat.sh"
+      - "trust/xnat/xnat/config/wait-for-xnat-plugins.sh"
+      - "trust/xnat/scripts/ensure_plugins.sh"
       - "trust/xnat/tests/**"
       - "trust/xnat/Makefile"
+      - "trust/Makefile"
+      - "Makefile"
+      - "flip-api/Makefile"
+      - "deploy/fl_backend.mk"
       - "trust/xnat/xnat/wait-for-postgres.sh"
       - "trust/xnat/postgres/guard-xnat-db-passwords.sh"
       - "trust/imaging-api/imaging_api/config.py"
@@ -32,8 +39,15 @@ on:
     branches: [main, develop]
     paths:
       - "trust/xnat/xnat/config/anon_script.das"
+      - "trust/xnat/xnat/config/configure-xnat.sh"
+      - "trust/xnat/xnat/config/wait-for-xnat-plugins.sh"
+      - "trust/xnat/scripts/ensure_plugins.sh"
       - "trust/xnat/tests/**"
       - "trust/xnat/Makefile"
+      - "trust/Makefile"
+      - "Makefile"
+      - "flip-api/Makefile"
+      - "deploy/fl_backend.mk"
       - "trust/xnat/xnat/wait-for-postgres.sh"
       - "trust/xnat/postgres/guard-xnat-db-passwords.sh"
       - "trust/imaging-api/imaging_api/config.py"

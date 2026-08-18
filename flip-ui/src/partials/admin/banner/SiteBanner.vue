@@ -50,6 +50,16 @@
                     <div class="relative p-4">
                         <div class="overflow-hidden border border-gray-300 rounded-lg shadow-lg dark:border-dark-border bg-gray-50 dark:bg-dark-canvas">
                             <div class="w-full">
+                                <!--
+                                    This duplicates AiBanner.vue's markup rather than rendering
+                                    <AiBanner>, which is why safeExternalUrl has to be applied a
+                                    second time here — the component gates its own link internally.
+                                    Rendering the real component would keep the scheme gate in one
+                                    place (and show admins exactly what users see), but it also
+                                    renders a dismiss button and drops the arrow icon, so the
+                                    preview would change. Left as-is deliberately: a security fix
+                                    is the wrong PR to restyle an admin screen in.
+                                -->
                                 <div class="p-2 transition bg-primary-500 sm:p-3">
                                     <div class="flex flex-wrap items-center justify-between">
                                         <div class="flex items-center flex-1">
@@ -61,12 +71,13 @@
                                             <p class="ml-3 font-medium text-white" v-text="values.message" />
                                         </div>
                                         <div
-                                            v-if="values.link"
+                                            v-if="safeExternalUrl(values.link)"
                                             class="flex-shrink-0 order-3 w-full mt-2 sm:order-2 sm:mt-0 sm:w-auto"
                                         >
                                             <a
-                                                :href="values.link"
+                                                :href="safeExternalUrl(values.link)"
                                                 target="_blank"
+                                                rel="noopener noreferrer"
                                                 class="flex items-center justify-center px-4 py-2 text-white group"
                                             >
                                                 Learn more
@@ -156,6 +167,7 @@ import AiLoader from "@/components/AiLoader/AiLoader.vue";
 import AiSkeleton from "@/components/AiSkeleton/AiSkeleton.vue";
 import AiTextArea from "@/components/AiTextArea/AiTextArea.vue";
 import { ISiteBanner, useSiteDetailsStore } from "@/store/siteDetailsStore";
+import { safeExternalUrl } from "@/utils/helpers";
 
 const details = useSiteDetailsStore();
 const loadingButton = ref(false);

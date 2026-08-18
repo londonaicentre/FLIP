@@ -19,6 +19,14 @@ exactly once, and each accession must carry exactly the lesion its panel claims 
 finding in the split's cohort dataframe. A mislabelled figure therefore fails loudly rather than
 shipping.
 
+**This script reads pixels through ``pydicom`` directly, not through the app's transform chain.**
+That is why it drew upright radiographs the entire time the model was being fed the transpose of
+them (FLIP#821) — it is a picture of the data, not of what the model sees, and it cannot become one
+without pulling MONAI into the ``docs`` extra. The gap is closed at the other end instead:
+``app_files/data_utils.py`` pins its loader to ``PydicomReader(swap_ij=False)``, which returns the
+array exactly as ``PixelData`` stores it, and ``fl-tutorials/tests/`` asserts that equality on every
+app on this path. Treat that suite, not this figure, as the evidence.
+
     uv run --extra docs python docs/make_dataset_figure.py --data-root /path/to/dataset
     make dataset-figure DATA_ROOT=/path/to/dataset
 """

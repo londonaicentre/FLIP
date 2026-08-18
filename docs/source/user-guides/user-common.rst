@@ -403,9 +403,16 @@ Upload Files
 
    .. warning::
 
-      **Your Python source is not analysed for malicious code.** ``.py`` files are checked for type
-      and released like any other file, then executed as-is on every participating trust. Only upload
-      code you have written or reviewed yourself, and treat code from third parties as untrusted.
+      **Your Python source is not blocked on the basis of what it does.** ``.py`` files are checked
+      for type and released like any other file, then executed as-is on every participating trust.
+      A non-blocking scan flags common risky patterns (``subprocess``, ``os.system``, ``eval``,
+      hardcoded credentials — and, since the scan uses Bandit's default rule set, some routine
+      patterns in ML code such as ``torch.load`` or ``assert``) as an amber indicator on the
+      model's file list, visible to you as the uploader and to anyone else who later opens the
+      model page. This is an advisory signal, not a gate — it does not stop obfuscated or
+      otherwise-undetected code from running, and an indicator does not by itself mean the file is
+      unsafe. Only upload code you have written or reviewed yourself, and treat code from third
+      parties as untrusted.
 
    Only recognised file types may be uploaded (by default ``.py``, ``.json``, ``.toml``, ``.pt``,
    ``.pth``, ``.pkl``, ``.txt``, ``.yaml``, ``.yml`` and ``.safetensors``). Anything else — including
@@ -565,7 +572,15 @@ Hovering over the graphs at various points will display the values.
 Connection Status
 *****************
 
-The Connection Status page shows the live state of the federation. Each participating Trust is shown as online, degraded or offline based on its most recent heartbeat, and can be viewed as a list or as a radial topology.
+The Connection Status page shows the live state of the federation. Each participating Trust reports the health of its core platform services (trust-api, data-access-api, imaging-api, XNAT, OMOP and the PACS/DICOM link), and its state is derived from those reports: Offline when the Trust has stopped sending heartbeats, Degraded when any other service is down or degraded, otherwise Online. The list can also be viewed as a radial topology.
+
+The Services column shows one status dot per container. Clicking a Trust row opens a detail drawer listing each container's status, running version and probe response time — so you can see *why* a Trust is degraded without access to the Trust's own network. The page and the drawer are available to every signed-in user, not only administrators: if a project stalls, you can check whether the Trust holding your data is reporting a failing service before raising it with the platform team. A Trust that has not reported container health (or whose report has gone stale) shows grey "No data" markers and falls back to heartbeat-only state.
+
+.. figure:: ../assets/flip/connection-status-drawer.png
+   :width: 600
+   :align: center
+
+   The Trust detail drawer: this Trust is Degraded because its XNAT is unreachable.
 
 The FL nets card reports the FL client-to-server connectivity for each net — that is, whether each Trust's FL client is connected. No training requests can be sent to a Trust whose FL client is offline.
 
@@ -573,4 +588,4 @@ The FL nets card reports the FL client-to-server connectivity for each net — t
    :width: 600
    :align: center
 
-   Viewing the federation connection status.
+   Viewing the federation connection status and a Trust's container health.

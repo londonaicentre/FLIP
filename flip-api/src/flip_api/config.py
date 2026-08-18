@@ -112,6 +112,11 @@ class Settings(BaseSettings):
     # a scan failure (fail-closed -> ERROR), never as clean.
     PICKLESCAN_TIMEOUT_SECONDS: int = 120
 
+    # Hard wall-clock cap on a single Bandit run over a .py upload (#877).
+    # Unlike PICKLESCAN_TIMEOUT_SECONDS, a timeout here just means no findings
+    # are recorded (fail-open) — Bandit is an advisory signal, not a gate.
+    BANDIT_TIMEOUT_SECONDS: int = 60
+
     # Reimport imaging project studies
     PROJECT_REIMPORT_RATE: int = 60  # How often to reimport studies for a given project (in minutes)
     MAX_REIMPORT_COUNT: int = 5
@@ -215,7 +220,12 @@ class Settings(BaseSettings):
             return 1800
         return v
 
-    @field_validator("PICKLESCAN_TIMEOUT_SECONDS", "SCHEDULER_MALWARE_SCAN_RECONCILE_RATE", mode="before")
+    @field_validator(
+        "PICKLESCAN_TIMEOUT_SECONDS",
+        "BANDIT_TIMEOUT_SECONDS",
+        "SCHEDULER_MALWARE_SCAN_RECONCILE_RATE",
+        mode="before",
+    )
     @classmethod
     def coerce_empty_scan_int(cls, v: object, info: ValidationInfo) -> object:
         """Treat an empty-string scan-timing setting as the field default.

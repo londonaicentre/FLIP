@@ -515,6 +515,54 @@ def check_for_available_net(session: Session) -> ISchedulerResponse | None:
         raise DatabaseError("Error checking for available net") from e
 
 
+def _retire_job_with_unapproved_trusts(job: FLJob, scheduler_id: UUID, session: Session) -> None:
+    """Retire a queued job whose trusts are not approved for its model, and free the scheduler.
+
+    Args:
+        job (FLJob): The queued job at the head of the queue, already loaded in this session.
+        scheduler_id (UUID): The scheduler that picked the job up.
+        session (Session): The database session.
+
+    Returns:
+        None
+    """
+    logger.error(
+        f"Job {job.id} references trust ids not approved for model {job.model_id}; "
+        "retiring it so it cannot block the queue"
+    )
+    job.status = JobStatus.DELETED
+
+    # Commit the retirement on its own, before the bookkeeping below. Everything after this
+    # point can raise — add_log rolls the session back and re-raises on failure — and a
+    # rollback would discard an uncommitted DELETED, returning the job to QUEUED. It is the
+    # globally-earliest queued job, so the next tick would select it again: the FLIP#894
+    # wedge, restored by the code meant to end it. Committing here also stops the
+    # self-exclusion in the query below depending on autoflush.
+    session.commit()
+
+    # A model can have been retried while this older job was waiting in the queue. Do not
+    # transition the model to ERROR in that case: update_model_status(ERROR) releases the
+    # latest non-deleted job for the model, which would silently complete the valid retry.
+    active_job = session.exec(
+        select(FLJob.id)
+        .where(
+            FLJob.model_id == job.model_id,
+            col(FLJob.status).in_((JobStatus.QUEUED, JobStatus.IN_PROGRESS)),
+        )
+        .limit(1)
+    ).first()
+    if not active_job:
+        update_model_status(job.model_id, ModelStatus.ERROR, session)
+    add_log(
+        job.model_id,
+        "Training could not start: the selected trusts are not approved for this model.",
+        session,
+        success=False,
+    )
+    session.commit()
+    revert_scheduler_pickup(scheduler_id, session)
+
+
 def check_for_queued_jobs(scheduler_id: UUID, session: Session) -> IJobResponse | None:
     """
     Checks for any queued jobs for a given scheduler.
@@ -524,12 +572,13 @@ def check_for_queued_jobs(scheduler_id: UUID, session: Session) -> IJobResponse 
         session (Session): The database session.
 
     Returns:
-        IJobResponse | None: The job response if a queued job is found, otherwise None.
+        IJobResponse | None: The job response if a queued job is found, otherwise None. Also None
+            when the job at the head of the queue is retired for referencing trusts that are not
+            approved for its model — it is removed rather than raised on, so the queue drains.
 
     Raises:
         flip_api.utils.exceptions.NotFoundError: If the scheduler referenced by ``scheduler_id`` cannot be found.
         DatabaseError: If the query or update fails at the DB layer.
-        Exception: If the job references invalid trusts.
     """
     logger.info("Checking for any queued jobs...")
 
@@ -557,9 +606,16 @@ def check_for_queued_jobs(scheduler_id: UUID, session: Session) -> IJobResponse 
         job.started = datetime.utcnow()
 
         job_trust_ids = [t.id for t in job.trusts]
-        # Validate trusts
+        # Validate trusts. A job that references trusts not approved for its model can never run,
+        # so retire it here rather than raising: the raise left the job QUEUED (the status write
+        # above rolls back with the transaction), and because this query always picks the
+        # globally-earliest queued job, the same unrunnable job was re-selected on every tick and
+        # blocked every job behind it, on every net, indefinitely (FLIP#894). initiate_training now
+        # rejects these at the boundary, so reaching this branch means a job predating that check
+        # or one whose model approvals changed after it was queued.
         if not validate_trust_ids(job.model_id, job_trust_ids, session):
-            raise Exception(f"Job {job.id} references trust ids not approved for model {job.model_id}")
+            _retire_job_with_unapproved_trusts(job, scheduler_id, session)
+            return None
 
         # Assign job to scheduler
         scheduler = session.get(FLScheduler, scheduler_id)
