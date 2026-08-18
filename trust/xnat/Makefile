@@ -77,14 +77,21 @@ KIT_FILE := $(if $(wildcard ../.env.$(KIT).$(ENV)),../.env.$(KIT).$(ENV),../.env
 ifneq ("$(wildcard $(KIT_FILE))","")
 export $(shell sed 's/=.*//' $(KIT_FILE))
 endif
+
+# INSTANCE_PREFIX for the per-instance trust network. FLIP_INSTANCE arrives already exported
+# by ../../deploy/instance.mk when trust/Makefile drives this sub-make; on the standalone
+# `make -C trust/xnat ...` path it must come from the environment, which
+# check_network_matches_trust below verifies rather than trusts — an unprefixed XNAT beside a
+# prefixed trust deploys healthily and simply cannot reach imaging-api.
+include ../../deploy/instance.mk
 # Slot NUMBER the hub assigned this trust, read from the kit file — NOT a
 # substring of the CODE. Drives the stack name (xnat<N>) and overlay network
-# (deploy_trust-network-<N>); trust/Makefile derives TRUST_NUM from
+# ($(INSTANCE_PREFIX)deploy_trust-network-<N>); trust/Makefile derives TRUST_NUM from
 # FL_KIT_SLOT_NUMBER identically, so XNAT and the trust core services land on
 # the same network.
 TRUST_NUM := $(FL_KIT_SLOT_NUMBER)
 XNAT_STACK := xnat$(TRUST_NUM)
-XNAT_NETWORK := deploy_trust-network-$(TRUST_NUM)
+XNAT_NETWORK := $(INSTANCE_PREFIX)deploy_trust-network-$(TRUST_NUM)
 # Defaults are the Trust_1 allocation, so a single-trust host (EC2 / on-prem)
 # needs no XNAT port entries in its kit file.
 XNAT_PORT_EFFECTIVE := $(or $(XNAT_PORT),8104)
@@ -384,8 +391,29 @@ xnat-configure:
 	docker exec $$CONTAINER bash -c 'set -o pipefail; cd /data/xnat/config && LOG_FILE="configure-xnat-$(XNAT_PROJECT).log" && rm -f "$$LOG_FILE" && bash configure-xnat.sh 2>&1 | tee "$$LOG_FILE"' && \
 	docker exec $$CONTAINER bash -c 'set -o pipefail; cd /data/xnat/config && LOG_FILE="configure-dcm2niix-$(XNAT_PROJECT).log" && rm -f "$$LOG_FILE" && bash configure-dcm2niix.sh 2>&1 | tee "$$LOG_FILE"'
 
+# Guard: XNAT and the trust core services must share one network. up-trust brings the trust
+# compose up before invoking us, so the trust's real attachment is observable — compare it
+# rather than assume both sides derived the same FLIP_INSTANCE. A mismatch (most likely the
+# standalone path with FLIP_INSTANCE unset) otherwise deploys a healthy-looking XNAT that
+# imaging-api cannot reach, surfacing much later as an opaque image-pull failure.
+define check_network_matches_trust
+	@actual=$$(docker ps --filter "label=com.docker.compose.project=trust$(TRUST_NUM)" -q 2>/dev/null | head -1); \
+	if [ -n "$$actual" ]; then \
+	  nets=$$(docker inspect "$$actual" --format '{{range $$k, $$v := .NetworkSettings.Networks}}{{$$k}} {{end}}' 2>/dev/null); \
+	  case " $$nets " in \
+	    *" $(XNAT_NETWORK) "*) ;; \
+	    *) echo "❌ XNAT would use $(XNAT_NETWORK), but trust$(TRUST_NUM) is on: $$nets"; \
+	       echo "   They must share a trust network or imaging-api cannot reach XNAT."; \
+	       echo "   Re-run with FLIP_INSTANCE set to the instance that owns trust$(TRUST_NUM)"; \
+	       echo "   (or unset it, if that trust belongs to the default instance)."; \
+	       exit 1;; \
+	  esac; \
+	fi
+endef
+
 create-xnat-network:
 	$(require_kit)
+	$(check_network_matches_trust)
 	@echo "🔧 Ensuring external Docker network $(XNAT_NETWORK) exists..."
 	@docker network inspect $(XNAT_NETWORK) >/dev/null 2>&1 || \
 		docker network create --driver overlay --attachable $(XNAT_NETWORK)

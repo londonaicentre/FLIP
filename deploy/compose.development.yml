@@ -282,11 +282,11 @@ networks:
 
   trust-network-1:
     external: true
-    name: deploy_trust-network-1
+    name: ${FLIP_INSTANCE:+$FLIP_INSTANCE-}deploy_trust-network-1
 
   trust-network-2:
     external: true
-    name: deploy_trust-network-2
+    name: ${FLIP_INSTANCE:+$FLIP_INSTANCE-}deploy_trust-network-2
 
   shared-net-1:
     external: true

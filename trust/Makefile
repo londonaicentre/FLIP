@@ -175,7 +175,7 @@ GPU_STATUS_MSG := $(if $(GPU_OVERRIDE),🖥️  GPU passthrough on — fl-client
 # `VAR=val cmd` shell prefix ("EC2: not found"); single-quoted it breaks on the
 # apostrophe. Double quotes handle both (trust names never contain $/backtick/").
 TRUST_VARS = \
-	TRUST_NETWORK_NAME=deploy_trust-network-$(TRUST_NUM) \
+	TRUST_NETWORK_NAME=$(INSTANCE_PREFIX)deploy_trust-network-$(TRUST_NUM) \
 	TRUST_NUMBER=$(TRUST_NUM) \
 	TRUST_NAME="$(or $(TRUST_NAME),$(FL_KIT_SLOT),$(KIT))"
 
@@ -410,27 +410,25 @@ create-networks-core:
 	$(call ensure_bridge_network,$(INSTANCE_PREFIX)deploy_shared-net-1)
 	$(call ensure_bridge_network,$(INSTANCE_PREFIX)deploy_shared-net-2)
 
+# Overlay, not bridge: XNAT attaches from a swarm stack, so these cannot use the
+# ensure_bridge_network macro. Prefixed like every other per-instance network — a trust
+# number alone does not isolate them, since a second hub hands out slot 1 again.
 create-networks-trust-1:
-	@{ docker network inspect deploy_trust-network-1 >/dev/null 2>&1 || docker network create --driver overlay --attachable deploy_trust-network-1; }
+	@{ docker network inspect $(INSTANCE_PREFIX)deploy_trust-network-1 >/dev/null 2>&1 || docker network create --driver overlay --attachable $(INSTANCE_PREFIX)deploy_trust-network-1; }
 
 create-networks-trust-2:
-	@{ docker network inspect deploy_trust-network-2 >/dev/null 2>&1 || docker network create --driver overlay --attachable deploy_trust-network-2; }
+	@{ docker network inspect $(INSTANCE_PREFIX)deploy_trust-network-2 >/dev/null 2>&1 || docker network create --driver overlay --attachable $(INSTANCE_PREFIX)deploy_trust-network-2; }
 
 create-networks: create-networks-core create-networks-trust-1 create-networks-trust-2
 
-# deploy_trust-network-* are keyed by trust number, NOT by FLIP_INSTANCE, so every
-# instance shares them. Removing them while tearing down a secondary instance would
-# delete the default stack's trust networks — today docker happens to refuse (they
-# are in use), but that is luck, not a guard: with the trusts down it would succeed
-# and take the default stack's networks with it. Hence the prefix check below.
+# Every network here carries the instance prefix, so an instance owns all of them and
+# removing them is unconditional. (Before the trust networks were prefixed they were
+# shared across instances, and this target had to refuse to delete them — that guard
+# would now leak one overlay network per instance instead of protecting anything.)
 remove-networks:
 	@echo "🗑️  Removing all trust networks..."
 	@docker network rm $(INSTANCE_PREFIX)central-hub-trust-apis-network $(INSTANCE_PREFIX)deploy_shared-net-1 $(INSTANCE_PREFIX)deploy_shared-net-2 2>/dev/null || true
-	@if [ -z "$(INSTANCE_PREFIX)" ]; then \
-		docker network rm deploy_trust-network-1 deploy_trust-network-2 2>/dev/null || true; \
-	else \
-		echo "  ↩️  keeping deploy_trust-network-{1,2} — shared across instances, not owned by '$(INSTANCE_PREFIX)'"; \
-	fi
+	@docker network rm $(INSTANCE_PREFIX)deploy_trust-network-1 $(INSTANCE_PREFIX)deploy_trust-network-2 2>/dev/null || true
 	@echo "✅ Trust networks removed!"
 
 recreate-networks: remove-networks create-networks
