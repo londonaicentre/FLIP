@@ -175,3 +175,40 @@ class TestTrainPhaseWiring:
             call for call in flip.send_event.call_args_list if call.kwargs["event_type"] == FLLogEvent.ROUND_AGGREGATED
         )
         assert aggregated_event.kwargs["details"] == {"returned": 2, "expected": 2}
+
+
+class TestMinClients:
+    """min_clients pins every node threshold to the participating-trust count.
+
+    flwr's FedAvg defaults all three to 2, so a single-trust FLIP run would otherwise
+    wait for a second node that never arrives (silently, until start()'s 3600s timeout).
+    Pinning them also stops a multi-trust run beginning before every expected trust has
+    connected, which would train on part of the federation without saying so.
+    """
+
+    def test_min_clients_pins_all_three_node_thresholds(self):
+        strategy = _strategy(min_clients=1)
+
+        assert strategy.min_train_nodes == 1
+        assert strategy.min_evaluate_nodes == 1
+        assert strategy.min_available_nodes == 1
+
+    def test_min_clients_uses_the_trust_count_not_a_constant(self):
+        strategy = _strategy(min_clients=3)
+
+        assert strategy.min_train_nodes == 3
+        assert strategy.min_evaluate_nodes == 3
+        assert strategy.min_available_nodes == 3
+
+    def test_explicit_thresholds_win_over_min_clients(self):
+        strategy = _strategy(min_clients=2, min_available_nodes=5)
+
+        assert strategy.min_available_nodes == 5
+        assert strategy.min_train_nodes == 2
+
+    def test_omitting_min_clients_leaves_flwr_defaults_untouched(self):
+        strategy = _strategy()
+
+        assert strategy.min_train_nodes == 2
+        assert strategy.min_evaluate_nodes == 2
+        assert strategy.min_available_nodes == 2

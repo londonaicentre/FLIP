@@ -62,6 +62,10 @@ dp-clipping-norm = 1.0
 dp-sensitivity = 1e-4
 dp-epsilon = 10.0
 dp-delta = 1e-5
+# Declared so fl-api can override it at submit time with the participating-trust count
+# (flwr rejects a --run-config key that the app config does not declare). Drives FedAvg's
+# node thresholds; see FlipFedAvg's min_clients.
+flip-min-clients = 1
 
 # Default federation to use when running the app
 

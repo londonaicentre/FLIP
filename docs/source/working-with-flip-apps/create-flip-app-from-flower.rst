@@ -177,6 +177,23 @@ If you subclass a strategy to add custom aggregation or post-round hooks, the ``
            # push any custom server-side signals here
            return result
 
+.. warning::
+
+   Set the strategy's node thresholds from ``flip-min-clients``. Flower defaults ``min_train_nodes``, ``min_evaluate_nodes`` and ``min_available_nodes`` to **2**, so a strategy left on those defaults never starts a round on a single-trust project: it waits for a second node that never arrives, silently, until ``start()``'s 3600s timeout. FLIP's FL API injects ``flip-min-clients`` with the participating-trust count, the same value the NVFLARE adapter puts in ``min_clients``.
+
+   .. code-block:: python
+
+      min_clients = int(run_config.get("flip-min-clients", 1))
+      strategy = FedAvg(
+          min_train_nodes=min_clients,
+          min_evaluate_nodes=min_clients,
+          min_available_nodes=min_clients,
+      )
+
+   FLIP's own strategies (``FlipFedAvg``, and the app templates that subclass it) take this as a single ``min_clients=`` argument instead. Declare ``flip-min-clients`` in ``[tool.flwr.app.config]`` alongside the other ``flip-*`` keys, or flwr rejects the injected override.
+
+   Take the value from the run config rather than hardcoding it: pinned to 1, a multi-trust run can begin before every trust has connected and train on part of the federation without saying so.
+
 ****************************************
 ClientApp: fetching the FLIP DataFrame
 ****************************************

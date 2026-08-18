@@ -50,6 +50,9 @@ def main(grid: Grid, context: Context, flip: FLIP = FLIP()) -> None:
     run_config = context.run_config
     model_id = run_config.get("flip-model-id", "monai-flower-tutorial-model")
     num_rounds = int(run_config.get("num-server-rounds", 1))
+    # Participating-trust count, injected into the run config by fl-api; see FlipFedAvg's
+    # min_clients. The 1 fallback keeps a local simulator run (no fl-api, no injection) working.
+    min_clients = int(run_config.get("flip-min-clients", 1))
 
     flip.update_status(model_id, ModelStatus.INITIATED)
 
@@ -75,6 +78,7 @@ def main(grid: Grid, context: Context, flip: FLIP = FLIP()) -> None:
     strategy = FedAvgWithClientMetrics(
         flip=flip,
         model_id=model_id,
+        min_clients=min_clients,
         fraction_train=1.0,
         fraction_evaluate=1.0,
         best_model_metric=best_model_metric,

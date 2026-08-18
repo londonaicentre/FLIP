@@ -28,13 +28,23 @@ def main(grid: Grid, context: Context) -> None:
 
     # Read run config
     num_rounds: int = context.run_config["num-server-rounds"]
+    # Participating-trust count, injected into the run config by fl-api. flwr defaults every node
+    # threshold to 2, so without this a single-trust run never starts a round — it waits for a
+    # second node until start()'s 3600s timeout, logging nothing. This app builds on flwr's FedAvg
+    # directly, so it sets the three thresholds itself; the FLIP strategies take one min_clients
+    # argument instead (see FlipFedAvg). The 1 fallback keeps a local simulator run working.
+    min_clients: int = int(context.run_config.get("flip-min-clients", 1))
 
     # Load global model
     model = get_dummy_model()
     arrays = ArrayRecord(model)
 
     # Initialize FedAvg strategy
-    strategy = FedAvg()
+    strategy = FedAvg(
+        min_train_nodes=min_clients,
+        min_evaluate_nodes=min_clients,
+        min_available_nodes=min_clients,
+    )
 
     # Start strategy, run FedAvg for `num_rounds`. The returned result carries the final arrays and
     # aggregated metrics; this toy app has nothing to persist, so it is deliberately not bound.

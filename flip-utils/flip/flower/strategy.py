@@ -68,6 +68,9 @@ class FlipFedAvg(FedAvg):
             global model on; ``None`` disables selection.
         best_model_metric_minimize: Whether lower values of that metric are
             better (e.g. a loss).
+        min_clients: Number of participating trusts. Pins ``min_train_nodes``,
+            ``min_evaluate_nodes`` and ``min_available_nodes`` unless the caller sets
+            them explicitly. ``None`` leaves ``FedAvg``'s own defaults (2) in place.
         **kwargs: Passed through to ``FedAvg``.
     """
 
@@ -78,8 +81,22 @@ class FlipFedAvg(FedAvg):
         *args,
         best_model_metric: str | None = None,
         best_model_metric_minimize: bool = False,
+        min_clients: int | None = None,
         **kwargs,
     ):
+        # One knob for all three of FedAvg's node thresholds, fed from the participating-trust
+        # count (fl-api-flower injects it as flip-min-clients; the NVFLARE adapter does the same
+        # thing via config["min_clients"] = len(trusts)). Without it every FLIP Flower app
+        # inherits flwr's default of 2: a single-trust run then waits for a second node that
+        # never arrives, silently, until start()'s 3600s timeout. Deriving it from the trust
+        # count rather than pinning it to 1 also keeps the other guarantee — a multi-trust run
+        # will not begin before every expected trust has connected, which would otherwise train
+        # on part of the federation without saying so. setdefault, so an app that sets a
+        # threshold explicitly still wins.
+        if min_clients is not None:
+            kwargs.setdefault("min_train_nodes", min_clients)
+            kwargs.setdefault("min_evaluate_nodes", min_clients)
+            kwargs.setdefault("min_available_nodes", min_clients)
         super().__init__(*args, **kwargs)
         self.flip = flip
         self.model_id = model_id
