@@ -197,10 +197,13 @@ Appendix A — Cyber Essentials
        remote-login port.
      - Operational
    * - **5. Malware and code protection**
-     - Uploaded model files are checked before use; the containers that execute training
+     - Uploaded model files are checked before use, including a non-blocking static-analysis
+       scan of Python source for common risky patterns; the containers that execute training
        workloads are isolated and hardened; automated secret scanning on every change;
-       supply-chain cooldown; cloud-native runtime threat detection.
-     - Operational; researcher-code review gate in delivery
+       supply-chain cooldown; cloud-native runtime threat detection. Arbitrary Python logic in
+       uploaded training code is not sandboxed at runtime — the accepted control is uploader
+       self-review plus RBAC, not an enforced platform gate (FLIP#877, GHSA-8465).
+     - Operational
 
 *****************************************************
 Appendix B — NHS Data Security and Protection Toolkit
@@ -291,7 +294,7 @@ Objective A — Managing security risk
    * - **A4 Supply chain**
      - Automated dependency vulnerability monitoring; 72-hour cooldown on new packages;
        lockfile-pinned builds; curated base application templates.
-     - Operational; researcher-code review gate in delivery
+     - Operational
 
 Objective B — Protecting against cyber attack
 =============================================

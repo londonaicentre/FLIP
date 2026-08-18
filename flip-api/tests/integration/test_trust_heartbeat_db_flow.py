@@ -21,12 +21,23 @@ tests cannot.
 """
 
 import hashlib
+from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
 from sqlmodel import select
 
 from flip_api.config import get_settings
 from flip_api.db.models.main_models import Trust
+from flip_api.domain.schemas.private import ServiceHealthEntry
+
+
+def _register_trust(session, name: str, api_key: str) -> UUID:
+    """Insert a trust row authenticating with ``api_key`` and return its id."""
+    trust = Trust(name=name, api_key_hash=hashlib.sha256(api_key.encode()).hexdigest())
+    session.add(trust)
+    session.commit()
+    session.refresh(trust)
+    return trust.id
 
 
 def test_trust_with_spaced_name_authenticates_and_heartbeats(client, session):
@@ -66,3 +77,74 @@ def test_invalid_api_key_returns_401(client):
     response = client.post("/api/trust/heartbeat", headers={header: "definitely-not-a-real-key"})
 
     assert response.status_code == 401
+
+
+def test_heartbeat_body_round_trips_jsonb_and_is_server_stamped(client, session):
+    """A snapshot body survives the JSONB round-trip; services_health_at is stamped
+    on receipt — the payload's own (year 2020) collected_at is never trusted."""
+    api_key = "integration-test-snapshot-key"
+    trust_id = _register_trust(session, "Snapshot Trust", api_key)
+    services = {
+        "trust-api": {"status": "healthy", "version": "0.3.0", "response_ms": None},
+        "xnat": {"status": "down", "version": None, "response_ms": None},
+        "omop": {"status": "degraded", "version": None, "response_ms": 1400},
+    }
+    before = datetime.now(timezone.utc).replace(tzinfo=None)
+
+    header = get_settings().TRUST_API_KEY_HEADER
+    response = client.post(
+        "/api/trust/heartbeat",
+        headers={header: api_key},
+        json={"services": services, "collected_at": "2020-01-01T00:00:00+00:00"},
+    )
+
+    assert response.status_code == 200, response.text
+    session.expire_all()
+    refreshed = session.exec(select(Trust).where(Trust.id == trust_id)).first()
+    assert refreshed is not None
+    assert refreshed.services_health == services
+    # Shape-sync tripwire: everything the hub persists (and passes through on
+    # GET /trust) must keep re-parsing as ServiceHealthEntry — if the entry model
+    # is ever reshaped, this fails instead of the UI silently rendering em dashes.
+    for entry in refreshed.services_health.values():
+        ServiceHealthEntry.model_validate(entry)
+    # The column is `timestamp without time zone` holding UTC; compare naive-UTC.
+    assert refreshed.services_health_at is not None
+    assert refreshed.services_health_at >= before - timedelta(seconds=1)
+
+
+def test_bodyless_heartbeat_leaves_services_columns_null(client, session):
+    """A pre-collector trust-api (no body) stamps last_heartbeat only."""
+    api_key = "integration-test-bodyless-key"
+    trust_id = _register_trust(session, "Legacy Trust", api_key)
+
+    header = get_settings().TRUST_API_KEY_HEADER
+    response = client.post("/api/trust/heartbeat", headers={header: api_key})
+
+    assert response.status_code == 200, response.text
+    session.expire_all()
+    refreshed = session.exec(select(Trust).where(Trust.id == trust_id)).first()
+    assert refreshed is not None
+    assert refreshed.last_heartbeat is not None
+    assert refreshed.services_health is None
+    assert refreshed.services_health_at is None
+
+
+def test_heartbeat_rejects_invalid_snapshot_and_persists_nothing(client, session):
+    """An invalid snapshot 422s and neither timestamp nor services move."""
+    api_key = "integration-test-invalid-key"
+    trust_id = _register_trust(session, "Invalid Snapshot Trust", api_key)
+
+    header = get_settings().TRUST_API_KEY_HEADER
+    response = client.post(
+        "/api/trust/heartbeat",
+        headers={header: api_key},
+        json={"services": {"xnat": {"status": "sideways"}}},
+    )
+
+    assert response.status_code == 422
+    session.expire_all()
+    refreshed = session.exec(select(Trust).where(Trust.id == trust_id)).first()
+    assert refreshed is not None
+    assert refreshed.last_heartbeat is None
+    assert refreshed.services_health is None

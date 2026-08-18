@@ -260,6 +260,7 @@ web_modules/
 # dotenv environment variable files
 .env.development
 .env.development.local
+.env.e2e
 .env.test.local
 .env.production.local
 .env.local
@@ -455,16 +456,12 @@ flip-utils/dist/
 # version control (covered by .claude/* above, listed explicitly for clarity).
 .claude/worktrees/
 
-# fl-tutorials generated / uncommitted artifacts (data/, tutorials/testing/tmp, the
-# spleen-seg uv.lock), scoped under the
+# fl-tutorials generated / uncommitted artifacts (data/, the spleen-seg uv.lock), scoped under the
 # per-backend tutorial trees (fl-tutorials/<backend>/) so a bare `data/` doesn't over-match
 # other data/ dirs in the monorepo:
 # - generated tutorial datasets (spleen/xray images + accession CSVs)
-# - testing-harness scratch dir
 # - tutorial uv.lock (tutorials intentionally don't pin a strict lockfile)
 fl-tutorials/nvflare/data/
-fl-tutorials/nvflare/testing/tmp/
-fl-tutorials/nvflare/testing/runs/workspace/
 fl-tutorials/nvflare/image_segmentation/3d_spleen_segmentation/uv.lock
 fl-services/flower/provision/creds/
 fl-services/flower/runs/

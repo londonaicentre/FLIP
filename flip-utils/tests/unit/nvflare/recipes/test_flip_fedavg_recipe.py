@@ -16,9 +16,9 @@ from pathlib import Path
 
 import pytest
 
-# PTFileModelPersistor's model={"path": "models.get_model"} triggers an import of the user's
-# ``models`` module at construction. In a real job that module lives in custom/; under unit
-# tests we inject a stub before importing the recipe.
+# The recipe's dict-config model refs ({"path": "models.get_model"}) resolve lazily at runtime,
+# not at construction/export — but the simulator-driven tests below DO resolve them, and in a
+# real job the module lives in custom/; under unit tests we inject a stub they can swap.
 _stub_models = types.ModuleType("models")
 _stub_models.get_model = lambda: object()
 sys.modules.setdefault("models", _stub_models)

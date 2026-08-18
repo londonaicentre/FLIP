@@ -1,17 +1,27 @@
 {
   "format_version": 2,
-  "model_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
-  "python_path": [".", "custom"],
-  "global_rounds": 3,
-  "min_clients": 1,
-  "server": {
-    "heart_beat_timeout": 600
-  },
-  "task_data_filters": [],
-  "task_result_filters": [
+  "workflows": [
     {
-      "tasks": ["evaluation", "post_task"],
-      "filters": [{"path": "flip.nvflare.components.ClientExceptionReporter", "args": {}}]
+      "id": "controller",
+      "path": "flip.nvflare.controllers.init_evaluation.InitEvaluation",
+      "args": {
+        "model_id": null
+      }
+    },
+    {
+      "id": "controller1",
+      "path": "nvflare.app_common.workflows.global_model_eval.GlobalModelEval",
+      "args": {
+        "validation_timeout": 12000,
+        "model_locator_id": "model_locator"
+      }
+    },
+    {
+      "id": "controller2",
+      "path": "flip.nvflare.controllers.broadcast_task.BroadcastTask",
+      "args": {
+        "task_name": "post_validation"
+      }
     }
   ],
   "components": [
@@ -19,67 +29,46 @@
       "id": "persistor",
       "path": "nvflare.app_opt.pt.file_model_persistor.PTFileModelPersistor",
       "args": {
+        "model": {
+          "path": "models.get_model"
+        }
       }
-    },
-    {
-      "id": "shareable_generator",
-      "path": "nvflare.app_common.shareablegenerators.full_model_shareable_generator.FullModelShareableGenerator",
-      "args": {}
     },
     {
       "id": "model_locator",
-      "path": "flip.nvflare.components.EvaluationPTModelLocator",
-      "args": {
-        "model_id": "{model_id}"
-      }
+      "path": "flip.nvflare.components.pt_model_locator.EvaluationModelLocator",
+      "args": {}
     },
     {
       "id": "json_generator",
-      "path": "flip.nvflare.components.EvaluationJsonGenerator",
+      "path": "flip.nvflare.components.evaluation_json_generator.EvaluationJsonGenerator",
       "args": {}
     },
     {
       "id": "flip_server_event_handler",
-      "path": "flip.nvflare.components.ServerEventHandler",
+      "path": "flip.nvflare.components.flip_server_event_handler.ServerEventHandler",
       "args": {
-        "model_id": "{model_id}"
+        "model_id": null
       }
     },
     {
       "id": "persist_and_cleanup",
-      "path": "flip.nvflare.components.PersistToS3AndCleanup",
+      "path": "flip.nvflare.components.persist_and_cleanup.PersistToS3AndCleanup",
       "args": {
-        "model_id": "{model_id}",
-        "persistor_id": "persistor"
+        "model_id": null
       }
     }
   ],
-  "workflows": [
+  "task_data_filters": [],
+  "task_result_filters": [
     {
-      "id": "init_evaluation",
-      "path": "flip.nvflare.controllers.InitEvaluation",
-      "args": {
-        "model_id": "{model_id}",
-        "min_clients": "{min_clients}"
-      }
-    },
-    {
-      "id": "site_validate",
-      "name": "ModelEval",
-      "path": "flip.nvflare.controllers.ModelEval",
-      "args": {
-        "model_locator_id": "model_locator",
-        "participating_clients": "{participating_clients}",
-        "validation_timeout": 12000
-      }
-    },
-    {
-      "id": "post_evaluation_cleanup",
-      "path": "flip.nvflare.controllers.BroadcastTask",
-      "args": {
-        "task_name": "post_task",
-        "participating_clients": "{participating_clients}"
-      }
+      "filters": [
+        {
+          "args": {},
+          "path": "flip.nvflare.components.client_exception_reporter.ClientExceptionReporter"
+        }
+      ],
+      "tasks": ["validate", "post_validation"]
     }
   ]
 }

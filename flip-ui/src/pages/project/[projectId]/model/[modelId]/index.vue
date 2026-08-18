@@ -76,8 +76,19 @@
                             <icon-ph-play-fill class="lg:mr-2" />
                             <span class="hidden lg:inline">Initiate Training</span>
                         </AiButton>
+                        <!-- Public Ark+ demo: the viewer identity has no permissions, but the
+                             real page shows the actions menu to the model owner — surface it so
+                             the recorded run's results stay downloadable (Stop Training renders
+                             disabled at RESULTS_UPLOADED). Vite inlines IS_DEMO; normal builds
+                             keep the viewer gate unchanged.
+                             This menu is safe to expose in the demo only because every item in
+                             it today is also status-gated, not just permission-gated — the
+                             invariant to preserve as this menu grows: any future item that is
+                             clickable purely on `!isViewer` (with no status guard) would become
+                             a live, clickable control in the public demo, harmlessly answered by
+                             Mirage but a confusing dead control in a public exhibit. -->
                         <TrainingActionsMenu
-                            v-if="!isViewer && !isTrainingPending() && activeTab === 'run'"
+                            v-if="(!isViewer || IS_DEMO) && !isTrainingPending() && activeTab === 'run'"
                             :status="getStatusEnumValue(modelData?.status)"
                         />
                     </div>
@@ -175,6 +186,7 @@ import AiGuard from "@/components/AiGuard/AiGuard.vue";
 import AiLoader from "@/components/AiLoader/AiLoader.vue";
 import useErrorHandler from "@/composables/useErrorHandler";
 import { usePermissions } from "@/composables/usePermissions";
+import { IS_DEMO } from "@/demo/bootstrap";
 import { FileUploadStatus } from "@/interfaces/model/types";
 import { IStep } from "@/interfaces/steps";
 import EditModelDrawer, { IEditModel } from "@/partials/models/EditModelDrawer.vue";

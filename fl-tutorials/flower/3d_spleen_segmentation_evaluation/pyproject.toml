@@ -26,8 +26,17 @@ version = "1.0.0"
 description = "Evaluation app"
 license = "Apache-2.0"
 # Dependencies for your Flower App
+# flip-utils is deliberately NOT declared here. Flower runtime-installs an app's declared
+# dependencies (`uv sync`) into a per-run environment that it PREPENDS to sys.path, so declaring
+# flip-utils resolves it from PyPI and shadows the in-repo copy baked into the FL images at
+# /opt/flip-utils — the tutorial-side half of FLIP#767. PyPI currently serves 0.1.8 against the
+# repo's 0.4.0, and 0.1.8 has no flip/flower/strategy.py, so a declared dependency breaks
+# `from flip.flower.strategy import FlipFedAvg` outright. Undeclared, `import flip` falls through
+# to the image's copy, which is what the platform runs. The fl-apps templates solve the same
+# problem with `[tool.uv.sources] flip-utils = { path = "/opt/flip-utils" }`; that pin cannot be
+# used here because it makes `uv sync` unresolvable on a workstation, where the path does not
+# exist. Pick up flip-utils changes with `make build-fl FL_BACKEND=flower`.
 dependencies = [
-    "flip-utils>=0.1.8",
     "flwr[simulation]>=1.32.0",
     "monai>=1.6.0",
     "nibabel>=5.3.3",

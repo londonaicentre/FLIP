@@ -38,16 +38,16 @@ def get_job_types_endpoint(db: Session = Depends(get_session)) -> dict[str, list
     Returns:
         dict[str, list[str]]: A dictionary where keys are job type names
             (e.g., 'standard', 'evaluation') and values are lists of required
-            file names (e.g., ['trainer.py', 'validator.py', 'config.json']).
+            file names (e.g., ['trainer.py', 'config.json', 'models.py']).
 
     Example Response:
 
         .. code-block:: json
 
             {
-                "standard": ["trainer.py", "validator.py", "models.py", "config.json"],
-                "evaluation": ["config.json", "evaluator.py"],
-                "fed_opt": ["trainer.py", "validator.py", "config.json"],
+                "standard": ["trainer.py", "config.json", "models.py"],
+                "evaluation": ["evaluator.py", "config.json", "models.py"],
+                "fed_opt": ["trainer.py", "config.json", "models.py"],
                 "diffusion_model": ["trainer.py", "validator.py", "config.json", "models.py"]
             }
 

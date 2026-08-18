@@ -220,6 +220,20 @@ def render_override(kit: dict[str, str], code: str, aws_region: str) -> str:
         "",
     ]
 
+    # OMOP core vocabulary (FLIP#842/843): the licensed bundle cannot be mirrored
+    # publicly, so the chart runs its vocab-load hook only when a readable bucket
+    # is named — the chart default is empty, and a release installed without this
+    # has NO vocabulary (cohort queries joining omop.concept return nothing).
+    # Each environment reads its OWN bucket (no cross-account read), which is
+    # exactly what AICENTRE_BUCKET_NAME carries.
+    if kit_bucket:
+        lines += [
+            "omopDb:",
+            "  vocabLoad:",
+            f"    s3Bucket: {kit_bucket}",
+            "",
+        ]
+
     # fl-client kit S3 bucket + slot-aware path. The NVFLARE kit is published
     # under .../net-1/services/<slot>, where <slot> is the FL kit slot the hub
     # assigned (e.g. Trust_2) — NOT the cosmetic trustName. Pin the path to the

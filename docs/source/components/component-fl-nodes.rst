@@ -29,13 +29,16 @@ Due to security restrictions, FLIP users are not allowed to control what happens
 Although most adjustable aspects of machine learning training happen on the client side 
 (e.g. dataloading, training loop, model architecture), FLIP provides different job types
 that the user can choose based on their needs.
-Currently, these job types include federated averaging (job type `standard`),
-evaluation task (job type `evaluation`), federated optimisation (job type `fed_opt`)
-and diffusion model training (job type `diffusion_model`), which covers multi-stage federated training.
-For NVFLARE, three further job types drive the client code through the modern **NVFLARE Client API**
-(a plain training/evaluation script using ``nvflare.client`` instead of a class-based ``Executor``):
-federated averaging (job type `standard_client_api`), model evaluation (job type `evaluation_client_api`)
-and two-stage diffusion model training (job type `diffusion_model_client_api`).
+Which job types are available depends on the backend.
+**Both backends** offer federated averaging (job type `standard`) and an evaluation task
+(job type `evaluation`) — for a Flower app, those two are the whole set.
+**NVFLARE** adds two-stage diffusion model training (job type `diffusion_model`) and federated
+optimisation (job type `fed_opt`, which shares `standard`'s client contract and differs only in
+the server-side optimizer aggregation). Every NVFLARE job type drives the client code through the
+modern **NVFLARE Client API** — a plain training/evaluation script using ``nvflare.client``
+(these Client-API templates briefly lived under `*_client_api` names alongside the Executor-based
+ones, then took over the plain names when those were retired).
+The manifests under :ref:`fl-required-files` are the authoritative list for each backend.
 More job types will be added in the future, adjusting to the community's needs.
 
 **How to choose a job type?**
@@ -56,26 +59,21 @@ Then, the Central Hub API will take care of bundling together:
 - The static (non-modifiable) files that are required for the specific job type.
 
 For more information about currently supported apps, see the per-job-type implementations under
-`fl-apps/ <https://github.com/londonaicentre/FLIP/tree/develop/fl-apps/nvflare>`_ (``standard``, ``evaluation``,
-``diffusion_model``, ``fed_opt``, ``standard_client_api``, ``evaluation_client_api``,
-``diffusion_model_client_api``).
+`fl-apps/ <https://github.com/londonaicentre/FLIP/tree/develop/fl-apps>`_.
 
-Examples of how the same job type (standard -> federated averaging) can run different user-uploaded applications are:
+The NVFLARE tutorials (all Client-API apps):
 
-- `xray_classification <https://github.com/londonaicentre/FLIP/tree/develop/fl-tutorials/nvflare/image_classification/xray_classification>`_
-- `3d_spleen_segmentation <https://github.com/londonaicentre/FLIP/tree/develop/fl-tutorials/nvflare/image_segmentation/3d_spleen_segmentation>`_
+- `xray_classification <https://github.com/londonaicentre/FLIP/tree/develop/fl-tutorials/nvflare/image_classification/xray_classification>`_ (job type `standard`)
+- `3d_spleen_segmentation <https://github.com/londonaicentre/FLIP/tree/develop/fl-tutorials/nvflare/image_segmentation/3d_spleen_segmentation>`_ (job type `standard`)
+- `3d_spleen_segmentation_evaluation <https://github.com/londonaicentre/FLIP/tree/develop/fl-tutorials/nvflare/image_evaluation/3d_spleen_segmentation_evaluation>`_ (job type `evaluation`)
+- `latent_diffusion_model <https://github.com/londonaicentre/FLIP/tree/develop/fl-tutorials/nvflare/image_synthesis/latent_diffusion_model>`_ (job type `diffusion_model`)
 
-Both cases perform a supervised federated averaging training, but the data, architecture and training configuration are different.
-
-The NVFLARE Client API job types have their own tutorials:
-
-- `xray_classification_client_api <https://github.com/londonaicentre/FLIP/tree/develop/fl-tutorials/nvflare/image_classification/xray_classification_client_api>`_ (job type `standard_client_api`)
-- `3d_spleen_segmentation_evaluation_client_api <https://github.com/londonaicentre/FLIP/tree/develop/fl-tutorials/nvflare/image_evaluation/3d_spleen_segmentation_evaluation_client_api>`_ (job type `evaluation_client_api`)
-- `latent_diffusion_model_client_api <https://github.com/londonaicentre/FLIP/tree/develop/fl-tutorials/nvflare/image_synthesis/latent_diffusion_model_client_api>`_ (job type `diffusion_model_client_api`)
+The two `standard` examples show how the same job type runs different user-uploaded
+applications: both perform a supervised federated averaging training, but the data, architecture
+and training configuration are different.
 
 These tutorials run on the local NVFLARE simulator from the repo root — e.g.
-``make -C fl-tutorials run-tutorial TUTORIAL=xray_classification`` (requires a GPU and the
-``flare-fl-base`` image; see the
+``make -C fl-tutorials run-tutorial TUTORIAL=xray_classification`` (requires a GPU; see the
 `fl-tutorials/ <https://github.com/londonaicentre/FLIP/tree/develop/fl-tutorials/nvflare>`_ README).
 
 
@@ -94,54 +92,29 @@ Required files per job type
 Each job type declares its own set of required files. A submission missing any of them is rejected
 before anything is shipped to a Trust, with a message naming the missing files.
 
-The lists below are reproduced from the manifests in the repository
-(``fl-apps/<backend>/<job_type>/required_files.json``, aggregated into
-``fl-apps/<backend>/required_files.json``), which are the source of truth. The FLIP UI reads the
-same manifests through the ``/model/job-types`` endpoint and shows the applicable list on the model
-page — so the UI, not this table, is what to trust if the two ever disagree.
+The manifests that decide this are included below **directly from the repository** rather than
+transcribed, so this page cannot fall out of step with the platform. Each key is a job type and its
+array is the exact set of files that job type requires.
 
-**NVFLARE job types**
+Each backend's manifest is generated from the per-template
+``fl-apps/<backend>/<job_type>/required_files.json`` files by ``fl-apps/check_required_files.sh``,
+which runs as a pre-commit hook and is enforced in CI — so adding a job type or changing its
+required set updates this page as a side effect of the change itself. The FLIP UI reads the same
+manifests through the ``/model/job-types`` endpoint and shows the applicable list on the model page.
 
-.. list-table::
-   :header-rows: 1
-   :widths: 32 68
+.. literalinclude:: ../../../fl-apps/nvflare/required_files.json
+   :language: json
+   :caption: ``fl-apps/nvflare/required_files.json`` — required files per NVFLARE job type
 
-   * - Job type
-     - Required files
-   * - ``standard``
-     - ``trainer.py``, ``validator.py``, ``models.py``, ``config.json``
-   * - ``standard_client_api``
-     - ``trainer.py``, ``models.py``, ``config.json`` (no ``validator.py`` — the Client API script
-       does its own validation)
-   * - ``fed_opt``
-     - ``trainer.py``, ``validator.py``, ``models.py``, ``config.json``
-   * - ``diffusion_model``
-     - ``trainer.py``, ``validator.py``, ``models.py``, ``config.json``
-   * - ``diffusion_model_client_api``
-     - ``trainer.py``, ``validator.py``, ``models.py``, ``config.json``
-   * - ``evaluation``
-     - ``evaluator.py``, ``config.json``
-   * - ``evaluation_client_api``
-     - ``evaluator.py``, ``models.py``, ``config.json``
-
-**Flower job types**
-
-.. list-table::
-   :header-rows: 1
-   :widths: 32 68
-
-   * - Job type
-     - Required files
-   * - ``standard``
-     - ``client_app.py``, ``models.py``
-   * - ``evaluation``
-     - ``client_app.py``, ``models.py``
+.. literalinclude:: ../../../fl-apps/flower/required_files.json
+   :language: json
+   :caption: ``fl-apps/flower/required_files.json`` — required files per Flower job type
 
 .. note::
 
-   ``config.json`` is a required file for every NVFLARE job type, because it carries ``job_type``
-   along with the training configuration below. It is *not* required for Flower job types, but
-   uploading one is still how a Flower app selects a job type other than ``standard``.
+   Every NVFLARE job type lists ``config.json``, which carries ``job_type`` along with the training
+   configuration below. The Flower job types do not require it, but uploading one is still how a
+   Flower app selects a job type other than ``standard``.
 
    ``pyproject.toml`` is **not** a file the researcher supplies for a Flower app. It is part of the
    platform's base template for the job type and is bundled automatically; a ``pyproject.toml``
@@ -323,8 +296,15 @@ The server will also use the package to update the status, as well as to upload 
 Privacy filters on shared model updates
 ---------------------------------------
 
+Both backends privatise a client's training result before it leaves the site, but with different
+mechanisms: NVFLARE sparsifies and clips without noise, while Flower clips and adds calibrated
+Gaussian noise for a formal ``(epsilon, delta)`` guarantee.
+
+NVFLARE: percentile sparsification
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
 Before a client's training result leaves a site, the NVFLARE training job types (`standard`, `fed_opt`,
-`diffusion_model`, `standard_client_api`, `diffusion_model_client_api`) pass it through a percentile-based
+`diffusion_model`) pass it through a percentile-based
 privacy filter (``PercentilePrivacy``, following Shokri & Shmatikov, "Privacy-preserving deep learning",
 CCS '15; the diffusion job types use the stage-aware ``StagePercentilePrivacy`` subclass, which computes
 the cutoff per training stage):
@@ -348,6 +328,42 @@ run with ``off: true``. Two caveats for anyone changing them:
   ``(epsilon, delta)`` guarantee. It complements — rather than replaces — FLIP's primary output controls
   (review of the uploaded app code and aggregate-only results).
 
+Flower: local differential privacy
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The Flower counterpart is ``flip.flower.privacy.flip_local_dp_mod``, a Flower *mod* that runs on the
+SuperNode. It clips the local update to a fixed L2 norm and adds Gaussian noise scaled to the configured
+budget, so the fl-server only ever receives a privatised update:
+
+.. code-block:: text
+
+   sigma = dp-sensitivity * sqrt(2 * ln(1.25 / dp-delta)) / dp-epsilon
+
+The maths is Flower's own (``compute_clip_model_update`` and ``add_gaussian_noise_inplace``); FLIP adds a
+config toggle and an integer-buffer carve-out. Parameters come from ``[tool.flwr.app.config]`` —
+``dp-enabled`` (default ``true``), ``dp-clipping-norm``, ``dp-sensitivity``, ``dp-epsilon``, ``dp-delta`` —
+and can be overridden per run with ``flwr run . --run-config "dp-enabled=false"``. ``dp-enabled: false``
+makes the mod a pass-through, mirroring the NVFLARE filter's ``off`` flag so DP-on and DP-off runs use an
+identical app.
+
+Three things to know:
+
+- **It applies to training rounds only.** The mod is registered as ``@app.train(mods=[flip_local_dp_mod])``,
+  leaving ``@app.evaluate`` untouched, which mirrors the ``train``-task scope of the NVFLARE filter.
+- **Integer buffers pass through unprivatised.** BatchNorm's ``num_batches_tracked`` counters and similar
+  integer entries are step counts rather than learned parameters, and Flower's clipping scales each array
+  in place by a float, which numpy cannot write back into an integer array. Excluding them is what keeps
+  the mod from crashing the client the first time clipping engages on a real model.
+- **Enforcement is by code review, not by the platform.** Unlike NVFLARE — where the filter is a
+  ``task_result_filters`` entry in the FLIP-owned ``config_fed_client.json`` — a Flower app's
+  ``client_app.py`` is uploaded by the model developer, so the template cannot register the mod on the
+  developer's behalf. An uploaded app that omits it shares raw updates. The shipped tutorials
+  (``numpy``, ``xray_classification``, ``3d_spleen_segmentation``) wire it as worked examples.
+
+The shipped parameter defaults are utility-first demonstration values, not a defensible privacy budget: a
+real budget calibrates ``dp-sensitivity`` to the local dataset and accounts for composition across rounds,
+which this mod does not do — every round spends the budget again.
+
 
 Disclaimer: some things are still under construction!
 -----------------------------------------------------
@@ -355,10 +371,10 @@ Disclaimer: some things are still under construction!
 There are currently some elements that are still under construction, and might not adjust exactly to 
 the description above:
 
-- for the class-based NVFLARE job types (``standard``, ``evaluation``, ``fed_opt``, ``diffusion_model``) the user upload is intentionally minimal — see :ref:`fl-required-files` for the per-job-type set — and the rest of the app is filled in from
+- for every NVFLARE job type the user upload is intentionally minimal — see :ref:`fl-required-files` for the per-job-type set — and the rest of the app is filled in from
   the static (non-modifiable) templates baked into the flip-api image at `FL_APP_BASE_DIR` (`fl-apps/`, see FLIP#724).
   These templates used to be published to an S3 bucket; that path has been removed. You can check what a fully bundled app looks like by consulting
   the per-job-type implementations under `fl-apps/ <https://github.com/londonaicentre/FLIP/tree/develop/fl-apps/nvflare>`_.
-- the modern NVFLARE Client API job types (`standard_client_api`, `evaluation_client_api`, `diffusion_model_client_api`) instead let the user upload a plain training/evaluation script that calls
-  ``nvflare.client`` directly. Over time, more job types will migrate to this recipe-driven model.
+- every NVFLARE job type takes a plain training/evaluation script that calls
+  ``nvflare.client`` directly (`fed_opt` reuses `standard`'s trainer contract unchanged).
 

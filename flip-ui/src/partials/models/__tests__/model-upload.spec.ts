@@ -286,8 +286,10 @@ describe("ModelUpload", () => {
 
         test("labels the SCANNING state without overstating what was inspected", async () => {
             // The state covers every file type, but only pickle-bearing files
-            // are actually content-scanned — Python source is released
-            // uninspected. The label must not imply otherwise (#52).
+            // get a scan that can block release. Python source also gets a
+            // Bandit pass (#877), but it is advisory only and never gates
+            // release — the label must not imply the file was vetted for
+            // malicious behaviour (#52).
             const wrapper = mountModelUpload({ files: [fileWith(FileUploadStatus.SCANNING)] });
             await flushPromises();
             const icon = wrapper.find(ModelUploadModal.scanningStatusLabel);
@@ -316,6 +318,37 @@ describe("ModelUpload", () => {
 
             expect(wrapper.find("[aria-label='Delete weights.pt']").exists()).toBe(true);
             expect(wrapper.find("[aria-label='Download weights.pt']").exists()).toBe(false);
+        });
+
+        test("shows an advisory indicator for a COMPLETED file with Bandit findings, but still allows download", async () => {
+            // Bandit findings are advisory only (#877) — the file is still
+            // COMPLETED and usable, unlike INFECTED which removes the object.
+            const flagged: FileInfo = {
+                ...fileWith(FileUploadStatus.COMPLETED, "trainer.py"),
+                bandit_findings: [
+                    {
+                        test_id: "B602",
+                        issue_text: "subprocess call with shell=True",
+                        severity: "HIGH",
+                        confidence: "HIGH",
+                        line_number: 3
+                    }
+                ]
+            };
+            const wrapper = mountModelUpload({ files: [flagged] });
+            await flushPromises();
+
+            const indicator = wrapper.find(ModelUploadModal.banditFindingsIndicator);
+            expect(indicator.exists()).toBe(true);
+            expect(indicator.attributes("title")).toContain("B602");
+            expect(wrapper.find("[aria-label='Download trainer.py']").exists()).toBe(true);
+        });
+
+        test("hides the advisory indicator for a file with no Bandit findings", async () => {
+            const clean = mountModelUpload({ files: [fileWith(FileUploadStatus.COMPLETED, "trainer.py")] });
+            await flushPromises();
+
+            expect(clean.find(ModelUploadModal.banditFindingsIndicator).exists()).toBe(false);
         });
 
         test("hides 'Download all' when any file is INFECTED or SCANNING", async () => {

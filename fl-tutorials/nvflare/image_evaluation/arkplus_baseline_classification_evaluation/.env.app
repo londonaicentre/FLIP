@@ -1,4 +1,4 @@
-JOB_TYPE=evaluation_client_api
+JOB_TYPE=evaluation
 SITE1_IMAGES_DIR=../../data/arkplus/site1_holdoff/accession-resources
 SITE1_DATAFRAME=../../data/arkplus/site1_holdoff/sample_get_dataframe_response.csv
 SITE2_IMAGES_DIR=../../data/arkplus/site2_holdoff/accession-resources

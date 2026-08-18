@@ -59,9 +59,10 @@ the upload flow is unaffected.
 
 ### Recommended: Docker Compose
 
-From the repository root:
+From the Flower service directory:
 
 ```bash
+cd fl-services/flower
 make build                # build the fl-base / superlink / supernode images
 make up                   # start fl-api, superlink, supernode-1, supernode-2
 ```
@@ -69,7 +70,7 @@ make up                   # start fl-api, superlink, supernode-1, supernode-2
 Then submit the run against the `fl-api` control plane:
 
 ```bash
-curl -X POST http://localhost:8000/submit_tutorial/xray_classification
+make submit APP=xray_classification    # from fl-services/flower/
 ```
 
 The dev compose stack (`deploy/compose.development.yml` +
@@ -138,6 +139,84 @@ use the compose stack above.
 | `LESIONS`            | Effusion / Edema / "Lungs in normal arrangement" | Multi-label heads + the normal-override column |
 | `value_to_numerical` | {0:"No",1:"Yes"} | Maps dataframe string values to binary labels |
 | `VALIDATE_EVERY`     | 1       | Validate every N epochs (currently always 1) |
+
+## Best-model selection
+
+This tutorial keeps the **best-scoring global model**, not just the last one. Two run-config keys drive it —
+`app/config.toml` for platform-submitted runs, `[tool.flwr.app.config]` in `pyproject.toml` for local
+`flwr run`:
+
+```toml
+best-model-metric = "test_f1-score"
+best-model-metric-minimize = false
+```
+
+`test_f1-score` is the **macro F1 across lesions** that `app/client_app.py` reports from its evaluate pass
+(`macro_mean` in `app/task.py`), matching the macro `VAL-F1-SCORE` the NVFLARE chest-X-ray tutorial selects
+on. The server weight-averages it across trusts by `num-examples` and keeps the round that scores highest.
+
+What changes when it is set:
+
+- The evaluate phase runs **every round** instead of only the last, so each round's freshly aggregated model
+  is actually measured. That is why `num-server-rounds` is 3 here (4 on the platform) — a one-round job's
+  "best" model is by definition its final one.
+- The results zip gains `best_FL_global_model.pt` next to `FL_global_model.pt`, in the same format, and
+  `cross_val_results.json` gains `best_model` / `best_round` / `best_metric`. Nothing is fabricated: with no
+  selection, or if the best-model write fails, the file and those keys are simply absent.
+
+Two things worth knowing before you change the metric:
+
+- **The key must be one the clients actually report.** Name a key nobody emits and the run completes with no
+  best model at all, logging a warning per round rather than failing — check the ServerApp log if the
+  artefact is missing.
+- **On Flower the metric is measured on the test split**, because that is what the evaluate phase uses here.
+  NVFLARE instead scores a pre-training pass over the *validation* split. Selecting on the test split is
+  convenient for a tutorial but is a mild form of selection-on-test; point `best-model-metric` at a
+  validation metric if you need the split kept clean.
+
+## Differential privacy
+
+Training updates are privatised **on the SuperNode**, before the reply leaves the trust. The
+`flip_local_dp_mod` mod from
+[`flip.flower.privacy`](../../../flip-utils/flip/flower/privacy.py) clips the local update to a
+fixed L2 norm and adds Gaussian noise scaled to the configured budget:
+
+```
+sigma = dp-sensitivity * sqrt(2 * ln(1.25 / dp-delta)) / dp-epsilon
+```
+
+It is wired in `app/client_app.py` as `@app.train(mods=[flip_local_dp_mod])`, so it covers training
+rounds only — `@app.evaluate` is untouched. That mirrors the scope of the NVFLARE apps'
+`PercentilePrivacy` result filter, though the mechanism is stronger: NVFLARE sparsifies by
+percentile and adds no noise, while this is a real (epsilon, delta) mechanism built on Flower's own
+`compute_clip_model_update` / `add_gaussian_noise_inplace`.
+
+| Key                | Default | Meaning |
+|--------------------|---------|---------|
+| `dp-enabled`       | `true`  | Master switch. `false` makes the mod a pass-through, so DP-on / DP-off runs use an identical app |
+| `dp-clipping-norm` | `1.0`   | L2 norm the update is clipped to before noise |
+| `dp-sensitivity`   | `1e-4`  | How much one training example can move the update |
+| `dp-epsilon`       | `10.0`  | Privacy budget — smaller means more privacy and more noise |
+| `dp-delta`         | `1e-5`  | Probability the guarantee fails outright |
+
+Override per run without editing the app:
+
+```bash
+flwr run . --run-config "dp-enabled=false"
+flwr run . --run-config "dp-epsilon=1.0 dp-clipping-norm=0.5"
+```
+
+> ⚠️ **The defaults are demonstration values, chosen utility-first** so this tutorial still
+> converges with the mechanism live (they give sigma ≈ 4.8e-5). They are **not** a defensible
+> privacy budget. A real one calibrates `dp-sensitivity` to the local dataset — roughly
+> `2 * dp-clipping-norm / |D|` for an average-of-examples update — and accounts for composition
+> across rounds, which this mod does not do: every round spends the budget again. With only a
+> handful of trusts the noise also does not average down the way central DP's does.
+
+Integer entries in the state dict (BatchNorm's `num_batches_tracked` counters) pass through
+unprivatised. They are step counts rather than learned parameters, and Flower's clipping scales
+each array in place by a float, which numpy refuses to write back into an int array — so the mod
+excludes them rather than crashing the client the first time clipping engages.
 
 ## Data assumptions
 

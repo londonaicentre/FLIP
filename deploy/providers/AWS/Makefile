@@ -87,13 +87,22 @@ export TF_VAR_FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME=${FLIP_MODEL_FILES_UPLOADS_BU
 export TF_VAR_FLIP_FL_RESULTS_BUCKET_NAME=${FLIP_FL_RESULTS_BUCKET_NAME}
 export TF_VAR_FLIP_APP_BUNDLES_BUCKET_NAME=${FLIP_APP_BUNDLES_BUCKET_NAME}
 export TF_VAR_AICENTRE_BUCKET_NAME=${AICENTRE_BUCKET_NAME}
+# A copied-but-unedited .env leaves `<your-...>` placeholders in place. Those are non-empty, so an
+# emptiness check passes them straight through to Terraform, which fails much later with an opaque
+# AWS bucket-name error. Treat a placeholder as unset — same idea as XNAT_CREDENTIAL_PLACEHOLDER in
+# trust/xnat/Makefile.
+unset_or_placeholder = $(if $(1),$(if $(filter <%>,$(patsubst <%,<%>,$(1))),placeholder,),unset)
+
 # Fail fast with a useful message if the per-tenant bucket names are missing
 # from the env file. The variables are required (no default) so Terraform
 # would otherwise prompt mid-plan with a generic message that gives no hint
 # about where to set the value.
-$(if $(FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME),,$(error 🪶 FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME must be set in $(MAIN_ENV_FILE)))
-$(if $(FLIP_FL_RESULTS_BUCKET_NAME),,$(error 🪶 FLIP_FL_RESULTS_BUCKET_NAME must be set in $(MAIN_ENV_FILE)))
-$(if $(FLIP_APP_BUNDLES_BUCKET_NAME),,$(error 🪶 FLIP_APP_BUNDLES_BUCKET_NAME must be set in $(MAIN_ENV_FILE)))
+$(if $(call unset_or_placeholder,$(FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME)),$(error 🪶 FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME must be set to a real bucket name in $(MAIN_ENV_FILE)),)
+$(if $(call unset_or_placeholder,$(FLIP_FL_RESULTS_BUCKET_NAME)),$(error 🪶 FLIP_FL_RESULTS_BUCKET_NAME must be set to a real bucket name in $(MAIN_ENV_FILE)),)
+$(if $(call unset_or_placeholder,$(FLIP_APP_BUNDLES_BUCKET_NAME)),$(error 🪶 FLIP_APP_BUNDLES_BUCKET_NAME must be set to a real bucket name in $(MAIN_ENV_FILE)),)
+# AICENTRE_BUCKET_NAME is guarded on the same terms: `variable "AICENTRE_BUCKET_NAME"` has no
+# default, and it also names the bucket the FL participant-kit targets below read and write.
+$(if $(call unset_or_placeholder,$(AICENTRE_BUCKET_NAME)),$(error 🪶 AICENTRE_BUCKET_NAME must be set to a real bucket name in $(MAIN_ENV_FILE)),)
 export TF_VAR_flip_cognito_admin_email=aicentreflip@gmail.com
 export TF_VAR_flip_cognito_researcher_email=rafaelagd@gmail.com
 export TF_VAR_POSTGRES_DB=${POSTGRES_DB}
@@ -161,9 +170,13 @@ export TF_VAR_SES_VERIFIED_EMAIL=${SES_VERIFIED_EMAIL}
 export TF_VAR_flip_alb_subdomain=${ALB_SUBDOMAIN}
 export TF_VAR_flip_nlb_subdomain=${NLB_SUBDOMAIN}
 export TF_VAR_FLIP_UI_BUCKET_NAME=${FLIP_UI_BUCKET_NAME}
-# flip-api / fl-* env vars consumed by ECS task definitions (locals.tf).
-# These mirror compose.production.yml so the running container sees the same
-# values whether it runs on EC2+compose or ECS Fargate.
+# Optional: bucket holding the public Ark+ demo download bundles, served via
+# CloudFront at /ark_demo/assets/*. Unset => no demo-assets resources (stag).
+export TF_VAR_DEMO_ASSETS_BUCKET_NAME=${DEMO_ASSETS_BUCKET_NAME}
+# flip-api / fl-* env vars consumed by the ECS task definitions (locals.tf) —
+# the canonical definition of production container config (#936). The prod
+# compose files mirror a subset as the local prod-image harness only; the hub
+# no longer deploys on EC2+compose.
 export TF_VAR_TRUST_API_KEY_HEADER=${TRUST_API_KEY_HEADER}
 export TF_VAR_INTERNAL_SERVICE_KEY_HEADER=${INTERNAL_SERVICE_KEY_HEADER}
 export TF_VAR_FL_ADMIN_DIRECTORY=${FL_ADMIN_DIRECTORY}
@@ -440,7 +453,13 @@ ansible-init: ## Initialize Ansible configuration on EC2 instances (if failed tr
 	@[ -n "$(ORTHANC_DATA_VERSION)" ] || (echo "❌  trust/orthanc/.data_version not found"; exit 1)
 	@uv sync
 	@uv run ansible-galaxy install -r requirements.yml
+	@# --skip-tags omop-vocab: the vocabulary load needs the trust's OMOP cluster
+	@# credentials, which live in the kit file. This target runs BEFORE
+	@# register-trusts in every deploy chain, so it has no KIT in scope (hence
+	@# trust_num falling back to 1 above) and cannot supply them. The vocabulary
+	@# is seeded later by `make seed-trust-data KIT=<CODE>`, which does have them.
 	@unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_SECURITY_TOKEN; uv run ansible-playbook site.yml \
+		--skip-tags omop-vocab \
 		-e flip_aicentre_bucket=$(AICENTRE_BUCKET_NAME) \
 		-e fl_backend=$(FL_BACKEND) \
 		-e fl_kit_date=$(FL_KIT_DATE) \
@@ -475,6 +494,7 @@ seed-trust-data: check-trust-ec2-enabled ssh-config ## Load trust-specific OMOP 
 	@[ -n "$(FL_KIT_SLOT_NUMBER)" ] || (echo "❌  FL_KIT_SLOT_NUMBER not found in trust/.env.$(KIT).$(KIT_ENV_SUFFIX) — run register-trusts first"; exit 1)
 	@[ -n "$(OMOP_DATA_VERSION)" ] || (echo "❌  trust/omop-db/.data_version not found"; exit 1)
 	@[ -n "$(ORTHANC_DATA_VERSION)" ] || (echo "❌  trust/orthanc/.data_version not found"; exit 1)
+	@[ -n "$(OMOP_POSTGRES_PASSWORD_KIT)" ] || (echo "❌  OMOP_POSTGRES_PASSWORD not found in trust/.env.$(KIT).$(KIT_ENV_SUFFIX) — the vocab-load play needs the cluster credentials"; exit 1)
 	@echo "🗄️  Seeding Trust EC2 with trust$(FL_KIT_SLOT_NUMBER) data (OMOP v$(OMOP_DATA_VERSION), Orthanc v$(ORTHANC_DATA_VERSION))..."
 	@uv run ansible-playbook site.yml \
 		--tags data \
@@ -482,7 +502,12 @@ seed-trust-data: check-trust-ec2-enabled ssh-config ## Load trust-specific OMOP 
 		-e fl_kit_date=$(FL_KIT_DATE) \
 		-e trust_num=$(FL_KIT_SLOT_NUMBER) \
 		-e omop_data_version=$(OMOP_DATA_VERSION) \
-		-e orthanc_data_version=$(ORTHANC_DATA_VERSION)
+		-e orthanc_data_version=$(ORTHANC_DATA_VERSION) \
+		-e omop_postgres_user=$(OMOP_POSTGRES_USER_KIT) \
+		-e omop_postgres_password=$(OMOP_POSTGRES_PASSWORD_KIT) \
+		-e omop_postgres_db=$(OMOP_POSTGRES_DB_KIT) \
+		-e vocab_s3_bucket=$(AICENTRE_BUCKET_NAME) \
+		-e omop_db_tag=$(DOCKER_TAG)
 	@echo "✅ Trust data seeding complete."
 
 .PHONY: deploy-centralhub
@@ -726,7 +751,7 @@ deploy-ui: ## Build flip-ui from the working tree and deploy it to S3 + invalida
 	$(_AWS_ENV) aws s3 sync ../../../flip-ui/dist/ s3://$$UI_BUCKET/ \
 		--delete \
 		--cache-control "public, max-age=31536000, immutable" \
-		--exclude "index.html" --exclude "js/window.js"; \
+		--exclude "index.html" --exclude "js/window.js" --exclude "ark_demo/*"; \
 	$(_AWS_ENV) aws s3 cp ../../../flip-ui/dist/index.html s3://$$UI_BUCKET/index.html \
 		--cache-control "no-cache, no-store, must-revalidate" \
 		--content-type "text/html; charset=utf-8"; \
@@ -741,6 +766,69 @@ deploy-ui: ## Build flip-ui from the working tree and deploy it to S3 + invalida
 		--paths "/*" >/dev/null
 	@echo "✅ deploy-ui complete."
 
+.PHONY: deploy-ark-demo
+deploy-ark-demo: ## Build the public Ark+ demo SPA from the working tree and deploy it to S3 (ark_demo/ prefix) + invalidate CloudFront
+	@# Refuse to publish the demo into an environment that has no demo behaviour.
+	@# DEMO_ASSETS_BUCKET_NAME gates BOTH the /ark_demo/* cache behaviour and its
+	@# enforcing ark_demo_spa CSP (cloudfront.tf), but the spa_rewrite function's
+	@# /ark_demo/ branch is ungated — so on an environment where it is unset (the
+	@# documented stag posture) this target used to happily sync a fully working,
+	@# unauthenticated demo onto the same origin as real Cognito tokens, served by
+	@# the DEFAULT behaviour, whose CSP is report-only. That is precisely the
+	@# silent-detach the README warns about, and nothing detected it (FLIP#794
+	@# review). Fail fast instead: an operator who wants the demo must provision
+	@# its behaviour first.
+	@if [ -z "$$DEMO_ASSETS_BUCKET_NAME" ]; then \
+		echo "❌ DEMO_ASSETS_BUCKET_NAME is not set for this environment."; \
+		echo "   It gates the /ark_demo/* CloudFront behaviour and the demo's enforcing CSP."; \
+		echo "   Publishing without it would serve the demo unauthenticated on the same"; \
+		echo "   origin as real Cognito tokens, under the default behaviour's report-only"; \
+		echo "   CSP. Set it (and apply) before deploying the demo."; \
+		exit 1; \
+	fi
+	@# The variable being set is necessary but not sufficient — it must actually
+	@# be applied. Confirm the behaviour exists on the live distribution.
+	@DIST_ID=$$($(_AWS_ENV) terraform output -raw CloudfrontDistributionId); \
+	if ! $(_AWS_ENV) aws cloudfront get-distribution-config --id "$$DIST_ID" \
+		--query "DistributionConfig.CacheBehaviors.Items[?PathPattern=='/ark_demo/*'] | length(@)" \
+		--output text 2>/dev/null | grep -qv '^0$$'; then \
+		echo "❌ No /ark_demo/* cache behaviour on distribution $$DIST_ID."; \
+		echo "   DEMO_ASSETS_BUCKET_NAME is set but not applied — run a terraform apply first."; \
+		exit 1; \
+	fi
+	@echo "🖼️  Building flip-ui Ark+ demo bundle from working tree..."
+	@# npm run build:demo's postbuild hook regenerates dist/js/window.js itself
+	@# (scripts/generate-demo-window-js.sh) — no separate window.js step needed,
+	@# unlike deploy-ui.
+	@cd ../../../flip-ui && npm ci && npm run build:demo
+	@echo "📦 Syncing demo assets to the deployed UI bucket (ark_demo/ prefix)..."
+	@# Same cache-control discipline as deploy-ui: hashed assetsDir chunks
+	@# (dist/static/... for the demo build — see the Vite assetsDir note in
+	@# ../README.md) are content-addressed and safe to cache forever; index.html
+	@# and window.js must never be cached long since they reference the hashed
+	@# bundle. --delete is scoped to this sync's destination (the ark_demo/
+	@# prefix), so it never touches the real app's objects at the bucket root —
+	@# see deploy-ui's own --exclude "ark_demo/*" for the other half of that
+	@# separation.
+	@UI_BUCKET=$$($(_AWS_ENV) terraform output -raw FlipUiBucketName); \
+	[ -n "$$UI_BUCKET" ] || { echo "❌ Terraform output FlipUiBucketName is empty"; exit 1; }; \
+	echo "   s3://$$UI_BUCKET/ark_demo/"; \
+	$(_AWS_ENV) aws s3 sync ../../../flip-ui/dist/ s3://$$UI_BUCKET/ark_demo/ \
+		--delete \
+		--cache-control "public, max-age=31536000, immutable" \
+		--exclude "index.html" --exclude "js/window.js"; \
+	$(_AWS_ENV) aws s3 cp ../../../flip-ui/dist/index.html s3://$$UI_BUCKET/ark_demo/index.html \
+		--cache-control "no-cache, no-store, must-revalidate" \
+		--content-type "text/html; charset=utf-8"; \
+	$(_AWS_ENV) aws s3 cp ../../../flip-ui/dist/js/window.js s3://$$UI_BUCKET/ark_demo/js/window.js \
+		--cache-control "no-cache, no-store, must-revalidate" \
+		--content-type "application/javascript; charset=utf-8"
+	@echo "🧹 Invalidating CloudFront (/ark_demo/*)..."
+	@$(_AWS_ENV) aws cloudfront create-invalidation \
+		--distribution-id $$($(_AWS_ENV) terraform output -raw CloudfrontDistributionId) \
+		--paths "/ark_demo/*" >/dev/null
+	@echo "✅ deploy-ark-demo complete."
+
 # Identity of the trust kit being deployed/provisioned — a trust CODE that
 # selects its kit file trust/.env.<KIT>.<env> and its trust-local data dirs.
 # REQUIRED on the command line for trust targets (no default, so a prod op
@@ -751,6 +839,12 @@ deploy-ui: ## Build flip-ui from the working tree and deploy it to S3 + invalida
 # FL_KIT_SLOT is also what trust/Makefile mounts), not duplicated here.
 FL_KIT_SLOT := $(shell sed -n 's/^FL_KIT_SLOT=//p' ../../../trust/.env.$(KIT).$(KIT_ENV_SUFFIX) 2>/dev/null)
 FL_KIT_SLOT_NUMBER := $(shell sed -n 's/^FL_KIT_SLOT_NUMBER=//p' ../../../trust/.env.$(KIT).$(KIT_ENV_SUFFIX) 2>/dev/null)
+
+# Trust-local OMOP DB credentials from the kit — passed to the vocab-load play
+# (they must match the values the restored pgdata cluster was built with).
+OMOP_POSTGRES_USER_KIT := $(shell sed -n 's/^OMOP_POSTGRES_USER=//p' ../../../trust/.env.$(KIT).$(KIT_ENV_SUFFIX) 2>/dev/null)
+OMOP_POSTGRES_PASSWORD_KIT := $(shell sed -n 's/^OMOP_POSTGRES_PASSWORD=//p' ../../../trust/.env.$(KIT).$(KIT_ENV_SUFFIX) 2>/dev/null)
+OMOP_POSTGRES_DB_KIT := $(shell sed -n 's/^OMOP_POSTGRES_DB=//p' ../../../trust/.env.$(KIT).$(KIT_ENV_SUFFIX) 2>/dev/null)
 
 # Data versions read from the canonical .data_version files — these govern both
 # the local update-omop-data / update-orthanc-data scripts and the Ansible plays.

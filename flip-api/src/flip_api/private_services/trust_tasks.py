@@ -23,12 +23,14 @@ from datetime import datetime, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Request, status
+from fastapi.encoders import jsonable_encoder
+from pydantic import ValidationError
 from sqlmodel import Session, col, select
 
 from flip_api.auth.access_manager import authenticate_trust
 from flip_api.db.database import get_session
 from flip_api.db.models.main_models import Trust, TrustTask
-from flip_api.domain.schemas.private import TaskResultInput, TrustTaskResponse
+from flip_api.domain.schemas.private import TaskResultInput, TrustHeartbeatInput, TrustTaskResponse
 from flip_api.domain.schemas.status import TaskStatus, TaskType
 from flip_api.private_services.imaging_notifications import handle_imaging_task_completed
 from flip_api.utils.encryption import encrypt
@@ -188,12 +190,15 @@ def _submit_task_result(
         )
 
 
-def _record_heartbeat(trust: Trust, db: Session) -> dict[str, object]:
-    """Stamp the trust row with the current UTC time.
+def _record_heartbeat(trust: Trust, db: Session, heartbeat: TrustHeartbeatInput | None = None) -> dict[str, object]:
+    """Stamp the trust row with the current UTC time and store any health snapshot.
 
     Args:
         trust (Trust): The authenticated trust.
         db (Session): Database session.
+        heartbeat (TrustHeartbeatInput | None): Optional per-service health snapshot.
+            None for bodyless heartbeats from pre-collector trust-api builds, whose
+            behavior is unchanged.
 
     Returns:
         dict[str, object]: ``{trust_id, trust_name, message}``.
@@ -204,6 +209,10 @@ def _record_heartbeat(trust: Trust, db: Session) -> dict[str, object]:
     logger.debug(f"Heartbeat received from trust '{trust.name}'")
     try:
         trust.last_heartbeat = datetime.now(timezone.utc)
+        if heartbeat is not None:
+            trust.services_health = heartbeat.model_dump(mode="json")["services"]
+            # Server-stamped: the payload's collected_at is never trusted for staleness.
+            trust.services_health_at = datetime.now(timezone.utc)
         db.commit()
         return {**_trust_identity(trust), "message": "Heartbeat recorded"}
     except Exception as e:
@@ -282,17 +291,45 @@ def submit_task_result(
 @limiter.limit("30/minute")
 def trust_heartbeat(
     request: Request,
+    body: dict | None = Body(default=None),
     db: Session = Depends(get_session),
     authenticated_trust: Trust = Depends(authenticate_trust),
 ) -> dict[str, object]:
     """Record a heartbeat for the authenticated trust.
 
+    The snapshot is validated in-hand rather than by the route signature so the
+    rejection can be logged **hub-side**, naming the trust. FastAPI's automatic 422
+    leaves no application log, and the sender is an unattended process whose own
+    logs live inside another institution — so without this, a trust whose telemetry
+    is being rejected is indistinguishable, from the hub, from one that never
+    reported at all. The 422 itself is preserved: the trust-api sees it and retries
+    bodyless, so a bad snapshot still cannot cost the trust its liveness.
+
     Args:
         request (Request): The FastAPI request, used by the rate limiter.
+        body (dict | None): Optional per-service health snapshot; absent on bodyless
+            heartbeats from pre-collector trust-api builds.
         db (Session): Database session.
         authenticated_trust (Trust): The trust resolved from the API key.
 
     Returns:
         dict[str, object]: ``{trust_id, trust_name, message}``.
+
+    Raises:
+        HTTPException: 422 when a body is present but is not a valid snapshot.
     """
-    return _record_heartbeat(authenticated_trust, db)
+    heartbeat = None
+    if body is not None:
+        try:
+            heartbeat = TrustHeartbeatInput.model_validate(body)
+        except ValidationError as e:
+            logger.error(
+                f"Rejected health snapshot from trust '{authenticated_trust.name}' "
+                f"({authenticated_trust.id}): {e.errors(include_url=False)[:3]}"
+            )
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=jsonable_encoder(e.errors(include_url=False)),
+            ) from e
+
+    return _record_heartbeat(authenticated_trust, db, heartbeat)
