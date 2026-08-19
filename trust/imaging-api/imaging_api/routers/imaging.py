@@ -17,9 +17,9 @@ from fastapi import APIRouter, Depends, HTTPException
 from imaging_api.routers.schemas import ImportStudyRequest, ImportStudyResponse, PacsStatus, Study
 from imaging_api.services.imaging import (
     ping_pacs,
+    ping_registered_pacs,
     query_by_accession_number,
     queue_image_import_request,
-    resolve_pacs_id,
 )
 from imaging_api.utils.auth import get_xnat_auth_headers
 from imaging_api.utils.exceptions import NotFoundError
@@ -37,8 +37,10 @@ def ping_pacs_endpoint(headers: XNATAuthHeaders, pacs_id: int | None = None) -> 
 
     Two routes, one handler. Without an id the PACS is resolved from XNAT the same way the import
     path resolves it — the id XNAT assigns at registration is not knowable in advance, so a caller
-    that only wants to know whether the trust's PACS answers should not have to guess one. The
-    by-id route stays for callers that genuinely mean a specific registration.
+    that only wants to know whether the trust's PACS answers should not have to guess one. A stale
+    cached id (the PACS was re-registered while imaging-api stayed up) is dropped and re-resolved
+    once rather than pinning the probe to a dead registration. The by-id route stays for callers
+    that genuinely mean a specific registration.
 
     Args:
         headers (XNATAuthHeaders): XNAT authentication headers.
@@ -51,7 +53,7 @@ def ping_pacs_endpoint(headers: XNATAuthHeaders, pacs_id: int | None = None) -> 
         HTTPException: If PACS is not found or if there is an error during the ping operation.
     """
     try:
-        return ping_pacs(resolve_pacs_id(headers) if pacs_id is None else pacs_id, headers)
+        return ping_registered_pacs(headers) if pacs_id is None else ping_pacs(pacs_id, headers)
     except NotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:

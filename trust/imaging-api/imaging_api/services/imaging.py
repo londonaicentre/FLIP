@@ -28,9 +28,12 @@ from imaging_api.utils.logger import logger
 
 PACS_ID = get_settings().PACS_ID
 XNAT_URL = get_settings().XNAT_URL
-# Bound the PACS-id lookup: it sits on the retrieval path, and an unbounded request to a wedged
-# XNAT would hang the import rather than falling back.
+# Bound every XNAT call: an unbounded request to a wedged XNAT would hang the import (and the
+# health probe) rather than failing. The DQR data-path calls get a far larger bound because they
+# proxy live DIMSE operations against the upstream PACS — a throttled or slow real PACS can hold
+# a C-FIND well past what any metadata round-trip to XNAT itself would need.
 XNAT_REQUEST_TIMEOUT = 30
+XNAT_DQR_REQUEST_TIMEOUT = 300
 
 # Cache for resolve_pacs_id(). XNAT assigns a PACS its id at registration time, so the id is fixed
 # for the life of that registration and re-resolving on every query would add an XNAT round-trip per
@@ -121,6 +124,38 @@ def forget_resolved_pacs_id() -> None:
     _resolved_pacs_id = None
 
 
+def ping_registered_pacs(headers: dict[str, str]) -> PacsStatus:
+    """
+    Pings the PACS registered in XNAT, resolving its id first.
+
+    On a 404 the resolved id is presumed stale — the PACS was re-registered under a new id while
+    this process stayed up — so the cache is dropped and the ping retried once against a freshly
+    resolved id. Without that, a caller that only ever pings (the trust-api health probe) would
+    keep failing on the dead id until the container restarted; ``check_pacs`` drops the cache the
+    same way on the import path (FLIP#993).
+
+    Args:
+        headers (dict[str, str]): XNAT authentication headers.
+
+    Returns:
+        PacsStatus: Status of the PACS system.
+
+    Raises:
+        imaging_api.utils.exceptions.NotFoundError: If the PACS is not found under the freshly
+            resolved id either.
+        Exception: If there is an error during the ping request.
+    """
+    pacs_id = resolve_pacs_id(headers)
+    try:
+        return ping_pacs(pacs_id, headers)
+    except NotFoundError:
+        forget_resolved_pacs_id()
+        fresh_id = resolve_pacs_id(headers)
+        if fresh_id == pacs_id:
+            raise
+        return ping_pacs(fresh_id, headers)
+
+
 def ping_pacs(pacs_id: int, headers: dict[str, str]) -> PacsStatus:
     """
     Pings the imaging provider (PACS) to check if it is reachable.
@@ -139,6 +174,7 @@ def ping_pacs(pacs_id: int, headers: dict[str, str]) -> PacsStatus:
     response = requests.get(
         f"{XNAT_URL}/xapi/pacs/{pacs_id}/status",
         headers=headers,
+        timeout=XNAT_REQUEST_TIMEOUT,
     )
     if response.status_code == 200:
         return PacsStatus(**response.json())
@@ -205,6 +241,7 @@ def query_by_accession_number(accession_number: str, headers: dict[str, str]) ->
         f"{XNAT_URL}/xapi/dqr/query/studies",
         headers=headers,
         json=study_query.model_dump(by_alias=True),
+        timeout=XNAT_DQR_REQUEST_TIMEOUT,
     )
     logger.debug(f"Query response: {response.text} - {response.status_code} - {response.reason}")
 
@@ -272,6 +309,7 @@ def queue_image_import_request(
         f"{XNAT_URL}/xapi/dqr/import",
         headers=headers,
         json=import_request.model_dump(by_alias=True),
+        timeout=XNAT_DQR_REQUEST_TIMEOUT,
     )
 
     if response.status_code == 200:

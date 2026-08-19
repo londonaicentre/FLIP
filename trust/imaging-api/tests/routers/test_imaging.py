@@ -68,16 +68,17 @@ def test_ping_pacs_without_id_resolves_the_registration(client):
     }
 
     with (
-        patch("imaging_api.routers.imaging.resolve_pacs_id", return_value=7) as mock_resolve,
+        patch("imaging_api.routers.imaging.ping_registered_pacs") as mock_ping_registered,
         patch("imaging_api.routers.imaging.ping_pacs") as mock_ping_pacs,
     ):
-        mock_ping_pacs.return_value = PacsStatus(**mock_response)
+        mock_ping_registered.return_value = PacsStatus(**mock_response)
 
         response = client.get("/imaging/ping_pacs")
 
         assert response.status_code == 200
-        assert mock_resolve.called, "the id was not resolved from XNAT"
-        assert mock_ping_pacs.call_args[0][0] == 7, "pinged an id other than the resolved one"
+        assert mock_ping_registered.called, "the id was not resolved from XNAT"
+        assert not mock_ping_pacs.called, "bypassed the resolving (stale-cache-aware) ping"
+        assert response.json()["pacsId"] == 7
 
 
 def test_ping_pacs_with_explicit_id_does_not_resolve(client):
@@ -94,7 +95,7 @@ def test_ping_pacs_with_explicit_id_does_not_resolve(client):
     }
 
     with (
-        patch("imaging_api.routers.imaging.resolve_pacs_id") as mock_resolve,
+        patch("imaging_api.routers.imaging.ping_registered_pacs") as mock_ping_registered,
         patch("imaging_api.routers.imaging.ping_pacs") as mock_ping_pacs,
     ):
         mock_ping_pacs.return_value = PacsStatus(**mock_response)
@@ -102,7 +103,7 @@ def test_ping_pacs_with_explicit_id_does_not_resolve(client):
         response = client.get("/imaging/ping_pacs/3")
 
         assert response.status_code == 200
-        assert not mock_resolve.called, "an explicit id was overridden by the resolved one"
+        assert not mock_ping_registered.called, "an explicit id was overridden by the resolved one"
         assert mock_ping_pacs.call_args[0][0] == 3
 
 

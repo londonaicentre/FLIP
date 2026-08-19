@@ -40,7 +40,7 @@ set -euo pipefail
 # calling AE, and the C-MOVE destination that imaging-api hands to the PACS. The PACS opens the
 # C-STORE association addressed to the AE title it has registered, so a receiver configured under a
 # different title rejects it.
-XNAT_URL="${XNAT_URL:-http://xnat-web:8080}" # internal to the container network
+XNAT_URL="${XNAT_URL-http://xnat-web:8080}" # internal to the container network
 XNAT_AETITLE="${XNAT_AETITLE-XNAT}"
 PACS_HOST="${PACS_HOST-orthanc}"            # service name in compose / k8s, or a real PACS host
 PACS_AETITLE="${PACS_AETITLE-ORTHANC}"
