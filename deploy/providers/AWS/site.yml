@@ -530,7 +530,13 @@
     - name: download OMOP PGDATA archive from Hugging Face
       ansible.builtin.get_url:
         url: "{{ hf_base_url }}/{{ pgdata_trust_dir }}/{{ pgdata_archive }}"
-        dest: "{{ omop_dir }}/pgdata.tar"
+        # Version-stamped destination, matching the source. get_url defaults to
+        # force: false ("downloaded only if the destination does not exist"), so a
+        # fixed name means a bumped omop_data_version silently reuses the PREVIOUS
+        # archive — and the wipe + extract below then restore the old dataset while
+        # reporting success. Nothing downstream can tell; the symptom is cohort
+        # counts that quietly do not match the data version that was asked for.
+        dest: "{{ omop_dir }}/{{ pgdata_archive }}"
         mode: "0644"
 
     - name: clear existing PGDATA directory
@@ -539,7 +545,7 @@
 
     - name: extract OMOP PGDATA
       command: >
-        tar -xf {{ omop_dir }}/pgdata.tar
+        tar -xf {{ omop_dir }}/{{ pgdata_archive }}
         -C {{ omop_dir }}/db_data
 
     - name: set Postgres ownership and permissions
@@ -723,7 +729,10 @@
     - name: download Orthanc archive from Hugging Face
       ansible.builtin.get_url:
         url: "{{ hf_base_url }}/{{ orthanc_trust_dir }}/{{ archive }}"
-        dest: "{{ base_dir }}/orthanc-storage.tar"
+        # Version-stamped for the same reason as the OMOP archive above: with a fixed
+        # name, get_url (force: false) skips the download when orthanc_data_version is
+        # bumped and the extract below restores the previous version's DICOM.
+        dest: "{{ base_dir }}/{{ archive }}"
         mode: "0644"
 
     - name: clear existing Orthanc storage
@@ -740,7 +749,7 @@
 
     - name: extract Orthanc data into orthanc-storage
       command: >
-        tar -xf {{ base_dir }}/orthanc-storage.tar -C {{ data_dir }}
+        tar -xf {{ base_dir }}/{{ archive }} -C {{ data_dir }}
 
     - name: ensure Orthanc storage is owned by container UID 999 and writable
       file:

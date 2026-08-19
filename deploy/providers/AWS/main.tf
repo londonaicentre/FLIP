@@ -366,17 +366,40 @@ resource "aws_iam_role_policy" "trust_ec2_s3" {
     Version = "2012-10-17"
     Statement = [
       {
+        # Scoped to the prefixes this host actually reads, mirroring S3ListAicentreBucketForKit
+        # in iam_ecs.tf. Bucket-wide list/read was largely inert before the kms:Decrypt grant
+        # below (nothing encrypted could be read at all); granting decrypt completes the
+        # capability, so the scope has to be narrowed in the same change. The bucket also holds
+        # every net's kits, the fl-server's own kit, the NVFLARE provisioning CA registry and
+        # the licensed OMOP vocabulary — and this is the host that runs researcher-submitted
+        # FL code, so it is the role that least deserves bucket-wide read.
         Effect = "Allow"
         Action = [
           "s3:ListBucket",
           "s3:GetBucketLocation",
         ]
         Resource = [aws_s3_bucket.aicentre_bucket.arn]
+        Condition = {
+          StringLike = {
+            "s3:prefix" = [
+              "fl-flare-participant-kits/*", "fl-flare-participant-kits",
+              "fl-flower-participant-kits/*", "fl-flower-participant-kits",
+              "vocab/*", "vocab",
+            ]
+          }
+        }
       },
       {
-        Effect   = "Allow"
-        Action   = ["s3:GetObject"]
-        Resource = ["${aws_s3_bucket.aicentre_bucket.arn}/*"]
+        # The three prefixes above: the two participant-kit trees (site.yml kit staging) and
+        # the licensed OMOP core-vocabulary bundle (site.yml, "download core vocabulary bundle
+        # from S3 (instance role)").
+        Effect = "Allow"
+        Action = ["s3:GetObject"]
+        Resource = [
+          "${aws_s3_bucket.aicentre_bucket.arn}/fl-flare-participant-kits/*",
+          "${aws_s3_bucket.aicentre_bucket.arn}/fl-flower-participant-kits/*",
+          "${aws_s3_bucket.aicentre_bucket.arn}/vocab/*",
+        ]
       },
       {
         # The bucket is SSE-KMS with the app CMK (services.tf, key defined in kms.tf),
@@ -393,6 +416,15 @@ resource "aws_iam_role_policy" "trust_ec2_s3" {
         Effect   = "Allow"
         Action   = ["kms:Decrypt", "kms:DescribeKey"]
         Resource = [aws_kms_key.flip_app_key.arn]
+        # The CMK also encrypts Secrets Manager (kms.tf), so constrain the grant to
+        # decrypts S3 performs on this host's behalf. Reading a secret would still need
+        # secretsmanager:GetSecretValue, which this role does not have — this keeps that
+        # true if the role ever gains it.
+        Condition = {
+          StringEquals = {
+            "kms:ViaService" = "s3.${var.AWS_REGION}.amazonaws.com"
+          }
+        }
       },
     ]
   })
