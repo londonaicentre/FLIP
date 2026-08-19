@@ -24,17 +24,34 @@
                 <!-- Page header (mirrors the Projects page spine) -->
                 <header class="flex flex-col gap-4 px-8 pt-8 pb-4 sm:flex-row sm:items-end sm:justify-between">
                     <div>
-                        <p class="text-xs font-mono uppercase tracking-widest text-gray-500 dark:text-gray-300">
-                            Estate-wide · every project
+                        <p
+                            class="text-xs font-mono uppercase tracking-widest text-gray-500 dark:text-gray-300"
+                            data-test="models-scope-eyebrow"
+                        >
+                            {{ isScoped ? `Project · ${scopedProject?.name}` : "Estate-wide · every project" }}
                         </p>
                         <h1 class="text-3xl font-semibold font-heading mt-1 text-gray-900 dark:text-gray-100">
                             <span class="text-primary-600 underline decoration-4 decoration-primary-500/60 underline-offset-8 dark:text-white">Models</span>
                             <span class="ml-3 text-gray-400 dark:text-gray-300 font-medium">{{ data.totalRecords ?? data.data.length }}</span>
                         </h1>
                         <p class="mt-2 text-sm text-gray-500 dark:text-gray-300">
-                            The federated training queue across every project you can access.
+                            {{ isScoped ? SCOPED_SUBTITLE : ESTATE_SUBTITLE }}
                         </p>
                     </div>
+                    <!-- Only offered when scoped: a model is created against one project, and the
+                         estate-wide view has none in hand. Server-side, creating against an
+                         unapproved project is refused, so don't offer it here either. -->
+                    <AiButton
+                        v-if="isScoped && !isViewer && scopedProject?.status === 'APPROVED'"
+                        primary
+                        data-test="add-model-btn"
+                        aria-label="Create Model"
+                        tooltip="Create Model"
+                        @click="modalsStore.toggleCreateModel"
+                    >
+                        <icon-mdi-plus class="lg:mr-2" />
+                        <span class="hidden lg:inline">Create Model</span>
+                    </AiButton>
                 </header>
 
                 <!-- Filter tiles: one per lifecycle group, each a toggle. Click the active tile to reset. -->
@@ -66,7 +83,7 @@
                     </button>
                 </div>
 
-                <!-- Toolbar: search -->
+                <!-- Toolbar: search + project filter -->
                 <div class="flex flex-wrap items-center gap-3 px-8 pb-4">
                     <div class="flex-1 min-w-[240px]">
                         <AiSearch
@@ -75,6 +92,42 @@
                             data-test="model-search"
                         />
                     </div>
+
+                    <label for="project-filter" class="sr-only">Filter by project</label>
+                    <!-- Bound to the URL rather than v-model'd: the address bar owns the scope, so
+                         the select reflects it instead of holding a second copy of it. -->
+                    <select
+                        id="project-filter"
+                        data-test="project-filter"
+                        class="rounded-md border-gray-200 dark:border-dark-border dark:bg-dark-canvas text-sm py-2 pl-3 pr-8"
+                        :value="projectFilter ?? ''"
+                        @change="applyProject(($event.target as HTMLSelectElement).value || null)"
+                    >
+                        <option value="">
+                            All projects
+                        </option>
+                        <option v-for="project in projectOptions ?? []" :key="project.id" :value="project.id">
+                            {{ project.name }}
+                        </option>
+                    </select>
+
+                    <span
+                        v-if="isScoped"
+                        data-test="project-filter-chip"
+                        class="inline-flex items-center gap-2 rounded-full border border-primary-200 bg-primary-100 py-1 pl-3 pr-1 text-xs font-semibold text-primary-600 dark:border-dark-border dark:bg-dark-surface dark:text-primary-200"
+                    >
+                        Project: {{ scopedProject?.name }}
+                        <button
+                            type="button"
+                            data-test="clear-project-filter"
+                            aria-label="Clear project filter"
+                            title="Clear project filter"
+                            class="inline-flex items-center justify-center w-[18px] h-[18px] rounded-full bg-primary-200 hover:bg-primary-300 dark:bg-dark-raised dark:hover:bg-dark-border"
+                            @click="applyProject(null)"
+                        >
+                            <icon-mdi-close class="w-3 h-3" />
+                        </button>
+                    </span>
                 </div>
 
                 <!-- Models table (div/grid layout: white rows + status rail, escapes the global
@@ -269,30 +322,64 @@
                 </div>
             </div>
         </transition>
+        <CreateModelModal
+            v-if="isScoped && projectFilter"
+            :open="modalsStore.createModelOpen"
+            :project-id="projectFilter"
+            @close-modal="modalsStore.toggleCreateModel"
+        />
     </div>
 </template>
 
 <script setup lang="ts">
 import { debouncedWatch } from "@vueuse/core";
 import useSWRV from "swrv";
-import { computed, ref } from "vue";
+import { computed, ref, watch } from "vue";
+import { useRoute, useRouter } from "vue-router";
 
+import AiButton from "@/components/AiButton/AiButton.vue";
 import AiCard from "@/components/AiCard/AiCard.vue";
 import AiLoader from "@/components/AiLoader/AiLoader.vue";
 import AiPagination from "@/components/AiPagination/AiPagination.vue";
 import AiSearch from "@/components/AiSearch/AiSearch.vue";
 import useErrorHandler from "@/composables/useErrorHandler";
+import { usePermissions } from "@/composables/usePermissions";
+import CreateModelModal from "@/partials/models/CreateModelModal.vue";
 import { getAllModels,
+    getModelProjectOptions,
+    IModelProjectOption,
     IModelSummary,
     isModelStatusError,
     ModelStatus,
     modelStatusDotClass as statusDotClass,
     modelStatusLabelWithQueue,
     modelStatusPillClass as statusPillClass } from "@/services/model-service";
+import { useModalsStore } from "@/store/modals";
 import { apiTimestampMs, relativeCreatedLabel } from "@/utils/helpers";
+import { Snackbar } from "@/utils/snackbar";
 import { TRUST_CHIP_CLASS, TRUST_CHIP_PLAIN_PADDING, trustChipLabel } from "@/utils/trust-chip";
 
 const pageSize = 20;
+
+const ESTATE_SUBTITLE = "The federated training queue across every project you can access.";
+const SCOPED_SUBTITLE =
+    "The federated training queue for this project. Clear the project filter to see the whole estate.";
+
+const route = useRoute();
+const router = useRouter();
+const modalsStore = useModalsStore();
+const { isViewer } = usePermissions();
+
+// The project scope lives in the URL, not in a ref: a scoped view is then linkable, the back
+// button works, and the fetch key below reads the same source of truth the address bar shows.
+const projectFilter = computed<string | null>(() => {
+    const raw = route.query.project;
+    const value = Array.isArray(raw) ? raw[0] : raw;
+
+    return value ? String(value) : null;
+});
+const projectQueryParam = computed<string>(() =>
+    projectFilter.value ? `&project=${encodeURIComponent(projectFilter.value)}` : "");
 
 const search = ref("");
 const pageNumber = ref(1);
@@ -354,7 +441,8 @@ const TILES: ITile[] = [
 // Tiles are accumulative: each click toggles a group in or out of the selection
 // and the list shows the union. An empty selection means no status filter (all
 // models). The page opens on the active work: Running + Queued.
-const activeTiles = ref<Set<GroupKey>>(new Set(["running", "queued"]));
+const DEFAULT_TILES: GroupKey[] = ["running", "queued"];
+const activeTiles = ref<Set<GroupKey>>(new Set(DEFAULT_TILES));
 
 const syncStatusFilter = (): void => {
     const statuses = TILES.filter(t => activeTiles.value.has(t.key)).flatMap(t => t.statuses);
@@ -362,13 +450,56 @@ const syncStatusFilter = (): void => {
     pageNumber.value = 1;
 };
 
+// Arriving already scoped — via "View All Models" or a bookmark — means "show everything in
+// this project", so the estate default of Running + Queued would hide most of what was asked
+// for. Seeded before syncStatusFilter() so the very first key is already the right one.
+if (projectFilter.value) activeTiles.value = new Set();
+
 // Seed the query param before SWRV builds its first key, so the default
 // selection doesn't cost an extra unfiltered fetch.
 syncStatusFilter();
 
+// Which project the page believes it is showing. Changing the dropdown navigates, so the
+// watcher below would otherwise treat the page's own navigation as an arrival and wipe the
+// filters the user just set. Claiming the value first tells the two apart. (A one-shot boolean
+// would not: it stays armed if `replace` rejects a duplicate navigation.)
+const claimedProject = ref<string | null>(projectFilter.value);
+
+const applyProject = (id: string | null): void => {
+    claimedProject.value = id;
+    pageNumber.value = 1;
+    const query = { ...route.query };
+    if (id) {
+        query.project = id;
+    } else {
+        delete query.project;
+    }
+    void router.replace({
+        path: route.path,
+        query
+    });
+};
+
+// An arrival from elsewhere — the sidebar Models link, a bookmark, back/forward. The link is a
+// query-only change on this same route, so the component is never remounted and only this can
+// reset the page.
+watch(projectFilter, next => {
+    if (next === claimedProject.value) return;
+    claimedProject.value = next;
+    activeTiles.value = next ? new Set() : new Set<GroupKey>(DEFAULT_TILES);
+    if (!next) {
+        // Both, deliberately: the debouncedWatch on `search` fires 500ms later, far too late
+        // for the key this reset is about to rebuild.
+        search.value = "";
+        searchQueryParam.value = "";
+    }
+    syncStatusFilter();
+});
+
 const { data, error } = useSWRV(
     () =>
-        `/models?pageNumber=${pageNumber.value}&pageSize=${pageSize}${searchQueryParam.value}${statusQueryParam.value}`,
+        `/models?pageNumber=${pageNumber.value}&pageSize=${pageSize}`
+        + `${searchQueryParam.value}${statusQueryParam.value}${projectQueryParam.value}`,
     getAllModels,
     {
         dedupingInterval: 5_000,
@@ -378,6 +509,33 @@ const { data, error } = useSWRV(
 );
 
 useErrorHandler(error);
+
+// The filter's options, and the only place the scoped project's name and status come from — a
+// project with no models yet has no row in the list to read them off. Barely changes, so it
+// polls not at all and dedupes for a minute.
+const { data: projectOptions } = useSWRV("/models/projects", getModelProjectOptions, {
+    dedupingInterval: 60_000,
+    shouldRetryOnError: false
+});
+
+const scopedProject = computed<IModelProjectOption | null>(() =>
+    projectOptions.value?.find(project => project.id === projectFilter.value) ?? null);
+const isScoped = computed<boolean>(() => !!projectFilter.value && !!scopedProject.value);
+
+// A project id we cannot show — a stale bookmark, a deleted project, access since revoked, or a
+// typo. Dropping it here keeps the page off the backend's 403, which would otherwise strand it
+// behind the loader with a global error banner. Waits for the options to arrive first, or it
+// would fight every deep link during the initial load.
+watch([projectOptions, projectFilter], ([options, filter]) => {
+    if (!options || !filter) return;
+    if (options.some(project => project.id === filter)) return;
+
+    Snackbar.error({
+        title: "Project unavailable",
+        text: "That project could not be found, so the full models list is shown instead."
+    });
+    applyProject(null);
+});
 
 const models = computed<IModelSummary[]>(() => data.value?.data ?? []);
 

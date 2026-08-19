@@ -115,7 +115,6 @@ const stubs = {
         template: "<div data-test='ai-alert' :data-variant='variant'><slot /></div>",
         props: ["variant"]
     },
-    AiBreadcrumbs: { template: "<div />" },
     AiButton: {
         inheritAttrs: false,
         props: ["disabled"],

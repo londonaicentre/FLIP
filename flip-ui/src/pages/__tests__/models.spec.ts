@@ -16,9 +16,9 @@
 import { createTestingPinia } from "@pinia/testing";
 import { mount } from "@vue/test-utils";
 import { beforeEach, describe, expect, test, vi } from "vitest";
-import { ref } from "vue";
+import { reactive, ref } from "vue";
 
-import { IModelSummary, IModelSummaryTrust } from "@/services/model-service";
+import { IModelProjectOption, IModelSummary, IModelSummaryTrust } from "@/services/model-service";
 
 import Page from "../models.vue";
 
@@ -30,14 +30,26 @@ interface ModelsResponse {
 }
 
 const mockSwrvData = ref<ModelsResponse | undefined>(undefined);
+const mockProjectOptions = ref<IModelProjectOption[] | undefined>(undefined);
 
 // Captures the SWRV key function so tests can inspect the query the page
-// would fetch (search / status filter params).
+// would fetch (search / status / project filter params).
 const swrvKey: { fn?: () => string } = {};
 
+// The page runs two SWRV subscriptions — the models page itself and the project
+// filter's options — so the mock routes by key rather than handing both the same ref.
 vi.mock("swrv", () => ({
-    default: (key: () => string) => {
-        swrvKey.fn = key;
+    default: (key: (() => string) | string) => {
+        // The options subscription passes a plain string key; the list passes a function so its
+        // filters stay reactive.
+        if ((typeof key === "function" ? key() : key).startsWith("/models/projects")) {
+            return {
+                data: mockProjectOptions,
+                mutate: vi.fn(),
+                error: ref(null)
+            };
+        }
+        swrvKey.fn = key as () => string;
 
         return {
             data: mockSwrvData,
@@ -47,8 +59,26 @@ vi.mock("swrv", () => ({
     }
 }));
 
+// The page reads its project scope from the URL. `reactive` is load-bearing: the tests that
+// simulate an external navigation mutate `mockRoute.query` and expect the page's watcher to fire.
+const mockRoute = reactive({
+    path: "/models",
+    query: {} as Record<string, string | undefined>
+});
+const mockReplace = vi.fn();
+vi.mock("vue-router", async (importOriginal) => {
+    const actual = await importOriginal<typeof import("vue-router")>();
+
+    return {
+        ...actual,
+        useRoute: () => mockRoute,
+        useRouter: () => ({ replace: mockReplace })
+    };
+});
+
 const stubs = {
     AiLoader: { template: "<div />" },
+    CreateModelModal: { template: "<div data-test='create-model-modal' />" },
     AiSearch: {
         props: ["modelValue"],
         emits: ["update:modelValue"],
@@ -78,6 +108,16 @@ const makeModel = (over: Partial<IModelSummary> = {}): IModelSummary => ({
     ownerName: "Dr Ada",
     trusts: [trust("GSTT")],
     ...over
+});
+
+const projectOption = (
+    id: string,
+    name: string,
+    status: IModelProjectOption["status"] = "APPROVED"
+): IModelProjectOption => ({
+    id,
+    name,
+    status
 });
 
 const setModels = (models: IModelSummary[], statusCounts: Record<string, number> = {}): void => {
@@ -113,6 +153,9 @@ function mountPage(options: { permissions?: string[] } = {}) {
 
 beforeEach(() => {
     mockSwrvData.value = undefined;
+    mockProjectOptions.value = undefined;
+    mockRoute.query = {};
+    mockReplace.mockClear();
 });
 
 describe("Models Page", () => {
@@ -579,5 +622,162 @@ describe("Models Page", () => {
         expect(pill.text()).toBe("Stopped");
         expect(pill.classes().some(c => c.includes("red"))).toBe(true);
         expect(wrapper.find("[data-test='model-status-rail']").classes()).toContain("bg-red-500");
+    });
+
+    describe("project filter", () => {
+        const options = [projectOption("p1", "Stroke triage"), projectOption("p2", "Chest X-ray")];
+
+        test("the dropdown offers every accessible project, plus an All projects reset", async () => {
+            setModels([makeModel()]);
+            mockProjectOptions.value = options;
+            const wrapper = mountPage();
+            await wrapper.vm.$nextTick();
+
+            const labels = wrapper.find("[data-test='project-filter']").findAll("option").map(o => o.text());
+            expect(labels).toEqual(["All projects", "Stroke triage", "Chest X-ray"]);
+        });
+
+        test("picking a project writes it to the URL rather than to local state", async () => {
+            // The URL is the source of truth: the page navigates and re-reads, so a scoped view
+            // is always linkable and the back button works.
+            setModels([makeModel()]);
+            mockProjectOptions.value = options;
+            const wrapper = mountPage();
+            await wrapper.vm.$nextTick();
+
+            await wrapper.find("[data-test='project-filter']").setValue("p2");
+
+            expect(mockReplace).toHaveBeenCalledWith(
+                expect.objectContaining({ query: expect.objectContaining({ project: "p2" }) })
+            );
+        });
+
+        test("arriving scoped puts the project in the fetch key and clears the status tiles", async () => {
+            // "View All Models" promises all of the project's models, so an arrival must not
+            // inherit the estate default of Running + Queued.
+            mockRoute.query = { project: "p1" };
+            setModels([makeModel()]);
+            mockProjectOptions.value = options;
+            const wrapper = mountPage();
+            await wrapper.vm.$nextTick();
+
+            const key = swrvKey.fn!();
+            expect(key).toContain("&project=p1");
+            expect(key).not.toContain("status=");
+        });
+
+        test("the scoped header names the project and the chip offers a way out", async () => {
+            mockRoute.query = { project: "p1" };
+            setModels([makeModel()]);
+            mockProjectOptions.value = options;
+            const wrapper = mountPage();
+            await wrapper.vm.$nextTick();
+
+            expect(wrapper.find("[data-test='models-scope-eyebrow']").text()).toContain("Stroke triage");
+            expect(wrapper.find("[data-test='project-filter-chip']").text()).toContain("Project: Stroke triage");
+
+            await wrapper.find("[data-test='clear-project-filter']").trigger("click");
+
+            expect(mockReplace).toHaveBeenCalledWith(
+                expect.objectContaining({ query: expect.not.objectContaining({ project: expect.anything() }) })
+            );
+        });
+
+        test("an unscoped page keeps the estate eyebrow and shows no chip", async () => {
+            setModels([makeModel()]);
+            mockProjectOptions.value = options;
+            const wrapper = mountPage();
+            await wrapper.vm.$nextTick();
+
+            expect(wrapper.find("[data-test='models-scope-eyebrow']").text()).toContain("Estate-wide");
+            expect(wrapper.find("[data-test='project-filter-chip']").exists()).toBe(false);
+        });
+
+        test("a project id that is not in the options is dropped instead of fetched", async () => {
+            // Covers a stale bookmark, a deleted project and lost access in one guard — and keeps
+            // the page off the backend's 403, which would strand it behind the loader.
+            mockRoute.query = { project: "gone" };
+            setModels([makeModel()]);
+            mockProjectOptions.value = options;
+            const wrapper = mountPage();
+            await wrapper.vm.$nextTick();
+
+            expect(mockReplace).toHaveBeenCalledWith(
+                expect.objectContaining({ query: expect.not.objectContaining({ project: expect.anything() }) })
+            );
+        });
+
+        test("waits for the options before judging an id", async () => {
+            // Options are still in flight: dropping the filter here would fight the user's own
+            // deep link on every page load.
+            mockRoute.query = { project: "p1" };
+            setModels([makeModel()]);
+            mockProjectOptions.value = undefined;
+            const wrapper = mountPage();
+            await wrapper.vm.$nextTick();
+
+            expect(mockReplace).not.toHaveBeenCalled();
+        });
+
+        test("navigating back to the estate view restores the default tiles and clears search", async () => {
+            // The sidebar Models link is a query-only change on the same route, so the component
+            // is never remounted — only a watcher can reset it.
+            mockRoute.query = { project: "p1" };
+            setModels([makeModel()]);
+            mockProjectOptions.value = options;
+            const wrapper = mountPage();
+            await wrapper.vm.$nextTick();
+
+            mockRoute.query = {};
+            await wrapper.vm.$nextTick();
+
+            const key = swrvKey.fn!();
+            expect(key).not.toContain("project=");
+            expect(key).toContain("status=RUNNING,INITIATED");
+        });
+    });
+
+    describe("scoped Create Model", () => {
+        const approved = [projectOption("p1", "Stroke triage", "APPROVED")];
+        const staged = [projectOption("p1", "Stroke triage", "STAGED")];
+
+        const mountScoped = (opts: { permissions?: string[]; options?: IModelProjectOption[] } = {}) => {
+            mockRoute.query = { project: "p1" };
+            setModels([makeModel()]);
+            mockProjectOptions.value = opts.options ?? approved;
+
+            return mountPage({ permissions: opts.permissions ?? ["CanCreateProjects"] });
+        };
+
+        test("shows for a researcher on an approved project", async () => {
+            const wrapper = mountScoped();
+            await wrapper.vm.$nextTick();
+
+            expect(wrapper.find("[data-test='add-model-btn']").exists()).toBe(true);
+        });
+
+        test("hides for a viewer", async () => {
+            const wrapper = mountScoped({ permissions: [] });
+            await wrapper.vm.$nextTick();
+
+            expect(wrapper.find("[data-test='add-model-btn']").exists()).toBe(false);
+        });
+
+        test("hides when the project is not approved", async () => {
+            // Creating against an unapproved project is refused server-side; don't offer it.
+            const wrapper = mountScoped({ options: staged });
+            await wrapper.vm.$nextTick();
+
+            expect(wrapper.find("[data-test='add-model-btn']").exists()).toBe(false);
+        });
+
+        test("hides on the estate-wide view, which has no project to create against", async () => {
+            setModels([makeModel()]);
+            mockProjectOptions.value = approved;
+            const wrapper = mountPage({ permissions: ["CanCreateProjects"] });
+            await wrapper.vm.$nextTick();
+
+            expect(wrapper.find("[data-test='add-model-btn']").exists()).toBe(false);
+        });
     });
 });

@@ -18,6 +18,7 @@ import { TrustsResults } from "@/interfaces/cohort-query/types";
 import { FileInfo, FileTableRow } from "@/interfaces/model/types";
 import type { IStep } from "@/interfaces/steps";
 import { _http, IPaginatedResponse } from "@/services/api";
+import type { ProjectStatus } from "@/services/project-service";
 
 export interface IModelMetricData {
     yLabel: string;
@@ -427,6 +428,29 @@ export interface IModelsPage extends IPaginatedResponse<IModelSummary> {
 /** Fetch the paginated, access-scoped list of models across every project the user can see. */
 export async function getAllModels(url: string): Promise<IModelsPage> {
     const response = await _http.get<IModelsPage>(url);
+
+    return response.data;
+}
+
+/**
+ * One option of the Models page's project filter.
+ *
+ * `status` rides along because the scoped "Create Model" button may only show for an APPROVED
+ * project, and a project with no models yet has no row in the list to read its status from.
+ */
+export interface IModelProjectOption {
+    id: string;
+    name: string;
+    status: ProjectStatus;
+}
+
+/**
+ * Fetch the projects the user may filter the Models page by — every one they can access,
+ * unpaginated. Deliberately not the paginated `/projects` list: a page of it cannot promise
+ * "all of them", and a truncated dropdown would misreport what the user has access to.
+ */
+export async function getModelProjectOptions(url: string): Promise<IModelProjectOption[]> {
+    const response = await _http.get<IModelProjectOption[]>(url);
 
     return response.data;
 }

@@ -41,6 +41,7 @@
                         <component :is="Component" class="w-full" @update-project="mutate" />
                         <CreateModelModal
                             :open="modalsStore.createModelOpen"
+                            :project-id="route.params.projectId as string"
                             @close-modal="modalsStore.toggleCreateModel"
                         />
                     </div>
@@ -69,7 +70,7 @@ import { usePermissions } from "@/composables/usePermissions";
 import DeploymentMode from "@/pages/DeploymentMode.vue";
 import CreateModelModal from "@/partials/models/CreateModelModal.vue";
 import { getProject, IProject } from "@/services/project-service";
-import { getCurrentUser } from "@/services/user-service";
+import { validateUser } from "@/services/user-service";
 import { useAuthStore } from "@/store/auth";
 import { useErrorStore } from "@/store/error";
 import { useModalsStore } from "@/store/modals";
@@ -91,17 +92,9 @@ const headerTitle = ref(route.name?.toString() ?? "");
 const pageRoute = ref(route.fullPath?.toString() ?? "");
 const emailAddress = authStore.user?.attributes?.email ?? "";
 
-// The cache key is scoped to the caller's Cognito `sub`, not left as a constant "/users/me".
-// swrv's cache is module-level and never expires (ttl defaults to 0); sign-out is an SPA
-// route change that leaves it intact. A constant key would therefore hand the next account
-// signing in to the same tab the previous user's profile, and `dedupingInterval` would
-// suppress the refetch that should correct it. The key never reaches the network — swrv passes
-// it to the fetcher, but `getCurrentUser` declares no parameter and resolves the caller from the
-// token — so this keeps the "no address in the URL" property the endpoint split exists for
-// (FLIP#907).
 const { data: currentUserProfile } = useSWRV(
-    () => authStore.user?.userId && `/users/me#${authStore.user.userId}`,
-    getCurrentUser,
+    () => emailAddress && `/users/${emailAddress}`,
+    () => validateUser(emailAddress),
     {
         dedupingInterval: 60_000,
         revalidateOnFocus: false,
