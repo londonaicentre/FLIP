@@ -255,6 +255,16 @@ describe("TrainingMetrics", () => {
         expect(wrapper.find("[data-test=chart-stub]").attributes("data-y-label")).toBe("TRAIN_LOSS");
     });
 
+    test("shows the empty state for a non-array metrics response instead of crashing", async () => {
+        // A stubbed or misbehaving backend can answer 200 with an empty body, which the
+        // fetch layer hands over as "" — the eager charts watcher must not .map over it.
+        setData("");
+        const wrapper = mountTrainingMetrics();
+        await flushPromises();
+
+        expect(wrapper.text()).toContain("Any metrics sent during the run will show here.");
+    });
+
     test("clears the active chart when the response empties", async () => {
         setData([TRAIN_LOSS]);
         const wrapper = mountTrainingMetrics();

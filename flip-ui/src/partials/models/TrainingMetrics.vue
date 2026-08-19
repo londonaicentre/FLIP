@@ -236,7 +236,10 @@ const nameToCode = computed(() => {
 const charts = computed(() => {
     const codes = nameToCode.value;
 
-    return (data.value ?? [])
+    // Array.isArray, not ?? []: a stubbed or misbehaving backend can 200 with an empty
+    // body ("" from the fetch layer), and unlike the template's lazy reads the
+    // activeChartId watcher evaluates this computed eagerly on every response.
+    return (Array.isArray(data.value) ? data.value : [])
         .map(chart => ({
             ...chart,
             metrics: chart.metrics.map(s => ({
