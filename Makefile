@@ -35,10 +35,15 @@ endif
 # Print which environment files are being used
 $(info Using MAIN_ENV_FILE: $(MAIN_ENV_FILE))
 
-# replace environment variables by the values from the .env files
+# Replace environment variables by the values from the .env files.
+# The sed extracts ONLY real assignments (`^KEY=`): a plain `sed 's/=.*//'` also
+# emits commented-out lines like `# DOCKER_FL_REGISTRY=`, and a bare
+# `export DOCKER_FL_REGISTRY` DEFINES it as empty (origin=file) — which silently
+# defeats `DOCKER_FL_REGISTRY ?= $(DOCKER_REGISTRY)` in deploy/fl_backend.mk and
+# leaves the FL images unprefixed (`flare-fl-server:stag` -> pull access denied).
 ifneq ("$(wildcard $(MAIN_ENV_FILE))","")
 include $(MAIN_ENV_FILE)
-export $(shell sed 's/=.*//' $(MAIN_ENV_FILE))
+export $(shell sed -n 's/^[[:space:]]*\([A-Za-z_][A-Za-z0-9_]*\)=.*/\1/p' $(MAIN_ENV_FILE))
 endif
 
 include deploy/fl_backend.mk

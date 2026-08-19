@@ -27,7 +27,7 @@
 # Load XNAT-specific .env file
 ifneq ("$(wildcard .env)","")
 include .env
-export $(shell sed 's/=.*//' .env)
+export $(shell sed -n 's/^[[:space:]]*\([A-Za-z_][A-Za-z0-9_]*\)=.*/\1/p' .env)
 endif
 
 # Default DOCKER_TAG to 'stag' when running standalone (not via root Makefile which exports its own)
@@ -72,10 +72,12 @@ KIT_FILE := $(if $(wildcard ../.env.$(KIT).$(ENV)),../.env.$(KIT).$(ENV),../.env
 # compose YAML from the calling shell env only. Without this export, the
 # stack came up with empty admin creds and configure-xnat.sh would 401/403
 # on every auth call, leaving "Site has not yet been configured" forever.
-# Pattern mirrors line 28 for trust/xnat/.env; Make silently ignores the
-# comment-line "exports" that sed leaks through.
+# Pattern mirrors the trust/xnat/.env export above. The sed extracts ONLY real
+# assignments: a plain `sed 's/=.*//'` also emits commented-out lines such as
+# `# FOO=`, and a bare `export FOO` DEFINES FOO as empty (origin=file), which
+# silently defeats any later `FOO ?= default`.
 ifneq ("$(wildcard $(KIT_FILE))","")
-export $(shell sed 's/=.*//' $(KIT_FILE))
+export $(shell sed -n 's/^[[:space:]]*\([A-Za-z_][A-Za-z0-9_]*\)=.*/\1/p' $(KIT_FILE))
 endif
 # Slot NUMBER the hub assigned this trust, read from the kit file — NOT a
 # substring of the CODE. Drives the stack name (xnat<N>) and overlay network
