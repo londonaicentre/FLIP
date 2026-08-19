@@ -28,7 +28,21 @@
                             class="text-xs font-mono uppercase tracking-widest text-gray-500 dark:text-gray-300"
                             data-test="models-scope-eyebrow"
                         >
-                            {{ isScoped ? `Project · ${scopedProject?.name}` : "Estate-wide · every project" }}
+                            <template v-if="isScoped">
+                                Project ·
+                                <!-- font-normal keeps the anchor at the eyebrow's weight (main.css
+                                     bolds every non-nav link); the underline carries the affordance. -->
+                                <router-link
+                                    :to="`/project/${projectFilter}`"
+                                    data-test="scope-project-link"
+                                    class="font-normal hover:underline hover:text-primary-600 dark:hover:text-primary-300"
+                                >
+                                    {{ scopedProject?.name }}
+                                </router-link>
+                            </template>
+                            <template v-else>
+                                Estate-wide · every project
+                            </template>
                         </p>
                         <h1 class="text-3xl font-semibold font-heading mt-1 text-gray-900 dark:text-gray-100">
                             <span class="text-primary-600 underline decoration-4 decoration-primary-500/60 underline-offset-8 dark:text-white">Models</span>

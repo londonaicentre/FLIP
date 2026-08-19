@@ -683,6 +683,20 @@ describe("Models Page", () => {
             );
         });
 
+        test("the scoped eyebrow links through to the project itself", async () => {
+            // The header is the only place the project is named; making it a link saves a trip
+            // through Projects to get to the project it is describing.
+            mockRoute.query = { project: "p1" };
+            setModels([makeModel()]);
+            mockProjectOptions.value = options;
+            const wrapper = mountPage();
+            await wrapper.vm.$nextTick();
+
+            const link = wrapper.find("[data-test='scope-project-link']");
+            expect(link.attributes("data-to")).toBe("/project/p1");
+            expect(link.text()).toBe("Stroke triage");
+        });
+
         test("an unscoped page keeps the estate eyebrow and shows no chip", async () => {
             setModels([makeModel()]);
             mockProjectOptions.value = options;
