@@ -264,8 +264,14 @@ dataAccessApi:
 # Shared images PVC — used by imaging-api and fl-client to share downloaded
 # DICOM images
 # ---------------------------------------------------------------------------
+# The handoff between imaging-api (which downloads a project's images from XNAT) and the
+# fl-client (which trains on them): both mount this volume at their images path. Enabled
+# by default because the alternative is a deployment that cannot train — with it off,
+# each pod gets its own emptyDir, imaging-api's downloads land in one and the fl-client
+# reads the other, and every run dies with num_samples=0 while all 300 downloads report
+# success. Disable only for a trust that will never run FL training.
 sharedImagesPvc:
-  enabled: false
+  enabled: true
   storageClassName: ""
   size: 100Gi
   accessMode: ReadWriteOnce
