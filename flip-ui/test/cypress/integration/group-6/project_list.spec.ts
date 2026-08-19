@@ -167,64 +167,56 @@ describe("project list", () => {
         cy.getBySel("project-name").should("not.contain", "Example project");
     });
 
-    // The layout facts this guards — column x-offsets, rendered font weight, the dot's
-    // actual hue — are all computed style. jsdom compiles no Tailwind, so a unit test
-    // can only assert the classes; this is the only layer that sees the real thing.
-    it("aligns the description column, renders it at body weight, and matches the staged dot to the row spine", () => {
-        const trust = (id: string, code: string, approved: boolean) => ({
-            id,
-            name: `${code} NHS Foundation Trust`,
-            code,
-            approved
+    // The facts this guards — column x-offsets, rendered font weight, the dot's actual hue
+    // — are all computed style. jsdom compiles no Tailwind, so the unit tests can only
+    // assert classes; this is the only layer that sees the real thing. All three are
+    // batched into one visit deliberately.
+    it("aligns the description column, drops the anchor's bold, and ties the staged dot to the spine", () => {
+        const trust = (code: string, approved: boolean) =>
+            ({
+                id: code,
+                name: `${code} NHS Foundation Trust`,
+                code,
+                approved
+            });
+        // The rows vary in exactly what used to size the `auto` tracks: trust count,
+        // next-action text and cohort figure. Newest first, so the STAGED row is row 0
+        // under the default "created" sort.
+        const project = (day: number, fields: Record<string, unknown>) => ({
+            id: `p-${day}`,
+            ownerId: "u1",
+            ownerEmail: "r.patel@example.com",
+            ownerName: "Riya Patel",
+            creationtimestamp: `2026-08-0${day}T10:00:00`,
+            users: [],
+            userCount: 3,
+            ...fields
         });
-        // Rows deliberately vary in exactly what used to size the `auto` tracks:
-        // trust count, next-action text and cohort figure. Newest first, so the
-        // STAGED row is row 0 under the default "created" sort.
         const rows = [
-            {
-                id: "11111111-1111-1111-1111-111111111111",
+            project(3, {
                 name: "Stroke triage",
-                description: "Federated stroke triage across participating trusts, with a rather longer blurb.",
-                ownerId: "u1",
-                ownerEmail: "r.patel@example.com",
-                ownerName: "Riya Patel",
-                creationtimestamp: "2026-08-03T10:00:00",
+                description: "Federated stroke triage across participating trusts, with a longer blurb.",
                 status: "STAGED",
-                users: [],
-                userCount: 3,
-                approvedTrusts: [trust("t1", "GSTT", false), trust("t2", "KCH", true)],
+                approvedTrusts: [trust("GSTT", false), trust("KCH", true)],
                 query: { totalCohort: 1234 }
-            },
-            {
-                id: "22222222-2222-2222-2222-222222222222",
+            }),
+            project(2, {
                 name: "Chest X-ray screening",
                 description: "Short blurb.",
-                ownerId: "u1",
-                ownerEmail: "r.patel@example.com",
-                ownerName: "Riya Patel",
-                creationtimestamp: "2026-08-02T10:00:00",
                 status: "APPROVED",
-                users: [],
-                userCount: 9,
-                approvedTrusts: [trust("t1", "GSTT", true), trust("t2", "KCH", true),
-                    trust("t3", "UCLH", true), trust("t4", "OUH", false)],
+                approvedTrusts: [trust("GSTT", true), trust("KCH", true), trust("UCLH", true), trust("OUH", false)],
                 query: { totalCohort: 98765 }
-            },
-            {
-                id: "33333333-3333-3333-3333-333333333333",
+            }),
+            project(1, {
                 name: "Spleen segmentation",
                 description: "Federated spleen segmentation across participating trusts, with a longer blurb again.",
-                ownerId: "u1",
-                ownerEmail: "r.patel@example.com",
-                ownerName: "Riya Patel",
-                creationtimestamp: "2026-08-01T10:00:00",
                 status: "UNSTAGED",
-                users: [],
-                userCount: 1,
                 approvedTrusts: []
-            }
+            })
         ];
 
+        // Pinned rather than inherited from cypress.config: the trusts column is
+        // `hidden lg:flex`, so the assertions below need a viewport at or above `lg`.
         cy.viewport(1366, 900);
         cy.intercept("GET", "/projects?pageNumber=1&pageSize=20", {
             body: {
@@ -238,45 +230,35 @@ describe("project list", () => {
         cy.wait("@getVariedProjects");
 
         // Every row's description starts on the same edge, whatever the other columns hold.
-        const lefts: number[] = [];
-        cy.getBySel("project-row-description")
-            .should("have.length", rows.length)
-            .each(($cell) => {
-                lefts.push(Math.round($cell[0].getBoundingClientRect().left));
-            })
-            .then(() => {
-                expect(new Set(lefts).size, `description left edges: ${lefts.join(", ")}`).to.equal(1);
-            });
+        cy.getBySel("project-row-description").should("have.length", rows.length).then(($cells) => {
+            const lefts = [...$cells].map(cell => Math.round(cell.getBoundingClientRect().left));
+            expect(new Set(lefts).size, `description left edges: ${lefts.join(", ")}`).to.equal(1);
+        });
 
         // Body weight: the row is an <a>, which main.css would otherwise render at 600.
         cy.getBySel("project-row-description").first().should("have.css", "font-weight", "400");
 
-        // Staged row: every chip dot is painted the same colour as that row's spine.
-        // Asserted hue-agnostically against the spine, so a repaint of the STAGED
-        // colour can never leave the dot behind.
+        // Staged row: the chip dots are painted the same colour as that row's spine.
+        // Compared as computed colours, so a repaint of either side fails here.
+        // `within` rather than a getBySel chain: getBySel wraps cy.get, a parent command
+        // that always queries from the document root, so chaining it off a row would
+        // match every row's dots.
         let stagedDotColour = "";
         cy.getBySel("project-list-item-0").within(() => {
             cy.getBySel("project-status-spine").then(($spine) => {
-                const spineColour = window.getComputedStyle($spine[0]).backgroundColor;
-                cy.getBySel("trust-status-dot")
-                    .should("have.length", 2)
-                    .each(($dot) => {
-                        expect(window.getComputedStyle($dot[0]).backgroundColor).to.equal(spineColour);
-                    })
-                    .then(($dots) => {
-                        stagedDotColour = window.getComputedStyle($dots[0]).backgroundColor;
-                    });
+                stagedDotColour = window.getComputedStyle($spine[0]).backgroundColor;
             });
+            cy.getBySel("trust-status-dot").should("have.length", 2)
+                .each(($dot) => expect(window.getComputedStyle($dot[0]).backgroundColor).to.equal(stagedDotColour));
         });
 
         // Approved row: the three signed-off trusts share one colour, distinct from the
-        // staged amber, and the trust still pending keeps exactly that amber. Note the
-        // dot does NOT match this row's spine — the APPROVED spine is a darker emerald,
-        // deliberately, since only the staged colour is shared with the spine.
+        // staged amber, and the trust still pending keeps exactly that amber. The dot does
+        // NOT match this row's spine — the APPROVED spine is a darker emerald.
         cy.getBySel("project-list-item-1").within(() => {
             cy.getBySel("trust-status-dot").should("have.length", 4).then(($dots) => {
                 // Chips sort by trust name: GSTT, KCH, OUH (pending), UCLH.
-                const colours = [...$dots].map(($dot) => window.getComputedStyle($dot).backgroundColor);
+                const colours = [...$dots].map(dot => window.getComputedStyle(dot).backgroundColor);
                 expect(colours[2], "the pending trust keeps the staged colour").to.equal(stagedDotColour);
                 const signedOff = [colours[0], colours[1], colours[3]];
                 expect(new Set(signedOff).size, "signed-off trusts share one colour").to.equal(1);
@@ -284,7 +266,7 @@ describe("project list", () => {
             });
         });
 
-        // Draft row: chips (none here) and no dots at all.
+        // Draft row: no dots at all.
         cy.getBySel("project-list-item-2").within(() => {
             cy.getBySel("trust-status-dot").should("not.exist");
         });
