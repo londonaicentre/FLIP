@@ -108,8 +108,18 @@ port. FLIP in turn supplies its own AE title, host and DICOM port.
    association using the AE title it has registered, and XNAT's SCP receiver rejects an association
    addressed to a different AE title.
 
-Configuration
-=============
+Configuring FLIP
+================
+
+These are FLIP's own settings, applied by the operator deploying the trust node — in the trust's kit
+file for a Compose deployment, or in the Helm values for Kubernetes. They are not something the
+trust's PACS team supplies; what they supply is covered above.
+
+.. important::
+
+   The defaults below describe the **mocked PACS that ships with FLIP for development**, not values
+   a trust should use. Every one of them is replaced with the real details when connecting to a
+   trust PACS.
 
 .. list-table::
    :widths: 30 45 25
@@ -117,7 +127,7 @@ Configuration
 
    * - Setting
      - Description
-     - Default
+     - Development default
    * - ``XNAT_AETITLE``
      - XNAT's own AE title, used for the DICOM SCP receiver, the DQR calling AE, and the C-MOVE
        destination
@@ -149,7 +159,7 @@ Configuration
      - How many times, and how far apart, to retry a study the PACS did not deliver
      - ``100`` / ``300``
 
-The defaults describe the mocked PACS that ships with FLIP for development, described below.
+The mocked PACS those defaults describe is covered below.
 
 Development: the Mocked PACS
 ============================
