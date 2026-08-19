@@ -98,8 +98,36 @@ The FLIP XNAT instance must be registered on the PACS as a DICOM node, permitted
 * act as a **C-MOVE destination**, so retrieved studies can be returned to it;
 * issue and answer **C-ECHO**, for verification in both directions.
 
-The trust must supply, and FLIP must be configured with, the PACS AE title, host and query/retrieve
-port. FLIP in turn supplies its own AE title, host and DICOM port.
+FLIP supplies its own AE title, host and DICOM port for that registration. In return, the trust
+needs to confirm the following — the first three are required to configure anything at all, the rest
+are the questions that most often turn out to matter:
+
+.. list-table::
+   :widths: 32 68
+   :header-rows: 1
+
+   * - What to ask for
+     - Why it matters
+   * - AE title, host/IP and query/retrieve port of the PACS
+     - The details XNAT dials. The port must be reachable from the XNAT container
+   * - Whether C-MOVE is served by a **different AE** to the query service
+     - Some PACS separate the query and retrieve roles; if so, both must be known
+   * - Confirmation that STUDY-level matching on Accession Number ``(0008,0050)`` is supported
+     - This is the only key FLIP queries by. Without it, nothing resolves
+   * - Whether relational queries / extended negotiation are supported
+     - FLIP registers the PACS with ``supportsExtendedNegotiations`` enabled; a PACS that does not
+       support it needs that turned off
+   * - The transfer syntax studies will be sent in
+     - Compressed or transcoded data still has to be readable by XNAT once archived
+   * - Any per-connection or per-session limit on how much may be retrieved
+     - A production PACS may refuse further associations after a certain volume; see
+       `Scheduling and Throughput`_
+   * - Whether DICOM TLS is required
+     - FLIP does not currently support TLS on the DIMSE connection, so this needs to be established
+       before committing to a design
+   * - Which port they want used for bulk retrieval
+     - A port already used for teleradiology may be configured for single studies rather than the
+       sustained retrieval FLIP performs
 
 .. note::
 
@@ -107,6 +135,16 @@ port. FLIP in turn supplies its own AE title, host and DICOM port.
    platform — for example ``FLIPXNAT``. It must match on both sides: the PACS opens the C-STORE
    association using the AE title it has registered, and XNAT's SCP receiver rejects an association
    addressed to a different AE title.
+
+.. note::
+
+   Registering a new node is often not something the trust's PACS team can do unaided. Depending on
+   how the PACS is managed, they may need to raise a call with the supplier to have the connection
+   enabled and any credentials issued — worth starting early, as it tends to set the lead time.
+
+   Where FLIP has been connected to this PACS before, ask for any previous FLIP or XNAT node entries
+   to be removed at the same time. Stale registrations pointing at decommissioned hosts are
+   confusing at best, and a retrieval addressed to one silently goes nowhere.
 
 Configuring FLIP
 ================
