@@ -1625,6 +1625,39 @@ def test_list_local_base_files_skips_symlinks(tmp_path):
     assert fl_service.list_local_base_files(base) == ["app/real.py"]
 
 
+def test_list_local_base_files_skips_local_dev_artefacts(tmp_path):
+    # In dev the repo's fl-apps/ tree is bind-mounted into flip-api, so a developer's .venv,
+    # __pycache__ or tool caches sit inside the template directory and would otherwise be
+    # mirrored into the bucket and shipped to every trust.
+    base = tmp_path / "base"
+    (base / "app").mkdir(parents=True)
+    (base / "app" / "client_app.py").write_text("x")
+    (base / "pyproject.toml").write_text("x")
+
+    (base / ".venv" / "lib" / "python3.12" / "site-packages").mkdir(parents=True)
+    (base / ".venv" / "pyvenv.cfg").write_text("x")
+    (base / ".venv" / "lib" / "python3.12" / "site-packages" / "_virtualenv.py").write_text("x")
+    (base / ".ruff_cache").mkdir()
+    (base / ".ruff_cache" / "CACHEDIR.TAG").write_text("x")
+    (base / "app" / "__pycache__").mkdir()
+    (base / "app" / "__pycache__" / "client_app.cpython-312.pyc").write_text("x")
+    (base / "app" / "stale.pyc").write_text("x")
+    (base / ".DS_Store").write_text("x")
+
+    assert fl_service.list_local_base_files(base) == ["app/client_app.py", "pyproject.toml"]
+
+
+def test_list_local_base_files_keeps_legitimate_dotfiles(tmp_path):
+    # The exclusion is an explicit denylist, NOT "skip anything starting with a dot" — the
+    # tutorials ship a real `.env.app` that must still reach the trusts.
+    base = tmp_path / "base"
+    (base / "app").mkdir(parents=True)
+    (base / ".env.app").write_text("x")
+    (base / "app" / ".gitkeep").write_text("")
+
+    assert fl_service.list_local_base_files(base) == [".env.app", "app/.gitkeep"]
+
+
 def test_list_local_base_files_returns_sorted_nested_relpaths(tmp_path):
     (tmp_path / "app" / "custom" / "sub").mkdir(parents=True)
     (tmp_path / "app" / "custom" / "sub" / "deep.py").write_text("x")

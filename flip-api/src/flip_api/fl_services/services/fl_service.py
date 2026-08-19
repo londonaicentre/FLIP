@@ -85,6 +85,29 @@ def _normalise_job_type(job_type: str, fl_backend: FLBackend) -> str:
     return resolved
 
 
+# Local development artefacts that are never part of an FL application. They are pruned from the
+# bundle walk below rather than filtered afterwards, so a virtualenv's thousands of files are never
+# stat-ed at all. Matched by exact directory name at any depth — deliberately NOT a "skip dotfiles"
+# rule, which would drop the tutorials' legitimate `.env.app`.
+EXCLUDED_BASE_DIR_NAMES = frozenset(
+    {
+        ".git",
+        ".ipynb_checkpoints",
+        ".mypy_cache",
+        ".pytest_cache",
+        ".ruff_cache",
+        ".venv",
+        "__pycache__",
+        "node_modules",
+        "venv",
+    }
+)
+
+# Compiled/OS droppings that can sit alongside real template files rather than in their own directory.
+EXCLUDED_BASE_FILE_NAMES = frozenset({".DS_Store"})
+EXCLUDED_BASE_FILE_SUFFIXES = (".pyc", ".pyo")
+
+
 def list_local_base_files(base_dir: Path) -> list[str]:
     """List every file under a local base-application directory, recursively.
 
@@ -106,12 +129,22 @@ def list_local_base_files(base_dir: Path) -> list[str]:
         The default baked-in ``fl-apps/`` tree contains none, but ``FL_APP_BASE_DIR`` may point at an
         operator-provided tree; skipping symlinks keeps the walk inside the template tree so a stray
         link can't pull files from elsewhere on the host into the uploaded bundle.
+
+        Local development artefacts (:data:`EXCLUDED_BASE_DIR_NAMES` and friends) are skipped for the
+        same reason. In dev the repo's ``fl-apps/`` tree is bind-mounted into flip-api, so anything a
+        developer's tooling leaves in a template directory — a ``.venv`` from running the app locally,
+        a ``.ruff_cache``, ``__pycache__`` — is otherwise mirrored into the bucket and shipped to every
+        trust. It is invisible in production, where the tree is baked from a clean CI checkout.
     """
     if not base_dir.is_dir():
         return []
     rel_paths: list[str] = []
-    for dirpath, _dirnames, filenames in os.walk(base_dir, followlinks=False):
+    for dirpath, dirnames, filenames in os.walk(base_dir, followlinks=False):
+        # In-place so os.walk does not descend into them (os.walk contract for topdown=True).
+        dirnames[:] = [d for d in dirnames if d not in EXCLUDED_BASE_DIR_NAMES]
         for name in filenames:
+            if name in EXCLUDED_BASE_FILE_NAMES or name.endswith(EXCLUDED_BASE_FILE_SUFFIXES):
+                continue
             path = Path(dirpath) / name
             if path.is_symlink():
                 continue
