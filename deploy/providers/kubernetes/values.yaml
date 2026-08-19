@@ -750,6 +750,9 @@ pacs:
   aeTitle: ORTHANC
   qrPort: 4242
   label: Test PACS instance
+  # Relational queries / extended negotiation. A per-PACS capability, not a preference: a PACS that
+  # does not support it rejects the association unless this is false. Ask the PACS team.
+  supportsExtendedNegotiations: true
   # Throttle. A production PACS may refuse further associations after a certain volume, and a trust
   # may want retrieval confined to out-of-hours. Agree the window with the PACS manager.
   availability:

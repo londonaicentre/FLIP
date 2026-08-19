@@ -320,7 +320,10 @@ class TrustKit:
         name (str): TRUST_NAME for display; falls back to the CODE when absent.
         slot_number (int | None): Assigned FL kit slot number (FL_KIT_SLOT_NUMBER).
             Drives the XNAT stack name (xnat<N>) and which trust exposes host APIs.
-        xnat_port (str | None): Host port for the trust's XNAT web UI.
+        xnat_web_port (str | None): Host port for the trust's XNAT web UI. Read from
+            XNAT_WEB_PORT, falling back to XNAT_PORT — the same precedence trust/xnat/Makefile
+            applies. Those were one variable until FLIP#993 split the DICOM listener off; a kit
+            that sets only XNAT_PORT still publishes the web UI there.
         pacs_ui_port (str | None): Host port for the trust's Orthanc PACS UI.
         trust_api_port (str | None): Host port for trust-api (slot-1 trust only).
         imaging_api_port (str | None): Host port for imaging-api (slot-1 trust only).
@@ -330,7 +333,7 @@ class TrustKit:
     code: str
     name: str
     slot_number: int | None
-    xnat_port: str | None
+    xnat_web_port: str | None
     pacs_ui_port: str | None
     trust_api_port: str | None
     imaging_api_port: str | None
@@ -381,7 +384,7 @@ def discover_trust_kits(trust_dir: Path, env: str) -> list[TrustKit]:
                 code=code,
                 name=env_vars.get("TRUST_NAME") or code,
                 slot_number=slot_number,
-                xnat_port=env_vars.get("XNAT_PORT"),
+                xnat_web_port=env_vars.get("XNAT_WEB_PORT") or env_vars.get("XNAT_PORT"),
                 pacs_ui_port=env_vars.get("PACS_UI_PORT"),
                 trust_api_port=env_vars.get("TRUST_API_PORT"),
                 imaging_api_port=env_vars.get("IMAGING_API_PORT"),
@@ -770,8 +773,8 @@ def main(
         for kit in trust_kits:
             slot = f" slot {kit.slot_number}" if kit.slot_number else ""
             # 127.0.0.1 (not localhost) avoids IPv6 routing issues with Docker Swarm.
-            if kit.xnat_port:
-                xnat_url = f"http://127.0.0.1:{kit.xnat_port}"
+            if kit.xnat_web_port:
+                xnat_url = f"http://127.0.0.1:{kit.xnat_web_port}"
                 check_http_endpoint(xnat_url, f"XNAT {kit.name}{slot} Web UI", [200, 302])
             if kit.pacs_ui_port:
                 pacs_url = f"http://localhost:{kit.pacs_ui_port}"

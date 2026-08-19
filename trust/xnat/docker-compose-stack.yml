@@ -49,6 +49,9 @@ services:
       - PACS_AETITLE=${PACS_AETITLE-ORTHANC}
       - PACS_QR_PORT=${PACS_QR_PORT-4242}
       - PACS_LABEL=${PACS_LABEL-Test PACS instance}
+      # A per-PACS capability, not a preference: a PACS without relational-query support
+      # rejects the association unless this is false.
+      - PACS_SUPPORTS_EXTENDED_NEGOTIATIONS=${PACS_SUPPORTS_EXTENDED_NEGOTIATIONS-true}
       # PACS throttle — a production PACS may refuse further associations after a certain volume.
       - PACS_AVAILABILITY_DAYS=${PACS_AVAILABILITY_DAYS-MONDAY,TUESDAY,WEDNESDAY,THURSDAY,FRIDAY,SATURDAY,SUNDAY}
       - PACS_AVAILABILITY_START=${PACS_AVAILABILITY_START-00:00}

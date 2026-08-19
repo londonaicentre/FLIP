@@ -455,11 +455,20 @@ The study data is sent to XNAT's prearchive.
 
 #### DICOM Port Map
 
-| Service | AE Title | Host | Port | Purpose |
-|---------|---------|------|------|---------|
-| XNAT SCP | `XNAT` | xnat-web | 8104 | Receives C-STORE from PACS |
-| Orthanc | `ORTHANC` | orthanc | 4242 | PACS — stores DICOM studies |
-| Imaging Worker | `XNAT (configurable via `xnat.web.dicomAet`)` | (any) | — | C-MOVE source AE |
+Values below are the shipped defaults for the mocked Orthanc; a trust PACS overrides them
+through the Helm values named in each cell.
+
+| Service | AE title | Host | Port | Purpose |
+|---------|----------|------|------|---------|
+| XNAT SCP receiver | `XNAT` (`xnat.web.dicomAet`) | xnat-web (`pacs.host` dials it back) | 8104 (`xnat.web.dicomPort`) | Receives the C-STORE the PACS opens after a C-MOVE |
+| PACS | `ORTHANC` (`pacs.aeTitle`) | orthanc (`pacs.host`) | 4242 (`pacs.qrPort`) | Serves C-FIND and C-MOVE |
+| DQR calling AE | same as the SCP receiver | — | — | The AE XNAT presents when it queries the PACS |
+
+There is no separate AE for the imaging worker: imaging-api drives retrieval through XNAT's DQR
+REST API, so every association on the wire is between XNAT and the PACS. The SCP receiver's AE
+title and the DQR calling AE are both `xnat.web.dicomAet` and must stay equal — DQR matches the
+C-MOVE destination against a registered receiver by exact `AE:port`, so a mismatch means the PACS
+sends the studies to an address XNAT is not listening on.
 
 #### XNAT SCP Receiver Configuration
 
@@ -470,7 +479,8 @@ kubectl exec -n flip-trust trust-release-flip-trust-xnat-db-0 -- psql -U xnat -d
   "SELECT id, ae_title, port, direct_archive, custom_processing, identifier FROM xhbm_dicomscpinstance;"
 ```
 
-Expected output:
+Expected output (`ae_title` and `port` follow `xnat.web.dicomAet` / `xnat.web.dicomPort`; the
+rest are fixed by `configure-xnat.sh`):
 `ae_title=XNAT, port=8104, direct_archive=t, custom_processing=t, identifier=dqrObjectIdentifier`
 
 If missing or wrong, recreate it via the REST API (see §2.2 — prefer the API

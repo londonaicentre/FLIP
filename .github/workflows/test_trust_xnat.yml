@@ -12,10 +12,11 @@
 
 name: Trust - XNAT CI
 
-# The suite covers the anonymization script and the weak-password guards. The
-# guard parity tests read their inputs from outside trust/xnat/tests/, so every
-# file they assert on has to trigger this workflow — otherwise a change to a
-# guard (or to the credential minter) lands with the test that pins it unrun.
+# The suite covers the anonymization script, the weak-password guards, and the deployment wiring
+# that carries configuration into configure-xnat.sh. Those tests read their inputs from outside
+# trust/xnat/tests/, so every file they assert on has to trigger this workflow — otherwise a change
+# to a guard, to the credential minter, or to either deployment path's environment block lands with
+# the test that pins it unrun.
 on:
   push:
     branches: [main, develop]
@@ -26,6 +27,9 @@ on:
       - "trust/xnat/scripts/ensure_plugins.sh"
       - "trust/xnat/tests/**"
       - "trust/xnat/Makefile"
+      - "trust/xnat/docker-compose-stack.yml"
+      - "trust/xnat/docker-compose-stack.real-pacs.yml"
+      - "deploy/providers/kubernetes/templates/xnat-init-job.yaml"
       - "trust/Makefile"
       - "Makefile"
       - "flip-api/Makefile"
@@ -44,6 +48,9 @@ on:
       - "trust/xnat/scripts/ensure_plugins.sh"
       - "trust/xnat/tests/**"
       - "trust/xnat/Makefile"
+      - "trust/xnat/docker-compose-stack.yml"
+      - "trust/xnat/docker-compose-stack.real-pacs.yml"
+      - "deploy/providers/kubernetes/templates/xnat-init-job.yaml"
       - "trust/Makefile"
       - "Makefile"
       - "flip-api/Makefile"

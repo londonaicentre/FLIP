@@ -83,8 +83,24 @@ def test_discovers_code_kits() -> None:
     _assert("KCH" in by_code and "GSTT" in by_code, "keyed by CODE", f"got {sorted(by_code)}")
     kch = by_code.get("KCH", TrustKit("", "", None, None, None, None, None, None))
     _assert(kch.slot_number == 1, "reads FL_KIT_SLOT_NUMBER", f"got {kch.slot_number!r}")
-    _assert(kch.xnat_port == "8106" and kch.pacs_ui_port == "8044", "reads XNAT/PACS ports")
+    _assert(kch.xnat_web_port == "8106" and kch.pacs_ui_port == "8044", "reads XNAT/PACS ports")
     _assert(kch.trust_api_port == "8020", "reads TRUST_API_PORT", f"got {kch.trust_api_port!r}")
+
+
+def test_web_port_prefers_xnat_web_port() -> None:
+    """The web UI moved off XNAT_PORT in FLIP#993; probing the DICOM port would report it down."""
+    trust = _trust_dir()
+    _write_kit(trust, "GSTT", "development", TRUST_NAME="GSTT", XNAT_PORT=8104, XNAT_WEB_PORT=8080)
+    kits = discover_trust_kits(trust, "development")
+    _assert(kits[0].xnat_web_port == "8080", "XNAT_WEB_PORT wins over XNAT_PORT", f"got {kits[0].xnat_web_port!r}")
+
+
+def test_web_port_falls_back_to_xnat_port() -> None:
+    """A kit predating the split sets only XNAT_PORT, and still publishes the web UI there."""
+    trust = _trust_dir()
+    _write_kit(trust, "GSTT", "development", TRUST_NAME="GSTT", XNAT_PORT=8104)
+    kits = discover_trust_kits(trust, "development")
+    _assert(kits[0].xnat_web_port == "8104", "falls back to XNAT_PORT", f"got {kits[0].xnat_web_port!r}")
 
 
 def test_ignores_examples_and_other_envs() -> None:
@@ -115,12 +131,13 @@ def test_missing_dir_returns_empty() -> None:
 
 
 def main() -> None:
-    for test in (
-        test_discovers_code_kits,
-        test_ignores_examples_and_other_envs,
-        test_missing_slot_and_name_fallback,
-        test_missing_dir_returns_empty,
-    ):
+    # Discovered rather than listed: the hand-maintained tuple this replaced meant a new test
+    # function ran nowhere and the suite still reported green.
+    tests = [v for k, v in list(globals().items()) if k.startswith("test_") and callable(v)]
+    if not tests:
+        print("no tests discovered")
+        sys.exit(1)
+    for test in tests:
         print(f"\n{test.__name__}")
         test()
     print(f"\n{PASS} passed, {FAIL} failed")

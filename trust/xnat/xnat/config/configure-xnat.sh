@@ -46,6 +46,10 @@ PACS_HOST="${PACS_HOST-orthanc}"            # service name in compose / k8s, or 
 PACS_AETITLE="${PACS_AETITLE-ORTHANC}"
 PACS_QR_PORT="${PACS_QR_PORT-4242}"
 PACS_LABEL="${PACS_LABEL-Test PACS instance}"
+# Relational queries / extended negotiation. On by default because both the mocked Orthanc and
+# every PACS we have integrated with support it, but it is a genuine per-PACS capability: a PACS
+# that does not support it must have this off or it rejects the association (FLIP#993).
+PACS_SUPPORTS_EXTENDED_NEGOTIATIONS="${PACS_SUPPORTS_EXTENDED_NEGOTIATIONS-true}"
 
 # DQR retry behaviour and the PACS availability schedule — the throttle for a production PACS, which
 # may refuse further associations after a certain volume (FLIP#993). Defaults are today's values.
@@ -62,7 +66,15 @@ PACS_UTILIZATION_PERCENT="${PACS_UTILIZATION_PERCENT-100}"
 : "${XNAT_URL:?}" "${XNAT_AETITLE:?}" "${PACS_HOST:?}" "${PACS_AETITLE:?}" "${PACS_QR_PORT:?}"
 : "${PACS_LABEL:?}" "${DQR_MAX_PACS_REQUEST_ATTEMPTS:?}" "${DQR_RETRY_WAIT_SECONDS:?}"
 : "${PACS_AVAILABILITY_DAYS:?}" "${PACS_AVAILABILITY_START:?}" "${PACS_AVAILABILITY_END:?}"
-: "${PACS_THREADS:?}" "${PACS_UTILIZATION_PERCENT:?}"
+: "${PACS_THREADS:?}" "${PACS_UTILIZATION_PERCENT:?}" "${PACS_SUPPORTS_EXTENDED_NEGOTIATIONS:?}"
+
+# Validated here rather than left to jq: --argjson accepts any JSON, so a "yes" or "True" would
+# fail inside the filter with a parse error that names neither the variable nor the accepted
+# values, and a bare `1` would silently register as the number 1 rather than a boolean.
+case "${PACS_SUPPORTS_EXTENDED_NEGOTIATIONS}" in
+  true|false) ;;
+  *) echo "ERROR: PACS_SUPPORTS_EXTENDED_NEGOTIATIONS must be true or false, got '${PACS_SUPPORTS_EXTENDED_NEGOTIATIONS}'" >&2; exit 1 ;;
+esac
 
 # jq parses the /xapi/dicomscp and /xapi/pacs listings below. It ships in the xnat-web image
 # (trust/xnat/xnat/Dockerfile), but fail loudly here rather than let a missing binary degrade into a
@@ -410,6 +422,7 @@ pacs_payload=$(jq -n \
   --arg host "${PACS_HOST}" \
   --arg label "${PACS_LABEL}" \
   --argjson port "${PACS_QR_PORT}" \
+  --argjson ext "${PACS_SUPPORTS_EXTENDED_NEGOTIATIONS}" \
   '{
     aeTitle: $ae,
     defaultQueryRetrievePacs: true,
@@ -420,7 +433,7 @@ pacs_payload=$(jq -n \
     queryRetrievePort: $port,
     queryable: true,
     storable: true,
-    supportsExtendedNegotiations: true
+    supportsExtendedNegotiations: $ext
   }')
 
 existing_pacs=$(xnat_curl -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_PASSWORD}" "$XNAT_URL/xapi/pacs")

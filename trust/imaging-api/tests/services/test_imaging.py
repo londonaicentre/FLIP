@@ -182,6 +182,20 @@ def test_check_pacs_success(mock_ping):
 
 
 # ---------------------------------------------------------------------------
+# check_pacs — no id supplied
+# ---------------------------------------------------------------------------
+@patch("imaging_api.services.imaging.resolve_pacs_id", return_value=7)
+@patch("imaging_api.services.imaging.ping_pacs")
+def test_check_pacs_without_id_resolves_rather_than_assuming_the_configured_one(mock_ping, mock_resolve):
+    """The configured PACS_ID is the unreachable-XNAT fallback, not a description of what exists."""
+    mock_ping.return_value = MagicMock(successful=True, enabled=True)
+
+    check_pacs({})
+
+    assert mock_ping.call_args[0][0] == 7
+
+
+# ---------------------------------------------------------------------------
 # check_pacs — not found
 # ---------------------------------------------------------------------------
 @patch("imaging_api.services.imaging.ping_pacs")

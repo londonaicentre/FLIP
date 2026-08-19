@@ -26,9 +26,10 @@ import pytest
 CONFIG_DIR = Path(__file__).resolve().parents[1] / "xnat" / "config"
 SCRIPT = CONFIG_DIR / "configure-xnat.sh"
 
-# Answers the two listings the script parses. GET /xapi/pacs returns nothing until a POST has been
-# seen, so a single run exercises the register-then-resolve path; seeding the marker file up front
-# makes the same stub return an already-registered PACS instead.
+# A miniature XNAT: it keeps the /xapi/pacs and /xapi/dicomscp collections in files and mutates them
+# on POST/PUT/DELETE, so a GET reflects what the script actually did rather than what the test said.
+# The earlier stub echoed the *configured* AE title back, which made "the configured title reached
+# XNAT" assertions circular — they held even when the script sent something else.
 STUB_CURL = r"""#!/bin/bash
 url=""; data=""; method="GET"; status_only=0; outfile=""
 prev=""
@@ -37,25 +38,64 @@ for a in "$@"; do
   case "$a" in http*) url="$a";; '%{http_code}') status_only=1;; esac
   prev="$a"
 done
-if [ -n "$data" ]; then
-  printf '%s\n' "=== $method $url" >> "$PAYLOADS"
-  printf '%s\n' "$data" >> "$PAYLOADS"
-fi
-[ "$method" = "DELETE" ] && printf '%s\n' "=== DELETE $url" >> "$PAYLOADS"
+
+# Every request, not only those carrying a body: a PUT whose whole meaning is its URL
+# (/xapi/users/guest/enabled/false) is otherwise invisible to the tests.
+printf '%s\n' "=== $method $url" >> "$PAYLOADS"
+[ -n "$data" ] && printf '%s\n' "$data" >> "$PAYLOADS"
+
+edit() {  # edit <state-file> <jq-filter> [args...]
+  local f="$1"; shift
+  jq "$@" "$f" > "$f.tmp" && mv "$f.tmp" "$f"
+}
+
+status=200
 body='{}'
 case "$url" in
-  *"/xapi/dicomscp"*) body="${STUB_SCP_JSON}" ;;
+  *"/xapi/pacs/"*"/availability")
+    status="${AVAIL_STATUS:-200}"
+    body="${AVAIL_BODY:-{\}}"
+    ;;
   *"/xapi/pacs")
-    if [ -f "$REGISTERED" ]; then
-      body='[{"id":'"$STUB_PACS_ID"',"aeTitle":"'"$STUB_PACS_AET"'","host":"'"$STUB_PACS_HOST"'","queryRetrievePort":'"$STUB_PACS_PORT"'}]'
-    else
-      body="${STUB_PACS_JSON:-[]}"
+    if [ "$method" = "POST" ] && [ -z "$SWALLOW_PACS_POST" ]; then
+      # XNAT assigns the id. Ours start at 7 so nothing can pass by assuming 1.
+      edit "$PACS_STATE" --argjson id "$(( $(jq 'length' "$PACS_STATE") + 7 ))" --argjson e "$data" \
+        '. + [$e + {id: $id}]'
     fi
-    [ "$method" = "POST" ] && touch "$REGISTERED"
+    body=$(cat "$PACS_STATE")
+    ;;
+  *"/xapi/pacs/"*)
+    id="${url##*/}"
+    case "$method" in
+      PUT) edit "$PACS_STATE" --argjson id "$id" --argjson e "$data" \
+             'map(if .id == $id then $e + {id: $id} else . end)' ;;
+      DELETE) edit "$PACS_STATE" --argjson id "$id" 'map(select(.id != $id))' ;;
+    esac
+    body=$(cat "$PACS_STATE")
+    ;;
+  *"/xapi/dicomscp")
+    if [ "$method" = "POST" ]; then
+      edit "$SCP_STATE" --argjson id "$(( $(jq 'length' "$SCP_STATE") + 5 ))" --argjson e "$data" \
+        '. + [$e + {id: $id}]'
+    fi
+    body=$(cat "$SCP_STATE")
+    ;;
+  *"/xapi/dicomscp/"*)
+    id="${url##*/}"
+    [ "$method" = "DELETE" ] && edit "$SCP_STATE" --argjson id "$id" 'map(select(.id != $id))'
+    body=$(cat "$SCP_STATE")
     ;;
 esac
+
+# Lets a test make one specific call fail, to exercise the error paths.
+case "${FAIL_ON_URL:-__none__}" in
+  __none__) ;;
+  *) case "$url" in *"$FAIL_ON_URL"*) status="${FAIL_STATUS:-500}"; body='{"error":"stub failure"}' ;; esac ;;
+esac
+
 [ -n "$outfile" ] && [ "$outfile" != "/dev/null" ] && printf '%s' "$body" > "$outfile"
-if [ "$status_only" = "1" ]; then printf '200'; else printf '%s\n200' "$body"; fi
+if [ "$status_only" = "1" ]; then printf '%s' "$status"; else printf '%s\n%s' "$body" "$status"; fi
+case "$status" in 2*) exit 0 ;; esac
 exit 0
 """
 
@@ -66,36 +106,51 @@ BASE_ENV = {
     "XNAT_SERVICE_USER": "flipServiceAccount",
     "XNAT_SERVICE_PASSWORD": "service",
     "XNAT_PORT": "8104",
+    # The plugin-readiness wait polls until a DQR route answers, bounded only by wall clock. With
+    # sleep stubbed out, a test that makes that route fail would spin at full speed for the default
+    # 900s budget rather than failing; cap it so the harness can never hang on one.
+    "XNAT_PLUGIN_READINESS_TIMEOUT_SECONDS": "5",
+    "XNAT_PLUGIN_READINESS_POLL_SECONDS": "0",
 }
 
+# What the stub reports as already registered when a test does not say otherwise.
+MOCK_PACS_REGISTRATION = '[{"id":7,"aeTitle":"ORTHANC","host":"orthanc","queryRetrievePort":4242}]'
 
-def run_configure(tmp_path, env_overrides=None, pacs_already_registered=False):
-    """Runs configure-xnat.sh against the stub and returns (exit code, payloads, combined output)."""
+
+def run_configure(tmp_path, env_overrides=None, pacs_state=None, scp_state=None):
+    """Runs configure-xnat.sh against the stub and returns (exit code, payloads, combined output).
+
+    Args:
+        tmp_path: pytest tmp_path for the stub PATH and state files.
+        env_overrides (dict | None): Environment for the run, layered over BASE_ENV.
+        pacs_state (str | None): JSON array the stub starts with as XNAT's PACS registrations.
+        scp_state (str | None): JSON array the stub starts with as XNAT's SCP receivers.
+    """
     bin_dir = tmp_path / "bin"
-    bin_dir.mkdir()
+    bin_dir.mkdir(parents=True)  # parents: tests that run twice pass a nested tmp_path
     stub = bin_dir / "curl"
     stub.write_text(STUB_CURL)
     stub.chmod(0o755)
+    # The script's fixed "wait for XNAT to settle" sleep is 10s of dead time per run, and the
+    # readiness loops it guards are already satisfied instantly by the stub. Stubbing sleep keeps
+    # the suite at seconds rather than minutes; nothing here is testing the waits.
+    no_sleep = bin_dir / "sleep"
+    no_sleep.write_text("#!/bin/sh\nexit 0\n")
+    no_sleep.chmod(0o755)
 
     payloads = tmp_path / "payloads.txt"
-    registered = tmp_path / "registered"
-    if pacs_already_registered:
-        registered.touch()
+    pacs_file = tmp_path / "pacs.json"
+    pacs_file.write_text(pacs_state if pacs_state is not None else "[]")
+    scp_file = tmp_path / "scp.json"
+    scp_file.write_text(scp_state if scp_state is not None else '[{"id":1,"aeTitle":"XNAT","port":8104}]')
 
     env = {
         **os.environ,
         **BASE_ENV,
         "PATH": f"{bin_dir}:{os.environ['PATH']}",
         "PAYLOADS": str(payloads),
-        "REGISTERED": str(registered),
-        # What the stub reports as registered. Defaults to the mock; when a test configures a
-        # different PACS the stub echoes that back, mimicking XNAT after the POST succeeded.
-        "STUB_SCP_JSON": '[{"id":1,"aeTitle":"XNAT","port":8104}]',
-        "STUB_PACS_JSON": "[]",
-        "STUB_PACS_ID": "7",
-        "STUB_PACS_AET": (env_overrides or {}).get("PACS_AETITLE", "ORTHANC"),
-        "STUB_PACS_HOST": "orthanc" if pacs_already_registered else (env_overrides or {}).get("PACS_HOST", "orthanc"),
-        "STUB_PACS_PORT": "4242" if pacs_already_registered else (env_overrides or {}).get("PACS_QR_PORT", "4242"),
+        "PACS_STATE": str(pacs_file),
+        "SCP_STATE": str(scp_file),
         **(env_overrides or {}),
     }
 
@@ -104,6 +159,28 @@ def run_configure(tmp_path, env_overrides=None, pacs_already_registered=False):
     )
     body = payloads.read_text() if payloads.exists() else ""
     return result.returncode, body, result.stdout + result.stderr
+
+
+def requests_made(payloads: str) -> list[tuple[str, str]]:
+    """Every (method, url) the script issued, in order."""
+    made = []
+    for block in payloads.split("=== "):
+        header = block.partition("\n")[0].split()
+        if len(header) == 2:
+            made.append((header[0], header[1]))
+    return made
+
+
+def body_for(payloads: str, endpoint: str) -> str:
+    """The last raw request body sent to ``endpoint`` — for the payloads that are not objects."""
+    found = None
+    for block in payloads.split("=== "):
+        header, _, rest = block.partition("\n")
+        parts = header.split()
+        if len(parts) == 2 and parts[1].endswith(endpoint) and rest.strip():
+            found = rest.strip()
+    assert found is not None, f"no body sent to {endpoint}"
+    return found
 
 
 def payload_for(payloads: str, endpoint: str) -> dict:
@@ -115,7 +192,8 @@ def payload_for(payloads: str, endpoint: str) -> dict:
     found = None
     for block in payloads.split("=== "):
         header, _, rest = block.partition("\n")
-        url = header.split()[-1] if header.split() else ""
+        parts = header.split()
+        url = parts[1] if len(parts) == 2 else ""
         matches = url.endswith(endpoint) or (
             endpoint == "/xapi/pacs" and re.search(r"/xapi/pacs/\d+$", url) is not None
         )
@@ -200,7 +278,7 @@ def test_registration_updates_in_place_when_host_or_port_drift(tmp_path):
     code, payloads, output = run_configure(
         tmp_path,
         {"PACS_HOST": "10.0.0.10", "PACS_QR_PORT": "8059"},
-        pacs_already_registered=True,  # stub reports ORTHANC at orthanc:4242
+        pacs_state=MOCK_PACS_REGISTRATION,
     )
     assert code == 0, output
     assert "updating to 10.0.0.10:8059" in output
@@ -212,14 +290,15 @@ def test_registration_updates_in_place_when_host_or_port_drift(tmp_path):
 
 def test_matching_registration_is_left_alone(tmp_path):
     """An unchanged registration must not be rewritten on every redeploy."""
-    code, _, output = run_configure(tmp_path, pacs_already_registered=True)
+    code, payloads, output = run_configure(tmp_path, pacs_state=MOCK_PACS_REGISTRATION)
     assert code == 0, output
     assert "already registered at orthanc:4242 — leaving as-is" in output
+    assert not [m for m, u in requests_made(payloads) if m in ("POST", "PUT") and u.endswith("/xapi/pacs")]
 
 
 def test_availability_uses_the_resolved_pacs_id(tmp_path):
     """The schedule must be written against the real registration, not a hardcoded id of 1."""
-    code, payloads, output = run_configure(tmp_path, pacs_already_registered=True)
+    code, payloads, output = run_configure(tmp_path, pacs_state=MOCK_PACS_REGISTRATION)
     assert code == 0, output
     assert payload_for(payloads, "/availability")["pacsId"] == 7
 
@@ -241,10 +320,11 @@ def test_receiver_on_our_port_is_reclaimed_whatever_it_is_called(tmp_path):
     """Renaming the AE title must not strand the old receiver fighting for the same port."""
     code, payloads, output = run_configure(
         tmp_path,
-        {"STUB_SCP_JSON": '[{"id":3,"aeTitle":"FLIPXNAT","port":8104}]'},
+        scp_state='[{"id":3,"aeTitle":"FLIPXNAT","port":8104}]',
     )
     assert code == 0, output
-    assert "(id 3)" in output and "FLIPXNAT" in output
+    assert "(id 3)" in output
+    assert "FLIPXNAT" in output
     assert any(u.endswith("/xapi/dicomscp/3") for u in deletes(payloads))
 
 
@@ -256,8 +336,8 @@ def test_foreign_pacs_registrations_are_removed(tmp_path):
             "PACS_AETITLE": "SECTRA_QR",
             "PACS_HOST": "10.0.0.10",
             "PACS_QR_PORT": "8059",
-            "STUB_PACS_JSON": '[{"id":1,"aeTitle":"ORTHANC","host":"orthanc","queryRetrievePort":4242}]',
         },
+        pacs_state='[{"id":1,"aeTitle":"ORTHANC","host":"orthanc","queryRetrievePort":4242}]',
     )
     assert code == 0, output
     assert "Removing PACS ORTHANC at orthanc:4242 (id 1)" in output
@@ -268,11 +348,8 @@ def test_receiver_is_reclaimed_when_port_and_title_both_change(tmp_path):
     """Matching on our port *or* our AE title left an orphan when both moved in one change."""
     code, payloads, output = run_configure(
         tmp_path,
-        {
-            "XNAT_PORT": "11112",
-            "XNAT_AETITLE": "FLIPXNAT2",
-            "STUB_SCP_JSON": '[{"id":3,"aeTitle":"FLIPXNAT","port":8104}]',
-        },
+        {"XNAT_PORT": "11112", "XNAT_AETITLE": "FLIPXNAT2"},
+        scp_state='[{"id":3,"aeTitle":"FLIPXNAT","port":8104}]',
     )
     assert code == 0, output
     assert any(u.endswith("/xapi/dicomscp/3") for u in deletes(payloads)), (
@@ -284,7 +361,7 @@ def test_refuses_to_delete_a_foreign_pacs_while_still_on_mock_defaults(tmp_path)
     """An unrelated redeploy must not delete a PACS the operator registered by hand."""
     code, payloads, output = run_configure(
         tmp_path,
-        {"STUB_PACS_JSON": '[{"id":1,"aeTitle":"SECTRA_QR","host":"10.0.0.10","queryRetrievePort":8059}]'},
+        pacs_state='[{"id":1,"aeTitle":"SECTRA_QR","host":"10.0.0.10","queryRetrievePort":8059}]',
     )
     assert code != 0, "should refuse rather than delete a registration it may not own"
     assert "SECTRA_QR at 10.0.0.10:8059" in output
@@ -307,3 +384,177 @@ def test_non_numeric_port_fails_naming_the_variable(tmp_path):
     """A bad port must fail here, not reach XNAT as an opaque 400."""
     code, _, output = run_configure(tmp_path, {"PACS_QR_PORT": "8059abc"})
     assert code != 0, "a non-numeric port was accepted"
+
+
+def test_scp_receiver_binds_the_configured_port(tmp_path):
+    """XNAT_PORT is the C-MOVE destination port; a receiver on any other port never gets the study."""
+    code, payloads, output = run_configure(tmp_path, {"XNAT_PORT": "11112"})
+    assert code == 0, output
+    assert payload_for(payloads, "/xapi/dicomscp")["port"] == 11112
+
+
+def test_scp_receiver_keeps_the_settings_the_dqr_import_path_depends_on(tmp_path):
+    """These four are why the receiver is re-created rather than left at XNAT's defaults.
+
+    ``dqrObjectIdentifier`` is what routes an arriving study to the project DQR requested it for;
+    without ``directArchive`` + ``customProcessing`` the study lands in the prearchive and is never
+    archived; ``anonymizationEnabled`` is what applies the site-wide anonymization script, so
+    turning it off sends identifiable DICOM into the archive.
+    """
+    code, payloads, output = run_configure(tmp_path)
+    assert code == 0, output
+
+    receiver = payload_for(payloads, "/xapi/dicomscp")
+    assert receiver["identifier"] == "dqrObjectIdentifier"
+    assert receiver["directArchive"] is True
+    assert receiver["customProcessing"] is True
+    assert receiver["anonymizationEnabled"] is True
+    assert receiver["enabled"] is True
+    # Routing/whitelisting are off deliberately: FLIP routes by DQR's identifier, and a whitelist
+    # here would silently drop studies the platform asked for.
+    assert receiver["whitelistEnabled"] is False
+    assert receiver["routingExpressionsEnabled"] is False
+
+
+def test_site_wide_anonymization_is_uploaded_and_enabled(tmp_path):
+    """The receiver's anonymizationEnabled only matters if the site script is on."""
+    code, payloads, output = run_configure(tmp_path)
+    assert code == 0, output
+    assert body_for(payloads, "/xapi/anonymize/site/enabled") == "true"
+    assert ("PUT", "http://xnat-web:8080/xapi/anonymize/site") in requests_made(payloads)
+
+
+def test_dqr_stays_restricted_to_authorised_accounts(tmp_path):
+    """allowAllUsersToUseDqr would let any XNAT account pull arbitrary studies from the trust PACS."""
+    code, payloads, output = run_configure(tmp_path)
+    assert code == 0, output
+    assert payload_for(payloads, "/xapi/dqr/settings")["allowAllUsersToUseDqr"] is False
+
+
+def test_guest_account_is_disabled(tmp_path):
+    """An enabled guest is an unauthenticated reader of an archive holding patient imaging."""
+    code, payloads, output = run_configure(tmp_path)
+    assert code == 0, output
+    assert ("PUT", "http://xnat-web:8080/xapi/users/guest/enabled/false") in requests_made(payloads)
+
+
+def test_pacs_registration_carries_the_flags_dqr_selects_on(tmp_path):
+    """defaultQueryRetrievePacs is how DQR picks this PACS, and imaging-api how it resolves the id."""
+    code, payloads, output = run_configure(tmp_path)
+    assert code == 0, output
+
+    pacs = payload_for(payloads, "/xapi/pacs")
+    assert pacs["defaultQueryRetrievePacs"] is True
+    assert pacs["defaultStoragePacs"] is True
+    assert pacs["queryable"] is True
+    assert pacs["storable"] is True
+
+
+def test_extended_negotiation_defaults_on_and_is_configurable(tmp_path):
+    """A PACS without relational-query support rejects the association unless this is off."""
+    code, payloads, output = run_configure(tmp_path)
+    assert code == 0, output
+    assert payload_for(payloads, "/xapi/pacs")["supportsExtendedNegotiations"] is True
+
+    code, payloads, output = run_configure(tmp_path / "off", {"PACS_SUPPORTS_EXTENDED_NEGOTIATIONS": "false"})
+    assert code == 0, output
+    assert payload_for(payloads, "/xapi/pacs")["supportsExtendedNegotiations"] is False
+
+
+@pytest.mark.parametrize("value", ["yes", "True", "1", ""])
+def test_non_boolean_extended_negotiation_is_refused(tmp_path, value):
+    """jq would take `1` as the number 1 and reject `yes` with a message naming neither the
+    variable nor the accepted values."""
+    code, _, output = run_configure(tmp_path, {"PACS_SUPPORTS_EXTENDED_NEGOTIATIONS": value})
+    assert code != 0, f"{value!r} was accepted as a boolean"
+    assert "PACS_SUPPORTS_EXTENDED_NEGOTIATIONS" in output
+
+
+def test_availability_window_is_enabled_and_live(tmp_path):
+    """A window written disabled is a schedule that silently never applies."""
+    code, payloads, output = run_configure(tmp_path)
+    assert code == 0, output
+
+    availability = payload_for(payloads, "/availability")
+    assert availability["enabled"] is True
+    assert availability["availableNow"] is True
+
+
+def test_dqr_retry_and_poll_settings_reach_xnat(tmp_path):
+    """The retry count and wait are the throttle a PACS team agrees to; a swap inverts it."""
+    code, payloads, output = run_configure(
+        tmp_path,
+        {"DQR_MAX_PACS_REQUEST_ATTEMPTS": "25", "DQR_RETRY_WAIT_SECONDS": "120"},
+    )
+    assert code == 0, output
+
+    dqr = payload_for(payloads, "/xapi/dqr/settings")
+    assert dqr["dqrMaxPacsRequestAttempts"] == "25"
+    assert dqr["dqrWaitToRetryRequestInSeconds"] == "120"
+    assert dqr["pacsAvailabilityCheckFrequency"] == "1 minute"
+    assert dqr["allowAllProjectsToUseDqr"] is True
+
+
+def test_a_rejected_availability_window_fails_the_run(tmp_path):
+    """A 400 that is not an overlap means the schedule was refused.
+
+    Reporting it as applied is the worst outcome available: a trust that negotiated an
+    out-of-hours window would be told it was in force while DQR retrieved around the clock.
+    """
+    code, _, output = run_configure(
+        tmp_path,
+        {"AVAIL_STATUS": "400", "AVAIL_BODY": '{"error":"Unknown day of week: FUNDAY"}'},
+    )
+    assert code != 0, "a refused availability window was reported as applied"
+    assert "availability" in output.lower()
+
+
+def test_a_server_error_on_availability_fails_the_run(tmp_path):
+    code, _, output = run_configure(tmp_path, {"AVAIL_STATUS": "500", "AVAIL_BODY": '{"error":"boom"}'})
+    assert code != 0, "a failed availability write was swallowed"
+
+
+def test_an_overlapping_availability_interval_is_tolerated(tmp_path):
+    """DQR pre-creates intervals at registration, so this specific 400 is not a failure."""
+    code, _, output = run_configure(
+        tmp_path,
+        {
+            "PACS_AVAILABILITY_DAYS": "MONDAY",
+            "AVAIL_STATUS": "400",
+            "AVAIL_BODY": '{"error":"probable overlap with existing interval"}',
+        },
+    )
+    assert code == 0, output
+    assert "already exists" in output
+
+
+def test_a_registration_that_did_not_take_fails_rather_than_configuring_nothing(tmp_path):
+    """XNAT answering 200 without persisting is exactly how FLIP#822 stayed hidden."""
+    code, _, output = run_configure(tmp_path, {"SWALLOW_PACS_POST": "1"})
+    assert code != 0, "an unregistered PACS was treated as configured"
+    assert "not registered" in output
+
+
+def test_drift_is_corrected_in_place_rather_than_re_created(tmp_path):
+    """A delete-and-recreate would change the PACS id under imaging-api's cache mid-flight."""
+    code, payloads, output = run_configure(
+        tmp_path,
+        {"PACS_HOST": "10.0.0.10", "PACS_QR_PORT": "8059"},
+        pacs_state=MOCK_PACS_REGISTRATION,
+    )
+    assert code == 0, output
+    assert ("PUT", "http://xnat-web:8080/xapi/pacs/7") in requests_made(payloads)
+    assert not [u for m, u in requests_made(payloads) if m == "DELETE" and "/xapi/pacs/" in u]
+
+
+def test_credentials_are_not_echoed_when_a_call_fails(tmp_path):
+    """The configure output is tee'd to a log file on the XNAT host."""
+    # The password-rotation PUT: the one call whose -d body is itself a credential.
+    code, _, output = run_configure(
+        tmp_path,
+        {"FAIL_ON_URL": "/xapi/users/admin", "FAIL_STATUS": "500"},
+    )
+    assert code != 0, "a 500 from XNAT did not abort the run"
+    assert "<redacted>" in output, "the failing request was echoed without redaction"
+    for secret in ("rotated", "initial", "service"):
+        assert secret not in output, f"the {secret!r} password reached the configure log"

@@ -106,6 +106,8 @@ spec:
               value: {{ .Values.pacs.qrPort | quote }}
             - name: PACS_LABEL
               value: {{ .Values.pacs.label | quote }}
+            - name: PACS_SUPPORTS_EXTENDED_NEGOTIATIONS
+              value: {{ .Values.pacs.supportsExtendedNegotiations | quote }}
             # Throttle: a production PACS may refuse further associations after a certain volume.
             - name: PACS_AVAILABILITY_DAYS
               value: {{ .Values.pacs.availability.days | quote }}

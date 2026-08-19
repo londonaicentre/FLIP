@@ -115,8 +115,8 @@ are the questions that most often turn out to matter:
    * - Confirmation that STUDY-level matching on Accession Number ``(0008,0050)`` is supported
      - This is the only key FLIP queries by. Without it, nothing resolves
    * - Whether relational queries / extended negotiation are supported
-     - FLIP registers the PACS with ``supportsExtendedNegotiations`` enabled; a PACS that does not
-       support it needs that turned off
+     - Enabled by default; a PACS that does not support it rejects the association, and needs
+       ``PACS_SUPPORTS_EXTENDED_NEGOTIATIONS=false``
    * - The transfer syntax studies will be sent in
      - Compressed or transcoded data still has to be readable by XNAT once archived
    * - Any per-connection or per-session limit on how much may be retrieved
@@ -187,6 +187,10 @@ trust's PACS team supplies; what they supply is covered above.
      - Host-published port for XNAT's web UI and REST API. Unrelated to DICOM; separate from
        ``XNAT_PORT`` so the DICOM receiver can be published independently
      - whatever ``XNAT_PORT`` is set to
+   * - ``PACS_SUPPORTS_EXTENDED_NEGOTIATIONS``
+     - Whether the PACS supports relational queries / extended negotiation. A capability of the
+       PACS, not a preference — see the table above
+     - ``true``
    * - ``PACS_AVAILABILITY_DAYS`` / ``_START`` / ``_END``
      - When retrieval may run, as a comma-separated day list and a daily window
      - all week, ``00:00``–``24:00``

@@ -387,6 +387,10 @@ After changes, evaluate if docs need updating:
   did (FLIP#822/#862). `configure-xnat.sh` updates an existing registration in place when the host or
   port drift, and imaging-api reads the PACS id from XNAT at runtime rather than assuming 1 —
   `configure-xnat.sh` keeps exactly one registration, so it is the sole one XNAT reports.
+- `PACS_SUPPORTS_EXTENDED_NEGOTIATIONS` — whether the PACS supports relational queries / extended
+  negotiation (default `true`). A capability of the PACS rather than a preference: one that does not
+  support it rejects the association outright. Validated as literally `true` or `false` before it
+  reaches jq, so a `yes` or a bare `1` fails naming the variable instead of registering the number 1.
 - `PACS_AVAILABILITY_DAYS` / `_START` / `_END` / `PACS_THREADS` / `PACS_UTILIZATION_PERCENT` /
   `DQR_MAX_PACS_REQUEST_ATTEMPTS` / `DQR_RETRY_WAIT_SECONDS` — the retrieval throttle. A production
   PACS may refuse further associations after a certain volume, so the window and thread count are

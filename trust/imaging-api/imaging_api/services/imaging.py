@@ -148,13 +148,15 @@ def ping_pacs(pacs_id: int, headers: dict[str, str]) -> PacsStatus:
         raise Exception(f"Failed to ping PACS: {response.text}")
 
 
-def check_pacs(headers: dict[str, str], pacs_id: int = PACS_ID) -> None:
+def check_pacs(headers: dict[str, str], pacs_id: int | None = None) -> None:
     """
     Checks if the PACS system is reachable by pinging it.
 
     Args:
         headers (dict[str, str]): XNAT authentication headers.
-        pacs_id (int): PACS ID to check. Default is the PACS_ID from settings.
+        pacs_id (int | None): PACS ID to check. Resolved from XNAT when omitted, rather than
+            defaulting to the configured ``PACS_ID`` — that setting is the unreachable-XNAT
+            fallback, not a description of what is registered.
 
     Returns:
         None
@@ -163,6 +165,8 @@ def check_pacs(headers: dict[str, str], pacs_id: int = PACS_ID) -> None:
         imaging_api.utils.exceptions.NotFoundError: If the PACS with the given ID is not found.
         Exception: If there is an error during the ping request or if the PACS is not reachable or is disabled.
     """
+    if pacs_id is None:
+        pacs_id = resolve_pacs_id(headers)
     try:
         pacs_status = ping_pacs(pacs_id, headers)
     except NotFoundError:

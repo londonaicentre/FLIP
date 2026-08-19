@@ -54,6 +54,58 @@ def test_ping_pacs_failure(client):
         assert error_message in response.json()["detail"]
 
 
+def test_ping_pacs_without_id_resolves_the_registration(client):
+    """trust-api's health probe calls this route: it must not have to know the id XNAT assigned."""
+    mock_response = {
+        "pacsId": 7,
+        "successful": True,
+        "pingTime": 123,
+        "created": 1610000000,
+        "enabled": True,
+        "timestamp": 1610001234,
+        "id": 7,
+        "disabled": 0,
+    }
+
+    with (
+        patch("imaging_api.routers.imaging.resolve_pacs_id", return_value=7) as mock_resolve,
+        patch("imaging_api.routers.imaging.ping_pacs") as mock_ping_pacs,
+    ):
+        mock_ping_pacs.return_value = PacsStatus(**mock_response)
+
+        response = client.get("/imaging/ping_pacs")
+
+        assert response.status_code == 200
+        assert mock_resolve.called, "the id was not resolved from XNAT"
+        assert mock_ping_pacs.call_args[0][0] == 7, "pinged an id other than the resolved one"
+
+
+def test_ping_pacs_with_explicit_id_does_not_resolve(client):
+    """The by-id route still means that specific registration."""
+    mock_response = {
+        "pacsId": 3,
+        "successful": True,
+        "pingTime": 123,
+        "created": 1610000000,
+        "enabled": True,
+        "timestamp": 1610001234,
+        "id": 3,
+        "disabled": 0,
+    }
+
+    with (
+        patch("imaging_api.routers.imaging.resolve_pacs_id") as mock_resolve,
+        patch("imaging_api.routers.imaging.ping_pacs") as mock_ping_pacs,
+    ):
+        mock_ping_pacs.return_value = PacsStatus(**mock_response)
+
+        response = client.get("/imaging/ping_pacs/3")
+
+        assert response.status_code == 200
+        assert not mock_resolve.called, "an explicit id was overridden by the resolved one"
+        assert mock_ping_pacs.call_args[0][0] == 3
+
+
 def test_query_by_accession_number_success(client):
     mock_study = Study(
         studyInstanceUid="1.2.3",
