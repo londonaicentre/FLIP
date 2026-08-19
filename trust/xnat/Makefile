@@ -246,8 +246,22 @@ endif
 	XNAT_PORT=$(XNAT_PORT_EFFECTIVE) \
 	PACS_UI_PORT=$(PACS_UI_PORT_EFFECTIVE) \
 	DOCKER_NETWORK_NAME=$(XNAT_NETWORK) \
-	docker stack deploy --with-registry-auth --detach=false ${STACK_FILES} $(XNAT_STACK)
+	docker stack deploy --with-registry-auth --resolve-image $(XNAT_RESOLVE_IMAGE) --detach=false ${STACK_FILES} $(XNAT_STACK)
 	$(MAKE) xnat-configure XNAT_PROJECT=$(XNAT_STACK)
+
+# Docker Swarm enforces image/node architecture strictly and, unlike docker compose,
+# will NOT fall back to emulation: an amd64-only image on an arm64 node sits Pending
+# forever with "no suitable node (unsupported platform on 1 node)". The XNAT images
+# are published amd64-only, so the whole stack stalls on an Apple Silicon host while
+# the compose-deployed hub and trust services run fine under emulation.
+#
+# `--resolve-image never` skips the registry manifest query that feeds that check, so
+# a locally-present amd64 image is scheduled and runs emulated. Default it to `never`
+# only when the node arch differs from amd64, so Linux/amd64 hosts keep the digest
+# pinning `always` gives them. Override explicitly if needed:
+#   make up-xnat KIT=<CODE> XNAT_RESOLVE_IMAGE=always
+XNAT_NODE_ARCH := $(shell docker info --format '{{.Architecture}}' 2>/dev/null)
+XNAT_RESOLVE_IMAGE ?= $(if $(filter x86_64 amd64,$(XNAT_NODE_ARCH)),always,never)
 
 down:
 	@for f in ../.env.*.$(ENV); do \
