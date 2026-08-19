@@ -93,7 +93,11 @@ spec:
           protocol: {{ default "TCP" .protocol }}
 {{- end }}
 {{- end }}
-    # Allow AWS IMDS (needed for EC2 metadata and IAM roles)
+    # Allow AWS IMDS (EC2 metadata / node IAM role).
+    # NOT for the fl-client any more: it holds no AWS credentials and its kit is staged
+    # onto the node before deploy. Kept because the OMOP/Orthanc seed Jobs may reach AWS
+    # through the node role on a managed cluster (on kind they use a host file mount).
+    # See NETWORK-POLICY.md — this is a candidate for removal once that is confirmed.
     - to:
         - ipBlock:
             cidr: 169.254.169.254/32

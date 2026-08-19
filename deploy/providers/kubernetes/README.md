@@ -19,7 +19,7 @@ trust services only make outbound connections to the Central Hub and the FL
 server; no inbound ports are exposed from the K8s cluster.
 
 > **Deployment status.** The chart is validated on single-node k3s and includes
-> kit synchronisation, default-deny ingress, audited egress rules, least-privilege
+> kit staging, default-deny ingress, audited egress rules, least-privilege
 > service accounts, and stateless-workload hardening. Review the
 > [known limitations](#known-limitations), particularly storage and Pod Security
 > constraints, before selecting it for a production Trust.
@@ -73,7 +73,7 @@ SHA-256 hash of the API key — re-running registration is idempotent.
 ### 2. Provide the infrastructure secrets
 
 The kit owns only the per-trust keys. The chart's *other* secrets (XNAT, OMOP,
-Orthanc, Grafana, S3 kit-sync credentials) are deployment-specific — supply them
+Orthanc, Grafana) are deployment-specific — supply them
 via the chart's built-in Secret template (`secrets.create=true` + a
 `values-secrets.yaml`, see the [Secrets Reference](#secrets-reference)) or create
 the Secret externally. `make sync-kit` (next step) patches the per-trust keys
@@ -89,11 +89,37 @@ This reads `trust/.env.<CODE>.stag`, patches the per-trust keys
 (`trust-api-key`, `trust-internal-service-key[-header]`, `aes-key-base64`) into
 the chart's Kubernetes Secret (`trust-release-flip-trust-secrets`), and writes a
 secret-free Helm override `k8s-trust-<CODE>.yaml` carrying the hub URL, FL
-backend, AWS region, the fl-client kit bucket, and the slot-aware NVFLARE kit
-path. Plaintext keys go straight into the Secret over kubectl's TLS channel —
-never to disk.
+backend, AWS region, and `flClient.kitHostPath` (taken from the kit's
+`FL_KIT_DIR`). Plaintext keys go straight into the Secret over kubectl's TLS
+channel — never to disk.
 
-### 4. Install / upgrade the chart
+### 4. Stage the FL participant kit onto the node
+
+```bash
+make -C deploy/providers/kubernetes stage-kit \
+  KIT_SRC=<dir holding this trust's kit> KUBE_CONTEXT=<kube context>
+```
+
+**The chart never fetches the kit.** A trust holds no FLIP AWS credentials — FL
+clients have none by design — and the kit reaches the operator out-of-band (see
+[`trust/README.md`](../../../trust/README.md)). It is placed on the node *before*
+the workload starts, which is also what a real trust does, so what is deployed
+here is what is deployed in production.
+
+`KIT_SRC` is the slot's own kit directory: for NVFLARE `local/`, `startup/`,
+`transfer/`; for Flower `certificates/` and `keys/` holding **only this slot's**
+credential. `KUBE_CONTEXT` is required — this writes to a node's filesystem, and
+on a host running several clusters, defaulting to the current context stages into
+whichever one `kubectl` happens to point at.
+
+The target implements the kind case (`docker cp` into the node). On a managed
+cluster, place the kit by whatever means the site allows and pass the resulting
+path as `flClient.kitHostPath`; nothing else changes.
+
+Skipping this step leaves the fl-client pod `Pending` with a `hostPath type check
+failed` event naming the missing path.
+
+### 5. Install / upgrade the chart
 
 ```bash
 make -C deploy/providers/kubernetes deploy-trust-k8s KIT=<CODE> PROD=stag
@@ -115,7 +141,7 @@ helm upgrade --install trust-release ./deploy/providers/kubernetes/ \
 first install can adopt it. It also regenerates the FL-server egress port from
 the kit on every run, so upgrades do not lose the fl-client gRPC allowance.
 
-### 5. Verify the trust is polling
+### 6. Verify the trust is polling
 
 ```bash
 kubectl get pods -n flip-trust
@@ -128,7 +154,7 @@ A `401 "API key is missing"` means the API-key **header** is mismatched — the
 chart default `TRUST_API_KEY_HEADER` is `Authorization` (the platform default);
 override it only if your hub uses a different header.
 
-### 6. (FL training only) Open the FL-server NLB
+### 7. (FL training only) Open the FL-server NLB
 
 Polling needs nothing more. For FL *training*, the K8s node's FL client must
 reach the hub's FL server. Add the node's public/egress IP to
