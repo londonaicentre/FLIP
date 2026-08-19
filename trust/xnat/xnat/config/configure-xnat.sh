@@ -31,6 +31,9 @@ set -euo pipefail
 # ${VAR-default} rather than ${VAR:-default} throughout: an *unset* variable takes the default,
 # but one set to the empty string stays empty and trips the guard below. An operator who writes
 # PACS_HOST= in a kit file must get a loud failure, not a silent fallback to the mocked PACS.
+# The bare-dash form is also the marker test_deploy_wiring.py derives the operator-knob roster
+# from, so XNAT_URL keeps the colon form deliberately: it is container-network wiring that
+# neither compose nor the Helm init job exposes to kit files, not a knob.
 #
 # XNAT's own identity and the upstream PACS. Defaults reproduce the mocked Orthanc that ships for
 # development, so an unconfigured deployment behaves exactly as before; a real trust overrides them
@@ -40,7 +43,7 @@ set -euo pipefail
 # calling AE, and the C-MOVE destination that imaging-api hands to the PACS. The PACS opens the
 # C-STORE association addressed to the AE title it has registered, so a receiver configured under a
 # different title rejects it.
-XNAT_URL="${XNAT_URL-http://xnat-web:8080}" # internal to the container network
+XNAT_URL="${XNAT_URL:-http://xnat-web:8080}" # internal to the container network
 XNAT_AETITLE="${XNAT_AETITLE-XNAT}"
 PACS_HOST="${PACS_HOST-orthanc}"            # service name in compose / k8s, or a real PACS host
 PACS_AETITLE="${PACS_AETITLE-ORTHANC}"

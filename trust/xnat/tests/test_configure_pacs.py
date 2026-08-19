@@ -303,7 +303,7 @@ def test_availability_uses_the_resolved_pacs_id(tmp_path):
     assert payload_for(payloads, "/availability")["pacsId"] == 7
 
 
-@pytest.mark.parametrize("var", ["XNAT_URL", "XNAT_AETITLE", "PACS_HOST", "PACS_AETITLE", "PACS_QR_PORT"])
+@pytest.mark.parametrize("var", ["XNAT_AETITLE", "PACS_HOST", "PACS_AETITLE", "PACS_QR_PORT"])
 def test_empty_values_fail_loudly(tmp_path, var):
     """An empty value would produce malformed JSON that XNAT rejects silently (FLIP#822/#862)."""
     code, _, output = run_configure(tmp_path, {var: ""})
