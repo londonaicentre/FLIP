@@ -697,6 +697,19 @@ describe("Models Page", () => {
             expect(link.text()).toBe("Stroke triage");
         });
 
+        test("the dropdown gives way to the chip once a project is picked", async () => {
+            // Two controls naming the same project is one too many: the chip says which project
+            // and offers the way out, so the select stands down until the scope is cleared.
+            mockRoute.query = { project: "p1" };
+            setModels([makeModel()]);
+            mockProjectOptions.value = options;
+            const wrapper = mountPage();
+            await wrapper.vm.$nextTick();
+
+            expect(wrapper.find("[data-test='project-filter']").exists()).toBe(false);
+            expect(wrapper.find("[data-test='project-filter-chip']").exists()).toBe(true);
+        });
+
         test("an unscoped page keeps the estate eyebrow and shows no chip", async () => {
             setModels([makeModel()]);
             mockProjectOptions.value = options;
