@@ -8,8 +8,8 @@ FLIP components
    components/architecture-overview
    components/component-fl-nodes
    components/component-omop-database
-   components/component-pacs
    components/component-xnat
+   components/component-pacs
    components/component-logging-stack
 
 .. note::
