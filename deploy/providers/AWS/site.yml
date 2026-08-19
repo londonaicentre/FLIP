@@ -342,8 +342,12 @@
         set -euo pipefail
         mkdir -p "{{ fl_kit_dir }}/net-1"
         find "{{ fl_kit_dir }}/net-1" -mindepth 1 -delete 2>/dev/null || true
+        # No trailing slash: trust_s3_source already ends with one, and the resulting
+        # `net-1//` is a literal empty path segment that matches no key — so the sync
+        # copied nothing, exited 0 with empty output, and reported ok. Combined with the
+        # wipe above, each run silently emptied the kit (FLIP#993 stag bring-up).
         aws s3 sync \
-          "{{ trust_s3_source }}/" \
+          "{{ trust_s3_source }}" \
           "{{ fl_kit_dir }}/net-1/"
       args:
         executable: /bin/bash

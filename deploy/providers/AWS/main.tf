@@ -378,6 +378,19 @@ resource "aws_iam_role_policy" "trust_ec2_s3" {
         Action   = ["s3:GetObject"]
         Resource = ["${aws_s3_bucket.aicentre_bucket.arn}/*"]
       },
+      {
+        # The bucket is SSE-KMS with the app CMK (services.tf), and the key policy only
+        # delegates to IAM — so GetObject alone decrypts nothing. Without this every FL
+        # participant-kit download fails AccessDenied on kms:Decrypt, and because the
+        # staging task in site.yml wipes the kit directory before syncing, the failure
+        # empties the kit rather than leaving the previous one in place. The ECS task
+        # roles were granted this the day the CMK landed (iam_ecs.tf); this role was
+        # missed, and stayed hidden until the first EC2 trust fetched a kit written
+        # after that change.
+        Effect   = "Allow"
+        Action   = ["kms:Decrypt", "kms:DescribeKey"]
+        Resource = [aws_kms_key.flip_app_key.arn]
+      },
     ]
   })
 }
