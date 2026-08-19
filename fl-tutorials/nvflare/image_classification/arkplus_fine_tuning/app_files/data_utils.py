@@ -167,16 +167,18 @@ def get_xray_transforms(is_validation: bool = False):
     cfg = load_config()
     input_size = int(cfg.get("ARKPLUS", {}).get("INPUT_SIZE", 224))
     transforms = [
-        mt.LoadImaged(keys=["image"]),
+        # The reader is pinned rather than left to MONAI's auto-detection. LoadImaged tries its
+        # registered readers last-registered-first, so which one wins depends on which optional
+        # backends happen to be installed: adding `itk` to the environment promotes ITKReader and
+        # silently changes the array's axis order. PydicomReader(swap_ij=False) returns the pixel
+        # array exactly as DICOM PixelData stores it, indexed (row, column). MONAI's default
+        # swap_ij=True returns it transposed, i.e. the model is fed sideways radiographs, and no
+        # rotation or flip undoes a transpose: a Rotate90d(k=-1) leaves the radiograph upright but
+        # mirrored, and a Flipd leaves it lying on its side. Loading in the right order removes the
+        # question of where a corrective Transposed belongs relative to Resized.
+        # fl-tutorials/tests/ pins this against the raw PixelData for every app on this path.
+        mt.LoadImaged(keys=["image"], reader="PydicomReader", swap_ij=False),
         mt.Lambdad(keys=["image"], func=_ensure_image_channel_first),
-        # LoadImaged returns the array transposed - indexed (column, row) where DICOM PixelData
-        # is (row, column) - so swap the spatial axes back before anything spatial runs. Neither a
-        # Rotate90 nor a Flip undoes a transpose: Rotate90d(k=-1) leaves the radiograph upright but
-        # mirrored, and a Flipd leaves it lying on its side. Sitting before Resized is not
-        # load-bearing while the target is square - the resamplers are separable, so the two orders
-        # are bit-identical - but it keeps the correction next to the load it undoes, and stays
-        # correct if the target ever stops being square.
-        mt.Transposed(keys=["image"], indices=(0, 2, 1)),
         mt.Resized(keys=["image"], spatial_size=[input_size, input_size]),
         mt.ScaleIntensityd(keys=["image"], channel_wise=True),
         mt.EnsureTyped(keys=["image"]),

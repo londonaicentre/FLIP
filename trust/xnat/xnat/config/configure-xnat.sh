@@ -50,14 +50,10 @@ until curl --output /dev/null --silent --head --fail \
 done
 echo "XNAT is up!"
 
-# Tomcat can serve the login page before plugin routes have registered. Wait
-# for the authenticated DQR settings endpoint before issuing any site changes;
-# otherwise a fresh boot races into a stream of 404s and leaves XNAT only
-# partially configured. The helper accepts either the initial or already-
-# rotated admin password, so a configuration-only retry remains idempotent.
-# XNAT_URL is passed explicitly: it is a plain (unexported) variable here, and the helper otherwise
-# falls back to its own default — so the two could silently probe and configure different hosts.
-XNAT_URL="$XNAT_URL" bash wait-for-xnat-plugins.sh
+# NOTE: the plugin-readiness wait deliberately does NOT run here. It cannot: the probe is an
+# authenticated plugin route, and an uninitialized XNAT redirects every authenticated route to
+# /setup, so it can only answer once the site has been initialized below. See FLIP#966 — running
+# it here deadlocked every fresh bring-up against a step downstream of itself.
 
 # Helper: curl wrapper for XNAT's REST API — same contract as xnat_curl in
 # configure-dcm2niix.sh, except credentials are passed by the caller: this
@@ -164,6 +160,21 @@ xnat_curl -X POST "$XNAT_URL/xapi/siteConfig" \
   -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_INITIAL_PASSWORD}" \
   -H "Content-Type: application/json" \
   -d "{\"initialized\": true, \"siteUrl\": \"${XNAT_SITE_URL:-$XNAT_URL}\"}"
+
+# Now that the site is initialized, authenticated routes stop redirecting to /setup and the
+# plugin-readiness probe can actually answer.
+#
+# Tomcat serves the login page before plugin routes have registered, so everything below that
+# touches a plugin — the DQR settings, the OHIF viewer preferences — would otherwise race into a
+# stream of 404s and leave XNAT half-configured. This is the earliest point the wait can succeed,
+# and still ahead of every plugin-dependent call. Nothing between here and those calls (password
+# rotation, service account, roles, guest) touches a plugin route.
+#
+# The helper accepts either the initial or already-rotated admin password, so a configuration-only
+# retry stays idempotent. XNAT_URL is passed explicitly: it is a plain (unexported) variable here
+# and the helper otherwise falls back to its own default, so the two could silently probe and
+# configure different hosts.
+XNAT_URL="$XNAT_URL" bash wait-for-xnat-plugins.sh
 
 # Change admin password
 echo "Changing admin password..."
