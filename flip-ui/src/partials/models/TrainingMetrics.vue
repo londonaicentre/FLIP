@@ -109,7 +109,7 @@
              a 16:9 box. min-h-0 lets it shrink below its content on a short window;
              the card carries the readability floor. -->
         <div v-if="view === 'single'" class="w-full flex-1 min-h-0 pt-4" role="tabpanel">
-            <AiMetricsChart v-if="activeChart" :data="activeChart" />
+            <AiMetricsChart v-if="activeChart" :data="activeChart" :style-index-by-series="styleIndexBySeries" />
         </div>
 
         <!-- Every plot at once. The cells keep a readable height and the view scrolls,
@@ -152,7 +152,7 @@
                         :data-test="`metrics-grid-plot-${chart.yLabel}-${chart.xLabel}`"
                         class="w-full aspect-[3/2] md:aspect-video min-h-[13rem] max-h-[24rem]"
                     >
-                        <AiMetricsChart :data="chart" />
+                        <AiMetricsChart :data="chart" :style-index-by-series="styleIndexBySeries" />
                     </div>
                 </figure>
             </div>
@@ -198,23 +198,6 @@ const chartId = (chart: IModelMetricData) => JSON.stringify([chart.yLabel, chart
 
 const activeChartId = ref<string | null>(null);
 
-// Default to the first chart whenever the data first loads or the active tab
-// disappears from the response (e.g. backend dropped a metric).
-watch(
-    data,
-    next => {
-        if (!next?.length) {
-            activeChartId.value = null;
-
-            return;
-        }
-        if (!activeChartId.value || !next.some(c => chartId(c) === activeChartId.value)) {
-            activeChartId.value = chartId(next[0]);
-        }
-    },
-    { immediate: true }
-);
-
 // Distinct x-axis labels per metric name. A metric plotted against a single x-axis shows just its
 // name; only when the same metric appears under more than one x-label do we disambiguate the tabs.
 const xLabelsByMetric = computed(() => {
@@ -247,17 +230,47 @@ const nameToCode = computed(() => {
 });
 
 // Every chart, with trust names shortened to their codes. Both views draw from
-// this, so a legend reads the same whichever layout you are in.
+// this, so a legend reads the same whichever layout you are in. Sorted by metric
+// title (then x-label) rather than backend arrival order, so related plots
+// (TRAIN-*/VAL-* pairs) sit together in the tabs and the grid (FLIP#1011).
 const charts = computed(() => {
     const codes = nameToCode.value;
 
-    return (data.value ?? []).map(chart => ({
-        ...chart,
-        metrics: chart.metrics.map(s => ({
-            ...s,
-            seriesLabel: codes.get(s.seriesLabel) ?? s.seriesLabel
+    return (data.value ?? [])
+        .map(chart => ({
+            ...chart,
+            metrics: chart.metrics.map(s => ({
+                ...s,
+                seriesLabel: codes.get(s.seriesLabel) ?? s.seriesLabel
+            }))
         }))
-    }));
+        .sort((a, b) => a.yLabel.localeCompare(b.yLabel) || a.xLabel.localeCompare(b.xLabel));
+});
+
+// Default to the first (sorted) chart whenever the data first loads or the active
+// tab disappears from the response (e.g. backend dropped a metric).
+watch(
+    charts,
+    next => {
+        if (!next.length) {
+            activeChartId.value = null;
+
+            return;
+        }
+        if (!activeChartId.value || !next.some(c => chartId(c) === activeChartId.value)) {
+            activeChartId.value = chartId(next[0]);
+        }
+    },
+    { immediate: true }
+);
+
+// One palette slot per series label, shared by every plot: slots are assigned over
+// the union of labels across all charts, so neither per-plot arrival order nor a
+// plot missing a trust can change what colour that trust wears elsewhere (FLIP#1011).
+const styleIndexBySeries = computed(() => {
+    const labels = new Set(charts.value.flatMap(c => c.metrics.map(s => s.seriesLabel)));
+
+    return Object.fromEntries([...labels].sort((a, b) => a.localeCompare(b)).map((label, idx) => [label, idx]));
 });
 
 const activeChart = computed(() => charts.value.find(c => chartId(c) === activeChartId.value) ?? null);

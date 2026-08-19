@@ -49,8 +49,8 @@ vi.mock("@/services/model-service", () => ({ getModelMetrics: vi.fn(async () => 
 vi.mock("@/components/AiChart/AiModelMetricsChart.vue", () => ({
     default: {
         name: "AiMetricsChart",
-        props: ["data"],
-        template: "<div data-test=\"chart-stub\" :data-y-label=\"data.yLabel\" :data-x-label=\"data.xLabel\" :data-series-labels=\"data.metrics.map(m => m.seriesLabel).join(',')\" />"
+        props: ["data", "styleIndexBySeries"],
+        template: "<div data-test=\"chart-stub\" :data-y-label=\"data.yLabel\" :data-x-label=\"data.xLabel\" :data-series-labels=\"data.metrics.map(m => m.seriesLabel).join(',')\" :data-style-index=\"JSON.stringify(styleIndexBySeries)\" />"
     }
 }));
 
@@ -454,6 +454,46 @@ describe("TrainingMetrics plot layout", () => {
 
         expect(second.find("[data-test=metrics-grid]").exists()).toBe(true);
         expect(second.find("[data-test=metrics-view-grid]").attributes("aria-pressed")).toBe("true");
+    });
+
+    test("sorts the plots by metric title, whatever order the backend sends", async () => {
+        setData([VAL_F1, TRAIN_LOSS]);
+        const wrapper = mountTrainingMetrics();
+        await flushPromises();
+
+        const tabs = wrapper.findAll("[role=tab]");
+        expect(tabs.map(t => t.text())).toEqual(["TRAIN_LOSS", "VAL-F1-SCORE"]);
+        // The default plot is the first sorted one, not the first to arrive.
+        expect(wrapper.get("[data-test=chart-stub]").attributes("data-y-label")).toBe("TRAIN_LOSS");
+    });
+
+    test("gives every trust one palette slot, shared by every plot in the grid", async () => {
+        // VAL_F1 carries KCH only; TRAIN_LOSS carries KCH + UCLH. Were slots assigned
+        // per plot, KCH would take slot 0 in one plot and share it with UCLH's absence
+        // shifting colours in the other.
+        setData([VAL_F1, TRAIN_LOSS]);
+        const wrapper = mountTrainingMetrics({
+            approvedTrusts: [{
+                name: "Kings College Hospital",
+                code: "KCH"
+            }]
+        });
+        await flushPromises();
+
+        await wrapper.find("[data-test=metrics-view-grid]").trigger("click");
+
+        const maps = wrapper.findAll("[data-test=chart-stub]").map(s => s.attributes("data-style-index"));
+        // The union of series labels over every plot, sorted, after code-shortening.
+        expect(maps).toEqual([
+            JSON.stringify({
+                KCH: 0,
+                UCLH: 1
+            }),
+            JSON.stringify({
+                KCH: 0,
+                UCLH: 1
+            })
+        ]);
     });
 
     test("there is no layout switch when there is nothing to lay out", async () => {
