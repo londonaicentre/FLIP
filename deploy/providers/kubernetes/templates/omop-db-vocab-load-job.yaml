@@ -126,32 +126,12 @@ spec:
               # failed attempt is replaced by a new pod with a new emptyDir. The
               # skip that saves the download is the probe above.
               aws s3 cp "s3://{{ .Values.omopDb.vocabLoad.s3Bucket }}/vocab/{{ .Values.omopDb.vocabLoad.bundleName }}.zip" /vocab-work/bundle.zip
+          {{- if .Values.omopDb.initJob.hostAwsMount.enabled }}
           env:
             - name: AWS_DEFAULT_REGION
               value: {{ default "eu-west-2" .Values.awsRegion | quote }}
-          {{- if .Values.omopDb.initJob.hostAwsMount.enabled }}
             - name: AWS_PROFILE
               value: {{ .Values.omopDb.initJob.awsProfile | quote }}
-          {{- else if .Values.omopDb.vocabLoad.useSecretCredentials }}
-            # Static / session credentials from the chart Secret. Without these the
-            # only auth paths are a mounted host ~/.aws (hostAwsMount) or IRSA, so a
-            # cluster that has neither fails with "Unable to locate credentials"
-            # despite the Secrets Reference documenting these very keys.
-            - name: AWS_ACCESS_KEY_ID
-              valueFrom:
-                secretKeyRef:
-                  name: {{ if .Values.secrets.create }}{{ include "flip-trust.fullname" . }}-secrets{{ else }}{{ .Values.secrets.existingName }}{{ end }}
-                  key: s3-access-key-id
-            - name: AWS_SECRET_ACCESS_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: {{ if .Values.secrets.create }}{{ include "flip-trust.fullname" . }}-secrets{{ else }}{{ .Values.secrets.existingName }}{{ end }}
-                  key: s3-secret-access-key
-            - name: AWS_SESSION_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: {{ if .Values.secrets.create }}{{ include "flip-trust.fullname" . }}-secrets{{ else }}{{ .Values.secrets.existingName }}{{ end }}
-                  key: aws-session-token
           {{- end }}
           resources:
             {{- toYaml .Values.omopDb.vocabLoad.fetchResources | nindent 12 }}

@@ -420,11 +420,6 @@ omopDb:
     enabled: true
     s3Bucket: ""
     bundleName: "vocab_aicentre_core_20240916"
-    # Fall back to the Secret's s3-access-key-id / s3-secret-access-key /
-    # aws-session-token when neither hostAwsMount nor IRSA is available (e.g. a
-    # local kind cluster driven by short-lived SSO session credentials). Ignored
-    # when initJob.hostAwsMount.enabled is true, which keeps precedence explicit.
-    useSecretCredentials: true
     # Scratch space for the downloaded bundle. Must hold the zip and its unpacked
     # contents at the same time — for the 20240916 bundle that is ~3.6 GiB
     # unpacked plus a ~600 MiB zip, so a peak near 4.2 GiB (both figures are in
