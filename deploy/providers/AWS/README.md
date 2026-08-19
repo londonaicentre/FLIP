@@ -1111,7 +1111,7 @@ EC2 instances are accessed through AWS Systems Manager Session Manager — port 
   session-manager-plugin --version  # Should output version >= 1.2.319.0
   ```
 
-- SSH key at `~/.ssh/host-aws` (configured in Step 3 of [Pre-configurations README](../README.md#step-3-get-ssh-key-configured))
+- SSH key at `~/.ssh/host-aws` (configured in Step 3 of [Pre-configurations README](../../README.md#step-3-get-ssh-key-configured))
 
 **Updating `~/.ssh/config`**
 

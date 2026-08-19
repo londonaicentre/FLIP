@@ -19,14 +19,23 @@ in [`../README.md#where-things-live`](../README.md#where-things-live).
 
 | Provider | Deploys | Entry point |
 | -------- | ------- | ----------- |
-| [`AWS/`](AWS/README.md) | **Hub + optional cloud trust** — ECS Fargate, RDS + Proxy, ALB/NLB, CloudFront, Cognito, SES, and (when `DEPLOY_TRUST_EC2` is set) a trust EC2 host | `make -C deploy/providers/AWS full-deploy PROD=<stag\|true>` |
+| [`AWS/`](AWS/README.md) | **Hub + optional cloud trust** — ECS Fargate, RDS + Proxy, ALB/NLB, CloudFront, Cognito, SES, and a trust EC2 host **unless `DEPLOY_TRUST_EC2=false`** (it defaults to `true`, and is settable from the env file as well as the CLI) | `make -C deploy/providers/AWS full-deploy KIT=<CODE> PROD=<stag\|true>`<br>hub-only: `full-deploy-hub-only PROD=<stag\|true>` |
 | [`kubernetes/`](kubernetes/README.md) | **Trust only** — Helm chart `flip-trust` | `make -C deploy/providers/kubernetes deploy-trust-k8s KIT=<CODE> PROD=<stag\|true>` |
 | [`local/`](local/README.md) | **Trust only** — Ansible provisioning of an on-prem Ubuntu host | `make -C deploy/providers/AWS provision-local-trust KIT=<CODE> PROD=<stag\|true>` |
 
-`KIT=<CODE>` names the trust whose kit file (`trust/.env.<CODE>.<env>`) the target reads; `PROD` selects that
-file's environment suffix (`stag` when unset, `production` when `true`). Both are load-bearing on the
-trust-side targets — `provision-local-trust` resolves `FL_KIT_SLOT` out of the kit file and aborts at the FL
-kit download without it.
+`KIT=<CODE>` names the trust whose kit file (`trust/.env.<CODE>.<env>`) the target reads; `PROD` selects
+that file's environment suffix. **The two Makefiles derive the suffix differently, so always spell `PROD`
+out:** `deploy/providers/AWS/Makefile`'s `KIT_ENV_SUFFIX` is two-valued — `production` when `PROD=true`,
+`stag` otherwise — while `deploy/providers/kubernetes/Makefile`'s `ENV` is three-valued: `production`,
+`stag`, and **`development` when `PROD` is unset**.
+
+`KIT` is load-bearing on every row, and omitting it costs a *partial* run rather than a clean failure:
+
+- `provision-local-trust` resolves `FL_KIT_SLOT` out of the kit file and aborts at the FL kit download —
+  after the Ansible play has already run.
+- `full-deploy` pulls in `deploy-trust` → `seed-trust-data`, whose `KIT is required` guard fires only after
+  `plan`, `apply`, `deploy-centralhub` and `register-trusts` have all run. Deploying the hub alone needs no
+  `KIT`: use `full-deploy-hub-only`.
 
 ## Why two of three are trust-only
 
