@@ -92,7 +92,7 @@ spec:
           operator: Exists
           effect: NoSchedule
       {{- end }}
-      {{- if or (and (eq .Values.flBackend "nvflare") .Values.flClient.nvflare.kitFromS3.enabled) (and (eq .Values.flBackend "flower") .Values.flClient.flower.kitFromS3.enabled) }}
+      {{- if include "flip-trust.flClientKitFromS3" . }}
       initContainers:
         - name: kit-init
           image: amazon/aws-cli:2.22.0
@@ -310,7 +310,7 @@ spec:
             medium: Memory
             sizeLimit: {{ .Values.flClient.shmSize }}
         - name: fl-client-kit
-{{- if .Values.flClient.nvflare.kitFromS3.enabled }}
+{{- if include "flip-trust.flClientKitFromS3" . }}
           emptyDir: {}
 {{- else if .Values.flClient.kitHostPath }}
           hostPath:

@@ -243,6 +243,57 @@ jobs:
             exit 1
           fi
 
+      # FLIP#999. The fl-client-kit volume and the kit-init initContainer encode the same
+      # decision — "is this backend's kit fetched from S3?" — and must agree: kit-init present
+      # means the volume is an emptyDir for it to populate, kit-init absent means the volume is
+      # the hostPath at flClient.kitHostPath. They were gated separately, and the volume's gate
+      # read only the NVFLARE flag, which values.yaml defaults to true. A Flower trust staging
+      # its kit on the node therefore rendered an emptyDir and started with empty /certs and
+      # /keys — no error at deploy time, just a SuperNode that never registers and logs a
+      # repeating "Connection attempt failed", indistinguishable from a TLS or network fault.
+      #
+      # Asserted per backend with --show-only, so the strings have to appear in the fl-client
+      # manifest and not merely somewhere in the release. The S3-on case is asserted too: it is
+      # the positive control that stops the staged case passing vacuously if the volume stopped
+      # rendering altogether.
+      - name: fl-client kit volume follows the active backend (FLIP#999)
+        run: |
+          for backend in nvflare flower; do
+            # Staged on the node: hostPath, and NO kit-init. Only this backend's own
+            # kitFromS3 flag is disabled — the other backend's is left at its values.yaml
+            # default, which is exactly the shape that regressed.
+            helm template trust-release deploy/providers/kubernetes/ \
+              --set trustName=CI --set trustNumber=1 \
+              --set flBackend="${backend}" \
+              --set "flClient.${backend}.kitFromS3.enabled=false" \
+              --set flClient.kitHostPath=/opt/fl-kit \
+              --show-only templates/fl-client.yaml > /tmp/kit-staged-"${backend}".yaml
+            if ! grep -A2 -F 'name: fl-client-kit' /tmp/kit-staged-"${backend}".yaml | grep -qF 'hostPath:'; then
+              echo "::error::${backend}: a kit staged at flClient.kitHostPath did not render as a hostPath — the staged kit is silently dropped"
+              exit 1
+            fi
+            if grep -qF 'name: kit-init' /tmp/kit-staged-"${backend}".yaml; then
+              echo "::error::${backend}: kit-init rendered with kitFromS3 disabled — it would overwrite the staged kit"
+              exit 1
+            fi
+
+            # Fetched from S3: emptyDir for kit-init to populate, and kit-init present.
+            helm template trust-release deploy/providers/kubernetes/ \
+              --set trustName=CI --set trustNumber=1 \
+              --set flBackend="${backend}" \
+              --set "flClient.${backend}.kitFromS3.enabled=true" \
+              --set "flClient.${backend}.kitFromS3.bucket=ci-bucket" \
+              --show-only templates/fl-client.yaml > /tmp/kit-s3-"${backend}".yaml
+            if ! grep -A2 -F 'name: fl-client-kit' /tmp/kit-s3-"${backend}".yaml | grep -qF 'emptyDir:'; then
+              echo "::error::${backend}: kitFromS3 enabled but the volume is not an emptyDir for kit-init to populate"
+              exit 1
+            fi
+            if ! grep -qF 'name: kit-init' /tmp/kit-s3-"${backend}".yaml; then
+              echo "::error::${backend}: kitFromS3 enabled but kit-init did not render — nothing would populate the volume"
+              exit 1
+            fi
+          done
+
   kind-e2e:
     name: kind E2E
     runs-on: ubuntu-latest

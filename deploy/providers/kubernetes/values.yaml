@@ -293,6 +293,14 @@ flClient:
     repository: ghcr.io/londonaicentre
     tag: stag
     pullPolicy: Always
+  # Node path holding a pre-staged participant kit, used INSTEAD of fetching from
+  # S3. Only consulted when the active backend's kitFromS3.enabled is false: the
+  # fl-client-kit volume is then a hostPath here, rather than an emptyDir that the
+  # kit-init initContainer populates. Leave empty to require the S3 path.
+  # For air-gapped trusts and local kind clusters, where the kit is copied onto the
+  # node out of band. The directory must be readable by the FL image's runtime user
+  # — 49999 (app) for the Flower SuperNode, which differs from the NVFLARE client.
+  kitHostPath: ""
   nvflare:
     kitFromS3:
       enabled: true
