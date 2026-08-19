@@ -95,9 +95,10 @@ spec:
 {{- end }}
     # Allow AWS IMDS (EC2 metadata / node IAM role).
     # NOT for the fl-client any more: it holds no AWS credentials and its kit is staged
-    # onto the node before deploy. Kept because the OMOP/Orthanc seed Jobs may reach AWS
-    # through the node role on a managed cluster (on kind they use a host file mount).
-    # See NETWORK-POLICY.md — this is a candidate for removal once that is confirmed.
+    # onto the node before deploy. Still load-bearing for the OMOP/Orthanc seed Jobs: the
+    # chart has no IRSA path, and their AWS env is gated on hostAwsMount.enabled which
+    # defaults false — so by default they reach S3 through the node instance role.
+    # See NETWORK-POLICY.md.
     - to:
         - ipBlock:
             cidr: 169.254.169.254/32
