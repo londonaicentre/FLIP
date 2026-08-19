@@ -49,9 +49,6 @@ SECRET_VAR_MAP = {
     "XNAT_DATASOURCE_PASSWORD": "xnat-datasource-password",
     "XNAT_DATASOURCE_ADMIN_PASSWORD": "xnat-datasource-admin-password",
     "GRAFANA_ADMIN_PASSWORD": "grafana-admin-password",
-    "AWS_ACCESS_KEY_ID": "s3-access-key-id",
-    "AWS_SECRET_ACCESS_KEY": "s3-secret-access-key",
-    "AWS_SESSION_TOKEN": "aws-session-token",
 }
 
 

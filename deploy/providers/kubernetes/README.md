@@ -359,8 +359,6 @@ with `secrets.create=true` or pre-created externally):
 | `xnat-datasource-password` | xnat-web, xnat-db, imaging-api | Password of the `xnat` **application role** — mint via `make generate-xnat-credentials KIT=<CODE>` and fill from the kit with `scripts/generate_values.py`; xnat-web and xnat-db refuse to start on the shipped placeholder or weak values, and imaging-api splices it into its `XNAT_DATABASE_URL` (FLIP-PT-056) |
 | `xnat-datasource-admin-password` | xnat-db | Password of the Postgres **superuser** (`POSTGRES_PASSWORD`). Minted by the same command, from the kit's `XNAT_DATASOURCE_ADMIN_PASSWORD`. Must differ from `xnat-datasource-password` — xnat-db's entrypoint refuses to start when the two match (FLIP-PT-056) |
 | `grafana-admin-password` | grafana | Grafana admin password |
-| `s3-access-key-id` | fl-client (init container) | AWS access key for S3 kit sync |
-| `s3-secret-access-key` | fl-client (init container) | AWS secret key for S3 kit sync |
 
 For production, use [External Secrets Operator](https://external-secrets.io/) to
 sync secrets from AWS Secrets Manager or HashiCorp Vault.
@@ -502,7 +500,7 @@ The chart is validated in CI via:
 
 ### FL client won't connect
 
-1. **S3 kit download failed**: Check the `kit-init` init container logs. Verify `s3-access-key-id` and `s3-secret-access-key` in the Secret are correct and the bucket path exists.
+1. **Kit not on the node**: The pod stays `Pending` with a `hostPath type check failed` event naming `flClient.kitHostPath`. Stage the kit first — `make stage-kit KIT_SRC=<local kit dir> KUBE_CONTEXT=<context>` — then re-deploy. The chart holds no AWS credentials and cannot fetch it.
 2. **Kit path mismatch**: Verify `flClient.kitHostPath` points at the directory ON THE NODE holding this trust's provisioned kit, and that it contains the slot's contents (NVFLARE: `local/`, `startup/`, `transfer/`; Flower: `certificates/` and `keys/` with this slot's credential). The chart never fetches the kit — it is delivered out-of-band and placed on the node before the workload starts. A missing path fails scheduling with the path named.
 3. **Network policy blocking**: Check egress CIDRs allow reaching the Central Hub and FL server. Temporarily disable policies with `--set networkPolicies.enabled=false` to isolate.
 4. **GPU not visible**: Verify `nvidia.com/gpu` annotation on the fl-client pod. Check CUDA env vars (`CUDA_VISIBLE_DEVICES`, `NVIDIA_VISIBLE_DEVICES`) are set via `flClient.gpu.enabled: true`.
@@ -536,7 +534,7 @@ Symptoms: trust-api can't reach imaging-api or data-access-api (connection timeo
 **OMOP init job** (`omop-db-init-job`):
 
 - The init Job is a Helm `post-install,post-upgrade` hook that downloads and restores OMOP data from S3.
-- If the Job fails: check `s3-bucket` and `s3-path` values. Verify `s3-access-key-id` / `s3-secret-access-key` in the Secret.
+- If the Job fails: check `s3-bucket` and `s3-path` values, and that `omopDb.initJob.hostAwsMount` points at a readable AWS config dir ON THE NODE (this Job authenticates via that mount, not via cluster-stored credentials).
 - PVC name must match the StatefulSet's `volumeClaimTemplates` — the Job expects a PVC named `<release-name>-omop-db-data`.
 - To re-run: `helm upgrade trust-release . --set omopDb.initJob.enabled=true` or delete the Job and let Helm re-create it.
 

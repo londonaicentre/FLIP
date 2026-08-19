@@ -11,6 +11,17 @@
 
 HELM := helm
 NAMESPACE ?= flip-trust
+
+# Where the FL participant kit lives ON THE NODE, and the uid that must own it.
+# KIT_DEST is what flClient.kitHostPath is set to. KIT_UID follows the backend's
+# image user: Flower's upstream base runs as 49999, the NVFLARE image as 1000.
+KIT_DEST ?= /opt/flip-fl-kit
+KIT_UID ?= $(if $(filter flower,$(FL_BACKEND)),49999,1000)
+# Which cluster to act on. Defaults to kubectl's current context, but stage-kit
+# REQUIRES it explicitly: it writes to a node's filesystem, and a machine running
+# several kind clusters will otherwise silently stage into whichever one kubectl
+# happens to point at.
+KUBE_CONTEXT ?=
 RELEASE_NAME ?= trust-release
 CHART_DIR := $(dir $(abspath $(firstword $(MAKEFILE_LIST))))
 VALUES_FILE ?= $(CHART_DIR)/values.yaml
@@ -36,7 +47,7 @@ ifneq ($(strip $(OVERRIDES_FILE)),)
 	VALUES_OPTS := $(VALUES_OPTS) -f $(OVERRIDES_FILE)
 endif
 
-.PHONY: help lint template deploy undeploy up down test validate clean deploy-trust-k8s undeploy-trust-k8s dry-run update-deps sync-kit patch-kit-secrets xnat-init patch-aws-creds preflight template-egress-variants
+.PHONY: help lint template deploy undeploy up down test validate clean deploy-trust-k8s undeploy-trust-k8s dry-run update-deps sync-kit patch-kit-secrets xnat-init stage-kit preflight template-egress-variants
 
 help: ## Display this help
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-25s\033[0m %s\n", $$1, $$2}'
@@ -61,6 +72,28 @@ preflight: ## Check all prerequisites before deploying (tools, cluster, files, k
 	 OVERRIDES_FILE="$(OVERRIDES_FILE)" \
 	 HELM="$(HELM)" \
 	 bash $(CHART_DIR)/scripts/preflight.sh
+
+stage-kit: ## Place this trust's FL participant kit onto the node (run BEFORE deploy)
+	## The chart never fetches the kit — a trust holds no FLIP AWS credentials, and the
+	## kit arrives out-of-band (trust/README.md). This copies an already-obtained kit
+	## from KIT_SRC onto the node at the path the chart mounts (flClient.kitHostPath).
+	##
+	##   make stage-kit KIT_SRC=~/kits/Trust_2 KIT_DEST=/opt/flip-fl-kit
+	##
+	## KIT_SRC contents are the slot's own kit: for NVFLARE local/ startup/ transfer/,
+	## for Flower certificates/ and keys/ holding THIS slot's credential only.
+	## On a real cluster the operator places it by whatever means the site allows; this
+	## target implements the kind case, which is what dev and stag use.
+	@[ -n "$(KIT_SRC)" ] || (echo "❌  KIT_SRC is required — the local directory holding this trust's kit"; exit 1)
+	@[ -d "$(KIT_SRC)" ] || (echo "❌  KIT_SRC $(KIT_SRC) is not a directory"; exit 1)
+	@[ -n "$(KUBE_CONTEXT)" ] || (echo "❌  KUBE_CONTEXT is required — this writes to a node's filesystem, and defaulting to kubectl's current context ($$(kubectl config current-context 2>/dev/null || echo none)) would stage into whichever cluster that happens to be. e.g. KUBE_CONTEXT=kind-flip-kch"; exit 1)
+	@node=$$(kubectl --context $(KUBE_CONTEXT) get nodes -o jsonpath='{.items[0].metadata.name}') && \
+	  [ -n "$$node" ] || { echo "❌  no node found in context $(KUBE_CONTEXT) — is the cluster reachable?"; exit 1; }; \
+	  echo "📦 Staging $(KIT_SRC) → [$(KUBE_CONTEXT)] $$node:$(KIT_DEST)"; \
+	  docker exec "$$node" mkdir -p "$(KIT_DEST)" && \
+	  docker cp "$(KIT_SRC)/." "$$node:$(KIT_DEST)/" && \
+	  docker exec "$$node" sh -c 'chmod -R go-rwx "$(KIT_DEST)" && chown -R $(KIT_UID):$(KIT_UID) "$(KIT_DEST)"' && \
+	  echo "✅ Kit staged. Deploy with --set flClient.kitHostPath=$(KIT_DEST)"
 
 deploy: preflight ## Deploy the Helm chart to the cluster
 	kubectl create namespace $(NAMESPACE) --dry-run=client -o yaml | kubectl apply -f -
@@ -175,11 +208,6 @@ xnat-init: ## Run the XNAT post-install init job manually (use after XNAT web is
 	(echo "❌  XNAT init failed — check logs:"; \
 	 kubectl logs -n $(NAMESPACE) -l app.kubernetes.io/component=xnat-init --tail=40; \
 	 exit 1)
-
-patch-aws-creds: ## Patch current AWS SSO credentials into the fl-client S3 secret (re-run after every helm upgrade or SSO token refresh)
-	@python3 $(CHART_DIR)/patch_aws_creds.py \
-		--namespace $(NAMESPACE) \
-		--secret-name $(RELEASE_NAME)-flip-trust-secrets
 
 patch-kit-secrets: ## Patch per-trust secrets from kit file into the cluster Secret WITHOUT overwriting the override YAML (safe after helm upgrade)
 	@[ -n "$(KIT)" ] || (echo "❌  KIT is required. Usage: make patch-kit-secrets KIT=Trust_K8s PROD=stag"; exit 1)
