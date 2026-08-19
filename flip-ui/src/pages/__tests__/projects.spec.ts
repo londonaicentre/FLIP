@@ -196,6 +196,16 @@ describe("Projects Page", () => {
         expect(wrapper.findAll("[data-test='trust-status-dot']")).toHaveLength(0);
     });
 
+    test("grid cards carry the created stamp beside the owner, as the list rows do", async () => {
+        setProject(makeProject("APPROVED", [trust("t1", "KCH", true)]));
+        const wrapper = mountPage();
+        await wrapper.find("[data-test='view-mode-grid']").trigger("click");
+
+        const footer = wrapper.find("[data-test='project-card-meta']");
+        expect(footer.text()).toContain("r.patel");
+        expect(footer.text()).toContain("created");
+    });
+
     test("renders the empty-state copy when the API returns zero projects", async () => {
         mockSwrvData.value = {
             data: [],

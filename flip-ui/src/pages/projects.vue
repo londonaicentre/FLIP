@@ -274,9 +274,13 @@
                             </span>
                         </div>
 
-                        <div class="flex justify-between items-center pt-2 mt-auto border-t border-gray-100 dark:border-dark-border text-xs text-gray-500 dark:text-gray-300">
-                            <span class="truncate max-w-[60%]">{{ ownerLabel(project) }}</span>
-                            <span>{{ userCountLabel(project) }}</span>
+                        <div class="flex justify-between items-center gap-2 pt-2 mt-auto border-t border-gray-100 dark:border-dark-border text-xs text-gray-500 dark:text-gray-300">
+                            <!-- Same owner · created line the list rows carry, so a card and a row
+                                 say the same things about a project. -->
+                            <span class="truncate" data-test="project-card-meta">
+                                {{ ownerLabel(project) }} · {{ relativeUpdated(project) }}
+                            </span>
+                            <span class="shrink-0">{{ userCountLabel(project) }}</span>
                         </div>
                     </router-link>
                 </div>

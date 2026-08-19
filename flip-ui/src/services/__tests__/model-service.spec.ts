@@ -66,8 +66,16 @@ describe("model-service", () => {
     describe("getModelProjectOptions", () => {
         it("GETs the unpaginated project options for the Models page filter", async () => {
             const options = [
-                { id: "p1", name: "Stroke triage", status: "APPROVED" },
-                { id: "p2", name: "Chest X-ray", status: "STAGED" }
+                {
+                    id: "p1",
+                    name: "Stroke triage",
+                    status: "APPROVED"
+                },
+                {
+                    id: "p2",
+                    name: "Chest X-ray",
+                    status: "STAGED"
+                }
             ];
             vi.mocked(_http.get).mockResolvedValue({ data: options } as never);
 

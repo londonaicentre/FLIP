@@ -26,9 +26,9 @@ from flip_api.model_services.services.model_service import (
     get_all_models_service,
     get_models_project_options_service,
 )
-from flip_api.project_services.services.project_services import get_project
 from flip_api.utils.logger import logger
 from flip_api.utils.paging_utils import get_total_pages
+from flip_api.utils.project_manager import get_project_by_id
 
 router = APIRouter(prefix="/models", tags=["model_services"])
 
@@ -169,7 +169,7 @@ def get_all_models_endpoint(
         # project that isn't there, 403 for one the caller may not see. Leaving it to the access
         # predicate would instead return an empty page, which reads as "this project has no
         # models" — indistinguishable from "not yours", and baffling on a shared link.
-        if get_project(project_filter, session) is None:
+        if get_project_by_id(project_filter, session) is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Project {project_filter} not found",
