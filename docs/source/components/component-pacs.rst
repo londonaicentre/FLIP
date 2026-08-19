@@ -264,9 +264,11 @@ a trust PACS — only the peer differs. It is why the configuration defaults abo
 * ``PACS_AETITLE=ORTHANC`` — Orthanc's AE title
 * ``PACS_QR_PORT=4242`` — Orthanc's DICOM port
 
-Because both sit on the same container network, Orthanc reaches XNAT's SCP receiver directly and no
-host port needs publishing. A real PACS is outside that network, which is the one material
-difference between the two setups and the reason the receiver must be explicitly exposed.
+Because both sit on the same container network, Orthanc reaches XNAT's SCP receiver directly and
+would not itself need the receiver's host port. A real PACS is outside that network — the one
+material difference between the two setups, and the reason the Compose deployment publishes the
+receiver everywhere (see above): the mocked setup then runs the identical wiring, rather than a
+private variant of it.
 
 .. note::
 
