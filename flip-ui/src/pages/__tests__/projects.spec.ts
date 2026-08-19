@@ -19,6 +19,7 @@ import { beforeEach, describe, expect, test, vi } from "vitest";
 import { ref } from "vue";
 
 import { IProject, IProjectTrust, ProjectStatus } from "@/services/project-service";
+import { TRUST_CHIP_DOTTED_PADDING, TRUST_CHIP_PLAIN_PADDING } from "@/utils/trust-chip";
 
 import Page from "../projects.vue";
 
@@ -139,13 +140,13 @@ describe("Projects Page", () => {
     // mounts. Amber is asserted literally here — the Cypress spec is what proves it is
     // the *same* amber as the row spine, by comparing computed colours.
     test.each([
-        ["UNSTAGED", true, null, "px-2", "KCH NHS Foundation Trust"],
-        ["STAGED", false, "bg-amber-500", "pl-1.5", "KCH NHS Foundation Trust — awaiting approval"],
+        ["UNSTAGED", true, null, TRUST_CHIP_PLAIN_PADDING, "KCH NHS Foundation Trust"],
+        ["STAGED", false, "bg-amber-500", TRUST_CHIP_DOTTED_PADDING, "KCH NHS Foundation Trust — awaiting approval"],
         // A trust that has signed off on a project still awaiting approval stays amber:
         // green is the project-wide "this trust is in" marker, not a per-trust one.
-        ["STAGED", true, "bg-amber-500", "pl-1.5", "KCH NHS Foundation Trust — awaiting approval"],
-        ["APPROVED", false, "bg-amber-500", "pl-1.5", "KCH NHS Foundation Trust — awaiting approval"],
-        ["APPROVED", true, "bg-emerald-500", "pl-1.5", "KCH NHS Foundation Trust — approved"]
+        ["STAGED", true, "bg-amber-500", TRUST_CHIP_DOTTED_PADDING, "KCH NHS Foundation Trust — awaiting approval"],
+        ["APPROVED", false, "bg-amber-500", TRUST_CHIP_DOTTED_PADDING, "KCH NHS Foundation Trust — awaiting approval"],
+        ["APPROVED", true, "bg-emerald-500", TRUST_CHIP_DOTTED_PADDING, "KCH NHS Foundation Trust — approved"]
     ] as const)(
         "%s project + trust.approved=%s → %s dot",
         async (status, approved, dotClass, chipPadding, title) => {
@@ -155,7 +156,7 @@ describe("Projects Page", () => {
 
             const chips = wrapper.findAll("[data-test='trust-chip']");
             expect(chips).toHaveLength(1);
-            expect(chips[0].classes()).toContain(chipPadding);
+            chipPadding.split(" ").forEach(cls => expect(chips[0].classes()).toContain(cls));
             // The tooltip is the accessible channel: the dot is aria-hidden, and
             // amber/emerald is the pairing colour-vision deficiency collapses.
             expect(chips[0].attributes("title")).toBe(title);

@@ -197,7 +197,7 @@ describe("Models Page", () => {
         expect(wrapper.find("[data-test='model-status-indicator']").text()).toBe("Model Queued");
     });
 
-    test("stacks mobile rows with the status pill and green-dot trust chips below sm", async () => {
+    test("stacks mobile rows with the status pill and code-only trust chips below sm", async () => {
         setModels([makeModel({
             trusts: [trust("GSTT"), trust("KCH")],
             status: "RUNNING",
@@ -218,10 +218,13 @@ describe("Models Page", () => {
         expect(pill.classes()).toContain("rounded-full");
         expect(pill.classes().join(" ")).toContain("bg-fuchsia-100");
         expect(pill.text()).toBe("Running");
-        // …and the same green-dot trust chips.
+        // …and the trust chips, which carry the code alone: every chip here is a trust the
+        // run was dispatched to, so there is no state for a dot to encode (unlike the
+        // Projects list, where a linked trust can still be pending).
         const chips = mobile.findAll("[data-test='model-trust-chip-mobile']");
         expect(chips).toHaveLength(2);
-        expect(chips[0].find("span.bg-emerald-500").exists()).toBe(true);
+        expect(chips[0].text()).toBe("GSTT");
+        expect(chips[0].find("span").exists()).toBe(false);
 
         // The sortable column header strip is desktop-only.
         const headerStrip = wrapper.find("[data-test='sort-header-name']").element.closest(".hidden");
@@ -551,6 +554,20 @@ describe("Models Page", () => {
         await wrapper.vm.$nextTick();
 
         expect(wrapper.findAll("[data-test='model-name']").map(n => n.text())).toEqual(["backend-first", "backend-second"]);
+    });
+
+    test("a just-created model reads amber, matching the Preparing tile it is counted under", async () => {
+        // PENDING ("Model Created") is grouped with PREPARED by the Preparing tile, which is
+        // amber — but the row used to render a grey pill and rail, so the same model read as
+        // two different states depending on where you looked.
+        setModels([makeModel({ status: "PENDING" })]);
+        const wrapper = mountPage();
+        await wrapper.vm.$nextTick();
+
+        const pill = wrapper.find("[data-test='model-status-indicator']");
+        expect(pill.text()).toBe("Model Created");
+        expect(pill.classes().some(c => c.includes("amber"))).toBe(true);
+        expect(wrapper.find("[data-test='model-status-rail']").classes()).toContain("bg-amber-500");
     });
 
     test("an error/terminal status renders a red pill and a red rail", async () => {

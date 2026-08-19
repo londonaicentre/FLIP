@@ -77,10 +77,11 @@
                     </div>
                 </div>
 
-                <!-- Models table (div/grid layout: transparent rows + status rail, escapes the
-                     global `<table>` styling in main.css) -->
+                <!-- Models table (div/grid layout: white rows + status rail, escapes the global
+                     `<table>` styling in main.css). Same surface as the Projects list: an AiCard
+                     holding white rows divided by hairlines, so the two tables read as one system. -->
                 <div class="px-8 pb-8">
-                    <div class="overflow-hidden border border-gray-200 rounded-xl dark:border-dark-border">
+                    <AiCard class="overflow-hidden p-0">
                         <!-- Header row: sortable columns (desktop-only — the stacked
                              mobile rows have no columns to head) -->
                         <div class="hidden sm:flex items-stretch bg-gray-50 border-b border-gray-200 dark:bg-dark-surface dark:border-dark-border">
@@ -112,7 +113,7 @@
                             v-for="(model, index) in sortedModels"
                             :key="model.id"
                             :data-test="`models-list-item-${index}`"
-                            class="flex items-stretch border-t border-gray-100 transition first:border-t-0 hover:bg-gray-50 dark:border-dark-border dark:hover:bg-dark-raised"
+                            class="flex items-stretch bg-white border-t border-gray-100 transition-colors first:border-t-0 hover:bg-gray-50 dark:bg-dark-canvas dark:border-dark-border dark:hover:bg-dark-surface"
                         >
                             <!-- Status rail -->
                             <div
@@ -154,9 +155,11 @@
                                             :key="t.id"
                                             data-test="model-trust-chip"
                                             :title="t.name"
-                                            class="inline-flex items-center gap-1 rounded-full border border-gray-200 bg-white px-2.5 py-0.5 text-xs text-gray-700 dark:border-dark-border dark:bg-dark-surface dark:text-gray-200"
+                                            :class="[TRUST_CHIP_CLASS, TRUST_CHIP_PLAIN_PADDING]"
                                         >
-                                            <span class="inline-block w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                                            <!-- Code only, no status dot: every chip here is a trust the
+                                                 run was dispatched to, so there is no state to encode. The
+                                                 Projects list dots because a trust there can be pending. -->
                                             {{ trustChipLabel(t) }}
                                         </span>
                                     </div>
@@ -234,11 +237,8 @@
                                         :key="t.id"
                                         data-test="model-trust-chip-mobile"
                                         :title="t.name"
-                                        class="inline-flex items-center gap-1 rounded-full border border-gray-200
-                                        bg-white px-2.5 py-0.5 text-xs text-gray-700 dark:text-gray-200
-                                        dark:border-dark-border dark:bg-dark-surface"
+                                        :class="[TRUST_CHIP_CLASS, TRUST_CHIP_PLAIN_PADDING]"
                                     >
-                                        <span class="inline-block w-1.5 h-1.5 rounded-full bg-emerald-500" />
                                         {{ trustChipLabel(t) }}
                                     </span>
                                 </div>
@@ -258,7 +258,7 @@
                         >
                             There are no models to show
                         </div>
-                    </div>
+                    </AiCard>
 
                     <AiPagination
                         class="mt-4"
@@ -277,19 +277,20 @@ import { debouncedWatch } from "@vueuse/core";
 import useSWRV from "swrv";
 import { computed, ref } from "vue";
 
+import AiCard from "@/components/AiCard/AiCard.vue";
 import AiLoader from "@/components/AiLoader/AiLoader.vue";
 import AiPagination from "@/components/AiPagination/AiPagination.vue";
 import AiSearch from "@/components/AiSearch/AiSearch.vue";
 import useErrorHandler from "@/composables/useErrorHandler";
 import { getAllModels,
     IModelSummary,
-    IModelSummaryTrust,
     isModelStatusError,
     ModelStatus,
     modelStatusDotClass as statusDotClass,
     modelStatusLabelWithQueue,
     modelStatusPillClass as statusPillClass } from "@/services/model-service";
 import { apiTimestampMs, relativeCreatedLabel } from "@/utils/helpers";
+import { TRUST_CHIP_CLASS, TRUST_CHIP_PLAIN_PADDING, trustChipLabel } from "@/utils/trust-chip";
 
 const pageSize = 20;
 
@@ -492,7 +493,7 @@ const railClass = (status: ModelStatus | undefined): string => {
     if (isModelStatusError(status)) return "bg-red-500";
     if (status === "RESULTS_UPLOADED") return "bg-emerald-500";
     if (status === "RUNNING") return "bg-fuchsia-500";
-    if (status === "PREPARED") return "bg-amber-500";
+    if (status === "PREPARED" || status === "PENDING") return "bg-amber-500";
 
     return "bg-gray-300 dark:bg-gray-600";
 };
@@ -513,20 +514,6 @@ const updateModelList = (pageNumberInt: number): void => {
     getSearchQuery();
 };
 
-// Prefer the trust's short code (e.g. "GSTT"); otherwise strip common name bloat
-// and truncate so chips stay compact — mirrors the Projects page behaviour.
-const trustChipLabel = (trust: IModelSummaryTrust): string => {
-    if (trust.code) return trust.code;
-    if (!trust.name) return "";
-    const stripped = trust.name
-        .replace(/\bNHS Foundation Trust\b/gi, "")
-        .replace(/\bNHS Trust\b/gi, "")
-        .replace(/\bTrust\b/gi, "")
-        .trim();
-    if (stripped.length <= 16) return stripped;
-
-    return stripped.slice(0, 14) + "…";
-};
 
 // Owner display name (UserProfile.name from the backend). Falls back to an
 // em-dash when the owner has no profile row — the endpoint carries no email.

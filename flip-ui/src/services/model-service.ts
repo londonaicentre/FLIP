@@ -198,7 +198,10 @@ export function modelStatusPillClass(status: ModelStatus | undefined): string {
     if (status === "RUNNING") {
         return "bg-fuchsia-100 text-fuchsia-800 dark:bg-fuchsia-900/40 dark:text-fuchsia-200";
     }
-    if (status === "PREPARED") {
+    // PENDING ("Model Created") shares PREPARED's amber: both are the "preparing" phase the
+    // /models filter tile counts them under, and a row that reads grey while its own tile
+    // reads amber tells the user two different things about one model.
+    if (status === "PREPARED" || status === "PENDING") {
         return "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200";
     }
 
@@ -210,7 +213,7 @@ export function modelStatusDotClass(status: ModelStatus | undefined): string {
     if (isModelStatusError(status)) return "bg-red-500";
     if (status === "RESULTS_UPLOADED") return "bg-emerald-500";
     if (status === "RUNNING") return "bg-fuchsia-500";
-    if (status === "PREPARED") return "bg-amber-500";
+    if (status === "PREPARED" || status === "PENDING") return "bg-amber-500";
 
     return "bg-gray-400";
 }

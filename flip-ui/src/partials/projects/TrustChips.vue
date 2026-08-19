@@ -16,19 +16,17 @@
         <span
             v-for="trust in trustsToShow"
             :key="trust.id"
-            class="inline-flex items-center py-0.5 rounded text-[11px] font-medium font-mono bg-gray-100 dark:bg-dark-surface text-gray-700 dark:text-gray-300"
-            :class="dotFor(trust) ? 'gap-1.5 pl-1.5 pr-2' : 'px-2'"
+            :class="[TRUST_CHIP_CLASS, dotFor(trust) ? TRUST_CHIP_DOTTED_PADDING : TRUST_CHIP_PLAIN_PADDING]"
             :title="chipTitle(trust)"
             data-test="trust-chip"
         >
             <span
                 v-if="dotFor(trust)"
-                class="w-1.5 h-1.5 rounded-full shrink-0"
-                :class="dotFor(trust)?.class"
+                :class="[TRUST_CHIP_DOT_CLASS, dotFor(trust)?.class]"
                 data-test="trust-status-dot"
                 aria-hidden="true"
             />
-            {{ chipLabel(trust) }}
+            {{ trustChipLabel(trust) }}
         </span>
         <span v-if="remainingTrustCount > 0" class="text-xs text-gray-500 dark:text-gray-300">
             +{{ remainingTrustCount }}
@@ -43,6 +41,11 @@
 import { computed } from "vue";
 
 import { IProject, IProjectTrust } from "@/services/project-service";
+import { TRUST_CHIP_CLASS,
+    TRUST_CHIP_DOT_CLASS,
+    TRUST_CHIP_DOTTED_PADDING,
+    TRUST_CHIP_PLAIN_PADDING,
+    trustChipLabel } from "@/utils/trust-chip";
 
 const props = defineProps<{ project: IProject }>();
 
@@ -94,22 +97,6 @@ const sortedTrusts = computed<IProjectTrust[]>(() =>
 const MAX_TRUST_CHIPS = 4;
 const trustsToShow = computed<IProjectTrust[]>(() => sortedTrusts.value.slice(0, MAX_TRUST_CHIPS));
 const remainingTrustCount = computed<number>(() => Math.max(sortedTrusts.value.length - MAX_TRUST_CHIPS, 0));
-
-// Prefer the trust's short code (e.g. "GSTT") when the backend supplies one. Fall back
-// to the full name with common bloat ("NHS Foundation Trust" etc.) stripped and
-// truncated to 16 chars so chips stay compact.
-const chipLabel = (trust: IProjectTrust): string => {
-    if (trust.code) return trust.code;
-    if (!trust.name) return "";
-    const stripped = trust.name
-        .replace(/\bNHS Foundation Trust\b/gi, "")
-        .replace(/\bNHS Trust\b/gi, "")
-        .replace(/\bTrust\b/gi, "")
-        .trim();
-    if (stripped.length <= 16) return stripped;
-
-    return stripped.slice(0, 14) + "…";
-};
 
 const chipTitle = (trust: IProjectTrust): string => {
     const dot = dotFor(trust);
