@@ -158,11 +158,12 @@
                             <div
                                 class="w-2 self-stretch shrink-0 relative"
                                 :class="spineBgClass(project.status)"
+                                data-test="project-status-spine"
                             >
                                 <div class="absolute inset-0 bg-gradient-to-r from-white/25 to-transparent" />
                             </div>
 
-                            <div class="grid grid-cols-1 md:grid-cols-[1.6fr_1.8fr_auto_auto] gap-5 px-5 py-4 items-center flex-1">
+                            <div :class="ROW_GRID_CLASS" class="grid gap-5 px-5 py-4 items-center flex-1" data-test="project-row-grid">
                                 <div class="min-w-0">
                                     <div class="font-heading font-semibold text-base text-gray-900 dark:text-gray-100 truncate" data-test="project-name">
                                         {{ project.name }}
@@ -171,23 +172,27 @@
                                         {{ ownerLabel(project) }} · {{ relativeUpdated(project) }}
                                     </div>
                                 </div>
-                                <div class="text-sm text-gray-600 dark:text-gray-300 leading-snug line-clamp-2">
+                                <div
+                                    class="text-sm font-normal text-gray-600 dark:text-gray-300 leading-snug line-clamp-2"
+                                    data-test="project-description"
+                                >
                                     {{ project.description || "—" }}
                                 </div>
-                                <div class="hidden lg:flex flex-row items-center gap-1.5">
+                                <div class="hidden lg:flex flex-wrap items-center gap-1.5 min-w-0">
                                     <span
                                         v-for="trust in trustsToShow(project)"
                                         :key="trust.id"
                                         class="inline-flex items-center py-0.5 rounded text-[11px] font-medium font-mono bg-gray-100 dark:bg-dark-surface text-gray-700 dark:text-gray-300"
-                                        :class="showsTrustDot(project, trust) ? 'gap-1.5 pl-1.5 pr-2' : 'px-2'"
+                                        :class="showsTrustDot(project) ? 'gap-1.5 pl-1.5 pr-2' : 'px-2'"
                                         :title="trust.name"
                                         data-test="trust-chip"
                                     >
-                                        <!-- Green dot: trust approved (shown only once the project is APPROVED). -->
+                                        <!-- Status dot: green once the trust is in, amber while staged. -->
                                         <span
-                                            v-if="showsTrustDot(project, trust)"
-                                            class="w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0"
-                                            data-test="trust-approved-dot"
+                                            v-if="showsTrustDot(project)"
+                                            class="w-1.5 h-1.5 rounded-full shrink-0"
+                                            :class="trustDotClass(project, trust)"
+                                            data-test="trust-status-dot"
                                             aria-hidden="true"
                                         />
                                         {{ trustChipLabel(trust) }}
@@ -205,7 +210,7 @@
                                         No trusts staged
                                     </span>
                                 </div>
-                                <div class="flex flex-col items-end gap-1.5 min-w-[150px]">
+                                <div class="flex flex-col items-end gap-1.5">
                                     <span
                                         class="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-semibold tracking-wide uppercase"
                                         :class="pillClass(project.status)"
@@ -254,7 +259,10 @@
                             <h3 class="font-heading font-semibold text-lg leading-tight text-gray-900 dark:text-gray-100">
                                 {{ project.name }}
                             </h3>
-                            <p class="mt-1.5 text-sm text-gray-500 dark:text-gray-300 leading-snug line-clamp-2">
+                            <p
+                                class="mt-1.5 text-sm font-normal text-gray-500 dark:text-gray-300 leading-snug line-clamp-2"
+                                data-test="project-description"
+                            >
                                 {{ project.description || "No description provided" }}
                             </p>
                         </div>
@@ -264,15 +272,16 @@
                                 v-for="trust in trustsToShow(project)"
                                 :key="trust.id"
                                 class="inline-flex items-center py-0.5 rounded text-[11px] font-medium font-mono bg-gray-100 dark:bg-dark-surface text-gray-700 dark:text-gray-300"
-                                :class="showsTrustDot(project, trust) ? 'gap-1.5 pl-1.5 pr-2' : 'px-2'"
+                                :class="showsTrustDot(project) ? 'gap-1.5 pl-1.5 pr-2' : 'px-2'"
                                 :title="trust.name"
                                 data-test="trust-chip"
                             >
-                                <!-- Green dot: trust approved (shown only once the project is APPROVED). -->
+                                <!-- Status dot: green once the trust is in, amber while staged. -->
                                 <span
-                                    v-if="showsTrustDot(project, trust)"
-                                    class="w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0"
-                                    data-test="trust-approved-dot"
+                                    v-if="showsTrustDot(project)"
+                                    class="w-1.5 h-1.5 rounded-full shrink-0"
+                                    :class="trustDotClass(project, trust)"
+                                    data-test="trust-status-dot"
                                     aria-hidden="true"
                                 />
                                 {{ trustChipLabel(trust) }}
@@ -357,6 +366,14 @@ const ownerQueryParam = ref("");
 // `ownerFilter=true` = "My projects" only; false = all accessible.
 const ownerFilter = ref(false);
 const userId = authStore.user?.userId;
+
+// Every list row is its own grid, so a content-sized (`auto`) track resolves to a
+// different width on each row and the description column drifts down the list.
+// Fixed fr/rem tracks resolve identically on every row, which is what lines the
+// columns up — the same approach as the Models table (`GRID_CLASS` in models.vue).
+// The trusts column only renders from `lg` up, hence the two templates.
+const ROW_GRID_CLASS = "grid-cols-1 md:grid-cols-[minmax(0,1.6fr)_minmax(0,1.8fr)_10rem] "
+    + "lg:grid-cols-[minmax(0,1.6fr)_minmax(0,1.8fr)_15rem_10rem]";
 
 type ViewMode = "list" | "grid";
 const viewMode = ref<ViewMode>("list");
@@ -493,12 +510,15 @@ const trustChipLabel = (trust: IProjectTrust): string => {
     return stripped.slice(0, 14) + "…";
 };
 
-// A trust chip gains a green dot once that trust has approved — but only
-// after the project itself reaches APPROVED. While the project is still
-// STAGED every chip stays plain, even for trusts that have already signed
-// off; the dot is the project-wide "this trust is in" marker.
-const showsTrustDot = (project: IProject, trust: IProjectTrust): boolean =>
-    project.status === "APPROVED" && trust.approved;
+// A trust chip's dot marks that trust's standing in the project. Green is still
+// the project-wide "this trust is in" marker — it needs the project itself to
+// have reached APPROVED as well as the trust to have signed off. Anything short
+// of that is staged, and reads in the same amber as the row's status spine
+// (SPINE_BG_CLASS.STAGED, so the two can never drift apart). Drafts show no dot:
+// nothing has been staged yet.
+const showsTrustDot = (project: IProject): boolean => project.status !== "UNSTAGED";
+const trustDotClass = (project: IProject, trust: IProjectTrust): string =>
+    project.status === "APPROVED" && trust.approved ? "bg-emerald-500" : SPINE_BG_CLASS.STAGED;
 
 const STATUS_LABEL: Record<ProjectStatus, string> = {
     APPROVED: "Approved",

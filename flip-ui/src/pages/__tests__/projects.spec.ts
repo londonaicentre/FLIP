@@ -135,15 +135,24 @@ describe("Projects Page", () => {
         expect(wrapper.text()).not.toContain("No trusts staged");
     });
 
-    test("staged projects render plain trust chips with no approval dot", async () => {
+    test("staged projects render amber trust dots — the same amber as the row spine", async () => {
         setProject(makeProject("STAGED", [trust("t1", "KCH", true), trust("t2", "GSTT", false)]));
         const wrapper = mountPage();
         await wrapper.vm.$nextTick();
 
-        // Both linked trusts render; the project is not APPROVED, so even the
-        // trust that has signed off keeps a plain chip.
+        // Both linked trusts render; the project is not APPROVED, so every chip
+        // carries the staged (amber) dot — including the trust that has already
+        // signed off, since the project itself is still awaiting approval.
         expect(wrapper.findAll("[data-test='trust-chip']")).toHaveLength(2);
-        expect(wrapper.findAll("[data-test='trust-approved-dot']")).toHaveLength(0);
+        const dots = wrapper.findAll("[data-test='trust-status-dot']");
+        expect(dots).toHaveLength(2);
+
+        const spineColour = wrapper.find("[data-test='project-status-spine']")
+            .classes().find(c => c.startsWith("bg-"));
+        dots.forEach(dot => {
+            expect(dot.classes()).toContain(spineColour);
+            expect(dot.classes()).not.toContain("bg-emerald-500");
+        });
     });
 
     test("an approved project shows a green dot on each approved trust chip", async () => {
@@ -151,18 +160,22 @@ describe("Projects Page", () => {
         const wrapper = mountPage();
         await wrapper.vm.$nextTick();
 
-        const dots = wrapper.findAll("[data-test='trust-approved-dot']");
+        const dots = wrapper.findAll("[data-test='trust-status-dot']");
         expect(dots).toHaveLength(2);
         dots.forEach(dot => expect(dot.classes()).toContain("bg-emerald-500"));
     });
 
-    test("a non-approved trust on an approved project keeps a plain chip", async () => {
+    test("a non-approved trust on an approved project keeps the amber staged dot", async () => {
         setProject(makeProject("APPROVED", [trust("t1", "KCH", true), trust("t2", "GSTT", false)]));
         const wrapper = mountPage();
         await wrapper.vm.$nextTick();
 
         expect(wrapper.findAll("[data-test='trust-chip']")).toHaveLength(2);
-        expect(wrapper.findAll("[data-test='trust-approved-dot']")).toHaveLength(1);
+        const dots = wrapper.findAll("[data-test='trust-status-dot']");
+        expect(dots).toHaveLength(2);
+        // Chips are sorted by name: GSTT (pending) then KCH (approved).
+        expect(dots[0].classes()).toContain("bg-amber-500");
+        expect(dots[1].classes()).toContain("bg-emerald-500");
     });
 
     test("renders approved trust dots in the grid view too", async () => {
@@ -172,7 +185,25 @@ describe("Projects Page", () => {
 
         const grid = wrapper.find("[data-test='projects-grid-view']");
         expect(grid.exists()).toBe(true);
-        expect(grid.findAll("[data-test='trust-approved-dot']")).toHaveLength(2);
+        expect(grid.findAll("[data-test='trust-status-dot']")).toHaveLength(2);
+    });
+
+    test("a draft project's chips carry no dot at all", async () => {
+        setProject(makeProject("UNSTAGED", [trust("t1", "KCH", false)]));
+        const wrapper = mountPage();
+        await wrapper.vm.$nextTick();
+
+        expect(wrapper.findAll("[data-test='trust-chip']")).toHaveLength(1);
+        expect(wrapper.findAll("[data-test='trust-status-dot']")).toHaveLength(0);
+    });
+
+    test("the grid view uses the same amber staged dot", async () => {
+        setProject(makeProject("STAGED", [trust("t1", "KCH", false)]));
+        const wrapper = mountPage();
+        await wrapper.find("[data-test='view-mode-grid']").trigger("click");
+
+        const grid = wrapper.find("[data-test='projects-grid-view']");
+        expect(grid.find("[data-test='trust-status-dot']").classes()).toContain("bg-amber-500");
     });
 
     test("renders the empty-state copy when the API returns zero projects", async () => {
@@ -284,19 +315,19 @@ describe("Projects Page", () => {
         expect(wrapper.text()).toContain("created");
     });
 
-    test("only the APPROVED project's chips carry the green approval dot, even when trust.approved is true on a STAGED project", async () => {
-        // showsTrustDot guards on project.status === "APPROVED" too — a
-        // freshly-staged trust that's already signed off must still render
-        // a plain chip until the project itself approves.
+    test("only the APPROVED project's chips turn green, even when trust.approved is true on a STAGED project", async () => {
+        // The green dot stays the project-wide "this trust is in" marker: a
+        // freshly-staged trust that's already signed off keeps the amber dot
+        // until the project itself approves.
         setProject(makeProject("STAGED", [trust("t1", "KCH", true)]));
         const stagedWrapper = mountPage();
         await stagedWrapper.vm.$nextTick();
-        expect(stagedWrapper.findAll("[data-test='trust-approved-dot']")).toHaveLength(0);
+        expect(stagedWrapper.find("[data-test='trust-status-dot']").classes()).toContain("bg-amber-500");
 
         setProject(makeProject("APPROVED", [trust("t1", "KCH", true)]));
         const approvedWrapper = mountPage();
         await approvedWrapper.vm.$nextTick();
-        expect(approvedWrapper.findAll("[data-test='trust-approved-dot']")).toHaveLength(1);
+        expect(approvedWrapper.find("[data-test='trust-status-dot']").classes()).toContain("bg-emerald-500");
     });
 
     test("hides the Create project button when the user lacks CanCreateProjects", async () => {
@@ -503,5 +534,47 @@ describe("Projects Page", () => {
         expect(text.endsWith("…")).toBe(true);
         // Truncation is 14 chars + ellipsis.
         expect(text.slice(0, -1)).toHaveLength(14);
+    });
+
+    test("the description column is body weight, not the anchor's inherited semibold", async () => {
+        // The whole row is a <router-link>, and main.css makes every non-nav <a>
+        // font-semibold — so the description rendered bold alongside the project
+        // name it is meant to sit under.
+        setProject(makeProject("STAGED", [trust("t1", "KCH", false)]));
+        const wrapper = mountPage();
+        await wrapper.vm.$nextTick();
+
+        expect(wrapper.find("[data-test='project-description']").classes()).toContain("font-normal");
+    });
+
+    test("the grid-view card description is body weight too", async () => {
+        setProject(makeProject("STAGED", [trust("t1", "KCH", false)]));
+        const wrapper = mountPage();
+        await wrapper.find("[data-test='view-mode-grid']").trigger("click");
+
+        const description = wrapper.find("[data-test='projects-grid-view'] [data-test='project-description']");
+        expect(description.classes()).toContain("font-normal");
+    });
+
+    test("every list row declares the same content-independent column template", async () => {
+        // Each row is its own grid, so a content-sized (`auto`) track resolves to
+        // a different width per row and the description column drifts down the
+        // list. Fixed fr/rem tracks keep every row's columns on the same edges.
+        mockSwrvData.value = {
+            data: [
+                makeProject("STAGED", [trust("t1", "KCH", false)]),
+                makeProject("APPROVED", [])
+            ],
+            totalPages: 1,
+            page: 1
+        };
+        const wrapper = mountPage();
+        await wrapper.vm.$nextTick();
+
+        const templates = wrapper.findAll("[data-test='project-row-grid']")
+            .map(row => row.classes().filter(c => c.includes("grid-cols")).sort().join(" "));
+        expect(templates).toHaveLength(2);
+        expect(new Set(templates).size).toBe(1);
+        expect(templates[0]).not.toMatch(/_auto|\[auto/);
     });
 });
