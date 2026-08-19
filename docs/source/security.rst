@@ -31,9 +31,12 @@ themselves — the AWS trust security groups define no ingress rules at all — 
 than depending on configuration discipline. Operator access is via AWS Systems Manager
 Session Manager, so port 22 is never opened.
 
-The one inbound connection in the design is internal to the trust. FLIP asks the trust's
-PACS for a study, and the PACS opens a connection back to XNAT to deliver it, on the
-DICOM port alone. It stays inside the trust's own network.
+The one inbound connection in the design applies only where FLIP is connected to a
+trust's own PACS, which today means an on-premises deployment. FLIP asks the PACS for a
+study, and the PACS opens a connection back to XNAT to deliver it, on the DICOM port
+alone. It stays inside the trust's own network. AWS-hosted trusts have no such path:
+they run FLIP's own bundled Orthanc, which XNAT reaches over the container network, so
+their security groups keep no ingress rules at all.
 
 **Only the Central Hub is internet-facing.** It sits behind CloudFront with modern TLS,
 HSTS, AWS WAF managed rules, and an internal-only Application Load Balancer. Nothing

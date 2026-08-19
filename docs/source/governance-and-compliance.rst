@@ -77,10 +77,11 @@ Network architecture as a governance guarantee
 The network design is why the guarantees above are structural rather than procedural.
 Each trust polls the Central Hub outbound, and there is no route from the internet — or
 from the hub — into a trust's network. For a trust's own network team, onboarding FLIP
-requires no inbound exposure to the outside world. The one inbound rule is internal to
-the trust: FLIP asks the trust's PACS for a study, and the PACS opens a connection back
-to XNAT to deliver it, on the DICOM port alone. A site-to-site VPN can be provisioned on request
-where a trust's policy calls for network-layer separation as well.
+requires no inbound exposure to the outside world. Where FLIP is connected to the trust's
+own PACS, one inbound rule is needed *inside* the trust: FLIP asks the PACS for a study,
+and the PACS opens a connection back to XNAT to deliver it, on the DICOM port alone.
+A site-to-site VPN can be provisioned on request where a trust's policy calls for
+network-layer separation as well.
 
 The practical governance point: a trust does not have to rely on the Central Hub's access
 controls to be confident its systems are unreachable. There is no path.
