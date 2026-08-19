@@ -31,7 +31,6 @@ XNAT_DIR = Path(__file__).resolve().parents[1]
 REPO_ROOT = XNAT_DIR.parents[1]
 SCRIPT = XNAT_DIR / "xnat" / "config" / "configure-xnat.sh"
 COMPOSE = XNAT_DIR / "docker-compose-stack.yml"
-REAL_PACS_OVERLAY = XNAT_DIR / "docker-compose-stack.real-pacs.yml"
 INIT_JOB = REPO_ROOT / "deploy" / "providers" / "kubernetes" / "templates" / "xnat-init-job.yaml"
 
 
@@ -119,37 +118,58 @@ def test_compose_defaults_do_not_cancel_the_scripts_empty_check():
     assert not offenders, f"these cancel the script's guard by defaulting an empty value: {sorted(offenders)}"
 
 
+def published_ports() -> list[str]:
+    """The compose file's ``ports:`` entries, comments and blanks skipped."""
+    entries = []
+    in_ports = False
+    for line in COMPOSE.read_text().splitlines():
+        if re.match(r"\s*ports:\s*$", line):
+            in_ports = True
+            continue
+        if not in_ports:
+            continue
+        # Comments and blank lines sit between `ports:` and its entries; only a key at the same
+        # or lower indent ends the block.
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        if not re.match(r"\s*-\s", line):
+            in_ports = False
+            continue
+        entries.append(line.strip().lstrip("- ").strip())
+    return entries
+
+
 def test_published_ports_are_flat_references():
     """``docker stack deploy`` rejects a nested default in a ports entry.
 
     ``${XNAT_WEB_PORT:-${XNAT_PORT}}:8080`` fails the whole deploy with "Does not match format
     'ports'" — the fallback has to be resolved by the Makefile, not by compose.
     """
-    for compose in (COMPOSE, REAL_PACS_OVERLAY):
-        in_ports = False
-        for line in compose.read_text().splitlines():
-            if re.match(r"\s*ports:\s*$", line):
-                in_ports = True
-                continue
-            if not in_ports:
-                continue
-            # Comments and blank lines sit between `ports:` and its entries; only a key at the same
-            # or lower indent ends the block.
-            if not line.strip() or line.lstrip().startswith("#"):
-                continue
-            if not re.match(r"\s*-\s", line):
-                in_ports = False
-                continue
-            assert not re.search(r"\$\{[^}]*\$\{", line), (
-                f"nested substitution in a ports entry of {compose.name}: {line.strip()}"
-            )
+    for entry in published_ports():
+        assert not re.search(r"\$\{[^}]*\$\{", entry), f"nested substitution in a ports entry: {entry}"
+
+
+def test_dicom_receiver_is_published_on_the_port_xnat_binds():
+    """The receiver is published unconditionally, and on the same number both sides of the mapping.
+
+    FLIP retrieves by DQR: after the C-MOVE the PACS opens a new association back to XNAT to
+    C-STORE the studies, and DQR matches that destination against a registered receiver by exact
+    AE title and port — so no host:container translation is possible on this leg. It used to be an
+    opt-in overlay; now every deployment publishes it so development runs the same wiring a
+    real-PACS trust relies on.
+    """
+    entries = published_ports()
+    assert "${XNAT_PORT}:${XNAT_PORT}" in entries, f"DICOM receiver not published: {entries}"
+    assert "${XNAT_WEB_PORT}:8080" in entries, f"web UI not published: {entries}"
 
 
 def test_web_port_defaults_to_the_dicom_port():
-    """They were one variable until this change, so a kit that sets only XNAT_PORT must still work.
+    """They were one variable until this change, so a kit that predates it sets only XNAT_PORT.
 
-    Defaulting to a literal instead broke the second trust on a host: KCH publishing on 8104 rather
-    than its own 8106 collides with a running GSTT.
+    Deriving the web port from it routes such a kit into the collision guard — a loud instruction
+    to allocate a second port. Defaulting to a literal instead would silently move that kit's web
+    UI to a number nothing else expects (and broke the second trust on a host: KCH publishing on
+    the literal rather than its own port collides with a running GSTT).
     """
     resolved = make_vars("XNAT_PORT_EFFECTIVE", "XNAT_WEB_PORT_EFFECTIVE", XNAT_PORT="8106")
     assert resolved["XNAT_WEB_PORT_EFFECTIVE"] == "8106"
@@ -220,22 +240,13 @@ def test_valid_ports_are_accepted(tmp_path):
     assert result.returncode == 0, result.stdout + result.stderr
 
 
-def test_real_pacs_refuses_to_publish_both_services_on_one_port(tmp_path):
-    """REAL_PACS=true publishes the DICOM receiver alongside the web UI; one port cannot serve both."""
-    result = run_xnat_reset(tmp_path, REAL_PACS="true", XNAT_PORT="8104", XNAT_WEB_PORT="8104")
+def test_refuses_to_publish_both_services_on_one_port(tmp_path):
+    """The DICOM receiver is published alongside the web UI; one host port cannot serve both.
+
+    This is also the fate of a kit that predates the FLIP#993 split and sets only XNAT_PORT: the
+    web port derives from it (see test_web_port_defaults_to_the_dicom_port), so the deploy stops
+    here with instructions instead of silently moving one of the services.
+    """
+    result = run_xnat_reset(tmp_path, XNAT_PORT="8104", XNAT_WEB_PORT="8104")
     assert result.returncode != 0, "the collision was accepted"
     assert "must differ" in result.stdout + result.stderr
-
-
-def test_one_port_is_fine_without_real_pacs(tmp_path):
-    """Sharing the number is the normal case: only the web UI is published."""
-    result = run_xnat_reset(tmp_path, XNAT_PORT="8104", XNAT_WEB_PORT="8104")
-    assert result.returncode == 0, result.stdout + result.stderr
-
-
-def test_real_pacs_overlay_is_only_added_on_request():
-    """Publishing the receiver is an opening; the mocked PACS reaches it over the container network."""
-    without = make_vars("STACK_FILES")["STACK_FILES"]
-    with_overlay = make_vars("STACK_FILES", REAL_PACS="true")["STACK_FILES"]
-    assert "real-pacs" not in without
-    assert "docker-compose-stack.real-pacs.yml" in with_overlay

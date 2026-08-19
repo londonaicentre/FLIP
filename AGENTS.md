@@ -378,9 +378,10 @@ After changes, evaluate if docs need updating:
   why host 8104 served Tomcat while the DICOM receiver's 8104 was an unpublished container port
   (FLIP#993). `XNAT_AETITLE` is applied to the SCP receiver, `dqrCallingAe`, and the C-MOVE
   destination in `ImportStudyRequest` — DQR matches that destination against a registered receiver by
-  exact `AE:port`, so all three must agree and no translation is possible on that leg. Publishing the
-  receiver for a real PACS is opt-in: `make -C trust/xnat up-xnat KIT=<CODE> REAL_PACS=true` adds
-  `docker-compose-stack.real-pacs.yml`, and the Makefile refuses to deploy if the two ports collide.
+  exact `AE:port`, so all three must agree and no translation is possible on that leg. Both ports are
+  host-published — the receiver so a real PACS can complete the C-STORE return leg of a retrieval,
+  and dev keeps the same wiring — so they must differ; the Makefile refuses to deploy if they
+  collide. Dev allocation: 8104/8105 (GSTT), 8106/8107 (KCH).
 - `PACS_HOST` / `PACS_AETITLE` / `PACS_QR_PORT` / `PACS_LABEL` — the upstream PACS, defaulting to the
   mocked Orthanc (`orthanc` / `ORTHANC` / `4242`). `PACS_QR_PORT` must be reachable *from the XNAT
   container*, not a host-published port — conflating the two is what the retired `PACS_DICOM_PORT`

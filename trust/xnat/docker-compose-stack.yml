@@ -17,10 +17,21 @@ services:
       placement:
         constraints: [node.role == manager]
     ports:
-      # Host-published web UI. The DICOM SCP receiver binds ${XNAT_PORT} *inside* the container and
-      # is published only by docker-compose-stack.real-pacs.yml (make ... REAL_PACS=true), because
-      # the mocked Orthanc reaches it over the container network (FLIP#993).
+      # Host-published web UI, and the DICOM SCP receiver next to it. The receiver has to be
+      # published for a real trust PACS: FLIP retrieves by DQR, so after XNAT issues C-FIND/C-MOVE
+      # the PACS opens a *new* association back to XNAT to C-STORE the studies — that return leg is
+      # inbound, and without a published port it never arrives (queries succeed, retrievals silently
+      # time out; FLIP#993). The mocked Orthanc reaches xnat-web:${XNAT_PORT} over the container
+      # network and doesn't need the publication, but every deployment gets it so development
+      # exercises the same wiring a real-PACS trust runs.
+      #
+      # XNAT_PORT is used on both sides of the mapping deliberately: DQR matches the C-MOVE
+      # destination against a registered SCP receiver by exact AE title and port, so the port the
+      # PACS connects to must be the same number XNAT binds — no translation is possible on this
+      # leg. Both ports are host-published, so XNAT_WEB_PORT and XNAT_PORT must differ; the Makefile
+      # refuses to deploy if they collide.
       - ${XNAT_WEB_PORT}:8080
+      - ${XNAT_PORT}:${XNAT_PORT}
     security_opt:
       - no-new-privileges:true
     cap_drop:

@@ -184,9 +184,9 @@ trust's PACS team supplies; what they supply is covered above.
        not a host-published port
      - ``4242``
    * - ``XNAT_WEB_PORT``
-     - Host-published port for XNAT's web UI and REST API. Unrelated to DICOM; separate from
-       ``XNAT_PORT`` so the DICOM receiver can be published independently
-     - whatever ``XNAT_PORT`` is set to
+     - Host-published port for XNAT's web UI and REST API. Unrelated to DICOM; the receiver is
+       host-published too, so this must differ from ``XNAT_PORT`` — the deploy refuses a collision
+     - ``8105``
    * - ``PACS_SUPPORTS_EXTENDED_NEGOTIATIONS``
      - Whether the PACS supports relational queries / extended negotiation. A capability of the
        PACS, not a preference — see the table above
@@ -206,13 +206,15 @@ The mocked PACS those defaults describe is covered below.
 Exposing the DICOM Receiver
 ===========================
 
-The page has said several times that the receiver must be reachable from the PACS. It is off by
-default, because the mocked PACS reaches it over the container network and publishing it would be an
-unnecessary opening. Turning it on differs by deployment:
+The page has said several times that the receiver must be reachable from the PACS. How it is
+exposed differs by deployment:
 
-**Compose.** ``make -C trust/xnat up-xnat KIT=<CODE> REAL_PACS=true`` adds an overlay that publishes
-the receiver on the host. ``XNAT_WEB_PORT`` and ``XNAT_PORT`` must then differ, since both are
-host-published; the Makefile refuses to deploy if they collide.
+**Compose.** The receiver is always published on the host, next to the web UI, so a development
+deployment runs the same wiring a real-PACS trust relies on. ``XNAT_WEB_PORT`` and ``XNAT_PORT``
+must therefore differ; the Makefile refuses to deploy if they collide. The mocked Orthanc does not
+itself need the publication — it reaches the receiver over the container network — and the mock
+deployments expose nothing by it: local development binds on the developer's machine, and the
+AWS-hosted mock trusts sit behind security groups with no ingress rules.
 
 **Kubernetes.** Three values, all off by default:
 

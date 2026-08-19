@@ -158,7 +158,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--skip-xnat", action="store_true", help="Skip the XNAT/OHIF segment")
     parser.add_argument(
         "--xnat-url",
-        default="http://127.0.0.1:8104",
+        default="http://127.0.0.1:8105",
         help=(
             "Trust XNAT base URL for segment 3. Keep the IPv4 literal: the XNAT ports are published by "
             "Docker Swarm ingress, which accepts but never answers ::1 connections — python-requests "
@@ -358,7 +358,7 @@ def resolve_xnat_ids(
     ``?subjectId=&projectId=&experimentId=&experimentLabel=``).
 
     Args:
-        xnat_url (str): Base URL of the trust's XNAT (e.g. http://localhost:8104).
+        xnat_url (str): Base URL of the trust's XNAT (e.g. http://localhost:8105).
         username (str): XNAT login.
         password (str): XNAT password.
         flip_project_id (str): FLIP project UUID to match against secondary_ID.
