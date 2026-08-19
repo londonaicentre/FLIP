@@ -114,12 +114,21 @@ own profile regardless of role.
 
 Researchers additionally need to resolve an email address when adding someone to a project, so they
 may check whether an address is registered. That check returns only the user's ID, email address and
-enabled flag — never their name or organisation — and it confirms only addresses the Researcher
-already knows, since there is no way to list or enumerate users without *Manage users*.
+enabled flag — never their name or organisation — and users cannot be *listed* without *Manage
+users*: no endpoint will hand a Researcher the roster.
+
+.. warning::
+
+   The address check is not yet bounded per caller, so users can still be *enumerated* even though
+   they cannot be listed. A Researcher who guesses addresses — an NHS address space is fairly
+   predictable — learns which of them hold accounts, one address per request, and nothing caps how
+   many they may try. What the check discloses stays narrow (ID, email address, enabled flag); how
+   often it may be asked does not. Rate-limiting it per authenticated caller is tracked in
+   `FLIP#961 <https://github.com/londonaicentre/FLIP/issues/961>`_.
 
 .. note::
 
    Unlike project-level writes, this capability follows the *Create projects* permission rather than
    project ownership. A project owner who has been demoted to Viewer keeps their existing project
-   write access (see the warning above) but loses the ability to look up new members, because the
-   add-member form is not shown to Viewers.
+   write access (see the ownership warning further up the page) but loses the ability to look up new
+   members, because the add-member form is not shown to Viewers.

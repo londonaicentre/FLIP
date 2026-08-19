@@ -66,6 +66,20 @@ def test_has_permissions_returns_false_when_db_raises():
     assert has_permissions(uuid4(), [PermissionRef.CAN_CREATE_PROJECTS], db) is False
 
 
+def test_has_permissions_denies_on_an_empty_permission_list():
+    """An empty list must grant nothing, mirroring has_any_permission.
+
+    This is the fail-open direction, so it needs an explicit guard rather than falling out of the
+    implementation: ``all()`` over an empty sequence is True, and the except-and-deny path would
+    not catch it either, since with nothing to check the query succeeds. Asserting the DB is never
+    touched pins that the deny happens up front and cannot depend on the query.
+    """
+    db = _db_granting(PermissionRef.CAN_CREATE_PROJECTS)
+
+    assert has_permissions(uuid4(), [], db) is False
+    db.exec.assert_not_called()
+
+
 def test_has_any_permission_returns_true_when_one_of_several_is_held():
     """Holding either permission is enough — this is the OR counterpart."""
     db = _db_granting(PermissionRef.CAN_CREATE_PROJECTS)

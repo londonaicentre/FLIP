@@ -52,6 +52,12 @@ def has_permissions(user_id: UUID, required_permissions: list[PermissionRef], db
     both A and B. For an OR check, use :func:`has_any_permission`; passing two permissions here
     when either would do silently denies everyone who holds just one of them.
 
+    An empty list grants nothing (returns False), matching :func:`has_any_permission`, so a caller
+    cannot accidentally allow everyone by passing no permissions. That guard is explicit here
+    because the natural implementation fails *open*: ``all()`` over an empty sequence is True, and
+    the ``except`` below would not catch it — with nothing to check, the query succeeds and the
+    generator never runs.
+
     Args:
         user_id (UUID): The ID of the user to check permissions for.
         required_permissions (list[PermissionRef]): A list of permissions to check against the user's roles.
@@ -60,6 +66,12 @@ def has_permissions(user_id: UUID, required_permissions: list[PermissionRef], db
     Returns:
         bool: True if the user has all required permissions, False otherwise
     """
+    # Deny before touching the DB. A dynamically built list that filtered down to nothing is a
+    # caller bug, so it is worth a log line rather than a silent deny.
+    if not required_permissions:
+        logger.error(f"Refusing to authorize user {user_id} against an empty required-permission list")
+        return False
+
     try:
         user_permission_ids = _user_permission_ids(user_id, db)
 

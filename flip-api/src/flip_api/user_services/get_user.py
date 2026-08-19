@@ -100,6 +100,20 @@ def lookup_project_member(
     project. That disclosure is one bit about an address the caller already holds, and it is
     bounded to Researchers and Admins — there is no self-signup on this platform.
 
+    What is bounded is *what* one call discloses, not *how often* it may be asked: nothing
+    rate-limits this route per caller, so a predictable address space stays walkable one guess at a
+    time. Tracked in FLIP#961 rather than fixed here — the only stable per-caller key is the
+    verified ``sub``, which means giving ``verify_token`` a ``Request`` to stash it on, i.e.
+    changing the dependency every authenticated route uses.
+
+    The address rides in the query string, which means it is retained in the CloudFront standard
+    access logs (``cs-uri-query``) and the WAF logs (``httpRequest.args``, unredacted) — so the set
+    of addresses a caller probed persists for those buckets' retention window. Kept as a ``GET``
+    anyway: it is a read, ``/api/*`` is served by the caching-disabled policy so there is no CDN
+    exposure, and the route this replaced carried the address in the path, which is logged just the
+    same. A ``POST`` with the address in the body would keep it out of those logs, at the cost of a
+    non-idempotent verb for a lookup — recorded here so the trade is not re-derived from scratch.
+
     Args:
         request (Request): FastAPI request object for headers.
         email (EmailStr): Email address of the prospective project member.
