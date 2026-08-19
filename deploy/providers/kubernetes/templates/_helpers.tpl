@@ -141,9 +141,5 @@ single backend's flag lets the two disagree, which renders an empty volume and
 drops a staged kit silently (#999) — so both call this helper.
 */}}
 {{- define "flip-trust.flClientKitFromS3" -}}
-{{- if eq .Values.flBackend "nvflare" }}
-{{- if .Values.flClient.nvflare.kitFromS3.enabled }}true{{ end }}
-{{- else if eq .Values.flBackend "flower" }}
-{{- if .Values.flClient.flower.kitFromS3.enabled }}true{{ end }}
-{{- end }}
+{{- if (index .Values.flClient .Values.flBackend).kitFromS3.enabled }}true{{ end }}
 {{- end }}

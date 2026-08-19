@@ -310,9 +310,7 @@ spec:
             medium: Memory
             sizeLimit: {{ .Values.flClient.shmSize }}
         - name: fl-client-kit
-{{- if include "flip-trust.flClientKitFromS3" . }}
-          emptyDir: {}
-{{- else if .Values.flClient.kitHostPath }}
+{{- if and (not (include "flip-trust.flClientKitFromS3" .)) .Values.flClient.kitHostPath }}
           hostPath:
             path: {{ .Values.flClient.kitHostPath | quote }}
             type: Directory

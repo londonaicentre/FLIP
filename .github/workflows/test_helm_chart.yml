@@ -256,6 +256,11 @@ jobs:
       # manifest and not merely somewhere in the release. The S3-on case is asserted too: it is
       # the positive control that stops the staged case passing vacuously if the volume stopped
       # rendering altogether.
+      # The volume is asserted by parsing the manifest and selecting the named entry
+      # under spec.template.spec.volumes, not by grepping around the string
+      # "name: fl-client-kit" — that string also names the two volumeMounts entries,
+      # so a context-window grep tests whichever node happens to sit near a match
+      # rather than the volume itself.
       - name: fl-client kit volume follows the active backend (FLIP#999)
         run: |
           for backend in nvflare flower; do
@@ -263,15 +268,27 @@ jobs:
             # kitFromS3 flag is disabled — the other backend's is left at its values.yaml
             # default, which is exactly the shape that regressed.
             helm template trust-release deploy/providers/kubernetes/ \
-              --set trustName=CI --set trustNumber=1 \
               --set flBackend="${backend}" \
               --set "flClient.${backend}.kitFromS3.enabled=false" \
               --set flClient.kitHostPath=/opt/fl-kit \
               --show-only templates/fl-client.yaml > /tmp/kit-staged-"${backend}".yaml
-            if ! grep -A2 -F 'name: fl-client-kit' /tmp/kit-staged-"${backend}".yaml | grep -qF 'hostPath:'; then
-              echo "::error::${backend}: a kit staged at flClient.kitHostPath did not render as a hostPath — the staged kit is silently dropped"
-              exit 1
-            fi
+            python3 - "${backend}" hostPath /tmp/kit-staged-"${backend}".yaml <<'PY'
+          import sys, yaml
+          backend, want, path = sys.argv[1], sys.argv[2], sys.argv[3]
+          # --show-only still emits the file's other documents (ServiceAccount, ConfigMap).
+          docs = [d for d in yaml.safe_load_all(open(path)) if d and d.get("kind") == "Deployment"]
+          if len(docs) != 1:
+              sys.exit(f"::error::{backend}: expected exactly 1 fl-client Deployment, got {len(docs)}")
+          vols = docs[0]["spec"]["template"]["spec"]["volumes"]
+          vol = next((v for v in vols if v["name"] == "fl-client-kit"), None)
+          if vol is None:
+              sys.exit(f"::error::{backend}: no fl-client-kit volume rendered at all")
+          if want not in vol:
+              sys.exit(
+                  f"::error::{backend}: a kit staged at flClient.kitHostPath rendered as "
+                  f"{sorted(k for k in vol if k != 'name')}, not {want} — the staged kit is silently dropped"
+              )
+          PY
             if grep -qF 'name: kit-init' /tmp/kit-staged-"${backend}".yaml; then
               echo "::error::${backend}: kit-init rendered with kitFromS3 disabled — it would overwrite the staged kit"
               exit 1
@@ -279,15 +296,26 @@ jobs:
 
             # Fetched from S3: emptyDir for kit-init to populate, and kit-init present.
             helm template trust-release deploy/providers/kubernetes/ \
-              --set trustName=CI --set trustNumber=1 \
               --set flBackend="${backend}" \
               --set "flClient.${backend}.kitFromS3.enabled=true" \
-              --set "flClient.${backend}.kitFromS3.bucket=ci-bucket" \
               --show-only templates/fl-client.yaml > /tmp/kit-s3-"${backend}".yaml
-            if ! grep -A2 -F 'name: fl-client-kit' /tmp/kit-s3-"${backend}".yaml | grep -qF 'emptyDir:'; then
-              echo "::error::${backend}: kitFromS3 enabled but the volume is not an emptyDir for kit-init to populate"
-              exit 1
-            fi
+            python3 - "${backend}" emptyDir /tmp/kit-s3-"${backend}".yaml <<'PY'
+          import sys, yaml
+          backend, want, path = sys.argv[1], sys.argv[2], sys.argv[3]
+          # --show-only still emits the file's other documents (ServiceAccount, ConfigMap).
+          docs = [d for d in yaml.safe_load_all(open(path)) if d and d.get("kind") == "Deployment"]
+          if len(docs) != 1:
+              sys.exit(f"::error::{backend}: expected exactly 1 fl-client Deployment, got {len(docs)}")
+          vols = docs[0]["spec"]["template"]["spec"]["volumes"]
+          vol = next((v for v in vols if v["name"] == "fl-client-kit"), None)
+          if vol is None:
+              sys.exit(f"::error::{backend}: no fl-client-kit volume rendered at all")
+          if want not in vol:
+              sys.exit(
+                  f"::error::{backend}: kitFromS3 is enabled but the volume rendered as "
+                  f"{sorted(k for k in vol if k != 'name')}, not {want} for kit-init to populate"
+              )
+          PY
             if ! grep -qF 'name: kit-init' /tmp/kit-s3-"${backend}".yaml; then
               echo "::error::${backend}: kitFromS3 enabled but kit-init did not render — nothing would populate the volume"
               exit 1
