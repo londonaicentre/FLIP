@@ -206,11 +206,10 @@ imagingApi:
             topologyKey: kubernetes.io/hostname
   env:
     XNAT_URL: "http://xnat-web:8080"
-    # DICOM SCP receiver port — NOT the web port. DQR import requests are
-    # queued with destination AE "XNAT:{XNAT_PORT}"; XNAT only dequeues them
-    # if a DICOM SCP receiver with that exact AE:port exists (8104, matching
-    # the xnat-web Service dicom-scp port and the Orthanc modality config).
-    XNAT_PORT: "8104"
+    # XNAT_PORT and XNAT_AETITLE are deliberately absent here. They describe XNAT's DICOM SCP
+    # receiver, so they come from xnat.web.dicomPort / xnat.web.dicomAet — the same values the init
+    # job registers the receiver with. Restating them here made two sources for one number, which is
+    # the defect FLIP#993 set out to remove.
     PACS_ID: "1"
     # Topology only — no password here (FLIP-PT-056): imaging-api splices in the
     # xnat-datasource-password secret at startup (see templates/imaging-api.yaml).

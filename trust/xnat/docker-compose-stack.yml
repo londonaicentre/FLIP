@@ -38,21 +38,25 @@ services:
       - XNAT_SERVICE_USER=${XNAT_SERVICE_USER}
       - XNAT_SERVICE_PASSWORD=${XNAT_SERVICE_PASSWORD}
       - XNAT_PORT=${XNAT_PORT}
-      - XNAT_AETITLE=${XNAT_AETITLE:-XNAT}
+      - XNAT_AETITLE=${XNAT_AETITLE-XNAT}
       # Upstream PACS, read by configure-xnat.sh. Defaults are the mocked Orthanc, so an
       # unconfigured stack behaves exactly as before; a real trust sets these in its kit file.
-      - PACS_HOST=${PACS_HOST:-orthanc}
-      - PACS_AETITLE=${PACS_AETITLE:-ORTHANC}
-      - PACS_QR_PORT=${PACS_QR_PORT:-4242}
-      - PACS_LABEL=${PACS_LABEL:-Test PACS instance}
+      # ${VAR-default}, not ${VAR:-default}: compose substitutes the default for a set-but-empty
+      # variable, which would hand the script a value it considers configured and cancel its
+      # fail-loud guard. An operator who writes PACS_HOST= in a kit file must get an error, not
+      # a silent fallback to the mocked PACS (FLIP#993).
+      - PACS_HOST=${PACS_HOST-orthanc}
+      - PACS_AETITLE=${PACS_AETITLE-ORTHANC}
+      - PACS_QR_PORT=${PACS_QR_PORT-4242}
+      - PACS_LABEL=${PACS_LABEL-Test PACS instance}
       # PACS throttle — a production PACS may refuse further associations after a certain volume.
-      - PACS_AVAILABILITY_DAYS=${PACS_AVAILABILITY_DAYS:-MONDAY,TUESDAY,WEDNESDAY,THURSDAY,FRIDAY,SATURDAY,SUNDAY}
-      - PACS_AVAILABILITY_START=${PACS_AVAILABILITY_START:-00:00}
-      - PACS_AVAILABILITY_END=${PACS_AVAILABILITY_END:-24:00}
-      - PACS_THREADS=${PACS_THREADS:-1}
-      - PACS_UTILIZATION_PERCENT=${PACS_UTILIZATION_PERCENT:-100}
-      - DQR_MAX_PACS_REQUEST_ATTEMPTS=${DQR_MAX_PACS_REQUEST_ATTEMPTS:-100}
-      - DQR_RETRY_WAIT_SECONDS=${DQR_RETRY_WAIT_SECONDS:-300}
+      - PACS_AVAILABILITY_DAYS=${PACS_AVAILABILITY_DAYS-MONDAY,TUESDAY,WEDNESDAY,THURSDAY,FRIDAY,SATURDAY,SUNDAY}
+      - PACS_AVAILABILITY_START=${PACS_AVAILABILITY_START-00:00}
+      - PACS_AVAILABILITY_END=${PACS_AVAILABILITY_END-24:00}
+      - PACS_THREADS=${PACS_THREADS-1}
+      - PACS_UTILIZATION_PERCENT=${PACS_UTILIZATION_PERCENT-100}
+      - DQR_MAX_PACS_REQUEST_ATTEMPTS=${DQR_MAX_PACS_REQUEST_ATTEMPTS-100}
+      - DQR_RETRY_WAIT_SECONDS=${DQR_RETRY_WAIT_SECONDS-300}
       - XNAT_DATASOURCE_DRIVER=${XNAT_DATASOURCE_DRIVER}
       - XNAT_DATASOURCE_URL=${XNAT_DATASOURCE_URL}
       - XNAT_DATASOURCE_NAME=${XNAT_DATASOURCE_NAME}

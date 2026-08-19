@@ -244,7 +244,7 @@ def test_receiver_on_our_port_is_reclaimed_whatever_it_is_called(tmp_path):
         {"STUB_SCP_JSON": '[{"id":3,"aeTitle":"FLIPXNAT","port":8104}]'},
     )
     assert code == 0, output
-    assert "Removing SCP receiver 'FLIPXNAT' (id 3)" in output
+    assert "(id 3)" in output and "FLIPXNAT" in output
     assert any(u.endswith("/xapi/dicomscp/3") for u in deletes(payloads))
 
 
@@ -260,5 +260,50 @@ def test_foreign_pacs_registrations_are_removed(tmp_path):
         },
     )
     assert code == 0, output
-    assert "Removing PACS 'ORTHANC' at orthanc:4242 (id 1)" in output
+    assert "Removing PACS ORTHANC at orthanc:4242 (id 1)" in output
     assert any(u.endswith("/xapi/pacs/1") for u in deletes(payloads))
+
+
+def test_receiver_is_reclaimed_when_port_and_title_both_change(tmp_path):
+    """Matching on our port *or* our AE title left an orphan when both moved in one change."""
+    code, payloads, output = run_configure(
+        tmp_path,
+        {
+            "XNAT_PORT": "11112",
+            "XNAT_AETITLE": "FLIPXNAT2",
+            "STUB_SCP_JSON": '[{"id":3,"aeTitle":"FLIPXNAT","port":8104}]',
+        },
+    )
+    assert code == 0, output
+    assert any(u.endswith("/xapi/dicomscp/3") for u in deletes(payloads)), (
+        "the old receiver was left enabled and bound to its port"
+    )
+
+
+def test_refuses_to_delete_a_foreign_pacs_while_still_on_mock_defaults(tmp_path):
+    """An unrelated redeploy must not delete a PACS the operator registered by hand."""
+    code, payloads, output = run_configure(
+        tmp_path,
+        {"STUB_PACS_JSON": '[{"id":1,"aeTitle":"SECTRA_QR","host":"10.0.0.10","queryRetrievePort":8059}]'},
+    )
+    assert code != 0, "should refuse rather than delete a registration it may not own"
+    assert "SECTRA_QR at 10.0.0.10:8059" in output
+    assert not any("/xapi/pacs/1" in u for u in deletes(payloads)), "deleted it anyway"
+
+
+def test_injected_json_in_a_pacs_value_cannot_change_other_fields(tmp_path):
+    """Values are data, not JSON fragments: a crafted host must not flip defaultQueryRetrievePacs."""
+    code, payloads, output = run_configure(
+        tmp_path,
+        {"PACS_HOST": 'x", "defaultQueryRetrievePacs": false, "z": "y'},
+    )
+    assert code == 0, output
+    pacs = payload_for(payloads, "/xapi/pacs")
+    assert pacs["defaultQueryRetrievePacs"] is True, "injected key won"
+    assert pacs["host"] == 'x", "defaultQueryRetrievePacs": false, "z": "y'
+
+
+def test_non_numeric_port_fails_naming_the_variable(tmp_path):
+    """A bad port must fail here, not reach XNAT as an opaque 400."""
+    code, _, output = run_configure(tmp_path, {"PACS_QR_PORT": "8059abc"})
+    assert code != 0, "a non-numeric port was accepted"

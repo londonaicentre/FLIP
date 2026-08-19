@@ -118,12 +118,29 @@ jobs:
             --set 'networkPolicies.allowedIngressCIDRsWithPorts[0].cidrs[0]=10.0.0.10/32' \
             --set 'networkPolicies.allowedIngressCIDRsWithPorts[0].port=8104' > /tmp/real-pacs.yaml
           for want in "nodePort: 8104" "allow-pacs-ingress" "cidr: \"10.0.0.10/32\"" \
-                      "value: \"SECTRA_QR\"" "value: \"FLIPXNAT\""; do
+                      "value: \"SECTRA_QR\"" "value: \"10.0.0.10\"" "value: \"8059\"" \
+                      "value: \"FLIPXNAT\""; do
             if ! grep -q "$want" /tmp/real-pacs.yaml; then
               echo "::error::real-PACS render is missing: $want"
               exit 1
             fi
           done
+          # imaging-api builds the C-MOVE destination from these, and DQR matches it against a
+          # registered receiver by exact AE title and port. Grepping the whole document is not
+          # enough — the init job's own copy satisfies that while imaging-api silently falls back
+          # to its code default, which is how this shipped broken once (FLIP#993).
+          python3 - <<'PY'
+          import re, sys, pathlib
+          doc = pathlib.Path("/tmp/real-pacs.yaml").read_text()
+          cm = next((d for d in doc.split("---")
+                     if "kind: ConfigMap" in d and "component: imaging-api" in d), None)
+          if cm is None:
+              sys.exit("::error::imaging-api ConfigMap not found in the real-PACS render")
+          for key, val in (("XNAT_AETITLE", "FLIPXNAT"), ("XNAT_PORT", "8104")):
+              if not re.search(rf'^\s*{key}:\s*"{val}"\s*$', cm, re.M):
+                  sys.exit(f'::error::imaging-api ConfigMap missing {key}: "{val}" '
+                           f'— the C-MOVE destination will not match the registered receiver')
+          PY
 
       # Default-deny must survive: the ingress allowance is the one inbound path into a trust, so a
       # chart that opened it without being asked would silently widen every existing deployment.

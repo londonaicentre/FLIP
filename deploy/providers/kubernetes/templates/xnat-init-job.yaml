@@ -90,10 +90,13 @@ spec:
                   key: xnat-service-password
             # DICOM SCP receiver: the port XNAT binds and registers, and the AE title the PACS
             # addresses its C-STORE association to. Must match what the PACS has registered.
+            # No `| default` here: Helm substitutes a default for an empty string too, which would
+            # hand the script a value it considers configured and cancel its fail-loud guard. The
+            # chart's own defaults live in values.yaml; an operator who blanks one gets an error.
             - name: XNAT_PORT
-              value: {{ .Values.xnat.web.dicomPort | default 8104 | quote }}
+              value: {{ .Values.xnat.web.dicomPort | quote }}
             - name: XNAT_AETITLE
-              value: {{ .Values.xnat.web.dicomAet | default "XNAT" | quote }}
+              value: {{ .Values.xnat.web.dicomAet | quote }}
             # Upstream PACS. Defaults are the mocked Orthanc; a real trust overrides them.
             - name: PACS_HOST
               value: {{ .Values.pacs.host | quote }}

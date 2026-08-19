@@ -22,7 +22,11 @@ metadata:
 data:
   XNAT_HOME: /data/xnat/home
   XNAT_ADMIN_USER: {{ .Values.xnat.web.adminUser | quote }}
-  XNAT_PORT: "8080"
+  # The DICOM SCP receiver port. Sourced from the same value the init job registers the receiver
+  # with, so a hand-run of configure-xnat.sh inside this pod (initJob.enabled: false) configures the
+  # same port rather than a stale literal. It read "8080" — Tomcat's port — while XNAT_PORT was
+  # still ambiguous; it now unambiguously means DICOM (FLIP#993).
+  XNAT_PORT: {{ .Values.xnat.web.dicomPort | quote }}
   XNAT_DATASOURCE_DRIVER: "org.postgresql.Driver"
   XNAT_DATASOURCE_NAME: "xnat"
   XNAT_DATASOURCE_USERNAME: {{ .Values.xnat.db.datasourceUsername | quote }}
@@ -33,7 +37,6 @@ data:
   XNAT_MIN_HEAP: {{ .Values.xnat.web.env.XNAT_MIN_HEAP | quote }}
   XNAT_MAX_HEAP: {{ .Values.xnat.web.env.XNAT_MAX_HEAP | quote }}
   CATALINA_OPTS: "-Xms{{ .Values.xnat.web.env.XNAT_MIN_HEAP }} -Xmx{{ .Values.xnat.web.env.XNAT_MAX_HEAP }} -Dxnat.home=/data/xnat/home -XX:+UseG1GC -Djava.awt.headless=true"
-  PACS_DICOM_PORT: "4242"
 ---
 apiVersion: v1
 kind: Service

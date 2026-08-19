@@ -290,17 +290,18 @@ echo "Configuring DQR plugin..."
 xnat_curl -X POST "$XNAT_URL/xapi/dqr/settings" \
   -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_PASSWORD}" \
   -H "Content-Type: application/json" \
-  -d "{
-    \"pacsAvailabilityCheckFrequency\": \"1 minute\",
-    \"dqrWaitToRetryRequestInSeconds\": \"${DQR_RETRY_WAIT_SECONDS}\",
-    \"assumeSameSessionIfArrivedWithin\": \"30 minutes\",
-    \"allowAllUsersToUseDqr\": false,
-    \"dqrCallingAe\": \"${XNAT_AETITLE}\",
-    \"notifyAdminOnImport\": false,
-    \"allowAllProjectsToUseDqr\": true,
-    \"leavePacsAuditTrail\": false,
-    \"dqrMaxPacsRequestAttempts\": \"${DQR_MAX_PACS_REQUEST_ATTEMPTS}\"
-  }"
+  -d "$(jq -n --arg ae "${XNAT_AETITLE}" \
+        --argjson retry "${DQR_RETRY_WAIT_SECONDS}" --argjson attempts "${DQR_MAX_PACS_REQUEST_ATTEMPTS}" '{
+    pacsAvailabilityCheckFrequency: "1 minute",
+    dqrWaitToRetryRequestInSeconds: ($retry | tostring),
+    assumeSameSessionIfArrivedWithin: "30 minutes",
+    allowAllUsersToUseDqr: false,
+    dqrCallingAe: $ae,
+    notifyAdminOnImport: false,
+    allowAllProjectsToUseDqr: true,
+    leavePacsAuditTrail: false,
+    dqrMaxPacsRequestAttempts: ($attempts | tostring)
+  }')"
 
 # Configure site-wide anonymization script
 echo "Configuring site-wide anonymization script..."
@@ -330,15 +331,19 @@ response=$(xnat_curl -u "$XNAT_ADMIN_USER:$XNAT_ADMIN_PASSWORD" "$XNAT_URL/xapi/
 if [[ -z "$response" || "$response" == "[]" ]]; then
     echo "No SCP receivers found."
 else
-    stale_ids=$(printf '%s' "$response" | jq -r --argjson port "${XNAT_PORT}" --arg ae "${XNAT_AETITLE}" \
-        'map(select(.port == $port or .aeTitle == $ae or .aeTitle == "XNAT")) | .[] | "\(.id):\(.aeTitle)"')
+    # Every receiver, not a filtered subset. Matching on "our port or our AE title" left an orphan
+    # whenever both moved in one change — an existing FLIPXNAT:8104 with new config
+    # XNAT_AETITLE=FLIPXNAT2 XNAT_PORT=11112 matched neither, so the old receiver stayed enabled and
+    # bound. XNAT carries exactly one FLIP-owned receiver and this script owns it, so the honest
+    # filter is all of them (FLIP#993).
+    stale_ids=$(printf '%s' "$response" | jq -r '.[] | "\(.id):\(.aeTitle):\(.port)"')
 
     if [[ -z "$stale_ids" ]]; then
-        echo "No SCP receiver to replace on port ${XNAT_PORT}."
+        echo "No existing SCP receiver to replace."
     else
-        while IFS=: read -r scp_receiver_id scp_receiver_ae; do
+        while IFS=: read -r scp_receiver_id scp_receiver_ae scp_receiver_port; do
             [[ -n "$scp_receiver_id" ]] || continue
-            echo "Removing SCP receiver '${scp_receiver_ae}' (id ${scp_receiver_id})..."
+            echo "Removing SCP receiver '${scp_receiver_ae}:${scp_receiver_port}' (id ${scp_receiver_id})..."
             xnat_curl -u "$XNAT_ADMIN_USER:$XNAT_ADMIN_PASSWORD" \
                 -X DELETE "$XNAT_URL/xapi/dicomscp/$scp_receiver_id" >/dev/null
         done <<< "$stale_ids"
@@ -350,21 +355,21 @@ echo "Configuring SCP receiver '${XNAT_AETITLE}' on port ${XNAT_PORT}..."
 xnat_curl -X POST "$XNAT_URL/xapi/dicomscp" \
   -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_PASSWORD}" \
   -H "Content-Type: application/json" \
-  -d "{
-    \"aeTitle\": \"${XNAT_AETITLE}\",
-    \"port\": ${XNAT_PORT},
-    \"enabled\": true,
-    \"customProcessing\": true,
-    \"directArchive\": true,
-    \"identifier\": \"dqrObjectIdentifier\",
-    \"anonymizationEnabled\": true,
-    \"whitelistEnabled\": false,
-    \"whitelistText\": \"\",
-    \"routingExpressionsEnabled\": false,
-    \"projectRoutingExpression\": \"\",
-    \"subjectRoutingExpression\": \"\",
-    \"sessionRoutingExpression\": \"\"
-  }"
+  -d "$(jq -n --arg ae "${XNAT_AETITLE}" --argjson port "${XNAT_PORT}" '{
+    aeTitle: $ae,
+    port: $port,
+    enabled: true,
+    customProcessing: true,
+    directArchive: true,
+    identifier: "dqrObjectIdentifier",
+    anonymizationEnabled: true,
+    whitelistEnabled: false,
+    whitelistText: "",
+    routingExpressionsEnabled: false,
+    projectRoutingExpression: "",
+    subjectRoutingExpression: "",
+    sessionRoutingExpression: ""
+  }')"
 
 # Configure OHIF viewer
 echo "Configuring OHIF viewer..."
@@ -393,18 +398,30 @@ xnat_curl -X POST "$XNAT_URL/xapi/siteConfig" \
 # Updating in place rather than delete-and-recreate keeps the PACS id stable, and means a kit change
 # actually takes effect: the previous check-then-create silently ignored a drifted host or port on
 # redeploy, leaving DQR pointing at the old PACS with no signal to the operator.
-pacs_payload="{
-      \"aeTitle\": \"${PACS_AETITLE}\",
-      \"defaultQueryRetrievePacs\": true,
-      \"defaultStoragePacs\": true,
-      \"host\": \"${PACS_HOST}\",
-      \"label\": \"${PACS_LABEL}\",
-      \"ormStrategySpringBeanId\": \"dicomOrmStrategy\",
-      \"queryRetrievePort\": ${PACS_QR_PORT},
-      \"queryable\": true,
-      \"storable\": true,
-      \"supportsExtendedNegotiations\": true
-    }"
+# Built with jq rather than string interpolation. Splicing operator-supplied values straight into
+# JSON is an injection point: a PACS_HOST of `x", "defaultQueryRetrievePacs": false, "z": "y`
+# produces *valid* JSON whose duplicate key wins, silently disabling the flag on the registration
+# this script exists to make authoritative; a label containing a quote produces malformed JSON that
+# XNAT rejects with an opaque 400 mid-run. --arg/--argjson keep them data. --argjson also parses the
+# numeric fields, so a non-numeric port fails here naming the variable, rather than as an
+# unexplained 400 (FLIP#993).
+pacs_payload=$(jq -n \
+  --arg ae "${PACS_AETITLE}" \
+  --arg host "${PACS_HOST}" \
+  --arg label "${PACS_LABEL}" \
+  --argjson port "${PACS_QR_PORT}" \
+  '{
+    aeTitle: $ae,
+    defaultQueryRetrievePacs: true,
+    defaultStoragePacs: true,
+    host: $host,
+    label: $label,
+    ormStrategySpringBeanId: "dicomOrmStrategy",
+    queryRetrievePort: $port,
+    queryable: true,
+    storable: true,
+    supportsExtendedNegotiations: true
+  }')
 
 existing_pacs=$(xnat_curl -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_PASSWORD}" "$XNAT_URL/xapi/pacs")
 pacs_entry=$(printf '%s' "$existing_pacs" | jq -c --arg ae "${PACS_AETITLE}" \
@@ -413,12 +430,33 @@ pacs_entry=$(printf '%s' "$existing_pacs" | jq -c --arg ae "${PACS_AETITLE}" \
 # Remove every registration that is not the configured one, so exactly one survives. Logged per
 # entry: this deletes configuration an administrator may have added through the XNAT UI, and that
 # should be visible in the deploy output rather than silent.
-foreign_pacs=$(printf '%s' "$existing_pacs" | jq -r --arg ae "${PACS_AETITLE}" \
-  'map(select(.aeTitle != $ae)) | .[] | "\(.id):\(.aeTitle):\(.host):\(.queryRetrievePort)"')
+#
+# Refuse rather than delete when the configuration is still the shipped default. An operator whose
+# XNAT already carries a hand-registered real PACS, running an unrelated upgrade without having set
+# PACS_AETITLE, would otherwise have that registration deleted and replaced with the mock — a
+# retrieval outage caused by a deploy that changed nothing else. Deleting is right only once the
+# operator has said which PACS is theirs (FLIP#993).
+foreign_pacs=$(printf '%s' "$existing_pacs" \
+  | jq -r --arg ae "${PACS_AETITLE}" 'map(select(.aeTitle != $ae)) | .[] | @base64')
 if [[ -n "$foreign_pacs" ]]; then
-  while IFS=: read -r stale_id stale_ae stale_host stale_port; do
-    [[ -n "$stale_id" ]] || continue
-    echo "Removing PACS '${stale_ae}' at ${stale_host}:${stale_port} (id ${stale_id}):" \
+  if [[ "${PACS_AETITLE}" == "ORTHANC" && "${PACS_HOST}" == "orthanc" ]]; then
+    echo "ERROR: XNAT has PACS registrations other than the configured one, but PACS_AETITLE and" >&2
+    echo "       PACS_HOST are still the mocked-Orthanc defaults. Refusing to delete a registration" >&2
+    echo "       this deployment may not own. Set PACS_AETITLE/PACS_HOST to the trust's PACS, or" >&2
+    echo "       remove the unwanted registration in XNAT's admin UI. Found:" >&2
+    printf '%s\n' "$foreign_pacs" | while read -r entry; do
+      [[ -n "$entry" ]] || continue
+      printf '         %s\n' "$(printf '%s' "$entry" | base64 -d \
+        | jq -r '"\(.aeTitle) at \(.host):\(.queryRetrievePort) (id \(.id))"')" >&2
+    done
+    exit 1
+  fi
+  while read -r entry; do
+    [[ -n "$entry" ]] || continue
+    # base64 per record: an IPv6 host contains colons, which a ':'-delimited read would mis-split.
+    stale=$(printf '%s' "$entry" | base64 -d)
+    stale_id=$(printf '%s' "$stale" | jq -r '.id')
+    echo "Removing PACS $(printf '%s' "$stale" | jq -r '"\(.aeTitle) at \(.host):\(.queryRetrievePort) (id \(.id))"'):" \
          "a trust XNAT retrieves from one PACS, and '${PACS_AETITLE}' is the configured one."
     xnat_curl -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_PASSWORD}" \
       -X DELETE "$XNAT_URL/xapi/pacs/${stale_id}" >/dev/null
@@ -460,8 +498,12 @@ PACS_ID=$(xnat_curl -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_PASSWORD}" "$XNAT_URL/xa
 #
 # DQR appears to pre-create availability intervals when the PACS is registered: on XNAT 1.10 +
 # DQR 3.0.0 this POST returns 400 "probable overlap with existing interval" for an already-scheduled
-# day, so 400 is treated as "already configured" rather than a failure. Anything else non-2xx is a
-# real error and fails the deploy.
+# day, so that specific 400 is treated as "already configured" rather than a failure.
+#
+# The overlap text is matched, not the bare status: the payload is now built from operator-supplied
+# values, so a bad day name or window also returns 400. Treating every 400 as an overlap reported a
+# rejected schedule as applied, and a trust that had negotiated an out-of-hours window would have
+# been told it was in force while DQR retrieved around the clock (FLIP#993).
 for DAY in ${PACS_AVAILABILITY_DAYS//,/ }; do
   echo "Setting PACS availability for $DAY..."
   avail_body=/tmp/pacs-availability-response.json
@@ -469,19 +511,21 @@ for DAY in ${PACS_AVAILABILITY_DAYS//,/ }; do
     -X POST "$XNAT_URL/xapi/pacs/${PACS_ID}/availability" \
     -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_PASSWORD}" \
     -H "Content-Type: application/json" \
-    -d "{
-      \"availabilityEnd\": \"${PACS_AVAILABILITY_END}\",
-      \"availabilityStart\": \"${PACS_AVAILABILITY_START}\",
-      \"availableNow\": true,
-      \"dayOfWeek\": \"$DAY\",
-      \"enabled\": true,
-      \"pacsId\": ${PACS_ID},
-      \"threads\": ${PACS_THREADS},
-      \"utilizationPercent\": ${PACS_UTILIZATION_PERCENT}
-    }") || avail_status="000"
+    -d "$(jq -n --arg start "${PACS_AVAILABILITY_START}" --arg end "${PACS_AVAILABILITY_END}" \
+          --arg day "$DAY" --argjson pacs "${PACS_ID}" --argjson threads "${PACS_THREADS}" \
+          --argjson util "${PACS_UTILIZATION_PERCENT}" '{
+      availabilityEnd: $end,
+      availabilityStart: $start,
+      availableNow: true,
+      dayOfWeek: $day,
+      enabled: true,
+      pacsId: $pacs,
+      threads: $threads,
+      utilizationPercent: $util
+    }')") || avail_status="000"
   if [[ "$avail_status" == 2* ]]; then
     continue
-  elif [[ "$avail_status" == "400" ]]; then
+  elif [[ "$avail_status" == "400" ]] && grep -qi 'overlap' "$avail_body"; then
     echo "  Availability interval for $DAY already exists (HTTP 400 overlap) — leaving as-is."
   else
     echo "ERROR: setting PACS availability for $DAY failed (HTTP $avail_status)" >&2
