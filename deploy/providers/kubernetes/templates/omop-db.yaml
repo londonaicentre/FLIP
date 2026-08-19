@@ -189,7 +189,7 @@ spec:
             initialDelaySeconds: 30
             periodSeconds: 10
             # pg_isready forks a client and connects; under a heavy write load
-            # (the omop-vocab-load hook COPYs ~33M rows into concept_ancestor)
+            # (the vocabulary-load post-install hook COPYs ~33M rows into concept_ancestor)
             # that can take many seconds, especially on slow or emulated hosts.
             # Kubernetes defaults timeoutSeconds to 1 and failureThreshold to 3,
             # so the DEFAULTS restart Postgres mid-load and abort the very hook
