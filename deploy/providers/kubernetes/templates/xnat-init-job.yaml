@@ -38,7 +38,23 @@ spec:
       # XNAT 1.9.3 back-filled on the later password PUT but 1.10.0 does not, so the
       # account could never authenticate. configure-xnat-web now creates it through
       # POST /xapi/users instead — see the comment at that call.
-      containers:
+      # configure-xnat-web runs as an INIT container, not a sibling.
+      #
+      # Both used to run concurrently in containers[], with configure-dcm2niix
+      # polling /xapi/siteConfig for up to 300s waiting for the activation that
+      # configure-xnat-web performs. On a slow host that budget expires first;
+      # configure-dcm2niix then exits 1, and restartPolicy: OnFailure restarts
+      # the whole pod — killing configure-xnat-web PART-WAY THROUGH the very
+      # activation being waited for. Every retry kills it again, so the site is
+      # never activated and the Job burns its backoffLimit:
+      #
+      #   "initialized": false          (still false 96 minutes later)
+      #   Job ... Failed  0/1
+      #   helm: failed post-install: Job in progress / context deadline exceeded
+      #
+      # An initContainer runs to completion before containers[] start, which
+      # removes the race by construction rather than by widening the timeout.
+      initContainers:
         - name: configure-xnat-web
           image: alpine:3.20
           command:
@@ -420,6 +436,7 @@ spec:
             limits:
               memory: "128Mi"
               cpu: "200m"
+      containers:
         # Configures the XNAT Container Service plugin to use the native
         # Kubernetes compute backend (available since container-service 3.2.0),
         # registers the dcm2niix command, and enables the Event Service so
