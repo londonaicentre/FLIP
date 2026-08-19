@@ -28,10 +28,15 @@ from imaging_api.utils.logger import logger
 
 PACS_ID = get_settings().PACS_ID
 XNAT_URL = get_settings().XNAT_URL
+# Bound the PACS-id lookup: it sits on the retrieval path, and an unbounded request to a wedged
+# XNAT would hang the import rather than falling back.
+XNAT_REQUEST_TIMEOUT = 30
 
-# Cache for resolve_pacs_id(). XNAT assigns PACS ids at registration time, so the mapping from AE
-# title to id is fixed for the life of the registration; re-resolving on every query would add an
-# XNAT round-trip per accession number.
+# Cache for resolve_pacs_id(). XNAT assigns a PACS its id at registration time, so the id is fixed
+# for the life of that registration and re-resolving on every query would add an XNAT round-trip per
+# accession number. Note the cache outlives the registration: if the PACS is re-registered while
+# imaging-api stays up — configure-xnat.sh deletes and recreates it when the AE title changes — the
+# cached id points at a deleted entry, so it is cleared when XNAT reports the PACS missing.
 _resolved_pacs_id: int | None = None
 
 
@@ -58,25 +63,62 @@ def resolve_pacs_id(headers: dict[str, str]) -> int:
         return _resolved_pacs_id
 
     try:
-        response = requests.get(f"{XNAT_URL}/xapi/pacs", headers=headers)
+        response = requests.get(f"{XNAT_URL}/xapi/pacs", headers=headers, timeout=XNAT_REQUEST_TIMEOUT)
         response.raise_for_status()
         registrations = response.json()
-        if registrations:
-            if len(registrations) > 1:
-                # configure-xnat.sh should have removed the others; if one reappeared, DQR's choice
-                # of PACS is ambiguous and the operator needs to know.
-                logger.warning(
-                    f"XNAT has {len(registrations)} PACS registrations; expected one. "
-                    f"Using '{registrations[0].get('aeTitle')}'."
-                )
-            _resolved_pacs_id = int(registrations[0]["id"])
-            logger.info(f"Resolved PACS '{registrations[0].get('aeTitle')}' to id {_resolved_pacs_id}")
-            return _resolved_pacs_id
-        logger.warning(f"XNAT reports no registered PACS; falling back to id {PACS_ID}")
     except Exception as e:
-        logger.warning(f"Could not resolve the PACS id ({e}); falling back to id {PACS_ID}")
+        # Deliberately not cached: a transient failure must not pin the fallback for the life of the
+        # process. Logged at error because the fallback is a guess — on an XNAT that carried the
+        # mocked Orthanc before the real PACS, id 1 is the known-wrong answer, and the symptom is
+        # "no study found" for every accession, which reads as a data problem rather than a
+        # misconfiguration (FLIP#993).
+        logger.error(
+            f"Could not resolve the PACS id from XNAT ({e}); falling back to id {PACS_ID}. "
+            f"Retrieval will target that id, which may not be the configured PACS."
+        )
+        return PACS_ID
 
-    return PACS_ID
+    if not isinstance(registrations, list) or not registrations:
+        logger.error(
+            f"XNAT reports no registered PACS; falling back to id {PACS_ID}. "
+            f"Retrieval will target that id, which may not be the configured PACS."
+        )
+        return PACS_ID
+
+    # configure-xnat.sh sets defaultQueryRetrievePacs on the one it owns and removes any other, so
+    # prefer that flag over list order — an extra registration added through the XNAT UI would
+    # otherwise be picked purely because XNAT happened to list it first.
+    default_qr = [p for p in registrations if p.get("defaultQueryRetrievePacs")]
+    chosen = (default_qr or registrations)[0]
+
+    if len(registrations) > 1:
+        logger.warning(
+            f"XNAT has {len(registrations)} PACS registrations; expected one. "
+            f"Using '{chosen.get('aeTitle')}'"
+            f"{' (the default query/retrieve PACS)' if default_qr else ' (first listed)'}."
+        )
+
+    try:
+        _resolved_pacs_id = int(chosen["id"])
+    except (KeyError, TypeError, ValueError) as e:
+        logger.error(f"PACS registration from XNAT has no usable id ({e}); falling back to id {PACS_ID}.")
+        return PACS_ID
+
+    logger.info(f"Resolved PACS '{chosen.get('aeTitle')}' to id {_resolved_pacs_id}")
+    return _resolved_pacs_id
+
+
+def forget_resolved_pacs_id() -> None:
+    """
+    Clears the cached PACS id so the next call re-reads it from XNAT.
+
+    Called when XNAT reports the resolved PACS missing. ``configure-xnat.sh`` deletes and recreates
+    the registration when its AE title changes, which gives it a new id, and nothing restarts
+    imaging-api when XNAT is reconfigured — so without this the cache would point at a deleted
+    registration until the container was restarted (FLIP#993).
+    """
+    global _resolved_pacs_id
+    _resolved_pacs_id = None
 
 
 def ping_pacs(pacs_id: int, headers: dict[str, str]) -> PacsStatus:
@@ -124,6 +166,10 @@ def check_pacs(headers: dict[str, str], pacs_id: int = PACS_ID) -> None:
     try:
         pacs_status = ping_pacs(pacs_id, headers)
     except NotFoundError:
+        # The id we hold no longer exists in XNAT. If it came from the cache it is stale — the PACS
+        # was re-registered under a new id while this process stayed up — so drop it and let the
+        # next call re-read, rather than failing every import until the container restarts.
+        forget_resolved_pacs_id()
         raise NotFoundError(f"PACS with ID '{pacs_id}' not found.")
     except Exception:
         raise Exception(f"Failed to ping PACS with ID '{pacs_id}'.")

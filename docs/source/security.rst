@@ -27,8 +27,8 @@ Network and perimeter
 **Trust systems accept no inbound connections from the internet or the Central Hub.**
 Each participating trust runs FLIP services that reach *out* to the Central Hub to
 collect work and report results. This is enforced in the infrastructure definitions
-themselves — the security groups permit no inbound traffic at all — rather than
-depending on configuration discipline. Operator access is via AWS Systems Manager
+themselves — the AWS trust security groups define no ingress rules at all — rather
+than depending on configuration discipline. Operator access is via AWS Systems Manager
 Session Manager, so port 22 is never opened.
 
 The one inbound connection in the design is internal to the trust. FLIP asks the trust's

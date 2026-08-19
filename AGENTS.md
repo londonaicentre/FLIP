@@ -385,7 +385,8 @@ After changes, evaluate if docs need updating:
   mocked Orthanc (`orthanc` / `ORTHANC` / `4242`). `PACS_QR_PORT` must be reachable *from the XNAT
   container*, not a host-published port — conflating the two is what the retired `PACS_DICOM_PORT`
   did (FLIP#822/#862). `configure-xnat.sh` updates an existing registration in place when the host or
-  port drift, and imaging-api resolves the PACS id by AE title rather than assuming 1.
+  port drift, and imaging-api reads the PACS id from XNAT at runtime rather than assuming 1 —
+  `configure-xnat.sh` keeps exactly one registration, so it is the sole one XNAT reports.
 - `PACS_AVAILABILITY_DAYS` / `_START` / `_END` / `PACS_THREADS` / `PACS_UTILIZATION_PERCENT` /
   `DQR_MAX_PACS_REQUEST_ATTEMPTS` / `DQR_RETRY_WAIT_SECONDS` — the retrieval throttle. A production
   PACS may refuse further associations after a certain volume, so the window and thread count are

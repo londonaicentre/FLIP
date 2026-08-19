@@ -116,7 +116,9 @@ jobs:
             --set pacs.aeTitle=SECTRA_QR \
             --set pacs.qrPort=8059 \
             --set 'networkPolicies.allowedIngressCIDRsWithPorts[0].cidrs[0]=10.0.0.10/32' \
-            --set 'networkPolicies.allowedIngressCIDRsWithPorts[0].port=8104' > /tmp/real-pacs.yaml
+            --set 'networkPolicies.allowedIngressCIDRsWithPorts[0].port=8104' \
+            --set 'networkPolicies.allowedEgressCIDRsWithPorts[0].cidrs[0]=10.0.0.10/32' \
+            --set 'networkPolicies.allowedEgressCIDRsWithPorts[0].port=8059' > /tmp/real-pacs.yaml
           for want in "nodePort: 8104" "allow-pacs-ingress" "cidr: \"10.0.0.10/32\"" \
                       "value: \"SECTRA_QR\"" "value: \"10.0.0.10\"" "value: \"8059\"" \
                       "value: \"FLIPXNAT\""; do
@@ -141,6 +143,17 @@ jobs:
                   sys.exit(f'::error::imaging-api ConfigMap missing {key}: "{val}" '
                            f'— the C-MOVE destination will not match the registered receiver')
           PY
+
+      # A real PACS with no egress rule cannot be queried at all — C-FIND never leaves the cluster.
+      # The chart refuses to render that, so assert the refusal: this configuration was previously
+      # rendered and asserted as correct (FLIP#993).
+      - name: Render template (real PACS without egress is refused)
+        run: |
+          if helm template trust-release deploy/providers/kubernetes/ \
+               --set pacs.host=10.0.0.10 --set pacs.qrPort=8059 > /dev/null 2>&1; then
+            echo "::error::a PACS with no egress rule rendered successfully"
+            exit 1
+          fi
 
       # Default-deny must survive: the ingress allowance is the one inbound path into a trust, so a
       # chart that opened it without being asked would silently widen every existing deployment.

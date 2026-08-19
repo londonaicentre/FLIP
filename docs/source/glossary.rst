@@ -26,10 +26,10 @@ Glossary
       Picture Archiving and Communication System (PACS), the clinical system used to store and retrieve medical imaging studies (such as DICOM series).
 
     **AE Title**
-      Application Entity Title. A DICOM system's name on the network, at most 16 characters. When one system connects to another it announces which AE title it is calling and which it is calling from, and the receiver accepts the connection only if the called title is its own. AE titles are names rather than addresses: the IP and port are configured alongside them. See :doc:`components/component-xnat`.
+      Application Entity Title. A DICOM system's name on the network, at most 16 characters. When one system connects to another it announces which AE title it is calling and which it is calling from, and the receiver accepts the connection only if the called title is its own. AE titles are names rather than addresses: the IP and port are configured alongside them. See :doc:`components/component-pacs`.
 
     **SCU / SCP**
-      Service Class User and Service Class Provider — DICOM's terms for client and server. An SCU opens connections; an SCP listens for them. A system is often both: XNAT acts as an SCU when it queries a PACS, and as an SCP when it receives the resulting images.
+      Service Class User and Service Class Provider — DICOM's terms for the two sides of a service. The SCU requests it; the SCP provides it. The roles are per operation, not per system, and can swap mid-exchange: a PACS is the SCP for C-MOVE, then becomes the SCU of the C-STORE it opens back to the destination. XNAT is likewise an SCU when it queries a PACS and an SCP when it receives the images.
 
     **DIMSE**
       DICOM Message Service Element, the classic DICOM network protocol (as opposed to the newer HTTP-based DICOMweb). FLIP retrieves imaging over DIMSE.

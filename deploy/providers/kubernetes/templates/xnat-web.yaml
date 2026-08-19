@@ -48,6 +48,15 @@ metadata:
     app.kubernetes.io/component: xnat-web
 spec:
   type: {{ .Values.xnat.web.service.type }}
+  {{- if and (eq .Values.xnat.web.service.type "NodePort") .Values.xnat.web.dicomNodePort }}
+  # Preserve the PACS's source IP. Under the default `Cluster` policy kube-proxy SNATs NodePort
+  # traffic to the node address before it reaches the pod, so the ingress NetworkPolicy's PACS CIDR
+  # would never match and the C-STORE return leg would be dropped by default-deny — queries
+  # succeeding while retrievals silently time out, which is the bug this exists to prevent
+  # (FLIP#993). `Local` also means only nodes running the pod answer, which suits the single-node
+  # trust deployment this targets.
+  externalTrafficPolicy: Local
+  {{- end }}
   ports:
     - port: {{ .Values.xnat.web.service.port }}
       targetPort: tomcat

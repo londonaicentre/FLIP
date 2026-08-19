@@ -385,7 +385,7 @@ def test_queue_image_import_request_partial_failure(mock_get_project, mock_post,
     assert response[1].status == "FAILED"
 
 
-# --- PACS id resolution by AE title (FLIP#993) ---------------------------------------------------
+# --- PACS id resolution (FLIP#993) ---------------------------------------------------
 
 
 @pytest.fixture(autouse=True)

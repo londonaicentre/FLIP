@@ -49,6 +49,19 @@ spec:
   policyTypes:
     - Ingress
 ---
+{{- if and .Values.networkPolicies.enabled (ne .Values.pacs.host "orthanc") }}
+{{- $pacsPort := .Values.pacs.qrPort | int }}
+{{- $egressOk := false }}
+{{- range .Values.networkPolicies.allowedEgressCIDRsWithPorts }}
+  {{- if eq (.port | int) $pacsPort }}{{ $egressOk = true }}{{ end }}
+{{- end }}
+{{- range .Values.networkPolicies.allowedEgressPorts }}
+  {{- if eq (.port | int) $pacsPort }}{{ $egressOk = true }}{{ end }}
+{{- end }}
+{{- if and (not $egressOk) (not .Values.networkPolicies.allowedEgressCIDRs) }}
+{{- fail (printf "pacs.host is %s but no egress rule reaches its query/retrieve port %v. XNAT could not issue C-FIND or C-MOVE, so retrieval would fail before it began. Add the PACS to networkPolicies.allowedEgressCIDRsWithPorts." .Values.pacs.host .Values.pacs.qrPort) }}
+{{- end }}
+{{- end }}
 {{- if .Values.networkPolicies.allowedIngressCIDRsWithPorts }}
 # Allow inbound DICOM from the trust PACS.
 #
@@ -79,6 +92,9 @@ spec:
             cidr: {{ . | quote }}
   {{- end }}
       ports:
+        {{- if not .port }}
+        {{- fail "networkPolicies.allowedIngressCIDRsWithPorts: each entry needs an explicit `port`. Kubernetes reads an absent port as *all* ports, which would widen the one inbound path into the trust from DICOM to everything." }}
+        {{- end }}
         - port: {{ .port }}
           protocol: {{ .protocol | default "TCP" }}
 {{- end }}

@@ -7,7 +7,9 @@ Deploy a FLIP node on-prem
 An on-prem FLIP node runs the trust-side stack (trust-api, imaging-api,
 data-access-api, FL client, optional XNAT/Orthanc) on an Ubuntu host owned by
 the Trust. The node polls the Central Hub for tasks over HTTPS — all
-communication is outbound, no inbound ports are opened. This is the deployment
+communication with the hub is outbound and no inbound ports are opened to the internet.
+Retrieval from the trust's own PACS is the exception — see
+:doc:`../components/component-pacs`. This is the deployment
 model used when the Trust has direct, governed access to its own OMOP database
 and PACS. For deployment inside a TRE see :doc:`deploy-flip-node-in-tre`; for
 the Central Hub side see :doc:`deploy-central-hub`.
@@ -262,7 +264,8 @@ the operator brings the stack up.
 Network requirements
 ***********************
 
-**No inbound port forwarding is needed.** Trusts poll the hub outbound for
+**No inbound port forwarding from the internet is needed.** (Retrieval from a trust PACS needs
+one rule inside the trust's own network — see :doc:`../components/component-pacs`.) Trusts poll the hub outbound for
 tasks, and FL clients connect outbound to the FL server via the NLB. All
 communication is trust-initiated.
 

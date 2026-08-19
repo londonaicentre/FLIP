@@ -742,7 +742,7 @@ podDisruptionBudget:
 # Upstream PACS that XNAT retrieves imaging from, via the DQR plugin.
 #
 # Defaults describe the mocked Orthanc deployed by this chart. A trust points these at its own PACS;
-# see docs/source/components/component-xnat.rst "Connecting to a Trust PACS". These replace the
+# see docs/source/components/component-pacs.rst. These replace the
 # former orthanc.dicomHost / dicomPort / dicomAet values, which no template ever read — which is why
 # setting orthanc.enabled: false with an external.host never actually redirected DQR.
 pacs:

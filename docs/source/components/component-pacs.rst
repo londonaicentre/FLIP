@@ -199,6 +199,49 @@ trust's PACS team supplies; what they supply is covered above.
 
 The mocked PACS those defaults describe is covered below.
 
+Exposing the DICOM Receiver
+===========================
+
+The page has said several times that the receiver must be reachable from the PACS. It is off by
+default, because the mocked PACS reaches it over the container network and publishing it would be an
+unnecessary opening. Turning it on differs by deployment:
+
+**Compose.** ``make -C trust/xnat up-xnat KIT=<CODE> REAL_PACS=true`` adds an overlay that publishes
+the receiver on the host. ``XNAT_WEB_PORT`` and ``XNAT_PORT`` must then differ, since both are
+host-published; the Makefile refuses to deploy if they collide.
+
+**Kubernetes.** Three values, all off by default:
+
+.. code-block:: yaml
+
+   xnat:
+     web:
+       service:
+         type: NodePort
+       # Pin the port so the PACS has a stable destination. Must be inside the API server's
+       # --service-node-port-range, or that range widened to admit the DICOM port.
+       dicomNodePort: 8104
+
+   networkPolicies:
+     # The C-STORE return leg. Scope to the PACS itself, never the whole trust network.
+     allowedIngressCIDRsWithPorts:
+       - cidrs: ["10.0.0.10/32"]
+         port: 8104
+     # The outbound query. Without this, C-FIND never leaves the cluster.
+     allowedEgressCIDRsWithPorts:
+       - cidrs: ["10.0.0.10/32"]
+         port: 8059
+
+The chart refuses to render a configured PACS with no egress rule, and refuses an ingress entry with
+no ``port`` — Kubernetes reads an absent port as *all* ports, which would widen the one inbound path
+into the trust from DICOM to everything.
+
+.. note::
+
+   Setting ``service.type: NodePort`` also sets ``externalTrafficPolicy: Local`` on that Service.
+   Under the default ``Cluster`` policy the PACS's source address is rewritten to the node's before
+   the pod sees it, so the ingress rule above would never match and the C-STORE would be dropped.
+
 Development: the Mocked PACS
 ============================
 
@@ -289,13 +332,21 @@ carries an availability schedule with a per-day window, a thread count and a uti
 Where a trust has a test or pre-production PACS, connecting FLIP to that first is recommended, and
 is usually raised as a separate service request.
 
-.. note::
+.. warning::
 
-   The availability schedule is applied when the PACS is first registered. The DQR plugin pre-creates
-   the intervals, and rejects a later write to a day that already has one, so changing the window on
-   an already-configured instance requires deleting the existing intervals through XNAT's
-   administration UI first. The values above therefore take effect on a fresh deployment; on a
-   running one, check what is actually configured rather than assuming the setting was applied.
+   **Verify the window that is actually in force rather than assuming the configured one applied.**
+
+   DQR pre-creates availability intervals when a PACS is registered, and rejects a write to a day
+   that already has one. On a first deployment the configured values are applied; on any XNAT where
+   intervals already exist — including one where the PACS has been re-registered, which leaves the
+   previous intervals behind — the write is rejected and the existing window stands. Changing it
+   then requires deleting the intervals through XNAT's administration UI.
+
+   Confirm with ``GET /xapi/pacs/{id}/availability`` after configuring. Note also that XNAT
+   normalises an end time of ``24:00`` to ``00:00`` when it stores it.
+
+   This matters because the window is usually something a trust's PACS manager has agreed to. If it
+   has not applied, retrieval runs outside it.
 
 Verification
 ============
