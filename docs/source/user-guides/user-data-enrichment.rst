@@ -123,6 +123,16 @@ Provide XNAT credentials either as environment variables or as a JSON file:
    export XNAT_USER=your-username
    export XNAT_PASS=your-password
 
+.. note::
+
+   These are **your own** XNAT login, not a deployment secret. If you administer the Trust and are
+   reading its kit file (``trust/.env.<CODE>.<env>``) or imaging-api's settings, the correspondence
+   is ``XNAT_URL`` → ``XNAT_HOST``, ``XNAT_ADMIN_USER`` → ``XNAT_USER``, ``XNAT_ADMIN_PASSWORD`` →
+   ``XNAT_PASS``. Prefer a personal account where you have one: ``XNAT_SERVICE_USER`` belongs to
+   imaging-api, and enrichment uploads are easier to audit under the person who made them. The
+   names match what the XNAT Container Service injects into jobs, so the same command also runs
+   unchanged as a container job.
+
 Then check what would happen before changing anything:
 
 .. code-block:: bash
@@ -155,8 +165,31 @@ Useful options:
      - Change the prefix swap used to derive filenames (default ``input_:label_``).
    * - ``--overwrite``
      - Replace enrichment files that are already present. Off by default, so re-running is safe.
+   * - ``--allow-no-op``
+     - Accept a run that resolved no destination at all. Off by default: see the note below.
+   * - ``--require-full-coverage``
+     - Also fail unless every scan in the project received its enrichment file.
 
-Run the command once per Trust, pointing ``XNAT_HOST`` at each in turn.
+**Enrich every Trust.** Each Trust's XNAT holds only its own studies, so a project is enriched only
+when every participating Trust has been. Repeat ``--credentials-file`` to cover the roster in one
+invocation:
+
+.. code-block:: bash
+
+   flip-xnat upload --flip-project-id <project-uuid> --manifest manifest.csv \
+     --credentials-file gstt.json --credentials-file kch.json
+
+The same manifest goes to every Trust, which is safe and needs no per-Trust splitting: an accession
+exists at exactly one Trust, and the others report it as *skipped (no matching scan)*. A Trust that
+has not pulled the project at all is skipped with a warning rather than failing the run.
+
+.. note::
+
+   **A run that resolves nothing exits non-zero.** If every scan is skipped — the wrong project, the
+   wrong Trust, or DICOM-to-NIfTI conversion not finished — there is nothing useful to report as
+   success, and an automated pipeline that treated it as success would go on to train with no
+   labels. Pass ``--allow-no-op`` for the legitimately empty case, such as a partial manifest sent
+   to a Trust that holds none of it.
 
 .. _enrichment-example:
 
@@ -169,9 +202,20 @@ The spleen segmentation tutorials ship a complete, runnable version of this work
 .. code-block:: bash
 
    make -C fl-tutorials download-spleen-data NUM_CASES=41
-   make -C fl-tutorials upload-spleen-labels FLIP_PROJECT_ID=<project-uuid> TRUST=1 DRY_RUN=1
+   make -C fl-tutorials upload-spleen-labels FLIP_PROJECT_ID=<project-uuid> \
+     XNAT_URLS="http://127.0.0.1:8104 http://127.0.0.1:8106" DRY_RUN=1
 
-Drop ``DRY_RUN=1`` to perform the upload, and repeat with ``TRUST=2`` (and the second Trust's XNAT credentials) for the other site. See the tutorial READMEs under ``fl-tutorials/`` for the full walkthrough.
+Drop ``DRY_RUN=1`` to perform the upload. The two URLs are the dev roster's XNATs — GSTT on 8104 and
+KCH on 8106 — and one invocation enriches both. For per-Trust logins, pass
+``XNAT_CREDENTIALS_FILES`` instead. ``NUM_CASES=41`` matters: the mapping covers 41 accessions, and
+a smaller download silently enriches only part of the cohort, which the command now warns about.
+
+There is also a ``TRUST=N`` filter, rarely needed, which keeps only the accessions whose OMOP
+``source_trust`` column is ``N`` (on the dev roster ``1`` is GSTT and ``2`` is KCH). Note this is the
+OMOP data partition and **not** the FL kit slot of the same ``Trust_N`` name, which the hub assigns
+at registration — the two numberings are unrelated.
+
+See the tutorial READMEs under ``fl-tutorials/`` for the full walkthrough.
 
 .. _confirm-enrichment:
 
@@ -213,3 +257,9 @@ Troubleshooting
      - The image pull has not run at this Trust, or the project id is wrong.
    * - Upload reports *skipped (already present)*
      - The enrichment file is already in place. Pass ``--overwrite`` only if you intend to replace it.
+   * - Upload exits non-zero with *Nothing was resolved*
+     - No scan anywhere matched. Check the project id, check you pointed at the right Trust, and check conversion has finished. Pass ``--allow-no-op`` if an empty run is genuinely expected.
+   * - Only some cases uploaded, and the command warned about a truncated dataset
+     - The local label set does not cover the whole mapping. For the spleen tutorial, re-download with ``NUM_CASES=41``; the Flower snapshot ships a fixed 6-case subset, so point ``--labels-dir`` at the NVFLARE download instead.
+   * - Training still fails after a clean-looking upload at one Trust
+     - The other Trusts were never enriched. Repeat ``--credentials-file`` (or ``XNAT_URLS``) so one run covers every Trust in the project.

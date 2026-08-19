@@ -133,3 +133,39 @@ def project_routes(files: list[str]) -> dict[str, FakeResponse]:
             }
         ),
     }
+
+
+def project_listing_route(flip_project_id: str | None, project_id: str = "PROJ") -> dict[str, FakeResponse]:
+    """Route for ``/data/projects``, used to resolve a project by ``secondary_ID``.
+
+    Args:
+        flip_project_id (str | None): The ``secondary_ID`` the server reports. ``None`` yields a
+            server that holds no matching project, i.e. a Trust that never pulled it.
+        project_id (str): The XNAT project id to report.
+
+    Returns:
+        dict[str, FakeResponse]: A single route, to merge into a project's routes.
+    """
+    rows = [] if flip_project_id is None else [{"ID": project_id, "secondary_ID": flip_project_id}]
+    # "/data/projects" is a prefix of "/data/projects/<id>/experiments", and FakeSession matches by
+    # substring in insertion order — so merge this route *after* the project's own routes.
+    return {"/data/projects": FakeResponse(payload={"ResultSet": {"Result": rows}})}
+
+
+def resolvable_project_routes(
+    files: list[str],
+    flip_project_id: str | None = "flip-uuid",
+    project_id: str = "PROJ",
+) -> dict[str, FakeResponse]:
+    """Full routes for a server that can resolve a FLIP project id and serve its scans.
+
+    Args:
+        files (list[str]): Filenames each scan's NIFTI resource reports.
+        flip_project_id (str | None): ``secondary_ID`` the server reports; ``None`` for a server
+            that does not hold this project.
+        project_id (str): The XNAT project id to report.
+
+    Returns:
+        dict[str, FakeResponse]: Routes, ordered most specific first.
+    """
+    return {**project_routes(files), **project_listing_route(flip_project_id, project_id)}

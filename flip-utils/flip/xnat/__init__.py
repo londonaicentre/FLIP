@@ -42,16 +42,22 @@ Example usage:
 from flip.xnat.client import XnatClient, XnatScan
 from flip.xnat.enrichment import (
     EnrichmentItem,
+    EnrichmentReport,
     EnrichmentSummary,
+    ServerOutcome,
     read_manifest,
+    run_enrichment,
     upload_enrichment_files,
 )
 
 __all__ = [
     "EnrichmentItem",
+    "EnrichmentReport",
     "EnrichmentSummary",
+    "ServerOutcome",
     "XnatClient",
     "XnatScan",
     "read_manifest",
+    "run_enrichment",
     "upload_enrichment_files",
 ]

@@ -18,8 +18,8 @@ import pytest
 
 from flip.exceptions import XnatError
 from flip.xnat.client import XnatClient
-from flip.xnat.enrichment import EnrichmentItem, read_manifest, upload_enrichment_files
-from tests.unit.xnat.helpers import FakeResponse, FakeSession, project_routes
+from flip.xnat.enrichment import EnrichmentItem, read_manifest, run_enrichment, upload_enrichment_files
+from tests.unit.xnat.helpers import FakeResponse, FakeSession, project_routes, resolvable_project_routes
 
 
 def _client(files: list[str], put_response: FakeResponse | None = None) -> XnatClient:
@@ -34,6 +34,23 @@ def _client(files: list[str], put_response: FakeResponse | None = None) -> XnatC
     """
     client = XnatClient(server="http://xnat.example", user="u", password="p")
     client._session = FakeSession(project_routes(files), put_response=put_response)  # type: ignore[assignment]
+    return client
+
+
+def _resolvable_client(name: str, flip_project_id: str | None = "flip-uuid") -> XnatClient:
+    """Build a stubbed client for one Trust's XNAT, able to resolve a FLIP project id.
+
+    Args:
+        name (str): Distinguishes the server URL, so per-server assertions are readable.
+        flip_project_id (str | None): ``secondary_ID`` the server reports; ``None`` for a Trust
+            that never pulled this project.
+
+    Returns:
+        XnatClient: The stubbed client.
+    """
+    client = XnatClient(server=f"http://xnat-{name}.example", user="u", password="p")
+    routes = resolvable_project_routes(["input_spleen_2.nii.gz"], flip_project_id)
+    client._session = FakeSession(routes)  # type: ignore[assignment]
     return client
 
 
@@ -272,3 +289,128 @@ class TestEnrichmentSummary:
 
         assert "FAK001" in rendered
         assert "local file not found" in rendered
+
+
+class TestResolvedAny:
+    """`ok` says nothing failed; `resolved_any` says something actually landed."""
+
+    def test_false_when_no_accession_matched_a_scan(self, tmp_path):
+        client = _client(["input_spleen_2.nii.gz"])
+
+        summary = upload_enrichment_files(client, "PROJ", [EnrichmentItem("NOPE", _label(tmp_path))])
+
+        # The pairing that made this worth a property: nothing failed, yet nothing was achieved.
+        assert summary.ok is True
+        assert summary.resolved_any is False
+        assert summary.requested == 1
+
+    def test_false_when_every_scan_lacked_a_converted_image(self, tmp_path):
+        client = _client(["something_else.nii.gz"])
+
+        summary = upload_enrichment_files(client, "PROJ", [EnrichmentItem("FAK001", _label(tmp_path))])
+
+        # Ran before DICOM-to-NIfTI conversion: the case the user guide leads its troubleshooting
+        # with, and the one that used to exit 0.
+        assert summary.skipped_no_resource == ["FAK001"]
+        assert summary.resolved_any is False
+
+    def test_true_when_the_file_was_already_present(self, tmp_path):
+        client = _client(["input_spleen_2.nii.gz", "label_spleen_2.nii.gz"])
+
+        summary = upload_enrichment_files(client, "PROJ", [EnrichmentItem("FAK001", _label(tmp_path))])
+
+        # An idempotent re-run has resolved its destination even though it wrote nothing.
+        assert summary.skipped_exists == ["FAK001"]
+        assert summary.resolved_any is True
+
+    def test_true_on_a_dry_run_that_would_upload(self, tmp_path):
+        client = _client(["input_spleen_2.nii.gz"])
+
+        summary = upload_enrichment_files(client, "PROJ", [EnrichmentItem("FAK001", _label(tmp_path))], dry_run=True)
+
+        # A dry run has to predict the real run's exit code, or it is not a rehearsal.
+        assert summary.resolved_any is True
+
+    def test_records_the_project_scan_count_as_the_coverage_denominator(self, tmp_path):
+        client = _client(["input_spleen_2.nii.gz"])
+
+        summary = upload_enrichment_files(client, "PROJ", [EnrichmentItem("FAK001", _label(tmp_path))])
+
+        assert (summary.resolved, summary.scans_total) == (1, 2)
+        assert "coverage: 1/2 scan(s)" in summary.render()
+
+    def test_render_explains_a_run_that_resolved_nothing(self, tmp_path):
+        client = _client(["input_spleen_2.nii.gz"])
+
+        summary = upload_enrichment_files(client, "PROJ", [EnrichmentItem("NOPE", _label(tmp_path))])
+
+        assert "Nothing was resolved" in summary.render()
+
+
+class TestRunEnrichment:
+    """Enrichment is per-Trust, so a complete run visits every Trust in the project."""
+
+    def test_uploads_the_same_manifest_to_every_server(self, tmp_path):
+        first, second = _resolvable_client("A"), _resolvable_client("B")
+        items = [EnrichmentItem("FAK001", _label(tmp_path))]
+
+        report = run_enrichment([first, second], items, flip_project_id="flip-uuid")
+
+        # Self-selecting: each server takes the whole manifest and matches only its own studies.
+        assert [len(client._session.puts) for client in (first, second)] == [1, 1]
+        assert report.exit_code() == 0
+
+    def test_a_trust_without_the_project_is_skipped_not_fatal(self, tmp_path):
+        holder, other = _resolvable_client("A"), _resolvable_client("B", flip_project_id=None)
+
+        items = [EnrichmentItem("FAK001", _label(tmp_path))]
+
+        report = run_enrichment([holder, other], items, flip_project_id="flip-uuid")
+
+        assert [outcome.fatal for outcome in report.outcomes] == [False, False]
+        assert report.exit_code() == 0
+
+    def test_the_only_trust_lacking_the_project_is_fatal(self, tmp_path):
+        client = _resolvable_client("A", flip_project_id=None)
+
+        report = run_enrichment([client], [EnrichmentItem("FAK001", _label(tmp_path))], flip_project_id="flip-uuid")
+
+        # Alone, "not at this Trust" is the whole run failing, not a skip.
+        assert report.outcomes[0].fatal is True
+        assert report.exit_code() == 1
+
+    def test_one_server_failing_does_not_abandon_the_others(self, tmp_path):
+        healthy = _resolvable_client("A")
+        broken = _resolvable_client("B")
+        broken._session.routes = {"/data/projects": FakeResponse(status_code=401, text="denied")}
+
+        items = [EnrichmentItem("FAK001", _label(tmp_path))]
+
+        report = run_enrichment([healthy, broken], items, flip_project_id="flip-uuid")
+
+        assert len(healthy._session.puts) == 1
+        assert report.exit_code() == 1
+
+    def test_requested_is_the_manifest_size_not_the_sum_across_servers(self, tmp_path):
+        clients = [_resolvable_client("A"), _resolvable_client("B")]
+        items = [EnrichmentItem("FAK001", _label(tmp_path)), EnrichmentItem("FAK002", _label(tmp_path, "b.nii.gz"))]
+
+        report = run_enrichment(clients, items, flip_project_id="flip-uuid")
+
+        # Summing would multiply the manifest by the roster and make coverage look unreachable.
+        assert report.requested == 2
+
+    def test_explicit_project_id_is_refused_for_a_roster(self, tmp_path):
+        clients = [_resolvable_client("A"), _resolvable_client("B")]
+
+        with pytest.raises(XnatError, match="differ per Trust"):
+            run_enrichment(clients, [EnrichmentItem("FAK001", _label(tmp_path))], project_id="PROJ")
+
+    def test_require_full_coverage_fails_a_partial_run(self, tmp_path):
+        client = _resolvable_client("A")
+
+        report = run_enrichment([client], [EnrichmentItem("FAK001", _label(tmp_path))], flip_project_id="flip-uuid")
+
+        # One of the project's two scans enriched.
+        assert report.exit_code() == 0
+        assert report.exit_code(require_full_coverage=True) == 1

@@ -194,6 +194,18 @@ class TestListResourceFiles:
             client.list_resource_files(scan, "NIFTI")
 
 
+def _files(names: list[str]) -> dict:
+    """Build a resource-file listing payload.
+
+    Args:
+        names (list[str]): Filenames the resource reports.
+
+    Returns:
+        dict: An XNAT ``ResultSet`` payload.
+    """
+    return {"ResultSet": {"Result": [{"Name": name} for name in names]}}
+
+
 class TestUploadScanResourceFile:
     """Uploads target the project-scoped scan resource path used by imaging-api."""
 
@@ -245,3 +257,59 @@ class TestUploadScanResourceFile:
                 local_path=local,
                 target_filename="label_a.nii.gz",
             )
+
+    def test_existing_file_without_overwrite_raises_before_any_put(self, tmp_path):
+        # XNAT's PUT replaces unconditionally — there is no overwrite query parameter — so the
+        # only way overwrite=False can mean anything is to ask first, as imaging-api does.
+        client = make_client({"/resources/NIFTI/files": FakeResponse(payload=_files(["label_a.nii.gz"]))})
+        local = tmp_path / "label_a.nii.gz"
+        local.write_bytes(b"volume")
+
+        with pytest.raises(XnatError, match="already exists"):
+            client.upload_scan_resource_file(
+                scan=XnatScan("FAK001", "SUBJ_1", "EXP_1", "1"),
+                project_id="PROJ",
+                resource="NIFTI",
+                local_path=local,
+                target_filename="label_a.nii.gz",
+            )
+
+        assert client._session.puts == []
+
+    def test_overwrite_replaces_an_existing_file(self, tmp_path):
+        client = make_client({"/resources/NIFTI/files": FakeResponse(payload=_files(["label_a.nii.gz"]))})
+        local = tmp_path / "label_a.nii.gz"
+        local.write_bytes(b"volume")
+
+        client.upload_scan_resource_file(
+            scan=XnatScan("FAK001", "SUBJ_1", "EXP_1", "1"),
+            project_id="PROJ",
+            resource="NIFTI",
+            local_path=local,
+            target_filename="label_a.nii.gz",
+            overwrite=True,
+        )
+
+        # The flag has to reach the wire, not just pick an error message.
+        assert len(client._session.puts) == 1
+
+    def test_path_characters_in_the_filename_are_escaped(self, tmp_path):
+        client = make_client({})
+        client._session = FakeSession({}, put_response=FakeResponse(status_code=200))
+        local = tmp_path / "label_a.nii.gz"
+        local.write_bytes(b"volume")
+
+        client.upload_scan_resource_file(
+            scan=XnatScan("FAK001", "SUBJ_1", "EXP_1", "1"),
+            project_id="PROJ",
+            resource="NIFTI",
+            local_path=local,
+            target_filename="../evil?x=1#f.nii.gz",
+            overwrite=True,
+        )
+
+        url = client._session.puts[0]
+        # requests splits on "?" and "#" before it quotes anything, so leaving them raw would both
+        # redirect the write and silently drop inbody=true.
+        assert url.endswith("/files/..%2Fevil%3Fx%3D1%23f.nii.gz?inbody=true")
+        assert url.count("?") == 1

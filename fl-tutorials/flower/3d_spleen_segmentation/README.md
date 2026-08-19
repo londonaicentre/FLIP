@@ -202,11 +202,19 @@ export XNAT_HOST=https://xnat.trust.example
 export XNAT_USER=your-username
 export XNAT_PASS=your-password
 
-make -C fl-tutorials upload-spleen-labels FL_BACKEND=flower FLIP_PROJECT_ID=<project-uuid> TRUST=1 DRY_RUN=1
+make -C fl-tutorials upload-spleen-labels FL_BACKEND=flower FLIP_PROJECT_ID=<project-uuid> \
+  XNAT_URLS="http://127.0.0.1:8104 http://127.0.0.1:8106" DRY_RUN=1
 ```
 
-`DRY_RUN=1` reports what would happen without changing anything — do that first. Drop it to upload, then
-repeat with `TRUST=2` and the second Trust's credentials.
+`DRY_RUN=1` reports what would happen without changing anything — do that first, then drop it to upload.
+One invocation covers every Trust in `XNAT_URLS` (above, the dev roster: GSTT on 8104, KCH on 8106), which
+matters because each Trust's XNAT holds only its own studies and a Trust left without labels fails training.
+
+> **This tutorial's download covers only part of the cohort.** `download-spleen-data FL_BACKEND=flower`
+> pulls a fixed 6-case HF snapshot and ignores `NUM_CASES`, while the accession mapping spans 41. Enriching
+> from it succeeds but leaves most of the cohort unlabelled, and the command says so. For full coverage use
+> the NVFLARE download (`make -C fl-tutorials/nvflare download-spleen-data NUM_CASES=41`) and point
+> `SPLEEN_LABELS_DIR` at it — the labels are backend-agnostic once they are in XNAT.
 
 Enrichment is **backend-agnostic**: the labels live in XNAT, so a project enriched once can be trained by
 either backend. This target deliberately delegates to the single copy of the upload script in

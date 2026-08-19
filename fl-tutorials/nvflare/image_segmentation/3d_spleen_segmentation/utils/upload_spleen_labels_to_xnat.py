@@ -35,21 +35,35 @@ download you have.
 import argparse
 import csv
 import logging
+import os
 import sys
 from pathlib import Path
 
 import requests
 from flip.exceptions import XnatError
-from flip.xnat import EnrichmentItem, XnatClient, upload_enrichment_files
+from flip.xnat import EnrichmentItem, XnatClient, run_enrichment
 
 logger = logging.getLogger(__name__)
 
 HF_TRUST_DATA_REPO = "aicentreflip/trust-data"
-HF_TRUST_DATA_REVISION = "main"
+
+HF_TRUST_DATA_REVISION = os.environ.get("HF_TRUST_DATA_REVISION", "main")
+"""Dataset revision to read the mapping at.
+
+``main`` by default, overridable so a run can be pinned to a commit sha. This mirrors
+``trust/omop-db/update_omop_data.sh`` and ``trust/orthanc/update_orthanc_data.sh``, which read the
+same variable — the mock DICOMs, the pgdata and this mapping all come from that one dataset, so
+pinning them together is the only way to pin them coherently.
+"""
+
+MAPPING_CACHE_FILENAME = ".accession_map.csv"
+"""Cached mapping, written beside the labels directory so re-runs and offline runs work."""
 
 # The OMOP CSV export is published per data version alongside the pgdata tars the trusts are
 # seeded from, so the mapping is read at whatever version this checkout deploys — one pin, in
 # trust/omop-db/.data_version, rather than a second copy that could silently drift from it.
+# Note this pins the *path*, not the bytes: HF_TRUST_DATA_REVISION above pins the revision those
+# bytes are read at, and defaults to a moving `main` like every other dataset read in this repo.
 OMOP_DATA_VERSION_FILE = Path(__file__).resolve().parents[5] / "trust" / "omop-db" / ".data_version"
 
 DOWNLOAD_TIMEOUT_SECONDS = 60
@@ -89,12 +103,43 @@ def mapping_csv_url(version: str | None = None) -> str:
     )
 
 
-def fetch_accession_map(url: str | None = None) -> dict[str, tuple[str, str]]:
+def _parse_accession_map(text: str, origin: str) -> dict[str, tuple[str, str]]:
+    """Parse the OMOP ``image_occurrence`` export into the accession mapping.
+
+    Args:
+        text (str): The CSV text.
+        origin (str): Where it came from, for error messages.
+
+    Returns:
+        dict[str, tuple[str, str]]: ``accession_id -> (msd_case, source_trust)``.
+
+    Raises:
+        SystemExit: If the CSV lacks the expected columns.
+    """
+    reader = csv.DictReader(text.splitlines())
+    missing = {"accession_id", "local_path", "source_trust"} - set(reader.fieldnames or [])
+    if missing:
+        raise SystemExit(f"❌ {origin} is missing column(s): {', '.join(sorted(missing))}")
+
+    return {
+        row["accession_id"]: (Path(row["local_path"]).name, row["source_trust"])
+        for row in reader
+        if row.get("accession_id") and row.get("local_path")
+    }
+
+
+def fetch_accession_map(url: str | None = None, cache_dir: Path | None = None) -> dict[str, tuple[str, str]]:
     """Fetch the accession-to-MSD-case mapping from the public trust-data dataset.
+
+    Cached on disk when ``cache_dir`` is given, so a re-run — and the second Trust of a two-Trust
+    enrichment — needs no further egress to huggingface.co, and an offline run still works. The
+    cache key is the URL, which already carries the data version and revision, so a version bump
+    fetches afresh rather than serving a stale mapping.
 
     Args:
         url (str | None): URL of the OMOP ``image_occurrence.csv`` export; defaults to the export
             for the version in ``trust/omop-db/.data_version``.
+        cache_dir (Path | None): Directory to cache the CSV in. No caching when ``None``.
 
     Returns:
         dict[str, tuple[str, str]]: ``accession_id -> (msd_case, source_trust)``, where ``msd_case``
@@ -104,6 +149,17 @@ def fetch_accession_map(url: str | None = None) -> dict[str, tuple[str, str]]:
         SystemExit: If the CSV cannot be fetched or lacks the expected columns.
     """
     url = url or mapping_csv_url()
+    cache_path = cache_dir / MAPPING_CACHE_FILENAME if cache_dir else None
+
+    if cache_path is not None and cache_path.is_file():
+        cached = cache_path.read_text()
+        header, _, body = cached.partition("\n")
+        if header == f"# {url}":
+            logger.info(f"📄 Using cached accession mapping from {cache_path}")
+            mapping = _parse_accession_map(body, str(cache_path))
+            logger.info(f"   {len(mapping)} accession(s) in the mapping")
+            return mapping
+
     logger.info(f"⬇️  Fetching accession mapping from {url}")
     try:
         response = requests.get(url, timeout=DOWNLOAD_TIMEOUT_SECONDS)
@@ -111,19 +167,28 @@ def fetch_accession_map(url: str | None = None) -> dict[str, tuple[str, str]]:
     except requests.RequestException as err:
         raise SystemExit(f"❌ Could not fetch the accession mapping: {err}")
 
-    reader = csv.DictReader(response.text.splitlines())
-    required = {"accession_id", "local_path", "source_trust"}
-    missing = required - set(reader.fieldnames or [])
-    if missing:
-        raise SystemExit(f"❌ {url} is missing column(s): {', '.join(sorted(missing))}")
+    mapping = _parse_accession_map(response.text, url)
+    if cache_path is not None:
+        try:
+            cache_path.write_text(f"# {url}\n{response.text}")
+        except OSError as err:
+            # A read-only labels directory is not a reason to fail an upload.
+            logger.warning(f"   could not cache the mapping at {cache_path}: {err}")
 
-    mapping = {
-        row["accession_id"]: (Path(row["local_path"]).name, row["source_trust"])
-        for row in reader
-        if row.get("accession_id") and row.get("local_path")
-    }
     logger.info(f"   {len(mapping)} accession(s) in the mapping")
     return mapping
+
+
+INCOMPLETE_DOWNLOAD_HELP = """   The two spleen downloads differ, so check the one --labels-dir points at:
+     NVFLARE (data/spleen/images)              make -C fl-tutorials/nvflare download-spleen-data NUM_CASES=41
+     Flower  (data/spleen/accession-resources) the HF snapshot ships a fixed 6-case subset, and
+                                               ignores NUM_CASES — point --labels-dir at the
+                                               NVFLARE download for full coverage."""
+"""Remediation text naming both backends.
+
+Printed unconditionally rather than inferred from ``--labels-dir``: guessing wrong sends the reader
+to a command that cannot help, and ``NUM_CASES`` genuinely does nothing on the Flower path.
+"""
 
 
 def build_manifest(labels_dir: Path, trust: str | None = None) -> list[EnrichmentItem]:
@@ -138,17 +203,23 @@ def build_manifest(labels_dir: Path, trust: str | None = None) -> list[Enrichmen
         list[EnrichmentItem]: Items whose label file exists on disk.
 
     Raises:
-        SystemExit: If ``labels_dir`` does not exist or yields no usable pairs.
+        SystemExit: If ``labels_dir`` does not exist, ``trust`` names no Trust in the mapping, or
+            no usable pairs are found.
     """
     if not labels_dir.is_dir():
-        raise SystemExit(
-            f"❌ Labels directory not found: {labels_dir}\n"
-            f"   Run: make -C fl-tutorials download-spleen-data NUM_CASES=41"
-        )
+        raise SystemExit(f"❌ Labels directory not found: {labels_dir}\n{INCOMPLETE_DOWNLOAD_HELP}")
+
+    mapping = fetch_accession_map(cache_dir=labels_dir)
+
+    # Validated against the data rather than pinned in `choices`, so a mapping with more Trusts
+    # works and a typo is answered with the Trusts that actually exist.
+    known_trusts = sorted({source_trust for _, source_trust in mapping.values()})
+    if trust is not None and trust not in known_trusts:
+        raise SystemExit(f"❌ --trust {trust} is not in the mapping. Trusts present: {', '.join(known_trusts)}")
 
     items: list[EnrichmentItem] = []
-    absent = 0
-    for accession_id, (msd_case, source_trust) in sorted(fetch_accession_map().items()):
+    missing_cases: list[str] = []
+    for accession_id, (msd_case, source_trust) in sorted(mapping.items()):
         if trust is not None and source_trust != trust:
             continue
 
@@ -156,18 +227,30 @@ def build_manifest(labels_dir: Path, trust: str | None = None) -> list[Enrichmen
         # while the file inside keeps the MSD case name.
         label_path = labels_dir / msd_case.replace("spleen_", "subject_") / "scans" / f"label_{msd_case}.nii.gz"
         if not label_path.is_file():
-            absent += 1
+            missing_cases.append(msd_case)
             continue
         items.append(EnrichmentItem(accession_id=accession_id, file_path=label_path))
 
-    if absent:
-        logger.info(f"   {absent} mapped case(s) not present in {labels_dir} (expected unless NUM_CASES=41)")
     if not items:
         raise SystemExit(
             f"❌ No label files found under {labels_dir}.\n"
             f"   Expected e.g. {labels_dir}/subject_2/scans/label_spleen_2.nii.gz\n"
-            f"   Run: make -C fl-tutorials download-spleen-data NUM_CASES=41"
+            f"{INCOMPLETE_DOWNLOAD_HELP}"
         )
+
+    # State coverage against the post-filter total. With the default NUM_CASES=10 a partial run is
+    # the norm, not the exception, and it ends in a silently truncated training set — so name the
+    # fraction and the cases rather than leaving the reader to work out the denominator.
+    expected = len(items) + len(missing_cases)
+    if missing_cases:
+        overflow = f", … (+{len(missing_cases) - 5} more)" if len(missing_cases) > 5 else ""
+        shown = ", ".join(missing_cases[:5]) + overflow
+        logger.warning(
+            f"⚠️  Only {len(items)}/{expected} mapped case(s) present in {labels_dir} — "
+            f"training will see a truncated dataset.\n   Missing: {shown}\n{INCOMPLETE_DOWNLOAD_HELP}"
+        )
+    else:
+        logger.info(f"   {len(items)}/{expected} mapped case(s) present locally")
 
     logger.info(f"   {len(items)} label file(s) ready to upload")
     return items
@@ -189,18 +272,67 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--trust",
-        choices=("1", "2"),
-        help="Only upload accessions held by this Trust. Without it, studies belonging to the other "
-        "Trust are reported as 'no matching scan', which is expected.",
+        metavar="N",
+        help="Only upload accessions whose OMOP source_trust column is N (dev roster: 1=GSTT, 2=KCH). "
+        "This is the OMOP data partition, NOT the FL kit slot of the same name, which the hub "
+        "assigns at registration. Usually unnecessary: without it the whole mapping goes to every "
+        "server and each reports the others' studies as 'no matching scan'.",
     )
     parser.add_argument(
         "--credentials-file",
-        help='JSON file of {"server": ..., "user": ..., "password": ...}. '
-        "Defaults to the XNAT_HOST / XNAT_USER / XNAT_PASS environment variables.",
+        action="append",
+        dest="credentials_files",
+        metavar="PATH",
+        help='JSON file of {"server": ..., "user": ..., "password": ...}. Repeat once per Trust.',
     )
+    parser.add_argument(
+        "--xnat-url",
+        action="append",
+        dest="xnat_urls",
+        metavar="URL",
+        help="XNAT base URL, repeatable — one per Trust, enriching the whole roster in one run. "
+        "Credentials come from --xnat-user/--xnat-password. Simpler than a credentials file when "
+        "every Trust shares a login, as on the dev stack.",
+    )
+    parser.add_argument("--xnat-user", default=os.environ.get("XNAT_USER"), help="Username for --xnat-url.")
+    parser.add_argument("--xnat-password", default=os.environ.get("XNAT_PASS"), help="Password for --xnat-url.")
     parser.add_argument("--overwrite", action="store_true", help="Replace labels that are already present.")
     parser.add_argument("--dry-run", action="store_true", help="Resolve and report, but upload nothing.")
+    parser.add_argument(
+        "--allow-no-op",
+        action="store_true",
+        help="Exit 0 even when no destination was resolved anywhere.",
+    )
+    parser.add_argument(
+        "--require-full-coverage",
+        action="store_true",
+        help="Also fail unless every scan in the visited project(s) received its label.",
+    )
     return parser
+
+
+def build_clients(args: argparse.Namespace) -> list[XnatClient]:
+    """Build one client per XNAT server named on the command line.
+
+    Explicit flags win over the environment, and ``--xnat-url`` over ``--credentials-file``; with
+    neither, the single-server ``XNAT_HOST``/``XNAT_USER``/``XNAT_PASS`` path is unchanged.
+
+    Args:
+        args (argparse.Namespace): Parsed arguments.
+
+    Returns:
+        list[XnatClient]: One client per server.
+
+    Raises:
+        XnatError: If ``--xnat-url`` is given without a username and password.
+    """
+    if args.xnat_urls:
+        if not args.xnat_user or not args.xnat_password:
+            raise XnatError("--xnat-url needs --xnat-user and --xnat-password (or XNAT_USER / XNAT_PASS)")
+        return [XnatClient(server=url, user=args.xnat_user, password=args.xnat_password) for url in args.xnat_urls]
+    if args.credentials_files:
+        return [XnatClient.from_config_file(path) for path in args.credentials_files]
+    return [XnatClient.from_env()]
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -218,12 +350,10 @@ def main(argv: list[str] | None = None) -> int:
     items = build_manifest(args.labels_dir.resolve(), args.trust)
 
     try:
-        client = XnatClient.from_config_file(args.credentials_file) if args.credentials_file else XnatClient.from_env()
-        project_id = client.resolve_project_by_flip_project_id(args.flip_project_id)
-        summary = upload_enrichment_files(
-            client,
-            project_id,
+        report = run_enrichment(
+            build_clients(args),
             items,
+            flip_project_id=args.flip_project_id,
             overwrite=args.overwrite,
             dry_run=args.dry_run,
         )
@@ -231,9 +361,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"❌ {err}", file=sys.stderr)
         return 1
 
-    print(f"\nXNAT project {project_id} ({client.server}):")
-    print(summary.render())
-    return 0 if summary.ok else 1
+    print(report.render())
+    return report.exit_code(allow_no_op=args.allow_no_op, require_full_coverage=args.require_full_coverage)
 
 
 if __name__ == "__main__":

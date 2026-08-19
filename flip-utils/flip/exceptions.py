@@ -29,3 +29,13 @@ class XnatError(Exception):
     enrichment stage. Deliberately distinct from training-time errors: enrichment runs on the
     model developer's workstation, not in the FL client.
     """
+
+
+class XnatProjectNotFound(XnatError):
+    """Raised when no XNAT project on a server carries the requested FLIP project id.
+
+    A subclass rather than a distinct error because callers that only care that *something* went
+    wrong keep working unchanged. It exists so a multi-server enrichment run can tell "this Trust
+    has not pulled this project" (a legitimate per-server skip) apart from "this Trust is
+    unreachable or rejected us" (a fault that must fail the run).
+    """

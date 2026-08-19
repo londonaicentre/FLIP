@@ -24,10 +24,11 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 import requests
 
-from flip.exceptions import XnatError
+from flip.exceptions import XnatError, XnatProjectNotFound
 
 logger = logging.getLogger(__name__)
 
@@ -175,7 +176,9 @@ class XnatClient:
             str: The XNAT project id.
 
         Raises:
-            XnatError: If no XNAT project carries that ``secondary_ID``.
+            XnatProjectNotFound: If no XNAT project carries that ``secondary_ID``. A subclass of
+                ``XnatError``, so callers catching the base class are unaffected; it exists so a
+                multi-server run can treat "not at this Trust" as a skip rather than a fault.
         """
         rows = self._get_result_rows("/data/projects", {"columns": "ID,secondary_ID"})
         for row in rows:
@@ -184,7 +187,7 @@ class XnatClient:
                 logger.info(f"Resolved FLIP project {flip_project_id} to XNAT project {project_id}")
                 return str(project_id)
 
-        raise XnatError(
+        raise XnatProjectNotFound(
             f"No XNAT project at {self.server} has secondary_ID={flip_project_id!r} "
             f"(checked {len(rows)} project(s)). Has the image pull for this project run at this Trust?"
         )
@@ -268,15 +271,26 @@ class XnatClient:
             local_path (Path): The file to upload.
             target_filename (str): Name the file should take in XNAT.
             overwrite (bool): Replace an existing file of that name. Off by default so a re-run
-                never silently rewrites enrichment that is already in place.
+                never silently rewrites enrichment that is already in place. Enforced by listing
+                the resource first, because XNAT's PUT overwrites unconditionally.
 
         Raises:
             XnatError: If the upload fails, or if the file exists and ``overwrite`` is False.
         """
+        # A bare PUT replaces an existing file silently — which is what imaging-api's own uploader
+        # assumes, and why it pre-checks with a GET (`services/upload.py::check_file_exists_in_xnat`).
+        # XNAT has no "overwrite" query parameter, so the guarantee this argument makes can only be
+        # kept by asking first. Without this, overwrite=False protected nothing at this level.
+        if not overwrite and target_filename in self.list_resource_files(scan, resource):
+            raise XnatError(f"File already exists on XNAT: {target_filename}")
+
+        # Escape the caller-supplied path segments. A "/" would redirect the write to another
+        # resource, and a "?" or "#" would truncate the URL and silently drop inbody=true —
+        # requests splits on those before it quotes anything, and leaves them in its safe set.
         url = (
-            f"{self.server}/data/projects/{project_id}/subjects/{scan.subject_id}/"
-            f"experiments/{scan.experiment_id}/scans/{scan.scan_id}/"
-            f"resources/{resource}/files/{target_filename}?inbody=true"
+            f"{self.server}/data/projects/{quote(project_id, safe='')}/subjects/{quote(scan.subject_id, safe='')}/"
+            f"experiments/{quote(scan.experiment_id, safe='')}/scans/{quote(scan.scan_id, safe='')}/"
+            f"resources/{quote(resource, safe='')}/files/{quote(target_filename, safe='')}?inbody=true"
         )
 
         try:
@@ -287,7 +301,9 @@ class XnatClient:
         except requests.RequestException as err:
             raise XnatError(f"Upload of {local_path} to {url} failed: {err}") from err
 
-        if response.status_code == 409 and not overwrite:
+        # 409 is kept as a distinct message for the race the pre-check cannot close, and because a
+        # server that does reject duplicates should say so clearly rather than as a bare status.
+        if response.status_code == 409:
             raise XnatError(f"File already exists on XNAT: {target_filename}")
         if response.status_code not in (200, 201):
             raise XnatError(f"Upload of {local_path} returned {response.status_code}: {response.text}")

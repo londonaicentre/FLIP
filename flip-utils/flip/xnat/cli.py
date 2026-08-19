@@ -21,7 +21,7 @@ import sys
 
 from flip.exceptions import XnatError
 from flip.xnat.client import XnatClient
-from flip.xnat.enrichment import DEFAULT_RENAME, DEFAULT_RESOURCE, read_manifest, upload_enrichment_files
+from flip.xnat.enrichment import DEFAULT_RENAME, DEFAULT_RESOURCE, read_manifest, run_enrichment
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -55,7 +55,12 @@ def _build_parser() -> argparse.ArgumentParser:
 
     upload.add_argument(
         "--credentials-file",
+        action="append",
+        dest="credentials_files",
+        metavar="PATH",
         help='JSON file of {"server": ..., "user": ..., "password": ...}. '
+        "Repeat once per Trust to enrich the whole roster in a single run — each Trust's XNAT holds "
+        "only its own studies, so the manifest is self-selecting and nothing is uploaded twice. "
         "Defaults to the XNAT_HOST / XNAT_USER / XNAT_PASS environment variables.",
     )
     upload.add_argument("--resource", default=DEFAULT_RESOURCE, help=f"XNAT resource (default: {DEFAULT_RESOURCE}).")
@@ -67,6 +72,17 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     upload.add_argument("--overwrite", action="store_true", help="Replace files that are already present.")
     upload.add_argument("--dry-run", action="store_true", help="Resolve and report, but upload nothing.")
+    upload.add_argument(
+        "--allow-no-op",
+        action="store_true",
+        help="Exit 0 even when no destination was resolved. By default that is an error, because "
+        "the commonest way enrichment silently achieves nothing is every scan being skipped.",
+    )
+    upload.add_argument(
+        "--require-full-coverage",
+        action="store_true",
+        help="Also fail unless every scan in the visited project(s) now carries its enrichment file.",
+    )
 
     return parser
 
@@ -89,12 +105,16 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     try:
-        client = XnatClient.from_config_file(args.credentials_file) if args.credentials_file else XnatClient.from_env()
-        project_id = args.project_id or client.resolve_project_by_flip_project_id(args.flip_project_id)
-        summary = upload_enrichment_files(
-            client,
-            project_id,
+        clients = (
+            [XnatClient.from_config_file(path) for path in args.credentials_files]
+            if args.credentials_files
+            else [XnatClient.from_env()]
+        )
+        report = run_enrichment(
+            clients,
             read_manifest(args.manifest),
+            flip_project_id=args.flip_project_id,
+            project_id=args.project_id,
             resource=args.resource,
             rename=(source_prefix, target_prefix),
             overwrite=args.overwrite,
@@ -104,9 +124,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"❌ {err}", file=sys.stderr)
         return 1
 
-    print(f"\nXNAT project {project_id} ({client.server}):")
-    print(summary.render())
-    return 0 if summary.ok else 1
+    print(report.render())
+    return report.exit_code(allow_no_op=args.allow_no_op, require_full_coverage=args.require_full_coverage)
 
 
 if __name__ == "__main__":

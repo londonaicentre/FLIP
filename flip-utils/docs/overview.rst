@@ -153,21 +153,35 @@ A ``flip-xnat`` console script is installed with the package:
    flip-xnat upload --flip-project-id <project-uuid> --manifest manifest.csv --dry-run
 
 The manifest is a CSV of ``accession_id,file_path`` (plus an optional
-``target_filename``). By default each uploaded file is named after the image
-already in the scan's ``NIFTI`` resource, swapping the ``input_`` prefix for
-``label_``, which is the pairing the apps rely on. Existing files are never
-replaced unless ``--overwrite`` is passed.
+``target_filename``, which must be a bare filename). By default each uploaded
+file is named after the image already in the scan's ``NIFTI`` resource, swapping
+the ``input_`` prefix for ``label_``, which is the pairing the apps rely on.
+Existing files are never replaced unless ``--overwrite`` is passed.
+
+Every Trust in the project needs enriching — each Trust's XNAT holds only its
+own studies — so repeat ``--credentials-file`` to cover the roster in one run:
+
+.. code-block:: bash
+
+   flip-xnat upload --flip-project-id <project-uuid> --manifest manifest.csv \
+     --credentials-file gstt.json --credentials-file kch.json
+
+The same manifest goes to every Trust; an accession exists at exactly one site
+and the others report it as *no matching scan*. A run that resolves no
+destination anywhere exits non-zero, so an automated pipeline cannot mistake a
+wholly-skipped enrichment for a completed one; pass ``--allow-no-op`` when an
+empty run is genuinely expected.
 
 The same operations are available as a Python API:
 
 .. code-block:: python
 
-   from flip.xnat import XnatClient, read_manifest, upload_enrichment_files
+   from flip.xnat import XnatClient, read_manifest, run_enrichment
 
-   client = XnatClient.from_env()
-   project = client.resolve_project_by_flip_project_id("<project-uuid>")
-   summary = upload_enrichment_files(client, project, read_manifest("manifest.csv"))
-   print(summary.render())
+   clients = [XnatClient.from_config_file("gstt.json"), XnatClient.from_config_file("kch.json")]
+   report = run_enrichment(clients, read_manifest("manifest.csv"), flip_project_id="<project-uuid>")
+   print(report.render())
+   raise SystemExit(report.exit_code())
 
 Run it only after the image pull **and** after DICOM-to-NIfTI conversion: the
 target filename is derived from the converted image, so running earlier skips

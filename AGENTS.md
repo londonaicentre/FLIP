@@ -165,22 +165,40 @@ fetches the accession→MSD-case mapping at run time from the public `aicentrefl
 label into the scan's existing `NIFTI` resource, renaming `input_` → `label_`. The XNAT protocol work lives in
 `flip.xnat` (`flip-utils/flip/xnat/`), also exposed as the `flip-xnat` CLI.
 
-Prereqs: `make -C fl-tutorials download-spleen-data NUM_CASES=41` and `XNAT_HOST`/`XNAT_USER`/`XNAT_PASS` (or
-`--credentials-file`) for the trust being enriched. Standalone, outside the smoke:
+**Enrich every trust, not one.** Each trust's XNAT holds only its own studies, so a trust left without
+labels takes the run down at the zero-pairs guard. One invocation covers the roster: pass a
+space-separated `XNAT_URLS` (credentials from `XNAT_USER`/`XNAT_PASS`) or repeat `XNAT_CREDENTIALS_FILES`
+for per-trust logins. The whole mapping goes to every server and each ignores the others' studies, so no
+per-trust splitting is needed. A run that resolves **no** destination anywhere now exits non-zero, so the
+smoke can no longer walk past a wholly-skipped enrichment into a doomed training run (`--allow-no-op`
+opts out). `TRUST=N` filters by the OMOP `source_trust` column (1=GSTT, 2=KCH) and is rarely needed —
+note that is the OMOP partition, **not** the FL kit slot of the same `Trust_N` name.
+
+Prereqs: `make -C fl-tutorials download-spleen-data NUM_CASES=41` (a smaller download enriches only part
+of the cohort — the command warns, naming the missing cases) and `XNAT_USER`/`XNAT_PASS`. Standalone,
+outside the smoke:
 
 ```bash
-make -C fl-tutorials upload-spleen-labels FLIP_PROJECT_ID=<uuid> TRUST=1 DRY_RUN=1   # then drop DRY_RUN
+make -C fl-tutorials upload-spleen-labels FLIP_PROJECT_ID=<uuid> \
+  XNAT_URLS="http://127.0.0.1:8104 http://127.0.0.1:8106" DRY_RUN=1   # then drop DRY_RUN
 ```
 
-Through the smoke, `make -C flip-api e2e_smoke_spleen` (or `e2e_smoke_spleen_evaluation`) now carries the
-in-tree command already. To invoke it directly instead:
+The mapping is cached beside the labels dir (so a re-run needs no huggingface.co egress) and
+`HF_TRUST_DATA_REVISION=<sha>` pins the dataset revision instead of the moving `main`.
+
+Through the smoke, `make -C flip-api e2e_smoke_spleen` (or `e2e_smoke_spleen_evaluation`) carries the
+in-tree command already, targeting both dev trusts via `SPLEEN_XNAT_URLS` (override for another roster;
+`SPLEEN_LABELS_DIR` likewise). The enrichment flags ride in `ENRICHMENT_ARGS`, deliberately *not*
+`EXTRA_ARGS` — a command-line variable beats a target-specific one, so folding them together made
+`make e2e_smoke_spleen EXTRA_ARGS="--project-id <uuid>"` silently skip enrichment. To invoke it directly
+instead:
 
 ```bash
 cd flip-api && uv run python -m tests.e2e_smoke \
   --model-files-dir ../fl-tutorials/nvflare/image_segmentation/3d_spleen_segmentation/app_files \
   --query-file ../fl-tutorials/nvflare/image_segmentation/3d_spleen_segmentation/query.sql \
   --data-enrichment-cwd ../fl-tutorials/nvflare/image_segmentation/3d_spleen_segmentation \
-  --data-enrichment-cmd 'uv run --no-project --with ../../../../flip-utils python utils/upload_spleen_labels_to_xnat.py --flip-project-id "$FLIP_PROJECT_ID" --labels-dir ../../data/spleen/images'
+  --data-enrichment-cmd 'uv run --no-project --with ../../../../flip-utils python utils/upload_spleen_labels_to_xnat.py --flip-project-id "$FLIP_PROJECT_ID" --labels-dir ../../data/spleen/images --xnat-url http://127.0.0.1:8104 --xnat-url http://127.0.0.1:8106'
 ```
 
 (The `$`-escaping trap still applies to any hand-written `EXTRA_ARGS`: `make -C flip-api …` expands once, so

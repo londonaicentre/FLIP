@@ -107,21 +107,30 @@ download-spleen-data:
 
 # Data enrichment: upload the MSD spleen labels into a real FLIP project's XNAT, so the spleen
 # apps find a label_*.nii.gz beside each pulled input_*.nii.gz. Needs NUM_CASES=41 on the download
-# above to cover every mapped accession, and XNAT credentials (XNAT_HOST/XNAT_USER/XNAT_PASS, or
-# XNAT_CREDENTIALS_FILE) for the Trust you are targeting. Run once per Trust.
+# above to cover every mapped accession.
+#
+# Enrich EVERY Trust in the project, not one: each Trust's XNAT holds only its own studies, so a
+# Trust left without labels fails training at the zero-pairs guard. One invocation covers the
+# roster — pass a space-separated XNAT_URLS (credentials from XNAT_USER/XNAT_PASS), or repeat
+# XNAT_CREDENTIALS_FILES for per-Trust logins. With neither, it falls back to a single server from
+# XNAT_HOST/XNAT_USER/XNAT_PASS. TRUST=N filters the manifest by the OMOP source_trust column and
+# is rarely needed: the whole mapping goes to every server and each ignores the others' studies.
 #
 # The script is deliberately single-copy and backend-agnostic — enrichment happens once per FLIP
 # project, in XNAT, and both backends read the result. fl-tutorials/flower/Makefile delegates here.
 # It runs via `uv run --no-project --with <flip-utils>` rather than the spleen tutorial's env, so
 # uploading labels never drags in the simulator's MONAI/torch stack.
 upload-spleen-labels:
-	@[ -n "$(FLIP_PROJECT_ID)" ] || (echo "❌  FLIP_PROJECT_ID is required. Usage: make upload-spleen-labels FLIP_PROJECT_ID=<uuid> [TRUST=1] [DRY_RUN=1]"; exit 1)
+	@[ -n "$(FLIP_PROJECT_ID)" ] || (echo "❌  FLIP_PROJECT_ID is required. Usage: make upload-spleen-labels FLIP_PROJECT_ID=<uuid> [XNAT_URLS=\"http://host1 http://host2\"] [DRY_RUN=1]"; exit 1)
 	@uv run --no-project --with $(FLIP_UTILS_DIR) python $(SPLEEN_DIR)/utils/upload_spleen_labels_to_xnat.py \
 		--flip-project-id $(FLIP_PROJECT_ID) \
 		--labels-dir $(SPLEEN_LABELS_DIR) \
 		$(if $(TRUST),--trust $(TRUST)) \
-		$(if $(XNAT_CREDENTIALS_FILE),--credentials-file $(XNAT_CREDENTIALS_FILE)) \
+		$(foreach url,$(XNAT_URLS),--xnat-url $(url)) \
+		$(foreach cfg,$(XNAT_CREDENTIALS_FILES) $(XNAT_CREDENTIALS_FILE),--credentials-file $(cfg)) \
 		$(if $(OVERWRITE),--overwrite) \
+		$(if $(ALLOW_NO_OP),--allow-no-op) \
+		$(if $(REQUIRE_FULL_COVERAGE),--require-full-coverage) \
 		$(if $(DRY_RUN),--dry-run)
 
 list-tutorials:
