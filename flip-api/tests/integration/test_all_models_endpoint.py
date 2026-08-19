@@ -39,6 +39,7 @@ from flip_api.domain.schemas.status import JobStatus, ModelStatus, ProjectStatus
 from tests.integration.conftest import admin_user, override_verify_token_as
 
 MODELS_URL = "/api/models"
+PROJECT_OPTIONS_URL = "/api/models/projects"
 
 
 def _add_project(session, project_factory, *, owner_id: UUID, name: str = "Project") -> Projects:
@@ -439,3 +440,196 @@ def test_queued_models_carry_their_queue_position(client: TestClient, session, p
     assert by_name["first-queued"]["queuePosition"] == 1
     assert by_name["second-queued"]["queuePosition"] == 2
     assert by_name["picked-up"]["queuePosition"] is None
+
+
+def test_project_filter_narrows_the_list_to_that_project(
+    client: TestClient, session, project_factory, model_factory
+):
+    """``?project=`` scopes the estate list to one project the caller can see."""
+    user_id = uuid4()
+    mine = _add_project(session, project_factory, owner_id=user_id, name="Stroke triage")
+    other = _add_project(session, project_factory, owner_id=user_id, name="Chest X-ray")
+    wanted = _add_model(session, model_factory, project_id=mine.id, owner_id=user_id, name="in-scope")
+    _add_model(session, model_factory, project_id=other.id, owner_id=user_id, name="out-of-scope")
+
+    override_verify_token_as(user_id)
+    response = client.get(MODELS_URL, params={"project": str(mine.id)})
+
+    assert response.status_code == 200
+    assert _ids(response.json()) == {str(wanted.id)}
+
+
+def test_project_filter_rescopes_status_counts(
+    client: TestClient, session, project_factory, model_factory
+):
+    """The tiles describe the project in view, not the estate behind it.
+
+    This is the reason the predicate belongs in the service's ``base_conditions`` rather than
+    alongside the status filter: put it in the wrong place and the rows scope while the tile
+    counts keep reporting estate-wide totals.
+    """
+    user_id = uuid4()
+    mine = _add_project(session, project_factory, owner_id=user_id, name="Stroke triage")
+    other = _add_project(session, project_factory, owner_id=user_id, name="Chest X-ray")
+    _add_model(session, model_factory, project_id=mine.id, owner_id=user_id, status=ModelStatus.RUNNING)
+    _add_model(session, model_factory, project_id=other.id, owner_id=user_id, status=ModelStatus.RUNNING)
+    _add_model(session, model_factory, project_id=other.id, owner_id=user_id, status=ModelStatus.PENDING)
+
+    override_verify_token_as(user_id)
+    response = client.get(MODELS_URL, params={"project": str(mine.id)})
+
+    assert response.status_code == 200
+    assert response.json()["statusCounts"] == {ModelStatus.RUNNING.value: 1}
+
+
+def test_project_filter_composes_with_the_status_filter(
+    client: TestClient, session, project_factory, model_factory
+):
+    """Rows honour project AND status; counts honour project only, so tiles stay usable."""
+    user_id = uuid4()
+    project = _add_project(session, project_factory, owner_id=user_id)
+    running = _add_model(
+        session, model_factory, project_id=project.id, owner_id=user_id, status=ModelStatus.RUNNING
+    )
+    _add_model(session, model_factory, project_id=project.id, owner_id=user_id, status=ModelStatus.PENDING)
+
+    override_verify_token_as(user_id)
+    response = client.get(
+        MODELS_URL, params={"project": str(project.id), "status": ModelStatus.RUNNING.value}
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert _ids(payload) == {str(running.id)}
+    assert payload["statusCounts"] == {ModelStatus.RUNNING.value: 1, ModelStatus.PENDING.value: 1}
+
+
+def test_project_filter_composes_with_search(
+    client: TestClient, session, project_factory, model_factory
+):
+    """Search narrows within the scoped project rather than escaping it."""
+    user_id = uuid4()
+    project = _add_project(session, project_factory, owner_id=user_id)
+    other = _add_project(session, project_factory, owner_id=user_id)
+    wanted = _add_model(session, model_factory, project_id=project.id, owner_id=user_id, name="xray-baseline")
+    _add_model(session, model_factory, project_id=project.id, owner_id=user_id, name="spleen-seg")
+    _add_model(session, model_factory, project_id=other.id, owner_id=user_id, name="xray-elsewhere")
+
+    override_verify_token_as(user_id)
+    response = client.get(MODELS_URL, params={"project": str(project.id), "search": "xray"})
+
+    assert response.status_code == 200
+    assert _ids(response.json()) == {str(wanted.id)}
+
+
+def test_project_filter_for_an_inaccessible_project_is_forbidden(
+    client: TestClient, session, project_factory, model_factory
+):
+    """Scoping to someone else's project is refused outright, not answered with an empty page.
+
+    An empty page would be indistinguishable from "this project has no models", which is a
+    confusing answer to a link somebody shared with you.
+    """
+    user_id = uuid4()
+    foreign = _add_project(session, project_factory, owner_id=uuid4())
+    _add_model(session, model_factory, project_id=foreign.id, owner_id=uuid4())
+
+    override_verify_token_as(user_id)
+    response = client.get(MODELS_URL, params={"project": str(foreign.id)})
+
+    assert response.status_code == 403
+
+
+def test_project_filter_for_an_unknown_project_is_not_found(client: TestClient, session):
+    """A stale bookmark to a deleted project gets 404, matching the per-project route."""
+    user_id = uuid4()
+
+    override_verify_token_as(user_id)
+    response = client.get(MODELS_URL, params={"project": str(uuid4())})
+
+    assert response.status_code == 404
+
+
+def test_invalid_project_param_is_rejected(client: TestClient, session):
+    """A malformed id is a 400, never a silent fall-back to the whole estate."""
+    user_id = uuid4()
+
+    override_verify_token_as(user_id)
+    response = client.get(MODELS_URL, params={"project": "not-a-uuid"})
+
+    assert response.status_code == 400
+
+
+def test_admin_can_scope_to_any_project(client: TestClient, session, project_factory, model_factory):
+    """A manager filters by a project they do not own."""
+    admin_id = admin_user(session)
+    foreign = _add_project(session, project_factory, owner_id=uuid4())
+    model = _add_model(session, model_factory, project_id=foreign.id, owner_id=uuid4())
+
+    override_verify_token_as(admin_id)
+    response = client.get(MODELS_URL, params={"project": str(foreign.id)})
+
+    assert response.status_code == 200
+    assert _ids(response.json()) == {str(model.id)}
+
+
+def test_project_options_list_only_accessible_projects(
+    client: TestClient, session, project_factory
+):
+    """The filter dropdown offers owned and granted projects, never anyone else's."""
+    user_id = uuid4()
+    owned = _add_project(session, project_factory, owner_id=user_id, name="Owned")
+    granted = _add_project(session, project_factory, owner_id=uuid4(), name="Granted")
+    _grant_access(session, project_id=granted.id, user_id=user_id)
+    _add_project(session, project_factory, owner_id=uuid4(), name="Someone else's")
+
+    override_verify_token_as(user_id)
+    response = client.get(PROJECT_OPTIONS_URL)
+
+    assert response.status_code == 200
+    assert [option["name"] for option in response.json()] == ["Granted", "Owned"]
+    assert {option["id"] for option in response.json()} == {str(owned.id), str(granted.id)}
+
+
+def test_project_options_include_projects_without_models(
+    client: TestClient, session, project_factory
+):
+    """A project with no models is still selectable — it just shows an empty list."""
+    user_id = uuid4()
+    empty = _add_project(session, project_factory, owner_id=user_id, name="No models yet")
+
+    override_verify_token_as(user_id)
+    response = client.get(PROJECT_OPTIONS_URL)
+
+    assert response.status_code == 200
+    assert [option["id"] for option in response.json()] == [str(empty.id)]
+
+
+def test_project_options_carry_status_for_the_create_model_gate(
+    client: TestClient, session, project_factory
+):
+    """The scoped Create Model button needs the project's status, so the option carries it."""
+    user_id = uuid4()
+    project = project_factory.build(
+        owner_id=user_id, name="Staged one", deleted=False, status=ProjectStatus.STAGED
+    )
+    session.add(project)
+    session.commit()
+
+    override_verify_token_as(user_id)
+    response = client.get(PROJECT_OPTIONS_URL)
+
+    assert response.status_code == 200
+    assert response.json()[0]["status"] == ProjectStatus.STAGED.value
+
+
+def test_project_options_admin_sees_every_project(client: TestClient, session, project_factory):
+    """A manager can filter by any project, so the dropdown lists them all."""
+    admin_id = admin_user(session)
+    _add_project(session, project_factory, owner_id=uuid4(), name="Someone else's")
+
+    override_verify_token_as(admin_id)
+    response = client.get(PROJECT_OPTIONS_URL)
+
+    assert response.status_code == 200
+    assert [option["name"] for option in response.json()] == ["Someone else's"]

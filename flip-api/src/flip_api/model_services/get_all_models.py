@@ -15,13 +15,18 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlmodel import Session
 
+from flip_api.auth.access_manager import can_access_project
 from flip_api.auth.auth_utils import has_permissions
 from flip_api.auth.dependencies import verify_token
 from flip_api.db.database import get_session
 from flip_api.db.models.user_models import PermissionRef
-from flip_api.domain.interfaces.model import IModelsListResponse
+from flip_api.domain.interfaces.model import IModelsListResponse, IModelsProjectOption
 from flip_api.domain.schemas.status import ModelStatus
-from flip_api.model_services.services.model_service import get_all_models_service
+from flip_api.model_services.services.model_service import (
+    get_all_models_service,
+    get_models_project_options_service,
+)
+from flip_api.project_services.services.project_services import get_project
 from flip_api.utils.logger import logger
 from flip_api.utils.paging_utils import get_total_pages
 
@@ -60,6 +65,65 @@ def _parse_statuses(raw_status: str | None) -> list[ModelStatus] | None:
     return parsed or None
 
 
+def _parse_project_id(raw_project: str | None) -> UUID | None:
+    """Validate the optional ``project`` query param, which scopes the list to one project.
+
+    Parsed explicitly rather than passed through: ``get_paging_details`` silently ignores query
+    keys it does not recognise, so a malformed id would otherwise degrade to "no filter" and hand
+    back the whole estate under a UI that claims to be showing one project.
+
+    Args:
+        raw_project (str | None): The raw ``project`` query param, if supplied.
+
+    Returns:
+        UUID | None: The parsed project id, or None when no filter was requested.
+
+    Raises:
+        HTTPException: 400 if the value is not a UUID.
+    """
+    if not raw_project or not raw_project.strip():
+        return None
+    try:
+        return UUID(raw_project.strip())
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid project filter: {raw_project}",
+        )
+
+
+@router.get(
+    "/projects",
+    summary="List the projects the caller can access, for the Models page's project filter.",
+    response_model=list[IModelsProjectOption],
+    status_code=status.HTTP_200_OK,
+)
+def get_models_project_options_endpoint(
+    session: Session = Depends(get_session),
+    user_id: UUID = Depends(verify_token),
+) -> list[IModelsProjectOption]:
+    """Options for the Models page's project filter — every project the caller can access.
+
+    Unpaginated and deliberately thin (id, name, status): the dropdown must list *all* accessible
+    projects, which one page of the paginated ``/projects`` endpoint cannot promise, and it has no
+    use for that endpoint's trusts, cohort query or user rows.
+
+    Args:
+        session (Session): The database session.
+        user_id (UUID): The authenticated caller's id.
+
+    Returns:
+        list[IModelsProjectOption]: Accessible projects, ordered by name.
+    """
+    # Managers filter by any project — drop the per-user access filter, as the list route does.
+    if has_permissions(user_id, [PermissionRef.CAN_MANAGE_PROJECTS], session):
+        requesting_user_id = None
+    else:
+        requesting_user_id = user_id
+
+    return get_models_project_options_service(session, requesting_user_id)
+
+
 @router.get(
     "",
     summary="Get a paginated, access-scoped list of models across every project.",
@@ -75,7 +139,9 @@ def get_all_models_endpoint(
 
     A caller sees models for projects they own or have been granted access to; a user with
     ``CAN_MANAGE_PROJECTS`` sees every model. Supports search (model or project name), a
-    comma-separated ``status`` filter and pagination, and returns per-status tile counts.
+    comma-separated ``status`` filter, a single-``project`` filter and pagination, and returns
+    per-status tile counts. The project filter scopes those counts too, so the UI's filter tiles
+    describe the project in view rather than the estate.
 
     Args:
         request (Request): The HTTP request, used to read query params.
@@ -89,6 +155,7 @@ def get_all_models_endpoint(
 
     query_params = dict(request.query_params)
     status_filter = _parse_statuses(query_params.get("status"))
+    project_filter = _parse_project_id(query_params.get("project"))
 
     # Managers see every model — drop the per-user access filter (equivalent to user_id = None),
     # mirroring get_projects_endpoint.
@@ -97,8 +164,24 @@ def get_all_models_endpoint(
     else:
         requesting_user_id = user_id
 
+    if project_filter is not None:
+        # Answer a scoped request the way the per-project route this replaces does: 404 for a
+        # project that isn't there, 403 for one the caller may not see. Leaving it to the access
+        # predicate would instead return an empty page, which reads as "this project has no
+        # models" — indistinguishable from "not yours", and baffling on a shared link.
+        if get_project(project_filter, session) is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Project {project_filter} not found",
+            )
+        if not can_access_project(user_id, project_filter, session):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You do not have access to this project",
+            )
+
     response, status_counts, paging = get_all_models_service(
-        session, requesting_user_id, query_params, status_filter
+        session, requesting_user_id, query_params, status_filter, project_filter
     )
     total_pages = get_total_pages(response.total_rows, paging.page_size)
 
