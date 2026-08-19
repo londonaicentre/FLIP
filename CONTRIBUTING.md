@@ -55,7 +55,10 @@ are provisioned in-tree (gitignored) under `fl-services/<backend>/provision/`. S
 - [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)
   on GPU hosts
 - GNU Make, `jq`, and `curl`
-- [Python 3.12+](https://www.python.org/downloads/) and [uv](https://docs.astral.sh/uv/)
+- [Python 3.12+](https://www.python.org/downloads/) and [uv](https://docs.astral.sh/uv/) **>= 0.10.0** —
+  earlier uv cannot parse the `exclude-newer = "3 days"` cooldown (see
+  [Dependency cooldown](#dependency-cooldown-supply-chain-protection)); it warns, ignores the setting and
+  re-resolves `uv.lock` without any cooldown. `scripts/check-uv-version.sh` enforces this.
 - The AWS CLI configured for SSO access to the development environment
 - [act](https://github.com/nektos/act) if you want to run GitHub Actions locally
 - **GHCR login** — `make up` pulls the repo-built service images from GitHub Container Registry by default, so authenticate once with a PAT that has `read:packages`:

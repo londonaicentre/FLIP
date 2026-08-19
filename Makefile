@@ -398,6 +398,7 @@ UV_PROJECTS := . flip-api docs trust/trust-api trust/imaging-api trust/data-acce
 # `exclude-newer` window, so transitive pin versions may shift even when no
 # direct dependency changed.
 lock:
+	@./scripts/check-uv-version.sh
 	@for dir in $(UV_PROJECTS); do \
 		echo "Locking $$dir"; \
 		( cd $$dir && uv lock ) || exit 1; \
