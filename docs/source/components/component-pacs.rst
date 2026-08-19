@@ -185,8 +185,8 @@ trust's PACS team supplies; what they supply is covered above.
      - ``4242``
    * - ``XNAT_WEB_PORT``
      - Host-published port for XNAT's web UI and REST API. Unrelated to DICOM; separate from
-       ``XNAT_PORT`` so the DICOM receiver can be published independently. Defaults to ``XNAT_PORT``
-     - ``XNAT_PORT``
+       ``XNAT_PORT`` so the DICOM receiver can be published independently
+     - whatever ``XNAT_PORT`` is set to
    * - ``PACS_AVAILABILITY_DAYS`` / ``_START`` / ``_END``
      - When retrieval may run, as a comma-separated day list and a daily window
      - all week, ``00:00``–``24:00``
