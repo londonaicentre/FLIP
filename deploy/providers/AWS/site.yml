@@ -248,8 +248,15 @@
     # prod compose mounts resolve to the same on-disk paths Ansible stages
     # below — keep the two sides in lockstep.
     fl_kit_dir: "/opt/flip/fl-kit"
+    # The slot this host was assigned by the hub at registration. NVFLARE names its
+    # participant kits after the slot, and the prod compose mounts
+    # net-1/services/${FL_KIT_SLOT}/ — so staging must follow trust_num rather than
+    # assume the first slot. A cloud trust can hold any slot: the hub allocates from
+    # FL_KIT_SLOT_NAMES, so the second EC2 trust in an environment is Trust_2, the
+    # third Trust_3, and a re-registration can move a host to a different one.
+    fl_kit_slot: "Trust_{{ trust_num | default('1') }}"
     # Ends in "/" — consumers pass it bare, never with a slash appended (see FLIP#965).
-    trust_s3_source: "s3://{{ flip_aicentre_bucket }}/fl-flare-participant-kits/{{ fl_kit_date }}/net-1/services/Trust_1/"
+    trust_s3_source: "s3://{{ flip_aicentre_bucket }}/fl-flare-participant-kits/{{ fl_kit_date }}/net-1/services/{{ fl_kit_slot }}/"
   tasks:
     - name: ensure FL kit directory exists
       file:
@@ -266,9 +273,9 @@
     # site_local_trust.yml — otherwise the `mkdir -p` inside the shell task
     # below runs under `become: true` (root) and the bind-mount source is
     # root-owned, which the non-root container can't write into.
-    - name: pre-create NVFLARE Trust_1 kit subdirectories (owned by ubuntu)
+    - name: pre-create NVFLARE kit subdirectories (owned by ubuntu)
       file:
-        path: "{{ fl_kit_dir }}/net-1/services/Trust_1/{{ item }}"
+        path: "{{ fl_kit_dir }}/net-1/services/{{ fl_kit_slot }}/{{ item }}"
         state: directory
         owner: ubuntu
         group: ubuntu
@@ -279,7 +286,7 @@
         - transfer
       when: fl_backend == "nvflare"
 
-    - name: sync NVFLARE Trust_1 participant kit from S3
+    - name: sync NVFLARE participant kit from S3
       # `aws s3 sync` skips files when source/dest size + mtime "look
       # equivalent", so a freshly regenerated kit can leave stale
       # rootCA.pem / client.crt / fed_client.json in place — the
@@ -288,11 +295,11 @@
       # destination first to force a clean copy. Mirrors the
       # ecs_efs_provision.tf fix on the central-hub side.
       #
-      # The hierarchical dest (net-1/services/Trust_1) preserves the
+      # The hierarchical dest (net-1/services/<slot>) preserves the
       # S3 bundle's own layout — the compose mount in
       # trust/deploy/compose_trust.production.nvflare.yml is
       # ${FL_KIT_DIR}/net-1/services/${TRUST_NAME}/{local,startup,transfer},
-      # which resolves to /opt/flip/fl-kit/net-1/services/Trust_1/...
+      # which resolves to /opt/flip/fl-kit/net-1/services/<slot>/...
       #
       # The sync (and the `find -delete` before it) run as root via
       # `become: true`, so files land root-owned regardless of the
@@ -309,7 +316,7 @@
       # (FLIP#965): the wipe means a no-op sync leaves the host with no kit at all.
       shell: |
         set -euo pipefail
-        dest="{{ fl_kit_dir }}/net-1/services/Trust_1"
+        dest="{{ fl_kit_dir }}/net-1/services/{{ fl_kit_slot }}"
         mkdir -p "$dest"
         find "$dest" -mindepth 1 -delete 2>/dev/null || true
         aws s3 sync \
