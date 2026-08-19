@@ -169,7 +169,7 @@
 
                             <div
                                 :class="ROW_GRID_CLASS"
-                                class="grid gap-5 px-5 py-4 items-center flex-1"
+                                class="grid gap-x-3 gap-y-1 md:gap-5 px-5 py-4 items-center flex-1"
                                 data-test="project-row-grid"
                             >
                                 <div class="min-w-0">
@@ -180,14 +180,26 @@
                                         {{ ownerLabel(project) }} · {{ relativeUpdated(project) }}
                                     </div>
                                 </div>
+                                <!-- Below md the row is two columns: this drops under the name and
+                                     its meta line, while the status block spans both rows to its
+                                     right. From md the normal column flow takes over. -->
                                 <div
-                                    class="text-sm text-gray-600 dark:text-gray-300 leading-snug line-clamp-2"
+                                    class="col-start-1 row-start-2 md:col-start-auto md:row-start-auto
+                                    text-[12.5px] md:text-sm text-gray-600 dark:text-gray-300 leading-snug line-clamp-2"
                                     data-test="project-row-description"
                                 >
                                     {{ project.description || "—" }}
                                 </div>
-                                <TrustChips :project="project" class="hidden lg:flex" />
-                                <div class="flex flex-col items-end gap-1.5">
+                                <TrustChips
+                                    :project="project"
+                                    class="col-start-2 row-start-2 self-start justify-end flex md:hidden
+                                    lg:col-start-auto lg:row-start-auto lg:justify-start lg:self-auto lg:flex"
+                                />
+                                <div
+                                    class="col-start-2 row-start-1 self-start md:col-start-auto
+                                    md:row-start-auto md:self-auto
+                                    flex flex-col items-end gap-1.5"
+                                >
                                     <span
                                         class="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-semibold tracking-wide uppercase"
                                         :class="pillClass(project.status)"
@@ -325,7 +337,7 @@ const userId = authStore.user?.userId;
 // the md template deliberately declares three tracks to the lg template's four.
 // Keep each class name whole within one string literal: Tailwind's extractor scans
 // source text, so a class split across a concatenation is never generated.
-const ROW_GRID_CLASS = "grid-cols-1 md:grid-cols-[minmax(0,1.6fr)_minmax(0,1.8fr)_10rem] "
+const ROW_GRID_CLASS = "grid-cols-[minmax(0,1fr)_8rem] md:grid-cols-[minmax(0,1.6fr)_minmax(0,1.8fr)_10rem] "
     + "lg:grid-cols-[minmax(0,1.6fr)_minmax(0,1.8fr)_15rem_10rem]";
 
 type ViewMode = "list" | "grid";
@@ -451,9 +463,12 @@ const SPINE_BG_CLASS: Record<ProjectStatus, string> = {
 };
 const spineBgClass = (s: ProjectStatus): string => SPINE_BG_CLASS[s];
 
+// What the project is waiting on, when the status pill doesn't already say it. STAGED's
+// "awaiting approval" is exactly what the STAGED pill means, so it stays silent; a draft's
+// missing cohort query is not derivable from "Draft", so that one earns its line.
 const NEXT_ACTION: Record<ProjectStatus, string | null> = {
     APPROVED: null,
-    STAGED: "Awaiting approval",
+    STAGED: null,
     UNSTAGED: "Cohort query needed"
 };
 const nextActionFor = (project: IProject): string | null => NEXT_ACTION[project.status];

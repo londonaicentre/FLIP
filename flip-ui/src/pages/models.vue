@@ -293,33 +293,41 @@
                                             </template>
                                         </p>
                                     </div>
-                                    <span
-                                        data-test="model-status-indicator-mobile"
-                                        class="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium shrink-0"
-                                        :class="statusPillClass(model.status)"
-                                    >
-                                        <span class="inline-block w-1.5 h-1.5 rounded-full" :class="statusDotClass(model.status)" />
-                                        {{ modelStatusLabelWithQueue(model.status, model.queuePosition) }}
-                                    </span>
+                                    <!-- Status and the trusts that ran it belong together: the chips
+                                         sit under the pill rather than running full width under the
+                                         description, which read as part of the description. -->
+                                    <div class="flex flex-col items-end gap-1.5 shrink-0">
+                                        <span
+                                            data-test="model-status-indicator-mobile"
+                                            class="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium"
+                                            :class="statusPillClass(model.status)"
+                                        >
+                                            <span class="inline-block w-1.5 h-1.5 rounded-full" :class="statusDotClass(model.status)" />
+                                            {{ modelStatusLabelWithQueue(model.status, model.queuePosition) }}
+                                        </span>
+                                        <div
+                                            v-if="model.trusts.length"
+                                            class="flex flex-wrap items-center justify-end gap-1.5"
+                                        >
+                                            <span
+                                                v-for="t in model.trusts"
+                                                :key="t.id"
+                                                data-test="model-trust-chip-mobile"
+                                                :title="t.name"
+                                                :class="[TRUST_CHIP_CLASS, TRUST_CHIP_PLAIN_PADDING]"
+                                            >
+                                                {{ trustChipLabel(t) }}
+                                            </span>
+                                        </div>
+                                        <p
+                                            v-else
+                                            data-test="model-trusts-empty-mobile"
+                                            class="text-xs italic text-right text-gray-400 dark:text-gray-300"
+                                        >
+                                            Trusts assigned when training starts
+                                        </p>
+                                    </div>
                                 </div>
-                                <div v-if="model.trusts.length" class="flex flex-wrap items-center gap-1.5 mt-2">
-                                    <span
-                                        v-for="t in model.trusts"
-                                        :key="t.id"
-                                        data-test="model-trust-chip-mobile"
-                                        :title="t.name"
-                                        :class="[TRUST_CHIP_CLASS, TRUST_CHIP_PLAIN_PADDING]"
-                                    >
-                                        {{ trustChipLabel(t) }}
-                                    </span>
-                                </div>
-                                <p
-                                    v-else
-                                    data-test="model-trusts-empty-mobile"
-                                    class="mt-2 text-xs italic text-gray-400 dark:text-gray-300"
-                                >
-                                    Trusts assigned when training starts
-                                </p>
                             </div>
                         </div>
 
