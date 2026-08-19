@@ -16,6 +16,7 @@
 import json
 import os
 import shutil
+import traceback
 from logging import ERROR, INFO
 from pathlib import Path
 
@@ -26,20 +27,52 @@ from flwr.app import ArrayRecord, Context
 from flwr.common import log
 from flwr.serverapp import Grid, ServerApp
 
-from app.models import get_model
 from app.strategy import EvaluationStrategy
 
 # Create ServerApp
 app = ServerApp()
 
 
+def _relay_failure(flip: FLIP, model_id: str) -> None:
+    """Report the active exception to the hub, best-effort (FLIP#1006).
+
+    The traceback goes through ``send_handled_exception`` (a ``success=false`` feed row —
+    the ServerApp runs on the Central Hub, so the full traceback crosses no trust
+    boundary) and the model is settled to ``ERROR``. Each step is guarded separately: a
+    hub that cannot be reached, or a non-UUID model id (tutorial/simulator contexts),
+    must not mask the original failure, which the caller re-raises.
+    """
+    try:
+        flip.send_handled_exception(traceback.format_exc(), client_name=None, model_id=model_id)
+    except Exception:
+        log(ERROR, "Failed to relay the ServerApp exception to the hub:\n%s", traceback.format_exc())
+    try:
+        flip.update_status(model_id, ModelStatus.ERROR)
+    except Exception:
+        log(ERROR, "Failed to report ERROR status to the hub:\n%s", traceback.format_exc())
+
+
 @app.main()
 def main(grid: Grid, context: Context, flip: FLIP = FLIP()) -> None:
-    """Main entry point for the ServerApp."""
+    """Main entry point for the ServerApp.
 
+    A thin relay shell: any exception escaping the run is reported to the hub before it
+    propagates, so a failed run shows its traceback on the model's activity feed instead
+    of waiting for the hub's failed-job sweep to fetch a log tail (FLIP#1001/#1006). The
+    re-raise keeps Flower's own ``finished:failed`` accounting intact.
+    """
+    model_id = context.run_config.get("flip-model-id", "monai-flower-evaluation-model")
+    try:
+        _run(grid, context, flip, model_id)
+    except Exception:
+        _relay_failure(flip, model_id)
+        raise
+
+
+def _run(grid: Grid, context: Context, flip: FLIP, model_id: str) -> None:
+    """The evaluation run itself — everything here is covered by ``main``'s relay."""
     run_config = context.run_config
     num_rounds = int(run_config.get("num-server-rounds", 1))
-    model_id = run_config.get("flip-model-id", "monai-flower-evaluation-model")
 
     flip.update_status(model_id, ModelStatus.INITIATED)
 
@@ -68,6 +101,11 @@ def main(grid: Grid, context: Context, flip: FLIP = FLIP()) -> None:
         msg = f"Checkpoint not found at: {checkpoint_file}"
         log(ERROR, msg)
         raise FileNotFoundError(msg)
+
+    # Imported here rather than at module scope: models.py is researcher-supplied, so an
+    # import error in it must land in main's relay instead of killing the ServerApp
+    # before it can report anything (FLIP#1006).
+    from app.models import get_model
 
     model = get_model()
     # Load to CPU: the SuperLink runs CPU-only and only repacks the weights for distribution to SuperNodes.
