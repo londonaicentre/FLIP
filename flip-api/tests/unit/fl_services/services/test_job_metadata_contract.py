@@ -17,15 +17,15 @@ from flip_api.domain.interfaces.fl import IJobMetaData
 from flip_api.domain.schemas.status import FLJobStatus
 
 
-def test_fl_job_status_has_exactly_five_contract_values():
-    assert {s.value for s in FLJobStatus} == {"PENDING", "RUNNING", "FINISHED", "FAILED", "STOPPED"}
+def test_fl_job_status_has_exactly_six_contract_values():
+    assert {s.value for s in FLJobStatus} == {"PENDING", "RUNNING", "FINISHED", "FAILED", "STOPPED", "UNKNOWN"}
 
 
 def test_job_metadata_has_exactly_job_id_and_status():
     assert set(IJobMetaData.model_fields) == {"job_id", "status"}
 
 
-@pytest.mark.parametrize("job_status", ["PENDING", "RUNNING", "FINISHED", "FAILED", "STOPPED"])
+@pytest.mark.parametrize("job_status", ["PENDING", "RUNNING", "FINISHED", "FAILED", "STOPPED", "UNKNOWN"])
 def test_job_metadata_accepts_every_contract_status(job_status):
     job = IJobMetaData.model_validate({"job_id": "abc", "status": job_status})
     assert job.status == FLJobStatus(job_status)

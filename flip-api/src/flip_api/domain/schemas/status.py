@@ -211,3 +211,8 @@ class FLJobStatus(StrEnum):
     FINISHED = "FINISHED"
     FAILED = "FAILED"
     STOPPED = "STOPPED"
+    # A native status the adapter's map does not recognise (i.e. a framework upgrade added
+    # one). Deliberately distinct from FAILED: consumers that act on FAILED are destructive
+    # (the failed-job reconcile errors the model and frees the net), so a guess must never
+    # act — UNKNOWN is a no-op everywhere, surfaced only in the adapter's warning log.
+    UNKNOWN = "UNKNOWN"

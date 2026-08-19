@@ -132,6 +132,12 @@ class Settings(BaseSettings):
     # How often to ask each net's FL API whether an in-flight job has failed (in minutes).
     # Bounds how long a run that dies after submission can leave its model looking alive.
     SCHEDULER_FL_JOB_RECONCILE_RATE: int = 1
+    # How long (in minutes) an in-flight job may go unlisted by its FL backend before the
+    # reconcile treats it as dead. Covers a backend restart losing its run state (the
+    # SuperLink's is in-memory by default): the run can never report, so waiting longer
+    # just leaves the model looking alive. Generous so a transient listing hiccup never
+    # errors a healthy run.
+    FL_JOB_UNLISTED_GRACE_MINUTES: int = 30
 
     # Database settings
     DB_PORT: int

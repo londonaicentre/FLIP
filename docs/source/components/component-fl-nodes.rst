@@ -305,18 +305,24 @@ the instant it starts — would therefore say nothing at all, leaving the model 
 The hub closes that gap by polling. Once a minute it asks each net's FL API for the status of
 every job it still believes is in flight; a job the backend reports as failed moves the model
 to ``ERROR``, frees the net, and writes the tail of the run's own log to the model's activity
-feed, where the researcher reads it alongside the round events. Only failures are polled for
-and only failures are acted on — a run that is pending, running or finished is left entirely
-to its own reporting.
+feed, where the researcher reads it alongside the round events. A job the backend no longer
+lists at all is treated the same way once it has gone unlisted for a grace period
+(``FL_JOB_UNLISTED_GRACE_MINUTES``, default 30) — the Flower SuperLink keeps run state in
+memory, so a restart forgets every run, and such a run can never report. Nothing else is
+acted on: a run that is pending, running or finished is left entirely to its own reporting.
 
 Two things are worth knowing about the captured log. It is a **tail**: a Flower run log opens
 with the per-run dependency install and the cause of a failure is at the far end, so the head
 is dropped. And it is best-effort — if the log cannot be retrieved, the feed says so and
-names the manual fallback, which is to run, inside the net's FL API container:
+names the manual fallback. On a Flower net that is to run, inside the net's FL API container:
 
 .. code-block:: bash
 
-   flwr log <run-id> <superlink> --show
+   flwr log <run-id> local --show
+
+On an NVFLARE net (whose FL API serves no run-log endpoint today, so its failures always
+surface status-only) the fallback is the FL API's ``POST /<job-id>/show_errors/server`` or
+the job's log in the fl-server workspace.
 
 This covers the **ServerApp**. A ClientApp that dies at a trust writes to that trust's
 SuperNode, which the Central Hub cannot read; such failures still surface only through

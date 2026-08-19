@@ -13,7 +13,7 @@
 
 import pytest
 
-from fl_api.schemas import JobMetadata, JobStatus, normalize_status
+from fl_api.schemas import _FLOWER_STATUS_MAP, JobMetadata, JobStatus, normalize_status
 
 
 @pytest.mark.parametrize(
@@ -28,20 +28,38 @@ from fl_api.schemas import JobMetadata, JobStatus, normalize_status
         ("stopped", JobStatus.STOPPED),
         ("RUNNING", JobStatus.RUNNING),
         ("  running  ", JobStatus.RUNNING),
-        ("", JobStatus.FAILED),
+        ("", JobStatus.UNKNOWN),
     ],
 )
 def test_normalize_status_maps_flower_statuses(native, expected):
     assert normalize_status(native) == expected
 
 
-def test_normalize_status_unknown_is_failed():
-    assert normalize_status("some-future-status") == JobStatus.FAILED
+def test_normalize_status_unmapped_is_unknown():
+    # UNKNOWN, not FAILED: the hub's failed-job reconcile errors the model and frees the
+    # net on FAILED, so a status added by a framework upgrade must never be guessed into it.
+    assert normalize_status("some-future-status") == JobStatus.UNKNOWN
+
+
+def test_normalize_status_covers_every_flwr_status_value():
+    """The map is exhaustive against the pinned flwr's own vocabulary.
+
+    The UNKNOWN default exists for the statuses a *future* flwr adds; this pins that no
+    status of the flwr actually installed falls through to it. `flwr ls` reports
+    non-terminal states bare and terminal states as `finished:<substatus>`
+    (see flwr.common.serde / RunStatus), plus the bare `stopped` from `flwr stop`.
+    """
+    from flwr.common.constant import Status, SubStatus
+
+    non_terminal = [Status.PENDING, Status.STARTING, Status.RUNNING]
+    terminal = [f"{Status.FINISHED}:{sub}" for sub in (SubStatus.COMPLETED, SubStatus.FAILED, SubStatus.STOPPED)]
+    for native in non_terminal + terminal:
+        assert native in _FLOWER_STATUS_MAP, f"flwr status {native!r} is unmapped"
 
 
 def test_job_metadata_has_exactly_job_id_and_status():
     assert set(JobMetadata.model_fields) == {"job_id", "status"}
 
 
-def test_job_status_has_exactly_five_contract_values():
-    assert {s.value for s in JobStatus} == {"PENDING", "RUNNING", "FINISHED", "FAILED", "STOPPED"}
+def test_job_status_has_exactly_six_contract_values():
+    assert {s.value for s in JobStatus} == {"PENDING", "RUNNING", "FINISHED", "FAILED", "STOPPED", "UNKNOWN"}

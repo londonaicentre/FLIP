@@ -1116,6 +1116,18 @@ def test_get_backend_job_status_unlisted_job_returns_none(mock_http_get):
 
 
 @patch("flip_api.fl_services.services.fl_service.http_get")
+def test_get_backend_job_status_accepts_unknown(mock_http_get):
+    # UNKNOWN is what an adapter reports for a native status its map does not recognise
+    # (i.e. a framework upgrade added one). The hub must parse it — and then not act on it
+    # (the reconcile only acts on FAILED; see test_reconcile_failed_jobs).
+    from flip_api.fl_services.services.fl_service import get_backend_job_status
+
+    mock_http_get.return_value = [{"job_id": "job123", "status": "UNKNOWN"}]
+
+    assert get_backend_job_status("http://fl-api-endpoint", "job123") == FLJobStatus.UNKNOWN
+
+
+@patch("flip_api.fl_services.services.fl_service.http_get")
 def test_get_backend_job_status_rejects_non_list_response(mock_http_get):
     from flip_api.fl_services.services.fl_service import get_backend_job_status
 
