@@ -503,7 +503,7 @@ The chart is validated in CI via:
 ### FL client won't connect
 
 1. **S3 kit download failed**: Check the `kit-init` init container logs. Verify `s3-access-key-id` and `s3-secret-access-key` in the Secret are correct and the bucket path exists.
-2. **Kit path mismatch**: Verify `flClient.nvflare.kitFromS3.pathTemplate` or `flClient.flower.kitFromS3.pathTemplate` resolves to a valid S3 path. The `tpl` function renders `.Values.trustName` so ensure `trustName` is set.
+2. **Kit path mismatch**: Verify `flClient.kitHostPath` points at the directory ON THE NODE holding this trust's provisioned kit, and that it contains the slot's contents (NVFLARE: `local/`, `startup/`, `transfer/`; Flower: `certificates/` and `keys/` with this slot's credential). The chart never fetches the kit — it is delivered out-of-band and placed on the node before the workload starts. A missing path fails scheduling with the path named.
 3. **Network policy blocking**: Check egress CIDRs allow reaching the Central Hub and FL server. Temporarily disable policies with `--set networkPolicies.enabled=false` to isolate.
 4. **GPU not visible**: Verify `nvidia.com/gpu` annotation on the fl-client pod. Check CUDA env vars (`CUDA_VISIBLE_DEVICES`, `NVIDIA_VISIBLE_DEVICES`) are set via `flClient.gpu.enabled: true`.
 5. **Flower superlink**: For Flower backend, verify `flClient.flower.superlink` is a reachable gRPC endpoint and root certificates are in the kit.

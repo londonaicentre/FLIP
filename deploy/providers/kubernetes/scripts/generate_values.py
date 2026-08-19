@@ -28,10 +28,9 @@ ENV_VAR_MAP = {
     "ENV": ("environment", False),
     "FL_BACKEND": ("flBackend", False),
     "UPLOADED_FEDERATED_DATA_BUCKET": ("uploadedFederatedDataBucket", False),
-    "S3_BUCKET": ("flClient.nvflare.kitFromS3.bucket", False),
-    "S3_BUCKET_FLOWER": ("flClient.flower.kitFromS3.bucket", False),
-    "S3_KIT_DATE": ("flClient.nvflare.kitFromS3.kitDate", False),
-    "S3_KIT_DATE_FLOWER": ("flClient.flower.kitFromS3.kitDate", False),
+    # No S3 kit fetch: the chart mounts an already-provisioned kit from the node
+    # (flClient.kitHostPath). A trust holds no FLIP AWS credentials.
+    "FL_KIT_DIR": ("flClient.kitHostPath", False),
     "AICENTRE_BUCKET_NAME": ("omopDb.initJob.s3Bucket", False),
     "OMOP_DATA_VERSION": ("omopDb.initJob.dataVersion", False),
 }
@@ -92,9 +91,6 @@ def build_values(env):
         # Normalise flBackend: accept any casing
         if env_var == "FL_BACKEND":
             val = val.lower().replace(" ", "")
-        # Also set Flower kit bucket when S3_BUCKET is set without explicit FLOWER variant
-        if env_var == "S3_BUCKET" and "S3_BUCKET_FLOWER" not in env:
-            deep_set(overrides, "flClient.flower.kitFromS3.bucket", val)
         deep_set(overrides, yaml_path, val)
 
     secrets = {}

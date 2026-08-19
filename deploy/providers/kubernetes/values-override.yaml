@@ -22,6 +22,7 @@ omopDb:
   vocabLoad:
     s3Bucket: flipstag-aicentre
 flClient:
-  nvflare:
-    kitFromS3:
-      bucket: flipstag-aicentre
+  # Absolute path ON THE NODE holding this trust's provisioned FL participant kit.
+  # The chart does not fetch kits — see values.yaml. On kind:
+  #   docker cp <kit>/. <cluster>-control-plane:/opt/flip-fl-kit/
+  kitHostPath: /opt/flip-fl-kit
