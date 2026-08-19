@@ -152,8 +152,14 @@ Delete Project
    Projects can be deleted at any time, but:
 
    - Any running training sessions will be deleted and no longer accessible
-   - Images associated with the project will be deleted from XNAT
-   - The project will no longer be visible within XNAT
+   - Imaging already pulled to each Trust is **deliberately retained** in that Trust's XNAT. Deleting a project
+     is a soft delete: the platform record is kept and the deletion audited, but the imaging is not touched.
+     Images could be re-pulled from PACS, whereas the segmentations, contours and annotations added during
+     data enrichment could not — so a project deletion never destroys them
+   - The project therefore remains visible within XNAT to users with access to it there, and is no longer
+     reachable through FLIP
+   - Removing a Trust's imaging is a **separate administrator action**, carried out at the Trust, and is not
+     part of deleting a project
 
 1. Select 'Edit Project'
 2. Under 'Advanced Options', click the 'Delete Project' button

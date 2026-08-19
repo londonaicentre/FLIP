@@ -68,6 +68,14 @@ def delete_project_endpoint(
     # annotations added during data enrichment could not. Imaging removal, when it is wanted,
     # belongs in an explicit purge with its own confirmation — not as a silent cascade off a
     # soft delete. See FLIP#963.
+    #
+    # Two consequences, so neither is rediscovered later:
+    #   * Retention is open-ended. That purge does not exist yet (tracked in FLIP#997), and there is
+    #     no TTL, retention sweep or admin endpoint either — so imaging for every deleted project
+    #     persists until someone acts directly in XNAT.
+    #   * Retained imaging is not re-adopted. Nothing sets `Projects.deleted` back to False, and a
+    #     re-created project gets a new id, so imaging-api would create a fresh XNAT project while
+    #     the old one stays keyed to the deleted project's id and unreachable from the UI.
 
     # Get the project models and abort training if necessary
     project_models, _ = get_project_models_service(project_id, db, all_results=True)

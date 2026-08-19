@@ -153,12 +153,16 @@ def delete_imaging_project(imaging_project: ImagingProject, db: Session) -> bool
 
     Not called when a project is soft-deleted — that deliberately leaves Trust imaging intact,
     because enrichment (segmentations, annotations) cannot be re-derived from PACS. This exists
-    for an explicit purge path. See FLIP#963.
+    for an explicit purge path (FLIP#997), which has not been built. See FLIP#963.
 
     The status is **not** marked ``DELETED`` here: queuing a task is a request, not a result, and
-    the Trust may fail to carry it out. Recording the outcome is the responsibility of whatever
-    processes the Trust's response, so the hub never claims imaging is gone while it is still
-    present in XNAT.
+    the Trust may fail to carry it out. **Nothing records the outcome yet** — this is not a job that
+    already lives elsewhere. `trust_tasks.py` post-processes ``CREATE_IMAGING`` results only
+    (`needs_post_processing` is gated on that task type), and `project_images_helpers.update_status`
+    has no caller, so no component can write ``XNATImageStatus.DELETED`` at all. The purge must
+    therefore add **both** halves: a caller for this function, and a ``DELETE_IMAGING`` result
+    handler that sets the status once a Trust confirms the deletion — so the hub never claims
+    imaging is gone while it is still present in XNAT.
 
     Args:
         imaging_project (ImagingProject): The imaging project to delete.

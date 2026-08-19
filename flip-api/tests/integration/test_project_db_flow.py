@@ -28,16 +28,19 @@ from flip_api.db.models.main_models import (
     ProjectsAudit,
     ProjectTrustIntersect,
     ProjectUserAccess,
+    Queries,
+    XNATProjectStatus,
 )
 from flip_api.domain.interfaces.project import IProjectApproval
 from flip_api.domain.schemas.actions import ProjectAuditAction
 from flip_api.domain.schemas.projects import ProjectDetails
-from flip_api.domain.schemas.status import ProjectStatus
+from flip_api.domain.schemas.status import ProjectStatus, XNATImageStatus
 from flip_api.project_services.services.project_services import (
     approve_project,
     create_project,
     delete_project,
     get_project,
+    get_reimport_queries_service,
 )
 
 
@@ -216,3 +219,68 @@ def test_approve_project_raises_for_soft_deleted_project(session, project_payloa
     payload = IProjectApproval(project_id=project_id, trust_ids=[])
     with pytest.raises(ValueError, match="does not exist or is deleted"):
         approve_project(session, payload, creator_id)
+
+
+@pytest.fixture
+def project_eligible_for_reimport(session, user_factory, trust_factory, project_payload):
+    """A live project wired up exactly as the reimport sweep expects to find it.
+
+    ``get_reimport_queries_service`` joins ``Queries`` → ``XNATProjectStatus`` → ``Trust`` and
+    additionally requires ``XNATProjectStatus.query_at_creation == Queries.id``, so all four rows
+    have to line up before the sweep will return anything at all.
+    """
+    creator_id = user_factory().id
+    project_id = create_project(payload=project_payload, current_user_id=creator_id, session=session)
+
+    trust = trust_factory.build()
+    session.add(trust)
+
+    query = Queries(name="Cohort", query="SELECT 1", project_id=project_id, created_by=creator_id)
+    session.add(query)
+    session.flush()
+
+    session.add(
+        XNATProjectStatus(
+            xnat_project_id=uuid4(),
+            project_id=project_id,
+            trust_id=trust.id,
+            retrieve_image_status=XNATImageStatus.CREATED,
+            query_at_creation=query.id,
+            reimport_count=0,
+        )
+    )
+    session.commit()
+
+    return {"project_id": project_id, "creator_id": creator_id, "trust": trust, "query": query}
+
+
+def test_reimport_sweep_returns_queries_for_a_live_project(session, project_eligible_for_reimport):
+    """Baseline: the sweep must still pick up a live project, or the deleted-project test proves nothing."""
+    ctx = project_eligible_for_reimport
+
+    reimport_queries = get_reimport_queries_service(max_reimport_count=5, session=session)
+
+    assert len(reimport_queries) == 1
+    assert reimport_queries[0].query_id == ctx["query"].id
+    assert reimport_queries[0].trust_id == ctx["trust"].id
+
+
+def test_reimport_sweep_skips_a_soft_deleted_project(session, project_eligible_for_reimport):
+    """A soft-deleted project must drop out of the reimport sweep (FLIP#963).
+
+    Soft delete deliberately leaves Trust imaging intact and no longer writes
+    ``retrieve_image_status = DELETED``, so the status flag can no longer be the gate. Without the
+    ``Projects.deleted`` predicate the scheduled sweep would keep queueing ``REIMPORT_STUDIES`` for
+    a deleted project, pulling *new* patient imaging into a Trust's XNAT after deletion.
+    """
+    ctx = project_eligible_for_reimport
+    delete_project(ctx["project_id"], ctx["creator_id"], session)
+
+    assert get_reimport_queries_service(max_reimport_count=5, session=session) == []
+
+    status_row = session.exec(
+        select(XNATProjectStatus).where(XNATProjectStatus.project_id == ctx["project_id"])
+    ).one()
+    assert status_row.retrieve_image_status == XNATImageStatus.CREATED, (
+        "Imaging status must be untouched by the delete — the project row is what gates the sweep"
+    )
