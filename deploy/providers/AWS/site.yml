@@ -248,6 +248,7 @@
     # prod compose mounts resolve to the same on-disk paths Ansible stages
     # below — keep the two sides in lockstep.
     fl_kit_dir: "/opt/flip/fl-kit"
+    # Ends in "/" — consumers pass it bare, never with a slash appended (see FLIP#965).
     trust_s3_source: "s3://{{ flip_aicentre_bucket }}/fl-flare-participant-kits/{{ fl_kit_date }}/net-1/services/Trust_1/"
   tasks:
     - name: ensure FL kit directory exists
@@ -297,6 +298,15 @@
       # `become: true`, so files land root-owned regardless of the
       # pre-created parent's ownership above — the closing chown fixes that
       # up for the non-root fl-client (GHSA-8465).
+      #
+      # transfer/ is re-created after the sync: the `find -delete` above removes the
+      # pre-created copy, and aws s3 sync mirrors objects rather than empty prefixes, so
+      # the provisioner's empty transfer/ never comes back. Docker would then create the
+      # bind-mount source as root and the non-root fl-client could not write its trained
+      # model at the END of a run. package-onprem-trust-kit.sh does the same mkdir.
+      #
+      # The assertion that follows is the same durable guard as the Flower branch below
+      # (FLIP#965): the wipe means a no-op sync leaves the host with no kit at all.
       shell: |
         set -euo pipefail
         dest="{{ fl_kit_dir }}/net-1/services/Trust_1"
@@ -305,6 +315,14 @@
         aws s3 sync \
           "{{ trust_s3_source }}" \
           "$dest"
+        mkdir -p "$dest/transfer"
+        if [ ! -s "$dest/startup/fed_client.json" ]; then
+          echo "ERROR: NVFLARE kit staging produced no fed_client.json in $dest." >&2
+          echo "       Source: {{ trust_s3_source }}" >&2
+          echo "       Check FLARE_KIT_DATE matches an S3 prefix, and that the instance role" >&2
+          echo "       can kms:Decrypt the bucket CMK." >&2
+          exit 1
+        fi
         chown -R ubuntu:ubuntu "$dest"
       args:
         executable: /bin/bash
@@ -321,6 +339,7 @@
     # preserved net-1/ hierarchy. For flower the compose mounts are
     # ${FL_KIT_DIR}/net-1/{certificates,keys}.
     fl_kit_dir: "/opt/flip/fl-kit"
+    # Ends in "/" — consumers pass it bare, never with a slash appended (see FLIP#965).
     trust_s3_source: "s3://{{ flip_aicentre_bucket }}/fl-flower-participant-kits/{{ fl_kit_date }}/net-1/"
   tasks:
     - name: ensure FL kit directory exists
@@ -333,6 +352,23 @@
       when: fl_backend == "flower"
 
     - name: sync Flower net-1 certificates and keys from S3
+      # Two rules below are load-bearing, both from FLIP#965:
+      #
+      # 1. trust_s3_source is passed BARE. It already ends in "/", and appending another
+      #    gives "net-1//" — a literal empty path segment matching no key, so the sync
+      #    copies nothing, exits 0 and reports ok. The NVFLARE sync above passes it bare
+      #    for the same reason; keep the two identical.
+      # 2. Only this host's own credential is staged. The prefix also holds every other
+      #    slot's SuperNode private key and the SuperLink server key, so syncing it whole
+      #    puts the whole federation's FL identity on every trust host. The SuperNode
+      #    reads exactly ca.crt and supernode_credentials_<slot> (the `command:` block in
+      #    compose_trust.production.flower.yml), which is what package-onprem-trust-kit.sh
+      #    stages for on-prem operators.
+      #
+      # The closing assertion is the durable half of the fix: because the wipe below runs
+      # first, a sync that copies nothing leaves the host with NO kit, and aws s3 sync
+      # exits 0 on an empty source. Assert the result rather than trust the exit code.
+      #
       # See the NVFLARE sync above — same staleness trap. Flower's
       # mTLS chain (rootCA.pem / server.pem / client.pem) is
       # regenerated whenever the kit date changes; without a wipe
@@ -342,13 +378,20 @@
         set -euo pipefail
         mkdir -p "{{ fl_kit_dir }}/net-1"
         find "{{ fl_kit_dir }}/net-1" -mindepth 1 -delete 2>/dev/null || true
-        # No trailing slash: trust_s3_source already ends with one, and the resulting
-        # `net-1//` is a literal empty path segment that matches no key — so the sync
-        # copied nothing, exited 0 with empty output, and reported ok. Combined with the
-        # wipe above, each run silently emptied the kit (FLIP#993 stag bring-up).
         aws s3 sync \
           "{{ trust_s3_source }}" \
-          "{{ fl_kit_dir }}/net-1/"
+          "{{ fl_kit_dir }}/net-1/" \
+          --exclude "*" \
+          --include "certificates/ca.crt" \
+          --include "keys/supernode_credentials_{{ trust_num }}"
+        if [ ! -s "{{ fl_kit_dir }}/net-1/certificates/ca.crt" ] ||
+           [ ! -s "{{ fl_kit_dir }}/net-1/keys/supernode_credentials_{{ trust_num }}" ]; then
+          echo "ERROR: Flower kit staging produced no usable kit in {{ fl_kit_dir }}/net-1." >&2
+          echo "       Source: {{ trust_s3_source }} (slot {{ trust_num }})" >&2
+          echo "       Check FLOWER_KIT_DATE matches an S3 prefix, that a kit exists for this" >&2
+          echo "       slot, and that the instance role can kms:Decrypt the bucket CMK." >&2
+          exit 1
+        fi
       args:
         executable: /bin/bash
       register: trust_sync

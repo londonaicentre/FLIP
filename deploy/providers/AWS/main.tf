@@ -379,14 +379,17 @@ resource "aws_iam_role_policy" "trust_ec2_s3" {
         Resource = ["${aws_s3_bucket.aicentre_bucket.arn}/*"]
       },
       {
-        # The bucket is SSE-KMS with the app CMK (services.tf), and the key policy only
-        # delegates to IAM — so GetObject alone decrypts nothing. Without this every FL
-        # participant-kit download fails AccessDenied on kms:Decrypt, and because the
-        # staging task in site.yml wipes the kit directory before syncing, the failure
-        # empties the kit rather than leaving the previous one in place. The ECS task
-        # roles were granted this the day the CMK landed (iam_ecs.tf); this role was
-        # missed, and stayed hidden until the first EC2 trust fetched a kit written
-        # after that change.
+        # The bucket is SSE-KMS with the app CMK (services.tf, key defined in kms.tf),
+        # which declares no key policy and so relies on the AWS default that delegates
+        # authorization to IAM. s3:GetObject alone is therefore not enough: without this
+        # statement every read of an encrypted object fails AccessDenied on kms:Decrypt.
+        # That matters more than it looks, because the kit-staging task in site.yml wipes
+        # its destination before fetching — a failed read leaves the host with no kit
+        # rather than the previous one. Default bucket encryption applies only to objects
+        # written after it was enabled, which is why kits predating the CMK still download
+        # with s3:GetObject alone and this gap went unnoticed. DescribeKey is not required
+        # for the read path; it is kept to match the ECS task roles (iam_ecs.tf), which
+        # were granted the same key when the CMK landed. See FLIP#965.
         Effect   = "Allow"
         Action   = ["kms:Decrypt", "kms:DescribeKey"]
         Resource = [aws_kms_key.flip_app_key.arn]
