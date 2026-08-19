@@ -147,11 +147,20 @@ describe("Projects Page", () => {
         const dots = wrapper.findAll("[data-test='trust-status-dot']");
         expect(dots).toHaveLength(2);
 
+        // Scrape the spine's colour rather than hard-coding "bg-amber-500": this is
+        // what pins the dot to SPINE_BG_CLASS.STAGED, so recolouring the spine can't
+        // leave the dot behind. It assumes the spine's only bg-* utility is its
+        // status colour — don't add a decorative one to that div.
         const spineColour = wrapper.find("[data-test='project-status-spine']")
             .classes().find(c => c.startsWith("bg-"));
+        expect(spineColour).toBe("bg-amber-500");
         dots.forEach(dot => {
             expect(dot.classes()).toContain(spineColour);
             expect(dot.classes()).not.toContain("bg-emerald-500");
+        });
+        // A dotted chip swaps its symmetric padding for the dot-side inset.
+        wrapper.findAll("[data-test='trust-chip']").forEach(chip => {
+            expect(chip.classes()).toContain("pl-1.5");
         });
     });
 
@@ -178,23 +187,59 @@ describe("Projects Page", () => {
         expect(dots[1].classes()).toContain("bg-emerald-500");
     });
 
-    test("renders approved trust dots in the grid view too", async () => {
+    test("renders emerald trust dots in the grid view too", async () => {
         setProject(makeProject("APPROVED", [trust("t1", "KCH", true), trust("t2", "GSTT", true)]));
         const wrapper = mountPage();
         await wrapper.find("[data-test='view-mode-grid']").trigger("click");
 
         const grid = wrapper.find("[data-test='projects-grid-view']");
         expect(grid.exists()).toBe(true);
-        expect(grid.findAll("[data-test='trust-status-dot']")).toHaveLength(2);
+        const dots = grid.findAll("[data-test='trust-status-dot']");
+        expect(dots).toHaveLength(2);
+        dots.forEach(dot => expect(dot.classes()).toContain("bg-emerald-500"));
     });
 
-    test("a draft project's chips carry no dot at all", async () => {
+    test("a draft project's chips carry no dot at all, and keep their symmetric padding", async () => {
         setProject(makeProject("UNSTAGED", [trust("t1", "KCH", false)]));
+        const wrapper = mountPage();
+        await wrapper.vm.$nextTick();
+
+        const chips = wrapper.findAll("[data-test='trust-chip']");
+        expect(chips).toHaveLength(1);
+        expect(wrapper.findAll("[data-test='trust-status-dot']")).toHaveLength(0);
+        // Positive assertion: a missing hook would satisfy the count above on its own.
+        expect(chips[0].classes()).toContain("px-2");
+        expect(chips[0].attributes("title")).toBe("KCH NHS Foundation Trust");
+    });
+
+    test("an unrecognised status is not painted as staged", async () => {
+        // `status` comes off the wire and can be absent (18 of 21 rows in the
+        // getProjects Cypress fixture have no status) or a value this union does
+        // not know yet. A deny-list (`!== "UNSTAGED"`) would give those an amber
+        // dot claiming "staged"; the allow-list shows nothing instead.
+        setProject({
+            ...makeProject("STAGED", [trust("t1", "KCH", true)]),
+            status: undefined as unknown as ProjectStatus
+        });
         const wrapper = mountPage();
         await wrapper.vm.$nextTick();
 
         expect(wrapper.findAll("[data-test='trust-chip']")).toHaveLength(1);
         expect(wrapper.findAll("[data-test='trust-status-dot']")).toHaveLength(0);
+    });
+
+    test("the chip tooltip says in words what the dot colour says in hue", async () => {
+        // The dot is aria-hidden and amber/emerald is exactly the pair CVD collapses,
+        // so the tooltip is the only channel carrying the distinction accessibly.
+        setProject(makeProject("APPROVED", [trust("t1", "KCH", true), trust("t2", "GSTT", false)]));
+        const wrapper = mountPage();
+        await wrapper.vm.$nextTick();
+
+        const titles = wrapper.findAll("[data-test='trust-chip']").map(chip => chip.attributes("title"));
+        expect(titles).toEqual([
+            "GSTT NHS Foundation Trust — awaiting approval",
+            "KCH NHS Foundation Trust — approved"
+        ]);
     });
 
     test("the grid view uses the same amber staged dot", async () => {
@@ -221,7 +266,7 @@ describe("Projects Page", () => {
 
     test("status indicators show human-friendly labels (Draft / Staged / Approved)", async () => {
         // Three projects, one per status — the sort puts STAGED first, then
-        // APPROVED, then UNSTAGED (see STATUS_SORT_VALUE in projects.vue), so
+        // APPROVED, then UNSTAGED (see STATUS_RANK in projects.vue), so
         // the indicator labels follow that order.
         mockSwrvData.value = {
             data: [
@@ -536,24 +581,27 @@ describe("Projects Page", () => {
         expect(text.slice(0, -1)).toHaveLength(14);
     });
 
-    test("the description column is body weight, not the anchor's inherited semibold", async () => {
+    test("the list row sets body weight on the container, so no descendant inherits the anchor's bold", async () => {
         // The whole row is a <router-link>, and main.css makes every non-nav <a>
-        // font-semibold — so the description rendered bold alongside the project
-        // name it is meant to sit under.
+        // font-semibold — so the description, the owner/updated meta line and the
+        // status sub-labels all rendered bold. jsdom compiles no Tailwind, so this
+        // asserts the guard (one font-normal on the container the description and
+        // its siblings live in); the rendered weight is asserted in Cypress.
         setProject(makeProject("STAGED", [trust("t1", "KCH", false)]));
         const wrapper = mountPage();
         await wrapper.vm.$nextTick();
 
-        expect(wrapper.find("[data-test='project-description']").classes()).toContain("font-normal");
+        expect(wrapper.find("[data-test='project-row-grid']").classes()).toContain("font-normal");
+        expect(wrapper.find("[data-test='project-row-description']").exists()).toBe(true);
     });
 
-    test("the grid-view card description is body weight too", async () => {
+    test("the grid-view card sets body weight on the card root", async () => {
         setProject(makeProject("STAGED", [trust("t1", "KCH", false)]));
         const wrapper = mountPage();
         await wrapper.find("[data-test='view-mode-grid']").trigger("click");
 
-        const description = wrapper.find("[data-test='projects-grid-view'] [data-test='project-description']");
-        expect(description.classes()).toContain("font-normal");
+        expect(wrapper.find("[data-test='project-card-0']").classes()).toContain("font-normal");
+        expect(wrapper.find("[data-test='project-card-description']").exists()).toBe(true);
     });
 
     test("every list row declares the same content-independent column template", async () => {
@@ -575,6 +623,13 @@ describe("Projects Page", () => {
             .map(row => row.classes().filter(c => c.includes("grid-cols")).sort().join(" "));
         expect(templates).toHaveLength(2);
         expect(new Set(templates).size).toBe(1);
-        expect(templates[0]).not.toMatch(/_auto|\[auto/);
+
+        // Every declared track must be content-independent. Checking for the literal
+        // word `auto` is not enough: a bare `1.6fr` means `minmax(auto,1.6fr)` and
+        // drifts just the same, as do min-content/max-content/fit-content.
+        const tracks = [...templates[0].matchAll(/grid-cols-\[([^\]]+)\]/g)]
+            .flatMap(match => match[1].split("_"));
+        expect(tracks.length).toBeGreaterThan(0);
+        tracks.forEach(track => expect(track).toMatch(/^(minmax\(0,[\d.]+fr\)|[\d.]+rem|[\d.]+px)$/));
     });
 });
