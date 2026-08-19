@@ -293,6 +293,36 @@ Note the reported upload sizes measure slightly different things per backend —
 The server will also use the package to update the status, as well as to upload the final results, which will be first saved in the server, to the final S3 buckets users can download from.
 
 
+When a run fails after submission
+---------------------------------
+
+Almost everything the Central Hub knows about a run in progress is reported *by* the run,
+through the ``flip`` package above. A run that dies before it can report anything — the
+classic case is an exception at import time in ``server_app.py``, which kills the ServerApp
+the instant it starts — would therefore say nothing at all, leaving the model showing
+``INITIATED`` indefinitely.
+
+The hub closes that gap by polling. Once a minute it asks each net's FL API for the status of
+every job it still believes is in flight; a job the backend reports as failed moves the model
+to ``ERROR``, frees the net, and writes the tail of the run's own log to the model's activity
+feed, where the researcher reads it alongside the round events. Only failures are polled for
+and only failures are acted on — a run that is pending, running or finished is left entirely
+to its own reporting.
+
+Two things are worth knowing about the captured log. It is a **tail**: a Flower run log opens
+with the per-run dependency install and the cause of a failure is at the far end, so the head
+is dropped. And it is best-effort — if the log cannot be retrieved, the feed says so and
+names the manual fallback, which is to run, inside the net's FL API container:
+
+.. code-block:: bash
+
+   flwr log <run-id> <superlink> --show
+
+This covers the **ServerApp**. A ClientApp that dies at a trust writes to that trust's
+SuperNode, which the Central Hub cannot read; such failures still surface only through
+whatever the app itself reports before dying.
+
+
 Privacy filters on shared model updates
 ---------------------------------------
 

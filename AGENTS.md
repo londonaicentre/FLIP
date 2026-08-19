@@ -395,6 +395,13 @@ After changes, evaluate if docs need updating:
 - `PICKLESCAN_FILE_SUFFIXES` / `PICKLESCAN_TIMEOUT_SECONDS` — which uploads get a structural picklescan before promotion (default `.pt .pth .pkl .pickle`) and the wall-clock cap per scan (default 120s). Dangerous globals mark the file `INFECTED` and delete the object; a scan that errors or times out fails closed to `ERROR`. Signature-based AV (GuardDuty Malware Protection for S3) is tracked separately in FLIP#838.
 - `BANDIT_TIMEOUT_SECONDS` — wall-clock cap (default 60s) on the non-blocking Bandit pass over `.py` uploads (FLIP#877, GHSA-8465). Unlike `PICKLESCAN_TIMEOUT_SECONDS` a timeout here just means no findings are recorded (fail-open, never `ERROR`) — Bandit is advisory only and never gates promotion. Findings land on `UploadedFiles.bandit_findings` (`[]` = scanned clean, `NULL` = never scanned) and surface in the UI as an amber indicator. `bandit` is a dependency baked into the `flip-api` image, not the mounted `src/`: under the dev pull-by-default sourcing above, running without `BUILD=true` after picking up this dependency serves an image with no `bandit` binary, so every upload silently records `NULL` findings while the UI and docs still claim a scan ran.
 - `SCHEDULER_MALWARE_SCAN_RECONCILE_RATE` — how often (minutes, default 1) the sweep re-checks uploads left `SCANNING` by an app restart mid-scan.
+- `SCHEDULER_FL_JOB_RECONCILE_RATE` / `FLOWER_RUN_LOG_MAX_CHARS` — how often (minutes, default 1) the hub asks each
+  net's FL API whether an in-flight job has failed, and the cap (default 8000 chars) on the run-log tail
+  `fl-api-flower`'s `GET /run_logs/{run_id}` returns. Nothing reports a run that dies *after* submission (an
+  ImportError at ServerApp module scope, say) — the model would otherwise sit at `INITIATED` forever — so the sweep
+  (`flip_api/fl_services/reconcile_failed_jobs.py`) polls for it, moves the model to `ERROR` and stores the log tail
+  on the activity feed. Only `FAILED` acts; `FINISHED` is left to the run's own `RESULTS_UPLOADED` callback. Covers
+  the ServerApp only — a ClientApp dying at a trust logs to that trust's SuperNode (FLIP#1001).
 
 ## Deployment Architecture
 

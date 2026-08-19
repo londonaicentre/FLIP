@@ -129,6 +129,9 @@ class Settings(BaseSettings):
         30  # How often to check for projects with unimported studies (in minutes)
     )
     SCHEDULER_MALWARE_SCAN_RECONCILE_RATE: int = 1  # How often to reconcile stuck SCANNING uploads (in minutes)
+    # How often to ask each net's FL API whether an in-flight job has failed (in minutes).
+    # Bounds how long a run that dies after submission can leave its model looking alive.
+    SCHEDULER_FL_JOB_RECONCILE_RATE: int = 1
 
     # Database settings
     DB_PORT: int

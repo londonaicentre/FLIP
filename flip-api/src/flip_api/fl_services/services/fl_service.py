@@ -977,6 +977,72 @@ def extract_current_job_data(net_endpoint: str, fl_backend_job_id: str) -> IJobM
     return current_job_data[0]
 
 
+def get_backend_job_status(net_endpoint: str, fl_backend_job_id: str) -> FLJobStatus | None:
+    """Return the FL backend's own status for one submitted job.
+
+    Unlike ``extract_current_job_data`` this does not filter to running jobs — the point
+    is to see terminal states, in particular the ``FAILED`` a run reaches when it dies
+    after a successful submission (FLIP#1001).
+
+    Args:
+        net_endpoint (str): The endpoint of the FL API service.
+        fl_backend_job_id (str): The backend-assigned job id to look up.
+
+    Returns:
+        FLJobStatus | None: The job's status, or ``None`` when the backend does not list
+            the job at all (nothing can be concluded — callers must not treat that as a
+            failure).
+
+    Raises:
+        ValueError: If the FL server response is not a list.
+        pydantic.ValidationError: If an entry does not conform to ``IJobMetaData``.
+    """
+    url = f"{net_endpoint}/list_jobs"
+    # Same generous timeout as the other FL status checks: listing runs goes through to the
+    # SuperLink / FLARE admin session and can exceed httpx's 5s default.
+    response = http_get(url, timeout=30)
+
+    if not isinstance(response, list):
+        error_msg = f"Unexpected response format from {url}: {response}"
+        logger.error(error_msg)
+        raise ValueError(error_msg)
+
+    for job in (IJobMetaData.model_validate(entry) for entry in response):
+        if job.job_id == fl_backend_job_id:
+            return job.status
+
+    logger.info(f"Job {fl_backend_job_id} is not listed by the FL API at {net_endpoint}.")
+    return None
+
+
+def fetch_run_logs(net_endpoint: str, fl_backend_job_id: str) -> str | None:
+    """Fetch the FL backend's log tail for one job, best-effort.
+
+    Only fl-api-flower serves ``/run_logs`` today, and it is diagnostic detail rather than
+    control flow, so every failure mode — endpoint absent, FL API down, malformed body —
+    degrades to ``None`` and the caller reports the failure without it.
+
+    Args:
+        net_endpoint (str): The endpoint of the FL API service.
+        fl_backend_job_id (str): The backend-assigned job id whose log to fetch.
+
+    Returns:
+        str | None: The log tail, or ``None`` when it could not be retrieved.
+    """
+    url = f"{net_endpoint}/run_logs/{fl_backend_job_id}"
+    try:
+        response = http_get(url, timeout=60)
+    except Exception as e:
+        logger.warning(f"Could not fetch run logs from {url}: {type(e).__name__}: {e}")
+        return None
+
+    if not isinstance(response, dict) or not isinstance(response.get("log"), str):
+        logger.warning(f"Unexpected run-logs response format from {url}: {type(response).__name__}")
+        return None
+
+    return cast(str, response["log"])
+
+
 def abort_model_training(request: Request, model_id: UUID, session: Session) -> None:
     """
     Check if the model is currently running training, and if it is, send an abort request to the FL server.

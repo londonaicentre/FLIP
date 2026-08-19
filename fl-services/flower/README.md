@@ -150,3 +150,25 @@ make -C fl-services/flower down
 The central-hub multi-net Flower topology is the separate
 [`deploy/compose.development.flower.yml`](../../deploy/compose.development.flower.yml), driven by the
 root `make up FL_BACKEND=flower`.
+
+## Diagnosing a run that fails after submission
+
+A Flower run whose ServerApp dies logs almost nothing where you would look for it: the SuperLink
+reports `Started task` and `Finished task` for the run in the same breath and says no more, and no
+container's `docker logs` carries the traceback. The run's own log lives in the SuperLink, reachable
+only through the Control API.
+
+The Central Hub polls for this (FLIP#1001): a job the FL API reports as failed drives the model to
+`ERROR` and the tail of the run log is written to the model's activity feed, so the usual first stop
+is the model page rather than a shell. To read the full stream by hand — or to inspect a run
+submitted outside the hub, e.g. via `make submit` — exec into the net's FL API container:
+
+```bash
+docker exec -it flip-fl-api-net-1 uvx flwr log <run-id> local --show     # hub multi-net stack
+docker compose -f fl-services/flower/compose.dev.yml exec fl-api \
+    uvx flwr log <run-id> local --show                                   # standalone dev stack
+```
+
+`--show` prints the stored log and exits; the `flwr log` default (`--stream`) follows it forever.
+Run ids come from `uvx flwr list local` in the same container, or from the `run-id` the submit
+returned. A ServerApp that died at import time ends with a traceback and `ERROR: Exit Code: 607`.

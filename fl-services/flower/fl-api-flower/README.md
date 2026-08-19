@@ -27,6 +27,7 @@ Standalone FastAPI service for Flower deployment runtime.
 - `POST /submit_run/{job_folder}` — submit a previously uploaded application; `job_folder` is the Central Hub `model_id` (UUID). flip-api's production path (also exposed as the hidden `/submit_job` alias)
 - `POST /submit_tutorial/{tutorial_name}` — submit a pre-baked tutorial folder by name (e.g. `numpy`, `xray_classification`); the local tutorial harness targets this
 - `DELETE /abort_run/{run_id}`
+- `GET /run_logs/{run_id}` — a bounded, secret-masked tail of a run's ServerApp log; the Central Hub reads it when it finds a run in a failed state (FLIP#1001)
 
 ## API docs
 
@@ -63,6 +64,27 @@ uvx flwr stop <run_id> local --format json
 
 It returns the full JSON payload from Flower.
 
+The run-logs endpoint runs:
+
+```bash
+uvx flwr log <run_id> local --show
+```
+
+`--show` (rather than the `flwr log` default `--stream`, which follows the log forever) prints what
+the SuperLink has stored for the run and exits. The response is
+`{"run_id": ..., "log": ..., "truncated": ...}`, where `log` is the **last** `FLOWER_RUN_LOG_MAX_CHARS`
+characters (default 8000) of the output: a Flower run log opens with the per-run dependency install and
+the cause of a failure is at the other end, so the head is the half worth dropping. Credential-shaped
+substrings are masked first — a run log is whatever researcher-supplied ServerApp code printed, in a
+container that holds a hub service key, so it is not trusted to be secret-free.
+
+To read the full stream by hand instead, exec into this container and run the same command without
+the truncation:
+
+```bash
+docker exec -it flip-fl-api-net-1 uvx flwr log <run_id> local --show
+```
+
 The server status endpoint checks the Flower SuperLink health service configured by
 `SUPERLINK_HEALTH_ADDRESS` and returns:
 
@@ -87,6 +109,8 @@ If `targets` are omitted, all registered trust names are returned.
 Set these environment variables in the FL API container:
 
 - `SUPERLINK_HEALTH_ADDRESS` (example: `superlink:9097`) — for server status checks
+- `FLOWER_RUN_LOG_MAX_CHARS` (optional, default `8000`) — cap on the run-log tail returned by
+  `/run_logs/{run_id}`. An unset, empty or unparseable value falls back to the default.
 
 ## Development startup with Docker Compose
 

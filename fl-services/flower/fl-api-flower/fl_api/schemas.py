@@ -79,6 +79,21 @@ class JobMetadata(BaseModel):
     status: JobStatus
 
 
+class RunLogs(BaseModel):
+    """The response of ``GET /run_logs/{run_id}`` — a bounded tail of a run's ServerApp output.
+
+    Only the tail is returned: a Flower run log opens with the per-run dependency
+    install (``uv sync`` over the app's whole dependency set) and the cause of a
+    failure is at the other end, so the head is the half worth dropping.
+    """
+
+    run_id: str
+    log: str
+    # True when the stored log was longer than the cap and the head was dropped, so a
+    # reader knows to go to `flwr log` for the full stream rather than assuming this is all.
+    truncated: bool
+
+
 # Flower native status (`flwr list` / `flwr stop`) -> normalized contract status.
 # Note: `flwr list` reports terminal states as `finished:*`, while `flwr stop` reports
 # the bare form `stopped` — both are mapped here.
