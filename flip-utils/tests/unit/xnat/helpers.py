@@ -57,6 +57,7 @@ class FakeSession:
         self.put_response = put_response or FakeResponse(status_code=200)
         self.puts: list[str] = []
         self.get_error: Exception | None = None
+        self.put_error: Exception | None = None
 
     def get(self, url: str, params: dict[str, str] | None = None, timeout: int | None = None) -> FakeResponse:
         """Return the first route whose key appears in ``url``, else a 404.
@@ -89,7 +90,12 @@ class FakeSession:
 
         Returns:
             FakeResponse: ``self.put_response``.
+
+        Raises:
+            Exception: ``self.put_error``, when set, to simulate a transport failure.
         """
+        if self.put_error is not None:
+            raise self.put_error
         self.puts.append(url)
         return self.put_response
 

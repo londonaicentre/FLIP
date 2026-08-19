@@ -17,6 +17,7 @@ hook consumes — so it is pinned here rather than left to the entry point.
 """
 
 import json
+import runpy
 from pathlib import Path
 
 import pytest
@@ -225,3 +226,17 @@ class TestMultipleTrusts:
 
         assert exit_code == 0
         assert [len(session.puts) for session in sessions] == [1, 0]
+
+
+class TestModuleEntryPoint:
+    """`python -m flip.xnat` is a documented alternative to the console script."""
+
+    def test_module_execution_delegates_to_main_and_propagates_its_exit_code(self, monkeypatch):
+        monkeypatch.setattr(cli, "main", lambda *args, **kwargs: 3)
+
+        with pytest.raises(SystemExit) as excinfo:
+            runpy.run_module("flip.xnat", run_name="__main__")
+
+        # The exit code is the contract the enrichment hook consumes, so it must survive the
+        # `python -m` path unchanged rather than collapsing to a bare 0/1.
+        assert excinfo.value.code == 3

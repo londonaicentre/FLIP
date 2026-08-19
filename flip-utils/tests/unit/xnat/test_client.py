@@ -313,3 +313,39 @@ class TestUploadScanResourceFile:
         # redirect the write and silently drop inbody=true.
         assert url.endswith("/files/..%2Fevil%3Fx%3D1%23f.nii.gz?inbody=true")
         assert url.count("?") == 1
+
+    def test_unreadable_local_file_raises_before_the_upload_is_claimed(self, tmp_path):
+        client = make_client({})
+        client._session = FakeSession({}, put_response=FakeResponse(status_code=200))
+        missing = tmp_path / "gone.nii.gz"
+
+        with pytest.raises(XnatError, match="Could not read"):
+            client.upload_scan_resource_file(
+                scan=XnatScan("FAK001", "SUBJ_1", "EXP_1", "1"),
+                project_id="PROJ",
+                resource="NIFTI",
+                local_path=missing,
+                target_filename="label_a.nii.gz",
+                overwrite=True,
+            )
+
+        assert client._session.puts == []
+
+    def test_transport_failure_during_upload_surfaces_as_xnat_error(self, tmp_path):
+        client = make_client({})
+        client._session = FakeSession({})
+        client._session.put_error = requests.ConnectionError("refused")
+        local = tmp_path / "label_a.nii.gz"
+        local.write_bytes(b"volume")
+
+        # A dropped connection must not be mistaken for a completed upload — the enrichment layer
+        # records this accession as failed, which is what makes the run exit non-zero.
+        with pytest.raises(XnatError, match="failed"):
+            client.upload_scan_resource_file(
+                scan=XnatScan("FAK001", "SUBJ_1", "EXP_1", "1"),
+                project_id="PROJ",
+                resource="NIFTI",
+                local_path=local,
+                target_filename="label_a.nii.gz",
+                overwrite=True,
+            )

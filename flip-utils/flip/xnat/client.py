@@ -296,10 +296,13 @@ class XnatClient:
         try:
             with local_path.open("rb") as handle:
                 response = self._session.put(url, data=handle, timeout=self.timeout)
-        except OSError as err:
-            raise XnatError(f"Could not read {local_path}: {err}") from err
+        # RequestException subclasses OSError, so it must be caught first — ordered the other way
+        # round, a dropped connection is reported as "Could not read <local file>", sending the
+        # operator to inspect a file that is perfectly fine.
         except requests.RequestException as err:
             raise XnatError(f"Upload of {local_path} to {url} failed: {err}") from err
+        except OSError as err:
+            raise XnatError(f"Could not read {local_path}: {err}") from err
 
         # 409 is kept as a distinct message for the race the pre-check cannot close, and because a
         # server that does reject duplicates should say so clearly rather than as a bare status.

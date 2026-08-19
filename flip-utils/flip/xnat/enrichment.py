@@ -143,6 +143,29 @@ class EnrichmentSummary:
         return "\n".join(lines)
 
 
+URL_UNSAFE_FILENAME_CHARS = frozenset("?#\\%")
+"""Characters rejected in a manifest ``target_filename`` on top of path separators.
+
+``?`` and ``#`` are legal in POSIX filenames but delimit a URL, and ``requests`` splits on them
+before it quotes anything — so they would sever the query string. ``%`` would make an
+already-encoded name ambiguous, and ``\\`` is a separator on the operator's side.
+"""
+
+
+def _is_bare_filename(name: str) -> bool:
+    """Check that a name addresses one file and survives URL construction intact.
+
+    Args:
+        name (str): The candidate filename.
+
+    Returns:
+        bool: True when the name is a single path component with no URL-significant characters.
+    """
+    if name in (".", "..") or name != Path(name).name:
+        return False
+    return not (URL_UNSAFE_FILENAME_CHARS & set(name))
+
+
 def read_manifest(path: str | Path) -> list[EnrichmentItem]:
     """Read a manifest CSV of files to upload.
 
@@ -188,11 +211,11 @@ def read_manifest(path: str | Path) -> list[EnrichmentItem]:
             resolved = manifest_path.parent / resolved
 
         target_filename = (row.get("target_filename") or "").strip() or None
-        if target_filename is not None and target_filename != Path(target_filename).name:
-            # This value is interpolated straight into the upload URL's path. A separator would
-            # redirect the write elsewhere, and a "?" or "#" would truncate the query string and
-            # silently drop inbody=true. Reject it here, where we can say why, rather than leaving
-            # XNAT to answer with a puzzling 404.
+        if target_filename is not None and not _is_bare_filename(target_filename):
+            # This value is interpolated into the upload URL's path. A separator would redirect the
+            # write elsewhere, and a "?" or "#" would truncate the URL and silently drop
+            # inbody=true. The client escapes it too, but rejecting here names the file and line
+            # instead of leaving XNAT to answer with a puzzling 404.
             raise XnatError(
                 f"Manifest {manifest_path} line {line_number}: target_filename must be a bare filename, "
                 f"got {target_filename!r}"

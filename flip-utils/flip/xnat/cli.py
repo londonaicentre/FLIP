@@ -128,5 +128,5 @@ def main(argv: list[str] | None = None) -> int:
     return report.exit_code(allow_no_op=args.allow_no_op, require_full_coverage=args.require_full_coverage)
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover - `python -m flip.xnat` covers this via __main__.py
     raise SystemExit(main())

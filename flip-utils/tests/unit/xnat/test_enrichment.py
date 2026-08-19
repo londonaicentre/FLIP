@@ -414,3 +414,46 @@ class TestRunEnrichment:
         # One of the project's two scans enriched.
         assert report.exit_code() == 0
         assert report.exit_code(require_full_coverage=True) == 1
+
+
+class TestManifestTargetFilenameValidation:
+    """The manifest is the one input to this subpackage that comes from outside XNAT."""
+
+    @pytest.mark.parametrize(
+        "name",
+        ["../evil.nii.gz", "sub/dir.nii.gz", "a?x=1.nii.gz", "a#frag.nii.gz"],
+    )
+    def test_non_bare_target_filename_is_rejected(self, tmp_path, name):
+        manifest = tmp_path / "manifest.csv"
+        manifest.write_text(f"accession_id,file_path,target_filename\nFAK001,label.nii.gz,{name}\n")
+
+        # Rejected at parse time, where the message can name the file and line — a separator would
+        # redirect the write, and "?" or "#" would truncate the URL and drop inbody=true.
+        with pytest.raises(XnatError, match="must be a bare filename"):
+            read_manifest(manifest)
+
+    def test_a_bare_target_filename_is_accepted(self, tmp_path):
+        manifest = tmp_path / "manifest.csv"
+        manifest.write_text("accession_id,file_path,target_filename\nFAK001,label.nii.gz,mask.nii.gz\n")
+
+        assert read_manifest(manifest)[0].target_filename == "mask.nii.gz"
+
+
+class TestExitCodeEdges:
+    """`exit_code` is the whole machine-readable contract; each rule gets a case."""
+
+    def test_a_failed_upload_fails_the_run(self, tmp_path):
+        client = _resolvable_client("A")
+        client._session.put_response = FakeResponse(status_code=500, text="boom")
+        items = [EnrichmentItem("FAK001", _label(tmp_path))]
+
+        report = run_enrichment([client], items, flip_project_id="flip-uuid")
+
+        # Something resolved, so the no-op rule does not apply — this is the ok=False path.
+        assert report.resolved_any is False or report.exit_code() == 1
+        assert report.exit_code() == 1
+        assert report.exit_code(allow_no_op=True) == 1
+
+    def test_requires_a_project_identifier(self, tmp_path):
+        with pytest.raises(XnatError, match="one of flip_project_id or project_id"):
+            run_enrichment([_resolvable_client("A")], [EnrichmentItem("FAK001", _label(tmp_path))])
