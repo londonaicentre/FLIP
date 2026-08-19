@@ -6,6 +6,7 @@
 |------|-----------|
 | `main.tf` | Provider config, VPC, subnets, IGW, NAT, route tables, RDS instance, Secrets Manager, SES |
 | `network_lza.tf` | LZA platform-managed network (FLIP#749): VPC/subnet data lookups + the `local.vpc_id` / `local.app_subnet_ids` / `local.data_subnet_ids` locals both paths consume |
+| `fl_ingress_lza.tf` | LZA-only ingress (FLIP#749 WP3, ported from the #829 e2e harness): internal FL NLB with static per-subnet IPs + its TG/SG, the ALB ingress rule for the networking-account relay path, and the `/flip/networking/*` edge-handoff SSM params |
 | `services.tf` | S3 buckets, Cognito |
 | `rds_proxy.tf` | RDS Proxy + IAM DB auth (proxy, IAM role/policy, SG, `rds-db:connect`) — see FLIP#556 |
 | `ecs.tf` | ECS cluster, capacity providers, ECS CloudWatch log groups (ALB / NLB / target groups / listener rules live in `main.tf`) |

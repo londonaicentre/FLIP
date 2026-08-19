@@ -31,7 +31,7 @@ variable "VPC_NAME" {
 }
 
 variable "lza_managed_network" {
-  description = "Run against the LZA-provisioned (platform-managed) network instead of creating one (FLIP#749). true skips the VPC module (and with it NAT/IGW/EIPs), the VPC endpoints, the DHCP options, and the /flip/networking/* SSM params, and discovers the AWSAccelerator VPC + subnets by Name tag instead (see network_lza.tf). Orthogonal to var.environment: the LZA account is prod-grade, so it deploys with environment=prod AND this flag. Set via PROD=lza in the Makefile."
+  description = "Run against the LZA-provisioned (platform-managed) network instead of creating one (FLIP#749). true skips the VPC module (and with it NAT/IGW/EIPs), the VPC endpoints, the DHCP options, and the legacy /flip/networking/* SSM params (fl_ingress_lza.tf publishes the LZA edge-handoff set under that prefix instead), and discovers the AWSAccelerator VPC + subnets by Name tag instead (see network_lza.tf). Orthogonal to var.environment: the LZA account is prod-grade, so it deploys with environment=prod AND this flag. Set via PROD=lza in the Makefile."
   type        = bool
   default     = false
 }
@@ -40,6 +40,18 @@ variable "lza_vpc_name" {
   description = "Name tag of the platform-managed VPC to discover when lza_managed_network is set. The subnet lookups derive their Name-tag patterns from it (<name>-app-*, <name>-data-*)."
   type        = string
   default     = "AWSAccelerator-eu-west-2-prod"
+}
+
+variable "networking_ingress_cidrs" {
+  description = "CIDRs of the networking account's ingress-VPC subnets (the edge NLB and CloudFront relay path over the TGW), admitted onto the LZA FL NLB and the ALB's main listener (fl_ingress_lza.tf). Empty by default so the stack applies standalone; the value comes from the networking account. LZA-only — legacy prod/stag never reads it."
+  type        = list(string)
+  default     = []
+}
+
+variable "lza_fl_nlb_host_num" {
+  description = "Host number (cidrhost index) assigned to the internal FL NLB's static private IP in each app subnet via subnet_mapping (fl_ingress_lza.tf) — e.g. 251 in 10.12.0.0/24 gives 10.12.0.251. Assigned (not discovered) so the IPs are known at plan time and stable by construction; keep it high, clear of DHCP-assigned task/ALB ENIs, and DIFFERENT from the e2e harness's fl_nlb_host_num (250) while both stacks share the app subnets (FLIP#829)."
+  type        = number
+  default     = 251
 }
 
 variable "max_azs" {
