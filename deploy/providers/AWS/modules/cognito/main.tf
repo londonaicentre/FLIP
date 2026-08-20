@@ -113,7 +113,7 @@ resource "random_string" "cognito_domain" {
 resource "aws_cognito_user_pool_domain" "main" {
   domain                = random_string.cognito_domain.result
   user_pool_id          = aws_cognito_user_pool.flip_user_pool.id
-  managed_login_version = 2
+  managed_login_version = var.managed_login_version
 
   lifecycle {
     prevent_destroy = true

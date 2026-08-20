@@ -199,11 +199,16 @@ module "cognito" {
   # (cloudfront.tf) so a zone-less bring-up (FLIP#749) sends the reachable
   # CloudFront default domain rather than a dead subdomain. Identical to
   # var.flip_alb_subdomain whenever DNS is managed (all legacy envs).
-  sign_in_hostname   = trimprefix(local.ui_origin, "https://")
-  admin_email        = var.flip_cognito_admin_email
-  researcher_email   = var.flip_cognito_researcher_email
-  seed_user_password = var.ADMIN_USER_PASSWORD
-  templates_dir      = "${path.module}/templates/cognito"
+  sign_in_hostname = trimprefix(local.ui_origin, "https://")
+  # Managed Login (v2) blocks PrivateLink access to cognito-idp, and the LZA
+  # account's ONLY path to Cognito is the central interface endpoint -- flip-api
+  # cannot boot against a v2 pool there (FLIP#749). Cosmetic either way: the
+  # FLIP UI signs in via the SDK, not the hosted UI.
+  managed_login_version = var.lza_managed_network ? 1 : 2
+  admin_email           = var.flip_cognito_admin_email
+  researcher_email      = var.flip_cognito_researcher_email
+  seed_user_password    = var.ADMIN_USER_PASSWORD
+  templates_dir         = "${path.module}/templates/cognito"
   # The UI uses USER_SRP_AUTH (Cognito's native auth flow, not OAuth2 redirect),
   # so callback_urls are hygiene only — keep the canonical UI origin + localhost
   # for dev.

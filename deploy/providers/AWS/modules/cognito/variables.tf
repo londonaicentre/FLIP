@@ -70,3 +70,9 @@ variable "mfa_configuration" {
     error_message = "mfa_configuration must be one of: OFF, OPTIONAL, ON."
   }
 }
+
+variable "managed_login_version" {
+  description = "Hosted-UI generation for the user pool domain: 2 = Managed Login (branding designer), 1 = classic hosted UI. Cognito refuses PrivateLink (interface-endpoint) API access to pools with Managed Login configured, so the LZA mode -- whose only route to cognito-idp is the central interface endpoint -- must run 1 (FLIP#749). FLIP's own UI performs SDK-based sign-in, so the hosted-UI generation is cosmetic."
+  type        = number
+  default     = 2
+}
