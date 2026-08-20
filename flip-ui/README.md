@@ -214,7 +214,7 @@ container reaches it via `--network host`.
 
 ```bash
 cd flip-ui
-make e2e_test_docker        # full suite, end-to-end (boots Vite, runs cypress in docker)
+make e2e_test               # full suite, end-to-end (boots Vite, runs cypress in docker)
 
 # Or, if you already have npm run test:start running in another shell:
 docker run --rm --network host \

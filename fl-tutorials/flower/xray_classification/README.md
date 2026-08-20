@@ -59,9 +59,10 @@ the upload flow is unaffected.
 
 ### Recommended: Docker Compose
 
-From the repository root:
+From the Flower service directory:
 
 ```bash
+cd fl-services/flower
 make build                # build the fl-base / superlink / supernode images
 make up                   # start fl-api, superlink, supernode-1, supernode-2
 ```
@@ -69,7 +70,7 @@ make up                   # start fl-api, superlink, supernode-1, supernode-2
 Then submit the run against the `fl-api` control plane:
 
 ```bash
-curl -X POST http://localhost:8000/submit_tutorial/xray_classification
+make submit APP=xray_classification    # from fl-services/flower/
 ```
 
 The dev compose stack (`deploy/compose.development.yml` +

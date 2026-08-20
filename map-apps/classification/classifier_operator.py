@@ -20,17 +20,17 @@ The preprocessing below mirrors the training application's ``transforms.py::get_
 these in step with training is the app author's responsibility; a mismatch here degrades the result
 silently.
 
-There is deliberately **no orientation transform here**, and that is worth stating explicitly because
-the training chain has one. MONAI's ``LoadImaged`` returns a DICOM's pixel array transposed — indexed
-``(column, row)`` where ``PixelData`` is ``(row, column)`` — so the training chain carries a
-``Transposed`` step whose only job is to undo that. This operator receives its array from
-``DICOMSeriesToVolumeOperator``, which preserves DICOM's ``(row, column)`` order, so there is nothing
-to undo: both paths end up on the image as stored.
+There is deliberately **no orientation transform here**, on either side. The training chain loads
+with ``LoadImaged(reader="PydicomReader", swap_ij=False)``, which returns the pixel array exactly as
+``PixelData`` stores it — ``(row, column)`` — rather than MONAI's default transpose; this operator
+receives its array from ``DICOMSeriesToVolumeOperator``, which preserves the same order. Both paths
+agree on the image as stored, with nothing to undo (``fl-tutorials/tests/`` pins the training side).
 
-Do not "restore" an orientation transform here by transcribing one from a training chain. Verified by
-pushing the same CR study through both paths: with the training chain's ``Transposed`` and no
-transform here, the two agree bit-for-bit (``max|diff| == 0``) on both a square and a non-square
-radiograph, and disagree under every rotation or flip.
+Do not "restore" an orientation transform here by transcribing one from a training chain — a chain's
+orientation step, when one exists, serves its loader, not the model. Verified by pushing the same CR
+study through both paths: with no transform on either side, the two agree bit-for-bit
+(``max|diff| == 0``) on both a square and a non-square radiograph, and disagree under every rotation
+or flip.
 """
 
 import json

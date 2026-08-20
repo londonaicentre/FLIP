@@ -1,0 +1,76 @@
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# CPU-only checks over fl-tutorials/: ruff across the whole tree, then the transform-chain
+# pytest suite in fl-tutorials/tests/. Neither needs a GPU, a dataset download or an FL image
+# -- unlike the simulator harness (`make -C fl-tutorials run-tutorial`), which needs all three
+# and therefore cannot run here.
+#
+# Path filters cover BOTH backends, plus the flip-utils environment AND source: the Ark+ apps
+# import `flip` at module-exec time, so a flip-utils source change can break this suite and must
+# trigger it. The pre-existing tutorial workflow (fl-apps-check-tutorial-sync.yml) was filtered to
+# flower only until this PR, so nothing in CI fired on an nvflare-only tutorial change.
+# See fl-tutorials/tests/README.md.
+name: FL Tutorials CI
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - "fl-tutorials/**"
+      - "flip-utils/flip/**"
+      - "flip-utils/pyproject.toml"
+      - "flip-utils/uv.lock"
+      - ".github/workflows/fl-tutorials-tests.yml"
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - "fl-tutorials/**"
+      - "flip-utils/flip/**"
+      - "flip-utils/pyproject.toml"
+      - "flip-utils/uv.lock"
+      - ".github/workflows/fl-tutorials-tests.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  fl-tutorials-tests:
+    name: Lint + transform tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./fl-tutorials
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        run: pip install uv
+
+      - name: Lint fl-tutorials
+        run: make lint
+
+      # The suite runs in flip-utils' environment (`flip-utils[full]`), which is what the FL
+      # images give these apps at runtime. Synced as its own step so an environment failure is
+      # distinguishable from a test failure in the log.
+      - name: Sync the flip-utils environment
+        working-directory: ./flip-utils
+        run: uv sync --extra full --group dev
+
+      - name: Run the tutorial transform tests
+        run: make pytest

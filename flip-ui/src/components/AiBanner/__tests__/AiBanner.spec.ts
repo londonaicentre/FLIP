@@ -25,4 +25,44 @@ describe("AiBanner", () => {
 
         expect(comp.element).toMatchSnapshot();
     });
+
+    test("renders the link when the scheme is http(s)", () => {
+        const comp = mountComponent(AiBanner, {
+            props: {
+                message: "Some cool message",
+                link: "https://example.nhs.uk"
+            }
+        });
+
+        expect(comp.find("[data-test=\"banner-link\"]").attributes("href")).toBe("https://example.nhs.uk");
+    });
+
+    test("opens the link in a new tab without opener access or a referrer", () => {
+        // The link target is admin-configured and external: rel="noopener" denies it a window
+        // handle back into FLIP, and "noreferrer" keeps the full FLIP URL (project UUIDs
+        // included) out of its Referer header.
+        const comp = mountComponent(AiBanner, {
+            props: {
+                message: "Some cool message",
+                link: "https://example.nhs.uk"
+            }
+        });
+
+        const link = comp.find("[data-test=\"banner-link\"]");
+        expect(link.attributes("target")).toBe("_blank");
+        expect(link.attributes("rel")).toBe("noopener noreferrer");
+    });
+
+    test("drops the link entirely when the scheme is not http(s)", () => {
+        // A javascript: href would execute in every user's session. The affordance should
+        // disappear rather than render as an anchor that silently does nothing.
+        const comp = mountComponent(AiBanner, {
+            props: {
+                message: "Some cool message",
+                link: "javascript:alert(1)"
+            }
+        });
+
+        expect(comp.find("[data-test=\"banner-link\"]").exists()).toBe(false);
+    });
 });

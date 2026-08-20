@@ -26,7 +26,12 @@ from flip.nvflare.runtime import get_flip_model_id
 
 
 class PersistToS3AndCleanup(FLComponent):
-    def __init__(self, model_id: str = "", persistor_id: str = AppConstants.DEFAULT_PERSISTOR_ID, flip: FLIP = FLIP()):
+    def __init__(
+        self,
+        model_id: str = "",
+        persistor_id: str = AppConstants.DEFAULT_PERSISTOR_ID,
+        flip: FLIP = FLIP(),
+    ) -> None:
         """The component that is executed post training and is a part of the FLIP training model
 
         The PersistToS3AndCleanup workflow saves the aggregated model (once training has finished) to an S3 bucket, and
@@ -36,6 +41,8 @@ class PersistToS3AndCleanup(FLComponent):
             model_id (str, optional): ID of the model that the training is being performed under. When empty,
                 the model ID is resolved lazily from job metadata via ``get_flip_model_id`` on first use.
             persistor_id (str, optional): ID of the persistor component. Defaults to "persistor".
+            flip (FLIP, optional): FLIP client used for status updates and exception reporting to the hub.
+                Defaults to ``FLIP()``.
 
         Raises:
             FileNotFoundError: boto3 error for when the zip file does not exist.

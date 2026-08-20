@@ -223,6 +223,26 @@ jobs:
             exit 1
           fi
 
+      # No chart template may print a credential into its pod log. The case that prompted this was
+      # the XNAT init Job echoing the live admin JSESSIONID (FLIP#892) — reused as a Cookie header
+      # on ~20 subsequent calls, and the chart ships Loki/Alloy, so a logged session is both
+      # replayable and retained beyond the Job. The guard is written against the *class* rather
+      # than that one token: it runs over the whole rendered chart, and matches an `echo` of any
+      # interpolated secret-shaped variable, so `echo "connecting as ${..._PASSWORD}"` added during
+      # a future debug session is caught as well as a verbatim re-add of the removed line.
+      #
+      # Matching the `${VAR}` *interpolation* rather than a literal name is deliberate: the string
+      # "JSESSIONID" appears legitimately ~25 times in Cookie headers (passed via -H, never echoed)
+      # and in scrub_args' own sed, so keying on the literal would be noise.
+      - name: Chart templates do not log credentials
+        run: |
+          helm template trust-release deploy/providers/kubernetes/ \
+            --set xnat.enabled=true > chart.rendered.yaml
+          if grep -nE 'echo[^|]*\$\{?[A-Za-z_]*(JSESSION|PASSWORD|SECRET|TOKEN|_KEY)' chart.rendered.yaml; then
+            echo "::error::a chart template echoes a credential into the pod log"
+            exit 1
+          fi
+
   kind-e2e:
     name: kind E2E
     runs-on: ubuntu-latest

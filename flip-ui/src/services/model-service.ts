@@ -335,7 +335,7 @@ export async function fetchJobTypes(): Promise<JobTypesResponse> {
         console.error("[fetchJobTypes] Error fetching job types:", error);
 
         // Return a minimal default if API fails
-        return { [DEFAULT_JOB_TYPE]: ["trainer.py", "validator.py", "models.py", "config.json"] };
+        return { [DEFAULT_JOB_TYPE]: ["trainer.py", "config.json", "models.py"] };
     }
 }
 

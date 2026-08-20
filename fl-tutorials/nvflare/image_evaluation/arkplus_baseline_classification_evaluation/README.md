@@ -32,7 +32,7 @@ differs. The `evaluation_results.json` output contract is unchanged.
 
 ## Compatible job type
 
-This tutorial is designed for `JOB_TYPE=evaluation_client_api`.
+This tutorial is designed for `JOB_TYPE=evaluation`.
 
 ## Prerequisites
 
@@ -121,7 +121,7 @@ Ark6 training output (`Ark6_swinLarge768_ep50.pth.tar`) in two steps:
 
 Default local development settings are in `.env.app`:
 
-- `JOB_TYPE=evaluation_client_api`
+- `JOB_TYPE=evaluation`
 - `RAW_CHECKPOINT=models/Ark6_swinLarge768_ep50.pth.tar`
 - `DEV_IMAGES_DIR` / `DEV_DATAFRAME` and the per-site `SITE{1,2}_*` paths
 - `FLIP_PROJECT_ID` / `FLIP_QUERY` (injected into the recipe for SimEnv; ignored under `LOCAL_DEV`)

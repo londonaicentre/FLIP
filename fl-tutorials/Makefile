@@ -10,16 +10,16 @@
 # limitations under the License.
 
 # Backend-aware entrypoint for the FL tutorial runners. The actual runner + harness live
-# per-backend under fl-tutorials/<backend>/ (NVFLARE today; Flower lands via #622). This thin
+# per-backend under fl-tutorials/<backend>/ (fl-tutorials/nvflare/ and fl-tutorials/flower/). This thin
 # Makefile forwards every target to fl-tutorials/$(FL_BACKEND)/ so the documented entrypoint
-#   make -C fl-tutorials <target> [TUTORIAL=... NUM_CASES=... TEMPLATE=...]
+#   make -C fl-tutorials <target> [TUTORIAL=... NUM_CASES=...]
 # keeps working and selects the backend via FL_BACKEND (default nvflare). Command-line
 # variables are forwarded to the sub-make automatically.
 FL_BACKEND ?= nvflare
 
 TUTORIAL_TARGETS := list-tutorials run-tutorial run-all-tutorials \
 	download-xray-data download-spleen-data \
-	download-arkplus-finetuning-data download-arkplus-eval-data test-template
+	download-arkplus-finetuning-data download-arkplus-eval-data
 
 .PHONY: $(TUTORIAL_TARGETS)
 $(TUTORIAL_TARGETS):
@@ -45,3 +45,21 @@ lint:
 format:
 	$(RUFF) format .
 	$(RUFF) check --fix .
+
+# ---------------------------------------------------------------------------
+# CPU-only pytest suite over the tutorial transform chains (fl-tutorials/tests/).
+# No GPU, no dataset, no FL image — unlike run-tutorial, which needs all three.
+#
+# It runs in flip-utils' environment (`flip-utils[full]`: monai, pydicom, torch),
+# which is what the FL images give these apps at runtime, rather than in a
+# per-tutorial venv — arkplus_fine_tuning/pyproject.toml does not even declare
+# monai, so that env cannot import its own data_utils.py. See tests/README.md.
+PYTEST ?= uv run --project ../flip-utils --extra full --group dev pytest
+
+.PHONY: pytest test unit_test
+pytest:
+	$(PYTEST) tests
+
+test: lint pytest
+
+unit_test: test

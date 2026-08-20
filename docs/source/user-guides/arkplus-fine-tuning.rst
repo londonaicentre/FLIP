@@ -212,9 +212,8 @@ completes.
 
 Navigate to the project's **Models** tab and create a new model. Upload the application files —
 the minimum set the FLIP platform expects is listed in
-``fl-apps/nvflare/standard_client_api/required_files.json`` in the repository (this app is a
-``standard_client_api`` job type — the plain ``standard`` manifest also requires a
-``validator.py`` this app doesn't have). For the Ark+ app the key files are:
+``fl-apps/nvflare/standard/required_files.json`` in the repository (this app is a
+``standard`` job type — the Client-API template, which needs no ``validator.py``). For the Ark+ app the key files are:
 
 * ``config.json`` — model configuration (lesion labels, training hyperparameters, Ark+
   architecture settings, finetuning controls)
@@ -235,7 +234,7 @@ in the client app bundle. Set ``SERVER_CHECKPOINT`` in ``config.json`` to the fi
    :caption: config.json (relevant keys)
 
    {
-     "job_type": "standard_client_api",
+     "job_type": "standard",
      "SERVER_CHECKPOINT": "pretrained_weights.pt",
      "AGGREGATE_ONLY_REGEX": "omni_heads",
      "GLOBAL_ROUNDS": 50,

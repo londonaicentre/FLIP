@@ -116,12 +116,15 @@ it explicitly for the command.) Any direct `docker`, `docker compose`, or
 
 ### Provision the trust host
 
-Run this **on the trust host** — there is no SSH path:
+Run this **on the trust host** — there is no SSH path. The target lives in the
+AWS provider Makefile (which orchestrates both cloud and local infrastructure),
+so run it from `deploy/providers/AWS/`:
 
 ```bash
 # Set the sudo password (fish shell; bash: read -rsp ... && export ANSIBLE_BECOME_PASS)
 set -x ANSIBLE_BECOME_PASS (read -s -P 'Sudo password: ')
 
+cd deploy/providers/AWS       # first time only, if you didn't `cd` earlier
 make provision-local-trust
 ```
 

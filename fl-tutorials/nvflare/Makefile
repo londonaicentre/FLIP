@@ -10,9 +10,10 @@
 # limitations under the License.
 
 # NVFLARE tutorial runner. Each tutorial under <category>/<name>/ carries a Makefile
-# + .env.app that delegates to the shared harness in testing/ (app_organiser.sh +
-# compose.yml -> nvflare simulator). Requires GPUs + the flare-fl-base image, and the
-# tutorial's dataset downloaded first (see each tutorial's README).
+# + .env.app whose `make run` delegates to `make sim` — the tutorial's job.py driving a
+# FLIP recipe on the NVFLARE simulator (SimEnv), run in the flip-utils venv with the
+# `full` ML extra. Requires a GPU, and the tutorial's dataset downloaded first (see each
+# tutorial's README); `make export` inside a tutorial needs neither.
 #
 #   make download-xray-data                       # fetch the x-ray dataset from HF
 #   make download-spleen-data                      # fetch + build the MSD spleen dataset
@@ -21,11 +22,10 @@
 #   make list-tutorials
 #   make run-tutorial TUTORIAL=xray_classification
 #   make run-all-tutorials      # runs every tutorial (heavy; stops on first failure)
-#   make test-template TEMPLATE=fed_opt   # smoke-test a template that has no tutorial
 #
 # Datasets land (gitignored) under data/ where each tutorial's .env.app expects them:
 #   - xray_classification: reference dataset from Hugging Face (download-xray-data)
-#   - the three spleen tutorials (segmentation / evaluation / synthesis) share the MSD
+#   - the spleen tutorials (segmentation / evaluation / synthesis) share the MSD
 #     spleen dataset (download-spleen-data); override case count with NUM_CASES=<n>.
 #   - the three Ark+ tutorials share aicentreflip/tutorials-arkplus-cxr-classification:
 #     arkplus_fine_tuning uses download-arkplus-finetuning-data (data/arkplus/site{1,2}/); the two
@@ -42,13 +42,7 @@ ARKPLUS_DATA_REPO := aicentreflip/tutorials-arkplus-cxr-classification
 NUM_CASES ?= 10
 SPLEEN_DIR := image_segmentation/3d_spleen_segmentation
 
-# Template smoke-test: which fl-apps/nvflare/<template> to exercise, and the tutorial whose
-# app_files + data drive it. fed_opt has no tutorial of its own, so it borrows the
-# spleen-segmentation tutorial (matching the legacy `make test-spleen-fedopt`).
-TEMPLATE ?= fed_opt
-TEMPLATE_TUTORIAL ?= image_segmentation/3d_spleen_segmentation
-
-.PHONY: list-tutorials run-tutorial run-all-tutorials download-xray-data download-spleen-data download-arkplus-finetuning-data download-arkplus-eval-data test-template
+.PHONY: list-tutorials run-tutorial run-all-tutorials download-xray-data download-spleen-data download-arkplus-finetuning-data download-arkplus-eval-data
 
 # Download the x-ray reference dataset from Hugging Face and normalise it into the
 # layout image_classification/xray_classification/.env.app expects (data/xrays_mini_300/,
@@ -124,11 +118,3 @@ run-all-tutorials:
 		$(MAKE) -C "$$d" run || { echo "❌ tutorial $$(basename $$d) failed"; exit 1; }; \
 	done
 
-# Smoke-test an fl-apps/nvflare/<template> on the NVFLARE simulator using a tutorial's app_files
-# + data. Mainly for templates with no dedicated tutorial (e.g. fed_opt): it runs the
-# tutorial with JOB_TYPE overridden to the template, so app_organiser.sh merges
-# fl-apps/nvflare/<TEMPLATE>/app with the tutorial's app_files. Requires the dataset
-# (make download-spleen-data) + GPUs + the flare-fl-base image.
-test-template:
-	@echo "🧪 Smoke-testing template '$(TEMPLATE)' via $(TEMPLATE_TUTORIAL) app_files + data"
-	$(MAKE) -C $(TEMPLATE_TUTORIAL) run JOB_TYPE=$(TEMPLATE)
