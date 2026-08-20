@@ -15,6 +15,14 @@
 # FLIP Cognito user pool + client + domain + seed users.
 
 resource "aws_cognito_user_pool" "flip_user_pool" {
+  # Feature tier. Null = never sent (legacy pools keep their grandfathered
+  # tier). The LZA mode pins LITE: ESSENTIALS -- the default for new pools --
+  # counts as "ManagedLogin configured", which Cognito refuses to serve over
+  # PrivateLink, and the interface endpoint is that account's only route to
+  # cognito-idp (FLIP#749). FLIP uses classic flows (SDK sign-in, TOTP MFA),
+  # all LITE features.
+  user_pool_tier = var.user_pool_tier
+
   name                     = var.user_pool_name
   username_attributes      = ["email"]
   auto_verified_attributes = ["email"]

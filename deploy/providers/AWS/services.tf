@@ -205,6 +205,7 @@ module "cognito" {
   # cannot boot against a v2 pool there (FLIP#749). Cosmetic either way: the
   # FLIP UI signs in via the SDK, not the hosted UI.
   managed_login_version = var.lza_managed_network ? 1 : 2
+  user_pool_tier        = var.lza_managed_network ? "LITE" : null
   admin_email           = var.flip_cognito_admin_email
   researcher_email      = var.flip_cognito_researcher_email
   seed_user_password    = var.ADMIN_USER_PASSWORD

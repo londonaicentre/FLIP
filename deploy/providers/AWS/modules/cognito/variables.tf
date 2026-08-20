@@ -76,3 +76,9 @@ variable "managed_login_version" {
   type        = number
   default     = 2
 }
+
+variable "user_pool_tier" {
+  description = "Cognito feature tier for the pool (LITE | ESSENTIALS | PLUS). Null omits the argument so existing pools keep their current tier. See the resource comment for why the LZA mode requires LITE."
+  type        = string
+  default     = null
+}
