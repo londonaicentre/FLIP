@@ -101,15 +101,10 @@ spec:
             - -c
             - |
               set -euo pipefail
-              {{- if eq .Values.flBackend "nvflare" }}
-              S3_PATH="{{ tpl .Values.flClient.nvflare.kitFromS3.pathTemplate . }}"
-              S3_BUCKET="{{ .Values.flClient.nvflare.kitFromS3.bucket }}"
+              {{- $kitFromS3 := (index .Values.flClient .Values.flBackend).kitFromS3 }}
+              S3_PATH="{{ tpl $kitFromS3.pathTemplate . }}"
+              S3_BUCKET="{{ $kitFromS3.bucket }}"
               DEST_DIR="/opt/fl-client/kit"
-              {{- else }}
-              S3_PATH="{{ tpl .Values.flClient.flower.kitFromS3.pathTemplate . }}"
-              S3_BUCKET="{{ .Values.flClient.flower.kitFromS3.bucket }}"
-              DEST_DIR="/opt/fl-client/kit"
-              {{- end }}
               echo "Syncing s3://${S3_BUCKET}/${S3_PATH} to ${DEST_DIR}..."
               {{- if .Values.flClient.s3EndpointOverride }}
               aws s3 sync "s3://${S3_BUCKET}/${S3_PATH}" "${DEST_DIR}" --delete --endpoint-url {{ .Values.flClient.s3EndpointOverride | quote }}
