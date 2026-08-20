@@ -226,3 +226,21 @@ resource "aws_ssm_parameter" "lza_web_port" {
   type        = "String"
   value       = tostring(var.ALB_HTTPS_PORT)
 }
+
+# Task-side admission for the internal NLB: the legacy
+# ecs_fl_server_ingress_nlb_grpc rule (ecs_sg.tf) references the legacy NLB's
+# SG and is gated off on LZA, which left the fl-server task admitting nothing
+# on its FL port -- the NLB's health checks parked the target at unhealthy and
+# ECS churned replacements forever.
+resource "aws_security_group_rule" "ecs_fl_server_ingress_internal_nlb" {
+  count       = var.lza_managed_network ? 1 : 0
+  type        = "ingress"
+  description = "gRPC from the internal FL NLB (edge-relayed FL clients + health checks)"
+  # Backend-dependent container port (Flower: SuperLink Fleet 9092) -- the
+  # NLB forwards its FL_SERVER_PORT listener here.
+  from_port                = local.fl_server_container_port
+  to_port                  = local.fl_server_container_port
+  protocol                 = "tcp"
+  source_security_group_id = module.fl_internal_nlb_security_group[0].security_group.id
+  security_group_id        = aws_security_group.ecs_fl_server.id
+}
