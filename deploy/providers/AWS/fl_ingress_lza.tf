@@ -180,13 +180,15 @@ resource "aws_lb_target_group" "ecs_fl_server_tcp_lza" {
 # CloudFront through the SG-drift stack instead; empty ingress CIDRs create
 # nothing, so the stack still applies standalone.
 resource "aws_security_group_rule" "alb_ingress_web_from_networking" {
-  count             = var.lza_managed_network && length(var.networking_ingress_cidrs) > 0 ? 1 : 0
-  type              = "ingress"
-  description       = "Web from the networking-account relay NLB path (CloudFront VPC origin)"
-  protocol          = "tcp"
-  from_port         = var.ALB_HTTPS_PORT
-  to_port           = var.ALB_HTTPS_PORT
-  cidr_blocks       = var.networking_ingress_cidrs
+  count       = var.lza_managed_network ? 1 : 0
+  type        = "ingress"
+  description = "Web from the networking-account relay NLB path (CloudFront VPC origin) and VPC-internal callers"
+  protocol    = "tcp"
+  from_port   = var.ALB_HTTPS_PORT
+  to_port     = var.ALB_HTTPS_PORT
+  # VPC CIDR: in-VPC verification (probe curls) and internal callers -- the
+  # same shape as the FL NLB SG above. The networking CIDRs are the relay path.
+  cidr_blocks       = concat([local.vpc_cidr_block], var.networking_ingress_cidrs)
   security_group_id = module.alb_security_group.security_group.id
 }
 
