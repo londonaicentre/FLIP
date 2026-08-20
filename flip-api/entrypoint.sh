@@ -26,6 +26,13 @@ ENV=${ENV:-development}
 UV_NO_SYNC=1
 export UV_NO_SYNC
 
+# With the boot-time sync gone, nothing installs the flip_api package into the
+# venv (the Dockerfile syncs dependencies before src/ exists, and dev
+# bind-mounts src/ over the image). Put the src layout on the import path
+# directly -- one mechanism for prod images and dev mounts alike.
+PYTHONPATH="/app/src${PYTHONPATH:+:$PYTHONPATH}"
+export PYTHONPATH
+
 echo "🚀 Starting flip-api entrypoint script..."
 echo "🌍 Environment: $ENV"
 echo "🐛 Debug mode: $DEBUG"
