@@ -175,6 +175,21 @@ def test_7_site_privacy_rejects_unsupported_backend() -> None:
     _assert("ignored" in result.detail, "detail explains that Flower ignores the policy")
 
 
+def test_8_site_privacy_not_configured_reports_cleanly() -> None:
+    """A kit with no FL_SITE_PRIVACY_* vars passes without claiming a stale render exists."""
+    print("▶ no site privacy policy configured -> PASS, clean detail")
+    result = mod.check_site_privacy_policy(
+        {"FL_BACKEND": "nvflare"},
+        True,
+        "TEST",
+        SCRIPTS_DIR.parent,
+    )
+    _assert(result.status == mod.Status.PASS, "status is PASS", result.detail)
+    _assert("no site privacy policy configured" in result.detail, "detail names the no-policy state", result.detail)
+    _assert("remove" not in result.detail, "detail does not claim a stale render", result.detail)
+    _assert("/dev/null" not in result.detail, "detail names no validation path", result.detail)
+
+
 def main() -> None:
     if not SCRIPT.is_file():
         sys.exit(f"❌ {SCRIPT} not found")
@@ -186,6 +201,7 @@ def main() -> None:
     test_5_site_privacy_uses_runtime_validator()
     test_6_site_privacy_rejects_non_finite_value()
     test_7_site_privacy_rejects_unsupported_backend()
+    test_8_site_privacy_not_configured_reports_cleanly()
 
     print("—")
     print(f"PASS={PASS}  FAIL={FAIL}")

@@ -42,6 +42,7 @@ import argparse
 import os
 import subprocess
 import sys
+import tempfile
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
@@ -482,17 +483,24 @@ def check_site_privacy_policy(
         return Check(label, Status.PASS, "not applicable for this FL backend")
 
     renderer = repo_root / "flip-utils" / "flip" / "nvflare" / "site_policy.py"
-    result = subprocess.run(
-        [sys.executable, str(renderer), "--check", os.devnull],
-        capture_output=True,
-        check=False,
-        env=policy_vars,
-        text=True,
-    )
+    # The validation target must not exist: the renderer treats any existing file as a
+    # stale render, so os.devnull would make a no-policy kit report "would remove stale
+    # /dev/null". env stays kit-only on purpose — the check validates what the kit file
+    # provides, not whatever the operator's shell happens to export.
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        result = subprocess.run(
+            [sys.executable, str(renderer), "--check", str(Path(tmp_dir) / "privacy.json")],
+            capture_output=True,
+            check=False,
+            env=policy_vars,
+            text=True,
+        )
     if result.returncode:
         detail = result.stderr.strip().removeprefix("[site-privacy] FATAL: ")
         return Check(label, Status.FAIL, detail or "site privacy validation failed", hints=hints)
-    detail = result.stdout.strip().removeprefix("[site-privacy] ")
+    # Keep the verdict half of the renderer's report; the rest names the throwaway
+    # validation path, which means nothing in a readiness table.
+    detail = result.stdout.strip().removeprefix("[site-privacy] ").split(" — ")[0]
     return Check(label, Status.PASS, detail)
 
 
