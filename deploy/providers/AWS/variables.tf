@@ -459,3 +459,16 @@ variable "ecs_exec_enabled" {
   type        = bool
   default     = false
 }
+
+variable "lza_elb_access_logs_bucket" {
+  description = <<-EOT
+    Name of the LZA LogArchive account's central ELB access-logs bucket. On the
+    LZA estate the accelerator's guardrail auto-enables ALB access logging to
+    this bucket out-of-band; setting it here codifies that state so plans stop
+    proposing to disable platform-managed logging. Empty (the default, and the
+    only valid value on legacy) omits the access_logs block entirely, keeping
+    legacy plans byte-identical.
+  EOT
+  type        = string
+  default     = ""
+}

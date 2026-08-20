@@ -482,6 +482,14 @@ module "alb" {
   security_groups            = [module.alb_security_group.security_group.id]
   enable_deletion_protection = false
 
+  # LZA (FLIP#749): the accelerator guardrail enables access logging to the
+  # LogArchive bucket out-of-band; mirror it so Terraform stops reverting it.
+  access_logs = var.lza_elb_access_logs_bucket != "" ? {
+    enabled = true
+    bucket  = var.lza_elb_access_logs_bucket
+    prefix  = "${data.aws_caller_identity.current.account_id}/elb-flip-alb"
+  } : {}
+
   # The main listener's protocol depends on DNS availability (FLIP#749): with a
   # hosted zone it terminates HTTPS with the DNS-validated ACM cert — the
   # canonical shape, unchanged for legacy prod/stag. Without one
