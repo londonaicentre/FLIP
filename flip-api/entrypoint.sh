@@ -17,6 +17,15 @@
 DEBUG=${DEBUG:-false}
 ENV=${ENV:-development}
 
+# The venv is baked at image build time (uv sync --locked in the Dockerfile).
+# Never re-resolve it at boot: uv would otherwise try to rebuild the project's
+# editable install, which fetches its build backend (setuptools) from PyPI --
+# on the egress-less LZA account (FLIP#749) that hangs and kills every boot,
+# and on legacy it silently re-downloads setuptools each start. Dependency
+# changes ship by rebuilding the image (BUILD=true in dev), never at boot.
+UV_NO_SYNC=1
+export UV_NO_SYNC
+
 echo "🚀 Starting flip-api entrypoint script..."
 echo "🌍 Environment: $ENV"
 echo "🐛 Debug mode: $DEBUG"
