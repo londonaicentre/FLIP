@@ -11,6 +11,8 @@
 #
 
 import json
+import runpy
+import sys
 
 import pytest
 
@@ -196,6 +198,55 @@ class TestMain:
         assert main(["--check", str(out_path)], env={"FL_SITE_PRIVACY_POLICY": "percentile"}) == 0
         assert not out_path.exists()
         assert main(["--check", str(out_path)], env={"FL_SITE_PRIVACY_POLICY": "bogus"}) == 1
+
+    def test_removes_stale_file_and_reports(self, tmp_path, capsys):
+        out_path = tmp_path / "privacy.json"
+        out_path.write_text("{}")
+
+        exit_code = main([str(out_path)], env={})
+
+        assert exit_code == 0
+        assert not out_path.exists()
+        assert "REMOVED" in capsys.readouterr().out
+
+    def test_check_flag_reports_removal_without_removing(self, tmp_path, capsys):
+        out_path = tmp_path / "privacy.json"
+        out_path.write_text("{}")
+
+        exit_code = main(["--check", str(out_path)], env={})
+
+        assert exit_code == 0
+        assert out_path.exists()
+        assert "would remove (--check)" in capsys.readouterr().out
+
+    def test_env_arg_omitted_reads_os_environ(self, tmp_path, monkeypatch):
+        # The real CLI passes no env mapping — main must fall back to os.environ.
+        out_path = tmp_path / "privacy.json"
+        for var in ("FL_SITE_PRIVACY_PERCENTILE", "FL_SITE_PRIVACY_GAMMA"):
+            monkeypatch.delenv(var, raising=False)
+        monkeypatch.setenv("FL_SITE_PRIVACY_POLICY", "percentile")
+
+        assert main([str(out_path)]) == 0
+        assert json.loads(out_path.read_text())["default_scope"] == SCOPE_NAME
+
+
+class TestModuleEntryPoint:
+    """The fl-client entrypoint invokes ``python -m flip.nvflare.site_policy`` — the module must run as a script."""
+
+    def test_runs_as_main_and_exits_via_systemexit(self, tmp_path, monkeypatch):
+        out_path = tmp_path / "privacy.json"
+        for var in ("FL_SITE_PRIVACY_PERCENTILE", "FL_SITE_PRIVACY_GAMMA"):
+            monkeypatch.delenv(var, raising=False)
+        monkeypatch.setenv("FL_SITE_PRIVACY_POLICY", "percentile")
+        monkeypatch.setattr(sys, "argv", ["site_policy", str(out_path)])
+        # Drop the already-imported module so runpy re-executes it cleanly (no double-import warning).
+        monkeypatch.delitem(sys.modules, "flip.nvflare.site_policy", raising=False)
+
+        with pytest.raises(SystemExit) as excinfo:
+            runpy.run_module("flip.nvflare.site_policy", run_name="__main__")
+
+        assert excinfo.value.code == 0
+        assert json.loads(out_path.read_text())["default_scope"] == SCOPE_NAME
 
 
 class TestNvflareRoundTrip:
