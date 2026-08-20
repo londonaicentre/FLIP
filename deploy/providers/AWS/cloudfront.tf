@@ -114,6 +114,14 @@ moved {
 ############################
 
 resource "aws_cloudfront_vpc_origin" "flip_api" {
+  # Gated off on LZA (FLIP#749): the GRCLOUDFRONTVPCORIGIN SCP denies
+  # cloudfront:CreateVpcOrigin in workload accounts -- deliberately, since a
+  # VPC origin reaches the ALB inside the VPC and bypasses the TGW + central
+  # firewall. On LZA the networking account's edge distribution is the front
+  # door (aicentre-lza-iac); fl_ingress_lza.tf admits its relay path onto the
+  # ALB instead of the SG rule below.
+  count = var.lza_managed_network ? 0 : 1
+
   vpc_origin_endpoint_config {
     # CloudFront VPC origin names accept only alphanumerics, dashes, and
     # underscores — the subdomain contains dots, so replace them with dashes.
@@ -148,6 +156,7 @@ resource "aws_cloudfront_vpc_origin" "flip_api" {
 # checks against the service-managed SG (or the CloudFront managed prefix
 # list), not the ENI source IP.
 data "aws_security_group" "cloudfront_vpcorigins_service" {
+  count  = var.lza_managed_network ? 0 : 1
   name   = "CloudFront-VPCOrigins-Service-SG"
   vpc_id = local.vpc_id
 
@@ -160,13 +169,32 @@ data "aws_security_group" "cloudfront_vpcorigins_service" {
 # lookup needs the VPC origin. Attaching the rule outside the module keeps the
 # chain linear.
 resource "aws_security_group_rule" "alb_ingress_https_from_cloudfront" {
+  count                    = var.lza_managed_network ? 0 : 1
   description              = "HTTPS from the CloudFront-VPCOrigins-Service-SG (Option 2 in AWS VPC origins docs)"
   type                     = "ingress"
   from_port                = var.ALB_HTTPS_PORT
   to_port                  = var.ALB_HTTPS_PORT
   protocol                 = "tcp"
   security_group_id        = module.alb_security_group.security_group.id
-  source_security_group_id = data.aws_security_group.cloudfront_vpcorigins_service.id
+  source_security_group_id = data.aws_security_group.cloudfront_vpcorigins_service[0].id
+}
+
+# State migration for the counts added above (FLIP#749 WP3): keeps existing
+# legacy states aligned without a manual `terraform state mv`. Safe to remove
+# once every live state file has been migrated.
+moved {
+  from = aws_cloudfront_vpc_origin.flip_api
+  to   = aws_cloudfront_vpc_origin.flip_api[0]
+}
+
+moved {
+  from = aws_security_group_rule.alb_ingress_https_from_cloudfront
+  to   = aws_security_group_rule.alb_ingress_https_from_cloudfront[0]
+}
+
+moved {
+  from = aws_cloudfront_distribution.flip_ui
+  to   = aws_cloudfront_distribution.flip_ui[0]
 }
 
 ############################
@@ -398,7 +426,7 @@ resource "aws_s3_bucket_policy" "demo_assets" {
       Resource  = "${data.aws_s3_bucket.demo_assets[0].arn}/ark_demo/assets/*"
       Condition = {
         StringEquals = {
-          "AWS:SourceArn" = aws_cloudfront_distribution.flip_ui.arn
+          "AWS:SourceArn" = var.lza_managed_network ? var.lza_web_edge_distribution_arn : aws_cloudfront_distribution.flip_ui[0].arn
         }
       }
     }]
@@ -468,7 +496,9 @@ locals {
   # (FLIP#749) it is the CloudFront default domain, so uploads/downloads and
   # sign-in keep working before any DNS exists. No dependency cycle: the
   # distribution references neither the app buckets' CORS nor Cognito.
-  ui_origin = var.manage_dns ? "https://${var.flip_alb_subdomain}" : "https://${aws_cloudfront_distribution.flip_ui.domain_name}"
+  # On LZA the workload distribution is gated off -- the UI origin is the
+  # networking account's edge distribution (FLIP#749 WP3).
+  ui_origin = var.manage_dns ? "https://${var.flip_alb_subdomain}" : var.lza_managed_network ? "https://${var.lza_web_edge_domain}" : "https://${aws_cloudfront_distribution.flip_ui[0].domain_name}"
 }
 
 # Custom origin-request policy for /api/*. The managed AllViewer policy
@@ -907,6 +937,13 @@ resource "aws_cloudfront_response_headers_policy" "flip_api" {
 }
 
 resource "aws_cloudfront_distribution" "flip_ui" {
+  # Gated off on LZA with the VPC origin above: the networking account's edge
+  # distribution serves the UI (cross-account OAC on aws_s3_bucket.flip_ui)
+  # and relays /api/* -- see aicentre-lza-iac. The WAF/OAC/function/response
+  # policies below stay standing unused on LZA to keep this diff and the
+  # legacy state churn minimal; the edge carries its own WAF.
+  count = var.lza_managed_network ? 0 : 1
+
   enabled             = true
   is_ipv6_enabled     = true
   http_version        = "http2"
@@ -936,7 +973,7 @@ resource "aws_cloudfront_distribution" "flip_ui" {
     origin_id   = "alb-api-origin"
 
     vpc_origin_config {
-      vpc_origin_id = aws_cloudfront_vpc_origin.flip_api.id
+      vpc_origin_id = aws_cloudfront_vpc_origin.flip_api[0].id
     }
   }
 
@@ -1068,7 +1105,7 @@ resource "aws_s3_bucket_policy" "flip_ui" {
         Resource  = "${aws_s3_bucket.flip_ui.arn}/*"
         Condition = {
           StringEquals = {
-            "AWS:SourceArn" = aws_cloudfront_distribution.flip_ui.arn
+            "AWS:SourceArn" = var.lza_managed_network ? var.lza_web_edge_distribution_arn : aws_cloudfront_distribution.flip_ui[0].arn
           }
         }
       },
@@ -1109,12 +1146,12 @@ resource "aws_s3_bucket_logging" "flip_ui" {
 
 output "CloudfrontDistributionId" {
   description = "CloudFront distribution ID for flip-ui (used by make deploy-ui for cache invalidation)"
-  value       = aws_cloudfront_distribution.flip_ui.id
+  value       = one(aws_cloudfront_distribution.flip_ui[*].id)
 }
 
 output "CloudfrontDistributionDomain" {
   description = "CloudFront distribution CloudFront-assigned domain (*.cloudfront.net). Use for pre-cutover smoke tests."
-  value       = aws_cloudfront_distribution.flip_ui.domain_name
+  value       = one(aws_cloudfront_distribution.flip_ui[*].domain_name)
 }
 
 output "FlipUiBucketName" {

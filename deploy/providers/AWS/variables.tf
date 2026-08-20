@@ -54,6 +54,18 @@ variable "lza_fl_nlb_host_num" {
   default     = 251
 }
 
+variable "lza_web_edge_domain" {
+  description = "Domain name of the networking account's edge CloudFront distribution -- the user-facing front door on LZA (FLIP#749 WP3; the workload distribution is gated off there). Used for local.ui_origin (CORS / UI origin URL). LZA-only."
+  type        = string
+  default     = ""
+}
+
+variable "lza_web_edge_distribution_arn" {
+  description = "ARN of the networking account's edge CloudFront distribution, granted s3:GetObject on the flip-ui (and demo-assets) buckets via cross-account OAC on LZA. LZA-only -- legacy grants the in-account distribution instead."
+  type        = string
+  default     = ""
+}
+
 variable "max_azs" {
   type = number
 }

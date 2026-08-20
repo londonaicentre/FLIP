@@ -612,8 +612,8 @@ resource "aws_route53_record" "alb" {
   # (Resource is still named "alb" for TF-state backwards compatibility; a
   # rename would recreate the record. The alias target is now CloudFront.)
   alias {
-    name                   = aws_cloudfront_distribution.flip_ui.domain_name
-    zone_id                = aws_cloudfront_distribution.flip_ui.hosted_zone_id
+    name                   = aws_cloudfront_distribution.flip_ui[0].domain_name
+    zone_id                = aws_cloudfront_distribution.flip_ui[0].hosted_zone_id
     evaluate_target_health = false
   }
 }
