@@ -807,12 +807,21 @@ deploy-ui: ## Build flip-ui from the working tree and deploy it to S3 + invalida
 	$(_AWS_ENV) aws s3 cp ../../../flip-ui/dist/js/window.js s3://$$UI_BUCKET/js/window.js \
 		--cache-control "no-cache, no-store, must-revalidate" \
 		--content-type "application/javascript; charset=utf-8"
+	@# On LZA there is no workload distribution to invalidate (cloudfront.tf gates
+	@# it off; the networking account's edge distribution serves the bucket) and no
+	@# cross-account invalidation permission -- BY DESIGN (FLIP#749): the hashed
+	@# bundles are immutable and index.html/window.js carry no-cache metadata, so a
+	@# deploy is visible on the next index.html fetch with no invalidation at all.
+ifeq ($(PROD),lza)
+	@echo "🧹 Skipping CloudFront invalidation on LZA (edge distribution honours the Cache-Control metadata)."
+else
 	@echo "🧹 Invalidating CloudFront..."
 	@DIST_ID=$$($(_AWS_ENV) terraform output -raw CloudfrontDistributionId); \
 	[ -n "$$DIST_ID" ] || { echo "❌ Terraform output CloudfrontDistributionId is empty"; exit 1; }; \
 	$(_AWS_ENV) aws cloudfront create-invalidation \
 		--distribution-id "$$DIST_ID" \
 		--paths "/*" >/dev/null
+endif
 	@echo "✅ deploy-ui complete."
 
 .PHONY: deploy-ark-demo
