@@ -244,3 +244,30 @@ resource "aws_security_group_rule" "ecs_fl_server_ingress_internal_nlb" {
   source_security_group_id = module.fl_internal_nlb_security_group[0].security_group.id
   security_group_id        = aws_security_group.ecs_fl_server.id
 }
+
+# The NVFLARE admin kit (provisioned from net-1_project_prod.yml) targets the
+# bare host `fl-server-net-1` — a SAN on the server cert alongside the public
+# FQDN. Legacy resolves it through the flip.local DHCP search domain
+# (dhcp.tf), which the LZA-managed VPC cannot carry, and Fargate's awsvpc
+# network mode rejects extraHosts — so publish the bare name as a
+# single-label private hosted zone whose apex A records are the internal FL
+# NLB's deterministic static IPs. A bare-name lookup exhausts the VPC search
+# domains and then matches this zone's apex, landing on the NLB → fl-server.
+resource "aws_route53_zone" "fl_server_bare_name" {
+  count   = var.lza_managed_network ? 1 : 0
+  name    = "fl-server-net-1"
+  comment = "LZA: resolve the NVFLARE admin kit's bare fl-server host inside the workload VPC (FLIP#749)"
+
+  vpc {
+    vpc_id = local.vpc_id
+  }
+}
+
+resource "aws_route53_record" "fl_server_bare_name_apex" {
+  count   = var.lza_managed_network ? 1 : 0
+  zone_id = aws_route53_zone.fl_server_bare_name[0].zone_id
+  name    = "fl-server-net-1"
+  type    = "A"
+  ttl     = 60
+  records = local.lza_fl_nlb_private_ips
+}
