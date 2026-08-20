@@ -192,7 +192,7 @@
                                 </div>
                                 <TrustChips
                                     :project="project"
-                                    class="col-start-2 row-start-2 self-start justify-end flex md:hidden
+                                    class="col-start-2 row-start-2 self-start justify-end md:hidden
                                     lg:col-start-auto lg:row-start-auto lg:justify-start lg:self-auto lg:flex"
                                 />
                                 <div
@@ -256,7 +256,7 @@
                             </p>
                         </div>
 
-                        <TrustChips :project="project" class="flex" />
+                        <TrustChips :project="project" />
 
                         <div
                             class="flex items-center gap-2 px-3 py-2 rounded-md bg-gray-50 dark:bg-dark-surface text-xs"

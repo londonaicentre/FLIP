@@ -522,10 +522,34 @@ watch(projectFilter, next => {
     syncStatusFilter();
 });
 
+// The filter's options, and the only place the scoped project's name and status come from — a
+// project with no models yet has no row in the list to read them off. Barely changes, so it
+// polls not at all and dedupes for a minute.
+const { data: projectOptions, error: projectOptionsError } = useSWRV("/models/projects", getModelProjectOptions, {
+    dedupingInterval: 60_000,
+    shouldRetryOnError: false
+});
+
+// With `?project=` in the URL, hold the models fetch until the options have confirmed the id: a
+// stale or unauthorised link would otherwise fire a scoped call the backend 403s/404s, flashing
+// the global error banner in the gap before the watcher below can tidy the URL. An options
+// *failure* opens the gate instead — against an API without /models/projects the list must still
+// load, with the filter degrading to invisible rather than the page waiting on a gate that can
+// never open.
+const scopedFetchReady = computed<boolean>(() => {
+    if (!projectFilter.value) return true;
+    if (projectOptionsError.value) return true;
+    if (!projectOptions.value) return false;
+
+    return projectOptions.value.some(project => project.id === projectFilter.value);
+});
+
 const { data, error } = useSWRV(
     () =>
-        `/models?pageNumber=${pageNumber.value}&pageSize=${pageSize}`
-        + `${searchQueryParam.value}${statusQueryParam.value}${projectQueryParam.value}`,
+        scopedFetchReady.value
+            ? `/models?pageNumber=${pageNumber.value}&pageSize=${pageSize}`
+                + `${searchQueryParam.value}${statusQueryParam.value}${projectQueryParam.value}`
+            : "",
     getAllModels,
     {
         dedupingInterval: 5_000,
@@ -536,22 +560,14 @@ const { data, error } = useSWRV(
 
 useErrorHandler(error);
 
-// The filter's options, and the only place the scoped project's name and status come from — a
-// project with no models yet has no row in the list to read them off. Barely changes, so it
-// polls not at all and dedupes for a minute.
-const { data: projectOptions } = useSWRV("/models/projects", getModelProjectOptions, {
-    dedupingInterval: 60_000,
-    shouldRetryOnError: false
-});
-
 const scopedProject = computed<IModelProjectOption | null>(() =>
     projectOptions.value?.find(project => project.id === projectFilter.value) ?? null);
 const isScoped = computed<boolean>(() => !!projectFilter.value && !!scopedProject.value);
 
 // A project id we cannot show — a stale bookmark, a deleted project, access since revoked, or a
-// typo. Dropping it here keeps the page off the backend's 403, which would otherwise strand it
-// behind the loader with a global error banner. Waits for the options to arrive first, or it
-// would fight every deep link during the initial load.
+// typo. The gate above has already kept it off the backend; this drops it from the URL and says
+// why, so the page lands on the full list instead of an empty scoped shell. Waits for the
+// options to arrive first, or it would fight every deep link during the initial load.
 watch([projectOptions, projectFilter], ([options, filter]) => {
     if (!options || !filter) return;
     if (options.some(project => project.id === filter)) return;

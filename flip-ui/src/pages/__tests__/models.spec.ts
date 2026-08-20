@@ -31,6 +31,7 @@ interface ModelsResponse {
 
 const mockSwrvData = ref<ModelsResponse | undefined>(undefined);
 const mockProjectOptions = ref<IModelProjectOption[] | undefined>(undefined);
+const mockProjectOptionsError = ref<Error | null>(null);
 
 // Captures the SWRV key function so tests can inspect the query the page
 // would fetch (search / status / project filter params).
@@ -46,7 +47,7 @@ vi.mock("swrv", () => ({
             return {
                 data: mockProjectOptions,
                 mutate: vi.fn(),
-                error: ref(null)
+                error: mockProjectOptionsError
             };
         }
         swrvKey.fn = key as () => string;
@@ -154,6 +155,7 @@ function mountPage(options: { permissions?: string[] } = {}) {
 beforeEach(() => {
     mockSwrvData.value = undefined;
     mockProjectOptions.value = undefined;
+    mockProjectOptionsError.value = null;
     mockRoute.query = {};
     mockReplace.mockClear();
 });
@@ -744,6 +746,55 @@ describe("Models Page", () => {
             await wrapper.vm.$nextTick();
 
             expect(mockReplace).not.toHaveBeenCalled();
+        });
+
+        test("holds the scoped fetch until the options confirm the id", async () => {
+            // A scoped key issued before validation would let a stale link hit the backend's
+            // 403/404 and flash the global error banner before the guard can tidy up.
+            mockRoute.query = { project: "p1" };
+            setModels([makeModel()]);
+            const wrapper = mountPage();
+            await wrapper.vm.$nextTick();
+
+            expect(swrvKey.fn!()).toBe("");
+
+            mockProjectOptions.value = options;
+            await wrapper.vm.$nextTick();
+
+            expect(swrvKey.fn!()).toContain("&project=p1");
+        });
+
+        test("an id the options reject never reaches the backend", async () => {
+            // The guard clears the URL, but the fetch key must stay empty in the meantime —
+            // otherwise the 403 it exists to prevent has already happened.
+            mockRoute.query = { project: "gone" };
+            setModels([makeModel()]);
+            const wrapper = mountPage();
+            await wrapper.vm.$nextTick();
+
+            expect(swrvKey.fn!()).toBe("");
+
+            mockProjectOptions.value = options;
+            await wrapper.vm.$nextTick();
+
+            expect(swrvKey.fn!()).toBe("");
+            expect(mockReplace).toHaveBeenCalledWith(
+                expect.objectContaining({ query: expect.not.objectContaining({ project: expect.anything() }) })
+            );
+        });
+
+        test("fetches scoped anyway when the options call fails", async () => {
+            // Against an API without /models/projects the filter degrades to invisible; the
+            // list itself must still load rather than wait forever on a gate that can't open.
+            mockRoute.query = { project: "p1" };
+            setModels([makeModel()]);
+            const wrapper = mountPage();
+            await wrapper.vm.$nextTick();
+
+            mockProjectOptionsError.value = new Error("404");
+            await wrapper.vm.$nextTick();
+
+            expect(swrvKey.fn!()).toContain("&project=p1");
         });
 
         test("navigating back to the estate view restores the default tiles and clears search", async () => {

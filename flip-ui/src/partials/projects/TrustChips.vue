@@ -12,7 +12,7 @@
 -->
 
 <template>
-    <div class="flex-wrap items-center gap-1.5 min-w-0">
+    <div class="flex flex-wrap items-center gap-1.5 min-w-0">
         <span
             v-for="trust in trustsToShow"
             :key="trust.id"
