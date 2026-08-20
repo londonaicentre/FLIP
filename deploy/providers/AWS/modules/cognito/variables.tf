@@ -82,3 +82,9 @@ variable "user_pool_tier" {
   type        = string
   default     = null
 }
+
+variable "create_hosted_ui_domain" {
+  description = "Whether to create the hosted-UI user pool domain. False on LZA -- see the resource comment: a domain that has ever had Managed Login blocks PrivateLink access to the pool, and FLIP's flows never use the hosted UI."
+  type        = bool
+  default     = true
+}

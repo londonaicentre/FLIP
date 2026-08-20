@@ -204,12 +204,13 @@ module "cognito" {
   # account's ONLY path to Cognito is the central interface endpoint -- flip-api
   # cannot boot against a v2 pool there (FLIP#749). Cosmetic either way: the
   # FLIP UI signs in via the SDK, not the hosted UI.
-  managed_login_version = var.lza_managed_network ? 1 : 2
-  user_pool_tier        = var.lza_managed_network ? "LITE" : null
-  admin_email           = var.flip_cognito_admin_email
-  researcher_email      = var.flip_cognito_researcher_email
-  seed_user_password    = var.ADMIN_USER_PASSWORD
-  templates_dir         = "${path.module}/templates/cognito"
+  managed_login_version   = var.lza_managed_network ? 1 : 2
+  user_pool_tier          = var.lza_managed_network ? "LITE" : null
+  create_hosted_ui_domain = !var.lza_managed_network
+  admin_email             = var.flip_cognito_admin_email
+  researcher_email        = var.flip_cognito_researcher_email
+  seed_user_password      = var.ADMIN_USER_PASSWORD
+  templates_dir           = "${path.module}/templates/cognito"
   # The UI uses USER_SRP_AUTH (Cognito's native auth flow, not OAuth2 redirect),
   # so callback_urls are hygiene only — keep the canonical UI origin + localhost
   # for dev.
@@ -236,6 +237,11 @@ moved {
 moved {
   from = aws_cognito_user_pool_domain.main
   to   = module.cognito.aws_cognito_user_pool_domain.main
+}
+
+moved {
+  from = module.cognito.aws_cognito_user_pool_domain.main
+  to   = module.cognito.aws_cognito_user_pool_domain.main[0]
 }
 
 moved {

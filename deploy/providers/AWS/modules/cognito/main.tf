@@ -119,6 +119,14 @@ resource "random_string" "cognito_domain" {
 }
 
 resource "aws_cognito_user_pool_domain" "main" {
+  # Gated off on LZA (FLIP#749): FLIP never uses the hosted UI (the app signs
+  # in via the SDK), and a domain object born with Managed Login keeps its
+  # "ManagedLogin configured" state through an in-place downgrade to v1 --
+  # Cognito then refuses PrivateLink API access to the whole pool, which is
+  # the LZA account's only route to cognito-idp. Proven empirically 2026-08-20:
+  # ListUsers through the interface endpoint returned the ManagedLogin error
+  # with the domain present (any version) and 200 once it was deleted.
+  count                 = var.create_hosted_ui_domain ? 1 : 0
   domain                = random_string.cognito_domain.result
   user_pool_id          = aws_cognito_user_pool.flip_user_pool.id
   managed_login_version = var.managed_login_version
