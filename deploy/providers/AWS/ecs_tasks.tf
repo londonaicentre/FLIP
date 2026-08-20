@@ -150,7 +150,7 @@ resource "aws_ecs_task_definition" "fl_api_net_1" {
   task_role_arn      = aws_iam_role.ecs_fl_api_task.arn
 
   container_definitions = jsonencode([
-    merge({
+    {
       name              = "fl-api-net-1"
       image             = local.fl_api_image
       cpu               = 1024
@@ -229,19 +229,7 @@ resource "aws_ecs_task_definition" "fl_api_net_1" {
         retries     = 3
         startPeriod = 120
       }
-      },
-      # The NVFLARE admin kit (provisioned from net-1_project_prod.yml) targets the
-      # bare host `fl-server-net-1` — a SAN on the server cert. On legacy that name
-      # resolves via the flip.local DHCP search domain (dhcp.tf), which the
-      # LZA-managed VPC cannot carry, so pin it to the internal FL NLB's static IPs
-      # (deterministic by subnet_mapping host_num). Empty merge on legacy keeps its
-      # container definition byte-identical.
-      var.lza_managed_network ? {
-        extraHosts = [
-          for ip in local.lza_fl_nlb_private_ips : { hostname = "fl-server-net-1", ipAddress = ip }
-        ]
-      } : {}
-    )
+    }
   ])
 
   dynamic "volume" {
