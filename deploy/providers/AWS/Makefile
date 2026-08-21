@@ -911,6 +911,7 @@ provision-local-trust: ## Provision the on-prem (local) trust host: install Dock
 			-i "localhost," \
 			-e ansible_connection=local \
 			-e ansible_python_interpreter=/usr/bin/python3 \
+			-e fl_backend=$(FL_BACKEND) \
 			../../../deploy/providers/local/site_local_trust.yml; \
 		PLAY_RC=$$?; \
 		exit $$PLAY_RC

@@ -196,15 +196,38 @@
         # `[Errno 13] Permission denied: '/app/data/images/net-1'`, and the
         # FL training run fails downstream with `num_samples=0` because the
         # whole cohort's image fetches errored out.
-        # The net-N children must be pre-created too: each fl-client now
-        # bind-mounts only its own net's slice (<base>/net-N — least
-        # privilege, so training code can't read another net's cached
-        # studies), and a Docker-created root-owned net-N would break
-        # imaging-api's writes into it exactly the same way.
+        # The net-N children must be pre-created too — see the separate,
+        # backend-aware task below.
         - /opt/flip/data/trust-1
+        - /opt/flip/data/trust-2
+
+    # Each fl-client bind-mounts only its own net's slice (<base>/net-N — least
+    # privilege, so training code can't read another net's cached studies), so
+    # the net-N children need pre-creating as well: a Docker-created root-owned
+    # net-N breaks imaging-api's writes into it exactly as described above.
+    #
+    # Their group is backend-aware because the fl-client writes inside net-N too
+    # (flip.add_resource stages under net-N/upload/, NVFLARE CleanupImages deletes
+    # net-N's children):
+    #   * NVFLARE — its client runs as uid 1000, the same as imaging-api, so the
+    #     plain ubuntu:ubuntu 0755 of the parent dirs covers both writers.
+    #   * Flower  — its client is built on upstream flwr/base, which runs as `app`
+    #     (uid/gid 49999) and gets no supplementary group from the production
+    #     compose. Without group 49999 + 0775 it is only "other" on the net dir and
+    #     add_resource fails with EACCES.
+    # Keep in sync with the K8s chart's images-init
+    # (deploy/providers/kubernetes/templates/fl-client.yaml), the on-prem
+    # site_local_trust.yml, and trust/Makefile's $(ensure_net_dirs).
+    - name: create per-net images bind-mount directories
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: ubuntu
+        group: "{{ '49999' if fl_backend == 'flower' else 'ubuntu' }}"
+        mode: "{{ '0775' if fl_backend == 'flower' else '0755' }}"
+      loop:
         - /opt/flip/data/trust-1/net-1
         - /opt/flip/data/trust-1/net-2
-        - /opt/flip/data/trust-2
         - /opt/flip/data/trust-2/net-1
         - /opt/flip/data/trust-2/net-2
 

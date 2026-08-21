@@ -18,6 +18,10 @@ services:
   fl-client-net-1:
     image: ${DOCKER_FL_REGISTRY}${DOCKER_FL_CLIENT_NAME}:${DOCKER_FL_TAG}
     # Read the host-provisioned 640 TLS keys via the host group (dev only).
+    # This is also what lets this client (upstream flwr/base, uid/gid 49999)
+    # write inside the images net dir, which $(ensure_net_dirs) provisions
+    # 0775 with THIS group in dev — production instead uses group 49999, since
+    # there is no group_add there. Keep the two in step.
     group_add: ["${DOCKER_GID:-1000}"]
     security_opt:
       - no-new-privileges:true
@@ -71,7 +75,7 @@ services:
 
   fl-client-net-2:
     image: ${DOCKER_FL_REGISTRY}${DOCKER_FL_CLIENT_NAME}:${DOCKER_FL_TAG}
-    # Read the host-provisioned 640 TLS keys via the host group (dev only).
+    # TLS keys + images net dir group, dev only (see fl-client-net-1 above).
     group_add: ["${DOCKER_GID:-1000}"]
     security_opt:
       - no-new-privileges:true

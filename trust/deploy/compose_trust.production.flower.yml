@@ -29,10 +29,14 @@ services:
       # container path keeps the net-1 suffix so imaging-api's absolute paths
       # still resolve unchanged inside the client. The host net-1 dir must be
       # pre-created writable by imaging-api's uid AND this client (which writes
-      # too: flip.add_resource stages under net-1/upload/). AWS site.yml, the
-      # on-prem local playbook, and `make up-trust`'s ownership-aware
-      # $(ensure_net_dirs) all do this — a Docker- or sudo-created root-owned
-      # source dir breaks those writes.
+      # too: flip.add_resource stages under net-1/upload/). This client is the
+      # upstream flwr/base image, running as `app` (uid/gid 49999) with no
+      # supplementary group here, so on Flower the dir is provisioned
+      # <imaging-api-uid>:49999 + 0775 — owner write for imaging-api, group
+      # write for this client. AWS site.yml's per-net task, the on-prem local
+      # playbook, and `make up-trust`'s ownership-aware $(ensure_net_dirs) all
+      # do this (as does the K8s chart's images-init) — a Docker- or
+      # sudo-created root-owned source dir breaks those writes.
       # Unset BASE_IMAGES_DOWNLOAD_DIR in the prod kit → /opt/flip/data/trust-${FL_KIT_SLOT_NUMBER}
       # (see imaging-api in compose_trust.production.yml for the full rationale;
       # mirrors ORTHANC_STORAGE_DIR's default).

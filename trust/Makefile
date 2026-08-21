@@ -102,14 +102,50 @@ IMAGES_BASE = $(or $(BASE_IMAGES_DOWNLOAD_DIR),$(if $(PROD),/opt/flip/data/trust
 # documented on-prem bring-up runs this Makefile under sudo, and Docker root-creates any
 # missing source dir — either way a root-owned net-N means imaging-api (uid 1000,
 # CapDrop ALL) cannot write inside it, every download 500s, and training dies much later
-# with a misleading num_samples=0. The base dir's owner is authoritative (set by the
-# provisioning playbooks in prod, by this mkdir as the host user in dev).
+# with a misleading num_samples=0. The base dir's owner UID is authoritative (set by the
+# provisioning playbooks in prod, by this mkdir as the host user in dev) and imaging-api
+# runs as it on every path, so it always owns net-N.
+#
+# The GROUP and MODE are backend-aware, because the fl-client writes inside net-N too
+# (flip.add_resource stages under net-N/upload/, NVFLARE CleanupImages deletes net-N's
+# children) and on Flower it does not share imaging-api's UID: the Flower client is built
+# on the upstream flwr/base image, which runs as `app` (uid/gid 49999). Mirrors the K8s
+# chart's images-init (deploy/providers/kubernetes/templates/fl-client.yaml):
+#   * NVFLARE, any env      — the base dir's own owner:group, 0755. Its client shares
+#     imaging-api's UID, so owner write covers both writers.
+#   * Flower, prod/stag     — <base-uid>:49999, 0775. The production compose adds no
+#     supplementary group, so 49999 has to be the dir's own group. Setting it needs root,
+#     which the documented on-prem/EC2 bring-up already has (sudo).
+#   * Flower, development   — <base-uid>:$(DOCKER_GID), 0775. The development compose
+#     already hands the client the host GID (`group_add: ["$${DOCKER_GID:-1000}"]`, for
+#     the 640 TLS keys), so group write is all that is missing — and an unprivileged dev
+#     bring-up could not chown to 49999 anyway.
+#
+# A failed chown/chmod is fatal: continuing lands in exactly the Permission-denied →
+# num_samples=0 failure this recipe exists to prevent, and a warning is easy to miss in
+# long bring-up output. It is fatal only after re-checking the dirs, though — chown/chmod
+# by a non-root non-owner returns EPERM even when the metadata already matches the
+# target, and that must not abort an already-correct host.
 define ensure_net_dirs
 	@base="$(IMAGES_BASE)"; \
 	mkdir -p "$$base/net-1" "$$base/net-2"; \
-	owner="$$(stat -c '%u:%g' "$$base")"; \
-	chown "$$owner" "$$base/net-1" "$$base/net-2" 2>/dev/null || \
-	  echo "⚠️  Could not align $$base/net-{1,2} ownership with $$base ($$owner) — imaging-api may be unable to write there (downloads would 500 and training would fail with num_samples=0). Fix: sudo chown -R $$owner $$base"
+	if [ "$(FL_BACKEND)" = "flower" ]; then \
+	  owner="$$(stat -c '%u' "$$base"):$(if $(PROD),49999,$(DOCKER_GID))"; mode=775; \
+	else \
+	  owner="$$(stat -c '%u:%g' "$$base")"; mode=755; \
+	fi; \
+	if ! chown "$$owner" "$$base/net-1" "$$base/net-2" 2>/dev/null || \
+	   ! chmod "$$mode" "$$base/net-1" "$$base/net-2" 2>/dev/null; then \
+	  for d in "$$base/net-1" "$$base/net-2"; do \
+	    got="$$(stat -c '%u:%g %a' "$$d")"; \
+	    case "$$got" in "$$owner "*"$$mode") continue;; esac; \
+	    echo "❌  $$d is $$got but must be $$owner $$mode — imaging-api and the $(FL_BACKEND)"; \
+	    echo "    fl-client both write there, so every image download would 500 and training"; \
+	    echo "    would later fail with a misleading num_samples=0."; \
+	    echo "    Fix: sudo chown $$owner $$base/net-1 $$base/net-2 && sudo chmod $$mode $$base/net-1 $$base/net-2"; \
+	    exit 1; \
+	  done; \
+	fi
 endef
 # --project-directory . keeps relative paths inside the compose files (./trust-api,
 # ./observability/, ./omop-db/volumes/, …) resolving from trust/ even though the compose
