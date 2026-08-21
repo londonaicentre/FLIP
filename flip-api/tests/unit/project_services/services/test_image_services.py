@@ -974,6 +974,52 @@ class TestGetImagingStatusSnapshot:
 
         assert snapshot.connection_state == ImagingConnectionState.UNREACHABLE
 
+    @pytest.mark.parametrize("result", [None, ""], ids=["none", "empty-string"])
+    def test_failure_with_no_result_payload_falls_back_to_unreachable(
+        self, result: str | None, mock_db_session: MagicMock
+    ):
+        """A task can be marked FAILED without ever recording a result — e.g. killed mid-flight."""
+        failed = MagicMock()
+        failed.status = TaskStatus.FAILED
+        failed.result = result
+        failed.updated_at = datetime.now(timezone.utc)
+        mock_db_session.exec.return_value.first.side_effect = [failed, None]
+
+        snapshot = _get_imaging_status_snapshot(uuid4(), uuid4(), mock_db_session)
+
+        assert snapshot.connection_state == ImagingConnectionState.UNREACHABLE
+
+    @pytest.mark.parametrize("payload", ['"boom"', "[404]", "404"], ids=["string", "list", "number"])
+    def test_non_object_failure_result_falls_back_to_unreachable(
+        self, payload: str, mock_db_session: MagicMock
+    ):
+        """Valid JSON that isn't an object has no `status_code` to read, so it can't be a 404."""
+        failed = MagicMock()
+        failed.status = TaskStatus.FAILED
+        failed.result = payload
+        failed.updated_at = datetime.now(timezone.utc)
+        mock_db_session.exec.return_value.first.side_effect = [failed, None]
+
+        snapshot = _get_imaging_status_snapshot(uuid4(), uuid4(), mock_db_session)
+
+        assert snapshot.connection_state == ImagingConnectionState.UNREACHABLE
+
+    def test_failure_with_no_result_keeps_the_last_known_counts(self, mock_db_session: MagicMock):
+        """Whatever shape the failure took, the last good counts must survive it."""
+        seen = datetime(2026, 8, 21, 13, 58, tzinfo=timezone.utc)
+        failed = MagicMock()
+        failed.status = TaskStatus.FAILED
+        failed.result = None
+        failed.updated_at = datetime(2026, 8, 21, 14, 30, tzinfo=timezone.utc)
+        mock_db_session.exec.return_value.first.side_effect = [failed, _completed_task(_SAMPLE_COUNTS, seen)]
+
+        snapshot = _get_imaging_status_snapshot(uuid4(), uuid4(), mock_db_session)
+
+        assert snapshot.connection_state == ImagingConnectionState.UNREACHABLE
+        assert snapshot.import_status is not None
+        assert snapshot.import_status.successful_count == 300
+        assert snapshot.last_seen_at == seen
+
     def test_recovery_back_to_ok_when_a_newer_refresh_succeeds(self, mock_db_session: MagicMock):
         """Once the trust comes back, the newest terminal task is COMPLETED again."""
         seen = datetime(2026, 8, 21, 15, 30, tzinfo=timezone.utc)

@@ -515,6 +515,33 @@ describe("ProjectStatus — XNAT import error states (FLIP#1022)", () => {
 
             expect(wrapper.find("[data-test=import-count-trust-1]").text()).not.toContain("at ");
         });
+
+        it("omits the timestamp rather than printing 'Invalid Date' when it cannot be parsed", () => {
+            mockSwrvData.value = [trustInState("unreachable", { lastSeenAt: "not-a-timestamp" })];
+            const wrapper = mountProjectStatus();
+
+            const count = wrapper.find("[data-test=import-count-trust-1]").text();
+            expect(count).not.toContain("Invalid Date");
+            expect(count).not.toContain("at ");
+            expect(count).toContain("300");
+        });
+
+        it("counts a trust that reports no successful field as zero retrieved", () => {
+            // A partial importStatus must still render a count, not "undefined / 5".
+            mockSwrvData.value = [
+                trustInState("unreachable", {
+                    importStatus: {
+                        failed: 0,
+                        processing: 5,
+                        queued: 0,
+                        queueFailed: 0
+                    } as IImagingProjectStatus["importStatus"]
+                })
+            ];
+            const wrapper = mountProjectStatus();
+
+            expect(wrapper.find("[data-test=import-count-trust-1]").text()).toContain("0 / 5");
+        });
     });
 
     describe("project missing on XNAT", () => {
