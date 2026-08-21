@@ -113,20 +113,6 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _size_mb(path: Path) -> float:
-    """Total size of an exported bundle, whether it is one file or a directory.
-
-    Args:
-        path (Path): The exported bundle.
-
-    Returns:
-        float: Size in megabytes.
-    """
-    if path.is_dir():
-        return sum(item.stat().st_size for item in path.rglob("*") if item.is_file()) / 1e6
-    return path.stat().st_size / 1e6
-
-
 def main(argv: list[str] | None = None) -> int:
     """Entry point.
 
@@ -164,7 +150,7 @@ def main(argv: list[str] | None = None) -> int:
         allow_pickle=args.allow_pickle,
     )
 
-    print(f"Wrote {result.output} ({_size_mb(result.output):.1f} MB)")
+    print(f"Wrote {result.output} ({result.size_bytes / 1e6:.1f} MB)")
     print(f"  form              : {result.form}")
     if result.method:
         print(f"  method            : {result.method}")

@@ -43,6 +43,7 @@ from flip.export import (
     load_app_model,
     load_checkpoint,
 )
+from flip.export.__main__ import build_parser, main
 
 _MODELS_PY = """
 from torch import nn
@@ -117,6 +118,19 @@ def _promote_integer_buffers(state_dict: OrderedDict) -> OrderedDict:
     )
 
 
+def _write_export_configs(tmp_path: Path, inference: dict | None = None) -> None:
+    """Write the author-supplied bundle configs where the exporter looks for them by default.
+
+    Args:
+        tmp_path (Path): Test directory holding ``app_files/`` beside ``export/``.
+        inference (dict | None): Inference config to write, defaulting to the shared one.
+    """
+    export_dir = tmp_path / "export"
+    export_dir.mkdir(exist_ok=True)
+    (export_dir / "inference.json").write_text(json.dumps(_INFERENCE if inference is None else inference))
+    (export_dir / "metadata.json").write_text(json.dumps(_METADATA))
+
+
 @pytest.fixture
 def app(tmp_path: Path) -> Path:
     """Create an application directory alongside an ``export/`` config directory.
@@ -127,11 +141,7 @@ def app(tmp_path: Path) -> Path:
     app_dir = tmp_path / "app_files"
     app_dir.mkdir()
     (app_dir / "models.py").write_text(_MODELS_PY.format(out_channels=2))
-
-    export_dir = tmp_path / "export"
-    export_dir.mkdir()
-    (export_dir / "inference.json").write_text(json.dumps(_INFERENCE))
-    (export_dir / "metadata.json").write_text(json.dumps(_METADATA))
+    _write_export_configs(tmp_path)
     return app_dir
 
 
@@ -296,10 +306,7 @@ class TestExportBundle:
         app_dir = tmp_path / "other_app"
         app_dir.mkdir()
         (app_dir / "models.py").write_text(_MODELS_PY.format(out_channels=5))
-        export_dir = tmp_path / "export"
-        export_dir.mkdir(exist_ok=True)
-        (export_dir / "inference.json").write_text(json.dumps(_INFERENCE))
-        (export_dir / "metadata.json").write_text(json.dumps(_METADATA))
+        _write_export_configs(tmp_path)
 
         with pytest.raises(RuntimeError, match="size mismatch|Error"):
             export_bundle(checkpoint, app_dir, tmp_path / "model.ts", example_input_shape=_INPUT_SHAPE)
@@ -327,9 +334,10 @@ class TestExportBundle:
         assert result.method == "trace"
         assert result.max_abs_delta == 0.0
 
-    def test_unverified_export_is_flagged(self, checkpoint, app, tmp_path):
+    @pytest.mark.parametrize(("form", "leaf"), [("torchscript", "model.ts"), ("directory", "bundle")])
+    def test_unverified_export_is_flagged(self, checkpoint, app, tmp_path, form, leaf):
         """Without a probe shape the export still succeeds, but says it was not verified."""
-        result = export_bundle(checkpoint, app, tmp_path / "model.ts")
+        result = export_bundle(checkpoint, app, tmp_path / leaf, form=form)
 
         assert result.max_abs_delta == -1.0
         assert any("not verified" in warning for warning in result.warnings)
@@ -400,11 +408,7 @@ def realistic_app(tmp_path: Path) -> Path:
     (app_dir / "models.py").write_text(_SIBLING_MODELS_PY)
     (app_dir / "blocks.py").write_text(_SIBLING_BLOCKS_PY)
     (app_dir / "config.json").write_text(json.dumps({"net_config": {"out_channels": 2}}))
-
-    export_dir = tmp_path / "export"
-    export_dir.mkdir()
-    (export_dir / "inference.json").write_text(json.dumps(_INFERENCE))
-    (export_dir / "metadata.json").write_text(json.dumps(_METADATA))
+    _write_export_configs(tmp_path)
     return app_dir
 
 
@@ -426,10 +430,8 @@ class TestDirectoryBundle:
         out = tmp_path / "bundle"
         export_bundle(checkpoint=checkpoint, app_dir=app, out=out, form="directory")
 
-        weights = out / "models" / "model.pt"
-        assert not zipfile.is_zipfile(weights) or "code/" not in "".join(zipfile.ZipFile(weights).namelist())
         with pytest.raises(RuntimeError):
-            torch.jit.load(str(weights))
+            torch.jit.load(str(out / "models" / "model.pt"))
 
     def test_reports_that_it_compiled_nothing(self, checkpoint, app, tmp_path):
         """``method`` describes a TorchScript compilation, and there was none."""
@@ -454,32 +456,25 @@ class TestDirectoryBundle:
         export_bundle(checkpoint=checkpoint, app_dir=app, out=out, form="directory")
 
         inference = json.loads((out / "configs" / "inference.json").read_text())
-        assert inference["network_def"] == {"_target_": "scripts.models.get_model"}
+        assert inference["network_def"] == {"_target_": "flip_network.get_model"}
         assert inference["preprocessing"] == _INFERENCE["preprocessing"]
+        assert (out / "flip_network.py").is_file()
 
-    def test_an_author_declared_network_is_left_alone(self, checkpoint, tmp_path):
+    def test_an_author_declared_network_is_left_alone(self, checkpoint, app, tmp_path):
         """An author who has declared their own architecture keeps it, and is told so."""
-        app_dir = tmp_path / "app_files"
-        app_dir.mkdir()
-        (app_dir / "models.py").write_text(_MODELS_PY.format(out_channels=2))
-        export_dir = tmp_path / "export"
-        export_dir.mkdir()
         declared = {"_target_": "monai.networks.nets.UNet", "spatial_dims": 2}
-        (export_dir / "inference.json").write_text(json.dumps({**_INFERENCE, "network": declared}))
-        (export_dir / "metadata.json").write_text(json.dumps(_METADATA))
+        _write_export_configs(tmp_path, inference={**_INFERENCE, "network": declared})
 
         out = tmp_path / "bundle"
-        result = export_bundle(checkpoint=checkpoint, app_dir=app_dir, out=out, form="directory")
+        result = export_bundle(checkpoint=checkpoint, app_dir=app, out=out, form="directory")
 
-        assert json.loads((out / "configs" / "inference.json").read_text())["network"] == declared
-        assert "network_def" not in json.loads((out / "configs" / "inference.json").read_text())
+        written = json.loads((out / "configs" / "inference.json").read_text())
+        assert written["network"] == declared
+        assert "network_def" not in written
         assert any("already declares 'network'" in warning for warning in result.warnings)
 
-    def test_sibling_modules_and_sidecar_files_travel_with_models_py(self, realistic_app, tmp_path):
+    def test_sibling_modules_and_sidecar_files_travel_with_models_py(self, checkpoint, realistic_app, tmp_path):
         """A tutorial's get_model() reads a sidecar config and imports a sibling; both must be there."""
-        checkpoint = tmp_path / "FL_global_model.pt"
-        torch.save(OrderedDict(model=_promote_integer_buffers(_reference_state_dict())), checkpoint)
-
         out = tmp_path / "bundle"
         result = export_bundle(
             checkpoint=checkpoint, app_dir=realistic_app, out=out, form="directory", example_input_shape=_INPUT_SHAPE
@@ -489,31 +484,26 @@ class TestDirectoryBundle:
         assert (out / "scripts" / "config.json").is_file()
         assert result.max_abs_delta == 0.0
 
-    def test_build_artefacts_are_not_copied(self, realistic_app, tmp_path):
+    def test_build_artefacts_are_not_copied(self, checkpoint, realistic_app, tmp_path):
         """A stale __pycache__ carries no architecture and would ship compiled bytecode."""
-        checkpoint = tmp_path / "FL_global_model.pt"
-        torch.save(OrderedDict(model=_promote_integer_buffers(_reference_state_dict())), checkpoint)
-
         out = tmp_path / "bundle"
         export_bundle(checkpoint=checkpoint, app_dir=realistic_app, out=out, form="directory")
 
         assert not (out / "scripts" / "__pycache__").exists()
 
-    def test_the_bundle_is_importable_from_a_clean_interpreter(self, realistic_app, tmp_path):
-        """The load the MAP performs: import scripts.models with only the bundle root on sys.path.
+    def test_the_bundle_is_importable_from_a_clean_interpreter(self, checkpoint, realistic_app, tmp_path):
+        """The load the MAP performs: import flip_network with only the bundle root on sys.path.
 
         Run in a subprocess because it is the *absence* of this suite's import state that is under
         test — the flat ``import blocks`` has to resolve from inside the bundle, not from the
         application directory this process already put on ``sys.path``.
         """
-        checkpoint = tmp_path / "FL_global_model.pt"
-        torch.save(OrderedDict(model=_promote_integer_buffers(_reference_state_dict())), checkpoint)
         out = tmp_path / "bundle"
         export_bundle(checkpoint=checkpoint, app_dir=realistic_app, out=out, form="directory")
 
         program = (
             "import sys, torch; sys.path.insert(0, sys.argv[1]);"
-            "import scripts.models as app_models; net = app_models.get_model();"
+            "import flip_network; net = flip_network.get_model();"
             "net.load_state_dict(torch.load(sys.argv[1] + '/models/model.pt', weights_only=True), strict=True);"
             "print(type(net).__name__)"
         )
@@ -524,16 +514,30 @@ class TestDirectoryBundle:
         assert completed.returncode == 0, completed.stderr
         assert completed.stdout.strip() == "WrappedNet"
 
-    def test_an_existing_package_init_is_preserved(self, checkpoint, app, tmp_path):
-        """Flower apps ship an __init__.py; its contents must survive the import shim."""
-        (app / "__init__.py").write_text('"""Standard app module."""\nMARKER = "kept"\n')
+    def test_the_copied_application_is_left_verbatim(self, checkpoint, app, tmp_path):
+        """Generated code lives in flip_network.py, so the researcher's own files are untouched."""
+        original = '"""Standard app module."""\nMARKER = "kept"\n'
+        (app / "__init__.py").write_text(original)
 
         out = tmp_path / "bundle"
         export_bundle(checkpoint=checkpoint, app_dir=app, out=out, form="directory")
 
-        init = (out / "scripts" / "__init__.py").read_text()
-        assert 'MARKER = "kept"' in init
-        assert "sys.path.insert" in init
+        assert (out / "scripts" / "__init__.py").read_text() == original
+        assert (out / "scripts" / "models.py").read_text() == (app / "models.py").read_text()
+
+    def test_an_application_that_is_not_a_package_becomes_importable(self, checkpoint, app, tmp_path):
+        """``flip_network`` imports ``scripts.models``, so ``scripts/`` has to be a package."""
+        out = tmp_path / "bundle"
+        export_bundle(checkpoint=checkpoint, app_dir=app, out=out, form="directory")
+
+        assert (out / "scripts" / "__init__.py").read_text() == ""
+
+    def test_a_bundle_refuses_to_be_committed(self, checkpoint, app, tmp_path):
+        """A bundle copies the application, which no weights-shaped ignore rule would catch."""
+        out = tmp_path / "bundle"
+        export_bundle(checkpoint=checkpoint, app_dir=app, out=out, form="directory")
+
+        assert (out / ".gitignore").read_text().splitlines()[-1] == "*"
 
     def test_provenance_reaches_the_configs_metadata(self, checkpoint, app, tmp_path):
         """A directory bundle must be as traceable as the TorchScript one."""
@@ -561,11 +565,11 @@ class TestDirectoryBundle:
 
     def test_no_example_shape_is_needed_even_with_method_trace(self, checkpoint, app, tmp_path):
         """``method`` is a TorchScript concern, so its precondition cannot apply here."""
-        result = export_bundle(
-            checkpoint=checkpoint, app_dir=app, out=tmp_path / "bundle", form="directory", method="trace"
-        )
+        out = tmp_path / "bundle"
 
-        assert result.method is None
+        export_bundle(checkpoint=checkpoint, app_dir=app, out=out, form="directory", method="trace")
+
+        assert (out / "models" / "model.pt").is_file()
 
     def test_a_re_export_drops_modules_the_application_no_longer_has(self, checkpoint, app, tmp_path):
         """A stale module left from a previous export would shadow the current app on sys.path."""
@@ -613,16 +617,63 @@ class TestTorchScriptFailure:
 
         assert "form='directory'" in str(raised.value)
         assert "unsupported on Python 3.14+" in str(raised.value)
-
-    def test_the_original_failure_is_kept_as_the_cause(self, checkpoint, app, tmp_path, monkeypatch):
-        """Advice must not cost the caller the underlying error."""
-
-        def _gone(*args, **kwargs):
-            raise AttributeError("module 'torch' has no attribute 'jit'")
-
-        monkeypatch.setattr(torch.jit, "script", _gone)
-
-        with pytest.raises(RuntimeError) as raised:
-            export_bundle(checkpoint=checkpoint, app_dir=app, out=tmp_path / "model.ts")
-
+        # Advice must not cost the caller the underlying error.
         assert isinstance(raised.value.__cause__, AttributeError)
+
+
+def _run_cli(checkpoint: Path, app: Path, out: Path, *extra: str) -> int:
+    """Invoke the module's entry point the way a researcher would.
+
+    Returns:
+        int: The process exit code.
+    """
+    return main(["--checkpoint", str(checkpoint), "--app-dir", str(app), "--out", str(out), *extra])
+
+
+class TestCommandLine:
+    """``python -m flip.export`` — the wiring most likely to break is the flag reaching the call."""
+
+    def test_form_defaults_to_torchscript(self):
+        """An existing invocation must keep producing exactly what it produced before."""
+        parsed = build_parser().parse_args(["--checkpoint", "c.pt", "--app-dir", "a", "--out", "o"])
+
+        assert parsed.form == "torchscript"
+
+    def test_directory_form_writes_a_bundle_and_claims_no_method(self, checkpoint, app, tmp_path, capsys):
+        """Printing a method would claim a TorchScript compilation that never happened."""
+        out = tmp_path / "bundle"
+
+        exit_code = _run_cli(checkpoint, app, out, "--form", "directory")
+
+        assert exit_code == 0
+        assert (out / "models" / "model.pt").is_file()
+        printed = capsys.readouterr().out
+        assert "form              : directory" in printed
+        assert "method" not in printed
+
+    def test_torchscript_form_still_reports_its_method(self, checkpoint, app, tmp_path, capsys):
+        """The default path's output is unchanged."""
+        _run_cli(checkpoint, app, tmp_path / "model.ts")
+
+        assert "method            : script" in capsys.readouterr().out
+
+
+class TestBundleSize:
+    """``ExportResult.size_bytes``, which the CLI prints for either form."""
+
+    def test_a_directory_bundle_is_measured_by_its_contents(self, checkpoint, app, tmp_path):
+        """``st_size`` on a directory reports the inode — a few kB, whatever the bundle holds."""
+        out = tmp_path / "bundle"
+
+        result = export_bundle(checkpoint, app, out, form="directory")
+
+        assert result.size_bytes > (out / "models" / "model.pt").stat().st_size
+        assert result.size_bytes != out.stat().st_size
+
+    def test_a_torchscript_bundle_is_measured_directly(self, checkpoint, app, tmp_path):
+        """The TorchScript form is one file, and must report its own size."""
+        out = tmp_path / "model.ts"
+
+        result = export_bundle(checkpoint, app, out)
+
+        assert result.size_bytes == out.stat().st_size

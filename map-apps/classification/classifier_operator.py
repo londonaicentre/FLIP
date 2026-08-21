@@ -56,6 +56,10 @@ from monai.transforms import Activations, Compose, EnsureType, Resize, ScaleInte
 LABELS = ("Effusion", "Edema")
 POSITIVE_THRESHOLD = 0.5
 
+# Fixed by MonaiBundleInferenceOperator, which is what a directory bundle is shaped for.
+INFERENCE_CONFIG_NAME = "inference.json"
+METADATA_CONFIG_NAME = "metadata.json"
+
 
 class FlipXrayClassifierOperator(Operator):
     """Runs the FLIP xray classifier over a DICOM-derived image and emits a text result.
@@ -109,60 +113,88 @@ class FlipXrayClassifierOperator(Operator):
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         if model_path.is_dir():
             self._logger.info(f"Model not in context; loading directory bundle from {model_path}")
-            return self._load_directory_bundle(model_path, device)
+            return self._load_directory_bundle(model_path, device, model_name)
         self._logger.info(f"Model not in context; loading TorchScript from {model_path}")
         return torch.jit.load(str(model_path), map_location=device)
 
-    def _load_directory_bundle(self, bundle_path: Path, device: torch.device):
+    def _resolve_bundle_root(self, model_path: Path, model_name: str) -> Path:
+        """Find the bundle under the packager's model path.
+
+        ``HOLOSCAN_MODEL_PATH`` points at whatever the packager copied ``--models`` into, which is
+        either the bundle itself or a directory of named models. A bundle is identified by its
+        ``configs/metadata.json`` — that is what makes a directory a MONAI bundle, rather than the
+        weights, which may be named either ``model.pt`` or ``model.ts``.
+
+        Args:
+            model_path (Path): The packager's model path.
+            model_name (str): Model name, used to choose when several bundles are present.
+
+        Returns:
+            Path: The bundle root.
+
+        Raises:
+            IOError: If no bundle is found, or if several are and none is named ``model_name``.
+        """
+        if (model_path / "configs" / METADATA_CONFIG_NAME).is_file():
+            return model_path
+
+        found = [
+            child for child in sorted(model_path.iterdir()) if (child / "configs" / METADATA_CONFIG_NAME).is_file()
+        ]
+        named = [child for child in found if child.name == model_name] if model_name else []
+        if named:
+            return named[0]
+        if len(found) != 1:
+            raise IOError(
+                f"Expected one bundle at or directly under {model_path}, found {len(found)}: "
+                f"{[child.name for child in found]}. Pass model_name to choose between them."
+            )
+        self._logger.info(f"Found the bundle one level down, at {found[0]}")
+        return found[0]
+
+    def _load_directory_bundle(self, model_path: Path, device: torch.device, model_name: str = ""):
         """Load a directory bundle without TorchScript, the way MONAI Deploy's own loader does.
 
         The architecture comes from the bundle's ``network``/``network_def`` config entry, which for
-        a ``flip.export`` bundle names ``get_model`` in the application copied under ``scripts/``.
-        That import needs the bundle root on ``sys.path`` first — the application's modules import
-        one another flatly, exactly as they do under the FL executors.
-
-        ``HOLOSCAN_MODEL_PATH`` points at whatever directory the packager copied ``--models`` into,
-        which may be the bundle itself or a directory holding it, so one level of nesting is
-        searched before giving up.
+        a ``flip.export`` bundle names ``get_model`` in the generated ``flip_network`` module at the
+        bundle root. That import needs the bundle root on ``sys.path`` first.
 
         Args:
-            bundle_path (Path): The bundle directory, or a directory containing one.
+            model_path (Path): The packager's model path — a bundle, or a directory of them.
             device (torch.device): Device to place the network on.
+            model_name (str): Model name, used to choose when several bundles are present.
 
         Returns:
             The network in eval mode, with the bundle's weights applied.
 
         Raises:
-            IOError: If no bundle with ``models/model.pt`` is found.
+            IOError: If no bundle, or no ``models/model.pt`` inside it, is found.
             RuntimeError: If no config entry names an architecture.
         """
-        if not (bundle_path / "models" / "model.pt").is_file():
-            nested = [child for child in sorted(bundle_path.iterdir()) if (child / "models" / "model.pt").is_file()]
-            if not nested:
-                raise IOError(f"No models/model.pt in {bundle_path} or any directory directly under it")
-            bundle_path = nested[0]
-            self._logger.info(f"Found the bundle one level down, at {bundle_path}")
+        bundle_path = self._resolve_bundle_root(model_path, model_name)
         weights = bundle_path / "models" / "model.pt"
+        if not weights.is_file():
+            raise IOError(f"No models/model.pt in {bundle_path}")
 
         if str(bundle_path) not in sys.path:
             sys.path.insert(0, str(bundle_path))
 
         parser = ConfigParser()
-        parser.read_meta(f=json.loads((bundle_path / "configs" / "metadata.json").read_text()))
-        parser.read_config([bundle_path / "configs" / "inference.json"])
+        parser.read_meta(f=bundle_path / "configs" / METADATA_CONFIG_NAME)
+        parser.read_config(bundle_path / "configs" / INFERENCE_CONFIG_NAME)
         parser.parse()
 
-        network = None
-        for key in ("network", "network_def"):
-            if parser.get(key) is not None:
-                network = parser.get_parsed_content(key)
-                break
-        if network is None:
-            raise RuntimeError(f"No 'network' or 'network_def' in {bundle_path / 'configs' / 'inference.json'}")
+        key = next((candidate for candidate in ("network", "network_def") if parser.get(candidate) is not None), None)
+        if key is None:
+            raise RuntimeError(f"No 'network' or 'network_def' in {bundle_path / 'configs' / INFERENCE_CONFIG_NAME}")
+        network = parser.get_parsed_content(key)
 
+        # Loaded onto the CPU and moved once, rather than map_location=device: loading straight to
+        # the GPU would copy the state dict there, back out into the CPU-resident network, and then
+        # in again — three crossings and a transient GPU copy of the whole model, for one move.
         # weights_only=True: a bundle's weights are a plain state dict, so nothing is lost by
         # refusing to unpickle arbitrary objects out of a file that arrived with the MAP.
-        network.load_state_dict(torch.load(str(weights), map_location=device, weights_only=True), strict=True)
+        network.load_state_dict(torch.load(str(weights), map_location="cpu", weights_only=True), strict=True)
         return network.to(device).eval()
 
     def setup(self, spec: OperatorSpec):

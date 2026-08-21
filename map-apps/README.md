@@ -108,5 +108,5 @@ TypeScript, so `.gitignore` carries targeted rules for the paths where TorchScri
 alongside the global `*.pt` rule that covers a directory bundle's weights.
 
 A directory bundle also copies your whole application into `scripts/`, which no weights rule
-catches. `.gitignore` covers the documented output name (`bundle/`) under these trees — export
-somewhere else and it is on you not to commit a second copy of the app.
+catches — so `flip.export` writes a `.gitignore` into the bundle itself. That covers any `--out`
+you choose, and any repository you export into, which a rule here could not.

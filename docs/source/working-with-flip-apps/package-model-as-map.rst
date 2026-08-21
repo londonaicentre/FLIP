@@ -315,17 +315,24 @@ which writes::
      configs/metadata.json      <- yours, plus provenance
      models/model.pt            <- plain state dict
      scripts/                   <- your app_files, verbatim
+     flip_network.py            <- generated: the bundle's entry point to get_model()
+     .gitignore                 <- generated: a bundle is a build artefact
 
 The exporter adds exactly one thing to your ``inference.json``: a ``network_def`` naming
-``scripts.models.get_model``, so the bundle can rebuild the architecture without TorchScript. If
-you have already declared ``network`` or ``network_def`` yourself, yours is kept and the export
-warns rather than overriding your architecture.
+``flip_network.get_model``, so the bundle can rebuild the architecture without TorchScript. If you
+have already declared ``network`` or ``network_def`` yourself, yours is kept and the export warns
+rather than overriding your architecture.
 
 **The whole application directory is copied, not just** ``models.py``. It has to be: the spleen
 tutorial's ``get_model()`` reads a sidecar ``config.json`` next to its own module, and the Ark+
-apps import a sibling module flatly. A generated ``scripts/__init__.py`` puts that directory on
-``sys.path`` at import time so those flat imports resolve inside the bundle exactly as they do
-under the FL executors. ``__pycache__`` and tool caches are left behind.
+apps import a sibling module flatly. Your files are copied **verbatim** — the generated
+``flip_network.py`` is what puts ``scripts/`` on ``sys.path`` before importing your ``get_model``,
+so those flat imports resolve inside the bundle exactly as they do under the FL executors, and
+nothing is written into your own source. ``__pycache__`` and tool caches are left behind, and an
+empty ``scripts/__init__.py`` is added only when your app is not already a package.
+
+The bundle carries its own ``.gitignore``, because a directory bundle contains a second copy of
+your application and ``--out`` can point anywhere — including inside your own repository.
 
 .. note::
 
