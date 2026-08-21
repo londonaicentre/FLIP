@@ -307,7 +307,7 @@ Software
 
 - Docker Engine (>= 24.0) with Docker Compose (>= 2.40)
 - NVIDIA Container Toolkit
-- Python 3.12+
+- Python 3.12 or 3.13
 - PostgreSQL client libraries (``postgresql-client``)
 - Make
 

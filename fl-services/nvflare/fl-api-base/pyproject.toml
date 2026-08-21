@@ -15,7 +15,7 @@ name = "flip-fl-api"
 version = "0.1.0"
 description = "Wrapper API for NVFLARE FL Admin API."
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.12,<3.14"
 dependencies = [
     "fastapi[standard]>=0.115.11",
     "nvflare==2.8.0",
