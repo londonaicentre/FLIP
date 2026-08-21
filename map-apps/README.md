@@ -79,6 +79,28 @@ holoscan package map-apps/segmentation \
 holoscan run my_flip_map-x64-workstation-dgpu-linux-amd64:latest -i <dicom-dir> -o ./output
 ```
 
+### Python here is 3.12, and stays 3.12
+
+**A MAP does not share an interpreter with FLIP.** `requirements.txt` is installed *inside* the
+container the packager builds, on a base image that pins Python 3.12.3. Nothing here is affected by
+what the rest of the repo runs on, and nothing here should be bumped in step with it.
+
+That matters because this corner is capped and the rest of the repo is not:
+
+| | Python | why |
+| --- | --- | --- |
+| `map-apps/` | **3.12, fixed** | `monai-deploy-app-sdk` declares `>=3.10,<3.14`; the holoscan CLI pins Ubuntu 24.04 package versions, so the base image must match |
+| everything else | `>=3.12,<3.14` | a deliberate cap (FLIP#1018), not a hard limit — every Python service's unit suite passes on 3.14 |
+
+So when FLIP eventually moves past 3.14, **leave these templates alone**. The cap is the App SDK's,
+it is not ours to lift, and it costs nothing: the MAP is a self-contained container that takes DICOM
+in and emits DICOM out. Bumping it "for consistency" would break packaging for no benefit.
+
+The pins in `requirements.txt` are load-bearing for a different reason — see the comments there and
+the prerequisites table in the packaging guide. In short: `monai>=1.5.2` (1.5.0 caps `torch<2.7`,
+which has no `sm_120` and so cannot use a Blackwell GPU) and `torch==2.11.0+cu128` (with the ceiling
+gone, PyPI's default wheel is cu130, which needs NVIDIA driver >= 580).
+
 ### `holoscan-source.json`
 
 The packager normally downloads a base-image manifest from GitHub, where most versions now return
