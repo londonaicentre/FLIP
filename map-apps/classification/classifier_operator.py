@@ -107,9 +107,15 @@ class FlipXrayClassifierOperator(Operator):
         Returns:
             The network, ready for inference.
         """
-        if app_context.models:
+        # `app_context.models` is not a reliable "we already have the model" signal. Its ModelFactory
+        # does not recognise a directory bundle, but still claims HOLOSCAN_MODEL_PATH and hands back
+        # a placeholder Model whose `predictor` is None — which fails much later, inside inference,
+        # as "A predictor of the model is not set". Verified by packaging and running a MAP against
+        # a directory bundle (FLIP#1019). Check for a usable predictor rather than mere presence.
+        in_context = app_context.models.get(model_name) if app_context.models else None
+        if getattr(in_context, "predictor", None) is not None:
             self._logger.info("Using model network from the application context.")
-            return app_context.models.get(model_name)
+            return in_context
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         if model_path.is_dir():
             self._logger.info(f"Model not in context; loading directory bundle from {model_path}")

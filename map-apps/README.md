@@ -96,10 +96,11 @@ A MAP that exits cleanly has proved nothing about correctness. Check the artefac
 - **DICOM SR** — read `ContentSequence` back. Keep report text ASCII: the writer does not set
   `SpecificCharacterSet`, so non-ASCII characters are stored as `?`.
 
-`--models` takes whichever form `flip.export` wrote: a `model.ts` file, or a directory bundle
-(`--form directory`). The directory form needs no `torch.jit` and is the way off TorchScript, which
-PyTorch has on a removal path; the packaging guide has the trade-off, and FLIP#1019 the background.
-Both templates load either.
+`--models` takes a `model.ts` file for either template. `flip.export --form directory` writes a
+directory bundle instead, which needs no `torch.jit` — but only `classification/` can consume one in
+a packaged MAP: the SDK's `ModelFactory` does not recognise a directory bundle and still hands
+`MonaiBundleInferenceOperator` a placeholder with no predictor, so `segmentation/` fails inside
+inference. Verified on an RTX 5090. The packaging guide has the detail, and FLIP#1019 the background.
 
 ## Do not commit weights
 

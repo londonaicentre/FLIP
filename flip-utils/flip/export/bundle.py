@@ -24,7 +24,10 @@ Two bundle forms are written, and the choice is a real trade rather than a prefe
   freezes the network into a graph; this form does not, so a MONAI release that renames a submodule
   of the network breaks the strict ``load_state_dict``. See the packaging guide.
 
-``MonaiBundleInferenceOperator`` consumes both. PyTorch has TorchScript on a removal path — it is
+``MonaiBundleInferenceOperator`` can load both, but only the TorchScript form survives MAP
+packaging today: the SDK's ``ModelFactory`` does not recognise a directory bundle yet still claims
+``HOLOSCAN_MODEL_PATH`` with a predictor-less placeholder, which the operator prefers over its own
+directory branch. The packaging guide has the detail. PyTorch has TorchScript on a removal path — it is
 deprecated on Python 3.12 and reports itself unsupported on 3.14+ — so the directory form is the
 escape hatch, and the one to reach for when a model will not script. ``torch.export`` is *not* an
 option: no released MONAI Deploy App SDK can load an ``ExportedProgram``. See FLIP#1019.
