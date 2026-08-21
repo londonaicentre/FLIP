@@ -672,14 +672,29 @@ configuration is identical to before — the legacy environments are never touch
   there can reach TGW/endpoints, and RDS doesn't need to); ECS tasks, the internal ALB, the RDS Proxy, EFS mount
   targets and the EC2 hosts go to the TGW-routed **app** subnets (they need the central endpoints / image pulls);
 - **gates off**: the SG-drift CloudTrail→EventBridge→Lambda stack (`security.tf` — the org baseline of Control Tower
-  org trail, GuardDuty, Security Hub and Config covers it) and the public FL-server NLB + target group + DNS record +
-  SG rules (no IGW and VPC Block Public Access make an internet-facing NLB impossible; FL ingress instead comes
-  through the networking account's edge NLB over TGW — proven end-to-end in FLIP#829/PR#830, wired up for the real
-  fl-server as follow-up #749 work). The `fl-server-net-1` / `fl-api-net-1` ECS services themselves still deploy —
-  they just have no inbound FL path yet.
+  org trail, GuardDuty, Security Hub and Config covers it), the public FL-server NLB + target group + DNS record +
+  SG rules (no IGW and VPC Block Public Access make an internet-facing NLB impossible), and the workload CloudFront
+  distribution + its VPC origin (the `GRCLOUDFRONTVPCORIGIN` SCP denies VPC origins by design — a VPC origin dials
+  the ALB inside the VPC, bypassing the TGW + central firewall). Ingress instead rides the networking account's
+  two-tier edge (proven end-to-end in FLIP#829/PR#830 and now serving the real stack): the edge CloudFront serves
+  the UI bucket via cross-account OAC and relays `/api/*` to the internal ALB, and the edge NLB forwards FL traffic
+  over TGW to the internal FL NLB in `fl_ingress_lza.tf` (static per-subnet IPs the edge registers once as targets),
+  which fronts `fl-server-net-1`.
 
-Everything else (ECS Fargate, RDS + Proxy, Cognito, S3 + CMK, Secrets Manager, SES, EFS, Cloud Map, internal ALB,
-CloudFront + WAF + ACM) remains FLIP-managed exactly as on legacy prod.
+Everything else (ECS Fargate, RDS + Proxy, Cognito, S3 + CMK, Secrets Manager, SES, EFS, Cloud Map, internal ALB)
+remains FLIP-managed exactly as on legacy prod; the legacy WAF/OAC/CloudFront-function components stay standing
+unused on LZA to keep legacy churn minimal.
+
+**Edge wiring is two-phase — by construction, not configuration.** The networking account's edge stack
+([aicentre-lza-iac](https://github.com/londonaicentre/aicentre-lza-iac)) is built *from* this stack's outputs: the
+first workload `apply` publishes the `/flip/networking/*` SSM handoff params (FL NLB private IPs + port, ALB DNS
+name, web port) that the edge NLB and relay consume, so the workload account necessarily applies before the edge
+distribution exists. On that first apply `TF_VAR_lza_web_edge_domain` and `TF_VAR_lza_web_edge_distribution_arn`
+are still empty: the UI-bucket policy then grants no principal (fail-closed — the edge simply cannot read the
+bucket yet) and `local.ui_origin` is a placeholder. Once the edge stack is up, set both values in `.env.lza-prod`
+(the edge distribution's default domain and its ARN) and re-apply to grant the cross-account OAC read and point
+bucket CORS + Cognito URLs at the edge domain. This ordering is why the two variables deliberately carry no
+"required-when-LZA" validation — it would hard-fail the legitimate first apply.
 
 **Prerequisites (already provisioned out-of-band in the account, not Terraform-managed here):**
 
@@ -744,12 +759,12 @@ kits and encrypted data stay valid) — never reuse the legacy Secrets Manager s
 `MANAGE_DNS=false` skips it plus every Route53 record and both DNS-validated ACM certs. Consequences, all of which
 revert by flipping `MANAGE_DNS=true` + `make plan`/`apply` once the zone lands:
 
-- CloudFront serves on its default `*.cloudfront.net` domain with the default viewer certificate (no aliases —
-  CloudFront only allows the default cert when no aliases are set). `terraform output CloudfrontDistributionDomain`
-  prints the URL.
-- The CloudFront→ALB `/api/*` origin leg runs **plain HTTP** over the private VPC-origin ENI (an ALB HTTPS listener
-  needs an ISSUED cert, and issuance needs DNS validation). Viewer traffic stays HTTPS. Accepted as a bring-up-only
-  limitation — the leg never leaves the VPC-origin path.
+- The user-facing URL is the networking account's edge distribution on its default `*.cloudfront.net` domain
+  (`TF_VAR_lza_web_edge_domain`) — the workload distribution is gated off on LZA, so `terraform output
+  CloudfrontDistributionDomain` is null there by design.
+- The edge→ALB `/api/*` relay leg terminates on a **plain-HTTP** ALB listener (an ALB HTTPS listener needs an
+  ISSUED cert, and issuance needs DNS validation). Viewer traffic stays HTTPS at the edge, and the relay leg never
+  leaves the TGW + central-firewall path. Accepted as a bring-up-only limitation.
 - Bucket CORS and the Cognito sign-in hostname/callback URLs follow the CloudFront default domain automatically
   (`local.ui_origin`), so uploads, downloads and sign-in work; `make deploy-ui` must generate `window.js` with
   `CENTRAL_HUB_API_URL` pointing at the CloudFront domain.
