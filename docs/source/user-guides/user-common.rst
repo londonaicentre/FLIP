@@ -499,6 +499,10 @@ When model files have been uploaded, you will then need to confirm that the data
 
    You must confirm the data enrichment step is complete (even if no enrichment of the dataset was required and/or actually performed) before training can commence.
 
+.. important::
+
+   If your model trains against labels that are **not** in :term:`OMOP` — segmentation masks and other image-derived annotations — those must be uploaded into each Trust's XNAT *before* you confirm this step, or training will start and then fail with no usable samples. Labels that *are* in OMOP, such as a lab result or a coded report finding, need no upload: project them as a column in your cohort query instead. See :ref:`data-enrichment` for both routes.
+
 1. Navigate to project page
 2. On the right-hand side, toggle the button to confirm the dataset has been enriched
 3. Click the 'Initiate Training' button to start the training cycle
