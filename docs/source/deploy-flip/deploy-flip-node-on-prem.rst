@@ -62,7 +62,7 @@ Prerequisites
 **Operator workstation** (the machine you run commands from — typically your
 laptop):
 
-- Python 3.12+ and `UV <https://docs.astral.sh/uv/guides/install-python/>`_.
+- Python 3.12 or 3.13 and `UV <https://docs.astral.sh/uv/guides/install-python/>`_.
 - Ansible (installed automatically by ``uv sync`` inside ``deploy/providers/AWS/``).
 - Terraform outputs available — you must have already run ``make init`` and
   ``make apply`` in ``deploy/providers/AWS/`` (the Central Hub deployment).

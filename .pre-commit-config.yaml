@@ -103,3 +103,15 @@ repos:
         name: uv-lock (aws-deploy)
         args: ['--check', '--project', 'deploy/providers/AWS']
         files: '^deploy/providers/AWS/(pyproject\.toml|uv\.lock|uv\.toml)$'
+      - id: uv-lock
+        name: uv-lock (flip-utils)
+        args: ['--check', '--project', 'flip-utils']
+        files: '^flip-utils/(pyproject\.toml|uv\.lock|uv\.toml)$'
+      - id: uv-lock
+        name: uv-lock (fl-api-flower)
+        args: ['--check', '--project', 'fl-services/flower/fl-api-flower']
+        files: '^fl-services/flower/fl-api-flower/(pyproject\.toml|uv\.lock|uv\.toml)$'
+      - id: uv-lock
+        name: uv-lock (fl-api-base)
+        args: ['--check', '--project', 'fl-services/nvflare/fl-api-base']
+        files: '^fl-services/nvflare/fl-api-base/(pyproject\.toml|uv\.lock|uv\.toml)$'
