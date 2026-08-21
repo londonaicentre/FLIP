@@ -46,7 +46,7 @@ backends are also provisioned in-tree (gitignored): `deploy/fl_backend.mk` point
 
 | Layer | Technology |
 | ------- | ----------- |
-| Backend APIs | Python 3.12+, FastAPI, SQLAlchemy/SQLModel, Pydantic |
+| Backend APIs | Python 3.12–3.13, FastAPI, SQLAlchemy/SQLModel, Pydantic |
 | Frontend | Vue 3, TypeScript, Vite, TailwindCSS, Pinia |
 | Database | PostgreSQL (psycopg2 + SQLModel sync sessions; RDS Proxy + IAM auth in prod) |
 | Package mgmt (Python) | UV (`uv sync`, `uv add`) |
