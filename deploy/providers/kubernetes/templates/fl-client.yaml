@@ -203,6 +203,10 @@ spec:
               # envsubst needed: the values are already correct for this deployment).
               cp /app/local/resources.json.default /app/local/resources.json 2>/dev/null || true
               cp /app/local/log_config.json.default /app/local/log_config.json 2>/dev/null || true
+              # Site privacy policy (FLIP#851): render or remove /app/local/privacy.json from
+              # FL_SITE_PRIVACY_*. `set -euo pipefail` above makes an invalid configuration
+              # fail the pod (fail closed) rather than run an unfiltered client.
+              python -m flip.nvflare.site_policy /app/local/privacy.json
               pkill -f nvflare 2>/dev/null || true
               rm -f /app/pid.fl /app/daemon_pid.fl
               cd /app/startup
@@ -214,6 +218,16 @@ spec:
           env:
             - name: UPLOADED_FEDERATED_DATA_BUCKET
               value: {{ .Values.uploadedFederatedDataBucket | default "" | quote }}
+            {{- if eq .Values.flBackend "nvflare" }}
+            # Keep policy values in the pod template, rather than only the ConfigMap,
+            # so a Helm value change triggers a Deployment rollout.
+            - name: FL_SITE_PRIVACY_POLICY
+              value: {{ .Values.flClient.nvflare.sitePrivacy.policy | quote }}
+            - name: FL_SITE_PRIVACY_PERCENTILE
+              value: {{ .Values.flClient.nvflare.sitePrivacy.percentile | quote }}
+            - name: FL_SITE_PRIVACY_GAMMA
+              value: {{ .Values.flClient.nvflare.sitePrivacy.gamma | quote }}
+            {{- end }}
             {{- if .Values.flClient.gpu.enabled }}
             - name: CUDA_VISIBLE_DEVICES
               value: "0"
