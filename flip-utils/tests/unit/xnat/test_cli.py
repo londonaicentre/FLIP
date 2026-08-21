@@ -227,6 +227,28 @@ class TestMultipleTrusts:
         assert exit_code == 0
         assert [len(session.puts) for session in sessions] == [1, 0]
 
+    def test_no_trust_holding_the_project_fails_even_with_allow_no_op(self, tmp_path, manifest, monkeypatch):
+        _stub_servers(
+            monkeypatch,
+            resolvable_project_routes(["input_spleen_2.nii.gz"], flip_project_id=None),
+            resolvable_project_routes(["input_spleen_2.nii.gz"], flip_project_id=None),
+        )
+
+        exit_code = cli.main(
+            _argv(
+                manifest,
+                "--allow-no-op",
+                "--credentials-file",
+                _credentials(tmp_path, "gstt.json"),
+                "--credentials-file",
+                _credentials(tmp_path, "kch.json"),
+            )
+        )
+
+        # Individually each not-at-this-Trust skip is legitimate, but the project existing at *no*
+        # Trust means the image pull never ran — never a legitimate no-op, whatever the flags say.
+        assert exit_code == 1
+
 
 class TestModuleEntryPoint:
     """`python -m flip.xnat` is a documented alternative to the console script."""

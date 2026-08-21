@@ -422,8 +422,14 @@ class EnrichmentReport:
 
     @property
     def fully_covered(self) -> bool:
-        """bool: True when every scan found across the roster now carries its enrichment file."""
-        return self.scans_total > 0 and self.resolved >= self.scans_total
+        """bool: True when every scan found across the roster now carries its enrichment file.
+
+        A roster member that never resolved the project counts as uncovered — its scans are
+        invisible to ``scans_total``, so the denominator alone cannot vouch for it. Full coverage
+        therefore also requires every visited server to have produced a summary.
+        """
+        every_server_ran = all(outcome.summary is not None for outcome in self.outcomes)
+        return every_server_ran and self.scans_total > 0 and self.resolved >= self.scans_total
 
     def exit_code(self, allow_no_op: bool = False, require_full_coverage: bool = False) -> int:
         """Decide the process exit code for this run.
@@ -431,6 +437,10 @@ class EnrichmentReport:
         The rules live here, once, rather than at each entry point, because the interesting cases
         are aggregate ones: with a multi-Trust roster a single server legitimately holding none of
         the cohort must **not** fail the run, while *no* server resolving anything must.
+
+        A run where *no* server produced a summary — every server errored, since with a roster a
+        per-server :class:`XnatProjectNotFound` is non-fatal — fails regardless of ``allow_no_op``:
+        a project existing at no Trust means the image pull never ran, never a legitimate no-op.
 
         Args:
             allow_no_op (bool): Treat a run that resolved nothing as success. For the legitimately
@@ -442,6 +452,8 @@ class EnrichmentReport:
             int: 0 on success, 1 otherwise.
         """
         if any(outcome.fatal for outcome in self.outcomes):
+            return 1
+        if self.outcomes and not self.summaries:
             return 1
         if any(not summary.ok for summary in self.summaries):
             return 1

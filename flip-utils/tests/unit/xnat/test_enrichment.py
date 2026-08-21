@@ -370,6 +370,16 @@ class TestRunEnrichment:
         assert [outcome.fatal for outcome in report.outcomes] == [False, False]
         assert report.exit_code() == 0
 
+    def test_no_server_holding_the_project_fails_even_with_a_roster(self, tmp_path):
+        clients = [_resolvable_client("A", flip_project_id=None), _resolvable_client("B", flip_project_id=None)]
+
+        report = run_enrichment(clients, [EnrichmentItem("FAK001", _label(tmp_path))], flip_project_id="flip-uuid")
+
+        # The project existing at *no* Trust means the image pull never ran — never a legitimate
+        # no-op, so `allow_no_op` does not excuse it.
+        assert report.exit_code() == 1
+        assert report.exit_code(allow_no_op=True) == 1
+
     def test_the_only_trust_lacking_the_project_is_fatal(self, tmp_path):
         client = _resolvable_client("A", flip_project_id=None)
 
@@ -412,6 +422,18 @@ class TestRunEnrichment:
         report = run_enrichment([client], [EnrichmentItem("FAK001", _label(tmp_path))], flip_project_id="flip-uuid")
 
         # One of the project's two scans enriched.
+        assert report.exit_code() == 0
+        assert report.exit_code(require_full_coverage=True) == 1
+
+    def test_full_coverage_requires_every_visited_server_to_resolve_the_project(self, tmp_path):
+        holder = _resolvable_client("A")
+        absent = _resolvable_client("B", flip_project_id=None)
+        items = [EnrichmentItem("FAK001", _label(tmp_path)), EnrichmentItem("FAK002", _label(tmp_path, "b.nii.gz"))]
+
+        report = run_enrichment([holder, absent], items, flip_project_id="flip-uuid")
+
+        # The absent Trust's scans are invisible to the coverage denominator, so its skip must
+        # count as uncovered rather than letting the holder's full coverage vouch for the roster.
         assert report.exit_code() == 0
         assert report.exit_code(require_full_coverage=True) == 1
 

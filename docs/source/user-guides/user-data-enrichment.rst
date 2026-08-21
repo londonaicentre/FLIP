@@ -166,9 +166,11 @@ Useful options:
    * - ``--overwrite``
      - Replace enrichment files that are already present. Off by default, so re-running is safe.
    * - ``--allow-no-op``
-     - Accept a run that resolved no destination at all. Off by default: see the note below.
+     - Accept a run that resolved no destination at all. Off by default: see the note below. It does
+       not excuse a project that *no* Trust holds — that always fails.
    * - ``--require-full-coverage``
-     - Also fail unless every scan in the project received its enrichment file.
+     - Also fail unless every scan in the project received its enrichment file, and every Trust in
+       the roster resolved the project at all.
 
 **Enrich every Trust.** Each Trust's XNAT holds only its own studies, so a project is enriched only
 when every participating Trust has been. Repeat ``--credentials-file`` to cover the roster in one
@@ -189,7 +191,8 @@ has not pulled the project at all is skipped with a warning rather than failing 
    wrong Trust, or DICOM-to-NIfTI conversion not finished — there is nothing useful to report as
    success, and an automated pipeline that treated it as success would go on to train with no
    labels. Pass ``--allow-no-op`` for the legitimately empty case, such as a partial manifest sent
-   to a Trust that holds none of it.
+   to a Trust that holds none of it. One case it does not cover: if *no* Trust in the roster holds
+   the project, the image pull never ran, so the run fails whatever the flags say.
 
 .. _enrichment-example:
 
@@ -254,7 +257,8 @@ Troubleshooting
    * - Upload reports *skipped (no matching scan)*
      - Those accessions are not held at this Trust. Expected when uploading a whole cohort to one site; each Trust holds only its own studies.
    * - ``No XNAT project has secondary_ID=...``
-     - The image pull has not run at this Trust, or the project id is wrong.
+     - The image pull has not run at this Trust, or the project id is wrong. Reported per Trust and
+       tolerated while another Trust holds the project; when no Trust does, the run exits non-zero.
    * - Upload reports *skipped (already present)*
      - The enrichment file is already in place. Pass ``--overwrite`` only if you intend to replace it.
    * - Upload exits non-zero with *Nothing was resolved*

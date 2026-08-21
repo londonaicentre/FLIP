@@ -170,7 +170,9 @@ The same manifest goes to every Trust; an accession exists at exactly one site
 and the others report it as *no matching scan*. A run that resolves no
 destination anywhere exits non-zero, so an automated pipeline cannot mistake a
 wholly-skipped enrichment for a completed one; pass ``--allow-no-op`` when an
-empty run is genuinely expected.
+empty run is genuinely expected. A roster where *no* Trust holds the project is
+the one case ``--allow-no-op`` does not cover: the image pull never ran there,
+so the run fails regardless.
 
 The same operations are available as a Python API:
 
