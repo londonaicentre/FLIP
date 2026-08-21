@@ -100,6 +100,27 @@ GitHub workflow). It is referenced by an immutable version tag from
 copy of that command, and imaging-api's `Settings.DCM2NIIX_IMAGE` — bump all three together with the
 Dockerfile's `DCM2NIIX_VERSION` (see FLIP#980: the Docker Hub `xnat/dcm2niix:latest` it replaces was
 a stale 2021 build that silently dropped slices from valid series).
+[`dcm2niix/check_image_pin_sync.sh`](dcm2niix/check_image_pin_sync.sh) enforces that the four stay in
+sync — it runs as a pre-commit hook and as the `dcm2niix-pin-sync` CI job — because a half-bumped set
+is otherwise silent: the old immutable tag simply keeps being pulled.
+
+#### Operator action: the GHCR package must be public
+
+**After the first publish, and again after any delete-and-recreate of the package, set
+`ghcr.io/londonaicentre/xnat-dcm2niix` to public.** New org packages default to **private**, and
+`GITHUB_TOKEN` cannot change a package's visibility, so the publish workflow cannot do this for you:
+
+> github.com/orgs/londonaicentre/packages/container/xnat-dcm2niix/settings → Danger Zone →
+> Change visibility → Public
+
+This matters because the XNAT Container Service pulls the converter **anonymously** — it holds no
+GHCR credentials, and the `ghcr.io` image host registered below is deliberately credential-less. A
+private package therefore registers fine at deploy time and only fails when a scan is archived at a
+trust, which is exactly the deferred, silent failure this pinning is meant to remove.
+
+The publish workflow's last step is the guard: it re-runs that anonymous manifest fetch against the
+tag it just pushed and fails the run if it is not publicly readable. A red first-publish run is the
+intended signal that the visibility flip is still outstanding — not a broken build.
 
 Because the image now lives on a registry other than Docker Hub, `configure-dcm2niix.sh` also
 registers `ghcr.io` as a credential-less Container Service **image host**. This is load-bearing on

@@ -279,6 +279,7 @@ Each Dockerfile explicitly drops root privileges by running the application as a
 | xnat-nginx | `nginx` | Pre-existing in the base image (`nginx`) |
 | xnat-db | `postgres` | Pre-existing in the base image (`postgres`) |
 | xnat-socket-proxy | `root` | Upstream `tecnativa/docker-socket-proxy` image — HAProxy connects to the root-owned Docker socket as its owner. Runs under `cap_drop: ALL` with no capabilities added back. |
+| xnat-dcm2niix | `root` | Deliberately keeps the base image's root default, matching the output-file ownership the previous `xnat/dcm2niix` image produced on the Container Service's build mount (XNAT reads the converted NIfTIs back off that mount). Not a compose service: a one-shot container the Container Service launches per scan and then reaps, so it sits outside the `cap_drop` regime below, which the compose files impose. |
 | flip-db / omop-db | `postgres` | Pre-existing in the base image (`postgres`) |
 
 **Bind-mount ownership.** Because XNAT (`xnat`, UID 1001) and Orthanc (`orthanc`, UID 999) no
@@ -342,7 +343,11 @@ container.
 XNAT's Container Service plugin launches processing containers — currently
 `ghcr.io/londonaicentre/xnat-dcm2niix` (a version-pinned build of dcm2niix; see
 `trust/xnat/dcm2niix/`), which every project created with DICOM→NIfTI conversion enabled
-triggers automatically on scan archive. It used to do this through `/var/run/docker.sock` mounted straight into `xnat-web`,
+triggers automatically on scan archive. That GHCR package must be **public** — the Container
+Service pulls it with no credentials, and org packages default to private, so a first publish (or
+any package recreate) needs a one-off operator visibility flip; see
+[`trust/xnat/README.md`](../trust/xnat/README.md#operator-action-the-ghcr-package-must-be-public).
+It used to do this through `/var/run/docker.sock` mounted straight into `xnat-web`,
 which is a root-equivalent capability: anything that compromises XNAT can exec into any container
 on the host, start privileged containers, or mount arbitrary host paths.
 

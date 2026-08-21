@@ -28,6 +28,20 @@ repos:
         files: '^fl-apps/(check_required_files\.sh|.*required_files\.json)$'
         always_run: false
 
+      # The dcm2niix Container Service image is pinned by `ARG DCM2NIIX_VERSION` in its Dockerfile
+      # and referenced as a literal `<image>:<tag>` string by three deploy configs. A version bump
+      # that misses one of them is silent at runtime (the old immutable tag keeps being pulled), so
+      # verify them here. Unlike fl-apps-required-files this only reports — the four sites are
+      # hand-written, not generated. The dcm2niix-pin-sync job in test_trust_xnat.yml re-runs the
+      # same script as the backstop for commits made without pre-commit installed. (#980)
+      - id: xnat-dcm2niix-pin-sync
+        name: Check the dcm2niix image pin is in sync
+        entry: bash trust/xnat/dcm2niix/check_image_pin_sync.sh
+        language: system
+        pass_filenames: false
+        files: '^(trust/xnat/dcm2niix/(Dockerfile|check_image_pin_sync\.sh)|trust/xnat/xnat/config/dcm2niix_command\.json|deploy/providers/kubernetes/templates/xnat-init-job\.yaml|trust/imaging-api/imaging_api/config\.py)$'
+        always_run: false
+
   - repo: https://github.com/trufflesecurity/trufflehog
     rev: v3.93.3
     hooks:

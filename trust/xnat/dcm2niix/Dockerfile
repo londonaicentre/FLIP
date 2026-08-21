@@ -22,8 +22,12 @@
 #   - trust/xnat/xnat/config/dcm2niix_command.json           (Compose deploy)
 #   - deploy/providers/kubernetes/templates/xnat-init-job.yaml (inline copy)
 #   - trust/imaging-api/imaging_api/config.py                 (Settings.DCM2NIIX_IMAGE)
+# check_image_pin_sync.sh (pre-commit hook + a CI job in test_trust_xnat.yml)
+# enforces that; a half-bumped set is otherwise silent, since the old immutable
+# tag just keeps being pulled.
 # The publish workflow (.github/workflows/docker_build_xnat_dcm2niix.yml) reads
 # DCM2NIIX_VERSION below and pushes ghcr.io/londonaicentre/xnat-dcm2niix:<version>.
+# That package must be **public** — see trust/xnat/README.md.
 
 FROM debian:13-slim
 
