@@ -17,7 +17,9 @@ beforeEach(() => {
 
     // The catch-all answers 200 with an empty body, which `fetchJobTypes` rejects as unusable —
     // so every spec that opens a model page needs a real map here, not just the ones asserting on
-    // required files. Specs that care about a particular job type override this locally.
+    // required files. The body below is the NVFLARE standard manifest; required files are
+    // per-backend, so a spec that cares about a particular job type — or about Flower's manifest
+    // (`client_app.py` in place of `trainer.py`) — overrides this locally.
     cy.intercept(
         "GET",
         "/model/job-types", {
