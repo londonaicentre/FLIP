@@ -12,8 +12,14 @@
 """Inference operator for the FLIP chest radiograph classification model.
 
 A classification MAP cannot use ``MonaiBundleInferenceOperator``: that operator maps an image to
-an image, whereas a classifier produces labels. This operator therefore runs the scripted network
-itself and emits a text result, which the DICOM Structured Report writer turns into a DICOM object.
+an image, whereas a classifier produces labels. This operator therefore loads the network itself
+and emits a text result, which the DICOM Structured Report writer turns into a DICOM object.
+
+Both bundle forms ``flip.export`` writes are accepted: a single TorchScript file, and a directory
+bundle whose weights are a plain state dict applied to the architecture its config names. The
+directory form exists because PyTorch has TorchScript on a removal path (FLIP#1019); loading it
+here touches ``torch.jit`` at no point, so this operator survives ``torch.jit`` going away as long
+as the model was exported that way.
 
 The preprocessing below mirrors the training application's ``transforms.py::get_xray_transforms``
 (validation branch): resize to 224x224, then scale intensity to [0, 1] on a single channel. Keeping
@@ -36,9 +42,11 @@ or flip.
 import json
 import logging
 import os
+import sys
 from pathlib import Path
 
 import torch
+from monai.bundle import ConfigParser
 from monai.deploy.core import AppContext, ConditionType, Fragment, Image, Operator, OperatorSpec
 from monai.transforms import Activations, Compose, EnsureType, Resize, ScaleIntensity
 
@@ -60,6 +68,8 @@ class FlipXrayClassifierOperator(Operator):
     """
 
     DEFAULT_OUTPUT_FOLDER = Path.cwd() / "classification_results"
+    # Either a TorchScript file or a directory bundle; HOLOSCAN_MODEL_PATH points at whichever the
+    # MAP was packaged with.
     MODEL_LOCAL_PATH = Path(os.environ.get("HOLOSCAN_MODEL_PATH", Path.cwd() / "model" / "model.ts"))
 
     def __init__(
@@ -83,14 +93,77 @@ class FlipXrayClassifierOperator(Operator):
         super().__init__(fragment, *args, **kwargs)
 
     def _get_model(self, app_context: AppContext, model_path: Path, model_name: str):
-        """Take the network from the application context, else load the TorchScript file directly."""
+        """Take the network from the application context, else load the bundle at ``model_path``.
+
+        Args:
+            app_context (AppContext): The MAP's application context, which may already hold the model.
+            model_path (Path): A TorchScript file, or a directory bundle written by ``flip.export``.
+            model_name (str): Model name, needed only in the multi-model case.
+
+        Returns:
+            The network, ready for inference.
+        """
         if app_context.models:
             self._logger.info("Using model network from the application context.")
             return app_context.models.get(model_name)
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        if model_path.is_dir():
+            self._logger.info(f"Model not in context; loading directory bundle from {model_path}")
+            return self._load_directory_bundle(model_path, device)
         self._logger.info(f"Model not in context; loading TorchScript from {model_path}")
-        return torch.jit.load(
-            str(model_path), map_location=torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        )
+        return torch.jit.load(str(model_path), map_location=device)
+
+    def _load_directory_bundle(self, bundle_path: Path, device: torch.device):
+        """Load a directory bundle without TorchScript, the way MONAI Deploy's own loader does.
+
+        The architecture comes from the bundle's ``network``/``network_def`` config entry, which for
+        a ``flip.export`` bundle names ``get_model`` in the application copied under ``scripts/``.
+        That import needs the bundle root on ``sys.path`` first — the application's modules import
+        one another flatly, exactly as they do under the FL executors.
+
+        ``HOLOSCAN_MODEL_PATH`` points at whatever directory the packager copied ``--models`` into,
+        which may be the bundle itself or a directory holding it, so one level of nesting is
+        searched before giving up.
+
+        Args:
+            bundle_path (Path): The bundle directory, or a directory containing one.
+            device (torch.device): Device to place the network on.
+
+        Returns:
+            The network in eval mode, with the bundle's weights applied.
+
+        Raises:
+            IOError: If no bundle with ``models/model.pt`` is found.
+            RuntimeError: If no config entry names an architecture.
+        """
+        if not (bundle_path / "models" / "model.pt").is_file():
+            nested = [child for child in sorted(bundle_path.iterdir()) if (child / "models" / "model.pt").is_file()]
+            if not nested:
+                raise IOError(f"No models/model.pt in {bundle_path} or any directory directly under it")
+            bundle_path = nested[0]
+            self._logger.info(f"Found the bundle one level down, at {bundle_path}")
+        weights = bundle_path / "models" / "model.pt"
+
+        if str(bundle_path) not in sys.path:
+            sys.path.insert(0, str(bundle_path))
+
+        parser = ConfigParser()
+        parser.read_meta(f=json.loads((bundle_path / "configs" / "metadata.json").read_text()))
+        parser.read_config([bundle_path / "configs" / "inference.json"])
+        parser.parse()
+
+        network = None
+        for key in ("network", "network_def"):
+            if parser.get(key) is not None:
+                network = parser.get_parsed_content(key)
+                break
+        if network is None:
+            raise RuntimeError(f"No 'network' or 'network_def' in {bundle_path / 'configs' / 'inference.json'}")
+
+        # weights_only=True: a bundle's weights are a plain state dict, so nothing is lost by
+        # refusing to unpickle arbitrary objects out of a file that arrived with the MAP.
+        network.load_state_dict(torch.load(str(weights), map_location=device, weights_only=True), strict=True)
+        return network.to(device).eval()
 
     def setup(self, spec: OperatorSpec):
         spec.input(self.input_name_image)

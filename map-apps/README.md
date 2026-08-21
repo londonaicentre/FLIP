@@ -96,8 +96,17 @@ A MAP that exits cleanly has proved nothing about correctness. Check the artefac
 - **DICOM SR** — read `ContentSequence` back. Keep report text ASCII: the writer does not set
   `SpecificCharacterSet`, so non-ASCII characters are stored as `?`.
 
+`--models` takes whichever form `flip.export` wrote: a `model.ts` file, or a directory bundle
+(`--form directory`). The directory form needs no `torch.jit` and is the way off TorchScript, which
+PyTorch has on a removal path; the packaging guide has the trade-off, and FLIP#1019 the background.
+Both templates load either.
+
 ## Do not commit weights
 
-Exported bundles (`model.ts`) are build artefacts. `*.ts` cannot be globally ignored because
-`flip-ui` is TypeScript, so `.gitignore` carries targeted rules for the paths where TorchScript
-models appear.
+Exported bundles are build artefacts. `*.ts` cannot be globally ignored because `flip-ui` is
+TypeScript, so `.gitignore` carries targeted rules for the paths where TorchScript models appear,
+alongside the global `*.pt` rule that covers a directory bundle's weights.
+
+A directory bundle also copies your whole application into `scripts/`, which no weights rule
+catches. `.gitignore` covers the documented output name (`bundle/`) under these trees — export
+somewhere else and it is on you not to commit a second copy of the app.

@@ -25,6 +25,7 @@ point, because every entry of the state dict is averaged as a float.
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
 import zipfile
 from collections import OrderedDict
@@ -341,3 +342,287 @@ class TestExportBundle:
 
         assert result.output.is_file()
         assert any("evaluation" in warning for warning in result.warnings)
+
+
+_SIBLING_MODELS_PY = """
+import json
+from pathlib import Path
+
+import blocks
+from torch import nn
+
+
+def _out_channels():
+    return json.loads((Path(__file__).parent / "config.json").read_text())["net_config"]["out_channels"]
+
+
+class WrappedNet(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.net = blocks.make_net(_out_channels())
+
+    def forward(self, x):
+        return self.net(x)
+
+
+def get_model():
+    return WrappedNet()
+"""
+
+_SIBLING_BLOCKS_PY = """
+from torch import nn
+
+
+def make_net(out_channels):
+    return nn.Sequential(
+        nn.Conv2d(1, 4, 3, padding=1),
+        nn.BatchNorm2d(4),
+        nn.ReLU(),
+        nn.Conv2d(4, out_channels, 1),
+    )
+"""
+
+
+@pytest.fixture
+def realistic_app(tmp_path: Path) -> Path:
+    """An application shaped like the shipped tutorials, rather than a single self-contained file.
+
+    ``models.py`` imports a sibling module flatly and reads a sidecar ``config.json`` next to itself
+    — both of which the spleen and Ark+ tutorials do — so the bundle has to carry more than
+    ``models.py`` for its ``get_model`` to be callable at all.
+
+    Returns:
+        Path: The application directory.
+    """
+    app_dir = tmp_path / "app_files"
+    (app_dir / "__pycache__").mkdir(parents=True)
+    (app_dir / "__pycache__" / "models.cpython-312.pyc").write_bytes(b"\x00\x00")
+    (app_dir / "models.py").write_text(_SIBLING_MODELS_PY)
+    (app_dir / "blocks.py").write_text(_SIBLING_BLOCKS_PY)
+    (app_dir / "config.json").write_text(json.dumps({"net_config": {"out_channels": 2}}))
+
+    export_dir = tmp_path / "export"
+    export_dir.mkdir()
+    (export_dir / "inference.json").write_text(json.dumps(_INFERENCE))
+    (export_dir / "metadata.json").write_text(json.dumps(_METADATA))
+    return app_dir
+
+
+class TestDirectoryBundle:
+    """The bundle form that needs no ``torch.jit`` (FLIP#1019)."""
+
+    def test_writes_the_layout_the_bundle_operator_looks_for(self, checkpoint, app, tmp_path):
+        """MonaiBundleInferenceOperator finds configs/ and models/ at fixed names."""
+        out = tmp_path / "bundle"
+        export_bundle(checkpoint=checkpoint, app_dir=app, out=out, form="directory")
+
+        assert (out / "configs" / "inference.json").is_file()
+        assert (out / "configs" / "metadata.json").is_file()
+        assert (out / "models" / "model.pt").is_file()
+        assert (out / "scripts" / "models.py").is_file()
+
+    def test_nothing_in_the_bundle_is_torchscript(self, checkpoint, app, tmp_path):
+        """The point of the form: the weights are a plain state dict, not a compiled archive."""
+        out = tmp_path / "bundle"
+        export_bundle(checkpoint=checkpoint, app_dir=app, out=out, form="directory")
+
+        weights = out / "models" / "model.pt"
+        assert not zipfile.is_zipfile(weights) or "code/" not in "".join(zipfile.ZipFile(weights).namelist())
+        with pytest.raises(RuntimeError):
+            torch.jit.load(str(weights))
+
+    def test_reports_that_it_compiled_nothing(self, checkpoint, app, tmp_path):
+        """``method`` describes a TorchScript compilation, and there was none."""
+        result = export_bundle(checkpoint=checkpoint, app_dir=app, out=tmp_path / "bundle", form="directory")
+
+        assert result.form == "directory"
+        assert result.method is None
+
+    def test_weights_reload_into_the_application_architecture(self, checkpoint, app, tmp_path):
+        """The saved state dict still fits the models.py travelling beside it."""
+        out = tmp_path / "bundle"
+        result = export_bundle(
+            checkpoint=checkpoint, app_dir=app, out=out, form="directory", example_input_shape=_INPUT_SHAPE
+        )
+
+        assert result.max_abs_delta == 0.0
+        assert result.warnings == []
+
+    def test_network_def_names_the_copied_application(self, checkpoint, app, tmp_path):
+        """The bundle has to say where its architecture comes from; nothing else in it does."""
+        out = tmp_path / "bundle"
+        export_bundle(checkpoint=checkpoint, app_dir=app, out=out, form="directory")
+
+        inference = json.loads((out / "configs" / "inference.json").read_text())
+        assert inference["network_def"] == {"_target_": "scripts.models.get_model"}
+        assert inference["preprocessing"] == _INFERENCE["preprocessing"]
+
+    def test_an_author_declared_network_is_left_alone(self, checkpoint, tmp_path):
+        """An author who has declared their own architecture keeps it, and is told so."""
+        app_dir = tmp_path / "app_files"
+        app_dir.mkdir()
+        (app_dir / "models.py").write_text(_MODELS_PY.format(out_channels=2))
+        export_dir = tmp_path / "export"
+        export_dir.mkdir()
+        declared = {"_target_": "monai.networks.nets.UNet", "spatial_dims": 2}
+        (export_dir / "inference.json").write_text(json.dumps({**_INFERENCE, "network": declared}))
+        (export_dir / "metadata.json").write_text(json.dumps(_METADATA))
+
+        out = tmp_path / "bundle"
+        result = export_bundle(checkpoint=checkpoint, app_dir=app_dir, out=out, form="directory")
+
+        assert json.loads((out / "configs" / "inference.json").read_text())["network"] == declared
+        assert "network_def" not in json.loads((out / "configs" / "inference.json").read_text())
+        assert any("already declares 'network'" in warning for warning in result.warnings)
+
+    def test_sibling_modules_and_sidecar_files_travel_with_models_py(self, realistic_app, tmp_path):
+        """A tutorial's get_model() reads a sidecar config and imports a sibling; both must be there."""
+        checkpoint = tmp_path / "FL_global_model.pt"
+        torch.save(OrderedDict(model=_promote_integer_buffers(_reference_state_dict())), checkpoint)
+
+        out = tmp_path / "bundle"
+        result = export_bundle(
+            checkpoint=checkpoint, app_dir=realistic_app, out=out, form="directory", example_input_shape=_INPUT_SHAPE
+        )
+
+        assert (out / "scripts" / "blocks.py").is_file()
+        assert (out / "scripts" / "config.json").is_file()
+        assert result.max_abs_delta == 0.0
+
+    def test_build_artefacts_are_not_copied(self, realistic_app, tmp_path):
+        """A stale __pycache__ carries no architecture and would ship compiled bytecode."""
+        checkpoint = tmp_path / "FL_global_model.pt"
+        torch.save(OrderedDict(model=_promote_integer_buffers(_reference_state_dict())), checkpoint)
+
+        out = tmp_path / "bundle"
+        export_bundle(checkpoint=checkpoint, app_dir=realistic_app, out=out, form="directory")
+
+        assert not (out / "scripts" / "__pycache__").exists()
+
+    def test_the_bundle_is_importable_from_a_clean_interpreter(self, realistic_app, tmp_path):
+        """The load the MAP performs: import scripts.models with only the bundle root on sys.path.
+
+        Run in a subprocess because it is the *absence* of this suite's import state that is under
+        test — the flat ``import blocks`` has to resolve from inside the bundle, not from the
+        application directory this process already put on ``sys.path``.
+        """
+        checkpoint = tmp_path / "FL_global_model.pt"
+        torch.save(OrderedDict(model=_promote_integer_buffers(_reference_state_dict())), checkpoint)
+        out = tmp_path / "bundle"
+        export_bundle(checkpoint=checkpoint, app_dir=realistic_app, out=out, form="directory")
+
+        program = (
+            "import sys, torch; sys.path.insert(0, sys.argv[1]);"
+            "import scripts.models as app_models; net = app_models.get_model();"
+            "net.load_state_dict(torch.load(sys.argv[1] + '/models/model.pt', weights_only=True), strict=True);"
+            "print(type(net).__name__)"
+        )
+        completed = subprocess.run(
+            [sys.executable, "-c", program, str(out)], capture_output=True, text=True, cwd=tmp_path
+        )
+
+        assert completed.returncode == 0, completed.stderr
+        assert completed.stdout.strip() == "WrappedNet"
+
+    def test_an_existing_package_init_is_preserved(self, checkpoint, app, tmp_path):
+        """Flower apps ship an __init__.py; its contents must survive the import shim."""
+        (app / "__init__.py").write_text('"""Standard app module."""\nMARKER = "kept"\n')
+
+        out = tmp_path / "bundle"
+        export_bundle(checkpoint=checkpoint, app_dir=app, out=out, form="directory")
+
+        init = (out / "scripts" / "__init__.py").read_text()
+        assert 'MARKER = "kept"' in init
+        assert "sys.path.insert" in init
+
+    def test_provenance_reaches_the_configs_metadata(self, checkpoint, app, tmp_path):
+        """A directory bundle must be as traceable as the TorchScript one."""
+        out = tmp_path / "bundle"
+        export_bundle(
+            checkpoint=checkpoint,
+            app_dir=app,
+            out=out,
+            form="directory",
+            provenance=Provenance(model_id="abc-123", participating_trusts=["GSTT", "KCH"]),
+            exported_at=datetime(2026, 8, 21, tzinfo=timezone.utc),
+        )
+
+        record = json.loads((out / "configs" / "metadata.json").read_text())[PROVENANCE_KEY]
+        assert record["flip_model_id"] == "abc-123"
+        assert record["participating_trusts"] == ["GSTT", "KCH"]
+        assert record["source_checkpoint"] == "FL_global_model.pt"
+
+    def test_unverified_export_is_flagged(self, checkpoint, app, tmp_path):
+        """No probe input means no equivalence check, in either form."""
+        result = export_bundle(checkpoint=checkpoint, app_dir=app, out=tmp_path / "bundle", form="directory")
+
+        assert result.max_abs_delta == -1.0
+        assert any("numerical equivalence was not verified" in warning for warning in result.warnings)
+
+    def test_no_example_shape_is_needed_even_with_method_trace(self, checkpoint, app, tmp_path):
+        """``method`` is a TorchScript concern, so its precondition cannot apply here."""
+        result = export_bundle(
+            checkpoint=checkpoint, app_dir=app, out=tmp_path / "bundle", form="directory", method="trace"
+        )
+
+        assert result.method is None
+
+    def test_a_re_export_drops_modules_the_application_no_longer_has(self, checkpoint, app, tmp_path):
+        """A stale module left from a previous export would shadow the current app on sys.path."""
+        out = tmp_path / "bundle"
+        (app / "old_helper.py").write_text("VALUE = 1\n")
+        export_bundle(checkpoint=checkpoint, app_dir=app, out=out, form="directory")
+        (app / "old_helper.py").unlink()
+
+        export_bundle(checkpoint=checkpoint, app_dir=app, out=out, form="directory")
+
+        assert not (out / "scripts" / "old_helper.py").exists()
+        assert (out / "scripts" / "models.py").is_file()
+
+    def test_a_large_application_directory_is_called_out(self, checkpoint, app, tmp_path, monkeypatch):
+        """The whole app dir travels, so a dataset left beside it silently bloats every bundle."""
+        monkeypatch.setattr("flip.export.bundle._SCRIPTS_SIZE_WARN_BYTES", 1_000)
+        (app / "leftover_dataset.npy").write_bytes(b"\x00" * 4_000)
+
+        result = export_bundle(checkpoint=checkpoint, app_dir=app, out=tmp_path / "bundle", form="directory")
+
+        assert any("move any data out of it before exporting" in warning for warning in result.warnings)
+
+    def test_refuses_to_write_a_bundle_over_a_file(self, checkpoint, app, tmp_path):
+        """``--out bundle/model.ts`` with the wrong form should say so, not half-write a tree."""
+        out = tmp_path / "model.ts"
+        out.write_bytes(b"not a bundle")
+
+        with pytest.raises(NotADirectoryError, match="existing file"):
+            export_bundle(checkpoint=checkpoint, app_dir=app, out=out, form="directory")
+
+
+class TestTorchScriptFailure:
+    """What a caller is told when ``torch.jit`` will not do its job (FLIP#1019)."""
+
+    def test_a_compilation_failure_points_at_the_directory_form(self, checkpoint, app, tmp_path, monkeypatch):
+        """The remedy is the same whether the model will not script or torch.jit has been removed."""
+
+        def _gone(*args, **kwargs):
+            raise AttributeError("module 'torch' has no attribute 'jit'")
+
+        monkeypatch.setattr(torch.jit, "script", _gone)
+
+        with pytest.raises(RuntimeError) as raised:
+            export_bundle(checkpoint=checkpoint, app_dir=app, out=tmp_path / "model.ts")
+
+        assert "form='directory'" in str(raised.value)
+        assert "unsupported on Python 3.14+" in str(raised.value)
+
+    def test_the_original_failure_is_kept_as_the_cause(self, checkpoint, app, tmp_path, monkeypatch):
+        """Advice must not cost the caller the underlying error."""
+
+        def _gone(*args, **kwargs):
+            raise AttributeError("module 'torch' has no attribute 'jit'")
+
+        monkeypatch.setattr(torch.jit, "script", _gone)
+
+        with pytest.raises(RuntimeError) as raised:
+            export_bundle(checkpoint=checkpoint, app_dir=app, out=tmp_path / "model.ts")
+
+        assert isinstance(raised.value.__cause__, AttributeError)

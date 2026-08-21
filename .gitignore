@@ -482,3 +482,9 @@ round_metrics/
 map-apps/**/*.ts
 fl-tutorials/**/*.ts
 flip-utils/**/*.ts
+# Directory-form bundles (`flip.export --form directory`) copy the whole application into
+# `scripts/`, which the `*.pt` weights rule above does not catch. Scoped to the documented output
+# name; an export written anywhere else is not covered.
+map-apps/**/bundle/
+fl-tutorials/**/bundle/
+flip-utils/**/bundle/

@@ -37,6 +37,9 @@ Example:
     )
     print(result.method, result.max_abs_delta)
 
+Pass ``form="directory"`` for a bundle that needs no ``torch.jit`` — see :mod:`flip.export.bundle`
+for what that trades away.
+
 This subpackage requires PyTorch, which ships in the ``full`` extra rather than the base install:
 
 .. code-block:: bash
@@ -56,6 +59,7 @@ except ModuleNotFoundError as exc:  # pragma: no cover
 
 from flip.export.bundle import (
     EXPORTABLE_JOB_TYPES,
+    BundleForm,
     ExportMethod,
     ExportResult,
     export_bundle,
@@ -73,6 +77,7 @@ from flip.export.provenance import PROVENANCE_KEY, Provenance
 __all__ = [
     "EXPORTABLE_JOB_TYPES",
     "PROVENANCE_KEY",
+    "BundleForm",
     "CheckpointFacts",
     "ExportMethod",
     "ExportResult",

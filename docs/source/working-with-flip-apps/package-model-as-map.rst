@@ -91,9 +91,10 @@ deployable service built around it that speaks the hospital's protocol.
 
    A bundle does not have to be a directory. It can also be a **single TorchScript file** with
    ``inference.json`` and ``metadata.json`` embedded as TorchScript *extra files* — which is what
-   :ref:`Step 3 <map-export-bundle>` produces, and what the MONAI Deploy App SDK's own reference
-   models use. That form is convenient here because a MAP then needs exactly one artefact
-   passed to ``--models``.
+   :ref:`Step 3 <map-export-bundle>` produces by default, and what the MONAI Deploy App SDK's own
+   reference models use. That form is convenient here because a MAP then needs exactly one artefact
+   passed to ``--models``. :ref:`Both forms are available <map-bundle-forms>`, and the directory
+   one is the way off ``torch.jit``.
 
 Where the boundary sits
 =======================
@@ -211,10 +212,11 @@ The script reports the checkpoint's structure and then attempts
 Step 3 — Export a MONAI Bundle
 ==============================
 
-The exported artefact is a single ``model.ts``: the TorchScript-compiled network carrying
-``inference.json`` and ``metadata.json`` as TorchScript *extra files*. This is the shape
+By default the exported artefact is a single ``model.ts``: the TorchScript-compiled network
+carrying ``inference.json`` and ``metadata.json`` as TorchScript *extra files*. This is the shape
 ``MonaiBundleInferenceOperator`` consumes, and it is what breaks the dependency on FLIP
-application code — a MAP built this way needs no ``models.py``.
+application code — a MAP built this way needs no ``models.py``. :ref:`A second form
+<map-bundle-forms>` writes a bundle directory instead, and needs no ``torch.jit``.
 
 Use :mod:`flip.export`:
 
@@ -251,7 +253,7 @@ Or as a library, which is the same code path:
 **It reads the bundle configuration rather than generating it.** ``inference.json`` and
 ``metadata.json`` are looked up in ``<app-dir>/../export/`` by default — written once by the app
 author, who is the person who knows the preprocessing. The exporter's job is to load the weights,
-compile them, embed those configs and stamp provenance.
+compile or serialise them, carry those configs and stamp provenance.
 
 ``--input-shape`` is optional when scripting, but supplying it is worth the keystrokes: it enables
 a numerical equivalence check against the eager model, and ``result.max_abs_delta`` of ``0.0`` is
@@ -262,13 +264,83 @@ Scripting is the default because it requires no example input. Tracing is availa
 ``--method trace`` for models that will not script, but then a shape is mandatory. Both FLIP
 tutorial models script cleanly with exact equivalence.
 
+.. _map-bundle-forms:
+
+Two bundle forms, and why the default is the one it is
+------------------------------------------------------
+
+``--form`` selects what gets written. Both are consumed by ``MonaiBundleInferenceOperator``, and
+the choice is a genuine trade rather than a preference:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 30 35 35
+
+   * - -
+     - ``torchscript`` (default)
+     - ``directory``
+   * - What ``--out`` is
+     - A file, conventionally ``model.ts``
+     - A directory
+   * - The weights
+     - TorchScript-compiled network
+     - Plain state dict at ``models/model.pt``
+   * - The configs
+     - Embedded as TorchScript *extra files*
+     - Plain files under ``configs/``
+   * - Ships your application code
+     - **No** — this is why it exists
+     - **Yes**, the whole app dir, under ``scripts/``
+   * - Uses ``torch.jit``
+     - To write and to read
+     - **Nowhere**
+
+Reach for ``--form directory`` in two situations: your model will not script, or ``torch.jit`` has
+stopped working. Otherwise the default is better, because a MAP built from it needs no FLIP
+application code at all.
+
+.. code-block:: bash
+
+   uv run python -m flip.export \
+       --checkpoint /path/to/FL_global_model.pt \
+       --app-dir    /path/to/your/app_files \
+       --out        bundle \
+       --form       directory \
+       --input-shape 1,1,96,96,96
+
+which writes::
+
+   bundle/
+     configs/inference.json     <- yours, plus a network_def entry
+     configs/metadata.json      <- yours, plus provenance
+     models/model.pt            <- plain state dict
+     scripts/                   <- your app_files, verbatim
+
+The exporter adds exactly one thing to your ``inference.json``: a ``network_def`` naming
+``scripts.models.get_model``, so the bundle can rebuild the architecture without TorchScript. If
+you have already declared ``network`` or ``network_def`` yourself, yours is kept and the export
+warns rather than overriding your architecture.
+
+**The whole application directory is copied, not just** ``models.py``. It has to be: the spleen
+tutorial's ``get_model()`` reads a sidecar ``config.json`` next to its own module, and the Ark+
+apps import a sibling module flatly. A generated ``scripts/__init__.py`` puts that directory on
+``sys.path`` at import time so those flat imports resolve inside the bundle exactly as they do
+under the FL executors. ``__pycache__`` and tool caches are left behind.
+
 .. note::
 
-   PyTorch has begun deprecating TorchScript in favour of ``torch.export``, and torch 2.11 emits
-   ``DeprecationWarning`` from ``torch.jit.save``/``load``/``trace``. TorchScript remains the
-   format MONAI Deploy's bundle inference operator consumes, so it is the correct choice today —
-   but this is a dependency worth watching, and a reason not to spread ``torch.jit`` calls across
-   the codebase when they can live behind :func:`flip.export.export_bundle`.
+   **Why not** ``torch.export``\ **?** Because nothing downstream can read it. PyTorch has
+   TorchScript on a removal path — deprecated on Python 3.12, and reporting itself *"not supported
+   in Python 3.14+ and may break"* — and points users at ``torch.export``. But no released
+   ``monai-deploy-app-sdk`` can load an ``ExportedProgram``: the bundle inference operator loads
+   ``.ts`` and ``.pt``, and nothing else. So the escape hatch from ``torch.jit`` is the directory
+   form above, not a new artefact format. MONAI core tracks its own TorchScript retirement in
+   `Project-MONAI/MONAI#8632 <https://github.com/Project-MONAI/MONAI/issues/8632>`_; when MONAI
+   Deploy follows, a third form becomes possible. FLIP#1019 has the detail.
+
+   The pressure is lower than it looks: ``monai-deploy-app-sdk`` itself declares
+   ``requires-python = ">=3.10,<3.14"``, so no part of this toolchain runs on the interpreter
+   where ``torch.jit`` warns it may break.
 
 .. warning::
 
