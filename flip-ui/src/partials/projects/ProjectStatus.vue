@@ -472,17 +472,20 @@ const rowRatio = (p: IImagingProjectStatus): number => {
 const isImportStale = (p: IImagingProjectStatus): boolean =>
     p.connectionState === "unreachable" || p.connectionState === "project-missing";
 
-// Copy per state. `unreachable` covers everything that stopped a refresh landing except a
-// confirmed-missing project, so its wording stays about the connection rather than the project.
+// Copy per state. The two states send an admin to different places — one is a connectivity
+// problem at the Trust, the other is a data problem inside a reachable XNAT — so the titles
+// contrast reachability explicitly rather than both reading as "can't find the project".
+// `unreachable` covers everything that stopped a refresh landing except a confirmed-missing
+// project, so its wording stays about the connection rather than the project.
 const ImportErrorCopy = {
     "unreachable": {
-        title: "Can't find the project on XNAT",
-        detail: "XNAT at this Trust is unreachable — check the connection. Showing last known counts.",
+        title: "Trust XNAT not reachable",
+        detail: "XNAT at this Trust did not respond — check the connection. Showing last known counts.",
         reimportTooltip: "Reimport attempts — paused while the Trust is unreachable"
     },
     "project-missing": {
-        title: "Project not found on XNAT",
-        detail: "XNAT is reachable but this imaging project no longer exists at the Trust. "
+        title: "Trust XNAT reachable, but project not found",
+        detail: "XNAT responded but this imaging project no longer exists at the Trust. "
             + "Contact an XNAT administrator. Showing last known counts.",
         reimportTooltip: "Reimport attempts — imaging project not found"
     }

@@ -488,7 +488,8 @@ describe("ProjectStatus — XNAT import error states (FLIP#1022)", () => {
 
             const footer = wrapper.find("[data-test=import-error-trust-1]");
             expect(footer.exists()).toBe(true);
-            expect(footer.text()).toContain("XNAT at this Trust is unreachable");
+            expect(footer.text()).toContain("Trust XNAT not reachable");
+            expect(footer.text()).toContain("did not respond");
             expect(footer.text()).toContain("Showing last known counts");
         });
 
@@ -523,6 +524,7 @@ describe("ProjectStatus — XNAT import error states (FLIP#1022)", () => {
 
             const footer = wrapper.find("[data-test=import-error-trust-1]");
             expect(footer.exists()).toBe(true);
+            expect(footer.text()).toContain("Trust XNAT reachable, but project not found");
             expect(footer.text()).toContain("no longer exists at the Trust");
             expect(footer.text()).toContain("Contact an XNAT administrator");
         });
@@ -535,6 +537,8 @@ describe("ProjectStatus — XNAT import error states (FLIP#1022)", () => {
             expect(wrapper.find("[data-test=last-known-tag-trust-1]").exists()).toBe(true);
         });
 
+        // The two states send an admin to different places, so they must contrast on
+        // reachability rather than both reading as some flavour of "can't find the project".
         it("distinguishes itself from the unreachable state", () => {
             mockSwrvData.value = [trustInState("project-missing")];
             const missing = mountProjectStatus().find("[data-test=import-error-trust-1]").text();
@@ -543,6 +547,9 @@ describe("ProjectStatus — XNAT import error states (FLIP#1022)", () => {
             const unreachable = mountProjectStatus().find("[data-test=import-error-trust-1]").text();
 
             expect(missing).not.toBe(unreachable);
+            expect(missing).toContain("reachable, but project not found");
+            expect(unreachable).toContain("not reachable");
+            expect(unreachable).not.toContain("project not found");
         });
     });
 
