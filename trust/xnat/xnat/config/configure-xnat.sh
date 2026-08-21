@@ -332,26 +332,33 @@ xnat_curl -X PUT "$XNAT_URL/xapi/anonymize/site/enabled" \
   -H "Content-Type: application/json" \
   -d 'true'
 
-# Remove any pre-existing SCP receiver we are about to replace, matched on **the port we bind**
-# rather than only on AE title. The receiver this script owns is defined by that port, so anything
-# else listening on it has to go regardless of what it is called — including a receiver left behind
-# by an earlier run under a different XNAT_AETITLE. Matching on title alone orphaned the old entry
-# on a rename, leaving two receivers fighting over one port. Also removes XNAT's stock default
-# receiver (always "XNAT", created by the webapp on first boot) wherever it is bound.
+# Remove the pre-existing SCP receivers this script owns, so the POST below can re-create exactly
+# one. Ownership is a property of the receiver itself, not of the port it binds or the title it
+# carries: every receiver FLIP creates is stamped with identifier "dqrObjectIdentifier" by the POST
+# below, and XNAT's stock receiver — created by the webapp on first boot, always called "XNAT" — is
+# the other one that has to go. `GET /xapi/dicomscp` returns `identifier` per receiver, so both
+# markers are readable from the listing.
 #
-# `--arg`/`--argjson` keep the values as data rather than splicing them into the filter, so a title
-# containing jq syntax cannot change what is selected.
+# Matching instead on "our port or our AE title" left an orphan whenever both moved in one change:
+# an existing FLIPXNAT:8104 under new config XNAT_AETITLE=FLIPXNAT2 XNAT_PORT=11112 matched neither,
+# so the old receiver stayed enabled and bound (FLIP#993).
+#
+# A receiver an operator registered for some other local DICOM source carries neither marker and is
+# left alone — it would otherwise be deleted on every redeploy and `helm upgrade`, with the deletion
+# visible only in a Job pod log that is discarded on success. If such a receiver is squatting the
+# port we are about to bind, it survives to the POST below, which then fails loud through xnat_curl:
+# deliberately the same choice the PACS-side guard makes further down — refuse rather than silently
+# delete configuration this deployment may not own.
+#
+# Both markers are literals in the filter, so nothing operator-supplied is spliced into jq.
 response=$(xnat_curl -u "$XNAT_ADMIN_USER:$XNAT_ADMIN_PASSWORD" "$XNAT_URL/xapi/dicomscp")
 
 if [[ -z "$response" || "$response" == "[]" ]]; then
     echo "No SCP receivers found."
 else
-    # Every receiver, not a filtered subset. Matching on "our port or our AE title" left an orphan
-    # whenever both moved in one change — an existing FLIPXNAT:8104 with new config
-    # XNAT_AETITLE=FLIPXNAT2 XNAT_PORT=11112 matched neither, so the old receiver stayed enabled and
-    # bound. XNAT carries exactly one FLIP-owned receiver and this script owns it, so the honest
-    # filter is all of them (FLIP#993).
-    stale_ids=$(printf '%s' "$response" | jq -r '.[] | "\(.id):\(.aeTitle):\(.port)"')
+    stale_ids=$(printf '%s' "$response" \
+      | jq -r '.[] | select(.identifier == "dqrObjectIdentifier" or .aeTitle == "XNAT")
+                   | "\(.id):\(.aeTitle):\(.port)"')
 
     if [[ -z "$stale_ids" ]]; then
         echo "No existing SCP receiver to replace."
@@ -365,7 +372,8 @@ else
     fi
 fi
 
-# Configure SCP receiver to have dqrObjectIdentifier as the identifier (the default is not)
+# Configure SCP receiver to have dqrObjectIdentifier as the identifier (the default is not). That
+# identifier is also what marks the receiver as FLIP-owned for the reclamation above.
 echo "Configuring SCP receiver '${XNAT_AETITLE}' on port ${XNAT_PORT}..."
 xnat_curl -X POST "$XNAT_URL/xapi/dicomscp" \
   -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_PASSWORD}" \

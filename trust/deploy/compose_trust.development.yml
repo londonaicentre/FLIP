@@ -58,7 +58,6 @@ services:
       dockerfile: Dockerfile
     restart: always
     ports:
-      # - "${PACS_DICOM_PORT}:4242"
       - "${PACS_UI_PORT}:8042"
     security_opt:
       - no-new-privileges:true

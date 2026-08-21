@@ -52,6 +52,15 @@ spec:
           # via wait-for-xnat-plugins.sh, then applies site, user, DQR, SCP receiver and PACS
           # configuration. It short-circuits when the site is already initialised, so re-running on
           # helm upgrade is safe.
+          #
+          # The `cd /data/xnat/config` below is a literal on purpose. XNAT_ROOT is a build ARG only —
+          # the image never exports it (the Dockerfile exports XNAT_HOME, not XNAT_ROOT), so there is
+          # no image-provided variable to read it back from at runtime. And /data/xnat is pinned
+          # chart-wide, not just here: xnat-web's six persistent-volume mountPaths, its XNAT_HOME, its
+          # -Dxnat.home, and the Container Service ConfigMap's "combined-path-translation" below all
+          # spell it out. An image rebuilt with a different XNAT_ROOT breaks every one of those with
+          # or without this line, so a value here would advertise a configurability the chart does not
+          # have. If XNAT_ROOT ever needs to move, it moves in all of those places at once.
           image: "{{ .Values.xnat.web.image.repository }}:{{ .Values.xnat.web.image.tag }}"
           imagePullPolicy: {{ .Values.xnat.web.image.pullPolicy }}
           command:

@@ -155,6 +155,26 @@ jobs:
             exit 1
           fi
 
+      # The return leg. Egress alone gets C-FIND and C-MOVE out; the studies come back on a *new*
+      # association the PACS opens to XNAT, which the default-deny drops unless the ingress
+      # allowance names the receiver's port. That configuration used to render clean and fail only
+      # at retrieval time — queries succeed, retrievals silently time out (FLIP#993). The second
+      # case is the near miss the guard exists for: an operator who lists the NodePort instead of
+      # the pod's containerPort. Both must be refused, or the render guard is decorative.
+      - name: Render template (real PACS without matching ingress is refused)
+        run: |
+          for port_args in "" "--set networkPolicies.allowedIngressCIDRsWithPorts[0].cidrs[0]=10.0.0.10/32 --set networkPolicies.allowedIngressCIDRsWithPorts[0].port=31104"; do
+            # shellcheck disable=SC2086 # deliberate word splitting: $port_args carries several flags
+            if helm template trust-release deploy/providers/kubernetes/ \
+                 --set pacs.host=10.0.0.10 --set pacs.qrPort=8059 \
+                 --set 'networkPolicies.allowedEgressCIDRsWithPorts[0].cidrs[0]=10.0.0.10/32' \
+                 --set 'networkPolicies.allowedEgressCIDRsWithPorts[0].port=8059' \
+                 $port_args > /dev/null 2>&1; then
+              echo "::error::a PACS with no ingress rule on the receiver's port rendered successfully (${port_args:-no ingress entry})"
+              exit 1
+            fi
+          done
+
       # Default-deny must survive: the ingress allowance is the one inbound path into a trust, so a
       # chart that opened it without being asked would silently widen every existing deployment.
       - name: Render template (default keeps ingress denied)

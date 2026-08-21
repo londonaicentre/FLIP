@@ -61,6 +61,22 @@ spec:
 {{- if and (not $egressOk) (not .Values.networkPolicies.allowedEgressCIDRs) }}
 {{- fail (printf "pacs.host is %s but no egress rule reaches its query/retrieve port %v. XNAT could not issue C-FIND or C-MOVE, so retrieval would fail before it began. Add the PACS to networkPolicies.allowedEgressCIDRsWithPorts." .Values.pacs.host .Values.pacs.qrPort) }}
 {{- end }}
+{{- $dicomPort := .Values.xnat.web.dicomPort | int }}
+{{- $ingressOk := false }}
+{{- range .Values.networkPolicies.allowedIngressCIDRsWithPorts }}
+  {{- if eq (.port | int) $dicomPort }}{{ $ingressOk = true }}{{ end }}
+{{- end }}
+{{- /*
+The return leg, guarded to the same standard as the outbound one. Retrieval is two connections in
+opposite directions: XNAT dials the PACS to C-FIND and C-MOVE, then the PACS opens a *new*
+association back to XNAT to C-STORE the studies. Omitting the egress rule already fails this render;
+omitting the inbound one used to render clean and produce the failure this chart's comments call the
+hardest to diagnose — queries succeed, retrievals silently time out with nothing logged on either
+side. Both directions now fail equally loudly, at render, naming the values to set.
+*/ -}}
+{{- if not $ingressOk }}
+{{- fail (printf "pacs.host is %s but networkPolicies.allowedIngressCIDRsWithPorts has no entry on port %v. After XNAT issues C-MOVE the PACS opens a new association back to XNAT to C-STORE the studies; without that allowance it is dropped, so queries succeed and retrievals silently time out. Add the PACS CIDRs on port %v, and make the receiver reachable from outside the cluster with xnat.web.service.type: NodePort plus xnat.web.dicomNodePort. Note the port here is the pod's containerPort (xnat.web.dicomPort, default 8104) and not dicomNodePort: a NetworkPolicy matches the port the pod listens on, after the node has undone the NodePort translation." .Values.pacs.host $dicomPort $dicomPort) }}
+{{- end }}
 {{- end }}
 {{- if .Values.networkPolicies.allowedIngressCIDRsWithPorts }}
 # Allow inbound DICOM from the trust PACS.

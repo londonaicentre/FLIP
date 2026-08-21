@@ -238,9 +238,13 @@ AWS-hosted mock trusts sit behind security groups with no ingress rules.
        - cidrs: ["10.0.0.10/32"]
          port: 8059
 
-The chart refuses to render a configured PACS with no egress rule, and refuses an ingress entry with
-no ``port`` — Kubernetes reads an absent port as *all* ports, which would widen the one inbound path
-into the trust from DICOM to everything.
+The chart refuses to render a configured PACS with no egress rule, and equally one with no ingress
+entry on ``xnat.web.dicomPort``: both directions of the retrieval have to be open, and an omitted
+return leg is the failure mode where queries succeed and retrievals silently time out. The port in
+the ingress entry is the pod's container port (``xnat.web.dicomPort``, default 8104), not
+``dicomNodePort`` — a NetworkPolicy matches after the node has undone the NodePort translation. An
+ingress entry with no ``port`` at all is refused too: Kubernetes reads an absent port as *all*
+ports, which would widen the one inbound path into the trust from DICOM to everything.
 
 .. note::
 

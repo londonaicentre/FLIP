@@ -68,7 +68,7 @@ KIT_FILE := $(if $(wildcard ../.env.$(KIT).$(ENV)),../.env.$(KIT).$(ENV),../.env
 -include $(KIT_FILE)
 # Kit-file values must reach the shell env, not just Make vars. docker stack
 # deploy (unlike docker compose) has no --env-file flag; it substitutes
-# ${XNAT_ADMIN_USER}, ${PACS_DICOM_PORT}, ${DOCKER_REGISTRY}, etc. in the
+# ${XNAT_ADMIN_USER}, ${PACS_UI_PORT}, ${DOCKER_REGISTRY}, etc. in the
 # compose YAML from the calling shell env only. Without this export, the
 # stack came up with empty admin creds and configure-xnat.sh would 401/403
 # on every auth call, leaving "Site has not yet been configured" forever.

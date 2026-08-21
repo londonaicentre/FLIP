@@ -116,6 +116,20 @@ BASE_ENV = {
 # What the stub reports as already registered when a test does not say otherwise.
 MOCK_PACS_REGISTRATION = '[{"id":7,"aeTitle":"ORTHANC","host":"orthanc","queryRetrievePort":4242}]'
 
+# The SCP receivers a test can seed XNAT with, one JSON object each — reclamation is scoped by what
+# created a receiver, so which of these survives is the whole point of those tests.
+#
+# FLIP-owned: created by an earlier run of this script, identified by the identifier it stamps on,
+# whatever AE title and port it happens to carry. `GET /xapi/dicomscp` does return `identifier` per
+# receiver (verified against a live XNAT), which is what makes ownership readable at all.
+FLIP_OWNED_RECEIVER = '{"id":3,"aeTitle":"FLIPXNAT","port":8104,"identifier":"dqrObjectIdentifier"}'
+# XNAT's own, created by the webapp on first boot: always titled "XNAT", never carrying FLIP's
+# identifier.
+STOCK_RECEIVER = '{"id":1,"aeTitle":"XNAT","port":8104,"identifier":"dicomObjectIdentifier"}'
+# An operator's, registered by hand for some other local DICOM source: neither marker, so nothing
+# here owns it.
+OPERATOR_RECEIVER = '{"id":9,"aeTitle":"WARDCT","port":11113,"identifier":"dicomObjectIdentifier"}'
+
 
 def run_configure(tmp_path, env_overrides=None, pacs_state=None, scp_state=None):
     """Runs configure-xnat.sh against the stub and returns (exit code, payloads, combined output).
@@ -142,7 +156,9 @@ def run_configure(tmp_path, env_overrides=None, pacs_state=None, scp_state=None)
     pacs_file = tmp_path / "pacs.json"
     pacs_file.write_text(pacs_state if pacs_state is not None else "[]")
     scp_file = tmp_path / "scp.json"
-    scp_file.write_text(scp_state if scp_state is not None else '[{"id":1,"aeTitle":"XNAT","port":8104}]')
+    # Default: XNAT's stock receiver, as the webapp creates it on first boot — title "XNAT" and the
+    # plain DICOM identifier, not FLIP's.
+    scp_file.write_text(scp_state if scp_state is not None else f"[{STOCK_RECEIVER}]")
 
     env = {
         **os.environ,
@@ -320,12 +336,34 @@ def test_receiver_on_our_port_is_reclaimed_whatever_it_is_called(tmp_path):
     """Renaming the AE title must not strand the old receiver fighting for the same port."""
     code, payloads, output = run_configure(
         tmp_path,
-        scp_state='[{"id":3,"aeTitle":"FLIPXNAT","port":8104}]',
+        scp_state=f"[{FLIP_OWNED_RECEIVER}]",
     )
     assert code == 0, output
     assert "(id 3)" in output
     assert "FLIPXNAT" in output
     assert any(u.endswith("/xapi/dicomscp/3") for u in deletes(payloads))
+
+
+def test_a_receiver_this_script_does_not_own_survives_the_reconcile(tmp_path):
+    """An operator's second receiver must not be collateral damage of every redeploy.
+
+    Reclamation is scoped to what FLIP created (identifier ``dqrObjectIdentifier``) plus XNAT's
+    stock receiver. A receiver registered by hand for another local DICOM source carries neither
+    marker, and deleting it would be silent: on Kubernetes the only record is a Job pod log the
+    hook-delete-policy discards on success.
+    """
+    code, payloads, output = run_configure(
+        tmp_path,
+        scp_state=f"[{OPERATOR_RECEIVER}, {FLIP_OWNED_RECEIVER}, {STOCK_RECEIVER}]",
+    )
+    assert code == 0, output
+
+    deleted = deletes(payloads)
+    assert not any(u.endswith("/xapi/dicomscp/9") for u in deleted), "deleted a receiver FLIP does not own"
+    assert "Removing SCP receiver 'WARDCT" not in output
+    # The two it does own still go, or the re-created receiver fights the old one for the port.
+    assert any(u.endswith("/xapi/dicomscp/3") for u in deleted), "left FLIP's own stale receiver behind"
+    assert any(u.endswith("/xapi/dicomscp/1") for u in deleted), "left XNAT's stock receiver behind"
 
 
 def test_foreign_pacs_registrations_are_removed(tmp_path):
@@ -349,7 +387,7 @@ def test_receiver_is_reclaimed_when_port_and_title_both_change(tmp_path):
     code, payloads, output = run_configure(
         tmp_path,
         {"XNAT_PORT": "11112", "XNAT_AETITLE": "FLIPXNAT2"},
-        scp_state='[{"id":3,"aeTitle":"FLIPXNAT","port":8104}]',
+        scp_state=f"[{FLIP_OWNED_RECEIVER}]",
     )
     assert code == 0, output
     assert any(u.endswith("/xapi/dicomscp/3") for u in deletes(payloads)), (
