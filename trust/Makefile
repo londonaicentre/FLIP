@@ -252,28 +252,58 @@ define require_kit_file
 	fi
 endef
 
-# Guard: refuse to start when the compose project this kit resolves to is already running
-# a DIFFERENT trust. TRUST_PROJECT is trust$(FL_KIT_SLOT_NUMBER), and slots are handed
+# Guard: refuse to act on the compose project this kit resolves to when it is already held
+# by a DIFFERENT trust. TRUST_PROJECT is trust$(FL_KIT_SLOT_NUMBER), and slots are handed
 # out by the hub from its own database — so a second hub (FLIP_INSTANCE, FLIP#957)
 # starts again at 1 and its first trust lands on a slot the default stack is already
 # using. Without this, compose treats the running containers as part of the project it
 # was asked to bring up and recreates them, destroying a live trust.
 #
+# Called from EVERY target that drives `-p $(TRUST_PROJECT)` with a kit, not just up-trust:
+# `down --remove-orphans` under the wrong kit destroys the other instance's trust just as
+# thoroughly as `up` does, and restart-trust reaches down-trust first — so guarding only
+# the up path left the whole restart route unprotected.
+#
 # The owning kit is read off compose's own environment_file label, compared by file
 # name so re-running for the SAME kit (the normal restart/update path) still works,
-# including from another checkout.
+# including from another checkout. That label is populated whenever compose was given
+# --env-file, which DOCKER_COMPOSE_CMD always passes (see __ENV_FILE_FLAG above);
+# verified live on Docker Compose v5.1.3, where the hub's own --env-file-less project
+# carries it empty and every trust project carries the kit path.
+#
+# Probed with `docker ps -a`, not `docker ps`: a stopped-but-not-removed stack still owns
+# the project name, and `up` would recreate those very containers under the wrong kit —
+# invisible to a running-only probe. Same-kit comparison still lets a legitimate restart
+# through. If the project has containers but no environment_file label to compare (an
+# older compose, or a stack brought up without --env-file), the owner cannot be
+# identified, so refuse rather than let the protection lapse silently.
 define check_slot_not_taken
-	@occupied=$$(docker ps --filter "label=com.docker.compose.project=$(TRUST_PROJECT)" \
-		--format '{{.Label "com.docker.compose.project.environment_file"}}' 2>/dev/null | head -1); \
+	@ids=$$(docker ps -a --filter "label=com.docker.compose.project=$(TRUST_PROJECT)" -q 2>/dev/null); \
+	occupied=$$(docker ps -a --filter "label=com.docker.compose.project=$(TRUST_PROJECT)" \
+		--format '{{.Label "com.docker.compose.project.environment_file"}}' 2>/dev/null | grep -v '^$$' | head -1); \
+	if [ -n "$$ids" ] && [ -z "$$occupied" ]; then \
+		owner=$$(docker ps -a --filter "label=com.docker.compose.project=$(TRUST_PROJECT)" \
+			--format '{{.Label "com.docker.compose.project.working_dir"}}' 2>/dev/null | grep -v '^$$' | head -1); \
+		echo "❌ Compose project '$(TRUST_PROJECT)' (FL kit slot $(TRUST_NUM)) already has containers,"; \
+		echo "   but they carry no com.docker.compose.project.environment_file label, so the kit that"; \
+		echo "   owns them cannot be identified. Refusing rather than risk recreating another"; \
+		echo "   trust's stack under $(KIT_FILE)."; \
+		echo "   Owning project directory: $${owner:-<unknown>}"; \
+		echo "   List them with:"; \
+		echo "       docker ps -a --filter label=com.docker.compose.project=$(TRUST_PROJECT)"; \
+		echo "   then remove them ('docker compose -p $(TRUST_PROJECT) down') if they are stale, or"; \
+		echo "   set FL_KIT_SLOT_NUMBER=<free> in trust/$(KIT_FILE) to move this trust to a free slot."; \
+		exit 1; \
+	fi; \
 	if [ -n "$$occupied" ] && [ "$$(basename "$$occupied")" != "$(KIT_FILE)" ]; then \
 		echo "❌ FL kit slot $(TRUST_NUM) is already in use on this host."; \
-		echo "   Compose project '$(TRUST_PROJECT)' is running trust $$(basename "$$occupied"),"; \
-		echo "   but you asked to start $(KIT_FILE). Bringing this up would hand those"; \
-		echo "   containers to the wrong kit and recreate them, taking the running trust down."; \
+		echo "   Compose project '$(TRUST_PROJECT)' is held by trust $$(basename "$$occupied"),"; \
+		echo "   but you asked to operate on $(KIT_FILE). Acting on this project would hand those"; \
+		echo "   containers to the wrong kit — recreating or tearing down another trust's stack."; \
 		echo ""; \
 		echo "   Slots are assigned per-hub, so a second stack (FLIP_INSTANCE) restarts at 1"; \
 		echo "   and collides with the default stack. Pick a free slot:"; \
-		echo "       docker ps --format '{{.Label \"com.docker.compose.project\"}}' | sort -u"; \
+		echo "       docker ps -a --format '{{.Label \"com.docker.compose.project\"}}' | sort -u"; \
 		echo "   then set FL_KIT_SLOT_NUMBER=<free> in trust/$(KIT_FILE) and re-run."; \
 		exit 1; \
 	fi
@@ -305,6 +335,7 @@ up-trust: update-omop-data update-orthanc-data create-networks
 
 down-trust:
 	$(require_kit)
+	$(check_slot_not_taken)
 	@echo "🛑 Stopping Trust services (KIT=$(KIT))..."
 	$(TRUST_VARS) ${DOCKER_COMPOSE_CMD} $(TRUST_OVERRIDE) -p $(TRUST_PROJECT) down --remove-orphans
 	@echo "🩻 Stopping XNAT for $(KIT)..."
@@ -329,6 +360,7 @@ restart-trust: down-trust up-trust
 # $(GPU_OVERRIDE) back.
 up-trust-ec2:
 	$(require_kit_file)
+	$(check_slot_not_taken)
 	@echo "🚢 Starting Trust services on EC2 (KIT=$(KIT))..."
 	@echo "⚙️ Using kit file trust/$(KIT_FILE)"
 	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
@@ -339,6 +371,7 @@ up-trust-ec2:
 
 down-trust-ec2:
 	$(require_kit)
+	$(check_slot_not_taken)
 	@echo "🛑 Stopping Trust services on EC2 (KIT=$(KIT))..."
 	$(TRUST_VARS) ${DOCKER_COMPOSE_CMD} -p $(TRUST_PROJECT) down --remove-orphans
 	@echo "🩻 Stopping XNAT for $(KIT)..."
@@ -378,6 +411,7 @@ up-fl-clients:
 
 up-fl-clients-kit:
 	$(require_kit_file)
+	$(check_slot_not_taken)
 	@echo "$(GPU_STATUS_MSG)"
 	$(TRUST_VARS) DEBUG=${DEBUG} ${DOCKER_COMPOSE_CMD} $(GPU_OVERRIDE) $(TRUST_OVERRIDE) -p $(TRUST_PROJECT) up -d --no-deps $(UP_PULL_FLAGS) fl-client-net-1 fl-client-net-2
 
@@ -391,6 +425,7 @@ down-fl-clients:
 
 down-fl-clients-kit:
 	$(require_kit)
+	$(check_slot_not_taken)
 	$(TRUST_VARS) ${DOCKER_COMPOSE_CMD} $(TRUST_OVERRIDE) -p $(TRUST_PROJECT) rm -fs fl-client-net-1 fl-client-net-2
 
 update-omop-data:
@@ -458,8 +493,11 @@ debug-imaging-api-off:
 debug-trust-api-off:
 	$(MAKE) _debug-service KIT=$(or $(KIT),$(FIRST_DEV_KIT)) DEBUG=false SVC=trust-api
 
-# Internal helper — brings one service up under the debug compose override.
+# Internal helper — brings one service up under the debug compose override. Guarded like the
+# rest: it drives `-p $(TRUST_PROJECT)` with `--remove-orphans`, which under a colliding kit
+# would delete the other instance's containers as "orphans" of this compose file.
 _debug-service:
+	$(check_slot_not_taken)
 	DEBUG=$(DEBUG) $(TRUST_VARS) ${DEBUG_OVERRIDE_COMPOSE_COMMAND} -p $(TRUST_PROJECT) up --remove-orphans -d $(SVC)
 
 
