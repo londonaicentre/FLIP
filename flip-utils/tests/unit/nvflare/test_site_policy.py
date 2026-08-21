@@ -87,6 +87,32 @@ class TestParseEnv:
         with pytest.raises(SitePolicyError, match="FL_SITE_PRIVACY_POLICY"):
             parse_env({"FL_SITE_PRIVACY_PERCENTILE": "10"})
 
+    def test_typo_with_policy_set_rejected(self):
+        # The dangerous case: the policy IS selected, so the typo'd name would otherwise be ignored and
+        # the site would quietly run percentile=10 instead of the intended 25.
+        with pytest.raises(SitePolicyError, match="FL_SITE_PRIVACY_PERCENTIL\\b"):
+            parse_env({"FL_SITE_PRIVACY_POLICY": "percentile", "FL_SITE_PRIVACY_PERCENTIL": "25"})
+
+    def test_typo_without_policy_rejected(self):
+        with pytest.raises(SitePolicyError, match="FL_SITE_PRIVACY_GAMA"):
+            parse_env({"FL_SITE_PRIVACY_GAMA": "0.05"})
+
+    def test_multiple_unknown_vars_all_named(self):
+        with pytest.raises(SitePolicyError) as excinfo:
+            parse_env({"FL_SITE_PRIVACY_POLICY": "percentile", "FL_SITE_PRIVACY_ZZZ": "1", "FL_SITE_PRIVACY_AAA": "2"})
+        # Sorted so the message is stable regardless of the environment's iteration order.
+        assert "FL_SITE_PRIVACY_AAA, FL_SITE_PRIVACY_ZZZ" in str(excinfo.value)
+
+    def test_empty_unknown_var_is_unset(self):
+        # `${VAR:-}` interpolation surfaces as "" — an unset unknown name must not stop the client.
+        policy = parse_env({"FL_SITE_PRIVACY_POLICY": "percentile", "FL_SITE_PRIVACY_PERCENTIL": "  "})
+        assert policy is not None
+        assert policy.percentile == 10
+
+    def test_unrelated_env_vars_ignored(self):
+        # os.environ is passed wholesale in production — only the FL_SITE_PRIVACY_ prefix is policed.
+        assert parse_env({"PATH": "/usr/bin", "FL_BACKEND": "nvflare"}) is None
+
 
 class TestBuildPolicyJson:
     """The rendered document must match NVFLARE's privacy.json schema: one scope, always a default_scope."""

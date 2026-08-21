@@ -342,8 +342,9 @@ additionally enforce its **own** update-privacy filter through NVFLARE's site pr
   federation.
 - The fl-client entrypoint renders the policy into ``/app/local/privacy.json`` at container start
   (``python -m flip.nvflare.site_policy``). With the variables unset, no policy file is written and behaviour
-  is exactly as before (app-level filters only). An **invalid** combination stops the fl-client at startup
-  (fail closed) rather than running unfiltered.
+  is exactly as before (app-level filters only). An **invalid** combination — including an unrecognised
+  ``FL_SITE_PRIVACY_*`` name, so a typo cannot quietly leave the defaults in force — stops the fl-client at
+  startup (fail closed) rather than running unfiltered.
 
 The policy uses the **stock** NVFLARE ``PercentilePrivacy`` filter, which unlike FLIP's app-level subclass
 has no ``off`` switch:
@@ -359,7 +360,8 @@ has no ``off`` switch:
      - ``percentile`` (deterministic clip + sparsify). Unset = no site policy.
      - unset
    * - ``FL_SITE_PRIVACY_PERCENTILE`` / ``FL_SITE_PRIVACY_GAMMA``
-     - Parameters for the percentile policy (same maths as the app-level filter above).
+     - Parameters for the percentile policy (same maths as the app-level filter above). ``gamma`` accepts
+       any positive value; a larger ``gamma`` merely weakens the truncation.
      - ``10`` / ``0.01``
 
 Semantics — verified against NVFLARE 2.8.0:

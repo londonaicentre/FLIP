@@ -25,8 +25,10 @@ The stock NVFLARE filter class is used deliberately: unlike FLIP's app-level sub
 Stdlib-only on purpose — it must run before NVFLARE starts and never fail on framework imports.
 Validation is strict because stock ``PercentilePrivacy`` fails *open* (silently forwards the update
 unfiltered) when ``gamma <= 0`` or ``percentile`` is outside ``[0, 100]``; a mis-set policy must stop
-the container, not run unprotected. When no policy is configured, any previously rendered file is
-removed — the env vars are the single source of truth, and the target lives on a persistent bind mount.
+the container, not run unprotected. An unrecognised ``FL_SITE_PRIVACY_*`` name is rejected for the same
+reason: a typo'd parameter would otherwise leave the weaker default silently in force. When no policy is
+configured, any previously rendered file is removed — the env vars are the single source of truth, and
+the target lives on a persistent bind mount.
 """
 
 import argparse
@@ -40,7 +42,11 @@ from pathlib import Path
 
 SCOPE_NAME = "site_default"
 PERCENTILE_FILTER_PATH = "nvflare.app_common.filters.percentile_privacy.PercentilePrivacy"
-_POLICY_VAR = "FL_SITE_PRIVACY_POLICY"
+_VAR_PREFIX = "FL_SITE_PRIVACY_"
+_POLICY_VAR = f"{_VAR_PREFIX}POLICY"
+_PERCENTILE_VAR = f"{_VAR_PREFIX}PERCENTILE"
+_GAMMA_VAR = f"{_VAR_PREFIX}GAMMA"
+_KNOWN_VARS = (_POLICY_VAR, _PERCENTILE_VAR, _GAMMA_VAR)
 
 
 class SitePolicyError(ValueError):
@@ -103,12 +109,25 @@ def parse_env(env: Mapping[str, str]) -> SitePolicy | None:
         The validated policy, or ``None`` when no policy is configured.
 
     Raises:
-        SitePolicyError: On an unknown policy, an invalid parameter, or parameters set without a policy.
+        SitePolicyError: On an unrecognised ``FL_SITE_PRIVACY_*`` name, an unknown policy, an invalid
+            parameter, or parameters set without a policy.
     """
+    # Checked before the policy branch: once a policy is selected a typo'd parameter name (e.g.
+    # FL_SITE_PRIVACY_PERCENTIL) would otherwise be ignored and the site would silently run the
+    # default — a weaker filter than the operator asked for.
+    unknown = sorted(
+        var for var in env if var.startswith(_VAR_PREFIX) and var not in _KNOWN_VARS and _get(env, var) is not None
+    )
+    if unknown:
+        raise SitePolicyError(
+            f"unrecognised site privacy variable(s) {', '.join(unknown)} — expected only "
+            f"{', '.join(_KNOWN_VARS)}; refusing to run a policy that ignores them"
+        )
+
     policy_raw = _get(env, _POLICY_VAR)
 
     if policy_raw is None:
-        stray = [var for var in ("FL_SITE_PRIVACY_PERCENTILE", "FL_SITE_PRIVACY_GAMMA") if _get(env, var) is not None]
+        stray = [var for var in (_PERCENTILE_VAR, _GAMMA_VAR) if _get(env, var) is not None]
         if stray:
             raise SitePolicyError(
                 f"{', '.join(sorted(stray))} set but {_POLICY_VAR} is not — refusing to guess a policy; "
@@ -119,14 +138,12 @@ def parse_env(env: Mapping[str, str]) -> SitePolicy | None:
     if policy_raw.lower() != "percentile":
         raise SitePolicyError(f"{_POLICY_VAR}={policy_raw!r} is not a known policy (expected: percentile)")
 
-    percentile_raw = _get(env, "FL_SITE_PRIVACY_PERCENTILE")
-    gamma_raw = _get(env, "FL_SITE_PRIVACY_GAMMA")
+    percentile_raw = _get(env, _PERCENTILE_VAR)
+    gamma_raw = _get(env, _GAMMA_VAR)
     percentile = 10 if percentile_raw is None else _parse_value(
-        "FL_SITE_PRIVACY_PERCENTILE", percentile_raw, minimum=0, maximum=100
+        _PERCENTILE_VAR, percentile_raw, minimum=0, maximum=100
     )
-    gamma = 0.01 if gamma_raw is None else _parse_value(
-        "FL_SITE_PRIVACY_GAMMA", gamma_raw, minimum=0, minimum_exclusive=True
-    )
+    gamma = 0.01 if gamma_raw is None else _parse_value(_GAMMA_VAR, gamma_raw, minimum=0, minimum_exclusive=True)
     return SitePolicy(percentile=percentile, gamma=gamma)
 
 

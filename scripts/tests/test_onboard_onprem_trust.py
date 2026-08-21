@@ -190,6 +190,28 @@ def test_8_site_privacy_not_configured_reports_cleanly() -> None:
     _assert("/dev/null" not in result.detail, "detail names no validation path", result.detail)
 
 
+def test_9_site_privacy_rejects_misspelt_variable() -> None:
+    """A typo'd FL_SITE_PRIVACY_* kit var must FAIL here rather than run a weaker filter than intended.
+
+    This check is where the renderer's unknown-name guard actually bites: it forwards every
+    FL_SITE_PRIVACY_-prefixed kit key to the renderer, whereas the compose and Helm delivery paths
+    enumerate only the three known names and drop a typo before it ever reaches the container.
+    """
+    print("▶ misspelt site privacy variable -> FAIL")
+    result = mod.check_site_privacy_policy(
+        {
+            "FL_BACKEND": "nvflare",
+            "FL_SITE_PRIVACY_POLICY": "percentile",
+            "FL_SITE_PRIVACY_PERCENTIL": "25",
+        },
+        True,
+        "TEST",
+        SCRIPTS_DIR.parent,
+    )
+    _assert(result.status == mod.Status.FAIL, "status is FAIL", result.detail)
+    _assert("FL_SITE_PRIVACY_PERCENTIL " in result.detail, "detail names the misspelt variable", result.detail)
+
+
 def main() -> None:
     if not SCRIPT.is_file():
         sys.exit(f"❌ {SCRIPT} not found")
@@ -202,6 +224,7 @@ def main() -> None:
     test_6_site_privacy_rejects_non_finite_value()
     test_7_site_privacy_rejects_unsupported_backend()
     test_8_site_privacy_not_configured_reports_cleanly()
+    test_9_site_privacy_rejects_misspelt_variable()
 
     print("—")
     print(f"PASS={PASS}  FAIL={FAIL}")
