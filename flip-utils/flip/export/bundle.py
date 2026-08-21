@@ -19,7 +19,10 @@ Two bundle forms are written, and the choice is a real trade rather than a prefe
   needs no FLIP application code — which is the whole reason this form exists.
 * ``form="directory"`` writes a directory bundle — plain weights under ``models/``, the configs
   under ``configs/``, and the application's own code under ``scripts/``. It touches ``torch.jit``
-  at no point, at the cost of shipping the application alongside the weights.
+  at no point, at the cost of shipping the application alongside the weights *and* of rebuilding
+  the architecture at inference time, under whatever MONAI the consuming container has. Scripting
+  freezes the network into a graph; this form does not, so a MONAI release that renames a submodule
+  of the network breaks the strict ``load_state_dict``. See the packaging guide.
 
 ``MonaiBundleInferenceOperator`` consumes both. PyTorch has TorchScript on a removal path — it is
 deprecated on Python 3.12 and reports itself unsupported on 3.14+ — so the directory form is the

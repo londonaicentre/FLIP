@@ -291,6 +291,9 @@ the choice is a genuine trade rather than a preference:
    * - Ships your application code
      - **No** — this is why it exists
      - **Yes**, the whole app dir, under ``scripts/``
+   * - The architecture
+     - Frozen into the compiled graph at export
+     - Rebuilt at inference by your ``get_model()``
    * - Uses ``torch.jit``
      - To write and to read
      - **Nowhere**
@@ -298,6 +301,22 @@ the choice is a genuine trade rather than a preference:
 Reach for ``--form directory`` in two situations: your model will not script, or ``torch.jit`` has
 stopped working. Otherwise the default is better, because a MAP built from it needs no FLIP
 application code at all.
+
+.. warning::
+
+   **The directory form couples your MAP to the MONAI your model was trained against, and the
+   TorchScript form does not.** Scripting freezes the network into a compiled graph, so the MAP
+   never constructs it; the directory form calls your ``get_model()`` inside the MAP, under
+   whatever MONAI that container has. If a MONAI release renames a submodule of the network you
+   build — say ``monai.networks.nets.UNet`` — the strict ``load_state_dict`` fails outright, which
+   is the good case. Check the MAP's ``requirements.txt`` against the MONAI your app trained with
+   before choosing this form, and prefer a version range that includes it.
+
+   Worth knowing: the MAP templates currently pin ``monai<=1.5.0`` while FLIP trains on ``1.6``.
+   That pin is inherited verbatim from the App SDK's own spleen example rather than chosen here,
+   and it is what forces ``torch<2.7`` and the two CUDA entries in
+   :ref:`the trap table <map-environment-traps>`. ``UNet`` happens to be unchanged between those
+   releases, so today's tutorials are unaffected — but that is luck, not a guarantee.
 
 .. code-block:: bash
 
