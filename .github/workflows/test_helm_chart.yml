@@ -271,7 +271,7 @@ jobs:
           # that string also names every volumeMount that reads the kit, so a context-window
           # grep tests whichever node happens to sit near a match rather than the volume itself.
           assert_kit_volume() { # <backend> <expected volume type> <manifest> <what a mismatch means>
-            uv run --no-project --with pyyaml python - "$@" <<'PY'
+            uv run --no-project --with "pyyaml==6.0.3" python - "$@" <<'PY'
           import sys, yaml
 
           backend, want, path, consequence = sys.argv[1:5]
