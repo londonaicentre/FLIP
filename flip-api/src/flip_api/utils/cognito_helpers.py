@@ -458,11 +458,15 @@ def reset_user_mfa(username: str, user_pool_id: str) -> None:
 
 # TTL cache for is_mfa_enabled. verify_token calls this on every
 # authenticated request, so a short-lived in-process cache sidesteps the
-# Cognito AdminGetUser round-trip and its throttling ceiling. The cache is
-# invalidated from reset_user_mfa so admin resets take effect immediately;
-# the TTL is the upper bound on staleness when a user's MFA preference
-# changes through a path that doesn't go through reset_user_mfa (e.g. the
-# user enrolling via updateMFAPreference on the client).
+# Cognito AdminGetUser round-trip and its throttling ceiling. Only positive
+# (enrolled) results are cached: enrolment happens client-side (Amplify
+# updateMFAPreference straight to Cognito), so the hub gets no signal to
+# invalidate — a cached False would 403 every MFA-gated call for up to the
+# TTL right after a first-time user enrols. Unenrolled users are parked on
+# the setup page and generate almost no gated traffic, so re-checking them
+# per request costs nothing. The True→False transition only happens through
+# reset_user_mfa, which invalidates the entry so admin resets take effect
+# immediately.
 _MFA_STATE_TTL_SECONDS = 60.0
 _mfa_state_cache: dict[tuple[str, str], tuple[bool, float]] = {}
 _mfa_state_cache_lock = threading.Lock()
@@ -483,8 +487,10 @@ def is_mfa_enabled(username: str, user_pool_id: str) -> bool:
     user has both verified a software token and had their preference set
     with Enabled=True.
 
-    Results are cached for a short TTL because ``verify_token`` calls this
-    on every authenticated request; see ``_MFA_STATE_TTL_SECONDS``.
+    Positive results are cached for a short TTL because ``verify_token``
+    calls this on every authenticated request; negative results are never
+    cached so client-side enrolment is visible immediately — see the
+    comment on ``_MFA_STATE_TTL_SECONDS``.
 
     Args:
         username (str): Username (email)
@@ -517,8 +523,9 @@ def is_mfa_enabled(username: str, user_pool_id: str) -> bool:
         ) from e
 
     enabled = "SOFTWARE_TOKEN_MFA" in response.get("UserMFASettingList", [])
-    with _mfa_state_cache_lock:
-        _mfa_state_cache[cache_key] = (enabled, time.monotonic() + _MFA_STATE_TTL_SECONDS)
+    if enabled:
+        with _mfa_state_cache_lock:
+            _mfa_state_cache[cache_key] = (enabled, time.monotonic() + _MFA_STATE_TTL_SECONDS)
     return enabled
 
 
