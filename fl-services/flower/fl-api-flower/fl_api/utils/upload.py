@@ -80,8 +80,26 @@ def upload_application(model_id: str, body: UploadAppRequest, upload_dir: Path) 
 
     Returns:
         dict[str, str]: A dictionary containing a success message and the location where the application was uploaded.
+
+    Raises:
+        HTTPException: 400 if the request names no participating trusts, or a bundle URL is
+            rejected; 500 if a bundle file cannot be downloaded.
     """
     logger.info(f"Received request to upload app: {model_id}")
+
+    # An empty trust list would inject flip-min-clients=0, and FlipFedAvg rejects a quorum below 1
+    # — but that raise happens inside the ServerApp at run time, long after submission, where the
+    # only channel left is a log line the platform does not surface. It is reachable: the hub's
+    # slot_names is a DB lookup returning [] when no participating trust holds an FL kit slot, and
+    # the Flower branch of validate_client_availability passes an empty list straight through.
+    # Refusing here turns it into the submit's error, which the hub already converts to ERROR on
+    # the model, and keeps the previous bundle intact — the job dir is cleared further down.
+    if not body.trusts:
+        logger.error(f"Upload request for model {model_id} names no participating trusts")
+        raise HTTPException(
+            status_code=400,
+            detail="No participating trusts in the upload request: a run needs at least one trust to train on.",
+        )
 
     # model_id is the Central Hub model UUID (validated as a UUID by the endpoint); it names
     # the per-model job dir. This section copies every uploaded file into that dir.

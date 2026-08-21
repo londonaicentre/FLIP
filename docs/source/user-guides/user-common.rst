@@ -351,8 +351,9 @@ There is no single list of required files. What a model must contain depends on 
 — the kind of federated job it runs, such as federated averaging or evaluation — and on which FL
 backend your platform is running. An app declares its job type with the ``job_type`` key in
 ``config.json``. Every app carries a ``config.json``, on either backend, because it is itself a
-required file for every job type. Where the key — or the file itself — is absent, the ``standard``
-job type is assumed.
+required file for every job type. Where the key is absent, the ``standard`` job type is assumed.
+The file itself is not optional: a model without a ``config.json`` is shown as missing it and
+cannot start training, whichever job type it was going to declare.
 
 **You do not need to look this up.** FLIP tells you which files your model needs, in two places on
 the model page:

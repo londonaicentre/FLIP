@@ -91,21 +91,22 @@ def main(grid: Grid, context: Context, flip: FLIP = FLIP()) -> None:
     # per-client metric breakdown.
     # A malformed flip-min-clients must fail the run, not escape from the strategy constructor:
     # an unhandled raise leaves the model at its last status and the net BUSY. ERROR is the only
-    # channel the researcher can actually see — the ServerApp log stream is not surfaced.
+    # channel the researcher can actually see — the ServerApp log stream is not surfaced. Both
+    # steps are covered because both can raise: the read rejects a non-integer, and FlipFedAvg's
+    # constructor rejects a quorum below 1 (an injected flip-min-clients=0).
     try:
         min_clients = min_clients_from_run_config(run_config)
+        strategy = EvaluationStrategy(
+            flip=flip,
+            model_id=model_id,
+            min_clients=min_clients,
+            fraction_train=0.0,  # No training
+            fraction_evaluate=1.0,  # All clients evaluate
+        )
     except ValueError as err:
         log(INFO, f"✗ {err}")
         flip.update_status(model_id, ModelStatus.ERROR)
         raise
-
-    strategy = EvaluationStrategy(
-        flip=flip,
-        model_id=model_id,
-        min_clients=min_clients,
-        fraction_train=0.0,  # No training
-        fraction_evaluate=1.0,  # All clients evaluate
-    )
 
     # The evaluation rounds start here — mirrors the standard template's strategy,
     # which reports RUNNING when its rounds start (#782).

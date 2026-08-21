@@ -82,9 +82,37 @@ def _reader_call(value: ast.expr, tree: ast.Module) -> ast.Call | None:
     return None
 
 
-def _strategy_call(source: str) -> ast.Call | None:
-    """Return the ``strategy = <Strategy>(...)`` call node, or None if there isn't one."""
-    for node in ast.walk(ast.parse(source)):
+def _handler_sets_error(handler: ast.ExceptHandler) -> bool:
+    """True if an except block reports the failure as a model status of ERROR."""
+    for node in ast.walk(handler):
+        if isinstance(node, ast.Attribute) and node.attr == "ERROR":
+            return True
+    return False
+
+
+def _guarded_by_value_error(node: ast.AST, tree: ast.Module) -> bool:
+    """True if ``node`` sits inside a ``try`` whose ValueError handler sets the model to ERROR."""
+    for candidate in ast.walk(tree):
+        if not isinstance(candidate, ast.Try):
+            continue
+        if not any(body_node is node or node in ast.walk(body_node) for body_node in candidate.body):
+            continue
+        for handler in candidate.handlers:
+            catches = handler.type
+            names = [catches] if not isinstance(catches, ast.Tuple) else list(catches.elts)
+            if any(getattr(name, "id", None) == "ValueError" for name in names) and _handler_sets_error(handler):
+                return True
+    return False
+
+
+def _strategy_call_in(tree: ast.Module) -> ast.Call | None:
+    """Return the ``strategy = <Strategy>(...)`` call node from ``tree``, or None if absent.
+
+    Takes the tree rather than the source because callers that also reason about the node's
+    surroundings need it to belong to the tree they are walking — nodes parsed twice compare
+    unequal, so a second parse would silently answer "not found" to every containment question.
+    """
+    for node in ast.walk(tree):
         if (
             isinstance(node, ast.Assign)
             and isinstance(node.value, ast.Call)
@@ -92,6 +120,11 @@ def _strategy_call(source: str) -> ast.Call | None:
         ):
             return node.value
     return None
+
+
+def _strategy_call(source: str) -> ast.Call | None:
+    """Return the ``strategy = <Strategy>(...)`` call node, or None if there isn't one."""
+    return _strategy_call_in(ast.parse(source))
 
 
 def test_discovery_actually_finds_the_flip_flower_apps():
@@ -175,4 +208,25 @@ def test_app_config_declares_flip_min_clients(server_app: Path):
     assert declared >= 2, (
         f"{pyproject}: declared {MIN_CLIENTS_KEY}={declared} is below flwr's "
         f"default of 2, which loosens the quorum wherever nothing injects the trust count"
+    )
+
+
+@pytest.mark.parametrize("server_app", FLIP_FLOWER_APPS, ids=lambda p: p.parents[1].name)
+def test_a_rejected_quorum_reaches_the_researcher_as_error(server_app: Path):
+    """Constructing the strategy must fail the model, not just the process.
+
+    ``min_clients_from_run_config`` is not the only ValueError on this path: FlipFedAvg's
+    constructor rejects a quorum below 1, and an app that wraps only the read leaves that raise
+    unhandled — the run dies with the model still at its last status and the net still BUSY,
+    which is the invisible-failure mode the run-config parsing was wrapped to avoid in the first
+    place. Asserting on the enclosing try rather than on a call means moving the construction out
+    of the guard fails here, whichever shape the app uses to do it.
+    """
+    tree = ast.parse(server_app.read_text())
+    call = _strategy_call_in(tree)
+    assert call is not None, f"{server_app}: no `strategy = ...(...)` construction found"
+
+    assert _guarded_by_value_error(call, tree), (
+        f"{server_app}: the strategy is constructed outside any try/except ValueError that sets "
+        f"ModelStatus.ERROR, so a rejected quorum kills the run without telling the researcher"
     )

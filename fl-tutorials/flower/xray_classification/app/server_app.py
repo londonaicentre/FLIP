@@ -73,16 +73,25 @@ def main(grid: Grid, context: Context, flip: FLIP = FLIP()) -> None:
 
     arrays = ArrayRecord(model.state_dict())
 
-    # Use FedAvg strategy with per-client metrics tracking
-    strategy = FedAvgWithClientMetrics(
-        flip=flip,
-        model_id=model_id,
-        min_clients=min_clients,
-        fraction_train=1.0,
-        fraction_evaluate=1.0,
-        best_model_metric=best_model_metric,
-        best_model_metric_minimize=best_model_metric_minimize,
-    )
+    # Use FedAvg strategy with per-client metrics tracking.
+    # FlipFedAvg rejects a quorum below 1, and that check runs in the constructor — outside the
+    # try above, which only covers reading the value. An injected flip-min-clients=0 would
+    # therefore raise here unhandled, leaving the model at PREPARED and the net BUSY, so the
+    # construction needs the same handling as the read.
+    try:
+        strategy = FedAvgWithClientMetrics(
+            flip=flip,
+            model_id=model_id,
+            min_clients=min_clients,
+            fraction_train=1.0,
+            fraction_evaluate=1.0,
+            best_model_metric=best_model_metric,
+            best_model_metric_minimize=best_model_metric_minimize,
+        )
+    except ValueError as err:
+        log(INFO, f"✗ {err}")
+        flip.update_status(model_id, ModelStatus.ERROR)
+        raise
 
     result = strategy.start(
         grid=grid,
