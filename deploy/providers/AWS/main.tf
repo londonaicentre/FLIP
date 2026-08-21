@@ -373,11 +373,15 @@ resource "aws_iam_role_policy" "trust_ec2_s3" {
         # every net's kits, the fl-server's own kit, the NVFLARE provisioning CA registry and
         # the licensed OMOP vocabulary — and this is the host that runs researcher-submitted
         # FL code, so it is the role that least deserves bucket-wide read.
-        Effect = "Allow"
-        Action = [
-          "s3:ListBucket",
-          "s3:GetBucketLocation",
-        ]
+        #
+        # Deliberately no s3:GetBucketLocation: a GetBucketLocation request carries no
+        # s3:prefix context key, so under this condition the grant could never authorize
+        # anything, and splitting it out unconditioned would widen the role for a call
+        # nothing on this host makes — the region is supplied by the instance's own
+        # configuration. Kit and vocab staging were verified on the stag EC2 trust with
+        # exactly the actions below.
+        Effect   = "Allow"
+        Action   = ["s3:ListBucket"]
         Resource = [aws_s3_bucket.aicentre_bucket.arn]
         Condition = {
           StringLike = {

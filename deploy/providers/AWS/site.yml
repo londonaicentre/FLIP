@@ -254,10 +254,34 @@
     # assume the first slot. A cloud trust can hold any slot: the hub allocates from
     # FL_KIT_SLOT_NAMES, so the second EC2 trust in an environment is Trust_2, the
     # third Trust_3, and a re-registration can move a host to a different one.
-    fl_kit_slot: "Trust_{{ trust_num | default('1') }}"
+    #
+    # No `| default('1')`: the slot names a specific host, so an unset trust_num on a
+    # `--tags flkit` re-stage would silently fetch Trust_1's kit onto a Trust_2/Trust_3
+    # host and report success — the same silent-wrong-result class this play's assertions
+    # exist to close. The Flower play below passes trust_num bare for the same reason.
+    # Bare, an unset trust_num fails on a Jinja "'trust_num' is undefined" error; the
+    # assert below fires first and says what to pass instead.
+    fl_kit_slot: "Trust_{{ trust_num }}"
     # Ends in "/" — consumers pass it bare, never with a slash appended (see FLIP#965).
     trust_s3_source: "s3://{{ flip_aicentre_bucket }}/fl-flare-participant-kits/{{ fl_kit_date }}/net-1/services/{{ fl_kit_slot }}/"
   tasks:
+    # Scoped to this play rather than added to the localhost play's assert block: that
+    # block runs under every tag selection (the play is `tags: always`), and the data
+    # plays further down legitimately default trust_num to "1". Only kit staging must
+    # have it stated, because there the wrong value fetches another trust's identity.
+    - name: ensure trust_num is defined for NVFLARE kit staging
+      assert:
+        that:
+          - trust_num is defined
+          - trust_num | string | length > 0
+        fail_msg: >-
+          trust_num must be defined for FL kit staging — it selects the participant-kit
+          slot (Trust_<trust_num>) this host was assigned by the hub at registration.
+          Pass it explicitly, e.g. `-e trust_num=2`, including for a standalone
+          `--tags flkit` re-stage. There is deliberately no default: staging the wrong
+          slot puts another trust's FL identity on this host and reports success.
+      when: fl_backend == "nvflare"
+
     - name: ensure FL kit directory exists
       file:
         path: "{{ fl_kit_dir }}"
@@ -349,6 +373,21 @@
     # Ends in "/" — consumers pass it bare, never with a slash appended (see FLIP#965).
     trust_s3_source: "s3://{{ flip_aicentre_bucket }}/fl-flower-participant-kits/{{ fl_kit_date }}/net-1/"
   tasks:
+    # Same requirement as the NVFLARE play above — trust_num selects which SuperNode
+    # credential is staged. Bare `{{ trust_num }}` already fails an undefined run, but
+    # on a Jinja "undefined variable" error rather than one that says what to pass.
+    - name: ensure trust_num is defined for Flower kit staging
+      assert:
+        that:
+          - trust_num is defined
+          - trust_num | string | length > 0
+        fail_msg: >-
+          trust_num must be defined for FL kit staging — it selects this host's own
+          SuperNode credential (keys/supernode_credentials_<trust_num>). Pass it
+          explicitly, e.g. `-e trust_num=2`, including for a standalone `--tags flkit`
+          re-stage.
+      when: fl_backend == "flower"
+
     - name: ensure FL kit directory exists
       file:
         path: "{{ fl_kit_dir }}"
@@ -368,9 +407,16 @@
       # 2. Only this host's own credential is staged. The prefix also holds every other
       #    slot's SuperNode private key and the SuperLink server key, so syncing it whole
       #    puts the whole federation's FL identity on every trust host. The SuperNode
-      #    reads exactly ca.crt and supernode_credentials_<slot> (the `command:` block in
-      #    compose_trust.production.flower.yml), which is what package-onprem-trust-kit.sh
-      #    stages for on-prem operators.
+      #    reads exactly ca.crt and its own supernode_credentials_<slot> (the `command:`
+      #    block in compose_trust.production.flower.yml), which is what the two --include
+      #    patterns below fetch — and nothing more.
+      #
+      #    This is intentionally NARROWER than package-onprem-trust-kit.sh, which syncs
+      #    the whole certificates/ tree (ca.crt, server.pem, server.key — ca.key never
+      #    reaches S3; fl-services/flower/Makefile excludes it at upload) plus the one
+      #    supernode credential. That tarball therefore still hands an on-prem operator
+      #    the SuperLink's server key — the same exposure class narrowed here for EC2 —
+      #    and closing it can be split into a follow-up.
       #
       # The closing assertion is the durable half of the fix: because the wipe below runs
       # first, a sync that copies nothing leaves the host with NO kit, and aws s3 sync
