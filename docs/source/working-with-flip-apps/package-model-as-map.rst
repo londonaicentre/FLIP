@@ -809,6 +809,19 @@ These were all encountered while establishing the sequence above. None are docum
        documentation has not caught up.
    * - ``holoscan package`` has no ``--models`` flag
      - ``holoscan-cli`` 4.3+ dropped the MAP interface. Use ≤4.2 or 3.x.
+   * - ``# of series: 0``, then ``Missing expected input 'study_selected_series_list'``
+     - The loader dropped every instance. With ``Error parsing SOP Instance: int() argument must be
+       ... not 'NoneType'`` just above it, the cause is an **empty** ``AcquisitionNumber``: the SDK
+       does ``int(instance.get("AcquisitionNumber", -1))``, and a tag that is present-but-empty
+       returns ``None`` rather than the default. **The FLIP mock CT data has this** — every spleen
+       series seeded from ``aicentreflip/trust-data`` carries an empty ``AcquisitionNumber`` and
+       ``SeriesNumber``. The mock CR data does not (the tag is absent there, so the default
+       applies), which is why the chest-radiograph path has never hit it. Until the dataset is
+       regenerated, stamp the tag before packaging::
+
+           for f in glob.glob("input/*.dcm"):
+               ds = pydicom.dcmread(f); ds.AcquisitionNumber = 1; ds.SeriesNumber = 1; ds.save_as(f)
+
    * - ``No installed Holoscan PyPI package found``
      - The packaging *host* needs the Holoscan **SDK**, not only the CLI — ``holoscan-cli`` alone
        gets you as far as generating ``app.json`` and then stops. ``pip install holoscan-cu12==3.11.0``
