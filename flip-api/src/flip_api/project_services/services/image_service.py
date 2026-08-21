@@ -23,11 +23,12 @@ from flip_api.db.models.main_models import Trust as DBTrust
 from flip_api.domain.interfaces.project import (
     IImagingImportStatus,
     IImagingStatus,
+    ImagingStatusSnapshot,
     IReimportQuery,
     IUpdateXnatProfile,
 )
 from flip_api.domain.schemas.projects import ImagingProject, XnatProjectStatusInfo
-from flip_api.domain.schemas.status import TaskStatus, TaskType, XNATImageStatus
+from flip_api.domain.schemas.status import ImagingConnectionState, TaskStatus, TaskType, XNATImageStatus
 from flip_api.trusts_services.services.trust import get_trusts
 from flip_api.utils.logger import logger
 
@@ -221,6 +222,158 @@ def get_xnat_project_status_info(xnat_project_id: UUID, db: Session) -> XnatProj
         raise
 
 
+# A refresh that has not reached one of these is still in flight, and says nothing either way
+# about whether the trust is reachable — only terminal tasks are evidence.
+_TERMINAL_TASK_STATUSES = (TaskStatus.COMPLETED, TaskStatus.FAILED)
+
+# imaging-api answers a missing XNAT project with 404 (`NotFoundError` from `get_project`) and a
+# failed XNAT fetch with 500, and trust-api maps its own transport failures to 502. Only 404 is
+# specific enough to report as "the project is gone"; see `ImagingConnectionState`.
+_PROJECT_MISSING_STATUS_CODE = 404
+
+
+def _latest_status_task(
+    trust_id: UUID,
+    xnat_project_id: UUID,
+    db: Session,
+    statuses: tuple[TaskStatus, ...],
+) -> TrustTask | None:
+    """Return the newest GET_IMAGING_STATUS task for a trust/XNAT project in one of `statuses`.
+
+    Args:
+        trust_id (UUID): The trust to look up.
+        xnat_project_id (UUID): The XNAT project ID to filter by (stored in task payload).
+        db (Session): Database session.
+        statuses (tuple[TaskStatus, ...]): Task states to consider.
+
+    Returns:
+        TrustTask | None: The newest matching task, or None if there is none.
+    """
+    return db.exec(
+        select(TrustTask)
+        .where(TrustTask.trust_id == trust_id)
+        .where(TrustTask.task_type == TaskType.GET_IMAGING_STATUS)
+        .where(col(TrustTask.status).in_(statuses))
+        # Substring match on JSON payload; safe since UUID v4 strings are unique
+        .where(col(TrustTask.payload).contains(str(xnat_project_id)))
+        .order_by(col(TrustTask.updated_at).desc())
+        .limit(1)
+    ).first()
+
+
+def _parse_import_status(result: str | None, trust_id: UUID) -> IImagingImportStatus | None:
+    """Parse the import-status counts out of a completed task result.
+
+    Args:
+        result (str | None): The task's JSON result payload.
+        trust_id (UUID): Owning trust, for log context only.
+
+    Returns:
+        IImagingImportStatus | None: Parsed counts, or None if absent or unparseable.
+    """
+    if not result:
+        return None
+
+    try:
+        result_data = json.loads(result)
+        import_status = result_data.get("import_status", result_data)
+        return IImagingImportStatus(
+            successful=import_status.get("successful_count", 0),
+            failed=import_status.get("failed_count", 0),
+            processing=import_status.get("processing_count", 0),
+            queued=import_status.get("queued_count", 0),
+            queueFailed=import_status.get("queue_failed_count", 0),
+        )
+    except (json.JSONDecodeError, KeyError, TypeError, AttributeError) as e:
+        logger.warning(f"Failed to parse imaging status result for trust {trust_id}: {e}")
+        return None
+
+
+def _classify_refresh_failure(result: str | None) -> ImagingConnectionState:
+    """Decide which error state a FAILED imaging-status refresh represents.
+
+    Prefers the structured `status_code` the trust reports alongside the error. Falls back to the
+    leading status code of the stringified `HTTPException` (`"<code>: <detail>"`) so trusts that
+    have not yet picked up the structured field are still classified correctly rather than all
+    collapsing to `UNREACHABLE`.
+
+    Args:
+        result (str | None): The failed task's JSON result payload.
+
+    Returns:
+        ImagingConnectionState: `PROJECT_MISSING` for a 404, `UNREACHABLE` for everything else —
+        including a result that cannot be parsed, since an unclassifiable failure is still a
+        failure and `UNREACHABLE` carries the more cautious message.
+    """
+    if not result:
+        return ImagingConnectionState.UNREACHABLE
+
+    try:
+        payload = json.loads(result)
+    except (json.JSONDecodeError, TypeError):
+        return ImagingConnectionState.UNREACHABLE
+
+    if not isinstance(payload, dict):
+        return ImagingConnectionState.UNREACHABLE
+
+    status_code = payload.get("status_code")
+    if status_code is None:
+        error = payload.get("error")
+        if isinstance(error, str):
+            leading = error.split(":", 1)[0].strip()
+            if leading.isdigit():
+                status_code = int(leading)
+
+    return (
+        ImagingConnectionState.PROJECT_MISSING
+        if status_code == _PROJECT_MISSING_STATUS_CODE
+        else ImagingConnectionState.UNREACHABLE
+    )
+
+
+def _get_imaging_status_snapshot(trust_id: UUID, xnat_project_id: UUID, db: Session) -> ImagingStatusSnapshot:
+    """Build the per-trust imaging status, including whether it is still current.
+
+    The counts always come from the newest refresh that *succeeded*, so a trust that drops out
+    keeps showing its last known progress rather than collapsing to zero. `connection_state`
+    comes from the newest refresh that *finished* either way, which is what makes a stale
+    snapshot distinguishable from a live one (GitHub issue #1022).
+
+    Costs one query in the healthy case; the second only runs once refreshes start failing.
+
+    Args:
+        trust_id (UUID): The trust to look up.
+        xnat_project_id (UUID): The XNAT project ID to filter by (stored in task payload).
+        db (Session): Database session.
+
+    Returns:
+        ImagingStatusSnapshot: Last known counts, connection state, and when the counts were
+        last confirmed.
+    """
+    latest = _latest_status_task(trust_id, xnat_project_id, db, _TERMINAL_TASK_STATUSES)
+
+    # No refresh has finished yet (first poll after project creation). Not an error state.
+    if latest is None:
+        return ImagingStatusSnapshot()
+
+    if latest.status == TaskStatus.COMPLETED:
+        return ImagingStatusSnapshot(
+            import_status=_parse_import_status(latest.result, trust_id),
+            connection_state=ImagingConnectionState.OK,
+            last_seen_at=latest.updated_at,
+        )
+
+    # The newest refresh failed, so fall back to the newest one that did not. `last_seen_at`
+    # deliberately tracks that older task: it is when the counts were last true, not when the
+    # failure happened.
+    last_good = _latest_status_task(trust_id, xnat_project_id, db, (TaskStatus.COMPLETED,))
+    return ImagingStatusSnapshot(
+        import_status=_parse_import_status(last_good.result, trust_id) if last_good else None,
+        connection_state=_classify_refresh_failure(latest.result),
+        last_seen_at=last_good.updated_at if last_good else None,
+    )
+
+
 def _get_latest_imaging_status(trust_id: UUID, xnat_project_id: UUID, db: Session) -> IImagingImportStatus | None:
     """Look up the most recent completed GET_IMAGING_STATUS task result for a trust and XNAT project.
 
@@ -232,33 +385,8 @@ def _get_latest_imaging_status(trust_id: UUID, xnat_project_id: UUID, db: Sessio
     Returns:
         IImagingImportStatus | None: Parsed import status counts, or None if no completed result exists.
     """
-    latest_task = db.exec(
-        select(TrustTask)
-        .where(TrustTask.trust_id == trust_id)
-        .where(TrustTask.task_type == TaskType.GET_IMAGING_STATUS)
-        .where(TrustTask.status == TaskStatus.COMPLETED)
-        # Substring match on JSON payload; safe since UUID v4 strings are unique
-        .where(col(TrustTask.payload).contains(str(xnat_project_id)))
-        .order_by(col(TrustTask.updated_at).desc())
-        .limit(1)
-    ).first()
-
-    if not latest_task or not latest_task.result:
-        return None
-
-    try:
-        result_data = json.loads(latest_task.result)
-        import_status = result_data.get("import_status", result_data)
-        return IImagingImportStatus(
-            successful=import_status.get("successful_count", 0),
-            failed=import_status.get("failed_count", 0),
-            processing=import_status.get("processing_count", 0),
-            queued=import_status.get("queued_count", 0),
-            queueFailed=import_status.get("queue_failed_count", 0),
-        )
-    except (json.JSONDecodeError, KeyError, TypeError) as e:
-        logger.warning(f"Failed to parse imaging status result for trust {trust_id}: {e}")
-        return None
+    latest_task = _latest_status_task(trust_id, xnat_project_id, db, (TaskStatus.COMPLETED,))
+    return _parse_import_status(latest_task.result, trust_id) if latest_task else None
 
 
 def get_imaging_project_statuses(
@@ -286,7 +414,7 @@ def get_imaging_project_statuses(
     for row_project in imaging_projects:
         project_creation_completed = False
         reimport_count_val = 0
-        import_status = None
+        snapshot = ImagingStatusSnapshot()
 
         # Only look up XNAT status and queue refresh tasks for trusts that have an XNAT project
         if row_project.xnat_project_id:
@@ -297,8 +425,8 @@ def get_imaging_project_statuses(
                 project_creation_completed = xnat_status_info.retrieve_image_status == XNATImageStatus.CREATED
                 reimport_count_val = xnat_status_info.reimport_count
 
-            # Look up the latest completed status result for this trust and XNAT project
-            import_status = _get_latest_imaging_status(row_project.trust_id, row_project.xnat_project_id, db)
+            # Last known counts plus whether they are still current (GitHub issue #1022)
+            snapshot = _get_imaging_status_snapshot(row_project.trust_id, row_project.xnat_project_id, db)
 
             # Queue a status refresh task only if one isn't already pending or in progress for this XNAT project
             existing_task = db.exec(
@@ -324,7 +452,9 @@ def get_imaging_project_statuses(
             trust_name=row_project.name,
             project_creation_completed=project_creation_completed,
             reimport_count=reimport_count_val,
-            import_status=import_status,
+            import_status=snapshot.import_status,
+            connection_state=snapshot.connection_state,
+            last_seen_at=snapshot.last_seen_at,
         )  # type: ignore[call-arg]
 
         response_statuses.append(current_project_status)

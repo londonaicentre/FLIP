@@ -55,6 +55,7 @@ const stubs = {
     "icon-ph-clock": { template: "<span data-test-icon='clock' />" },
     "icon-ph-warning-circle-fill": { template: "<span data-test-icon='exclamation' />" },
     "icon-ph-arrows-clockwise": { template: "<span data-test-icon='refresh' />" },
+    "icon-ph-x-circle-fill": { template: "<span data-test-icon='x-circle' />" },
     Transition: { template: "<div><slot /></div>" }
 };
 
@@ -432,6 +433,130 @@ describe("ProjectStatus", () => {
 
             // When data is undefined, the skeleton loading state is shown, not the data view
             expect(wrapper.find(ProjectStatusComponent.overviewProjectCreation).exists()).toBe(false);
+        });
+    });
+});
+
+describe("ProjectStatus — XNAT import error states (FLIP#1022)", () => {
+    const lastSeen = "2026-08-21T13:58:00Z";
+
+    function trustInState(
+        connectionState: IImagingProjectStatus["connectionState"],
+        overrides: Partial<IImagingProjectStatus> = {}
+    ): IImagingProjectStatus {
+        return {
+            trustId: "trust-1",
+            trustName: "Alpha Trust",
+            projectCreationCompleted: true,
+            importStatus: {
+                successful: 300,
+                failed: 0,
+                processing: 0,
+                queued: 0,
+                queueFailed: 0
+            },
+            reimportCount: 0,
+            connectionState,
+            lastSeenAt: lastSeen,
+            ...overrides
+        };
+    }
+
+    describe("healthy", () => {
+        it("shows the Created footer and no error rim", () => {
+            mockSwrvData.value = [trustInState("ok")];
+            const wrapper = mountProjectStatus();
+
+            expect(wrapper.find("[data-test=project-creation-complete-trust-1]").exists()).toBe(true);
+            expect(wrapper.find("[data-test=import-error-trust-1]").exists()).toBe(false);
+            expect(wrapper.find("[data-test=last-known-tag-trust-1]").exists()).toBe(false);
+        });
+
+        it("treats a missing connectionState as healthy", () => {
+            // A hub that predates this field must not make every card look broken.
+            mockSwrvData.value = [trustInState(undefined, { lastSeenAt: undefined })];
+            const wrapper = mountProjectStatus();
+
+            expect(wrapper.find("[data-test=import-error-trust-1]").exists()).toBe(false);
+        });
+    });
+
+    describe("connection lost", () => {
+        it("shows the unreachable footer message", () => {
+            mockSwrvData.value = [trustInState("unreachable")];
+            const wrapper = mountProjectStatus();
+
+            const footer = wrapper.find("[data-test=import-error-trust-1]");
+            expect(footer.exists()).toBe(true);
+            expect(footer.text()).toContain("XNAT at this Trust is unreachable");
+            expect(footer.text()).toContain("Showing last known counts");
+        });
+
+        it("keeps the last known percentage instead of dropping to zero", () => {
+            mockSwrvData.value = [trustInState("unreachable")];
+            const wrapper = mountProjectStatus(true, 5, 300);
+
+            expect(wrapper.find("[data-test=pct-retrieved-trust-1]").text()).toBe("100%");
+            expect(wrapper.find("[data-test=successful-imports-trust-1]").text()).toBe("300");
+        });
+
+        it("marks the counts as last known, with the time they were last confirmed", () => {
+            mockSwrvData.value = [trustInState("unreachable")];
+            const wrapper = mountProjectStatus();
+
+            expect(wrapper.find("[data-test=last-known-tag-trust-1]").text()).toBe("Last known");
+            expect(wrapper.find("[data-test=import-count-trust-1]").text()).toMatch(/at \d{2}:\d{2}/);
+        });
+
+        it("omits the timestamp when the counts have never been confirmed", () => {
+            mockSwrvData.value = [trustInState("unreachable", { lastSeenAt: undefined })];
+            const wrapper = mountProjectStatus();
+
+            expect(wrapper.find("[data-test=import-count-trust-1]").text()).not.toContain("at ");
+        });
+    });
+
+    describe("project missing on XNAT", () => {
+        it("shows the project-not-found footer message", () => {
+            mockSwrvData.value = [trustInState("project-missing")];
+            const wrapper = mountProjectStatus();
+
+            const footer = wrapper.find("[data-test=import-error-trust-1]");
+            expect(footer.exists()).toBe(true);
+            expect(footer.text()).toContain("no longer exists at the Trust");
+            expect(footer.text()).toContain("Contact an XNAT administrator");
+        });
+
+        it("still keeps the last known counts on screen", () => {
+            mockSwrvData.value = [trustInState("project-missing")];
+            const wrapper = mountProjectStatus(true, 5, 300);
+
+            expect(wrapper.find("[data-test=pct-retrieved-trust-1]").text()).toBe("100%");
+            expect(wrapper.find("[data-test=last-known-tag-trust-1]").exists()).toBe(true);
+        });
+
+        it("distinguishes itself from the unreachable state", () => {
+            mockSwrvData.value = [trustInState("project-missing")];
+            const missing = mountProjectStatus().find("[data-test=import-error-trust-1]").text();
+
+            mockSwrvData.value = [trustInState("unreachable")];
+            const unreachable = mountProjectStatus().find("[data-test=import-error-trust-1]").text();
+
+            expect(missing).not.toBe(unreachable);
+        });
+    });
+
+    describe("recovery", () => {
+        it("returns to the healthy footer once the trust reports ok again", async () => {
+            mockSwrvData.value = [trustInState("unreachable")];
+            const wrapper = mountProjectStatus();
+            expect(wrapper.find("[data-test=import-error-trust-1]").exists()).toBe(true);
+
+            mockSwrvData.value = [trustInState("ok")];
+            await wrapper.vm.$nextTick();
+
+            expect(wrapper.find("[data-test=import-error-trust-1]").exists()).toBe(false);
+            expect(wrapper.find("[data-test=project-creation-complete-trust-1]").exists()).toBe(true);
         });
     });
 });

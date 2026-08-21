@@ -27,6 +27,7 @@ trust.
 import asyncio
 import json
 import sys
+from typing import Any
 
 import httpx
 
@@ -175,12 +176,19 @@ async def _report_task_result(client: httpx.AsyncClient, task_id: str, result: d
     Args:
         client (httpx.AsyncClient): HTTP client for making requests.
         task_id (str): The ID of the completed task.
-        result (dict): Result dict with ``success`` and optional ``result`` / ``error`` fields.
+        result (dict): Result dict with ``success`` and optional ``result`` / ``error`` /
+            ``status_code`` fields.
     """
     result_data = result.get("result")
-    # Include error details in the result field when reporting failures
+    # Include error details in the result field when reporting failures. ``status_code`` rides
+    # along when the handler knew one, so the hub can tell a missing XNAT project (404) from an
+    # unreachable one without parsing the error string (FLIP#1022). Absent codes stay absent
+    # rather than becoming null, so the hub's fallback parsing still kicks in.
     if not result.get("success", False) and result.get("error") and not result_data:
-        result_data = json.dumps({"error": result["error"]})
+        error_payload: dict[str, Any] = {"error": result["error"]}
+        if result.get("status_code") is not None:
+            error_payload["status_code"] = result["status_code"]
+        result_data = json.dumps(error_payload)
 
     payload = {
         "success": result.get("success", False),

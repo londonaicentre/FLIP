@@ -14,6 +14,7 @@ from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
 import pytest
+from fastapi import HTTPException
 
 from trust_api.services.task_handlers import (
     TASK_HANDLERS,
@@ -288,6 +289,50 @@ async def test_handle_get_imaging_status_error(mock_make_request):
 
     assert result["success"] is False
     assert "Service unavailable" in result["error"]
+
+
+@pytest.mark.asyncio
+async def test_handle_get_imaging_status_reports_upstream_status_code(mock_make_request):
+    """A 404 from imaging-api means the XNAT project is gone, which the hub renders differently
+    from an unreachable trust (FLIP#1022). Report the code structurally so the hub does not have
+    to sniff it out of the error string."""
+    mock_make_request.side_effect = HTTPException(status_code=404, detail="Project not found")
+
+    result = await handle_get_imaging_status({
+        "imaging_project_id": "img-123",
+        "encoded_query": "base64query",
+    })
+
+    assert result["success"] is False
+    assert result["status_code"] == 404
+
+
+@pytest.mark.asyncio
+async def test_handle_get_imaging_status_reports_transport_status_code(mock_make_request):
+    """make_request maps transport failures to 502; that is an unreachable XNAT, not a missing project."""
+    mock_make_request.side_effect = HTTPException(status_code=502, detail="Failed to connect")
+
+    result = await handle_get_imaging_status({
+        "imaging_project_id": "img-123",
+        "encoded_query": "base64query",
+    })
+
+    assert result["success"] is False
+    assert result["status_code"] == 502
+
+
+@pytest.mark.asyncio
+async def test_handle_get_imaging_status_omits_status_code_for_non_http_errors(mock_make_request):
+    """A non-HTTP failure has no meaningful status code — omit the key rather than invent one."""
+    mock_make_request.side_effect = Exception("Service unavailable")
+
+    result = await handle_get_imaging_status({
+        "imaging_project_id": "img-123",
+        "encoded_query": "base64query",
+    })
+
+    assert result["success"] is False
+    assert "status_code" not in result
 
 
 @pytest.mark.asyncio
