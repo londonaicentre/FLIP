@@ -9,8 +9,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Unit tests for sync_k8s_kit.py — focused on the FL-server port-only egress
-rule (FLIP#593 pt.3) so a sync-kit re-run no longer silently strips it.
+"""Unit tests for sync_k8s_kit.py's generated Helm override — the values whose
+absence or misplacement installs a release that looks healthy and is not: the
+FL-server port-only egress rule (FLIP#593 pt.3), the OMOP vocab-load bucket
+(FLIP#842/843), and flClient.kitHostPath (FLIP#965/#1009).
 
 The egress rule is PORT-ONLY (FL_SERVER_PORT added to ``allowedEgressPorts``),
 not a resolved-/32 CIDR pin: the FL server's internet-facing NLB has AWS-managed
@@ -111,10 +113,40 @@ def test_render_override_omits_vocab_load_without_bucket():
     kit = {k: v for k, v in _FL_KIT.items() if k != "AICENTRE_BUCKET_NAME"}
     out = sync_k8s_kit.render_override(kit, "Trust_K8s", "eu-west-2")
     # Not `"omopDb:" not in out` — that would break spuriously the day an unrelated
-    # omopDb key joins the override. s3Bucket appears nowhere else (the fl-client
-    # section emits a bare `bucket:`).
+    # omopDb key joins the override. s3Bucket appears nowhere else: the fl-client
+    # section carries only `kitHostPath:` now that the chart never fetches the kit.
     assert "vocabLoad" not in out
     assert "s3Bucket" not in out
+
+
+def test_render_override_sets_kit_host_path_from_kit():
+    """flClient.kitHostPath comes from the kit's FL_KIT_DIR. It is `required` in the
+    chart, so an override that omits it (or nests it wrong) fails the render — and one
+    that emits the wrong path leaves the pod Pending on `hostPath type check failed`,
+    with nothing naming the staged path it disagrees with. Anchored on newlines because
+    the nesting IS the meaning: emitted a level deeper the fragment would still match."""
+    kit = {**_FL_KIT, "FL_KIT_DIR": "/srv/kits/Trust_K8s"}
+    out = sync_k8s_kit.render_override(kit, "Trust_K8s", "eu-west-2")
+    assert "\nflClient:\n  kitHostPath: /srv/kits/Trust_K8s\n" in out
+
+
+def test_render_override_falls_back_to_canonical_kit_host_path():
+    """A kit with no FL_KIT_DIR still renders the canonical path — the same value every
+    shipped kit file sets, the Ansible EC2/on-prem plays stage to, and the chart
+    Makefile's KIT_DEST defaults to. Any other fallback would render a path nothing
+    staged to (FLIP#1009 review)."""
+    kit = {k: v for k, v in _FL_KIT.items() if k != "FL_KIT_DIR"}
+    out = sync_k8s_kit.render_override(kit, "Trust_K8s", "eu-west-2")
+    assert "\nflClient:\n  kitHostPath: /opt/flip/fl-kit\n" in out
+
+
+def test_render_override_kit_host_path_ignores_blank_fl_kit_dir():
+    """A kit file carrying an empty FL_KIT_DIR (a commented-out or cleared value) must
+    fall back rather than emit `kitHostPath:` with no value — Helm would read that as
+    null and the chart's `required` guard would fire at deploy time instead of here."""
+    kit = {**_FL_KIT, "FL_KIT_DIR": "   "}
+    out = sync_k8s_kit.render_override(kit, "Trust_K8s", "eu-west-2")
+    assert "\nflClient:\n  kitHostPath: /opt/flip/fl-kit\n" in out
 
 
 if __name__ == "__main__":

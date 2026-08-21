@@ -74,7 +74,7 @@ jobs:
           version: "v4.2.3"
 
       - name: Render template (default/nvflare)
-        run: helm template trust-release deploy/providers/kubernetes/ --set flClient.kitHostPath=/opt/flip-fl-kit > /dev/null
+        run: helm template trust-release deploy/providers/kubernetes/ --set flClient.kitHostPath=/opt/flip/fl-kit > /dev/null
 
       # flClient.kitHostPath is required whenever the FL client is enabled: the chart
       # cannot fetch the kit (a trust holds no FLIP AWS credentials — it is provisioned
@@ -99,11 +99,11 @@ jobs:
           fi
 
       - name: Render template (flower backend)
-        run: helm template trust-release deploy/providers/kubernetes/ --set flClient.kitHostPath=/opt/flip-fl-kit --set flBackend=flower > /dev/null
+        run: helm template trust-release deploy/providers/kubernetes/ --set flClient.kitHostPath=/opt/flip/fl-kit --set flBackend=flower > /dev/null
 
       - name: Render template (all services disabled)
         run: |
-          helm template trust-release deploy/providers/kubernetes/ --set flClient.kitHostPath=/opt/flip-fl-kit \
+          helm template trust-release deploy/providers/kubernetes/ --set flClient.kitHostPath=/opt/flip/fl-kit \
             --set trustApi.enabled=false \
             --set imagingApi.enabled=false \
             --set dataAccessApi.enabled=false \
@@ -118,7 +118,7 @@ jobs:
 
       - name: Render template (external service override)
         run: |
-          helm template trust-release deploy/providers/kubernetes/ --set flClient.kitHostPath=/opt/flip-fl-kit \
+          helm template trust-release deploy/providers/kubernetes/ --set flClient.kitHostPath=/opt/flip/fl-kit \
             --set omopDb.enabled=false \
             --set omopDb.external.host=test.example.com \
             > /dev/null
@@ -130,7 +130,7 @@ jobs:
       # WHOLE Helm release of the first operator who configures a bucket.
       - name: Render template (vocab-load enabled)
         run: |
-          helm template trust-release deploy/providers/kubernetes/ --set flClient.kitHostPath=/opt/flip-fl-kit \
+          helm template trust-release deploy/providers/kubernetes/ --set flClient.kitHostPath=/opt/flip/fl-kit \
             --set omopDb.vocabLoad.s3Bucket=test-bucket > /tmp/vocab.yaml
           if ! grep -q "omop-vocab-load" /tmp/vocab.yaml; then
             echo "::error::the vocab-load Job did not render with s3Bucket set — its body is now untested in CI"
@@ -144,7 +144,7 @@ jobs:
       # in THIS Job and not merely somewhere in the release.
       - name: Vocab-load probes before it fetches
         run: |
-          helm template trust-release deploy/providers/kubernetes/ --set flClient.kitHostPath=/opt/flip-fl-kit \
+          helm template trust-release deploy/providers/kubernetes/ --set flClient.kitHostPath=/opt/flip/fl-kit \
             --set omopDb.vocabLoad.s3Bucket=test-bucket \
             --show-only templates/omop-db-vocab-load-job.yaml > /tmp/vocabjob.yaml
           # Every pattern is passed with -e: three of these begin with "-" and
@@ -219,7 +219,7 @@ jobs:
       # would be indistinguishable.
       - name: Render template (vocab-load skipped without a bucket)
         run: |
-          helm template trust-release deploy/providers/kubernetes/ --set flClient.kitHostPath=/opt/flip-fl-kit > /tmp/novocab.yaml
+          helm template trust-release deploy/providers/kubernetes/ --set flClient.kitHostPath=/opt/flip/fl-kit > /tmp/novocab.yaml
           if ! grep -q "omop-db" /tmp/novocab.yaml; then
             echo "::error::the default render produced no omop-db resources — the absence check below would pass vacuously"
             exit 1
@@ -234,7 +234,7 @@ jobs:
       # with no registered users instead of failing the pod.
       - name: Orthanc registered-users secret ref stays required (FLIP-PT-091)
         run: |
-          helm template trust-release deploy/providers/kubernetes/ --set flClient.kitHostPath=/opt/flip-fl-kit \
+          helm template trust-release deploy/providers/kubernetes/ --set flClient.kitHostPath=/opt/flip/fl-kit \
             --show-only templates/orthanc.yaml > orthanc.rendered.yaml
           if ! grep -q 'key: orthanc-registered-users' orthanc.rendered.yaml; then
             echo "::error::orthanc-registered-users secretKeyRef missing from the rendered manifest"
@@ -258,7 +258,7 @@ jobs:
       # and in scrub_args' own sed, so keying on the literal would be noise.
       - name: Chart templates do not log credentials
         run: |
-          helm template trust-release deploy/providers/kubernetes/ --set flClient.kitHostPath=/opt/flip-fl-kit \
+          helm template trust-release deploy/providers/kubernetes/ --set flClient.kitHostPath=/opt/flip/fl-kit \
             --set xnat.enabled=true > chart.rendered.yaml
           if grep -nE 'echo[^|]*\$\{?[A-Za-z_]*(JSESSION|PASSWORD|SECRET|TOKEN|_KEY)' chart.rendered.yaml; then
             echo "::error::a chart template echoes a credential into the pod log"

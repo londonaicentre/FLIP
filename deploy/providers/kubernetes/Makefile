@@ -13,9 +13,15 @@ HELM := helm
 NAMESPACE ?= flip-trust
 
 # Where the FL participant kit lives ON THE NODE, and the uid that must own it.
-# KIT_DEST is what flClient.kitHostPath is set to. KIT_UID follows the backend's
-# image user: Flower's upstream base runs as 49999, the NVFLARE image as 1000.
-KIT_DEST ?= /opt/flip-fl-kit
+# KIT_DEST is what flClient.kitHostPath is set to, so it must match what the chart
+# mounts. `make sync-kit` renders kitHostPath from the kit file's FL_KIT_DIR, which
+# is /opt/flip/fl-kit in every shipped kit (trust/.env.example) and the path the
+# Ansible EC2/on-prem plays stage to — so that is the default here too. Overriding
+# it means also passing --set flClient.kitHostPath=<same path> at deploy, or the pod
+# stays Pending on a `hostPath type check failed` event naming the mounted path.
+# KIT_UID follows the backend's image user: Flower's upstream base runs as 49999,
+# the NVFLARE image as 1000.
+KIT_DEST ?= /opt/flip/fl-kit
 KIT_UID ?= $(if $(filter flower,$(FL_BACKEND)),49999,1000)
 # Which cluster to act on. Defaults to kubectl's current context, but stage-kit
 # REQUIRES it explicitly: it writes to a node's filesystem, and a machine running
@@ -78,8 +84,11 @@ stage-kit: ## Place this trust's FL participant kit onto the node (run BEFORE de
 	## kit arrives out-of-band (trust/README.md). This copies an already-obtained kit
 	## from KIT_SRC onto the node at the path the chart mounts (flClient.kitHostPath).
 	##
-	##   make stage-kit KIT_SRC=~/kits/Trust_2 KIT_DEST=/opt/flip-fl-kit
+	##   make stage-kit KIT_SRC=~/kits/Trust_2 KUBE_CONTEXT=kind-flip-kch
 	##
+	## KIT_DEST defaults to /opt/flip/fl-kit, which is what `make sync-kit` renders as
+	## flClient.kitHostPath (from the kit's FL_KIT_DIR) — pass it only alongside a
+	## matching --set flClient.kitHostPath at deploy time.
 	## KIT_SRC contents are the slot's own kit: for NVFLARE local/ startup/ transfer/,
 	## for Flower certificates/ and keys/ holding THIS slot's credential only.
 	## On a real cluster the operator places it by whatever means the site allows; this

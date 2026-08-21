@@ -194,6 +194,10 @@ def render_override(kit: dict[str, str], code: str, aws_region: str) -> str:
     kit_bucket = kit.get("AICENTRE_BUCKET_NAME", "").strip()
     # Where the operator placed this trust's kit ON THE NODE. FL_KIT_DIR is the same
     # value the Compose path uses, so one kit field serves both deployment shapes.
+    # The fallback is the canonical FLIP kit path: every shipped kit sets FL_KIT_DIR
+    # to it, the Ansible EC2/on-prem plays stage to it, and the chart Makefile's
+    # KIT_DEST defaults to it — a kit missing the field still renders a path the
+    # default `make stage-kit` actually wrote to.
     kit_host_path = kit.get("FL_KIT_DIR", "").strip() or "/opt/flip/fl-kit"
 
     lines = [
@@ -235,12 +239,11 @@ def render_override(kit: dict[str, str], code: str, aws_region: str) -> str:
             "",
         ]
 
-    # fl-client kit S3 bucket + slot-aware path. The NVFLARE kit is published
     # The chart does not fetch the participant kit — a trust holds no FLIP AWS
     # credentials, and the kit reaches the operator out-of-band (trust/README.md).
     # It is provisioned onto the node before the workload starts, so all the kit
-    # override carries is where to find it. On kind:
-    #   docker cp <kit>/. <cluster>-control-plane:/opt/flip-fl-kit/
+    # override carries is where to find it. On kind, `make stage-kit` does:
+    #   docker cp <kit>/. <cluster>-control-plane:/opt/flip/fl-kit/
     fl_section = [
         "flClient:",
         f"  kitHostPath: {kit_host_path}",

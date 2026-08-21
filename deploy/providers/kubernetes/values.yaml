@@ -17,7 +17,10 @@ trustNumber: 1
 environment: production
 logLevel: INFO
 
-# AWS region for S3 bucket access (used by FL client init container and other AWS-integrated services)
+# AWS region for the OMOP and Orthanc data Jobs — the seed restores and the OMOP
+# vocabulary load — which read from S3 with the operator credentials mounted at
+# omopDb.initJob.hostAwsMount / orthanc.initJob.hostAwsMount. Not used by the FL client:
+# it holds no AWS credentials and its kit is staged onto the node out-of-band.
 awsRegion: "eu-west-2"
 
 # S3 bucket for uploaded federated data (mounted by FL client)
@@ -295,7 +298,10 @@ flClient:
   # what is deployed here is what is deployed in production.
   #
   # On kind, either map it in with an extraMount at cluster-create time, or copy it into
-  # the node: `docker cp <kit>/. <cluster>-control-plane:/opt/flip-fl-kit/`.
+  # the node: `docker cp <kit>/. <cluster>-control-plane:/opt/flip/fl-kit/` (which is
+  # what `make stage-kit` does). /opt/flip/fl-kit is the kit file's FL_KIT_DIR — the same
+  # path the Compose and Ansible trust deployments use — so keep any override in step
+  # with the path the kit was actually staged to, or the pod stays Pending.
   kitHostPath: ""
   hostAliases:
     - ip: "13.43.162.56"
@@ -332,8 +338,11 @@ flClient:
       initialDelaySeconds: 30
       periodSeconds: 15
   serviceAccount:
+    # Deliberately empty, and no IRSA example: the fl-client holds no AWS credentials.
+    # Its participant kit is staged onto the node out-of-band (kitHostPath above) and
+    # it reaches no other AWS service, so annotating this account with a role would
+    # hand FLIP credentials to the host that runs researcher-submitted FL code.
     annotations: {}
-      # eks.amazonaws.com/role-arn: arn:aws:iam::123456789012:role/fl-client-s3-access
   sidecar:
     enabled: false
 

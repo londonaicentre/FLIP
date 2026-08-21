@@ -249,6 +249,6 @@ spec:
           # `type: Directory` makes a missing path a scheduling failure that names the
           # path, rather than an empty dir the client fails against much later.
           hostPath:
-            path: {{ required "flClient.kitHostPath is required when flClient.enabled — the absolute path ON THE NODE holding this trust's provisioned FL participant kit. On kind: docker cp <kit>/. <cluster>-control-plane:/opt/flip-fl-kit/ then --set flClient.kitHostPath=/opt/flip-fl-kit" .Values.flClient.kitHostPath | quote }}
+            path: {{ required "flClient.kitHostPath is required when flClient.enabled — the absolute path ON THE NODE holding this trust's provisioned FL participant kit. Stage it with `make -C deploy/providers/kubernetes stage-kit KIT_SRC=<kit dir> KUBE_CONTEXT=<ctx>`, then --set flClient.kitHostPath=/opt/flip/fl-kit (stage-kit's default KIT_DEST, and the kit file's FL_KIT_DIR)" .Values.flClient.kitHostPath | quote }}
             type: Directory
 {{- end }}
