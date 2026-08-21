@@ -86,6 +86,8 @@ So if you hit `network deploy_shared-net-1 declared as external, but could not b
 `make -C trust create-networks` — starting the hub stack cannot help, and a remote trust operator has no
 hub compose on the host at all.
 
-The `deploy_` prefix is a historical compose project-name artifact; the names are now pinned explicitly with
-`name:` on both sides, so they are stable regardless of directory layout. Bring the networks up before the
-stack — `up-trust` depends on `create-networks` for exactly this reason.
+The `deploy_` prefix is a historical compose project-name artifact. On the hub side the names are now pinned
+explicitly with `name:` (`trust-network-1` → `deploy_trust-network-1`, etc.); the trust side pins only
+`default` and relies on the compose key itself as the external network name for the rest (hence the literal
+`deploy_shared-net-1` keys). Either way the names are stable regardless of directory layout. Bring the
+networks up before the stack — `up-trust` depends on `create-networks` for exactly this reason.
