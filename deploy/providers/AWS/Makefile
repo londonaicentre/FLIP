@@ -788,12 +788,20 @@ deploy-ark-demo: ## Build the public Ark+ demo SPA from the working tree and dep
 	fi
 	@# The variable being set is necessary but not sufficient — it must actually
 	@# be applied. Confirm the behaviour exists on the live distribution.
+	@# Capture the count into a variable rather than testing `if ! … | grep -qv`:
+	@# _AWS_ENV expands to `unset …; AWS_PROFILE=…`, so the embedded `;` bound the
+	@# `!` to the `unset` and left the `if` condition as the *un-negated* grep —
+	@# inverting the guard, which then refused to publish on a correctly
+	@# provisioned distribution and waved the demo through on an unprovisioned
+	@# one (precisely the silent-detach this check exists to prevent).
 	@DIST_ID=$$($(_AWS_ENV) terraform output -raw CloudfrontDistributionId); \
-	if ! $(_AWS_ENV) aws cloudfront get-distribution-config --id "$$DIST_ID" \
+	DEMO_BEHAVIOURS=$$($(_AWS_ENV) aws cloudfront get-distribution-config --id "$$DIST_ID" \
 		--query "DistributionConfig.CacheBehaviors.Items[?PathPattern=='/ark_demo/*'] | length(@)" \
-		--output text 2>/dev/null | grep -qv '^0$$'; then \
+		--output text 2>/dev/null); \
+	if [ -z "$$DEMO_BEHAVIOURS" ] || [ "$$DEMO_BEHAVIOURS" = "0" ]; then \
 		echo "❌ No /ark_demo/* cache behaviour on distribution $$DIST_ID."; \
 		echo "   DEMO_ASSETS_BUCKET_NAME is set but not applied — run a terraform apply first."; \
+		echo "   (An empty result also lands here — a failed describe call fails closed.)"; \
 		exit 1; \
 	fi
 	@echo "🖼️  Building flip-ui Ark+ demo bundle from working tree..."
