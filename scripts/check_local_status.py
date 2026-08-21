@@ -311,6 +311,28 @@ def load_env_file(env_file: Path) -> dict[str, str]:
     return env_vars
 
 
+def instance_prefix(env_vars: dict[str, str]) -> str:
+    """Derive the FLIP_INSTANCE container-name prefix, empty for the default stack.
+
+    Every hub container_name carries this prefix when a second dev stack is running (FLIP#957) —
+    the same `${FLIP_INSTANCE:+$FLIP_INSTANCE-}` spelling the compose files use. Without honouring
+    it, this script reports every hub container missing against exactly the two-stack setup it
+    exists to diagnose.
+
+    The process environment wins over the env file so `FLIP_INSTANCE=b make check-status` inspects
+    the secondary stack without editing .env.development, matching how make and compose resolve the
+    same knob.
+
+    Args:
+        env_vars (dict[str, str]): Values loaded from the hub env file.
+
+    Returns:
+        str: The prefix including its trailing hyphen, or "" when no instance is named.
+    """
+    instance = (os.environ.get("FLIP_INSTANCE") or env_vars.get("FLIP_INSTANCE", "")).strip()
+    return f"{instance}-" if instance else ""
+
+
 @dataclass
 class TrustKit:
     """A discovered per-trust kit file (trust/.env.<CODE>.<env>) and its host-facing ports.
@@ -446,6 +468,12 @@ def main(
     API_PORT = env_vars.get("API_PORT", "8001")
     FL_API_PORT = env_vars.get("FL_API_PORT", "8000")
 
+    # Hub container names carry the FLIP_INSTANCE prefix on a secondary dev stack — see
+    # instance_prefix() for why and for the environment-over-env-file precedence.
+    INSTANCE_PREFIX = instance_prefix(env_vars)
+    if INSTANCE_PREFIX:
+        print_status("INFO", f"FLIP_INSTANCE set — expecting hub containers named {INSTANCE_PREFIX}*")
+
     # Per-trust ports live in each trust's CODE-named kit file
     # (trust/.env.<CODE>.<env>) — the source of truth trust/Makefile -includes and
     # `make up` globs — keyed by the hub-assigned FL slot, not fixed Trust_1 /
@@ -484,15 +512,15 @@ def main(
             else:
                 # Check each expected container
                 expected_containers = [
-                    "flip-ui",
-                    "flip-api",
-                    "flip-db",
+                    f"{INSTANCE_PREFIX}flip-ui",
+                    f"{INSTANCE_PREFIX}flip-api",
+                    f"{INSTANCE_PREFIX}flip-db",
                 ]
 
                 # Add configured FL server and API containers
                 for net_num in configured_net_numbers:
-                    expected_containers.append(f"fl-server-net-{net_num}")
-                    expected_containers.append(f"flip-fl-api-net-{net_num}")
+                    expected_containers.append(f"{INSTANCE_PREFIX}fl-server-net-{net_num}")
+                    expected_containers.append(f"{INSTANCE_PREFIX}flip-fl-api-net-{net_num}")
 
                 for container in expected_containers:
                     container_found = False
@@ -677,7 +705,7 @@ def main(
         print_section("FL container running and endpoint checks on the expected ports")
         for net_num in configured_net_numbers:
             fl_port = FL_API_PORT  # Use the same FL API port for all nets
-            fl_service_name = f"flip-fl-api-net-{net_num}"
+            fl_service_name = f"{INSTANCE_PREFIX}flip-fl-api-net-{net_num}"
             print_status("INFO", f"Checking FL API Net-{net_num} health endpoint inside container...")
             try:
                 success, output = run_command(
@@ -704,8 +732,11 @@ def main(
         # Check that FL API can be reached from flip-api container
         for net_num in configured_net_numbers:
             fl_port = "8000"  # FL API always runs on port 8000 inside the container
-            fl_service_name = f"flip-fl-api-net-{net_num}"
-            container_name = "flip-api"
+            # Compose service name, not container_name: the alias resolves in every stack,
+            # whereas container_name carries the FLIP_INSTANCE prefix (same rule as
+            # NET_ENDPOINTS — see .env.development.example).
+            fl_service_name = f"fl-api-net-{net_num}"
+            container_name = f"{INSTANCE_PREFIX}flip-api"
             fl_api_url = f"http://{fl_service_name}:{fl_port}/check_server_status"
             print_status("INFO", f"Checking FL API Net-{net_num} from '{container_name}' container...")
             try:
@@ -794,7 +825,7 @@ def main(
     print_section("Container Logs")
 
     print_status("INFO", "Checking for container errors in recent logs...")
-    critical_containers = ["flip-api", "flip-ui"]
+    critical_containers = [f"{INSTANCE_PREFIX}flip-api", f"{INSTANCE_PREFIX}flip-ui"]
     for container in critical_containers:
         try:
             success, logs = run_command(["docker", "logs", "--tail", "50", container], timeout=10)

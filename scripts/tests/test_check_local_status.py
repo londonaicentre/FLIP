@@ -12,11 +12,15 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Unit tests for scripts/check_local_status.py kit discovery.
+"""Unit tests for scripts/check_local_status.py kit discovery and instance naming.
 
 discover_trust_kits() globs trust/.env.<CODE>.<env> kit files and reads each
 trust's host-facing ports + assigned FL slot, so the status checker reflects
 the CODE-named kit architecture instead of fixed Trust_1 / Trust_2 names.
+
+instance_prefix() derives the FLIP_INSTANCE container-name prefix, so a second
+dev stack (FLIP#957) is diagnosed against its own containers rather than
+reported wholesale as missing.
 
 Usage:
     uv run --no-config scripts/tests/test_check_local_status.py
@@ -24,6 +28,7 @@ Usage:
 
 from __future__ import annotations
 
+import os
 import sys
 import tempfile
 from pathlib import Path
@@ -31,7 +36,7 @@ from pathlib import Path
 SCRIPTS_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(SCRIPTS_DIR))
 
-from check_local_status import TrustKit, discover_trust_kits  # noqa: E402
+from check_local_status import TrustKit, discover_trust_kits, instance_prefix  # noqa: E402
 
 PASS = 0
 FAIL = 0
@@ -114,12 +119,49 @@ def test_missing_dir_returns_empty() -> None:
     _assert(kits == [], "missing trust dir -> empty list", f"got {kits!r}")
 
 
+def test_instance_prefix() -> None:
+    """The prefix must match `${FLIP_INSTANCE:+$FLIP_INSTANCE-}`, with the environment winning.
+
+    Getting the default-stack case wrong is the expensive one: a stray prefix would report every
+    hub container missing on the single-stack setup that nearly every run inspects.
+    """
+    original = os.environ.pop("FLIP_INSTANCE", None)
+    try:
+        _assert(instance_prefix({}) == "", "unset -> no prefix", f"got {instance_prefix({})!r}")
+        _assert(
+            instance_prefix({"FLIP_INSTANCE": ""}) == "",
+            "empty env-file value -> no prefix",
+            f"got {instance_prefix({'FLIP_INSTANCE': ''})!r}",
+        )
+        _assert(
+            instance_prefix({"FLIP_INSTANCE": "  "}) == "",
+            "whitespace-only value -> no prefix",
+            f"got {instance_prefix({'FLIP_INSTANCE': '  '})!r}",
+        )
+        _assert(
+            instance_prefix({"FLIP_INSTANCE": "b"}) == "b-",
+            "env-file value -> '<value>-'",
+            f"got {instance_prefix({'FLIP_INSTANCE': 'b'})!r}",
+        )
+        os.environ["FLIP_INSTANCE"] = "shell"
+        _assert(
+            instance_prefix({"FLIP_INSTANCE": "envfile"}) == "shell-",
+            "process environment beats the env file",
+            f"got {instance_prefix({'FLIP_INSTANCE': 'envfile'})!r}",
+        )
+    finally:
+        os.environ.pop("FLIP_INSTANCE", None)
+        if original is not None:
+            os.environ["FLIP_INSTANCE"] = original
+
+
 def main() -> None:
     for test in (
         test_discovers_code_kits,
         test_ignores_examples_and_other_envs,
         test_missing_slot_and_name_fallback,
         test_missing_dir_returns_empty,
+        test_instance_prefix,
     ):
         print(f"\n{test.__name__}")
         test()
