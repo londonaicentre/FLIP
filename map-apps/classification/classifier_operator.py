@@ -179,10 +179,12 @@ class FlipXrayClassifierOperator(Operator):
         if str(bundle_path) not in sys.path:
             sys.path.insert(0, str(bundle_path))
 
+        # No explicit parse(): get_parsed_content() parses when the resolver is empty, which it is
+        # here — parse(reset=True) fills items but not resolved_content. Checked in MONAI 1.5.0,
+        # the version this MAP pins, and unchanged in 1.6.
         parser = ConfigParser()
         parser.read_meta(f=bundle_path / "configs" / METADATA_CONFIG_NAME)
         parser.read_config(bundle_path / "configs" / INFERENCE_CONFIG_NAME)
-        parser.parse()
 
         key = next((candidate for candidate in ("network", "network_def") if parser.get(candidate) is not None), None)
         if key is None:
