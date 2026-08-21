@@ -185,15 +185,26 @@ async def test_handle_delete_imaging_success(mock_make_request):
     """Should call imaging-api to delete project."""
     mock_make_request.return_value = {"status": "deleted"}
 
-    result = await handle_delete_imaging({"imaging_project_id": "img-123"})
+    imaging_project_id = str(uuid4())
+    result = await handle_delete_imaging({"imaging_project_id": imaging_project_id})
 
     assert result["success"] is True
     mock_make_request.assert_awaited_once()
     call_args = mock_make_request.call_args
     assert call_args.kwargs["method"] == "DELETE"
-    assert call_args.kwargs["url"].endswith("/projects/img-123")
+    assert call_args.kwargs["url"].endswith(f"/projects/{imaging_project_id}")
     assert "params" not in call_args.kwargs
     _assert_trust_internal_auth_header(call_args)
+
+
+@pytest.mark.asyncio
+async def test_handle_delete_imaging_rejects_non_uuid_id(mock_make_request):
+    """Should refuse an id that is not a UUID instead of interpolating it into the URL path."""
+    result = await handle_delete_imaging({"imaging_project_id": "../other-resource"})
+
+    assert result["success"] is False
+    assert "imaging_project_id" in result["error"]
+    mock_make_request.assert_not_called()
 
 
 # ---- Get imaging status handler ----
@@ -273,7 +284,7 @@ async def test_handle_delete_imaging_error(mock_make_request):
     """Should return failure on error."""
     mock_make_request.side_effect = Exception("Service unavailable")
 
-    result = await handle_delete_imaging({"imaging_project_id": "img-123"})
+    result = await handle_delete_imaging({"imaging_project_id": str(uuid4())})
 
     assert result["success"] is False
     assert "Service unavailable" in result["error"]
