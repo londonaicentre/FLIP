@@ -37,7 +37,7 @@
                                     data-test="scope-project-link"
                                     class="font-normal hover:underline hover:text-primary-600 dark:hover:text-primary-300"
                                 >
-                                    {{ scopedProject?.name }}
+                                    {{ scopedProjectLabel }}
                                 </router-link>
                             </template>
                             <template v-else>
@@ -124,7 +124,7 @@
                         <option value="">
                             All projects
                         </option>
-                        <option v-for="project in projectOptions ?? []" :key="project.id" :value="project.id">
+                        <option v-for="project in projectOptionList" :key="project.id" :value="project.id">
                             {{ project.name }}
                         </option>
                     </select>
@@ -134,7 +134,7 @@
                         data-test="project-filter-chip"
                         class="inline-flex items-center gap-2 rounded-full border border-primary-200 bg-primary-100 py-1.5 pl-4 pr-1.5 text-[13.5px] font-semibold text-primary-600 dark:border-dark-border dark:bg-dark-surface dark:text-primary-200"
                     >
-                        Project: {{ scopedProject?.name }}
+                        Project: {{ scopedProjectLabel }}
                         <button
                             type="button"
                             data-test="clear-project-filter"
@@ -524,24 +524,35 @@ watch(projectFilter, next => {
 
 // The filter's options, and the only place the scoped project's name and status come from — a
 // project with no models yet has no row in the list to read them off. Barely changes, so it
-// polls not at all and dedupes for a minute.
-const { data: projectOptions, error: projectOptionsError } = useSWRV("/models/projects", getModelProjectOptions, {
+// polls not at all and dedupes for a minute. `mutate` forces a fetch through that dedup window
+// (see the guard watcher below); `isValidating` says when one is in flight.
+const {
+    data: projectOptions,
+    error: projectOptionsError,
+    isValidating: projectOptionsValidating,
+    mutate: revalidateProjectOptions
+} = useSWRV("/models/projects", getModelProjectOptions, {
     dedupingInterval: 60_000,
     shouldRetryOnError: false
 });
 
+// The options as a list, whatever arrived. Array-checked rather than `?? []`: the body comes off
+// the wire, and a catch-all stub answering with an empty string would otherwise reach `.find()`
+// and take the whole page down with a TypeError.
+const projectOptionList = computed<IModelProjectOption[]>(() =>
+    Array.isArray(projectOptions.value) ? projectOptions.value : []);
+
 // With `?project=` in the URL, hold the models fetch until the options have confirmed the id: a
 // stale or unauthorised link would otherwise fire a scoped call the backend 403s/404s, flashing
-// the global error banner in the gap before the watcher below can tidy the URL. An options
-// *failure* opens the gate instead — against an API without /models/projects the list must still
-// load, with the filter degrading to invisible rather than the page waiting on a gate that can
-// never open.
+// the global error banner in the gap before the guard below can tidy the URL. An options
+// *failure* opens the gate instead — the list must still load rather than wait on a gate that can
+// never open, with the filter degrading to invisible.
 const scopedFetchReady = computed<boolean>(() => {
     if (!projectFilter.value) return true;
     if (projectOptionsError.value) return true;
     if (!projectOptions.value) return false;
 
-    return projectOptions.value.some(project => project.id === projectFilter.value);
+    return projectOptionList.value.some(project => project.id === projectFilter.value);
 });
 
 const { data, error } = useSWRV(
@@ -561,23 +572,79 @@ const { data, error } = useSWRV(
 useErrorHandler(error);
 
 const scopedProject = computed<IModelProjectOption | null>(() =>
-    projectOptions.value?.find(project => project.id === projectFilter.value) ?? null);
-const isScoped = computed<boolean>(() => !!projectFilter.value && !!scopedProject.value);
+    projectOptionList.value.find(project => project.id === projectFilter.value) ?? null);
+
+// Scoped, but with no name to show for it. A 404 is the one options failure that does NOT land
+// here: an API without /models/projects also predates the `project` query param and ignores it,
+// so the rows really are estate-wide and the estate header stays truthful. Every other failure
+// (5xx, network, timeout) leaves a working scoped endpoint that honours the param — the table
+// below IS one project's, and saying "Estate-wide" over it would tell the user the opposite of
+// what the page is showing.
+const OPTIONS_ENDPOINT_ABSENT = 404;
+const scopedWithoutName = computed<boolean>(() => {
+    if (!projectFilter.value || !projectOptionsError.value) return false;
+    // Duck-typed rather than axios's `isAxiosError`: the value arrives through SWRV as `unknown`,
+    // and a failure with no response at all (network/timeout) simply has no status to read.
+    const status = (projectOptionsError.value as { response?: { status?: number } }).response?.status;
+
+    return status !== OPTIONS_ENDPOINT_ABSENT;
+});
+
+const isScoped = computed<boolean>(() =>
+    !!projectFilter.value && (!!scopedProject.value || scopedWithoutName.value));
+
+// What the header and the chip call the scoped project: its name once the options have arrived,
+// otherwise the raw id from the URL — the only handle on it when the options call failed.
+const scopedProjectLabel = computed<string>(() => scopedProject.value?.name ?? projectFilter.value ?? "");
+
+// The id we have already forced a fresh options fetch for, so a genuinely-absent project is
+// judged once against live data instead of looping on mutate().
+const revalidatedOptionsFor = ref<string | null>(null);
 
 // A project id we cannot show — a stale bookmark, a deleted project, access since revoked, or a
 // typo. The gate above has already kept it off the backend; this drops it from the URL and says
-// why, so the page lands on the full list instead of an empty scoped shell. Waits for the
-// options to arrive first, or it would fight every deep link during the initial load.
-watch([projectOptions, projectFilter], ([options, filter]) => {
-    if (!options || !filter) return;
-    if (options.some(project => project.id === filter)) return;
+// why, so the page lands on the full list instead of an empty scoped shell.
+//
+// It cannot judge the id on the options it happens to hold: they are SWRV-cached for a minute
+// with no refresh interval, so a project created since the last visit is missing from a list the
+// subscription will not refetch inside that window — leaving the gate shut, the fetch key empty
+// and the page stranded on the loader until the window lapses. A first miss therefore forces one
+// revalidation (`mutate` bypasses the dedup window) and the id is judged on what comes back.
+//
+// `immediate` is load-bearing: SWRV serves a cached list synchronously during setup, so a plain
+// watcher would never see the very value this guard exists to distrust.
+watch(
+    [projectOptions, projectFilter, projectOptionsValidating],
+    ([options, filter, validating]) => {
+        if (!filter) {
+            revalidatedOptionsFor.value = null;
 
-    Snackbar.error({
-        title: "Project unavailable",
-        text: "That project could not be found, so the full models list is shown instead."
-    });
-    applyProject(null);
-});
+            return;
+        }
+        // Nothing can be proved absent while a fetch is in flight, or when one failed — SWRV
+        // keeps the last list on error, and bouncing off that would drop a good deep link.
+        // scopedWithoutName covers the failure case instead.
+        if (validating || projectOptionsError.value) return;
+        // Array-checked, not truthiness-checked: an unstubbed route answering with an empty
+        // string body must not reach `.some()`.
+        if (!Array.isArray(options)) return;
+        if (options.some(project => project.id === filter)) return;
+
+        if (revalidatedOptionsFor.value !== filter) {
+            revalidatedOptionsFor.value = filter;
+            void revalidateProjectOptions();
+
+            return;
+        }
+
+        Snackbar.error({
+            title: "Project unavailable",
+            text: "That project could not be found, so the full models list is shown instead."
+        });
+        applyProject(null);
+    },
+    { immediate: true }
+);
 
 const models = computed<IModelSummary[]>(() => data.value?.data ?? []);
 
@@ -686,9 +753,8 @@ const sortedModels = computed<IModelSummary[]>(() => {
     return [...models.value].sort(sortDir.value === "asc" ? cmp : (a, b) => cmp(b, a));
 });
 
-// Status-toned left rail: magenta = running, amber = preparing, emerald =
-// completed, red = needs attention, neutral = created/queued. PENDING groups under
-// the Preparing tile but keeps the neutral tone — nothing is running yet.
+// Status-toned left rail: magenta = running, amber = preparing (PENDING + PREPARED),
+// emerald = completed, red = needs attention, neutral = queued.
 const railClass = (status: ModelStatus | undefined): string => {
     if (isModelStatusError(status)) return "bg-red-500";
     if (status === "RESULTS_UPLOADED") return "bg-emerald-500";

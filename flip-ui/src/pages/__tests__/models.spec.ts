@@ -15,7 +15,7 @@
 
 import { createTestingPinia } from "@pinia/testing";
 import { mount } from "@vue/test-utils";
-import { beforeEach, describe, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { reactive, ref } from "vue";
 
 import { IModelProjectOption, IModelSummary, IModelSummaryTrust } from "@/services/model-service";
@@ -31,7 +31,15 @@ interface ModelsResponse {
 
 const mockSwrvData = ref<ModelsResponse | undefined>(undefined);
 const mockProjectOptions = ref<IModelProjectOption[] | undefined>(undefined);
-const mockProjectOptionsError = ref<Error | null>(null);
+
+/** The shape the page reads a status off — an axios error carries `response.status`. */
+type OptionsError = { response?: { status?: number } } | null;
+const mockProjectOptionsError = ref<OptionsError>(null);
+const mockProjectOptionsValidating = ref(false);
+const mockProjectOptionsMutate = vi.fn();
+
+/** A failed options call: `status` omitted stands for a network error, which carries no response. */
+const httpError = (status?: number): OptionsError => (status === undefined ? {} : { response: { status } });
 
 // Captures the SWRV key function so tests can inspect the query the page
 // would fetch (search / status / project filter params).
@@ -46,8 +54,9 @@ vi.mock("swrv", () => ({
         if ((typeof key === "function" ? key() : key).startsWith("/models/projects")) {
             return {
                 data: mockProjectOptions,
-                mutate: vi.fn(),
-                error: mockProjectOptionsError
+                mutate: mockProjectOptionsMutate,
+                error: mockProjectOptionsError,
+                isValidating: mockProjectOptionsValidating
             };
         }
         swrvKey.fn = key as () => string;
@@ -55,7 +64,8 @@ vi.mock("swrv", () => ({
         return {
             data: mockSwrvData,
             mutate: vi.fn(),
-            error: ref(null)
+            error: ref(null),
+            isValidating: ref(false)
         };
     }
 }));
@@ -130,10 +140,15 @@ const setModels = (models: IModelSummary[], statusCounts: Record<string, number>
     };
 };
 
+// Every page mounted by a test, unmounted in afterEach. The SWRV refs and the route object are
+// module-level, so a wrapper left mounted keeps reacting to the *next* test's state — which
+// silently multiplies the mutate/replace calls the guard tests count.
+const mountedPages: { unmount: () => void }[] = [];
+
 function mountPage(options: { permissions?: string[] } = {}) {
     const { permissions = [] } = options;
 
-    return mount(Page, {
+    const wrapper = mount(Page, {
         global: {
             plugins: [createTestingPinia({
                 createSpy: vi.fn,
@@ -150,12 +165,21 @@ function mountPage(options: { permissions?: string[] } = {}) {
             stubs
         }
     });
+    mountedPages.push(wrapper);
+
+    return wrapper;
 }
+
+afterEach(() => {
+    mountedPages.splice(0).forEach(wrapper => wrapper.unmount());
+});
 
 beforeEach(() => {
     mockSwrvData.value = undefined;
     mockProjectOptions.value = undefined;
     mockProjectOptionsError.value = null;
+    mockProjectOptionsValidating.value = false;
+    mockProjectOptionsMutate.mockClear();
     mockRoute.query = {};
     mockReplace.mockClear();
 });
@@ -722,7 +746,32 @@ describe("Models Page", () => {
             expect(wrapper.find("[data-test='project-filter-chip']").exists()).toBe(false);
         });
 
-        test("a project id that is not in the options is dropped instead of fetched", async () => {
+        test("an id the cached options do not know forces one revalidation before it is judged", async () => {
+            // The options are SWRV-cached for a minute with no refresh interval, so a project
+            // created since the last visit is missing from a list the subscription will not
+            // refetch inside that window. Judging the id against that cache would leave the gate
+            // shut and the page stranded on the loader; mutate() bypasses the dedup window.
+            mockRoute.query = { project: "fresh" };
+            setModels([makeModel()]);
+            mockProjectOptions.value = options;
+            const wrapper = mountPage();
+            await wrapper.vm.$nextTick();
+
+            expect(mockProjectOptionsMutate).toHaveBeenCalledTimes(1);
+            // Nothing is judged on the stale list: no bounce, and the gate stays shut meanwhile.
+            expect(mockReplace).not.toHaveBeenCalled();
+            expect(swrvKey.fn!()).toBe("");
+
+            // The forced fetch returns the project the cache had never seen.
+            mockProjectOptions.value = [...options, projectOption("fresh", "Fresh project")];
+            await wrapper.vm.$nextTick();
+
+            expect(mockReplace).not.toHaveBeenCalled();
+            expect(swrvKey.fn!()).toContain("&project=fresh");
+            expect(wrapper.find("[data-test='models-scope-eyebrow']").text()).toContain("Fresh project");
+        });
+
+        test("a project id still absent from the freshly-fetched options is dropped", async () => {
             // Covers a stale bookmark, a deleted project and lost access in one guard — and keeps
             // the page off the backend's 403, which would strand it behind the loader.
             mockRoute.query = { project: "gone" };
@@ -731,9 +780,42 @@ describe("Models Page", () => {
             const wrapper = mountPage();
             await wrapper.vm.$nextTick();
 
+            expect(mockProjectOptionsMutate).toHaveBeenCalledTimes(1);
+            expect(mockReplace).not.toHaveBeenCalled();
+
+            // Same content, freshly fetched: the project genuinely is not there.
+            mockProjectOptions.value = [...options];
+            await wrapper.vm.$nextTick();
+
             expect(mockReplace).toHaveBeenCalledWith(
                 expect.objectContaining({ query: expect.not.objectContaining({ project: expect.anything() }) })
             );
+        });
+
+        test("judges nothing while the options are revalidating", async () => {
+            mockRoute.query = { project: "gone" };
+            setModels([makeModel()]);
+            mockProjectOptions.value = options;
+            mockProjectOptionsValidating.value = true;
+            const wrapper = mountPage();
+            await wrapper.vm.$nextTick();
+
+            expect(mockProjectOptionsMutate).not.toHaveBeenCalled();
+            expect(mockReplace).not.toHaveBeenCalled();
+        });
+
+        test("a non-array options body is ignored rather than crashing the page", async () => {
+            // Cypress's catch-all interceptor answers unstubbed routes with an empty body, so the
+            // guard must not assume `.some()` exists on whatever arrives off the wire.
+            mockRoute.query = { project: "p1" };
+            setModels([makeModel()]);
+            mockProjectOptions.value = "" as unknown as IModelProjectOption[];
+            const wrapper = mountPage();
+            await wrapper.vm.$nextTick();
+
+            expect(wrapper.exists()).toBe(true);
+            expect(mockProjectOptionsMutate).not.toHaveBeenCalled();
+            expect(mockReplace).not.toHaveBeenCalled();
         });
 
         test("waits for the options before judging an id", async () => {
@@ -776,6 +858,9 @@ describe("Models Page", () => {
 
             mockProjectOptions.value = options;
             await wrapper.vm.$nextTick();
+            // First miss only buys a fresh list; the id is judged on what that returns.
+            mockProjectOptions.value = [...options];
+            await wrapper.vm.$nextTick();
 
             expect(swrvKey.fn!()).toBe("");
             expect(mockReplace).toHaveBeenCalledWith(
@@ -783,18 +868,64 @@ describe("Models Page", () => {
             );
         });
 
-        test("fetches scoped anyway when the options call fails", async () => {
-            // Against an API without /models/projects the filter degrades to invisible; the
-            // list itself must still load rather than wait forever on a gate that can't open.
+        test("a 404 from the options endpoint keeps the estate header", async () => {
+            // An API without /models/projects also predates the `project` query param and ignores
+            // it, so the rows underneath really are estate-wide: the header is telling the truth,
+            // and the filter degrades to invisible rather than the list waiting on a gate that
+            // can never open.
             mockRoute.query = { project: "p1" };
             setModels([makeModel()]);
             const wrapper = mountPage();
             await wrapper.vm.$nextTick();
 
-            mockProjectOptionsError.value = new Error("404");
+            mockProjectOptionsError.value = httpError(404);
             await wrapper.vm.$nextTick();
 
             expect(swrvKey.fn!()).toContain("&project=p1");
+            expect(wrapper.find("[data-test='models-scope-eyebrow']").text()).toContain("Estate-wide");
+            expect(wrapper.find("[data-test='project-filter-chip']").exists()).toBe(false);
+        });
+
+        test.each([
+            ["a 5xx", 500],
+            ["a network error", undefined]
+        ])("%s from the options endpoint leaves a name-less scoped header, not the estate one", async (_label, status) => {
+            // The scoped endpoint is working — only the options call failed — so the param IS
+            // honoured and the table below is scoped. Claiming "Estate-wide" there tells the user
+            // the opposite of what the page is showing; the id is all the page has to name it by.
+            mockRoute.query = { project: "p1" };
+            setModels([makeModel()]);
+            const wrapper = mountPage();
+            await wrapper.vm.$nextTick();
+
+            mockProjectOptionsError.value = httpError(status);
+            await wrapper.vm.$nextTick();
+
+            expect(swrvKey.fn!()).toContain("&project=p1");
+            const eyebrow = wrapper.find("[data-test='models-scope-eyebrow']");
+            expect(eyebrow.text()).not.toContain("Estate-wide");
+            expect(eyebrow.text()).toContain("Project ·");
+            const link = wrapper.find("[data-test='scope-project-link']");
+            expect(link.attributes("data-to")).toBe("/project/p1");
+            expect(link.text()).toBe("p1");
+            // No options to choose from, so the dropdown stays down; the chip still offers the
+            // way back to the estate view.
+            expect(wrapper.find("[data-test='project-filter']").exists()).toBe(false);
+            expect(wrapper.find("[data-test='project-filter-chip']").text()).toContain("Project: p1");
+        });
+
+        test("the scoped Create Model button stays hidden while the project has no known status", async () => {
+            // Creating against an unapproved project is refused server-side, and a failed options
+            // call means the page cannot tell whether this one is approved.
+            mockRoute.query = { project: "p1" };
+            setModels([makeModel()]);
+            const wrapper = mountPage({ permissions: ["CanCreateProjects"] });
+            await wrapper.vm.$nextTick();
+
+            mockProjectOptionsError.value = httpError(500);
+            await wrapper.vm.$nextTick();
+
+            expect(wrapper.find("[data-test='add-model-btn']").exists()).toBe(false);
         });
 
         test("navigating back to the estate view restores the default tiles and clears search", async () => {

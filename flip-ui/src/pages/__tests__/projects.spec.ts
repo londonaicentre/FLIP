@@ -140,16 +140,20 @@ describe("Projects Page", () => {
     // mounts. Amber is asserted literally here — the Cypress spec is what proves it is
     // the *same* amber as the row spine, by comparing computed colours.
     test.each([
-        ["UNSTAGED", true, null, TRUST_CHIP_PLAIN_PADDING, "KCH NHS Foundation Trust"],
-        ["STAGED", false, "bg-amber-500", TRUST_CHIP_DOTTED_PADDING, "KCH NHS Foundation Trust — awaiting approval"],
+        ["UNSTAGED", true, null, TRUST_CHIP_PLAIN_PADDING, "KCH NHS Foundation Trust", null],
+        ["STAGED", false, "bg-amber-500", TRUST_CHIP_DOTTED_PADDING,
+            "KCH NHS Foundation Trust — awaiting approval", "— awaiting approval"],
         // A trust that has signed off on a project still awaiting approval stays amber:
         // green is the project-wide "this trust is in" marker, not a per-trust one.
-        ["STAGED", true, "bg-amber-500", TRUST_CHIP_DOTTED_PADDING, "KCH NHS Foundation Trust — awaiting approval"],
-        ["APPROVED", false, "bg-amber-500", TRUST_CHIP_DOTTED_PADDING, "KCH NHS Foundation Trust — awaiting approval"],
-        ["APPROVED", true, "bg-emerald-500", TRUST_CHIP_DOTTED_PADDING, "KCH NHS Foundation Trust — approved"]
+        ["STAGED", true, "bg-amber-500", TRUST_CHIP_DOTTED_PADDING,
+            "KCH NHS Foundation Trust — awaiting approval", "— awaiting approval"],
+        ["APPROVED", false, "bg-amber-500", TRUST_CHIP_DOTTED_PADDING,
+            "KCH NHS Foundation Trust — awaiting approval", "— awaiting approval"],
+        ["APPROVED", true, "bg-emerald-500", TRUST_CHIP_DOTTED_PADDING,
+            "KCH NHS Foundation Trust — approved", "— approved"]
     ] as const)(
         "%s project + trust.approved=%s → %s dot",
-        async (status, approved, dotClass, chipPadding, title) => {
+        async (status, approved, dotClass, chipPadding, title, standing) => {
             setProject(makeProject(status, [trust("t1", "KCH", approved)]));
             const wrapper = mountPage();
             await wrapper.vm.$nextTick();
@@ -157,9 +161,17 @@ describe("Projects Page", () => {
             const chips = wrapper.findAll("[data-test='trust-chip']");
             expect(chips).toHaveLength(1);
             chipPadding.split(" ").forEach(cls => expect(chips[0].classes()).toContain(cls));
-            // The tooltip is the accessible channel: the dot is aria-hidden, and
-            // amber/emerald is the pairing colour-vision deficiency collapses.
             expect(chips[0].attributes("title")).toBe(title);
+
+            // The sr-only suffix — not the hover-only tooltip — is the accessible channel: the
+            // dot is aria-hidden, and amber/emerald is the pairing colour-vision deficiency
+            // collapses, so the standing has to reach keyboard and screen-reader users in words.
+            const standingText = chips[0].find("[data-test='trust-chip-standing']");
+            expect(standingText.exists()).toBe(standing !== null);
+            if (standing) {
+                expect(standingText.classes()).toContain("sr-only");
+                expect(standingText.text()).toBe(standing);
+            }
 
             const dots = wrapper.findAll("[data-test='trust-status-dot']");
             expect(dots).toHaveLength(dotClass ? 1 : 0);
@@ -284,8 +296,9 @@ describe("Projects Page", () => {
 
         const chips = wrapper.findAll("[data-test='trust-chip']");
         expect(chips).toHaveLength(1);
-        // After stripping bloat: "Maple" — well under the 16-char limit.
-        expect(chips[0].text()).toBe("Maple");
+        // After stripping bloat: "Maple" — well under the 16-char limit. Read off the label
+        // element, not the chip: the chip also carries the sr-only standing text.
+        expect(chips[0].find("[data-test='trust-chip-label']").text()).toBe("Maple");
     });
 
     test("caps visible trust chips at 4 and surfaces a +N marker for the overflow", async () => {
@@ -515,7 +528,7 @@ describe("Projects Page", () => {
 
         const chips = wrapper.findAll("[data-test='trust-chip']");
         expect(chips).toHaveLength(1);
-        const text = chips[0].text();
+        const text = chips[0].find("[data-test='trust-chip-label']").text();
         expect(text.endsWith("…")).toBe(true);
         // Truncation is 14 chars + ellipsis.
         expect(text.slice(0, -1)).toHaveLength(14);

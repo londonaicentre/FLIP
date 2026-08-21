@@ -26,7 +26,12 @@
                 data-test="trust-status-dot"
                 aria-hidden="true"
             />
-            {{ trustChipLabel(trust) }}
+            <span data-test="trust-chip-label">{{ trustChipLabel(trust) }}</span>
+            <!-- The standing in words, for anyone the dot's hue doesn't reach. `sr-only` is
+                 absolutely positioned, so it takes no space and no flex gap of its own. -->
+            <span v-if="dotFor(trust)" class="sr-only" data-test="trust-chip-standing">
+                — {{ dotFor(trust)?.label }}
+            </span>
         </span>
         <span v-if="remainingTrustCount > 0" class="text-xs text-gray-500 dark:text-gray-300">
             +{{ remainingTrustCount }}
@@ -49,10 +54,12 @@ import { TRUST_CHIP_CLASS,
 
 const props = defineProps<{ project: IProject }>();
 
-// A chip's dot marks that trust's standing in the project. Colour and tooltip come
-// from one row of this table so they can't disagree — the dot is aria-hidden and the
-// two states differ only by hue, which colour-blind and screen-reader users can't
-// read, so the tooltip is the accessible channel for the same distinction.
+// A chip's dot marks that trust's standing in the project. Colour, tooltip and the chip's
+// sr-only suffix all come from one row of this table so they can't disagree — the dot is
+// aria-hidden and the two states differ only by hue, which colour-blind and screen-reader
+// users can't read. The sr-only text after the label is the accessible channel for that
+// distinction: `title` is hover-only, so it reaches neither keyboard nor assistive-technology
+// users (and `aria-label` on a role-less span is not reliably announced either).
 //
 // `pending` is deliberately the same amber as the STAGED row spine in projects.vue
 // (SPINE_BG_CLASS.STAGED): a staged row's dots and its spine should read as one
