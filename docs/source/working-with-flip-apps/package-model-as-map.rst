@@ -816,8 +816,8 @@ These were all encountered while establishing the sequence above. None are docum
        returns ``None`` rather than the default. **The FLIP mock CT data has this** — every spleen
        series seeded from ``aicentreflip/trust-data`` carries an empty ``AcquisitionNumber`` and
        ``SeriesNumber``. The mock CR data does not (the tag is absent there, so the default
-       applies), which is why the chest-radiograph path has never hit it. Until the dataset is
-       regenerated, stamp the tag before packaging::
+       applies), which is why the chest-radiograph path has never hit it. **Fixed in mock-data
+       version 20260821**; on anything older, stamp the tag before packaging::
 
            for f in glob.glob("input/*.dcm"):
                ds = pydicom.dcmread(f); ds.AcquisitionNumber = 1; ds.SeriesNumber = 1; ds.save_as(f)

@@ -402,9 +402,9 @@ runs — not on the EC2.
 ```bash
 ssh flip-trust
 DIR=$(docker inspect trust1-orthanc-1 --format '{{range .Mounts}}{{if eq .Destination "/var/lib/orthanc/db"}}{{.Source}}{{end}}{{end}}')
-# Version from trust/orthanc/.data_version (e.g. 20260106); trust slot from the kit (trust1/trust2)
+# Version from trust/orthanc/.data_version (e.g. 20260821); trust slot from the kit (trust1/trust2)
 curl -fSL -o /tmp/orthanc-data.tar \
-  "https://huggingface.co/datasets/aicentreflip/trust-data/resolve/main/trust1/trust1_orthanc_data_20260106.tar"
+  "https://huggingface.co/datasets/aicentreflip/trust-data/resolve/main/trust1/trust1_orthanc_data_20260821.tar"
 docker stop trust1-orthanc-1
 sudo rm -rf "$DIR"/*          # wipe the stale empty index
 sudo tar xf /tmp/orthanc-data.tar -C "$DIR"
