@@ -198,11 +198,19 @@ const chartId = (chart: IModelMetricData) => JSON.stringify([chart.yLabel, chart
 
 const activeChartId = ref<string | null>(null);
 
+// The single guarded read of the response — every derived view below goes through it.
+// Array.isArray, not ?? []: a stubbed or misbehaving backend can 200 with an empty
+// body ("" from the fetch layer), and unlike the template's lazy reads the
+// activeChartId watcher evaluates `charts` eagerly on every response. The service
+// normalises this too, but the component also renders from SWRV cache and stubbed
+// responses, so the guard stays here as well.
+const metrics = computed(() => (Array.isArray(data.value) ? data.value : []));
+
 // Distinct x-axis labels per metric name. A metric plotted against a single x-axis shows just its
 // name; only when the same metric appears under more than one x-label do we disambiguate the tabs.
 const xLabelsByMetric = computed(() => {
     const map = new Map<string, Set<string>>();
-    for (const chart of data.value ?? []) {
+    for (const chart of metrics.value) {
         const labels = map.get(chart.yLabel) ?? new Set<string>();
         labels.add(chart.xLabel);
         map.set(chart.yLabel, labels);
@@ -236,10 +244,7 @@ const nameToCode = computed(() => {
 const charts = computed(() => {
     const codes = nameToCode.value;
 
-    // Array.isArray, not ?? []: a stubbed or misbehaving backend can 200 with an empty
-    // body ("" from the fetch layer), and unlike the template's lazy reads the
-    // activeChartId watcher evaluates this computed eagerly on every response.
-    return (Array.isArray(data.value) ? data.value : [])
+    return metrics.value
         .map(chart => ({
             ...chart,
             metrics: chart.metrics.map(s => ({

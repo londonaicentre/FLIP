@@ -263,6 +263,10 @@ describe("TrainingMetrics", () => {
         await flushPromises();
 
         expect(wrapper.text()).toContain("Any metrics sent during the run will show here.");
+        // Every derived view reads the same guarded value, so a non-array response yields no
+        // tabs (an empty xLabelsByMetric) as well as no charts.
+        expect(wrapper.find("[role=tablist]").exists()).toBe(false);
+        expect(wrapper.find("[data-test=chart-stub]").exists()).toBe(false);
     });
 
     test("clears the active chart when the response empties", async () => {
