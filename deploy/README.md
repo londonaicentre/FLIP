@@ -36,9 +36,14 @@ they are filed by two different rules:
 Every compose file in **this** directory is Central-Hub-only — `flip-ui`, `flip-api`, `flip-db`, `pgadmin`,
 and the `fl-api-net-*` / `fl-server-net-*` FL server side. No trust service is defined here. The one place
 hub compose touches "trust" is **networking**: `compose.development.yml` joins
-`central-hub-trust-apis-network`, `trust-network-1/2` and `shared-net-1/2` as `external: true` — exactly as
+`central-hub-trust-apis-network`, `trust-network-1/2` and `fl-net-1/2` as `external: true` — exactly as
 the trust composes do. Neither side *creates* them; `make create-networks` does (the root target forwards
 to `trust/Makefile`, which owns all five).
+
+`fl-net-<N>` is the FL data plane — `fl-server-net-<N>`, `fl-api-net-<N>` and each trust's
+`fl-client-net-<N>`. `flip-api` is deliberately not on it: it fronts the database, and an fl-client holds
+no Central Hub credential by design, so it is given no route to one. The fl-server's `FLIP_API_INTERNAL_URL`
+callback goes over the hub-internal network instead.
 
 Only **trusts** have more than one deployment target (AWS EC2, on-prem Ubuntu, Kubernetes), which is why
 `providers/` looks trust-heavy: the abstraction exists because trusts vary. The hub has exactly one
