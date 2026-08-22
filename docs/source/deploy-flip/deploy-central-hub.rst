@@ -204,7 +204,9 @@ CI otherwise.
 ``alembic upgrade head`` on every container start, so a fresh ``flip-api`` deploy
 applies any pending revisions in order against the existing database:
 
-- **Development**: ``make restart`` re-creates the ``flip-api`` container; revisions apply on boot.
+- **Development**: ``make restart`` re-creates the ``flip-api`` service's container
+  (``deploy-flip-api-1`` — compose names it from the project, no service sets
+  ``container_name``); revisions apply on boot.
 - **Staging / Production**: a normal ECS redeploy (``make deploy-centralhub`` from
   ``deploy/providers/AWS/``) applies the revisions before the new task serves traffic.
 

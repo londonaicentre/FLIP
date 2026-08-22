@@ -936,8 +936,11 @@ def main(
     print_section("Database Connectivity")
 
     print_status("INFO", "Checking PostgreSQL connectivity...")
-    # Try to connect using docker exec
-    # success, output = run_command(["docker", "exec", "flip-db", "psql", "-U", "local_user", "-c", "SELECT 1;"])
+    # Try to connect using docker exec. Resolve the container through hub_containers rather than
+    # naming it: with no container_name the db is `deploy-flip-db-1` on the default stack and
+    # `<instance>-deploy-flip-db-1` on a second one (FLIP#957).
+    # db = hub_containers.get("flip-db")
+    # success, output = run_command(["docker", "exec", db.name, "psql", "-U", "local_user", "-c", "SELECT 1;"])
     # if success:
     #     print_status("PASS", "PostgreSQL database is accessible")
     # else:
