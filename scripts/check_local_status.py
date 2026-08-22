@@ -526,14 +526,16 @@ def main(
         project_dir: Project root directory
         skip_endpoints: Skip HTTP endpoint checks
         skip_docker: Skip Docker container checks
-        env_file: Path to .env file (defaults to .env.development)
+        env_file: Path to .env file (defaults to $MAIN_ENV_FILE, else .env.development)
     """
     # Change to project directory
     os.chdir(project_dir)
 
-    # Load environment variables
+    # Load environment variables. MAIN_ENV_FILE is how make and compose select a second stack's
+    # env file, so honour it here too — otherwise this reports on the default stack while the
+    # operator is running against the other one.
     if env_file is None:
-        env_file = project_dir / ".env.development"
+        env_file = project_dir / os.environ.get("MAIN_ENV_FILE", ".env.development")
 
     if env_file.exists():
         env_vars = load_env_file(env_file)
@@ -1082,7 +1084,7 @@ if __name__ == "__main__":
         "--env-file",
         type=Path,
         default=None,
-        help="Path to .env file (defaults to .env.development)",
+        help="Path to .env file (defaults to $MAIN_ENV_FILE, else .env.development)",
     )
 
     args = parser.parse_args()

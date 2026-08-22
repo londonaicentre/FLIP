@@ -10,20 +10,24 @@
 # limitations under the License.
 #
 
+# Repo-root-relative FILENAME, never a path — the root Makefile exports it that way and each
+# sub-Makefile prepends its own `../`. Baking `../` in here instead would silently lose the file
+# whenever the value is overridden (`make up MAIN_ENV_FILE=.env.b.development` for a second
+# stack), because the include below is guarded by a wildcard and just skips a missing file.
 ifeq ($(PROD),true)
-MAIN_ENV_FILE=../.env.production
+MAIN_ENV_FILE ?= .env.production
 else ifeq ($(PROD),stag)
-MAIN_ENV_FILE=../.env.stag
+MAIN_ENV_FILE ?= .env.stag
 else
-MAIN_ENV_FILE=../.env.development
+MAIN_ENV_FILE ?= .env.development
 endif
 
 $(info Using MAIN_ENV_FILE: $(MAIN_ENV_FILE))
 
 # replace environment variables by the values from the .env files
-ifneq ("$(wildcard $(MAIN_ENV_FILE))","")
-include $(MAIN_ENV_FILE)
-export $(shell sed 's/=.*//' $(MAIN_ENV_FILE))
+ifneq ("$(wildcard ../$(MAIN_ENV_FILE))","")
+include ../$(MAIN_ENV_FILE)
+export $(shell sed 's/=.*//' ../$(MAIN_ENV_FILE))
 endif
 
 include ../deploy/instance.mk
