@@ -32,6 +32,8 @@ Access
 
 XNAT instances are local to each participating trust. As such, model developers are required to access the local network at each Trust in order to access the XNAT web UI and perform any data enrichment activities.
 
+For what those activities involve — including where enrichment files must be placed so the FL client can find them, and how to upload a whole cohort's labels with the ``flip-xnat`` tool — see :ref:`data-enrichment`.
+
 Login
 ======
 

@@ -392,8 +392,26 @@ describe("model-service", () => {
             expect(result).toEqual([]);
         });
 
+        it("getDownloadUrlForResults returns [] when the backend body is empty", async () => {
+            // A 200 with no body reaches the fetch layer as the string "" — `?? []` lets it
+            // through and every caller then treats a string as an array (FLIP#1011).
+            vi.mocked(_http.get).mockResolvedValue({ data: "" } as never);
+
+            const result = await getDownloadUrlForResults("m-1");
+
+            expect(result).toEqual([]);
+        });
+
         it("getLogsForModel returns [] when body is null", async () => {
             vi.mocked(_http.get).mockResolvedValue({ data: null } as never);
+
+            const result = await getLogsForModel("/logs/m-1");
+
+            expect(result).toEqual([]);
+        });
+
+        it("getLogsForModel returns [] when the backend body is empty", async () => {
+            vi.mocked(_http.get).mockResolvedValue({ data: "" } as never);
 
             const result = await getLogsForModel("/logs/m-1");
 
@@ -420,6 +438,14 @@ describe("model-service", () => {
 
         it("getModelMetrics returns [] when body is null", async () => {
             vi.mocked(_http.get).mockResolvedValue({ data: null } as never);
+
+            const result = await getModelMetrics("/metrics/m-1");
+
+            expect(result).toEqual([]);
+        });
+
+        it("getModelMetrics returns [] when the backend body is empty", async () => {
+            vi.mocked(_http.get).mockResolvedValue({ data: "" } as never);
 
             const result = await getModelMetrics("/metrics/m-1");
 
