@@ -317,15 +317,18 @@ debug-off-all:
 	DEBUG=false $(DEBUG_OVERRIDE_COMPOSE_COMMAND) up --remove-orphans -d
 	$(MAKE) -C trust debug-off
 
+# Hub-shared network names all follow `$(INSTANCE_PREFIX)deploy_<name>`, where `deploy_` names
+# the hub compose project that owns them — the same string compose would generate itself if it
+# still created them, rather than looked them up `external:` (FLIP#957).
 create-networks-centralhub:
-	$(call ensure_bridge_network,$(INSTANCE_PREFIX)central-hub-network)
+	$(call ensure_bridge_network,$(INSTANCE_PREFIX)deploy_central-hub-network)
 
 create-networks: create-networks-centralhub
 	$(MAKE) -C trust create-networks
 
 remove-networks:
 	@echo "🗑️  Removing all networks..."
-	@docker network rm $(INSTANCE_PREFIX)central-hub-network 2>/dev/null || true
+	@docker network rm $(INSTANCE_PREFIX)deploy_central-hub-network 2>/dev/null || true
 	$(MAKE) -C trust remove-networks
 	@echo "✅ All networks removed!"
 

@@ -740,8 +740,9 @@ def main(
 
             # Networks, unlike containers, really do carry the instance prefix in their names —
             # they are created outside compose and joined `external: true` by literal name from
-            # each trust's own compose project, so `-p` cannot scope them (FLIP#957).
-            expected_networks = [f"{INSTANCE_PREFIX}central-hub-network"]
+            # each trust's own compose project, so `-p` cannot scope them (FLIP#957). Every one
+            # is `<prefix>deploy_<name>`, `deploy_` being the hub compose project that owns it.
+            expected_networks = [f"{INSTANCE_PREFIX}deploy_central-hub-network"]
             for net_num in configured_net_numbers:
                 expected_networks.append(f"{INSTANCE_PREFIX}deploy_shared-net-{net_num}")
 

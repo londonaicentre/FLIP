@@ -278,16 +278,24 @@ volumes:
 # Removed rather than left standing as a description of behaviour that does not
 # happen. If loopback-only binding is wanted, it belongs on the `docker network
 # create` calls in `create-networks` as `-o`, not here (FLIP#959).
+#
+# All six real names follow one rule: `${FLIP_INSTANCE:+$FLIP_INSTANCE-}deploy_<name>`. The
+# `deploy_` names the hub compose project that owns the network — which is also exactly what
+# compose would generate (`<project>_<key>`) if it still created them. It stopped generating
+# anything once they became `external: true` ("the name field is used as is and is not scoped
+# with the project name"), so the prefix has to be spelled out here; `central-hub-network` and
+# `central-hub-trust-apis-network` were the two left bare when the rest were written out, and
+# now match (FLIP#957).
 networks:
   default:
     external: true
-    name: ${FLIP_INSTANCE:+$FLIP_INSTANCE-}central-hub-network
+    name: ${FLIP_INSTANCE:+$FLIP_INSTANCE-}deploy_central-hub-network
 
   # Shared network for trust-to-hub communication (outbound from trust only).
   # Trusts poll the hub for tasks and push results back — no inbound connections to trusts.
   central-hub-trust-apis-network:
     external: true
-    name: ${FLIP_INSTANCE:+$FLIP_INSTANCE-}central-hub-trust-apis-network
+    name: ${FLIP_INSTANCE:+$FLIP_INSTANCE-}deploy_central-hub-trust-apis-network
 
   trust-network-1:
     external: true

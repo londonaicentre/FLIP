@@ -439,9 +439,12 @@ tests:
 	cd ../imaging-api && make test && \
 	cd ../trust-api && make test
 
+# Hub-shared network names all follow `$(INSTANCE_PREFIX)deploy_<name>`, where `deploy_` names
+# the hub compose project that owns them — the same string compose would generate itself if it
+# still created them, rather than looked them up `external:` (FLIP#957).
 create-networks-core:
 	@echo "🔧 Ensuring external Docker networks exist..."
-	$(call ensure_bridge_network,$(INSTANCE_PREFIX)central-hub-trust-apis-network)
+	$(call ensure_bridge_network,$(INSTANCE_PREFIX)deploy_central-hub-trust-apis-network)
 	$(call ensure_bridge_network,$(INSTANCE_PREFIX)deploy_shared-net-1)
 	$(call ensure_bridge_network,$(INSTANCE_PREFIX)deploy_shared-net-2)
 
@@ -462,7 +465,7 @@ create-networks: create-networks-core create-networks-trust-1 create-networks-tr
 # would now leak one overlay network per instance instead of protecting anything.)
 remove-networks:
 	@echo "🗑️  Removing all trust networks..."
-	@docker network rm $(INSTANCE_PREFIX)central-hub-trust-apis-network $(INSTANCE_PREFIX)deploy_shared-net-1 $(INSTANCE_PREFIX)deploy_shared-net-2 2>/dev/null || true
+	@docker network rm $(INSTANCE_PREFIX)deploy_central-hub-trust-apis-network $(INSTANCE_PREFIX)deploy_shared-net-1 $(INSTANCE_PREFIX)deploy_shared-net-2 2>/dev/null || true
 	@docker network rm $(INSTANCE_PREFIX)deploy_trust-network-1 $(INSTANCE_PREFIX)deploy_trust-network-2 2>/dev/null || true
 	@echo "✅ Trust networks removed!"
 
