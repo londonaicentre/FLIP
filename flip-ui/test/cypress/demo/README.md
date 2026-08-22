@@ -12,7 +12,7 @@ Local dev tool — not run in CI, and entirely separate from the docs-GIF pipeli
 # once per environment
 aws sso login --sso-session FLIP     # presigned URLs + Cognito admin calls need a live session
 make demo-users                      # create the demo Cognito users (DEMO_*_PASSWORD from env)
-docker restart flip-api              # boot seeding grants the demo users their roles
+docker compose -p deploy restart flip-api   # boot seeding grants the demo users their roles
 
 # record (from the repo root; ~30-45 min end to end, dominated by import + training)
 make demo-video

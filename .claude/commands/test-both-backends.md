@@ -13,7 +13,7 @@ pull on the first backend, then reuse the same approved project on the second.
 
 **Preconditions (check first, do not skip):**
 - The stack must be running: `make up` (central hub + trusts + XNAT), trusts registered, Orthanc seeded. If it's not up, stop and tell the user to start it — do not try to `make up` yourself (it needs AWS access and is slow).
-- If the user is testing branch code, the running containers must carry it. Remind them that the stack serves published images unless rebuilt (`make build-fl FL_BACKEND=<backend>` or the fast fl-api-only path), and they can confirm with `docker exec flip-fl-api-net-1 cat fl_api/utils/upload.py`.
+- If the user is testing branch code, the running containers must carry it. Remind them that the stack serves published images unless rebuilt (`make build-fl FL_BACKEND=<backend>` or the fast fl-api-only path), and they can confirm with `docker compose -p deploy exec fl-api-net-1 cat fl_api/utils/upload.py`.
 
 **Steps:**
 
