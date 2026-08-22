@@ -55,7 +55,6 @@ services:
       - fl-server-net-1
     networks:
       - default
-      - fl-net-1
     restart: unless-stopped
 
   fl-api-net-2:
@@ -86,7 +85,6 @@ services:
       - fl-server-net-2
     networks:
       - default
-      - fl-net-2
     restart: unless-stopped
 
   fl-server-net-1:

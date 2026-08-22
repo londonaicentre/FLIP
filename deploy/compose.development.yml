@@ -317,13 +317,18 @@ networks:
     external: true
     name: ${FLIP_INSTANCE:+$FLIP_INSTANCE-}deploy_trust-network-2
 
-  # The FL data plane, one per FL net. Membership is exactly: `fl-server-net-<N>`,
-  # `fl-api-net-<N>` (plus flower's one-shot `register-supernode-keys-net-<N>`), and every
-  # trust's `fl-client-net-<N>` — and **not** `flip-api`, which fronts the database and is
-  # reached by fl-server over `default` instead. Keep it that way: re-adding flip-api here
-  # would put the hub API back on a network every trust's fl-client can reach, which is
-  # both wider than the documented model (an fl-client holds no hub credential) and wider
-  # than production, where clients reach the hub VPC on the FL port alone.
+  # The FL data plane, one per FL net. Membership is exactly two services: the hub's
+  # `fl-server-net-<N>` and every trust's `fl-client-net-<N>`. It is the FL twin of
+  # `central-hub-trust-apis-network` (flip-api ↔ trust-api) — one hub service meeting one
+  # trust service, and nothing else crossing.
+  #
+  # Everything else hub-side stays on `default`: `flip-api`, `fl-api-net-<N>` and flower's
+  # one-shot `register-supernode-keys-net-<N>` all reach the FL server there, on its control
+  # ports (`9093`/`9097` for flower, the admin port for nvflare) rather than the client-facing
+  # Fleet port. Keep it that way. Putting any of them back here would hand every trust's
+  # fl-client a route to a hub service it has no business reaching — wider than the documented
+  # model (an fl-client holds no hub URL and no hub credential, only TRUST_INTERNAL_SERVICE_KEY)
+  # and wider than production, where a trust reaches the hub VPC on the FL port alone.
   fl-net-1:
     external: true
     name: ${FLIP_INSTANCE:+$FLIP_INSTANCE-}deploy_fl-net-1

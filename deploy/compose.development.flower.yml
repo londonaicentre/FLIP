@@ -47,7 +47,6 @@ services:
       - CHOWN
     networks:
       - default
-      - fl-net-1
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/openapi.json', timeout=3)"]
@@ -77,7 +76,6 @@ services:
       - CHOWN
     networks:
       - default
-      - fl-net-2
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/openapi.json', timeout=3)"]
@@ -185,7 +183,7 @@ services:
       fl-api-net-1:
         condition: service_healthy
     networks:
-      - fl-net-1
+      - default
 
   fl-server-net-2:
     image: ${DOCKER_FL_REGISTRY}${DOCKER_FL_SERVER_NAME}:${DOCKER_FL_TAG}
@@ -274,4 +272,4 @@ services:
       fl-api-net-2:
         condition: service_healthy
     networks:
-      - fl-net-2
+      - default
