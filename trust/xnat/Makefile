@@ -90,7 +90,9 @@ include ../../deploy/instance.mk
 # FL_KIT_SLOT_NUMBER identically, so XNAT and the trust core services land on
 # the same network.
 TRUST_NUM := $(FL_KIT_SLOT_NUMBER)
-XNAT_STACK := xnat$(TRUST_NUM)
+# Instance-scoped like TRUST_PROJECT: swarm stack names are global to the daemon, so two
+# hubs whose slot numbering both restart at 1 would otherwise deploy over each other's XNAT.
+XNAT_STACK := $(INSTANCE_PREFIX)xnat$(TRUST_NUM)
 XNAT_NETWORK := $(INSTANCE_PREFIX)deploy_trust-network-$(TRUST_NUM)
 # Defaults are the Trust_1 allocation, so a single-trust host (EC2 / on-prem)
 # needs no XNAT port entries in its kit file.

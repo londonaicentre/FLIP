@@ -152,7 +152,11 @@ endif
 # the existing scheme. Decoupled from the kit FILENAME (now the trust CODE) so
 # the slot the hub assigned governs the runtime topology, not the handle.
 TRUST_NUM := $(FL_KIT_SLOT_NUMBER)
-TRUST_PROJECT := trust$(TRUST_NUM)
+# Instance-scoped for the same reason the trust network is: FL kit slots are handed out
+# per hub, so a second hub restarts numbering at 1 and its trusts would otherwise land in
+# the default stack's compose projects (`trust1`, `trust2`) — adopting or clobbering another
+# hub's trust rather than standing up their own. Unset FLIP_INSTANCE leaves `trust<N>`.
+TRUST_PROJECT := $(INSTANCE_PREFIX)trust$(TRUST_NUM)
 # Dev only: expose this trust's APIs on the host. The override binds a single
 # fixed host-port set, so only the trust assigned slot Trust_1 claims it.
 TRUST_OVERRIDE := $(if $(filter Trust_1,$(FL_KIT_SLOT)),-f deploy/compose_trust-1_override.yml,)
