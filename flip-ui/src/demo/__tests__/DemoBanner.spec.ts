@@ -13,8 +13,15 @@
 
 import { mountComponent } from "@test/helper";
 
-import { DEMO_CAPTURE_DATE } from "../../../mocks/demo/ark-plus-register";
+import { DEMO_CAPTURE_DATE, DEMO_EVALUATION_CAPTURE_DATE } from "../../../mocks/demo/ark-plus-register";
 import DemoBanner from "../DemoBanner.vue";
+
+const humanised = (iso: string) => new Date(`${iso}T00:00:00Z`).toLocaleDateString("en-GB", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    timeZone: "UTC"
+});
 
 describe("DemoBanner", () => {
     it("renders a persistent, non-dismissible read-only-demo label", () => {
@@ -32,14 +39,20 @@ describe("DemoBanner", () => {
         // DEMO_CAPTURE_DATE is "YYYY-MM-DD"; assert against the same
         // formatting the component uses so this doesn't hardcode a date
         // string that drifts the moment the register is re-captured.
-        const expected = new Date(`${DEMO_CAPTURE_DATE}T00:00:00Z`).toLocaleDateString("en-GB", {
-            day: "2-digit",
-            month: "short",
-            year: "numeric",
-            timeZone: "UTC"
-        });
-
-        expect(comp.text()).toContain(expected);
+        expect(comp.text()).toContain(humanised(DEMO_CAPTURE_DATE));
         expect(comp.text()).toContain("Read-only demo");
+    });
+
+    it("names BOTH capture dates while the two projects are captured apart", () => {
+        const comp = mountComponent(DemoBanner);
+
+        // The register spans two captures (the fine-tuning project was
+        // re-captured alone after the FLIP#821 orientation fix). Showing only
+        // one date silently misdates half the exhibit, which is exactly what
+        // the register's provenance discipline exists to prevent — so the
+        // evaluation date is asserted, not merely rendered.
+        expect(comp.text()).toContain(humanised(DEMO_EVALUATION_CAPTURE_DATE));
+        expect(comp.text()).toContain("fine-tuning");
+        expect(comp.text()).toContain("evaluation");
     });
 });
