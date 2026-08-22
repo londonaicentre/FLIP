@@ -10,10 +10,13 @@
 # limitations under the License.
 #
 
-# Load environment variables for development
-ifneq ("$(wildcard ../.env.development)","")
-include ../.env.development
-export $(shell sed 's/=.*//' ../.env.development)
+# Load environment variables. MAIN_ENV_FILE is exported by the root Makefile, so
+# `make up MAIN_ENV_FILE=.env.b.development` reaches here too; the default keeps a
+# standalone `make -C flip-api …` working exactly as before.
+MAIN_ENV_FILE ?= .env.development
+ifneq ("$(wildcard ../$(MAIN_ENV_FILE))","")
+include ../$(MAIN_ENV_FILE)
+export $(shell sed 's/=.*//' ../$(MAIN_ENV_FILE))
 endif
 # Load GITHUB secrets if they exist
 ifneq ("$(wildcard ../.env.github)","")

@@ -52,8 +52,9 @@ KIT_FILE := $(if $(wildcard .env.$(KIT).$(ENV)),.env.$(KIT).$(ENV),.env.$(KIT))
 # `make -C trust up-trust …`. Must precede fl_backend.mk so FL_BACKEND is set.
 # Prod kits carry Hub-shared live, so prod stays kit-only (no hub .env include —
 # a remote operator never has the hub env).
+MAIN_ENV_FILE ?= .env.development
 ifeq ($(ENV),development)
--include ../.env.development
+-include ../$(MAIN_ENV_FILE)
 export AES_KEY_BASE64 CENTRAL_HUB_API_URL TRUST_API_KEY_HEADER FL_BACKEND \
        FLOWER_KIT_DATE FLARE_KIT_DATE DOCKER_TAG DOCKER_REGISTRY \
        DOCKER_FL_TAG DOCKER_FL_REGISTRY NLB_SUBDOMAIN FL_SERVER_PORT

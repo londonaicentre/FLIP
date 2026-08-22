@@ -33,6 +33,10 @@ ENV=development
 endif
 
 # Print which environment files are being used
+# Exported so `make -C flip-api` / `-C trust` resolve the SAME env file rather than
+# hardcoding .env.development. That is what lets a second hub run from ONE checkout:
+#     make up MAIN_ENV_FILE=.env.b.development
+export MAIN_ENV_FILE
 $(info Using MAIN_ENV_FILE: $(MAIN_ENV_FILE))
 
 # replace environment variables by the values from the .env files
