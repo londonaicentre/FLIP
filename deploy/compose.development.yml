@@ -13,6 +13,19 @@
 # NOTE Important: any sections specified in base configs will be overridden if you specify the same sections in the
 # inheriting service configs below
 
+# No service here sets `container_name`. Container names are left to the compose project
+# (`-p $(COMPOSE_PROJECT)` — see deploy/instance.mk), which yields `deploy-flip-api-1` on the
+# default stack and `<instance>-deploy-flip-api-1` on a second one, so a parallel dev stack
+# (FLIP#957) needs no per-service naming at all. `container_name` is incompatible with a
+# project prefix anyway: it is a global, project-independent name, so two stacks sharing one
+# would collide outright.
+#
+# Nothing in the stack addresses these containers by name. Service-to-service traffic resolves
+# through the compose SERVICE name, which docker registers as a network alias on every network
+# the container joins and which is identical in both stacks — so the FL kits (`fed_client.json`
+# targets `fl-server-net-1:8002`, the SuperLink cert SAN is `DNS:fl-server-net-1`) and
+# NET_ENDPOINTS keep working untouched. That makes the service KEYS below load-bearing: renaming
+# one breaks TLS and the kits, whereas the container names are free to change.
 services:
   #################### CENTRAL HUB ####################
 
@@ -55,7 +68,6 @@ services:
     restart: unless-stopped
     networks:
       - default
-    container_name: ${FLIP_INSTANCE:+$FLIP_INSTANCE-}flip-ui
 
   flip-api:
     platform: linux/x86_64
@@ -197,7 +209,6 @@ services:
     cap_add:
       - CHOWN
     restart: unless-stopped
-    container_name: ${FLIP_INSTANCE:+$FLIP_INSTANCE-}flip-api
 
   flip-db:
     image: postgres:17
@@ -227,7 +238,6 @@ services:
       - SETGID
     networks:
       - default
-    container_name: ${FLIP_INSTANCE:+$FLIP_INSTANCE-}flip-db
 
   #################### PGADMIN ####################
 
@@ -250,7 +260,6 @@ services:
       - default
       - trust-network-1
       - trust-network-2
-    container_name: ${FLIP_INSTANCE:+$FLIP_INSTANCE-}flip-pgadmin
 
 volumes:
   pgadmin_data:

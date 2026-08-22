@@ -13,11 +13,15 @@
 # NOTE Important: any sections specified in base configs will be overridden if you specify the same sections in the
 # inheriting service configs below
 
+# No `container_name` here either — see the header of compose.development.yml. The service KEYS
+# are load-bearing and must not be renamed: `fl-server-net-<N>` is the SAN in the SuperLink's
+# provisioned TLS certificate (`DNS:fl-server-net-1`), so a SuperNode's certificate check fails
+# outright if that name stops resolving, and `fl-api-net-<N>` is what NET_ENDPOINTS and
+# FL_API_ADDRESS below dial.
 services:
   #################### CENTRAL HUB FL ####################
 
   fl-api-net-1:
-    container_name: ${FLIP_INSTANCE:+$FLIP_INSTANCE-}flip-fl-api-net-1
     image: ${DOCKER_FL_REGISTRY}${DOCKER_FL_API_NAME}:${DOCKER_FL_TAG}
     volumes:
       - ${FL_PROVISIONED_DIR}/net-1/certificates:/certs:ro
@@ -53,7 +57,6 @@ services:
       start_period: 10s
 
   fl-api-net-2:
-    container_name: ${FLIP_INSTANCE:+$FLIP_INSTANCE-}flip-fl-api-net-2
     image: ${DOCKER_FL_REGISTRY}${DOCKER_FL_API_NAME}:${DOCKER_FL_TAG}
     volumes:
       - ${FL_PROVISIONED_DIR}/net-2/certificates:/certs:ro
@@ -84,7 +87,6 @@ services:
       start_period: 10s
 
   fl-server-net-1:
-    container_name: ${FLIP_INSTANCE:+$FLIP_INSTANCE-}fl-server-net-1
     image: ${DOCKER_FL_REGISTRY}${DOCKER_FL_SERVER_NAME}:${DOCKER_FL_TAG}
     # Dev-only: run as root so the server can read BOTH the host-provisioned
     # 0640 TLS keys AND the host operator's AWS SSO cache. The app user (uid
@@ -149,16 +151,15 @@ services:
 
   # One-shot service to register SuperNode public keys with the SuperLink
   register-supernode-keys-net-1:
-    container_name: ${FLIP_INSTANCE:+$FLIP_INSTANCE-}register-supernode-keys-net-1
     # It doesn't really matter if we use FL server or FL base image here since register-supernode-keys.sh is in both
     image: ${DOCKER_FL_REGISTRY}${DOCKER_FL_SERVER_NAME}:${DOCKER_FL_TAG}
     environment:
       - SUPERLINK_ADDRESS=fl-server-net-1:9093
-      # Service name, not the container name: container_name carries the FLIP_INSTANCE
-      # prefix, so `flip-fl-api-net-1` does not resolve in a secondary stack, while the
-      # service alias `fl-api-net-1` resolves in every stack. Getting this wrong fails
-      # SILENTLY — register-supernode-keys.sh swallows the DNS error and still exits 0,
-      # leaving SuperNode keys unlabelled and FL metrics attributed to unknown_client
+      # Service name (`fl-api-net-1`), which is the only name that resolves: with no
+      # container_name the container is named by the compose project, and the old
+      # `flip-fl-api-net-1` spelling is not a DNS name in any stack. Getting this wrong
+      # fails SILENTLY — register-supernode-keys.sh swallows the DNS error and still exits
+      # 0, leaving SuperNode keys unlabelled and FL metrics attributed to unknown_client
       # (FLIP#957).
       - FL_API_ADDRESS=http://fl-api-net-1:8000
       # The script reads ${TRUST_NAMES} as a label list, but the underlying identity it's
@@ -183,7 +184,6 @@ services:
       - shared-net-1
 
   fl-server-net-2:
-    container_name: ${FLIP_INSTANCE:+$FLIP_INSTANCE-}fl-server-net-2
     image: ${DOCKER_FL_REGISTRY}${DOCKER_FL_SERVER_NAME}:${DOCKER_FL_TAG}
     # Dev-only: run as root so the server can read BOTH the host-provisioned
     # 0640 TLS keys AND the host operator's AWS SSO cache. The app user (uid
@@ -248,7 +248,6 @@ services:
 
   # One-shot service to register SuperNode public keys with the SuperLink
   register-supernode-keys-net-2:
-    container_name: ${FLIP_INSTANCE:+$FLIP_INSTANCE-}register-supernode-keys-net-2
     # It doesn't really matter if we use FL server or FL base image here since register-supernode-keys.sh is in both
     image: ${DOCKER_FL_REGISTRY}${DOCKER_FL_SERVER_NAME}:${DOCKER_FL_TAG}
     environment:
