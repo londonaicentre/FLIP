@@ -744,7 +744,7 @@ def main(
             # is `<prefix>deploy_<name>`, `deploy_` being the hub compose project that owns it.
             expected_networks = [f"{INSTANCE_PREFIX}deploy_central-hub-network"]
             for net_num in configured_net_numbers:
-                expected_networks.append(f"{INSTANCE_PREFIX}deploy_shared-net-{net_num}")
+                expected_networks.append(f"{INSTANCE_PREFIX}deploy_fl-net-{net_num}")
 
             if success:
                 for network in expected_networks:

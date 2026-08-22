@@ -47,7 +47,7 @@ services:
       - CHOWN
     networks:
       - default
-      - shared-net-1
+      - fl-net-1
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/openapi.json', timeout=3)"]
@@ -77,7 +77,7 @@ services:
       - CHOWN
     networks:
       - default
-      - shared-net-2
+      - fl-net-2
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/openapi.json', timeout=3)"]
@@ -144,8 +144,12 @@ services:
       # the host-owned 0640 TLS key and 0600 SSO token cache — root's implicit DAC
       # bypass is itself a capability, and it is dropped here (FLIP#485).
       - DAC_OVERRIDE
+    # `default` is the hub-internal network. fl-server is the one FL service that calls back
+    # into flip-api (FLIP_API_INTERNAL_URL + INTERNAL_SERVICE_KEY above), and flip-api is
+    # deliberately not on the FL net — see the networks block in compose.development.yml.
     networks:
-      - shared-net-1
+      - default
+      - fl-net-1
     restart: unless-stopped
     init: true
 
@@ -181,7 +185,7 @@ services:
       fl-api-net-1:
         condition: service_healthy
     networks:
-      - shared-net-1
+      - fl-net-1
 
   fl-server-net-2:
     image: ${DOCKER_FL_REGISTRY}${DOCKER_FL_SERVER_NAME}:${DOCKER_FL_TAG}
@@ -241,8 +245,10 @@ services:
       # the host-owned 0640 TLS key and 0600 SSO token cache — root's implicit DAC
       # bypass is itself a capability, and it is dropped here (FLIP#485).
       - DAC_OVERRIDE
+    # `default` is the hub-internal network — see fl-server-net-1 above.
     networks:
-      - shared-net-2
+      - default
+      - fl-net-2
     restart: unless-stopped
     init: true
 
@@ -268,4 +274,4 @@ services:
       fl-api-net-2:
         condition: service_healthy
     networks:
-      - shared-net-2
+      - fl-net-2

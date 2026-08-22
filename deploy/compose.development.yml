@@ -116,11 +116,16 @@ services:
       - ../fl-apps/:/app/fl-apps/
       - ~/.aws/config:/home/${UNAME}/.aws/config:ro
       - ~/.aws/sso/cache:/home/${UNAME}/.aws/sso/cache:rw
+    # Deliberately NOT on `fl-net-*`: flip-api fronts the database and holds the hub's
+    # credentials, and nothing on the FL data plane calls it. The traffic that looks like
+    # it needs this is the fl-server → flip-api callback, and fl-server reaches it over
+    # `default` (the hub-internal network) instead — see the FL overlays. A trust's
+    # fl-client carries no hub URL and no hub credential, only TRUST_INTERNAL_SERVICE_KEY,
+    # so putting flip-api on the FL nets only widened the reachable surface, and did so
+    # further than production, where clients reach the hub VPC on the FL port alone.
     networks:
       - default
       - central-hub-trust-apis-network
-      - shared-net-1
-      - shared-net-2
     environment:
       - ENV=development
       # Dev-on-pull (see `user:` above): import flip_api via PYTHONPATH and skip
@@ -286,6 +291,13 @@ volumes:
 # with the project name"), so the prefix has to be spelled out here; `central-hub-network` and
 # `central-hub-trust-apis-network` were the two left bare when the rest were written out, and
 # now match (FLIP#957).
+#
+# The two numbering axes are NOT parallel, which is the trap the `fl-net-<N>` name exists to
+# defuse: `fl-net-<N>` is numbered by **FL net** (`net-1`/`net-2` — the `fl_nets` table,
+# NET_NUMBER, `fl-server-net-<N>`), while `trust-network-<N>` is numbered by **trust slot**.
+# One trust can sit on `trust-network-2` and `fl-net-1` at the same time, and does today. The
+# earlier name for these, `shared-net-<N>`, described who was attached rather than what the
+# network is for — and stopped being true once flip-api came off them (see below).
 networks:
   default:
     external: true
@@ -305,10 +317,17 @@ networks:
     external: true
     name: ${FLIP_INSTANCE:+$FLIP_INSTANCE-}deploy_trust-network-2
 
-  shared-net-1:
+  # The FL data plane, one per FL net. Membership is exactly: `fl-server-net-<N>`,
+  # `fl-api-net-<N>` (plus flower's one-shot `register-supernode-keys-net-<N>`), and every
+  # trust's `fl-client-net-<N>` — and **not** `flip-api`, which fronts the database and is
+  # reached by fl-server over `default` instead. Keep it that way: re-adding flip-api here
+  # would put the hub API back on a network every trust's fl-client can reach, which is
+  # both wider than the documented model (an fl-client holds no hub credential) and wider
+  # than production, where clients reach the hub VPC on the FL port alone.
+  fl-net-1:
     external: true
-    name: ${FLIP_INSTANCE:+$FLIP_INSTANCE-}deploy_shared-net-1
+    name: ${FLIP_INSTANCE:+$FLIP_INSTANCE-}deploy_fl-net-1
 
-  shared-net-2:
+  fl-net-2:
     external: true
-    name: ${FLIP_INSTANCE:+$FLIP_INSTANCE-}deploy_shared-net-2
+    name: ${FLIP_INSTANCE:+$FLIP_INSTANCE-}deploy_fl-net-2

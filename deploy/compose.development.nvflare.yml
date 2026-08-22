@@ -55,7 +55,7 @@ services:
       - fl-server-net-1
     networks:
       - default
-      - shared-net-1
+      - fl-net-1
     restart: unless-stopped
 
   fl-api-net-2:
@@ -86,7 +86,7 @@ services:
       - fl-server-net-2
     networks:
       - default
-      - shared-net-2
+      - fl-net-2
     restart: unless-stopped
 
   fl-server-net-1:
@@ -132,8 +132,12 @@ services:
       # (FOWNER). Without these the container crash-loops (FLIP#485).
       - DAC_OVERRIDE
       - FOWNER
+    # `default` is the hub-internal network. fl-server is the one FL service that calls back
+    # into flip-api (FLIP_API_INTERNAL_URL + INTERNAL_SERVICE_KEY above), and flip-api is
+    # deliberately not on the FL net — see the networks block in compose.development.yml.
     networks:
-      - shared-net-1
+      - default
+      - fl-net-1
     restart: unless-stopped
     init: true
 
@@ -180,7 +184,9 @@ services:
       # (FOWNER). Without these the container crash-loops (FLIP#485).
       - DAC_OVERRIDE
       - FOWNER
+    # `default` is the hub-internal network — see fl-server-net-1 above.
     networks:
-      - shared-net-2
+      - default
+      - fl-net-2
     restart: unless-stopped
     init: true

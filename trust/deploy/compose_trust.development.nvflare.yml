@@ -59,7 +59,7 @@ services:
       - TRUST_INTERNAL_SERVICE_KEY=${TRUST_INTERNAL_SERVICE_KEY}
     networks:
       - default
-      - deploy_shared-net-1
+      - fl-net-1
     shm_size: '32gb'
     # GPU passthrough via compose_trust.development.gpu.yml overlay (gated on NUM_AVAILABLE_GPUS)
 
@@ -95,6 +95,6 @@ services:
       - TRUST_INTERNAL_SERVICE_KEY=${TRUST_INTERNAL_SERVICE_KEY}
     networks:
       - default
-      - deploy_shared-net-2
+      - fl-net-2
     shm_size: '32gb'
     # GPU passthrough via compose_trust.development.gpu.yml overlay (gated on NUM_AVAILABLE_GPUS)

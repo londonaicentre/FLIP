@@ -314,9 +314,13 @@ networks:
   central-hub-trust-apis-network:
     external: true
     name: ${FLIP_INSTANCE:+$FLIP_INSTANCE-}deploy_central-hub-trust-apis-network
-  deploy_shared-net-1:
+  # The FL data plane, one per FL net: fl-server, fl-api and every trust's fl-client,
+  # and deliberately not flip-api. Numbered by FL net (`net-1`/`net-2`, matching the
+  # `fl_nets` table and NET_NUMBER), *not* by trust slot the way `trust-network-<N>`
+  # is — a trust on slot 2 can perfectly well sit on `fl-net-1`.
+  fl-net-1:
     external: true
-    name: ${FLIP_INSTANCE:+$FLIP_INSTANCE-}deploy_shared-net-1
-  deploy_shared-net-2:
+    name: ${FLIP_INSTANCE:+$FLIP_INSTANCE-}deploy_fl-net-1
+  fl-net-2:
     external: true
-    name: ${FLIP_INSTANCE:+$FLIP_INSTANCE-}deploy_shared-net-2
+    name: ${FLIP_INSTANCE:+$FLIP_INSTANCE-}deploy_fl-net-2
