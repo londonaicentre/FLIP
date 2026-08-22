@@ -94,6 +94,10 @@ TRUST_NUM := $(FL_KIT_SLOT_NUMBER)
 # hubs whose slot numbering both restart at 1 would otherwise deploy over each other's XNAT.
 XNAT_STACK := $(INSTANCE_PREFIX)xnat$(TRUST_NUM)
 XNAT_NETWORK := $(INSTANCE_PREFIX)deploy_trust-network-$(TRUST_NUM)
+# The trust core services this XNAT must sit beside — same derivation as trust/Makefile's
+# TRUST_PROJECT. Instance-scoped: unprefixed, the guard below inspects whichever hub owns
+# plain `trust<N>` and reports on a trust that is not ours.
+TRUST_PROJECT := $(INSTANCE_PREFIX)trust$(TRUST_NUM)
 # Defaults are the Trust_1 allocation, so a single-trust host (EC2 / on-prem)
 # needs no XNAT port entries in its kit file.
 XNAT_PORT_EFFECTIVE := $(or $(XNAT_PORT),8104)
@@ -399,14 +403,14 @@ xnat-configure:
 # standalone path with FLIP_INSTANCE unset) otherwise deploys a healthy-looking XNAT that
 # imaging-api cannot reach, surfacing much later as an opaque image-pull failure.
 define check_network_matches_trust
-	@actual=$$(docker ps --filter "label=com.docker.compose.project=trust$(TRUST_NUM)" -q 2>/dev/null | head -1); \
+	@actual=$$(docker ps --filter "label=com.docker.compose.project=$(TRUST_PROJECT)" -q 2>/dev/null | head -1); \
 	if [ -n "$$actual" ]; then \
 	  nets=$$(docker inspect "$$actual" --format '{{range $$k, $$v := .NetworkSettings.Networks}}{{$$k}} {{end}}' 2>/dev/null); \
 	  case " $$nets " in \
 	    *" $(XNAT_NETWORK) "*) ;; \
-	    *) echo "❌ XNAT would use $(XNAT_NETWORK), but trust$(TRUST_NUM) is on: $$nets"; \
+	    *) echo "❌ XNAT would use $(XNAT_NETWORK), but $(TRUST_PROJECT) is on: $$nets"; \
 	       echo "   They must share a trust network or imaging-api cannot reach XNAT."; \
-	       echo "   Re-run with FLIP_INSTANCE set to the instance that owns trust$(TRUST_NUM)"; \
+	       echo "   Re-run with FLIP_INSTANCE set to the instance that owns $(TRUST_PROJECT)"; \
 	       echo "   (or unset it, if that trust belongs to the default instance)."; \
 	       exit 1;; \
 	  esac; \

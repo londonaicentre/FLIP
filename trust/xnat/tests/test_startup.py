@@ -596,6 +596,7 @@ def _docker_stub(
     working_dir: str = "",
     networks: str = "",
     require_ps_all: bool = False,
+    owning_project: str = "",
 ) -> dict[str, str]:
     """Put a fake `docker` first on PATH answering exactly the probes the makefile guards run.
 
@@ -608,10 +609,19 @@ def _docker_stub(
     `require_ps_all` makes the stub answer `ps` only when `-a` was passed, standing in for a
     stopped-but-not-removed stack: a guard that probed running containers alone would see an empty
     project and wave the collision through.
+
+    `owning_project` makes the stub answer `ps … -q` only when the compose-project filter names
+    that project, so a guard querying the wrong one sees an empty project instead of being handed
+    these containers regardless. Without it the stub cannot distinguish `trust1` from `b-trust1`.
     """
     bin_dir = tmp_path / "docker-stub-bin"
     bin_dir.mkdir(exist_ok=True)
     emit_ids = f"printf '%s\\n' '{container_ids}'" if container_ids else ":"
+    if owning_project:
+        emit_ids = (
+            f'case "$*" in *"com.docker.compose.project={owning_project} "*|'
+            f'*"com.docker.compose.project={owning_project}") {emit_ids} ;; esac'
+        )
     all_gate = (
         '  seen_all=0; for arg in "$@"; do if [ "$arg" = "-a" ]; then seen_all=1; fi; done\n'
         '  [ "$seen_all" = 1 ] || exit 0\n'
@@ -762,7 +772,12 @@ def test_xnat_network_guard_refuses_a_trust_on_a_different_instance(tmp_path: Pa
     can easily miss it — producing a healthy-looking XNAT that imaging-api simply cannot reach.
     """
     trust_dir = _kit_tree(tmp_path)
-    env = _docker_stub(tmp_path, container_ids="c0ffeec0ffee", networks="deploy_trust-network-1 ")
+    env = _docker_stub(
+        tmp_path,
+        container_ids="c0ffeec0ffee",
+        networks="deploy_trust-network-1 ",
+        owning_project="b-trust1",
+    )
     env["FLIP_INSTANCE"] = "b"
 
     result = _run_kit_target(
@@ -772,14 +787,41 @@ def test_xnat_network_guard_refuses_a_trust_on_a_different_instance(tmp_path: Pa
     combined = result.stdout + result.stderr
     assert result.returncode != 0, f"XNAT attached to a network the trust is not on\n{combined}"
     assert "XNAT would use b-deploy_trust-network-1" in combined, combined
-    assert "trust1 is on: deploy_trust-network-1" in combined, combined
+    assert "b-trust1 is on: deploy_trust-network-1" in combined, combined
+
+
+def test_xnat_network_guard_ignores_another_instances_trust(tmp_path: Path) -> None:
+    """The guard must read *our* instance's trust, not whoever owns the unprefixed project.
+
+    FL kit slots are handed out per hub, so both instances run a `trust1`. Filtering on the
+    unprefixed name reads the other hub's trust: it refuses a correctly-placed deploy whenever
+    the default instance holds that number, and passes vacuously when nothing holds it.
+    """
+    trust_dir = _kit_tree(tmp_path)
+    env = _docker_stub(
+        tmp_path,
+        container_ids="c0ffeec0ffee",
+        networks="deploy_trust-network-1 ",
+        owning_project="trust1",
+    )
+    env["FLIP_INSTANCE"] = "b"
+
+    result = _run_kit_target(
+        REPO_ROOT / "trust" / "xnat" / "Makefile", "create-xnat-network", trust_dir / "xnat", env
+    )
+
+    combined = result.stdout + result.stderr
+    assert result.returncode == 0, f"guard judged instance b against the default instance\n{combined}"
 
 
 def test_xnat_network_guard_passes_when_the_trust_is_on_the_same_network(tmp_path: Path) -> None:
     """Positive control: a matching attachment must not be refused."""
     trust_dir = _kit_tree(tmp_path)
     env = _docker_stub(
-        tmp_path, container_ids="c0ffeec0ffee", networks="b-deploy_trust-network-1 bridge "
+        tmp_path,
+        container_ids="c0ffeec0ffee",
+        networks="b-deploy_trust-network-1 bridge ",
+        owning_project="b-trust1",
     )
     env["FLIP_INSTANCE"] = "b"
 
