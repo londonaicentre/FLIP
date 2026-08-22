@@ -74,7 +74,10 @@ get_service_name = $(subst -api,, $(subst flip-,central hub ,$(subst fl-,central
 export COMPOSE_BAKE=true
 DOCKER_COMMAND=docker compose -p $(COMPOSE_PROJECT) -f $(COMMON_COMPOSE_FILE) -f $(FL_BACKEND_COMPOSE_FILE)
 DEBUG_OVERRIDE_COMPOSE_COMMAND=docker compose -p $(COMPOSE_PROJECT) -f $(COMMON_COMPOSE_FILE) -f $(FL_BACKEND_COMPOSE_FILE) -f deploy/compose.development.debug.override.yml
-SHOW_LOGS_CENTRAL_HUB=docker logs -f $(INSTANCE_PREFIX)flip-api --tail 100 --timestamps --follow
+# Through compose, addressing the service rather than the container: the containers are
+# named by the project (deploy-flip-api-1, or <instance>-deploy-flip-api-1), so a literal
+# `docker logs flip-api` names nothing on any stack.
+SHOW_LOGS_CENTRAL_HUB=$(DOCKER_COMMAND) logs --follow --tail 100 --timestamps flip-api
 GENERIC_LOGS=docker logs -f --tail 100 --timestamps --follow
 
 # UP_PULL_FLAGS controls the pull/build behaviour of the `up` targets.

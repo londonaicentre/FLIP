@@ -311,13 +311,8 @@ def load_env_file(env_file: Path) -> dict[str, str]:
     return env_vars
 
 
-def instance_prefix(env_vars: dict[str, str]) -> str:
-    """Derive the FLIP_INSTANCE container-name prefix, empty for the default stack.
-
-    Every hub container_name carries this prefix when a second dev stack is running (FLIP#957) —
-    the same `${FLIP_INSTANCE:+$FLIP_INSTANCE-}` spelling the compose files use. Without honouring
-    it, this script reports every hub container missing against exactly the two-stack setup it
-    exists to diagnose.
+def resolve_instance(env_vars: dict[str, str]) -> str:
+    """Read the FLIP_INSTANCE name, empty for the default stack.
 
     The process environment wins over the env file so `FLIP_INSTANCE=b make check-status` inspects
     the secondary stack without editing .env.development, matching how make and compose resolve the
@@ -327,10 +322,114 @@ def instance_prefix(env_vars: dict[str, str]) -> str:
         env_vars (dict[str, str]): Values loaded from the hub env file.
 
     Returns:
+        str: The instance name, or "" when no instance is named.
+    """
+    return (os.environ.get("FLIP_INSTANCE") or env_vars.get("FLIP_INSTANCE", "")).strip()
+
+
+def instance_prefix(env_vars: dict[str, str]) -> str:
+    """Derive the FLIP_INSTANCE **network**-name prefix, empty for the default stack.
+
+    The same `${FLIP_INSTANCE:+$FLIP_INSTANCE-}` spelling deploy/instance.mk and the compose files
+    use. It applies to the hub-shared Docker networks, which carry the prefix in their real names
+    because they are a cross-project contract each trust joins `external: true` by literal name
+    (FLIP#957). It deliberately does NOT apply to container names — those come from the compose
+    project, see compose_project() — so this must not be reused for them.
+
+    Args:
+        env_vars (dict[str, str]): Values loaded from the hub env file.
+
+    Returns:
         str: The prefix including its trailing hyphen, or "" when no instance is named.
     """
-    instance = (os.environ.get("FLIP_INSTANCE") or env_vars.get("FLIP_INSTANCE", "")).strip()
+    instance = resolve_instance(env_vars)
     return f"{instance}-" if instance else ""
+
+
+def compose_project(env_vars: dict[str, str]) -> str:
+    """Derive the hub's compose project name — the same value `-p` carries in the Makefiles.
+
+    Hub containers set no `container_name`, so compose names them `<project>-<service>-<replica>`.
+    Matching on those assembled strings would re-hardcode a name compose is free to change, so this
+    is fed to a `com.docker.compose.project` label filter instead (discover_compose_containers).
+
+    Mirrors COMPOSE_PROJECT in deploy/instance.mk, including the bare `deploy` default — that is
+    exactly the value compose derives implicitly from the directory of the first `-f` file.
+
+    Args:
+        env_vars (dict[str, str]): Values loaded from the hub env file.
+
+    Returns:
+        str: `<instance>-deploy`, or `deploy` when no instance is named.
+    """
+    instance = resolve_instance(env_vars)
+    return f"{instance}-deploy" if instance else "deploy"
+
+
+@dataclass
+class ComposeContainer:
+    """One container of a compose project, identified by its compose service name.
+
+    Attributes:
+        service (str): The compose service key (e.g. `fl-api-net-1`) — stable across instances.
+        name (str): The container name docker assigned (e.g. `deploy-fl-api-net-1-1`).
+        status (str): The `docker ps` status string (e.g. `Up 3 hours (healthy)`).
+    """
+
+    service: str
+    name: str
+    status: str
+
+    @property
+    def running(self) -> bool:
+        """bool: Whether docker reports the container as up."""
+        return self.status.startswith("Up")
+
+
+def parse_compose_containers(output: str) -> dict[str, ComposeContainer]:
+    """Parse tab-separated `docker ps` rows into a service-keyed map.
+
+    Split out from the docker call so it can be unit-tested. Rows whose service label is empty are
+    dropped: a container started outside compose carries no service to key on.
+
+    Args:
+        output (str): Lines of `<service>\\t<name>\\t<status>`.
+
+    Returns:
+        dict[str, ComposeContainer]: One entry per compose service, keyed by service name.
+    """
+    containers: dict[str, ComposeContainer] = {}
+    for line in output.splitlines():
+        parts = line.split("\t")
+        if len(parts) != 3 or not parts[0].strip():
+            continue
+        service, name, status = (p.strip() for p in parts)
+        containers[service] = ComposeContainer(service=service, name=name, status=status)
+    return containers
+
+
+def discover_compose_containers(project: str) -> dict[str, ComposeContainer]:
+    """List one compose project's containers, keyed by compose service name.
+
+    `-a` so a crashed/exited container is reported as present-but-not-running rather than missing,
+    which is the more useful diagnosis.
+
+    Args:
+        project (str): The compose project name (see compose_project()).
+
+    Returns:
+        dict[str, ComposeContainer]: One entry per compose service; empty when nothing is up.
+    """
+    success, output = run_command([
+        "docker",
+        "ps",
+        "-a",
+        "--filter",
+        f"label=com.docker.compose.project={project}",
+        "--format",
+        '{{.Label "com.docker.compose.service"}}\t{{.Names}}\t{{.Status}}',
+    ])
+    return parse_compose_containers(output) if success else {}
 
 
 @dataclass
@@ -468,11 +567,22 @@ def main(
     API_PORT = env_vars.get("API_PORT", "8001")
     FL_API_PORT = env_vars.get("FL_API_PORT", "8000")
 
-    # Hub container names carry the FLIP_INSTANCE prefix on a secondary dev stack — see
-    # instance_prefix() for why and for the environment-over-env-file precedence.
+    # A secondary dev stack (FLIP#957) runs in its own compose project and on its own set of
+    # hub networks. Containers are found through the project label, networks through the name
+    # prefix — see compose_project() / instance_prefix() for the split and for the
+    # environment-over-env-file precedence.
+    COMPOSE_PROJECT = compose_project(env_vars)
     INSTANCE_PREFIX = instance_prefix(env_vars)
     if INSTANCE_PREFIX:
-        print_status("INFO", f"FLIP_INSTANCE set — expecting hub containers named {INSTANCE_PREFIX}*")
+        print_status(
+            "INFO",
+            f"FLIP_INSTANCE set — inspecting compose project '{COMPOSE_PROJECT}' "
+            f"and networks named {INSTANCE_PREFIX}*",
+        )
+
+    # Resolved once, up here rather than inside the --skip-docker branch: the later `docker exec`
+    # and `docker logs` checks need the container names too, and they run under --skip-docker.
+    hub_containers = discover_compose_containers(COMPOSE_PROJECT)
 
     # Per-trust ports live in each trust's CODE-named kit file
     # (trust/.env.<CODE>.<env>) — the source of truth trust/Makefile -includes and
@@ -501,37 +611,34 @@ def main(
     if not skip_docker:
         print_section("Docker Container Status")
 
-        print_status("INFO", "Checking Docker containers...")
+        print_status("INFO", f"Checking Docker containers in compose project '{COMPOSE_PROJECT}'...")
 
-        # Get container status
+        # Expectations are expressed as compose SERVICE names: they are the stable identity here,
+        # while the container names are assembled by compose from the project (deploy-flip-api-1,
+        # or <instance>-deploy-flip-api-1 on a second stack).
         try:
-            success, containers = run_command(["docker", "ps", "--format", "{{.Names}}:{{.Status}}"])
-
-            if not success:
-                print_status("FAIL", "Could not retrieve Docker container status")
+            if not hub_containers:
+                print_status("FAIL", f"No containers found in compose project '{COMPOSE_PROJECT}' — is the hub up?")
             else:
-                # Check each expected container
-                expected_containers = [
-                    f"{INSTANCE_PREFIX}flip-ui",
-                    f"{INSTANCE_PREFIX}flip-api",
-                    f"{INSTANCE_PREFIX}flip-db",
-                ]
+                expected_services = ["flip-ui", "flip-api", "flip-db"]
 
-                # Add configured FL server and API containers
+                # Add configured FL server and API services
                 for net_num in configured_net_numbers:
-                    expected_containers.append(f"{INSTANCE_PREFIX}fl-server-net-{net_num}")
-                    expected_containers.append(f"{INSTANCE_PREFIX}flip-fl-api-net-{net_num}")
+                    expected_services.append(f"fl-server-net-{net_num}")
+                    expected_services.append(f"fl-api-net-{net_num}")
 
-                for container in expected_containers:
-                    container_found = False
-                    for line in containers.split("\n"):
-                        if line.startswith(f"{container}:") and "Up" in line:
-                            status = line.split(":", 1)[1] if ":" in line else ""
-                            print_status("PASS", f"Container '{container}' is running ({status})")
-                            container_found = True
-                            break
-                    if not container_found:
-                        print_status("FAIL", f"Container '{container}' is not running")
+                for service in expected_services:
+                    hub_container = hub_containers.get(service)
+                    if hub_container is None:
+                        print_status("FAIL", f"Service '{service}' has no container in project '{COMPOSE_PROJECT}'")
+                    elif hub_container.running:
+                        print_status(
+                            "PASS", f"Container '{hub_container.name}' is running ({hub_container.status})"
+                        )
+                    else:
+                        print_status(
+                            "FAIL", f"Container '{hub_container.name}' is not running ({hub_container.status})"
+                        )
 
                 # Check for any exited containers
                 success, exited = run_command([
@@ -609,9 +716,13 @@ def main(
                     "xnat2-xnat-nginx-1",
                 ]
 
+                # Its own listing: these are XNAT's own compose projects, unrelated to the hub
+                # project resolved above.
+                _, running = run_command(["docker", "ps", "--format", "{{.Names}}:{{.Status}}"])
+
                 for container in xnat_compose_containers:
                     container_found = False
-                    for line in containers.split("\n"):
+                    for line in running.split("\n"):
                         if line.startswith(f"{container}:") and "Up" in line:
                             print_status("PASS", f"XNAT container '{container}' is running")
                             container_found = True
@@ -627,9 +738,12 @@ def main(
         try:
             success, networks = run_command(["docker", "network", "ls", "--format", "{{.Name}}"])
 
-            expected_networks = ["central-hub-network"]
+            # Networks, unlike containers, really do carry the instance prefix in their names —
+            # they are created outside compose and joined `external: true` by literal name from
+            # each trust's own compose project, so `-p` cannot scope them (FLIP#957).
+            expected_networks = [f"{INSTANCE_PREFIX}central-hub-network"]
             for net_num in configured_net_numbers:
-                expected_networks.append(f"deploy_shared-net-{net_num}")
+                expected_networks.append(f"{INSTANCE_PREFIX}deploy_shared-net-{net_num}")
 
             if success:
                 for network in expected_networks:
@@ -705,14 +819,19 @@ def main(
         print_section("FL container running and endpoint checks on the expected ports")
         for net_num in configured_net_numbers:
             fl_port = FL_API_PORT  # Use the same FL API port for all nets
-            fl_service_name = f"{INSTANCE_PREFIX}flip-fl-api-net-{net_num}"
+            # The container that compose created for this project's fl-api-net-<N> service, looked
+            # up rather than spelled out — the name is the project's to choose.
+            fl_container = hub_containers.get(f"fl-api-net-{net_num}")
+            if fl_container is None:
+                print_status("FAIL", f"FL API Net-{net_num} has no container in project '{COMPOSE_PROJECT}'")
+                continue
             print_status("INFO", f"Checking FL API Net-{net_num} health endpoint inside container...")
             try:
                 success, output = run_command(
                     [
                         "docker",
                         "exec",
-                        fl_service_name,
+                        fl_container.name,
                         "python",
                         "-c",
                         (
@@ -730,14 +849,17 @@ def main(
                 print_status("FAIL", f"FL API Net-{net_num} is NOT responding at port {fl_port}: {e}")
 
         # Check that FL API can be reached from flip-api container
+        hub_api = hub_containers.get("flip-api")
         for net_num in configured_net_numbers:
             fl_port = "8000"  # FL API always runs on port 8000 inside the container
-            # Compose service name, not container_name: the alias resolves in every stack,
-            # whereas container_name carries the FLIP_INSTANCE prefix (same rule as
-            # NET_ENDPOINTS — see .env.development.example).
+            # Dialled by compose SERVICE name — that is the network alias, identical in every
+            # stack, and the same value NET_ENDPOINTS must carry (see .env.development.example).
             fl_service_name = f"fl-api-net-{net_num}"
-            container_name = f"{INSTANCE_PREFIX}flip-api"
             fl_api_url = f"http://{fl_service_name}:{fl_port}/check_server_status"
+            if hub_api is None:
+                print_status("FAIL", f"Cannot check FL API Net-{net_num}: no flip-api container in this project")
+                continue
+            container_name = hub_api.name
             print_status("INFO", f"Checking FL API Net-{net_num} from '{container_name}' container...")
             try:
                 success, output = run_command(
@@ -825,8 +947,13 @@ def main(
     print_section("Container Logs")
 
     print_status("INFO", "Checking for container errors in recent logs...")
-    critical_containers = [f"{INSTANCE_PREFIX}flip-api", f"{INSTANCE_PREFIX}flip-ui"]
-    for container in critical_containers:
+    critical_services = ["flip-api", "flip-ui"]
+    for critical_service in critical_services:
+        resolved = hub_containers.get(critical_service)
+        if resolved is None:
+            print_status("WARN", f"No container for service '{critical_service}' in project '{COMPOSE_PROJECT}'")
+            continue
+        container = resolved.name
         try:
             success, logs = run_command(["docker", "logs", "--tail", "50", container], timeout=10)
             if success:

@@ -26,14 +26,19 @@ include $(MAIN_ENV_FILE)
 export $(shell sed 's/=.*//' $(MAIN_ENV_FILE))
 endif
 
-docker_command = docker compose -f ../deploy/compose.development.yml
+include ../deploy/instance.mk
+
+# -p is explicit rather than inherited: compose would otherwise derive the project from the
+# directory of the first -f file (always deploy/), pinning every instance to `deploy` and, on
+# a second stack, running these one-shots against the default stack's project (FLIP#957).
+docker_command = docker compose -p $(COMPOSE_PROJECT) -f ../deploy/compose.development.yml
 
 unit_test:
-	$(docker_command) run --rm --remove-orphans --name flip-ui-test flip-ui npm run test:unit:update
+	$(docker_command) run --rm --remove-orphans --name $(INSTANCE_PREFIX)flip-ui-test flip-ui npm run test:unit:update
 shell:
-	$(docker_command) run --rm --remove-orphans --name flip-ui-shell flip-ui sh
+	$(docker_command) run --rm --remove-orphans --name $(INSTANCE_PREFIX)flip-ui-shell flip-ui sh
 npm-install:
-	$(docker_command) run --rm --remove-orphans --name flip-ui-npm-install flip-ui npm install
+	$(docker_command) run --rm --remove-orphans --name $(INSTANCE_PREFIX)flip-ui-npm-install flip-ui npm install
 
 # Cypress runs on the host (matching CI), not inside the dev container — Chrome
 # needs to be available locally. Requires Node >=20.19 and `npm install` to have

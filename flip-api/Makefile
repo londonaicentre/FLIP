@@ -21,13 +21,21 @@ include ../.env.github
 export $(shell sed 's/=.*//' ../.env.github)
 endif
 
+# COMPOSE_PROJECT for the -p below. Must follow the .env includes above, which is where
+# FLIP_INSTANCE comes from.
+include ../deploy/instance.mk
+
 service_name = flip-api
 lint_command = uv run ruff check . --fix
 test_args = --tb=short --disable-warnings --cov=src/ --cov-report=term-missing
 test_coverage_html_command = uv run pytest $(test_args) --cov-report=html --cov-report=xml:coverage.xml
 test_coverage_html_command_unit = uv run pytest ./tests/unit ./tests/step_functions_services $(test_args) --cov-report=html:htmlcov-unit --cov-report=xml:coverage-unit.xml
 test_coverage_html_command_integration = uv run pytest ./tests/integration $(test_args) --cov-report=html:htmlcov-integration --cov-report=xml:coverage-integration.xml
-docker_command = DEBUG=$(DEBUG) docker compose -f ../deploy/compose.development.yml
+# -p is explicit rather than inherited: compose would otherwise derive the project from the
+# directory of the first -f file (always deploy/), pinning every instance to `deploy` and, on
+# a second stack, running these targets — including the alembic ones that write into the
+# bind-mounted source tree — against the default stack's containers (FLIP#957).
+docker_command = DEBUG=$(DEBUG) docker compose -p $(COMPOSE_PROJECT) -f ../deploy/compose.development.yml
 run_clean = run --rm --remove-orphans
 mypy_command = uv run mypy . --ignore-missing-imports
 

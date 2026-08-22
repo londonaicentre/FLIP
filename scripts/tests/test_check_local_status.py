@@ -18,9 +18,13 @@ discover_trust_kits() globs trust/.env.<CODE>.<env> kit files and reads each
 trust's host-facing ports + assigned FL slot, so the status checker reflects
 the CODE-named kit architecture instead of fixed Trust_1 / Trust_2 names.
 
-instance_prefix() derives the FLIP_INSTANCE container-name prefix, so a second
-dev stack (FLIP#957) is diagnosed against its own containers rather than
-reported wholesale as missing.
+compose_project() and instance_prefix() split the two things FLIP_INSTANCE
+(FLIP#957) renames: containers are found via the compose project label, while
+the hub-shared networks really do carry a name prefix. Getting either wrong
+reports a healthy stack as wholly missing.
+
+parse_compose_containers() turns the `docker ps` rows into that service-keyed
+map — the part that would otherwise need a live daemon to exercise.
 
 Usage:
     uv run --no-config scripts/tests/test_check_local_status.py
@@ -36,7 +40,13 @@ from pathlib import Path
 SCRIPTS_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(SCRIPTS_DIR))
 
-from check_local_status import TrustKit, discover_trust_kits, instance_prefix  # noqa: E402
+from check_local_status import (  # noqa: E402
+    TrustKit,
+    compose_project,
+    discover_trust_kits,
+    instance_prefix,
+    parse_compose_containers,
+)
 
 PASS = 0
 FAIL = 0
@@ -120,10 +130,10 @@ def test_missing_dir_returns_empty() -> None:
 
 
 def test_instance_prefix() -> None:
-    """The prefix must match `${FLIP_INSTANCE:+$FLIP_INSTANCE-}`, with the environment winning.
+    """The network prefix must match `${FLIP_INSTANCE:+$FLIP_INSTANCE-}`, environment winning.
 
     Getting the default-stack case wrong is the expensive one: a stray prefix would report every
-    hub container missing on the single-stack setup that nearly every run inspects.
+    hub network missing on the single-stack setup that nearly every run inspects.
     """
     original = os.environ.pop("FLIP_INSTANCE", None)
     try:
@@ -155,6 +165,67 @@ def test_instance_prefix() -> None:
             os.environ["FLIP_INSTANCE"] = original
 
 
+def test_compose_project() -> None:
+    """Must mirror COMPOSE_PROJECT in deploy/instance.mk, bare `deploy` default included.
+
+    The default must stay exactly `deploy` — that is the value compose derives implicitly from the
+    directory of the first `-f` file, so anything else stops matching the containers `make up`
+    created, on the single-stack setup that nearly every run inspects.
+    """
+    original = os.environ.pop("FLIP_INSTANCE", None)
+    try:
+        _assert(compose_project({}) == "deploy", "unset -> 'deploy'", f"got {compose_project({})!r}")
+        _assert(
+            compose_project({"FLIP_INSTANCE": "  "}) == "deploy",
+            "whitespace-only value -> 'deploy'",
+            f"got {compose_project({'FLIP_INSTANCE': '  '})!r}",
+        )
+        _assert(
+            compose_project({"FLIP_INSTANCE": "b"}) == "b-deploy",
+            "env-file value -> '<value>-deploy'",
+            f"got {compose_project({'FLIP_INSTANCE': 'b'})!r}",
+        )
+        os.environ["FLIP_INSTANCE"] = "shell"
+        _assert(
+            compose_project({"FLIP_INSTANCE": "envfile"}) == "shell-deploy",
+            "process environment beats the env file",
+            f"got {compose_project({'FLIP_INSTANCE': 'envfile'})!r}",
+        )
+    finally:
+        os.environ.pop("FLIP_INSTANCE", None)
+        if original is not None:
+            os.environ["FLIP_INSTANCE"] = original
+
+
+def test_parse_compose_containers() -> None:
+    """Rows are keyed by compose service, not by the project-assembled container name.
+
+    The service name is what the rest of the script asks for, and it is identical in both stacks —
+    the container name it maps to is not, which is the whole point of resolving instead of
+    spelling one out.
+    """
+    rows = "\n".join((
+        "flip-api\tb-deploy-flip-api-1\tUp 3 hours (healthy)",
+        "fl-api-net-1\tb-deploy-fl-api-net-1-1\tUp 3 hours",
+        "fl-server-net-2\tb-deploy-fl-server-net-2-1\tExited (1) 2 minutes ago",
+    ))
+    parsed = parse_compose_containers(rows)
+    _assert(sorted(parsed) == ["fl-api-net-1", "fl-server-net-2", "flip-api"], "keyed by service name")
+    _assert(
+        parsed["fl-api-net-1"].name == "b-deploy-fl-api-net-1-1",
+        "maps the service to the project-assembled container name",
+        f"got {parsed['fl-api-net-1'].name!r}",
+    )
+    _assert(parsed["flip-api"].running, "'Up ...' -> running")
+    _assert(not parsed["fl-server-net-2"].running, "'Exited ...' -> not running")
+
+    # A container started outside compose carries no service label; keying an empty string would
+    # shadow a real service and report it healthy.
+    stray = parse_compose_containers("\tsome-stray-container\tUp 1 hour")
+    _assert(stray == {}, "row with no service label is dropped", f"got {stray!r}")
+    _assert(parse_compose_containers("") == {}, "empty output -> empty map")
+
+
 def main() -> None:
     for test in (
         test_discovers_code_kits,
@@ -162,6 +233,8 @@ def main() -> None:
         test_missing_slot_and_name_fallback,
         test_missing_dir_returns_empty,
         test_instance_prefix,
+        test_compose_project,
+        test_parse_compose_containers,
     ):
         print(f"\n{test.__name__}")
         test()
