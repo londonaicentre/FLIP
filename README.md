@@ -134,6 +134,7 @@ FLIP is maintained as one monorepo. Each major area owns its detailed setup and 
 | [`fl-services/`](fl-services/) | NVFLARE and Flower network services, images, and provisioning |
 | [`fl-apps/`](fl-apps/) | Backend-specific application templates bundled by the Central Hub |
 | [`fl-tutorials/`](fl-tutorials/) | Worked federated-learning applications and local runners |
+| [`map-apps/`](map-apps/) | MONAI Application Package (MAP) templates for packaging FLIP-trained models for clinical deployment |
 | [`deploy/`](deploy/) | Compose configuration and AWS, on-premises, and Kubernetes providers |
 | [`docs/`](docs/) | Sphinx source published on ReadTheDocs |
 | [`scripts/`](scripts/) | Repository-wide development and deployment helpers |

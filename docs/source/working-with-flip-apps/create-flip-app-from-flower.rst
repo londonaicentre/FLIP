@@ -15,7 +15,8 @@ This page walks through the code changes required to adapt a stock Flower app (f
 
 A full, runnable reference is available in-tree:
 
-- ``fl-apps/flower/standard/app/`` — a minimal training-only ``ServerApp`` / ``ClientApp`` template.
+- ``fl-apps/flower/standard/app/`` — the platform-side base bundle: a minimal ``ServerApp`` and strategy scaffold. ``client_app.py`` and ``models.py`` are user-supplied (see ``fl-apps/flower/standard/required_files.json``).
+- ``fl-tutorials/flower/xray_classification/`` — a complete training example with both ``ServerApp`` and ``ClientApp``.
 - ``fl-tutorials/flower/3d_spleen_segmentation/`` — a MONAI spleen-segmentation example that exercises every SDK call covered below.
 
 *****************
@@ -41,7 +42,7 @@ The ``pyproject.toml`` wires the two entry points together:
    serverapp = "app.server_app:app"
    clientapp = "app.client_app:app"
 
-If you are starting from scratch, copy the in-tree ``fl-apps/flower/standard/`` as a template — it already contains the minimum FLIP integration described below.
+If you are starting from scratch, ``fl-apps/flower/standard/`` provides the platform-side ``ServerApp`` scaffold with the minimum FLIP integration described below; for a complete worked example including a matching ``ClientApp``, see ``fl-tutorials/flower/xray_classification/`` or ``fl-tutorials/flower/3d_spleen_segmentation/``.
 
 .. note::
 

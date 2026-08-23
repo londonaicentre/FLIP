@@ -597,6 +597,7 @@ def update_project_status(
         None
 
     Raises:
+        ValueError: If no project exists with the given ID.
         HTTPException: If the project status cannot be updated due to an error.
     """
     project = session.get(Projects, project_id)
