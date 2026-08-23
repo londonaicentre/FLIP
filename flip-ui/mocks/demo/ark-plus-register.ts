@@ -138,13 +138,42 @@
  *      forbids — but two names for one id is a contradiction the register
  *      should not carry.
  *
+ *   8. the fine-tuning project's and model's TITLES AND DESCRIPTIONS carried
+ *      over from the run the 2026-08-22 capture replaced, by decision of the
+ *      project owner. This is the one edit that adds prose rather than removing
+ *      it, so it is called out separately from the seven rules above: the real
+ *      prod records carry an empty description and the model name
+ *      "finetunning", which reads as a broken exhibit on a public page.
+ *
+ *      It is sound because the re-run is the SAME experiment — the earlier
+ *      copy describes this run correctly, and every specific claim in it was
+ *      checked against the new capture rather than assumed: Swin-Large at
+ *      768px (ARKPLUS.MODEL_NAME/INPUT_SIZE), frozen encoder with a fresh
+ *      5-class head (LOAD_BACKBONE_ONLY, AGGREGATE_ONLY_REGEX omni_heads,
+ *      NUM_CLASSES_LIST [5]), 50 global rounds of 5 local epochs
+ *      (GLOBAL_ROUNDS/LOCAL_ROUNDS), batch size 4 (BATCH_SIZE), LR 1.5e-3 to
+ *      1.5e-4 (LR_START/LR_END), 20% held out per site (VAL_SPLIT), and
+ *      "per-round payloads in the tens of kilobytes" — which the captured
+ *      logs put at 26.9 KB a round.
+ *
+ *      One claim did NOT survive that check and was dropped: the old model
+ *      name pinned the app build "(arkplus-apps 8a188867)", which is the
+ *      PRE-FLIP#821 build. This run used the fixed apps, so carrying it would
+ *      have named the wrong code. The name is now "Ark+ Finetuning 50r
+ *      client_api".
+ *
+ *      If the prod records are ever given real titles and descriptions, drop
+ *      this rule and capture them instead — a value read from the platform
+ *      always beats one restored by hand.
+ *
  * Institution names are shown verbatim by decision of the project owner: the
  * two participating trusts (King's College London, Bangkok Dusit Medical
  * Services), and Guy's and St Thomas' NHS Foundation Trust, which after rule 7
  * appears only as a copyright holder in the licence header of the cohort SQL —
  * rendered on the cohort page — rather than as the name of any trust.
  *
- * Re-capturing the register means re-applying all seven rules. Project and model
+ * Re-capturing the register means re-applying rules 1-7, and deciding afresh
+ * whether rule 8 is still needed. Project and model
  * ids are deliberately NOT scrubbed: they are public URL path segments.
  */
 
