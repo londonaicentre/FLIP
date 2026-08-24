@@ -58,6 +58,13 @@ class Http {
 
         http.interceptors.request.use(
             async config => {
+                // Public Ark+ demo: never touch Amplify/Cognito. Requests are
+                // answered by the in-browser Mirage server, so no bearer token
+                // is needed and no auth network call must ever leave the page.
+                if (import.meta.env.VITE_DEMO === "true") {
+                    return config;
+                }
+
                 if (config.headers && config.headers.Authorization === undefined) {
                     // Amplify v6 caches tokens asynchronously after signIn;
                     // a call to fetchAuthSession() immediately after an
@@ -95,7 +102,18 @@ class Http {
         );
 
         http.interceptors.response.use(
-            (response) => response,
+            (response) => {
+                // Public Ark+ demo: Mirage's fake XHR ignores responseType "blob"
+                // and yields a string body. Wrap it so Blob consumers
+                // (downloadModelFile -> blob.text()) work identically to prod.
+                if (import.meta.env.VITE_DEMO === "true"
+                    && response.config.responseType === "blob"
+                    && typeof response.data === "string") {
+                    response.data = new Blob([response.data]);
+                }
+
+                return response;
+            },
             function (error) {
                 if (error.response?.status === 401) {
                     // Skip the forced sign-out entirely on mid-flow auth

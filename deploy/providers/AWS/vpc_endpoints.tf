@@ -62,6 +62,14 @@ resource "aws_security_group_rule" "vpc_endpoints_egress_all" {
 # Gateway endpoint: S3
 ############################
 
+# Referenced by the trust security group's egress allowlist (#876) to scope
+# S3 traffic (FL kit sync) to AWS's own managed prefix list instead of a raw
+# CIDR — S3's edge IP ranges are dynamic, so the prefix list is the only
+# mechanism that stays correct as AWS rotates them.
+data "aws_ec2_managed_prefix_list" "s3" {
+  name = "com.amazonaws.${var.AWS_REGION}.s3"
+}
+
 resource "aws_vpc_endpoint" "s3" {
   vpc_id            = module.flip_vpc.vpc_id
   service_name      = "com.amazonaws.${var.AWS_REGION}.s3"

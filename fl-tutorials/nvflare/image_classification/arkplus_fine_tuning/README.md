@@ -23,7 +23,7 @@ legacy Executor API to the Client API. The job is defined entirely in Python via
 
 ## Compatible job type
 
-`config.json["job_type"] = "standard_client_api"`. Each client runs [`app_files/trainer.py`](app_files/trainer.py)
+`config.json["job_type"] = "standard"`. Each client runs [`app_files/trainer.py`](app_files/trainer.py)
 as an in-process Client-API script (`flare.init()` → `flare.receive()`/`flare.send()` round loop) via
 NVFLARE's `InProcessClientAPIExecutor`. There is **no `validator.py`** — the held-out validation folds
 into the trainer's `flare.is_evaluate()` branch (server-driven cross-site evaluation).
@@ -133,6 +133,14 @@ It runs in the tutorial-local env with the `docs` extra (`matplotlib` + `pydicom
 it checks each panel's lesion against `config.json` and each accession's labels against its split's
 cohort dataframe, so a mislabelled figure fails rather than ships.
 
+> **What this figure is and is not evidence of.** The panels are drawn from `pydicom`'s `PixelData`,
+> not by running the app's transform chain. It once showed perfectly upright radiographs while the
+> model was being fed the transpose of them (FLIP#821), so a figure that looks right is not by
+> itself evidence that the model sees the same thing. The two are now tied together deliberately:
+> `get_xray_transforms()` pins its reader to `PydicomReader(swap_ij=False)`, which returns the array
+> exactly as `PixelData` stores it, and `fl-tutorials/tests/` asserts that bit-for-bit on every app
+> on this path. **That test suite — not this figure — is what makes the panels representative.**
+
 ## Checkpoint setup
 
 `make run`/`make export` require the backbone checkpoint at `app_files/pretrained_weights.pt`, produced
@@ -193,7 +201,7 @@ make round-metrics COMPARE=/path/to/platform/rounds.tsv   # adds a platform − 
 this same app; the summary then includes a side-by-side steady-state table (round duration,
 aggregation time, inter-round gap), i.e. a baseline for the overhead the platform adds over bare
 local training. Knobs: `WORKSPACE` (simulator workspace parsed for logs; defaults to `job.py`'s
-`/tmp/nvflare/arkplus_finetuning_client_api`) and `METRICS_OUT` (output base directory).
+`/tmp/nvflare/arkplus_finetuning`) and `METRICS_OUT` (output base directory).
 
 > **Interpretation caveat.** Both simulated clients share one host and one GPU
 > (`num_threads = num_clients`), so simulator round durations bundle GPU contention between the two

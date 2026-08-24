@@ -10,22 +10,23 @@
 # limitations under the License.
 
 # NVFLARE tutorial runner. Each tutorial under <category>/<name>/ carries a Makefile
-# + .env.app that delegates to the shared harness in testing/ (app_organiser.sh +
-# compose.yml -> nvflare simulator). Requires GPUs + the flare-fl-base image, and the
-# tutorial's dataset downloaded first (see each tutorial's README).
+# + .env.app whose `make run` delegates to `make sim` — the tutorial's job.py driving a
+# FLIP recipe on the NVFLARE simulator (SimEnv), run in the flip-utils venv with the
+# `full` ML extra. Requires a GPU, and the tutorial's dataset downloaded first (see each
+# tutorial's README); `make export` inside a tutorial needs neither.
 #
 #   make download-xray-data                       # fetch the x-ray dataset from HF
 #   make download-spleen-data                      # fetch + build the MSD spleen dataset
+#   make upload-spleen-labels FLIP_PROJECT_ID=<uuid>  # data enrichment: push labels into a Trust's XNAT
 #   make download-arkplus-finetuning-data          # fetch the Ark+ train splits from HF
 #   make download-arkplus-eval-data                # fetch the Ark+ hold-out splits from HF
 #   make list-tutorials
 #   make run-tutorial TUTORIAL=xray_classification
 #   make run-all-tutorials      # runs every tutorial (heavy; stops on first failure)
-#   make test-template TEMPLATE=fed_opt   # smoke-test a template that has no tutorial
 #
 # Datasets land (gitignored) under data/ where each tutorial's .env.app expects them:
 #   - xray_classification: reference dataset from Hugging Face (download-xray-data)
-#   - the three spleen tutorials (segmentation / evaluation / synthesis) share the MSD
+#   - the spleen tutorials (segmentation / evaluation / synthesis) share the MSD
 #     spleen dataset (download-spleen-data); override case count with NUM_CASES=<n>.
 #   - the three Ark+ tutorials share aicentreflip/tutorials-arkplus-cxr-classification:
 #     arkplus_fine_tuning uses download-arkplus-finetuning-data (data/arkplus/site{1,2}/); the two
@@ -41,14 +42,14 @@ ARKPLUS_DATA_REPO := aicentreflip/tutorials-arkplus-cxr-classification
 # Number of MSD spleen cases to download for the spleen tutorials (1-41).
 NUM_CASES ?= 10
 SPLEEN_DIR := image_segmentation/3d_spleen_segmentation
+# Where download-spleen-data lands the subject_N/scans/{input,label}_spleen_N.nii.gz trees that
+# upload-spleen-labels reads. Flower's Makefile overrides this to its own spleen download.
+SPLEEN_LABELS_DIR ?= data/spleen/images
+# upload-spleen-labels runs against the in-tree flip-utils, not the PyPI release, so the enrichment
+# CLI always matches this checkout (flip.xnat may be newer here than the last published version).
+FLIP_UTILS_DIR ?= $(abspath ../../flip-utils)
 
-# Template smoke-test: which fl-apps/nvflare/<template> to exercise, and the tutorial whose
-# app_files + data drive it. fed_opt has no tutorial of its own, so it borrows the
-# spleen-segmentation tutorial (matching the legacy `make test-spleen-fedopt`).
-TEMPLATE ?= fed_opt
-TEMPLATE_TUTORIAL ?= image_segmentation/3d_spleen_segmentation
-
-.PHONY: list-tutorials run-tutorial run-all-tutorials download-xray-data download-spleen-data download-arkplus-finetuning-data download-arkplus-eval-data test-template
+.PHONY: list-tutorials run-tutorial run-all-tutorials download-xray-data download-spleen-data download-arkplus-finetuning-data download-arkplus-eval-data upload-spleen-labels
 
 # Download the x-ray reference dataset from Hugging Face and normalise it into the
 # layout image_classification/xray_classification/.env.app expects (data/xrays_mini_300/,
@@ -104,6 +105,34 @@ download-spleen-data:
 	@cd $(SPLEEN_DIR) && uv run python utils/create_spleen_accession_csv.py --images_dir ../../data/spleen/images --output_csv ../../data/spleen/dataframe.csv
 	@echo "✅ spleen data ready at data/spleen/ — run: make run-tutorial TUTORIAL=3d_spleen_segmentation"
 
+# Data enrichment: upload the MSD spleen labels into a real FLIP project's XNAT, so the spleen
+# apps find a label_*.nii.gz beside each pulled input_*.nii.gz. Needs NUM_CASES=41 on the download
+# above to cover every mapped accession.
+#
+# Enrich EVERY Trust in the project, not one: each Trust's XNAT holds only its own studies, so a
+# Trust left without labels fails training at the zero-pairs guard. One invocation covers the
+# roster — pass a space-separated XNAT_URLS (credentials from XNAT_USER/XNAT_PASS), or repeat
+# XNAT_CREDENTIALS_FILES for per-Trust logins. With neither, it falls back to a single server from
+# XNAT_HOST/XNAT_USER/XNAT_PASS. TRUST=N filters the manifest by the OMOP source_trust column and
+# is rarely needed: the whole mapping goes to every server and each ignores the others' studies.
+#
+# The script is deliberately single-copy and backend-agnostic — enrichment happens once per FLIP
+# project, in XNAT, and both backends read the result. fl-tutorials/flower/Makefile delegates here.
+# It runs via `uv run --no-project --with <flip-utils>` rather than the spleen tutorial's env, so
+# uploading labels never drags in the simulator's MONAI/torch stack.
+upload-spleen-labels:
+	@[ -n "$(FLIP_PROJECT_ID)" ] || (echo "❌  FLIP_PROJECT_ID is required. Usage: make upload-spleen-labels FLIP_PROJECT_ID=<uuid> [XNAT_URLS=\"http://host1 http://host2\"] [DRY_RUN=1]"; exit 1)
+	@uv run --no-project --with $(FLIP_UTILS_DIR) python $(SPLEEN_DIR)/utils/upload_spleen_labels_to_xnat.py \
+		--flip-project-id $(FLIP_PROJECT_ID) \
+		--labels-dir $(SPLEEN_LABELS_DIR) \
+		$(if $(TRUST),--trust $(TRUST)) \
+		$(foreach url,$(XNAT_URLS),--xnat-url $(url)) \
+		$(foreach cfg,$(XNAT_CREDENTIALS_FILES) $(XNAT_CREDENTIALS_FILE),--credentials-file $(cfg)) \
+		$(if $(OVERWRITE),--overwrite) \
+		$(if $(ALLOW_NO_OP),--allow-no-op) \
+		$(if $(REQUIRE_FULL_COVERAGE),--require-full-coverage) \
+		$(if $(DRY_RUN),--dry-run)
+
 list-tutorials:
 	@echo "Available NVFLARE tutorials (pass the name to 'make run-tutorial TUTORIAL=…'):"
 	@for d in $(TUTORIAL_DIRS); do echo "  - $$(basename $$d)  ($$d)"; done
@@ -124,11 +153,3 @@ run-all-tutorials:
 		$(MAKE) -C "$$d" run || { echo "❌ tutorial $$(basename $$d) failed"; exit 1; }; \
 	done
 
-# Smoke-test an fl-apps/nvflare/<template> on the NVFLARE simulator using a tutorial's app_files
-# + data. Mainly for templates with no dedicated tutorial (e.g. fed_opt): it runs the
-# tutorial with JOB_TYPE overridden to the template, so app_organiser.sh merges
-# fl-apps/nvflare/<TEMPLATE>/app with the tutorial's app_files. Requires the dataset
-# (make download-spleen-data) + GPUs + the flare-fl-base image.
-test-template:
-	@echo "🧪 Smoke-testing template '$(TEMPLATE)' via $(TEMPLATE_TUTORIAL) app_files + data"
-	$(MAKE) -C $(TEMPLATE_TUTORIAL) run JOB_TYPE=$(TEMPLATE)

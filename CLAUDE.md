@@ -15,8 +15,8 @@ FLIP/
 ├── flip-ui/            # Frontend UI (Vue 3 / TypeScript / TailwindCSS)
 ├── flip-utils/         # FLIP Python library (pip-installable flip-utils)
 ├── fl-services/        # FL Docker services + network provisioning, per backend (Makefile owns build/provision/up/down/submit; flower also up-secure): fl-services/nvflare/{fl-base,fl-server,fl-client,fl-api-base, provision/{net-*_project_*.yml, scripts/, workspace-{dev,stag,prod}/ gitignored}}, fl-services/flower/{fl-base,superlink,supernode,fl-api-flower, provision/{scripts/, creds/ gitignored}} (#622)
-├── fl-apps/            # FL app templates per backend: fl-apps/nvflare/{standard,standard_client_api,fed_opt,evaluation,evaluation_client_api,diffusion_model,diffusion_model_client_api}, fl-apps/flower/{standard,evaluation} + check_required_files.sh (cross-backend CI validator at root)
-├── fl-tutorials/       # FL tutorials per backend: fl-tutorials/nvflare/{image_*,testing}, fl-tutorials/flower/{xray_classification,3d_spleen_segmentation*,numpy} (root Makefile forwards by FL_BACKEND); xray classification, spleen seg/eval, diffusion
+├── fl-apps/            # FL app templates per backend: fl-apps/nvflare/{standard,evaluation,diffusion_model,fed_opt} (all Client-API), fl-apps/flower/{standard,evaluation} + check_required_files.sh (cross-backend CI validator at root)
+├── fl-tutorials/       # FL tutorials per backend (all NVFLARE ones are Client-API apps): fl-tutorials/nvflare/{image_*}, fl-tutorials/flower/{xray_classification,3d_spleen_segmentation*,numpy} (root Makefile forwards by FL_BACKEND); xray classification, spleen seg/eval, diffusion. Plus fl-tutorials/tests/ — CPU-only pytest over the tutorial transform chains (#871), run by `make -C fl-tutorials test`
 ├── trust/
 │   ├── trust-api/      # Trust API gateway (Python/FastAPI)
 │   ├── data-access-api/# OMOP database queries (Python/FastAPI)
@@ -46,7 +46,7 @@ backends are also provisioned in-tree (gitignored): `deploy/fl_backend.mk` point
 
 | Layer | Technology |
 | ------- | ----------- |
-| Backend APIs | Python 3.12+, FastAPI, SQLAlchemy/SQLModel, Pydantic |
+| Backend APIs | Python 3.12–3.13, FastAPI, SQLAlchemy/SQLModel, Pydantic |
 | Frontend | Vue 3, TypeScript, Vite, TailwindCSS, Pinia |
 | Database | PostgreSQL (psycopg2 + SQLModel sync sessions; RDS Proxy + IAM auth in prod) |
 | Package mgmt (Python) | UV (`uv sync`, `uv add`) |
@@ -107,6 +107,7 @@ change, since those live in the image layer, not the mounted `src/`.
 make unit_test             # All unit tests across all services (from root)
 make integration_test      # flip-api + trust integration tests (from root)
 make tests                 # flip-ui unit + e2e tests, then flip-api test suite (from root)
+make -C fl-tutorials test  # ruff over fl-tutorials/ + the CPU-only transform-chain suite (no GPU/dataset/FL image)
 make e2e_smoke             # End-to-end smoke against a running stack (see below)
 # From a service directory (e.g., flip-api/):
 make test                  # ruff + mypy + pytest (unit + integration)
@@ -143,41 +144,76 @@ or fl-api change) without re-creating the project and re-pulling DICOM (~6 min/b
 
 **Smoking the spleen segmentation app requires a data-enrichment step (it needs labels).** *Data enrichment*
 is the platform stage where a model developer adds whatever an app needs on top of the pulled imaging data in
-XNAT (`docs/source/user-guides/user-common.rst` — a project cannot start training until enrichment is
-confirmed complete, even when nothing was added). **Segmentation apps need one:** the trust PACS supplies CT
-*images* only, while the spleen apps (`fl-tutorials/<backend>/3d_spleen_segmentation*`) pair each converted
-`input_*.nii.gz` with a sibling `label_*.nii.gz`. Skip it and the smoke pulls, converts, starts training and
-then dies with `num_samples=0` (preceded by `⚠️ No matching segmentation for input_*.nii.gz`) — which reads
-like an app or data-pull bug.
+XNAT (`docs/source/user-guides/user-data-enrichment.rst` — a project cannot start training until enrichment is
+confirmed complete, even when nothing was added).
+
+**Which supervised apps need it:** only those whose labels are **not in OMOP**. A segmentation mask is a 3D
+volume with nowhere to live in the cohort query, so the spleen apps
+(`fl-tutorials/<backend>/3d_spleen_segmentation*`) pair each converted `input_*.nii.gz` with a sibling
+`label_*.nii.gz` that has to be uploaded to XNAT. The xray classification tutorial is the counter-example: its
+labels *are* in OMOP, projected as dataframe columns by `query.sql` (`image_feature` → `observation`), and it
+needs no enrichment. Skip a required enrichment and the smoke pulls, converts, starts training and then fails
+with `No image/label pairs found: N image(s) …, none with a matching label_*.nii.gz` — which names the actual
+cause. (Older app copies die with torch's opaque `num_samples=0` instead.)
 
 `e2e_smoke` has a hook for exactly this: `--data-enrichment-cwd` + `--data-enrichment-cmd` run a shell command
-**between the image pull and training**, with `FLIP_PROJECT_ID` exported. For spleen the enrichment is
-`upload_labels_to_XNAT.py` from the **private** repo `londonaicentre/flip_project_spleen_segmentation` (needs
-its `.xnat1.cfg` / `.xnat2.cfg` — one per trust XNAT — and its MSD labels); it resolves each trust's XNAT
-project by `secondary_ID == <FLIP project_id>` and writes each label into the scan's existing `NIFTI` resource,
-renaming `input_` → `label_`. Invoke the smoke **directly** rather than through `make`, because `make` mangles
-the `$` in `EXTRA_ARGS` before the enrichment command reaches the shell:
+**between the image pull and training**, with `FLIP_PROJECT_ID` exported. Since FLIP#776 the spleen uploader is
+in-tree at `fl-tutorials/nvflare/image_segmentation/3d_spleen_segmentation/utils/upload_spleen_labels_to_xnat.py`
+— **no private repo required**. It resolves each trust's XNAT project by `secondary_ID == <FLIP project_id>`,
+fetches the accession→MSD-case mapping at run time from the public `aicentreflip/trust-data` dataset
+(`omop-csv/<version>/spleen_project/image_occurrence.csv`, which also carries `source_trust`), and writes each
+label into the scan's existing `NIFTI` resource, renaming `input_` → `label_`. The XNAT protocol work lives in
+`flip.xnat` (`flip-utils/flip/xnat/`), also exposed as the `flip-xnat` CLI.
+
+**Enrich every trust, not one.** Each trust's XNAT holds only its own studies, so a trust left without
+labels takes the run down at the zero-pairs guard. One invocation covers the roster: pass a
+space-separated `XNAT_URLS` (credentials from `XNAT_USER`/`XNAT_PASS`) or repeat `XNAT_CREDENTIALS_FILES`
+for per-trust logins. The whole mapping goes to every server and each ignores the others' studies, so no
+per-trust splitting is needed. A run that resolves **no** destination anywhere now exits non-zero, so the
+smoke can no longer walk past a wholly-skipped enrichment into a doomed training run (`--allow-no-op`
+opts out). `TRUST=N` filters by the OMOP `source_trust` column (1=GSTT, 2=KCH) and is rarely needed —
+note that is the OMOP partition, **not** the FL kit slot of the same `Trust_N` name.
+
+Prereqs: `make -C fl-tutorials download-spleen-data NUM_CASES=41` (a smaller download enriches only part
+of the cohort — the command warns, naming the missing cases) and `XNAT_USER`/`XNAT_PASS`. Standalone,
+outside the smoke:
+
+```bash
+make -C fl-tutorials upload-spleen-labels FLIP_PROJECT_ID=<uuid> \
+  XNAT_URLS="http://127.0.0.1:8104 http://127.0.0.1:8106" DRY_RUN=1   # then drop DRY_RUN
+```
+
+The mapping is cached beside the labels dir (so a re-run needs no huggingface.co egress) and
+`HF_TRUST_DATA_REVISION=<sha>` pins the dataset revision instead of the moving `main`.
+
+Through the smoke, `make -C flip-api e2e_smoke_spleen` (or `e2e_smoke_spleen_evaluation`) carries the
+in-tree command already, targeting both dev trusts via `SPLEEN_XNAT_URLS` (override for another roster;
+`SPLEEN_LABELS_DIR` likewise). The enrichment flags ride in `ENRICHMENT_ARGS`, deliberately *not*
+`EXTRA_ARGS` — a command-line variable beats a target-specific one, so folding them together made
+`make e2e_smoke_spleen EXTRA_ARGS="--project-id <uuid>"` silently skip enrichment. To invoke it directly
+instead:
 
 ```bash
 cd flip-api && uv run python -m tests.e2e_smoke \
   --model-files-dir ../fl-tutorials/nvflare/image_segmentation/3d_spleen_segmentation/app_files \
   --query-file ../fl-tutorials/nvflare/image_segmentation/3d_spleen_segmentation/query.sql \
-  --data-enrichment-cwd <path-to>/flip_project_spleen_segmentation \
-  --data-enrichment-cmd 'uv run upload_labels_to_XNAT.py --flip-project-id "$FLIP_PROJECT_ID"'
+  --data-enrichment-cwd ../fl-tutorials/nvflare/image_segmentation/3d_spleen_segmentation \
+  --data-enrichment-cmd 'uv run --no-project --with ../../../../flip-utils python utils/upload_spleen_labels_to_xnat.py --flip-project-id "$FLIP_PROJECT_ID" --labels-dir ../../data/spleen/images --xnat-url http://127.0.0.1:8104 --xnat-url http://127.0.0.1:8106'
 ```
 
-(Through `make` there are two working forms: `make -C flip-api e2e_smoke_spleen`, whose in-Makefile
-`EXTRA_ARGS` carries `$$FLIP_PROJECT_ID` — a `$$` escape survives the single make expansion; or the root
-`make e2e_smoke` with the id passed literally — `--flip-project-id <uuid>` — when reusing a project via
-`--project-id`. The root wrapper re-expands `EXTRA_ARGS` through a second make and shell, so no `$`-escape
-survives it: `$$` lands empty and `$$$$` injects the recipe shell's PID.)
+(The `$`-escaping trap still applies to any hand-written `EXTRA_ARGS`: `make -C flip-api …` expands once, so
+`$$FLIP_PROJECT_ID` survives; the **root** `make e2e_smoke` re-expands through a second make and shell, so no
+`$`-escape survives it — `$$` lands empty and `$$$$` injects the recipe shell's PID. Pass the id literally
+there. The in-Makefile targets handle this for you. Note that `e2e_smoke_spleen` uploads the **Flower**
+tutorial (`../fl-tutorials/flower/3d_spleen_segmentation/{app,query.sql}`), not the NVFLARE paths shown in the
+direct-invocation example above — pair it with `FL_BACKEND=flower`, or invoke `tests.e2e_smoke` directly with
+the NVFLARE paths for the NVFLARE tutorial. The enrichment step itself is backend-agnostic and runs out of the
+NVFLARE tree either way.)
 
 Enrichment must land **after** the pull and after DICOM→NIfTI conversion; the hook's position guarantees that.
 The uploader derives each target filename from the converted `input_*.nii.gz`, so with no `NIFTI` resource it
-silently skips every scan (`-> skipped: no NIFTI resource`) and you get the same opaque `num_samples=0` — i.e.
-a broken XNAT Container Service surfaces as "no labels". Removing the private-repo dependency (so spleen is
-runnable outside the org and in CI) is tracked in FLIP#776. The xray classification tutorial reads DICOM
-directly and needs no enrichment.
+skips every scan (reported as *skipped (no image in resource)*) — i.e. a broken XNAT Container Service surfaces
+as "no labels".
 
 **Testing a change on BOTH FL backends in one sitting (the backend switch).** The pulled DICOM lives in
 each trust's Orthanc/XNAT, which `make restart-fl` leaves untouched — so you can pull once on the first
@@ -198,19 +234,20 @@ runs old images otherwise): `docker exec flip-fl-api-net-1 cat fl_api/utils/uplo
 
 ### Running FL Tutorials Locally
 
-The NVFLARE tutorials live in `fl-tutorials/` and run on the local NVFLARE simulator (needs a GPU +
-the `flare-fl-base` image). Each tutorial carries a `.env.app` and delegates to the shared harness in
-`fl-tutorials/nvflare/testing/`. From the repo root:
+The NVFLARE tutorials live in `fl-tutorials/` and are all **Client-API** apps (the legacy Executor
+tutorials, templates and their Docker `testing/` harness are removed; the pre-rename `*_client_api`
+job-type names survive only as accepted aliases for models created before the rename). Each tutorial carries a `.env.app` and a `job.py` driving a FLIP recipe;
+`make run` delegates to `make sim`, which runs the NVFLARE simulator (SimEnv) in the flip-utils venv
+with the `full` ML extra (needs a GPU; per-tutorial `make export` builds the full job config with no
+GPU). From the repo root:
 
 ```bash
 make -C fl-tutorials list-tutorials
 make -C fl-tutorials download-xray-data                  # xray dataset (HF); spleen: download-spleen-data
 make -C fl-tutorials run-tutorial TUTORIAL=xray_classification
-make -C fl-tutorials run-all-tutorials                   # all four (heavy; stops on first failure)
-make -C fl-tutorials test-template TEMPLATE=fed_opt      # smoke-test a template that has no tutorial
+make -C fl-tutorials run-all-tutorials                   # every tutorial (heavy; stops on first failure)
 ```
 
-The simulator GPU id defaults to `0`; override with `SIM_GPU` in `fl-tutorials/nvflare/testing/.env.testing`.
 To iterate on the FL images, `make build-fl` builds them locally as `:dev` (see `fl-services/nvflare/README.md`);
 run the stack on them with `make up DOCKER_FL_REGISTRY= DOCKER_FL_TAG=dev`.
 
@@ -338,7 +375,7 @@ After changes, evaluate if docs need updating:
 - Line length: 120. Linter: Ruff (`select = ['I', 'F', 'E', 'W', 'PT', 'UP006', 'UP007', 'UP035', 'UP042', 'UP045']`; `UP042` enforces `StrEnum` over the legacy `(str, Enum)` pattern). Type checker: mypy.
 - Docstrings: Google style. Naming: snake_case. Imports: alphabetically sorted.
 - Source layout: `src/[service_name]/`. Tests: `tests/unit/`, `tests/integration/`.
-- Test placement: a test goes in `tests/integration/` if and only if it touches a real backing service (Postgres via `session` fixture, real AWS, a running sibling API, real Orthanc/XNAT/OMOP). If every external dependency is mocked, it's a unit test in `tests/unit/`. FastAPI `TestClient` alone does not make a test "integration". See `CONTRIBUTING.md` ("Where does my test go?") for the canonical rule.
+- Test placement: a test goes in `tests/integration/` if and only if it touches a real backing service (Postgres via `session` fixture, real AWS, a running sibling API, real Orthanc/XNAT/OMOP). If every external dependency is mocked, it's a unit test in `tests/unit/`. FastAPI `TestClient` alone does not make a test "integration". Tests for the tutorial tree live outside any service, in `fl-tutorials/tests/` — CPU-only, running in flip-utils' env (`flip-utils[full]`), with fixtures synthesised in-process; anything needing real training stays with the GPU simulator harness. See `CONTRIBUTING.md` ("Where does my test go?") for the canonical rule.
 - Dependency injection: FastAPI `Depends()`. DB: sync SQLModel `Session` via `get_session()` — the `with Session(...)` block is load-bearing on error paths (FLIP#773). Prod authenticates through RDS Proxy with a per-connection IAM token (SQLAlchemy `do_connect` hook, passwordless engine URL).
 
 ### JavaScript/TypeScript (flip-ui)
@@ -400,7 +437,7 @@ After changes, evaluate if docs need updating:
 
 ## CI/CD
 
-GitHub Actions: `test_flip_api.yml`, `test_flip_ui.yml`, `test_trust_*.yml`, `docker_build_*.yml`, `validate_terraform.yml`, `secret-scanning.yml`, `docs.yml`, `pr_acceptance_criteria.yml`. Run locally: `make ci` (uses `act`).
+GitHub Actions: `test_flip_api.yml`, `test_flip_ui.yml`, `test_trust_*.yml`, `fl-tutorials-tests.yml`, `docker_build_*.yml`, `validate_terraform.yml`, `secret-scanning.yml`, `docs.yml`, `pr_acceptance_criteria.yml`. Run locally: `make ci` (uses `act`).
 
 ### Docker image builds: gated on tests, manual trigger for branches
 

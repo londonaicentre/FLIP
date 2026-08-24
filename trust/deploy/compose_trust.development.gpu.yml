@@ -17,6 +17,10 @@
 # nets, so both fl-clients are covered. `count` tracks NUM_AVAILABLE_GPUS so the Docker
 # reservation and the fl-client app's own GPU hint stay in lockstep; to pin specific
 # GPUs later, replace `count` with `device_ids: ["0", "2"]` (mutually exclusive).
+#
+# No Linux capability is added back here for GPU passthrough: the NVIDIA
+# Container Toolkit injects device nodes/driver libraries via an OCI prestart
+# hook at the runtime level, not through an in-container capability.
 
 services:
 

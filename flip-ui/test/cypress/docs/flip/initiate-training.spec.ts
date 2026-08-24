@@ -32,7 +32,7 @@ describe("docs: initiate training", () => {
             fixture: "model/configJsonStandard.json"
         }).as("getConfigJsonBytes");
         cy.intercept("GET", "/model/job-types", {
-            standard: ["trainer.py", "validator.py", "models.py", "config.json"]
+            standard: ["trainer.py", "config.json", "models.py"]
         }).as("getJobTypes");
 
         cy.visit(`project/${projectId}/model/${modelId}`);

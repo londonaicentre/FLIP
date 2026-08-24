@@ -9,616 +9,494 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import argparse
 import json
 import logging
-import os.path
 from pathlib import Path
 
 import numpy as np
+import nvflare.client as flare
+import pandas as pd
 import pydicom
 import torch
 from data_utils import Lesion, LesionDict, get_labels_from_radiology_row, get_lesion_label
 from flip import FLIP
-from flip.constants import PTConstants, ResourceType
-from flip.nvflare.metrics import send_metrics_value
-from flip.utils import get_model_weights_diff
+from flip.constants import ResourceType
 from loss_and_metrics import compute_precision_recall_f1, get_bce_loss
 from models import get_model
 from monai.data import DataLoader, Dataset
-from nvflare.apis.dxo import DataKind, from_shareable
-from nvflare.apis.executor import Executor
-from nvflare.apis.fl_constant import ReservedKey, ReturnCode
-from nvflare.apis.fl_context import FLContext
-from nvflare.apis.shareable import Shareable, make_reply
-from nvflare.apis.signal import Signal
-from nvflare.app_common.abstract.model import make_model_learnable, model_learnable_to_dxo
-from nvflare.app_common.app_constant import AppConstants
-from nvflare.app_opt.pt.model_persistence_format_manager import PTModelPersistenceFormatManager
+from nvflare.client.tracking import SummaryWriter
 from tqdm import tqdm
 from transforms import get_xray_transforms
 
+logger = logging.getLogger(__name__)
 
-class FLIP_TRAINER(Executor):
-    def __init__(
-        self,
-        train_task_name=AppConstants.TASK_TRAIN,
-        submit_model_task_name=AppConstants.TASK_SUBMIT_MODEL,
-        exclude_vars=None,
-        project_id="",
-        query="",
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--project_id", type=str, default="")
+    return parser.parse_args()
+
+
+def load_query() -> str:
+    """Read the cohort query from the client app config.
+
+    NVFlare's TaskScriptRunner does a naive whitespace split on task_script_args,
+    so the SQL query (which can contain spaces) is plumbed via the top-level
+    ``query`` key in ``config/config_fed_client.json`` rather than as a CLI flag.
+    In dev/simulator mode this is ignored by ``flip.get_dataframe``.
+    """
+    client_cfg = Path(__file__).parent.parent / "config" / "config_fed_client.json"
+    if client_cfg.exists():
+        try:
+            return json.loads(client_cfg.read_text()).get("query", "")
+        except Exception:
+            return ""
+    return ""
+
+
+def load_config() -> dict:
+    """Load the user-supplied config.json that sits next to this script."""
+    config_path = Path(__file__).parent.resolve() / "config.json"
+    with open(config_path) as f:
+        config = json.load(f)
+
+    # value_to_numerical keys come from JSON as strings — coerce to int and validate.
+    value_to_numerical = {int(k): v for k, v in config["value_to_numerical"].items()}
+    if 0 not in value_to_numerical or 1 not in value_to_numerical:
+        raise ValueError("value_to_numerical must contain mappings for 0 and 1.")
+    config["value_to_numerical"] = value_to_numerical
+
+    # The "-1" key in LESIONS is reserved for the normality label and must be
+    # split out before turning the dict into a LesionDict of trainable classes.
+    lesions = dict(config["LESIONS"])
+    normal_key = lesions.pop("-1", "Normal")
+    config["LESIONS"] = lesions
+    config["NORMAL_KEY"] = normal_key
+    return config
+
+
+def build_datalist(
+    flip: FLIP,
+    dataframe: pd.DataFrame,
+    project_id: str,
+    lesions: LesionDict,
+    value_to_numerical: dict,
+    normal_key: str,
+) -> list:
+    """
+    Iterate the cohort dataframe and return MONAI-compatible image items.
+
+    Args:
+        flip (FLIP): The FLIP client instance.
+        dataframe (pd.DataFrame): The cohort dataframe containing accession IDs and labels.
+        project_id (str): The FLIP project ID.
+        lesions (LesionDict): The dictionary of lesions to extract labels for.
+        value_to_numerical (dict): Mapping of label values to numerical representations.
+        normal_key (str): The key in the dataframe that represents normal cases.
+
+    Returns:
+        datalist (list[dict[str, str]]): List of dicts containing image paths and corresponding labels.
+    """
+    datalist: list[dict[str, str]] = []
+
+    for _, row in tqdm(
+        dataframe.iterrows(),
+        total=len(dataframe),
+        desc="Processing cohort",
+        unit="accession",
     ):
-        """Trainer for FLIP-based X-ray image classification.
+        accession_id = row["accession_id"]
 
-        Args:
-            train_task_name (str, optional): Task name for train task. Defaults to "train".
-            submit_model_task_name (str, optional): Task name for submit model. Defaults to "submit_model".
-            exclude_vars (list): List of variables to exclude during model loading.
-        """
-        super(FLIP_TRAINER, self).__init__()
+        # Extract the pathology labels for this accession ID from the dataframe row
+        pathology_dict = get_labels_from_radiology_row(row, lesions, value_to_numerical, normal_key)
 
-        self._train_task_name = train_task_name
-        self._submit_model_task_name = submit_model_task_name
-        self._exclude_vars = exclude_vars
-
-        # Logger
-        self.logger = logging.getLogger(self.__class__.__name__)
-
-        # Load the config
-        self.config = {}
-        working_dir = Path(__file__).parent.resolve()
-        with open(str(working_dir / "config.json")) as file:
-            self.config = json.load(file)
-            self._epochs = self.config["LOCAL_ROUNDS"]
-            self._lr_start = self.config["LR_START"]
-            self._lr_end = self.config["LR_END"]
-            self._val_split = self.config["VAL_SPLIT"]
-            self._test_split = self.config["TEST_SPLIT"]
-            self._lesions = self.config["LESIONS"]
-            self._value_to_numerical = {int(i): j for i, j in self.config["value_to_numerical"].items()}
-            if 0 not in self._value_to_numerical.keys() and 1 not in self._value_to_numerical.keys():
-                raise ValueError("value_to_numerical must contain mappings for 0 and 1.")
-            if "-1" in self._lesions.keys():
-                self._normal_key = self._lesions["-1"]
-                del self._lesions["-1"]
-            else:
-                self._normal_key = "Normal"
-            self._batch_size = self.config["BATCH_SIZE"]
-            self.validate_every = self.config["VALIDATE_EVERY"] if "VALIDATE_EVERY" in self.config.keys() else 1
-
-        self._lesions = LesionDict(items=[Lesion(id=int(k), lesion=v) for k, v in self._lesions.items()])
-
-        # Setup the model
-        self.model = get_model()
-        self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-        self.model.to(self.device)
-
-        # Setup the transforms
-
-        self._train_transforms = get_xray_transforms()
-        self._val_transforms = get_xray_transforms(is_validation=True)
-
-        # Setup the training dataset
-        self.flip = FLIP()
-        self.project_id = project_id
-        self.query = query
-        self.dataframe = self.flip.get_dataframe(self.project_id, self.query)
-        if "accession_id" not in self.dataframe.columns:
-            raise ValueError("The dataframe must contain 'accession_id' column.")
-        self.train_dict, self.val_dict = self.get_image_and_label_list()
-
-        # Setup the dataset
-        self.training_dataset = Dataset(self.train_dict, transform=self._train_transforms)
-        self.training_dataloader = DataLoader(self.training_dataset, batch_size=self._batch_size, shuffle=True)
-        self.validation_dataset = Dataset(self.val_dict, transform=self._val_transforms)
-        self.validation_dataloader = DataLoader(self.validation_dataset, batch_size=self._batch_size, shuffle=False)
-
-        self.logger.info(
-            f"DataLoader created: training batches={len(self.training_dataloader)}, "
-            f"validation batches={len(self.validation_dataloader)}"
-        )
-
-        # Log overall class distribution in datasets
-        self.log_dataset_class_distribution()
-
-        # Define optimizer
-        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self._lr_start)
-        gamma_lr = (self._lr_end / self._lr_start) ** (1 / self._epochs)
-        self.scheduler = torch.optim.lr_scheduler.ExponentialLR(self.optimizer, gamma=gamma_lr)
-
-        # Setup the persistence manager to save PT model.
-        # The default training configuration is used by persistence manager
-        # in case no initial model is found.
-        self._default_train_conf = {"train": {"model": type(self.model).__name__}}
-        self.persistence_manager = PTModelPersistenceFormatManager(
-            data=self.model.state_dict(), default_train_conf=self._default_train_conf
-        )
-
-    def get_num_epochs(self):
-        """Returns the number of epochs for training."""
-        return self._epochs
-
-    def get_image_and_label_list(self):
-        """
-        Returns a list of dictionaries containing a field "image" and a fields corresponding to each lesion with its
-        label value.
-
-        Args:
-            None
-
-        Returns:
-            train_datalist (list): List of dicts containing image paths and corresponding lesion labels for the training
-            set.
-            val_datalist (list): List of dicts containing image paths and corresponding lesion labels for the validation
-            set.
-        """
-        datalist = []
-
-        # loop over each accession id in the train set
-        for _, row in tqdm(self.dataframe.iterrows(), desc="Preparing dataset", unit="accession"):
-            accession_id = row["accession_id"]
-
-            # First, we load the radiology note; format should be: [project] - [lesion1,lesion2,lesion3_lesion3]
-            pathology_dict = get_labels_from_radiology_row(
-                row, self._lesions, self._value_to_numerical, self._normal_key
+        try:
+            accession_folder_path = flip.get_by_accession_number(
+                project_id, accession_id, resource_type=[ResourceType.DICOM]
             )
+        except Exception as err:
+            logger.info("⚠️ Could not fetch images for accession_id=%s: %s", accession_id, err)
+            continue
 
+        # get all images in the accession folder that match the pattern "*.dcm"
+        all_images = list(accession_folder_path.rglob("*.dcm"))
+
+        for img in all_images:
             try:
-                accession_folder_path = self.flip.get_by_accession_number(
-                    self.project_id,
-                    accession_id,
-                    resource_type=[
-                        ResourceType.DICOM,
-                    ],
-                )
-            except Exception as err:
-                self.logger.info("⚠️ Could not fetch images for accession_id=%s: %s", accession_id, err)
+                _ = pydicom.dcmread(str(img), stop_before_pixels=True)
+            except Exception as e:
+                logger.warning("Skipping invalid DICOM %s: %s", img.name, e)
                 continue
 
-            # get all images in the accession folder that match the pattern "*.dcm"
-            all_images = list(accession_folder_path.rglob("*.dcm"))
+            item = {"image": str(img)}
+            item.update(pathology_dict)
+            datalist.append(item)
 
-            for img in all_images:
-                try:
-                    _ = pydicom.dcmread(str(img), stop_before_pixels=True)
-                except Exception as e:
-                    self.logger.warning("Skipping invalid DICOM %s: %s", img.name, e)
-                    continue
+    logger.info("Dataset ready: %d images", len(datalist))
+    return datalist
 
-                # defines keys for image and segmentation
-                item_ = {"image": str(img)}
-                item_.update(pathology_dict)
-                datalist.append(item_)
 
-        self.logger.info("Dataset ready: %d images", len(datalist))
+def split_datalist(datalist: list, val_split: float, test_split: float) -> tuple:
+    """Deterministic 3-way split — splits happen before any shuffling/sampling."""
+    train, val, test = np.split(
+        datalist,
+        [int(len(datalist) * (1 - val_split - test_split)), int(len(datalist) * (1 - test_split))],
+    )
+    logger.info(f"Split → train={len(train)}, val={len(val)}, test={len(test)}")
+    return train, val, test
 
-        # split into the training and testing data
-        train_datalist, val_datalist, test_datalist = np.split(
-            datalist,
-            [
-                int(len(datalist) * (1 - self._val_split - self._test_split)),
-                int(len(datalist) * (1 - self._test_split)),
-            ],
-        )
 
-        self.logger.info(
-            "Found %d files for training, %d files for validation and %d files for testing.",
-            len(train_datalist),
-            len(val_datalist),
-            len(test_datalist),
-        )
+def log_class_distribution(datalist: list, dataset_name: str, lesions: LesionDict) -> None:
+    logger.info(f"\n{'=' * 80}\n{dataset_name} dataset ({len(datalist)} samples)\n{'=' * 80}")
+    for lesion in lesions.items:
+        labels = [item[lesion.lesion] for item in datalist]
+        pos = sum(1 for x in labels if x == 1)
+        neg = sum(1 for x in labels if x == 0)
+        masked = sum(1 for x in labels if x == -1)
+        ratio = pos / (pos + neg) * 100 if pos + neg > 0 else 0.0
+        logger.info(f"  {lesion.lesion:20s}: {pos:4d} pos, {neg:4d} neg, {masked:4d} masked  ({ratio:.2f}% pos)")
 
-        return train_datalist, val_datalist
 
-    def log_dataset_class_distribution(self):
-        """Log the overall class distribution in training and validation datasets."""
-        self.logger.info("\n" + "=" * 80)
-        self.logger.info("OVERALL CLASS DISTRIBUTION IN DATASETS")
-        self.logger.info("=" * 80)
+def epoch_loop(
+    model: torch.nn.Module,
+    dataloader: DataLoader,
+    lesions: LesionDict,
+    device: torch.device,
+    optimizer: torch.optim.Optimizer | None,
+    epoch: int,
+    phase: str,
+) -> dict:
+    """Single pass over the dataloader. Returns batch metrics keyed by lesion."""
+    is_train = optimizer is not None
+    model.train(is_train)
 
-        for dataset_name, datalist in [("TRAINING", self.train_dict), ("VALIDATION", self.val_dict)]:
-            self.logger.info(f"\n{dataset_name} Dataset ({len(datalist)} samples):")
-            for lesion in self._lesions.items:
-                lesion_name = lesion.lesion
-                all_labels = [item[lesion_name] for item in datalist]
-                num_positive = sum(1 for label in all_labels if label == 1)
-                num_negative = sum(1 for label in all_labels if label == 0)
-                num_masked = sum(1 for label in all_labels if label == -1)
+    metrics: dict = {"loss": [], "precision": {}, "recall": {}, "f1-score": {}}
+    for name in lesions.get_lesion_list():
+        metrics["precision"][name] = []
+        metrics["recall"][name] = []
+        metrics["f1-score"][name] = []
 
-                if num_positive + num_negative > 0:
-                    positive_ratio = num_positive / (num_positive + num_negative) * 100
+    with torch.set_grad_enabled(is_train):
+        for i, batch in enumerate(dataloader):
+            images = batch["image"].to(device)
+            labels = get_lesion_label(batch, lesions).to(device)
+
+            labels_np = labels.detach().cpu().numpy()
+            batch_info = f"Epoch {epoch + 1}, {phase} batch {i + 1}/{len(dataloader)} (size={labels.shape[0]}) - "
+            for idx, lesion in enumerate(lesions.items):
+                valid = labels_np[:, idx][labels_np[:, idx] != -1]
+                if len(valid) > 0:
+                    batch_info += f"{lesion.lesion}: {int(np.sum(valid == 1))}p/{int(np.sum(valid == 0))}n; "
                 else:
-                    positive_ratio = 0.0
+                    batch_info += f"{lesion.lesion}: all masked; "
+            logger.info(batch_info)
 
-                self.logger.info(
-                    f"  {lesion_name:20s}: {num_positive:4d} positive, {num_negative:4d} negative, "
-                    f"{num_masked:4d} masked/unknown"
-                )
-                self.logger.info(f"                        Positive ratio: {positive_ratio:.2f}% (excluding masked)")
+            # A fully-masked batch (every label -1) carries no supervision signal: the clamped loss
+            # would be a flat 0.0 that trains nothing and drags the epoch mean down (pre-clamp, the
+            # NaN it produced was excluded from the mean by np.nanmean). Skip it loudly so a
+            # systematic label degeneracy (e.g. a broken label join) stays visible (FLIP#764).
+            if (labels == -1).all():
+                logger.warning(f"{phase} batch {i + 1}/{len(dataloader)}: all labels masked (-1), skipping batch")
+                continue
 
-        self.logger.info("=" * 80 + "\n")
+            if is_train:
+                optimizer.zero_grad()
+            output = model(images)
+            loss = get_bce_loss(output, labels)
 
-    def local_train(self, fl_ctx: FLContext, weights, abort_signal, global_round):
-        # Set the model weights
-        self.model.load_state_dict(state_dict=weights)
+            # Skip a non-finite batch instead of letting it poison the model: a single NaN/Inf loss
+            # backpropagates into every weight via optimizer.step(), after which every subsequent
+            # batch is NaN and the whole pass reports loss=nan (see FLIP#764).
+            if not torch.isfinite(loss):
+                logger.warning(f"Skipping {phase} batch {i + 1}/{len(dataloader)}: non-finite loss ({loss.item()})")
+                continue
 
-        # Basic training
-        self.model.train()
-        self.logger.info(f"Starting local train on device {self.device}")
-        self.logger.info("Note: Batches with insufficient class representation will produce NaN metrics.")
-        self.logger.info("      These NaN values will be ignored when computing epoch averages using np.nanmean().\n")
-        training_metrics = {"loss": {"train": [], "val": []}, "f1-score": {}, "precision": {}, "recall": {}}
-        for lesion_name in self._lesions.get_lesion_list():
-            training_metrics["f1-score"][lesion_name] = {"train": [], "val": []}
-            training_metrics["precision"][lesion_name] = {"train": [], "val": []}
-            training_metrics["recall"][lesion_name] = {"train": [], "val": []}
-
-        self._n_iterations = 0
-        for epoch in range(self._epochs):
-            training_metrics_ = {"loss": {"train": [], "val": []}, "f1-score": {}, "precision": {}, "recall": {}}
-            for lesion_name in self._lesions.get_lesion_list():
-                training_metrics_["f1-score"][lesion_name] = {"train": [], "val": []}
-                training_metrics_["precision"][lesion_name] = {"train": [], "val": []}
-                training_metrics_["recall"][lesion_name] = {"train": [], "val": []}
-
-            for i, batch in enumerate(self.training_dataloader):
-                if abort_signal.triggered:
-                    # If abort_signal is triggered, we simply return.
-                    # The outside function will check it again and decide steps to take.
-                    return
-
-                images = batch["image"].to(self.device)
-                labels = get_lesion_label(batch, self._lesions).to(self.device)
-
-                # Log class distribution for this batch
-                labels_np = labels.detach().cpu().numpy()
-                batch_info = (
-                    f"Epoch {epoch + 1}, Train Batch {i + 1}/{len(self.training_dataloader)}, "
-                    f"Batch size: {labels.shape[0]} - "
-                )
-                for lesion_idx, lesion in enumerate(self._lesions.items):
-                    lesion_labels = labels_np[:, lesion_idx]
-                    # Filter out -1 (unknown/masked) values
-                    valid_labels = lesion_labels[lesion_labels != -1]
-                    if len(valid_labels) > 0:
-                        num_positive = np.sum(valid_labels == 1)
-                        num_negative = np.sum(valid_labels == 0)
-                        batch_info += f"{lesion.lesion}: {num_positive} pos / {num_negative} neg; "
-                    else:
-                        batch_info += f"{lesion.lesion}: all masked; "
-                self.logger.info(batch_info)
-
-                # A fully-masked batch (every label -1) carries no supervision signal: the clamped
-                # loss would be a flat 0.0 that trains nothing and drags the epoch mean down. Skip
-                # it loudly so a systematic label degeneracy (e.g. a broken label join) stays
-                # visible in the logs instead of vanishing into the clamp (FLIP#764).
-                if (labels == -1).all():
-                    self.logger.warning(
-                        "Train batch %d/%d: all labels masked (-1), skipping batch",
-                        i + 1,
-                        len(self.training_dataloader),
-                    )
-                    continue
-
-                self.optimizer.zero_grad()
-                output = self.model(images)
-                loss = get_bce_loss(output, labels)
-
-                # Skip a non-finite batch instead of letting it poison the model: a single NaN/Inf
-                # loss backpropagates into every weight via optimizer.step(), after which every
-                # subsequent batch is NaN and the whole pass reports loss=nan (see FLIP#764).
-                if not torch.isfinite(loss):
-                    self.logger.warning(
-                        "Skipping batch %d/%d: non-finite loss (%s)", i + 1, len(self.training_dataloader), loss.item()
-                    )
-                    continue
-
+            if is_train:
                 loss.backward()
                 # Gradient clipping bounds the update so an exploding gradient on one batch can't
                 # diverge the model to NaN within a single optimizer step.
-                torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
-                self.optimizer.step()
-                training_metrics_["loss"]["train"].append(loss.item())
-                output = torch.sigmoid(output)
-                for pathology in self._lesions.get_lesion_list():
-                    precision, recall, f1_score = compute_precision_recall_f1(
-                        output, labels, pathology, lesions=self._lesions
-                    )
-                    training_metrics_["precision"][pathology]["train"].append(precision)
-                    training_metrics_["recall"][pathology]["train"].append(recall)
-                    training_metrics_["f1-score"][pathology]["train"].append(f1_score)
-                self._n_iterations += 1
-            if epoch % self.validate_every == 0:
-                self.model.eval()
-                for i, batch in enumerate(self.validation_dataloader):
-                    if abort_signal.triggered:
-                        # If abort_signal is triggered, we simply return.
-                        # The outside function will check it again and decide steps to take.
-                        return
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+                optimizer.step()
 
-                    images = batch["image"].to(self.device)
-                    labels = get_lesion_label(batch, self._lesions).to(self.device)
+            metrics["loss"].append(loss.item())
+            probs = torch.sigmoid(output)
+            for name in lesions.get_lesion_list():
+                precision, recall, f1 = compute_precision_recall_f1(probs, labels, name, lesions=lesions)
+                metrics["precision"][name].append(precision)
+                metrics["recall"][name].append(recall)
+                metrics["f1-score"][name].append(f1)
 
-                    # Log class distribution for this validation batch
-                    labels_np = labels.detach().cpu().numpy()
-                    batch_info = (
-                        f"Epoch {epoch + 1}, Val Batch {i + 1}/{len(self.validation_dataloader)}, "
-                        f"Batch size: {labels.shape[0]} - "
-                    )
-                    for lesion_idx, lesion in enumerate(self._lesions.items):
-                        lesion_labels = labels_np[:, lesion_idx]
-                        # Filter out -1 (unknown/masked) values
-                        valid_labels = lesion_labels[lesion_labels != -1]
-                        if len(valid_labels) > 0:
-                            num_positive = np.sum(valid_labels == 1)
-                            num_negative = np.sum(valid_labels == 0)
-                            batch_info += f"{lesion.lesion}: {num_positive} pos / {num_negative} neg; "
-                        else:
-                            batch_info += f"{lesion.lesion}: all masked; "
-                    self.logger.info(batch_info)
+    return metrics
 
-                    # Skip fully-masked batches here too: with the clamped loss they would
-                    # contribute a spurious 0.0 to the epoch mean, where the pre-clamp NaN was
-                    # excluded by np.nanmean below. Skipping keeps the epoch average over
-                    # supervised batches only, and keeps the degeneracy visible.
-                    if (labels == -1).all():
-                        self.logger.warning(
-                            "Val batch %d/%d: all labels masked (-1), skipping batch",
-                            i + 1,
-                            len(self.validation_dataloader),
-                        )
-                        continue
 
-                    output = self.model(images)
-                    loss = get_bce_loss(output, labels)
+def _safe_mean(values: list) -> float:
+    if not values:
+        return float("nan")
+    return float(np.nanmean(values))
 
-                    # Mirror the train loop's guard: np.nanmean below already excludes a NaN from
-                    # the epoch mean, but skipping silently would hide the degeneracy behind it
-                    # (see FLIP#764).
-                    if not torch.isfinite(loss):
-                        self.logger.warning(
-                            "Skipping val batch %d/%d: non-finite loss (%s)",
-                            i + 1,
-                            len(self.validation_dataloader),
-                            loss.item(),
-                        )
-                        continue
 
-                    training_metrics_["loss"]["val"].append(loss.item())
-                    output = torch.sigmoid(output)
-                    for pathology in self._lesions.get_lesion_list():
-                        precision, recall, f1_score = compute_precision_recall_f1(
-                            output, labels, pathology, lesions=self._lesions
-                        )
-                        training_metrics_["precision"][pathology]["val"].append(precision)
-                        training_metrics_["recall"][pathology]["val"].append(recall)
-                        training_metrics_["f1-score"][pathology]["val"].append(f1_score)
-                self.model.train()
+def _publish(writer: SummaryWriter, label: str, value: float, step: int) -> None:
+    """Push a scalar through SummaryWriter, swapping NaN for 0.0 like the legacy code did."""
+    if np.isnan(value):
+        logger.warning(f"{label} is NaN — sending 0.0")
+        value = 0.0
+    writer.add_scalar(label, value, global_step=step)
 
-            self.scheduler.step()
 
-            # Aggregate metrics:
+def aggregate_and_publish(
+    train_metrics: dict,
+    val_metrics: dict | None,
+    writer: SummaryWriter,
+    lesions: LesionDict,
+    step: int,
+) -> None:
+    # These are per-epoch scalars: the "@epoch" tag suffix names the x-axis (the FLIP analytics bridge
+    # parses "<label>[@<x_label>]" — see FLIP#148) and `step` (cumulative epoch) is the coordinate.
+    _publish(writer, "TRAIN_LOSS@epoch", _safe_mean(train_metrics["loss"]), step)
+    # Only publish VAL_* scalars when validation actually ran this epoch (per VALIDATE_EVERY) —
+    # emitting a 0.0 placeholder would inject spurious zeros into the validation series.
+    if val_metrics is not None:
+        _publish(writer, "VAL_LOSS@epoch", _safe_mean(val_metrics["loss"]), step)
 
-            for metric, metric_dump in training_metrics_.items():
-                if metric == "loss":
-                    training_metrics["loss"]["train"].append(np.nanmean(metric_dump["train"]))
-                    if epoch % self.validate_every == 0:
-                        training_metrics["loss"]["val"].append(np.nanmean(metric_dump["val"]))
-                    else:
-                        if len(training_metrics_["loss"]["val"]) == 0:
-                            training_metrics["loss"]["val"].append(0)
-                        else:
-                            training_metrics["loss"]["val"].append(training_metrics["loss"]["val"][-1])
-                else:
-                    for lesion_name in self._lesions.get_lesion_list():
-                        training_metrics[metric][lesion_name]["train"].append(
-                            np.nanmean(metric_dump[lesion_name]["train"])
-                        )
-                        if epoch % self.validate_every == 0:
-                            training_metrics[metric][lesion_name]["val"].append(
-                                np.nanmean(metric_dump[lesion_name]["val"])
-                            )
-                        else:
-                            if len(training_metrics[metric][lesion_name]["val"]) == 0:
-                                training_metrics[metric][lesion_name]["val"].append(0)
-                            else:
-                                training_metrics[metric][lesion_name]["val"].append(
-                                    training_metrics[metric][lesion_name]["val"][-1]
-                                )
+    for metric in ["f1-score", "precision", "recall"]:
+        for name in lesions.get_lesion_list():
+            # Include the lesion name in the tag so each lesion writes to a distinct series.
+            _publish(writer, f"TRAIN-{metric.upper()}-{name}@epoch", _safe_mean(train_metrics[metric][name]), step)
+            if val_metrics is not None:
+                _publish(writer, f"VAL-{metric.upper()}-{name}@epoch", _safe_mean(val_metrics[metric][name]), step)
 
-            # Get text
-            message = f"epoch {epoch + 1}/{self.get_num_epochs()} - "
-            for metric, metric_values in training_metrics.items():
-                if metric == "loss":
-                    message += (
-                        f"{metric}: train={metric_values['train'][-1]:.4f}, val={metric_values['val'][-1]:.4f};\t"
-                    )
-                else:
-                    for lesion_name, lesion_values in metric_values.items():
-                        lvt = lesion_values["train"][-1]
-                        lvv = lesion_values["val"][-1]
-                        # Format with 'N/A' if NaN, otherwise show the value
-                        lvt_str = "N/A" if np.isnan(lvt) else f"{lvt:.4f}"
-                        lvv_str = "N/A" if np.isnan(lvv) else f"{lvv:.4f}"
-                        message += f"{metric}-{lesion_name}: train={lvt_str}, val={lvv_str};\t"
 
-            message += "\n"
-            self.logger.info(message)
-            self.log_info(fl_ctx, message)
+def local_train(
+    model: torch.nn.Module,
+    train_loader: DataLoader,
+    val_loader: DataLoader,
+    optimizer: torch.optim.Optimizer,
+    scheduler: torch.optim.lr_scheduler._LRScheduler,
+    lesions: LesionDict,
+    device: torch.device,
+    epochs: int,
+    validate_every: int,
+    writer: SummaryWriter,
+    global_round: int,
+) -> int:
+    """Train for `epochs` local epochs and stream metrics. Returns total iteration count."""
+    n_iterations = 0
+    for epoch in range(epochs):
+        train_metrics = epoch_loop(model, train_loader, lesions, device, optimizer, epoch, "Train")
+        n_iterations += len(train_metrics["loss"])
 
-            # Log summary of NaN occurrences for this epoch
-            nan_summary = f"Epoch {epoch + 1} NaN Summary:\n"
-            has_nan = False
-            for metric in ["f1-score", "precision", "recall"]:
-                for lesion_name in self._lesions.get_lesion_list():
-                    train_values = training_metrics_[metric][lesion_name]["train"]
-                    train_nans = sum(1 for x in train_values if np.isnan(x))
-                    train_valid = len([x for x in train_values if not np.isnan(x)])
+        val_metrics = None
+        if epoch % validate_every == 0:
+            val_metrics = epoch_loop(model, val_loader, lesions, device, optimizer=None, epoch=epoch, phase="Val")
 
-                    if epoch % self.validate_every == 0:
-                        val_values = training_metrics_[metric][lesion_name]["val"]
-                        val_nans = sum(1 for x in val_values if np.isnan(x))
-                        val_valid = len([x for x in val_values if not np.isnan(x)])
-                    else:
-                        val_nans = 0
-                        val_valid = 0
+        scheduler.step()
 
-                    if train_nans > 0 or val_nans > 0:
-                        has_nan = True
-                        train_total = len(train_values)
-                        val_total = len(val_values) if epoch % self.validate_every == 0 else 0
+        step = global_round * epochs + epoch + 1
+        aggregate_and_publish(train_metrics, val_metrics, writer, lesions, step)
 
-                        train_avg = training_metrics[metric][lesion_name]["train"][-1]
-                        val_avg = training_metrics[metric][lesion_name]["val"][-1]
+    return n_iterations
 
-                        # Format with 'N/A (all batches NaN)' if NaN, otherwise show the value
-                        train_avg_str = "N/A (all batches NaN)" if np.isnan(train_avg) else f"{train_avg:.4f}"
-                        val_avg_str = "N/A (all batches NaN)" if np.isnan(val_avg) else f"{val_avg:.4f}"
 
-                        nan_summary += (
-                            f"  {lesion_name} {metric}: {train_nans}/{train_total} train batches had NaN "
-                            f"({train_valid} valid), {val_nans}/{val_total} val batches had NaN ({val_valid} valid)\n"
-                            f"    -> Averaged from valid batches: train={train_avg_str}, val={val_avg_str}\n"
-                        )
+def cross_site_validate(
+    model: torch.nn.Module,
+    test_loader: DataLoader,
+    lesions: LesionDict,
+    device: torch.device,
+    writer: SummaryWriter,
+) -> dict:
+    """Run the cross-site validation pass against the held-out test split."""
+    model.eval()
+    metrics: dict = {"loss": [], "precision": {}, "recall": {}, "f1-score": {}}
+    for name in lesions.get_lesion_list():
+        metrics["precision"][name] = []
+        metrics["recall"][name] = []
+        metrics["f1-score"][name] = []
 
-            if has_nan:
-                self.logger.info(nan_summary)
-                self.log_info(fl_ctx, nan_summary)
-            # Send metrics over to FLIP. These are per-epoch points, so plot them on an "epoch" axis at
-            # the cumulative epoch count; the FL global round is recorded alongside as provenance.
-            cumulative_epoch = global_round * (self._epochs) + epoch + 1
+    with torch.no_grad():
+        for i, batch in enumerate(test_loader):
+            images = batch["image"].to(device)
+            labels = get_lesion_label(batch, lesions).to(device)
 
-            # Send loss metrics - convert NaN to 0.0
-            train_loss = training_metrics["loss"]["train"][-1]
-            val_loss = training_metrics["loss"]["val"][-1]
+            # Skip fully-masked batches: with the clamped loss they would contribute a spurious 0.0
+            # to the test mean, where the pre-clamp NaN was excluded by np.nanmean in _safe_mean.
+            if (labels == -1).all():
+                logger.warning(f"Test batch {i + 1}/{len(test_loader)}: all labels masked (-1), skipping batch")
+                continue
 
-            if np.isnan(train_loss):
-                self.logger.warning("TRAIN_LOSS is NaN (no valid batches) - sending 0.0")
-                train_loss = 0.0
+            output = model(images)
+            loss = get_bce_loss(output, labels)
 
-            if np.isnan(val_loss):
-                self.logger.warning("VAL_LOSS is NaN (no valid batches) - sending 0.0")
-                val_loss = 0.0
+            # Mirror epoch_loop's guard: np.nanmean already excludes a NaN from the test mean, but
+            # skipping silently would hide the degeneracy behind it — keep it visible (FLIP#764).
+            if not torch.isfinite(loss):
+                logger.warning(f"Skipping test batch {i + 1}/{len(test_loader)}: non-finite loss ({loss.item()})")
+                continue
 
-            send_metrics_value(
-                label="TRAIN_LOSS",
-                x_value=cumulative_epoch,
-                x_label="epoch",
-                value=train_loss,
-                fl_ctx=fl_ctx,
-                flip=self.flip,
+            metrics["loss"].append(loss.item())
+            probs = torch.sigmoid(output)
+            for name in lesions.get_lesion_list():
+                precision, recall, f1 = compute_precision_recall_f1(probs, labels, name, lesions=lesions)
+                metrics["precision"][name].append(precision)
+                metrics["recall"][name].append(recall)
+                metrics["f1-score"][name].append(f1)
+
+    writer.add_scalar("TEST_LOSS", _safe_mean(metrics["loss"]), global_step=0)
+    for metric in ["f1-score", "precision", "recall"]:
+        for name in lesions.get_lesion_list():
+            # Include the lesion name in the tag so each lesion writes to a distinct series
+            # (matches aggregate_and_publish; without it every lesion collapses onto one tag).
+            writer.add_scalar(f"TEST-{metric.upper()}-{name}", _safe_mean(metrics[metric][name]), global_step=0)
+
+    return metrics
+
+
+def load_global_weights(model: torch.nn.Module, input_model: flare.FLModel) -> dict:
+    """Push the incoming server weights onto the local model and return them as torch tensors."""
+    torch_weights = {k: torch.as_tensor(v) for k, v in input_model.params.items()}
+    model.load_state_dict(torch_weights)
+    return torch_weights
+
+
+def evaluate_global_model(
+    model: torch.nn.Module,
+    val_loader: DataLoader,
+    lesions: LesionDict,
+    device: torch.device,
+) -> dict[str, float]:
+    """Evaluate the received global model on the local validation split for best-model selection.
+
+    Must run BEFORE local training so the metrics describe the aggregated global model the server
+    just broadcast — they ride back on the returned ``FLModel`` (DXO meta ``INITIAL_METRICS``) and
+    drive the server-side ``IntimeModelSelector``, which averages them across clients and saves the
+    best global checkpoint on improvement.
+
+    Args:
+        model (torch.nn.Module): Model already loaded with the received global weights.
+        val_loader (DataLoader): Local validation split loader.
+        lesions (LesionDict): The trainable lesion classes.
+        device (torch.device): Torch device to evaluate on.
+
+    Returns:
+        dict[str, float]: Flat metrics — ``VAL_LOSS``, per-lesion ``VAL-<METRIC>-<lesion>`` and
+        macro ``VAL-<METRIC>`` (mean across lesions) for f1-score/precision/recall. NaNs are
+        mapped to 0.0 (as in ``_publish``) so a masked-out lesion cannot poison the server-side
+        cross-client average.
+    """
+    metrics = epoch_loop(model, val_loader, lesions, device, optimizer=None, epoch=0, phase="Val")
+    flat = {"VAL_LOSS": _safe_mean(metrics["loss"])}
+    for metric in ["f1-score", "precision", "recall"]:
+        per_lesion = [_safe_mean(metrics[metric][name]) for name in lesions.get_lesion_list()]
+        for name, value in zip(lesions.get_lesion_list(), per_lesion):
+            flat[f"VAL-{metric.upper()}-{name}"] = value
+        flat[f"VAL-{metric.upper()}"] = _safe_mean(per_lesion)
+    return {label: (0.0 if np.isnan(value) else float(value)) for label, value in flat.items()}
+
+
+def main() -> None:
+    args = parse_args()
+    config = load_config()
+
+    lesions = LesionDict(items=[Lesion(id=int(k), lesion=v) for k, v in config["LESIONS"].items()])
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+
+    model = get_model().to(device)
+    optimizer = torch.optim.Adam(model.parameters(), lr=config["LR_START"])
+    # gamma_lr is sized so the LR decays LR_START -> LR_END over one global round's worth of local
+    # epochs (LOCAL_ROUNDS steps). The optimizer/scheduler are created once and persist across the
+    # whole flare.is_running() loop (never reset per global round), so from round 2 onwards the LR
+    # keeps decaying below LR_END (continuous decay). This matches the legacy xray_classification
+    # trainer's scheduler lifecycle.
+    gamma_lr = (config["LR_END"] / config["LR_START"]) ** (1 / config["LOCAL_ROUNDS"])
+    scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=gamma_lr)
+
+    flip = FLIP()
+    query = load_query()
+    dataframe = flip.get_dataframe(args.project_id, query)
+    if "accession_id" not in dataframe.columns:
+        raise ValueError("The dataframe must contain 'accession_id' column.")
+
+    datalist = build_datalist(
+        flip, dataframe, args.project_id, lesions, config["value_to_numerical"], config["NORMAL_KEY"]
+    )
+    train_items, val_items, test_items = split_datalist(datalist, config["VAL_SPLIT"], config["TEST_SPLIT"])
+
+    train_loader = DataLoader(
+        Dataset(train_items, transform=get_xray_transforms()), batch_size=config["BATCH_SIZE"], shuffle=True
+    )
+    val_loader = DataLoader(
+        Dataset(val_items, transform=get_xray_transforms(is_validation=True)),
+        batch_size=config["BATCH_SIZE"],
+        shuffle=False,
+    )
+    test_loader = DataLoader(
+        Dataset(test_items, transform=get_xray_transforms(is_validation=True)),
+        batch_size=config["BATCH_SIZE"],
+        shuffle=False,
+    )
+    log_class_distribution(train_items, "TRAIN", lesions)
+    log_class_distribution(val_items, "VAL", lesions)
+
+    flare.init()
+    writer = SummaryWriter()
+
+    while flare.is_running():
+        input_model = flare.receive()
+        if input_model is None:
+            break
+
+        if flare.is_train():
+            original_weights = load_global_weights(model, input_model)
+            global_round = input_model.current_round or 0
+
+            # Best-model selection (FLIP#673): evaluate the received global model before local
+            # training mutates it. Gated on BEST_MODEL_METRIC so runs without selection skip the
+            # extra validation pass.
+            global_val_metrics = None
+            if config.get("BEST_MODEL_METRIC"):
+                global_val_metrics = evaluate_global_model(model, val_loader, lesions, device)
+
+            n_iterations = local_train(
+                model,
+                train_loader,
+                val_loader,
+                optimizer,
+                scheduler,
+                lesions,
+                device,
+                epochs=config["LOCAL_ROUNDS"],
+                validate_every=config.get("VALIDATE_EVERY", 1),
+                writer=writer,
+                global_round=global_round,
             )
-            send_metrics_value(
-                label="VAL_LOSS",
-                x_value=cumulative_epoch,
-                x_label="epoch",
-                value=val_loss,
-                fl_ctx=fl_ctx,
-                flip=self.flip,
-            )
 
-            for metric in ["f1-score", "precision", "recall"]:
-                for lesion_name in self._lesions.get_lesion_list():
-                    train_value = training_metrics[metric][lesion_name]["train"][-1]
-                    val_value = training_metrics[metric][lesion_name]["val"][-1]
-
-                    # Convert NaN to 0.0 before sending
-                    if np.isnan(train_value):
-                        self.logger.warning(
-                            f"TRAIN-{metric.upper()} for {lesion_name} is NaN (no valid batches) - sending 0.0"
-                        )
-                        train_value = 0.0
-
-                    if np.isnan(val_value):
-                        self.logger.warning(
-                            f"VAL-{metric.upper()} for {lesion_name} is NaN (no valid batches) - sending 0.0"
-                        )
-                        val_value = 0.0
-
-                    send_metrics_value(
-                        label=f"{'train'.upper()}-{metric.upper()}-{lesion_name}",
-                        x_value=cumulative_epoch,
-                        x_label="epoch",
-                        value=train_value,
-                        fl_ctx=fl_ctx,
-                        flip=self.flip,
-                    )
-                    send_metrics_value(
-                        label=f"{'val'.upper()}-{metric.upper()}-{lesion_name}",
-                        x_value=cumulative_epoch,
-                        x_label="epoch",
-                        value=val_value,
-                        fl_ctx=fl_ctx,
-                        flip=self.flip,
-                    )
-
-    def execute(
-        self,
-        task_name: str,
-        shareable: Shareable,
-        fl_ctx: FLContext,
-        abort_signal: Signal,
-    ) -> Shareable:
-        if task_name == self._train_task_name:
-            global_round = shareable.get_header(AppConstants.CURRENT_ROUND)
-
-            # Get model weights
-            dxo = from_shareable(shareable)
-
-            # Ensure data kind is weights.
-            if not dxo.data_kind == DataKind.WEIGHTS:
-                self.log_error(
-                    fl_ctx,
-                    f"data_kind expected WEIGHTS but got {dxo.data_kind} instead.",
+            # Send back DIFF (matches the original weight-update behaviour used with FullModelShareableGenerator).
+            new_state = {k: v.detach().cpu().numpy() for k, v in model.state_dict().items()}
+            diff = {k: new_state[k] - original_weights[k].detach().cpu().numpy() for k in new_state}
+            flare.send(
+                flare.FLModel(
+                    params=diff,
+                    params_type="DIFF",
+                    # metrics of the *received* global model (see evaluate_global_model) — the
+                    # framework treats params+metrics as "evaluation on the global model" and
+                    # carries them as INITIAL_METRICS for IntimeModelSelector.
+                    metrics=global_val_metrics,
+                    meta={"NUM_STEPS_CURRENT_ROUND": n_iterations},
                 )
-                return make_reply(ReturnCode.BAD_TASK_DATA)
+            )
 
-            # Convert weights to tensor../ Run training
-            torch_weights = {k: torch.as_tensor(v) for k, v in dxo.data.items()}
-            self.local_train(fl_ctx, torch_weights, abort_signal, global_round)
+        elif flare.is_evaluate():
+            load_global_weights(model, input_model)
+            metrics = cross_site_validate(model, test_loader, lesions, device, writer)
+            flare.send(flare.FLModel(metrics={"loss": _safe_mean(metrics["loss"])}))
 
-            # Check the abort_signal after training.
-            # local_train returns early if abort_signal is triggered.
-            if abort_signal.triggered:
-                return make_reply(ReturnCode.TASK_ABORTED)
+        elif flare.is_submit_model():
+            params = {k: v.detach().cpu().numpy() for k, v in model.state_dict().items()}
+            flare.send(flare.FLModel(params=params, params_type="FULL"))
 
-            # Save the local model after training.
-            self.save_local_model(fl_ctx)
-
-            # Get the new state dict and send as weights
-            new_weights = self.model.state_dict()
-            outgoing_dxo = get_model_weights_diff(dxo.data, new_weights, self._n_iterations)
-            return outgoing_dxo.to_shareable()
-
-        elif task_name == self._submit_model_task_name:
-            # Load local model
-            ml = self.load_local_model(fl_ctx)
-
-            # Get the model parameters and create dxo from it
-            dxo = model_learnable_to_dxo(ml)
-            return dxo.to_shareable()
         else:
-            return make_reply(ReturnCode.TASK_UNKNOWN)
+            logger.warning("Received unknown task; ignoring.")
 
-    def save_local_model(self, fl_ctx: FLContext):
-        run_dir = fl_ctx.get_engine().get_workspace().get_run_dir(fl_ctx.get_prop(ReservedKey.RUN_NUM))
-        models_dir = os.path.join(run_dir, PTConstants.PTModelsDir)
-        if not os.path.exists(models_dir):
-            os.makedirs(models_dir)
-        model_path = os.path.join(models_dir, PTConstants.PTLocalModelName)
 
-        ml = make_model_learnable(self.model.state_dict(), {})
-        self.persistence_manager.update(ml)
-        torch.save(self.persistence_manager.to_persistence_dict(), model_path)
-
-    def load_local_model(self, fl_ctx: FLContext):
-        run_dir = fl_ctx.get_engine().get_workspace().get_run_dir(fl_ctx.get_prop(ReservedKey.RUN_NUM))
-        models_dir = os.path.join(run_dir, PTConstants.PTModelsDir)
-        if not os.path.exists(models_dir):
-            return None
-        model_path = os.path.join(models_dir, PTConstants.PTLocalModelName)
-
-        self.persistence_manager = PTModelPersistenceFormatManager(
-            data=torch.load(model_path), default_train_conf=self._default_train_conf
-        )
-        ml = self.persistence_manager.to_model_learnable(exclude_vars=self._exclude_vars)
-        return ml
+if __name__ == "__main__":
+    main()

@@ -24,6 +24,7 @@ from logging import INFO
 from pathlib import Path
 
 import torch
+from flip.flower.privacy import flip_local_dp_mod
 from flwr.app import ArrayRecord, ConfigRecord, Context, Message, MetricRecord, RecordDict
 from flwr.clientapp import ClientApp
 from flwr.common import log
@@ -81,7 +82,12 @@ def _load_model_on_device(msg: Message) -> tuple[torch.nn.Module, torch.device]:
     return model, device
 
 
-@app.train()
+# The DP mod clips the update to `dp-clipping-norm` and adds Gaussian noise calibrated to
+# (dp-epsilon, dp-delta) before the reply leaves the SuperNode — see pyproject.toml's
+# [tool.flwr.app.config]. It is applied to @app.train only; @app.evaluate below is untouched.
+# DenseNet121's 121 int64 `num_batches_tracked` BatchNorm counters pass through unprivatised;
+# the mod excludes them because clipping cannot write a float scale back into an int array.
+@app.train(mods=[flip_local_dp_mod])
 def train(msg: Message, context: Context) -> Message:
     """Train chest-X-ray DenseNet for ``LOCAL_ROUNDS`` epochs against the local cohort."""
     config = _load_config()

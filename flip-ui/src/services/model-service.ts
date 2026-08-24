@@ -335,7 +335,7 @@ export async function fetchJobTypes(): Promise<JobTypesResponse> {
         console.error("[fetchJobTypes] Error fetching job types:", error);
 
         // Return a minimal default if API fails
-        return { [DEFAULT_JOB_TYPE]: ["trainer.py", "validator.py", "models.py", "config.json"] };
+        return { [DEFAULT_JOB_TYPE]: ["trainer.py", "config.json", "models.py"] };
     }
 }
 
@@ -493,16 +493,18 @@ export async function initialiseTraining(
     await _http.post(`/fl/initiate/${modelId}`, initTrainingRequestData);
 }
 
+// Array.isArray, not ?? []: a 200 with an empty body reaches the fetch layer as the string "",
+// which `??` passes straight through and every caller then treats as an array (FLIP#1011).
 export async function getDownloadUrlForResults(modelId: string): Promise<string[]> {
     const response = await _http.get<string[]>(`/files/model/${modelId}/fl/results`);
 
-    return response.data ?? [];
+    return Array.isArray(response.data) ? response.data : [];
 }
 
 export async function getLogsForModel(url: string): Promise<ILog[]> {
     const response = await _http.get<ILog[]>(url);
 
-    return response.data ?? [];
+    return Array.isArray(response.data) ? response.data : [];
 }
 
 export async function stopTraining(modelId: string): Promise<undefined> {
@@ -515,6 +517,6 @@ export async function getModelMetrics(url: string): Promise<IModelMetricData[]> 
 
     const response = await _http.get<IModelMetricData[]>(url);
 
-    return response.data ?? [];
+    return Array.isArray(response.data) ? response.data : [];
 }
 

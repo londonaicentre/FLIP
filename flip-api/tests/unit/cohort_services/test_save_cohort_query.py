@@ -118,8 +118,12 @@ def test_save_cohort_query_internal_error(mock_has_project_status, mock_can_modi
     request = MagicMock()
     request.headers.get.return_value = mock_auth_token
 
-    # Expect an HTTPException or a general Exception with a message
-    with pytest.raises(HTTPException, match="Internal server error") as exc_info:
+    with pytest.raises(HTTPException) as exc_info:
         save_cohort_query(request=request, cohort_query=cohort_query_input, db=mock_db_session)
 
     assert exc_info.value.status_code == 500
+    # Equality, not `match=`: that is re.search, so it matches
+    # "Internal server error: Unexpected DB failure" just as happily and would pass against the
+    # leaking version. The point of the assertion is that the exception text is *absent*.
+    assert exc_info.value.detail == "Internal server error"
+    assert "Unexpected DB failure" not in exc_info.value.detail

@@ -17,6 +17,21 @@ services:
 
   fl-client-net-1:
     image: ${DOCKER_FL_REGISTRY}${DOCKER_FL_CLIENT_NAME}:${DOCKER_FL_TAG}
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    # No capability is added back. The image runs non-root (GHSA-8465) and Docker
+    # grants effective capabilities only to root, so a cap_add here would land in
+    # the bounding set and never take effect (CapEff stays 0). provision/workspace-dev/
+    # (gitignored) is written by `make provision` as the host user and the image's UID
+    # is baked in at build time (fl-base's UID/GID build args) from that same user's
+    # .env.development, so build+provision by the same developer already match. When
+    # they don't (CI, a shared devbox, a teammate's prebuilt :dev image) the fix is to
+    # chown the provisioned kit dirs to the container UID — see fl-services/nvflare/README.md
+    # — not a capability grant. What aborts the entrypoint in that case is the envsubst
+    # write into the bind-mounted local/ (guarded by `|| exit 1`); the `chmod +x` calls
+    # on startup/*.sh are unguarded and do not crash-loop.
     volumes:
       # Mount the base images download directory to share images downloaded from XNAT with FL clients
       - ${BASE_IMAGES_DOWNLOAD_DIR}:/app/data/images
@@ -42,6 +57,12 @@ services:
       # This key is per-trust and never leaves the trust environment.
       - TRUST_INTERNAL_SERVICE_KEY_HEADER=${TRUST_INTERNAL_SERVICE_KEY_HEADER}
       - TRUST_INTERNAL_SERVICE_KEY=${TRUST_INTERNAL_SERVICE_KEY}
+      # Site-enforced NVFLARE privacy policy (FLIP#851) — set in the trust's kit file
+      # (Host-local profile) and rendered into /app/local/privacy.json by the fl-client
+      # entrypoint at container start. Unset/empty = no site policy (previous behavior).
+      - FL_SITE_PRIVACY_POLICY=${FL_SITE_PRIVACY_POLICY:-}
+      - FL_SITE_PRIVACY_PERCENTILE=${FL_SITE_PRIVACY_PERCENTILE:-}
+      - FL_SITE_PRIVACY_GAMMA=${FL_SITE_PRIVACY_GAMMA:-}
     networks:
       - default
       - deploy_shared-net-1
@@ -50,6 +71,11 @@ services:
 
   fl-client-net-2:
     image: ${DOCKER_FL_REGISTRY}${DOCKER_FL_CLIENT_NAME}:${DOCKER_FL_TAG}
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    # No capability added back — see fl-client-net-1 above.
     volumes:
       # Mount the base images download directory to share images downloaded from XNAT with FL clients
       - ${BASE_IMAGES_DOWNLOAD_DIR}:/app/data/images
@@ -73,6 +99,10 @@ services:
       # This key is per-trust and never leaves the trust environment.
       - TRUST_INTERNAL_SERVICE_KEY_HEADER=${TRUST_INTERNAL_SERVICE_KEY_HEADER}
       - TRUST_INTERNAL_SERVICE_KEY=${TRUST_INTERNAL_SERVICE_KEY}
+      # Site-enforced NVFLARE privacy policy (FLIP#851) — see the fl-client-net-1 note.
+      - FL_SITE_PRIVACY_POLICY=${FL_SITE_PRIVACY_POLICY:-}
+      - FL_SITE_PRIVACY_PERCENTILE=${FL_SITE_PRIVACY_PERCENTILE:-}
+      - FL_SITE_PRIVACY_GAMMA=${FL_SITE_PRIVACY_GAMMA:-}
     networks:
       - default
       - deploy_shared-net-2

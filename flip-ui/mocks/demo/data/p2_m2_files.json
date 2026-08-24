@@ -1,0 +1,82 @@
+[
+  {
+    "id": "c2b48d39-325e-478e-b03e-fab03a4b35a5",
+    "name": "arkplus_finetuned_weights.pt",
+    "size": 795539335.0,
+    "type": "application/octet-stream",
+    "status": "COMPLETED",
+    "modelId": "fcf8cb36-5685-4085-abc1-14bd25151566",
+    "created": null,
+    "modified": null
+  },
+  {
+    "id": "b8749850-4a31-42af-af09-32f422714bac",
+    "name": "arkplus_flat_models.py",
+    "size": 3285.0,
+    "type": "application/octet-stream",
+    "status": "COMPLETED",
+    "modelId": "fcf8cb36-5685-4085-abc1-14bd25151566",
+    "created": null,
+    "modified": null
+  },
+  {
+    "id": "32feaae6-0234-494f-9b7a-e1fab5303254",
+    "name": "arkplus_pretrained_weights.pt",
+    "size": 795823544.0,
+    "type": "application/octet-stream",
+    "status": "COMPLETED",
+    "modelId": "fcf8cb36-5685-4085-abc1-14bd25151566",
+    "created": null,
+    "modified": null
+  },
+  {
+    "id": "3e8017f3-7183-4b6e-a1e3-d536a17e7c2c",
+    "name": "config.json",
+    "size": 1425.0,
+    "type": "application/json",
+    "status": "COMPLETED",
+    "modelId": "fcf8cb36-5685-4085-abc1-14bd25151566",
+    "created": null,
+    "modified": null
+  },
+  {
+    "id": "c27f3216-51ad-4042-9321-0a630de5eddf",
+    "name": "data_utils.py",
+    "size": 15460.0,
+    "type": "application/octet-stream",
+    "status": "COMPLETED",
+    "modelId": "fcf8cb36-5685-4085-abc1-14bd25151566",
+    "created": null,
+    "modified": null
+  },
+  {
+    "id": "f7021525-a6c1-4c0a-87e7-8a245c4fb152",
+    "name": "evaluator.py",
+    "size": 19384.0,
+    "type": "application/octet-stream",
+    "status": "COMPLETED",
+    "modelId": "fcf8cb36-5685-4085-abc1-14bd25151566",
+    "created": null,
+    "modified": null
+  },
+  {
+    "id": "8e76f50b-753d-4709-a4f7-109f3b7e1079",
+    "name": "metrics_utils.py",
+    "size": 13615.0,
+    "type": "application/octet-stream",
+    "status": "COMPLETED",
+    "modelId": "fcf8cb36-5685-4085-abc1-14bd25151566",
+    "created": null,
+    "modified": null
+  },
+  {
+    "id": "1a51a415-316e-4800-9120-878c4a467bcc",
+    "name": "models.py",
+    "size": 4886.0,
+    "type": "application/octet-stream",
+    "status": "COMPLETED",
+    "modelId": "fcf8cb36-5685-4085-abc1-14bd25151566",
+    "created": null,
+    "modified": null
+  }
+]

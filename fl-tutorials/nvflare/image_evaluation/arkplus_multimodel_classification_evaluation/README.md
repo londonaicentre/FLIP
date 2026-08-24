@@ -42,7 +42,7 @@ legacy tutorial.
 
 ## Compatible job type
 
-This tutorial is designed for `JOB_TYPE=evaluation_client_api`.
+This tutorial is designed for `JOB_TYPE=evaluation`.
 
 ## Prerequisites
 
@@ -140,7 +140,7 @@ your own, set `FINETUNED_CHECKPOINT` in `.env.app` to a URL or a local (absolute
 
 Default local development settings are in `.env.app`:
 
-- `JOB_TYPE=evaluation_client_api`
+- `JOB_TYPE=evaluation`
 - `RAW_CHECKPOINT=models/Ark6_swinLarge768_ep50.pth.tar`
 - `FINETUNED_CHECKPOINT=` (empty → download the default fine-tuned model from `aicentreflip/tutorials-arkplus-cxr-finetuned`)
 - `DEV_IMAGES_DIR` / `DEV_DATAFRAME` and the per-site `SITE{1,2}_*` paths

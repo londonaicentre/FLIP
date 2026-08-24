@@ -47,9 +47,10 @@ This example of Flower uses a small MONAI UNet based on FLIP's implementation an
 
 ### Recommended: Docker Compose
 
-From the repository root:
+From the Flower service directory:
 
 ```bash
+cd fl-services/flower
 make build                # build the fl-base / superlink / supernode images
 make up                   # start fl-api, superlink, supernode-1, supernode-2
 ```
@@ -57,7 +58,7 @@ make up                   # start fl-api, superlink, supernode-1, supernode-2
 Then submit the run against the `fl-api` control plane:
 
 ```bash
-make submit APP=3d_spleen_segmentation
+make submit APP=3d_spleen_segmentation    # from fl-services/flower/
 ```
 
 The default stack publishes no host ports; `make submit` execs into the fl-api
@@ -135,6 +136,90 @@ What changes when it is set:
 - The key must be one the clients actually report. Name a key nobody emits and the run completes with no
   best model at all, logging a warning per round rather than failing — check the ServerApp log if the
   artefact is missing.
+
+## Differential privacy
+
+Training updates are privatised **on the SuperNode**, before the reply leaves the trust. The
+`flip_local_dp_mod` mod from
+[`flip.flower.privacy`](../../../flip-utils/flip/flower/privacy.py) clips the local update to a
+fixed L2 norm and adds Gaussian noise scaled to the configured budget:
+
+```
+sigma = dp-sensitivity * sqrt(2 * ln(1.25 / dp-delta)) / dp-epsilon
+```
+
+It is wired in `app/client_app.py` as `@app.train(mods=[flip_local_dp_mod])`, so it covers training
+rounds only — `@app.evaluate` is untouched. That mirrors the scope of the NVFLARE apps'
+`PercentilePrivacy` result filter, though the mechanism is stronger: NVFLARE sparsifies by
+percentile and adds no noise, while this is a real (epsilon, delta) mechanism built on Flower's own
+`compute_clip_model_update` / `add_gaussian_noise_inplace`.
+
+| Key                | Default | Meaning |
+|--------------------|---------|---------|
+| `dp-enabled`       | `true`  | Master switch. `false` makes the mod a pass-through, so DP-on / DP-off runs use an identical app |
+| `dp-clipping-norm` | `1.0`   | L2 norm the update is clipped to before noise |
+| `dp-sensitivity`   | `1e-4`  | How much one training example can move the update |
+| `dp-epsilon`       | `10.0`  | Privacy budget — smaller means more privacy and more noise |
+| `dp-delta`         | `1e-5`  | Probability the guarantee fails outright |
+
+Override per run without editing the app:
+
+```bash
+flwr run . --run-config "dp-enabled=false"
+flwr run . --run-config "dp-epsilon=1.0 dp-clipping-norm=0.5"
+```
+
+> ⚠️ **The defaults are demonstration values, chosen utility-first** so this tutorial still
+> converges with the mechanism live (they give sigma ≈ 4.8e-5). They are **not** a defensible
+> privacy budget. A real one calibrates `dp-sensitivity` to the local dataset — roughly
+> `2 * dp-clipping-norm / |D|` for an average-of-examples update — and accounts for composition
+> across rounds, which this mod does not do: every round spends the budget again. With only a
+> handful of trusts the noise also does not average down the way central DP's does.
+
+Integer entries in the state dict (BatchNorm's `num_batches_tracked` counters) pass through
+unprivatised. They are step counts rather than learned parameters, and Flower's clipping scales
+each array in place by a float, which numpy refuses to write back into an int array — so the mod
+excludes them rather than crashing the client the first time clipping engages.
+
+## Running on a real FLIP project: data enrichment
+
+Everything above runs against **local** data. On a real FLIP project the images come from each Trust's
+PACS — and PACS supply images only. A segmentation mask is a 3D volume with nowhere to live in OMOP, so
+the labels must be uploaded into each Trust's XNAT before training. That is the platform's **data
+enrichment** stage.
+
+(Contrast the chest X-ray classification tutorial, whose labels *are* in OMOP: its cohort query projects
+them as dataframe columns and it needs no enrichment. See the Data Enrichment user guide.)
+
+Each label must land in the **same scan's `NIFTI` resource** as its image, named to match — the app
+pairs them by filename, substituting `/input_` with `/label_`. Run the upload **after the image pull and
+after DICOM-to-NIfTI conversion**.
+
+```bash
+make -C fl-tutorials download-spleen-data FL_BACKEND=flower
+
+export XNAT_HOST=https://xnat.trust.example
+export XNAT_USER=your-username
+export XNAT_PASS=your-password
+
+make -C fl-tutorials upload-spleen-labels FL_BACKEND=flower FLIP_PROJECT_ID=<project-uuid> \
+  XNAT_URLS="http://127.0.0.1:8104 http://127.0.0.1:8106" DRY_RUN=1
+```
+
+`DRY_RUN=1` reports what would happen without changing anything — do that first, then drop it to upload.
+One invocation covers every Trust in `XNAT_URLS` (above, the dev roster: GSTT on 8104, KCH on 8106), which
+matters because each Trust's XNAT holds only its own studies and a Trust left without labels fails training.
+
+> **This tutorial's download covers only part of the cohort.** `download-spleen-data FL_BACKEND=flower`
+> pulls a fixed 6-case HF snapshot and ignores `NUM_CASES`, while the accession mapping spans 41. Enriching
+> from it succeeds but leaves most of the cohort unlabelled, and the command says so. For full coverage use
+> the NVFLARE download (`make -C fl-tutorials/nvflare download-spleen-data NUM_CASES=41`) and point
+> `SPLEEN_LABELS_DIR` at it — the labels are backend-agnostic once they are in XNAT.
+
+Enrichment is **backend-agnostic**: the labels live in XNAT, so a project enriched once can be trained by
+either backend. This target deliberately delegates to the single copy of the upload script in
+`fl-tutorials/nvflare/image_segmentation/3d_spleen_segmentation/utils/`, passing this tutorial's own data
+directory — see that tutorial's README for the full walkthrough and options.
 
 ## Data Location
 

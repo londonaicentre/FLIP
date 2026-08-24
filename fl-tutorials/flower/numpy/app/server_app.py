@@ -36,8 +36,9 @@ def main(grid: Grid, context: Context) -> None:
     # Initialize FedAvg strategy
     strategy = FedAvg()
 
-    # Start strategy, run FedAvg for `num_rounds`
-    result = strategy.start(
+    # Start strategy, run FedAvg for `num_rounds`. The returned result carries the final arrays and
+    # aggregated metrics; this toy app has nothing to persist, so it is deliberately not bound.
+    strategy.start(
         grid=grid,
         initial_arrays=arrays,
         num_rounds=num_rounds,
