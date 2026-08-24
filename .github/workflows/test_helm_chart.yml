@@ -73,6 +73,11 @@ jobs:
         with:
           version: "v4.2.3"
 
+      # For the PyYAML the kit-volume assertion runs under — the runner image's
+      # system python is not guaranteed to carry it.
+      - name: Install uv
+        run: pip install uv
+
       - name: Render template (default/nvflare)
         run: helm template trust-release deploy/providers/kubernetes/ > /dev/null
 
@@ -242,6 +247,84 @@ jobs:
             echo "::error::a chart template echoes a credential into the pod log"
             exit 1
           fi
+
+      # FLIP#999. The fl-client-kit volume and the kit-init initContainer encode the same
+      # decision — "is this backend's kit fetched from S3?" — and must agree (why, and what
+      # goes wrong when they do not, is on flip-trust.flClientKitFromS3 in _helpers.tpl). The
+      # regression this guards: gated separately, the volume's gate read only the NVFLARE flag,
+      # which values.yaml defaults to true, so a Flower trust staging its kit on the node
+      # rendered an emptyDir and started with empty /certs and /keys — no error at deploy time,
+      # just a SuperNode that never registers and logs a repeating "Connection attempt failed",
+      # indistinguishable from a TLS or network fault. That silence is why the shapes are
+      # asserted in CI rather than left to review.
+      #
+      # Scoped with --show-only, so the shapes have to hold in the fl-client manifest and not
+      # merely somewhere in the release. kitHostPath is set in BOTH cases below, so each pair
+      # of renders differs on kitFromS3 alone and the assertions pin the precedence between
+      # the two flags: kitFromS3 must win over a leftover kitHostPath, or kit-init would
+      # aws-s3-sync --delete and chown the staged node directory as root. Without that, a
+      # volume gate reading kitHostPath alone would pass every assertion here.
+      - name: fl-client kit volume follows the active backend (FLIP#999)
+        run: |
+          # The volume is asserted by parsing the manifest and selecting the named entry under
+          # spec.template.spec.volumes, not by grepping around the string "name: fl-client-kit":
+          # that string also names every volumeMount that reads the kit, so a context-window
+          # grep tests whichever node happens to sit near a match rather than the volume itself.
+          assert_kit_volume() { # <backend> <expected volume type> <manifest> <what a mismatch means>
+            uv run --no-project --with "pyyaml==6.0.3" python - "$@" <<'PY'
+          import sys, yaml
+
+          backend, want, path, consequence = sys.argv[1:5]
+
+          def die(msg):
+              print(f"::error::{msg}")  # workflow commands are read from stdout, not stderr
+              sys.exit(1)
+
+          # --show-only still emits the file's other documents (ServiceAccount, ConfigMap).
+          docs = [d for d in yaml.safe_load_all(open(path)) if d and d.get("kind") == "Deployment"]
+          if len(docs) != 1:
+              die(f"{backend}: expected exactly 1 fl-client Deployment, got {len(docs)}")
+          vols = docs[0]["spec"]["template"]["spec"]["volumes"]
+          vol = next((v for v in vols if v["name"] == "fl-client-kit"), None)
+          if vol is None:
+              die(f"{backend}: no fl-client-kit volume rendered at all")
+          if want not in vol:
+              got = sorted(k for k in vol if k != "name")
+              die(f"{backend}: fl-client-kit rendered as {got}, not {want} — {consequence}")
+          PY
+          }
+
+          for backend in nvflare flower; do
+            # Staged on the node: hostPath, and NO kit-init. Only this backend's own
+            # kitFromS3 flag is disabled — the other backend's is left at its values.yaml
+            # default, which is exactly the shape that regressed.
+            helm template trust-release deploy/providers/kubernetes/ \
+              --set flBackend="${backend}" \
+              --set "flClient.${backend}.kitFromS3.enabled=false" \
+              --set flClient.kitHostPath=/opt/fl-kit \
+              --show-only templates/fl-client.yaml > /tmp/kit-staged-"${backend}".yaml
+            assert_kit_volume "${backend}" hostPath /tmp/kit-staged-"${backend}".yaml \
+              "the kit staged at flClient.kitHostPath is silently dropped"
+            if grep -qF 'name: kit-init' /tmp/kit-staged-"${backend}".yaml; then
+              echo "::error::${backend}: kit-init rendered with kitFromS3 disabled — it would overwrite the staged kit"
+              exit 1
+            fi
+
+            # Fetched from S3 (kitHostPath still set — see the step comment): emptyDir for
+            # kit-init to populate, and kit-init present. Also the positive control that stops
+            # the staged case above passing vacuously if the volume stopped rendering at all.
+            helm template trust-release deploy/providers/kubernetes/ \
+              --set flBackend="${backend}" \
+              --set "flClient.${backend}.kitFromS3.enabled=true" \
+              --set flClient.kitHostPath=/opt/fl-kit \
+              --show-only templates/fl-client.yaml > /tmp/kit-s3-"${backend}".yaml
+            assert_kit_volume "${backend}" emptyDir /tmp/kit-s3-"${backend}".yaml \
+              "kit-init would have nothing to populate"
+            if ! grep -qF 'name: kit-init' /tmp/kit-s3-"${backend}".yaml; then
+              echo "::error::${backend}: kitFromS3 enabled but kit-init did not render — nothing would populate the volume"
+              exit 1
+            fi
+          done
 
   kind-e2e:
     name: kind E2E

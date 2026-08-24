@@ -813,16 +813,25 @@ def get_reimport_queries_service(max_reimport_count: int, session: Session) -> l
     Assumes relationships:
     - XNATProjectStatus.trust -> Trust
     - (optional) Queries -> XNATProjectStatus via project_id
+
+    A deleted project is excluded via ``Projects.deleted``, not via the imaging status: soft delete leaves
+    Trust imaging intact (FLIP#963) and no longer writes ``DELETED``, so the project row is the only gate
+    that still moves. Without it the sweep would keep queueing ``REIMPORT_STUDIES`` for deleted projects,
+    pulling *new* patient imaging into a Trust's XNAT after deletion — acquisition, not retention. The
+    ``!= DELETED`` predicate is kept as a belt-and-braces check for rows written before FLIP#963 and for the
+    explicit purge path (FLIP#997), which will set that status once a Trust confirms the deletion.
     """
     try:
         stmt = (
             select(Queries, XNATProjectStatus, Trust)
             .join(XNATProjectStatus, col(Queries.project_id) == col(XNATProjectStatus.project_id))
             .join(Trust, col(XNATProjectStatus.trust_id) == Trust.id)
+            .join(Projects, col(XNATProjectStatus.project_id) == Projects.id)
             .where(
                 XNATProjectStatus.reimport_count < max_reimport_count,
                 XNATProjectStatus.retrieve_image_status != XNATImageStatus.DELETED,
                 XNATProjectStatus.query_at_creation == Queries.id,
+                col(Projects.deleted).is_(False),
             )
         )
 
