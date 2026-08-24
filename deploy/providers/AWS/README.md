@@ -785,11 +785,11 @@ revert by flipping `MANAGE_DNS=true` + `make plan`/`apply` once the zone lands:
 
 **State of the LZA path** (tracked on #749):
 
-- **Multi-AZ has landed platform-side** (verified against the live account 2026-08-20): both AZs now carry an
-  `-app-*`, a `-data-*` and a `-tgw-*` subnet, which clears the earlier single-AZ constraints — the RDS subnet
-  group's two-AZ requirement is satisfiable, and the TGW attachment no longer rides a lone `tgw-a` subnet with
-  `-b`-originated traffic blackholing (the condition reported on PR#830). No FLIP-side change was needed: the
-  subnet lookups glob every matching Name tag, so the second AZ arrived on an ordinary plan.
+- **Multi-AZ has landed platform-side** (verified against the live account 2026-08-24): both AZs carry an
+  `-app-*`, a `-data-*` and a `-tgw-*` subnet, which clears the earlier single-AZ constraints — the live
+  `flip-db-subnet-group` spans both AZs, and the TGW attachment now rides `tgw-a` **and** `tgw-b`, so traffic
+  originating in the `-b` subnets no longer blackholes (the condition reported on PR#830). No FLIP-side change
+  was needed: the subnet lookups glob every matching Name tag, so the second AZ arrived on an ordinary plan.
 - **FL ingress is wired.** `fl_ingress_lza.tf` creates the internal NLB (static per-subnet IPs, so the edge can
   register them once as targets), its target group fronting `fl-server-net-1`, and the `/flip/networking/*` SSM
   handoff the networking account consumes. The full chain — internet → edge NLB → TGW → central firewall →
