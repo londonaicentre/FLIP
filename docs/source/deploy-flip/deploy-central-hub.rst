@@ -14,11 +14,55 @@ and :doc:`deploy-flip-node-in-tre`.
    :local:
    :depth: 2
 
+****************
+Deployment modes
+****************
+
+The Terraform root in ``deploy/providers/AWS/`` supports **two deployment modes**, both
+permanently supported. They share one root module — the second is selected by an environment
+flag, not a fork of the code.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 20 18 31 31
+
+   * - Mode
+     - Selected by
+     - Network
+     - Ingress
+   * - **Self-contained** (default)
+     - ``PROD=stag`` / ``PROD=true``
+     - FLIP creates its own VPC, subnets, internet gateway and NAT
+     - In-account CloudFront for the UI and ``/api/*``; a public NLB for FL traffic
+   * - **Platform-managed**
+     - ``PROD=lza``
+     - Discovered from a VPC provisioned by the AWS `Landing Zone Accelerator
+       <https://aws.amazon.com/solutions/implementations/landing-zone-accelerator-on-aws/>`_;
+       FLIP creates no network resources
+     - A shared networking account's edge, reached over a Transit Gateway; no public load
+       balancer in the workload account
+
+**Self-contained** is the default, and the shape the rest of this page assumes. Everything
+FLIP needs lives in one AWS account, which is the simplest way to stand up a Central Hub.
+
+**Platform-managed** suits an AWS estate already governed by the Landing Zone Accelerator,
+where a platform team owns the network, the guardrails and a shared edge, and workload
+accounts are denied VPC-layer creation. FLIP then discovers the network it is given instead
+of building one, and ingress arrives through the estate's own edge. Deploying this way means
+coordinating with whoever operates that estate — the account needs its VPC, Transit Gateway
+attachment, egress path and edge listeners in place before FLIP applies. The operator-facing
+detail (what the flag gates on and off, the environment file, and the handoff to the
+networking account) is in the "Deploying onto an LZA estate" section of
+`deploy/providers/AWS/README.md
+<https://github.com/londonaicentre/FLIP/blob/main/deploy/providers/AWS/README.md>`_.
+
+Where a command below differs between the two, the difference is called out inline.
+
 ************
 Architecture
 ************
 
-The Central Hub stack runs in a custom VPC with public and private subnets across two AZs:
+In the self-contained mode the Central Hub stack runs in a custom VPC with public and private subnets across two AZs:
 
 - **flip-ui** — static assets served from S3 behind CloudFront at the canonical subdomain (``stag.flip.aicentre.co.uk`` / ``app.flip.aicentre.co.uk``). CloudFront also forwards ``/api/*`` to the ALB.
 - **flip-api** — the central application API.
@@ -27,6 +71,11 @@ The Central Hub stack runs in a custom VPC with public and private subnets acros
 - **Cognito** — user authentication (TOTP MFA enforced).
 - **SES** — transactional email (invites, password reset, access requests).
 - **Secrets Manager** — AES key, database password, internal service key hash.
+
+Under the platform-managed mode the same services run unchanged; what differs is where they
+sit and how traffic reaches them. The VPC and subnets are the accelerator's, there is no
+in-account CloudFront distribution and no public NLB, and both web and FL traffic arrive from
+the shared networking account over the Transit Gateway.
 
 Operator access is via AWS Systems Manager (SSM) Session Manager — port 22 is
 **not** open on any security group.
@@ -41,13 +90,13 @@ Prerequisites
 4. **GitHub CLI** — needed to authenticate against GitHub Container Registry for image pulls.
 5. **SSH key pair** at ``~/.ssh/host-aws`` — uploaded to AWS and used as the
    identity file for the SSM ProxyCommand-based SSH config.
-6. **Environment file** — ``.env.stag`` (staging) or ``.env.production``
-   (production) in the project root.
+6. **Environment file** — ``.env.stag`` (staging), ``.env.production``
+   (production), or ``.env.lza-prod`` (platform-managed) in the project root.
 7. **AWS Session Manager plugin** — required for ``ssh flip`` and ``make forward-trust``.
 
-AWS profile aliases (``prod``, ``stag``, ``dev``) should be configured in
-``~/.aws/config`` so the Makefile guards can verify the active profile against
-the chosen environment.
+AWS profile aliases (``prod``, ``stag``, ``dev``, and ``lza-prod`` for a
+platform-managed deployment) should be configured in ``~/.aws/config`` so the
+Makefile guards can verify the active profile against the chosen environment.
 
 ************************
 Required IAM permissions
@@ -113,9 +162,21 @@ This runs, in order:
 13. ``status`` — comprehensive health checks.
 
 The ``PROD`` variable selects the environment file (``stag`` → ``.env.stag``,
-``true`` → ``.env.production``) and is mapped onto ``TF_VAR_environment``
-(``stag`` or ``prod``) so Terraform can gate prod-only RDS hardening (deletion
-protection, final snapshot).
+``true`` → ``.env.production``, ``lza`` → ``.env.lza-prod``) and is mapped onto
+``TF_VAR_environment`` — ``stag`` for staging, ``prod`` for both ``true`` and
+``lza`` — so Terraform can gate prod-only RDS hardening (deletion protection,
+final snapshot). ``PROD=lza`` additionally sets the platform-managed-network
+flag, which is orthogonal to the environment name: a platform-managed
+deployment is a production estate and keeps every prod-only control.
+
+.. note::
+
+   ``full-deploy`` is the self-contained chain. Some of its steps — the cloud
+   trust EC2, the SSH and Ansible provisioning — do not apply to a
+   platform-managed deployment, and the chain, along with ``make status`` and
+   ``make destroy``, is not yet exercised there. On ``PROD=lza`` run ``init`` /
+   ``plan`` / ``apply`` followed by ``deploy-centralhub`` and ``deploy-ui``; see
+   the AWS README section linked under `Deployment modes`_.
 
 Subsequent UI-only deploys do not need Terraform:
 
@@ -135,7 +196,7 @@ For debugging or selective steps:
 
 .. code-block:: shell
 
-   export PROD=stag    # or: export PROD=true
+   export PROD=stag    # or: export PROD=true, or PROD=lza (platform-managed)
 
    make github-login
    make aws-login
@@ -173,8 +234,9 @@ for full details):
   trust API key and written into the trust's kit file.
 
 ``make generate-internal-service-key`` populates the active env file
-(``.env.stag`` or ``.env.production``) and preserves any keys that already
-exist; ``make register-trusts`` writes the per-trust keys into the kit files.
+(``.env.stag``, ``.env.production`` or ``.env.lza-prod``) and preserves any keys
+that already exist; ``make register-trusts`` writes the per-trust keys into the
+kit files.
 
 ***********************
 Applying schema changes
