@@ -311,6 +311,16 @@ flClient:
     repository: ghcr.io/londonaicentre
     tag: stag
     pullPolicy: Always
+  nvflare:
+    # Site-enforced privacy policy (FLIP#851): rendered into /app/local/privacy.json
+    # at container start by `python -m flip.nvflare.site_policy`. Empty string = unset
+    # = no site policy (previous behavior). policy: "percentile"; the params
+    # mirror the FL_SITE_PRIVACY_* env vars documented in trust/README.md. An invalid
+    # combination fails the pod (fail closed) rather than running unfiltered.
+    sitePrivacy:
+      policy: ""
+      percentile: ""
+      gamma: ""
   flower:
     superlink: ""
     supernodeClientAppIoAddress: "127.0.0.1:9094"

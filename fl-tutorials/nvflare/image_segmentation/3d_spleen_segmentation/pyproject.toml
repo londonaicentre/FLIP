@@ -2,7 +2,7 @@
 name = "spleen-segmentation-tutorial"
 version = "0.1.0"
 description = "Local uv environment for the 3D spleen segmentation tutorial utilities."
-requires-python = ">=3.12"
+requires-python = ">=3.12,<3.14"
 dependencies = [
     "monai>=1.5.1",
     "natsort>=8.4.0",

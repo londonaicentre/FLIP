@@ -47,6 +47,18 @@ beforeEach(() => {
     }
     ).as("getPermissionsGlobal");
 
+    // The main layout resolves the signed-in user's profile on every page load. The fixture
+    // carries an empty `name` on purpose: specs sign in as different users, and the header falls
+    // back to the signed-in email address when there is no profile name, which is what they
+    // assert on. Override this intercept in a spec that needs the display-name path.
+    cy.intercept(
+        "GET",
+        "/users/me", {
+        statusCode: 200,
+        fixture: "user/getCurrentUser"
+    }
+    ).as("getCurrentUserGlobal");
+
     cy.intercept(
         "GET",
         "/projects?pageNumber=1&pageSize=20", {

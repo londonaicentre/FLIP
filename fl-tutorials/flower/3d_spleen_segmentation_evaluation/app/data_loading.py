@@ -45,6 +45,7 @@ class FLIP_BASE:
         """
         datalist: list[dict[str, str]] = []
 
+        images_found = 0
         # loop over each accession id in the train set
         for accession_id in self.dataframe["accession_id"]:
             try:
@@ -62,6 +63,7 @@ class FLIP_BASE:
 
             # get all images in the accession folder that match the pattern "input_*.nii.gz"
             all_images = list(accession_folder_path.rglob("input_*.nii.gz"))
+            images_found += len(all_images)
 
             for img in all_images:
                 # for each image, find the corresponding segmentation mask
@@ -94,4 +96,15 @@ class FLIP_BASE:
                 datalist.append({"image": str(img), "label": seg})
 
         log(INFO, f"Found {len(datalist)} files in total — evaluating all of them.")
+
+        # Fail here rather than letting an empty dataset surface downstream as torch's opaque
+        # "num_samples should be a positive integer value, but got num_samples=0".
+        if not datalist:
+            raise RuntimeError(
+                f"No image/label pairs found: {images_found} input_*.nii.gz image(s) across "
+                f"{len(self.dataframe['accession_id'])} accession(s), none with a matching label_*.nii.gz. "
+                "Supervised evaluation needs a label beside each image in XNAT — was the data-enrichment step "
+                "run, and did it run after DICOM-to-NIfTI conversion? See the Data Enrichment user guide."
+            )
+
         return datalist

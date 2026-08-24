@@ -80,6 +80,18 @@ COHORT_QUERY_THRESHOLD=10
 
 This is the minimum cohort size the trust will release anything about. Cohort statistics below it are privacy-suppressed (a genuine zero and a small count are indistinguishable), and both row-level routes refuse outright — `/cohort/dataframe`, which supplies FL training data, and `/cohort/accession-ids`, which decides whose imaging is pulled into XNAT. Raise it to release less. It is the operator's setting, not the hub's: trusts need not agree on a value, and the hub cannot lower it. See [`data-access-api/README.md`](data-access-api/README.md#row-level-data-and-the-disclosure-threshold). The same schema serves dev trusts (GSTT/KCH against a local hub), on-prem trusts (against a prod hub), and laptop-against-prod testing — operator picks the kit code (`trust/.env.<CODE>.<env>`) and `make -C trust up-trust KIT=<CODE> PROD=<env>` handles the rest.
 
+#### Site-enforced FL privacy policy (optional, NVFLARE only)
+
+The kit file's Host-local profile can set `FL_SITE_PRIVACY_POLICY=percentile` (plus optional
+`FL_SITE_PRIVACY_*` parameters — see the commented block in `trust/.env.example`). The fl-client entrypoint
+renders these into the client's NVFLARE `local/privacy.json` at container start, so THIS trust's
+update-privacy filter is applied to every outgoing model update regardless of the researcher's app config
+(site filters run before app filters and jobs cannot opt out). Unset = no site policy (app-level filters
+only, the previous behavior). Invalid values stop the fl-client at startup — fail closed. Apply changes with
+`make -C trust up-fl-clients-kit KIT=<CODE>`; the fl-client log then shows
+`[site-privacy] site privacy policy ACTIVE: ...`. Details: `docs/source/components/component-fl-nodes.rst`
+("Site-enforced privacy policy").
+
 ### 3. Start the trust against the hub
 
 ```sh

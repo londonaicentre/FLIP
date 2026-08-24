@@ -13,6 +13,10 @@
 
 # FLIP Trust — Kubernetes Helm Chart
 
+> **Deploys: trust only.** No Central Hub component is defined by this chart. The hub is still involved —
+> the trust must be registered on it (`make register-trust KIT=<CODE>`) to get its kit file. See
+> [`../README.md`](../README.md) for how this provider relates to the other two.
+
 This Helm chart deploys the FLIP trust-side services on Kubernetes. It follows
 the same **zero inbound trust** architecture as the Docker Compose deployment:
 trust services only make outbound connections to the Central Hub and the FL
@@ -531,6 +535,7 @@ The chart is validated in CI via:
 3. **Network policy blocking**: Check egress CIDRs allow reaching the Central Hub and FL server. Temporarily disable policies with `--set networkPolicies.enabled=false` to isolate.
 4. **GPU not visible**: Verify `nvidia.com/gpu` annotation on the fl-client pod. Check CUDA env vars (`CUDA_VISIBLE_DEVICES`, `NVIDIA_VISIBLE_DEVICES`) are set via `flClient.gpu.enabled: true`.
 5. **Flower superlink**: For Flower backend, verify `flClient.flower.superlink` is a reachable gRPC endpoint and root certificates are in the kit.
+6. **Staged kit unreadable**: Verify the node directory at `flClient.kitHostPath` is readable by the client's runtime uid (NVFLARE 1000, Flower 49999).
 
 ### Network policy blocking intra-service traffic
 
