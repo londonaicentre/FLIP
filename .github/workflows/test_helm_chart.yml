@@ -270,82 +270,105 @@ jobs:
             exit 1
           fi
 
-      # FLIP#999. The fl-client-kit volume and the kit-init initContainer encode the same
-      # decision — "is this backend's kit fetched from S3?" — and must agree (why, and what
-      # goes wrong when they do not, is on flip-trust.flClientKitFromS3 in _helpers.tpl). The
-      # regression this guards: gated separately, the volume's gate read only the NVFLARE flag,
-      # which values.yaml defaults to true, so a Flower trust staging its kit on the node
-      # rendered an emptyDir and started with empty /certs and /keys — no error at deploy time,
-      # just a SuperNode that never registers and logs a repeating "Connection attempt failed",
-      # indistinguishable from a TLS or network fault. That silence is why the shapes are
-      # asserted in CI rather than left to review.
+      # FLIP#999, restated for a chart that no longer fetches the kit (FLIP#965). The
+      # regression this guards was: the fl-client-kit volume and its mounts were gated
+      # separately, and the volume's gate read only the NVFLARE flag, so a Flower trust
+      # rendered an emptyDir and started with empty /certs and /keys — no error at deploy
+      # time, just a SuperNode that never registers and logs a repeating "Connection
+      # attempt failed", indistinguishable from a TLS or network fault. That silence is
+      # why the shapes are asserted in CI rather than left to review.
       #
-      # Scoped with --show-only, so the shapes have to hold in the fl-client manifest and not
-      # merely somewhere in the release. kitHostPath is set in BOTH cases below, so each pair
-      # of renders differs on kitFromS3 alone and the assertions pin the precedence between
-      # the two flags: kitFromS3 must win over a leftover kitHostPath, or kit-init would
-      # aws-s3-sync --delete and chown the staged node directory as root. Without that, a
-      # volume gate reading kitHostPath alone would pass every assertion here.
-      - name: fl-client kit volume follows the active backend (FLIP#999)
+      # With the S3 fetch path removed there is one shape, not two: the kit is ALWAYS the
+      # node directory at flClient.kitHostPath, and nothing in the pod may write to it.
+      # So the assertions are (a) the volume is that hostPath, typed Directory, at exactly
+      # the path set — an emptyDir or a dropped `type` turns a mis-staged kit from a
+      # scheduling failure that names the path into a client that starts against an empty
+      # mount; (b) no initContainer runs at all, since the only one that ever existed was
+      # the removed S3 sync, which --delete'd and chowned that node directory as root; and
+      # (c) the mounts follow the ACTIVE backend and carry the other backend's not at all —
+      # the per-backend subPaths are the half that regressed, and a volume assertion alone
+      # passes while they point at the wrong subdirectories.
+      #
+      # Scoped with --show-only, so the shapes have to hold in the fl-client manifest and
+      # not merely somewhere in the release.
+      - name: fl-client kit is the staged node directory, per backend (FLIP#999)
         run: |
-          # The volume is asserted by parsing the manifest and selecting the named entry under
-          # spec.template.spec.volumes, not by grepping around the string "name: fl-client-kit":
-          # that string also names every volumeMount that reads the kit, so a context-window
-          # grep tests whichever node happens to sit near a match rather than the volume itself.
-          assert_kit_volume() { # <backend> <expected volume type> <manifest> <what a mismatch means>
-            uv run --no-project --with "pyyaml==6.0.3" python - "$@" <<'PY'
+          # Asserted by parsing the manifest and selecting spec.template.spec.volumes by
+          # name, not by grepping around the string "name: fl-client-kit": that string also
+          # names every volumeMount that reads the kit, so a context-window grep tests
+          # whichever node happens to sit near a match rather than the volume itself.
+          for backend in nvflare flower; do
+            helm template trust-release deploy/providers/kubernetes/ \
+              --set flBackend="${backend}" \
+              --set flClient.kitHostPath=/opt/fl-kit \
+              --show-only templates/fl-client.yaml > /tmp/kit-"${backend}".yaml
+            uv run --no-project --with "pyyaml==6.0.3" python - \
+              "${backend}" /tmp/kit-"${backend}".yaml <<'PY'
           import sys, yaml
 
-          backend, want, path, consequence = sys.argv[1:5]
+          backend, path = sys.argv[1:3]
+          HOST_PATH = "/opt/fl-kit"
+          # mountPath -> subPath within the staged kit, for each backend. The fl-client
+          # reads exactly these; the other backend's must not render.
+          MOUNTS = {
+              "nvflare": {
+                  "/app/local": "local",
+                  "/app/startup": "startup",
+                  "/app/transfer": "transfer",
+              },
+              "flower": {
+                  "/certs": "certificates",
+                  "/keys": "keys",
+              },
+          }
 
           def die(msg):
-              print(f"::error::{msg}")  # workflow commands are read from stdout, not stderr
+              print(f"::error::{backend}: {msg}")  # workflow commands are read from stdout
               sys.exit(1)
 
           # --show-only still emits the file's other documents (ServiceAccount, ConfigMap).
           docs = [d for d in yaml.safe_load_all(open(path)) if d and d.get("kind") == "Deployment"]
           if len(docs) != 1:
-              die(f"{backend}: expected exactly 1 fl-client Deployment, got {len(docs)}")
-          vols = docs[0]["spec"]["template"]["spec"]["volumes"]
-          vol = next((v for v in vols if v["name"] == "fl-client-kit"), None)
+              die(f"expected exactly 1 fl-client Deployment, got {len(docs)}")
+          pod = docs[0]["spec"]["template"]["spec"]
+
+          vol = next((v for v in pod["volumes"] if v["name"] == "fl-client-kit"), None)
           if vol is None:
-              die(f"{backend}: no fl-client-kit volume rendered at all")
-          if want not in vol:
+              die("no fl-client-kit volume rendered at all")
+          if "hostPath" not in vol:
               got = sorted(k for k in vol if k != "name")
-              die(f"{backend}: fl-client-kit rendered as {got}, not {want} — {consequence}")
-          PY
+              die(f"fl-client-kit rendered as {got}, not hostPath — "
+                  "the kit staged at flClient.kitHostPath is silently dropped and the "
+                  "client starts against an empty mount")
+          if vol["hostPath"].get("path") != HOST_PATH:
+              die(f"fl-client-kit hostPath is {vol['hostPath'].get('path')!r}, not the "
+                  f"{HOST_PATH!r} that was --set — the kit path is not plumbed through")
+          if vol["hostPath"].get("type") != "Directory":
+              die(f"fl-client-kit hostPath type is {vol['hostPath'].get('type')!r}, not "
+                  "'Directory' — a missing kit would mount as an empty dir instead of "
+                  "failing scheduling with the path named")
+
+          if pod.get("initContainers"):
+              names = [c.get("name") for c in pod["initContainers"]]
+              die(f"fl-client renders initContainers {names} — nothing may run before the "
+                  "client and write to the staged node directory (the removed S3 sync did)")
+
+          containers = [c for c in pod["containers"] if c["name"] == "fl-client"]
+          if len(containers) != 1:
+              die(f"expected exactly 1 fl-client container, got {len(containers)}")
+          got = {
+              m["mountPath"]: m.get("subPath")
+              for m in containers[0].get("volumeMounts", [])
+              if m["name"] == "fl-client-kit"
           }
-
-          for backend in nvflare flower; do
-            # Staged on the node: hostPath, and NO kit-init. Only this backend's own
-            # kitFromS3 flag is disabled — the other backend's is left at its values.yaml
-            # default, which is exactly the shape that regressed.
-            helm template trust-release deploy/providers/kubernetes/ \
-              --set flBackend="${backend}" \
-              --set "flClient.${backend}.kitFromS3.enabled=false" \
-              --set flClient.kitHostPath=/opt/fl-kit \
-              --show-only templates/fl-client.yaml > /tmp/kit-staged-"${backend}".yaml
-            assert_kit_volume "${backend}" hostPath /tmp/kit-staged-"${backend}".yaml \
-              "the kit staged at flClient.kitHostPath is silently dropped"
-            if grep -qF 'name: kit-init' /tmp/kit-staged-"${backend}".yaml; then
-              echo "::error::${backend}: kit-init rendered with kitFromS3 disabled — it would overwrite the staged kit"
-              exit 1
-            fi
-
-            # Fetched from S3 (kitHostPath still set — see the step comment): emptyDir for
-            # kit-init to populate, and kit-init present. Also the positive control that stops
-            # the staged case above passing vacuously if the volume stopped rendering at all.
-            helm template trust-release deploy/providers/kubernetes/ \
-              --set flBackend="${backend}" \
-              --set "flClient.${backend}.kitFromS3.enabled=true" \
-              --set flClient.kitHostPath=/opt/fl-kit \
-              --show-only templates/fl-client.yaml > /tmp/kit-s3-"${backend}".yaml
-            assert_kit_volume "${backend}" emptyDir /tmp/kit-s3-"${backend}".yaml \
-              "kit-init would have nothing to populate"
-            if ! grep -qF 'name: kit-init' /tmp/kit-s3-"${backend}".yaml; then
-              echo "::error::${backend}: kitFromS3 enabled but kit-init did not render — nothing would populate the volume"
-              exit 1
-            fi
+          want = MOUNTS[backend]
+          if got != want:
+              other = MOUNTS["flower" if backend == "nvflare" else "nvflare"]
+              leaked = sorted(set(got) & set(other))
+              extra = f" (it carries the other backend's mounts: {leaked})" if leaked else ""
+              die(f"fl-client-kit mounts are {got}, not {want}{extra} — the client reads "
+                  "the wrong subdirectories of the staged kit and starts with them empty")
+          PY
           done
 
   kind-e2e:
