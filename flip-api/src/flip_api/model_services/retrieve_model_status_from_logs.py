@@ -79,8 +79,14 @@ def retrieve_model_status_from_logs(
     except httpx.HTTPStatusError as exc:
         if exc.response.status_code == 404:
             logger.debug("Could not find model status from logs.")
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Logs not found.")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc))
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Logs not found.") from exc
+        # str() on an HTTPStatusError embeds the full request URL, and elastic_url is a Secrets
+        # Manager value — keep it in the log, never in a response body reachable by any user with
+        # model access.
+        logger.exception("Elasticsearch query for model status failed")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error"
+        ) from exc
 
     logs = response.json().get("hits", {}).get("hits", [])
     if not logs:

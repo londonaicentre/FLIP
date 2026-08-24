@@ -152,8 +152,14 @@ Delete Project
    Projects can be deleted at any time, but:
 
    - Any running training sessions will be deleted and no longer accessible
-   - Images associated with the project will be deleted from XNAT
-   - The project will no longer be visible within XNAT
+   - Imaging already pulled to each Trust is **deliberately retained** in that Trust's XNAT. Deleting a project
+     is a soft delete: the platform record is kept and the deletion audited, but the imaging is not touched.
+     Images could be re-pulled from PACS, whereas the segmentations, contours and annotations added during
+     data enrichment could not — so a project deletion never destroys them
+   - The project therefore remains visible within XNAT to users with access to it there, and is no longer
+     reachable through FLIP
+   - Removing a Trust's imaging is a **separate administrator action**, carried out at the Trust, and is not
+     part of deleting a project
 
 1. Select 'Edit Project'
 2. Under 'Advanced Options', click the 'Delete Project' button
@@ -498,6 +504,10 @@ When model files have been uploaded, you will then need to confirm that the data
 .. note::
 
    You must confirm the data enrichment step is complete (even if no enrichment of the dataset was required and/or actually performed) before training can commence.
+
+.. important::
+
+   If your model trains against labels that are **not** in :term:`OMOP` — segmentation masks and other image-derived annotations — those must be uploaded into each Trust's XNAT *before* you confirm this step, or training will start and then fail with no usable samples. Labels that *are* in OMOP, such as a lab result or a coded report finding, need no upload: project them as a column in your cohort query instead. See :ref:`data-enrichment` for both routes.
 
 1. Navigate to project page
 2. On the right-hand side, toggle the button to confirm the dataset has been enriched

@@ -37,8 +37,8 @@ hand-edit them — regenerate via `recipe.py` after any recipe change and commit
 ## How the aggregation differs from `standard`
 
 - The aggregator accepts the clients' `WEIGHT_DIFF` DXOs directly (stock
-  `InTimeAccumulateWeightedAggregator` default), and FLIP's `ScatterAndGather` deliberately skips
-  its DIFF→WEIGHTS reconstruction when the aggregator expects `WEIGHT_DIFF`.
+  `InTimeAccumulateWeightedAggregator` default) — as every FLIP job type now does; the difference
+  is purely in how the averaged diff is applied.
 - The shareable generator is `flip.nvflare.components.FlipFedOptShareableGenerator` (stock
   `PTFedOptModelShareableGenerator` extended to source the model from the user's
   `models.get_model`), which applies the averaged diff to the global model through the configured

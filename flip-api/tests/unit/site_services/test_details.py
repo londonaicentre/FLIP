@@ -80,8 +80,10 @@ def test_get_details_not_found(client, mock_db):
 
     response = client.get("/api/site/details")
 
-    assert response.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
-    assert "Error fetching site details" in response.json()["detail"]
+    # The service raises a 404 for missing deployment config; the router now passes that status
+    # through unchanged rather than masking it as a 500 with the message embedded.
+    assert response.status_code == status.HTTP_404_NOT_FOUND
+    assert response.json()["detail"] == "Deployment mode not found"
 
 
 @patch("flip_api.site_services.details.has_permissions", return_value=True)
@@ -137,8 +139,9 @@ def test_put_details_failure(mock_perms, client, mock_db):
     response = client.put("/api/site/details", json=payload)
 
     assert response.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
-    assert "Error updating site details" in response.json()["detail"]
-    assert "DB failure" in response.json()["detail"]
+    # The raw exception text must not reach the client (the #888 class of leak).
+    assert response.json()["detail"] == "Internal server error"
+    assert "DB failure" not in response.json()["detail"]
 
 
 @patch("flip_api.site_services.details.has_permissions", return_value=False)

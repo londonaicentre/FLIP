@@ -12,7 +12,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Tests for scripts/onboard_onprem_trust.py::check_data_dir.
+"""Focused tests for the on-prem trust readiness checks.
 
 Regression cover for the on-prem onboarding crash: a trust data dir
 (OMOP_DATA_DIR / ORTHANC_STORAGE_DIR) owned by a container after a previous
@@ -134,6 +134,84 @@ def test_4_missing_dir_fails() -> None:
         _assert("does not exist" in result.detail, "detail mentions missing")
 
 
+def test_5_site_privacy_uses_runtime_validator() -> None:
+    """The readiness check accepts a valid NVFLARE percentile policy."""
+    print("▶ valid NVFLARE site privacy policy -> PASS")
+    result = mod.check_site_privacy_policy(
+        {"FL_BACKEND": "nvflare", "FL_SITE_PRIVACY_POLICY": "percentile"},
+        True,
+        "TEST",
+        SCRIPTS_DIR.parent,
+    )
+    _assert(result.status == mod.Status.PASS, "status is PASS", result.detail)
+
+
+def test_6_site_privacy_rejects_non_finite_value() -> None:
+    """The readiness check inherits fail-closed numeric validation from the renderer."""
+    print("▶ non-finite site privacy parameter -> FAIL")
+    result = mod.check_site_privacy_policy(
+        {
+            "FL_BACKEND": "nvflare",
+            "FL_SITE_PRIVACY_POLICY": "percentile",
+            "FL_SITE_PRIVACY_GAMMA": "inf",
+        },
+        True,
+        "TEST",
+        SCRIPTS_DIR.parent,
+    )
+    _assert(result.status == mod.Status.FAIL, "status is FAIL", result.detail)
+
+
+def test_7_site_privacy_rejects_unsupported_backend() -> None:
+    """A configured policy must not appear active when Flower will ignore it."""
+    print("▶ site privacy policy on Flower -> FAIL")
+    result = mod.check_site_privacy_policy(
+        {"FL_BACKEND": "flower", "FL_SITE_PRIVACY_POLICY": "percentile"},
+        True,
+        "TEST",
+        SCRIPTS_DIR.parent,
+    )
+    _assert(result.status == mod.Status.FAIL, "status is FAIL", result.detail)
+    _assert("ignored" in result.detail, "detail explains that Flower ignores the policy")
+
+
+def test_8_site_privacy_not_configured_reports_cleanly() -> None:
+    """A kit with no FL_SITE_PRIVACY_* vars passes without claiming a stale render exists."""
+    print("▶ no site privacy policy configured -> PASS, clean detail")
+    result = mod.check_site_privacy_policy(
+        {"FL_BACKEND": "nvflare"},
+        True,
+        "TEST",
+        SCRIPTS_DIR.parent,
+    )
+    _assert(result.status == mod.Status.PASS, "status is PASS", result.detail)
+    _assert("no site privacy policy configured" in result.detail, "detail names the no-policy state", result.detail)
+    _assert("remove" not in result.detail, "detail does not claim a stale render", result.detail)
+    _assert("/dev/null" not in result.detail, "detail names no validation path", result.detail)
+
+
+def test_9_site_privacy_rejects_misspelt_variable() -> None:
+    """A typo'd FL_SITE_PRIVACY_* kit var must FAIL here rather than run a weaker filter than intended.
+
+    This check is where the renderer's unknown-name guard actually bites: it forwards every
+    FL_SITE_PRIVACY_-prefixed kit key to the renderer, whereas the compose and Helm delivery paths
+    enumerate only the three known names and drop a typo before it ever reaches the container.
+    """
+    print("▶ misspelt site privacy variable -> FAIL")
+    result = mod.check_site_privacy_policy(
+        {
+            "FL_BACKEND": "nvflare",
+            "FL_SITE_PRIVACY_POLICY": "percentile",
+            "FL_SITE_PRIVACY_PERCENTIL": "25",
+        },
+        True,
+        "TEST",
+        SCRIPTS_DIR.parent,
+    )
+    _assert(result.status == mod.Status.FAIL, "status is FAIL", result.detail)
+    _assert("FL_SITE_PRIVACY_PERCENTIL " in result.detail, "detail names the misspelt variable", result.detail)
+
+
 def main() -> None:
     if not SCRIPT.is_file():
         sys.exit(f"❌ {SCRIPT} not found")
@@ -142,6 +220,11 @@ def main() -> None:
     test_2_populated_dir_passes()
     test_3_empty_dir_fails()
     test_4_missing_dir_fails()
+    test_5_site_privacy_uses_runtime_validator()
+    test_6_site_privacy_rejects_non_finite_value()
+    test_7_site_privacy_rejects_unsupported_backend()
+    test_8_site_privacy_not_configured_reports_cleanly()
+    test_9_site_privacy_rejects_misspelt_variable()
 
     print("—")
     print(f"PASS={PASS}  FAIL={FAIL}")

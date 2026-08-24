@@ -53,7 +53,6 @@ from pathlib import Path
 from typing import Any
 
 from nvflare import FedJob
-from nvflare.apis.dxo import DataKind
 from nvflare.app_common.aggregators import InTimeAccumulateWeightedAggregator
 from nvflare.app_common.executors.in_process_client_api_executor import InProcessClientAPIExecutor
 from nvflare.app_common.shareablegenerators.full_model_shareable_generator import FullModelShareableGenerator
@@ -224,26 +223,16 @@ class FlipFedAvgRecipe(Recipe):
 
         super().__init__(self._build_fed_job())
 
-    def _make_shareable_generator(self):
-        """Build the server's shareable generator — the FedAvg full-model replace by default.
+    def _make_shareable_generator(self) -> FullModelShareableGenerator:
+        """Build the server's shareable generator — the FedAvg diff-apply by default.
 
         Returns:
-            FullModelShareableGenerator: Applies the aggregated ``WEIGHTS`` as the new global model.
-            Subclasses override this (with :meth:`_aggregator_data_kind`) to change the aggregation
+            FullModelShareableGenerator: Adds the aggregated ``WEIGHT_DIFF`` average onto the
+            global model (the aggregator's stock output kind — see the aggregator comment in
+            :meth:`_build_fed_job`). Subclasses override this hook to change the aggregation
             scheme — see :class:`~flip.nvflare.recipes.flip_fedopt_recipe.FlipFedOptRecipe`.
         """
         return FullModelShareableGenerator()
-
-    def _aggregator_data_kind(self) -> DataKind:
-        """DXO kind the aggregator accepts. ``WEIGHTS`` for FedAvg: clients send a ``WEIGHT_DIFF``,
-        which FLIP's :class:`~flip.nvflare.controllers.ScatterAndGather` reconstructs into full
-        weights before aggregation (and deliberately does NOT when this returns ``WEIGHT_DIFF`` —
-        the FedOpt path).
-
-        Returns:
-            DataKind: The aggregator's ``expected_data_kind``.
-        """
-        return DataKind.WEIGHTS
 
     def _build_fed_job(self) -> FedJob:
         """Construct the FedJob NVFLARE's Recipe uses for ``execute(env)``.
@@ -267,9 +256,12 @@ class FlipFedAvgRecipe(Recipe):
             id="persistor",
         )
         shareable_generator_id = job.to_server(self._make_shareable_generator(), id="shareable_generator")
-        aggregator_id = job.to_server(
-            InTimeAccumulateWeightedAggregator(expected_data_kind=self._aggregator_data_kind()), id="aggregator"
-        )
+        # Stock NVFLARE semantics: the aggregator averages the clients' WEIGHT_DIFF updates directly
+        # (its stock default expected kind) and the shareable generator applies the average to the
+        # global model — FedAvg adds it (FullModelShareableGenerator), FedOpt feeds it through the
+        # server optimizer. Partial (frozen-backbone head-only) diffs are natively safe: keys absent
+        # from the averaged diff keep their global value.
+        aggregator_id = job.to_server(InTimeAccumulateWeightedAggregator(), id="aggregator")
 
         # Server: FLIP components (locator, JSON generator, event handler, S3 persistor).
         job.to_server(PTModelLocator(model={"path": "models.get_model"}), id="model_locator")

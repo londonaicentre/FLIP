@@ -85,7 +85,7 @@ def main() -> None:
     parser.add_argument(
         "--workspace",
         type=str,
-        default="/tmp/nvflare/ldm_client_api",
+        default="/tmp/nvflare/ldm",
         help="SimEnv workspace root",
     )
     # NOTE: ``--export``/``--export-dir`` are handled by NVFLARE's ``Recipe.execute`` (it strips them

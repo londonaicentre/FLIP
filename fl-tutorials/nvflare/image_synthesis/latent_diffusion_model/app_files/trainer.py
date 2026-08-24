@@ -17,8 +17,8 @@ autoencoder's latent space) and their cross-site validation passes (``validate_a
 ``validate_dm``). The single-name ``flare.is_train()`` / ``flare.is_evaluate()`` predicates cannot
 distinguish the two train phases, so dispatch is on ``get_task_name()``.
 
-Training tasks send back a full-model weight **diff** (``params_type="DIFF"``; the FLIP
-ScatterAndGather controller rebuilds full weights server-side before aggregation) stamped with the
+Training tasks send back a full-model weight **diff** (``params_type="DIFF"``; the diffs reach the
+stock ``WEIGHT_DIFF`` aggregator untouched, which averages them directly) stamped with the
 ``FlipMetaKey.STAGE`` meta that scopes the ``StagePercentilePrivacy`` DP filter to the modules the
 phase actually trains. Validation tasks send back aggregate metrics only.
 

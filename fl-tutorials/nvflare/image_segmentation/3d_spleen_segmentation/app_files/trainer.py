@@ -121,7 +121,7 @@ def build_datalist(flip: FLIP, dataframe: pd.DataFrame, project_id: str) -> list
     if not datalist:
         # Fail loudly: torch's downstream num_samples=0 error reads like an app bug, when the usual
         # cause is a missing data-enrichment step (no label_*.nii.gz uploaded next to the images).
-        raise ValueError(
+        raise RuntimeError(
             f"No image/label pairs found: {n_images} image(s) across {len(dataframe)} accession(s), "
             "none with a matching label_*.nii.gz. Was the data-enrichment (label upload) step run?"
         )
@@ -298,8 +298,8 @@ def main() -> None:
                 writer.add_scalar("VAL_LOSS@epoch", float(last_val_loss), global_step=cumulative_epoch)
                 writer.add_scalar("VAL_DICE@epoch", float(last_val_dice), global_step=cumulative_epoch)
 
-            # Send back DIFF: FLIP's ScatterAndGather reconstructs full WEIGHTS from the diff
-            # server-side before the WEIGHTS aggregator accepts it.
+            # Send back DIFF: the server aggregates the diffs directly and applies the average
+            # to the global model (stock NVFLARE semantics).
             new_state = {k: v.detach().cpu().numpy() for k, v in model.state_dict().items()}
             diff = {k: new_state[k] - torch_weights[k].detach().cpu().numpy() for k in new_state}
             flare.send(
@@ -310,6 +310,7 @@ def main() -> None:
                     # as "evaluation on the global model" and carries them as INITIAL_METRICS for
                     # IntimeModelSelector.
                     metrics=global_val_metrics,
+                    # Batches across ALL local epochs this round (as in the xray app); the DP clip bound scales with it.
                     meta={"NUM_STEPS_CURRENT_ROUND": n_iterations},
                 )
             )

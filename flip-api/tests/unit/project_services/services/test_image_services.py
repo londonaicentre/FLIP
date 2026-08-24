@@ -127,29 +127,41 @@ class TestDeleteImagingProject:
         result = delete_imaging_project(sample_imaging_project_data, mock_db_session)
 
         assert result is True
-        # Should add a TrustTask and update status
+        # Queues a TrustTask for the trust to act on.
         mock_db_session.add.assert_called_once()
-        mock_db_session.execute.assert_called_once()
         mock_db_session.commit.assert_called_once()
 
     @patch(MOCK_LOGGER_PATH)
-    def test_db_update_fails(
+    def test_status_is_not_marked_deleted_on_queue(
         self,
         mock_logger: MagicMock,
         mock_db_session: MagicMock,
         sample_imaging_project_data: ImagingProject,
     ):
-        db_update_error = Exception("DB Update Failed")
-        mock_db_session.execute.side_effect = db_update_error
+        """Queuing a task is a request, not a result — the trust may never carry it out.
+
+        Marking the status DELETED here made the hub assert imaging was gone while it was still
+        fully present in XNAT (FLIP#963).
+        """
+        delete_imaging_project(sample_imaging_project_data, mock_db_session)
+
+        mock_db_session.execute.assert_not_called()
+
+    @patch(MOCK_LOGGER_PATH)
+    def test_db_failure_rolls_back(
+        self,
+        mock_logger: MagicMock,
+        mock_db_session: MagicMock,
+        sample_imaging_project_data: ImagingProject,
+    ):
+        db_error = Exception("DB Commit Failed")
+        mock_db_session.commit.side_effect = db_error
 
         result = delete_imaging_project(sample_imaging_project_data, mock_db_session)
 
         assert result is False
-        mock_logger.error.assert_called_with(
-            f"Error queuing imaging project deletion: {db_update_error}", exc_info=True
-        )
+        mock_logger.error.assert_called_with(f"Error queuing imaging project deletion: {db_error}", exc_info=True)
         mock_db_session.rollback.assert_called_once()
-        mock_db_session.commit.assert_not_called()
 
 
 # --- get_xnat_project_status_info ---

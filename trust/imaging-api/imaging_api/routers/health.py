@@ -45,6 +45,6 @@ async def health_check() -> dict[str, str | None]:
     Health check endpoint for the Imaging API
 
     Returns:
-        dict: The status of the service and its installed package version.
+        dict[str, str | None]: The status of the service and its installed package version.
     """
     return {"status": "ok", "version": _service_version()}

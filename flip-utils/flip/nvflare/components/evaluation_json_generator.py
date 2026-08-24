@@ -38,13 +38,14 @@ class EvaluationJsonGenerator(ValidationJsonGenerator):
     **Results shape.** Each entry is keyed by data site, then by model name. Which controller drives
     the run decides where the model name comes from:
 
-    - ``GlobalModelEval`` (``evaluation``) sends one ``validate`` task per (model, client)
-      and sets ``AppConstants.MODEL_OWNER``, so results nest under it. Keying on the client alone
-      would let each model's metrics overwrite the previous model's (FLIP#754).
-    - FLIP's own ``ModelEval`` (``evaluation``) sends every model in one task and sets no
-      ``MODEL_OWNER``; the evaluator returns its own model-keyed dict, which is stored as-is.
+    - ``GlobalModelEval`` (the ``evaluation`` job type) sends one ``validate`` task per
+      (model, client) and sets ``AppConstants.MODEL_OWNER``, so results nest under it. Keying on
+      the client alone would let each model's metrics overwrite the previous model's (FLIP#754).
+    - The retired legacy ``ModelEval`` controller (deleted with the Executor syntax) sent every
+      model in one task and set no ``MODEL_OWNER``; the evaluator returned its own model-keyed
+      dict, stored as-is — the no-``MODEL_OWNER`` branch stays for that stored-results shape.
 
-    **Failures.** Both eval controllers fire ``VALIDATION_RESULT_RECEIVED`` *before* they inspect the
+    **Failures.** The eval controller fires ``VALIDATION_RESULT_RECEIVED`` *before* it inspects the
     result's return code, so a failed or aborted task arrives here carrying no DXO. Each such task is
     recorded in ``_eval_failures`` and written to ``PTConstants.EvalFailuresFilename``, and
     :meth:`all_tasks_failed` lets ServerEventHandler fail the run rather than report success on an

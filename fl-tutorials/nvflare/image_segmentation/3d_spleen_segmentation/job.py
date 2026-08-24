@@ -85,7 +85,7 @@ def main() -> None:
     parser.add_argument(
         "--workspace",
         type=str,
-        default="/tmp/nvflare/spleen_client_api",
+        default="/tmp/nvflare/spleen",
         help="SimEnv workspace root",
     )
     # NOTE: ``--export``/``--export-dir`` are handled by NVFLARE's ``Recipe.execute`` (it strips them

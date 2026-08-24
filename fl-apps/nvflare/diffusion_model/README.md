@@ -49,9 +49,9 @@ dispatches on `nvflare.client.api.get_task_name()`. `validator.py` is still requ
 validation passes (and shared latent-geometry helpers) that `trainer.py` imports; it is a plain
 module, not an NVFLARE component.
 
-Training results return as a full-model weight **diff** (`params_type="DIFF"`; the FLIP
-`ScatterAndGather` base rebuilds full weights server-side before the `WEIGHTS` aggregator runs),
-filtered through `StagePercentilePrivacy` — the stage-aware DP filter computes its percentile
+Training results return as a full-model weight **diff** (`params_type="DIFF"`; the aggregator
+averages the clients' `WEIGHT_DIFF` updates directly — the stock default — and the shareable
+generator applies the average to the global model), filtered through `StagePercentilePrivacy` — the stage-aware DP filter computes its percentile
 cutoff over exactly the modules the stage trained, scoped by the `FlipMetaKey.STAGE` meta the
 script stamps on the outgoing `FLModel`.
 
