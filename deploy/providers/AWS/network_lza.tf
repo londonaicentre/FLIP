@@ -16,9 +16,9 @@
 # Platform-managed network (LZA) — FLIP#749
 ############################
 #
-# On the LZA FLIPProduction account (893493035022) the VPC layer is provisioned
-# by the AWS Accelerator pipeline (londonaicentre/lza) and the GRNETSEC2 SCP
-# denies CreateVpc / CreateSubnet / CreateInternetGateway / AllocateAddress /
+# On an LZA-governed workload account the VPC layer is provisioned by the AWS
+# Accelerator pipeline (londonaicentre/lza) and the GRNETSEC2 SCP denies
+# CreateVpc / CreateSubnet / CreateInternetGateway / AllocateAddress /
 # CreateVpcEndpoint to everything but that pipeline (GRTGWVPN makes even
 # route-table edits pipeline-only), so this stack cannot create its own network
 # there. When var.lza_managed_network is set the VPC module is skipped

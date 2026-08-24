@@ -29,7 +29,7 @@
 | ------- | ------------- | --------- |
 | `stag` | Staging | `flipstag` |
 | `prod` | Production | `flipprod` |
-| `lza-prod` | LZA FLIPProduction (`PROD=lza`, FLIP#749; `FLIPAdminAccess` permission set) | `893493035022` |
+| `lza-prod` | LZA estate (`PROD=lza`, FLIP#749; `FLIPAdminAccess` permission set) | `FLIPProduction` |
 | `dev` | Development (the `dev/` root: Cognito + SES; `FlipDeveloperAccess` permission set) | `flipdev` |
 
 ## Key Deploy Commands
@@ -37,7 +37,7 @@
 ```bash
 make full-deploy PROD=stag                   # Full staging deploy
 make full-deploy PROD=true                    # Full prod deploy
-make init/plan/apply PROD=lza                 # LZA FLIPProduction (env-gated; full-deploy chains untested there — see README "Deploying to the LZA account")
+make init/plan/apply PROD=lza                 # LZA estate, platform-managed network (env-gated; full-deploy chains untested there — see README "Deploying onto an LZA estate")
 make full-deploy-hybrid PROD=<stag|true> [LOCAL_TRUST_IP=<ip>]  # Hybrid with on-prem trust
 make full-deploy-hub-only PROD=<stag|true>    # Hub only, NO cloud Trust EC2 (all trusts on-prem, e.g. GPU hosts) — see README "Hub-only Deployment"
 make init/plan/apply                          # Terraform workflow

@@ -586,8 +586,8 @@ The `PROD` variable determines which environment files are loaded:
 
 - `PROD=stag` → Uses the root `.env.stag`
 - `PROD=true` → Uses the root `.env.production`
-- `PROD=lza` → Uses the root `.env.lza-prod` (the LZA FLIPProduction account — see
-  [Deploying to the LZA account](#deploying-to-the-lza-account-flipproduction))
+- `PROD=lza` → Uses the root `.env.lza-prod` (an LZA-governed estate — see
+  [Deploying onto an LZA estate](#deploying-onto-an-lza-estate-prodlza))
 
 If `PROD` is omitted when running the AWS provider Makefile, it defaults to staging.
 
@@ -640,19 +640,31 @@ make apply
 
 See [`dev/README.md`](./dev/README.md) for the one-time `terraform import` workflow that pulls the manually-created dev Cognito pool into state.
 
-### Deploying to the LZA account (FLIPProduction)
+### Deploying onto an LZA estate (PROD=lza)
 
-[FLIP#749](https://github.com/londonaicentre/FLIP/issues/749) migrates the production deployment to the LZA-provisioned
-**FLIPProduction** account (`893493035022`, eu-west-2). Until cutover it runs **in parallel** with legacy prod: every
-LZA adaptation in this stack is env-gated behind `PROD=lza`, and with `PROD=true`/`PROD=stag` the resolved
-configuration is identical to before — the legacy environments are never touched by LZA work.
+This Terraform root supports **two deployment modes**, both permanently:
+
+| Mode | Selected by | Network | Ingress |
+| --- | --- | --- | --- |
+| **Self-contained** (default) | `PROD=stag` / `PROD=true` | FLIP creates its own VPC, subnets, IGW, NAT | In-account CloudFront + public FL NLB |
+| **Platform-managed (LZA)** | `PROD=lza` | Discovered from the accelerator-provisioned VPC; FLIP creates none of it | Shared networking account's two-tier edge, over the Transit Gateway |
+
+Self-contained single-account is the supported open-source deployment shape and is not going away. The LZA mode
+([FLIP#749](https://github.com/londonaicentre/FLIP/issues/749)) is the multi-account shape for estates running AWS's
+[Landing Zone Accelerator](https://aws.amazon.com/solutions/implementations/landing-zone-accelerator-on-aws/), where
+the network, guardrails and edge are owned by the accelerator pipeline rather than by FLIP.
+
+The two are one root module, not a fork: every LZA adaptation is gated behind `var.lza_managed_network` (set from
+`PROD=lza`), so with `PROD=true`/`PROD=stag` the resolved configuration is identical to before — the self-contained
+environments are never touched by LZA work. The AI Centre's own LZA target is the **FLIPProduction** workload
+account in `eu-west-2`, reached through the `lza-prod` profile alias and running alongside legacy prod.
 
 **What `PROD=lza` selects:**
 
 | Concern | Value |
 | --- | --- |
 | Env file | root `.env.lza-prod` (gitignored, like the other env files) |
-| Profile guard | `AWS_PROFILE=lza-prod` — a short local alias for the `FLIPAdminAccess` permission set on `893493035022`, per the same convention as `prod`/`stag` (override via `LZA_AWS_PROFILE`) |
+| Profile guard | `AWS_PROFILE=lza-prod` — a short local alias for the workload account's `FLIPAdminAccess` permission set, per the same convention as `prod`/`stag` (override via `LZA_AWS_PROFILE`) |
 | `TF_VAR_environment` | `prod` — LZA is a production estate, so all prod-only hardening (RDS deletion protection, final snapshot) stays on |
 | `TF_VAR_lza_managed_network` | `true` — the platform-managed-network toggle, orthogonal to `environment` (see below) |
 | Trust kit suffix | `trust/.env.<CODE>.lza-prod` — a separate namespace so legacy prod kits are never overwritten |
@@ -666,8 +678,8 @@ configuration is identical to before — the legacy environments are never touch
   centralised in the Network account; S3+DynamoDB gateway endpoints are platform-provided), the DHCP options, and the
   `/flip/networking/*` SSM params (legacy TGW coupling — the LZA TGW attachment is platform-managed);
 - **discovers instead**: the `AWSAccelerator-eu-west-2-prod` VPC and its subnets by Name tag (`network_lza.tf`;
-  override the name via `LZA_VPC_NAME`). Subnet lookups match ALL `-app-*` / `-data-*` hits, so the multi-AZ `-b`
-  subnets the platform team is adding appear on the next plan without a code change;
+  override the name via `LZA_VPC_NAME`). Subnet lookups match ALL `-app-*` / `-data-*` hits, so subnets the platform
+  team adds later — as the second AZ's were — appear on the next plan with no code change;
 - **places by connectivity need**: RDS instances go to the isolated **data** subnets (local routes only — nothing
   there can reach TGW/endpoints, and RDS doesn't need to); ECS tasks, the internal ALB, the RDS Proxy, EFS mount
   targets and the EC2 hosts go to the TGW-routed **app** subnets (they need the central endpoints / image pulls);
@@ -721,9 +733,9 @@ AWS_REGION=eu-west-2
 # Registry: the ghcr/ pull-through cache, NOT ghcr.io (no internet egress).
 # Composes with the image names exactly like the GHCR prefix does:
 # <registry><name>:<tag> → .../ghcr/londonaicentre/flip-api:<tag>
-DOCKER_REGISTRY=893493035022.dkr.ecr.eu-west-2.amazonaws.com/ghcr/londonaicentre/
+DOCKER_REGISTRY=<account-id>.dkr.ecr.eu-west-2.amazonaws.com/ghcr/londonaicentre/
 # EFS-provision one-shot utility image via the credential-less ecr-public/ cache
-EFS_PROVISION_IMAGE=893493035022.dkr.ecr.eu-west-2.amazonaws.com/ecr-public/aws-cli/aws-cli:2.22.35
+EFS_PROVISION_IMAGE=<account-id>.dkr.ecr.eu-west-2.amazonaws.com/ecr-public/aws-cli/aws-cli:2.22.35
 
 # Bucket names are globally unique and the legacy flipprod-* names stay taken
 # while the old account lives — the LZA env uses its own flip-lza-* namespace.
@@ -771,21 +783,20 @@ revert by flipping `MANAGE_DNS=true` + `make plan`/`apply` once the zone lands:
 - Trusts polling the hub would need the CloudFront domain as `CENTRAL_HUB_API_URL` — fine for WP3 smoke trusts;
   the real cutover is DNS-only and happens after the zone migrates.
 
-**Not yet on LZA** (tracked on #749):
+**State of the LZA path** (tracked on #749):
 
-- Multi-AZ is only partially landed (verified against the live account 2026-08-17): `prod-app-b` exists (lza#38), so
-  the **ALB is unblocked**, but there is **no `prod-data-b`** — the RDS subnet group still fails its ≥2-AZ
-  requirement — and **no `prod-tgw-b`**, so the TGW attachment rides the lone `tgw-a` subnet and **TGW-routed
-  traffic from `-b` subnets blackholes** (central endpoints, image pulls; reported on PR#830). Until `data-b`/`tgw-b`
-  land and the attachment spans both AZs, workloads that need the TGW must stay pinned to `-a` subnets — the e2e-lza
-  stack (FLIP#829) shows the pinning pattern.
-- No FL inbound path (see the NLB gating above). The ingress architecture itself is settled and proven end-to-end
-  with dummy services — internet → networking-account edge NLB → TGW → central firewall → workload NLB → ECS
-  (FLIP#829 / PR#830) — but wiring the real `fl-server-net-1` behind that chain (internal NLB + target group in this
-  stack, edge listener registration on the platform side) is follow-up #749 work.
-- The `full-deploy*` chains, `make status`/`check_status.py`, `update_env.py` and `make destroy` are untested against
-  `PROD=lza` — WP3 exercises the `init`/`plan`/`apply` (+ `deploy-centralhub`/`deploy-ui`) loop first and fixes up the
-  auxiliary tooling as findings come in.
+- **Multi-AZ has landed platform-side** (verified against the live account 2026-08-20): both AZs now carry an
+  `-app-*`, a `-data-*` and a `-tgw-*` subnet, which clears the earlier single-AZ constraints — the RDS subnet
+  group's two-AZ requirement is satisfiable, and the TGW attachment no longer rides a lone `tgw-a` subnet with
+  `-b`-originated traffic blackholing (the condition reported on PR#830). No FLIP-side change was needed: the
+  subnet lookups glob every matching Name tag, so the second AZ arrived on an ordinary plan.
+- **FL ingress is wired.** `fl_ingress_lza.tf` creates the internal NLB (static per-subnet IPs, so the edge can
+  register them once as targets), its target group fronting `fl-server-net-1`, and the `/flip/networking/*` SSM
+  handoff the networking account consumes. The full chain — internet → edge NLB → TGW → central firewall →
+  internal NLB → ECS — was proven with dummy services first (FLIP#829 / PR#830).
+- **Still untested against `PROD=lza`:** the `full-deploy*` chains, `make status`/`check_status.py`, `update_env.py`
+  and `make destroy`. WP3 exercises the `init`/`plan`/`apply` (+ `deploy-centralhub`/`deploy-ui`) loop first and
+  fixes up the auxiliary tooling as findings come in.
 
 ### Terraform module layout
 

@@ -13,10 +13,10 @@
 ifeq ($(PROD),true)
 MAIN_ENV_FILE=../../../.env.production
 else ifeq ($(PROD),lza)
-# LZA FLIPProduction account (FLIP#749): a prod-grade environment on the
-# platform-managed (AWS Accelerator) network, running in parallel with legacy
-# prod until cutover. Gitignored like the other env files — see the
-# "Deploying to the LZA account" section in README.md for the required values.
+# LZA estate (FLIP#749): a prod-grade environment on a platform-managed (AWS
+# Landing Zone Accelerator) network, the second of the two supported deployment
+# modes. Gitignored like the other env files — see the "Deploying onto an LZA
+# estate" section in README.md for the required values.
 MAIN_ENV_FILE=../../../.env.lza-prod
 else
 # Sometimes PROD may not be set, default to staging environment in that case
@@ -60,8 +60,8 @@ $(if $(FL_KIT_DATE),,$(error 🧠 $(if $(filter nvflare,$(FL_BACKEND)),FLARE_KIT
 # the env file or on the command line if your local profile names differ.
 PROD_AWS_PROFILE ?= prod
 STAG_AWS_PROFILE ?= stag
-# The LZA FLIPProduction account (893493035022) is reached via the Identity
-# Center `FLIPAdminAccess` permission set; like prod/stag above, the default is
+# The LZA workload account is reached via the Identity Center
+# `FLIPAdminAccess` permission set; like prod/stag above, the default is
 # a short local alias for it in ~/.aws/config (FLIP#749).
 LZA_AWS_PROFILE ?= lza-prod
 
