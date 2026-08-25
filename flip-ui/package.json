@@ -78,7 +78,7 @@
         "codemirror-editor-vue3": "^2.1.7",
         "cypress": "15.21.0",
         "cypress-file-upload": "^5.0.8",
-        "cypress-localstorage-commands": "^2.2.0",
+        "cypress-localstorage-commands": "^2.3.0",
         "date-fns": "^2.25.0",
         "dotenv": "^16.0.3",
         "eslint": "^10.1.0",

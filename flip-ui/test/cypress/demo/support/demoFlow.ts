@@ -25,14 +25,35 @@ export interface IDemoState {
 // read it between segments. Gitignored.
 const STATE_FILE = "test/cypress/demo/state.json";
 
-/** Read a required Cypress env var, failing the segment loudly when unset. */
+/** Read a required non-sensitive run variable, failing the segment loudly when unset.
+ *
+ * Backed by `Cypress.expose()` rather than the deprecated env accessor, so it stays
+ * synchronous and spec bodies keep their shape. Secrets do NOT come through here —
+ * see `requireSecret`. The allowlist lives in test/cypress/plugins/index.ts.
+ */
 export function requireEnv(name: string): string {
-    const value = Cypress.env(name);
+    const value = Cypress.expose(name);
     if (!value) {
-        throw new Error(`Missing required Cypress env var for demo segment: ${name}`);
+        throw new Error(`Missing required Cypress config for demo segment: ${name}`);
     }
 
     return String(value);
+}
+
+/** Read a required secret. Async by necessity: Cypress 15 removed synchronous
+ *  access to sensitive values, because anything the browser-side env accessor can
+ *  read, the application under test can read too. `cy.env()` resolves in Node and
+ *  hands the value straight to the command that needs it.
+ */
+export function requireSecret(name: string): Cypress.Chainable<string> {
+    return cy.env([name], { log: false }).then((values) => {
+        const value = (values as Record<string, unknown>)[name];
+        if (!value) {
+            throw new Error(`Missing required Cypress secret for demo segment: ${name}`);
+        }
+
+        return String(value);
+    });
 }
 
 /** Persist ids for the orchestrator + later segments. Full overwrite. */
@@ -95,7 +116,7 @@ function decodeJwtPayload(win: Window, token: string): { sub: string; email?: st
 //      sub/email decoded from the real idToken, permissions fetched from the
 //      hub with the real access token. Every subsequent API call rides the
 //      genuine Cognito session via the axios interceptor.
-Cypress.Commands.add("demoLogin", (email: string, password: string, options?: { scenic?: boolean; stealth?: boolean }) => {
+Cypress.Commands.add("demoLogin", (email: string, passwordKey: string, options?: { scenic?: boolean; stealth?: boolean }) => {
     const scenic = options?.scenic ?? false;
     const stealth = options?.stealth ?? false;
     if (stealth) {
@@ -103,24 +124,31 @@ Cypress.Commands.add("demoLogin", (email: string, password: string, options?: { 
     }
     // flip-ui/.env.development carries the hub URL without the /api suffix,
     // the root env with it — normalise to a with-/api base either way.
-    const rawHubUrl = String(Cypress.env("CENTRAL_HUB_API_URL") || "http://localhost:8080");
+    const rawHubUrl = String(Cypress.expose("CENTRAL_HUB_API_URL") || "http://localhost:8080");
     const apiBase = rawHubUrl.replace(/\/api\/?$/, "") + "/api";
     demoVisit("/auth/login");
     if (scenic) {
         cy.getBySel("username").demoType(email);
-        cy.getBySel("password").demoType(password, { log: false });
     } else {
         // force: in stealth mode the whole document is visibility:hidden.
         cy.getBySel("username").type(email, {
             delay: 0,
             force: true
         });
-        cy.getBySel("password").type(password, {
-            delay: 0,
-            force: true,
-            log: false
-        });
     }
+    // Resolved here rather than in the spec so the password never lands in a
+    // spec-level variable, and never travels through browser-readable config.
+    requireSecret(passwordKey).then((password) => {
+        if (scenic) {
+            cy.getBySel("password").demoType(password, { log: false });
+        } else {
+            cy.getBySel("password").type(password, {
+                delay: 0,
+                force: true,
+                log: false
+            });
+        }
+    });
     if (stealth) {
         cy.getBySel("login-btn").click({ force: true });
     } else {
@@ -131,7 +159,7 @@ Cypress.Commands.add("demoLogin", (email: string, password: string, options?: { 
     // replaces this as soon as the app loads. When the orchestrator fell back
     // to the well-known admin for this persona (demo users not provisioned),
     // say so ON CAMERA — the CLI warning is invisible in the assembled mp4.
-    const fallbackRole = Cypress.env("DEMO_CREDENTIALS_FALLBACK");
+    const fallbackRole = Cypress.expose("DEMO_CREDENTIALS_FALLBACK");
     cy.demoCaption(
         fallbackRole
             ? `Authenticating with the Central Hub… (demo ${fallbackRole} user not provisioned — ` +
@@ -183,9 +211,11 @@ declare global {
     // eslint-disable-next-line @typescript-eslint/no-namespace
     namespace Cypress {
         interface Chainable {
+            /** `passwordKey` is the NAME of a secret in the plugins allowlist,
+             *  not the password itself — demoLogin resolves it via cy.env(). */
             demoLogin(
                 email: string,
-                password: string,
+                passwordKey: string,
                 options?: { scenic?: boolean; stealth?: boolean }
             ): Chainable<void>;
         }
