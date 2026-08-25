@@ -15,9 +15,6 @@
 
 
 
-// eslint-disable-next-line @typescript-eslint/no-var-requires
-const path = require("path");
-import { startDevServer } from "@cypress/vite-dev-server";
 import * as dotenv from "dotenv";
 
 
@@ -28,13 +25,6 @@ export default function (
 
     dotenv.config({ path: "./.env.e2e" });
     config.env = process.env;
-
-    on("dev-server:start", async (options: Cypress.DevServerConfig) => {
-        return startDevServer({
-            options,
-            viteConfig: { configFile: path.resolve(__dirname, "..", "..", "vite.config.js"), },
-        });
-    });
 
     return config;
 }

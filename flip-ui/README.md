@@ -219,12 +219,12 @@ make e2e_test               # full suite, end-to-end (boots Vite, runs cypress i
 # Or, if you already have npm run test:start running in another shell:
 docker run --rm --network host \
     -v "$PWD":/e2e -w /e2e --entrypoint cypress \
-    cypress/included:14.5.2 \
+    cypress/included:15.21.0 \
     run --browser electron \
     --spec 'test/cypress/integration/group-3/**/*.spec.ts'
 ```
 
-The image (`cypress/included:14.5.2`) is ~3 GB on first pull and cached
+The image (`cypress/included:15.21.0`) is ~3 GB on first pull and cached
 afterwards. Pin the tag to whatever `cypress` version is in `package.json` so
 the binary in the image matches the project config.
 
