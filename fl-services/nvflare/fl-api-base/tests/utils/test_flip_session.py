@@ -210,17 +210,21 @@ def test_there_are_overrides_to_check():
     assert set(_overridden_methods()) >= {"_do_command", "get_system_info", "get_connected_client_list"}
 
 
-@pytest.mark.parametrize("method_name", _overridden_methods())
-def test_override_does_not_narrow_the_base_signature(method_name):
-    """Every parameter the base accepts must be accepted by our override.
+def _assert_substitutable(base_sig: inspect.Signature, override_sig: inspect.Signature, label: str) -> None:
+    """Assert `override_sig` accepts every call the base accepts, by name *and* by position.
 
-    `_do_command` used to take only `cmd`, so NVFLARE's `_collect_info` calls
-    (`enforce_meta=False`) -- show_errors, show_stats, reset_errors -- raised TypeError.
+    Split out from the test that drives it so the rule itself can be pinned against synthetic
+    signatures (below). The rule is code too, and has shipped with holes twice (FLIP#1032) --
+    re-mutating `FLIP_Session` by hand is not a check CI can repeat.
+
+    Args:
+        base_sig (inspect.Signature): Signature of the NVFLARE method being overridden.
+        override_sig (inspect.Signature): Signature of the `FLIP_Session` override.
+        label (str): How to name the override in assertion messages.
     """
-    base_sig = inspect.signature(getattr(Session, method_name))
-    override = inspect.signature(getattr(FLIP_Session, method_name))
-    override_params = override.parameters
+    override_params = override_sig.parameters
     accepts_var_kw = any(p.kind is inspect.Parameter.VAR_KEYWORD for p in override_params.values())
+    accepts_var_positional = any(p.kind is inspect.Parameter.VAR_POSITIONAL for p in override_params.values())
     positional = [
         p
         for p in override_params.values()
@@ -230,35 +234,126 @@ def test_override_does_not_narrow_the_base_signature(method_name):
     for index, (name, param) in enumerate(base_sig.parameters.items()):
         if param.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):
             continue
+        override_param = override_params.get(name)
 
-        # Every base parameter must be reachable BY NAME. `**kwargs` alone is not enough: a
-        # renamed positional (the old `cmd` for the base's `command`) swallows the value
-        # positionally but still breaks `_do_command(command=...)`. Named-and-in-the-same-slot
-        # is the only shape that is truly substitutable.
-        if name in override_params:
-            slot_ok = name not in [p.name for p in positional] or positional[index].name == name
-            assert slot_ok, (
-                f"FLIP_Session.{method_name} accepts '{name}' but in a different position "
-                f"({override}); positional callers would bind the wrong value."
-            )
-        else:
+        # Reachable BY NAME. `**kwargs` alone is not enough for a *renamed* positional (the old
+        # `cmd` for the base's `command`): it swallows the value positionally but still breaks
+        # `_do_command(command=...)`.
+        if override_param is None:
             # Absent by name is only acceptable when **kwargs can carry it AND the base gives it
             # a default -- a required base parameter must always be nameable.
             reachable = accepts_var_kw and param.default is not inspect.Parameter.empty
             assert reachable, (
-                f"FLIP_Session.{method_name} does not accept base parameter '{name}' "
-                f"({override}); narrowing a base signature breaks NVFLARE's own callers."
+                f"{label} does not accept base parameter '{name}' ({override_sig}); "
+                f"narrowing a base signature breaks NVFLARE's own callers."
+            )
+        elif param.default is not inspect.Parameter.empty:
+            # A silently different default is the quieter half of the same bug: the removed
+            # __init__ flipped secure_mode from the base's True to False, which no
+            # parameter-presence check would notice.
+            assert override_param.default == param.default, (
+                f"{label} changes the default of '{name}' from {param.default!r} to "
+                f"{override_param.default!r}; callers relying on the base default silently get "
+                f"different behaviour."
             )
 
-        # A silently different default is the quieter half of the same bug: the removed
-        # __init__ flipped secure_mode from the base's True to False, which no
-        # parameter-presence check would notice.
-        if name in override_params and param.default is not inspect.Parameter.empty:
-            assert override_params[name].default == param.default, (
-                f"FLIP_Session.{method_name} changes the default of '{name}' from "
-                f"{param.default!r} to {override_params[name].default!r}; callers relying on the "
-                f"base default silently get different behaviour."
+        if param.kind not in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD):
+            continue
+
+        # ...and reachable BY POSITION, in the base's own slot. Keeping the name while demoting the
+        # parameter to keyword-only reads as harmless and is not: NVFLARE passes `command`
+        # positionally from all eight of its `_do_command` call sites.
+        stays_positional = override_param is None or override_param.kind is not inspect.Parameter.KEYWORD_ONLY
+        assert stays_positional, (
+            f"{label} makes base parameter '{name}' keyword-only ({override_sig}); "
+            f"callers passing it positionally would raise TypeError."
+        )
+        if index < len(positional):
+            assert positional[index].name == name, (
+                f"{label} does not put base parameter '{name}' in the base's positional slot "
+                f"{index} ({override_sig}); positional callers would bind the wrong value."
             )
+        else:
+            # Past the override's own positionals the slot exists only if `*args` absorbs it.
+            assert accepts_var_positional, (
+                f"{label} has no positional slot {index} for base parameter '{name}' "
+                f"({override_sig}); positional callers would raise TypeError."
+            )
+
+
+@pytest.mark.parametrize("method_name", _overridden_methods())
+def test_override_does_not_narrow_the_base_signature(method_name):
+    """Every parameter the base accepts must be accepted by our override.
+
+    `_do_command` used to take only `cmd`, so NVFLARE's `_collect_info` calls
+    (`enforce_meta=False`) -- show_errors, show_stats, reset_errors -- raised TypeError.
+    """
+    _assert_substitutable(
+        inspect.signature(getattr(Session, method_name)),
+        inspect.signature(getattr(FLIP_Session, method_name)),
+        f"FLIP_Session.{method_name}",
+    )
+
+
+# --------------------------------------------------------------------------------------
+# Guard the guard: `_assert_substitutable` against signatures known to be substitutable or
+# not. `_base_shape` mirrors NVFLARE's `_do_command(self, command, enforce_meta=True,
+# props=None)`, the signature whose narrowing caused FLIP#1032.
+# --------------------------------------------------------------------------------------
+
+
+def _base_shape(self, command, enforce_meta=True, props=None):
+    """Stand-in for the NVFLARE base signature the cases below are checked against."""
+
+
+@pytest.mark.parametrize(
+    ("shape", "override"),
+    [
+        ("forwards everything it does not name", lambda self, command, *args, **kwargs: None),
+        ("restates the base exactly", lambda self, command, enforce_meta=True, props=None: None),
+        ("adds a trailing parameter of its own", lambda self, command, *args, retries=3, **kwargs: None),
+    ],
+)
+def test_substitutable_shapes_pass_the_guard(shape, override):
+    """A widening override must not be flagged -- a guard that fails these is unusable."""
+    _assert_substitutable(inspect.signature(_base_shape), inspect.signature(override), shape)
+
+
+@pytest.mark.parametrize(
+    ("shape", "override", "message"),
+    [
+        # The hole this pins: same name, still reachable by keyword, but no longer positional.
+        (
+            "demotes a positional to keyword-only",
+            lambda self, *args, command, **kwargs: None,
+            "makes base parameter 'command' keyword-only",
+        ),
+        (
+            "renames the first positional",
+            lambda self, cmd, *args, **kwargs: None,
+            "does not accept base parameter 'command'",
+        ),
+        (
+            "drops a middle parameter, shifting a later one up",
+            lambda self, command, props, **kwargs: None,
+            "in the base's positional slot 2",
+        ),
+        (
+            "leaves no slot for the base's trailing positionals",
+            lambda self, command, **kwargs: None,
+            "has no positional slot 2",
+        ),
+        (
+            "flips a default",
+            lambda self, command, *args, enforce_meta=False, **kwargs: None,
+            "changes the default of 'enforce_meta'",
+        ),
+    ],
+)
+def test_narrowing_shapes_fail_the_guard(shape, override, message):
+    """Each of these breaks a call the base allows, so the guard must reject it."""
+    with pytest.raises(AssertionError, match=message):
+        _assert_substitutable(inspect.signature(_base_shape), inspect.signature(override), shape)
 
 
 def test_do_command_forwards_base_keyword_arguments(session):
