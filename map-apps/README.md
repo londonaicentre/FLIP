@@ -47,8 +47,7 @@ split between [`fl-apps/`](../fl-apps) (job-type templates) and
 ```
 map-apps/
 ├── segmentation/          DICOM SEG output — bundle-driven inference
-├── classification/        DICOM SR output  — custom operator + SR writer
-└── holoscan-source.json   pinned base-image manifest (see below)
+└── classification/        DICOM SR output  — custom operator + SR writer
 ```
 
 ## Choosing a template
@@ -63,8 +62,8 @@ image; it has no way to emit a label.
 
 ## Building a MAP
 
-Both templates are packaged the same way. `holoscan-source.json` and the UID flags are
-**required**, not optional — see the guide for why.
+Both templates are packaged the same way. The UID flags are **required**, not optional — see the
+guide for why. Package with `holoscan-cli` **4.2.0**: 4.3.0 removed MAP packaging altogether.
 
 ```bash
 holoscan package map-apps/segmentation \
@@ -72,8 +71,8 @@ holoscan package map-apps/segmentation \
     --models   <bundle-dir>/model.ts \
     --tag      my_flip_map:latest \
     --platform x86_64 \
+    --cuda     13 \
     --sdk      monai-deploy \
-    --source   map-apps/holoscan-source.json \
     --uid $(id -u) --gid $(id -g)
 
 holoscan run my_flip_map-x64-workstation-dgpu-linux-amd64:latest -i <dicom-dir> -o ./output
@@ -99,16 +98,20 @@ in and emits DICOM out. Bumping it "for consistency" would break packaging for n
 The pins in `requirements.txt` are load-bearing for a different reason — see the comments there and
 the prerequisites table in the packaging guide. In short: `monai>=1.6.0` (four high-severity
 advisories are patched only there, it matches what FLIP trains with, and the inherited `<=1.5.0`
-capped `torch<2.7`, which has no `sm_120` and so cannot use a Blackwell GPU) and
-`torch==2.11.0+cu128` (with that cap gone, PyPI's default wheel is cu130, which needs NVIDIA driver
->= 580; cu128 runs on older and newer drivers alike).
+capped `torch<2.7`, which has no `sm_120` and so cannot use a Blackwell GPU), `torch==2.13.0` from
+PyPI's default cu130 line, and `holoscan-cu13` 4.2.0 with `monai-deploy-app-sdk` 4.0.0 — one
+coherent CUDA-13 generation, at the cost of the driver floor below.
 
-### `holoscan-source.json`
+### The driver floor
 
-The packager normally downloads a base-image manifest from GitHub, where most versions now return
-404. This file pins the manifest locally and selects a **CUDA 12 / Ubuntu 24.04** base image:
-CUDA 13 images require NVIDIA driver ≥580, and Ubuntu 24.04 is required because the CLI pins
-Python 3.12.3 package versions.
+The base image is **CUDA 13 / Ubuntu 24.04** (`nvcr.io/nvidia/cuda:13.0.0-runtime-ubuntu24.04`),
+so packaging and running both need **NVIDIA driver ≥ 580**. Check `nvidia-smi` first. Ubuntu 24.04
+is not incidental either — the CLI pins Python 3.12.3 package versions, so the base image must
+match.
+
+The manifest naming that image is fetched from GitHub, where only `holoscan-cli` 4.2.0's is
+published; that is the second reason for the CLI pin, and why no local `--source` file is kept in
+this directory any more.
 
 ## Verifying the output
 

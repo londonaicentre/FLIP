@@ -149,73 +149,95 @@ unpinned instruction rots quickly.
      - Version
      - Notes
    * - ``monai-deploy-app-sdk``
-     - ``3.5.0``
-     - 4.x requires a CUDA 13 base image; see :ref:`map-environment-traps`.
+     - ``4.0.0``
+     - The CUDA-13 generation. 3.5.0 does ``from holoscan.graphs import *`` and therefore needs
+       holoscan 3.x; 4.0.0 imports it tolerantly and requires ``holoscan-cu13``.
    * - ``holoscan`` / ``holoscan-cli``
-     - ``3.11.0``
-     - SDK 3.5.0 uses ``holoscan.graphs``, removed in holoscan 4.x. Install **both**: the packager
-       refuses to run with only the CLI. Pinning the CLI is load-bearing in its own right —
-       ``holoscan-cli`` 4.3.0 replaced MAP packaging with a source-project build system, and
-       ``monai-deploy-app-sdk`` depends on ``holoscan-cli`` unpinned, so an unconstrained install
-       leaves you with a CLI that cannot build a MAP at all.
+     - ``4.2.0``
+     - Install **both**: the packager refuses to run with only the CLI. The CLI pin is load-bearing
+       in its own right — ``holoscan-cli`` **4.3.0 removed MAP packaging entirely**, replacing it
+       with a source-project build system, and ``monai-deploy-app-sdk`` depends on ``holoscan-cli``
+       unpinned, so an unconstrained install leaves you with a CLI that has no
+       ``holoscan package --models`` at all. 4.2.0 is also the only version whose base-image
+       manifest is published upstream, which is why no ``--source`` file is needed.
    * - ``monai``
      - ``>=1.6.0``
      - Four high-severity advisories are patched only in 1.6.0, and it is what FLIP trains with.
        **Not** ``1.5.0``: that release also declares ``torch<2.7.0``, which costs you the GPU. See
        below.
    * - ``torch``
-     - ``2.11.0+cu128``
-     - The ``+cu128`` local version is load-bearing; PyPI's default wheel is cu130.
+     - ``2.13.0``
+     - PyPI's default wheel line, which is cu130.
+   * - **NVIDIA driver**
+     - **>= 580**
+     - Required by cu130 and by the CUDA-13 base image, on the packaging host **and** on every host
+       that runs the MAP. This is the one hard prerequisite the toolchain adds; check it with
+       ``nvidia-smi`` before you start. See below for what to do if a deployment site is below it.
    * - Python
      - ``3.12``
      - The MAP base image must be Ubuntu 24.04 to match.
 
-You also need Docker with the NVIDIA Container Toolkit, and an NVIDIA driver appropriate to the
-CUDA version of the MAP base image.
+You also need Docker with the NVIDIA Container Toolkit.
 
 .. note::
 
-   **Why the MONAI floor is 1.6.0 and the torch build is spelled out.** Both templates originally
-   carried ``monai<=1.5.0``, inherited verbatim from the App SDK's ``ai_spleen_seg_app`` example.
-   Nothing requires it — ``monai-deploy-app-sdk`` does not depend on MONAI at all, reaching it
-   through ``optional_import`` — and 1.5.0 is the only release in that neighbourhood still
-   declaring ``torch<2.7.0``. Measured on an RTX 5090 (driver 575 at the time):
+   **Why these versions, and what the driver floor buys.** Both templates originally carried
+   ``monai<=1.5.0`` on the CUDA-12 toolchain, inherited verbatim from the App SDK's
+   ``ai_spleen_seg_app`` example. Nothing required it — ``monai-deploy-app-sdk`` does not depend on
+   MONAI at all, reaching it through ``optional_import`` — and 1.5.0 is the only release in that
+   neighbourhood still declaring ``torch<2.7.0``. Measured on an RTX 5090:
 
    .. list-table::
       :header-rows: 1
-      :widths: 40 24 18 18
+      :widths: 34 22 14 14 16
 
       * - requirements
         - resolves to
         - ``is_available()``
         - a real kernel
+        - the MAP's DICOM SEG
       * - ``monai<=1.5.0`` + ``torch``
         - torch 2.6.0+cu124
         - ``True``
         - **fails**, no ``sm_120``
-      * - ``monai>=1.5.2`` + ``torch``
+        - never produced
+      * - ``monai>=1.5.2`` + ``torch``, driver 575
         - torch 2.13.0+cu130
         - ``False``
         - fails, driver < 580
+        - never produced
       * - ``monai>=1.5.2`` + ``torch==2.11.0+cu128``
         - torch 2.11.0+cu128
         - ``True``
-        - **works**
+        - works
+        - 73 frames, 212,808 voxels
+      * - ``monai>=1.6.0`` + ``torch==2.11.0+cu128``
+        - torch 2.11.0+cu128
+        - ``True``
+        - works
+        - **identical, voxel for voxel**
+      * - **the current pins**, driver 580
+        - torch 2.13.0+cu130
+        - ``True``
+        - works
+        - **identical, voxel for voxel**
 
-   So raising the floor is necessary but not sufficient: with MONAI's ceiling gone, PyPI's default
-   torch wheel is cu130, which needs driver >= 580. Pinning the ``+cu128`` build is what makes the
-   MAP runnable on hosts below that, and it runs on newer drivers too. That combination also brings
-   ``nvidia-cuda-runtime-cu12`` 12.8 in transitively, which is why the templates no longer name it
-   explicitly. The cost is a torch ceiling: 2.11.0 is the last build PyTorch publishes to the cu128
-   index.
+   Two conclusions follow, and both are load-bearing.
 
-   **1.6.0 rather than the 1.5 line, and why that is safe.** A MAP packaged with ``monai>=1.6.0``
-   (App SDK 3.5.0, holoscan 3.11.0, torch 2.11.0+cu128) was built and run on an RTX 5090 against a
-   168-slice spleen CT and the published tutorial checkpoint. Its DICOM SEG is **identical, voxel
-   for voxel**, to the same MAP built on 1.5.2 — same 73 frames, same 212,808 foreground voxels.
-   ``UNet`` and ``DenseNet121``, the two architectures the tutorials use, have identical state-dict
-   keys and shapes across the two releases, so the coupling described under
+   **MONAI 1.6.0 changes nothing about what the MAP computes.** Same 73 frames, same 212,808
+   foreground voxels, same 278 mL, against the published tutorial checkpoint and a 168-slice spleen
+   CT. ``UNet`` and ``DenseNet121``, the two architectures the tutorials use, have identical
+   state-dict keys and shapes across 1.5.2 and 1.6.0, so the coupling described under
    :ref:`map-bundle-forms` does not bite them.
+
+   **The CUDA-13 move costs a driver floor and buys a torch line that still moves.** PyTorch
+   publishes no cu128 wheel above **2.11.0**, so the previous pins were a permanent ceiling: a torch
+   advisory fixed in 2.12 or later would have forced this migration anyway, under time pressure. The
+   price is that ``nvidia-smi`` must report **580 or newer** wherever the MAP is packaged *and*
+   wherever it runs. If a deployment site is below that, do not loosen the pins in place — the
+   previous generation is a coherent set and is one commit back in this file's history
+   (``monai>=1.6.0``, ``torch==2.11.0+cu128``, ``holoscan-cu12==3.11.0``, App SDK 3.5.0,
+   ``holoscan-cli==3.11.0`` with a local ``--source`` manifest), and it produces the same SEG.
 
 
 Step 1 — Obtain the aggregated checkpoint
@@ -359,7 +381,9 @@ application code at all.
 
    **A directory bundle does not work with the segmentation template today.** Verified by packaging
    and running one on an RTX 5090: ``holoscan package --models <bundle-dir>`` succeeds and the MAP
-   starts, but inference dies with ``ItemNotExistsError: A predictor of the model is not set``.
+   starts, but inference dies with ``ItemNotExistsError: A predictor of the model is not set``. The
+   toolchain move to App SDK 4.0.0 did not fix it: ``core/models/named_model.py`` and
+   ``core/models/factory.py``, where the cause lives, are byte-identical between 3.5.0 and 4.0.0.
 
    The cause is upstream, not in the bundle. The packager copies the bundle into
    ``/opt/holoscan/models``, and the SDK's ``ModelFactory`` does not recognise that layout as a
@@ -560,20 +584,22 @@ trained under either NVFLARE or Flower.
        --models   <bundle-dir>/model.ts \
        --tag      my_flip_map:latest \
        --platform x86_64 \
+       --cuda     13 \
        --sdk      monai-deploy \
-       --source   map-apps/holoscan-source.json \
        --uid $(id -u) --gid $(id -g)
 
-Two flags are load-bearing and are not in the upstream instructions:
+Two flags deserve a word:
 
-``--source``
-   Supplies the base-image manifest locally. The packager otherwise fetches it from GitHub, where
-   only one version's manifest is currently published.
+``--cuda``
+   Selects the base image's CUDA generation. 13 is the default in ``holoscan-cli`` 4.x, so this is
+   documentation rather than necessity — but it is the flag to change if you ever have to build the
+   CUDA-12 variant, and it must agree with the ``holoscan-cu13`` / ``holoscan-cu12`` pin in
+   ``requirements.txt``.
 
 ``--uid`` / ``--gid``
-   The packager installs Python dependencies with ``pip install --user``, while the runner
-   launches the container as the *host* user. If those identities differ, every import inside the
-   MAP fails.
+   Not in the upstream instructions, and not optional. The packager installs Python dependencies
+   with ``pip install --user``, while the runner launches the container as the *host* user. If those
+   identities differ, every import inside the MAP fails.
 
 
 Step 5 — Run the MAP
@@ -818,8 +844,8 @@ These were all encountered while establishing the sequence above. None are docum
    * - Symptom
      - Cause and remedy
    * - ``nvidia-container-cli: unsatisfied condition: cuda>=13.0``
-     - App SDK 4.x builds CUDA 13 MAPs, which need driver ≥580. Use SDK 3.5.0, or upgrade the
-       driver.
+     - The host driver is below 580 and cannot run the CUDA-13 MAP. Upgrade it, or build the
+       previous generation (see ``The NVIDIA driver on your system is too old`` below).
    * - ``monai-deploy: command not found``
      - SDK 4.x ships no console scripts; packaging moved to the ``holoscan`` CLI. The 4.x
        documentation has not caught up.
@@ -849,27 +875,35 @@ These were all encountered while establishing the sequence above. None are docum
 
    * - ``No installed Holoscan PyPI package found``
      - The packaging *host* needs the Holoscan **SDK**, not only the CLI — ``holoscan-cli`` alone
-       gets you as far as generating ``app.json`` and then stops. ``pip install holoscan-cu12==3.11.0``
+       gets you as far as generating ``app.json`` and then stops. ``pip install holoscan-cu13==4.2.0``
        into the same environment; ``holoscan version`` should stop reporting ``Holoscan SDK: N/A``.
    * - ``ManifestDownloadError ... 404``
-     - The base-image manifest is fetched from GitHub and most versions are absent. Pass a local
-       manifest with ``--source``.
+     - The base-image manifest is fetched from GitHub, where only ``4.2.0``'s is published — which
+       is one reason the toolchain pins that version. On any other CLI version, write the manifest
+       out yourself and pass it with ``--source``.
    * - ``E: Version '3.12.3-*' for 'python3' was not found``
      - The CLI pins Ubuntu 24.04 package versions; the base image in the manifest must be an
        Ubuntu 24.04 image.
    * - ``ModuleNotFoundError`` inside the MAP
      - UID mismatch between build and run. Pass ``--uid``/``--gid``.
    * - ``undefined symbol: cudaGetDriverEntryPointByVersion``
-     - A torch build whose bundled CUDA runtime is older than 12.8 shadows the base image's and
-       lacks the symbol holoscan needs. The pinned ``torch==2.11.0+cu128`` brings 12.8 with it;
-       you only see this if you loosen that pin.
+     - A torch build whose bundled CUDA runtime is older than the base image's shadows it and lacks
+       a symbol holoscan needs. You see this by mixing generations — a cu12 torch under a CUDA-13
+       base image, or the reverse. Keep ``torch``, ``holoscan-cu13`` and ``--cuda`` in agreement.
    * - ``no kernel image is available for execution on the device``
      - torch <2.7 has no ``sm_120``, so it cannot use a Blackwell GPU — while
        ``torch.cuda.is_available()`` still returns ``True``, so it fails late. Caused by
        ``monai<=1.5.0``, which caps torch below 2.7; the templates now floor MONAI at 1.6.0.
    * - ``The NVIDIA driver on your system is too old``
-     - A cu130 torch wheel, which needs driver >= 580. This is what an unpinned ``torch`` resolves
-       to now that MONAI no longer caps it — pin the ``+cu128`` build.
+     - The driver is below 580 and cannot run cu130. Upgrade it, or build the previous generation
+       (``torch==2.11.0+cu128``, ``holoscan-cu12==3.11.0``, App SDK 3.5.0, ``holoscan-cli==3.11.0``
+       with a local ``--source`` manifest, ``--cuda 12``) — one commit back in this file's history,
+       and it produces the same DICOM SEG.
+   * - ``holoscan package: error: unrecognized arguments: --models`` (or a ``package`` subcommand
+       that talks about DEB/WHEEL generators)
+     - ``holoscan-cli`` >= 4.3.0, which removed MAP packaging in favour of a source-project build
+       system. ``monai-deploy-app-sdk`` depends on ``holoscan-cli`` unpinned, so this is what an
+       unconstrained install gives you. Pin ``holoscan-cli==4.2.0``.
 
 
 .. _map-config-enforcement:
