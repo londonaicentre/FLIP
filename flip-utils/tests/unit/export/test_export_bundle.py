@@ -67,6 +67,29 @@ def get_model():
     return WrappedNet(out_channels={out_channels})
 """
 
+# A model that carries state across forward passes. Scripting shares its buffers with the eager
+# module, so the two disagree the moment either is called — the simplest faithful stand-in for any
+# architecture whose export does not compute what the trained model computes.
+_STATEFUL_MODELS_PY = """
+import torch
+from torch import nn
+
+
+class CountingNet(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.net = nn.Conv2d(1, 2, 1)
+        self.register_buffer("calls", torch.zeros(()))
+
+    def forward(self, x):
+        self.calls += 1
+        return self.net(x) * self.calls
+
+
+def get_model():
+    return CountingNet()
+"""
+
 _INFERENCE = {"preprocessing": {"_target_": "Compose", "transforms": []}}
 _METADATA = {
     "version": "0.0.1",
@@ -237,6 +260,40 @@ class TestExportBundle:
         result = export_bundle(checkpoint, app, out, example_input_shape=_INPUT_SHAPE)
 
         assert result.max_abs_delta == 0.0
+
+    def test_an_export_that_changes_the_maths_is_reported(self, tmp_path):
+        """A divergent export is otherwise silent: it writes, it loads, and it computes the wrong thing.
+
+        The probe comparison is the only thing standing between that and a MAP that segments a
+        patient with a model the researcher never trained, so the warning has to reach the caller
+        rather than only the log.
+        """
+        app_dir = tmp_path / "app_files"
+        app_dir.mkdir()
+        (app_dir / "models.py").write_text(_STATEFUL_MODELS_PY)
+        _write_export_configs(tmp_path)
+        from torch import nn
+
+        reference = nn.Conv2d(1, 2, 1)
+        checkpoint = tmp_path / "FL_global_model.pt"
+        torch.save(
+            OrderedDict(
+                model=OrderedDict(
+                    [
+                        ("net.weight", reference.weight.detach()),
+                        ("net.bias", reference.bias.detach()),
+                        ("calls", torch.zeros(())),
+                    ]
+                ),
+                train_conf={"train": {"model": "CountingNet"}},
+            ),
+            checkpoint,
+        )
+
+        result = export_bundle(checkpoint, app_dir, tmp_path / "model.ts", example_input_shape=_INPUT_SHAPE)
+
+        assert result.max_abs_delta > 0
+        assert any("differs from eager by" in warning for warning in result.warnings)
 
     def test_exported_bundle_reloads_from_disk_and_still_matches(self, checkpoint, app, tmp_path):
         """The saved artefact is self-contained — a MAP carries no FLIP app code."""
