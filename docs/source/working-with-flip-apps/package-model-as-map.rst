@@ -154,10 +154,15 @@ unpinned instruction rots quickly.
    * - ``holoscan`` / ``holoscan-cli``
      - ``3.11.0``
      - SDK 3.5.0 uses ``holoscan.graphs``, removed in holoscan 4.x. Install **both**: the packager
-       refuses to run with only the CLI.
+       refuses to run with only the CLI. Pinning the CLI is load-bearing in its own right —
+       ``holoscan-cli`` 4.3.0 replaced MAP packaging with a source-project build system, and
+       ``monai-deploy-app-sdk`` depends on ``holoscan-cli`` unpinned, so an unconstrained install
+       leaves you with a CLI that cannot build a MAP at all.
    * - ``monai``
-     - ``>=1.5.2,<1.6``
-     - **Not** ``1.5.0``: that release declares ``torch<2.7.0``, which costs you the GPU. See below.
+     - ``>=1.6.0``
+     - Four high-severity advisories are patched only in 1.6.0, and it is what FLIP trains with.
+       **Not** ``1.5.0``: that release also declares ``torch<2.7.0``, which costs you the GPU. See
+       below.
    * - ``torch``
      - ``2.11.0+cu128``
      - The ``+cu128`` local version is load-bearing; PyPI's default wheel is cu130.
@@ -170,11 +175,11 @@ CUDA version of the MAP base image.
 
 .. note::
 
-   **Why the MONAI floor is 1.5.2 and the torch build is spelled out.** Both templates originally
+   **Why the MONAI floor is 1.6.0 and the torch build is spelled out.** Both templates originally
    carried ``monai<=1.5.0``, inherited verbatim from the App SDK's ``ai_spleen_seg_app`` example.
    Nothing requires it — ``monai-deploy-app-sdk`` does not depend on MONAI at all, reaching it
    through ``optional_import`` — and 1.5.0 is the only release in that neighbourhood still
-   declaring ``torch<2.7.0``. Measured on an RTX 5090 (driver 575):
+   declaring ``torch<2.7.0``. Measured on an RTX 5090 (driver 575 at the time):
 
    .. list-table::
       :header-rows: 1
@@ -198,9 +203,19 @@ CUDA version of the MAP base image.
         - **works**
 
    So raising the floor is necessary but not sufficient: with MONAI's ceiling gone, PyPI's default
-   torch wheel is cu130, which outruns the driver. Pinning the ``+cu128`` build is what actually
-   fixes it. That combination also brings ``nvidia-cuda-runtime-cu12`` 12.8 in transitively, which
-   is why the templates no longer name it explicitly.
+   torch wheel is cu130, which needs driver >= 580. Pinning the ``+cu128`` build is what makes the
+   MAP runnable on hosts below that, and it runs on newer drivers too. That combination also brings
+   ``nvidia-cuda-runtime-cu12`` 12.8 in transitively, which is why the templates no longer name it
+   explicitly. The cost is a torch ceiling: 2.11.0 is the last build PyTorch publishes to the cu128
+   index.
+
+   **1.6.0 rather than the 1.5 line, and why that is safe.** A MAP packaged with ``monai>=1.6.0``
+   (App SDK 3.5.0, holoscan 3.11.0, torch 2.11.0+cu128) was built and run on an RTX 5090 against a
+   168-slice spleen CT and the published tutorial checkpoint. Its DICOM SEG is **identical, voxel
+   for voxel**, to the same MAP built on 1.5.2 — same 73 frames, same 212,808 foreground voxels.
+   ``UNet`` and ``DenseNet121``, the two architectures the tutorials use, have identical state-dict
+   keys and shapes across the two releases, so the coupling described under
+   :ref:`map-bundle-forms` does not bite them.
 
 
 Step 1 — Obtain the aggregated checkpoint
@@ -370,11 +385,12 @@ application code at all.
    is the good case. Check the MAP's ``requirements.txt`` against the MONAI your app trained with
    before choosing this form, and prefer a version range that includes it.
 
-   Worth knowing: the MAP templates currently pin ``monai<=1.5.0`` while FLIP trains on ``1.6``.
-   That pin is inherited verbatim from the App SDK's own spleen example rather than chosen here,
-   and it is what forces ``torch<2.7`` and the two CUDA entries in
-   :ref:`the trap table <map-environment-traps>`. ``UNet`` happens to be unchanged between those
-   releases, so today's tutorials are unaffected — but that is luck, not a guarantee.
+   The MAP templates and FLIP's training environment are deliberately kept on the same MONAI
+   (``>=1.6.0`` in both, the templates having been moved off an inherited ``monai<=1.5.0``), which
+   is what makes the directory form safe to use here today. Keep them aligned when either moves:
+   ``UNet`` and ``DenseNet121`` are unchanged between 1.5.2 and 1.6.0, so this particular step
+   would have been survivable either way, but that is a fact about those two releases rather than
+   a guarantee about the next one.
 
 .. code-block:: bash
 
@@ -841,7 +857,7 @@ These were all encountered while establishing the sequence above. None are docum
    * - ``no kernel image is available for execution on the device``
      - torch <2.7 has no ``sm_120``, so it cannot use a Blackwell GPU — while
        ``torch.cuda.is_available()`` still returns ``True``, so it fails late. Caused by
-       ``monai<=1.5.0``, which caps torch below 2.7; the templates now floor MONAI at 1.5.2.
+       ``monai<=1.5.0``, which caps torch below 2.7; the templates now floor MONAI at 1.6.0.
    * - ``The NVIDIA driver on your system is too old``
      - A cu130 torch wheel, which needs driver >= 580. This is what an unpinned ``torch`` resolves
        to now that MONAI no longer caps it — pin the ``+cu128`` build.

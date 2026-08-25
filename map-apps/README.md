@@ -97,9 +97,11 @@ it is not ours to lift, and it costs nothing: the MAP is a self-contained contai
 in and emits DICOM out. Bumping it "for consistency" would break packaging for no benefit.
 
 The pins in `requirements.txt` are load-bearing for a different reason — see the comments there and
-the prerequisites table in the packaging guide. In short: `monai>=1.5.2` (1.5.0 caps `torch<2.7`,
-which has no `sm_120` and so cannot use a Blackwell GPU) and `torch==2.11.0+cu128` (with the ceiling
-gone, PyPI's default wheel is cu130, which needs NVIDIA driver >= 580).
+the prerequisites table in the packaging guide. In short: `monai>=1.6.0` (four high-severity
+advisories are patched only there, it matches what FLIP trains with, and the inherited `<=1.5.0`
+capped `torch<2.7`, which has no `sm_120` and so cannot use a Blackwell GPU) and
+`torch==2.11.0+cu128` (with that cap gone, PyPI's default wheel is cu130, which needs NVIDIA driver
+>= 580; cu128 runs on older and newer drivers alike).
 
 ### `holoscan-source.json`
 
