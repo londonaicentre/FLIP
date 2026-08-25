@@ -10,15 +10,17 @@
 # limitations under the License.
 #
 
+import inspect
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import call, patch
 
 import pytest
 from nvflare.fuel.flare_api.api_spec import InternalError, SessionClosed
+from nvflare.fuel.flare_api.flare_api import Session
 
 from fl_api.utils.flip_session import FLIP_Session
-from fl_api.utils.schemas import ServerInfoModel, SystemInfoModel
+from fl_api.utils.schemas import ClientInfoModel, ServerInfoModel, SystemInfoModel
 
 FL_ADMIN_DIR = str(Path(__file__).parents[2] / "admin")
 
@@ -165,3 +167,186 @@ def test_check_client_status_asserts_when_multiple_job_statuses_returned(session
     ):
         with pytest.raises(AssertionError, match="Expected only one job status for client c1"):
             session.check_client_status()
+
+
+# --------------------------------------------------------------------------------------
+# Liskov guards (FLIP#1032)
+#
+# FLIP_Session is substituted for nvflare's Session, so NVFLARE's own code calls these
+# methods. Two things must therefore hold, and neither is enforced by the language:
+#   1. no override may narrow its base signature -- a parameter the base accepts and we do
+#      not is a TypeError at whichever upstream call site passes it;
+#   2. the models returned by the type-changing overrides must keep the attributes NVFLARE
+#      reads off them.
+# Both failed silently in the past, so they are pinned here rather than trusted.
+# --------------------------------------------------------------------------------------
+
+
+def _overridden_methods() -> list[str]:
+    """Every FLIP_Session member that shadows one on the NVFLARE base.
+
+    `__init__` is deliberately in scope -- the removed override narrowed it too -- while other
+    dunders are not, since Python's own protocol methods are not part of this contract.
+    """
+    return [
+        name
+        for name, value in vars(FLIP_Session).items()
+        if callable(value) and (name == "__init__" or not name.startswith("__")) and hasattr(Session, name)
+    ]
+
+
+def test_there_are_overrides_to_check():
+    """Guard the guard: a rename that empties the set must not silently pass the tests below."""
+    assert set(_overridden_methods()) >= {"_do_command", "get_system_info", "get_connected_client_list"}
+
+
+@pytest.mark.parametrize("method_name", _overridden_methods())
+def test_override_does_not_narrow_the_base_signature(method_name):
+    """Every parameter the base accepts must be accepted by our override.
+
+    `_do_command` used to take only `cmd`, so NVFLARE's `_collect_info` calls
+    (`enforce_meta=False`) -- show_errors, show_stats, reset_errors -- raised TypeError.
+    """
+    base_params = inspect.signature(getattr(Session, method_name)).parameters
+    override = inspect.signature(getattr(FLIP_Session, method_name))
+    override_params = override.parameters
+    accepts_var_kw = any(p.kind is inspect.Parameter.VAR_KEYWORD for p in override_params.values())
+
+    for name, param in base_params.items():
+        if param.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):
+            continue
+        assert name in override_params or accepts_var_kw, (
+            f"FLIP_Session.{method_name} does not accept base parameter '{name}' "
+            f"({override}); narrowing a base signature breaks NVFLARE's own callers."
+        )
+        # A silently different default is the quieter half of the same bug: the removed
+        # __init__ flipped secure_mode from the base's True to False, which no
+        # parameter-presence check would notice.
+        if name in override_params and param.default is not inspect.Parameter.empty:
+            assert override_params[name].default == param.default, (
+                f"FLIP_Session.{method_name} changes the default of '{name}' from "
+                f"{param.default!r} to {override_params[name].default!r}; callers relying on the "
+                f"base default silently get different behaviour."
+            )
+
+
+def test_do_command_forwards_base_keyword_arguments(session):
+    """The regression itself: enforce_meta / props must reach the base untouched."""
+    with patch("nvflare.fuel.flare_api.flare_api.Session._do_command", return_value={"ok": True}) as parent:
+        session._do_command("SHOW_ERRORS job server", enforce_meta=False, props={"k": "v"})
+
+    parent.assert_called_once_with("SHOW_ERRORS job server", enforce_meta=False, props={"k": "v"})
+
+
+def test_do_command_forwards_keyword_arguments_through_a_reconnect(session):
+    """A retry must re-issue the *same* command, kwargs included -- not a narrowed one."""
+    with (
+        patch(
+            "nvflare.fuel.flare_api.flare_api.Session._do_command",
+            side_effect=[SessionClosed("session closed"), {"ok": True}],
+        ) as parent,
+        patch.object(session, "_reconnect"),
+    ):
+        session._do_command("CMD", enforce_meta=False)
+
+    assert parent.call_args_list == [call("CMD", enforce_meta=False), call("CMD", enforce_meta=False)]
+
+
+def test_system_info_model_keeps_the_attributes_nvflare_reads():
+    """Pin the duck-typed contract get_system_info's type swap rests on.
+
+    NVFLARE's `_client_last_connect_times`, `_wait_for_clients_shutdown`,
+    `_wait_for_clients_restart`, `restart` and `get_connected_client_list` all call
+    `get_system_info()` and read these attributes off the result. Renaming any of them on
+    FLIP's models breaks NVFLARE's restart and shutdown waits with an AttributeError deep
+    inside upstream code.
+    """
+    info = SystemInfoModel(
+        server_info=ServerInfoModel(status="running", start_time=123.0),
+        client_info=[ClientInfoModel(name="c1", last_connect_time=1.0, status="online")],
+        job_info=[],
+    )
+
+    assert info.server_info.status == "running"
+    assert info.server_info.start_time == 123.0
+    assert info.client_info[0].name == "c1"
+    assert info.client_info[0].last_connect_time == 1.0
+
+
+def test_reconnect_preserves_the_session_study():
+    """Re-initialising without the study would silently change which jobs commands can see."""
+    with patch("nvflare.fuel.flare_api.flare_api.Session.__init__", return_value=None):
+        session = FLIP_Session(username="u", startup_path="p", secure_mode=True, debug=False)
+    session.username = "u"
+    session.startup_path = "p"
+    session.secure_mode = True
+    session._debug = False
+    session._study = "a-study"
+
+    with (
+        patch("nvflare.fuel.flare_api.flare_api.Session.__init__", return_value=None) as base_init,
+        patch.object(session, "try_connect"),
+    ):
+        session._reconnect()
+
+    base_init.assert_called_once_with(session, "u", "p", True, False, "a-study")
+
+
+def test_construction_signature_matches_the_base():
+    """There is no __init__ override, and if one is ever added it must not narrow the base.
+
+    The removed override re-stashed username/startup_path/secure_mode under private aliases the
+    base already keeps, while dropping the base's `study` parameter and flipping `secure_mode`
+    from True to False (FLIP#1032). This asserts the resulting contract rather than the absence
+    of an override, so a future override that genuinely forwards is still allowed.
+    """
+    params = inspect.signature(FLIP_Session.__init__).parameters
+
+    assert "study" in params, "dropping `study` makes FLIP_Session(study=...) a TypeError"
+    assert params["secure_mode"].default is True, "secure_mode must default to the base's True"
+
+
+@pytest.mark.parametrize(
+    ("call_session", "expected_command"),
+    [
+        (lambda s: s.show_errors("job-1", "server"), "show_errors job-1 server"),
+        (lambda s: s.show_stats("job-1", "server"), "show_stats job-1 server"),
+        (lambda s: s.reset_errors("job-1"), "reset_errors job-1 all"),
+    ],
+)
+def test_collect_info_commands_reach_the_transport(session, call_session, expected_command):
+    """The end-to-end regression for FLIP#1032, through NVFLARE's own code.
+
+    show_errors / show_stats / reset_errors all route through NVFLARE's `_collect_info`, which
+    is one of only two upstream sites that call `_do_command(..., enforce_meta=False)`. Every one
+    of them used to raise `TypeError: FLIP_Session._do_command() got an unexpected keyword
+    argument 'enforce_meta'` before reaching the wire.
+
+    Only `session.api` is faked here, so the assertion covers the real `show_errors` ->
+    `_collect_info` -> `FLIP_Session._do_command` -> `Session._do_command` chain rather than a
+    mock of it.
+    """
+    session.api = SimpleNamespace(
+        closed=False,
+        do_command=lambda command, props=None: {
+            "status": "SUCCESS",
+            "data": [{"type": "dict", "data": {"server": {"ServerRunner": "some error"}}}],
+        },
+    )
+
+    captured = {}
+    real_do_command = type(session).__mro__[1]._do_command
+
+    def spy(self, command, *args, **kwargs):
+        captured["command"] = command
+        captured["kwargs"] = kwargs
+        return real_do_command(self, command, *args, **kwargs)
+
+    with patch("nvflare.fuel.flare_api.flare_api.Session._do_command", spy):
+        result = call_session(session)
+
+    assert captured["command"] == expected_command
+    assert captured["kwargs"] == {"enforce_meta": False}
+    # reset_errors returns None by design; the other two return the collected dict.
+    if result is not None:
+        assert result == {"server": {"ServerRunner": "some error"}}
