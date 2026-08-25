@@ -43,10 +43,17 @@ class FLIP_Session(Session):
         silently drop the session back to the default study, changing which jobs subsequent
         commands can see.
         """
-        Session.__init__(self, self.username, self.startup_path, self.secure_mode, self._debug, self._study)
+        Session.__init__(
+            self,
+            username=self.username,
+            startup_path=self.startup_path,
+            secure_mode=self.secure_mode,
+            debug=self._debug,
+            study=self._study,
+        )
         self.try_connect(timeout=5.0)
 
-    def _do_command(self, cmd: str, *args: Any, **kwargs: Any) -> Any:
+    def _do_command(self, command: str, *args: Any, **kwargs: Any) -> Any:
         """
         Override the _do_command method to add error handling for session inactivity or closure.
 
@@ -56,32 +63,40 @@ class FLIP_Session(Session):
         re-raised immediately — there is no further retry loop.
 
         ``*args`` / ``**kwargs`` are forwarded untouched so this override stays transparent to the
-        base signature (``enforce_meta``, ``props``, and anything a future NVFLARE adds). Accepting
-        only ``cmd`` used to break every command that passes them — ``show_errors``, ``show_stats``
-        and ``reset_errors``, all of which route through NVFLARE's ``_collect_info``
-        (``enforce_meta=False``) — while leaving the positional-only callers working, so the fault
-        stayed hidden until someone called one of those three (FLIP#1032).
+        base signature (``enforce_meta``, ``props``, and anything a future NVFLARE adds). The first
+        parameter is named ``command`` to match the base exactly: forwarding does not repair a
+        renamed positional, so ``_do_command(command=...)`` would still be a ``TypeError``.
+
+        Accepting only ``cmd`` used to break every caller that passes those keywords. NVFLARE 2.8.0
+        has **eight** such sites — ``_shell_command_on_target``, ``_collect_info``,
+        ``report_resources``, ``report_version``, ``get_job_logs``, ``configure_job_log``,
+        ``configure_site_log`` and ``do_app_command`` — of which four are reachable from this
+        service's routes: ``show_errors``, ``show_stats`` and ``reset_errors`` (via
+        ``_collect_info``) plus ``get_working_directory`` (via ``_shell_command_on_target``). Every
+        other caller passes the command positionally with defaults, which the narrowed signature
+        happened to satisfy, so the fault stayed hidden until someone called one of those four
+        (FLIP#1032).
 
         Args:
-            cmd (str): The command to be executed.
+            command (str): The command to be executed.
             *args (Any): Positional arguments forwarded to the base implementation.
             **kwargs (Any): Keyword arguments forwarded to the base implementation.
         """
         try:
-            return super()._do_command(cmd, *args, **kwargs)
+            return super()._do_command(command, *args, **kwargs)
         except InternalError as e:
             if "session_inactive" in str(e):
                 logger.warning("Session inactive, trying to reconnect...")
                 self.try_connect(timeout=5.0)
-                return super()._do_command(cmd, *args, **kwargs)
+                return super()._do_command(command, *args, **kwargs)
             raise e
         except SessionClosed:
             logger.warning("Session closed; attempting to reconnect and retry command.")
             self._reconnect()
             try:
-                return super()._do_command(cmd, *args, **kwargs)
+                return super()._do_command(command, *args, **kwargs)
             except Exception:
-                logger.error("Retry after reconnect failed for command: %s", cmd)
+                logger.error("Retry after reconnect failed for command: %s", command)
                 raise
 
     def check_server_status(self) -> ServerInfoModel:
@@ -168,11 +183,12 @@ class FLIP_Session(Session):
         """
         Get a list of the connected clients, as FLIP's serialisable schema.
 
-        Body-identical to the base implementation (which is also
-        ``self.get_system_info().client_info``); it exists only to re-declare the return type now
-        that ``get_system_info`` above yields FLIP models. Same duck-typing caveat as that method.
+        Delegates to the base rather than re-implementing its body, so a future upstream change to
+        how "connected" is derived is inherited rather than silently diverging here. The override
+        exists only to re-declare the return type, now that ``get_system_info`` above yields FLIP
+        models. Same duck-typing caveat as that method.
 
         Returns:
             List[ClientInfoModel]: a list of ClientInfoModel objects containing name, last connect time, and status.
         """
-        return self.get_system_info().client_info
+        return super().get_connected_client_list()
