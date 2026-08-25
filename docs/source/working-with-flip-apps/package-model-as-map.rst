@@ -827,16 +827,25 @@ These were all encountered while establishing the sequence above. None are docum
      - ``holoscan-cli`` 4.3+ dropped the MAP interface. Use ≤4.2 or 3.x.
    * - ``# of series: 0``, then ``Missing expected input 'study_selected_series_list'``
      - The loader dropped every instance. With ``Error parsing SOP Instance: int() argument must be
-       ... not 'NoneType'`` just above it, the cause is an **empty** ``AcquisitionNumber``: the SDK
-       does ``int(instance.get("AcquisitionNumber", -1))``, and a tag that is present-but-empty
-       returns ``None`` rather than the default. **The FLIP mock CT data has this** — every spleen
-       series seeded from ``aicentreflip/trust-data`` carries an empty ``AcquisitionNumber`` and
-       ``SeriesNumber``. The mock CR data does not (the tag is absent there, so the default
-       applies), which is why the chest-radiograph path has never hit it. **Fixed in mock-data
-       version 20260821**; on anything older, stamp the tag before packaging::
+       ... not 'NoneType'`` just above it, the cause is a numeric tag that is **present but empty**:
+       the SDK does ``int()`` on it, and pydicom returns ``None`` for such a tag rather than the
+       default the SDK passes. **The FLIP mock CT data has this** — every spleen series seeded from
+       ``aicentreflip/trust-data`` carries an empty ``SeriesNumber`` (which fails first, in
+       ``populate_series_attributes``) and an empty ``AcquisitionNumber`` (``int(instance.get(
+       "AcquisitionNumber", -1))``, reached only where two instances share a position). The mock CR
+       data does not (the tags are absent there, so the defaults apply), which is why the
+       chest-radiograph path has never hit it. **Fixed in mock-data version 20260821**, which fills
+       both; on anything older, stamp them before packaging::
 
-           for f in glob.glob("input/*.dcm"):
-               ds = pydicom.dcmread(f); ds.AcquisitionNumber = 1; ds.SeriesNumber = 1; ds.save_as(f)
+           import glob
+
+           import pydicom
+
+           for path in glob.glob("input/*.dcm"):
+               ds = pydicom.dcmread(path)
+               ds.AcquisitionNumber = 1
+               ds.SeriesNumber = 1
+               ds.save_as(path, enforce_file_format=True)
 
    * - ``No installed Holoscan PyPI package found``
      - The packaging *host* needs the Holoscan **SDK**, not only the CLI — ``holoscan-cli`` alone
