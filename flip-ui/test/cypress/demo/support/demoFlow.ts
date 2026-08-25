@@ -210,7 +210,7 @@ Cypress.Commands.add("demoLogin", (email: string, passwordKey: string, options?:
 declare global {
     // eslint-disable-next-line @typescript-eslint/no-namespace
     namespace Cypress {
-        interface Chainable {
+        interface Chainable<Subject = any> {
             /** `passwordKey` is the NAME of a secret in the plugins allowlist,
              *  not the password itself — demoLogin resolves it via cy.env(). */
             demoLogin(

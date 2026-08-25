@@ -6,7 +6,8 @@
     ],
     "compilerOptions": {
         "types": [
-            "cypress"
+            "cypress",
+            "vite/client"
         ],
         "target": "es2019",
         "lib": [
@@ -14,6 +15,10 @@
             "dom.iterable",
             "es2022"
         ],
+        // vite 8 ships a pure `exports` map with no top-level `types`/`main`, which
+        // classic node resolution cannot read — hence "Cannot find module 'vite'"
+        // in iconStubPlugin.ts. "bundler" is the correct mode for a Vite project.
+        "moduleResolution": "bundler",
         "isolatedModules": false,
         "allowJs": true,
         "noEmit": true,

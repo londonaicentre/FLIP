@@ -30,19 +30,35 @@ declare namespace Cypress {
         pinia: Pinia;
     }
 
-    interface Chainable {
+    /**
+    * Options accepted by cy.login — mirrors the LoginOptions interface in
+    * test/cypress/support/cognito.ts, which owns the implementation.
+    */
+    interface LoginOptions {
+        username?: string;
+        permissionsFixture?: string;
+    }
+
+    interface Chainable<Subject = any> {
         /**
          * Get DOM element by data-test attribute.
          *
          * @param {string} selector - The data-test attribute of the target DOM element.
          * @return {HTMLElement} - Target DOM element
          */
-        getBySel(value: string): Chainable<Subject>,
+        getBySel(
+            value: string,
+            options?: Partial<Loggable & Timeoutable & Withinable & Shadow>
+        ): Chainable<Subject>,
         /**
          * Login in to AWS Cognito via Amplify Auth API bypassing UI.
-         * @param {string=} [username] - [optional] - The username of the account to login with.
-         * @param {string=} [password] - [optional] - The password of the account to login with.
+         *
+         * Accepts either an options object or, for the legacy call sites that
+         * predate it, a bare username string — matching the implementation in
+         * test/cypress/support/cognito.ts.
+         *
+         * @param {LoginOptions|string=} [options] - [optional] - Login options, or a username.
          */
-        login(username: string = "", password: string = ""): Chainable<Subject>
+        login(options?: LoginOptions | string): Chainable<Subject>
     }
 }
