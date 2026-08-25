@@ -57,8 +57,14 @@ def test_normalize_status_covers_every_flwr_status_value():
         assert native in _FLOWER_STATUS_MAP, f"flwr status {native!r} is unmapped"
 
 
-def test_job_metadata_has_exactly_job_id_and_status():
-    assert set(JobMetadata.model_fields) == {"job_id", "status"}
+def test_job_metadata_has_exactly_the_contract_fields():
+    # The other adapter and flip-api's IJobMetaData pin the same set. A field added here and
+    # nowhere else is invisible until a hub reads it, so all three move in the same PR.
+    assert set(JobMetadata.model_fields) == {"job_id", "status", "status_details"}
+
+
+def test_status_details_defaults_to_none():
+    assert JobMetadata(job_id="1", status=JobStatus.RUNNING).status_details is None
 
 
 def test_job_status_has_exactly_six_contract_values():

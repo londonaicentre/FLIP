@@ -26,6 +26,11 @@ in-flight job's FL API for that job's status and, on ``FAILED``, records the bac
 tail against the model and drives it to ``ERROR`` — which releases the net through
 ``update_model_status``'s existing terminal-status path.
 
+That same ``/list_jobs`` response also carries ``status_details`` — the backend's own one-line
+explanation, where it has one — so the feed row can lead with the cause rather than opening on
+the per-run dependency install that dominates a Flower log tail. Flower fills it; NVFLARE has
+no equivalent native field and leaves it unset.
+
 Two conditions act, both meaning "this run will never report":
 
 * the backend lists the job as ``FAILED``, or
@@ -63,7 +68,7 @@ from flip_api.db.database import get_engine
 from flip_api.db.models.main_models import FLJob, FLNets, FLScheduler, Model
 from flip_api.domain.schemas.status import FLJobStatus, JobStatus, ModelStatus
 from flip_api.domain.schemas.types import FLBackend
-from flip_api.fl_services.services.fl_service import fetch_run_logs, get_backend_job_status
+from flip_api.fl_services.services.fl_service import fetch_run_logs, get_backend_job_metadata
 from flip_api.model_services.services.model_service import add_log, update_model_status
 from flip_api.utils.logger import logger
 
@@ -85,19 +90,36 @@ _MANUAL_FALLBACK_HINTS: dict[FLBackend, str] = {
         "The FL run log could not be retrieved from the FL API. Run "
         "`flwr log <run-id> local --show` inside the net's FL API container to read it."
     ),
+    # Deliberately points at the container's stdout and nowhere else. The two more obvious
+    # destinations do not work: the FL API's `POST /<job-id>/show_errors/server` 500s against
+    # the installed NVFLARE (FLIP#1032), and the job workspace holds opaque
+    # `data`/`meta`/`workspace` blobs rather than a readable log — a filesystem-wide search of
+    # a failed run's fl-server matched only the uploaded app bundle, never the traceback.
+    # Revisit once #1032 lands.
     FLBackend.NVFLARE: (
-        "The FL run log could not be retrieved from the FL API. Query the net's FL API "
-        "(`POST /<job-id>/show_errors/server`) or read the job's log in the fl-server workspace."
+        "The FL run log could not be retrieved from the FL API. Read the failure in the net's "
+        "fl-server container output (`docker logs fl-server-net-<n>`); NVFLARE keeps no "
+        "readable per-job log in the job workspace."
     ),
 }
 
 
-def _failure_message(fl_backend_job_id: str, run_log: str | None, fl_backend: FLBackend) -> str:
+def _failure_message(
+    fl_backend_job_id: str, status_details: str | None, run_log: str | None, fl_backend: FLBackend
+) -> str:
     """Compose the activity-feed text for a run that failed after submission.
+
+    ``status_details`` leads when the backend supplied one, because the log tail buries the
+    cause: a Flower run log opens with the per-run ``uv sync``, whose single ``Installed:
+    [...]`` line is most of the stored row, leaving the traceback below the fold of the feed
+    panel. The one-liner is the same exception the traceback ends with, so putting it at the
+    top costs a line and saves the reader the scroll. The tail still follows — it carries the
+    file and line number, which the one-liner does not.
 
     Args:
         fl_backend_job_id (str): The backend-assigned job id, quoted so an operator can
             take it straight to ``flwr log`` / the FL API.
+        status_details (str | None): The backend's own one-line cause, when it has one.
         run_log (str | None): The backend's log tail, when it could be retrieved.
         fl_backend (FLBackend): The net's backend, selecting the manual-fallback wording.
 
@@ -105,8 +127,10 @@ def _failure_message(fl_backend_job_id: str, run_log: str | None, fl_backend: FL
         str: The text stored on the model's failed ``fl_logs`` row.
     """
     header = f"Training failed: FL run {fl_backend_job_id} ended in a failed state without reporting a result."
+    if status_details:
+        header = f"{header}\n\nReported cause: {status_details}"
     if not run_log or not run_log.strip():
-        return f"{header} {_MANUAL_FALLBACK_HINTS[fl_backend]}"
+        return f"{header}\n\n{_MANUAL_FALLBACK_HINTS[fl_backend]}"
     return f"{header}\n\nEnd of the FL run log:\n{run_log.strip()[-_MAX_STORED_LOG_CHARS:]}"
 
 
@@ -196,13 +220,14 @@ def reconcile_failed_fl_jobs(session: Session) -> int:
         # Non-null by the WHERE clause above; the column is nullable until submission.
         fl_backend_job_id = cast(str, nullable_backend_job_id)
         try:
-            backend_status = get_backend_job_status(endpoint, fl_backend_job_id)
+            backend_job = get_backend_job_metadata(endpoint, fl_backend_job_id)
+            backend_status = backend_job.status if backend_job else None
 
-            if backend_status == FLJobStatus.FAILED:
+            if backend_job is not None and backend_status == FLJobStatus.FAILED:
                 # The log fetch goes over the network too, so do it before the race
                 # re-check below.
                 run_log = fetch_run_logs(endpoint, fl_backend_job_id)
-                message = _failure_message(fl_backend_job_id, run_log, fl_backend)
+                message = _failure_message(fl_backend_job_id, backend_job.status_details, run_log, fl_backend)
             elif backend_status is None and started is not None and datetime.utcnow() - started > unlisted_grace:
                 # The backend has no record of a run the hub submitted long ago — a
                 # backend restart lost it (SuperLink run state is in-memory by default).

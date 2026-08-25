@@ -16,6 +16,7 @@ from uuid import uuid4
 
 import pytest
 
+from flip_api.domain.interfaces.fl import IJobMetaData
 from flip_api.domain.schemas.status import FLJobStatus, ModelStatus
 from flip_api.domain.schemas.types import FLBackend
 from flip_api.fl_services.reconcile_failed_jobs import (
@@ -57,12 +58,17 @@ def _mock_db(job_rows, model_statuses=None):
     return db
 
 
+def _meta(status, details=None):
+    """One `GET /list_jobs` item as the FL API would return it."""
+    return IJobMetaData(job_id=_BACKEND_JOB_ID, status=status, status_details=details)
+
+
 @pytest.fixture
 def mock_dependencies():
     settings = MagicMock()
     settings.FL_JOB_UNLISTED_GRACE_MINUTES = _GRACE_MINUTES
     with (
-        patch("flip_api.fl_services.reconcile_failed_jobs.get_backend_job_status") as mock_status,
+        patch("flip_api.fl_services.reconcile_failed_jobs.get_backend_job_metadata") as mock_status,
         patch("flip_api.fl_services.reconcile_failed_jobs.fetch_run_logs") as mock_logs,
         patch("flip_api.fl_services.reconcile_failed_jobs.add_log") as mock_add_log,
         patch("flip_api.fl_services.reconcile_failed_jobs.update_model_status") as mock_update,
@@ -80,7 +86,7 @@ def mock_dependencies():
 def test_failed_run_errors_the_model_and_logs_the_cause(mock_dependencies):
     job = _job_row()
     db = _mock_db([job], model_statuses=[ModelStatus.RUNNING])
-    mock_dependencies["status"].return_value = FLJobStatus.FAILED
+    mock_dependencies["status"].return_value = _meta(FLJobStatus.FAILED)
     mock_dependencies["logs"].return_value = "ImportError: cannot import name 'min_clients_from_run_config'"
 
     reported = reconcile_failed_fl_jobs(db)
@@ -100,19 +106,69 @@ def test_failed_run_errors_the_model_and_logs_the_cause(mock_dependencies):
 
 @pytest.mark.parametrize(
     ("fl_backend", "expected_hint"),
-    [(FLBackend.FLOWER, "flwr log"), (FLBackend.NVFLARE, "show_errors")],
+    # NVFLARE deliberately no longer names show_errors: that route 500s (FLIP#1032) and the
+    # job workspace holds no readable log, so the container output is the only real answer.
+    [(FLBackend.FLOWER, "flwr log"), (FLBackend.NVFLARE, "docker logs fl-server-net-")],
 )
 def test_failure_without_retrievable_logs_names_the_backend_manual_fallback(
     mock_dependencies, fl_backend, expected_hint
 ):
     db = _mock_db([_job_row(fl_backend=fl_backend)], model_statuses=[ModelStatus.INITIATED])
-    mock_dependencies["status"].return_value = FLJobStatus.FAILED
+    mock_dependencies["status"].return_value = _meta(FLJobStatus.FAILED)
     mock_dependencies["logs"].return_value = None
 
     reconcile_failed_fl_jobs(db)
 
     message = mock_dependencies["add_log"].call_args[0][1]
     assert expected_hint in message
+
+
+def test_backend_status_details_lead_the_message(mock_dependencies):
+    """The backend's one-line cause goes above the log tail, not after it.
+
+    A Flower run log opens with the per-run `uv sync` -- one `Installed: [...]` line is most
+    of the stored row -- so a reader who only sees the top of the feed panel would otherwise
+    get a dependency manifest instead of the reason.
+    """
+    db = _mock_db([_job_row()], model_statuses=[ModelStatus.RUNNING])
+    mock_dependencies["status"].return_value = _meta(
+        FLJobStatus.FAILED,
+        details="ServerApp failed with exception: No module named 'flwr.common.message'",
+    )
+    mock_dependencies["logs"].return_value = "Installed: [a==1, b==2]\nTraceback...\nModuleNotFoundError"
+
+    reconcile_failed_fl_jobs(db)
+
+    message = mock_dependencies["add_log"].call_args[0][1]
+    assert "Reported cause: ServerApp failed with exception: No module named" in message
+    # Cause first, log tail after -- the ordering is the point.
+    assert message.index("Reported cause:") < message.index("End of the FL run log:")
+
+
+def test_status_details_are_reported_even_without_a_log(mock_dependencies):
+    """An NVFLARE-style failure (no /run_logs) still gets any cause the backend supplied."""
+    db = _mock_db([_job_row(fl_backend=FLBackend.NVFLARE)], model_statuses=[ModelStatus.INITIATED])
+    mock_dependencies["status"].return_value = _meta(FLJobStatus.FAILED, details="job failed to deploy")
+    mock_dependencies["logs"].return_value = None
+
+    reconcile_failed_fl_jobs(db)
+
+    message = mock_dependencies["add_log"].call_args[0][1]
+    assert "Reported cause: job failed to deploy" in message
+    assert "docker logs fl-server-net-" in message
+
+
+def test_absent_status_details_change_nothing(mock_dependencies):
+    """A backend with no per-job explanation (NVFLARE today) reads exactly as before."""
+    db = _mock_db([_job_row()], model_statuses=[ModelStatus.RUNNING])
+    mock_dependencies["status"].return_value = _meta(FLJobStatus.FAILED, details=None)
+    mock_dependencies["logs"].return_value = "Traceback...\nImportError"
+
+    reconcile_failed_fl_jobs(db)
+
+    message = mock_dependencies["add_log"].call_args[0][1]
+    assert "Reported cause:" not in message
+    assert "End of the FL run log:" in message
 
 
 @pytest.mark.parametrize(
@@ -126,7 +182,7 @@ def test_non_failed_runs_are_left_alone(mock_dependencies, backend_status):
     # period (the row's `started` defaults to just-now) an unlisted run is a listing
     # hiccup, not a death.
     db = _mock_db([_job_row()])
-    mock_dependencies["status"].return_value = backend_status
+    mock_dependencies["status"].return_value = _meta(backend_status) if backend_status else None
 
     reported = reconcile_failed_fl_jobs(db)
 
@@ -180,7 +236,7 @@ def test_no_in_flight_jobs_does_not_call_the_fl_api(mock_dependencies):
 )
 def test_model_that_settled_during_the_status_call_wins_the_race(mock_dependencies, settled_status):
     db = _mock_db([_job_row()], model_statuses=[settled_status])
-    mock_dependencies["status"].return_value = FLJobStatus.FAILED
+    mock_dependencies["status"].return_value = _meta(FLJobStatus.FAILED)
 
     reported = reconcile_failed_fl_jobs(db)
 
@@ -204,7 +260,7 @@ def test_unlisted_run_past_grace_still_defers_to_a_settled_model(mock_dependenci
 def test_one_unreachable_net_does_not_stop_the_other_jobs(mock_dependencies):
     unreachable, healthy = _job_row(), _job_row(backend_job_id="222")
     db = _mock_db([unreachable, healthy], model_statuses=[ModelStatus.RUNNING])
-    mock_dependencies["status"].side_effect = [ConnectionError("net-1 is down"), FLJobStatus.FAILED]
+    mock_dependencies["status"].side_effect = [ConnectionError("net-1 is down"), _meta(FLJobStatus.FAILED)]
 
     reported = reconcile_failed_fl_jobs(db)
 

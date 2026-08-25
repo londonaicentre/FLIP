@@ -157,6 +157,14 @@ class JobMetadata(BaseModel):
 
     job_id: str
     status: JobStatus
+    # Part of the shared contract, but always None here: NVFLARE has no native per-job
+    # explanation to carry. `nvflare.apis.job_def.JobMetaKey` exposes no error/details key —
+    # the closest are `job_deploy_detail` (per-target "OK"/failure of the *deployment* only;
+    # it reads `['server: OK', 'Trust_2: OK']` even on a job that then died with
+    # FINISHED:EXECUTION_EXCEPTION) and `schedule_history`. The cause of an NVFLARE run
+    # failure lives only in the fl-server container's stdout. Declared so the field means the
+    # same thing on both adapters and the hub never has to branch on backend to read it.
+    status_details: str | None = None
 
 
 # NVFLARE RunStatus (nvflare/apis/job_def.py) -> normalized contract status.

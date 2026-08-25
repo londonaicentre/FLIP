@@ -311,6 +311,11 @@ lists at all is treated the same way once it has gone unlisted for a grace perio
 memory, so a restart forgets every run, and such a run can never report. Nothing else is
 acted on: a run that is pending, running or finished is left entirely to its own reporting.
 
+The feed row leads with the backend's own one-line explanation of the failure, when it has
+one. Flower reports this on every ``flwr ls`` entry, so the hub gets the ServerApp's exception
+type and message from the same call it already makes to read the status — no extra request.
+NVFLARE has no equivalent field, so its rows carry the status alone.
+
 Two things are worth knowing about the captured log. It is a **tail**: a Flower run log opens
 with the per-run dependency install and the cause of a failure is at the far end, so the head
 is dropped. And it is best-effort — if the log cannot be retrieved, the feed says so and
@@ -321,8 +326,14 @@ names the manual fallback. On a Flower net that is to run, inside the net's FL A
    flwr log <run-id> local --show
 
 On an NVFLARE net (whose FL API serves no run-log endpoint today, so its failures always
-surface status-only) the fallback is the FL API's ``POST /<job-id>/show_errors/server`` or
-the job's log in the fl-server workspace.
+surface status-only) the fallback is the fl-server container's own output:
+
+.. code-block:: bash
+
+   docker logs fl-server-net-<n>
+
+NVFLARE keeps no readable per-job log in the job workspace — the workspace holds opaque
+archive blobs — so the container output is where the traceback actually lives.
 
 This covers the **ServerApp**. A ClientApp that dies at a trust writes to that trust's
 SuperNode, which the Central Hub cannot read; such failures still surface only through

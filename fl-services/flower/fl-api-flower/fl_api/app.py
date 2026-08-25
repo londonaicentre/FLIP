@@ -65,6 +65,14 @@ _node_trust_mapping: dict[str, str] = {}  # Flower node_id → trust name
 # deadline is 5s, so anything past this means the CLI itself is wedged (unreachable
 # SuperLink, uvx resolving the package) rather than a slow run.
 _RUN_LOG_COMMAND_TIMEOUT_SECONDS = 60
+# Cap on the `status-details` one-liner carried on each list_jobs item. It is a status
+# string, not a log, so this is a sanity bound rather than a real truncation policy — but
+# the text is a researcher-authored exception message, so it is not trusted to be short.
+_MAX_STATUS_DETAILS_CHARS = 500
+# `flwr ls` writes this literal for a run with nothing to say (a healthy or still-running
+# one), rather than omitting the key. Carrying it through would put "N/A" in the hub's
+# activity feed as though it were a cause.
+_NO_STATUS_DETAILS = "N/A"
 _DEFAULT_RUN_LOG_MAX_CHARS = 8000
 
 
@@ -223,6 +231,28 @@ def _get_federation_nodes(src_root: Path) -> list[dict[str, Any]]:
     return nodes
 
 
+def _clean_status_details(raw: Any) -> str | None:
+    """Normalise one run's ``status-details`` into the contract's optional one-liner.
+
+    Redacted like the run log is, and for the same reason: the text is whatever the
+    ServerApp's exception carried, written by researcher-supplied code in a container that
+    holds a hub service key. Collapsed to a single line so it can be used as a headline in
+    the hub's activity feed without swallowing the log tail that follows it.
+
+    Args:
+        raw (Any): The ``status-details`` value from one `flwr ls` entry, if any.
+
+    Returns:
+        str | None: The cleaned one-liner, or None when the backend had nothing to say.
+    """
+    if not isinstance(raw, str):
+        return None
+    collapsed = " ".join(raw.split())
+    if not collapsed or collapsed == _NO_STATUS_DETAILS:
+        return None
+    return redact_secrets(collapsed)[:_MAX_STATUS_DETAILS_CHARS]
+
+
 def _parse_runs_payload(payload: dict[str, Any]) -> list[JobMetadata]:
     runs = payload.get("runs")
     if not isinstance(runs, list):
@@ -240,6 +270,9 @@ def _parse_runs_payload(payload: dict[str, Any]) -> list[JobMetadata]:
                 JobMetadata(
                     job_id=str(run["run-id"]),
                     status=normalize_status(run["status"]),
+                    # Absent on older flwr versions -- .get, so a missing key is simply no
+                    # detail rather than the 500 a missing run-id/status earns below.
+                    status_details=_clean_status_details(run.get("status-details")),
                 )
             )
         except KeyError as err:

@@ -36,8 +36,8 @@ def test_list_runs_success(client, src_root, mock_flwr_run):
     assert len(body) == 2
     for item in body:
         JobMetadata.model_validate(item)
-    assert body[0] == {"job_id": "9478652229627629048", "status": "FINISHED"}
-    assert body[1] == {"job_id": "2528745119497052892", "status": "RUNNING"}
+    assert body[0] == {"job_id": "9478652229627629048", "status": "FINISHED", "status_details": None}
+    assert body[1] == {"job_id": "2528745119497052892", "status": "RUNNING", "status_details": None}
 
 
 def test_list_jobs_alias_returns_same_shape(client, src_root, mock_flwr_run):
@@ -46,7 +46,69 @@ def test_list_jobs_alias_returns_same_shape(client, src_root, mock_flwr_run):
     response = client.get("/list_jobs")
 
     assert response.status_code == 200
-    assert response.json() == [{"job_id": "1", "status": "RUNNING"}]
+    assert response.json() == [{"job_id": "1", "status": "RUNNING", "status_details": None}]
+
+
+def test_status_details_carries_the_backends_own_cause(client, src_root, mock_flwr_run):
+    # `flwr ls` already explains a failed run in one line. Carrying it costs nothing —
+    # no extra call, no log fetch — and it is the cause the hub puts at the top of the
+    # model's activity feed (FLIP#1001).
+    mock_flwr_run(
+        stdout=(
+            '{"success": true, "runs": [{"run-id":"7","fab-name":"x","status":"finished:failed",'
+            '"status-details":"ServerApp failed with exception: No module named \'flwr.common.message\'"}]}'
+        )
+    )
+
+    response = client.get("/list_runs")
+
+    assert response.status_code == 200
+    assert response.json() == [
+        {
+            "job_id": "7",
+            "status": "FAILED",
+            "status_details": "ServerApp failed with exception: No module named 'flwr.common.message'",
+        }
+    ]
+
+
+def test_status_details_na_is_reported_as_absent(client, src_root, mock_flwr_run):
+    # flwr writes the literal "N/A" for a run with nothing to say rather than omitting the
+    # key; passing it through would print "Reported cause: N/A" in the activity feed.
+    mock_flwr_run(
+        stdout='{"success": true, "runs": [{"run-id":"7","fab-name":"x","status":"running","status-details":"N/A"}]}'
+    )
+
+    assert client.get("/list_runs").json() == [{"job_id": "7", "status": "RUNNING", "status_details": None}]
+
+
+def test_status_details_is_collapsed_redacted_and_bounded(client, src_root, mock_flwr_run):
+    # The text is a researcher-authored exception message from a container holding a hub
+    # service key, so it gets the same masking the run log does — and a length bound, since
+    # nothing upstream constrains how long an exception message can be.
+    secret = "aws_secret_access_key=" + "b" * 900
+    mock_flwr_run(
+        stdout=(
+            '{"success": true, "runs": [{"run-id":"7","fab-name":"x","status":"finished:failed",'
+            f'"status-details":"boom\\n   over  lines {secret}"}}]}}'
+        )
+    )
+
+    details = client.get("/list_runs").json()[0]["status_details"]
+
+    assert details is not None
+    assert "\n" not in details
+    assert "boom over lines" in details
+    assert "b" * 40 not in details
+    assert len(details) <= 500
+
+
+def test_status_details_absent_key_is_not_an_error(client, src_root, mock_flwr_run):
+    # Older flwr versions have no such key. Unlike run-id/status (which 500 when missing),
+    # this one is simply absent detail.
+    mock_flwr_run(stdout='{"success": true, "runs": [{"run-id":"7","fab-name":"x","status":"running"}]}')
+
+    assert client.get("/list_runs").json() == [{"job_id": "7", "status": "RUNNING", "status_details": None}]
 
 
 def test_list_runs_malformed_run_returns_500(client, src_root, mock_flwr_run):

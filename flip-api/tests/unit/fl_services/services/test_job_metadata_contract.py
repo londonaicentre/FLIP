@@ -21,8 +21,26 @@ def test_fl_job_status_has_exactly_six_contract_values():
     assert {s.value for s in FLJobStatus} == {"PENDING", "RUNNING", "FINISHED", "FAILED", "STOPPED", "UNKNOWN"}
 
 
-def test_job_metadata_has_exactly_job_id_and_status():
-    assert set(IJobMetaData.model_fields) == {"job_id", "status"}
+def test_job_metadata_has_exactly_the_contract_fields():
+    # Pinned deliberately: the contract is implemented independently by two FL API adapters,
+    # so a field added on one side and not the other is invisible until it matters. Adding a
+    # field here means adding it to both adapters' JobMetadata in the same PR.
+    assert set(IJobMetaData.model_fields) == {"job_id", "status", "status_details"}
+
+
+def test_status_details_is_optional_and_defaults_to_none():
+    # Optional so an FL API image predating the field still validates against a newer hub —
+    # unlike the UNKNOWN status value, this half of the contract is deploy-order-safe in both
+    # directions (the hub also ignores extra fields, so a newer FL API is safe too).
+    job = IJobMetaData.model_validate({"job_id": "abc", "status": "FAILED"})
+    assert job.status_details is None
+
+
+def test_status_details_is_carried_through_when_present():
+    job = IJobMetaData.model_validate(
+        {"job_id": "abc", "status": "FAILED", "status_details": "ServerApp failed with exception: boom"}
+    )
+    assert job.status_details == "ServerApp failed with exception: boom"
 
 
 @pytest.mark.parametrize("job_status", ["PENDING", "RUNNING", "FINISHED", "FAILED", "STOPPED", "UNKNOWN"])

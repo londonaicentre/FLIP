@@ -1091,50 +1091,79 @@ def test_extract_current_job_data_multiple_found(mock_http_get):
 
 
 @patch("flip_api.fl_services.services.fl_service.http_get")
-def test_get_backend_job_status_returns_terminal_status(mock_http_get):
+def test_get_backend_job_metadata_returns_terminal_status(mock_http_get):
     # Unlike extract_current_job_data this must see terminal states — that is the whole
     # point of the FL job reconcile (#1001).
-    from flip_api.fl_services.services.fl_service import get_backend_job_status
+    from flip_api.fl_services.services.fl_service import get_backend_job_metadata
 
     mock_http_get.return_value = [
         {"job_id": "job999", "status": "RUNNING"},
         {"job_id": "job123", "status": "FAILED"},
     ]
 
-    assert get_backend_job_status("http://fl-api-endpoint", "job123") == FLJobStatus.FAILED
+    assert get_backend_job_metadata("http://fl-api-endpoint", "job123").status == FLJobStatus.FAILED
     mock_http_get.assert_called_once_with("http://fl-api-endpoint/list_jobs", timeout=30)
 
 
 @patch("flip_api.fl_services.services.fl_service.http_get")
-def test_get_backend_job_status_unlisted_job_returns_none(mock_http_get):
+def test_get_backend_job_metadata_unlisted_job_returns_none(mock_http_get):
     # "Not listed" is not "failed": the caller must be able to tell them apart.
-    from flip_api.fl_services.services.fl_service import get_backend_job_status
+    from flip_api.fl_services.services.fl_service import get_backend_job_metadata
 
     mock_http_get.return_value = [{"job_id": "other", "status": "RUNNING"}]
 
-    assert get_backend_job_status("http://fl-api-endpoint", "job123") is None
+    assert get_backend_job_metadata("http://fl-api-endpoint", "job123") is None
 
 
 @patch("flip_api.fl_services.services.fl_service.http_get")
-def test_get_backend_job_status_accepts_unknown(mock_http_get):
+def test_get_backend_job_metadata_accepts_unknown(mock_http_get):
     # UNKNOWN is what an adapter reports for a native status its map does not recognise
     # (i.e. a framework upgrade added one). The hub must parse it — and then not act on it
     # (the reconcile only acts on FAILED; see test_reconcile_failed_jobs).
-    from flip_api.fl_services.services.fl_service import get_backend_job_status
+    from flip_api.fl_services.services.fl_service import get_backend_job_metadata
 
     mock_http_get.return_value = [{"job_id": "job123", "status": "UNKNOWN"}]
 
-    assert get_backend_job_status("http://fl-api-endpoint", "job123") == FLJobStatus.UNKNOWN
+    assert get_backend_job_metadata("http://fl-api-endpoint", "job123").status == FLJobStatus.UNKNOWN
 
 
 @patch("flip_api.fl_services.services.fl_service.http_get")
-def test_get_backend_job_status_rejects_non_list_response(mock_http_get):
-    from flip_api.fl_services.services.fl_service import get_backend_job_status
+def test_get_backend_job_metadata_carries_status_details(mock_http_get):
+    # The backend's own one-line cause rides the same response the status does — that is why
+    # the lookup returns the whole contract item rather than just the status (#1001).
+    from flip_api.fl_services.services.fl_service import get_backend_job_metadata
+
+    mock_http_get.return_value = [
+        {
+            "job_id": "job123",
+            "status": "FAILED",
+            "status_details": "ServerApp failed with exception: boom",
+        }
+    ]
+
+    job = get_backend_job_metadata("http://fl-api-endpoint", "job123")
+    assert job.status_details == "ServerApp failed with exception: boom"
+
+
+@patch("flip_api.fl_services.services.fl_service.http_get")
+def test_get_backend_job_metadata_tolerates_absent_status_details(mock_http_get):
+    # An FL API predating the field (or NVFLARE, which has no native equivalent) must still
+    # validate — the field is optional precisely so deploy order cannot break the sweep.
+    from flip_api.fl_services.services.fl_service import get_backend_job_metadata
+
+    mock_http_get.return_value = [{"job_id": "job123", "status": "FAILED"}]
+
+    assert get_backend_job_metadata("http://fl-api-endpoint", "job123").status_details is None
+
+
+@patch("flip_api.fl_services.services.fl_service.http_get")
+def test_get_backend_job_metadata_rejects_non_list_response(mock_http_get):
+    from flip_api.fl_services.services.fl_service import get_backend_job_metadata
 
     mock_http_get.return_value = {"job_id": "job123"}
 
     with pytest.raises(ValueError, match="Unexpected response format"):
-        get_backend_job_status("http://fl-api-endpoint", "job123")
+        get_backend_job_metadata("http://fl-api-endpoint", "job123")
 
 
 @patch("flip_api.fl_services.services.fl_service.http_get")

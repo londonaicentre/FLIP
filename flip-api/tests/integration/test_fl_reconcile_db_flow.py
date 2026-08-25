@@ -27,6 +27,7 @@ import pytest
 from sqlmodel import select
 
 from flip_api.db.models.main_models import FLJob, FLLogs, FLNets, FLScheduler
+from flip_api.domain.interfaces.fl import IJobMetaData
 from flip_api.domain.schemas.status import FLJobStatus, JobStatus, ModelStatus, NetStatus, ProjectStatus
 from flip_api.domain.schemas.types import FLBackend
 from flip_api.fl_services.reconcile_failed_jobs import reconcile_failed_fl_jobs
@@ -81,8 +82,8 @@ def test_failed_run_is_resolved_end_to_end(session, submitted_in_flight_job):
 
     with (
         patch(
-            "flip_api.fl_services.reconcile_failed_jobs.get_backend_job_status",
-            return_value=FLJobStatus.FAILED,
+            "flip_api.fl_services.reconcile_failed_jobs.get_backend_job_metadata",
+            return_value=IJobMetaData(job_id=_BACKEND_JOB_ID, status=FLJobStatus.FAILED),
         ) as mock_status,
         patch(
             "flip_api.fl_services.reconcile_failed_jobs.fetch_run_logs",
@@ -117,7 +118,7 @@ def test_settled_job_is_not_even_polled(session, submitted_in_flight_job):
     session.add(ctx["job"])
     session.commit()
 
-    with patch("flip_api.fl_services.reconcile_failed_jobs.get_backend_job_status") as mock_status:
+    with patch("flip_api.fl_services.reconcile_failed_jobs.get_backend_job_metadata") as mock_status:
         reported = reconcile_failed_fl_jobs(session)
 
     assert reported == 0
@@ -132,7 +133,7 @@ def test_unlisted_run_past_grace_is_resolved_end_to_end(session, submitted_in_fl
     session.commit()
 
     with (
-        patch("flip_api.fl_services.reconcile_failed_jobs.get_backend_job_status", return_value=None),
+        patch("flip_api.fl_services.reconcile_failed_jobs.get_backend_job_metadata", return_value=None),
         patch("flip_api.fl_services.reconcile_failed_jobs.fetch_run_logs") as mock_logs,
     ):
         reported = reconcile_failed_fl_jobs(session)

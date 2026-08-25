@@ -977,19 +977,23 @@ def extract_current_job_data(net_endpoint: str, fl_backend_job_id: str) -> IJobM
     return current_job_data[0]
 
 
-def get_backend_job_status(net_endpoint: str, fl_backend_job_id: str) -> FLJobStatus | None:
-    """Return the FL backend's own status for one submitted job.
+def get_backend_job_metadata(net_endpoint: str, fl_backend_job_id: str) -> IJobMetaData | None:
+    """Return the FL backend's own metadata for one submitted job.
 
     Unlike ``extract_current_job_data`` this does not filter to running jobs — the point
     is to see terminal states, in particular the ``FAILED`` a run reaches when it dies
     after a successful submission (FLIP#1001).
+
+    Returns the whole contract item rather than just the status so the caller also gets
+    ``status_details`` — the backend's own one-line cause, free in this same response —
+    without a second network call.
 
     Args:
         net_endpoint (str): The endpoint of the FL API service.
         fl_backend_job_id (str): The backend-assigned job id to look up.
 
     Returns:
-        FLJobStatus | None: The job's status, or ``None`` when the backend does not list
+        IJobMetaData | None: The job's metadata, or ``None`` when the backend does not list
             the job at all (nothing can be concluded — callers must not treat that as a
             failure).
 
@@ -1009,7 +1013,7 @@ def get_backend_job_status(net_endpoint: str, fl_backend_job_id: str) -> FLJobSt
 
     for job in (IJobMetaData.model_validate(entry) for entry in response):
         if job.job_id == fl_backend_job_id:
-            return job.status
+            return job
 
     logger.info(f"Job {fl_backend_job_id} is not listed by the FL API at {net_endpoint}.")
     return None
