@@ -13,7 +13,7 @@
 
 from typing import Any
 
-from nvflare.fuel.flare_api.api_spec import InternalError, SessionClosed
+from nvflare.fuel.flare_api.api_spec import InternalError, NoConnection, SessionClosed
 from nvflare.fuel.flare_api.flare_api import Session
 
 from fl_api.utils.logger import logger
@@ -42,7 +42,17 @@ class FLIP_Session(Session):
         copies. ``_study`` is passed through deliberately: re-initialising without it would
         silently drop the session back to the default study, changing which jobs subsequent
         commands can see.
+
+        The previous ``AdminAPI`` is closed **first**. ``Session.__init__`` assigns a brand-new
+        one over ``self.api``, so without this the old object is merely dereferenced: its cell
+        threads and sockets keep running and the FL server still counts the session as logged in.
+        A flapping fl-server drives one reconnect per command, so those abandoned sessions
+        accumulate for the lifetime of this process (FLIP#1035). ``_close_ignore_errors`` is
+        NVFLARE's own helper for exactly this — it swallows the logout failure you get when the
+        server has already gone, while still stopping the local machinery. Closing *after*
+        re-initialising would tear down the session just built.
         """
+        self._close_ignore_errors()
         Session.__init__(
             self,
             username=self.username,
@@ -51,15 +61,44 @@ class FLIP_Session(Session):
             debug=self._debug,
             study=self._study,
         )
-        self.try_connect(timeout=5.0)
+        try:
+            self.try_connect(timeout=5.0)
+        except Exception:
+            # `Session.__init__` above has already swapped in a fresh AdminAPI, so a failure here
+            # leaves the session holding one that was never logged in: `closed` is False, but its
+            # command registry is empty because only `_after_login` fills it. Every later command
+            # then fails client-side in `_get_command_detail` with
+            # `ERROR_SYNTAX: Command <name> not found` — an InternalError no recovery branch
+            # catches, and `closed` being False means the base never raises SessionClosed either.
+            # The session looks healthy and can never work again; only a container restart clears
+            # it. Closing the half-built API restores the invariant "unusable implies closed", so
+            # the next command raises SessionClosed and recovery runs again, self-healing once the
+            # server is back. `api.close()` rather than `_close_ignore_errors()`: no logout
+            # round-trip to a server we already know is unreachable.
+            logger.warning("Reconnect failed; closing the half-built session so the next command retries.")
+            try:
+                self.api.close()
+            except Exception:
+                pass
+            raise
 
     def _do_command(self, command: str, *args: Any, **kwargs: Any) -> Any:
         """
         Override the _do_command method to add error handling for session inactivity or closure.
 
-        On ``InternalError`` with "session_inactive", reconnects via ``try_connect`` and retries once.
-        On ``SessionClosed`` (e.g. idle timeout, fl-server restart, network blip), fully re-initialises
-        the admin session via ``_reconnect`` and retries once. Any exception on the retry is logged and
+        Three ways a live session goes bad, all recovered here (FLIP#1035):
+
+        * ``InternalError`` with "session_inactive" — reconnect via ``try_connect``, and if the
+          AdminAPI turns out to be closed or unreachable, fall through to a full ``_reconnect``.
+        * ``SessionClosed`` — idle timeout, or the API was closed under us.
+        * ``NoConnection`` — the fl-server went away (restart, network blip). This one is easy to
+          miss: it derives from ``ConnectionError``/``OSError``, **not** from ``SessionClosed`` or
+          ``InternalError``, so it was previously caught by neither branch and escaped to the
+          router. Observed live: restarting ``fl-server-net-N`` left every subsequent command
+          answering 500 with ``cannot connect to server: ERROR_SERVER_CONNECTION`` **permanently**,
+          because nothing rebuilt the AdminAPI — only restarting the fl-api container cleared it.
+
+        Either way the command is retried exactly once; any exception on the retry is logged and
         re-raised immediately — there is no further retry loop.
 
         ``*args`` / ``**kwargs`` are forwarded untouched so this override stays transparent to the
@@ -85,19 +124,44 @@ class FLIP_Session(Session):
         try:
             return super()._do_command(command, *args, **kwargs)
         except InternalError as e:
-            if "session_inactive" in str(e):
-                logger.warning("Session inactive, trying to reconnect...")
-                self.try_connect(timeout=5.0)
-                return super()._do_command(command, *args, **kwargs)
-            raise e
-        except SessionClosed:
-            logger.warning("Session closed; attempting to reconnect and retry command.")
-            self._reconnect()
-            try:
-                return super()._do_command(command, *args, **kwargs)
-            except Exception:
-                logger.error("Retry after reconnect failed for command: %s", command)
+            if "session_inactive" not in str(e):
                 raise
+            logger.warning("Session inactive, trying to reconnect...")
+            try:
+                self.try_connect(timeout=5.0)
+            except (SessionClosed, NoConnection):
+                # try_connect refuses outright when the AdminAPI is closed, and raises
+                # NoConnection when the server is unreachable. Raised in here, neither re-enters
+                # this try's handler list, so they used to escape as a 500 and the rebuild below
+                # never ran — the branches recovered from the same condition with very different
+                # strength (FLIP#1035).
+                logger.warning("Reconnect refused; rebuilding the admin session.")
+                self._reconnect()
+            return self._retry_after_recovery(command, *args, **kwargs)
+        except (SessionClosed, NoConnection):
+            logger.warning("Session unusable; attempting to reconnect and retry command.")
+            self._reconnect()
+            return self._retry_after_recovery(command, *args, **kwargs)
+
+    def _retry_after_recovery(self, command: str, *args: Any, **kwargs: Any) -> Any:
+        """Re-issue a command once after a reconnect, logging what failed if it still cannot run.
+
+        Args:
+            command (str): The command to re-issue, unchanged.
+            *args (Any): Positional arguments forwarded to the base implementation.
+            **kwargs (Any): Keyword arguments forwarded to the base implementation.
+
+        Returns:
+            Any: The base implementation's reply.
+
+        Raises:
+            Exception: Whatever the retry raised — there is no second retry.
+        """
+        try:
+            return super()._do_command(command, *args, **kwargs)
+        except Exception:
+            logger.error("Retry after reconnect failed for command: %s", command)
+            raise
 
     def check_server_status(self) -> ServerInfoModel:
         """

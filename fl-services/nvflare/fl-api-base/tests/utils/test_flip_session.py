@@ -16,7 +16,7 @@ from types import SimpleNamespace
 from unittest.mock import call, patch
 
 import pytest
-from nvflare.fuel.flare_api.api_spec import InternalError, SessionClosed
+from nvflare.fuel.flare_api.api_spec import InternalError, NoConnection, SessionClosed
 from nvflare.fuel.flare_api.flare_api import Session
 
 from fl_api.utils.flip_session import FLIP_Session
@@ -495,3 +495,189 @@ NVFLARE 2.8.0 calls `_do_command(..., enforce_meta=False)` from eight sites; fou
     # keywords are what this test is pinning, so only assert the payload where one applies.
     if isinstance(result, dict):
         assert result == {"server": {"ServerRunner": "some error"}}
+
+
+# --------------------------------------------------------------------------------------
+# Reconnect lifecycle (FLIP#1035)
+# --------------------------------------------------------------------------------------
+
+
+def test_reconnect_closes_the_previous_admin_api(session):
+    """Rebuilding the session must release the old AdminAPI, not just drop the reference.
+
+    `Session.__init__` assigns a brand-new `self.api`; without an explicit close the old one keeps
+    its cell threads and sockets running and stays logged in on the FL server. A flapping
+    fl-server drives one reconnect per command, so the abandoned sessions accumulate for the life
+    of the fl-api process.
+    """
+    session.username = "u"
+    session.startup_path = "p"
+    session.secure_mode = True
+    session._debug = False
+    session._study = "default"
+
+    with (
+        patch("nvflare.fuel.flare_api.flare_api.Session.__init__", return_value=None) as base_init,
+        patch.object(session, "_close_ignore_errors") as close_old,
+        patch.object(session, "try_connect"),
+    ):
+        session._reconnect()
+
+    close_old.assert_called_once_with()
+    # Order matters: closing after re-init would close the NEW api, killing the session we just built.
+    assert close_old.call_count == 1
+    assert base_init.called
+
+
+def test_reconnect_closes_the_old_api_before_building_the_new_one(session):
+    """Guard the ordering explicitly -- closing afterwards would tear down the fresh session."""
+    session.username = "u"
+    session.startup_path = "p"
+    session.secure_mode = True
+    session._debug = False
+    session._study = "default"
+    calls = []
+
+    with (
+        patch("nvflare.fuel.flare_api.flare_api.Session.__init__", side_effect=lambda *a, **k: calls.append("init")),
+        patch.object(session, "_close_ignore_errors", side_effect=lambda: calls.append("close")),
+        patch.object(session, "try_connect", side_effect=lambda **k: calls.append("connect")),
+    ):
+        session._reconnect()
+
+    assert calls == ["close", "init", "connect"]
+
+
+def test_session_inactive_falls_back_to_full_reconnect_when_try_connect_fails(session):
+    """The `session_inactive` branch must not give up where the `SessionClosed` branch recovers.
+
+    `try_connect` itself raises SessionClosed when the AdminAPI is already closed -- which is the
+    normal state after an fl-server restart. Raised inside the `except InternalError` handler, that
+    exception does not re-enter the same try's handler list, so it used to escape to the router as
+    a 500 and `_reconnect()` -- the only path that rebuilds the AdminAPI -- never ran.
+    """
+    with (
+        patch(
+            "nvflare.fuel.flare_api.flare_api.Session._do_command",
+            side_effect=[InternalError("session_inactive"), {"ok": True}],
+        ) as parent,
+        patch.object(session, "try_connect", side_effect=SessionClosed("session closed")) as try_connect,
+        patch.object(session, "_reconnect") as reconnect,
+    ):
+        result = session._do_command("CMD", enforce_meta=False)
+
+    assert result == {"ok": True}
+    try_connect.assert_called_once_with(timeout=5.0)
+    reconnect.assert_called_once_with()
+    # The retry must carry the original command and keywords, not a re-derived one.
+    assert parent.call_args_list == [call("CMD", enforce_meta=False), call("CMD", enforce_meta=False)]
+
+
+def test_session_inactive_reconnect_failure_still_propagates(session):
+    """Falling back must not mask a genuinely dead server -- one retry, then raise."""
+    with (
+        patch(
+            "nvflare.fuel.flare_api.flare_api.Session._do_command",
+            side_effect=InternalError("session_inactive"),
+        ),
+        patch.object(session, "try_connect", side_effect=SessionClosed("session closed")),
+        patch.object(session, "_reconnect", side_effect=SessionClosed("still closed")),
+    ):
+        with pytest.raises(SessionClosed, match="still closed"):
+            session._do_command("CMD")
+
+
+def test_no_connection_triggers_a_full_reconnect(session):
+    """The failure an fl-server restart actually produces.
+
+    `NoConnection` derives from ConnectionError/OSError -- not from SessionClosed or
+    InternalError -- so neither recovery branch used to catch it. Reproduced live by restarting
+    `fl-server-net-1`: every later command answered 500 with
+    `cannot connect to server: ERROR_SERVER_CONNECTION` permanently, because nothing rebuilt the
+    AdminAPI, until the fl-api container itself was restarted.
+    """
+    with (
+        patch(
+            "nvflare.fuel.flare_api.flare_api.Session._do_command",
+            side_effect=[NoConnection("cannot connect to server: ERROR_SERVER_CONNECTION"), {"ok": True}],
+        ) as parent,
+        patch.object(session, "_reconnect") as reconnect,
+    ):
+        result = session._do_command("CMD", enforce_meta=False)
+
+    assert result == {"ok": True}
+    reconnect.assert_called_once_with()
+    assert parent.call_args_list == [call("CMD", enforce_meta=False), call("CMD", enforce_meta=False)]
+
+
+def test_session_inactive_falls_back_when_try_connect_cannot_reach_the_server(session):
+    """try_connect raises NoConnection (not SessionClosed) when the server is unreachable."""
+    with (
+        patch(
+            "nvflare.fuel.flare_api.flare_api.Session._do_command",
+            side_effect=[InternalError("session_inactive"), {"ok": True}],
+        ),
+        patch.object(session, "try_connect", side_effect=NoConnection("cannot connect to server")),
+        patch.object(session, "_reconnect") as reconnect,
+    ):
+        assert session._do_command("CMD") == {"ok": True}
+
+    reconnect.assert_called_once_with()
+
+
+def test_failed_reconnect_leaves_the_session_closed(session):
+    """The wedge this whole issue is really about.
+
+    `Session.__init__` swaps in a fresh AdminAPI before try_connect can fail, so a reconnect
+    attempted while the server is still down leaves a session that was never logged in:
+    `closed` is False but the command registry is empty. Every later command then dies
+    client-side with `ERROR_SYNTAX: Command <name> not found` — an InternalError no branch
+    catches — and because `closed` is False the base never raises SessionClosed either. The
+    session looks healthy and can never work again.
+
+    Closing it on the way out restores "unusable implies closed", so the next command raises
+    SessionClosed and recovery runs again.
+    """
+    session.username = "u"
+    session.startup_path = "p"
+    session.secure_mode = True
+    session._debug = False
+    session._study = "default"
+    half_built = SimpleNamespace(closed=False)
+
+    def fake_init(*args, **kwargs):
+        session.api = half_built
+
+    with (
+        patch("nvflare.fuel.flare_api.flare_api.Session.__init__", side_effect=fake_init),
+        patch.object(session, "_close_ignore_errors"),
+        patch.object(session, "try_connect", side_effect=NoConnection("cannot connect to server")),
+    ):
+        half_built.close = lambda: setattr(half_built, "closed", True)
+        with pytest.raises(NoConnection):
+            session._reconnect()
+
+    assert half_built.closed is True, (
+        "a half-built session must be left closed, or every later command raises "
+        "ERROR_SYNTAX against an empty command registry with no path back"
+    )
+
+
+def test_failed_reconnect_close_failure_does_not_mask_the_original_error(session):
+    """If even closing the half-built API throws, the reconnect failure is what propagates."""
+    session.username = "u"
+    session.startup_path = "p"
+    session.secure_mode = True
+    session._debug = False
+    session._study = "default"
+
+    def fake_init(*args, **kwargs):
+        session.api = SimpleNamespace(closed=False, close=lambda: (_ for _ in ()).throw(RuntimeError("boom")))
+
+    with (
+        patch("nvflare.fuel.flare_api.flare_api.Session.__init__", side_effect=fake_init),
+        patch.object(session, "_close_ignore_errors"),
+        patch.object(session, "try_connect", side_effect=NoConnection("cannot connect to server")),
+    ):
+        with pytest.raises(NoConnection):
+            session._reconnect()
