@@ -119,8 +119,8 @@ def test_macos_resource_forks_are_skipped_without_consuming_a_slot(
 ) -> None:
     """The archive ships ``._spleen_<N>.nii.gz`` siblings; they are not cases.
 
-    They must not be sorted as cases either -- keying on the number alone would raise on a name
-    that has none, and counting one would silently cost a real case its slot.
+    They must not reach the sort either: natsort would happily interleave them with the real
+    volumes, and one counted as a case would silently cost a real case its slot.
     """
     base_dir = _write_extracted_dataset(tmp_path)
     for case in MSD_CASE_NUMBERS[:5]:

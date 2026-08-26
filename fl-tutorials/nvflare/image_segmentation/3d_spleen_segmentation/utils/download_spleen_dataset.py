@@ -12,33 +12,12 @@
 
 import argparse
 import os
-import re
 import shutil
-import sys
 
 from monai.apps.utils import download_and_extract
+from natsort import natsorted
 
 MAX_CASES = 41
-
-# An imagesTr entry, e.g. "spleen_9.nii.gz". The case number is unpadded, which is why it has to be
-# parsed out rather than sorted on as text.
-_CASE_FILENAME = re.compile(r"spleen_(\d+)\.nii\.gz")
-
-
-def _case_number(image_filename):
-    """Sort key for an ``imagesTr`` entry: the case number in ``spleen_<N>.nii.gz``.
-
-    Args:
-        image_filename (str): The bare filename, e.g. ``spleen_9.nii.gz``.
-
-    Returns:
-        tuple[int, str]: The case number, then the filename. The filename is a tiebreak so an entry
-        that does not follow the convention still orders deterministically — it sorts last rather
-        than raising, leaving the decision on whether to keep it where it already lives (the
-        image/label existence check below).
-    """
-    match = _CASE_FILENAME.fullmatch(image_filename)
-    return (int(match.group(1)) if match else sys.maxsize, image_filename)
 
 
 def download_spleen_dataset(filepath, output_dir):
@@ -100,13 +79,14 @@ def reorganise_spleen_dataset(output_dir, num_cases):
     # List all image files, lowest case number first. Case numbers are unpadded (spleen_2 …
     # spleen_63), so sorting the names as text is lexicographic: it puts spleen_19 before spleen_2
     # ('1' < '2') and spleen_2 before spleen_20 ('.' < '0'), which made --num_cases N keep an
-    # arbitrary-looking subset instead of the N lowest-numbered cases (FLIP#1060).
+    # arbitrary-looking subset instead of the N lowest-numbered cases (FLIP#1060). natsorted keys
+    # on the digit run, as create_spleen_accession_csv.py already does for the subject IDs derived
+    # from these same names — the two orderings have to agree.
     #
-    # The hidden-file filter runs before the sort, not inside the loop: the archive carries macOS
-    # resource forks (._spleen_<N>.nii.gz) alongside the real volumes, and they must not reach the
-    # sort key — they are not cases, and one counted as a case would silently cost a real one its
-    # slot.
-    image_files = sorted((f for f in os.listdir(images_dir) if not f.startswith(".")), key=_case_number)
+    # The hidden-file filter runs before the sort rather than inside the loop below: the archive
+    # carries macOS resource forks (._spleen_<N>.nii.gz) beside the real volumes, and one of those
+    # counted as a case would silently cost a real case its slot.
+    image_files = natsorted(f for f in os.listdir(images_dir) if not f.startswith("."))
 
     # Process each image file
     print(f"Copying up to {num_cases} images and labels to subject folders in {output_dir}...")
