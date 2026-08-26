@@ -85,44 +85,58 @@ def _normalise_job_type(job_type: str, fl_backend: FLBackend) -> str:
     return resolved
 
 
-# Local development artefacts that are never part of an FL application. They are pruned from the
-# bundle walk below rather than filtered afterwards, so a virtualenv's thousands of files are never
-# stat-ed at all. Matched by exact directory name at any depth — deliberately NOT a "skip dotfiles"
-# rule, which would drop the tutorials' legitimate `.env.app`.
-EXCLUDED_BASE_DIR_NAMES = frozenset(
-    {
-        ".git",
-        ".ipynb_checkpoints",
-        ".mypy_cache",
-        ".pytest_cache",
-        ".ruff_cache",
-        ".venv",
-        "__pycache__",
-        "node_modules",
-        "venv",
-    }
-)
+# The only directory of a base template that is ever deployed. Everything a job actually needs at a
+# trust lives under it: the NVFLARE ``app/config/*.json`` pair, or the Flower ``app/*.py`` modules
+# named by ``[tool.flwr.app.components]``. The researcher's own files are added by the bundler
+# afterwards (into ``app*/custom/`` for NVFLARE, or alongside for Flower) and never pass through
+# this walk.
+BUNDLED_APP_DIR_NAME = "app"
 
-# Compiled/OS droppings that can sit alongside real template files rather than in their own directory.
-EXCLUDED_BASE_FILE_NAMES = frozenset({".DS_Store"})
-EXCLUDED_BASE_FILE_SUFFIXES = (".pyc", ".pyo")
+# The single root file each backend needs beside ``app/``:
+#   NVFLARE  meta.json      — the job definition NVFLARE reads to deploy the app.
+#   Flower   pyproject.toml — the FAB definition; ``[tool.flwr.app.components]`` resolves
+#                             ``app.server_app:app`` relative to it, so it must sit at the run root.
+BUNDLED_ROOT_FILES: dict[str, frozenset[str]] = {
+    FLBackend.NVFLARE: frozenset({"meta.json"}),
+    FLBackend.FLOWER: frozenset({"pyproject.toml"}),
+}
+
+# Compiled Python is the one artefact that appears *inside* ``app/`` rather than at the template
+# root, so positional allowlisting alone cannot exclude it — it needs naming.
+EXCLUDED_APP_DIR_NAMES = frozenset({"__pycache__"})
+EXCLUDED_APP_FILE_SUFFIXES = (".pyc", ".pyo")
 
 
-def list_local_base_files(base_dir: Path) -> list[str]:
-    """List every file under a local base-application directory, recursively.
+def list_local_base_files(base_dir: Path, allowed_root_files: frozenset[str]) -> list[str]:
+    """List the files of a local base-application template that belong in a deployed bundle.
 
     The base FL application templates live in the repo's ``fl-apps/`` tree, baked into the
     flip-api image and read from ``FL_APP_BASE_DIR`` (FLIP#724) — no longer from S3. This walks
-    ``base_dir`` and returns each file's path relative to it, so the bundler can mirror the tree
-    1:1 into the destination bucket.
+    ``base_dir`` and returns each kept file's path relative to it, so the bundler can mirror them
+    into the destination bucket.
+
+    Selection is a positive allowlist, not a denylist of known junk (FLIP#1008): everything under
+    ``app/`` plus the backend's single root file, and nothing else. A template directory is also a
+    live uv project root — it is where ``pyproject.toml`` sits — so it is exactly where ``uv sync``,
+    ``ruff``, ``pytest`` and friends write their caches. In dev that tree is bind-mounted into
+    flip-api, so a denylist would have to keep pace with every tool a developer might run, and a
+    single miss ships the artefact to every trust. Allowlisting is closed by construction: a
+    ``.venv`` is excluded because it is not ``app/``, not because it was enumerated.
+
+    It also drops files that are real but have no business at a trust — ``recipe.py`` (a developer
+    driver that regenerates the committed configs), ``README.md``, and the per-template
+    ``required_files.json`` (the source for the backend-level manifest flip-api actually reads, one
+    directory up). A denylist could never exclude those, since they are not artefacts.
 
     Args:
         base_dir (Path): Root directory of a backend/job-type base application
             (``<FL_APP_BASE_DIR>/<backend>/<job_type>``).
+        allowed_root_files (frozenset[str]): Filenames kept at ``base_dir`` itself — see
+            :data:`BUNDLED_ROOT_FILES`.
 
     Returns:
-        list[str]: Sorted relative POSIX paths of every regular file under ``base_dir`` (nested
-        paths included). Empty if ``base_dir`` does not exist or contains no files.
+        list[str]: Sorted relative POSIX paths of every kept file under ``base_dir``. Empty if
+        ``base_dir`` does not exist or contains nothing that qualifies.
 
     Note:
         Symlinks are ignored — both symlinked files and symlinked directories (``followlinks=False``).
@@ -130,26 +144,62 @@ def list_local_base_files(base_dir: Path) -> list[str]:
         operator-provided tree; skipping symlinks keeps the walk inside the template tree so a stray
         link can't pull files from elsewhere on the host into the uploaded bundle.
 
-        Local development artefacts (:data:`EXCLUDED_BASE_DIR_NAMES` and friends) are skipped for the
-        same reason. In dev the repo's ``fl-apps/`` tree is bind-mounted into flip-api, so anything a
-        developer's tooling leaves in a template directory — a ``.venv`` from running the app locally,
-        a ``.ruff_cache``, ``__pycache__`` — is otherwise mirrored into the bucket and shipped to every
-        trust. It is invisible in production, where the tree is baked from a clean CI checkout.
+        For that same operator-provided case the allowlist fails *closed*: an unrecognised file is
+        dropped rather than shipped. Every skipped path is logged at debug level so the omission is
+        diagnosable from the bundling logs rather than surfacing as a missing file at a trust.
     """
     if not base_dir.is_dir():
         return []
+
     rel_paths: list[str] = []
-    for dirpath, dirnames, filenames in os.walk(base_dir, followlinks=False):
-        # In-place so os.walk does not descend into them (os.walk contract for topdown=True).
-        dirnames[:] = [d for d in dirnames if d not in EXCLUDED_BASE_DIR_NAMES]
-        for name in filenames:
-            if name in EXCLUDED_BASE_FILE_NAMES or name.endswith(EXCLUDED_BASE_FILE_SUFFIXES):
+    skipped: list[str] = []
+
+    for entry in sorted(base_dir.iterdir()):
+        if entry.is_symlink():
+            skipped.append(entry.name)
+            continue
+        if entry.is_dir():
+            if entry.name != BUNDLED_APP_DIR_NAME:
+                skipped.append(f"{entry.name}/")
                 continue
-            path = Path(dirpath) / name
-            if path.is_symlink():
-                continue
-            rel_paths.append(path.relative_to(base_dir).as_posix())
+            rel_paths.extend(_walk_app_dir(entry, base_dir, skipped))
+        elif entry.is_file():
+            if entry.name in allowed_root_files:
+                rel_paths.append(entry.name)
+            else:
+                skipped.append(entry.name)
+
+    if skipped:
+        logger.debug(f"Excluded from the {base_dir.name} bundle (not app/ or an allowed root file): {sorted(skipped)}")
     return sorted(rel_paths)
+
+
+def _walk_app_dir(app_dir: Path, base_dir: Path, skipped: list[str]) -> list[str]:
+    """Collect deployable files under a template's ``app/`` directory.
+
+    Args:
+        app_dir (Path): The template's ``app/`` directory.
+        base_dir (Path): Template root, so returned paths stay relative to it.
+        skipped (list[str]): Accumulator for excluded paths, for the caller's debug log.
+
+    Returns:
+        list[str]: Relative POSIX paths of the files to bundle.
+    """
+    kept: list[str] = []
+    for dirpath, dirnames, filenames in os.walk(app_dir, followlinks=False):
+        # In place, so os.walk does not descend (os.walk contract for topdown=True).
+        pruned = [d for d in dirnames if d in EXCLUDED_APP_DIR_NAMES]
+        dirnames[:] = [d for d in dirnames if d not in EXCLUDED_APP_DIR_NAMES]
+        skipped.extend(f"{Path(dirpath).relative_to(base_dir).as_posix()}/{d}/" for d in pruned)
+
+        for name in filenames:
+            path = Path(dirpath) / name
+            rel = path.relative_to(base_dir).as_posix()
+            if path.is_symlink() or name.endswith(EXCLUDED_APP_FILE_SUFFIXES):
+                skipped.append(rel)
+                continue
+            kept.append(rel)
+    return kept
 
 
 def upload_app(model_id: UUID, training_details: IStartTrainingBody, endpoint: str) -> Any:
@@ -598,9 +648,16 @@ def bundle_nvflare_application(model_id: UUID, job_type: str = DEFAULT_JOB_TYPE)
     # (FLIP#724) — there is no S3 base bucket.
     base_dir = Path(get_settings().FL_APP_BASE_DIR) / FLBackend.NVFLARE / job_type
     logger.debug(f"Base application dir: {base_dir}")
-    base_rel_paths = list_local_base_files(base_dir)
+    allowed_root_files = BUNDLED_ROOT_FILES[FLBackend.NVFLARE]
+    base_rel_paths = list_local_base_files(base_dir, allowed_root_files)
     if not base_rel_paths:
-        raise FileNotFoundError(f"Base application files missing in the local base directory: {base_dir}")
+        # Reached when the directory exists but holds nothing deployable. Name the rule, so an
+        # operator looking at a visibly non-empty template directory is not left guessing;
+        # the debug log above lists exactly what was excluded.
+        raise FileNotFoundError(
+            f"Base application files missing in the local base directory: {base_dir} "
+            f"(a bundle needs an app/ directory and one of {sorted(allowed_root_files)})"
+        )
 
     # Clear destination if files already exist there (e.g. from a previous training run)
     dest_files = s3.list_objects(dest_bucket_s3_path)
@@ -803,9 +860,16 @@ def bundle_flower_application(model_id: UUID, job_type: str = DEFAULT_JOB_TYPE) 
     # (FLIP#724) — there is no S3 base bucket.
     base_dir = Path(get_settings().FL_APP_BASE_DIR) / FLBackend.FLOWER / job_type
     logger.debug(f"Base application dir: {base_dir}")
-    base_rel_paths = list_local_base_files(base_dir)
+    allowed_root_files = BUNDLED_ROOT_FILES[FLBackend.FLOWER]
+    base_rel_paths = list_local_base_files(base_dir, allowed_root_files)
     if not base_rel_paths:
-        raise FileNotFoundError(f"Base application files missing in the local base directory: {base_dir}")
+        # Reached when the directory exists but holds nothing deployable. Name the rule, so an
+        # operator looking at a visibly non-empty template directory is not left guessing;
+        # the debug log above lists exactly what was excluded.
+        raise FileNotFoundError(
+            f"Base application files missing in the local base directory: {base_dir} "
+            f"(a bundle needs an app/ directory and one of {sorted(allowed_root_files)})"
+        )
 
     # Clear destination if files already exist there (e.g. from a previous training run)
     dest_files = s3.list_objects(dest_bucket_s3_path)

@@ -11,6 +11,7 @@
 #
 
 import json
+import logging
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 from uuid import UUID, uuid4
@@ -1313,7 +1314,13 @@ def test_bundle_nvflare_application_no_base_files(mock_s3, mocked_settings, mode
 @patch("flip_api.fl_services.services.fl_service.JobRequiredFiles.get_required_files")
 @patch("flip_api.fl_services.services.fl_service.S3Client")
 def test_bundle_nvflare_application_no_app_folders(mock_s3, mock_required, mocked_settings, model_id):
-    """Base tree without any top-level ``app*`` folder is rejected."""
+    """Base tree without an ``app/`` folder is rejected.
+
+    Under the FLIP#1008 allowlist nothing outside ``app/`` is bundleable, so a template holding
+    only ``notapp/`` yields an empty file list and is rejected at the first check rather than
+    later by the app-folder scan. The error names the rule and the debug log lists what was
+    excluded, so a visibly non-empty directory reporting "missing" is still diagnosable.
+    """
     base_dir = mocked_settings.FL_APP_BASE_DIR
     model_bucket = mocked_settings.SCANNED_MODEL_FILES_BUCKET
 
@@ -1326,7 +1333,7 @@ def test_bundle_nvflare_application_no_app_folders(mock_s3, mock_required, mocke
     ]
     mock_client.copy_object.return_value = None
 
-    with pytest.raises(FileNotFoundError, match="No app folders found under base application"):
+    with pytest.raises(FileNotFoundError, match="Base application files missing"):
         fl_service.bundle_nvflare_application(model_id)
 
 
@@ -1635,9 +1642,13 @@ def test_abort_model_training_raises_on_invalid_target(
 # --- local base-file helper + local-directory bundling edge cases (FLIP#724) ----------------------
 
 
+FLOWER_ROOT = fl_service.BUNDLED_ROOT_FILES[FLBackend.FLOWER]
+NVFLARE_ROOT = fl_service.BUNDLED_ROOT_FILES[FLBackend.NVFLARE]
+
+
 def test_list_local_base_files_missing_dir_returns_empty(tmp_path):
     # A non-existent base directory yields no files (bundlers turn this into FileNotFoundError).
-    assert fl_service.list_local_base_files(tmp_path / "does-not-exist") == []
+    assert fl_service.list_local_base_files(tmp_path / "does-not-exist", FLOWER_ROOT) == []
 
 
 def test_list_local_base_files_skips_symlinks(tmp_path):
@@ -1655,14 +1666,16 @@ def test_list_local_base_files_skips_symlinks(tmp_path):
 
     (base / "app" / "link.py").symlink_to(external_file)  # symlinked file
     (base / "linked_dir").symlink_to(external_dir)  # symlinked directory
+    (base / "app" / "linked_sub").symlink_to(external_dir)  # symlinked dir INSIDE app/
 
-    assert fl_service.list_local_base_files(base) == ["app/real.py"]
+    assert fl_service.list_local_base_files(base, FLOWER_ROOT) == ["app/real.py"]
 
 
-def test_list_local_base_files_skips_local_dev_artefacts(tmp_path):
+def test_list_local_base_files_excludes_local_dev_artefacts(tmp_path):
     # In dev the repo's fl-apps/ tree is bind-mounted into flip-api, so a developer's .venv,
     # __pycache__ or tool caches sit inside the template directory and would otherwise be
-    # mirrored into the bucket and shipped to every trust.
+    # mirrored into the bucket and shipped to every trust. None of them is enumerated: they are
+    # excluded because they are neither app/ nor an allowed root file (FLIP#1008).
     base = tmp_path / "base"
     (base / "app").mkdir(parents=True)
     (base / "app" / "client_app.py").write_text("x")
@@ -1673,23 +1686,70 @@ def test_list_local_base_files_skips_local_dev_artefacts(tmp_path):
     (base / ".venv" / "lib" / "python3.12" / "site-packages" / "_virtualenv.py").write_text("x")
     (base / ".ruff_cache").mkdir()
     (base / ".ruff_cache" / "CACHEDIR.TAG").write_text("x")
-    (base / "app" / "__pycache__").mkdir()
-    (base / "app" / "__pycache__" / "client_app.cpython-312.pyc").write_text("x")
-    (base / "app" / "stale.pyc").write_text("x")
     (base / ".DS_Store").write_text("x")
 
-    assert fl_service.list_local_base_files(base) == ["app/client_app.py", "pyproject.toml"]
+    assert fl_service.list_local_base_files(base, FLOWER_ROOT) == ["app/client_app.py", "pyproject.toml"]
 
 
-def test_list_local_base_files_keeps_legitimate_dotfiles(tmp_path):
-    # The exclusion is an explicit denylist, NOT "skip anything starting with a dot" — the
-    # tutorials ship a real `.env.app` that must still reach the trusts.
+def test_list_local_base_files_excludes_unknown_tool_output(tmp_path):
+    # The point of allowlisting over a denylist: a cache from a tool nobody enumerated is still
+    # excluded, because the rule is positional rather than a list of known offenders.
     base = tmp_path / "base"
     (base / "app").mkdir(parents=True)
-    (base / ".env.app").write_text("x")
-    (base / "app" / ".gitkeep").write_text("")
+    (base / "app" / "server_app.py").write_text("x")
+    (base / "pyproject.toml").write_text("x")
 
-    assert fl_service.list_local_base_files(base) == [".env.app", "app/.gitkeep"]
+    for unknown in (".tox", ".nox", "htmlcov", ".idea", "dist", "standard_app.egg-info"):
+        (base / unknown).mkdir()
+        (base / unknown / "junk.txt").write_text("x")
+
+    assert fl_service.list_local_base_files(base, FLOWER_ROOT) == ["app/server_app.py", "pyproject.toml"]
+
+
+def test_list_local_base_files_excludes_compiled_python_inside_app(tmp_path):
+    # __pycache__/*.pyc is the one artefact that appears INSIDE app/, so position alone cannot
+    # exclude it — it is named explicitly.
+    base = tmp_path / "base"
+    (base / "app" / "__pycache__").mkdir(parents=True)
+    (base / "app" / "client_app.py").write_text("x")
+    (base / "app" / "__pycache__" / "client_app.cpython-312.pyc").write_text("x")
+    (base / "app" / "stale.pyc").write_text("x")
+    (base / "app" / "stale.pyo").write_text("x")
+    (base / "pyproject.toml").write_text("x")
+
+    assert fl_service.list_local_base_files(base, FLOWER_ROOT) == ["app/client_app.py", "pyproject.toml"]
+
+
+def test_list_local_base_files_excludes_developer_files_that_are_not_artefacts(tmp_path):
+    # recipe.py regenerates the committed configs on a developer's workstation; README.md is
+    # documentation; the per-template required_files.json is the source for the backend-level
+    # manifest flip-api reads one directory up. All three are real files that a denylist could
+    # never exclude, and none of them belongs at a trust.
+    base = tmp_path / "base"
+    (base / "app" / "config").mkdir(parents=True)
+    (base / "app" / "config" / "config_fed_server.json").write_text("{}")
+    (base / "meta.json").write_text("{}")
+    (base / "recipe.py").write_text("x")
+    (base / "README.md").write_text("x")
+    (base / "required_files.json").write_text("[]")
+
+    assert fl_service.list_local_base_files(base, NVFLARE_ROOT) == [
+        "app/config/config_fed_server.json",
+        "meta.json",
+    ]
+
+
+def test_list_local_base_files_root_file_is_per_backend(tmp_path):
+    # Each backend keeps exactly one root file: NVFLARE's job definition, Flower's FAB definition.
+    # The other backend's is not deployable here and must not ride along.
+    base = tmp_path / "base"
+    (base / "app").mkdir(parents=True)
+    (base / "app" / "keep.py").write_text("x")
+    (base / "meta.json").write_text("{}")
+    (base / "pyproject.toml").write_text("x")
+
+    assert fl_service.list_local_base_files(base, NVFLARE_ROOT) == ["app/keep.py", "meta.json"]
+    assert fl_service.list_local_base_files(base, FLOWER_ROOT) == ["app/keep.py", "pyproject.toml"]
 
 
 def test_list_local_base_files_returns_sorted_nested_relpaths(tmp_path):
@@ -1700,11 +1760,28 @@ def test_list_local_base_files_returns_sorted_nested_relpaths(tmp_path):
     (tmp_path / "pyproject.toml").write_text("x")
 
     # Directories are not returned, only files; paths are relative POSIX and sorted.
-    assert fl_service.list_local_base_files(tmp_path) == [
+    assert fl_service.list_local_base_files(tmp_path, FLOWER_ROOT) == [
         "app/config/config_fed_server.json",
         "app/custom/sub/deep.py",
         "pyproject.toml",
     ]
+
+
+def test_list_local_base_files_logs_what_it_dropped(tmp_path, caplog):
+    # FL_APP_BASE_DIR may point at an operator-provided tree, where the allowlist fails CLOSED.
+    # The debug log is what makes such an omission diagnosable from the bundling logs instead of
+    # surfacing later as a missing file at a trust.
+    base = tmp_path / "base"
+    (base / "app").mkdir(parents=True)
+    (base / "app" / "client_app.py").write_text("x")
+    (base / "pyproject.toml").write_text("x")
+    (base / "operator_extra.py").write_text("x")
+
+    with caplog.at_level(logging.DEBUG):
+        kept = fl_service.list_local_base_files(base, FLOWER_ROOT)
+
+    assert kept == ["app/client_app.py", "pyproject.toml"]
+    assert "operator_extra.py" in caplog.text
 
 
 @patch("flip_api.fl_services.services.fl_service.JobRequiredFiles.is_valid_job_type", return_value=True)
