@@ -236,8 +236,8 @@ The Central Hub has **one supported production deployment**: ECS Fargate via the
 `locals.tf`) are the **canonical definition of production container config**. That root offers **two
 deployment modes**, both permanently supported: the default **self-contained single-account** shape
 (`PROD=stag`/`PROD=true`), where FLIP creates its own VPC and edge; and the **platform-managed** shape
-(`PROD=lza`) for an AWS Landing Zone Accelerator estate, where the network and edge are owned by the
-accelerator. The second is an env-gated mode of the same root, not a separate path — see
+(`PROD=lza`, or `PROD=lza-stag` for a staging estate) for an AWS Landing Zone Accelerator estate, where the
+network and edge are owned by the accelerator. The second is an env-gated mode of the same root, not a separate path — see
 [Deploying onto an LZA estate](providers/AWS/README.md#deploying-onto-an-lza-estate-prodlza)
 ([FLIP#749](https://github.com/londonaicentre/FLIP/issues/749)). The ECS FL task definitions serve **both
 FL backends** ([FLIP#566](https://github.com/londonaicentre/FLIP/issues/566)): `FL_BACKEND` in the env file

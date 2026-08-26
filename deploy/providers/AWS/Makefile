@@ -18,6 +18,12 @@ else ifeq ($(PROD),lza)
 # modes. Gitignored like the other env files — see the "Deploying onto an LZA
 # estate" section in README.md for the required values.
 MAIN_ENV_FILE=../../../.env.lza-prod
+else ifeq ($(PROD),lza-stag)
+# Staging on an LZA estate: same platform-managed mode as PROD=lza, but in the
+# staging workload account with staging semantics (TF_VAR_environment=stag, so
+# the prod-only RDS hardening stays off, and deploys track origin/develop like
+# legacy stag). Requires LZA_VPC_NAME in the env file — see the guard below.
+MAIN_ENV_FILE=../../../.env.lza-stag
 else
 # Sometimes PROD may not be set, default to staging environment in that case
 PROD=stag
@@ -60,10 +66,11 @@ $(if $(FL_KIT_DATE),,$(error 🧠 $(if $(filter nvflare,$(FL_BACKEND)),FLARE_KIT
 # the env file or on the command line if your local profile names differ.
 PROD_AWS_PROFILE ?= prod
 STAG_AWS_PROFILE ?= stag
-# The LZA workload account is reached via the Identity Center
-# `FLIPAdminAccess` permission set; like prod/stag above, the default is
-# a short local alias for it in ~/.aws/config (FLIP#749).
+# The LZA workload accounts are reached via the Identity Center
+# `FLIPAdminAccess` permission set; like prod/stag above, the defaults are
+# short local aliases for it in ~/.aws/config (FLIP#749).
 LZA_AWS_PROFILE ?= lza-prod
+LZA_STAG_AWS_PROFILE ?= lza-stag
 
 # Refuse to operate against an unintended AWS account. Profile name is the safety
 # guard because Make has no easy way to read the account ID without an `aws` call.
@@ -75,6 +82,16 @@ else ifeq ($(PROD),lza)
 ifneq ($(AWS_PROFILE),$(LZA_AWS_PROFILE))
 $(error "For LZA deployments, AWS_PROFILE must be set to '$(LZA_AWS_PROFILE)' (override via LZA_AWS_PROFILE)")
 endif
+else ifeq ($(PROD),lza-stag)
+ifneq ($(AWS_PROFILE),$(LZA_STAG_AWS_PROFILE))
+$(error "For LZA staging deployments, AWS_PROFILE must be set to '$(LZA_STAG_AWS_PROFILE)' (override via LZA_STAG_AWS_PROFILE)")
+endif
+# The variables.tf default VPC name is the PROD template (AWSAccelerator-eu-west-2-prod);
+# there is no defaultable name for the staging VPC, so require it explicitly rather
+# than letting the data lookup fail with an opaque "no results" in the wrong account.
+ifeq ($(LZA_VPC_NAME),)
+$(error "For LZA staging deployments, LZA_VPC_NAME must be set in .env.lza-stag (the Name tag of the staging platform VPC)")
+endif
 else
 ifneq ($(AWS_PROFILE),$(STAG_AWS_PROFILE))
 $(error "For staging deployments, AWS_PROFILE must be set to '$(STAG_AWS_PROFILE)' (override via STAG_AWS_PROFILE)")
@@ -82,29 +99,31 @@ endif
 endif
 
 ## SETTING VARIABLES FOR TERRAFORM
-# Map the Make-level PROD flag (true|lza|stag) onto a Terraform-friendly environment name.
-# Used in main.tf to gate prod-only RDS hardening (deletion protection, final snapshot).
-# PROD=lza is a production estate, so it keeps the prod hardening — what differs there
-# is the platform-managed network, toggled by the orthogonal flag below (FLIP#749).
+# Map the Make-level PROD flag (true|lza|lza-stag|stag) onto a Terraform-friendly
+# environment name. Used in main.tf to gate prod-only RDS hardening (deletion
+# protection, final snapshot). PROD=lza is a production estate, so it keeps the prod
+# hardening; PROD=lza-stag is staging semantics on the platform-managed network —
+# the two axes are orthogonal, toggled by the flag below (FLIP#749).
 export TF_VAR_environment=$(if $(filter true lza,$(PROD)),prod,stag)
 
-# Platform-managed network toggle (FLIP#749): on the LZA FLIPProduction account
-# the VPC layer is provisioned by the AWS Accelerator pipeline and SCP-denied to
-# this stack, so Terraform switches from creating the network to data lookups
+# Platform-managed network toggle (FLIP#749): on an LZA workload account the VPC
+# layer is provisioned by the AWS Accelerator pipeline and SCP-denied to this
+# stack, so Terraform switches from creating the network to data lookups
 # (see network_lza.tf). Off for every legacy environment.
-export TF_VAR_lza_managed_network=$(if $(filter lza,$(PROD)),true,false)
-# Name tag of the platform-managed VPC; only consulted when PROD=lza. Set
+export TF_VAR_lza_managed_network=$(if $(filter lza lza-stag,$(PROD)),true,false)
+# Name tag of the platform-managed VPC; only consulted on the LZA modes. Set
 # LZA_VPC_NAME in the env file to override the variables.tf default
-# (AWSAccelerator-eu-west-2-prod) if the platform template is ever renamed.
+# (AWSAccelerator-eu-west-2-prod) — optional on PROD=lza if the platform template
+# keeps that name, mandatory on PROD=lza-stag (guard above).
 ifneq ($(LZA_VPC_NAME),)
 export TF_VAR_lza_vpc_name=$(LZA_VPC_NAME)
 endif
 
 # Kit-file env suffix: PROD=true → .production kits, PROD=lza → .lza-prod kits (a
 # separate namespace so the parallel-running legacy prod kits are never touched
-# during the FLIP#749 migration), otherwise → .stag. Selects the trust kit file
-# trust/.env.<KIT>.<suffix> for the trust-deploy targets.
-KIT_ENV_SUFFIX := $(if $(filter true,$(PROD)),production,$(if $(filter lza,$(PROD)),lza-prod,stag))
+# during the FLIP#749 migration), PROD=lza-stag → .lza-stag kits, otherwise → .stag.
+# Selects the trust kit file trust/.env.<KIT>.<suffix> for the trust-deploy targets.
+KIT_ENV_SUFFIX := $(if $(filter true,$(PROD)),production,$(if $(filter lza,$(PROD)),lza-prod,$(if $(filter lza-stag,$(PROD)),lza-stag,stag)))
 export TF_VAR_max_azs=2
 export TF_VAR_vpc_cidr=10.0.0.0/16
 export TF_VAR_public_subnets=["10.0.1.0/24", "10.0.2.0/24"]
@@ -241,7 +260,8 @@ CENTRALHUB_ECS_SERVICES = flip-api fl-api-net-1 fl-server-net-1
 # recorded commit and rollback-centralhub can repoint at the previous revision. The
 # env-file tags (DOCKER_TAG / DOCKER_FL_TAG) remain the bootstrap-only defaults Terraform
 # bakes into a (re)created task-definition family — day-to-day deploys never touch them.
-# PROD=lza tracks origin/main like legacy prod (both are production estates, FLIP#749).
+# PROD=lza tracks origin/main like legacy prod (both are production estates, FLIP#749);
+# PROD=lza-stag falls through to origin/develop like legacy stag.
 DEPLOY_GIT_REF := $(if $(filter true lza,$(PROD)),origin/main,origin/develop)
 
 TRUST_IMAGES = \
@@ -812,7 +832,7 @@ deploy-ui: ## Build flip-ui from the working tree and deploy it to S3 + invalida
 	@# cross-account invalidation permission -- BY DESIGN (FLIP#749): the hashed
 	@# bundles are immutable and index.html/window.js carry no-cache metadata, so a
 	@# deploy is visible on the next index.html fetch with no invalidation at all.
-ifeq ($(PROD),lza)
+ifneq ($(filter lza lza-stag,$(PROD)),)
 	@echo "🧹 Skipping CloudFront invalidation on LZA (edge distribution honours the Cache-Control metadata)."
 else
 	@echo "🧹 Invalidating CloudFront..."

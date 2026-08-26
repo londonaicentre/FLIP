@@ -35,7 +35,7 @@ flag, not a fork of the code.
      - FLIP creates its own VPC, subnets, internet gateway and NAT
      - In-account CloudFront for the UI and ``/api/*``; a public NLB for FL traffic
    * - **Platform-managed**
-     - ``PROD=lza``
+     - ``PROD=lza`` (production) / ``PROD=lza-stag`` (staging)
      - Discovered from a VPC provisioned by the AWS `Landing Zone Accelerator
        <https://aws.amazon.com/solutions/implementations/landing-zone-accelerator-on-aws/>`_;
        FLIP creates no network resources
@@ -91,12 +91,13 @@ Prerequisites
 5. **SSH key pair** at ``~/.ssh/host-aws`` — uploaded to AWS and used as the
    identity file for the SSM ProxyCommand-based SSH config.
 6. **Environment file** — ``.env.stag`` (staging), ``.env.production``
-   (production), or ``.env.lza-prod`` (platform-managed) in the project root.
+   (production), or ``.env.lza-prod`` / ``.env.lza-stag`` (platform-managed) in
+   the project root.
 7. **AWS Session Manager plugin** — required for ``ssh flip`` and ``make forward-trust``.
 
-AWS profile aliases (``prod``, ``stag``, ``dev``, and ``lza-prod`` for a
-platform-managed deployment) should be configured in ``~/.aws/config`` so the
-Makefile guards can verify the active profile against the chosen environment.
+AWS profile aliases (``prod``, ``stag``, ``dev``, and ``lza-prod`` / ``lza-stag``
+for a platform-managed deployment) should be configured in ``~/.aws/config`` so
+the Makefile guards can verify the active profile against the chosen environment.
 
 ************************
 Required IAM permissions
@@ -162,21 +163,23 @@ This runs, in order:
 13. ``status`` — comprehensive health checks.
 
 The ``PROD`` variable selects the environment file (``stag`` → ``.env.stag``,
-``true`` → ``.env.production``, ``lza`` → ``.env.lza-prod``) and is mapped onto
-``TF_VAR_environment`` — ``stag`` for staging, ``prod`` for both ``true`` and
-``lza`` — so Terraform can gate prod-only RDS hardening (deletion protection,
-final snapshot). ``PROD=lza`` additionally sets the platform-managed-network
-flag, which is orthogonal to the environment name: a platform-managed
-deployment is a production estate and keeps every prod-only control.
+``true`` → ``.env.production``, ``lza`` → ``.env.lza-prod``, ``lza-stag`` →
+``.env.lza-stag``) and is mapped onto ``TF_VAR_environment`` — ``prod`` for
+``true`` and ``lza``, ``stag`` otherwise — so Terraform can gate prod-only RDS
+hardening (deletion protection, final snapshot). The two ``lza`` values
+additionally set the platform-managed-network flag, which is orthogonal to the
+environment name: ``PROD=lza`` is a production estate and keeps every prod-only
+control, while ``PROD=lza-stag`` is staging semantics on the same
+platform-managed network.
 
 .. note::
 
    ``full-deploy`` is the self-contained chain. Some of its steps — the cloud
    trust EC2, the SSH and Ansible provisioning — do not apply to a
    platform-managed deployment, and the chain, along with ``make status`` and
-   ``make destroy``, is not yet exercised there. On ``PROD=lza`` run ``init`` /
-   ``plan`` / ``apply`` followed by ``deploy-centralhub`` and ``deploy-ui``; see
-   the AWS README section linked under `Deployment modes`_.
+   ``make destroy``, is not yet exercised there. On the ``lza`` values run
+   ``init`` / ``plan`` / ``apply`` followed by ``deploy-centralhub`` and
+   ``deploy-ui``; see the AWS README section linked under `Deployment modes`_.
 
 Subsequent UI-only deploys do not need Terraform:
 
@@ -196,7 +199,7 @@ For debugging or selective steps:
 
 .. code-block:: shell
 
-   export PROD=stag    # or: export PROD=true, or PROD=lza (platform-managed)
+   export PROD=stag    # or: export PROD=true, or PROD=lza / PROD=lza-stag (platform-managed)
 
    make github-login
    make aws-login

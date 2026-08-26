@@ -586,8 +586,9 @@ The `PROD` variable determines which environment files are loaded:
 
 - `PROD=stag` → Uses the root `.env.stag`
 - `PROD=true` → Uses the root `.env.production`
-- `PROD=lza` → Uses the root `.env.lza-prod` (an LZA-governed estate — see
+- `PROD=lza` → Uses the root `.env.lza-prod` (production on an LZA-governed estate — see
   [Deploying onto an LZA estate](#deploying-onto-an-lza-estate-prodlza))
+- `PROD=lza-stag` → Uses the root `.env.lza-stag` (staging on an LZA-governed estate)
 
 If `PROD` is omitted when running the AWS provider Makefile, it defaults to staging.
 
@@ -647,7 +648,7 @@ This Terraform root supports **two deployment modes**, both permanently:
 | Mode | Selected by | Network | Ingress |
 | --- | --- | --- | --- |
 | **Self-contained** (default) | `PROD=stag` / `PROD=true` | FLIP creates its own VPC, subnets, IGW, NAT | In-account CloudFront + public FL NLB |
-| **Platform-managed (LZA)** | `PROD=lza` | Discovered from the accelerator-provisioned VPC; FLIP creates none of it | Shared networking account's two-tier edge, over the Transit Gateway |
+| **Platform-managed (LZA)** | `PROD=lza` / `PROD=lza-stag` | Discovered from the accelerator-provisioned VPC; FLIP creates none of it | Shared networking account's two-tier edge, over the Transit Gateway |
 
 Self-contained single-account is the supported open-source deployment shape and is not going away. The LZA mode
 ([FLIP#749](https://github.com/londonaicentre/FLIP/issues/749)) is the multi-account shape for estates running AWS's
@@ -655,9 +656,27 @@ Self-contained single-account is the supported open-source deployment shape and 
 the network, guardrails and edge are owned by the accelerator pipeline rather than by FLIP.
 
 The two are one root module, not a fork: every LZA adaptation is gated behind `var.lza_managed_network` (set from
-`PROD=lza`), so with `PROD=true`/`PROD=stag` the resolved configuration is identical to before — the self-contained
-environments are never touched by LZA work. The AI Centre's own LZA target is the **FLIPProduction** workload
-account in `eu-west-2`, reached through the `lza-prod` profile alias and running alongside legacy prod.
+the LZA `PROD` values), so with `PROD=true`/`PROD=stag` the resolved configuration is identical to before — the
+self-contained environments are never touched by LZA work. The AI Centre's own LZA targets are the
+**FLIPProduction** workload account in `eu-west-2` (the `lza-prod` profile alias, running alongside legacy prod)
+and a staging workload account reached as `lza-stag`.
+
+Environment (prod vs stag semantics) and network mode are **orthogonal axes**, and the two `PROD` values set them
+independently:
+
+| | `PROD=lza` | `PROD=lza-stag` |
+| --- | --- | --- |
+| Env file / kit suffix | `.env.lza-prod` / `trust/.env.<CODE>.lza-prod` | `.env.lza-stag` / `trust/.env.<CODE>.lza-stag` |
+| Profile guard | `lza-prod` (`LZA_AWS_PROFILE`) | `lza-stag` (`LZA_STAG_AWS_PROFILE`) |
+| `TF_VAR_environment` | `prod` — RDS deletion protection + final snapshot on | `stag` — disposable, like legacy stag |
+| `deploy-centralhub` git ref | `origin/main` | `origin/develop` |
+| `LZA_VPC_NAME` | optional (defaults to the prod template name) | **required** in the env file — there is no defaultable staging VPC name, so the Makefile refuses to run without it rather than letting the lookup fail opaquely |
+
+Everything below reads naturally for either value; where it says `PROD=lza`, staging substitutes `lza-stag` and
+its own account-scoped values (state bucket, `flip-lza-stag-*` bucket namespace, pull-through registry URL). Each
+LZA environment is its **own workload account** — never co-tenant two environments in one account: the stack's
+resource names (`flip-cluster`, `flip-api`, `flip-database-proxy`, the `/flip/networking/*` handoff params) are
+fixed per account by design.
 
 **What `PROD=lza` selects:**
 
