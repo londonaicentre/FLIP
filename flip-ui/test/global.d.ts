@@ -31,13 +31,12 @@ declare namespace Cypress {
     }
 
     /**
-    * Options accepted by cy.login — mirrors the LoginOptions interface in
-    * test/cypress/support/cognito.ts, which owns the implementation.
+    * Options accepted by cy.login — the type is owned by the implementation in
+    * test/cypress/support/cognito.ts. The inline import() keeps this file a
+    * script: a top-level import would turn it into a module and stop this
+    * `declare namespace Cypress` from merging into the global one.
     */
-    interface LoginOptions {
-        username?: string;
-        permissionsFixture?: string;
-    }
+    type LoginOptions = import("./cypress/support/cognito").LoginOptions;
 
     interface Chainable<Subject = any> {
         /**
