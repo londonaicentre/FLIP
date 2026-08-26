@@ -48,9 +48,9 @@ we call an app. Some of these files are required to run the app, and some are op
 are required depends on the job type (see :ref:`fl-required-files` below).
 
 The job type is passed as key `job_type` in the `config.json` file (for both NVFLARE and Flower apps).
-An unrecognised value is rejected at submission. A missing one falls back to ``standard``, as does an
-app carrying no ``config.json`` at all — which is a valid Flower submission, since ``config.json`` is a
-required file for the NVFLARE job types but not for the Flower ones (see :ref:`fl-required-files`).
+An unrecognised value is rejected at submission, and a missing one falls back to ``standard``. The file
+itself is a required file for every job type on both backends (see :ref:`fl-required-files`), so an app
+that omits it is rejected before bundling rather than defaulted.
 
 Once uploaded, the UI will indicate which files are required for the specific job.
 
@@ -112,9 +112,10 @@ manifests through the ``/model/job-types`` endpoint and shows the applicable lis
 
 .. note::
 
-   Every NVFLARE job type lists ``config.json``, which carries ``job_type`` along with the training
-   configuration below. The Flower job types do not require it, but uploading one is still how a
-   Flower app selects a job type other than ``standard``.
+   Every job type on both backends lists ``config.json``, because it is what selects the job type:
+   an app declares ``job_type`` there, and an app without one can only ever run ``standard``. For
+   NVFLARE it also carries the training configuration described below; for Flower it carries
+   nothing else, since Flower apps take their run configuration from ``config.toml``.
 
    ``pyproject.toml`` is **not** a file the researcher supplies for a Flower app. It is part of the
    platform's base template for the job type and is bundled automatically; a ``pyproject.toml``
@@ -328,6 +329,65 @@ run with ``off: true``. Two caveats for anyone changing them:
   ``(epsilon, delta)`` guarantee. It complements — rather than replaces — FLIP's primary output controls
   (review of the uploaded app code and aggregate-only results).
 
+Site-enforced privacy policy (per trust)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The filter above is part of the **app**: it is configured in the job's ``config_fed_client.json``, so its
+parameters — including ``off: true`` — are chosen on the researcher's side. Since FLIP#851 each trust can
+additionally enforce its **own** update-privacy filter through NVFLARE's site privacy policy
+(``local/privacy.json`` in the client's workspace), configured entirely on the trust's side:
+
+- The trust sets ``FL_SITE_PRIVACY_*`` variables in its kit file (``trust/.env.<CODE>.<env>``, Host-local
+  profile section) and restarts its fl-clients (``make -C trust up-fl-clients-kit KIT=<CODE>``). No hub
+  redeploy, and no coordination with other trusts — different trusts can run different policies in the same
+  federation.
+- The fl-client entrypoint renders the policy into ``/app/local/privacy.json`` at container start
+  (``python -m flip.nvflare.site_policy``). With the variables unset, no policy file is written and behaviour
+  is exactly as before (app-level filters only). An **invalid** combination — including an unrecognised
+  ``FL_SITE_PRIVACY_*`` name, so a typo cannot quietly leave the defaults in force — stops the fl-client at
+  startup (fail closed) rather than running unfiltered.
+
+The policy uses the **stock** NVFLARE ``PercentilePrivacy`` filter, which unlike FLIP's app-level subclass
+has no ``off`` switch:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 30 40 30
+
+   * - Variable
+     - Meaning
+     - Default
+   * - ``FL_SITE_PRIVACY_POLICY``
+     - ``percentile`` (deterministic clip + sparsify). Unset = no site policy.
+     - unset
+   * - ``FL_SITE_PRIVACY_PERCENTILE`` / ``FL_SITE_PRIVACY_GAMMA``
+     - Parameters for the percentile policy (same maths as the app-level filter above). ``gamma`` accepts
+       any positive value; a larger ``gamma`` merely weakens the truncation.
+     - ``10`` / ``0.01``
+
+Semantics — verified against NVFLARE 2.8.0:
+
+- **The site policy composes with, and cannot be bypassed by, the app config.** NVFLARE applies site scope
+  filters *before* the job's ``task_result_filters`` in one chain (``nvflare/apis/utils/task_utils.py``);
+  job filters are appended, never substituted. An app that sets ``off: true`` (or ships no filter at all —
+  the evaluation templates) disables only its own filter instance; the site filter still runs.
+- **Jobs cannot opt out or pick a weaker scope.** The rendered policy defines exactly one scope
+  (``site_default``) set as ``default_scope``. FLIP's fl-api writes each job's ``meta.json`` itself and never
+  sets a ``scope`` key, so every job lands in the default scope; a job carrying an unknown scope name is
+  rejected at deploy time on that site with ``privacy scope 'X' is not allowed``.
+- **Ordering changes the percentile maths slightly.** The site filter runs before the job's ``KeepOnlyVars``,
+  so it computes its percentile over the *full* result dict — on a frozen-backbone (head-only) finetune that
+  vector is dominated by the backbone's all-zero diffs, unlike the app-level filter which deliberately runs
+  after ``KeepOnlyVars``. Prefer modest site percentiles (the default ``10``); the convergence caveat above
+  applies doubly here.
+- **Evaluation results are unaffected.** The filter only transforms ``WEIGHTS`` / ``WEIGHT_DIFF``
+  payloads, so metrics and validation results pass through untouched.
+- **Failures are loud.** A filter error surfaces as ``TASK_RESULT_FILTER_ERROR`` in the FL logs and the
+  client's audit trail — never a silent unfiltered send.
+- **NVFLARE only.** Flower has no site-side filter hook, so this enforcement point does not exist on the
+  Flower backend; the app-level review of uploaded training code remains the control there (Flower parity is
+  tracked in FLIP#852).
+
 Flower: local differential privacy
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -358,7 +418,7 @@ Three things to know:
   ``task_result_filters`` entry in the FLIP-owned ``config_fed_client.json`` — a Flower app's
   ``client_app.py`` is uploaded by the model developer, so the template cannot register the mod on the
   developer's behalf. An uploaded app that omits it shares raw updates. The shipped tutorials
-  (``numpy``, ``xray_classification``, ``3d_spleen_segmentation``) wire it as worked examples.
+  (``xray_classification``, ``3d_spleen_segmentation``) wire it as worked examples.
 
 The shipped parameter defaults are utility-first demonstration values, not a defensible privacy budget: a
 real budget calibrates ``dp-sensitivity`` to the local dataset and accounts for composition across rounds,

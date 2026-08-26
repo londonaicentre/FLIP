@@ -1,4 +1,4 @@
-# Copyright (c) 2026 Flower Labs GmbH
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
@@ -10,10 +10,8 @@
 # limitations under the License.
 #
 
-"""quickstart-numpy: A Flower / NumPy app."""
+"""Allow ``python -m flip.xnat`` as an alternative to the ``flip-xnat`` console script."""
 
-import numpy as np
+from flip.xnat.cli import main
 
-
-def get_dummy_model():
-    return [np.ones((1, 1))]
+raise SystemExit(main())

@@ -160,6 +160,93 @@ accuracy = true
     assert "metrics" in config_doc
 
 
+@pytest.mark.parametrize(("trusts", "expected"), [(["trust1"], 1), (["trust1", "trust2"], 2)])
+def test_upload_app_injects_min_clients_from_trust_count(trusts, expected, client, upload_dir, mock_requests_get):
+    """flip-min-clients carries the participating-trust count into the Flower run config.
+
+    The NVFLARE adapter already does this (``config["min_clients"] = len(trusts)`` in
+    prepare_config.configure_server). Without the Flower equivalent the strategy inherits
+    flwr's ``min_*_nodes=2`` default, so a single-trust run waits for a second node that
+    never arrives, in an unbounded poll loop that never times out.
+    """
+    model_id = str(uuid4())
+
+    # Seeded, not empty: config.toml is researcher-uploadable and the templates ship none, so a
+    # supplied flip-min-clients must lose to the trust count rather than cap the federation.
+    mock_requests_get({f"https://example.com/{model_id}/app/config.toml": b"flip-min-clients = 1\n"})
+
+    body = UploadAppRequest(
+        project_id="project-123",
+        cohort_query="*",
+        trusts=trusts,
+        bundle_urls=[f"https://example.com/{model_id}/app/config.toml"],
+    )
+
+    response = client.post(f"/upload_app/{model_id}", json=body.model_dump())
+
+    assert response.status_code == 200
+
+    config_doc = parse((upload_dir / model_id / "app" / "config.toml").read_text())
+    assert config_doc["flip-min-clients"] == expected
+
+
+def test_upload_app_rejects_an_empty_trust_list(client, upload_dir, mock_requests_get):
+    """No participating trusts is refused at submit, not carried into the run as a zero quorum.
+
+    ``len([])`` would inject ``flip-min-clients=0``; FlipFedAvg rejects that, but only once the
+    ServerApp is already running, where the raise is a log line the platform never surfaces and
+    the model is left mid-status. The hub reaches here with an empty list whenever no
+    participating trust holds an FL kit slot (``slot_names`` is a DB lookup that can return
+    ``[]``, and the Flower branch of ``validate_client_availability`` passes it through).
+    """
+    model_id = str(uuid4())
+
+    mock_requests_get({f"https://example.com/{model_id}/app/config.toml": b""})
+
+    body = UploadAppRequest(
+        project_id="project-123",
+        cohort_query="*",
+        trusts=[],
+        bundle_urls=[f"https://example.com/{model_id}/app/config.toml"],
+    )
+
+    response = client.post(f"/upload_app/{model_id}", json=body.model_dump())
+
+    assert response.status_code == 400
+    assert "trust" in response.json()["detail"].lower()
+
+    # Nothing was written: the refusal lands before the job dir is created.
+    assert not (upload_dir / model_id).exists()
+
+
+def test_upload_app_refusal_keeps_the_previous_bundle(client, upload_dir, mock_requests_get):
+    """The empty-trust refusal must not wipe the bundle a previous run left behind.
+
+    ``upload_application`` clears the job dir before it validates anything else, so a check
+    added after that point would destroy the last good bundle on its way to failing. Pinning
+    the ordering here is what keeps the guard non-destructive.
+    """
+    model_id = str(uuid4())
+
+    job_dir = upload_dir / model_id
+    job_dir.mkdir(parents=True, exist_ok=True)
+    (job_dir / "previous_bundle.py").write_text("from a run that worked")
+
+    mock_requests_get({f"https://example.com/{model_id}/app/config.toml": b""})
+
+    body = UploadAppRequest(
+        project_id="project-123",
+        cohort_query="*",
+        trusts=[],
+        bundle_urls=[f"https://example.com/{model_id}/app/config.toml"],
+    )
+
+    response = client.post(f"/upload_app/{model_id}", json=body.model_dump())
+
+    assert response.status_code == 400
+    assert (job_dir / "previous_bundle.py").read_text() == "from a run that worked"
+
+
 def test_upload_app_places_checkpoint_in_job_dir(client, upload_dir, mock_requests_get):
     """Checkpoint files are downloaded into the job dir alongside the sources.
 
