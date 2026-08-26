@@ -22,6 +22,14 @@ on:
     paths:
       - "trust/xnat/dcm2niix/**"
       - ".github/workflows/docker_build_xnat_dcm2niix.yml"
+  # PR runs exercise the Dockerfile — the pinned dcm2niix download, its sha256
+  # check and the smoke test baked into the build — so a bad pin fails in the PR
+  # rather than after merge. The login/push/visibility steps are gated below, so
+  # nothing is published from a pull request (same pattern as docker_build_orthanc).
+  pull_request:
+    paths:
+      - "trust/xnat/dcm2niix/**"
+      - ".github/workflows/docker_build_xnat_dcm2niix.yml"
 
 permissions:
   contents: read
@@ -105,6 +113,7 @@ jobs:
           echo "Generated tags: ${TAGS}"
 
       - name: Log in to GitHub Container Registry
+        if: github.event_name != 'pull_request'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_ACTOR: ${{ github.actor }}
@@ -122,6 +131,7 @@ jobs:
           docker build "${TAG_FLAGS[@]}" .
 
       - name: Push Docker image
+        if: github.event_name != 'pull_request'
         env:
           DOCKER_TAGS: ${{ steps.tags.outputs.tags }}
         run: |
@@ -141,6 +151,7 @@ jobs:
       # is called with no credentials, so the check sees exactly what an
       # unauthenticated trust sees.
       - name: Verify the published image is anonymously pullable
+        if: github.event_name != 'pull_request'
         env:
           DCM2NIIX_VERSION: ${{ steps.tags.outputs.version }}
         run: |
