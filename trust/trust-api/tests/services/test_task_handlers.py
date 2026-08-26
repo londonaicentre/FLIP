@@ -10,6 +10,7 @@
 # limitations under the License.
 #
 
+import json
 from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
@@ -23,6 +24,7 @@ from trust_api.services.task_handlers import (
     handle_create_imaging,
     handle_delete_imaging,
     handle_get_imaging_status,
+    handle_persist_cohort,
     handle_reimport_studies,
     handle_update_user_profile,
 )
@@ -53,6 +55,7 @@ def test_task_handlers_registry():
         "get_imaging_status",
         "reimport_studies",
         "update_user_profile",
+        "persist_cohort",
     }
     assert set(TASK_HANDLERS.keys()) == expected_types
 
@@ -327,3 +330,64 @@ async def test_handle_update_user_profile_error(mock_make_request):
 
     assert result["success"] is False
     assert "Service unavailable" in result["error"]
+
+
+# ---- Persist cohort handler (FLIP#857) ----
+
+
+@pytest.mark.asyncio
+async def test_handle_persist_cohort_freezes_via_data_access_and_returns_facts(mock_make_request):
+    """Forwards the snapshot request to data-access-api and returns its response as the result."""
+    snapshot_facts = {
+        "row_count": 24,
+        "columns": ["modality", "accession_id"],
+        "has_accessions": True,
+        "snapshot_at": "2026-08-26T00:00:00+00:00",
+        "query_hash": "abc123",
+    }
+    mock_make_request.return_value = snapshot_facts
+
+    payload = {
+        "project_id": str(uuid4()),
+        "trust_id": str(uuid4()),
+        "encrypted_project_id": "enc123",
+        "query": "SELECT * FROM omop.image_occurrence",
+        "query_id": str(uuid4()),
+    }
+    result = await handle_persist_cohort(payload)
+
+    assert result["success"] is True
+    assert json.loads(result["result"]) == snapshot_facts
+
+    call = mock_make_request.call_args_list[0]
+    assert call.kwargs["method"] == "POST"
+    assert call.kwargs["url"].endswith("/cohort/snapshot")
+    # Only the encrypted id + query go to data-access-api (its DataframeQuery schema).
+    assert call.kwargs["json_body"] == {"encrypted_project_id": "enc123", "query": payload["query"]}
+    _assert_trust_internal_auth_header(call)
+
+
+@pytest.mark.asyncio
+async def test_handle_persist_cohort_invalid_payload():
+    """A malformed task payload fails validation before any request is made."""
+    result = await handle_persist_cohort({"query": "SELECT 1"})
+
+    assert result["success"] is False
+    assert "validation error" in result["error"].lower()
+
+
+@pytest.mark.asyncio
+async def test_handle_persist_cohort_reports_data_access_failure(mock_make_request):
+    """A refused snapshot (e.g. below-threshold 403) marks the task FAILED at the hub."""
+    mock_make_request.side_effect = Exception("403: Cohort is too small for row-level data to be released.")
+
+    payload = {
+        "project_id": str(uuid4()),
+        "trust_id": str(uuid4()),
+        "encrypted_project_id": "enc123",
+        "query": "SELECT * FROM omop.image_occurrence",
+    }
+    result = await handle_persist_cohort(payload)
+
+    assert result["success"] is False
+    assert "too small" in result["error"]

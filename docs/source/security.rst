@@ -151,9 +151,15 @@ independent controls would each have to fail before anything unintended could ex
   reveal that a handful of patients matched — the threshold is the trust's own
   disclosure floor (default 10), set by each trust in its deployment kit: trusts need
   not agree on a shared value, and the hub cannot lower it;
-- cached results are scoped to the requesting project and expire in minutes, so no
-  project is served another's data and no result outlives a withdrawal of consent or a
-  correction to a record.
+- row-level data is released only from the **cohort frozen at project approval**: each
+  Trust materialises the approved query's result once and serves that immutable,
+  project-scoped artefact from then on, ignoring any SQL supplied at request time. The
+  cohort a project trains on is therefore exactly the cohort that was approved — it cannot
+  silently grow as the live database grows — and training code cannot run queries of its
+  own. Withdrawals and record corrections propagate at explicit re-approval events, which
+  atomically replace the frozen artefact, and at project teardown, which deletes it —
+  never mid-training, where a silently shifting dataset would corrupt the model without
+  anyone approving the change.
 
 This is achieved **without restricting researchers to a fixed menu of queries** —
 arbitrary analytical SQL remains available. The constraint is on the shape and privilege

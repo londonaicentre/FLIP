@@ -139,6 +139,15 @@ services:
       # kit file to release less. The `:-10` keeps an unset variable from arriving as an
       # empty string, which pydantic would reject against `int`.
       COHORT_QUERY_THRESHOLD: ${COHORT_QUERY_THRESHOLD:-10}
+      # Approved-cohort snapshot store (FLIP#857): the container-side path of the bind
+      # mount below. Fixed here; the HOST side is the kit's COHORT_SNAPSHOT_STORAGE_DIR.
+      COHORT_SNAPSHOT_DIR: /snapshots
+    volumes:
+      # Approved-cohort snapshots: host dir from the kit's Host-local profile, pre-created
+      # host-user-owned by `make up-trust` (the service runs non-root and disables the
+      # store if it cannot write). Holds row-level patient data — include it in the
+      # trust's backup/retention practice alongside the OMOP data dir.
+      - ${COHORT_SNAPSHOT_STORAGE_DIR:-./data-access-api/.snapshots/trust}:/snapshots
 
   trust-api:
     image: ghcr.io/londonaicentre/trust-api:${DOCKER_TAG}

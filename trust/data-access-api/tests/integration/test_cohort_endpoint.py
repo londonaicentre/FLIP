@@ -41,17 +41,23 @@ def _cohort_payload(query: str) -> dict:
     }
 
 
-def _dataframe_payload(query: str) -> dict:
-    """Payload for the two row-level routes, which take ``DataframeQuery`` (two fields only).
+# Row-level routes key everything on the hub project id, which must be a UUID (it becomes a
+# directory name in the snapshot store).
+_PROJECT_A = "0b91a3f2-30c3-4bd5-9a1e-2f24c7f5a111"
+_PROJECT_B = "4d5e6f70-8192-4a3b-bc4d-5e6f70819222"
+
+
+def _dataframe_payload(query: str, project_id: str = _PROJECT_A) -> dict:
+    """Payload for the row-level + snapshot routes, which take ``DataframeQuery``.
 
     ``encrypted_project_id`` is encrypted with the same AES key the container is configured
-    with, so the decrypt path stays real rather than mocked. The import is function-local for
-    the same reason it is in ``test_dataframe_endpoint_returns_seeded_columns``: the conftest
-    pins ``AES_KEY_BASE64`` before any ``data_access_api`` module builds its Settings singleton.
+    with, so the decrypt path stays real rather than mocked. The import is function-local:
+    the conftest pins ``AES_KEY_BASE64`` before any ``data_access_api`` module builds its
+    Settings singleton.
     """
     from data_access_api.utils.encryption import encrypt
 
-    return {"encrypted_project_id": encrypt("integration-project-1"), "query": query}
+    return {"encrypted_project_id": encrypt(project_id), "query": query}
 
 
 def test_cohort_endpoint_returns_aggregates_for_image_occurrences(http_client):
@@ -132,112 +138,149 @@ def test_cohort_endpoint_requires_auth_header(data_access_api_url):
     assert response.status_code == 401
 
 
-def test_dataframe_endpoint_returns_seeded_columns(http_client):
-    """``/cohort/dataframe`` returns column-oriented data straight from Postgres.
+# ---------------------------------------------------------------------------
+# Snapshot lifecycle: the row-level routes serve ONLY the frozen approved cohort
+# (FLIP#857). Each test uses its own project UUID so the per-session store never
+# couples tests; snapshots are cleaned up where a later test would collide.
+# ---------------------------------------------------------------------------
 
-    The endpoint decrypts ``encrypted_project_id`` with the shared AES key, so the test
-    encrypts a real project id with the same key the container is configured with. This
-    keeps the encryption path real instead of mocking ``decrypt``.
-    """
-    from data_access_api.utils.encryption import encrypt
-
-    payload = {
-        "encrypted_project_id": encrypt("integration-project-1"),
-        "query": (
-            "SELECT c.concept_code AS modality, io.accession_id "
-            "FROM omop.image_occurrence io "
-            "LEFT JOIN omop.concept c ON c.concept_id = io.modality_concept_id"
-        ),
-    }
-    response = http_client.post("/cohort/dataframe", json=payload)
-    assert response.status_code == 200, response.text
-
-    body = response.json()
-    assert set(body.keys()) == {"modality", "accession_id"}
-    assert len(body["modality"]) == 24
-    # Sanity: counts in the dataframe should match the seed totals.
-    assert body["modality"].count("CT") == 12
-    assert body["modality"].count("MR") == 8
-    assert body["modality"].count("XR") == 4
-    # accession_id is unique per row in the seed.
-    assert len(set(body["accession_id"])) == 24
+_SEED_COHORT_QUERY = (
+    "SELECT c.concept_code AS modality, io.accession_id "
+    "FROM omop.image_occurrence io "
+    "LEFT JOIN omop.concept c ON c.concept_id = io.modality_concept_id"
+)
 
 
-def test_accession_ids_returns_seeded_ids(http_client):
-    """``/cohort/accession-ids`` projects the id column out of the caller's cohort.
+def _create_snapshot(http_client, query: str, project_id: str) -> httpx.Response:
+    return http_client.post("/cohort/snapshot", json=_dataframe_payload(query, project_id))
 
-    The route wraps the caller's (re-emitted) SQL as ``SELECT accession_id FROM (...) AS
-    cohort_subquery``, so only that one column ever crosses the trust boundary regardless of
-    what the inner query selected.
-    """
+
+def test_row_level_routes_refuse_without_a_snapshot(http_client):
+    """Fail-closed: no approved snapshot ⇒ no row-level data, on both routes."""
+    payload = _dataframe_payload("SELECT * FROM omop.image_occurrence", "97fca5ab-0000-4000-8000-000000000001")
+    for path in ("/cohort/dataframe", "/cohort/accession-ids"):
+        response = http_client.post(path, json=payload)
+        assert response.status_code == 403, response.text
+        assert response.json()["detail"] == "No approved cohort snapshot exists for this project."
+
+
+def test_snapshot_then_dataframe_serves_the_frozen_cohort(http_client):
+    """The full approval-time flow: freeze once, then serve — ignoring the client's SQL."""
+    created = _create_snapshot(http_client, _SEED_COHORT_QUERY, _PROJECT_A)
+    assert created.status_code == 200, created.text
+    body = created.json()
+    assert body["row_count"] == 24
+    assert body["has_accessions"] is True
+    assert set(body["columns"]) == {"modality", "accession_id"}
+
+    # The served query is hostile-looking and never executed: the frozen frame comes back.
     response = http_client.post(
-        "/cohort/accession-ids",
-        json=_dataframe_payload("SELECT person_id, accession_id FROM omop.image_occurrence"),
+        "/cohort/dataframe",
+        json=_dataframe_payload("SELECT * FROM omop.person", _PROJECT_A),
     )
     assert response.status_code == 200, response.text
+    frame = response.json()
+    assert set(frame.keys()) == {"modality", "accession_id"}
+    assert len(frame["modality"]) == 24
+    assert frame["modality"].count("CT") == 12
+    assert frame["modality"].count("MR") == 8
+    assert frame["modality"].count("XR") == 4
+    assert len(set(frame["accession_id"])) == 24
 
-    accession_ids = response.json()["accession_ids"]
+    # And the frozen accession pointer set serves from the same artefact.
+    ids_response = http_client.post(
+        "/cohort/accession-ids",
+        json=_dataframe_payload("SELECT 1 AS nothing FROM omop.person", _PROJECT_A),
+    )
+    assert ids_response.status_code == 200, ids_response.text
+    accession_ids = ids_response.json()["accession_ids"]
     assert len(accession_ids) == 24
-    # accession_id is unique per row in the seed (ACC-1001 … ACC-1024).
-    assert len(set(accession_ids)) == 24
     assert "ACC-1001" in accession_ids
 
 
-def test_accession_ids_missing_column_surfaces_get_records_400(http_client):
-    """A cohort that does not project ``accession_id`` fails inside ``get_records``, not after it.
+def test_tabular_snapshot_serves_empty_accession_list(http_client):
+    """A frozen cohort without accession_id is a tabular project: imaging no-ops, no error.
 
-    Pins which 400 actually reaches the caller. Because the route wraps the inner query in
-    ``SELECT accession_id FROM (...)``, Postgres raises ``UndefinedColumn`` while the query is
-    executing — so ``get_records`` converts it to a category 400 and the router's
-    ``except HTTPException: raise`` branch re-raises it before any DataFrame is returned. A
-    router-level "did the DataFrame come back with the column?" guard could never fire, which
-    is why there isn't one; this test is the standing proof of that. The cohort here is 16
-    rows — comfortably over the stack's threshold — so the refusal is about the column, not
-    the cohort size.
+    (Pre-snapshot, a cohort not projecting accession_id produced an UndefinedColumn 400 out
+    of the live wrapped query; with frozen serving the column's absence is a legitimate
+    project shape, recorded in the snapshot's metadata.)
     """
+    created = _create_snapshot(http_client, "SELECT person_id FROM omop.person", _PROJECT_B)
+    assert created.status_code == 200, created.text
+    assert created.json()["has_accessions"] is False
+
     response = http_client.post(
         "/cohort/accession-ids",
-        json=_dataframe_payload("SELECT person_id FROM omop.person"),
+        json=_dataframe_payload("SELECT person_id FROM omop.person", _PROJECT_B),
     )
-    assert response.status_code == 400, response.text
-    assert response.json()["detail"] == "The column 'accession_id' does not exist."
+    assert response.status_code == 200, response.text
+    assert response.json()["accession_ids"] == []
 
 
-def test_accession_ids_below_threshold_is_refused(http_client):
-    """A below-threshold cohort is refused outright — no partial list, no count.
+def test_below_threshold_snapshot_is_refused_and_persists_nothing(http_client):
+    """The disclosure floor is enforced at freeze time; a refused freeze leaves no artefact.
 
     modality_concept_id 4013632 = 'XR'; the seed has 4 such rows, under the stack's
-    COHORT_QUERY_THRESHOLD of 5.
+    COHORT_QUERY_THRESHOLD of 5. The refusal text matches the row-level routes' fixed
+    below-threshold string, and a zero-row cohort refuses byte-identically so the snapshot
+    route cannot act as a row-count oracle either.
     """
+    project_id = "97fca5ab-0000-4000-8000-000000000002"
+    below = _create_snapshot(
+        http_client,
+        "SELECT accession_id FROM omop.image_occurrence WHERE modality_concept_id = 4013632",
+        project_id,
+    )
+    zero = _create_snapshot(
+        http_client,
+        "SELECT accession_id FROM omop.image_occurrence WHERE accession_id = 'NONEXISTENT'",
+        project_id,
+    )
+    assert below.status_code == zero.status_code == 403
+    assert below.text == zero.text
+    assert below.json()["detail"] == "Cohort is too small for row-level data to be released."
+
+    # Nothing was persisted: the project still refuses row-level serving outright.
     response = http_client.post(
-        "/cohort/accession-ids",
-        json=_dataframe_payload(
-            "SELECT accession_id FROM omop.image_occurrence WHERE modality_concept_id = 4013632"
-        ),
+        "/cohort/dataframe", json=_dataframe_payload("SELECT 1 AS one FROM omop.person", project_id)
     )
-    assert response.status_code == 403, response.text
-    assert response.json()["detail"] == "Cohort is too small for row-level data to be released."
+    assert response.status_code == 403
+    assert response.json()["detail"] == "No approved cohort snapshot exists for this project."
 
 
-def test_accession_ids_zero_rows_indistinguishable_from_below_threshold(http_client):
-    """Privacy regression, against real Postgres rather than a mocked DataFrame.
-
-    A cohort matching nothing and a cohort of 1-4 rows must produce byte-identical refusals,
-    or the response itself becomes a row-count oracle: a caller could binary-search a
-    predicate and learn whether *any* patient matches it, one bit at a time.
-    """
-    below_threshold = http_client.post(
-        "/cohort/accession-ids",
-        json=_dataframe_payload(
-            "SELECT accession_id FROM omop.image_occurrence WHERE modality_concept_id = 4013632"
-        ),
+def test_snapshot_route_rejects_unsafe_sql(http_client):
+    """validate_query remains the authority on the one query the snapshot route executes."""
+    response = _create_snapshot(
+        http_client,
+        "INSERT INTO omop.person (person_id) VALUES (999)",
+        "97fca5ab-0000-4000-8000-000000000003",
     )
-    genuine_zero = http_client.post(
-        "/cohort/accession-ids",
-        json=_dataframe_payload(
-            "SELECT accession_id FROM omop.image_occurrence WHERE accession_id = 'NONEXISTENT'"
-        ),
-    )
+    assert response.status_code == 400, response.text
 
-    assert below_threshold.status_code == genuine_zero.status_code == 403
-    assert below_threshold.text == genuine_zero.text
+
+def test_reapproval_replaces_the_snapshot_and_delete_removes_it(http_client):
+    """Overwrite-on-reapproval and the FLIP#997 teardown hook, end to end."""
+    from data_access_api.utils.encryption import encrypt
+
+    project_id = "97fca5ab-0000-4000-8000-000000000004"
+    first = _create_snapshot(http_client, _SEED_COHORT_QUERY, project_id)
+    assert first.status_code == 200, first.text
+
+    second = _create_snapshot(http_client, "SELECT person_id, accession_id FROM omop.image_occurrence", project_id)
+    assert second.status_code == 200, second.text
+
+    served = http_client.post(
+        "/cohort/dataframe", json=_dataframe_payload("SELECT 1 AS one FROM omop.person", project_id)
+    )
+    assert set(served.json().keys()) == {"person_id", "accession_id"}
+
+    deleted = http_client.post("/cohort/snapshot/delete", json={"encrypted_project_id": encrypt(project_id)})
+    assert deleted.status_code == 200
+    assert deleted.json() == {"deleted": True}
+    again = http_client.post("/cohort/snapshot/delete", json={"encrypted_project_id": encrypt(project_id)})
+    assert again.json() == {"deleted": False}
+
+    refused = http_client.post(
+        "/cohort/dataframe", json=_dataframe_payload("SELECT 1 AS one FROM omop.person", project_id)
+    )
+    assert refused.status_code == 403

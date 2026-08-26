@@ -23,11 +23,13 @@ from flip_api.db.models.main_models import TrustTask
 from flip_api.db.models.user_models import PermissionRef
 from flip_api.domain.interfaces.trust import (
     ICreateImagingProject,
+    IPersistCohort,
     ITrust,
 )
 from flip_api.domain.schemas.status import TaskType
 from flip_api.project_services.services.project_services import get_project, get_users_with_access
 from flip_api.utils.cognito_helpers import get_cognito_users, get_user_pool_id
+from flip_api.utils.encryption import encrypt
 from flip_api.utils.logger import logger
 
 router = APIRouter(prefix="/trust", tags=["trusts_services"])
@@ -90,6 +92,36 @@ async def start_project_imaging_creation(
 
         # Get Cognito users
         cognito_users = get_cognito_users(params={"UserPoolId": user_pool_id})
+
+        # Freeze the approved cohort BEFORE imaging creation (FLIP#857): the trust
+        # materialises the cohort once and the row-level routes serve only that artefact,
+        # so the frozen accession set must exist by the time imaging retrieval asks for
+        # it. Queued and committed first: pending-task dispatch orders by created_at and
+        # the trust poller processes sequentially, so the separate commit gives the
+        # snapshot task a strictly earlier timestamp than the imaging task below.
+        if project.query is not None:
+            persist_payload = IPersistCohort(
+                project_id=project_id,
+                trust_id=trust.id,
+                encrypted_project_id=encrypt(str(project_id)),
+                query=project.query.query,
+                query_id=project.query.id,
+            )
+            persist_task = TrustTask(
+                trust_id=trust.id,
+                task_type=TaskType.PERSIST_COHORT,
+                # query_id on the task row records which Queries row was frozen (indexed).
+                query_id=project.query.id,
+                payload=json.dumps(persist_payload.model_dump(mode="json"), default=str),
+            )
+            db.add(persist_task)
+            db.commit()
+            logger.info(f"Queued cohort snapshot task for trust {trust.name}, project {project_id}")
+        else:
+            logger.warning(
+                f"Project {project_id} has no cohort query — skipping the cohort snapshot task; "
+                "row-level routes will refuse this project at every trust"
+            )
 
         # Create request data for trust
         request_data = ICreateImagingProject(

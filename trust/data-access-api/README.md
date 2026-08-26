@@ -67,6 +67,37 @@ Key environment variables (set in [`.env.development.example`](../../.env.develo
 | `AES_KEY_BASE64` | AES encryption key for decrypting project identifiers |
 | `TRUST_INTERNAL_SERVICE_KEY_HEADER` | Header name for trust-internal service auth (default `X-Trust-Internal-Service-Key`) |
 | `TRUST_INTERNAL_SERVICE_KEY` | Per-trust plaintext key. Required on every `/cohort` request. |
+| `COHORT_SNAPSHOT_DIR` | Container path of the approved-cohort snapshot store (the compose files fix it to `/snapshots` and bind-mount the kit's host-side `COHORT_SNAPSHOT_STORAGE_DIR` there). Empty = store disabled, so row-level routes refuse every project — fail-closed. |
+| `SNAPSHOT_MAX_BYTES` | Hard cap on one serialized snapshot (default 512 MiB). An over-cap cohort is refused, never truncated. |
+
+## Approved-cohort snapshots (FLIP#857)
+
+At project approval, trust-api forwards a `POST /cohort/snapshot` request: the approved query
+of record is validated, executed **once**, and the resulting dataframe is persisted under
+`COHORT_SNAPSHOT_DIR/<hub-project-uuid>/` (`dataframe.parquet` + `meta.json`, written with
+atomic directory renames so readers never see a half-written artefact). From then on the two
+row-level routes — `/cohort/dataframe` and `/cohort/accession-ids` — serve **only** that
+frozen artefact, keyed on the encrypted hub project id; the SQL the caller supplies is ignored
+(hash-compared against the frozen query and logged when it differs). Consequences:
+
+- the cohort a project trains on is exactly the cohort that was approved — it cannot grow as
+  the live OMOP database grows, and every training-round fetch returns identical data;
+- researcher FL code calling `flip.get_dataframe(...)` cannot execute SQL against OMOP at
+  all — the arbitrary-SQL exposure on `/cohort/dataframe` is closed;
+- a project with no snapshot is refused outright (fixed generic detail);
+- a frozen cohort with no `accession_id` column returns an **empty** accession list — a
+  tabular/OMOP-only project legitimately has no imaging to pull;
+- re-approval calls `/cohort/snapshot` again and atomically replaces the artefact — this is
+  how OMOP-side record removals and opt-outs propagate into an approved project (at explicit
+  re-snapshot events, never silently mid-training);
+- `POST /cohort/snapshot/delete` removes the artefact (the FLIP#997 teardown hook).
+
+Live OMOP is evaluated only by `/cohort` (statistics — pre-approval by definition) and
+`/cohort/snapshot`. The disclosure threshold below is enforced at snapshot creation (nothing
+is persisted for a below-threshold cohort) and re-checked at serve time against the frozen
+row count, using the live threshold value — so an operator raising their floor takes effect
+on already-approved projects. The snapshot directory holds row-level patient data: include it
+in the trust's backup/retention practice alongside the OMOP data volume.
 
 ## Authentication
 

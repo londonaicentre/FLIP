@@ -58,6 +58,10 @@ def compose_stack() -> Generator[DockerCompose, None, None]:
         context=str(_COMPOSE_DIR),
         compose_file_name=_COMPOSE_FILE,
         wait=True,
+        # Rebuild the from-source service on every session: without it, `docker compose up`
+        # reuses a previously built image, so a dependency change (pyproject/uv.lock) never
+        # reaches the stack and the suite green-lights code that cannot run in a fresh build.
+        build=True,
     ) as compose:
         yield compose
 

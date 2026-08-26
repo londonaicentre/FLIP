@@ -82,3 +82,29 @@ class AccessionIdsResponse(BaseModel):
         ...,
         description="The accession IDs of the cohort, in query order.",
     )
+
+
+class SnapshotResponse(BaseModel):
+    """What ``POST /cohort/snapshot`` persisted — aggregates only, no row-level data."""
+
+    row_count: int = Field(..., description="Number of cohort rows frozen in the snapshot")
+    columns: list[str] = Field(..., description="Ordered column names of the frozen dataframe")
+    has_accessions: bool = Field(
+        ...,
+        description="Whether the frozen cohort carries an accession_id column (i.e. pulls imaging)",
+    )
+    snapshot_at: str = Field(..., description="ISO-8601 UTC timestamp of snapshot creation")
+    query_hash: str = Field(
+        ...,
+        description="SHA-256 of the normalised SQL the snapshot froze (drift detection, not a control)",
+    )
+
+
+class SnapshotDeleteRequest(BaseModel):
+    """Input for ``POST /cohort/snapshot/delete``."""
+
+    encrypted_project_id: str = Field(
+        ...,
+        description="The encrypted identifier for the central hub project",
+        json_schema_extra={"example": "encrypted_12345"},
+    )

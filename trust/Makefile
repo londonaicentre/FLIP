@@ -181,6 +181,7 @@ TRUST_VARS = \
 TRUST_BUILD_VARS = \
 	BASE_IMAGES_DOWNLOAD_DIR=$(or $(BASE_IMAGES_DOWNLOAD_DIR),./data/trust) \
 	ORTHANC_STORAGE_DIR=$(or $(ORTHANC_STORAGE_DIR),./orthanc/orthanc-storage-trust1) \
+	COHORT_SNAPSHOT_STORAGE_DIR=$(or $(COHORT_SNAPSHOT_STORAGE_DIR),./data-access-api/.snapshots/trust) \
 	FL_KIT_SLOT=$(or $(FL_KIT_SLOT),Trust_1) \
 	FL_KIT_SLOT_NUMBER=$(or $(FL_KIT_SLOT_NUMBER),1)
 
@@ -267,6 +268,10 @@ up-trust: update-omop-data update-orthanc-data create-networks
 	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
 	$(call check_omop_data_dir,$(or $(OMOP_DATA_DIR),./omop-db/volumes/Trust_$(TRUST_NUM)/db_data))
 	mkdir -p $(or $(BASE_IMAGES_DOWNLOAD_DIR),./data/$(KIT))
+	# Pre-create the cohort-snapshot bind dir as the HOST user: if compose auto-created it,
+	# it would be root-owned and the non-root data-access-api would disable the store.
+	# The fallback must match the compose default (Trust_${TRUST_NUMBER}).
+	mkdir -p $(or $(COHORT_SNAPSHOT_STORAGE_DIR),./data-access-api/.snapshots/Trust_$(TRUST_NUM))
 	@echo "$(GPU_STATUS_MSG)"
 	$(TRUST_VARS) DEBUG=${DEBUG} ${DOCKER_COMPOSE_CMD} $(GPU_OVERRIDE) $(TRUST_OVERRIDE) -p $(TRUST_PROJECT) up -d $(UP_PULL_FLAGS)
 	@echo "🩻 Starting XNAT for $(KIT)..."
@@ -302,6 +307,7 @@ up-trust-ec2:
 	@echo "⚙️ Using kit file trust/$(KIT_FILE)"
 	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
 	@echo "🖥️  EC2 trust runs CPU-only by design — GPU overlay omitted + NUM_AVAILABLE_GPUS forced to 0 (t3.xlarge has no GPU)."
+	mkdir -p $(or $(COHORT_SNAPSHOT_STORAGE_DIR),./data-access-api/.snapshots/Trust_$(TRUST_NUM))
 	$(TRUST_VARS) NUM_AVAILABLE_GPUS=0 DEBUG=${DEBUG} ${DOCKER_COMPOSE_CMD} -p $(TRUST_PROJECT) up -d --pull always
 	@echo "🩻 Starting XNAT for $(KIT)..."
 	$(MAKE) -C xnat up-xnat KIT=$(KIT) PROD=$(PROD)

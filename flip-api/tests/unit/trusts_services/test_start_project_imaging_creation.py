@@ -10,6 +10,7 @@
 # limitations under the License.
 #
 
+import json
 import uuid
 from unittest import mock
 from unittest.mock import MagicMock
@@ -19,6 +20,7 @@ from fastapi import HTTPException
 
 from flip_api.domain.interfaces.project import IProjectQuery, IProjectResponse
 from flip_api.domain.interfaces.trust import ITrust
+from flip_api.domain.schemas.status import TaskType
 from flip_api.domain.schemas.users import CognitoUser
 from flip_api.trusts_services.start_project_imaging_creation import start_project_imaging_creation
 
@@ -173,9 +175,22 @@ async def test_successful_imaging_creation(
     )
 
     assert response["success"] == "Imaging project creation task queued successfully"
-    # Verify task was added and committed
-    mock_get_session.add.assert_called_once()
-    mock_get_session.commit.assert_called_once()
+    # Two tasks, in this order: the cohort snapshot (FLIP#857) is queued and committed
+    # FIRST so its created_at strictly precedes the imaging task's — pending-task dispatch
+    # orders by created_at and the trust poller is sequential, so the frozen accession set
+    # exists by the time imaging retrieval asks for it.
+    assert mock_get_session.add.call_count == 2
+    assert mock_get_session.commit.call_count == 2
+    persist_task = mock_get_session.add.call_args_list[0][0][0]
+    imaging_task = mock_get_session.add.call_args_list[1][0][0]
+    assert persist_task.task_type == TaskType.PERSIST_COHORT
+    assert imaging_task.task_type == TaskType.CREATE_IMAGING
+    # The task row records which Queries row was frozen, and the payload carries both the
+    # encrypted id (forwarded to data-access-api) and the query of record.
+    assert persist_task.query_id is not None
+    persist_payload = json.loads(persist_task.payload)
+    assert persist_payload["encrypted_project_id"]
+    assert persist_payload["query"] == "SELECT * FROM table"
 
 
 # Test case for DB error during task creation
@@ -229,8 +244,9 @@ async def test_dicom_to_nifti_false_forwarded_to_trust(
         user_id=user_id,
     )
 
-    # Verify the task payload includes dicom_to_nifti=False
-    mock_get_session.add.assert_called_once()
-    task = mock_get_session.add.call_args[0][0]
+    # Verify the task payload includes dicom_to_nifti=False.
+    # The imaging task is queued second, after the cohort-snapshot task.
+    task = mock_get_session.add.call_args_list[-1][0][0]
+    assert task.task_type == TaskType.CREATE_IMAGING
     payload = json.loads(task.payload)
     assert payload["dicom_to_nifti"] is False
