@@ -13,6 +13,7 @@
 
 import stylistic from "@stylistic/eslint-plugin";
 import { defineConfigWithVueTs, vueTsConfigs } from "@vue/eslint-config-typescript";
+import importX from "eslint-plugin-import-x";
 import simpleImportSort from "eslint-plugin-simple-import-sort";
 import pluginVue from "eslint-plugin-vue";
 
@@ -139,6 +140,33 @@ export default defineConfigWithVueTs(
                 afterAll: "readonly",
                 afterEach: "readonly",
             },
+        },
+    },
+
+    {
+        // Dependency scoping guard (FLIP#1041). Production source may not import a
+        // package that is only declared in `devDependencies`, nor one that is declared
+        // nowhere and resolves solely through npm's hoisting of a parent's tree.
+        //
+        // The point is not the build - vite bundles whatever the entry points reach,
+        // whichever stanza a package sits in. It is that Dependabot derives a security
+        // alert's scope label from the stanza, so a shipped package left in
+        // `devDependencies` yields an alert labelled "Development" that reads as
+        // not-user-facing. See flip-ui/README.md -> Dependency scoping.
+        //
+        // `mocks/` is deliberately NOT exempt: mocks/demo-server.ts ships in the public
+        // /ark_demo bundle, so its imports are production imports.
+        name: "flip-ui/dependency-scoping",
+        files: ["src/**/*.ts", "src/**/*.vue", "mocks/**/*.ts"],
+        ignores: ["**/*.spec.ts", "**/__tests__/**"],
+        plugins: { "import-x": importX },
+        rules: {
+            "import-x/no-extraneous-dependencies": ["error", {
+                devDependencies: false,
+                optionalDependencies: false,
+                peerDependencies: true,
+                includeTypes: false,
+            }],
         },
     },
 );

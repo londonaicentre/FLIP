@@ -196,7 +196,11 @@ const allModels = (): unknown => {
     // Every recorded run finished, so the trust list is the project's own — the
     // real endpoint returns [] only for models that never reached dispatch.
     const runTrusts = (trusts as { id: string; name: string; code: string }[])
-        .map(({ id, name, code }) => ({ id, name, code }));
+        .map(({ id, name, code }) => ({
+            id,
+            name,
+            code
+        }));
 
     const data: Record<string, unknown>[] = rows.map(({ model, project }) => ({
         ...model,
@@ -210,7 +214,10 @@ const allModels = (): unknown => {
     const statusCounts = data.reduce<Record<string, number>>((counts, model) => {
         const status = String(model.status);
 
-        return { ...counts, [status]: (counts[status] ?? 0) + 1 };
+        return {
+            ...counts,
+            [status]: (counts[status] ?? 0) + 1
+        };
     }, {});
 
     return {
@@ -238,7 +245,10 @@ const flNets = (): unknown => {
         lastConnected: new Date().toUTCString()
     }));
 
-    return [{ name: "net-1", clients }];
+    return [{
+        name: "net-1",
+        clients
+    }];
 };
 
 /**

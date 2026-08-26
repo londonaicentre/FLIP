@@ -21,7 +21,6 @@ import { createApp } from "vue";
 import VueTippy from "vue-tippy";
 import SmartTable from "vuejs-smart-table";
 
-import { makeServer } from "../mocks/server";
 import App from "./App.vue";
 import { seedDemoAuth } from "./demo/bootstrap";
 import router from "./router";
@@ -67,6 +66,13 @@ if (!isDemoBuild) {
  * Behind a dynamic import the reference disappears with the branch, so no
  * fixture chunk is emitted at all.
  *
+ * `mocks/server` (the VITE_LOCAL dev mock) is loaded the same way, for the same
+ * reason. It was a static import until FLIP#1041: the VITE_LOCAL branch folded
+ * correctly, but miragejs patches Error.prototype at module scope, so rolldown
+ * kept the module anyway and shipped ~230 modules — Mirage, Pretender,
+ * route-recognizer, inflected and all of lodash — in the production entry
+ * chunk of every build. Neither mock server may be imported statically here.
+ *
  * Mounting waits for that install: Mirage patches XHR globally when it is
  * constructed, and the app issues its first requests during mount. Mounting
  * first would let those escape to the network before the mock exists. In a
@@ -90,6 +96,7 @@ async function bootstrap(): Promise<void> {
     }
     else if (import.meta.env.VITE_LOCAL === "true" && !isE2E) {
         console.info("Running locally, will use mocked API.");
+        const { makeServer } = await import("../mocks/server");
         makeServer();
     }
 

@@ -132,23 +132,43 @@ Client ID are required for a production deployment.
 
 ### Dependency scoping
 
-**If a non-test file under `src/` imports a package — statically or through a dynamic `import()` — it belongs in
-`dependencies`, not `devDependencies`.**
+**Production source may not import a package that is only declared in `devDependencies`, nor one that is
+declared nowhere and resolves through npm's hoisting of a parent's tree.** "Production source" is everything
+the deployed bundles reach: `src/`, minus its test files, plus `mocks/` — which `build:demo` pulls into the
+public `/ark_demo` bundle.
 
-The build itself does not care: `vite build` tree-shakes from the `src/` entry points and bundles whatever they
-reach, whichever stanza the package sits in. The stanza matters because **Dependabot derives an alert's scope
-label from it**. A package that ships to users but sits in `devDependencies` produces an alert labelled
-"Development", which reads as *not in the production bundle* and invites a wrongly-dismissed alert on code that
-CloudFront is serving to every user. FLIP#1041 fixed 16 such packages (`axios`, `pinia`, `aws-amplify`,
-`vee-validate` among them) plus `husky`, which had drifted the other way.
+This is enforced, not just documented: the `flip-ui/dependency-scoping` block in
+[`eslint.config.mjs`](eslint.config.mjs) runs `import-x/no-extraneous-dependencies` over exactly that file
+set, so `npm run lint` fails in CI the moment an import lands in the wrong stanza.
 
-Two traps when checking this:
+The rule exists for **Dependabot**, not the build. `vite build` tree-shakes from the entry points and bundles
+whatever they reach whichever stanza a package sits in, and every install path in the repo (`npm ci` in CI,
+the Dockerfile, `make deploy-ui`) installs both stanzas — so a wrong stanza breaks nothing and is invisible
+until it matters. What it changes is the **scope label on a security alert**: a package that ships to users
+but sits in `devDependencies` produces an alert labelled "Development", which reads as *not in the production
+bundle* and invites a wrongly-dismissed alert on code CloudFront is serving. FLIP#1041 corrected 21
+packages: 18 moved out of `devDependencies`, two that were declared nowhere at all (`codemirror`,
+`tippy.js` — they resolved only by hoisting), and `husky`, which had drifted the other way. Correct scoping
+is also the precondition for ever adopting `npm ci --omit=dev` here.
 
-- **`src/` also holds the co-located `*.spec.ts` unit tests.** Their imports (`vitest`, `@vue/test-utils`,
-  `@pinia/testing`) are genuinely dev-only — exclude test files before concluding a package ships.
-- **A `from "..."` grep alone under-reports.** `highlight.js` is loaded lazily via
-  `import("highlight.js/lib/core")` in [`src/utils/highlightJson.ts`](src/utils/highlightJson.ts) and is
-  correctly a `dependency` despite having no static import.
+Note the rule keys off the **import graph, not the bundle**. `@popperjs/core` is a `dependency` even though
+tree-shaking currently drops it (its only consumers, `AiSelect`/`AiChipSelect`, are unused) — declaring on
+what production code imports is stable, whereas declaring on what survives tree-shaking silently flips the
+correct answer whenever an unrelated component starts or stops being used.
+
+Two traps when auditing this by hand:
+
+- **A `from "..."` grep under-reports.** `highlight.js` is loaded lazily via
+  `import("highlight.js/lib/core")` and `import("highlight.js/lib/languages/json")` in
+  [`src/utils/highlightJson.ts`](src/utils/highlightJson.ts), and is correctly a `dependency` despite having
+  no static import. Test files also live under `src/` (107 in `__tests__/` directories plus two flat
+  `*.spec.ts`), and their imports — `vitest`, `@vue/test-utils`, `@pinia/testing` — are genuinely dev-only.
+- **A static import of a side-effecting module is never dropped, even from a branch that folds.** Neither
+  mock server may be imported statically from [`src/main.ts`](src/main.ts); both are loaded through dynamic
+  `import()` inside their own folded branch. `mocks/server` was static until FLIP#1041 and shipped ~230
+  modules — Mirage, Pretender, route-recognizer, inflected and all of lodash — in the production entry
+  chunk of every build, because miragejs patches `Error.prototype` at module scope. Making it dynamic cut
+  the entry chunk from 331 KB to 182 KB. See the comment above `bootstrap()`.
 
 ## Testing
 
