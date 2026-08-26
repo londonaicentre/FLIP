@@ -576,6 +576,39 @@ class TestDownloadCache:
 
         mock_get_project.assert_not_called()
 
+    @pytest.mark.asyncio
+    @patch("imaging_api.services.download.get_project_from_central_hub_project_id")
+    async def test_cache_hit_refreshes_last_used(self, mock_get_project, headers, tmp_path):
+        """A hit must bump the sentinel's mtime — it is the last-used clock the TTL
+        retention sweeper expires on (FLIP#1050)."""
+        accession_dir = _seed_cached_download(str(tmp_path), "net1", "hub-proj-1", "ACC123")
+        sentinel = os.path.join(accession_dir, ".flip_complete-scan-NIFTI")
+        os.utime(sentinel, (1_000_000, 1_000_000))
+
+        with patch("imaging_api.services.download.BASE_IMAGES_DOWNLOAD_DIR", str(tmp_path)):
+            result = await download_and_unzip_images("hub-proj-1", "ACC123", "net1", "scan", "NIFTI", headers)
+
+        assert result == accession_dir
+        assert os.stat(sentinel).st_mtime > 1_000_000
+        mock_get_project.assert_not_called()
+
+    @pytest.mark.asyncio
+    @patch("imaging_api.services.download.touch_sentinel", side_effect=OSError("read-only fs"))
+    @patch("imaging_api.services.download.get_project_from_central_hub_project_id")
+    async def test_cache_hit_survives_a_failing_last_used_touch(
+        self, mock_get_project, mock_touch, headers, tmp_path
+    ):
+        """Last-used bookkeeping is best-effort: a failing touch must not turn a hit
+        into an error (worst case the entry just expires early and re-downloads)."""
+        accession_dir = _seed_cached_download(str(tmp_path), "net1", "hub-proj-1", "ACC123")
+
+        with patch("imaging_api.services.download.BASE_IMAGES_DOWNLOAD_DIR", str(tmp_path)):
+            result = await download_and_unzip_images("hub-proj-1", "ACC123", "net1", "scan", "NIFTI", headers)
+
+        assert result == accession_dir
+        mock_touch.assert_called_once()
+        mock_get_project.assert_not_called()
+
 
 class TestDownloadFileLocalWriteFailure:
     """download_file must distinguish XNAT-side 404 from local-fs write failures."""

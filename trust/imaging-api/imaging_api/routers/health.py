@@ -16,6 +16,8 @@ from pathlib import Path
 
 from fastapi import APIRouter
 
+from imaging_api.utils.background import dead_background_tasks
+
 router = APIRouter(prefix="/health", tags=["Health"])
 
 # The service is a uv "virtual" project (never installed as a distribution), so the
@@ -40,11 +42,22 @@ def _service_version() -> str | None:
 
 
 @router.get("")
-async def health_check() -> dict[str, str | None]:
+async def health_check() -> dict[str, object]:
     """
     Health check endpoint for the Imaging API
 
+    Reports ``degraded`` when a background service (the image-cache retention sweeper)
+    has died: the process still answers HTTP, but unbounded cache growth has silently
+    resumed, and a plain "ok" would hide that. Still HTTP 200 either way — container
+    healthchecks key on the status code, and a restart loop would not fix a dead sweeper.
+
     Returns:
-        dict[str, str | None]: The status of the service and its installed package version.
+        dict[str, object]: The service status, its version (the same contract as the
+        sibling trust services' /health), and any dead background tasks.
     """
-    return {"status": "ok", "version": _service_version()}
+    dead = dead_background_tasks()
+    return {
+        "status": "degraded" if dead else "ok",
+        "version": _service_version(),
+        "dead_tasks": sorted(dead),
+    }

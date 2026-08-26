@@ -96,6 +96,18 @@ class Settings(BaseSettings):
     # Reimport settings
     REIMPORT_STUDIES_ENABLED: bool = True
 
+    # Image-cache retention (FLIP#1050): the download cache under
+    # BASE_IMAGES_DOWNLOAD_DIR is bounded by a TTL on last use, enforced by the
+    # in-process sweeper in services/cache_retention.py. Defaults live here, not
+    # in the compose environment blocks (see the injection rule comment in
+    # trust/deploy/compose_trust.development.yml) — an empty ${VAR} from an older
+    # kit file would override them. Floats so a dev stack can run a minutes-scale
+    # TTL for live verification. The TTL must comfortably exceed any FL job
+    # duration: NVFLARE clients refresh last-used only once, at job start.
+    IMAGE_CACHE_RETENTION_ENABLED: bool = True
+    IMAGE_CACHE_RETENTION_HOURS: float = 168.0  # 7 days since last use
+    IMAGE_CACHE_SWEEP_INTERVAL_MINUTES: float = 60.0
+
 
 # Eager load once (for app use)
 _settings = Settings()  # type: ignore

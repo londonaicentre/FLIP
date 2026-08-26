@@ -17,7 +17,7 @@ from pathlib import Path
 import requests
 
 from imaging_api.config import get_settings
-from imaging_api.services.image_cache import remove_sentinel, sentinel_path, write_sentinel
+from imaging_api.services.image_cache import remove_sentinel, sentinel_path, touch_sentinel, write_sentinel
 from imaging_api.services.projects import (
     get_experiment,
     get_project_from_central_hub_project_id,
@@ -55,7 +55,8 @@ async def download_and_unzip_images(
     this once per accession per round, and without the cache each of those calls is a full study
     re-download of bytes already on local disk (FLIP#953). The per-project path segment keeps projects
     that share an accession from being served each other's copies (their XNAT content can differ, e.g.
-    per-project label enrichment).
+    per-project label enrichment). A hit also refreshes the sentinel's mtime, which the TTL retention
+    sweeper (``services/cache_retention.py``) reads as the entry's last-used time (FLIP#1050).
 
     Args:
         central_hub_project_id (str): Central Hub project ID. Corresponds to XNAT secondary ID.
@@ -114,6 +115,12 @@ async def download_and_unzip_images(
             f"({assessor_type}/{resource_type}): reusing {accession_dir_abs} (~{size_mb:.1f} MB, "
             f"skipping XNAT download)"
         )
+        try:
+            touch_sentinel(accession_dir_abs, assessor_type, resource_type)
+        except OSError as e:
+            # A hit must never fail because last-used bookkeeping did: worst case the
+            # entry expires earlier than it should and re-downloads.
+            logger.warning(f"Could not refresh last-used time on cache sentinel {sentinel!r}: {e}")
         return accession_dir_abs
     if force_refresh:
         remove_sentinel(accession_dir_abs, assessor_type, resource_type)

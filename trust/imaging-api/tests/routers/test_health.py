@@ -55,6 +55,37 @@ async def test_health_check(client):
     response = client.get("/health/")
     assert response.status_code == 200
     assert response.json()["status"] == "ok"
+    assert response.json()["dead_tasks"] == []
+
+
+@pytest.mark.asyncio
+async def test_health_degraded_when_a_background_task_died(client):
+    """A dead retention sweeper means unbounded cache growth silently resumed — /health
+    must say so (degraded + the task name) while staying HTTP 200: container healthchecks
+    key on the status code, and a restart loop would not fix a dead sweeper."""
+    import asyncio as _asyncio
+
+    from imaging_api.utils.background import reset_dead_background_tasks, watch_background_task
+
+    async def _record_one_death():
+        async def _raises():
+            raise RuntimeError("boom")
+
+        task = _asyncio.ensure_future(_raises())
+        task.set_name("image_cache_retention")
+        task.add_done_callback(watch_background_task)
+        with pytest.raises(RuntimeError):
+            await task
+        await _asyncio.sleep(0)
+
+    await _record_one_death()
+    try:
+        response = client.get("/health/")
+        assert response.status_code == 200
+        assert response.json()["status"] == "degraded"
+        assert response.json()["dead_tasks"] == ["image_cache_retention"]
+    finally:
+        reset_dead_background_tasks()
 
 
 @pytest.mark.asyncio
@@ -79,7 +110,7 @@ async def test_health_still_answers_when_the_version_cannot_be_read(client, unre
     response = client.get("/health/")
 
     assert response.status_code == 200
-    assert response.json() == {"status": "ok", "version": None}
+    assert response.json() == {"status": "ok", "version": None, "dead_tasks": []}
 
 
 @pytest.mark.asyncio

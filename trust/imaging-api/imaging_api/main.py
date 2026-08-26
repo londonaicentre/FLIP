@@ -10,6 +10,10 @@
 # limitations under the License.
 #
 
+import asyncio
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from log_config import LoggingMiddleware
 
@@ -23,6 +27,45 @@ from imaging_api.routers.projects import router as projects_router
 from imaging_api.routers.retrieval import router as retrieval_router
 from imaging_api.routers.upload import router as upload_router
 from imaging_api.routers.users import router as users_router
+from imaging_api.services.cache_retention import SWEEP_TASK_NAME, run_cache_retention_sweeper
+from imaging_api.utils.background import reset_dead_background_tasks, watch_background_task
+from imaging_api.utils.logger import logger
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+    """Start the image-cache retention sweeper background service (FLIP#1050).
+
+    Settings are read here at startup, not at module scope, so tests that reload this
+    module with a stubbed settings object don't need the retention fields.
+
+    Args:
+        app (FastAPI): The FastAPI application instance being started.
+    """
+    reset_dead_background_tasks()
+    background_tasks: list[asyncio.Task[None]] = []
+    if get_settings().IMAGE_CACHE_RETENTION_ENABLED:
+        task = asyncio.create_task(run_cache_retention_sweeper(), name=SWEEP_TASK_NAME)
+        # The sweeper runs until shutdown, so a finished task means unbounded cache
+        # growth has resumed: record it so /health stops claiming "ok".
+        task.add_done_callback(watch_background_task)
+        background_tasks.append(task)
+    else:
+        logger.info("Image-cache retention sweeper disabled (IMAGE_CACHE_RETENTION_ENABLED=false)")
+    yield
+    for task in background_tasks:
+        task.cancel()
+    for task in background_tasks:
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            # A task that died before shutdown re-raises its original exception here.
+            # watch_background_task already logged it and flagged /health degraded —
+            # shutdown must not crash re-raising a death that was already surfaced.
+            pass
+
 
 # Disable Swagger / OpenAPI / ReDoc in production. Imaging-api proxies privileged
 # XNAT operations; leaking its full route + schema map to anyone who reaches the
@@ -37,6 +80,7 @@ app = FastAPI(
     docs_url="/docs" if _docs_enabled else None,
     openapi_url="/openapi.json" if _docs_enabled else None,
     redoc_url="/redoc" if _docs_enabled else None,
+    lifespan=lifespan,
 )
 
 app.add_middleware(LoggingMiddleware)

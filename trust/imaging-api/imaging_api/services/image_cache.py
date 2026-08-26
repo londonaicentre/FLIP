@@ -23,6 +23,10 @@ the directory member-by-member, so a partially-extracted folder can hold plausib
 files. Sentinels are exact-match per (assessor_type, resource_type); ``ALL`` and a specific
 resource type cache independently. Helpers are pure functions over explicit directory
 arguments so callers keep patching their own module-level ``BASE_IMAGES_DOWNLOAD_DIR``.
+
+The sentinel's mtime doubles as the cache entry's last-used time: set at download by
+``write_sentinel``, refreshed on every cache hit by ``touch_sentinel``, and read by the TTL
+retention sweeper in ``services/cache_retention.py`` (FLIP#1050).
 """
 
 import glob
@@ -93,6 +97,26 @@ def write_sentinel(accession_dir_abs: str, assessor_type: str, resource_type: st
     """
     os.makedirs(accession_dir_abs, exist_ok=True)
     Path(sentinel_path(accession_dir_abs, assessor_type, resource_type)).touch()
+
+
+def touch_sentinel(accession_dir_abs: str, assessor_type: str, resource_type: str) -> None:
+    """
+    Records "last used now" on an existing completeness sentinel.
+
+    Deliberately ``os.utime`` and not ``Path.touch()``: touching must never *create* the
+    sentinel — that would fabricate completeness for a download that never finished. A
+    missing sentinel raises instead, and the caller decides how loudly to react.
+
+    Args:
+        accession_dir_abs (str): Absolute accession directory the sentinel lives in.
+        assessor_type (str): The assessor type of the sentinel to refresh.
+        resource_type (str): The resource type of the sentinel to refresh.
+
+    Raises:
+        FileNotFoundError: If the sentinel does not exist.
+        ValueError: If assessor_type or resource_type attempts path traversal.
+    """
+    os.utime(sentinel_path(accession_dir_abs, assessor_type, resource_type))
 
 
 def remove_sentinel(accession_dir_abs: str, assessor_type: str, resource_type: str) -> None:
