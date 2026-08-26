@@ -208,8 +208,10 @@ def test_create_snapshot_freezes_the_validated_query_result(
     assert payload["row_count"] == 3
     assert payload["has_accessions"] is True
     assert payload["query_hash"] == normalised_query_hash(FROZEN_QUERY)
-    # The frame is what validate_query's emission produced; the hash is of the RAW query.
-    mock_get_records.assert_called_once_with(mock_validate_query.return_value)
+    # The frame is what validate_query's emission produced, read FRESH (use_cache=False —
+    # a re-approval must not re-freeze the stale frame the statistics run cached);
+    # the hash is of the RAW query.
+    mock_get_records.assert_called_once_with(mock_validate_query.return_value, use_cache=False)
     mock_save_snapshot.assert_called_once()
     assert mock_save_snapshot.call_args.kwargs["query_hash"] == normalised_query_hash(FROZEN_QUERY)
 

@@ -300,7 +300,11 @@ def create_snapshot(query_input: DataframeQuery) -> SnapshotResponse:
 
     safe_query = validate_query(query_input.query)
     try:
-        df = get_records(safe_query)
+        # use_cache=False: the artefact must freeze LIVE OMOP at this moment. The statistics
+        # run at submission caches this same SQL for CACHE_TTL_DAYS, and on re-approval —
+        # the event that propagates OMOP-side removals/opt-outs into the snapshot — a cached
+        # read would silently re-freeze the pre-removal cohort.
+        df = get_records(safe_query, use_cache=False)
     except HTTPException:
         # get_records already converts driver errors into category-only
         # HTTPExceptions; re-wrapping them below would discard that work and
