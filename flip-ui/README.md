@@ -151,10 +151,12 @@ packages: 18 moved out of `devDependencies`, two that were declared nowhere at a
 `tippy.js` — they resolved only by hoisting), and `husky`, which had drifted the other way. Correct scoping
 is also the precondition for ever adopting `npm ci --omit=dev` here.
 
-Note the rule keys off the **import graph, not the bundle**. `@popperjs/core` is a `dependency` even though
-tree-shaking currently drops it (its only consumers, `AiSelect`/`AiChipSelect`, are unused) — declaring on
-what production code imports is stable, whereas declaring on what survives tree-shaking silently flips the
-correct answer whenever an unrelated component starts or stops being used.
+Note the rule keys off the **import graph, not the bundle**: a package imported by production source is a
+`dependency` even if tree-shaking currently drops it. What production code imports is stable, whereas what
+survives tree-shaking silently flips the correct answer whenever an unrelated component starts or stops being
+used. (`@popperjs/core` was the worked example of this until FLIP#1063 removed its only importer along with
+the dead `AiSelect`/`AiChipSelect` components, at which point it left the manifest entirely — the honest
+resolution, and the one a lint rule cannot reach, since nothing flags an import that is merely unreachable.)
 
 Two traps when auditing this by hand:
 
