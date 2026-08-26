@@ -58,7 +58,7 @@ from nvflare.recipe.spec import Recipe
 
 from flip.constants import FlipTasks
 from flip.nvflare.components import (
-    CleanupImages,
+    CleanupJobDir,
     ClientEventHandler,
     ClientExceptionReporter,
     FlipAnalyticsBridge,
@@ -210,7 +210,7 @@ class FlipDiffusionRecipe(Recipe):
         job.to_server(PersistToS3AndCleanup(persistor_id="persistor"), id="persist_and_cleanup")
 
         # Server workflows: init, then the two training phases in sequence.
-        job.to_server(InitTraining(min_clients=self.min_clients))
+        job.to_server(InitTraining())
         self._add_train_phase(job, TRAIN_AE_TASK, model_locator_id="model_locator_initial")
         self._add_train_phase(job, TRAIN_DM_TASK, model_locator_id="model_locator")
 
@@ -220,8 +220,8 @@ class FlipDiffusionRecipe(Recipe):
             tasks=[VALIDATE_AE_TASK, VALIDATE_DM_TASK, FlipTasks.POST_VALIDATION.value],
         )
 
-        # Clients: cleanup executor for the init/post-validation tasks.
-        job.to_clients(CleanupImages(), tasks=["init_training", FlipTasks.POST_VALIDATION.value])
+        # Clients: end-of-run job-workspace cleanup.
+        job.to_clients(CleanupJobDir(), tasks=[FlipTasks.POST_VALIDATION.value])
 
         # Clients: ONE Client API executor serving all four ML tasks. The executor forwards the
         # actual task name to the script, which dispatches on ``flare.get_task_name()`` — the

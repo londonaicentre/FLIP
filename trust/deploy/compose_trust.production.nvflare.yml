@@ -45,8 +45,8 @@ services:
       # container path keeps the net-1 suffix so imaging-api's absolute paths
       # still resolve unchanged inside the client. The host net-1 dir must be
       # pre-created writable by imaging-api's uid AND this client (which writes
-      # too: flip.add_resource stages under net-1/upload/, CleanupImages deletes
-      # net-1's children). AWS site.yml, the on-prem local playbook, and
+      # too: flip.add_resource stages under net-1/upload/). AWS site.yml, the
+      # on-prem local playbook, and
       # `make up-trust`'s ownership-aware $(ensure_net_dirs) all do this — a
       # Docker- or sudo-created root-owned source dir breaks those writes.
       # Unset BASE_IMAGES_DOWNLOAD_DIR in the prod kit → /opt/flip/data/trust-${FL_KIT_SLOT_NUMBER}

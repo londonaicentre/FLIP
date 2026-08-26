@@ -3,11 +3,10 @@
   "executors": [
     {
       "tasks": [
-        "init_task",
         "post_validation"
       ],
       "executor": {
-        "path": "flip.nvflare.components.cleanup.CleanupImages",
+        "path": "flip.nvflare.components.cleanup.CleanupJobDir",
         "args": {}
       }
     },

@@ -13,12 +13,14 @@
 """TTL retention sweeper for the on-disk image download cache (FLIP#1050).
 
 The cache under ``BASE_IMAGES_DOWNLOAD_DIR`` (layout and completeness contract in
-``services/image_cache.py``) has no other bound: NVFLARE's app-level ``CleanupImages``
-wipes a net dir at job start/end, but Flower has no site-side hook, so without this
-sweeper every project ever run on a Flower net leaves its imaging on the trust host
-forever. The sweep removes an accession directory once its last use — the newest
-``.flip_complete-*`` sentinel mtime, refreshed on every cache hit — is older than the
-TTL, plus crash-orphaned staging zips and emptied project dirs.
+``services/image_cache.py``) has no other bound: nothing else on either FL backend
+deletes downloaded imaging (the NVFLARE ``CleanupImages`` executor that wiped the net
+dir at job start/end is retired — it defeated the cache between runs — and Flower
+never had a site-side hook), so without this sweeper every project ever run on a net
+leaves its imaging on the trust host forever. The sweep removes an accession directory
+once its last use — the newest ``.flip_complete-*`` sentinel mtime, refreshed on every
+cache hit — is older than the TTL, plus crash-orphaned staging zips and emptied
+project dirs.
 
 Concurrency invariant (load-bearing, do not relax): ``sweep_expired_cache_entries`` is
 fully synchronous — no ``await`` from first stat to last delete — and imaging-api runs
@@ -30,9 +32,10 @@ mid-pass, reintroduces the race with in-flight extractions. The deliberate cost 
 that a pass blocks the loop for its duration — acceptable because the download path's
 synchronous ``requests`` transfers already block it for far longer.
 
-Deletions still tolerate concurrent removal (ENOENT is benign): NVFLARE's
-``CleanupImages`` empties net-dir children from the fl-client container, invisible to
-this process's serialisation.
+Deletions still tolerate concurrent removal (ENOENT is benign): another actor — an
+operator tidying by hand, or an outdated fl-client image still running the retired
+``CleanupImages`` wipe — can empty net-dir children invisible to this process's
+serialisation.
 """
 
 import asyncio
@@ -132,8 +135,8 @@ def _remove_expired_accession_dir(accession_dir: str, base_abs: str, stats: Swee
     size = _dir_size_bytes(accession_dir_real)
 
     def _onexc(_func: object, _path: str, exc: BaseException) -> None:
-        # ENOENT is benign — CleanupImages may be emptying this net dir concurrently
-        # from the fl-client container.
+        # ENOENT is benign — another actor (an operator, or an outdated fl-client image
+        # still running the retired CleanupImages wipe) may empty this dir concurrently.
         if isinstance(exc, FileNotFoundError):
             return
         stats.errors += 1

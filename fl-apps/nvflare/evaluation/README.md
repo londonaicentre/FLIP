@@ -87,7 +87,7 @@ with the failed tasks recorded in `evaluation_failures.json`.
 
 **Client — `config_fed_client.json` `executors`:**
 
-- `init_task`, `post_validation` → `flip.nvflare.components.CleanupImages`
+- `post_validation` → `flip.nvflare.components.CleanupJobDir` (end-of-run job-workspace cleanup; imaging retention is trust-side, FLIP#1050)
 - `validate` → `nvflare.app_common.executors.InProcessClientAPIExecutor`
 - Event handler: `ClientEventHandler`
 

@@ -12,7 +12,6 @@
 
 import os
 import shutil
-from pathlib import Path
 
 from nvflare.apis.executor import Executor
 from nvflare.apis.fl_constant import ReturnCode
@@ -24,25 +23,28 @@ from nvflare.security.logging import secure_format_traceback
 from flip.constants import FlipConstants, FlipTasks
 
 
-class CleanupImages(Executor):
+class CleanupJobDir(Executor):
     def __init__(self):
-        """CleanupImages takes place at the start and end of the run.
-        All the images used for the training are deleted to prevent the build-up of unnecessary
-        files on the storage space. Executing at the start of a run ensures that any training code
-        is executed with a clean slate.
+        """Deletes the client-side NVFLARE job workspace at the end of a run.
 
-        Args:
+        The job directory holds the deployed app code, logs and anything training wrote to
+        its working directory; without this it accumulates per job for the lifetime of the
+        fl-client container. Triggered by the server's end-of-run ``post_validation``
+        broadcast.
 
-        Raises:
+        This replaces the retired ``CleanupImages`` executor, which additionally wiped the
+        net's imaging directory at job start and end. Imaging retention is now owned
+        trust-side by imaging-api's TTL sweeper (FLIP#1050), so cached studies survive
+        across jobs and consecutive runs of the same project reuse them instead of
+        re-downloading the cohort.
         """
 
         super().__init__()
 
     def execute(self, task_name: str, shareable: Shareable, fl_ctx: FLContext, abort_signal: Signal) -> Shareable:
         try:
-            if task_name in (FlipTasks.POST_VALIDATION, FlipTasks.POST_TASK):
-                cwd = os.getcwd()
-                job_dir = os.path.join(cwd, fl_ctx.get_job_id())
+            if task_name == FlipTasks.POST_VALIDATION:
+                job_dir = os.path.join(os.getcwd(), fl_ctx.get_job_id())
 
                 if os.path.isdir(job_dir):
                     if not FlipConstants.LOCAL_DEV:
@@ -51,50 +53,7 @@ class CleanupImages(Executor):
                     else:
                         self.log_info(fl_ctx, f"[DEV] Cleanup → job directory {job_dir}")
 
-            if task_name in (
-                FlipTasks.INIT_TRAINING,
-                FlipTasks.POST_VALIDATION,
-                FlipTasks.INIT_TASK,
-                FlipTasks.POST_TASK,
-            ):
-                if not FlipConstants.LOCAL_DEV:
-                    net_directory = os.path.join(FlipConstants.IMAGES_DIR, FlipConstants.NET_ID)
-
-                    size_in_bytes = sum(f.stat().st_size for f in Path(net_directory).glob("**/*") if f.is_file())
-                    size_in_gb = round(size_in_bytes / pow(1024, 3), 2)
-
-                    self.log_info(
-                        fl_ctx,
-                        f"Attempting to delete the images stored under: {net_directory} - Total {size_in_gb}gb",
-                    )
-
-                    if not os.path.exists(net_directory):
-                        self.log_info(
-                            fl_ctx,
-                            f"Directory {net_directory} does not exist, nothing to clean up.",
-                        )
-                        return make_reply(ReturnCode.OK)
-
-                    # Delete all files and directories in the net_directory
-                    for filename in os.listdir(net_directory):
-                        file_path = os.path.join(net_directory, filename)
-
-                        if os.path.isfile(file_path) or os.path.islink(file_path):
-                            self.log_info(fl_ctx, f"Deleting file {file_path}")
-                            os.unlink(file_path)
-                        elif os.path.isdir(file_path):
-                            self.log_info(fl_ctx, f"Deleting directory {file_path}")
-                            shutil.rmtree(file_path)
-
-                    self.log_info(
-                        fl_ctx,
-                        "Cleanup executed successfully, images and job folder have been deleted.",
-                    )
-
-                    return make_reply(ReturnCode.OK)
-                else:
-                    self.log_info(fl_ctx, "[DEV] Cleanup → images")
-                    return make_reply(ReturnCode.OK)
+                return make_reply(ReturnCode.OK)
 
             return make_reply(ReturnCode.TASK_UNKNOWN)
         except Exception:

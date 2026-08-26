@@ -115,8 +115,8 @@ class TestFlipEvalRecipe:
             # validate task is registered on the executor.
             executor_tasks = [t for e in client_cfg["executors"] for t in e["tasks"]]
             assert "validate" in executor_tasks
-            assert "init_task" in executor_tasks  # CleanupImages init
-            assert "post_validation" in executor_tasks  # CleanupImages post
+            assert "post_validation" in executor_tasks  # CleanupJobDir end-of-run
+            assert "init_task" not in executor_tasks  # retired with CleanupImages (FLIP#1050)
 
             # project_id / query are emitted as top-level client-config placeholders.
             assert client_cfg["project_id"] == ""

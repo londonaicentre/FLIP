@@ -287,9 +287,11 @@ the next FL round — return the local copy without touching XNAT. Training code
 without penalty and should not build its own on-disk guards around it; to force a re-download after the accession's
 content changed in XNAT, the Imaging API's download route accepts ``force_refresh=true`` (uploads through
 ``flip.add_resource`` invalidate the cache automatically). Cached studies are retained trust-side for a bounded
-time since last use (7 days by default, enforced by the Imaging API's retention sweeper), so a project idle for
-longer than that incurs one fresh download on its next run — this is what keeps imaging from accumulating
-indefinitely on a trust host on the Flower backend, which has no ``CleanupImages`` equivalent.
+time since last use (7 days by default, enforced by the Imaging API's retention sweeper) and survive across FL
+jobs on both backends, so consecutive runs of the same project reuse them; a project idle for longer than the
+retention window incurs one fresh download on its next run. This sweeper is what keeps imaging from accumulating
+indefinitely on a trust host — it replaced the NVFLARE-only ``CleanupImages`` executor, which wiped the net's
+imaging at job start and end and so defeated the cache between runs.
 
 For communication with the Central Hub:
 - `flip.update_status(model_id, new_model_status)`: these calls will update the Central Hub about status on the specific model that is running (example: when it started training, or if there's an error).

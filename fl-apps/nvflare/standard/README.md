@@ -53,7 +53,7 @@ There is **no `validator.py`** — validation is orchestrated server-side via `G
 
 **Client — `config_fed_client.json` `executors` / `filters`:**
 
-- `init_training`, `post_validation` → `flip.nvflare.components.CleanupImages`
+- `post_validation` → `flip.nvflare.components.CleanupJobDir` (end-of-run job-workspace cleanup; imaging retention is trust-side, FLIP#1050)
 - `train`, `validate` → `nvflare.app_common.executors.InProcessClientAPIExecutor`
 - `train` result → `flip.nvflare.components.PercentilePrivacy` (DP noise filter)
 - Event handlers: `ClientEventHandler`, `FlipAnalyticsBridge`

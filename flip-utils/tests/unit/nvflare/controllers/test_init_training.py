@@ -9,63 +9,19 @@
 # limitations under the License.
 #
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
-import pytest
-from nvflare.apis.fl_constant import ReturnCode
-
-from flip.constants import FlipConstants, FlipEvents
+from flip.constants import FlipEvents
 from flip.nvflare.controllers.init_training import InitTraining
 
 
 class TestInitTraining:
-    def test_init_with_valid_uuid(self):
-        """Test initialization with valid UUID stores it as fallback"""
-        model_id = "123e4567-e89b-12d3-a456-426614174000"
-        controller = InitTraining(model_id=model_id)
-        assert controller._model_id_fallback == model_id
-        assert controller._model_id is None
-        assert controller._min_clients == FlipConstants.MIN_CLIENTS
-
-    def test_resolve_model_id_uses_fallback_when_fl_ctx_has_no_custom_props(self):
-        """Lazy resolution returns the constructor UUID when fl_ctx has no custom_props."""
-        model_id = "123e4567-e89b-12d3-a456-426614174000"
-        controller = InitTraining(model_id=model_id)
-        fl_ctx = MagicMock()
-        fl_ctx.get_prop.return_value = None
-        result = controller._resolve_model_id(fl_ctx)
-        assert result == model_id
-
-    def test_init_with_min_clients(self):
-        """Test initialization with custom min_clients"""
-        model_id = "123e4567-e89b-12d3-a456-426614174000"
-        controller = InitTraining(model_id=model_id, min_clients=3)
-        assert controller._min_clients == 3
-
-    def test_init_with_invalid_min_clients_raises_error(self):
-        """Test initialization with invalid min_clients raises ValueError"""
-        model_id = "123e4567-e89b-12d3-a456-426614174000"
-        mock_flip = MagicMock()
-        with pytest.raises(ValueError, match="Invalid number of minimum clients"):
-            InitTraining(model_id=model_id, min_clients=0, flip=mock_flip)
-
-    def test_init_with_negative_cleanup_timeout_raises_error(self):
-        """Test initialization with negative cleanup_timeout raises ValueError"""
-        model_id = "123e4567-e89b-12d3-a456-426614174000"
-        mock_flip = MagicMock()
-        with pytest.raises(ValueError, match="cleanup_timeout must be greater"):
-            InitTraining(model_id=model_id, cleanup_timeout=-1, flip=mock_flip)
-
-    def test_init_with_custom_cleanup_timeout(self):
-        """Test initialization with custom cleanup_timeout"""
-        model_id = "123e4567-e89b-12d3-a456-426614174000"
-        controller = InitTraining(model_id=model_id, cleanup_timeout=300)
-        assert controller._cleanup_timeout == 300
+    def test_init(self):
+        assert InitTraining() is not None
 
     def test_start_controller_no_engine(self):
         """Test start_controller when engine is not found"""
-        model_id = "123e4567-e89b-12d3-a456-426614174000"
-        controller = InitTraining(model_id=model_id)
+        controller = InitTraining()
         controller.system_panic = MagicMock()
 
         fl_ctx = MagicMock()
@@ -79,27 +35,23 @@ class TestInitTraining:
 
     def test_start_controller_success(self):
         """Test successful start_controller"""
-        model_id = "123e4567-e89b-12d3-a456-426614174000"
-        controller = InitTraining(model_id=model_id)
+        controller = InitTraining()
         controller.log_info = MagicMock()
 
         fl_ctx = MagicMock()
         fl_ctx.get_peer_context.return_value = None
-        engine = MagicMock()
-        fl_ctx.get_engine.return_value = engine
+        fl_ctx.get_engine.return_value = MagicMock()
 
         controller.start_controller(fl_ctx)
 
         controller.log_info.assert_called()
 
-    @patch("flip.nvflare.controllers.init_training.Task")
-    def test_control_flow_success(self, mock_task):
-        """Test successful control_flow"""
-        model_id = "123e4567-e89b-12d3-a456-426614174000"
-        controller = InitTraining(model_id=model_id, min_clients=1)
+    def test_control_flow_fires_training_initiated(self):
+        """control_flow's whole job is the hub status event — no cleanup broadcast any more
+        (imaging retention moved trust-side to imaging-api's TTL sweeper, FLIP#1050)."""
+        controller = InitTraining()
         controller.log_info = MagicMock()
         controller.fire_event = MagicMock()
-        controller.broadcast_and_wait = MagicMock()
 
         fl_ctx = MagicMock()
         fl_ctx.get_peer_context.return_value = None
@@ -108,33 +60,27 @@ class TestInitTraining:
 
         controller.control_flow(abort_signal, fl_ctx)
 
-        controller.fire_event.assert_called_with(FlipEvents.TRAINING_INITIATED, fl_ctx)
-        controller.broadcast_and_wait.assert_called_once()
+        controller.fire_event.assert_called_once_with(FlipEvents.TRAINING_INITIATED, fl_ctx)
+        assert not hasattr(controller, "_cleanup_timeout")
 
-    @patch("flip.nvflare.controllers.init_training.Task")
-    def test_control_flow_with_abort_signal(self, mock_task):
-        """Test control_flow with abort signal"""
-        model_id = "123e4567-e89b-12d3-a456-426614174000"
-        controller = InitTraining(model_id=model_id, min_clients=1)
+    def test_control_flow_panics_on_status_failure(self):
+        """A failing status event must panic the run, not pass silently."""
+        controller = InitTraining()
         controller.log_info = MagicMock()
-        controller.fire_event = MagicMock()
-        controller.broadcast_and_wait = MagicMock()
+        controller.log_error = MagicMock()
+        controller.log_exception = MagicMock()
+        controller.system_panic = MagicMock()
+        controller.fire_event = MagicMock(side_effect=RuntimeError("hub unreachable"))
 
         fl_ctx = MagicMock()
         fl_ctx.get_peer_context.return_value = None
-        abort_signal = MagicMock()
-        # Trigger abort after broadcast
-        abort_signal.triggered = True
 
-        controller.control_flow(abort_signal, fl_ctx)
+        controller.control_flow(MagicMock(), fl_ctx)
 
-        # Should fire ABORTED event
-        assert any(call[0][0] == FlipEvents.ABORTED for call in controller.fire_event.call_args_list)
+        controller.system_panic.assert_called()
 
-    def test_stop_controller(self):
-        """Test stop_controller"""
-        model_id = "123e4567-e89b-12d3-a456-426614174000"
-        controller = InitTraining(model_id=model_id)
+    def test_stop_controller_cancels_tasks(self):
+        controller = InitTraining()
         controller.log_info = MagicMock()
         controller.cancel_all_tasks = MagicMock()
 
@@ -144,52 +90,3 @@ class TestInitTraining:
         controller.stop_controller(fl_ctx)
 
         controller.cancel_all_tasks.assert_called_once()
-
-    def test_process_result_of_unknown_task(self):
-        """Test process_result_of_unknown_task"""
-        model_id = "123e4567-e89b-12d3-a456-426614174000"
-        controller = InitTraining(model_id=model_id)
-        controller.log_error = MagicMock()
-
-        fl_ctx = MagicMock()
-        fl_ctx.get_peer_context.return_value = None
-        client = MagicMock()
-        shareable = MagicMock()
-
-        controller.process_result_of_unknown_task(client, "unknown_task", "task_id", shareable, fl_ctx)
-
-        controller.log_error.assert_called()
-
-    def test_accept_cleanup_result_success(self):
-        """Test _accept_cleanup_result with successful result"""
-        model_id = "123e4567-e89b-12d3-a456-426614174000"
-        controller = InitTraining(model_id=model_id)
-
-        fl_ctx = MagicMock()
-        fl_ctx.get_peer_context.return_value = None
-        shareable = MagicMock()
-        shareable.get_return_code.return_value = ReturnCode.OK
-
-        result = controller._accept_cleanup_result("client1", shareable, fl_ctx)
-
-        # Should return None for OK status
-        assert result is None
-
-    def test_accept_cleanup_result_with_exception(self):
-        """Test _accept_cleanup_result with execution exception"""
-        model_id = "123e4567-e89b-12d3-a456-426614174000"
-        mock_flip = MagicMock()
-        controller = InitTraining(model_id=model_id, flip=mock_flip)
-        controller.log_error = MagicMock()
-        controller.system_panic = MagicMock()
-
-        fl_ctx = MagicMock()
-        fl_ctx.get_peer_context.return_value = None
-        shareable = MagicMock()
-        shareable.get_return_code.return_value = ReturnCode.EXECUTION_EXCEPTION
-        shareable.get_header.return_value = "Test exception"
-
-        controller._accept_cleanup_result("client1", shareable, fl_ctx)
-
-        controller.system_panic.assert_called_once()
-        mock_flip.send_handled_exception.assert_called_once()

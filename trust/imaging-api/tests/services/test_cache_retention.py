@@ -197,7 +197,8 @@ class TestSweepRobustness:
         assert stats == SweepStats()
 
     def test_concurrent_deletion_is_benign(self, tmp_path):
-        """CleanupImages can empty the net dir under us: ENOENT must not count as an error."""
+        """A concurrent deleter (operator, outdated fl-client image) can empty dirs under us:
+        ENOENT must not count as an error."""
         expired = _seed_accession(tmp_path, "net-1", "proj-a", "ACC1", sentinel_mtimes=[EXPIRED])
         real_rmtree = shutil.rmtree
 

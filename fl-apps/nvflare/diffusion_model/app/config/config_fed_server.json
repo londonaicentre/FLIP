@@ -4,9 +4,7 @@
         {
             "id": "controller",
             "path": "flip.nvflare.controllers.init_training.InitTraining",
-            "args": {
-                "model_id": null
-            }
+            "args": {}
         },
         {
             "id": "controller1",

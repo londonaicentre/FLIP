@@ -107,8 +107,8 @@ IMAGES_BASE = $(or $(BASE_IMAGES_DOWNLOAD_DIR),$(if $(PROD),/opt/flip/data/trust
 # runs as it on every path, so it always owns net-N.
 #
 # The GROUP and MODE are backend-aware, because the fl-client writes inside net-N too
-# (flip.add_resource stages under net-N/upload/, NVFLARE CleanupImages deletes net-N's
-# children) and on Flower it does not share imaging-api's UID: the Flower client is built
+# (flip.add_resource stages under net-N/upload/) and on Flower it does not share
+# imaging-api's UID: the Flower client is built
 # on the upstream flwr/base image, which runs as `app` (uid/gid 49999). Mirrors the K8s
 # chart's images-init (deploy/providers/kubernetes/templates/fl-client.yaml):
 #   * NVFLARE, any env      — the base dir's own owner:group, 0755. Its client shares

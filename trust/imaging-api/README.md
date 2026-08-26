@@ -66,9 +66,10 @@ Downloads are cached on the trust host. Extraction lands in
 sentinel is present the cached folder is returned without contacting XNAT, so FL training code that fetches the
 cohort every round stops re-downloading bytes already on disk. Sentinels match exactly per
 (assessor, resource); the per-project path segment keeps projects that share an accession from being served each
-other's copies. The cache is invalidated when an upload changes the accession's XNAT content (see Upload), by
-`force_refresh=true` (the sentinel is removed before the re-download starts and rewritten on success), and — on the
-NVFLARE backend — by `CleanupImages`, which empties the whole net directory at job start and end.
+other's copies. The cache is invalidated when an upload changes the accession's XNAT content (see Upload) and by
+`force_refresh=true` (the sentinel is removed before the re-download starts and rewritten on success). Cached
+studies survive across FL jobs on both backends — the NVFLARE `CleanupImages` executor that used to wipe the net
+directory at job start and end is retired (FLIP#1050) — so consecutive runs of the same project reuse the cache.
 
 **Retention (FLIP#1050).** The cache is bounded by a TTL on last use, enforced by an in-process sweeper
 (`services/cache_retention.py`) started with the app: an accession directory whose newest sentinel mtime — refreshed

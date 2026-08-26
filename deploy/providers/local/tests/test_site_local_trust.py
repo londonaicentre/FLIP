@@ -175,7 +175,7 @@ def test_net_dirs_are_writable_by_the_fl_client(playbook: list[dict]) -> None:
     """The per-net images dirs must be group-writable by the Flower client (uid/gid 49999).
 
     imaging-api (uid 1000) owns them on every backend, but the fl-client writes inside them too
-    (``flip.add_resource`` staging, NVFLARE ``CleanupImages``). NVFLARE's client shares
+    (``flip.add_resource`` staging). NVFLARE's client shares
     imaging-api's uid so owner write is enough; Flower's is built on upstream ``flwr/base`` and
     runs as ``app`` (uid/gid 49999) with no supplementary group, so a ``ubuntu:ubuntu`` ``0755``
     net dir leaves it as "other" and ``add_resource`` fails with EACCES. Mirrors the K8s chart's

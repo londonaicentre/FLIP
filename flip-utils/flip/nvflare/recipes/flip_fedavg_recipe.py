@@ -64,7 +64,7 @@ from nvflare.recipe.spec import Recipe
 
 from flip.constants import FlipTasks
 from flip.nvflare.components import (
-    CleanupImages,
+    CleanupJobDir,
     ClientEventHandler,
     ClientExceptionReporter,
     FlipAnalyticsBridge,
@@ -284,7 +284,7 @@ class FlipFedAvgRecipe(Recipe):
             )
 
         # Server workflows: init → train → model evaluation → post-validation cleanup.
-        job.to_server(InitTraining(min_clients=self.min_clients))
+        job.to_server(InitTraining())
         job.to_server(
             ScatterAndGather(
                 min_clients=self.min_clients,
@@ -332,8 +332,8 @@ class FlipFedAvgRecipe(Recipe):
                 id="trim_broadcast_to_trainable",
             )
 
-        # Clients: cleanup executor for init/post tasks.
-        job.to_clients(CleanupImages(), tasks=["init_training", "post_validation"])
+        # Clients: end-of-run job-workspace cleanup.
+        job.to_clients(CleanupJobDir(), tasks=["post_validation"])
 
         # Clients: Client API trainer for train / optional submit_model / validate.
         executor_tasks = [self.train_task_name, self.evaluate_task_name]

@@ -151,8 +151,8 @@ class TestFlipDiffusionRecipe:
             executor_tasks = [t for e in client_cfg["executors"] for t in e["tasks"]]
             for task in ("train_ae", "train_dm", "validate_ae", "validate_dm"):
                 assert task in executor_tasks
-            assert "init_training" in executor_tasks  # CleanupImages init
-            assert "post_validation" in executor_tasks  # CleanupImages post
+            assert "post_validation" in executor_tasks  # CleanupJobDir end-of-run
+            assert "init_training" not in executor_tasks  # retired with CleanupImages (FLIP#1050)
 
             # The stage-aware DP filter guards both train tasks' results.
             privacy_blocks = [

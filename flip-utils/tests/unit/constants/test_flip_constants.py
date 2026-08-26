@@ -197,18 +197,17 @@ class TestFlipTasks:
 
     def test_flip_tasks_values(self):
         """FlipTasks enum should have expected values."""
-        assert FlipTasks.INIT_TRAINING.value == "init_training"
         assert FlipTasks.POST_VALIDATION.value == "post_validation"
-        assert FlipTasks.CLEANUP.value == "cleanup"
 
     def test_flip_tasks_is_string_enum(self):
         """FlipTasks should be a string enum."""
-        assert isinstance(FlipTasks.INIT_TRAINING, str)
-        assert FlipTasks.INIT_TRAINING == "init_training"
+        assert isinstance(FlipTasks.POST_VALIDATION, str)
+        assert FlipTasks.POST_VALIDATION == "post_validation"
 
     def test_flip_tasks_all_members(self):
-        """FlipTasks should have exactly 5 members (includes evaluation-specific tasks)."""
-        assert len(FlipTasks) == 5
+        """Only the end-of-run broadcast remains; the init/cleanup task names died with
+        the CleanupImages executor (imaging retention moved trust-side, FLIP#1050)."""
+        assert len(FlipTasks) == 1
 
 
 class TestFlipEvents:

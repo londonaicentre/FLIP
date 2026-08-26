@@ -50,7 +50,7 @@ from nvflare.recipe.spec import Recipe
 
 from flip.constants import FlipTasks
 from flip.nvflare.components import (
-    CleanupImages,
+    CleanupJobDir,
     ClientEventHandler,
     ClientExceptionReporter,
     EvaluationJsonGenerator,
@@ -138,7 +138,7 @@ class FlipEvalRecipe(Recipe):
 
         # Server workflows: init → global-model validate → post-validation cleanup.
         # GlobalModelEval validates only the server-loaded model; client models are never requested.
-        job.to_server(InitEvaluation(min_clients=self.min_clients))
+        job.to_server(InitEvaluation())
         job.to_server(
             GlobalModelEval(
                 model_locator_id="model_locator",
@@ -153,8 +153,8 @@ class FlipEvalRecipe(Recipe):
         )
         job.to_server(BroadcastTask(task_name=FlipTasks.POST_VALIDATION.value))
 
-        # Clients: cleanup executor for the init/post-validation tasks.
-        job.to_clients(CleanupImages(), tasks=["init_task", "post_validation"])
+        # Clients: end-of-run job-workspace cleanup.
+        job.to_clients(CleanupJobDir(), tasks=["post_validation"])
 
         # Clients: Client API evaluator for the validate task.
         job.to_clients(

@@ -64,7 +64,7 @@ order.
 
 **Client — `config_fed_client.json` `executors` (by task):**
 
-- `init_training`, `post_validation` → `flip.nvflare.components.CleanupImages`
+- `post_validation` → `flip.nvflare.components.CleanupJobDir` (end-of-run job-workspace cleanup; imaging retention is trust-side, FLIP#1050)
 - `train`, `validate` → `nvflare.app_common.executors.InProcessClientAPIExecutor` running
   `custom/trainer.py`
 
