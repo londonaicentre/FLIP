@@ -260,7 +260,13 @@ restart: down up
 # NOTE: flip-api is recreated first so its startup seeding re-applies FL_BACKEND onto the
 #       FLNets rows — the seeded backend is canonical, so this is how a framework switch
 #       (make restart-fl FL_BACKEND=...) takes effect. --no-deps leaves flip-db untouched.
-restart-fl:
+# NOTE: _ensure-fl-jobs-dir is a prerequisite for the same reason `up` has it. The FL APIs
+#       bind-mount jobs/<net> and create a per-model dir under it at submit time; if the
+#       source path does not exist, the daemon creates it as root, and the container (uid
+#       1000) then cannot mkdir inside it. The failure surfaces four layers away as a 500 on
+#       /upload_app and an opaque model ERROR, with the PermissionError only in the FL API's
+#       own log — so a tree that has never run `make up` fails every FL job until this runs.
+restart-fl: _ensure-fl-jobs-dir
 	@echo "🔄 Restarting FL services ($(FL_BACKEND))..."
 	@echo "🔄 Step 1: Stopping and removing old FL clients..."
 	$(MAKE) -C trust down-fl-clients
