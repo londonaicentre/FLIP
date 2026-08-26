@@ -10,11 +10,12 @@
     See the License for the specific language governing permissions and
     limitations under the License.
 -->
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 700" width="1000" height="700"
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 736" width="1000" height="736"
      role="img" aria-labelledby="erd-title erd-desc" font-family="Helvetica, Arial, sans-serif">
   <title id="erd-title">The FLIP subset of the OMOP CDM 5.4 schema</title>
-  <desc id="erd-desc">Entity-relationship diagram of the eight omop-schema tables FLIP cohort
-    queries use. person, visit_occurrence and procedure_occurrence give the clinical context;
+  <desc id="erd-desc">Entity-relationship diagram of the eight omop-schema tables a FLIP
+    cohort query can draw on. person, visit_occurrence and procedure_occurrence give the
+    clinical context;
     the MI-CDM extension tables image_occurrence and image_feature carry the imaging metadata;
     observation and measurement hold image-derived values; concept resolves every concept id.
     image_occurrence.accession_id is a FLIP-specific column that points at the study in the
@@ -60,7 +61,7 @@
     </marker>
   </defs>
 
-  <rect x="0" y="0" width="1000" height="700" fill="#ffffff"/>
+  <rect x="0" y="0" width="1000" height="736" fill="#ffffff"/>
 
   <!-- outside the database -->
   <g>
@@ -73,8 +74,6 @@
   <!-- omop.person -->
   <g>
     <rect x="20" y="40" width="258" height="83" rx="4" class="box"/>
-    <path d="M 20 65 h 258" class="rule"/>
-    <path d="M 20.5 44 h 257 a 0 0 0 0 0 0 0" fill="none"/>
     <rect x="20.8" y="40.8" width="256.4" height="23.4" class="hdr"/>
     <path d="M 20 65 h 258" class="rule"/>
     <text x="32" y="57" class="tname">omop.person</text>
@@ -86,8 +85,6 @@
   <!-- omop.visit_occurrence -->
   <g>
     <rect x="20" y="168" width="258" height="83" rx="4" class="box"/>
-    <path d="M 20 193 h 258" class="rule"/>
-    <path d="M 20.5 172 h 257 a 0 0 0 0 0 0 0" fill="none"/>
     <rect x="20.8" y="168.8" width="256.4" height="23.4" class="hdr"/>
     <path d="M 20 193 h 258" class="rule"/>
     <text x="32" y="185" class="tname">omop.visit_occurrence</text>
@@ -99,8 +96,6 @@
   <!-- omop.procedure_occurrence -->
   <g>
     <rect x="20" y="296" width="258" height="100" rx="4" class="box"/>
-    <path d="M 20 321 h 258" class="rule"/>
-    <path d="M 20.5 300 h 257 a 0 0 0 0 0 0 0" fill="none"/>
     <rect x="20.8" y="296.8" width="256.4" height="23.4" class="hdr"/>
     <path d="M 20 321 h 258" class="rule"/>
     <text x="32" y="313" class="tname">omop.procedure_occurrence</text>
@@ -113,8 +108,6 @@
   <!-- omop.image_occurrence -->
   <g>
     <rect x="352" y="40" width="296" height="185" rx="4" class="box-mi"/>
-    <path d="M 352 65 h 296" class="rule"/>
-    <path d="M 352.5 44 h 295 a 0 0 0 0 0 0 0" fill="none"/>
     <rect x="352.8" y="40.8" width="294.4" height="23.4" class="hdr-mi"/>
     <path d="M 352 65 h 296" class="rule"/>
     <text x="364" y="57" class="tname-mi">omop.image_occurrence  ★</text>
@@ -133,8 +126,6 @@
   <!-- omop.image_feature -->
   <g>
     <rect x="352" y="320" width="296" height="151" rx="4" class="box-mi"/>
-    <path d="M 352 345 h 296" class="rule"/>
-    <path d="M 352.5 324 h 295 a 0 0 0 0 0 0 0" fill="none"/>
     <rect x="352.8" y="320.8" width="294.4" height="23.4" class="hdr-mi"/>
     <path d="M 352 345 h 296" class="rule"/>
     <text x="364" y="337" class="tname-mi">omop.image_feature  ★</text>
@@ -150,8 +141,6 @@
   <!-- omop.concept -->
   <g>
     <rect x="708" y="150" width="252" height="100" rx="4" class="box"/>
-    <path d="M 708 175 h 252" class="rule"/>
-    <path d="M 708.5 154 h 251 a 0 0 0 0 0 0 0" fill="none"/>
     <rect x="708.8" y="150.8" width="250.4" height="23.4" class="hdr"/>
     <path d="M 708 175 h 252" class="rule"/>
     <text x="720" y="167" class="tname">omop.concept</text>
@@ -164,8 +153,6 @@
   <!-- omop.observation -->
   <g>
     <rect x="708" y="320" width="252" height="100" rx="4" class="box"/>
-    <path d="M 708 345 h 252" class="rule"/>
-    <path d="M 708.5 324 h 251 a 0 0 0 0 0 0 0" fill="none"/>
     <rect x="708.8" y="320.8" width="250.4" height="23.4" class="hdr"/>
     <path d="M 708 345 h 252" class="rule"/>
     <text x="720" y="337" class="tname">omop.observation</text>
@@ -178,8 +165,6 @@
   <!-- omop.measurement -->
   <g>
     <rect x="708" y="462" width="252" height="100" rx="4" class="box"/>
-    <path d="M 708 487 h 252" class="rule"/>
-    <path d="M 708.5 466 h 251 a 0 0 0 0 0 0 0" fill="none"/>
     <rect x="708.8" y="462.8" width="250.4" height="23.4" class="hdr"/>
     <path d="M 708 487 h 252" class="rule"/>
     <text x="720" y="479" class="tname">omop.measurement</text>
@@ -190,13 +175,13 @@
   </g>
 
   <!-- foreign keys (solid) -->
-  <path d="M 149 123 V 168" class="edge" marker-end="url(#ar)"/>
+  <path d="M 149 123 V 168" class="edge" marker-start="url(#ar)"/>
   <text x="155" y="141" class="lbl">person_id</text>
-  <path d="M 149 251 V 296" class="edge" marker-end="url(#ar)"/>
+  <path d="M 149 251 V 296" class="edge" marker-start="url(#ar)"/>
   <text x="155" y="269" class="lbl">visit_occurrence_id</text>
-  <path d="M 278 198 H 315 V 124.5 H 352" class="edge" marker-end="url(#ar)"/>
-  <path d="M 278 330 H 341 V 107.5 H 352" class="edge" marker-end="url(#ar)"/>
-  <path d="M 500 225 V 320" class="edge" marker-end="url(#ar)"/>
+  <path d="M 278 198 H 315 V 124.5 H 352" class="edge" marker-start="url(#ar)"/>
+  <path d="M 278 330 H 341 V 107.5 H 352" class="edge" marker-start="url(#ar)"/>
+  <path d="M 500 225 V 320" class="edge" marker-start="url(#ar)"/>
   <text x="506" y="259" class="lbl">image_occurrence_id</text>
 
   <!-- accession_id: the FLIP-specific hop out of the database -->
@@ -215,17 +200,21 @@
   <text x="708" y="141" class="lbl">every *_concept_id resolves here</text>
 
   <!-- legend -->
-  <rect x="20" y="588" width="940" height="92" rx="4" fill="#fafbfc" stroke="#e6e9ee"/>
-  <path d="M 36 610 h 34" class="edge" marker-end="url(#ar)"/>
-  <text x="80" y="614" class="note">Foreign key, declared in
-    <tspan font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="9.5px">OMOPCDM_postgresql_5.4_constraints.sql</tspan></text>
-  <path d="M 36 634 h 34" class="edge-s" marker-end="url(#ar)"/>
-  <text x="80" y="638" class="note">Soft link &#8212; no foreign key. Which table <tspan font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="9.5px">image_feature_event_id</tspan></text>
-  <text x="80" y="652" class="note">points at is decided by <tspan font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="9.5px">image_feature_event_field_concept_id</tspan>.</text>
-  <path d="M 36 670 h 34" class="edge-a" marker-end="url(#ar-a)"/>
-  <text x="80" y="674" class="note"><tspan font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="9.5px">accession_id</tspan>, added by FLIP, is how a cohort row reaches its DICOM study.</text>
-  <text x="600" y="614" class="note"><tspan fill="#61366E" font-weight="700">&#9733;</tspan>  MI-CDM imaging extension table</text>
-  <text x="600" y="638" class="note">Every table here also carries</text>
-  <text x="600" y="652" class="note"><tspan font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="9.5px">person_id</tspan>, a foreign key to</text>
-  <text x="600" y="666" class="note"><tspan font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="9.5px">omop.person</tspan>; those edges are omitted.</text>
+  <rect x="20" y="578" width="940" height="130" rx="4" fill="#fafbfc" stroke="#e6e9ee"/>
+  <path d="M 36 600 h 34" class="edge" marker-start="url(#ar)"/>
+  <text x="80" y="604" class="note">Foreign key, declared in <tspan font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="9.5px">OMOPCDM_postgresql_5.4_constraints.sql</tspan>.</text>
+  <path d="M 36 624 h 34" class="edge-c" marker-end="url(#ar-c)"/>
+  <text x="80" y="628" class="note">Concept-id resolution. The standard tables declare these as foreign keys; the</text>
+  <text x="80" y="642" class="note">MI-CDM tables do not, so nothing in the schema records the link.</text>
+  <path d="M 36 662 h 34" class="edge-s" marker-end="url(#ar)"/>
+  <text x="80" y="666" class="note">Soft link &#8212; no foreign key. <tspan font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="9.5px">image_feature_event_field_concept_id</tspan></text>
+  <text x="80" y="680" class="note">names the target table; <tspan font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="9.5px">1147304</tspan> is the concept for <tspan font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="9.5px">observation</tspan>.</text>
+  <path d="M 36 698 h 34" class="edge-a" marker-end="url(#ar-a)"/>
+  <text x="80" y="702" class="note"><tspan font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="9.5px">accession_id</tspan>, added by FLIP, is how a cohort row reaches its DICOM study.</text>
+  <text x="600" y="604" class="note"><tspan fill="#61366E" font-weight="700">&#9733;</tspan>  MI-CDM imaging extension table</text>
+  <text x="600" y="628" class="note">Arrows point from the table holding the</text>
+  <text x="600" y="642" class="note">key to the table it references.</text>
+  <text x="600" y="666" class="note">Column lists are abridged; the reference</text>
+  <text x="600" y="680" class="note">tables on the page are complete.</text>
+  <text x="600" y="702" class="note">Most <tspan font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="9.5px">person_id</tspan> keys to <tspan font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="9.5px">omop.person</tspan> are omitted.</text>
 </svg>

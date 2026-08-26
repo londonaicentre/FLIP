@@ -16,8 +16,9 @@ To prepare the standardised data to be ingested into each Trust's OMOP Database,
 
 .. _omop-schema:
 
+******
 Schema
-======
+******
 
 The database implements `OMOP CDM 5.4 <https://ohdsi.github.io/CommonDataModel/cdm54.html>`_ in the
 ``omop`` schema — all 39 standard tables — extended with the two
@@ -26,13 +27,16 @@ The database implements `OMOP CDM 5.4 <https://ohdsi.github.io/CommonDataModel/c
 `CommonDataModel <https://github.com/OHDSI/CommonDataModel>`_ project's
 ``inst/ddl/5.4/postgresql`` and extended in place.
 
-Most of those 41 tables are unused by FLIP. The diagram below shows only the part a cohort query
-actually traverses: the clinical context on the left, the imaging metadata in the middle, the values
-and the vocabulary on the right.
+Most of those 41 tables are unused by FLIP. The diagram below shows the part a cohort query can
+draw on: the clinical context on the left, the imaging metadata in the middle, the values and the
+vocabulary on the right.
 
 .. figure:: ../assets/omop/omop-flip-schema.svg
-   :alt: Entity-relationship diagram of the eight omop-schema tables FLIP cohort queries use, showing person, visit_occurrence and procedure_occurrence linked to the MI-CDM tables image_occurrence and image_feature, which reach observation and measurement through a soft link and resolve concept ids through the concept table; image_occurrence.accession_id points out of the database at the Trust PACS and XNAT.
-   :width: 800
+   :alt: Entity-relationship diagram of the eight omop-schema tables a FLIP cohort query can draw
+      on, showing person, visit_occurrence and procedure_occurrence linked to the MI-CDM tables
+      image_occurrence and image_feature, which reach observation and measurement through a soft
+      link and resolve concept ids through the concept table; image_occurrence.accession_id points
+      out of the database at the Trust PACS and XNAT.
    :align: center
 
    The FLIP-relevant subset of OMOP CDM 5.4. Purple tables are the MI-CDM imaging extension;
@@ -41,14 +45,15 @@ and the vocabulary on the right.
 .. _omop-micdm:
 
 The MI-CDM imaging extension
-----------------------------
+============================
 
 Standard OMOP has nowhere to record an imaging study. The
 `Medical Imaging Common Data Model (MI-CDM) <https://www.ncbi.nlm.nih.gov/pmc/articles/PMC11031512/>`_
 is the OHDSI extension that adds one — the successor to the earlier R-CDM radiology tables — and
 FLIP implements it with two tables.
 
-``image_occurrence`` holds one row per imaging study or series:
+``image_occurrence`` holds one row per imaging study or series — FLIP populates one row per
+accession:
 
 .. list-table::
    :widths: 34 22 44
@@ -80,8 +85,10 @@ FLIP implements it with two tables.
      - DICOM Study and Series Instance UIDs.
    * - ``wadors_uri`` / ``local_path``
      - ``varchar(512)``
-     - MI-CDM's own pointers to the pixel data. FLIP reads neither — images are resolved
-       through ``accession_id``.
+     - MI-CDM's own pointers to the pixel data. FLIP resolves images through ``accession_id``
+       instead and reads neither at query time, but ``local_path`` is not dead weight: the spleen
+       tutorial's enrichment step recovers each study's MSD case name from that column of the
+       canonical CSV export.
    * - ``image_occurrence_date``
      - ``date``
      - Study date.
@@ -116,9 +123,13 @@ FLIP implements it with two tables.
    * - ``image_feature_type_concept_id``
      - ``integer``
      - Provenance of the finding, e.g. read from a report versus produced by an algorithm.
-   * - ``image_finding_concept_id`` / ``image_finding_id``
+   * - ``image_finding_concept_id``
      - ``integer``
-     - Optional link to a coded finding record.
+     - The kind of finding the row belongs to, e.g. *nodule*, as a concept id.
+   * - ``image_finding_id``
+     - ``integer``
+     - Groups the ``image_feature`` rows describing one finding. Locally minted — there is no
+       finding table for it to reference.
    * - ``anatomic_site_concept_id``
      - ``integer``
      - Body part the finding concerns.
@@ -133,38 +144,43 @@ Three consequences matter when writing a cohort query:
 ``accession_id`` is how a cohort row reaches its images
    ``image_occurrence.accession_id`` is not part of upstream MI-CDM; FLIP adds it with a bare
    ``ALTER TABLE ... ADD COLUMN`` in the DDL. It is the accession number XNAT uses to pull the study
-   out of the Trust PACS, so a query that does not project it produces a cohort with no imaging
-   attached. The Data Access API's accession-id route wraps the saved query as
-   ``SELECT accession_id FROM (<query>) AS cohort_subquery``, so omitting the column is a hard error
-   rather than a silent one.
+   out of the Trust PACS, and every cohort query that wants imaging must project it. Omitting it
+   fails loudly rather than silently: the Data Access API's accession-id route wraps the saved query
+   as ``SELECT accession_id FROM (<query>) AS cohort_subquery``, so the column's absence surfaces as
+   an error rather than as a cohort with no imaging attached.
 
 The link from ``image_feature`` to its value is a soft one
    ``image_feature`` does not carry the finding's value. Instead
-   ``image_feature_event_field_concept_id`` names the table that does and ``image_feature_event_id``
+   ``image_feature_event_field_concept_id`` names the table that does — ``observation`` for the
+   tutorial queries, ``measurement`` where the value is numeric — and ``image_feature_event_id``
    gives the row id in it. There is no foreign key to follow and no way to infer the target from the
    schema, so a query has to pin the field concept itself — ``= 1147304`` for ``observation`` — before
-   joining. This is the one part of the schema that cannot be worked out from the constraints.
+   joining. The image tables' ``*_concept_id`` columns sit in the same blind spot: unlike the
+   standard tables, neither declares a foreign key to ``concept``, so the constraints describe only
+   five of the links a query actually follows.
 
 Concept ids are meaningless until they are joined
-   Every ``*_concept_id`` resolves through ``omop.concept``, which is populated by the vocabulary
-   load rather than by the data load. On a Trust stack whose vocabulary has never been seeded,
-   ``omop.concept`` is empty and any query joining it returns nothing at all — see
-   :ref:`omop-dev-instance`.
+   Every ``*_concept_id`` resolves through ``omop.concept``, and the licensed core vocabulary that
+   populates it arrives by a separate seeding step, not with the data. Before that step a Trust
+   database still has a non-empty ``omop.concept`` — the DICOM vocabulary ships inside the data
+   volume — so counting its rows tells you nothing; a join on a SNOMED CT or LOINC id simply matches
+   nothing. See :ref:`omop-dev-instance`.
 
 .. _omop-sample-queries:
 
+*********************
 Sample cohort queries
-=====================
+*********************
 
 The tutorials in ``fl-tutorials/`` each ship the cohort query they were written against. Two of them
-bracket the range of what a query has to do. Both are shown below exactly as they are in the
-repository; the Flower copies
+bracket the range of what a query has to do. Both are shown below in full, less the licence
+header; the Flower copies
 (``fl-tutorials/flower/xray_classification/query.sql`` and
 ``fl-tutorials/flower/3d_spleen_segmentation/query.sql``) are byte-identical, so cohort queries are
 independent of the FL backend.
 
 Chest X-ray classification — labels out of OMOP
------------------------------------------------
+===============================================
 
 .. literalinclude:: ../../../fl-tutorials/nvflare/image_classification/xray_classification/query.sql
    :language: sql
@@ -180,18 +196,23 @@ This is the general shape of a supervised imaging query, in three steps:
    findings is three rows; the ``MAX(CASE WHEN image_feature_concept_id = ... THEN ... END)``
    idiom collapses them into one row per study with one column per finding. The concept ids
    in this tutorial are ``4215818`` *Effusion*, ``4196943`` *Edema* and ``40481136``
-   *Lungs in normal arrangement*.
-#. The outer ``SELECT`` joins ``omop.concept`` to turn modality and anatomy ids into names, and
-   aliases each pivoted column.
+   *Lungs in normal arrangement*. The join to ``omop.concept`` that decodes each Yes/No answer
+   (``value_concept``) lives inside this CTE — it is the one an unseeded vocabulary breaks first.
+#. The outer ``SELECT`` joins ``omop.concept`` again to turn modality and anatomy ids into names,
+   and aliases each pivoted column.
 
 Those aliases are load-bearing. The dataframe the FL client receives from ``flip.get_dataframe`` has
 exactly the query's output column names, and the tutorial matches them by **exact string** — the
 ``LESIONS`` map in its ``config.json`` contains ``"Effusion"``, ``"Edema"`` and
-``"Lungs in normal arrangement"``, which is why the SQL quotes those aliases verbatim. Renaming a
-column in the query without renaming it in ``config.json`` silently produces an all-masked label.
+``"Lungs in normal arrangement"``, which is why the SQL quotes those aliases verbatim.
+
+Rename a *lesion* column in the query without renaming it in ``config.json`` and training dies with
+a ``KeyError`` on that lesion — loud, but a long way from the SQL that caused it. Rename the
+*normality* column and nothing raises at all: the negative override simply stops firing, and every
+study silently keeps its per-lesion values. That one is the trap.
 
 3D spleen segmentation — labels not in OMOP
---------------------------------------------
+===========================================
 
 .. literalinclude:: ../../../fl-tutorials/nvflare/image_segmentation/3d_spleen_segmentation/query.sql
    :language: sql
@@ -216,10 +237,12 @@ selects the cohort, and the labels are enriched into XNAT.
    authority on this — it parses the query, checks the syntax tree and re-emits the SQL that actually
    runs. See :ref:`create-cohort-query` for the user-facing workflow.
 
+**************
 Access control
-==============
+**************
 
-Cohort queries issued by the Data Access API connect as the ``data_analyst_reader`` role, a member of
+On Compose deployments, cohort queries issued by the Data Access API connect as
+``DATA_ACCESS_POSTGRES_USER`` — ``data_analyst_reader`` by default — a member of
 ``omop_readonly_base``. The grants are created at first initialisation by
 ``trust/omop-db/files/create_readonly_users.sql``: ``CONNECT`` on the database, ``USAGE`` on the
 ``omop`` schema and ``SELECT`` on its tables and sequences, with ``INSERT``, ``UPDATE``, ``DELETE``,
@@ -229,10 +252,12 @@ defence-in-depth.
 
 .. note::
 
-   The grant is narrower on Compose deployments than on Kubernetes ones. The Kubernetes Trust chart
-   grants the role ``pg_read_all_data``, so on a Kubernetes Trust the schema pin inside
-   ``validate_query`` — not the database grant — is what keeps a query inside ``omop``. Narrowing
-   that grant to match Compose is tracked separately.
+   None of that applies on Kubernetes. The Trust chart creates the role directly with ``CONNECT``
+   and ``pg_read_all_data`` — no base-role membership, no connection limit, no statement timeout and
+   no revokes — so a Kubernetes Trust has neither the 300-second cap nor a schema-scoped grant, and
+   the schema pin inside ``validate_query`` is what keeps a query inside ``omop``. Narrowing the
+   grant to match Compose is tracked in
+   `FLIP#904 <https://github.com/londonaicentre/FLIP/issues/904>`_.
 
 Row-level results are additionally gated on the Trust's ``COHORT_QUERY_THRESHOLD`` (default 10): a
 cohort smaller than the threshold is refused with a fixed message, identical to the one a cohort of
@@ -242,8 +267,9 @@ around the clinical data boundary.
 
 .. _omop-dev-instance:
 
+*******************************
 Mocked instance for development
-===============================
+*******************************
 
 Development and staging Trust stacks run a mocked OMOP database:
 ``ghcr.io/londonaicentre/omop-db``, a PostgreSQL image whose build source lives
@@ -254,7 +280,7 @@ dataset on the public Hugging Face dataset
 deterministically split across however many mock Trusts are stood up.
 
 Getting the data
-----------------
+================
 
 Dev stacks do not build the database — they download a ready-populated PostgreSQL data volume per
 Trust from the same public dataset, roughly 11 MB each, at
@@ -273,7 +299,7 @@ row carries a ``source_trust`` column, and standing up N Trusts is a determinist
 dataset — see ``trust/omop-db/README.md`` for the partition modes and for rebuilding the volumes.
 
 Seeding the vocabulary
-----------------------
+======================
 
 The published image and the data volumes are deliberately **vocabulary-free**. SNOMED CT, LOINC,
 Read v2 and dm+d are licensed material, so they are kept out of every published artifact and each
@@ -286,13 +312,21 @@ environment loads the bundle it is licensed to use into its own running database
 
 .. warning::
 
-   Until this has run, ``omop.concept`` is empty and **every cohort query that joins it returns
-   nothing** — the chest X-ray query above among them. The stack starts cleanly and the failure
-   looks like an empty cohort, not an error. The spleen query is the exception that proves the
-   rule: it filters on a concept id but never joins ``omop.concept``, so it keeps working.
+   Until this has run, **a cohort query that resolves core-vocabulary concepts returns nothing** —
+   the chest X-ray query above among them, because the SNOMED CT ids it joins on are not there. The
+   stack starts cleanly and the result looks like an empty cohort. Don't diagnose it by counting
+   ``omop.concept``: the DICOM vocabulary ships in the data volume, so that table has rows either
+   way. ``omop.concept_ancestor`` is the empty one, and it is what the Data Access API probes — a
+   genuinely empty cohort makes it log an error naming this exact cause and the command to fix it.
+
+   The spleen query is the exception: it filters on a concept id but never joins ``omop.concept``,
+   so it keeps working on an unseeded stack.
 
 Two ways to obtain the bundle: FLIP developers with organisation AWS access run
 ``make -C trust/omop-db fetch-vocab-core``; anyone else can build an equivalent export from
-`OHDSI Athena <https://athena.ohdsi.org/>`_ under their own licences. The DICOM vocabulary is
+`OHDSI Athena <https://athena.ohdsi.org/>`_ under their own licences and unpack it into
+``trust/omop-db/data/vocab_aicentre_core_20240916/``. Do that first — ``load-omop-vocab`` depends on
+``fetch-vocab-core``, which skips the download when the directory is already there but fails without
+AWS access when it is not. The DICOM vocabulary is
 separate — it is freely redistributable, ships inside the data volumes, and needs no seeding step.
 ``trust/omop-db/README.md`` carries the full vocabulary roster, versions and licensing.

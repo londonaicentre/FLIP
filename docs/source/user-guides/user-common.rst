@@ -190,7 +190,7 @@ Cohort Query
 
 Cohort data is stored within a `PostgreSQL <https://www.postgresql.org/>`_ database conforming to the OMOP Common Data Model, extended with the :term:`MI-CDM` imaging tables — see :ref:`the schema reference <omop-schema>` for the tables a query can draw on, and :ref:`omop-sample-queries` for two worked examples.
 
-The ``image_occurrence`` table has been modified to include an ``accession_id`` field which contains the reference to the associated DICOM series. As this is the field that XNAT will read from when retrieving the associated DICOM series from PACS, the 'accession_id' needs to be included in all queries if relevant images are to be made available.
+The ``image_occurrence`` table has been modified to include an ``accession_id`` field which contains the reference to the associated DICOM study. As this is the field that XNAT will read from when retrieving the associated DICOM series from PACS, the 'accession_id' needs to be included in all queries if relevant images are to be made available.
 
 .. _create-cohort-query:
 
