@@ -40,6 +40,10 @@ XNAT_DQR_REQUEST_TIMEOUT = 300
 # accession number. Note the cache outlives the registration: if the PACS is re-registered while
 # imaging-api stays up — configure-xnat.sh deletes and recreates it when the AE title changes — the
 # cached id points at a deleted entry, so it is cleared when XNAT reports the PACS missing.
+# Deliberately unlocked: routes here are sync defs dispatched to a threadpool, so two cold-cache
+# threads can race the read-check-set — but both resolve the same fixed id from the same XNAT
+# roster, so the loser merely repeats one metadata round-trip. A lock would serialise every request
+# to save that one call.
 _resolved_pacs_id: int | None = None
 
 

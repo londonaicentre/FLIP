@@ -77,6 +77,18 @@ side. Both directions now fail equally loudly, at render, naming the values to s
 {{- if not $ingressOk }}
 {{- fail (printf "pacs.host is %s but networkPolicies.allowedIngressCIDRsWithPorts has no entry on port %v. After XNAT issues C-MOVE the PACS opens a new association back to XNAT to C-STORE the studies; without that allowance it is dropped, so queries succeed and retrievals silently time out. Add the PACS CIDRs on port %v, and make the receiver reachable from outside the cluster with xnat.web.service.type: NodePort plus xnat.web.dicomNodePort. Note the port here is the pod's containerPort (xnat.web.dicomPort, default 8104) and not dicomNodePort: a NetworkPolicy matches the port the pod listens on, after the node has undone the NodePort translation." .Values.pacs.host $dicomPort $dicomPort) }}
 {{- end }}
+{{- /*
+The NetworkPolicy admits the C-STORE leg only as far as the pod; the packet still needs a route from
+outside the cluster to that pod. templates/xnat-web.yaml publishes the DICOM receiver beyond the
+cluster only when service.type is NodePort AND dicomNodePort is set — on ClusterIP both blocks
+silently no-op, so a chart could satisfy every guard above and still render with no path a PACS
+packet can take: the same queries-succeed/retrievals-time-out failure, one layer up. Refuse
+ClusterIP specifically rather than demanding NodePort, because a LoadBalancer service (MetalLB and
+friends) is an equally valid way to make the receiver reachable and must not be rejected.
+*/ -}}
+{{- if eq .Values.xnat.web.service.type "ClusterIP" }}
+{{- fail (printf "pacs.host is %s but xnat.web.service.type is ClusterIP, so the DICOM receiver is unreachable from outside the cluster and the C-STORE return leg the PACS opens after C-MOVE can never arrive. Set xnat.web.service.type: NodePort plus xnat.web.dicomNodePort (equal to xnat.web.dicomPort), or expose the receiver through a LoadBalancer service." .Values.pacs.host) }}
+{{- end }}
 {{- end }}
 {{- if .Values.networkPolicies.allowedIngressCIDRsWithPorts }}
 # Allow inbound DICOM from the trust PACS.
