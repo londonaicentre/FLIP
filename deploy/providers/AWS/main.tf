@@ -374,6 +374,18 @@ resource "aws_iam_role_policy" "trust_ec2_s3" {
         # the licensed OMOP vocabulary — and this is the host that runs researcher-submitted
         # FL code, so it is the role that least deserves bucket-wide read.
         #
+        # The narrowing deliberately stops at the kit-type prefix, i.e. within these trees any
+        # trust host can still read any trust's kit. Slot-level (Trust_<n>) scoping is not
+        # expressible here: one shared trust-ec2-role serves every trust host and the slot is
+        # an Ansible-runtime value IAM never sees. Date-level scoping via var.flare_kit_date /
+        # var.flower_kit_date was considered and deferred: only one of the two is non-empty
+        # per backend (naive interpolation yields a dead "//*" ARN for the other, so it needs
+        # conditional resource lists), and it couples `terraform apply` to the Ansible
+        # -e fl_kit_date value — re-staging kits at a new date against stale IAM would
+        # hard-fail the exact task this change fixes. Net effect is still a narrowing: the
+        # pre-#1009 statement granted GetObject on the entire bucket. Revisit date scoping if
+        # the cross-trust residual stops being acceptable.
+        #
         # Deliberately no s3:GetBucketLocation: a GetBucketLocation request carries no
         # s3:prefix context key, so under this condition the grant could never authorize
         # anything, and splitting it out unconditioned would widen the role for a call
