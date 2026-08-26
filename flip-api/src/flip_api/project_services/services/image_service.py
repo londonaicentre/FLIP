@@ -341,6 +341,12 @@ def _get_imaging_status_snapshot(trust_id: UUID, xnat_project_id: UUID, db: Sess
 
     Costs one query in the healthy case; the second only runs once refreshes start failing.
 
+    The two SELECTs are deliberately unlocked, and the race is accepted: a COMPLETED refresh
+    landing between them can pair fresh counts with the stale failure state for that one
+    response. The next poll (the UI asks every few seconds) reads the new row and heals it, and
+    the stale pairing errs toward showing a connection problem — never toward hiding one — so
+    serialising the reads buys nothing worth the locking.
+
     Args:
         trust_id (UUID): The trust to look up.
         xnat_project_id (UUID): The XNAT project ID to filter by (stored in task payload).
