@@ -22,34 +22,51 @@ once its last use — the newest ``.flip_complete-*`` sentinel mtime, refreshed 
 cache hit — is older than the TTL, plus crash-orphaned staging zips and emptied
 project dirs.
 
-Concurrency invariant (load-bearing, do not relax): ``sweep_expired_cache_entries`` is
-fully synchronous — no ``await`` from first stat to last delete — and imaging-api runs
-one uvicorn worker (see entrypoint.sh), so a pass runs only *between* requests on the
-shared event loop and can never interleave with ``download_and_unzip_images`` (itself
-await-free — see the matching invariant comment there and FLIP#1026). That is why no
-locking exists here; offloading the sweep to a thread or executor, or awaiting
-mid-pass, reintroduces the race with in-flight extractions. The deliberate cost is
-that a pass blocks the loop for its duration — acceptable because the download path's
-synchronous ``requests`` transfers already block it for far longer.
+Concurrency invariant (load-bearing, do not relax): each swept item's expiry check and
+removal run **without yielding** — ``_sweep_steps`` is a generator whose step bodies
+contain no ``await``, and imaging-api runs one uvicorn worker (see entrypoint.sh) — so
+a deletion can never interleave with ``download_and_unzip_images`` (itself await-free —
+see the matching invariant comment there and FLIP#1026). That per-item atomicity is why
+no locking exists here; offloading step bodies to a thread/executor, or awaiting inside
+one, reintroduces the race with in-flight extractions. *Between* items the driving loop
+yields to the event loop, so a mass expiry cannot starve ``/health`` (K8s liveness
+probes) or queued downloads for the length of a whole pass — the blocking unit is one
+accession directory's stat+rmtree, not the pass. A download that lands between items is
+safe by construction: a fresh extraction keeps its directory mtime (and then sentinel)
+inside the TTL, so the next step skips it.
 
-Deletions still tolerate concurrent removal (ENOENT is benign): another actor — an
-operator tidying by hand, or an outdated fl-client image still running the retired
-``CleanupImages`` wipe — can empty net-dir children invisible to this process's
-serialisation.
+Deletions tolerate concurrent removal (``FileNotFoundError`` is benign at every level,
+skipped without counting as an error): another actor — an operator tidying by hand, or
+an outdated fl-client image still running the retired ``CleanupImages`` wipe — can
+empty net-dir children invisible to this process's serialisation.
 """
 
 import asyncio
 import os
 import shutil
 import time
+from collections.abc import Iterator
 from dataclasses import dataclass
 
 from imaging_api.config import get_settings
 from imaging_api.services.image_cache import SENTINEL_PREFIX
+from imaging_api.utils.background import (
+    clear_degraded_background_service,
+    record_degraded_background_service,
+)
 from imaging_api.utils.logger import logger
 
 # Name surfaced by /health's dead_tasks when the sweeper dies.
 SWEEP_TASK_NAME = "image_cache_retention"
+
+# Name surfaced by /health when the sweeper is alive but its passes keep failing —
+# without this, a permanently-erroring sweep (e.g. an undeletable cache after a uid
+# change) would fill the disk for months with nothing but hourly log lines to show.
+SWEEP_FAILING_HEALTH_NAME = "image_cache_retention:failing"
+
+# Consecutive failing passes (item errors, or a pass-level exception) before /health
+# degrades; one clean pass clears it.
+FAILING_PASS_THRESHOLD = 3
 
 # Upload staging dir (services/upload.py) — a sibling of the per-project cache dirs
 # inside each net dir. Never swept, however old; the unconditional name skip also
@@ -130,7 +147,14 @@ def _remove_expired_accession_dir(accession_dir: str, base_abs: str, stats: Swee
     """
     accession_dir_real = os.path.realpath(accession_dir)
     # Belt-and-braces, mirroring invalidate_accession: never delete outside the base dir.
+    # This branch should be unreachable (symlinks are filtered upstream) — which is
+    # exactly why firing it must leave a trace, not a silently-immortal cache entry.
     if not accession_dir_real.startswith(base_abs + os.sep):
+        stats.errors += 1
+        logger.error(
+            f"Cache retention: refusing to remove {accession_dir!r} — resolves to "
+            f"{accession_dir_real!r}, outside the cache base dir"
+        )
         return
     size = _dir_size_bytes(accession_dir_real)
 
@@ -148,12 +172,15 @@ def _remove_expired_accession_dir(accession_dir: str, base_abs: str, stats: Swee
         stats.bytes_freed += size
 
 
-def _sweep_project_dir(project_dir: str, base_abs: str, cutoff: float, stats: SweepStats) -> None:
+def _sweep_project_dir(project_dir: str, base_abs: str, cutoff: float, stats: SweepStats) -> Iterator[None]:
     """
-    Sweeps one per-project cache directory: expired accession dirs, crash-orphaned staging
-    zips (``download_and_unzip_images`` stages ``<accession>-scans-<resource>.zip`` here and
+    Sweeps one per-project cache directory, yielding once per handled entry.
+
+    Removes expired accession dirs and crash-orphaned staging zips
+    (``download_and_unzip_images`` stages ``<accession>-scans-<resource>.zip`` here and
     deletes it after extraction — one older than the TTL was left by a crash), then the
-    project dir itself if empty.
+    project dir itself if empty. Each yield lands *after* the entry's check+removal
+    completed — the caller may suspend at the yield without breaking per-item atomicity.
 
     Args:
         project_dir (str): The project directory (child of a net dir).
@@ -161,8 +188,15 @@ def _sweep_project_dir(project_dir: str, base_abs: str, cutoff: float, stats: Sw
         cutoff (float): POSIX timestamp; entries last used before it are expired.
         stats (SweepStats): Counters to update in place.
     """
-    with os.scandir(project_dir) as scan:
-        entries = list(scan)
+    try:
+        with os.scandir(project_dir) as scan:
+            entries = list(scan)
+    except FileNotFoundError:
+        return  # concurrently removed — benign
+    except OSError as e:
+        stats.errors += 1
+        logger.error(f"Cache retention: cannot list project dir {project_dir!r}: {type(e).__name__}: {e}")
+        return
     for entry in entries:
         try:
             if entry.is_symlink():
@@ -178,9 +212,12 @@ def _sweep_project_dir(project_dir: str, base_abs: str, cutoff: float, stats: Sw
                         os.unlink(entry_real)
                         stats.orphan_zips_removed += 1
                         stats.bytes_freed += size
+        except FileNotFoundError:
+            continue  # concurrently removed under us — benign
         except OSError as e:
             stats.errors += 1
             logger.error(f"Cache retention: failed sweeping {entry.path!r}: {type(e).__name__}: {e}")
+        yield
     try:
         os.rmdir(project_dir)  # only succeeds when empty; ENOTEMPTY keeps it
         stats.empty_project_dirs_removed += 1
@@ -188,31 +225,28 @@ def _sweep_project_dir(project_dir: str, base_abs: str, cutoff: float, stats: Sw
         pass
 
 
-def sweep_expired_cache_entries(base_dir: str, ttl_seconds: float, now: float | None = None) -> SweepStats:
+def _sweep_steps(base_dir: str, ttl_seconds: float, now: float, stats: SweepStats) -> Iterator[None]:
     """
-    Runs one synchronous retention pass over the whole image download cache.
+    Generator running one retention pass, yielding between handled items.
 
-    Walks ``<base>/<net>/<project>/<accession>``, removing accession dirs whose last use
-    (see ``_entry_last_used``) predates the TTL, project-level ``*.zip`` staging files
-    orphaned by a crash, and project dirs left empty. Net dirs are pre-created mount
-    points with backend-aware ownership and are never removed — nor is the ``upload``
-    staging dir inside each net. Symlinks are never followed or deleted through. Every
-    per-item failure is counted and logged without aborting the pass.
+    The driving loop chooses whether to yield control (``run_cache_retention_sweeper``
+    awaits between items; ``sweep_expired_cache_entries`` drains synchronously). Net
+    dirs are pre-created mount points with backend-aware ownership and are never
+    removed — nor is the ``upload`` staging dir inside each net. Symlinks are never
+    followed or deleted through. Item-level failures are counted and logged without
+    aborting the pass; concurrent removals (``FileNotFoundError``) are skipped silently.
 
     Args:
         base_dir (str): The base images download directory (one subdirectory per net).
         ttl_seconds (float): Seconds since last use after which an entry is expired.
-        now (float | None): Injectable clock for tests; defaults to ``time.time()``.
-
-    Returns:
-        SweepStats: What the pass removed and how many item-level errors it hit.
+        now (float): POSIX timestamp to measure the TTL against.
+        stats (SweepStats): Counters to update in place.
     """
-    stats = SweepStats()
     base_abs = os.path.realpath(base_dir)
     if not os.path.isdir(base_abs):
         logger.warning(f"Cache retention: base images dir {base_dir!r} does not exist; nothing to sweep")
-        return stats
-    cutoff = (now if now is not None else time.time()) - ttl_seconds
+        return
+    cutoff = now - ttl_seconds
 
     with os.scandir(base_abs) as entries:
         net_dirs = [e.path for e in entries if e.is_dir(follow_symlinks=False)]
@@ -220,6 +254,8 @@ def sweep_expired_cache_entries(base_dir: str, ttl_seconds: float, now: float | 
         try:
             with os.scandir(net_dir) as entries:
                 project_entries = list(entries)
+        except FileNotFoundError:
+            continue  # concurrently removed — benign
         except OSError as e:
             stats.errors += 1
             logger.error(f"Cache retention: cannot list net dir {net_dir!r}: {type(e).__name__}: {e}")
@@ -231,10 +267,29 @@ def sweep_expired_cache_entries(base_dir: str, ttl_seconds: float, now: float | 
                 # Stray files directly under a net dir are not ours to manage — the
                 # cache only ever writes project *directories* here.
                 if entry.is_dir(follow_symlinks=False):
-                    _sweep_project_dir(entry.path, base_abs, cutoff, stats)
+                    yield from _sweep_project_dir(entry.path, base_abs, cutoff, stats)
+            except FileNotFoundError:
+                continue
             except OSError as e:
                 stats.errors += 1
                 logger.error(f"Cache retention: failed sweeping {entry.path!r}: {type(e).__name__}: {e}")
+
+
+def sweep_expired_cache_entries(base_dir: str, ttl_seconds: float, now: float | None = None) -> SweepStats:
+    """
+    Runs one full retention pass synchronously (drains ``_sweep_steps``).
+
+    Args:
+        base_dir (str): The base images download directory (one subdirectory per net).
+        ttl_seconds (float): Seconds since last use after which an entry is expired.
+        now (float | None): Injectable clock for tests; defaults to ``time.time()``.
+
+    Returns:
+        SweepStats: What the pass removed and how many item-level errors it hit.
+    """
+    stats = SweepStats()
+    for _ in _sweep_steps(base_dir, ttl_seconds, now if now is not None else time.time(), stats):
+        pass
     return stats
 
 
@@ -242,7 +297,11 @@ async def run_cache_retention_sweeper() -> None:
     """Runs the retention sweep forever at the configured interval (sweep first, then sleep).
 
     The first pass at startup reaps any backlog accumulated while the service was down.
-    A failing pass is logged and the loop survives — only cancellation (shutdown) ends it.
+    A failing pass is logged and the loop survives — only cancellation (shutdown) ends
+    it — but ``FAILING_PASS_THRESHOLD`` consecutive failing passes mark
+    ``SWEEP_FAILING_HEALTH_NAME`` into the background-service registry so ``/health``
+    reports ``degraded`` instead of an endless stream of unread error logs; one clean
+    pass clears it.
     """
     settings = get_settings()
     ttl_seconds = settings.IMAGE_CACHE_RETENTION_HOURS * 3600
@@ -257,10 +316,17 @@ async def run_cache_retention_sweeper() -> None:
             "running longer than the TTL risks its images being swept mid-job (NVFLARE clients refresh "
             "last-used only at job start)"
         )
+    failing_streak = 0
     while True:
         started = time.monotonic()
+        stats = SweepStats()
+        pass_failed = False
         try:
-            stats = sweep_expired_cache_entries(BASE_IMAGES_DOWNLOAD_DIR, ttl_seconds)
+            for _ in _sweep_steps(BASE_IMAGES_DOWNLOAD_DIR, ttl_seconds, time.time(), stats):
+                # Yield between items so a mass expiry can't starve /health or queued
+                # downloads; each item's check+delete completed before this point (the
+                # per-item atomicity invariant in the module docstring).
+                await asyncio.sleep(0)
             logger.info(
                 f"Cache retention sweep: {stats.accession_dirs_removed} accession dirs, "
                 f"{stats.orphan_zips_removed} orphaned zips, {stats.empty_project_dirs_removed} empty "
@@ -269,4 +335,19 @@ async def run_cache_retention_sweeper() -> None:
             )
         except Exception:
             logger.exception("Cache retention sweep pass failed")
+            pass_failed = True
+        if pass_failed or stats.errors:
+            failing_streak += 1
+            if failing_streak == FAILING_PASS_THRESHOLD:
+                record_degraded_background_service(SWEEP_FAILING_HEALTH_NAME)
+                logger.error(
+                    f"Cache retention has now failed {failing_streak} consecutive passes — "
+                    f"marking {SWEEP_FAILING_HEALTH_NAME!r} degraded on /health (cache growth "
+                    "is effectively unbounded until this recovers)"
+                )
+        else:
+            if failing_streak >= FAILING_PASS_THRESHOLD:
+                logger.info("Cache retention recovered after a clean pass; clearing degraded marker")
+            failing_streak = 0
+            clear_degraded_background_service(SWEEP_FAILING_HEALTH_NAME)
         await asyncio.sleep(interval_seconds)

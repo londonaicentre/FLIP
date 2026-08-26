@@ -217,6 +217,12 @@ imagingApi:
     XNAT_DATABASE_URL: "postgresql+asyncpg://xnat@xnat-db:5432/xnat"
     DATA_ACCESS_API_URL: "http://data-access-api:8000"
     BASE_IMAGES_DOWNLOAD_DIR: "/app/data/images"
+    # Image-cache retention (FLIP#1050) — keep the defaults in step with
+    # imaging_api/config.py. IMAGE_CACHE_RETENTION_ENABLED is the operator kill
+    # switch for the sweeper; HOURS is the TTL since last use.
+    IMAGE_CACHE_RETENTION_ENABLED: "true"
+    IMAGE_CACHE_RETENTION_HOURS: "168"
+    IMAGE_CACHE_SWEEP_INTERVAL_MINUTES: "60"
 
 # ---------------------------------------------------------------------------
 # data-access-api — OMOP database queries for cohort analysis

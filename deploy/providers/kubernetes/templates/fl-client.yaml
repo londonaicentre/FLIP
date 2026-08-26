@@ -101,9 +101,8 @@ spec:
         # the image-baked `flip` user — GHSA-8465, same anchor as kit-init's
         # chown below); on Flower the group is the SuperNode's `app` uid (49999)
         # with group-write, because the client itself must also write inside the
-        # net dir (`flip.add_resource` stages files under <netId>/upload/;
-        # NVFLARE's CleanupImages deletes the dir's children — both need write,
-        # read-only is NOT sufficient for the client). Without this, every
+        # net dir (`flip.add_resource` stages files under <netId>/upload/ —
+        # write access, read-only is NOT sufficient for the client). Without this, every
         # imaging-api download would 500 with EACCES and training would die
         # later with a misleading num_samples=0.
         # Runs unconditionally, unlike kit-init below. Reuses the fl-client's

@@ -25,12 +25,14 @@ from flip.constants import FlipConstants, FlipTasks
 
 class CleanupJobDir(Executor):
     def __init__(self):
-        """Deletes the client-side NVFLARE job workspace at the end of a run.
+        """Deletes the client-side NVFLARE job workspace on the ``post_validation`` broadcast.
 
         The job directory holds the deployed app code, logs and anything training wrote to
         its working directory; without this it accumulates per job for the lifetime of the
-        fl-client container. Triggered by the server's end-of-run ``post_validation``
-        broadcast.
+        fl-client container. The broadcast is end-of-run in the single-phase job types;
+        the multi-phase diffusion job fires it at the end of *each* phase, so the workspace
+        is also cleared mid-run between the AE and DM phases (as it was under the retired
+        executor).
 
         This replaces the retired ``CleanupImages`` executor, which additionally wiped the
         net's imaging directory at job start and end. Imaging retention is now owned

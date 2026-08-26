@@ -14,6 +14,7 @@ import os
 import tempfile
 from unittest.mock import MagicMock, patch
 
+import pytest
 from nvflare.apis.fl_constant import ReturnCode
 
 from flip.constants import FlipTasks
@@ -26,6 +27,13 @@ def _fl_ctx(job_id: str) -> MagicMock:
     fl_ctx.get_job_id.return_value = job_id
     fl_ctx.get_identity_name.return_value = "test_client"
     return fl_ctx
+
+
+def test_cleanup_images_is_gone():
+    """The retirement is deliberate and uncompensated: model bundles referencing the old
+    class must be re-created from the updated templates (FLIP#1050 — no compat alias)."""
+    with pytest.raises(ImportError):
+        from flip.nvflare.components.cleanup import CleanupImages  # noqa: F401
 
 
 class TestCleanupJobDir:

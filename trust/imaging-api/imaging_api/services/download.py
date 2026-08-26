@@ -118,8 +118,11 @@ async def download_and_unzip_images(
         try:
             touch_sentinel(accession_dir_abs, assessor_type, resource_type)
         except OSError as e:
-            # A hit must never fail because last-used bookkeeping did: worst case the
-            # entry expires earlier than it should and re-downloads.
+            # A hit must never fail because last-used bookkeeping did. But the stale
+            # clock is not harmless: this path has already handed the directory to an
+            # fl-client that reads it for the rest of the job, and if touches keep
+            # failing the entry ages toward the TTL while still in use — the sweeper
+            # can then reap it mid-job. Hence a warning per occurrence, never silence.
             logger.warning(f"Could not refresh last-used time on cache sentinel {sentinel!r}: {e}")
         return accession_dir_abs
     if force_refresh:

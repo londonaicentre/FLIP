@@ -22,7 +22,14 @@ from nvflare.apis.signal import Signal
 
 
 class BroadcastTask(Controller):
-    """Broadcast an empty task and wait for every targeted client response."""
+    """Broadcast an empty task and wait for every targeted client response.
+
+    Return codes are deliberately not inspected here: error surfacing is owned by the
+    ``ClientExceptionReporter`` TASK_RESULT filter, which every recipe wires on the same
+    task names and which reports each ``EXECUTION_EXCEPTION`` reply to the hub. A recipe
+    adding a ``BroadcastTask`` without that filter gets a genuinely silent error drop —
+    wire both or neither.
+    """
 
     def __init__(self, task_name: str, timeout: int = 600, participating_clients: list[str] | None = None) -> None:
         super().__init__()

@@ -35,6 +35,9 @@ data:
   XNAT_DATABASE_URL: {{ .Values.imagingApi.env.XNAT_DATABASE_URL | quote }}
   DATA_ACCESS_API_URL: {{ .Values.imagingApi.env.DATA_ACCESS_API_URL | quote }}
   BASE_IMAGES_DOWNLOAD_DIR: {{ .Values.imagingApi.env.BASE_IMAGES_DOWNLOAD_DIR | quote }}
+  IMAGE_CACHE_RETENTION_ENABLED: {{ .Values.imagingApi.env.IMAGE_CACHE_RETENTION_ENABLED | quote }}
+  IMAGE_CACHE_RETENTION_HOURS: {{ .Values.imagingApi.env.IMAGE_CACHE_RETENTION_HOURS | quote }}
+  IMAGE_CACHE_SWEEP_INTERVAL_MINUTES: {{ .Values.imagingApi.env.IMAGE_CACHE_SWEEP_INTERVAL_MINUTES | quote }}
   ENV: {{ .Values.environment | quote }}
   LOG_LEVEL: {{ .Values.logLevel | quote }}
 ---

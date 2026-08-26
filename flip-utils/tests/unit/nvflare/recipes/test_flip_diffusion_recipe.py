@@ -151,7 +151,12 @@ class TestFlipDiffusionRecipe:
             executor_tasks = [t for e in client_cfg["executors"] for t in e["tasks"]]
             for task in ("train_ae", "train_dm", "validate_ae", "validate_dm"):
                 assert task in executor_tasks
-            assert "post_validation" in executor_tasks  # CleanupJobDir end-of-run
+            # Job-workspace cleanup: CleanupJobDir owns post_validation and nothing
+            # broadcasts the retired init task (FLIP#1050 — CleanupImages retirement).
+            cleanup_executor = next(
+                e for e in client_cfg["executors"] if e["executor"]["path"].endswith("cleanup.CleanupJobDir")
+            )
+            assert cleanup_executor["tasks"] == ["post_validation"]
             assert "init_training" not in executor_tasks  # retired with CleanupImages (FLIP#1050)
 
             # The stage-aware DP filter guards both train tasks' results.

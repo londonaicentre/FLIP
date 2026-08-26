@@ -69,7 +69,7 @@ script stamps on the outgoing `FLModel`.
 
 **Client — `config_fed_client.json` `executors` / `filters`:**
 
-- `post_validation` → `flip.nvflare.components.CleanupJobDir` (end-of-run job-workspace cleanup; imaging retention is trust-side, FLIP#1050)
+- `post_validation` → `flip.nvflare.components.CleanupJobDir` (job-workspace cleanup — this job broadcasts it at the end of each phase, steps 4 and 7 above; imaging retention is trust-side, FLIP#1050)
 - `train_ae`, `train_dm`, `validate_ae`, `validate_dm` → ONE
   `nvflare.app_common.executors.InProcessClientAPIExecutor` running `custom/trainer.py`
 - `train_ae`/`train_dm` results → `flip.nvflare.components.StagePercentilePrivacy` (stage-aware DP

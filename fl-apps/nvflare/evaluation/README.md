@@ -34,8 +34,8 @@ regenerate via `recipe.py` after any recipe change and commit the result.
 
 ## What's the logic?
 
-1. `InitEvaluation` reports evaluation start to the Central Hub, runs the client image-cleanup task,
-   and validates that `config.json` declares the model(s) to evaluate.
+1. `InitEvaluation` reports evaluation start to the Central Hub and validates that `config.json`
+   declares the model(s) to evaluate.
 2. `GlobalModelEval` loads the uploaded checkpoint via `EvaluationModelLocator` and broadcasts it to
    every site as a single `FLModel` (`validate` task).
 3. Each site runs the user's `evaluator.py` via `InProcessClientAPIExecutor`, using the NVFLARE Client

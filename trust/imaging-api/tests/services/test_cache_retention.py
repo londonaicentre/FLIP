@@ -154,6 +154,50 @@ class TestOrphanZips:
         assert stats.orphan_zips_removed == 1
         assert stats.bytes_freed == 10
 
+    def test_project_dir_holding_only_an_expired_zip_is_emptied_then_removed(self, tmp_path):
+        """The crash-orphan case end to end: zip unlinked, then the emptied project dir
+        rmdir'd in the same pass — no empty-dir residue accumulates."""
+        project_dir = os.path.join(str(tmp_path), "net-1", "proj-a")
+        os.makedirs(project_dir)
+        orphan = os.path.join(project_dir, "ACC1-scans-NIFTI.zip")
+        with open(orphan, "wb") as fh:
+            fh.write(b"x" * 10)
+        _age(orphan, EXPIRED)
+
+        stats = sweep_expired_cache_entries(str(tmp_path), TTL, now=NOW)
+
+        assert not os.path.exists(project_dir)
+        assert stats.orphan_zips_removed == 1
+        assert stats.empty_project_dirs_removed == 1
+
+    def test_concurrently_deleted_zip_is_benign(self, tmp_path):
+        """A zip removed under us between scandir and unlink must not count as an error."""
+        project_dir = os.path.join(str(tmp_path), "net-1", "proj-a")
+        os.makedirs(project_dir)
+        orphan = os.path.join(project_dir, "ACC1-scans-NIFTI.zip")
+        with open(orphan, "wb") as fh:
+            fh.write(b"x")
+        _age(orphan, EXPIRED)
+
+        with patch.object(cache_retention.os, "unlink", side_effect=FileNotFoundError):
+            stats = sweep_expired_cache_entries(str(tmp_path), TTL, now=NOW)
+
+        assert stats.errors == 0
+        assert stats.orphan_zips_removed == 0
+
+    def test_non_zip_stray_file_inside_project_dir_kept(self, tmp_path):
+        project_dir = os.path.join(str(tmp_path), "net-1", "proj-a")
+        os.makedirs(project_dir)
+        stray = os.path.join(project_dir, "notes.txt")
+        with open(stray, "w") as fh:
+            fh.write("x")
+        _age(stray, EXPIRED)
+
+        stats = sweep_expired_cache_entries(str(tmp_path), TTL, now=NOW)
+
+        assert os.path.isfile(stray)
+        assert stats.orphan_zips_removed == 0
+
 
 class TestEmptyProjectDirs:
     def test_emptied_project_dir_removed_nonempty_kept(self, tmp_path):
@@ -196,6 +240,28 @@ class TestSweepRobustness:
 
         assert stats == SweepStats()
 
+    def test_accession_dir_vanishing_before_its_stat_is_benign(self, tmp_path):
+        """An accession dir deleted under us between scandir and last-used stat must be
+        skipped without counting as an error."""
+        _seed_accession(tmp_path, "net-1", "proj-a", "ACC1", sentinel_mtimes=[EXPIRED])
+
+        with patch.object(cache_retention, "_entry_last_used", side_effect=FileNotFoundError):
+            stats = sweep_expired_cache_entries(str(tmp_path), TTL, now=NOW)
+
+        assert stats.errors == 0
+        assert stats.accession_dirs_removed == 0
+
+    def test_escaping_realpath_is_refused_loudly(self, tmp_path):
+        """The belt-and-braces traversal guard must leave a trace when it fires — a
+        silently-immortal cache entry is the failure mode this module exists to close."""
+        _seed_accession(tmp_path, "net-1", "proj-a", "ACC1", sentinel_mtimes=[EXPIRED])
+        stats = SweepStats()
+
+        cache_retention._remove_expired_accession_dir("/somewhere/else/entirely", str(tmp_path), stats)
+
+        assert stats.errors == 1
+        assert stats.accession_dirs_removed == 0
+
     def test_concurrent_deletion_is_benign(self, tmp_path):
         """A concurrent deleter (operator, outdated fl-client image) can empty dirs under us:
         ENOENT must not count as an error."""
@@ -214,29 +280,56 @@ class TestSweepRobustness:
 
 
 class TestSweeperLoop:
+    @pytest.fixture(autouse=True)
+    def _clean_degraded_registry(self):
+        from imaging_api.utils.background import reset_dead_background_tasks
+
+        reset_dead_background_tasks()
+        yield
+        reset_dead_background_tasks()
+
     @pytest.mark.asyncio
     async def test_loop_sweeps_then_sleeps_and_survives_a_failing_pass(self, monkeypatch):
-        sweep = MagicMock(side_effect=RuntimeError("pass blew up"))
-        monkeypatch.setattr(cache_retention, "sweep_expired_cache_entries", sweep)
+        steps = MagicMock(side_effect=RuntimeError("pass blew up"))
+        monkeypatch.setattr(cache_retention, "_sweep_steps", steps)
         # End the loop at its first sleep: a real-time wait here would only slow the suite.
-        monkeypatch.setattr(
-            cache_retention.asyncio, "sleep", MagicMock(side_effect=asyncio.CancelledError)
-        )
+        monkeypatch.setattr(cache_retention.asyncio, "sleep", MagicMock(side_effect=asyncio.CancelledError))
 
         with pytest.raises(asyncio.CancelledError):
             await cache_retention.run_cache_retention_sweeper()
 
-        sweep.assert_called_once()
-        args = sweep.call_args[0]
+        steps.assert_called_once()
+        args = steps.call_args[0]
         assert args[0] == cache_retention.BASE_IMAGES_DOWNLOAD_DIR
         assert args[1] == pytest.approx(168.0 * 3600)
+        assert isinstance(args[3], SweepStats)
+
+    @pytest.mark.asyncio
+    async def test_loop_yields_between_items(self, monkeypatch, tmp_path):
+        """The driving loop must await between generator steps so a mass expiry can't
+        starve /health — one asyncio.sleep(0) per handled item, then the interval sleep."""
+        _seed_accession(tmp_path, "net-1", "proj-a", "ACC_A", sentinel_mtimes=[time.time()])
+        _seed_accession(tmp_path, "net-1", "proj-a", "ACC_B", sentinel_mtimes=[time.time()])
+        monkeypatch.setattr(cache_retention, "BASE_IMAGES_DOWNLOAD_DIR", str(tmp_path))
+        sleep_calls = []
+
+        async def fake_sleep(delay):
+            sleep_calls.append(delay)
+            if delay > 0:  # the interval sleep ends the test
+                raise asyncio.CancelledError
+
+        monkeypatch.setattr(cache_retention.asyncio, "sleep", fake_sleep)
+
+        with pytest.raises(asyncio.CancelledError):
+            await cache_retention.run_cache_retention_sweeper()
+
+        assert sleep_calls.count(0) == 2  # one yield per accession dir handled
+        assert sleep_calls[-1] > 0
 
     @pytest.mark.asyncio
     async def test_interval_floored_at_one_minute(self, monkeypatch):
-        monkeypatch.setattr(
-            cache_retention.get_settings(), "IMAGE_CACHE_SWEEP_INTERVAL_MINUTES", 0.0
-        )
-        monkeypatch.setattr(cache_retention, "sweep_expired_cache_entries", MagicMock(return_value=SweepStats()))
+        monkeypatch.setattr(cache_retention.get_settings(), "IMAGE_CACHE_SWEEP_INTERVAL_MINUTES", 0.0)
+        monkeypatch.setattr(cache_retention, "_sweep_steps", MagicMock(return_value=iter([])))
         sleep = MagicMock(side_effect=asyncio.CancelledError)
         monkeypatch.setattr(cache_retention.asyncio, "sleep", sleep)
 
@@ -244,6 +337,73 @@ class TestSweeperLoop:
             await cache_retention.run_cache_retention_sweeper()
 
         sleep.assert_called_once_with(60.0)
+
+
+class TestFailingStreakEscalation:
+    """A sweep that stays alive but keeps failing must degrade /health — hourly error
+    logs on a trust host nobody tails are not an escalation path."""
+
+    @pytest.fixture(autouse=True)
+    def _clean_degraded_registry(self):
+        from imaging_api.utils.background import reset_dead_background_tasks
+
+        reset_dead_background_tasks()
+        yield
+        reset_dead_background_tasks()
+
+    @staticmethod
+    def _drive(monkeypatch, per_pass_errors):
+        """Run the loop for len(per_pass_errors) passes, then cancel at the next sleep."""
+
+        def make_steps(errors_iter):
+            def steps(_base, _ttl, _now, stats):
+                stats.errors = next(errors_iter)
+                return iter([])
+
+            return steps
+
+        monkeypatch.setattr(cache_retention, "_sweep_steps", make_steps(iter(per_pass_errors)))
+        remaining = {"sleeps": len(per_pass_errors)}
+
+        async def fake_sleep(_delay):
+            remaining["sleeps"] -= 1
+            if remaining["sleeps"] <= 0:
+                raise asyncio.CancelledError
+
+        monkeypatch.setattr(cache_retention.asyncio, "sleep", fake_sleep)
+
+    @pytest.mark.asyncio
+    async def test_three_failing_passes_mark_degraded(self, monkeypatch):
+        from imaging_api.utils.background import dead_background_tasks
+
+        self._drive(monkeypatch, per_pass_errors=[2, 1, 3])
+
+        with pytest.raises(asyncio.CancelledError):
+            await cache_retention.run_cache_retention_sweeper()
+
+        assert cache_retention.SWEEP_FAILING_HEALTH_NAME in dead_background_tasks()
+
+    @pytest.mark.asyncio
+    async def test_two_failing_passes_do_not_mark(self, monkeypatch):
+        from imaging_api.utils.background import dead_background_tasks
+
+        self._drive(monkeypatch, per_pass_errors=[2, 1])
+
+        with pytest.raises(asyncio.CancelledError):
+            await cache_retention.run_cache_retention_sweeper()
+
+        assert dead_background_tasks() == set()
+
+    @pytest.mark.asyncio
+    async def test_clean_pass_clears_the_marker(self, monkeypatch):
+        from imaging_api.utils.background import dead_background_tasks
+
+        self._drive(monkeypatch, per_pass_errors=[1, 1, 1, 0])
+
+        with pytest.raises(asyncio.CancelledError):
+            await cache_retention.run_cache_retention_sweeper()
+
+        assert dead_background_tasks() == set()
 
 
 class TestEntryLastUsed:

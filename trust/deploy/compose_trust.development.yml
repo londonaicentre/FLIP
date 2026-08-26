@@ -119,6 +119,14 @@ services:
       DEBUG: ${DEBUG}
       ENV: development
       BASE_IMAGES_DOWNLOAD_DIR: /app/data/images
+      # Image-cache retention (FLIP#1050): defaults live in imaging_api/config.py; the
+      # `:-` form keeps an unset OR empty kit var falling through to the same defaults
+      # (so this dodges the empty-${VAR} trap above) while still giving the operator a
+      # kit-file override — including the kill switch for a data-deleting feature.
+      # Keep the fallback values in step with config.py.
+      IMAGE_CACHE_RETENTION_ENABLED: ${IMAGE_CACHE_RETENTION_ENABLED:-true}
+      IMAGE_CACHE_RETENTION_HOURS: ${IMAGE_CACHE_RETENTION_HOURS:-168}
+      IMAGE_CACHE_SWEEP_INTERVAL_MINUTES: ${IMAGE_CACHE_SWEEP_INTERVAL_MINUTES:-60}
       LOG_LEVEL: ${TRUST_LOG_LEVEL}
       TRUST_INTERNAL_SERVICE_KEY: ${TRUST_INTERNAL_SERVICE_KEY}
       # Dev-on-pull (see `user:` above): host-uid process imports the package via

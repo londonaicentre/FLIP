@@ -207,8 +207,7 @@
     # net-N breaks imaging-api's writes into it exactly as described above.
     #
     # Their group is backend-aware because the fl-client writes inside net-N too
-    # (flip.add_resource stages under net-N/upload/, NVFLARE CleanupImages deletes
-    # net-N's children):
+    # (flip.add_resource stages under net-N/upload/):
     #   * NVFLARE — its client runs as uid 1000, the same as imaging-api, so the
     #     plain ubuntu:ubuntu 0755 of the parent dirs covers both writers.
     #   * Flower  — its client is built on upstream flwr/base, which runs as `app`

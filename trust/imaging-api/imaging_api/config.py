@@ -98,12 +98,14 @@ class Settings(BaseSettings):
 
     # Image-cache retention (FLIP#1050): the download cache under
     # BASE_IMAGES_DOWNLOAD_DIR is bounded by a TTL on last use, enforced by the
-    # in-process sweeper in services/cache_retention.py. Defaults live here, not
-    # in the compose environment blocks (see the injection rule comment in
-    # trust/deploy/compose_trust.development.yml) — an empty ${VAR} from an older
-    # kit file would override them. Floats so a dev stack can run a minutes-scale
-    # TTL for live verification. The TTL must comfortably exceed any FL job
-    # duration: NVFLARE clients refresh last-used only once, at job start.
+    # in-process sweeper in services/cache_retention.py. These defaults are the
+    # single source of truth; the trust composes and the K8s chart inject the vars
+    # with matching `:-`/values fallbacks (immune to the empty-${VAR} trap) so an
+    # operator can override per trust — RETENTION_ENABLED is the sweeper kill
+    # switch. Keep those fallbacks in step with these values. Floats so a dev
+    # stack can run a minutes-scale TTL for live verification. The TTL must
+    # comfortably exceed any FL job duration: NVFLARE clients refresh last-used
+    # only once, at job start.
     IMAGE_CACHE_RETENTION_ENABLED: bool = True
     IMAGE_CACHE_RETENTION_HOURS: float = 168.0  # 7 days since last use
     IMAGE_CACHE_SWEEP_INTERVAL_MINUTES: float = 60.0

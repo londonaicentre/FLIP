@@ -131,6 +131,14 @@ class TestFlipFedAvgRecipe:
             executor_tasks = client_cfg["executors"][-1]["tasks"]
             assert executor_tasks == ["train", "validate"]
             assert "submit_model" not in executor_tasks
+            # Job-workspace cleanup: CleanupJobDir owns post_validation and nothing
+            # broadcasts the retired init task (FLIP#1050 — CleanupImages retirement).
+            cleanup_executor = next(
+                e for e in client_cfg["executors"] if e["executor"]["path"].endswith("cleanup.CleanupJobDir")
+            )
+            assert cleanup_executor["tasks"] == ["post_validation"]
+            all_tasks = [t for e in client_cfg["executors"] for t in e["tasks"]]
+            assert "init_training" not in all_tasks
         finally:
             sys.modules["models"].get_model = lambda: object()
 

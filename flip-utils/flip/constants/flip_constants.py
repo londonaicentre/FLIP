@@ -140,9 +140,10 @@ class ResourceType(StrEnum):
 class FlipTasks(StrEnum):
     """Task names used in FLIP workflows."""
 
-    # End-of-run broadcast (all job types) — triggers the client-side job-workspace cleanup.
-    # The init_training/init_task/post_task names died with the CleanupImages executor
-    # (imaging retention moved trust-side to imaging-api's TTL sweeper, FLIP#1050).
+    # Triggers the client-side job-workspace cleanup: broadcast at end of run in the
+    # single-phase job types, and at the end of each phase in the multi-phase diffusion
+    # job. The init_training/init_task/post_task names died with the CleanupImages
+    # executor (imaging retention moved trust-side to imaging-api's TTL sweeper, FLIP#1050).
     POST_VALIDATION = "post_validation"
 
 

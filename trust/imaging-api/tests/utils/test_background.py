@@ -15,7 +15,9 @@ import asyncio
 import pytest
 
 from imaging_api.utils.background import (
+    clear_degraded_background_service,
     dead_background_tasks,
+    record_degraded_background_service,
     reset_dead_background_tasks,
     watch_background_task,
 )
@@ -74,6 +76,17 @@ async def test_cancelled_task_is_not_recorded():
     await asyncio.sleep(0)
 
     assert dead_background_tasks() == set()
+
+
+def test_degraded_marker_recorded_and_cleared():
+    """Alive-but-failing services share the /health registry with actual deaths."""
+    record_degraded_background_service("image_cache_retention:failing")
+    assert dead_background_tasks() == {"image_cache_retention:failing"}
+
+    clear_degraded_background_service("image_cache_retention:failing")
+    assert dead_background_tasks() == set()
+
+    clear_degraded_background_service("never-recorded")  # clearing an absent marker is a no-op
 
 
 @pytest.mark.asyncio

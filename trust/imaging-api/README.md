@@ -77,11 +77,15 @@ on every cache hit — is older than `IMAGE_CACHE_RETENTION_HOURS` (default `168
 (every `IMAGE_CACHE_SWEEP_INTERVAL_MINUTES`, default `60`; `IMAGE_CACHE_RETENTION_ENABLED=false` disables). The sweep
 also reaps sentinel-less accession dirs (invalidated or partially extracted) once the directory mtime ages out,
 staging zips orphaned by a crash, and project dirs left empty — but never a net directory (a pre-created mount point)
-or the `upload/` staging dir inside it. The defaults live in the service settings, not the compose files; the TTL
-must comfortably exceed any FL job duration, because NVFLARE clients refresh last-used only once, at job start
-(Flower clients re-hit every round). The sweep pass is synchronous on the single-worker event loop, so it serialises
-with in-flight downloads by construction; if the sweeper dies, `/health` reports `degraded` with the task name.
-Nothing in the cache is unique — an expired entry re-downloads from XNAT on the next request.
+or the `upload/` staging dir inside it. The defaults live in the service settings and are operator-overridable per
+trust (kit file on compose, `imagingApi.env` on K8s) — `IMAGE_CACHE_RETENTION_ENABLED=false` is the kill switch. The
+TTL must comfortably exceed any FL job duration, because NVFLARE clients refresh last-used only once, at job start
+(Flower clients re-hit every round). Each entry's expiry check and removal run without yielding on the single-worker
+event loop — so a deletion can never interleave with an in-flight download — while the pass yields between entries
+so `/health` and queued downloads stay responsive through a mass expiry. If the sweeper dies, or keeps failing its
+passes, `/health` reports `degraded` with the task name (visible to a direct probe; the hub Connection Status page
+does not yet read the body — FLIP#1059). Nothing in the cache is unique — an expired entry re-downloads from XNAT
+on the next request.
 
 ### Imaging
 

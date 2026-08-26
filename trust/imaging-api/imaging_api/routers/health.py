@@ -47,9 +47,11 @@ async def health_check() -> dict[str, object]:
     Health check endpoint for the Imaging API
 
     Reports ``degraded`` when a background service (the image-cache retention sweeper)
-    has died: the process still answers HTTP, but unbounded cache growth has silently
-    resumed, and a plain "ok" would hide that. Still HTTP 200 either way — container
-    healthchecks key on the status code, and a restart loop would not fix a dead sweeper.
+    has died or is persistently failing its passes: the process still answers HTTP, but
+    unbounded cache growth has silently resumed, and a plain "ok" would hide that. Still
+    HTTP 200 either way — container healthchecks key on the status code, and a restart
+    loop would not fix a dead sweeper. (FLIP#1059 tracks surfacing the body's status on
+    the hub's Connection Status page, which currently reads only the status code.)
 
     Returns:
         dict[str, object]: The service status, its version (the same contract as the

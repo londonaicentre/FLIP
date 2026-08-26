@@ -16,6 +16,11 @@ The cache-retention sweeper runs forever by construction, so a finished task mea
 service is gone: the process keeps serving HTTP while unbounded image-cache growth has
 silently resumed. Recording the death lets ``/health`` report ``degraded`` instead of a
 reassuring "ok". (Pattern shared with trust-api's ``utils/background.py``.)
+
+The registry also carries alive-but-degraded markers: a service that survives but has
+stopped doing its job (e.g. the sweeper failing every pass) records a name here via
+``record_degraded_background_service`` and clears it on recovery — task death and
+persistent failure surface through the same ``/health`` field.
 """
 
 import asyncio
@@ -37,6 +42,25 @@ def dead_background_tasks() -> set[str]:
 def reset_dead_background_tasks() -> None:
     """Clear the record (used by tests, and by a fresh lifespan on restart)."""
     _dead_tasks.clear()
+
+
+def record_degraded_background_service(name: str) -> None:
+    """Mark an alive-but-failing background service as degraded on ``/health``.
+
+    Args:
+        name (str): Marker name to surface in ``dead_tasks`` (convention:
+            ``<task_name>:failing`` to distinguish it from an actual death).
+    """
+    _dead_tasks.add(name)
+
+
+def clear_degraded_background_service(name: str) -> None:
+    """Clear a degraded marker once the service recovers; a no-op if not recorded.
+
+    Args:
+        name (str): The marker name previously recorded.
+    """
+    _dead_tasks.discard(name)
 
 
 def watch_background_task(task: asyncio.Task) -> None:

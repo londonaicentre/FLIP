@@ -74,7 +74,7 @@
     # under sudo on-prem): a root-created net-N dir is unwritable by imaging-api
     # (uid 1000) and every image download 500s.
     # The group is backend-aware because the fl-client writes inside net-N too
-    # (flip.add_resource staging, NVFLARE CleanupImages): NVFLARE's client shares
+    # (flip.add_resource staging): NVFLARE's client shares
     # imaging-api's uid 1000, but Flower's is built on upstream flwr/base and runs
     # as `app` (uid/gid 49999) with no supplementary group, so it needs group
     # 49999 + 0775 or add_resource fails with EACCES.
