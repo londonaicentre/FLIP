@@ -267,6 +267,10 @@ make debug SERVICE=trust-api       # Available: flip-api, trust-api, imaging-api
 make debug-off SERVICE=flip-api    # Stop debug mode
 ```
 
+Debug ports (hub `API_DEBUG_PORT`, trust `TRUST/IMAGING/DATA_ACCESS_DEBUG_PORT`) publish on
+`127.0.0.1` only, so the debugger must attach from the same host — for a remote dev box, tunnel the
+port (SSH/SSM) rather than exposing it on the LAN.
+
 ### Test Data
 
 ```bash
