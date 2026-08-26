@@ -290,20 +290,23 @@ lint, type-checking, unit and integration tests, docs, Terraform validation, Hel
 Coverage upload to Codecov is non-blocking (`fail_ci_if_error: false`), so a missing `CODECOV_TOKEN` on your fork
 never fails an otherwise-green job.
 
-### IAM policy lint (Terraform)
+### Checkov security lint (Terraform)
 
-`validate_terraform.yml` carries an `IAM Policy Lint` job (FLIP#1052) alongside `fmt`/`validate`: checkov's IAM
-checks run statically over `deploy/providers/AWS/**` and **block the PR** on overly-broad policy statements — a
-wildcard `Resource`/`Action` on a restrictable data-access action, data exfiltration or privilege-escalation
-shapes. Both policy syntaxes are covered (`data "aws_iam_policy_document"` blocks and `jsonencode()` policies), no
-cloud credentials are needed, and checkov already knows which AWS actions support no resource-level scoping
+`validate_terraform.yml` carries a `Checkov Security Lint` job (FLIP#1052 + the FLIP#1058 triage) alongside
+`fmt`/`validate`: a curated checkov check list runs statically over `deploy/providers/AWS/**` and **blocks the
+PR**. It covers IAM policy content — overly-broad statements such as a wildcard `Resource`/`Action` on a
+restrictable data-access action, data exfiltration or privilege-escalation shapes, on both policy syntaxes
+(`data "aws_iam_policy_document"` blocks and `jsonencode()` policies) — plus a small promoted set of
+infrastructure-posture checks (IMDSv2-only EC2, module version pinning, HSTS, WAF Log4j rule, SSM/KMS posture).
+No cloud credentials are needed, and checkov already knows which AWS actions support no resource-level scoping
 (e.g. `ssmmessages:*`, `ec2:Describe*`) — those wildcards pass without ceremony. Run it locally with
-`make -C deploy/providers/AWS iam-lint`.
+`make -C deploy/providers/AWS checkov-lint`.
 
-Deliberate breadth is acknowledged **in-code, with a rationale**, never by weakening the check list: put
-`# checkov:skip=<CHECK_ID>:<why this breadth is deliberate>` inside the flagged resource/data block. The check
-list lives in `deploy/providers/AWS/scripts/iam_policy_lint.sh`, which self-tests against a canary fixture before
-scanning so a broken checkov install can never produce a vacuous green.
+Deliberate breadth or posture is acknowledged **in-code, with a rationale**, never by weakening the check list:
+put `# checkov:skip=<CHECK_ID>:<why this is deliberate>` inside the flagged resource/data block. The check
+list — including the classes triaged in FLIP#1058 and deliberately *not* promoted — lives in
+`deploy/providers/AWS/scripts/checkov_lint.sh`, which self-tests against a canary fixture before scanning so a
+broken checkov install can never produce a vacuous green.
 
 ### Running the stack (pull vs. build)
 

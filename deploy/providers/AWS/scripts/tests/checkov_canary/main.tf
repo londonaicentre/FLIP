@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Canary fixture for scripts/iam_policy_lint.sh (FLIP#1052) — NOT deployed
+# Canary fixture for scripts/checkov_lint.sh (FLIP#1052) — NOT deployed
 # infrastructure. This statement is deliberately overly broad: a data-access
 # action with a wildcard Resource. The lint harness asserts checkov FAILS it
 # before scanning the real tree, so a broken install or an ineffective check

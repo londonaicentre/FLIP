@@ -777,22 +777,28 @@ This prints a list of URLs you can paste into your browser:
 
 Press Ctrl+C to stop all forwards. The Central Hub UI and API are accessed via the CloudFront distribution at the canonical subdomain (e.g. `https://app.flip.aicentre.co.uk`) — no port forwarding needed. The ALB is internal (private subnets, no public IP); CloudFront reaches it through a VPC origin.
 
-## IAM Policy Lint
+## Checkov Security Lint
 
-CI blocks PRs that add overly-broad IAM statements to this tree (FLIP#1052): the `IAM Policy Lint` job in
-`validate_terraform.yml` runs checkov's IAM checks statically over `deploy/providers/AWS/**` — no credentials,
-no `terraform init`, no plan. It flags wildcard `Resource`/`Action` on restrictable data-access actions plus the
-data-exfiltration / privilege-escalation / permissions-management shapes, on both policy syntaxes
-(`data "aws_iam_policy_document"` blocks and `jsonencode()` policies). Checkov knows which AWS actions support
-no resource-level scoping (`ssmmessages:*`, `ec2:Describe*`, …), so those deliberate `resources = ["*"]`
-statements pass without suppression.
+CI blocks PRs that regress this tree's security posture (FLIP#1052 + the FLIP#1058 triage): the
+`Checkov Security Lint` job in `validate_terraform.yml` runs a curated checkov check list statically over
+`deploy/providers/AWS/**` — no credentials, no `terraform init`, no plan. Two families are promoted:
+
+- **IAM policy content** — wildcard `Resource`/`Action` on restrictable data-access actions plus the
+  data-exfiltration / privilege-escalation / permissions-management shapes, on both policy syntaxes
+  (`data "aws_iam_policy_document"` blocks and `jsonencode()` policies). Checkov knows which AWS actions
+  support no resource-level scoping (`ssmmessages:*`, `ec2:Describe*`, …), so those deliberate
+  `resources = ["*"]` statements pass without suppression.
+- **Infrastructure posture** (promoted per the FLIP#1058 triage) — IMDSv2-only EC2 instances, registry-module
+  version pinning, HSTS on CloudFront response-header policies, the WAF Log4j managed rule, SSM parameter and
+  KMS key-policy posture. Every existing instance is either fixed or carries an inline suppression with its
+  rationale; classes deliberately *not* promoted are recorded in the script.
 
 ```bash
-make iam-lint     # run the same check locally (uses checkov from PATH, or uvx)
+make checkov-lint     # run the same check locally (uses checkov from PATH, or uvx)
 ```
 
-Deliberate breadth on a restrictable action is acknowledged **in-code with a rationale**, never by weakening the
-check list globally — add inside the flagged resource/data block:
+Deliberate breadth or posture is acknowledged **in-code with a rationale**, never by weakening the check list
+globally — add inside the flagged resource/data block:
 
 ```hcl
 data "aws_iam_policy_document" "example" {
@@ -803,11 +809,12 @@ data "aws_iam_policy_document" "example" {
 }
 ```
 
-The check list and invocation live in [`scripts/iam_policy_lint.sh`](scripts/iam_policy_lint.sh). The script
+The check list and invocation live in [`scripts/checkov_lint.sh`](scripts/checkov_lint.sh). The script
 first asserts checkov still fails the deliberately broad canary fixture
-(`scripts/tests/iam_lint_canary/`) before scanning the real tree, so a broken install or an ineffective
-check list fails loudly instead of passing vacuously. Known limitation: only a **literal** `"*"` is caught —
-an interpolated bucket-root grant (`"${aws_s3_bucket.x.arn}/*"` on `s3:GetObject`) still needs human review.
+(`scripts/tests/checkov_canary/`) before scanning the real tree, so a broken install or an ineffective
+check list fails loudly instead of passing vacuously. Known limitation: the IAM checks only catch a
+**literal** `"*"` — an interpolated bucket-root grant (`"${aws_s3_bucket.x.arn}/*"` on `s3:GetObject`) still
+needs human review.
 
 ## Hybrid Deployment: Adding an On-Premises Trust
 

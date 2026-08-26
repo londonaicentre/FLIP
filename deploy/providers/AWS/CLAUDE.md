@@ -53,7 +53,7 @@ make add-fl-kits N=<n> PROD=<stag|true>       # Ensure N more claimable FL kit s
 make apply-fl-kit-slots                       # Targeted plan/apply of the /flip/fl_kit_slot_names SSM parameter (slot activation path)
 make destroy                                  # Selective destroy (preserves Cognito, Secrets, S3)
 make aws-login                                # AWS SSO login
-make iam-lint                                 # Static IAM policy-content lint (checkov, no credentials/init) — CI counterpart is the IAM Policy Lint job in validate_terraform.yml (FLIP#1052); suppress deliberate breadth in-code with `# checkov:skip=<ID>:<rationale>`
+make checkov-lint                             # Static checkov security lint (IAM policy content + promoted posture checks; no credentials/init) — CI counterpart is the Checkov Security Lint job in validate_terraform.yml (FLIP#1052, FLIP#1058); suppress deliberate breadth/posture in-code with `# checkov:skip=<ID>:<rationale>`
 ```
 
 ## Infrastructure

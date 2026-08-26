@@ -223,9 +223,9 @@ check-ssm-ready: ## Verify SSM Session Manager prerequisites are installed
 prettier: ## Format Terraform files. YAML files are formatted by the prettier pre-commit hook.
 	terraform fmt -recursive
 
-.PHONY: iam-lint
-iam-lint: ## Static IAM policy-content lint (checkov) over this Terraform tree — no credentials or init needed (FLIP#1052)
-	bash scripts/iam_policy_lint.sh
+.PHONY: checkov-lint
+checkov-lint: ## Static checkov security lint (IAM policy content + promoted posture checks) over this Terraform tree — no credentials or init needed (FLIP#1052, FLIP#1058)
+	bash scripts/checkov_lint.sh
 
 .PHONY: create-backend
 create-backend: ## Create Terraform backend S3 bucket - Only run once

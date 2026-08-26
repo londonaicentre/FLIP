@@ -437,7 +437,7 @@ After changes, evaluate if docs need updating:
 
 ## CI/CD
 
-GitHub Actions: `test_flip_api.yml`, `test_flip_ui.yml`, `test_trust_*.yml`, `fl-tutorials-tests.yml`, `docker_build_*.yml`, `validate_terraform.yml` (fmt/validate + a blocking IAM policy-content lint over `deploy/providers/AWS/**` — checkov, static, credential-free; local run `make -C deploy/providers/AWS iam-lint`, deliberate breadth suppressed in-code with `# checkov:skip=<ID>:<rationale>` — FLIP#1052), `secret-scanning.yml`, `docs.yml`, `pr_acceptance_criteria.yml`. Run locally: `make ci` (uses `act`).
+GitHub Actions: `test_flip_api.yml`, `test_flip_ui.yml`, `test_trust_*.yml`, `fl-tutorials-tests.yml`, `docker_build_*.yml`, `validate_terraform.yml` (fmt/validate + a blocking checkov security lint over `deploy/providers/AWS/**` — IAM policy content plus promoted posture checks; static, credential-free; local run `make -C deploy/providers/AWS checkov-lint`, deliberate breadth/posture suppressed in-code with `# checkov:skip=<ID>:<rationale>` — FLIP#1052, FLIP#1058), `secret-scanning.yml`, `docs.yml`, `pr_acceptance_criteria.yml`. Run locally: `make ci` (uses `act`).
 
 ### Docker image builds: gated on tests, manual trigger for branches
 
