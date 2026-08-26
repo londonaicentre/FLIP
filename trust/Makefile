@@ -362,8 +362,13 @@ down-fl-clients-kit:
 	$(require_kit)
 	$(TRUST_VARS) ${DOCKER_COMPOSE_CMD} $(TRUST_OVERRIDE) -p $(TRUST_PROJECT) rm -fs fl-client-net-1 fl-client-net-2
 
+# Forward this kit's OMOP_DATA_DIR as the slot-numbered override the script reads, so the
+# dir populated here is the one check_omop_data_dir inspects and the compose file mounts.
+# Only the invoking kit's slot is set: a KIT-less call (the bare `make -C trust
+# update-omop-data`) sets neither and both trusts fall back to the in-repo default.
 update-omop-data:
-	$(OMOP_DB_CMD) update-omop-data TRUST=$(TRUST)
+	$(OMOP_DB_CMD) update-omop-data TRUST=$(TRUST) \
+	  $(if $(and $(TRUST_NUM),$(OMOP_DATA_DIR)),OMOP_DATA_DIR_TRUST_$(TRUST_NUM)=$(OMOP_DATA_DIR))
 
 update-orthanc-data:
 	$(ORTHANC_CMD) update-orthanc-data TRUST=$(TRUST)

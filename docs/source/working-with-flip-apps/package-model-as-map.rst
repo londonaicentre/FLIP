@@ -683,8 +683,8 @@ moments.
 solely to decide which base application template to bundle, and validates that value against the
 per-backend manifest of known job types (``bundle_nvflare_application`` /
 ``bundle_flower_application`` in ``flip-api/src/flip_api/fl_services/services/fl_service.py``). An
-unrecognised ``job_type`` is rejected; a missing one falls back to ``standard`` — as does a missing
-``config.json``, which is a valid submission for a Flower app.
+unrecognised ``job_type`` is rejected; a missing one falls back to ``standard``. The file itself is
+a required file on both backends, so a submission without it is rejected before bundling.
 
 **For NVFLARE, the FL API then validates a fixed set of platform keys** when it assembles the job
 (``validate_config`` in ``fl-services/nvflare/fl-api-base/fl_api/utils/prepare_config.py``). Several

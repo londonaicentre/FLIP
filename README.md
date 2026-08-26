@@ -78,6 +78,24 @@ make up
 If Swarm is already active, `docker swarm init` reports that and can be skipped. Open `https://localhost` for the UI
 and `http://localhost:8080/docs` for the Central Hub API documentation.
 
+### Load the OMOP vocabulary
+
+`make up` fetches each Trust's OMOP data automatically, but the published tarballs are **vocab-free**. Load the core
+vocabulary once per Trust, then restart the readers so they drop their cached query results:
+
+```bash
+make -C trust/omop-db load-omop-vocab                    # Trust_1 (GSTT, port 5434)
+make -C trust/omop-db load-omop-vocab OMOP_DB_PORT=5436  # Trust_2 (KCH)
+
+docker restart trust1-data-access-api-1 trust2-data-access-api-1
+```
+
+Skip it and every cohort query returns zero rows, which surfaces several steps later as a project that cannot be
+staged — `returned no cohort records (zero or privacy-suppressed)` — so it reads as a disclosure-threshold problem
+rather than a missing vocabulary. This is the one step needing credentials for the AI Centre's bundle; contributors
+without that access self-serve from OHDSI Athena. See
+[`trust/omop-db/README.md`](trust/omop-db/README.md#the-core-vocabulary-bundle) for the bundle and both routes.
+
 To run the scripted project lifecycle against the running stack:
 
 ```bash
