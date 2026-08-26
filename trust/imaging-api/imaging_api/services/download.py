@@ -82,10 +82,12 @@ async def download_and_unzip_images(
         unzipping process.
     """
     # Concurrency invariant: this coroutine contains no `await`, and imaging-api runs one uvicorn
-    # worker (`fastapi run`/`fastapi dev`, never --workers), so concurrent calls for the same key
-    # serialise end-to-end and cannot race on the shared zip path or its rename below. Introducing
-    # an await here, extra workers, or a threadpool offload voids that and needs an explicit
-    # per-(net, project, accession) lock — or download-to-temp-dir-then-rename — instead.
+    # worker (`fastapi run`/`fastapi dev`, never --workers — the entrypoint.sh command carries the
+    # matching warning), so concurrent calls for the same key serialise end-to-end and cannot race
+    # on the shared zip path or its rename below. Introducing an await here, extra workers, or a
+    # threadpool offload voids that and needs an explicit per-(net, project, accession) lock — or
+    # download-to-temp-dir-then-rename — instead. FLIP#1026 tracks the temp-dir staging; this
+    # comment (and the entrypoint one) go when it lands.
     # Validate net_id doesn't escape base images directory
     download_dir = os.path.join(BASE_IMAGES_DOWNLOAD_DIR, net_id)
     base_images_download_dir_abs = os.path.realpath(BASE_IMAGES_DOWNLOAD_DIR)
