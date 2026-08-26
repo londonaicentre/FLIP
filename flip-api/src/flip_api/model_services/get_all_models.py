@@ -165,19 +165,24 @@ def get_all_models_endpoint(
         requesting_user_id = user_id
 
     if project_filter is not None:
-        # Answer a scoped request the way the per-project route this replaces does: 404 for a
-        # project that isn't there, 403 for one the caller may not see. Leaving it to the access
-        # predicate would instead return an empty page, which reads as "this project has no
-        # models" — indistinguishable from "not yours", and baffling on a shared link.
+        # Access is checked BEFORE existence, deliberately: a non-manager gets the same 403 whether
+        # the project is merely not theirs or not there at all, so this route never confirms to a
+        # caller probing ids whether a guessed project exists. The 404 is reachable only by
+        # CAN_MANAGE_PROJECTS holders — who can list every project anyway, and whose stale link to
+        # a deleted project should say so. Leaving both to the access predicate would instead
+        # return an empty page, which reads as "this project has no models" — indistinguishable
+        # from "not yours", and baffling on a shared link.
+        # requesting_user_id is None exactly when the caller holds CAN_MANAGE_PROJECTS (computed
+        # above), for whom can_access_project short-circuits True — skip the duplicate lookup.
+        if requesting_user_id is not None and not can_access_project(user_id, project_filter, session):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You do not have access to this project",
+            )
         if get_project_by_id(project_filter, session) is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Project {project_filter} not found",
-            )
-        if not can_access_project(user_id, project_filter, session):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="You do not have access to this project",
             )
 
     response, status_counts, paging = get_all_models_service(

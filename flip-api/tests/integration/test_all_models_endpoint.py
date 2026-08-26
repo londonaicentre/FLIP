@@ -541,13 +541,36 @@ def test_project_filter_for_an_inaccessible_project_is_forbidden(
 
 
 def test_project_filter_for_an_unknown_project_is_not_found(client: TestClient, session):
-    """A stale bookmark to a deleted project gets 404, matching the per-project route."""
+    """A manager's stale bookmark to a deleted project gets 404 — and only a manager's.
+
+    Access is checked before existence, so the 404 branch is reachable solely by
+    CAN_MANAGE_PROJECTS holders, who can list every project anyway; everyone else gets the
+    uniform 403 pinned by the no-oracle test below.
+    """
+    admin_id = admin_user(session)
+
+    override_verify_token_as(admin_id)
+    response = client.get(MODELS_URL, params={"project": str(uuid4())})
+
+    assert response.status_code == 404
+
+
+def test_unknown_project_is_indistinguishable_from_an_inaccessible_one_for_non_managers(
+    client: TestClient, session
+):
+    """A non-manager probing an unknown project id gets the plain no-access 403, never a 404.
+
+    Pins the no-enumeration-oracle property: the response — status and detail — is identical to
+    the one for an existing project the caller may not see, so this route never confirms whether
+    a guessed project id exists.
+    """
     user_id = uuid4()
 
     override_verify_token_as(user_id)
     response = client.get(MODELS_URL, params={"project": str(uuid4())})
 
-    assert response.status_code == 404
+    assert response.status_code == 403
+    assert response.json()["detail"] == "You do not have access to this project"
 
 
 def test_invalid_project_param_is_rejected(client: TestClient, session):
