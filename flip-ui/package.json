@@ -24,6 +24,7 @@
         "serve:demo": "vite preview --mode demo --port 4174",
         "serve": "vite preview",
         "test:unit": "vitest run --silent --coverage",
+        "test:types": "tsc --noEmit -p test/tsconfig.json",
         "lint": "npx eslint \"./src/**/*.vue\" \"./src/**/*.ts\"",
         "prepare": "husky install",
         "test:unit:update": "vitest run -u --silent --coverage",

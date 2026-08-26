@@ -198,6 +198,16 @@ npm run test:start &       # in one shell — leave running
 npx cypress open           # in another — pick a spec
 ```
 
+#### Typecheck the test tree
+
+```bash
+npm run test:types         # tsc --noEmit -p test/tsconfig.json
+```
+
+The Cypress tree has its own TS project ([`test/tsconfig.json`](test/tsconfig.json)) that `npm run lint`
+(eslint over `src/` only) never sees, so CI runs this as a separate step to keep the custom-command
+declarations honest.
+
 #### Run a single group
 
 ```bash
