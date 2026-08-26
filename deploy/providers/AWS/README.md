@@ -779,7 +779,7 @@ Press Ctrl+C to stop all forwards. The Central Hub UI and API are accessed via t
 
 ## Checkov Security Lint
 
-CI blocks PRs that regress this tree's security posture (FLIP#1052 + the FLIP#1058 triage): the
+CI goes red on PRs that regress this tree's security posture (FLIP#1052 + the FLIP#1058 triage): the
 `Checkov Security Lint` job in `validate_terraform.yml` runs a curated checkov check list statically over
 `deploy/providers/AWS/**` — no credentials, no `terraform init`, no plan. Two families are promoted:
 
@@ -794,8 +794,13 @@ CI blocks PRs that regress this tree's security posture (FLIP#1052 + the FLIP#10
   rationale; classes deliberately *not* promoted are recorded in the script.
 
 ```bash
-make checkov-lint     # run the same check locally (uses checkov from PATH, or uvx)
+make checkov-lint                          # from the REPO ROOT (env-free)
+bash scripts/checkov_lint.sh               # or directly, from this directory
 ```
+
+(The `checkov-lint` target in *this* directory's Makefile works too, but only with a populated deploy env
+file — the Makefile's parse-time `FL_KIT_DATE` guard fires before any target runs. The repo-root target and
+the direct script invocation need nothing.)
 
 Deliberate breadth or posture is acknowledged **in-code with a rationale**, never by weakening the check list
 globally — add inside the flagged resource/data block:

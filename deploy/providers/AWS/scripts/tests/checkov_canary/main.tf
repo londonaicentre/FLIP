@@ -13,16 +13,25 @@
 # limitations under the License.
 
 # Canary fixture for scripts/checkov_lint.sh (FLIP#1052) — NOT deployed
-# infrastructure. This statement is deliberately overly broad: a data-access
-# action with a wildcard Resource. The lint harness asserts checkov FAILS it
-# before scanning the real tree, so a broken install or an ineffective check
-# list can never produce a vacuous green. No module references this directory,
-# so `terraform validate` of the roots never loads it.
-data "aws_iam_policy_document" "iam_lint_canary" {
+# infrastructure. One deliberate violation per promoted check family; the lint
+# harness asserts checkov FAILS both before scanning the real tree, so a broken
+# install or an ineffective check list can never produce a vacuous green. No
+# module references this directory, so `terraform validate` of the roots never
+# loads it.
+
+# IAM family: a data-access action with a wildcard Resource (CKV_AWS_356).
+data "aws_iam_policy_document" "checkov_canary" {
   statement {
     sid       = "CanaryOverlyBroadRead"
     effect    = "Allow"
     actions   = ["s3:GetObject"]
     resources = ["*"]
   }
+}
+
+# Posture family: an EC2 instance with IMDSv1 left enabled — no
+# metadata_options block (CKV_AWS_79).
+resource "aws_instance" "checkov_canary" {
+  ami           = "ami-00000000000000000"
+  instance_type = "t3.micro"
 }

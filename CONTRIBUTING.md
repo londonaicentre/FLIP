@@ -293,14 +293,15 @@ never fails an otherwise-green job.
 ### Checkov security lint (Terraform)
 
 `validate_terraform.yml` carries a `Checkov Security Lint` job (FLIP#1052 + the FLIP#1058 triage) alongside
-`fmt`/`validate`: a curated checkov check list runs statically over `deploy/providers/AWS/**` and **blocks the
-PR**. It covers IAM policy content — overly-broad statements such as a wildcard `Resource`/`Action` on a
+`fmt`/`validate`: a curated checkov check list runs statically over `deploy/providers/AWS/**` and **fails the
+PR's CI** on a regression. It covers IAM policy content — overly-broad statements such as a wildcard `Resource`/`Action` on a
 restrictable data-access action, data exfiltration or privilege-escalation shapes, on both policy syntaxes
 (`data "aws_iam_policy_document"` blocks and `jsonencode()` policies) — plus a small promoted set of
 infrastructure-posture checks (IMDSv2-only EC2, module version pinning, HSTS, WAF Log4j rule, SSM/KMS posture).
 No cloud credentials are needed, and checkov already knows which AWS actions support no resource-level scoping
 (e.g. `ssmmessages:*`, `ec2:Describe*`) — those wildcards pass without ceremony. Run it locally with
-`make -C deploy/providers/AWS checkov-lint`.
+`make checkov-lint` from the repo root (deliberately not the `deploy/providers/AWS` Makefile, whose parse-time
+env guard needs the gitignored deploy env files).
 
 Deliberate breadth or posture is acknowledged **in-code, with a rationale**, never by weakening the check list:
 put `# checkov:skip=<CHECK_ID>:<why this is deliberate>` inside the flagged resource/data block. The check

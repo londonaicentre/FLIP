@@ -289,6 +289,11 @@ restart-no-trust:
 	$(MAKE) -e DEBUG=$(DEBUG) -C flip-api restart
 ci:
 	act --env-file .env.development
+# Runs the script directly (not via deploy/providers/AWS/Makefile) so it stays
+# credential-free: that Makefile's parse-time FL_KIT_DATE guard needs the
+# gitignored deploy env files, which contributors don't have.
+checkov-lint:
+	bash deploy/providers/AWS/scripts/checkov_lint.sh
 ui:
 ifeq ($(strip $(PROD)),)
 	@echo "🚀 Starting UI..."
