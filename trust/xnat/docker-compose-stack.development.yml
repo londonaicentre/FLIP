@@ -36,6 +36,17 @@ services:
   xnat-db:
     volumes:
       - ./postgres:/docker-entrypoint-initdb.d
+      # Persist the database (FLIP#1048). Without this, /var/lib/postgresql/data falls
+      # back to the anonymous volume the postgres image declares, and swarm mints a NEW
+      # empty one on every task recreate — so any `up-xnat` (and therefore any
+      # `make -C trust up-trust`) silently discards every project, user and imaging
+      # session. xnat-web's archive IS bind-mounted below, so the symptom is the worst
+      # kind: the DICOM files survive on disk while the database indexing them does not,
+      # and XNAT comes back up healthy, serving 200s, with zero projects. Production
+      # already does this (docker-compose-stack.production.yml); dev was the outlier.
+      # Kept under XNAT_DATA_DIR so a trust's database sits beside its archive and the
+      # two cannot drift apart when an operator moves or clears that trust's data.
+      - ${XNAT_DATA_DIR}/xnat-db-data:/var/lib/postgresql/data
     deploy:
       resources:
         reservations:

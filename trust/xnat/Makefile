@@ -363,6 +363,7 @@ xnat-reset:
 		mkdir -p $(XNAT_DATA_DIR)/xnat-data/archive; \
 		mkdir -p $(XNAT_DATA_DIR)/xnat-data/build; \
 		mkdir -p $(XNAT_DATA_DIR)/xnat-data/cache; \
+		mkdir -p $(XNAT_DATA_DIR)/xnat-db-data; \
 	fi
 
 # Configure an XNAT instance with initial settings and run dcm2niix setup.
