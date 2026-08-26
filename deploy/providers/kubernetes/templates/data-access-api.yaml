@@ -34,6 +34,11 @@ data:
   DATA_ACCESS_POSTGRES_USER: {{ .Values.dataAccessApi.env.DATA_ACCESS_POSTGRES_USER | quote }}
   ENV: {{ .Values.environment | quote }}
   LOG_LEVEL: {{ .Values.logLevel | quote }}
+  {{- if .Values.dataAccessApi.snapshots.enabled }}
+  # Approved-cohort snapshot store (FLIP#857) — the PVC mount below. Row-level serving is
+  # fail-closed without it.
+  COHORT_SNAPSHOT_DIR: "/snapshots"
+  {{- end }}
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -57,6 +62,13 @@ spec:
     spec:
       enableServiceLinks: false
       serviceAccountName: {{ include "flip-trust.fullname" . }}-data-access-api
+      {{- if .Values.dataAccessApi.snapshots.enabled }}
+      securityContext:
+        # Makes the snapshot PVC group-writable for the image's non-root user — without it a
+        # fresh volume mounts root-owned, the store disables itself, and fail-closed serving
+        # refuses every project.
+        fsGroup: {{ .Values.dataAccessApi.snapshots.fsGroup }}
+      {{- end }}
       {{- if .Values.imagePullSecrets }}
       imagePullSecrets:
 {{ include "flip-trust.imagePullSecrets" . | nindent 8 }}
@@ -101,6 +113,11 @@ spec:
                 secretKeyRef:
                   name: {{ if .Values.secrets.create }}{{ include "flip-trust.fullname" . }}-secrets{{ else }}{{ .Values.secrets.existingName }}{{ end }}
                   key: trust-internal-service-key
+          {{- if .Values.dataAccessApi.snapshots.enabled }}
+          volumeMounts:
+            - name: cohort-snapshots
+              mountPath: /snapshots
+          {{- end }}
           resources:
             {{- toYaml .Values.dataAccessApi.resources | nindent 12 }}
           livenessProbe:
@@ -117,6 +134,34 @@ spec:
             initialDelaySeconds: {{ .Values.dataAccessApi.probes.readiness.initialDelaySeconds }}
             periodSeconds: {{ .Values.dataAccessApi.probes.readiness.periodSeconds }}
             timeoutSeconds: {{ .Values.dataAccessApi.probes.readiness.timeoutSeconds }}
+      {{- if .Values.dataAccessApi.snapshots.enabled }}
+      volumes:
+        - name: cohort-snapshots
+          persistentVolumeClaim:
+            claimName: {{ include "flip-trust.fullname" . }}-cohort-snapshots
+      {{- end }}
+{{- if .Values.dataAccessApi.snapshots.enabled }}
+---
+# Approved-cohort snapshot store (FLIP#857): frozen cohort artefacts, one directory per
+# hub project UUID. Row-level patient data — back this PV up with the OMOP volume.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "flip-trust.fullname" . }}-cohort-snapshots
+  namespace: {{ include "flip-trust.namespace" . }}
+  labels:
+    {{- include "flip-trust.labels" . | nindent 4 }}
+    app.kubernetes.io/component: data-access-api
+spec:
+  accessModes:
+    - {{ .Values.dataAccessApi.snapshots.accessMode }}
+  {{- if .Values.dataAccessApi.snapshots.storageClassName }}
+  storageClassName: {{ .Values.dataAccessApi.snapshots.storageClassName }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.dataAccessApi.snapshots.size }}
+{{- end }}
 ---
 apiVersion: v1
 kind: Service
