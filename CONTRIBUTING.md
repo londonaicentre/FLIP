@@ -290,6 +290,21 @@ lint, type-checking, unit and integration tests, docs, Terraform validation, Hel
 Coverage upload to Codecov is non-blocking (`fail_ci_if_error: false`), so a missing `CODECOV_TOKEN` on your fork
 never fails an otherwise-green job.
 
+### IAM policy lint (Terraform)
+
+`validate_terraform.yml` carries an `IAM Policy Lint` job (FLIP#1052) alongside `fmt`/`validate`: checkov's IAM
+checks run statically over `deploy/providers/AWS/**` and **block the PR** on overly-broad policy statements — a
+wildcard `Resource`/`Action` on a restrictable data-access action, data exfiltration or privilege-escalation
+shapes. Both policy syntaxes are covered (`data "aws_iam_policy_document"` blocks and `jsonencode()` policies), no
+cloud credentials are needed, and checkov already knows which AWS actions support no resource-level scoping
+(e.g. `ssmmessages:*`, `ec2:Describe*`) — those wildcards pass without ceremony. Run it locally with
+`make -C deploy/providers/AWS iam-lint`.
+
+Deliberate breadth is acknowledged **in-code, with a rationale**, never by weakening the check list: put
+`# checkov:skip=<CHECK_ID>:<why this breadth is deliberate>` inside the flagged resource/data block. The check
+list lives in `deploy/providers/AWS/scripts/iam_policy_lint.sh`, which self-tests against a canary fixture before
+scanning so a broken checkov install can never produce a vacuous green.
+
 ### Running the stack (pull vs. build)
 
 In development (`PROD` unset), `make up` **pulls** the repo-built service images

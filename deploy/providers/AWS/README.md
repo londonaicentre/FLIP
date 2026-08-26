@@ -777,6 +777,38 @@ This prints a list of URLs you can paste into your browser:
 
 Press Ctrl+C to stop all forwards. The Central Hub UI and API are accessed via the CloudFront distribution at the canonical subdomain (e.g. `https://app.flip.aicentre.co.uk`) — no port forwarding needed. The ALB is internal (private subnets, no public IP); CloudFront reaches it through a VPC origin.
 
+## IAM Policy Lint
+
+CI blocks PRs that add overly-broad IAM statements to this tree (FLIP#1052): the `IAM Policy Lint` job in
+`validate_terraform.yml` runs checkov's IAM checks statically over `deploy/providers/AWS/**` — no credentials,
+no `terraform init`, no plan. It flags wildcard `Resource`/`Action` on restrictable data-access actions plus the
+data-exfiltration / privilege-escalation / permissions-management shapes, on both policy syntaxes
+(`data "aws_iam_policy_document"` blocks and `jsonencode()` policies). Checkov knows which AWS actions support
+no resource-level scoping (`ssmmessages:*`, `ec2:Describe*`, …), so those deliberate `resources = ["*"]`
+statements pass without suppression.
+
+```bash
+make iam-lint     # run the same check locally (uses checkov from PATH, or uvx)
+```
+
+Deliberate breadth on a restrictable action is acknowledged **in-code with a rationale**, never by weakening the
+check list globally — add inside the flagged resource/data block:
+
+```hcl
+data "aws_iam_policy_document" "example" {
+  # checkov:skip=CKV_AWS_356:<why this breadth is deliberate — e.g. dedicated single-purpose bucket>
+  statement {
+    ...
+  }
+}
+```
+
+The check list and invocation live in [`scripts/iam_policy_lint.sh`](scripts/iam_policy_lint.sh). The script
+first asserts checkov still fails the deliberately broad canary fixture
+(`scripts/tests/iam_lint_canary/`) before scanning the real tree, so a broken install or an ineffective
+check list fails loudly instead of passing vacuously. Known limitation: only a **literal** `"*"` is caught —
+an interpolated bucket-root grant (`"${aws_s3_bucket.x.arn}/*"` on `s3:GetObject`) still needs human review.
+
 ## Hybrid Deployment: Adding an On-Premises Trust
 
 To connect a local (on-premises) Trust host to the AWS Central Hub:

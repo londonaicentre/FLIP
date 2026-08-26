@@ -72,3 +72,29 @@ jobs:
 
       - name: Run add_fl_kits.sh test harness
         run: bash deploy/providers/AWS/scripts/tests/test_add_fl_kits.sh
+
+  # Static IAM policy-content lint (FLIP#1052): checkov's IAM checks over the
+  # whole AWS tree, catching overly-broad statements (wildcard Resource/Action
+  # on restrictable data-access actions) that fmt/validate can't see. Runs on
+  # raw .tf with no credentials, no init, no plan — fork-PR-safe. Deliberate
+  # breadth is acknowledged in-code via `# checkov:skip=<ID>:<rationale>`, never
+  # by weakening the check list. The script self-tests against a canary fixture
+  # first, so a broken install can't produce a vacuous green.
+  iam-policy-lint:
+    name: IAM Policy Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install checkov
+        # Keep in sync with CHECKOV_VERSION in scripts/iam_policy_lint.sh.
+        run: pip install checkov==3.3.14
+
+      - name: Run IAM policy lint
+        run: bash deploy/providers/AWS/scripts/iam_policy_lint.sh
