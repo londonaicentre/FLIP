@@ -14,6 +14,9 @@
 # -- unlike the simulator harness (`make -C fl-tutorials run-tutorial`), which needs all three
 # and therefore cannot run here.
 #
+# fl-apps/flower/** is here because test_flower_min_clients_wiring.py polices the deployed
+# templates too -- flip-api discards an uploaded server_app.py, so fl-apps/flower is the code
+# that actually runs. Without this filter the guard never fires on the files that matter most.
 # Path filters cover BOTH backends, plus the flip-utils environment AND source: the Ark+ apps
 # import `flip` at module-exec time, so a flip-utils source change can break this suite and must
 # trigger it. The pre-existing tutorial workflow (fl-apps-check-tutorial-sync.yml) was filtered to
@@ -26,6 +29,7 @@ on:
     branches: [main, develop]
     paths:
       - "fl-tutorials/**"
+      - "fl-apps/flower/**"
       - "flip-utils/flip/**"
       - "flip-utils/pyproject.toml"
       - "flip-utils/uv.lock"
@@ -34,6 +38,7 @@ on:
     branches: [main, develop]
     paths:
       - "fl-tutorials/**"
+      - "fl-apps/flower/**"
       - "flip-utils/flip/**"
       - "flip-utils/pyproject.toml"
       - "flip-utils/uv.lock"
