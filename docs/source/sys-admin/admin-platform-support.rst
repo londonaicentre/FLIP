@@ -70,7 +70,14 @@ As a system, the FLIP solution handles the following types of data:
    The XNAT cached image data at item 2 **survives deletion of the project it belongs to**. Deleting a project
    in FLIP is a soft delete of the platform record and does not remove anything from a Trust's XNAT, because
    the local enrichment (segmentation, labelling, contours, annotations) cannot be re-derived from PACS the way
-   the images themselves can. Removing that data is an explicit administrator action taken at the Trust.
+   the images themselves can. Removing that data from XNAT is an explicit administrator action taken at the Trust.
+
+   Distinct from XNAT's archive, the **imaging download cache** on the trust host (under
+   ``BASE_IMAGES_DOWNLOAD_DIR``, filled by the Imaging API when FL training fetches a cohort) is transient
+   and managed automatically: entries unused for 7 days (``IMAGE_CACHE_RETENTION_HOURS``, configurable per
+   trust, disable-able via ``IMAGE_CACHE_RETENTION_ENABLED``) are removed by the Imaging API's retention
+   sweeper. Nothing in that cache is unique — every entry re-downloads from XNAT on demand — so its removal
+   needs no administrator action and loses no enrichment.
 
 Backup
 ======

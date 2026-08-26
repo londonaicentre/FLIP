@@ -70,6 +70,18 @@ other's copies. The cache is invalidated when an upload changes the accession's 
 `force_refresh=true` (the sentinel is removed before the re-download starts and rewritten on success), and — on the
 NVFLARE backend — by `CleanupImages`, which empties the whole net directory at job start and end.
 
+**Retention (FLIP#1050).** The cache is bounded by a TTL on last use, enforced by an in-process sweeper
+(`services/cache_retention.py`) started with the app: an accession directory whose newest sentinel mtime — refreshed
+on every cache hit — is older than `IMAGE_CACHE_RETENTION_HOURS` (default `168`, 7 days) is removed on the next pass
+(every `IMAGE_CACHE_SWEEP_INTERVAL_MINUTES`, default `60`; `IMAGE_CACHE_RETENTION_ENABLED=false` disables). The sweep
+also reaps sentinel-less accession dirs (invalidated or partially extracted) once the directory mtime ages out,
+staging zips orphaned by a crash, and project dirs left empty — but never a net directory (a pre-created mount point)
+or the `upload/` staging dir inside it. The defaults live in the service settings, not the compose files; the TTL
+must comfortably exceed any FL job duration, because NVFLARE clients refresh last-used only once, at job start
+(Flower clients re-hit every round). The sweep pass is synchronous on the single-worker event loop, so it serialises
+with in-flight downloads by construction; if the sweeper dies, `/health` reports `degraded` with the task name.
+Nothing in the cache is unique — an expired entry re-downloads from XNAT on the next request.
+
 ### Imaging
 
 Interfaces with XNAT's DICOM Query-Retrieve (DQR) plugin. Full DQR API docs available at
