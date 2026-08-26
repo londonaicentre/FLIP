@@ -236,6 +236,27 @@ class IImagingImportStatus(BaseModel):
     )
 
 
+class ICohortSnapshot(BaseModel):
+    """One trust's frozen approved-cohort record (FLIP#857) — aggregates only.
+
+    ``approvedRecordCount`` is the count the project was staged/approved on; when it
+    differs from ``rowCount`` the live cohort drifted between submission and approval
+    (the UI surfaces the diff — the snapshot is what the project trains on either way).
+    """
+
+    trust_id: UUID = Field(alias="trustId")
+    trust_name: str = Field(alias="trustName")
+    row_count: int = Field(alias="rowCount")
+    approved_record_count: int | None = Field(default=None, alias="approvedRecordCount")
+    has_accessions: bool = Field(alias="hasAccessions")
+    snapshot_at: datetime = Field(alias="snapshotAt")
+    query_id: UUID | None = Field(default=None, alias="queryId")
+
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+
+
 class IImagingStatusResponse(BaseModel):
     project_creation_completed: bool = Field(alias="projectCreationCompleted")
     import_status: IImagingImportStatus | None = Field(default=None, alias="importStatus")

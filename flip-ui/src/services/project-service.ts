@@ -112,6 +112,19 @@ export interface IImagingProjectStatus {
     reimportCount?: number,
 }
 
+// One trust's frozen approved-cohort record (FLIP#857) — aggregates only. A rowCount
+// differing from approvedRecordCount means the live cohort drifted between submission
+// and approval; hasAccessions=false marks a tabular cohort with no imaging to pull.
+export interface ICohortSnapshot {
+    trustId: string,
+    trustName: string,
+    rowCount: number,
+    approvedRecordCount: number | null,
+    hasAccessions: boolean,
+    snapshotAt: string,
+    queryId: string | null,
+}
+
 export async function getProject(url: string): Promise<IProject> {
     const response = await _http.get<IProject>(url);
 
@@ -154,6 +167,12 @@ export async function deleteProject(url: string): Promise<void> {
 
 export async function getImagingProjectsStatus(url: string): Promise<IImagingProjectStatus[]> {
     const response = await _http.get<IImagingProjectStatus[]>(url);
+
+    return response.data;
+}
+
+export async function getCohortSnapshots(url: string): Promise<ICohortSnapshot[]> {
+    const response = await _http.get<ICohortSnapshot[]>(url);
 
     return response.data;
 }
