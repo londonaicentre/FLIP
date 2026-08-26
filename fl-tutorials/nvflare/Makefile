@@ -17,6 +17,7 @@
 #
 #   make download-xray-data                       # fetch the x-ray dataset from HF
 #   make download-spleen-data                      # fetch + build the MSD spleen dataset
+#   make download-synthea-data                     # fetch + derive the Synthea OMOP tabular dataset
 #   make upload-spleen-labels FLIP_PROJECT_ID=<uuid>  # data enrichment: push labels into a Trust's XNAT
 #   make download-arkplus-finetuning-data          # fetch the Ark+ train splits from HF
 #   make download-arkplus-eval-data                # fetch the Ark+ hold-out splits from HF
@@ -31,6 +32,8 @@
 #   - the three Ark+ tutorials share aicentreflip/tutorials-arkplus-cxr-classification:
 #     arkplus_fine_tuning uses download-arkplus-finetuning-data (data/arkplus/site{1,2}/); the two
 #     Ark+ evaluation tutorials use download-arkplus-eval-data (data/arkplus/site{1,2}_holdoff/).
+#   - ehr_risk_prediction derives its tabular dataset from the public Synthea-in-OMOP
+#     1k-person set on the AWS Open Data Registry (download-synthea-data, data/synthea/).
 
 # Discover tutorials: any <category>/<name>/ that carries a .env.app.
 TUTORIAL_DIRS := $(sort $(patsubst %/,%,$(dir $(wildcard */*/.env.app))))
@@ -49,7 +52,12 @@ SPLEEN_LABELS_DIR ?= data/spleen/images
 # CLI always matches this checkout (flip.xnat may be newer here than the last published version).
 FLIP_UTILS_DIR ?= $(abspath ../../flip-utils)
 
-.PHONY: list-tutorials run-tutorial run-all-tutorials download-xray-data download-spleen-data download-arkplus-finetuning-data download-arkplus-eval-data upload-spleen-labels
+EHR_DIR := tabular_classification/ehr_risk_prediction
+# Where download-synthea-data lands the derived tabular CSVs. fl-tutorials/flower/Makefile
+# overrides this to its own data/ tree when delegating here.
+SYNTHEA_OUTPUT_DIR ?= data/synthea
+
+.PHONY: list-tutorials run-tutorial run-all-tutorials download-xray-data download-spleen-data download-synthea-data download-arkplus-finetuning-data download-arkplus-eval-data upload-spleen-labels
 
 # Download the x-ray reference dataset from Hugging Face and normalise it into the
 # layout image_classification/xray_classification/.env.app expects (data/xrays_mini_300/,
@@ -132,6 +140,15 @@ upload-spleen-labels:
 		$(if $(ALLOW_NO_OP),--allow-no-op) \
 		$(if $(REQUIRE_FULL_COVERAGE),--require-full-coverage) \
 		$(if $(DRY_RUN),--dry-run)
+
+# Download three OMOP tables of the public 1k-person Synthea dataset (AWS Open Data Registry,
+# anonymous HTTPS, ~5 MB) and derive the EHR risk-prediction tutorial's dataframe.csv + per-site
+# splits into $(SYNTHEA_OUTPUT_DIR) (gitignored). Idempotent — the raw tables are cached under
+# $(SYNTHEA_OUTPUT_DIR)/.synthea-raw/. Needs only pandas, so it runs outside any project venv.
+download-synthea-data:
+	@echo "⬇️  Downloading Synthea-in-OMOP tabular dataset (AWS Open Data Registry)..."
+	@uv run --no-project --with pandas python $(EHR_DIR)/utils/build_synthea_dataframe.py --output-dir $(SYNTHEA_OUTPUT_DIR)
+	@echo "✅ Synthea data ready at $(SYNTHEA_OUTPUT_DIR)/ — run: make run-tutorial TUTORIAL=ehr_risk_prediction"
 
 list-tutorials:
 	@echo "Available NVFLARE tutorials (pass the name to 'make run-tutorial TUTORIAL=…'):"

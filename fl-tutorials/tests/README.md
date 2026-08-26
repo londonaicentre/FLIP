@@ -13,10 +13,13 @@ limitations under the License.
 
 # fl-tutorials tests
 
-CPU-only pytest suite over the tutorial apps: their transform chains, plus a static drift guard on
+CPU-only pytest suite over the tutorial apps: their transform chains, a static drift guard on
 the Flower apps' `min_clients` wiring (which also covers `fl-apps/flower/`, the templates that
-actually deploy). No GPU, no dataset download, no FL image, no network — the fixtures are synthetic
-DICOMs built in-process, and the whole suite runs in a couple of seconds.
+actually deploy), and the EHR risk-prediction tutorial's shared feature engineering + model
+contract (`test_ehr_feature_engineering.py` — that app reads no DICOM, so it is deliberately
+absent from `DICOM_APPS`). No GPU, no dataset download, no FL image, no network — the fixtures
+are synthetic DICOMs and dataframes built in-process, and the whole suite runs in a couple of
+seconds.
 
 ```bash
 make -C fl-tutorials test        # ruff over fl-tutorials/ + this suite
