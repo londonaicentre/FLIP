@@ -130,6 +130,26 @@ Client ID are required for a production deployment.
 > [`vite.config.mts`](vite.config.mts)). Use `VITE_LOCAL` only with `npm run dev` against a mocked API, and never
 > set `VITE_DEMO` at all — the demo build gets it from `--mode demo`. Keep both out of CI and deploy environments.
 
+### Dependency scoping
+
+**If a non-test file under `src/` imports a package — statically or through a dynamic `import()` — it belongs in
+`dependencies`, not `devDependencies`.**
+
+The build itself does not care: `vite build` tree-shakes from the `src/` entry points and bundles whatever they
+reach, whichever stanza the package sits in. The stanza matters because **Dependabot derives an alert's scope
+label from it**. A package that ships to users but sits in `devDependencies` produces an alert labelled
+"Development", which reads as *not in the production bundle* and invites a wrongly-dismissed alert on code that
+CloudFront is serving to every user. FLIP#1041 fixed 16 such packages (`axios`, `pinia`, `aws-amplify`,
+`vee-validate` among them) plus `husky`, which had drifted the other way.
+
+Two traps when checking this:
+
+- **`src/` also holds the co-located `*.spec.ts` unit tests.** Their imports (`vitest`, `@vue/test-utils`,
+  `@pinia/testing`) are genuinely dev-only — exclude test files before concluding a package ships.
+- **A `from "..."` grep alone under-reports.** `highlight.js` is loaded lazily via
+  `import("highlight.js/lib/core")` in [`src/utils/highlightJson.ts`](src/utils/highlightJson.ts) and is
+  correctly a `dependency` despite having no static import.
+
 ## Testing
 
 ### Unit tests (Vitest)
