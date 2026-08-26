@@ -140,3 +140,71 @@ the full platform path, upload the app files through the FLIP UI (or `make e2e_s
 FL API bundles the template and applies `config.json`'s `GLOBAL_ROUNDS` at submit time. Remember
 the data-enrichment step: training dies with "No image/label pairs found" until the labels are
 uploaded next to the pulled images in XNAT.
+
+## Running on a real FLIP project: data enrichment
+
+The `export` and `sim` runs above use **local** data. On a real FLIP project the images come from
+each Trust's PACS — and PACS supply images only. A segmentation mask is a 3D volume
+with nowhere to live in OMOP, so the labels have to be uploaded into each Trust's XNAT before training.
+That upload is the platform's **data enrichment** stage.
+
+(Contrast the chest X-ray classification tutorial, whose labels *are* in OMOP: its `query.sql` projects
+them as dataframe columns and it needs no enrichment. See the Data Enrichment user guide.)
+
+Each label must land in the **same scan's `NIFTI` resource** as its image, named to match — the training
+code pairs them by filename, substituting `/input_` with `/label_`:
+
+```text
+NIFTI resource of one scan
+├── input_spleen_2.nii.gz   # pulled from PACS, converted by FLIP
+└── label_spleen_2.nii.gz   # uploaded by you
+```
+
+Run the upload **after the image pull and after DICOM-to-NIfTI conversion** — the target filename is
+derived from the converted image, so running earlier silently skips every scan.
+
+### Uploading the MSD labels
+
+First download all 41 cases (the default of 10 covers only part of the cohort):
+
+```bash
+make -C fl-tutorials download-spleen-data NUM_CASES=41
+```
+
+Then, with network access to the Trust's XNAT and credentials in the environment:
+
+```bash
+export XNAT_HOST=https://xnat.trust.example
+export XNAT_USER=your-username
+export XNAT_PASS=your-password
+
+make -C fl-tutorials upload-spleen-labels FLIP_PROJECT_ID=<project-uuid> \
+  XNAT_URLS="http://127.0.0.1:8104 http://127.0.0.1:8106" DRY_RUN=1
+```
+
+`DRY_RUN=1` reports what would happen without changing anything — do that first, then drop it to
+upload.
+
+**Enrich every Trust.** Each Trust's XNAT holds only its own studies, so the project is enriched
+only once all of them are; a Trust left without labels fails training at the zero-pairs guard. The
+`XNAT_URLS` list above is the dev roster — GSTT on 8104, KCH on 8106 — and one invocation covers
+both. Where the Trusts need different logins, repeat `XNAT_CREDENTIALS_FILES` instead. Sending the
+whole mapping to every Trust is safe: an accession exists at exactly one site, and the others report
+it as "no matching scan".
+
+The accession-to-case mapping is fetched at run time from the public `aicentreflip/trust-data` dataset
+(the same mock data the Trusts are seeded from), so nothing needs to be checked in. It is cached beside
+the labels directory, so a re-run needs no network. Set `HF_TRUST_DATA_REVISION=<sha>` to pin the
+dataset revision rather than reading the moving `main`.
+
+`TRUST=N` filters the manifest to one site using that dataset's `source_trust` column (`1` is GSTT,
+`2` is KCH), and is rarely needed now that one run covers the roster. It is the **OMOP data
+partition**, not the FL kit slot of the same `Trust_N` name that the hub assigns at registration —
+the two numberings are unrelated, and confusing them uploads a site's labels to the wrong XNAT,
+where every accession reports the benign-looking "no matching scan".
+
+Options: `OVERWRITE=1` to replace labels already in place, `XNAT_CREDENTIALS_FILE=<path>` to read
+credentials from a JSON file instead of the environment.
+
+This step is **backend-agnostic** — the labels live in XNAT, so a project enriched once can be trained
+by either the NVFLARE or the Flower spleen tutorial. `fl-tutorials/flower` delegates to this same script.

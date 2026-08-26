@@ -152,8 +152,14 @@ Delete Project
    Projects can be deleted at any time, but:
 
    - Any running training sessions will be deleted and no longer accessible
-   - Images associated with the project will be deleted from XNAT
-   - The project will no longer be visible within XNAT
+   - Imaging already pulled to each Trust is **deliberately retained** in that Trust's XNAT. Deleting a project
+     is a soft delete: the platform record is kept and the deletion audited, but the imaging is not touched.
+     Images could be re-pulled from PACS, whereas the segmentations, contours and annotations added during
+     data enrichment could not — so a project deletion never destroys them
+   - The project therefore remains visible within XNAT to users with access to it there, and is no longer
+     reachable through FLIP
+   - Removing a Trust's imaging is a **separate administrator action**, carried out at the Trust, and is not
+     part of deleting a project
 
 1. Select 'Edit Project'
 2. Under 'Advanced Options', click the 'Delete Project' button
@@ -350,9 +356,10 @@ Model Files
 There is no single list of required files. What a model must contain depends on its **job type**
 — the kind of federated job it runs, such as federated averaging or evaluation — and on which FL
 backend your platform is running. An app declares its job type with the ``job_type`` key in
-``config.json``. Every NVFLARE app carries a ``config.json``, because it is itself a required file
-for those job types; a Flower app only needs one in order to run a job type other than the default.
-Where the key — or the file itself — is absent, the ``standard`` job type is assumed.
+``config.json``. Every app carries a ``config.json``, on either backend, because it is itself a
+required file for every job type. Where the key is absent, the ``standard`` job type is assumed.
+The file itself is not optional: a model without a ``config.json`` is shown as missing it and
+cannot start training, whichever job type it was going to declare.
 
 **You do not need to look this up.** FLIP tells you which files your model needs, in two places on
 the model page:
@@ -446,8 +453,9 @@ Where that configuration lives, and which settings are available, depends on the
 - **NVIDIA FLARE apps** are configured through ``config.json``, which is one of the required files
   for every NVFLARE job type. As well as declaring ``job_type``, it may set platform-recognised
   keys such as ``GLOBAL_ROUNDS`` and ``LOCAL_ROUNDS``.
-- **Flower apps** take their run configuration from the platform's app template, which your app
-  can override with a ``config.toml`` file. Flower apps do not use the NVFLARE keys.
+- **Flower apps** also carry a ``config.json``, but it is read only for ``job_type`` — the run
+  configuration comes from the platform's app template, which your app can override with a
+  ``config.toml`` file. Flower apps do not use the NVFLARE keys.
 
 For NVFLARE apps, any key the platform does not recognise is passed through untouched, for your own
 code to read at runtime — which is how the tutorials carry app-specific settings such as learning
@@ -498,6 +506,10 @@ When model files have been uploaded, you will then need to confirm that the data
 .. note::
 
    You must confirm the data enrichment step is complete (even if no enrichment of the dataset was required and/or actually performed) before training can commence.
+
+.. important::
+
+   If your model trains against labels that are **not** in :term:`OMOP` — segmentation masks and other image-derived annotations — those must be uploaded into each Trust's XNAT *before* you confirm this step, or training will start and then fail with no usable samples. Labels that *are* in OMOP, such as a lab result or a coded report finding, need no upload: project them as a column in your cohort query instead. See :ref:`data-enrichment` for both routes.
 
 1. Navigate to project page
 2. On the right-hand side, toggle the button to confirm the dataset has been enriched

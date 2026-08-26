@@ -1528,6 +1528,30 @@ class TestIsMfaEnabled:
 
         assert mock_client_instance.admin_get_user.call_count == 1
 
+    def test_negative_result_is_not_cached(self, mock_boto3_client, mock_settings):
+        """A not-enrolled result must never be cached: first-time enrolment
+        happens client-side (Amplify updateMFAPreference straight to Cognito),
+        so the hub gets no invalidation signal — a cached False would 403
+        every MFA-gated call for up to the TTL right after the user enrols."""
+        mock_client_instance = mock_boto3_client.return_value
+        mock_client_instance.admin_get_user.return_value = {
+            "Username": "user@example.com",
+            "UserMFASettingList": [],
+        }
+
+        # Pre-enrolment status check (what /users/me/mfa/status does).
+        assert is_mfa_enabled("user@example.com", "pool-id") is False
+
+        # User enrols via the client; Cognito now reports an active token.
+        mock_client_instance.admin_get_user.return_value = {
+            "Username": "user@example.com",
+            "UserMFASettingList": ["SOFTWARE_TOKEN_MFA"],
+        }
+
+        # The very next gated call must see the fresh state, not a stale False.
+        assert is_mfa_enabled("user@example.com", "pool-id") is True
+        assert mock_client_instance.admin_get_user.call_count == 2
+
     def test_cache_is_invalidated_by_reset_user_mfa(self, mock_boto3_client, mock_settings):
         """admin_set_user_mfa_preference must invalidate the cached entry so the
         next verify_token call sees the fresh Cognito state."""

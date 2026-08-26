@@ -26,6 +26,9 @@ per-client metrics for the results JSON and to evaluate on the final round only.
 The required files (see [`required_files.json`](./required_files.json)) are:
 
 - `client_app.py` — the Flower `ClientApp`, defining `@app.train` and `@app.evaluate`.
+- `config.json` — declares `job_type`. The Central Hub reads this key and nothing else from the
+  file, to pick which base application to bundle; omit the key and you get `standard`, but the file
+  itself is required. Run configuration lives in `config.toml`, not here.
 - `models.py` — defines the model; `models.get_model` is what `server_app.py` instantiates to seed
   the initial global arrays.
 
@@ -55,7 +58,6 @@ The mod clips the local update to `dp-clipping-norm` and adds Gaussian noise cal
 (`dp-epsilon`, `dp-delta`) before the reply leaves the SuperNode, and is toggled by `dp-enabled` in
 `[tool.flwr.app.config]`. See [`flip.flower.privacy`](../../../flip-utils/flip/flower/privacy.py)
 for the mechanism and the shipped tutorials for worked examples:
-[`numpy`](../../../fl-tutorials/flower/numpy/README.md),
 [`xray_classification`](../../../fl-tutorials/flower/xray_classification/README.md) and
 [`3d_spleen_segmentation`](../../../fl-tutorials/flower/3d_spleen_segmentation/README.md).
 
