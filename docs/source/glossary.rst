@@ -15,6 +15,12 @@ Glossary
     **Flower Framework**
       Flower is an open-source framework for building federated learning systems. It provides tools and libraries to facilitate the development and deployment of federated learning applications. For more information, please see its `official documentation <https://flower.ai/docs/framework/>`_.
 
+    **MI-CDM**
+      Medical Imaging Common Data Model. The OHDSI extension that adds imaging to the OMOP CDM,
+      contributing the ``image_occurrence`` and ``image_feature`` tables. FLIP implements it and
+      adds an ``accession_id`` column to ``image_occurrence`` so that a cohort row can be matched
+      to its DICOM study in the Trust :term:`PACS`. See :ref:`omop-schema`.
+
     **NVIDIA FLARE**
       NVIDIA Federated Learning Application Runtime Environment is a domain-agnostic, open-source, extensible SDK that allows researchers and data scientists to adapt existing ML/DL workflows to a federated paradigm.
       For more information, please see the documentation `here <https://nvflare.readthedocs.io/en/main/index.html>`_.
