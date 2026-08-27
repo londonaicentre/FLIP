@@ -20,6 +20,8 @@ import datetime
 import json
 from typing import Any
 
+from fastapi import HTTPException
+
 from trust_api.config import get_settings
 from trust_api.routers.schemas import (
     CentralHubProject,
@@ -216,11 +218,17 @@ async def handle_get_imaging_status(payload: dict[str, Any]) -> dict[str, Any]:
 
     Gets the import status from the local imaging-api and reports back to the hub.
 
+    On failure the upstream HTTP status code is reported alongside the error, because the hub
+    renders a missing XNAT project (imaging-api 404) differently from an unreachable one
+    (500/502) — see FLIP#1022. Without it the hub would have to recover the code by parsing the
+    stringified exception.
+
     Args:
         payload: Task payload containing imaging_project_id and encoded_query.
 
     Returns:
-        dict with success status and imaging status result.
+        dict with success status and imaging status result. On failure, ``status_code`` is
+        present only when the failure carried one.
     """
     logger.info(f"Processing get imaging status task: {payload.get('imaging_project_id')}")
 
@@ -238,6 +246,9 @@ async def handle_get_imaging_status(payload: dict[str, Any]) -> dict[str, Any]:
         logger.info(f"Imaging status retrieved: {imaging_project_id}")
         return {"success": True, "result": json.dumps(response)}
 
+    except HTTPException as e:
+        logger.error(f"Error getting imaging status: {e}")
+        return {"success": False, "error": str(e), "status_code": e.status_code}
     except Exception as e:
         logger.error(f"Error getting imaging status: {e}")
         return {"success": False, "error": str(e)}

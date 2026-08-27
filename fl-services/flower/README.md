@@ -143,9 +143,25 @@ a participant slot.
 ```bash
 make -C fl-services/flower up                 # INSECURE stack (1 SuperLink + 2 SuperNodes + fl-api)
 make -C fl-services/flower up-secure          # SECURE stack (TLS + SuperNode auth); needs `provision` first
-make -C fl-services/flower submit APP=numpy   # submit a job to the running stack
+make -C fl-services/flower submit APP=xray_classification   # submit a job to the running stack
 make -C fl-services/flower down
 ```
+
+**Fetch the dataset before `up`.** The default `APP=xray_classification` is not self-contained: it
+reads images and a dataframe from the SuperNodes' bind mounts, and `up` only creates *placeholder*
+mounts (`DEV_IMAGES_DIR` defaults to `/tmp/flwr-dev-images`, `DEV_DATAFRAME` to
+`/tmp/flwr-dev-dataframe.csv` — see [`compose.dev.yml`](compose.dev.yml)). Submitting against those
+trains on an empty dataset with no signal that the data is missing. So download the data first, then
+point both variables at it when bringing the net up:
+
+```bash
+make -C fl-tutorials download-xray-data FL_BACKEND=flower   # → fl-tutorials/flower/data/xrays_mini_300/
+make -C fl-services/flower up \
+  DEV_IMAGES_DIR=$(pwd)/fl-tutorials/flower/data/xrays_mini_300/accession-resources \
+  DEV_DATAFRAME=$(pwd)/fl-tutorials/flower/data/xrays_mini_300/sample_get_dataframe_response.csv
+```
+
+(Run from the repo root; `data/` is gitignored. `up-secure` takes the same two variables.)
 
 The central-hub multi-net Flower topology is the separate
 [`deploy/compose.development.flower.yml`](../../deploy/compose.development.flower.yml), driven by the

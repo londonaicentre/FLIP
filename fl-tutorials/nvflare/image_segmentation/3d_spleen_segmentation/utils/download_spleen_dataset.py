@@ -15,6 +15,7 @@ import os
 import shutil
 
 from monai.apps.utils import download_and_extract
+from natsort import natsorted
 
 MAX_CASES = 41
 
@@ -65,7 +66,8 @@ def reorganise_spleen_dataset(output_dir, num_cases):
     Args:
         output_dir (str): The directory where the original downloaded dataset is located and where the reorganized
         dataset will be saved.
-        num_cases (int): Number of cases to keep from the dataset.
+        num_cases (int): Number of cases to keep from the dataset — the ``num_cases`` cases with
+        the lowest case numbers.
     """
     base_dir = os.path.join(output_dir, "Task09_Spleen")
     images_dir = os.path.join(base_dir, "imagesTr")
@@ -74,16 +76,23 @@ def reorganise_spleen_dataset(output_dir, num_cases):
     # Ensure output directory exists
     os.makedirs(output_dir, exist_ok=True)
 
-    # List all image files
-    image_files = sorted(os.listdir(images_dir))
+    # List all image files, lowest case number first. Case numbers are unpadded (spleen_2 …
+    # spleen_63), so sorting the names as text is lexicographic: it puts spleen_19 before spleen_2
+    # ('1' < '2') and spleen_2 before spleen_20 ('.' < '0'), which made --num_cases N keep an
+    # arbitrary-looking subset instead of the N lowest-numbered cases (FLIP#1060). natsorted keys
+    # on the digit run, as create_spleen_accession_csv.py already does for the subject IDs derived
+    # from these same names — the two orderings have to agree.
+    #
+    # The hidden-file filter runs before the sort rather than inside the loop below: the archive
+    # carries macOS resource forks (._spleen_<N>.nii.gz) beside the real volumes, and one of those
+    # counted as a case would silently cost a real case its slot.
+    image_files = natsorted(f for f in os.listdir(images_dir) if not f.startswith("."))
 
     # Process each image file
     print(f"Copying up to {num_cases} images and labels to subject folders in {output_dir}...")
 
     copied_cases = 0
     for img_file in image_files:
-        if img_file.startswith("."):
-            continue
         if copied_cases >= num_cases:
             break
 
@@ -135,7 +144,8 @@ if __name__ == "__main__":
         "-n",
         type=int,
         default=10,
-        help=f"number of cases to keep after download and reorganization (1 to {MAX_CASES}).",
+        help=f"number of cases to keep after download and reorganization (1 to {MAX_CASES}); "
+        "the lowest-numbered cases are kept.",
     )
     args = parser.parse_args()
 
