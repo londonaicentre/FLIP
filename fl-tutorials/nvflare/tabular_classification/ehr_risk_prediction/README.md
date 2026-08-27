@@ -164,14 +164,19 @@ off a single file. Override the round/client counts inline, e.g.
 1. Upload [`app_files/`](app_files) as the model files of a **`standard`**-job-type model.
 2. Submit [`query.sql`](query.sql) as the project's cohort query.
 
-Because the cohort carries no imaging, the project's imaging import is a no-op (nothing to pull) —
-expected for a tabular project. On the dev stack, run `make -C trust load-synthea-ehr` (above) first
-so the query has data. As an end-to-end smoke against a running stack — **no enrichment flags**:
+The cohort fetches no imaging, but the platform does not yet know that: every project runs the
+imaging stage, so the trusts create an (empty) XNAT project and attempt a PACS pull for each
+`accession_id` — here person ids, so every pull fails, by design and harmlessly. The e2e smoke's
+image-pull guard must therefore be disabled with `--image-pull-threshold 0` (the wait returns as
+soon as the trusts report their task totals). On the dev stack, run
+`make -C trust load-synthea-ehr` (above) first so the query has data. As an end-to-end smoke
+against a running stack — **no enrichment flags**:
 
 ```bash
 make e2e_smoke \
   MODEL_FILES_DIR=fl-tutorials/nvflare/tabular_classification/ehr_risk_prediction/app_files \
-  QUERY_FILE=fl-tutorials/nvflare/tabular_classification/ehr_risk_prediction/query.sql
+  QUERY_FILE=fl-tutorials/nvflare/tabular_classification/ehr_risk_prediction/query.sql \
+  EXTRA_ARGS="--image-pull-threshold 0"
 ```
 
 ### FLIP-specific values

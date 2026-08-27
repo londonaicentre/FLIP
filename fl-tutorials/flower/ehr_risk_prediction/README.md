@@ -133,13 +133,17 @@ partition, so the run is genuinely federated off one file.
 ### On the platform (or `make e2e_smoke`)
 
 Upload [`app/`](app) as the model files of a **`standard`**-job-type model and submit
-[`query.sql`](query.sql) as the project's cohort query. The cohort triggers no imaging pull. As an
+[`query.sql`](query.sql) as the project's cohort query. The cohort fetches no imaging, but the
+platform still runs the imaging stage for every project: the trusts create an (empty) XNAT project
+and attempt a PACS pull per `accession_id` — person ids here, so every pull fails, harmlessly. The
+smoke's image-pull guard must therefore be disabled with `--image-pull-threshold 0`. As an
 end-to-end smoke against a running stack — **no enrichment flags**:
 
 ```bash
 make e2e_smoke FL_BACKEND=flower \
   MODEL_FILES_DIR=fl-tutorials/flower/ehr_risk_prediction/app \
-  QUERY_FILE=fl-tutorials/flower/ehr_risk_prediction/query.sql
+  QUERY_FILE=fl-tutorials/flower/ehr_risk_prediction/query.sql \
+  EXTRA_ARGS="--image-pull-threshold 0"
 ```
 
 (On the dev stack, run `make -C trust load-synthea-ehr` first so the query returns data.)
