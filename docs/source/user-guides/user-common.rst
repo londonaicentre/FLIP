@@ -281,6 +281,8 @@ To view the progress of the imaging data import at each participating Trust, use
 .. note::
 
    Importing large sets of studies from PACS systems can take a very long time and individual imports may fail if the system is under too much strain. Overtime, FLIP will automatically reimport failed studies as indicated by the reimport count.
+
+The counts shown for each Trust are the latest it has reported. If a Trust stops responding — or its XNAT no longer holds the imaging project — its card keeps the last known counts on display, marked **Last known** together with the time they were last confirmed, and shows what went wrong in the card footer: *Trust XNAT not reachable* when the Trust's XNAT did not respond at all, or *Trust XNAT reachable, but project not found* when XNAT answered but the imaging project no longer exists there (for example after the Trust's deployment was reset). The card returns to normal automatically once the Trust reports successfully again.
    Once the reimport cap is reached, failed studies will no longe be reimported. If there are still failures present, please contact an XNAT administrator. Manual intervention may be needed.
 
 .. figure:: ../assets/flip/study-reimport-max.gif
