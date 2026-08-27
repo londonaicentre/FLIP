@@ -144,10 +144,13 @@ for check_id in ${CHECKS//,/ }; do
 done
 
 # --- Guard: every checkov:skip must carry a rationale -----------------------
-# Checkov itself accepts a bare `# checkov:skip=<ID>` (verified) — enforce the
-# mandatory-rationale rule here instead.
-bare_skips="$(grep -rEn '#[[:space:]]*checkov:skip=[A-Za-z0-9_]+[[:space:]]*(:[[:space:]]*)?$' \
-    --include='*.tf' "${AWS_ROOT}" || true)"
+# Checkov itself accepts a bare skip in either HCL comment style — `#` or `//`
+# (both verified on 3.3.14) — so match both here to enforce the
+# mandatory-rationale rule. `.terraform/` is excluded so module code downloaded
+# by a local `terraform init` can't trip the guard (the scan below already
+# ignores it via checkov's default CKV_IGNORED_DIRECTORIES).
+bare_skips="$(grep -rEn '(#|//)[[:space:]]*checkov:skip=[A-Za-z0-9_]+[[:space:]]*(:[[:space:]]*)?$' \
+    --include='*.tf' --exclude-dir='.terraform' "${AWS_ROOT}" || true)"
 if [ -n "${bare_skips}" ]; then
     echo "ERROR: checkov:skip without a rationale — the format is # checkov:skip=<ID>:<why this is deliberate>:" >&2
     echo "${bare_skips}" >&2
