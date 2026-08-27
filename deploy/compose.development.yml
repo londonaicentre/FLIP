@@ -291,7 +291,6 @@ services:
       - default
       - mlflow-network
     restart: unless-stopped
-    container_name: flip-mlflow
 
   #################### PGADMIN ####################
 

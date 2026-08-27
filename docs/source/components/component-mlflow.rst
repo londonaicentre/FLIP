@@ -14,9 +14,9 @@ MLflow experiment tracking (dev)
 ##################################
 
 The development stack ships an `MLflow <https://mlflow.org>`_ tracking server
-(``flip-mlflow``) that mirrors federated training telemetry for researchers:
-cross-run metric comparison, run parameters, and a model registry linking each
-uploaded results zip to the exact run that produced it.
+(compose service ``mlflow``) that mirrors federated training telemetry for
+researchers: cross-run metric comparison, run parameters, and a model registry
+linking each uploaded results zip to the exact run that produced it.
 
 Additive dual-write
 ===================
