@@ -245,7 +245,7 @@ See [`test/cypress/demo/README.md`](test/cypress/demo/README.md) for the full co
 The Cypress suite runs on every PR and on push to `develop` / `main` via the `cypress-e2e` job in
 [`.github/workflows/test_flip_ui.yml`](../.github/workflows/test_flip_ui.yml). The job:
 
-- Uses `cypress-io/github-action@v6`, which caches the Cypress binary and `node_modules` between runs.
+- Uses `cypress-io/github-action@v7`, which caches the Cypress binary and `node_modules` between runs.
 - Fans out across the six spec groups via a `strategy.matrix.group` so wall-clock time stays short.
 - Boots the Vite dev server with the same `.env.e2e` stub shown above.
 - On failure, uploads `test/cypress/screenshots` as an artefact (`cypress-screenshots-<group>`, retained 7 days).

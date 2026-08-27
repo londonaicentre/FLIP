@@ -141,7 +141,12 @@ def main() -> int:
         print("   Check your AWS session (aws sso login --sso-session FLIP) and the pool id.", file=sys.stderr)
         return 1
 
-    print("\n🔁 Restart flip-api (docker restart flip-api) so boot seeding grants the demo roles.")
+    # Through compose, naming the SERVICE: dev containers carry no container_name, so they are
+    # named by the project (deploy-flip-api-1) and a literal `docker restart flip-api` matches
+    # nothing. The project is FLIP_INSTANCE's, mirroring COMPOSE_PROJECT in deploy/instance.mk.
+    instance = os.environ.get("FLIP_INSTANCE", "").strip()
+    project = f"{instance}-deploy" if instance else "deploy"
+    print(f"\n🔁 Restart flip-api (docker compose -p {project} restart flip-api) so boot seeding grants the roles.")
     return 0
 
 
