@@ -47,15 +47,12 @@ SPLEEN_UV := uv run --project spleen
 # Download the x-ray reference dataset from Hugging Face and normalise it into the layout
 # both harnesses read (data/xrays_mini_300/, gitignored). Idempotent — safe to re-run.
 # One canonical CSV name (dataframe.csv): the NVFLARE .env.app files and the Flower
-# run-tutorial.sh both point at it.
+# run-tutorial.sh both point at it. Script + README live in xrays_mini_300/ (see its README).
 download-xray-data:
-	@echo "⬇️  Downloading x-ray dataset from Hugging Face ($(HF_TEST_DATA_REPO))..."
-	@uv run --no-project --with huggingface_hub python -c "from huggingface_hub import snapshot_download; snapshot_download(repo_id='$(HF_TEST_DATA_REPO)', repo_type='dataset', local_dir='$(HF_CACHE)', allow_patterns=['flip-fl-base-test-data/xrays_mini_300/*'])"
-	@rm -rf $(DATA_DIR)/xrays_mini_300
-	@mkdir -p $(DATA_DIR)/xrays_mini_300
-	@cp -r $(HF_CACHE)/flip-fl-base-test-data/xrays_mini_300/accession-resources $(DATA_DIR)/xrays_mini_300/accession-resources
-	@cp $(HF_CACHE)/flip-fl-base-test-data/xrays_mini_300/sample_get_dataframe_response.csv $(DATA_DIR)/xrays_mini_300/dataframe.csv
-	@echo "✅ x-ray data ready at $(abspath $(DATA_DIR))/xrays_mini_300/ — make -C fl-tutorials run-tutorial TUTORIAL=xray_classification"
+	@uv run --no-project --with huggingface_hub python xrays_mini_300/download_xrays_dataset.py \
+		--cache-dir $(HF_CACHE) \
+		--output-dir $(DATA_DIR)/xrays_mini_300 \
+		--repo-id $(HF_TEST_DATA_REPO)
 
 # The spleen dataset has two variants sharing data/spleen/: the raw MSD build (images/ +
 # dataframe.csv — what the NVFLARE simulator reads, and where the enrichment labels come
@@ -92,36 +89,29 @@ download-spleen-flip-format-data:
 
 # Download the Ark+ chest X-ray TRAIN splits from Hugging Face and normalise them into the
 # layout arkplus_fine_tuning/.env.app expects (data/arkplus/site{1,2}/, gitignored).
-# Idempotent — safe to re-run. Large (~6.3 GB).
+# Idempotent — safe to re-run. Large (~6.3 GB). Script + README live in arkplus/ (see its
+# README) — the same script backs download-arkplus-eval-data below, parameterised by --sites.
 download-arkplus-finetuning-data:
-	@echo "⬇️  Downloading Ark+ training splits from Hugging Face ($(ARKPLUS_DATA_REPO))..."
-	@uv run --no-project --with huggingface_hub python -c "from huggingface_hub import snapshot_download; snapshot_download(repo_id='$(ARKPLUS_DATA_REPO)', repo_type='dataset', local_dir='$(HF_CACHE)', allow_patterns=['site1/*', 'site2/*'])"
-	@rm -rf $(DATA_DIR)/arkplus/site1 $(DATA_DIR)/arkplus/site2
-	@mkdir -p $(DATA_DIR)/arkplus/site1 $(DATA_DIR)/arkplus/site2
-	@cp -r $(HF_CACHE)/site1/accession-resources $(DATA_DIR)/arkplus/site1/accession-resources
-	@cp $(HF_CACHE)/site1/sample_get_dataframe_response.csv $(DATA_DIR)/arkplus/site1/sample_get_dataframe_response.csv
-	@cp -r $(HF_CACHE)/site2/accession-resources $(DATA_DIR)/arkplus/site2/accession-resources
-	@cp $(HF_CACHE)/site2/sample_get_dataframe_response.csv $(DATA_DIR)/arkplus/site2/sample_get_dataframe_response.csv
-	@# Written last, only on a fully successful run: `experiment`'s dataset-present check in
-	@# arkplus_fine_tuning/Makefile looks for this marker (not just directory existence), so an
-	@# interrupted download/copy (e.g. Ctrl+C mid-run) can't be mistaken for complete data on the
-	@# next `make reproduce-overhead`.
-	@touch $(DATA_DIR)/arkplus/site1/.download-complete $(DATA_DIR)/arkplus/site2/.download-complete
-	@echo "✅ Ark+ training data ready at $(abspath $(DATA_DIR))/arkplus/site{1,2}/ — make -C fl-tutorials run-tutorial TUTORIAL=arkplus_fine_tuning"
+	@uv run --no-project --with huggingface_hub python arkplus/download_arkplus_dataset.py \
+		--cache-dir $(HF_CACHE) \
+		--output-dir $(DATA_DIR)/arkplus \
+		--repo-id $(ARKPLUS_DATA_REPO) \
+		--sites site1 site2 \
+		--label training \
+		--next-step "make -C fl-tutorials run-tutorial TUTORIAL=arkplus_fine_tuning" \
+		--write-marker
 
 # Download the Ark+ chest X-ray HOLD-OUT splits from Hugging Face and normalise them into the
 # layout the two Ark+ evaluation tutorials' .env.app expect (data/arkplus/site{1,2}_holdoff/,
 # gitignored). Idempotent — safe to re-run (~1.6 GB).
 download-arkplus-eval-data:
-	@echo "⬇️  Downloading Ark+ hold-out splits from Hugging Face ($(ARKPLUS_DATA_REPO))..."
-	@uv run --no-project --with huggingface_hub python -c "from huggingface_hub import snapshot_download; snapshot_download(repo_id='$(ARKPLUS_DATA_REPO)', repo_type='dataset', local_dir='$(HF_CACHE)', allow_patterns=['site1_holdoff/*', 'site2_holdoff/*'])"
-	@rm -rf $(DATA_DIR)/arkplus/site1_holdoff $(DATA_DIR)/arkplus/site2_holdoff
-	@mkdir -p $(DATA_DIR)/arkplus/site1_holdoff $(DATA_DIR)/arkplus/site2_holdoff
-	@cp -r $(HF_CACHE)/site1_holdoff/accession-resources $(DATA_DIR)/arkplus/site1_holdoff/accession-resources
-	@cp $(HF_CACHE)/site1_holdoff/sample_get_dataframe_response.csv $(DATA_DIR)/arkplus/site1_holdoff/sample_get_dataframe_response.csv
-	@cp -r $(HF_CACHE)/site2_holdoff/accession-resources $(DATA_DIR)/arkplus/site2_holdoff/accession-resources
-	@cp $(HF_CACHE)/site2_holdoff/sample_get_dataframe_response.csv $(DATA_DIR)/arkplus/site2_holdoff/sample_get_dataframe_response.csv
-	@echo "✅ Ark+ hold-out data ready at $(abspath $(DATA_DIR))/arkplus/site{1,2}_holdoff/ — make -C fl-tutorials run-tutorial TUTORIAL=arkplus_baseline_classification_evaluation (or arkplus_multimodel_classification_evaluation)"
+	@uv run --no-project --with huggingface_hub python arkplus/download_arkplus_dataset.py \
+		--cache-dir $(HF_CACHE) \
+		--output-dir $(DATA_DIR)/arkplus \
+		--repo-id $(ARKPLUS_DATA_REPO) \
+		--sites site1_holdoff site2_holdoff \
+		--label hold-out \
+		--next-step "make -C fl-tutorials run-tutorial TUTORIAL=arkplus_baseline_classification_evaluation (or arkplus_multimodel_classification_evaluation)"
 
 # Data enrichment: upload the MSD spleen labels into a real FLIP project's XNAT, so the spleen
 # apps find a label_*.nii.gz beside each pulled input_*.nii.gz. Needs NUM_CASES=41 on the MSD

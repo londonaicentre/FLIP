@@ -59,5 +59,18 @@ pandas, natsort; `uv.lock` is gitignored):
   for the full walkthrough, and the repo-root `CLAUDE.md` for its `e2e_smoke` wiring). Runs
   against the in-tree `flip-utils`, not `spleen/`'s env.
 
-xray and arkplus are recipe-only (plain Hugging Face snapshots normalised by the
-[`Makefile`](Makefile)).
+[`xrays_mini_300/`](xrays_mini_300/) owns the single x-ray script — no dedicated uv project,
+it runs via `uv run --no-project --with huggingface_hub`, the same way `upload-spleen-labels`
+runs against `flip-utils` without adopting `spleen/`'s env:
+
+- `download_xrays_dataset.py` — fetch the Hugging Face snapshot and normalise it into
+  `accession-resources/` + `dataframe.csv`.
+
+[`arkplus/`](arkplus/) owns the single arkplus script — no dedicated uv project, it runs via
+`uv run --no-project --with huggingface_hub`, the same way `upload-spleen-labels` runs
+against `flip-utils` without adopting `spleen/`'s env:
+
+- `download_arkplus_dataset.py` — fetch the given site folders (TRAIN or HOLD-OUT) from
+  Hugging Face and normalise each into `accession-resources/` +
+  `sample_get_dataframe_response.csv`. Parameterised by `--sites`, so one script backs both
+  `download-arkplus-finetuning-data` and `download-arkplus-eval-data`.
