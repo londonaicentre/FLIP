@@ -183,6 +183,11 @@ dev = [
     "huggingface-hub>=1.6.0",
     "matplotlib>=3.10.7",
     "mypy>=1.18.2,<2.0",
+    # Test-only: fl-tutorials/tests/ runs in this environment (see fl-tutorials/tests/pytest.ini)
+    # and imports the spleen downloader, which natural-sorts its case list. natsort is a real
+    # dependency of the spleen tutorial itself (3d_spleen_segmentation/pyproject.toml); it is here
+    # only so the test can import the script under test. Deliberately NOT a runtime dep.
+    "natsort>=8.4.0",
     "pyqt5>=5.15.11",
     "pytest>=8.4.2",
     "pytest-cov>=7.0.0",
