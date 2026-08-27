@@ -13,6 +13,10 @@
 
 # FLIP Trust — Kubernetes Helm Chart
 
+> **Deploys: trust only.** No Central Hub component is defined by this chart. The hub is still involved —
+> the trust must be registered on it (`make register-trust KIT=<CODE>`) to get its kit file. See
+> [`../README.md`](../README.md) for how this provider relates to the other two.
+
 This Helm chart deploys the FLIP trust-side services on Kubernetes. It follows
 the same **zero inbound trust** architecture as the Docker Compose deployment:
 trust services only make outbound connections to the Central Hub and the FL
@@ -286,6 +290,27 @@ helm install trust-release ./ --set flBackend=nvflare
 helm install trust-release ./ --set flBackend=flower
 ```
 
+#### Staged participant kit (no S3)
+
+By default the `kit-init` initContainer fetches the active backend's participant kit
+from S3 into an `emptyDir`. Air-gapped trusts and local `kind` clusters can stage the
+kit on the node instead:
+
+```yaml
+flClient:
+  <backend>:            # nvflare or flower — the active backend's flag
+    kitFromS3:
+      enabled: false
+  kitHostPath: /opt/fl-kit/<slot>   # node directory holding the kit
+```
+
+The `fl-client-kit` volume then mounts `kitHostPath` directly and no `kit-init` runs.
+The directory must be readable by the FL image's runtime user (uid 1000 for the
+NVFLARE client, uid 49999 for the Flower SuperNode). With `kitFromS3` disabled and
+`kitHostPath` unset, the kit volume renders as an empty `emptyDir` — nothing fails at
+deploy time and the client starts without credentials, so configure one or the other.
+When `kitFromS3` is enabled it wins over a set `kitHostPath`.
+
 ### GPU Configuration
 
 ```yaml
@@ -509,6 +534,7 @@ The chart is validated in CI via:
 3. **Network policy blocking**: Check egress CIDRs allow reaching the Central Hub and FL server. Temporarily disable policies with `--set networkPolicies.enabled=false` to isolate.
 4. **GPU not visible**: Verify `nvidia.com/gpu` annotation on the fl-client pod. Check CUDA env vars (`CUDA_VISIBLE_DEVICES`, `NVIDIA_VISIBLE_DEVICES`) are set via `flClient.gpu.enabled: true`.
 5. **Flower superlink**: For Flower backend, verify `flClient.flower.superlink` is a reachable gRPC endpoint and root certificates are in the kit.
+6. **Staged kit not mounted**: With the active backend's `kitFromS3.enabled=false`, verify `flClient.kitHostPath` is set and the node directory is readable by the client's runtime uid (NVFLARE 1000, Flower 49999) — unset, the kit volume renders empty with no deploy-time error and the client starts without credentials.
 
 ### Network policy blocking intra-service traffic
 

@@ -104,12 +104,21 @@ export interface IImagingImportStatus {
     queueFailed: number;
 }
 
+// How the hub's newest imaging-status refresh for this trust turned out. The counts in
+// `importStatus` are always the last known ones, so anything other than "ok" means they are
+// stale and must not be presented as current (FLIP#1022).
+export type ImagingConnectionState = "ok" | "unreachable" | "project-missing";
+
 export interface IImagingProjectStatus {
     trustId: string,
     trustName: string,
     projectCreationCompleted: boolean,
     importStatus?: IImagingImportStatus,
     reimportCount?: number,
+    connectionState?: ImagingConnectionState,
+    // When `importStatus` was last confirmed against the trust (ISO 8601). Absent when no
+    // refresh has ever succeeded.
+    lastSeenAt?: string | null,
 }
 
 export async function getProject(url: string): Promise<IProject> {

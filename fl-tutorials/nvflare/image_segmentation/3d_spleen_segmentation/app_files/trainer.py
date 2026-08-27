@@ -121,7 +121,7 @@ def build_datalist(flip: FLIP, dataframe: pd.DataFrame, project_id: str) -> list
     if not datalist:
         # Fail loudly: torch's downstream num_samples=0 error reads like an app bug, when the usual
         # cause is a missing data-enrichment step (no label_*.nii.gz uploaded next to the images).
-        raise ValueError(
+        raise RuntimeError(
             f"No image/label pairs found: {n_images} image(s) across {len(dataframe)} accession(s), "
             "none with a matching label_*.nii.gz. Was the data-enrichment (label upload) step run?"
         )

@@ -306,9 +306,23 @@ networks:
   default:
     external: true
     name: ${TRUST_NETWORK_NAME}
+  # Hub-shared networks, created by the hub's compose project and joined here by
+  # literal name — a trust is its own compose project and compose has no cross-project
+  # network reference, so the name is the whole contract. Every one of them is
+  # `${FLIP_INSTANCE:+$FLIP_INSTANCE-}deploy_<name>`, where `deploy_` is the hub compose
+  # project that owns it and the FLIP_INSTANCE prefix is what attaches this trust to the
+  # hub instance it was launched for (FLIP#957). The keys are local to this file and stay
+  # stable, since the services above reference them by key.
   central-hub-trust-apis-network:
     external: true
-  deploy_shared-net-1:
+    name: ${FLIP_INSTANCE:+$FLIP_INSTANCE-}deploy_central-hub-trust-apis-network
+  # The FL data plane, one per FL net: fl-server, fl-api and every trust's fl-client,
+  # and deliberately not flip-api. Numbered by FL net (`net-1`/`net-2`, matching the
+  # `fl_nets` table and NET_NUMBER), *not* by trust slot the way `trust-network-<N>`
+  # is — a trust on slot 2 can perfectly well sit on `fl-net-1`.
+  fl-net-1:
     external: true
-  deploy_shared-net-2:
+    name: ${FLIP_INSTANCE:+$FLIP_INSTANCE-}deploy_fl-net-1
+  fl-net-2:
     external: true
+    name: ${FLIP_INSTANCE:+$FLIP_INSTANCE-}deploy_fl-net-2

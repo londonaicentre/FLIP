@@ -174,7 +174,7 @@ def _resolve_job_dir(folder: str) -> Path:
 
 
 def _validate_tutorial_folder(tutorial_name: str) -> Path:
-    # Tutorial submit: pre-baked tutorial folders (e.g. "numpy", "xray_classification") are
+    # Tutorial submit: pre-baked tutorial folders (e.g. "xray_classification") are
     # submitted by name, not a UUID, so they get a charset/traversal guard instead.
     validate_tutorial_folder_name(tutorial_name)
     return _resolve_job_dir(tutorial_name)
@@ -408,7 +408,7 @@ def submit_run(job_folder: UUID) -> str:
 @app.post("/submit_tutorial/{tutorial_name}", status_code=status.HTTP_200_OK, response_model=str)
 def submit_tutorial(tutorial_name: str) -> str:
     # Tutorial path: pre-baked tutorial folders are submitted by name (not a UUID), e.g.
-    # `numpy` / `xray_classification`. Charset/traversal-guarded, contained under the src root.
+    # `xray_classification`. Charset/traversal-guarded, contained under the src root.
     return _submit_from_job_dir(_validate_tutorial_folder(tutorial_name), tutorial_name)
 
 
