@@ -113,8 +113,13 @@ BASE_ENV = {
     "XNAT_PLUGIN_READINESS_POLL_SECONDS": "0",
 }
 
-# What the stub reports as already registered when a test does not say otherwise.
-MOCK_PACS_REGISTRATION = '[{"id":7,"aeTitle":"ORTHANC","host":"orthanc","queryRetrievePort":4242}]'
+# What the stub reports as already registered when a test does not say otherwise. Carries every
+# kit-managed field the drift check compares (a live XNAT GET /xapi/pacs returns them all), with
+# values matching the script's defaults so the entry reads as in-sync unless a test drifts one.
+MOCK_PACS_REGISTRATION = (
+    '[{"id":7,"aeTitle":"ORTHANC","host":"orthanc","queryRetrievePort":4242,'
+    '"label":"Test PACS instance","supportsExtendedNegotiations":true}]'
+)
 
 # The SCP receivers a test can seed XNAT with, one JSON object each — reclamation is scoped by what
 # created a receiver, so which of these survives is the whole point of those tests.
@@ -302,6 +307,28 @@ def test_registration_updates_in_place_when_host_or_port_drift(tmp_path):
     pacs = payload_for(payloads, "/xapi/pacs")
     assert pacs["host"] == "10.0.0.10"
     assert pacs["queryRetrievePort"] == 8059
+
+
+def test_registration_updates_in_place_when_flags_drift(tmp_path):
+    """Drift in a kit-managed field other than host/port must also land, not log "leaving as-is".
+
+    supportsExtendedNegotiations is the documented lever for a real PACS that rejects extended
+    negotiation, and the k8s init job re-runs this script on every helm upgrade against persistent
+    XNAT data — a host/port-only comparison keeps the old flag forever with no signal.
+    """
+    code, payloads, output = run_configure(
+        tmp_path,
+        {"PACS_SUPPORTS_EXTENDED_NEGOTIATIONS": "false"},
+        pacs_state=MOCK_PACS_REGISTRATION,
+    )
+    assert code == 0, output
+    assert "leaving as-is" not in output
+    assert "supportsExtendedNegotiations" in output
+
+    pacs = payload_for(payloads, "/xapi/pacs")
+    assert pacs["supportsExtendedNegotiations"] is False
+    assert pacs["host"] == "orthanc"
+    assert pacs["queryRetrievePort"] == 4242
 
 
 def test_matching_registration_is_left_alone(tmp_path):

@@ -495,13 +495,21 @@ if [[ -z "$pacs_entry" ]]; then
     -d "$pacs_payload"
 else
   PACS_ID=$(printf '%s' "$pacs_entry" | jq -r '.id')
-  current_host=$(printf '%s' "$pacs_entry" | jq -r '.host // empty')
-  current_port=$(printf '%s' "$pacs_entry" | jq -r '.queryRetrievePort // empty')
 
-  if [[ "$current_host" == "${PACS_HOST}" && "$current_port" == "${PACS_QR_PORT}" ]]; then
+  # Drift is judged over every kit-managed field, not just host+port: label and
+  # supportsExtendedNegotiations come from the kit too, and the k8s init job re-runs this script on
+  # every helm upgrade against persistent XNAT data — a narrower comparison logs "leaving as-is"
+  # and keeps the old flag forever, exactly the silently-ignored kit change the in-place update
+  # exists to prevent. Comparison against the desired payload rather than the env vars keeps type
+  # handling in jq (port and the flag are JSON number/boolean in both documents, not strings).
+  pacs_drift=$(jq -cn --argjson entry "$pacs_entry" --argjson desired "$pacs_payload" \
+    '[("host","queryRetrievePort","label","supportsExtendedNegotiations")
+      | select($entry[.] != $desired[.])]')
+
+  if [[ "$pacs_drift" == "[]" ]]; then
     echo "PACS '${PACS_AETITLE}' already registered at ${PACS_HOST}:${PACS_QR_PORT} — leaving as-is."
   else
-    echo "PACS '${PACS_AETITLE}' registered at ${current_host}:${current_port}," \
+    echo "PACS '${PACS_AETITLE}' drifted on $(printf '%s' "$pacs_drift" | jq -r 'join(", ")')," \
          "updating to ${PACS_HOST}:${PACS_QR_PORT}..."
     xnat_curl -X PUT "$XNAT_URL/xapi/pacs/${PACS_ID}" \
       -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_PASSWORD}" \
