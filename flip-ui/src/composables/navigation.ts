@@ -32,7 +32,9 @@ export default function useNavigation(props: IAIHeaderProps): ComputedRef {
         {
             name: "Models",
             href: "/models",
-            current: props.currentPage === "/models",
+            // startsWith, not equality: the page keeps its project scope in the query
+            // (/models?project=<id>), which would otherwise light no nav item at all.
+            current: props.currentPage.startsWith("/models"),
             canAccess: true
         },
         {
