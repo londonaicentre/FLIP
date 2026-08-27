@@ -47,7 +47,8 @@ split between [`fl-apps/`](../fl-apps) (job-type templates) and
 ```
 map-apps/
 ├── segmentation/          DICOM SEG output — bundle-driven inference
-└── classification/        DICOM SR output  — custom operator + SR writer
+├── classification/        DICOM SR output  — custom operator + SR writer
+└── tests/                 CPU-only tests over the custom operator (run in CI: test_map_apps.yml)
 ```
 
 ## Choosing a template
