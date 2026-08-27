@@ -241,6 +241,53 @@ def test_health_does_not_require_auth():
 
 
 # ---------------------------------------------------------------------------
+# Cohort-admin auth — the snapshot WRITE routes require proof of possessing
+# AES_KEY_BASE64 on top of the trust-internal key (FLIP#857), so a caller that
+# holds only the shared trust-internal key (fl-client) cannot DEFINE or destroy a
+# project's frozen cohort. The read routes must stay reachable with the
+# trust-internal key alone.
+# ---------------------------------------------------------------------------
+
+_WRITE_ROUTES = [
+    ("/cohort/snapshot", sample_dataframe_query),
+    ("/cohort/snapshot/delete", {"encrypted_project_id": "encrypted-id"}),
+]
+
+
+@pytest.mark.parametrize(("path", "payload"), _WRITE_ROUTES)
+def test_write_routes_reject_trust_internal_key_without_cohort_admin_proof(path, payload):
+    """A valid trust-internal key alone (what fl-client holds) is refused with 403 —
+    authenticated but not authorised to define the cohort."""
+    response = client.post(path, json=payload, headers=AUTH_HEADERS)
+    assert response.status_code == 403
+    assert "authorised" in response.json()["detail"].lower()
+
+
+@pytest.mark.parametrize(("path", "payload"), _WRITE_ROUTES)
+def test_write_routes_reject_wrong_cohort_admin_proof(path, payload):
+    """A wrong AES-possession proof is refused with the same fixed 403 as a missing one,
+    so the refusal never reveals whether the proof was absent or merely invalid."""
+    headers = {**AUTH_HEADERS, "X-Cohort-Admin-Key": "not-the-real-proof"}
+    response = client.post(path, json=payload, headers=headers)
+    assert response.status_code == 403
+    assert "authorised" in response.json()["detail"].lower()
+
+
+@pytest.mark.parametrize("path", ["/cohort/dataframe", "/cohort/accession-ids"])
+@patch("data_access_api.routers.cohort.decrypt")
+@patch("data_access_api.routers.cohort.get_snapshot")
+def test_read_routes_do_not_require_cohort_admin_proof(mock_get_snapshot, mock_decrypt, path):
+    """The read routes must NOT gain the cohort-admin gate: the trust-internal key alone must
+    get past auth into the handler (a cohort-admin 403 here would mean fl-client's get_dataframe
+    broke). With no snapshot the handler reaches its own fail-closed 403 — distinct text — which
+    proves auth let the caller through rather than blocking on cohort-admin."""
+    mock_decrypt.return_value = "my_project"
+    mock_get_snapshot.return_value = None
+    response = client.post(path, json=sample_dataframe_query, headers=AUTH_HEADERS)
+    assert "authorised" not in response.json().get("detail", "").lower()
+
+
+# ---------------------------------------------------------------------------
 # Parse-then-emit tests
 #
 # validate_query is the single parse-validate-emit step: it returns the caller's

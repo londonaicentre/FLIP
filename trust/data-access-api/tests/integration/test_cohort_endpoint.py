@@ -21,7 +21,7 @@ comments (omop_seed.sql).
 import httpx
 import pytest
 
-from tests.integration.conftest import AUTH_HEADERS
+from tests.integration.conftest import AUTH_HEADERS, COHORT_ADMIN_HEADERS
 
 
 @pytest.fixture
@@ -152,7 +152,10 @@ _SEED_COHORT_QUERY = (
 
 
 def _create_snapshot(http_client, query: str, project_id: str) -> httpx.Response:
-    return http_client.post("/cohort/snapshot", json=_dataframe_payload(query, project_id))
+    # The write route needs the cohort-admin proof on top of the client's trust-internal key.
+    return http_client.post(
+        "/cohort/snapshot", json=_dataframe_payload(query, project_id), headers=COHORT_ADMIN_HEADERS
+    )
 
 
 def test_row_level_routes_refuse_without_a_snapshot(http_client):
@@ -162,6 +165,18 @@ def test_row_level_routes_refuse_without_a_snapshot(http_client):
         response = http_client.post(path, json=payload)
         assert response.status_code == 403, response.text
         assert response.json()["detail"] == "No approved cohort snapshot exists for this project."
+
+
+def test_snapshot_write_routes_reject_trust_internal_key_without_cohort_admin_proof(http_client):
+    """End-to-end: the container refuses a cohort-defining write from a caller that holds only the
+    shared trust-internal key (what fl-client has) — the AES-possession gate closes that path
+    (FLIP#857). ``http_client`` carries AUTH_HEADERS but not COHORT_ADMIN_HEADERS."""
+    from data_access_api.utils.encryption import encrypt
+
+    create = http_client.post("/cohort/snapshot", json=_dataframe_payload(_SEED_COHORT_QUERY, _PROJECT_B))
+    assert create.status_code == 403, create.text
+    delete = http_client.post("/cohort/snapshot/delete", json={"encrypted_project_id": encrypt(_PROJECT_B)})
+    assert delete.status_code == 403, delete.text
 
 
 def test_snapshot_then_dataframe_serves_the_frozen_cohort(http_client):
@@ -274,10 +289,14 @@ def test_reapproval_replaces_the_snapshot_and_delete_removes_it(http_client):
     )
     assert set(served.json().keys()) == {"person_id", "accession_id"}
 
-    deleted = http_client.post("/cohort/snapshot/delete", json={"encrypted_project_id": encrypt(project_id)})
+    deleted = http_client.post(
+        "/cohort/snapshot/delete", json={"encrypted_project_id": encrypt(project_id)}, headers=COHORT_ADMIN_HEADERS
+    )
     assert deleted.status_code == 200
     assert deleted.json() == {"deleted": True}
-    again = http_client.post("/cohort/snapshot/delete", json={"encrypted_project_id": encrypt(project_id)})
+    again = http_client.post(
+        "/cohort/snapshot/delete", json={"encrypted_project_id": encrypt(project_id)}, headers=COHORT_ADMIN_HEADERS
+    )
     assert again.json() == {"deleted": False}
 
     refused = http_client.post(

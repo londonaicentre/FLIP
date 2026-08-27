@@ -10,6 +10,7 @@
 # limitations under the License.
 #
 
+import hashlib
 import json
 from unittest.mock import AsyncMock, patch
 from uuid import uuid4
@@ -17,6 +18,8 @@ from uuid import uuid4
 import pytest
 
 from trust_api.services.task_handlers import (
+    AES_KEY_BASE64,
+    COHORT_ADMIN_KEY_HEADER,
     TASK_HANDLERS,
     TRUST_INTERNAL_SERVICE_KEY,
     TRUST_INTERNAL_SERVICE_KEY_HEADER,
@@ -35,6 +38,16 @@ def _assert_trust_internal_auth_header(call_args) -> None:
     trust-internal service key header."""
     headers = call_args.kwargs.get("headers") or {}
     assert headers.get(TRUST_INTERNAL_SERVICE_KEY_HEADER) == TRUST_INTERNAL_SERVICE_KEY
+
+
+def _assert_cohort_admin_header(call_args) -> None:
+    """A cohort-DEFINING write (snapshot create/delete) must additionally carry the
+    cohort-admin proof: the SHA-256 of AES_KEY_BASE64, never the key itself (FLIP#857)."""
+    headers = call_args.kwargs.get("headers") or {}
+    expected = hashlib.sha256(AES_KEY_BASE64.encode()).hexdigest()
+    assert headers.get(COHORT_ADMIN_KEY_HEADER) == expected
+    # Defence in depth: the raw key must never travel as a header value.
+    assert AES_KEY_BASE64 not in headers.values()
 
 
 @pytest.fixture
@@ -365,6 +378,9 @@ async def test_handle_persist_cohort_freezes_via_data_access_and_returns_facts(m
     # Only the encrypted id + query go to data-access-api (its DataframeQuery schema).
     assert call.kwargs["json_body"] == {"encrypted_project_id": "enc123", "query": payload["query"]}
     _assert_trust_internal_auth_header(call)
+    # Snapshot creation is a cohort-DEFINING write: it must also carry the cohort-admin proof
+    # (FLIP#857), which fl-client cannot produce.
+    _assert_cohort_admin_header(call)
 
 
 @pytest.mark.asyncio

@@ -115,6 +115,17 @@ class Settings(BaseSettings):
     TRUST_INTERNAL_SERVICE_KEY_HEADER: str = "X-Trust-Internal-Service-Key"
     TRUST_INTERNAL_SERVICE_KEY: str = ""
 
+    # Cohort-write authorisation (FLIP#857). The snapshot create/delete routes carry a second
+    # gate on top of the trust-internal key: the caller must prove possession of AES_KEY_BASE64
+    # by sending the SHA-256 of the key in this header. This separates the services trusted to
+    # DEFINE a project's approved cohort (trust-api, data-access-api — both hold the AES key)
+    # from fl-client, which runs researcher training code, holds the trust-internal key for its
+    # imaging reads, and deliberately has no AES key. The read routes are unaffected, so
+    # fl-client's ``get_dataframe`` keeps working; only the cohort-defining writes are locked
+    # down. The digest — not the raw key — is transmitted, so a captured header or a log line
+    # never reveals the encryption key.
+    COHORT_ADMIN_KEY_HEADER: str = "X-Cohort-Admin-Key"
+
     # Define the database URL for the OMOP database
     @property
     def OMOP_DATABASE_URL(self) -> SecretStr:

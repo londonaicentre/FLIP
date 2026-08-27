@@ -90,7 +90,10 @@ frozen artefact, keyed on the encrypted hub project id; the SQL the caller suppl
 - re-approval calls `/cohort/snapshot` again and atomically replaces the artefact — this is
   how OMOP-side record removals and opt-outs propagate into an approved project (at explicit
   re-snapshot events, never silently mid-training);
-- `POST /cohort/snapshot/delete` removes the artefact (the FLIP#997 teardown hook).
+- `POST /cohort/snapshot/delete` removes the artefact (the FLIP#997 teardown hook);
+- both write routes (`/cohort/snapshot`, `/cohort/snapshot/delete`) require **cohort-admin** auth
+  (AES-key possession) on top of the trust-internal key, so researcher FL code cannot define or
+  destroy the frozen cohort — see [Authentication](#authentication).
 
 Live OMOP is evaluated only by `/cohort` (statistics — pre-approval by definition) and
 `/cohort/snapshot`. The disclosure threshold below is enforced at snapshot creation (nothing
@@ -114,6 +117,18 @@ from the [`flip` Python package](https://github.com/londonaicentre/FLIP/tree/dev
 (consumed by both NVFLARE and Flower fl-client / fl-server images), and that package reads
 `TRUST_INTERNAL_SERVICE_KEY` from `os.environ` and adds the header to its HTTP request. Tutorials
 and user-uploaded `client_app.py` / `server_app.py` do not deal with the header directly.
+
+**Cohort-admin gate on the write routes (FLIP#857).** Because fl-client legitimately holds the
+trust-internal key, that key alone cannot separate "may read the approved cohort" from "may
+DEFINE it". The cohort router is therefore split: `authenticate_internal_service` gates the read
+routes (`/cohort`, `/cohort/dataframe`, `/cohort/accession-ids`), while the snapshot **write**
+routes (`/cohort/snapshot`, `/cohort/snapshot/delete`) additionally require `authenticate_cohort_admin`
+— proof of possessing `AES_KEY_BASE64`, sent as the **SHA-256 of the key** (never the key itself)
+in `COHORT_ADMIN_KEY_HEADER` (default `X-Cohort-Admin-Key`) and constant-time compared. trust-api
+holds the AES key and sends the proof when it forwards an approval-time snapshot; fl-client has no
+AES key, so researcher FL code cannot rewrite or delete a project's frozen cohort. A caller with a
+valid trust-internal key but no/invalid proof is refused **403**. No new secret is provisioned — the
+gate reuses the existing AES-key possession boundary, so kit files and `register_trust` are unchanged.
 
 Each trust has a distinct key. A trust's `TRUST_INTERNAL_SERVICE_KEY` is minted by `register_trust`
 (`make register-trusts`) and written into that trust's kit file (`trust/.env.<CODE>.<env>`), which

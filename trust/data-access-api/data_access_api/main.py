@@ -19,7 +19,8 @@ from log_config import LoggingMiddleware
 # Ensure structured logging is configured on import
 import data_access_api.utils.logger  # noqa: F401
 from data_access_api.config import get_settings
-from data_access_api.routers.cohort import router as cohort_router
+from data_access_api.routers.cohort import read_router as cohort_read_router
+from data_access_api.routers.cohort import write_router as cohort_write_router
 from data_access_api.routers.health import router as health_router
 from data_access_api.services.cohort_snapshot import ensure_store
 
@@ -52,5 +53,6 @@ app = FastAPI(
 
 app.add_middleware(LoggingMiddleware)
 
-app.include_router(cohort_router)
+app.include_router(cohort_read_router)
+app.include_router(cohort_write_router)
 app.include_router(health_router)

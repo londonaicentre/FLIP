@@ -35,7 +35,7 @@ from data_access_api.services.cohort_snapshot import (
     snapshot_enabled,
 )
 from data_access_api.utils.encryption import decrypt
-from data_access_api.utils.internal_auth import authenticate_internal_service
+from data_access_api.utils.internal_auth import authenticate_cohort_admin, authenticate_internal_service
 from data_access_api.utils.logger import logger
 
 # Returned instead of row-level data when a cohort is smaller than
@@ -52,8 +52,24 @@ _BELOW_THRESHOLD_DETAIL = "Cohort is too small for row-level data to be released
 _NO_SNAPSHOT_DETAIL = "No approved cohort snapshot exists for this project."
 
 
-# Create Router
-router = APIRouter(prefix="/cohort", tags=["Cohort"], dependencies=[Depends(authenticate_internal_service)])
+# Two routers under the same /cohort prefix, split by privilege (FLIP#857).
+#
+# read_router — statistics + the two row-level serve routes. Gated on the trust-internal key
+# alone: every trust-internal service (trust-api, imaging-api, fl-client) legitimately reads
+# here, and the routes serve only the frozen, project-scoped, threshold-gated snapshot.
+#
+# write_router — the routes that DEFINE/destroy the frozen artefact the row-level routes then
+# serve. Gated on the trust-internal key AND cohort-admin (proof of possessing AES_KEY_BASE64),
+# so a caller must be both a trust-internal service and one of the two trusted to define cohorts.
+# fl-client holds the trust-internal key but no AES key, so it can read its cohort but never
+# rewrite or delete it. The dependency order matters: trust-internal runs first, so a caller
+# without it gets 401 before the cohort-admin check ever runs (which returns 403).
+read_router = APIRouter(prefix="/cohort", tags=["Cohort"], dependencies=[Depends(authenticate_internal_service)])
+write_router = APIRouter(
+    prefix="/cohort",
+    tags=["Cohort"],
+    dependencies=[Depends(authenticate_internal_service), Depends(authenticate_cohort_admin)],
+)
 
 
 def _require_snapshot(project_id: str) -> Snapshot:
@@ -106,7 +122,7 @@ def _log_ignored_client_query(project_id: str, snapshot: Snapshot, client_query:
         )
 
 
-@router.post("", response_model=StatisticsResponse)
+@read_router.post("", response_model=StatisticsResponse)
 def receive_cohort_query(query_input: CohortQueryInput) -> StatisticsResponse:
     """
     Receives a cohort query and returns the aggregated statistics.
@@ -166,7 +182,7 @@ def receive_cohort_query(query_input: CohortQueryInput) -> StatisticsResponse:
     return results
 
 
-@router.post("/dataframe")
+@read_router.post("/dataframe")
 def get_dataframe(query_input: DataframeQuery) -> dict[str, list[Any]]:
     """
     Serves the project's FROZEN cohort in a DataFrame-like structure (column-oriented dict).
@@ -209,7 +225,7 @@ def get_dataframe(query_input: DataframeQuery) -> dict[str, list[Any]]:
     return snapshot.df.to_dict(orient="list")
 
 
-@router.post("/accession-ids", response_model=AccessionIdsResponse)
+@read_router.post("/accession-ids", response_model=AccessionIdsResponse)
 def get_accession_ids(query_input: DataframeQuery) -> AccessionIdsResponse:
     """
     Returns only the ``accession_id`` column of the project's FROZEN cohort.
@@ -260,18 +276,21 @@ def get_accession_ids(query_input: DataframeQuery) -> AccessionIdsResponse:
     return AccessionIdsResponse(accession_ids=frozen_ids)
 
 
-@router.post("/snapshot", response_model=SnapshotResponse)
+@write_router.post("/snapshot", response_model=SnapshotResponse)
 def create_snapshot(query_input: DataframeQuery) -> SnapshotResponse:
     """
     Materialises the cohort ONCE and persists it as this project's frozen artefact (FLIP#857).
 
-    Called by trust-api when the hub approves a project. From that point the two row-level
-    routes serve the persisted dataframe keyed on the project id and ignore caller SQL, so
-    the cohort a project trains on is exactly the cohort that was approved — it cannot grow
-    with the live database, and it is identical on every fetch. Re-approval calls this again
-    and atomically replaces the artefact (which is also how OMOP-side removals and opt-outs
-    propagate into an approved project: at explicit re-snapshot events, never silently
-    mid-training).
+    Called by trust-api when the hub approves a project. It defines the artefact everyone
+    then trains on, so it sits on the ``write_router`` and requires cohort-admin authorisation
+    (proof of possessing ``AES_KEY_BASE64``) in addition to the trust-internal key — fl-client
+    holds the latter but not the former, so researcher code cannot reach here (FLIP#857). From
+    that point the two row-level routes serve the persisted dataframe keyed on the project id
+    and ignore caller SQL, so the cohort a project trains on is exactly the cohort that was
+    approved — it cannot grow with the live database, and it is identical on every fetch.
+    Re-approval calls this again and atomically replaces the artefact (which is also how
+    OMOP-side removals and opt-outs propagate into an approved project: at explicit re-snapshot
+    events, never silently mid-training).
 
     This route (with the statistics route) is where live OMOP is evaluated, exactly once
     per approval; ``validate_query`` remains the authority on the SQL executed here. The
@@ -347,7 +366,7 @@ def create_snapshot(query_input: DataframeQuery) -> SnapshotResponse:
     )
 
 
-@router.post("/snapshot/delete")
+@write_router.post("/snapshot/delete")
 def remove_snapshot(query_input: SnapshotDeleteRequest) -> dict[str, bool]:
     """
     Removes a project's frozen cohort artefact. Idempotent.

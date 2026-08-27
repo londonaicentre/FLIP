@@ -27,7 +27,7 @@ from data_access_api.services.cohort_snapshot import (
     SnapshotTooLarge,
     normalised_query_hash,
 )
-from tests.conftest import AUTH_HEADERS
+from tests.conftest import AUTH_HEADERS, WRITE_AUTH_HEADERS
 
 client = TestClient(app)
 
@@ -201,7 +201,7 @@ def test_create_snapshot_freezes_the_validated_query_result(
         created_at="2026-08-26T00:00:00+00:00",
     )
 
-    response = client.post("/cohort/snapshot", json=sample_dataframe_query, headers=AUTH_HEADERS)
+    response = client.post("/cohort/snapshot", json=sample_dataframe_query, headers=WRITE_AUTH_HEADERS)
 
     assert response.status_code == 200
     payload = response.json()
@@ -230,7 +230,7 @@ def test_create_snapshot_below_threshold_persists_nothing(
     mock_get_settings.return_value.COHORT_QUERY_THRESHOLD = 10
     mock_get_records.return_value = pd.DataFrame({"accession_id": ["A1"]})
 
-    response = client.post("/cohort/snapshot", json=sample_dataframe_query, headers=AUTH_HEADERS)
+    response = client.post("/cohort/snapshot", json=sample_dataframe_query, headers=WRITE_AUTH_HEADERS)
 
     assert response.status_code == 403
     assert response.json()["detail"] == _BELOW_THRESHOLD_DETAIL
@@ -252,7 +252,7 @@ def test_create_snapshot_oversize_returns_413_without_detail_leakage(
     mock_get_records.return_value = pd.DataFrame({"accession_id": ["A1", "A2", "A3"]})
     mock_save_snapshot.side_effect = SnapshotTooLarge("snapshot is 999 bytes, over the 10-byte limit")
 
-    response = client.post("/cohort/snapshot", json=sample_dataframe_query, headers=AUTH_HEADERS)
+    response = client.post("/cohort/snapshot", json=sample_dataframe_query, headers=WRITE_AUTH_HEADERS)
 
     assert response.status_code == 413
     assert "byte" not in response.json()["detail"]  # category-only, no internals
@@ -261,7 +261,7 @@ def test_create_snapshot_oversize_returns_413_without_detail_leakage(
 @patch("data_access_api.routers.cohort.snapshot_enabled")
 def test_create_snapshot_store_disabled_returns_503(mock_snapshot_enabled):
     mock_snapshot_enabled.return_value = False
-    response = client.post("/cohort/snapshot", json=sample_dataframe_query, headers=AUTH_HEADERS)
+    response = client.post("/cohort/snapshot", json=sample_dataframe_query, headers=WRITE_AUTH_HEADERS)
     assert response.status_code == 503
 
 
@@ -280,7 +280,7 @@ def test_create_snapshot_non_uuid_project_id_returns_400(
     mock_get_records.return_value = pd.DataFrame({"accession_id": ["A1", "A2", "A3"]})
     mock_save_snapshot.side_effect = ValueError("project_id must be a UUID")
 
-    response = client.post("/cohort/snapshot", json=sample_dataframe_query, headers=AUTH_HEADERS)
+    response = client.post("/cohort/snapshot", json=sample_dataframe_query, headers=WRITE_AUTH_HEADERS)
 
     assert response.status_code == 400
 
@@ -291,12 +291,14 @@ def test_delete_snapshot_route_is_idempotent(mock_decrypt, mock_delete_snapshot)
     mock_decrypt.return_value = "8b2e9d6e-5a53-4f2e-9c37-2c8f4f0f2d11"
     mock_delete_snapshot.side_effect = [True, False]
 
-    first = client.post("/cohort/snapshot/delete", json={"encrypted_project_id": "enc"}, headers=AUTH_HEADERS)
-    second = client.post("/cohort/snapshot/delete", json={"encrypted_project_id": "enc"}, headers=AUTH_HEADERS)
+    first = client.post("/cohort/snapshot/delete", json={"encrypted_project_id": "enc"}, headers=WRITE_AUTH_HEADERS)
+    second = client.post("/cohort/snapshot/delete", json={"encrypted_project_id": "enc"}, headers=WRITE_AUTH_HEADERS)
 
     assert first.json() == {"deleted": True}
     assert second.json() == {"deleted": False}
 
 
-# (Auth coverage for the snapshot routes lives in test_cohort.py's parametrised
-# missing-key / wrong-key tests, alongside every other /cohort route.)
+# (Auth coverage for the snapshot routes lives in test_cohort.py: the parametrised
+# missing-key / wrong-key tests cover the trust-internal gate alongside every other
+# /cohort route, and the cohort-admin tests cover the extra AES-possession gate the
+# WRITE routes carry — a valid trust-internal key without the proof is refused 403.)

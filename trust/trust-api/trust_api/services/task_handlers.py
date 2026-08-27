@@ -17,6 +17,7 @@ Each handler processes a specific task type and returns a result dict.
 """
 
 import datetime
+import hashlib
 import json
 from typing import Any
 
@@ -40,6 +41,8 @@ TRUST_API_KEY = get_settings().TRUST_API_KEY
 TRUST_API_KEY_HEADER = get_settings().TRUST_API_KEY_HEADER
 TRUST_INTERNAL_SERVICE_KEY = get_settings().TRUST_INTERNAL_SERVICE_KEY
 TRUST_INTERNAL_SERVICE_KEY_HEADER = get_settings().TRUST_INTERNAL_SERVICE_KEY_HEADER
+AES_KEY_BASE64 = get_settings().AES_KEY_BASE64
+COHORT_ADMIN_KEY_HEADER = get_settings().COHORT_ADMIN_KEY_HEADER
 
 
 def trust_internal_headers() -> dict[str, str]:
@@ -53,6 +56,22 @@ def trust_internal_headers() -> dict[str, str]:
         to the trust-internal service key.
     """
     return {TRUST_INTERNAL_SERVICE_KEY_HEADER: TRUST_INTERNAL_SERVICE_KEY}
+
+
+def cohort_admin_headers() -> dict[str, str]:
+    """Headers for data-access-api's cohort-DEFINING write routes (snapshot create/delete).
+
+    Those routes require the trust-internal key AND proof of possessing ``AES_KEY_BASE64``
+    (FLIP#857) — the second gate is what stops fl-client's researcher code from rewriting or
+    deleting a project's frozen cohort, since fl-client holds no AES key. The proof is the
+    SHA-256 of the key, never the key itself, so it stays off the wire and out of logs. Layers
+    the cohort-admin header on top of the trust-internal one.
+
+    Returns:
+        dict[str, str]: The trust-internal header plus the cohort-admin proof header.
+    """
+    proof = hashlib.sha256(AES_KEY_BASE64.encode()).hexdigest()
+    return {**trust_internal_headers(), COHORT_ADMIN_KEY_HEADER: proof}
 
 
 # Task type constants — must match TaskType enum in flip-api/src/flip_api/domain/schemas/status.py
@@ -96,7 +115,9 @@ async def handle_persist_cohort(payload: dict[str, Any]) -> dict[str, Any]:
                 "encrypted_project_id": request.encrypted_project_id,
                 "query": request.query,
             },
-            headers=trust_internal_headers(),
+            # Snapshot creation is a cohort-DEFINING write: it needs the cohort-admin proof on
+            # top of the trust-internal key (FLIP#857).
+            headers=cohort_admin_headers(),
             # Snapshot creation runs the full cohort query, so it inherits the cohort
             # query's timeout rather than the default request timeout.
             timeout_seconds=get_settings().COHORT_QUERY_TIMEOUT_SECONDS,

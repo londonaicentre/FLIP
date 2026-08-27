@@ -130,6 +130,15 @@ trust receives a different value, limiting the effect of disclosure to one trust
 rotation is performed by issuing a new trust kit and restarting the trust-side services
 together so callers and receivers change atomically.
 
+Because the FL client legitimately holds this key — it reads the approved cohort and pulls
+imaging — the key alone cannot separate reading a project's cohort from *defining* it. The
+two ``data-access-api`` routes that materialise or delete the frozen cohort therefore carry a
+second gate on top of the shared key: proof of possessing the trust's payload-encryption key
+(``AES_KEY_BASE64``), which ``trust-api`` and ``data-access-api`` hold but the FL client does
+not. The proof is a one-way digest of the key, not the key itself, so it never appears on the
+wire or in logs. A caller that presents a valid shared key but not this proof is refused. No
+additional secret is provisioned; the control reuses a possession boundary that already exists.
+
 **************************
 The clinical data boundary
 **************************
