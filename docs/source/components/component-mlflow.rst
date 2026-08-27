@@ -71,14 +71,16 @@ network placement:
 
 - The UI is published on ``127.0.0.1:${MLFLOW_PORT}`` only — hub administrators
   on the dev host.
-- The container joins the hub network (compose alias ``default``, created as
-  ``deploy_central-hub-network``, where flip-api reaches it) and a dedicated
-  hub-only bridge (alias ``mlflow-network``, created as
-  ``deploy_central-hub-mlflow-network``, where the fl-servers reach it). Both
-  carry the per-instance prefix from ``FLIP_INSTANCE`` when one is set. MLflow
-  must **never** join ``fl-net-1/2``: the trust fl-clients live there, and
-  keeping trust-side containers off MLflow's networks *is* the security
-  boundary. fl-clients keep zero hub credentials, exactly as before.
+- The container joins one network: the hub-internal one (compose alias
+  ``default``, created as ``deploy_central-hub-network``, plus the per-instance
+  prefix from ``FLIP_INSTANCE`` when set). Every writer is already on it —
+  flip-api and both fl-servers — and no trust container is: a trust is a
+  separate compose project and declares only its own network,
+  ``central-hub-trust-apis-network`` and ``fl-net-1/2``, so it cannot attach to
+  the hub network at all. MLflow must **never** be added to ``fl-net-1/2``:
+  that is where the trust fl-clients live, and keeping trust-side containers
+  off MLflow's network *is* the security boundary. fl-clients keep zero hub
+  credentials, exactly as before.
 
 Using it
 ========

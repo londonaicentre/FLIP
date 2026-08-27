@@ -121,7 +121,7 @@ services:
       - INTERNAL_SERVICE_KEY=${INTERNAL_SERVICE_KEY}
       - AWS_PROFILE=${AWS_PROFILE}
       # MLflow dual-write (FLIP#745): the flip package mirrors metrics/status to
-      # MLflow over the hub-only mlflow-network below. Empty => sink disabled.
+      # MLflow, reached over `default` (hub-internal). Empty => sink disabled.
       - MLFLOW_TRACKING_URI=${MLFLOW_TRACKING_URI:-}
     command:
       - --ssl-ca-certfile
@@ -151,8 +151,6 @@ services:
     networks:
       - default
       - fl-net-1
-      # Hub-only bridge to the mlflow container — NOT shared with trust fl-clients.
-      - mlflow-network
     restart: unless-stopped
     init: true
 
@@ -254,8 +252,6 @@ services:
     networks:
       - default
       - fl-net-2
-      # Hub-only bridge to the mlflow container — NOT shared with trust fl-clients.
-      - mlflow-network
     restart: unless-stopped
     init: true
 

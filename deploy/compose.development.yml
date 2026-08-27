@@ -284,12 +284,13 @@ services:
       - mlflow_data:/mlflow/data
       - mlflow_artifacts:/mlflow/artifacts
     networks:
-      # default (central-hub-network): flip-api + the admin browser reach it here.
-      # mlflow-network: hub-only bridge shared with the fl-servers. NEVER attach
-      # mlflow to fl-net-1/2 — trust fl-clients live there and MLflow has no
-      # auth of its own; network placement is the security boundary.
+      # `default` is the hub-internal network, and it is the whole access-control
+      # story: MLflow OSS has no auth, so network placement is the boundary. Every
+      # writer is already here (flip-api, both fl-servers) and no trust container
+      # is — a trust is its own compose project and only declares its own network,
+      # central-hub-trust-apis-network and fl-net-1/2. NEVER attach mlflow to
+      # fl-net-1/2: that is where the trust fl-clients live.
       - default
-      - mlflow-network
     restart: unless-stopped
 
   #################### PGADMIN ####################
@@ -386,10 +387,3 @@ networks:
   fl-net-2:
     external: true
     name: ${FLIP_INSTANCE:+$FLIP_INSTANCE-}deploy_fl-net-2
-
-  # Hub-only bridge for the fl-server → MLflow dual-write. Deliberately distinct
-  # from fl-net-1/2 (which the trust fl-clients join): MLflow OSS has no auth,
-  # so keeping trust-side containers off this network is the security boundary.
-  mlflow-network:
-    external: true
-    name: ${FLIP_INSTANCE:+$FLIP_INSTANCE-}deploy_central-hub-mlflow-network

@@ -333,7 +333,6 @@ debug-off-all:
 # still created them, rather than looked them up `external:` (FLIP#957).
 create-networks-centralhub:
 	$(call ensure_bridge_network,$(INSTANCE_PREFIX)deploy_central-hub-network)
-	$(call ensure_bridge_network,$(INSTANCE_PREFIX)deploy_central-hub-mlflow-network)
 
 # Start only the MLflow tracking server (FLIP#745). Included in `make up` via the
 # compose file; this standalone target is for fl-tutorials runs that want metric
@@ -347,7 +346,6 @@ create-networks: create-networks-centralhub
 remove-networks:
 	@echo "🗑️  Removing all networks..."
 	@docker network rm $(INSTANCE_PREFIX)deploy_central-hub-network 2>/dev/null || true
-	@docker network rm $(INSTANCE_PREFIX)deploy_central-hub-mlflow-network 2>/dev/null || true
 	$(MAKE) -C trust remove-networks
 	@echo "✅ All networks removed!"
 
