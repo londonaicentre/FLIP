@@ -11,13 +11,6 @@
     limitations under the License.
 -->
 
----
-
-tags: [quickstart]
-dataset: [spleen]
-framework: [monai]
----
-
 # Federated Learning with MONAI and Flower (Quickstart Example)
 
 This example of Flower uses a small MONAI UNet based on FLIP's implementation and a training-only `ClientApp`. It reads NIfTI data from the local `./data` folder and does not write any outputs.
