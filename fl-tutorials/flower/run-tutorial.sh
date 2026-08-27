@@ -32,15 +32,28 @@ if [ ! -d "$HERE/$TUTORIAL/app" ]; then echo "❌ Unknown tutorial '$TUTORIAL'. 
 case "$TUTORIAL" in
   3d_spleen_segmentation|3d_spleen_segmentation_evaluation)
     export DEV_IMAGES_DIR="$HERE/data/spleen/accession-resources"
-    export DEV_DATAFRAME="$HERE/data/spleen/sample_get_dataframe_response.csv" ;;
+    export DEV_DATAFRAME="$HERE/data/spleen/sample_get_dataframe_response.csv"
+    DATASET_TARGET=spleen ;;
   xray_classification)
     export DEV_IMAGES_DIR="$HERE/data/xrays_mini_300/accession-resources"
-    export DEV_DATAFRAME="$HERE/data/xrays_mini_300/sample_get_dataframe_response.csv" ;;
+    export DEV_DATAFRAME="$HERE/data/xrays_mini_300/sample_get_dataframe_response.csv"
+    DATASET_TARGET=xray ;;
+  ehr_risk_prediction)
+    # Tabular-only tutorial: no images, so DEV_IMAGES_DIR stays unset — the compose default
+    # (an empty images dir the app never reads) is fine. Both SuperNodes get the same CSV; each
+    # ClientApp slices out its own person_id-modulo partition.
+    export DEV_DATAFRAME="$HERE/data/synthea/dataframe.csv"
+    DATASET_TARGET=synthea ;;
   *) echo "❌ No data mapping for '$TUTORIAL'"; exit 1 ;;
 esac
 if [ -n "${DEV_IMAGES_DIR:-}" ] && [ ! -d "$DEV_IMAGES_DIR" ]; then
   echo "❌ Dataset missing: $DEV_IMAGES_DIR"
-  echo "   Run: make -C $REPO_ROOT/fl-tutorials download-$( [ "${TUTORIAL#xray}" != "$TUTORIAL" ] && echo xray || echo spleen )-data FL_BACKEND=flower"
+  echo "   Run: make -C $REPO_ROOT/fl-tutorials download-$DATASET_TARGET-data FL_BACKEND=flower"
+  exit 1
+fi
+if [ -n "${DEV_DATAFRAME:-}" ] && [ ! -f "$DEV_DATAFRAME" ]; then
+  echo "❌ Dataset missing: $DEV_DATAFRAME"
+  echo "   Run: make -C $REPO_ROOT/fl-tutorials download-$DATASET_TARGET-data FL_BACKEND=flower"
   exit 1
 fi
 

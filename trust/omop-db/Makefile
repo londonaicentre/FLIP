@@ -78,6 +78,25 @@ load-omop-vocab: fetch-vocab-core
 	OMOP_DB_PORT=$(OMOP_DB_PORT) ./files/load_core_vocab.sh \
 		data/$(VOCAB_CORE_BUNDLE) files/OMOPCDM_postgresql_5.4_constraints.sql
 
+# Load the public Synthea-in-OMOP EHR cohort (person + conditions + visits) into a RUNNING trust
+# omop-db — the populate side of the EHR risk-prediction tutorial
+# (fl-tutorials/{nvflare/tabular_classification,flower}/ehr_risk_prediction). The shipped mock OMOP
+# carries no condition rows, so that tutorial's query.sql returns nothing until this runs. Downloads
+# ~5 MB from the AWS Open Data Registry at run time (anonymous HTTPS, cached under data/synthea-ehr/,
+# never committed) and appends a per-trust person_id-modulo slice (ids shifted into a reserved band
+# so they never collide with the imaging cohorts). Idempotent. Run once per trust, giving that
+# trust's index + published port (same shape as load-omop-vocab):
+#   make load-synthea-ehr TRUST_INDEX=1 OMOP_DB_PORT=5434   # GSTT
+#   make load-synthea-ehr TRUST_INDEX=2 OMOP_DB_PORT=5436   # KCH
+SYNTHEA_EHR_BASE_URL ?= https://synthea-omop.s3.amazonaws.com/synthea1k
+SYNTHEA_EHR_CACHE_DIR ?= data/synthea-ehr
+TRUST_INDEX ?= 1
+
+load-synthea-ehr:
+	OMOP_DB_PORT=$(OMOP_DB_PORT) uv run python -m omop_db_tools.synthea_ehr \
+		--trust-index $(TRUST_INDEX) --num-trusts $(NUM_TRUSTS) \
+		--base-url $(SYNTHEA_EHR_BASE_URL) --cache-dir $(SYNTHEA_EHR_CACHE_DIR)
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Image build + populate pipeline (standalone; see README "Building the image")
 # ─────────────────────────────────────────────────────────────────────────────

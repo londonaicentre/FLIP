@@ -63,6 +63,16 @@ tolerate the DICOM vocab already present in the tarballs):
   Orthanc PACS volumes, whose studies match each trust's accession IDs) and `modulo`
   (`person_id % N`, any trust count, needs regenerated imaging data). All tables carry `person_id`, so
   person-level partitioning preserves referential integrity.
+- **Synthea EHR cohort** (`src/omop_db_tools/synthea_ehr.py`, `make load-synthea-ehr`): the populate
+  side of the EHR risk-prediction tutorial. The shipped mock OMOP has NO `condition_occurrence` rows,
+  so that tutorial's `query.sql` returns nothing until this loads the public 1k-person Synthea-in-OMOP
+  set (AWS Open Data Registry, anonymous HTTPS, downloaded at run time, never committed) into a running
+  DB. Synthea ids are shifted into a reserved high band (`PERSON_ID_OFFSET`, even → per-trust modulo
+  split unchanged) so they never collide with the imaging cohorts' keys, and the tutorial's `query.sql`
+  scopes to persons that HAVE a condition — i.e. exactly these rows. FK-safe: `gender_concept_id` keeps
+  Synthea's standard 8507/8532 (`query.sql` reads it), every other `*_concept_id` is zeroed to `0`
+  ("No matching concept"), conditions match on the `condition_source_value` SNOMED string. Idempotent
+  (reserved band deleted before reload); unit-tested in `tests/unit/test_synthea_ehr.py`.
 - The populate scripts run on the **host** against published ports (`OMOP_DB_HOST` defaults to
   localhost) and need postgresql-client (`psql`/`pg_isready`).
 
@@ -71,6 +81,9 @@ tolerate the DICOM vocab already present in the tarballs):
 ```bash
 make update-omop-data [TRUST=1|2]   # consumer path: sync vocab-free pgdata volumes from HF
 make load-omop-vocab [OMOP_DB_PORT=5436]  # seed the licensed vocab + constraints into a running trust DB
+make load-synthea-ehr TRUST_INDEX=1 OMOP_DB_PORT=5434  # EHR risk-prediction tutorial: load public
+                                    # Synthea-in-OMOP conditions/visits/persons into a running trust DB
+                                    # (once per trust; downloads ~5MB from AWS Open Data at run time)
 cp .env.build.example .env.build    # once, before any build-pipeline target
 make build                          # plain docker build — no data inputs, no credentials
 make up-build / down-build          # the standalone per-trust build DBs

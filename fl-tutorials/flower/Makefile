@@ -33,7 +33,7 @@ HF_DATA_REPO := aicentreflip/flip-fl-base-test-data
 # 3d_spleen_segmentation, 3d_spleen_segmentation_evaluation).
 TUTORIAL_DIRS := $(sort $(patsubst %/app/,%,$(dir $(wildcard */app/.))))
 
-.PHONY: list-tutorials run-tutorial run-all-tutorials download-xray-data download-spleen-data upload-spleen-labels
+.PHONY: list-tutorials run-tutorial run-all-tutorials download-xray-data download-spleen-data download-synthea-data upload-spleen-labels
 
 # Data enrichment: upload the MSD spleen labels into a real FLIP project's XNAT.
 #
@@ -67,6 +67,15 @@ download-spleen-data:
 	@cp data/.hf/flip-fl-base-test-data/spleen/sample_get_dataframe_response.csv data/spleen/sample_get_dataframe_response.csv
 	@mkdir -p data/model_checkpoints && cp data/.hf/flip-fl-base-test-data/checkpoints/model.pt data/model_checkpoints/model.pt
 	@echo "✅ spleen data ready at data/spleen/ (+ checkpoint) — make run-tutorial TUTORIAL=3d_spleen_segmentation"
+
+# Derive the EHR risk-prediction tutorial's tabular dataset into data/synthea/ (gitignored).
+# Deliberately delegates to the NVFLARE tree rather than duplicating the builder script — the
+# derivation is backend-agnostic and single-copy (same pattern as upload-spleen-labels); only the
+# output directory differs. The Flower dev compose mounts data/synthea/dataframe.csv into both
+# SuperNodes; each ClientApp slices out its own person_id partition (see the tutorial README).
+download-synthea-data:
+	@$(MAKE) --no-print-directory -C $(REPO_ROOT)/fl-tutorials/nvflare download-synthea-data \
+		SYNTHEA_OUTPUT_DIR=$(abspath data/synthea)
 
 list-tutorials:
 	@echo "Available Flower tutorials (pass the name to 'make run-tutorial TUTORIAL=…'):"

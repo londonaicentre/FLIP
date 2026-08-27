@@ -49,7 +49,12 @@ SPLEEN_LABELS_DIR ?= data/spleen/images
 # CLI always matches this checkout (flip.xnat may be newer here than the last published version).
 FLIP_UTILS_DIR ?= $(abspath ../../flip-utils)
 
-.PHONY: list-tutorials run-tutorial run-all-tutorials download-xray-data download-spleen-data download-arkplus-finetuning-data download-arkplus-eval-data upload-spleen-labels
+EHR_DIR := tabular_classification/ehr_risk_prediction
+# Where download-synthea-data lands the derived tabular CSVs (gitignored). fl-tutorials/flower/Makefile
+# overrides this to its own data/ tree when it delegates the download here.
+SYNTHEA_OUTPUT_DIR ?= data/synthea
+
+.PHONY: list-tutorials run-tutorial run-all-tutorials download-xray-data download-spleen-data download-synthea-data download-arkplus-finetuning-data download-arkplus-eval-data upload-spleen-labels
 
 # Download the x-ray reference dataset from Hugging Face and normalise it into the
 # layout image_classification/xray_classification/.env.app expects (data/xrays_mini_300/,
@@ -104,6 +109,17 @@ download-spleen-data:
 	@cd $(SPLEEN_DIR) && uv run python utils/download_spleen_dataset.py --output_dir ../../data/spleen/images --num_cases $(NUM_CASES)
 	@cd $(SPLEEN_DIR) && uv run python utils/create_spleen_accession_csv.py --images_dir ../../data/spleen/images --output_csv ../../data/spleen/dataframe.csv
 	@echo "✅ spleen data ready at data/spleen/ — run: make run-tutorial TUTORIAL=3d_spleen_segmentation"
+
+# Download three OMOP tables of the public 1k-person Synthea dataset (AWS Open Data Registry,
+# anonymous HTTPS, ~5 MB) and derive the EHR risk-prediction tutorial's dataframe.csv + per-site
+# splits into $(SYNTHEA_OUTPUT_DIR) (gitignored). Idempotent — the raw tables are cached under
+# $(SYNTHEA_OUTPUT_DIR)/.synthea-raw/. Needs only pandas, so it runs outside any project venv.
+# This is the LOCAL-SIM dataset; the on-platform path loads the same data into a trust's OMOP via
+# `make -C trust load-synthea-ehr` (see the tutorial README).
+download-synthea-data:
+	@echo "⬇️  Downloading Synthea-in-OMOP tabular dataset (AWS Open Data Registry)..."
+	@uv run --no-project --with pandas python $(EHR_DIR)/utils/build_synthea_dataframe.py --output-dir $(SYNTHEA_OUTPUT_DIR)
+	@echo "✅ Synthea data ready at $(SYNTHEA_OUTPUT_DIR)/ — run: make run-tutorial TUTORIAL=ehr_risk_prediction"
 
 # Data enrichment: upload the MSD spleen labels into a real FLIP project's XNAT, so the spleen
 # apps find a label_*.nii.gz beside each pulled input_*.nii.gz. Needs NUM_CASES=41 on the download
