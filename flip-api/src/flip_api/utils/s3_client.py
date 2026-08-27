@@ -511,7 +511,7 @@ class S3Client:
             List of full S3 paths (e.g., s3://bucket/key)
 
         Raises:
-            HTTPException: If listing objects fails
+            Exception: If listing objects fails, or if the S3 path is invalid.
         """
         try:
             bucket, prefix = parse_s3_path(s3_path)

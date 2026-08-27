@@ -181,7 +181,7 @@ const liveTrusts = (): unknown => {
  * exhibit (FLIP#794 review). The shape is IModelsPage (services/model-service.ts):
  * a paginated IModelSummary list plus the per-status totals the filter tiles sum.
  */
-const allModels = (): unknown => {
+const allModels = (projectId?: string | null): unknown => {
     const rows = [
         ...(projectModelsP1 as { data: Record<string, unknown>[] }).data.map(model => ({
             model,
@@ -202,14 +202,16 @@ const allModels = (): unknown => {
             code
         }));
 
-    const data: Record<string, unknown>[] = rows.map(({ model, project }) => ({
-        ...model,
-        projectId: project.id,
-        projectName: project.name,
-        ownerId: model.owner_id,
-        ownerName: DEMO_USER.name,
-        trusts: runTrusts
-    }));
+    const data: Record<string, unknown>[] = rows
+        .filter(({ project }) => !projectId || project.id === projectId)
+        .map(({ model, project }) => ({
+            ...model,
+            projectId: project.id,
+            projectName: project.name,
+            ownerId: model.owner_id,
+            ownerName: DEMO_USER.name,
+            trusts: runTrusts
+        }));
 
     const statusCounts = data.reduce<Record<string, number>>((counts, model) => {
         const status = String(model.status);
@@ -301,8 +303,23 @@ export function makeDemoServer(options: { timing?: number } = {}): Server {
                 byParam(cohortByQuery, request.params.queryId));
 
             // ---- Estate-wide Models list --------------------------------------
-            // Registered before /model/:modelId/* so the literal path wins.
-            this.get(`${BASE}/models`, () => new Response(200, undefined, allModels() as never));
+            // Registered before /model/:modelId/* so the literal path wins. Honours the page's
+            // ?project= filter, or the recorded demo would show the whole estate under a chip
+            // naming one project.
+            this.get(`${BASE}/models`, (_schema, request) =>
+                new Response(200, undefined, allModels(request.queryParams?.project as string) as never));
+            this.get(`${BASE}/models/projects`, () => new Response(200, undefined, [
+                {
+                    id: projectP1.id,
+                    name: projectP1.name,
+                    status: "APPROVED"
+                },
+                {
+                    id: projectP2.id,
+                    name: projectP2.name,
+                    status: "APPROVED"
+                }
+            ] as never));
 
             // ---- Model dashboard ----------------------------------------------
             // POST / not GET: mirrors the real API (retrieve_model_step_function),
