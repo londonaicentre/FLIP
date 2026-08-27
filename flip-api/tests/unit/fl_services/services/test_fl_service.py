@@ -344,7 +344,7 @@ def test_bundle_nvflare_application_success(
     dest_bucket = mocked_settings.FL_APP_DESTINATION_BUCKET
 
     # Base application template on the local FL_APP_BASE_DIR tree
-    write_base_tree(base_dir, "nvflare", "standard", ["app/file1.py"])
+    write_base_tree(base_dir, "nvflare", "standard", ["app/file1.py", "meta.json"])
 
     mock_client = mock_s3.return_value
     # Ensure get_object returns a body whose read() yields the config.json bytes
@@ -400,7 +400,7 @@ def test_bundle_nvflare_application_diverts_eval_checkpoint(
     dest_bucket = mocked_settings.FL_APP_DESTINATION_BUCKET
 
     # The tree lives under the RESOLVED name only — proving the alias path reads it from there.
-    write_base_tree(base_dir, "nvflare", "evaluation", ["app/custom/flip.py"])
+    write_base_tree(base_dir, "nvflare", "evaluation", ["app/custom/flip.py", "meta.json"])
 
     eval_config = {
         "job_type": job_type,
@@ -459,7 +459,7 @@ def test_bundle_nvflare_application_diverts_standard_server_checkpoint(
     model_bucket = mocked_settings.SCANNED_MODEL_FILES_BUCKET
     dest_bucket = mocked_settings.FL_APP_DESTINATION_BUCKET
 
-    write_base_tree(base_dir, "nvflare", "standard", ["app/custom/flip.py"])
+    write_base_tree(base_dir, "nvflare", "standard", ["app/custom/flip.py", "meta.json"])
 
     std_config = {"job_type": "standard", "SERVER_CHECKPOINT": "pretrained_weights.pt"}
     mock_client = mock_s3.return_value
@@ -518,7 +518,9 @@ def test_bundle_nvflare_application_model_files_overwrite(
     dest_bucket = mocked_settings.FL_APP_DESTINATION_BUCKET
 
     # Base template contains flip.py under app/custom — a name the researcher must not overwrite
-    write_base_tree(base_dir, "nvflare", "standard", ["app/custom/flip.py", "app/config/config_fed_client.json"])
+    write_base_tree(
+        base_dir, "nvflare", "standard", ["app/custom/flip.py", "app/config/config_fed_client.json", "meta.json"]
+    )
 
     mock_client = mock_s3.return_value
     # config.json with job_type standard
@@ -607,7 +609,7 @@ def test_bundle_nvflare_application_file_wrong_job_type_in_config(
 
     # A base template exists for the parametrized job_type (unused for the "invalid" run, which is
     # rejected before the base directory is ever walked).
-    write_base_tree(base_dir, "nvflare", job_type, ["app/file1.py"])
+    write_base_tree(base_dir, "nvflare", job_type, ["app/file1.py", "meta.json"])
 
     mock_is_valid.side_effect = lambda jt, backend: jt in mock_job_types_file
     mock_client = mock_s3.return_value
@@ -646,7 +648,7 @@ def test_bundle_nvflare_application_wrong_files(mock_s3, mock_required, mock_ver
     base_dir = mocked_settings.FL_APP_BASE_DIR
     model_bucket = mocked_settings.SCANNED_MODEL_FILES_BUCKET
 
-    write_base_tree(base_dir, "nvflare", "standard", ["app/file1.py"])
+    write_base_tree(base_dir, "nvflare", "standard", ["app/file1.py", "meta.json"])
 
     mock_client = mock_s3.return_value
     # Provide an empty JSON config for tests that include config.json in model files
@@ -807,7 +809,7 @@ def test_bundle_flower_application_file_wrong_job_type_in_config(
 
     # A base template exists for the parametrized job_type (unused for the "invalid" run, which is
     # rejected before the base directory is ever walked).
-    write_base_tree(base_dir, "flower", job_type, ["app/file1.py"])
+    write_base_tree(base_dir, "flower", job_type, ["app/file1.py", "pyproject.toml"])
 
     mock_is_valid.side_effect = lambda jt, backend: jt in mock_job_types_file
     mock_client = mock_s3.return_value
@@ -845,7 +847,7 @@ def test_bundle_flower_application_wrong_files(mock_s3, mock_required, mocked_se
     base_dir = mocked_settings.FL_APP_BASE_DIR
     model_bucket = mocked_settings.SCANNED_MODEL_FILES_BUCKET
 
-    write_base_tree(base_dir, "flower", "standard", ["app/server_app.py"])
+    write_base_tree(base_dir, "flower", "standard", ["app/server_app.py", "pyproject.toml"])
 
     mock_client = mock_s3.return_value
     mock_client.get_object.return_value = {
@@ -1311,6 +1313,27 @@ def test_bundle_nvflare_application_no_base_files(mock_s3, mocked_settings, mode
         fl_service.bundle_nvflare_application(model_id)
 
 
+@patch("flip_api.fl_services.services.fl_service.S3Client")
+def test_bundle_nvflare_application_missing_root_file(mock_s3, mocked_settings, model_id):
+    """A template with ``app/`` files but no ``meta.json`` is rejected at bundle time.
+
+    Without this guard the bundle uploads cleanly and only fails at the FL server, far from the
+    cause — NVFLARE has no job definition to deploy.
+    """
+    base_dir = mocked_settings.FL_APP_BASE_DIR
+    model_bucket = mocked_settings.SCANNED_MODEL_FILES_BUCKET
+
+    write_base_tree(base_dir, "nvflare", "standard", ["app/file1.py"])  # app/ present, meta.json absent
+
+    mock_client = mock_s3.return_value
+    mock_client.list_objects.side_effect = [
+        [f"{model_bucket}/{model_id}/trainer.py"],  # model files (no config.json)
+    ]
+
+    with pytest.raises(FileNotFoundError, match="Base application root file missing"):
+        fl_service.bundle_nvflare_application(model_id)
+
+
 @patch("flip_api.fl_services.services.fl_service.JobRequiredFiles.get_required_files")
 @patch("flip_api.fl_services.services.fl_service.S3Client")
 def test_bundle_nvflare_application_no_app_folders(mock_s3, mock_required, mocked_settings, model_id):
@@ -1348,7 +1371,7 @@ def test_bundle_nvflare_application_no_config_clears_existing_dest(
     model_bucket = mocked_settings.SCANNED_MODEL_FILES_BUCKET
     dest_bucket = mocked_settings.FL_APP_DESTINATION_BUCKET
 
-    write_base_tree(base_dir, "nvflare", "standard", ["app/file1.py"])
+    write_base_tree(base_dir, "nvflare", "standard", ["app/file1.py", "meta.json"])
 
     mock_client = mock_s3.return_value
     mock_required.return_value = ["trainer.py", "validator.py"]
@@ -1389,6 +1412,27 @@ def test_bundle_flower_application_no_base_files(mock_s3, mocked_settings, model
     ]
 
     with pytest.raises(FileNotFoundError, match="Base application files missing in the local base directory"):
+        fl_service.bundle_flower_application(model_id)
+
+
+@patch("flip_api.fl_services.services.fl_service.S3Client")
+def test_bundle_flower_application_missing_root_file(mock_s3, mocked_settings, model_id):
+    """A template with ``app/`` files but no ``pyproject.toml`` is rejected at bundle time.
+
+    Without this guard the bundle uploads cleanly and only fails at the FL server, far from the
+    cause — fl-api-flower cannot build a FAB without the run-root ``pyproject.toml``.
+    """
+    base_dir = mocked_settings.FL_APP_BASE_DIR
+    model_bucket = mocked_settings.SCANNED_MODEL_FILES_BUCKET
+
+    write_base_tree(base_dir, "flower", "standard", ["app/server_app.py"])  # app/ present, pyproject.toml absent
+
+    mock_client = mock_s3.return_value
+    mock_client.list_objects.side_effect = [
+        [f"{model_bucket}/{model_id}/client_app.py"],  # model files (no config.json)
+    ]
+
+    with pytest.raises(FileNotFoundError, match="Base application root file missing"):
         fl_service.bundle_flower_application(model_id)
 
 
@@ -1796,7 +1840,9 @@ def test_bundle_nvflare_application_uploads_nested_base_paths(
     model_bucket = mocked_settings.SCANNED_MODEL_FILES_BUCKET
     dest_bucket = mocked_settings.FL_APP_DESTINATION_BUCKET
 
-    write_base_tree(base_dir, "nvflare", "standard", ["app/config/config_fed_server.json", "app/custom/sub/deep.py"])
+    write_base_tree(
+        base_dir, "nvflare", "standard", ["app/config/config_fed_server.json", "app/custom/sub/deep.py", "meta.json"]
+    )
 
     mock_client = mock_s3.return_value
     mock_client.get_object.return_value = {
@@ -1833,7 +1879,7 @@ def test_bundle_nvflare_application_propagates_upload_failure(
     base_dir = mocked_settings.FL_APP_BASE_DIR
     model_bucket = mocked_settings.SCANNED_MODEL_FILES_BUCKET
 
-    write_base_tree(base_dir, "nvflare", "standard", ["app/file1.py"])
+    write_base_tree(base_dir, "nvflare", "standard", ["app/file1.py", "meta.json"])
 
     mock_client = mock_s3.return_value
     mock_client.get_object.return_value = {

@@ -658,6 +658,14 @@ def bundle_nvflare_application(model_id: UUID, job_type: str = DEFAULT_JOB_TYPE)
             f"Base application files missing in the local base directory: {base_dir} "
             f"(a bundle needs an app/ directory and one of {sorted(allowed_root_files)})"
         )
+    if not allowed_root_files.intersection(base_rel_paths):
+        # A template whose app/ files survived the walk but whose root file did not would bundle
+        # cleanly and only fail at the FL server, far from the cause — NVFLARE has no meta.json
+        # job definition to deploy. Fail here instead, naming what the template must carry.
+        raise FileNotFoundError(
+            f"Base application root file missing in the local base directory: {base_dir} "
+            f"(a bundle needs one of {sorted(allowed_root_files)} beside {BUNDLED_APP_DIR_NAME}/)"
+        )
 
     # Clear destination if files already exist there (e.g. from a previous training run)
     dest_files = s3.list_objects(dest_bucket_s3_path)
@@ -869,6 +877,15 @@ def bundle_flower_application(model_id: UUID, job_type: str = DEFAULT_JOB_TYPE) 
         raise FileNotFoundError(
             f"Base application files missing in the local base directory: {base_dir} "
             f"(a bundle needs an app/ directory and one of {sorted(allowed_root_files)})"
+        )
+    if not allowed_root_files.intersection(base_rel_paths):
+        # A template whose app/ files survived the walk but whose root file did not would bundle
+        # cleanly and only fail at the FL server, far from the cause — fl-api-flower cannot build
+        # a FAB without the run-root pyproject.toml. Fail here instead, naming what the template
+        # must carry.
+        raise FileNotFoundError(
+            f"Base application root file missing in the local base directory: {base_dir} "
+            f"(a bundle needs one of {sorted(allowed_root_files)} beside {BUNDLED_APP_DIR_NAME}/)"
         )
 
     # Clear destination if files already exist there (e.g. from a previous training run)
