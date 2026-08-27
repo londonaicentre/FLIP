@@ -124,6 +124,42 @@ class TestUnzipFile:
             assert os.path.exists(os.path.join(result, "scan.nii"))
             assert not os.path.exists(zip_path)  # zip deleted
 
+    def test_real_xnat_layout_merges_into_populated_accession_dir(self):
+        """Re-extracting over a populated accession dir merges; it must not 500.
+
+        Real XNAT scan zips (``/scans/ALL/files?format=zip``) carry the experiment
+        label — the accession id — as their top-level folder, never the zip's own
+        stem. So on a force-refresh / upload-invalidation re-download the rename
+        branch in ``unzip_file`` is skipped (``<extract_dir>/<zip stem>`` never
+        exists) and extraction merges member-by-member into the already-populated
+        accession dir: no ``FileExistsError``/``ENOTEMPTY``. Files absent from the
+        new zip are deliberately left behind — replacing the merge with an
+        extract-to-temp-and-swap is #1026.
+        """
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            accession_dir = os.path.join(tmp_dir, "ACC123")
+            member_rel = os.path.join("scans", "1", "resources", "NIFTI", "files", "input_1.nii.gz")
+            os.makedirs(os.path.join(accession_dir, os.path.dirname(member_rel)))
+            with open(os.path.join(accession_dir, member_rel), "w") as f:
+                f.write("old-data")
+            stale_file = os.path.join(accession_dir, "old_file.txt")
+            with open(stale_file, "w") as f:
+                f.write("stale")
+
+            # Top-level folder is the accession id, NOT the zip stem "ACC123-scans-NIFTI".
+            zip_path = os.path.join(tmp_dir, "ACC123-scans-NIFTI.zip")
+            with zipfile.ZipFile(zip_path, "w") as zf:
+                zf.writestr(f"ACC123/{member_rel.replace(os.sep, '/')}", "new-data")
+
+            result = unzip_file(zip_path, tmp_dir, "ACC123")
+
+            assert result == accession_dir
+            with open(os.path.join(accession_dir, member_rel)) as f:
+                assert f.read() == "new-data"  # same-name member overwritten
+            assert os.path.exists(stale_file)  # unrelated pre-existing file untouched
+            assert not os.path.exists(os.path.join(tmp_dir, "ACC123-scans-NIFTI"))
+            assert not os.path.exists(zip_path)  # zip deleted
+
     def test_not_found_raises_file_not_found_error(self):
         with pytest.raises(FileNotFoundError, match="ZIP file not found"):
             unzip_file("/nonexistent/path.zip", "/tmp", "test")
