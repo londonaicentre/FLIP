@@ -107,10 +107,10 @@ This command executes the following steps in order:
 7. **`apply`**: Apply infrastructure changes
 8. **`update-env`**: Refresh the root environment file with Terraform outputs
 9. **`ssh-config`**: Update `~/.ssh/config` with SSM-managed EC2 instance IDs
-10. **`ansible-init`**: Patch both hosts, install `psql` on the Central Hub bastion, and provision Docker, AWS CLI, CloudWatch, and FL assets on the Trust EC2
+10. **`ansible-init`**: Patch both hosts, install `psql` on the Central Hub bastion, and provision Docker, AWS CLI, CloudWatch, and FL assets on the Trust EC2 (the FL kit is staged as `Trust_1` at this point — no slot has been assigned yet)
 11. **`deploy-centralhub`**: Deploy the Central Hub ECS Fargate services (`flip-api`, `fl-api-net-1`, `fl-server-net-1`) at the tip of the env's branch via new task-definition revisions (see [Central Hub deploys and rollback](#central-hub-deploys-and-rollback-immutable-sha-tags)) and sync the UI to S3 + invalidate CloudFront
 12. **`register-trusts`**: Register every locally-present trust kit file (`trust/.env.<CODE>.<env>`) on the running hub and fill each kit with hub-shared values
-13. **`deploy-trust`**: Deploy Trust services via Docker Compose to the Trust EC2
+13. **`deploy-trust`**: Re-stage the FL participant kit for the slot the hub assigned at registration (`stage-fl-kit`, reading `FL_KIT_SLOT_NUMBER` from the kit file — idempotent when the host really is `Trust_1`), then deploy Trust services via Docker Compose to the Trust EC2
 14. **`status`**: Run comprehensive health checks
 
 To provision only the minimal Central Hub bastion after a targeted Terraform
