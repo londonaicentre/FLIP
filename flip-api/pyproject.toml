@@ -19,7 +19,7 @@ authors = [
     { name = "R. Garcia-Dias", email = "rafaelagd@gmail.com" },
     { name = "A. Triay Bagur", email = "alexandre.triay_bagur@kcl.ac.uk" },
 ]
-requires-python = ">=3.12"
+requires-python = ">=3.12,<3.14"
 dependencies = [
     "alembic>=1.13",
     "fastapi[standard]>=0.115.11",

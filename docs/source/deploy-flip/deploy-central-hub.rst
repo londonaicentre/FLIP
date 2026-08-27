@@ -37,7 +37,7 @@ Prerequisites
 
 1. **AWS CLI configured with SSO access** — see `deploy/README.md <https://github.com/londonaicentre/FLIP/blob/main/deploy/README.md>`_.
 2. **Terraform >= 1.13.1** (or OpenTofu).
-3. **Python 3.12+** with `UV <https://docs.astral.sh/uv/guides/install-python/>`_.
+3. **Python 3.12 or 3.13** with `UV <https://docs.astral.sh/uv/guides/install-python/>`_.
 4. **GitHub CLI** — needed to authenticate against GitHub Container Registry for image pulls.
 5. **SSH key pair** at ``~/.ssh/host-aws`` — uploaded to AWS and used as the
    identity file for the SSM ProxyCommand-based SSH config.
@@ -204,7 +204,9 @@ CI otherwise.
 ``alembic upgrade head`` on every container start, so a fresh ``flip-api`` deploy
 applies any pending revisions in order against the existing database:
 
-- **Development**: ``make restart`` re-creates the ``flip-api`` container; revisions apply on boot.
+- **Development**: ``make restart`` re-creates the ``flip-api`` service's container
+  (``deploy-flip-api-1`` — compose names it from the project, no service sets
+  ``container_name``); revisions apply on boot.
 - **Staging / Production**: a normal ECS redeploy (``make deploy-centralhub`` from
   ``deploy/providers/AWS/``) applies the revisions before the new task serves traffic.
 

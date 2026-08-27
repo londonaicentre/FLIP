@@ -21,7 +21,7 @@ the model-file contract, run an application locally, or provide the inputs to th
 | Backend | Examples |
 | --- | --- |
 | [`nvflare/`](nvflare/) | Chest X-ray classification, spleen segmentation and evaluation, diffusion, and template tests |
-| [`flower/`](flower/) | Chest X-ray classification, spleen segmentation and evaluation, NumPy, and SuperGrid examples |
+| [`flower/`](flower/) | Chest X-ray classification, spleen segmentation and evaluation |
 
 The root Makefile forwards tutorial commands to `FL_BACKEND=nvflare` by default. Select Flower explicitly with
 `FL_BACKEND=flower`.

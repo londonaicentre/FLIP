@@ -135,6 +135,11 @@ describe("ModelTabs", () => {
         const live = mountTabs("RUNNING", "run");
         expect(live.find("[data-test=tab-run-live]").exists()).toBe(true);
 
+        // Same purple pair as the Training panel's Live activity dot (ping
+        // bg-primary-500, dot bg-primary-600) so the two live indicators match.
+        expect(live.find("[data-test=tab-run-live]").classes()).toContain("bg-primary-500");
+        expect(live.find("[data-test=tab-run-live-dot]").classes()).toContain("bg-primary-600");
+
         const finished = mountTabs("RESULTS_UPLOADED", "run");
         expect(finished.find("[data-test=tab-run-live]").exists()).toBe(false);
 

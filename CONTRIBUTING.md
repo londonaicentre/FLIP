@@ -51,11 +51,15 @@ are provisioned in-tree (gitignored) under `fl-services/<backend>/provision/`. S
 ### Prerequisites
 
 - A Linux development host; a CUDA-capable GPU is required for GPU-backed tutorials and training
-- [Docker Engine](https://docs.docker.com/engine/install/) with Compose and Swarm mode
+- [Docker Engine](https://docs.docker.com/engine/install/) with Compose and Swarm mode. The trust
+  slot-collision guard identifies a running stack's owning kit through Compose's
+  `com.docker.compose.project.environment_file` container label (verified live on Compose v5.1.3);
+  a Compose too old to record that label does not lose the protection — the guard fails closed,
+  refusing the operation with an explicit "the kit that owns them cannot be identified" stop
 - [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)
   on GPU hosts
 - GNU Make, `jq`, and `curl`
-- [Python 3.12+](https://www.python.org/downloads/) and [uv](https://docs.astral.sh/uv/)
+- [Python 3.12 or 3.13](https://www.python.org/downloads/) and [uv](https://docs.astral.sh/uv/)
 - The AWS CLI configured for SSO access to the development environment
 - [act](https://github.com/nektos/act) if you want to run GitHub Actions locally
 - **GHCR login** — `make up` pulls the repo-built service images from GitHub Container Registry by default, so authenticate once with a PAT that has `read:packages`:

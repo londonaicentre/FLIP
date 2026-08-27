@@ -1,0 +1,200 @@
+# Copyright (c) Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+name: Build and Push Docker Image for XNAT dcm2niix
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, develop]
+    # Narrower than the other xnat workflows' trust/xnat/** filter: this image
+    # shares nothing with the xnat-web/db/nginx build contexts, so only its own
+    # directory should trigger a republish.
+    paths:
+      - "trust/xnat/dcm2niix/**"
+      - ".github/workflows/docker_build_xnat_dcm2niix.yml"
+  # PR runs exercise the Dockerfile — the pinned dcm2niix download, its sha256
+  # check and the smoke test baked into the build — so a bad pin fails in the PR
+  # rather than after merge. The login/push/visibility steps are gated below, so
+  # nothing is published from a pull request (same pattern as docker_build_orthanc).
+  pull_request:
+    paths:
+      - "trust/xnat/dcm2niix/**"
+      - ".github/workflows/docker_build_xnat_dcm2niix.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-push:
+    # Skip on forks: they cannot push to ghcr.io/londonaicentre, so this whole
+    # build-and-publish job would otherwise show a spurious CI failure on fork
+    # pushes. Upstream main/develop publishing is unchanged.
+    if: github.repository == 'londonaicentre/FLIP'
+    runs-on: ubuntu-latest
+    permissions: # override top-level read-only default to allow GHCR push
+      contents: read
+      packages: write
+    defaults:
+      run:
+        working-directory: ./trust/xnat/dcm2niix
+    env:
+      REGISTRY: ghcr.io
+      IMAGE_NAME: londonaicentre/xnat-dcm2niix
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Determine tags
+        id: tags
+        env:
+          GH_REF_NAME: ${{ github.ref_name }}
+          GH_EVENT_NAME: ${{ github.event_name }}
+          GH_REF: ${{ github.ref }}
+          GH_SHA: ${{ github.sha }}
+        run: |
+          TAGS="${REGISTRY}/${IMAGE_NAME}:${{ github.sha }}"
+
+          # An empty sha would silently publish a mutable literal `sha-` tag — refuse.
+          [[ -n "$GH_SHA" ]] || { echo "::error::empty commit SHA — cannot compute the sha-<short7> tag"; exit 1; }
+
+          # Immutable short-SHA tag (FLIP#751), pushed uniformly on every publish.
+          # Length 7 must match the tag resolution in deploy/providers/AWS/Makefile.
+          TAGS="${TAGS},${REGISTRY}/${IMAGE_NAME}:sha-${GH_SHA:0:7}"
+
+          # The tool-version tag is the one every deploy config references
+          # (dcm2niix_command.json, the K8s init-job copy, imaging-api's
+          # Settings.DCM2NIIX_IMAGE). Read it from the Dockerfile so the pin has a
+          # single source of truth; refuse to publish if it can't be parsed.
+          DCM2NIIX_VERSION=$(sed -n 's/^ARG DCM2NIIX_VERSION=//p' Dockerfile)
+          [[ -n "$DCM2NIIX_VERSION" ]] || { echo "::error::could not read ARG DCM2NIIX_VERSION from Dockerfile"; exit 1; }
+          TAGS="${TAGS},${REGISTRY}/${IMAGE_NAME}:${DCM2NIIX_VERSION}"
+
+          # Branch name sanitization
+          SAFE_REF_NAME=$(echo "$GH_REF_NAME" | sed 's/[^a-zA-Z0-9]/-/g')
+          TAGS="${TAGS},${REGISTRY}/${IMAGE_NAME}:${SAFE_REF_NAME}"
+
+          # Branch number (if starts with number)
+          if [[ "$GH_REF_NAME" =~ ^[0-9]+ ]]; then
+              BRANCH_NUM=$(echo "$GH_REF_NAME" | grep -oE '^[0-9]+')
+              TAGS="${TAGS},${REGISTRY}/${IMAGE_NAME}:${BRANCH_NUM}"
+          fi
+
+          # PR Number (if PR)
+          if [[ "$GH_EVENT_NAME" == "pull_request" ]]; then
+             PR_NUMBER=$(echo "$GH_REF" | awk -F / '{print $3}')
+             TAGS="${TAGS},${REGISTRY}/${IMAGE_NAME}:pr-${PR_NUMBER}"
+          fi
+
+          # Determine if this is a merge/push to main or develop. Unlike the
+          # workflow_run-gated application workflows, this one is triggered
+          # directly, so github.ref_name is the branch already.
+          BRANCH_NAME=""
+          if [[ "$GH_EVENT_NAME" == "push" ]]; then
+            BRANCH_NAME="$GH_REF_NAME"
+          fi
+
+          if [[ "$BRANCH_NAME" == "main" ]]; then
+            TAGS="${TAGS},${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:prod"
+          elif [[ "$BRANCH_NAME" == "develop" ]]; then
+            TAGS="${TAGS},${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:stag"
+          fi
+          echo "tags=${TAGS}" >> $GITHUB_OUTPUT
+          echo "version=${DCM2NIIX_VERSION}" >> $GITHUB_OUTPUT
+          echo "Generated tags: ${TAGS}"
+
+      - name: Log in to GitHub Container Registry
+        if: github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_ACTOR: ${{ github.actor }}
+        run: echo "$GH_TOKEN" | docker login $REGISTRY -u "$GH_ACTOR" --password-stdin
+
+      - name: Build Docker image
+        env:
+          DOCKER_TAGS: ${{ steps.tags.outputs.tags }}
+        run: |
+          IFS=',' read -ra TAG_ARRAY <<< "$DOCKER_TAGS"
+          TAG_FLAGS=()
+          for tag in "${TAG_ARRAY[@]}"; do
+            TAG_FLAGS+=("-t" "$tag")
+          done
+          docker build "${TAG_FLAGS[@]}" .
+
+      - name: Push Docker image
+        if: github.event_name != 'pull_request'
+        env:
+          DOCKER_TAGS: ${{ steps.tags.outputs.tags }}
+        run: |
+          IFS=',' read -ra TAG_ARRAY <<< "$DOCKER_TAGS"
+          for tag in "${TAG_ARRAY[@]}"; do
+            docker push "$tag"
+          done
+
+      # The XNAT Container Service pulls this image with no credentials, so a
+      # private package is registrable but unpullable — conversion then fails
+      # only at runtime, at a trust. New org packages default to private and
+      # GITHUB_TOKEN cannot flip that, so the flip is an operator action
+      # (trust/xnat/README.md). This probe is what makes forgetting it loud:
+      # it repeats the anonymous pull the Container Service performs, and the
+      # run goes red until the package is public. Deliberately token-less —
+      # the docker login above is not reused, and the ghcr.io token endpoint
+      # is called with no credentials, so the check sees exactly what an
+      # unauthenticated trust sees.
+      - name: Verify the published image is anonymously pullable
+        if: github.event_name != 'pull_request'
+        env:
+          DCM2NIIX_VERSION: ${{ steps.tags.outputs.version }}
+        run: |
+          MANIFEST_URL="https://${REGISTRY}/v2/${IMAGE_NAME}/manifests/${DCM2NIIX_VERSION}"
+          TOKEN_URL="https://${REGISTRY}/token?scope=repository:${IMAGE_NAME}:pull&service=${REGISTRY}"
+          TOKEN_BODY=$(mktemp)
+          FAILURE=""
+
+          # GHCR wants a bearer token even for anonymous pulls, and it refuses to mint one at all
+          # (403) for a package that is not public — so both requests are failure points and
+          # neither may use `curl -f`, which would abort the step with a bare exit 22 instead of
+          # the operator instructions below. `-w %{http_code}` keeps a refusal a value, not a
+          # crash; a genuine network error still fails the step through curl's own exit status.
+          TOKEN_CODE=$(curl -sS -o "$TOKEN_BODY" -w '%{http_code}' "$TOKEN_URL")
+          if [[ "$TOKEN_CODE" != "200" ]]; then
+            FAILURE="anonymous pull token refused (HTTP ${TOKEN_CODE})"
+          else
+            ANON_TOKEN=$(jq -r '.token // empty' "$TOKEN_BODY")
+            if [[ -z "$ANON_TOKEN" ]]; then
+              FAILURE="the ${REGISTRY} token endpoint returned no token"
+            else
+              HTTP_CODE=$(curl -sS -o /dev/null -w '%{http_code}' \
+                -H "Authorization: Bearer ${ANON_TOKEN}" \
+                -H "Accept: application/vnd.oci.image.index.v1+json" \
+                -H "Accept: application/vnd.oci.image.manifest.v1+json" \
+                -H "Accept: application/vnd.docker.distribution.manifest.list.v2+json" \
+                -H "Accept: application/vnd.docker.distribution.manifest.v2+json" \
+                "$MANIFEST_URL")
+              if [[ "$HTTP_CODE" != "200" ]]; then
+                FAILURE="anonymous GET of the manifest returned HTTP ${HTTP_CODE}, expected 200"
+              fi
+            fi
+          fi
+          rm -f "$TOKEN_BODY"
+
+          if [[ -n "$FAILURE" ]]; then
+            # The push above just succeeded, so the package exists: a refusal here means private.
+            echo "Probing ${MANIFEST_URL} without credentials: ${FAILURE}."
+            echo "The XNAT Container Service pulls this image with no credentials, so while the"
+            echo "package is private every trust's DICOM->NIfTI conversion fails at runtime."
+            echo "Fix: github.com/orgs/londonaicentre/packages/container/xnat-dcm2niix/settings"
+            echo "     -> Danger Zone -> Change visibility -> Public (see trust/xnat/README.md)."
+            echo "::error::${IMAGE_NAME}:${DCM2NIIX_VERSION} is not public: flip the package visibility"
+            exit 1
+          fi
+          echo "${IMAGE_NAME}:${DCM2NIIX_VERSION} is anonymously pullable."

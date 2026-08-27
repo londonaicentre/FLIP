@@ -17,11 +17,16 @@
 # NOTE Important: any sections specified in base configs will be overridden if you specify the same sections in the
 # inheriting service configs below
 
+# No `container_name` here either — see the header of compose.production.yml. Container names come
+# from the compose project (`deploy-fl-server-net-1-1`); the service KEYS are load-bearing and must
+# not be renamed: every provisioned client kit pins the server by name (`fed_client.json` carries
+# `"target": "fl-server-net-1:8002"`, and the name is a SAN in the provisioned certificates), and
+# `fl-api-net-<N>` is what NET_ENDPOINTS dials. The `/opt/flip/services/flip-fl-api-net-1/…` bind
+# mounts below are unrelated — those are directory names in the provisioned NVFLARE kit layout.
 services:
   #################### CENTRAL HUB FL ####################
 
   fl-api-net-1:
-    container_name: flip-fl-api-net-1
     image: ${DOCKER_FL_REGISTRY}${DOCKER_FL_API_NAME}:${DOCKER_FL_TAG}
     environment:
       - FL_ADMIN_DIRECTORY=${FL_ADMIN_DIRECTORY}
@@ -54,7 +59,6 @@ services:
 
   # TODO add second FL network when needed
   # fl-api-net-2:
-  #   container_name: flip-fl-api-net-2
   #   image: ${DOCKER_FL_REGISTRY}${DOCKER_FL_API_NAME}:${DOCKER_FL_TAG}
   #   environment:
   #     - FL_ADMIN_DIRECTORY=${FL_ADMIN_DIRECTORY}
@@ -67,7 +71,6 @@ services:
   #   restart: unless-stopped
 
   fl-server-net-1:
-    container_name: fl-server-net-1
     image: ${DOCKER_FL_REGISTRY}${DOCKER_FL_SERVER_NAME}:${DOCKER_FL_TAG}
     volumes:
       # Provisioned NVFLARE secrets (certificates, fed_server.json)
@@ -113,7 +116,6 @@ services:
 
   # TODO add second FL network when needed
   # fl-server-net-2:
-  #   container_name: fl-server-net-2
   #   image: ${DOCKER_FL_REGISTRY}${DOCKER_FL_SERVER_NAME}:${DOCKER_FL_TAG}
   #   volumes:
   #     # Provisioned NVFLARE secrets (certificates, fed_server.json)

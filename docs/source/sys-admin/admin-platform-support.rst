@@ -65,6 +65,13 @@ As a system, the FLIP solution handles the following types of data:
 2. Transient XNAT cached image data, potentially enriched locally with segmentation, labelling, etc., sourced from Trust PACS.
 3. Log files including event logs and other information generated as part of the operation of the system.
 
+.. note::
+
+   The XNAT cached image data at item 2 **survives deletion of the project it belongs to**. Deleting a project
+   in FLIP is a soft delete of the platform record and does not remove anything from a Trust's XNAT, because
+   the local enrichment (segmentation, labelling, contours, annotations) cannot be re-derived from PACS the way
+   the images themselves can. Removing that data is an explicit administrator action taken at the Trust.
+
 Backup
 ======
 

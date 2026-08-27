@@ -12,7 +12,9 @@ Local dev tool — not run in CI, and entirely separate from the docs-GIF pipeli
 # once per environment
 aws sso login --sso-session FLIP     # presigned URLs + Cognito admin calls need a live session
 make demo-users                      # create the demo Cognito users (DEMO_*_PASSWORD from env)
-docker restart flip-api              # boot seeding grants the demo users their roles
+docker restart deploy-flip-api-1     # boot seeding grants the demo users their roles
+                                     # (compose names it from the project; on a second hub it is
+                                     #  <instance>-deploy-flip-api-1, which make demo-users prints)
 
 # record (from the repo root; ~30-45 min end to end, dominated by import + training)
 make demo-video
@@ -46,8 +48,8 @@ bash scripts/assemble-demo-video.sh test/cypress/demo/videos test/cypress/demo/o
 # off-camera between the import and the model segments — same enrichment
 # contract as e2e_smoke, FLIP_PROJECT_ID exported; escape $ once per make):
 make -C flip-api demo_video DEMO_ARGS="--app spleen --publish-segmentations \
-  --data-enrichment-cwd <path-to>/flip_project_spleen_segmentation \
-  --data-enrichment-cmd 'uv run upload_labels_to_XNAT.py --flip-project-id \"\$\$FLIP_PROJECT_ID\"'"
+  --data-enrichment-cwd ../fl-tutorials/nvflare/image_segmentation/3d_spleen_segmentation \
+  --data-enrichment-cmd 'uv run --no-project --with ../../../../flip-utils python utils/upload_spleen_labels_to_xnat.py --flip-project-id \"\$\$FLIP_PROJECT_ID\" --labels-dir ../../data/spleen/images'"
 # → out/flip-demo-spleen.mp4
 ```
 

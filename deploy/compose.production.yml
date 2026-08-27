@@ -19,6 +19,19 @@
 # NOTE Important: any sections specified in base configs will be overridden if you specify the same sections in the
 # inheriting service configs below
 
+# No service here sets `container_name` — same rule as the dev composes (FLIP#957). Container names
+# are left to the compose project (`-p $(COMPOSE_PROJECT)` — see deploy/instance.mk), which yields
+# `deploy-flip-api-1` on the default harness. `container_name` is a global, project-independent name,
+# so it would collide outright between two harnesses on one host.
+#
+# Nothing addresses these containers by name: service-to-service traffic resolves through the compose
+# SERVICE name, which docker registers as a network alias on every network the container joins. That
+# makes the service KEYS below the load-bearing names — renaming one breaks the provisioned FL kits
+# and their TLS (see the overlays), whereas the container names are free to change.
+#
+# None of this touches AWS: production runs on ECS Fargate, where the container names come from the
+# task definitions in deploy/providers/AWS/ecs_tasks.tf and discovery from Cloud Map. This file is
+# only the local prod-image harness described above.
 services:
   #################### CENTRAL HUB ####################
 
@@ -84,4 +97,3 @@ services:
     cap_add:
       - CHOWN
     restart: unless-stopped
-    container_name: flip-api

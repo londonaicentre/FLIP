@@ -89,7 +89,7 @@ describe("create project", () => {
     });
 
     it("successfully validates the email when adding a user", () => {
-        cy.intercept("GET", `/users/${validUsers[0].email}`, {
+        cy.intercept({ method: "GET", pathname: "/users/lookup", query: { email: validUsers[0].email } }, {
             statusCode: 200,
             body: {
                 "id": "12345",
@@ -107,7 +107,7 @@ describe("create project", () => {
     });
 
     it("does not add a disabled user to the project", () => {
-        cy.intercept("GET", `/users/${validUsers[0].email}`, {
+        cy.intercept({ method: "GET", pathname: "/users/lookup", query: { email: validUsers[0].email } }, {
             statusCode: 200,
             body: {
                 "id": "12345",
@@ -150,7 +150,13 @@ describe("create project", () => {
             body: { "id": validProject.id }
         }).as("createProject");
 
-        cy.intercept("GET", `/users/${validUsers[0].email}`, { statusCode: 404 }).as("validateUser");
+        cy.intercept(
+
+            { method: "GET", pathname: "/users/lookup", query: { email: validUsers[0].email } },
+
+            { statusCode: 404 }
+
+        ).as("validateUser");
 
         cy.getBySel("project-name").type("Test Project Name");
         cy.getBySel("project-description").type("Test Project Description");
@@ -181,7 +187,7 @@ describe("create project", () => {
             body: { "id": validProject.id }
         }).as("createProject");
 
-        cy.intercept("GET", `/users/${validUsers[0].email}`, {
+        cy.intercept({ method: "GET", pathname: "/users/lookup", query: { email: validUsers[0].email } }, {
             statusCode: 200,
             body: {
                 "id": "ad1fbfc0-e6dc-40e1-9a6c-0019cf490fa3",
@@ -227,7 +233,7 @@ describe("create project", () => {
         cy.getBySel("project-name").type("Test Project Name");
         cy.getBySel("project-description").type("Test Project Description");
 
-        cy.intercept("GET", `/users/${validUsers[0].email}`, {
+        cy.intercept({ method: "GET", pathname: "/users/lookup", query: { email: validUsers[0].email } }, {
             statusCode: 200,
             body: {
                 "id": "ad1fbfc0-e6dc-40e1-9a6c-0019cf490fa3",
@@ -242,7 +248,7 @@ describe("create project", () => {
 
         cy.getBySel("added-user-0").contains(validUsers[0].email).should("be.visible");
 
-        cy.intercept("GET", `/users/${validUsers[1].email}`, {
+        cy.intercept({ method: "GET", pathname: "/users/lookup", query: { email: validUsers[1].email } }, {
             statusCode: 200,
             body: {
                 "id": "2635f591-1430-4d20-86e2-c0ee88c0a0c5",
@@ -257,7 +263,7 @@ describe("create project", () => {
 
         cy.getBySel("added-user-1").contains(validUsers[1].email).should("be.visible");
 
-        cy.intercept("GET", `/users/${validUsers[2].email}`, {
+        cy.intercept({ method: "GET", pathname: "/users/lookup", query: { email: validUsers[2].email } }, {
             statusCode: 200,
             body: {
                 "id": "9057b483-d483-47a1-af3b-72ca23893caa",
@@ -300,7 +306,7 @@ describe("create project", () => {
         cy.getBySel("project-name").type("Test Project Name");
         cy.getBySel("project-description").type("Test Project Description");
 
-        cy.intercept("GET", `/users/${validUsers[0].email}`, {
+        cy.intercept({ method: "GET", pathname: "/users/lookup", query: { email: validUsers[0].email } }, {
             statusCode: 200,
             body: {
                 "id": "ad1fbfc0-e6dc-40e1-9a6c-0019cf490fa3",
@@ -316,7 +322,7 @@ describe("create project", () => {
 
         cy.getBySel("added-user-0").contains(validUsers[0].email).should("be.visible");
 
-        cy.intercept("GET", `/users/${validUsers[1].email}`, {
+        cy.intercept({ method: "GET", pathname: "/users/lookup", query: { email: validUsers[1].email } }, {
             statusCode: 200,
             body: {
                 "id": "2635f591-1430-4d20-86e2-c0ee88c0a0c5",
@@ -331,7 +337,7 @@ describe("create project", () => {
 
         cy.getBySel("added-user-1").contains(validUsers[1].email).should("be.visible");
 
-        cy.intercept("GET", `/users/${validUsers[2].email}`, {
+        cy.intercept({ method: "GET", pathname: "/users/lookup", query: { email: validUsers[2].email } }, {
             statusCode: 200,
             body: {
                 "id": "9057b483-d483-47a1-af3b-72ca23893caa",

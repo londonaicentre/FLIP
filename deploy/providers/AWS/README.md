@@ -13,6 +13,10 @@
 
 # FLIP AWS Terraform/OpenTofu and Ansible Infrastructure
 
+> **Deploys: Central Hub + optional cloud trust.** One Terraform root, one state file — the cloud trust runs
+> inside the hub's VPC and is not separable from it. See [`../README.md`](../README.md) for how this provider
+> relates to the other two.
+
 Terraform/OpenTofu and Ansible Infrastructure as Code to deploy the FLIP application stack to AWS.
 
 This provider manages the **Central Hub** (always in AWS) and, optionally, one or more **Trust** instances. Trust services can be deployed in two ways:
@@ -1107,7 +1111,7 @@ EC2 instances are accessed through AWS Systems Manager Session Manager — port 
   session-manager-plugin --version  # Should output version >= 1.2.319.0
   ```
 
-- SSH key at `~/.ssh/host-aws` (configured in Step 3 of [Pre-configurations README](../README.md#step-3-get-ssh-key-configured))
+- SSH key at `~/.ssh/host-aws` (configured in Step 3 of [Pre-configurations README](../../README.md#step-3-get-ssh-key-configured))
 
 **Updating `~/.ssh/config`**
 

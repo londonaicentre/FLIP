@@ -13,6 +13,19 @@
 # NOTE Important: any sections specified in base configs will be overridden if you specify the same sections in the
 # inheriting service configs below
 
+# No service here sets `container_name`. Container names are left to the compose project
+# (`-p $(COMPOSE_PROJECT)` — see deploy/instance.mk), which yields `deploy-flip-api-1` on the
+# default stack and `<instance>-deploy-flip-api-1` on a second one, so a parallel dev stack
+# (FLIP#957) needs no per-service naming at all. `container_name` is incompatible with a
+# project prefix anyway: it is a global, project-independent name, so two stacks sharing one
+# would collide outright.
+#
+# Nothing in the stack addresses these containers by name. Service-to-service traffic resolves
+# through the compose SERVICE name, which docker registers as a network alias on every network
+# the container joins and which is identical in both stacks — so the FL kits (`fed_client.json`
+# targets `fl-server-net-1:8002`, the SuperLink cert SAN is `DNS:fl-server-net-1`) and
+# NET_ENDPOINTS keep working untouched. That makes the service KEYS below load-bearing: renaming
+# one breaks TLS and the kits, whereas the container names are free to change.
 services:
   #################### CENTRAL HUB ####################
 
@@ -55,7 +68,6 @@ services:
     restart: unless-stopped
     networks:
       - default
-    container_name: flip-ui
 
   flip-api:
     platform: linux/x86_64
@@ -86,7 +98,12 @@ services:
       target: development
     ports:
       - "${API_PORT}:8000"
-      - 5678:5678
+      # Bound to loopback: an open debugpy port is arbitrary code execution for
+      # anyone who can reach it, and docker's iptables rules sit ahead of most host
+      # firewalls. This was the intent behind the network driver_opts added with the
+      # debugger in nhsflame#311, which never applied because the networks are
+      # external — compose ignores driver options there (FLIP#959).
+      - 127.0.0.1:${API_DEBUG_PORT:-5678}:5678
     depends_on:
       - flip-db
     volumes:
@@ -99,11 +116,16 @@ services:
       - ../fl-apps/:/app/fl-apps/
       - ~/.aws/config:/home/${UNAME}/.aws/config:ro
       - ~/.aws/sso/cache:/home/${UNAME}/.aws/sso/cache:rw
+    # Deliberately NOT on `fl-net-*`: flip-api fronts the database and holds the hub's
+    # credentials, and nothing on the FL data plane calls it. The traffic that looks like
+    # it needs this is the fl-server → flip-api callback, and fl-server reaches it over
+    # `default` (the hub-internal network) instead — see the FL overlays. A trust's
+    # fl-client carries no hub URL and no hub credential, only TRUST_INTERNAL_SERVICE_KEY,
+    # so putting flip-api on the FL nets only widened the reachable surface, and did so
+    # further than production, where clients reach the hub VPC on the FL port alone.
     networks:
       - default
       - central-hub-trust-apis-network
-      - shared-net-1
-      - shared-net-2
     environment:
       - ENV=development
       # Dev-on-pull (see `user:` above): import flip_api via PYTHONPATH and skip
@@ -146,7 +168,12 @@ services:
       - POSTGRES_USER=${POSTGRES_USER}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
       - DB_HOST=${DB_HOST}
-      - DB_PORT=${DB_PORT}
+      # The port flip-db listens on inside the docker network, not the published one.
+      # Fixed at 5432 by the postgres image, so it is a literal here rather than
+      # ${DB_PORT} — in dev DB_PORT is the *host* port (see the flip-db ports below),
+      # and reusing it here would point flip-api, and wait-for-postgres.sh, at a port
+      # nothing is listening on as soon as a second stack moved it (FLIP#957).
+      - DB_PORT=5432
       - POSTGRES_DB=${POSTGRES_DB}
       - TRUST_API_KEY_HEADER=${TRUST_API_KEY_HEADER}
       - INTERNAL_SERVICE_KEY_HEADER=${INTERNAL_SERVICE_KEY_HEADER}
@@ -191,12 +218,19 @@ services:
     cap_add:
       - CHOWN
     restart: unless-stopped
-    container_name: flip-api
 
   flip-db:
     image: postgres:17
     ports:
-      - ${DB_PORT}:${DB_PORT}
+      # DB_PORT is the host port; the container side is fixed at 5432 by the postgres
+      # image, exactly as uvicorn is fixed at 8000 behind ${API_PORT}.
+      #
+      # This was previously ${DB_PORT}:${DB_PORT}, one variable meaning two different
+      # things, which made a second stack impossible: raising it to free the host port
+      # pointed flip-api at a port nothing was listening on, and leaving it pinned
+      # failed outright with "Bind for 0.0.0.0:5432 failed: port is already allocated"
+      # (FLIP#957).
+      - ${DB_PORT}:5432
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
@@ -213,7 +247,6 @@ services:
       - SETGID
     networks:
       - default
-    container_name: flip-db
 
   #################### MLFLOW ####################
 
@@ -253,7 +286,7 @@ services:
     networks:
       # default (central-hub-network): flip-api + the admin browser reach it here.
       # mlflow-network: hub-only bridge shared with the fl-servers. NEVER attach
-      # mlflow to shared-net-1/2 — trust fl-clients live there and MLflow has no
+      # mlflow to fl-net-1/2 — trust fl-clients live there and MLflow has no
       # auth of its own; network placement is the security boundary.
       - default
       - mlflow-network
@@ -281,71 +314,83 @@ services:
       - default
       - trust-network-1
       - trust-network-2
-    container_name: flip-pgadmin
 
 volumes:
   pgadmin_data:
   mlflow_data:
   mlflow_artifacts:
 
+# Every network here is created outside compose by `make create-networks` —
+# trust-network-* as swarm overlays (`--driver overlay --attachable`) because the
+# XNAT stack attaches to them via `docker stack deploy`, the rest as plain bridges.
+# They are therefore `external: true` and compose only looks them up by name.
+#
+# These blocks used to also carry `driver: bridge` and `driver_opts` pinning a
+# per-network bridge name plus a distinct host_binding_ipv4 (127.0.0.1, .10.0.1,
+# .20.0.1, .30.0.1, .40.0.1, .50.0.1). None of it has ever applied: compose ignores
+# driver options for external networks, and `create-networks` passes no `-o`, so
+# every network reports `opts=map[]` and published ports bind to 0.0.0.0. The
+# `driver: bridge` was additionally wrong for trust-network-*, which are overlay.
+# Removed rather than left standing as a description of behaviour that does not
+# happen. If loopback-only binding is wanted, it belongs on the `docker network
+# create` calls in `create-networks` as `-o`, not here (FLIP#959).
+#
+# All six real names follow one rule: `${FLIP_INSTANCE:+$FLIP_INSTANCE-}deploy_<name>`. The
+# `deploy_` names the hub compose project that owns the network — which is also exactly what
+# compose would generate (`<project>_<key>`) if it still created them. It stopped generating
+# anything once they became `external: true` ("the name field is used as is and is not scoped
+# with the project name"), so the prefix has to be spelled out here; `central-hub-network` and
+# `central-hub-trust-apis-network` were the two left bare when the rest were written out, and
+# now match (FLIP#957).
+#
+# The two numbering axes are NOT parallel, which is the trap the `fl-net-<N>` name exists to
+# defuse: `fl-net-<N>` is numbered by **FL net** (`net-1`/`net-2` — the `fl_nets` table,
+# NET_NUMBER, `fl-server-net-<N>`), while `trust-network-<N>` is numbered by **trust slot**.
+# One trust can sit on `trust-network-2` and `fl-net-1` at the same time, and does today. The
+# earlier name for these, `shared-net-<N>`, described who was attached rather than what the
+# network is for — and stopped being true once flip-api came off them (see below).
 networks:
   default:
     external: true
-    name: central-hub-network
-    driver: bridge
-    driver_opts:
-      com.docker.network.bridge.name: "central-hub-network"
-      com.docker.network.bridge.host_binding_ipv4: "127.0.0.1"
+    name: ${FLIP_INSTANCE:+$FLIP_INSTANCE-}deploy_central-hub-network
 
   # Shared network for trust-to-hub communication (outbound from trust only).
   # Trusts poll the hub for tasks and push results back — no inbound connections to trusts.
   central-hub-trust-apis-network:
     external: true
-    name: central-hub-trust-apis-network
-    driver: bridge
-    driver_opts:
-      com.docker.network.bridge.name: "central-hub-trust-apis-network"
-      com.docker.network.bridge.host_binding_ipv4: "127.10.0.1"
+    name: ${FLIP_INSTANCE:+$FLIP_INSTANCE-}deploy_central-hub-trust-apis-network
 
   trust-network-1:
     external: true
-    name: deploy_trust-network-1
-    driver: bridge
-    driver_opts:
-      com.docker.network.bridge.name: "deploy_trust-network-1"
-      com.docker.network.bridge.host_binding_ipv4: "127.20.0.1"
+    name: ${FLIP_INSTANCE:+$FLIP_INSTANCE-}deploy_trust-network-1
 
   trust-network-2:
     external: true
-    name: deploy_trust-network-2
-    driver: bridge
-    driver_opts:
-      com.docker.network.bridge.name: "deploy_trust-network-2"
-      com.docker.network.bridge.host_binding_ipv4: "127.30.0.1"
+    name: ${FLIP_INSTANCE:+$FLIP_INSTANCE-}deploy_trust-network-2
 
-  shared-net-1:
+  # The FL data plane, one per FL net. Membership is exactly two services: the hub's
+  # `fl-server-net-<N>` and every trust's `fl-client-net-<N>`. It is the FL twin of
+  # `central-hub-trust-apis-network` (flip-api ↔ trust-api) — one hub service meeting one
+  # trust service, and nothing else crossing.
+  #
+  # Everything else hub-side stays on `default`: `flip-api`, `fl-api-net-<N>` and flower's
+  # one-shot `register-supernode-keys-net-<N>` all reach the FL server there, on its control
+  # ports (`9093`/`9097` for flower, the admin port for nvflare) rather than the client-facing
+  # Fleet port. Keep it that way. Putting any of them back here would hand every trust's
+  # fl-client a route to a hub service it has no business reaching — wider than the documented
+  # model (an fl-client holds no hub URL and no hub credential, only TRUST_INTERNAL_SERVICE_KEY)
+  # and wider than production, where a trust reaches the hub VPC on the FL port alone.
+  fl-net-1:
     external: true
-    name: deploy_shared-net-1
-    driver: bridge
-    driver_opts:
-      com.docker.network.bridge.name: "deploy_shared-net-1"
-      com.docker.network.bridge.host_binding_ipv4: "127.40.0.1"
+    name: ${FLIP_INSTANCE:+$FLIP_INSTANCE-}deploy_fl-net-1
 
-  shared-net-2:
+  fl-net-2:
     external: true
-    name: deploy_shared-net-2
-    driver: bridge
-    driver_opts:
-      com.docker.network.bridge.name: "deploy_shared-net-2"
-      com.docker.network.bridge.host_binding_ipv4: "127.50.0.1"
+    name: ${FLIP_INSTANCE:+$FLIP_INSTANCE-}deploy_fl-net-2
 
   # Hub-only bridge for the fl-server → MLflow dual-write. Deliberately distinct
-  # from shared-net-1/2 (which the trust fl-clients join): MLflow OSS has no auth,
+  # from fl-net-1/2 (which the trust fl-clients join): MLflow OSS has no auth,
   # so keeping trust-side containers off this network is the security boundary.
   mlflow-network:
     external: true
-    name: central-hub-mlflow-network
-    driver: bridge
-    driver_opts:
-      com.docker.network.bridge.name: "central-hub-mlflow-network"
-      com.docker.network.bridge.host_binding_ipv4: "127.60.0.1"
+    name: ${FLIP_INSTANCE:+$FLIP_INSTANCE-}deploy_central-hub-mlflow-network

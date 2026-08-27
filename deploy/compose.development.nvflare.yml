@@ -13,11 +13,14 @@
 # NOTE Important: any sections specified in base configs will be overridden if you specify the same sections in the
 # inheriting service configs below
 
+# No `container_name` here either — see the header of compose.development.yml. The service KEYS
+# are load-bearing and must not be renamed: every provisioned client kit pins the server by name
+# (`fed_client.json` carries `"target": "fl-server-net-1:8002"`, and the name is a SAN in the
+# provisioned certificates), and `fl-api-net-<N>` is what NET_ENDPOINTS dials.
 services:
   #################### CENTRAL HUB FL ####################
 
   fl-api-net-1:
-    container_name: flip-fl-api-net-1
     image: ${DOCKER_FL_REGISTRY}${DOCKER_FL_API_NAME}:${DOCKER_FL_TAG}
     environment:
       - FL_ADMIN_DIRECTORY=${FL_ADMIN_DIRECTORY}
@@ -31,7 +34,9 @@ services:
       - JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB=${JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB:-0}
     ports:
       - "${FL_API_PORT}:8000"
-      - "5679:5679"
+      # Loopback-only — an exposed debugpy port is arbitrary code execution for anyone
+      # who can reach it; see compose.development.yml's flip-api ports (FLIP#959).
+      - "127.0.0.1:${FL_API_DEBUG_PORT:-5679}:5679"
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -50,11 +55,9 @@ services:
       - fl-server-net-1
     networks:
       - default
-      - shared-net-1
     restart: unless-stopped
 
   fl-api-net-2:
-    container_name: flip-fl-api-net-2
     image: ${DOCKER_FL_REGISTRY}${DOCKER_FL_API_NAME}:${DOCKER_FL_TAG}
     environment:
       - FL_ADMIN_DIRECTORY=${FL_ADMIN_DIRECTORY}
@@ -82,11 +85,9 @@ services:
       - fl-server-net-2
     networks:
       - default
-      - shared-net-2
     restart: unless-stopped
 
   fl-server-net-1:
-    container_name: fl-server-net-1
     image: ${DOCKER_FL_REGISTRY}${DOCKER_FL_SERVER_NAME}:${DOCKER_FL_TAG}
     volumes:
       # Provisioned NVFLARE secrets (certificates, fed_server.json)
@@ -132,15 +133,18 @@ services:
       # (FOWNER). Without these the container crash-loops (FLIP#485).
       - DAC_OVERRIDE
       - FOWNER
+    # `default` is the hub-internal network. fl-server is the one FL service that calls back
+    # into flip-api (FLIP_API_INTERNAL_URL + INTERNAL_SERVICE_KEY above), and flip-api is
+    # deliberately not on the FL net — see the networks block in compose.development.yml.
     networks:
-      - shared-net-1
+      - default
+      - fl-net-1
       # Hub-only bridge to the mlflow container — NOT shared with trust fl-clients.
       - mlflow-network
     restart: unless-stopped
     init: true
 
   fl-server-net-2:
-    container_name: fl-server-net-2
     image: ${DOCKER_FL_REGISTRY}${DOCKER_FL_SERVER_NAME}:${DOCKER_FL_TAG}
     volumes:
       # Provisioned NVFLARE secrets (certificates, fed_server.json)
@@ -185,8 +189,10 @@ services:
       # (FOWNER). Without these the container crash-loops (FLIP#485).
       - DAC_OVERRIDE
       - FOWNER
+    # `default` is the hub-internal network — see fl-server-net-1 above.
     networks:
-      - shared-net-2
+      - default
+      - fl-net-2
       # Hub-only bridge to the mlflow container — NOT shared with trust fl-clients.
       - mlflow-network
     restart: unless-stopped
