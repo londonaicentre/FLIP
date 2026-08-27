@@ -351,7 +351,7 @@ Abridged from ``fl-tutorials/flower/3d_spleen_segmentation/pyproject.toml``:
 .. code-block:: toml
 
    [project]
-   name = "quickstart-monai"
+   name = "standard-app"
    version = "1.0.0"
    dependencies = [
        "flip-utils>=0.1.8",

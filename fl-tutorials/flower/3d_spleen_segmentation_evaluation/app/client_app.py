@@ -11,7 +11,7 @@
 # limitations under the License.
 #
 
-"""quickstart-monai: A Flower / MONAI evaluation-only app."""
+"""3d-spleen-segmentation-evaluation: evaluation-only Flower / MONAI ClientApp for 3D spleen segmentation."""
 
 import os
 from logging import INFO

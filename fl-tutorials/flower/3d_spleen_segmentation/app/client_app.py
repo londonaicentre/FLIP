@@ -11,7 +11,7 @@
 # limitations under the License.
 #
 
-"""quickstart-monai: A Flower / MONAI training-only app.
+"""3d-spleen-segmentation: Flower / MONAI ClientApp for 3D spleen segmentation (training-only).
 
 Metrics flow through the reply Message's MetricRecord. The fl-server forwards
 them to the Central Hub on this client's behalf — clients must not hold the
