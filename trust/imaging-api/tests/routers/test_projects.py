@@ -15,6 +15,7 @@ from uuid import uuid4
 
 import pytest
 
+from imaging_api.config import get_settings
 from imaging_api.routers.schemas import CentralHubProject, Experiment, Project, Subject
 from imaging_api.utils.exceptions import AlreadyExistsError, NotFoundError
 
@@ -89,7 +90,7 @@ async def test_create_project_event_subscription_active_matches_dicom_to_nifti(
     await create_project_from_central_hub_project(central_hub_project, headers, background_tasks)
 
     mock_event_sub.assert_called_once_with(
-        TEST_XNAT_PROJECT_ID, "xnat/dcm2niix:latest", dicom_to_nifti, headers
+        TEST_XNAT_PROJECT_ID, get_settings().DCM2NIIX_IMAGE, dicom_to_nifti, headers
     )
 
 

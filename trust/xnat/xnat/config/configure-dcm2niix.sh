@@ -121,6 +121,38 @@ fi
 echo "Container Service -> Docker (via xnat-socket-proxy): OK"
 
 # ----------------------------------------------------------------
+# IMAGE HOST (registry entry for the pinned dcm2niix image)
+# ----------------------------------------------------------------
+
+# In swarm mode the Container Service resolves registry credentials for `docker service create` by
+# looking up an image-host entry whose `url` equals the registry hostname parsed from the image
+# string — the BARE hostname, no scheme (container-service 3.8.1, DockerControlApi.authConfig →
+# dockerHubService.getByUrl). With no matching entry the resolved AuthConfig is null, and the swarm
+# launch path passes it to docker-java's withAuthConfig unguarded (unlike the pull path, which
+# null-checks), so every launch dies with `NullPointerException: authConfig was not specified`
+# before a service exists — even for a public image that needs no credentials. Register the
+# registry as a credential-less image host so the lookup resolves. The hostname is derived from the
+# image pinned in dcm2niix_command.json so it can never drift from the image actually launched; an
+# image with no registry component is a Docker Hub image, covered by the built-in default entry.
+DCM2NIIX_IMAGE=$(jq -r '.image // empty' dcm2niix_command.json)
+DCM2NIIX_REGISTRY=${DCM2NIIX_IMAGE%%/*}
+if [[ "$DCM2NIIX_REGISTRY" == *.* || "$DCM2NIIX_REGISTRY" == *:* || "$DCM2NIIX_REGISTRY" == localhost ]]; then
+  echo "Ensuring image host '$DCM2NIIX_REGISTRY' is registered..."
+  HUB_ID=$(xnat_curl "$XNAT_URL/xapi/docker/hubs" \
+    | jq -r --arg url "$DCM2NIIX_REGISTRY" 'map(select(.url == $url)) | .[0].id // empty')
+  if [[ -z "$HUB_ID" ]]; then
+    xnat_curl -X POST "$XNAT_URL/xapi/docker/hubs" \
+      -H "Content-Type: application/json" \
+      -d "{\"name\": \"$DCM2NIIX_REGISTRY\", \"url\": \"$DCM2NIIX_REGISTRY\"}" >/dev/null
+    echo "Image host '$DCM2NIIX_REGISTRY' registered."
+  else
+    echo "Image host '$DCM2NIIX_REGISTRY' already registered (id=$HUB_ID)."
+  fi
+else
+  echo "dcm2niix image has no registry component; the built-in Docker Hub image host applies."
+fi
+
+# ----------------------------------------------------------------
 # CONTAINER SERVICE
 # ----------------------------------------------------------------
 
@@ -215,6 +247,16 @@ if [ "$WRAPPER_ENABLED" != "true" ]; then
   echo "ERROR: dcm2niix wrapper is not enabled site-wide (expected true)" >&2
   echo "  body: $WRAPPER_ENABLED" >&2
   exit 1
+fi
+
+# Verify the image host for the pinned image's registry persisted (swarm launches NPE without it)
+if [[ "$DCM2NIIX_REGISTRY" == *.* || "$DCM2NIIX_REGISTRY" == *:* || "$DCM2NIIX_REGISTRY" == localhost ]]; then
+  HUB_COUNT=$(xnat_curl "$XNAT_URL/xapi/docker/hubs" \
+    | jq -r --arg url "$DCM2NIIX_REGISTRY" 'map(select(.url == $url)) | length')
+  if [ "$HUB_COUNT" -lt 1 ]; then
+    echo "ERROR: no image host registered with url '$DCM2NIIX_REGISTRY' (expected >= 1)" >&2
+    exit 1
+  fi
 fi
 
 # Verify event service is enabled
