@@ -11,7 +11,7 @@
     limitations under the License.
 -->
 
-# :package: FLIP {{VERSION}} Release Notes
+# :package: {{PROJECT}} {{VERSION}} Release Notes
 
 ## :sparkles: Highlights
 

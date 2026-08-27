@@ -53,5 +53,3 @@ How FLIP adds value
 Our Federated Learning Interoperability Platform (FLIP) ensures a high level of fidelity in AI output models compared to traditional aggregative data strategies because the data it trains on does not need to be anonymised before use.
 
 FLIP also allows us to adhere to each Trust's governance and data privacy regulations and ensures that our models are scalable in international contexts in full compliance with international laws and guidance.
-
-FLIP will be deployed across seven NHS Trusts.

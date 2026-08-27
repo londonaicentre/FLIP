@@ -43,7 +43,11 @@ jobs:
       - name: Setup trust test env
         uses: ./.github/actions/setup-trust-test-env
         with:
-          python-version: ${{ github.event.inputs.python-version || '3.11' }}
+          # python-version deliberately omitted — the composite action defaults to
+          # the 3.12 that .python-version and requires-python pin. Do not restate
+          # it per job: the previous `github.event.inputs.python-version` form had
+          # no workflow_dispatch trigger to feed it, so this job silently ran 3.11
+          # while the integration job below ran 3.12.
           trust-api-key: ${{ secrets.TRUST_API_KEY || 'test-trust-api-key-for-ci' }}
           aes-key-base64: ${{ secrets.AES_KEY_BASE64 || 'dGVzdC1hZXMta2V5LWZvci1jaS10ZXN0aW5nLTMyYnl0ZXM=' }}  # pragma: allowlist secret
           postgres-password: ${{ secrets.POSTGRES_PASSWORD }}
@@ -53,7 +57,7 @@ jobs:
         run: make local_test
 
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v7
         with:
           files: trust/trust-api/coverage-unit.xml
           flags: trust-api
@@ -83,7 +87,7 @@ jobs:
       - name: Setup trust test env
         uses: ./.github/actions/setup-trust-test-env
         with:
-          python-version: ${{ github.event.inputs.python-version || '3.12' }}
+          # python-version deliberately omitted — see the unit job above.
           trust-api-key: ${{ secrets.TRUST_API_KEY || 'test-trust-api-key-for-ci' }}
           aes-key-base64: ${{ secrets.AES_KEY_BASE64 || 'QgZ+TBA0lUxcuCiRPLneFe/JjMaUEUJWHACHHGz2gGA=' }}  # pragma: allowlist secret
           postgres-password: ${{ secrets.POSTGRES_PASSWORD || 'test_password' }}
@@ -136,7 +140,7 @@ jobs:
           echo "::endgroup::"
 
       - name: Upload integration coverage to Codecov
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v7
         with:
           files: trust/trust-api/coverage-integration.xml
           flags: trust-api-integration

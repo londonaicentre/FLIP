@@ -139,6 +139,35 @@ resource "aws_s3_bucket_logging" "this" {
   target_prefix = "${var.bucket_name}/"
 }
 
+# Noncurrent-version expiry — only created when the caller opts in with a
+# positive day count. Versioning is unconditional above, so without this every
+# deleted or overwritten object keeps its previous version (and its storage
+# cost) indefinitely. The retention window doubles as the forensic window for
+# quarantined uploads: the scan pipeline deletes a rejected file, and its
+# noncurrent version remains recoverable for this many days.
+resource "aws_s3_bucket_lifecycle_configuration" "this" {
+  count = var.noncurrent_version_expiration_days > 0 ? 1 : 0
+
+  bucket = aws_s3_bucket.this.id
+
+  rule {
+    id     = "expire-noncurrent-versions"
+    status = "Enabled"
+
+    filter {}
+
+    noncurrent_version_expiration {
+      noncurrent_days = var.noncurrent_version_expiration_days
+    }
+
+    abort_incomplete_multipart_upload {
+      days_after_initiation = 7
+    }
+  }
+
+  depends_on = [aws_s3_bucket_versioning.this]
+}
+
 # CORS is only created when cors_methods is non-empty. Server-only buckets
 # (e.g. FL app bundles, fetched exclusively by flip-api via boto3) get no
 # CORS resource at all, so the bucket presents no `Access-Control-Allow-*`

@@ -17,22 +17,6 @@ from enum import Enum, StrEnum
 # ---------------------------
 
 
-class BucketStatus(Enum):
-    """Status of the bucket."""
-
-    CLEAN = "clean"
-    INFECTED = "infected"
-    NO = "no"
-
-
-class BucketAction(Enum):
-    """Action to be taken on the bucket."""
-
-    DELETE = "delete"
-    TAG = "tag"
-    NO = "no"
-
-
 class ClientDeployResponse(StrEnum):
     """Response for client deployment."""
 
@@ -111,6 +95,13 @@ class FileUploadStatus(Enum):
     SCANNING = "SCANNING"
     COMPLETED = "COMPLETED"
     ERROR = "ERROR"
+    # Malware-scan verdict: the uploaded object contained dangerous content
+    # (e.g. a pickle with dangerous globals) and has been deleted from S3.
+    # Distinct from ERROR so the UI can tell "scan judged the file malicious"
+    # from "something went wrong". Appended last to keep the native Postgres
+    # enum order consistent between fresh databases and ones migrated via
+    # ALTER TYPE ... ADD VALUE.
+    INFECTED = "INFECTED"
 
 
 class FileUploadTag(Enum):
@@ -204,6 +195,27 @@ class XNATImageStatus(StrEnum):
     RETRIEVE_ERROR = "RETRIEVE_ERROR"
     CREATED = "CREATED"
     DELETED = "DELETED"
+
+
+class ImagingConnectionState(StrEnum):
+    """How the last imaging-status refresh for a trust's XNAT project turned out.
+
+    The per-trust imaging counts the hub serves are always the *last known* ones — they come
+    from the most recent ``GET_IMAGING_STATUS`` task that completed successfully. This value
+    says whether that snapshot is still current, so a consumer can tell a live 100% from a
+    stale one (GitHub issue #1022). Derived per request from the newest terminal task; not
+    persisted.
+
+    ``PROJECT_MISSING`` is narrower than ``UNREACHABLE``: it means the trust answered and XNAT
+    answered, but the imaging project is gone (imaging-api raises ``NotFoundError`` -> 404).
+    Anything else that stops a refresh landing — XNAT down (imaging-api 500), imaging-api
+    unreachable from trust-api (502), or the trust never picking the task up — is
+    ``UNREACHABLE``, which is also the fallback when a failure cannot be classified.
+    """
+
+    OK = "ok"
+    UNREACHABLE = "unreachable"
+    PROJECT_MISSING = "project-missing"
 
 
 class FLJobStatus(StrEnum):

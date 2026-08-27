@@ -17,12 +17,17 @@ from data_utils import LesionDict
 def get_bce_loss(outputs: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
     """
     Computes the Binary Cross-Entropy loss, not taking into account elements where the ground truths are -1.
+
+    The denominator is clamped to at least 1 so a fully-masked batch (every label -1, e.g. when a shuffled
+    batch happens to contain only unannotated studies) yields 0.0 rather than 0/0 = NaN. An unguarded NaN here
+    propagates through loss.backward() + optimizer.step() and poisons every model weight, so one bad batch would
+    turn the whole training pass NaN (see FLIP#764).
     """
 
     loss_function = torch.nn.BCEWithLogitsLoss(reduction="none")
     mask = (targets != -1).to(dtype=targets.dtype, device=targets.device)
     loss = loss_function(outputs, targets) * mask
-    loss = loss.sum() / mask.sum()
+    loss = loss.sum() / mask.sum().clamp_min(1.0)
     return loss
 
 

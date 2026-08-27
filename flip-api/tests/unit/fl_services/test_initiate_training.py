@@ -65,6 +65,15 @@ def deployment_mode_disabled():
         yield mock_enabled
 
 
+@pytest.fixture(autouse=True)
+def mock_validate_trust_ids():
+    # With a MagicMock session the real validate_trust_ids compares ModelTrustIntersect rows
+    # against the submitted ids and always fails, so default it to approved here; the
+    # unapproved-trust test below overrides the return value.
+    with patch("flip_api.fl_services.initiate_training.validate_trust_ids", return_value=True) as mock:
+        yield mock
+
+
 @pytest.fixture
 def mock_can_modify_model():
     with patch("flip_api.fl_services.initiate_training.can_modify_model") as mock:
@@ -162,7 +171,11 @@ def test_initiate_training_failure(model_id, fake_request, mock_db, client1, moc
         with pytest.raises(HTTPException) as exc_info:
             initiate_training(model_id, payload, fake_request, mock_db, user_id="user123")
         assert exc_info.value.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
-        assert "Unexpected error" in exc_info.value.detail
+        # The underlying exception text must stay in the log, not the response body — it can carry
+        # connection strings and other internals, and this endpoint is reachable by any researcher
+        # who owns the model.
+        assert exc_info.value.detail == "Internal server error"
+        assert "Unexpected error" not in exc_info.value.detail
 
 
 def test_initiate_training_unavailable_in_deployment_mode(
@@ -192,6 +205,26 @@ def test_initiate_training_rejects_unknown_trusts(
 
     assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
     assert str(ghost_id) in exc_info.value.detail
+    mock_add_fl_job.assert_not_called()
+
+
+def test_initiate_training_rejects_trusts_not_approved_for_the_model(
+    model_id, fake_request, mock_db, client1, mock_can_modify_model, mock_add_fl_job, mock_validate_trust_ids
+):
+    """A trust that exists but is not approved for this model must be refused at the boundary.
+
+    Accepting it here used to enqueue a job that could never run, and because the scheduler picks
+    the globally-earliest queued job it then blocked FL training on every net indefinitely
+    (FLIP#894).
+    """
+    mock_validate_trust_ids.return_value = False
+    payload = IInitiateTrainingInputPayload(trust_ids=[client1.id])
+
+    with pytest.raises(HTTPException) as exc_info:
+        initiate_training(model_id, payload, fake_request, mock_db, user_id="user123")
+
+    assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
+    assert "not approved" in exc_info.value.detail
     mock_add_fl_job.assert_not_called()
 
 

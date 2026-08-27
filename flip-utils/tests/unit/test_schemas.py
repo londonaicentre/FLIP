@@ -19,9 +19,23 @@ import pytest
 from pydantic import ValidationError
 
 import flip.schemas
-from flip.schemas import FLLogEvent, TrainingLog, TrainingMetrics
+from flip.schemas import FLLogEvent, TrainingLog, TrainingMetrics, split_x_label
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
+
+
+class TestSplitXLabel:
+    """Test the shared "<label>[@<x_label>]" key splitter."""
+
+    def test_plain_key_has_no_x_label(self):
+        assert split_x_label("train_loss") == ("train_loss", None)
+
+    def test_at_segment_names_the_x_axis(self):
+        assert split_x_label("train_loss@epoch") == ("train_loss", "epoch")
+
+    def test_only_first_at_splits(self):
+        """Anything after the first "@" belongs to the x_label."""
+        assert split_x_label("loss@epoch@2") == ("loss", "epoch@2")
 
 
 class TestTrainingMetrics:
@@ -41,7 +55,62 @@ class TestTrainingMetrics:
             "global_round": 3,
             "label": "LOSS_FUNCTION",
             "result": 0.42,
+            "x_value": 3.0,
+            "x_label": "Global Rounds",
         }
+
+    def test_x_label_defaults_to_global_round(self):
+        """x_label defaults to the historical axis label when the client doesn't set one (FLIP#148)."""
+        metrics = TrainingMetrics(fl_client_name="site-1", global_round=1, label="loss", result=1.0)
+        assert metrics.x_label == "Global Rounds"
+
+    def test_model_dump_emits_custom_x_label(self):
+        """A client-supplied x_label is carried on the wire (FLIP#148)."""
+        payload = TrainingMetrics(
+            fl_client_name="site-1", global_round=1, label="loss", result=1.0, x_label="epoch"
+        ).model_dump()
+        assert payload["x_label"] == "epoch"
+
+    def test_x_value_defaults_to_global_round(self):
+        """A metric without an explicit coordinate is plotted at its global round (FLIP#148)."""
+        metrics = TrainingMetrics(fl_client_name="site-1", global_round=4, label="loss", result=1.0)
+        assert metrics.x_value == 4.0
+
+    def test_explicit_none_x_value_backfills_from_global_round(self):
+        """Callers pass x_value=None straight through; the validator resolves it."""
+        metrics = TrainingMetrics(fl_client_name="site-1", global_round=4, label="loss", result=1.0, x_value=None)
+        assert metrics.x_value == 4.0
+
+    def test_custom_x_value_is_carried_on_the_wire(self):
+        """An arbitrary (float) coordinate is kept and global_round stays as provenance."""
+        payload = TrainingMetrics(
+            fl_client_name="site-1", global_round=2, label="loss", result=1.0, x_value=7.5, x_label="epoch"
+        ).model_dump()
+        assert payload["x_value"] == 7.5
+        assert payload["global_round"] == 2
+
+    @pytest.mark.parametrize("bad_x", [float("nan"), float("inf"), float("-inf")])
+    def test_non_finite_x_value_rejected(self, bad_x):
+        """nan/inf would break JSON-encoding the hub's metrics response, so reject at the edge."""
+        with pytest.raises(ValidationError):
+            TrainingMetrics(fl_client_name="site-1", global_round=1, label="loss", result=1.0, x_value=bad_x)
+
+    @pytest.mark.parametrize("bad_result", [float("nan"), float("inf"), float("-inf")])
+    def test_non_finite_result_rejected(self, bad_result):
+        """result carries the same JSON-encoding hazard as x_value, so it gets the same edge guard."""
+        with pytest.raises(ValidationError):
+            TrainingMetrics(fl_client_name="site-1", global_round=1, label="loss", result=bad_result)
+
+    @pytest.mark.parametrize("bad_label", ["", "x" * 65])
+    def test_out_of_bounds_x_label_rejected(self, bad_label):
+        """x_label is plot identity and the rendered axis title: empty or oversized labels are refused."""
+        with pytest.raises(ValidationError):
+            TrainingMetrics(fl_client_name="site-1", global_round=1, label="loss", result=1.0, x_label=bad_label)
+
+    def test_x_label_at_the_length_bound_is_accepted(self):
+        """A 64-char x_label sits exactly on the bound and must validate."""
+        metrics = TrainingMetrics(fl_client_name="site-1", global_round=1, label="loss", result=1.0, x_label="x" * 64)
+        assert metrics.x_label == "x" * 64
 
     def test_global_round_accepts_zero(self):
         """global_round of 0 is the first round and must be valid."""
@@ -240,6 +309,27 @@ class TestHubMirrorStaysInSync:
         fl_side = _class_body_ast(Path(flip.schemas.__file__), class_name)
         hub_side = _class_body_ast(_REPO_ROOT / hub_path, class_name)
         assert fl_side == hub_side, f"{class_name} drifted from its flip-api mirror ({hub_path}) — update both together"
+
+    def test_default_x_axis_label_value_matches_flip_api_constant(self):
+        """Pin the two DEFAULT_X_AXIS_LABEL constant *values* to each other.
+
+        The AST mirror guard above compares ``Field(default=DEFAULT_X_AXIS_LABEL)``
+        by *name*, so the constants' values can skew without failing it — and a
+        skew silently splits one logical plot onto two differently-named axes
+        depending on which side applied the default.
+        """
+        constants_module = ast.parse((_REPO_ROOT / "flip-api/src/flip_api/utils/constants.py").read_text())
+        hub_values = [
+            stmt.value.value
+            for stmt in constants_module.body
+            if isinstance(stmt, ast.Assign)
+            and isinstance(stmt.value, ast.Constant)
+            for target in stmt.targets
+            if isinstance(target, ast.Name) and target.id == "DEFAULT_X_AXIS_LABEL"
+        ]
+        assert hub_values == [flip.schemas.DEFAULT_X_AXIS_LABEL], (
+            "DEFAULT_X_AXIS_LABEL value drifted between flip-utils and flip-api — update both together"
+        )
 
     def test_queue_position_stays_hub_reserved(self):
         """Pin the shape of the one sanctioned mirror divergence.

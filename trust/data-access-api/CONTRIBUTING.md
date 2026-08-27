@@ -50,7 +50,7 @@ SELECT * FROM OMOP.IMAGE_OCCURRENCE WHERE modality_concept_id = 4300757
 ```sql
 SELECT p.gender_source_value, p.year_of_birth, r.protocol_source_value, r.manufacturer, r.accession_id
 FROM omop.person p
-INNER JOIN omop.radiology_occurrence r ON r.person_id = p.person_id
-WHERE r.radiology_occurrence_id > 200000
+INNER JOIN omop.image_occurrence r ON r.person_id = p.person_id
+WHERE r.image_occurrence_id > 200000
   AND p.gender_source_value = 'M'
 ```

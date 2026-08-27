@@ -11,6 +11,7 @@
 #
 
 import asyncio
+import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -149,6 +150,72 @@ async def test_send_heartbeat_success():
 
 
 @pytest.mark.asyncio
+async def test_send_heartbeat_posts_no_body_before_first_collection():
+    """Until the health collector has a snapshot, the heartbeat must stay bodyless —
+    the exact wire behavior of pre-collector trust-api builds."""
+    mock_client = AsyncMock()
+    mock_client.post.return_value = MagicMock(is_success=True)
+
+    with patch("trust_api.services.task_poller.current_snapshot", return_value=None):
+        await _send_heartbeat(mock_client)
+
+    assert "json" not in mock_client.post.call_args.kwargs
+
+
+@pytest.mark.asyncio
+async def test_send_heartbeat_attaches_health_snapshot_body():
+    """Once a snapshot exists, it rides along as the heartbeat JSON body."""
+    snapshot = {
+        "services": {"trust-api": {"status": "healthy", "version": "0.3.0", "response_ms": None}},
+        "collected_at": "2026-08-06T12:00:00+00:00",
+    }
+    mock_client = AsyncMock()
+    mock_client.post.return_value = MagicMock(is_success=True)
+
+    with patch("trust_api.services.task_poller.current_snapshot", return_value=snapshot):
+        await _send_heartbeat(mock_client)
+
+    assert mock_client.post.call_args.kwargs["json"] == snapshot
+
+
+@pytest.mark.asyncio
+async def test_send_heartbeat_retries_bodyless_when_hub_rejects_snapshot():
+    """A hub 422 on the snapshot must not cost liveness: telemetry is optional,
+    last_heartbeat is not. The poller retries once without the body so the trust
+    keeps reading Online while the rejection is investigated from the error log."""
+    snapshot = {
+        "services": {"trust-api": {"status": "healthy", "version": "0.3.0", "response_ms": None}},
+        "collected_at": "2026-08-06T12:00:00+00:00",
+    }
+    mock_client = AsyncMock()
+    mock_client.post.side_effect = [
+        MagicMock(is_success=False, status_code=422, text='{"detail": "bad snapshot"}'),
+        MagicMock(is_success=True),
+    ]
+
+    with patch("trust_api.services.task_poller.current_snapshot", return_value=snapshot):
+        await _send_heartbeat(mock_client)
+
+    assert mock_client.post.call_count == 2
+    assert mock_client.post.call_args_list[0].kwargs["json"] == snapshot
+    assert "json" not in mock_client.post.call_args_list[1].kwargs
+
+
+@pytest.mark.asyncio
+async def test_send_heartbeat_does_not_retry_on_non_422_rejection():
+    """Auth/availability rejections (401/500) are not snapshot problems — a bodyless
+    retry would just duplicate the failure and mask the real error."""
+    snapshot = {"services": {}, "collected_at": "2026-08-06T12:00:00+00:00"}
+    mock_client = AsyncMock()
+    mock_client.post.return_value = MagicMock(is_success=False, status_code=401, text="Invalid API key")
+
+    with patch("trust_api.services.task_poller.current_snapshot", return_value=snapshot):
+        await _send_heartbeat(mock_client)
+
+    assert mock_client.post.call_count == 1
+
+
+@pytest.mark.asyncio
 async def test_send_heartbeat_error():
     """Should not raise on transport error."""
     mock_client = AsyncMock()
@@ -240,6 +307,42 @@ async def test_report_task_result_includes_error_in_result():
     payload = call_args[1]["json"]
     assert payload["success"] is False
     assert "Something went wrong" in payload["result"]
+
+
+@pytest.mark.asyncio
+async def test_report_task_result_forwards_status_code():
+    """The hub classifies a failed imaging-status refresh on the upstream status code (FLIP#1022),
+    so it has to survive the trip through the result payload."""
+    mock_response = AsyncMock()
+    mock_response.status_code = 200
+    mock_client = AsyncMock()
+    mock_client.post.return_value = mock_response
+
+    await _report_task_result(
+        mock_client, "task-123",
+        {"success": False, "error": "404: Project not found", "status_code": 404},
+    )
+
+    payload = json.loads(mock_client.post.call_args[1]["json"]["result"])
+    assert payload["status_code"] == 404
+    assert payload["error"] == "404: Project not found"
+
+
+@pytest.mark.asyncio
+async def test_report_task_result_omits_absent_status_code():
+    """Handlers that report no status code must not gain a null one."""
+    mock_response = AsyncMock()
+    mock_response.status_code = 200
+    mock_client = AsyncMock()
+    mock_client.post.return_value = mock_response
+
+    await _report_task_result(
+        mock_client, "task-123",
+        {"success": False, "error": "Something went wrong"},
+    )
+
+    payload = json.loads(mock_client.post.call_args[1]["json"]["result"])
+    assert "status_code" not in payload
 
 
 # ---- _process_task ----

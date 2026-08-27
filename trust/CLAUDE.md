@@ -10,8 +10,8 @@ Trust services run at each healthcare institution (cloud EC2 or on-prem). All tr
 | imaging-api | 8001 | DICOM image retrieval from PACS |
 | data-access-api | 8010 | OMOP database queries for cohort analysis |
 | fl-client | — | FL participant (connects outbound to FL server via NLB) |
-| omop-db | 5432 | Mocked OMOP patient database (PostgreSQL) |
-| orthanc | 8042 | Mocked DICOM PACS server (UI/REST; DICOM port 4242 is internal to the trust network and not bound to the host) |
+| omop-db | 5432 | Mocked OMOP patient database (PostgreSQL); dir also holds the image build source + populate tooling (#834, see `omop-db/CLAUDE.md`) |
+| orthanc | 8042 | Mocked DICOM PACS server (UI/REST behind HTTP basic auth — kit file's `ORTHANC_USERNAME`/`ORTHANC_PASSWORD`; DICOM port 4242 is internal to the trust network and not bound to the host) |
 | xnat | 8104 | Mocked neuroimaging platform |
 | observability | 3000/3100 | Grafana + Loki monitoring stack |
 
@@ -35,7 +35,7 @@ the commented dev form):
 
 | Section | Owner | Touched by |
 |---------|-------|-----------|
-| Host-local profile | Operator | hand-edit (ports, bind dirs) |
+| Host-local profile | Operator | hand-edit (ports, bind dirs, optional `FL_SITE_PRIVACY_*` site privacy policy) |
 | Trust-local credentials | Operator | hand-edit (passwords, service URLs) |
 | Hub-shared (managed) | Hub admin | `register-trust KIT=<CODE>` (live in prod, commented in dev) / `sync-trust-kit KIT=<CODE>` (prod refresh) |
 | Kit credentials (managed) | Hub | `register-trust` only — write-once; hub keeps only the hash |
@@ -82,17 +82,21 @@ The packager does NOT edit the kit file.
 
 The operator extracts, copies `.env.<CODE>.production` into their checkout,
 edits only the Host-local profile (sets `FL_KIT_DIR`, ports/dirs) and rotates
-the Trust-local passwords, runs `make onboard-onprem-trust KIT=<CODE> PROD=true`
-for the readiness checklist (kit present, swarm active, Hub-shared + Kit
-credentials populated, FL_KIT_DIR exists + has the expected files), then
-`make up-onprem-trust KIT=<CODE> PROD=true`.
+the Trust-local passwords, runs `sudo -E make onboard-onprem-trust KIT=<CODE> PROD=true`
+for the readiness checklist (kit present, swarm active — the swarm check queries
+the docker daemon, hence sudo; Hub-shared + Kit credentials populated, FL_KIT_DIR
+exists + has the expected files), then `sudo -E make up-onprem-trust KIT=<CODE> PROD=true`.
+Sudo because the provisioned login user is deliberately not in the docker group
+(root-equivalent); `-E` preserves `$HOME` so root's docker reuses the operator's
+GHCR login from `~/.docker/config.json`.
 
 ## Key Files
 
 | File | Purpose |
 |------|---------|
 | `Makefile` | Trust stack orchestration (parameterized `up-trust KIT=<name>`) |
-| `deploy/compose_trust.development.yml` | Dev Docker Compose (builds from source) |
+| `deploy/README.md` | Compose file matrix, the `--project-directory` rule these files depend on, and the external networks they join |
+| `deploy/compose_trust.development.yml` | Dev Docker Compose (pulls repo-built services from GHCR by default via `pull_policy: always`; `BUILD=true` rebuilds from the `build:` block instead) |
 | `deploy/compose_trust.production.yml` | Prod Docker Compose (GHCR images; declares the `trust-local-{loki,grafana}-data` named volumes as defaults) |
 | `deploy/compose_trust.{env}.{flower\|nvflare}.yml` | FL backend variants |
 | `deploy/compose_trust.{env}.gpu.yml` | GPU passthrough overlay — added by `up-trust` / `up-fl-clients-kit` via `GPU_OVERRIDE` only when the kit's `NUM_AVAILABLE_GPUS > 0`; reserves host NVIDIA GPU(s) for the fl-client. `up-trust-ec2` never applies it (the EC2 t3.xlarge is GPU-less, so the fl-client is CPU-only there regardless of the kit) |
@@ -108,7 +112,7 @@ make up-trust KIT=GSTT         # Start one trust stack (also brings up its XNAT)
 make down-trust KIT=GSTT       # Stop one trust stack
 make restart-trust KIT=GSTT    # Restart one trust stack
 make up-trust-ec2 KIT=GSTT     # Start one trust stack on a cloud EC2 host
-make up-trust KIT=<CODE> PROD=true  # Start a trust pointing at a remote hub (e.g. on-prem)
+make up-trust KIT=<CODE> PROD=true  # Start a trust pointing at a remote hub (on-prem hosts: prefix sudo -E — login user is not in the docker group)
 make debug                     # Trust-1 in debug mode
 make debug-trust-api           # Debug trust-api only
 make debug-imaging-api         # Debug imaging-api only
@@ -128,5 +132,6 @@ make update-orthanc-data TRUST=1  # Trust_1 only
 - Trust identity: `TRUST_API_KEY` (per-trust, from the kit file `trust/.env.<CODE>.<env>`); optional `EXPECTED_TRUST_ID` self-check. The hub identifies the trust by API key alone.
 - Encryption: `AES_KEY_BASE64` for trust-to-hub payload encryption (hub-shared; synced into the kit file).
 - `DEBUG` is no longer inherited from a hub env file. `make debug` / `make debug-off` set it explicitly; `make up-trust` without an explicit `DEBUG=true` runs services in non-debug mode.
+- Site-enforced FL privacy policy (NVFLARE only, FLIP#851): `FL_SITE_PRIVACY_POLICY=percentile` (+ optional `FL_SITE_PRIVACY_*` params, see `trust/.env.example`) in the kit's Host-local profile. Rendered into the fl-client's NVFLARE `local/privacy.json` at container start by `python -m flip.nvflare.site_policy` — composes on top of (runs before) any app-level filter, jobs can't opt out, invalid values fail the fl-client closed. Unset = no site policy (previous behavior). Apply with `make -C trust up-fl-clients-kit KIT=<CODE>`.
 - The two shipped dev trusts (GSTT, KCH) have separate ports, networks, and data dirs. Their FL kit *slots* are still named `Trust_1` / `Trust_2` — those are the pre-provisioned FL participant-kit identities (cert CN for NVFLARE, supernode number for Flower), assigned to a trust by the hub at registration. A trust (GSTT) claims a slot (Trust_1); they are different things.
 - Local trust uses `trust-local` project name to avoid port collisions

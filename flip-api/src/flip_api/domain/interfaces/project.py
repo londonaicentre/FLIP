@@ -16,7 +16,7 @@ from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, validator
 
-from flip_api.domain.schemas.status import ModelStatus, ProjectStatus
+from flip_api.domain.schemas.status import ImagingConnectionState, ModelStatus, ProjectStatus
 from flip_api.domain.schemas.users import CognitoUser
 
 # Blocks the three characters most likely to enable structural XML injection
@@ -147,6 +147,15 @@ class IProject(BaseModel):  # Base for IProject to avoid repetition
 
 class IReturnedProject(IProject):  # Extends IProject
     owner_email: EmailStr = Field(..., alias="ownerEmail")
+    # Narrow by construction, not by declaration. `CognitoUser` permits `name` and `organisation`,
+    # but they stay empty here because `get_project` fills this list from `get_user_by_email_or_id`
+    # (which populates id/email/is_disabled alone) and never calls `apply_user_profile` — the DB
+    # join that is the only source of those two fields. Do not enrich project members with display
+    # names: that would widen full-profile disclosure to every project co-member, which is the leak
+    # FLIP#907 closed on `/users/{user_id}`. The shape to hold to is `ProjectMemberLookup`; typing
+    # this field as one so the response model enforces it rather than a field default is FLIP#996,
+    # which is not a one-line change — `get_project` passes `CognitoUser` instances, and that field
+    # type rejects them at construction.
     users: list[CognitoUser]
     # Surfaced read-only so the edit form can display the project's
     # DICOM->NIfTI setting. Fixed at creation and immutable afterwards (the
@@ -229,12 +238,38 @@ class IImagingImportStatus(BaseModel):
 
 class IImagingStatusResponse(BaseModel):
     project_creation_completed: bool = Field(alias="projectCreationCompleted")
+    # The last *known* counts, not necessarily current ones — read `connection_state` and
+    # `last_seen_at` before presenting these as live (GitHub issue #1022).
     import_status: IImagingImportStatus | None = Field(default=None, alias="importStatus")
     reimport_count: int | None = Field(default=None, alias="reimportCount")
+    # Whether the newest refresh landed, so a consumer can tell a live 100% from a stale one.
+    # Defaults to OK so a trust with no refresh history reads as "nothing wrong yet" rather
+    # than as an error.
+    connection_state: ImagingConnectionState = Field(
+        default=ImagingConnectionState.OK, alias="connectionState"
+    )
+    # When `import_status` was last confirmed against the trust. None when no refresh has ever
+    # succeeded for this project.
+    last_seen_at: datetime | None = Field(default=None, alias="lastSeenAt")
 
     model_config = ConfigDict(
         populate_by_name=True,
     )
+
+
+class ImagingStatusSnapshot(BaseModel):
+    """What the hub knows about one trust's imaging import, and how current it is.
+
+    Built per request from the trust's ``GET_IMAGING_STATUS`` task history rather than stored:
+    ``import_status``/``last_seen_at`` come from the newest task that *succeeded*, while
+    ``connection_state`` is derived from the newest task that reached a terminal state. Those
+    are the same task in the healthy case and diverge once refreshes start failing, which is
+    precisely the stale-status case in GitHub issue #1022.
+    """
+
+    import_status: IImagingImportStatus | None = None
+    connection_state: ImagingConnectionState = ImagingConnectionState.OK
+    last_seen_at: datetime | None = None
 
 
 class IImagingStatus(IImagingStatusResponse):  # Extends IImagingStatusResponse

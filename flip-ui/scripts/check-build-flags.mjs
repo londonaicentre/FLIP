@@ -12,14 +12,18 @@
  * limitations under the License.
  */
 
-// Wired into the `prebuild` and `prebuild:deploy` npm hooks so it runs
-// only before `npm run build` / `npm run build:deploy`, never before
-// `npm run dev`. Vite inlines `import.meta.env.VITE_LOCAL` at build
-// time and the surrounding branches in src/utils/auth.ts and
-// src/main.ts are dead-code-eliminated when the flag is "false" — so
-// any production-style build with VITE_LOCAL=true ships a bundle that
-// bypasses the Cognito session check on every guarded route and
-// boots the MirageJS mock instead of the real backend.
+// Wired into the `prebuild`, `prebuild:deploy` and `prebuild:demo` npm
+// hooks so it runs before every `npm run build*`, never before
+// `npm run dev`. Vite inlines `import.meta.env.VITE_LOCAL` /
+// `import.meta.env.VITE_DEMO` at build time and the surrounding
+// branches in src/utils/auth.ts and src/main.ts are
+// dead-code-eliminated when the flag is anything but "true" — so any
+// production-style build carrying either flag ships a bundle that
+// bypasses the Cognito session check on every guarded route and boots
+// a MirageJS mock instead of the real backend. The public demo build
+// is not exempt: `npm run build:demo` gets its flag from vite.config's
+// `define` for `--mode demo`, so VITE_DEMO must never be set in the
+// environment at all.
 
 import { pathToFileURL } from "node:url";
 
@@ -49,6 +53,71 @@ export function checkViteLocal(env) {
 }
 
 /**
+ * Message for a VITE_E2E misuse. Unlike VITE_LOCAL this flag has one
+ * legitimate home — the Cypress dev server (`vite --mode e2e`, reading
+ * .env.e2e) — so the caller decides legality from (mode, command) and
+ * this only phrases the refusal.
+ *
+ * VITE_E2E arms the Cypress auth seam in src/utils/auth.ts, which takes
+ * the signed-in user from a `cypress.auth.user` localStorage key instead
+ * of Cognito. In a browser without that fixture nobody is ever signed in,
+ * so every guarded navigation redirects to /auth/login — an interactive
+ * dev server with the flag set silently logs you out on each refresh, and
+ * a build with it ships an auth seam to users.
+ *
+ * @param {string} [mode] Vite mode, when known (config-time callers).
+ * @param {string} [command] "build" | "serve", when known.
+ * @returns {string} multi-line refusal message
+ */
+export function checkViteE2e(mode, command) {
+    const where = mode === undefined
+        ? "Refusing to build flip-ui: VITE_E2E=true is set."
+        : `Refusing to run flip-ui (mode '${mode}', command '${command}') with VITE_E2E=true.`;
+
+    return [
+        where,
+        "",
+        "VITE_E2E arms the Cypress auth seam in src/utils/auth.ts, which",
+        "reads the signed-in user from a 'cypress.auth.user' localStorage",
+        "key instead of Cognito. A browser without that fixture is never",
+        "signed in, so every page refresh redirects to /auth/login.",
+        "",
+        "The flag is valid only for the Cypress dev server, which loads",
+        "flip-ui/.env.e2e via 'npm run test:start' (vite --mode e2e).",
+        "It must never appear in .env.development or in a built bundle."
+    ].join("\n");
+}
+
+/**
+ * Same contract as checkViteLocal, for the public-demo flag. VITE_DEMO
+ * short-circuits the Cognito session check and boots the offline demo
+ * MirageJS server (mocks/demo-server.ts) — an unauthenticated bundle,
+ * exactly like VITE_LOCAL. The legitimate demo build never needs the
+ * env var: `npm run build:demo` runs `vite build --mode demo`, and
+ * vite.config.mts inlines the flag via `define` for that mode.
+ *
+ * @param {Record<string, string | undefined>} env
+ * @returns {string | null}
+ */
+export function checkViteDemo(env) {
+    if (env.VITE_DEMO !== "true") return null;
+
+    return [
+        "Refusing to build flip-ui: VITE_DEMO=true is set in the environment.",
+        "",
+        "VITE_DEMO bypasses the Cognito session check in src/utils/auth.ts",
+        "and boots the offline demo MirageJS server from src/main.ts. Vite",
+        "inlines this flag at build time, so a production-style build with",
+        "VITE_DEMO=true ships an unauthenticated demo bundle in place of",
+        "the real app.",
+        "",
+        "The only supported way to produce the public demo bundle is",
+        "'npm run build:demo' (vite build --mode demo), which inlines the",
+        "flag itself. Never set VITE_DEMO in the environment or an env file."
+    ].join("\n");
+}
+
+/**
  * CLI driver. Takes the side-effecting bits as parameters so a unit
  * test can drive it without forking a real process — child-process
  * spawns don't count for vitest's coverage instrumentation, and we
@@ -59,7 +128,12 @@ export function checkViteLocal(env) {
  * @returns {0 | 1} exit code; the caller forwards it to process.exit.
  */
 export function runCli(env, io) {
-    const reason = checkViteLocal(env);
+    // The prebuild hooks have no Vite mode, so an exported VITE_E2E here is
+    // unambiguously a shipping build — refuse it on the same axis as
+    // VITE_LOCAL. The mode-aware check lives in vite.config.mts.
+    const reason = checkViteLocal(env)
+        ?? checkViteDemo(env)
+        ?? (env.VITE_E2E === "true" ? checkViteE2e() : null);
     if (reason) {
         io.error(reason);
         io.exit(1);

@@ -12,8 +12,8 @@
 """Preprocess Ark+ checkpoints for the evaluation pipeline.
 
 Produces clean state dict files that match the raw ArkSwinTransformer
-architecture exactly, so that EvaluationPTModelLocator's ``strict=True``
-validation passes on the server side.
+architecture exactly, so the evaluator's ``strict`` ``load_state_dict`` on the
+client side accepts the broadcast weights.
 
 Usage::
 

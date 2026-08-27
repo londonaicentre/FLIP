@@ -49,8 +49,8 @@ vi.mock("@/services/model-service", () => ({ getModelMetrics: vi.fn(async () => 
 vi.mock("@/components/AiChart/AiModelMetricsChart.vue", () => ({
     default: {
         name: "AiMetricsChart",
-        props: ["data"],
-        template: "<div data-test=\"chart-stub\" :data-y-label=\"data.yLabel\" :data-series-labels=\"data.metrics.map(m => m.seriesLabel).join(',')\" />"
+        props: ["data", "styleIndexBySeries"],
+        template: "<div data-test=\"chart-stub\" :data-y-label=\"data.yLabel\" :data-x-label=\"data.xLabel\" :data-series-labels=\"data.metrics.map(m => m.seriesLabel).join(',')\" :data-style-index=\"JSON.stringify(styleIndexBySeries)\" />"
     }
 }));
 
@@ -116,6 +116,30 @@ const VAL_F1 = {
         }]
     }]
 };
+// Same metric name (VAL_LOSS) under two different x-axis labels — must render as two separate plots
+// (FLIP#148), with the tabs disambiguated by their x-label.
+const VAL_LOSS_EPOCH = {
+    yLabel: "VAL_LOSS",
+    xLabel: "epoch",
+    metrics: [{
+        seriesLabel: "Kings College Hospital",
+        data: [{
+            xValue: 1,
+            yValue: 0.4
+        }]
+    }]
+};
+const VAL_LOSS_ROUND = {
+    yLabel: "VAL_LOSS",
+    xLabel: "Global Rounds",
+    metrics: [{
+        seriesLabel: "Kings College Hospital",
+        data: [{
+            xValue: 1,
+            yValue: 0.5
+        }]
+    }]
+};
 
 describe("TrainingMetrics", () => {
     beforeEach(() => {
@@ -168,7 +192,7 @@ describe("TrainingMetrics", () => {
         const wrapper = mountTrainingMetrics();
         await flushPromises();
 
-        await wrapper.get("[data-test=training-plot-tab-VAL-F1-SCORE]").trigger("click");
+        await wrapper.get("[data-test=training-plot-tab-VAL-F1-SCORE-global_round]").trigger("click");
         await flushPromises();
 
         const tabs = wrapper.findAll("[role=tab]");
@@ -219,7 +243,7 @@ describe("TrainingMetrics", () => {
         await flushPromises();
 
         // Switch to the second tab so it has a non-default active label.
-        await wrapper.get("[data-test=training-plot-tab-VAL-F1-SCORE]").trigger("click");
+        await wrapper.get("[data-test=training-plot-tab-VAL-F1-SCORE-global_round]").trigger("click");
         await flushPromises();
         expect(wrapper.find("[data-test=chart-stub]").attributes("data-y-label")).toBe("VAL-F1-SCORE");
 
@@ -229,6 +253,20 @@ describe("TrainingMetrics", () => {
         await flushPromises();
 
         expect(wrapper.find("[data-test=chart-stub]").attributes("data-y-label")).toBe("TRAIN_LOSS");
+    });
+
+    test("shows the empty state for a non-array metrics response instead of crashing", async () => {
+        // A stubbed or misbehaving backend can answer 200 with an empty body, which the
+        // fetch layer hands over as "" — the eager charts watcher must not .map over it.
+        setData("");
+        const wrapper = mountTrainingMetrics();
+        await flushPromises();
+
+        expect(wrapper.text()).toContain("Any metrics sent during the run will show here.");
+        // Every derived view reads the same guarded value, so a non-array response yields no
+        // tabs (an empty xLabelsByMetric) as well as no charts.
+        expect(wrapper.find("[role=tablist]").exists()).toBe(false);
+        expect(wrapper.find("[data-test=chart-stub]").exists()).toBe(false);
     });
 
     test("clears the active chart when the response empties", async () => {
@@ -295,7 +333,7 @@ describe("TrainingMetrics plot layout", () => {
         const wrapper = mountTrainingMetrics();
         await flushPromises();
 
-        await wrapper.get("[data-test=metrics-plot-select]").setValue("VAL-F1-SCORE");
+        await wrapper.get("[data-test=metrics-plot-select]").setValue(JSON.stringify(["VAL-F1-SCORE", "global_round"]));
 
         expect(wrapper.get("[data-test=chart-stub]").attributes("data-y-label")).toBe("VAL-F1-SCORE");
     });
@@ -318,8 +356,8 @@ describe("TrainingMetrics plot layout", () => {
         await wrapper.find("[data-test=metrics-view-grid]").trigger("click");
 
         expect(wrapper.findAll("[data-test=chart-stub]")).toHaveLength(2);
-        expect(wrapper.find("[data-test='metrics-grid-cell-TRAIN_LOSS']").text()).toContain("TRAIN_LOSS");
-        expect(wrapper.find("[data-test='metrics-grid-cell-VAL-F1-SCORE']").text()).toContain("VAL-F1-SCORE");
+        expect(wrapper.find("[data-test='metrics-grid-cell-TRAIN_LOSS-global_round']").text()).toContain("TRAIN_LOSS");
+        expect(wrapper.find("[data-test='metrics-grid-cell-VAL-F1-SCORE-global_round']").text()).toContain("VAL-F1-SCORE");
         expect(wrapper.find("[data-test=metrics-view-grid]").attributes("aria-pressed")).toBe("true");
     });
 
@@ -330,7 +368,7 @@ describe("TrainingMetrics plot layout", () => {
 
         await wrapper.find("[data-test=metrics-view-grid]").trigger("click");
 
-        const cell = wrapper.get("[data-test='metrics-grid-cell-TRAIN_LOSS']");
+        const cell = wrapper.get("[data-test='metrics-grid-cell-TRAIN_LOSS-global_round']");
         expect(cell.classes()).not.toContain("h-56");
         // A stale canvas can never paint over the neighbouring cell.
         expect(cell.classes()).toContain("overflow-hidden");
@@ -340,7 +378,7 @@ describe("TrainingMetrics plot layout", () => {
         // leaving the plot itself flatter than 16:9.
         expect(cell.classes()).not.toContain("aspect-video");
 
-        const plot = wrapper.get("[data-test='metrics-grid-plot-TRAIN_LOSS']");
+        const plot = wrapper.get("[data-test='metrics-grid-plot-TRAIN_LOSS-global_round']");
         // One column below md, where a 16:9 plot spans the whole card and reads flat;
         // 16:9 returns once the columns do.
         expect(plot.classes()).toContain("aspect-[3/2]");
@@ -394,7 +432,7 @@ describe("TrainingMetrics plot layout", () => {
         const wrapper = mountTrainingMetrics();
         await flushPromises();
 
-        await wrapper.get("[data-test='training-plot-tab-VAL-F1-SCORE']").trigger("click");
+        await wrapper.get("[data-test='training-plot-tab-VAL-F1-SCORE-global_round']").trigger("click");
         await wrapper.find("[data-test=metrics-view-grid]").trigger("click");
         await wrapper.find("[data-test=metrics-view-single]").trigger("click");
 
@@ -432,6 +470,46 @@ describe("TrainingMetrics plot layout", () => {
         expect(second.find("[data-test=metrics-view-grid]").attributes("aria-pressed")).toBe("true");
     });
 
+    test("sorts the plots by metric title, whatever order the backend sends", async () => {
+        setData([VAL_F1, TRAIN_LOSS]);
+        const wrapper = mountTrainingMetrics();
+        await flushPromises();
+
+        const tabs = wrapper.findAll("[role=tab]");
+        expect(tabs.map(t => t.text())).toEqual(["TRAIN_LOSS", "VAL-F1-SCORE"]);
+        // The default plot is the first sorted one, not the first to arrive.
+        expect(wrapper.get("[data-test=chart-stub]").attributes("data-y-label")).toBe("TRAIN_LOSS");
+    });
+
+    test("gives every trust one palette slot, shared by every plot in the grid", async () => {
+        // VAL_F1 carries KCH only; TRAIN_LOSS carries KCH + UCLH. Were slots assigned
+        // per plot, KCH would take slot 0 in one plot and share it with UCLH's absence
+        // shifting colours in the other.
+        setData([VAL_F1, TRAIN_LOSS]);
+        const wrapper = mountTrainingMetrics({
+            approvedTrusts: [{
+                name: "Kings College Hospital",
+                code: "KCH"
+            }]
+        });
+        await flushPromises();
+
+        await wrapper.find("[data-test=metrics-view-grid]").trigger("click");
+
+        const maps = wrapper.findAll("[data-test=chart-stub]").map(s => s.attributes("data-style-index"));
+        // The union of series labels over every plot, sorted, after code-shortening.
+        expect(maps).toEqual([
+            JSON.stringify({
+                KCH: 0,
+                UCLH: 1
+            }),
+            JSON.stringify({
+                KCH: 0,
+                UCLH: 1
+            })
+        ]);
+    });
+
     test("there is no layout switch when there is nothing to lay out", async () => {
         setData([]);
         const wrapper = mountTrainingMetrics();
@@ -450,5 +528,35 @@ describe("TrainingMetrics chart sizing", () => {
         expect(panel.classes()).toContain("flex-1");
         expect(panel.classes()).toContain("min-h-0");
         expect(panel.classes()).not.toContain("aspect-video");
+    });
+
+    test("renders a separate tab per (metric, x-label) and disambiguates same-metric tabs", async () => {
+        setData([VAL_LOSS_EPOCH, VAL_LOSS_ROUND]);
+        const wrapper = mountTrainingMetrics();
+        await flushPromises();
+
+        const tabs = wrapper.findAll("[role=tab]");
+        // Two plots for the same metric name because their x-axis labels differ (FLIP#148).
+        expect(tabs).toHaveLength(2);
+        expect(tabs[0].text()).toBe("VAL_LOSS · epoch");
+        expect(tabs[1].text()).toBe("VAL_LOSS · Global Rounds");
+
+        // First plot active by default — identified by (yLabel, xLabel), not yLabel alone.
+        const stub = wrapper.find("[data-test=chart-stub]");
+        expect(stub.attributes("data-y-label")).toBe("VAL_LOSS");
+        expect(stub.attributes("data-x-label")).toBe("epoch");
+    });
+
+    test("switches between same-metric plots that differ only by x-label", async () => {
+        setData([VAL_LOSS_EPOCH, VAL_LOSS_ROUND]);
+        const wrapper = mountTrainingMetrics();
+        await flushPromises();
+
+        await wrapper.findAll("[role=tab]")[1].trigger("click");
+        await flushPromises();
+
+        const stub = wrapper.find("[data-test=chart-stub]");
+        expect(stub.attributes("data-y-label")).toBe("VAL_LOSS");
+        expect(stub.attributes("data-x-label")).toBe("Global Rounds");
     });
 });

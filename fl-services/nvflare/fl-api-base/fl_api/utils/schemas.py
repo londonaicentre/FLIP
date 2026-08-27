@@ -125,6 +125,13 @@ class IOverridableConfig(BaseModel):
     # are sent — e.g. a frozen-backbone fine-tune sends just its head, avoiding the large-payload
     # uplink timeout (FLIP#684). Unset (default) = full-model update, unchanged behaviour.
     AGGREGATE_ONLY_REGEX: str | None = None
+    # Validation-metric label driving best-global-model selection. When set, a stock
+    # IntimeModelSelector is injected server-side so the best global model is saved alongside the
+    # final one (FLIP#673); the client trainer must report this metric on its returned FLModel.
+    # Unset (default) = no selector, only the final model is saved.
+    BEST_MODEL_METRIC: str | None = None
+    # Whether lower metric values are better (loss-like). Negates the selector's key metric.
+    BEST_MODEL_METRIC_MINIMIZE: bool = False
 
 
 class JobStatus(StrEnum):

@@ -43,7 +43,8 @@
 #   7. Extract, copy .env.<slot> into trust/, edit Host-local profile +
 #      Trust-local credentials sections (set FL_KIT_DIR to the extracted
 #      fl-kit/ absolute path, override ports/dirs/passwords as needed for
-#      their host), then `make up-onprem-trust KIT=<slot>`.
+#      their host), then `sudo -E make up-onprem-trust KIT=<slot>` (sudo:
+#      the provisioned login user is deliberately not in the docker group).
 
 set -eo pipefail
 
@@ -243,9 +244,11 @@ cat <<EOF
   4. Send your public IP to the FLIP admin so they can open the NLB:
        curl -s https://api.ipify.org
 
-  5. Bring up the stack:
+  5. Bring up the stack (sudo: the provisioned login user is deliberately
+     not in the docker group; -E keeps your \$HOME so root's docker reuses
+     your GHCR login from ~/.docker/config.json):
 
-       make up-onprem-trust KIT=${slot}
+       sudo -E make up-onprem-trust KIT=${slot}
 
 ════════════════════════════════════════════════════════════════════════
 

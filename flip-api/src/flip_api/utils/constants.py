@@ -14,6 +14,12 @@ import os
 
 SERVICE_UNAVAILABLE_MESSAGE = "The server is unable to process any requests at the moment, please try again later."
 
+# Default label naming the x-axis of an FL training-metric plot. Used when a metric is logged without
+# an explicit x-axis label — the historical behaviour, where the x-axis is the FL global round. Single
+# source of truth for the FLMetrics column default, the ingest-schema default, and the plot's x-axis
+# title (FLIP#148).
+DEFAULT_X_AXIS_LABEL = "Global Rounds"
+
 # AWS SES email templates
 ACCESS_REQUEST_TEMPLATE_NAME = "flip-access-request"
 IMAGING_CREDENTIALS_TEMPLATE_NAME = "flip-xnat-credentials"
@@ -38,3 +44,11 @@ ADMIN_EMAIL_2 = "alexandre.triay_bagur@kcl.ac.uk"
 ADMIN_EMAIL_3 = "rafael.dias@kcl.ac.uk"
 RESEARCHER_EMAIL = "rafaelagd@gmail.com"
 VIEWER_EMAIL = "triayalex@gmail.com"
+
+# Demo users for the scripted demo-video recorder (tests/demo_video.py). Created
+# in Cognito by flip_api/scripts/create_demo_users.py (passwords come from
+# DEMO_*_PASSWORD env vars, never committed); role grants are seeded at boot by
+# db/seed/main_users.py iff the users exist in the pool. Emails are env-
+# overridable so operators can point the demo at their own accounts.
+DEMO_RESEARCHER_EMAIL = os.environ.get("DEMO_RESEARCHER_EMAIL", "flip-demo-researcher@example.com")
+DEMO_ADMIN_EMAIL = os.environ.get("DEMO_ADMIN_EMAIL", "flip-demo-admin@example.com")

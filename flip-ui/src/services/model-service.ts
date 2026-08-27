@@ -18,6 +18,7 @@ import { TrustsResults } from "@/interfaces/cohort-query/types";
 import { FileInfo, FileTableRow } from "@/interfaces/model/types";
 import type { IStep } from "@/interfaces/steps";
 import { _http, IPaginatedResponse } from "@/services/api";
+import type { ProjectStatus } from "@/services/project-service";
 
 export interface IModelMetricData {
     yLabel: string;
@@ -198,7 +199,10 @@ export function modelStatusPillClass(status: ModelStatus | undefined): string {
     if (status === "RUNNING") {
         return "bg-fuchsia-100 text-fuchsia-800 dark:bg-fuchsia-900/40 dark:text-fuchsia-200";
     }
-    if (status === "PREPARED") {
+    // PENDING ("Model Created") shares PREPARED's amber: both are the "preparing" phase the
+    // /models filter tile counts them under, and a row that reads grey while its own tile
+    // reads amber tells the user two different things about one model.
+    if (status === "PREPARED" || status === "PENDING") {
         return "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200";
     }
 
@@ -210,7 +214,7 @@ export function modelStatusDotClass(status: ModelStatus | undefined): string {
     if (isModelStatusError(status)) return "bg-red-500";
     if (status === "RESULTS_UPLOADED") return "bg-emerald-500";
     if (status === "RUNNING") return "bg-fuchsia-500";
-    if (status === "PREPARED") return "bg-amber-500";
+    if (status === "PREPARED" || status === "PENDING") return "bg-amber-500";
 
     return "bg-gray-400";
 }
@@ -317,26 +321,70 @@ export type JobTypesResponse = Record<string, string[]>;
 let _jobTypesCache: JobTypesResponse | null = null;
 
 /**
+ * Raised when the job-types map cannot be obtained. Callers surface this rather than substituting
+ * a guess: the required-files list is per-backend, so any invented list is wrong on some
+ * deployment and produces a training gate the researcher can never satisfy.
+ */
+export class JobTypesUnavailableError extends Error {
+    constructor(reason: string, options?: { cause?: unknown }) {
+        super(`Could not load the job types: ${reason}`);
+        this.name = "JobTypesUnavailableError";
+        this.cause = options?.cause;
+    }
+}
+
+/**
+ * Whether a `/model/job-types` payload is usable as a job-types map.
+ *
+ * A transport error is not the only way this call fails to produce an answer: a proxy or test
+ * harness answering `200` with an empty or non-object body would otherwise be cached as a map with
+ * no job types in it, which reads downstream as "this deployment has no required files" rather
+ * than "we never found out".
+ *
+ * The `DEFAULT_JOB_TYPE` check is what stops that reading from unlocking training. Every consumer
+ * falls back to the default job type's list, and `stringArrayContainsAll(names, [])` is `true` —
+ * so a map missing that key would leave `requiredFiles` empty, mark every model as having all its
+ * files, and enable training against a gate that checks nothing.
+ */
+const isUsableJobTypesPayload = (payload: unknown): payload is JobTypesResponse =>
+    typeof payload === "object" && payload !== null && !Array.isArray(payload)
+        && DEFAULT_JOB_TYPE in payload
+        && Object.values(payload).every(
+            files => Array.isArray(files) && files.every(file => typeof file === "string")
+        );
+
+/**
  * Fetches all job types and their required files from the backend API.
- * Results are cached to avoid repeated API calls.
+ * Successful results are cached to avoid repeated API calls; failures are never cached, so a
+ * retry re-hits the API.
  * @returns Promise resolving to a record mapping job types to required files
+ * @throws JobTypesUnavailableError if the request fails or returns an unusable payload
  */
 export async function fetchJobTypes(): Promise<JobTypesResponse> {
     if (_jobTypesCache) {
         return _jobTypesCache;
     }
 
+    let payload: unknown;
     try {
-        const response = await _http.get<JobTypesResponse>("/model/job-types");
-        _jobTypesCache = response.data as JobTypesResponse;
-
-        return _jobTypesCache!;
+        payload = (await _http.get<unknown>("/model/job-types")).data;
     } catch (error) {
         console.error("[fetchJobTypes] Error fetching job types:", error);
 
-        // Return a minimal default if API fails
-        return { [DEFAULT_JOB_TYPE]: ["trainer.py", "validator.py", "models.py", "config.json"] };
+        throw new JobTypesUnavailableError("the request failed", { cause: error });
     }
+
+    if (!isUsableJobTypesPayload(payload)) {
+        console.error("[fetchJobTypes] Unusable job-types payload:", payload);
+
+        throw new JobTypesUnavailableError(
+            `the response was not a job-types map containing '${DEFAULT_JOB_TYPE}'`
+        );
+    }
+
+    _jobTypesCache = payload;
+
+    return _jobTypesCache;
 }
 
 /**
@@ -401,6 +449,10 @@ export interface IModelSummary {
     projectName: string;
     ownerId: string;
     ownerName?: string | null;
+    // Optional only until the deployed API ships the field: the owner sub-line
+    // shows an em-dash and the default created-sort keeps the backend order
+    // when it is absent.
+    creationTimestamp?: string;
     trusts: IModelSummaryTrust[];
     // The model's 1-based place in the FL training queue (1 = next to be picked
     // up); null/absent unless the model has a queued job waiting for a net.
@@ -420,6 +472,29 @@ export interface IModelsPage extends IPaginatedResponse<IModelSummary> {
 /** Fetch the paginated, access-scoped list of models across every project the user can see. */
 export async function getAllModels(url: string): Promise<IModelsPage> {
     const response = await _http.get<IModelsPage>(url);
+
+    return response.data;
+}
+
+/**
+ * One option of the Models page's project filter.
+ *
+ * `status` rides along because the scoped "Create Model" button may only show for an APPROVED
+ * project, and a project with no models yet has no row in the list to read its status from.
+ */
+export interface IModelProjectOption {
+    id: string;
+    name: string;
+    status: ProjectStatus;
+}
+
+/**
+ * Fetch the projects the user may filter the Models page by — every one they can access,
+ * unpaginated. Deliberately not the paginated `/projects` list: a page of it cannot promise
+ * "all of them", and a truncated dropdown would misreport what the user has access to.
+ */
+export async function getModelProjectOptions(url: string): Promise<IModelProjectOption[]> {
+    const response = await _http.get<IModelProjectOption[]>(url);
 
     return response.data;
 }
@@ -489,16 +564,18 @@ export async function initialiseTraining(
     await _http.post(`/fl/initiate/${modelId}`, initTrainingRequestData);
 }
 
+// Array.isArray, not ?? []: a 200 with an empty body reaches the fetch layer as the string "",
+// which `??` passes straight through and every caller then treats as an array (FLIP#1011).
 export async function getDownloadUrlForResults(modelId: string): Promise<string[]> {
     const response = await _http.get<string[]>(`/files/model/${modelId}/fl/results`);
 
-    return response.data ?? [];
+    return Array.isArray(response.data) ? response.data : [];
 }
 
 export async function getLogsForModel(url: string): Promise<ILog[]> {
     const response = await _http.get<ILog[]>(url);
 
-    return response.data ?? [];
+    return Array.isArray(response.data) ? response.data : [];
 }
 
 export async function stopTraining(modelId: string): Promise<undefined> {
@@ -511,6 +588,6 @@ export async function getModelMetrics(url: string): Promise<IModelMetricData[]> 
 
     const response = await _http.get<IModelMetricData[]>(url);
 
-    return response.data ?? [];
+    return Array.isArray(response.data) ? response.data : [];
 }
 

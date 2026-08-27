@@ -15,6 +15,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, Mock, call, patch
 
 import pytest
+from nvflare.app_common.app_constant import DefaultCheckpointFileName
 from nvflare.app_opt.pt.file_model_persistor import PTFileModelPersistor
 
 from flip.constants import PTConstants
@@ -170,10 +171,46 @@ class TestPersistToS3AndCleanup:
 
         flip.upload_results_to_s3.assert_called_once()
 
-        # Should move global model, trainer.py, and validator.py if they exist
-        assert mock_move.call_count == 3
+        # Should move global model, best model, trainer.py, and validator.py if they exist
+        assert mock_move.call_count == 4
         # Two dirs are pruned before zipping: app_server + cross_site_val/model_shareables.
         assert mock_rmtree.call_count == 2
+
+    @patch("flip.nvflare.components.persist_and_cleanup.FlipConstants")
+    @patch("shutil.move")
+    @patch("shutil.rmtree")
+    @patch("os.path.isfile")
+    @patch("os.path.isdir")
+    def test_upload_results_ships_no_best_model_when_none_was_saved(
+        self, mock_isdir, mock_isfile, mock_rmtree, mock_move, mock_constants
+    ):
+        """A best model appears in the results only when selection actually saved one.
+
+        The best checkpoint is written by the persistor on GLOBAL_BEST_MODEL_AVAILABLE (fired by
+        IntimeModelSelector) — when no selector was wired, no best file exists, and none must be
+        fabricated: shipping a copy of the final model as "best" would imply a selection happened.
+        """
+        mock_constants.LOCAL_DEV = False
+        best_model_path = os.path.join(
+            "/mock/workspace", "app_server", "model", DefaultCheckpointFileName.BEST_GLOBAL_MODEL
+        )
+
+        flip = MagicMock()
+        component = PersistToS3AndCleanup(model_id="123e4567-e89b-12d3-a456-426614174000", flip=flip)
+
+        fl_ctx = MagicMock()
+        fl_ctx.get_peer_context.return_value = None
+        fl_ctx.get_job_id.return_value = "job-123"
+        fl_ctx.get_engine.return_value.get_workspace.return_value.get_run_dir.return_value = "/mock/workspace"
+
+        mock_isfile.side_effect = lambda p: p != best_model_path
+        mock_isdir.return_value = True
+
+        component.upload_results_to_s3_bucket(fl_ctx)
+
+        assert mock_move.call_count == 3
+        assert not any("best" in str(c.args[0]) for c in mock_move.call_args_list)
+        flip.upload_results_to_s3.assert_called_once()
 
     @patch("flip.nvflare.components.persist_and_cleanup.FlipConstants")
     @patch("shutil.move")

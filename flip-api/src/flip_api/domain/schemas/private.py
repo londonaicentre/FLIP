@@ -12,14 +12,16 @@
 
 import json
 from datetime import datetime
-from typing import Any
+from enum import StrEnum
+from typing import Annotated, Any
 from uuid import UUID
 
-from pydantic import BaseModel, Field, model_validator, validator
+from pydantic import BaseModel, Field, StringConstraints, model_validator, validator
 
 from flip_api.config import get_settings
 from flip_api.domain.schemas.status import TaskType
 from flip_api.domain.schemas.types import FLLogEvent
+from flip_api.utils.constants import DEFAULT_X_AXIS_LABEL
 
 
 class Results(BaseModel):
@@ -57,10 +59,38 @@ class OmopCohortResults(BaseModel):
 
 
 class TrainingMetrics(BaseModel):
+    """One FL training/evaluation metric point. Mirrors flip-utils' ``flip/schemas.py`` (the sender).
+
+    ``global_round`` is provenance — always the FL global round the metric was reported in, never
+    overridden. The plot coordinate is the (``x_label``, ``x_value``) pair, defaulting to the global
+    round on the "Global Rounds" axis — see FLIP#148.
+    """
+
     fl_client_name: str
     global_round: int = Field(ge=0)
     label: str
-    result: float
+    # nan/inf are rejected here and on x_value below: a non-finite value would survive to the DB and
+    # then break JSON-encoding the metrics response for the whole model.
+    result: float = Field(allow_inf_nan=False)
+    # The x-coordinate this metric is plotted at. Defaults to the global round (see the validator
+    # below), which also keeps payloads from pre-x_value FL images valid.
+    x_value: float = Field(allow_inf_nan=False)
+    # Label naming the x-axis this metric is plotted against; defaults to the FL global round axis when
+    # the client doesn't send one. A plot's identity is the (label, x_label) pair — see FLIP#148.
+    # Bounded like event_type: the label originates in uploaded training code, is persisted, mints a
+    # new plot per distinct value, and is rendered as the axis title — unbounded or empty values would
+    # mint unbounded or blank-titled plots.
+    x_label: str = Field(default=DEFAULT_X_AXIS_LABEL, min_length=1, max_length=64)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _default_x_value_to_global_round(cls, data: Any) -> Any:
+        """Backfill a missing/None ``x_value`` from ``global_round`` (back-compat with old senders)."""
+        if isinstance(data, dict) and data.get("x_value") is None:
+            global_round = data.get("global_round")
+            if global_round is not None:  # absent global_round -> let the field-required error surface
+                data = {**data, "x_value": global_round}
+        return data
 
 
 class TrainingLog(BaseModel):
@@ -190,3 +220,49 @@ class TaskResultInput(BaseModel):
 
     success: bool
     result: str | None = Field(default=None, max_length=get_settings().MAX_TASK_RESULT_LENGTH)
+
+
+class ServiceHealthStatus(StrEnum):
+    """Wire vocabulary for a trust-internal service's probed state."""
+
+    HEALTHY = "healthy"
+    DEGRADED = "degraded"
+    DOWN = "down"
+    UNKNOWN = "unknown"
+
+
+class ServiceHealthEntry(BaseModel):
+    """One probed service inside a heartbeat snapshot.
+
+    Bounds are defence-in-depth: the payload originates inside a trust but is
+    persisted verbatim into JSONB and rendered on the Connection Status page, so
+    every free-text field is length-capped and numerics are range-capped.
+    """
+
+    status: ServiceHealthStatus
+    version: str | None = Field(default=None, max_length=64)
+    response_ms: int | None = Field(default=None, ge=0, le=1_000_000)
+
+
+# Roster keys are the trust collector's wire contract; the hub stays roster-agnostic
+# and only constrains the shape, so a trust can report a new service without a hub deploy.
+_ServiceKey = Annotated[str, StringConstraints(pattern=r"^[a-z0-9-]{1,32}$")]
+
+
+class TrustHeartbeatInput(BaseModel):
+    """Optional heartbeat body: the trust's per-service health snapshot (issue #901).
+
+    Older trust-api builds POST no body at all — the route treats an absent body as
+    "no snapshot" and only stamps ``last_heartbeat``. ``collected_at`` is accepted
+    (and discarded) so collector payloads stay self-describing on the wire; it is
+    never persisted or used for staleness — the hub stamps its own
+    ``services_health_at`` on receipt so a trust cannot backdate or postdate its
+    snapshot.
+    """
+
+    # Bounds declared on the field so they also surface in the OpenAPI schema;
+    # entry-level caps live on ServiceHealthEntry. min_length matters as much as
+    # max: an empty snapshot would overwrite a good one AND be stamped fresh,
+    # defeating the collector's drop-the-snapshot-on-failure design.
+    services: dict[_ServiceKey, ServiceHealthEntry] = Field(min_length=1, max_length=16)
+    collected_at: datetime | None = None

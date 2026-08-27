@@ -1,0 +1,48 @@
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Fixture tests for the FL round-metrics extractors.
+#
+# ubuntu-latest is load-bearing, not incidental: its default awk is mawk, and one of the
+# two silent-corruption bugs this suite guards against was a mawk-vs-gawk number-formatting
+# difference that produced a plausible-but-wrong rounds.tsv. Running here keeps mawk in the
+# loop even when every developer's workstation has gawk.
+
+name: FL round metrics tests
+
+on:
+  push:
+    branches: [develop]
+    paths:
+      - "scripts/fl_round_metrics/**"
+      - ".github/workflows/fl_round_metrics_tests.yml"
+  pull_request:
+    branches: [develop]
+    paths:
+      - "scripts/fl_round_metrics/**"
+      - ".github/workflows/fl_round_metrics_tests.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  extractor-fixture-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+      - name: Report the awk implementation under test
+        run: awk -W version 2>&1 | head -1 || awk --version | head -1
+      - name: Run extractor fixture tests
+        run: bash scripts/fl_round_metrics/tests/run_extractor_tests.sh

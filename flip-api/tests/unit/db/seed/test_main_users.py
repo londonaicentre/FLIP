@@ -24,6 +24,8 @@ from flip_api.utils.constants import (
     ADMIN_EMAIL_1,
     ADMIN_EMAIL_2,
     ADMIN_EMAIL_3,
+    DEMO_ADMIN_EMAIL,
+    DEMO_RESEARCHER_EMAIL,
     RESEARCHER_EMAIL,
     VIEWER_EMAIL,
 )
@@ -47,7 +49,7 @@ def test_seed_main_users_calls_ensure_user_and_role(mock_logger, mock_ensure_use
     """Test that seed_main_users calls ensure_user_and_role for each admin, researcher, and viewer."""
     seed_main_users(mock_session)
 
-    assert mock_ensure_user_and_role.call_count == 5
+    assert mock_ensure_user_and_role.call_count == 7
 
     mock_ensure_user_and_role.assert_any_call(
         ADMIN_EMAIL_1, RoleRef.ADMIN, mock_session, *MAIN_USER_PROFILES[ADMIN_EMAIL_1]
@@ -89,10 +91,10 @@ def test_seed_main_users_continues_after_per_user_http_failure(
 
     seed_main_users(mock_session)
 
-    # All five users are still attempted — failure on one does not abort the rest.
-    assert mock_ensure_user_and_role.call_count == 5
+    # All seven users are still attempted — failure on one does not abort the rest.
+    assert mock_ensure_user_and_role.call_count == 7
     # Each failure is logged at warning level so an operator can see what was skipped.
-    assert mock_logger.warning.call_count == 5
+    assert mock_logger.warning.call_count == 7
     # Final completion log still fires.
     mock_logger.info.assert_called_with("✅ Finished seeding main users.")
 
@@ -157,6 +159,8 @@ def test_seed_main_users_runs_all_when_each_succeeds(mock_logger, mock_ensure_us
         (ADMIN_EMAIL_3, RoleRef.ADMIN, mock_session, *MAIN_USER_PROFILES[ADMIN_EMAIL_3]),
         (RESEARCHER_EMAIL, RoleRef.RESEARCHER, mock_session, *MAIN_USER_PROFILES[RESEARCHER_EMAIL]),
         (VIEWER_EMAIL, RoleRef.VIEWER, mock_session, *MAIN_USER_PROFILES[VIEWER_EMAIL]),
+        (DEMO_RESEARCHER_EMAIL, RoleRef.RESEARCHER, mock_session, *MAIN_USER_PROFILES[DEMO_RESEARCHER_EMAIL]),
+        (DEMO_ADMIN_EMAIL, RoleRef.ADMIN, mock_session, *MAIN_USER_PROFILES[DEMO_ADMIN_EMAIL]),
     ]
     actual_calls = [c.args for c in mock_ensure_user_and_role.call_args_list]
     assert actual_calls == expected_calls

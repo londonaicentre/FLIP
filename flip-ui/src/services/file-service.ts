@@ -16,11 +16,11 @@
 
 import { type AxiosResponse, isAxiosError } from "axios";
 
+import { IS_DEMO } from "@/demo/bootstrap";
 import { FileUploadStatus } from "@/interfaces/model/types";
 
 import { _http } from "./api";
 import { DEFAULT_JOB_TYPE,
-    fetchJobTypes,
     getRequiredFilesForJobType,
     isValidJobType,
     type JobType,
@@ -35,10 +35,69 @@ export interface IModelConfig {
     [key: string]: unknown;
 }
 
-export const downloadModelFile = async (url: string): Promise<Blob> => {
-    const response: AxiosResponse<Blob> = await _http.get(url, { responseType: "blob" });
+export interface IPresignedDownloadResponse {
+    url: string;
+    fileName: string;
+}
+
+/**
+ * Asks flip-api for a short-lived presigned S3 GET URL for a model file.
+ *
+ * A tiny JSON response, safe under the shared axios client's timeout. What to
+ * do with the URL is the caller's choice: navigate the browser straight to it
+ * (streamed download, no memory bound — S3 serves it with
+ * `Content-Disposition: attachment`) or fetch its bytes into a Blob when the
+ * content itself is needed (config.json parsing, zip bundling).
+ */
+export const getModelFileDownloadUrl = async (url: string): Promise<IPresignedDownloadResponse> => {
+    const response: AxiosResponse<IPresignedDownloadResponse> = await _http.get(url);
 
     return response.data;
+};
+
+/**
+ * Downloads a model file's bytes.
+ *
+ * Two steps: first ask flip-api for a short-lived presigned S3 URL, then
+ * fetch the actual bytes directly from S3 with the global `fetch` API.
+ * `fetch` is used instead of the shared axios client for the byte transfer
+ * because that client would prepend `baseURL`, attach an `Authorization`
+ * header S3 doesn't expect, and re-apply the very request timeout this
+ * two-step flow exists to avoid (large files can take far longer than 30s
+ * to transfer). Note the returned Blob lives in memory — for a plain
+ * "save this file" action prefer navigating to
+ * `getModelFileDownloadUrl(...).url` instead.
+ */
+export const downloadModelFile = async (url: string): Promise<Blob> => {
+    // The public demo has no S3 and no network: the two-step presigned flow
+    // cannot work there twice over. The demo API returns the file body itself
+    // rather than a `{url, fileName}` envelope, so the presign step yielded
+    // `undefined` and `fetch(undefined)` threw on every poll tick — leaving both
+    // evaluation models silently falling back to jobType "standard" (FLIP#794
+    // review); and even a well-formed URL would be blocked by the demo's
+    // `connect-src 'none'` CSP, which is what makes "zero egress" true.
+    // Requesting the body through the shared axios client instead keeps it
+    // inside Mirage's XHR interception, where the response interceptor in
+    // services/api.ts wraps the string body back into a Blob so this function's
+    // contract is identical in both builds.
+    if (IS_DEMO) {
+        const demoResponse = await _http.get<Blob>(url, { responseType: "blob" });
+
+        return demoResponse.data;
+    }
+
+    const presigned = await getModelFileDownloadUrl(url);
+    const response = await fetch(presigned.url);
+
+    if (!response.ok) {
+        // An expired/malformed presigned URL resolves normally under fetch
+        // (unlike axios, which throws on a non-2xx) — without this check
+        // response.blob() would silently return S3's XML error body as if
+        // it were the file's real bytes.
+        throw new Error(`Download rejected by storage (status ${response.status})`);
+    }
+
+    return response.blob();
 };
 
 /**
@@ -81,15 +140,17 @@ export const getModelConfig = async (modelId: string): Promise<IModelConfig | nu
  * missing, unparseable, missing/invalid `job_type` field). Transient fetch
  * failures from `getModelConfig` propagate so the caller can decide retry
  * policy.
+ *
+ * `jobTypes` is passed in rather than fetched here so the page owns the single
+ * `fetchJobTypes` call and the single place its failure is surfaced.
  */
 export const getJobTypeFromConfig = async (
     modelId: string,
-    jobTypes?: JobTypesResponse
+    jobTypes: JobTypesResponse
 ): Promise<JobType> => {
-    const availableJobTypes = jobTypes ?? await fetchJobTypes();
     const config = await getModelConfig(modelId);
 
-    if (config && config.job_type && isValidJobType(availableJobTypes, config.job_type)) {
+    if (config && config.job_type && isValidJobType(jobTypes, config.job_type)) {
         return config.job_type;
     }
 

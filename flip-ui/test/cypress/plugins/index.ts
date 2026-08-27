@@ -26,7 +26,7 @@ export default function (
     config: Cypress.PluginConfigOptions
 ): void | Cypress.ConfigOptions | Promise<Cypress.ConfigOptions> {
 
-    dotenv.config({ path: "./.env.development" });
+    dotenv.config({ path: "./.env.e2e" });
     config.env = process.env;
 
     on("dev-server:start", async (options: Cypress.DevServerConfig) => {

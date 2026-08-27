@@ -20,8 +20,6 @@ from sqlalchemy.orm import declarative_base
 
 from flip_api.domain.schemas.status import (
     AccessRequestStatus,
-    BucketAction,
-    BucketStatus,
     FileUploadStatus,
     FileUploadTag,
 )
@@ -50,25 +48,6 @@ class IFileInfo:
     size: int
     type: str
     tag: FileUploadTag | None
-
-
-class IScannedFileRecord:
-    Sns: "IScannedFileSns"
-
-
-class IScannedFileSns:
-    Message: str
-
-
-class IScannedFileMessage:
-    bucket: str
-    key: str
-    status: BucketStatus
-    action: BucketAction
-
-
-class IScannedFileInput:
-    Records: list[IScannedFileRecord]
 
 
 class SQLArray:

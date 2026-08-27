@@ -33,12 +33,14 @@ model_id = uuid.uuid4()
 file_name = "test_file.txt"
 user_id = uuid.uuid4()
 bucket_name = "s3://test_bucket/scanned_model_files"
+uploaded_bucket_name = "s3://test_bucket/uploaded_model_files"
 
 
 @pytest.fixture
 def mocked_settings():
     mock = Settings(
         SCANNED_MODEL_FILES_BUCKET=bucket_name,
+        UPLOADED_MODEL_FILES_BUCKET=uploaded_bucket_name,
     )
     with patch("flip_api.file_services.delete_file.get_settings", return_value=mock):
         yield mock
@@ -46,7 +48,12 @@ def mocked_settings():
 
 @patch("flip_api.file_services.delete_file.can_modify_model", return_value=True)
 def test_delete_model_file_success(session: Session, monkeypatch, mocked_settings):
-    """Test successful file deletion from S3 and database."""
+    """Test successful file deletion from S3 and database.
+
+    Both prefixes are cleared: a file still SCANNING (or one whose promote
+    was interrupted) exists only under the staging prefix, so deleting the
+    promoted copy alone would strand it (#52).
+    """
     # Mock S3 client
     s3_client_mock = mock.Mock(spec=S3Client)
     monkeypatch.setattr("flip_api.file_services.delete_file.S3Client", lambda: s3_client_mock)
@@ -59,10 +66,32 @@ def test_delete_model_file_success(session: Session, monkeypatch, mocked_setting
     result = delete_model_file(model_id, file_name, db_mock, user_id)
 
     # Assertions
-    s3_client_mock.delete_object.assert_called_once_with(f"{bucket_name}/{model_id}/{file_name}")
+    assert [call.args[0] for call in s3_client_mock.delete_object.call_args_list] == [
+        f"{bucket_name}/{model_id}/{file_name}",
+        f"{uploaded_bucket_name}/{model_id}/{file_name}",
+    ]
     db_mock.delete.assert_called_once()
     db_mock.commit.assert_called_once()
     assert result == {"message": f"File {file_name} deleted successfully from Model ID: {model_id}"}
+
+
+@patch("flip_api.file_services.delete_file.can_modify_model", return_value=True)
+def test_delete_model_file_skips_duplicate_delete_when_prefixes_match(session, monkeypatch):
+    """With both settings on the same prefix (stale env mid-rollout) the
+    endpoint must not issue the same delete twice."""
+    settings = Settings(
+        SCANNED_MODEL_FILES_BUCKET=bucket_name,
+        UPLOADED_MODEL_FILES_BUCKET=bucket_name,
+    )
+    s3_client_mock = mock.Mock(spec=S3Client)
+    monkeypatch.setattr("flip_api.file_services.delete_file.S3Client", lambda: s3_client_mock)
+    db_mock = mock.Mock(spec=Session)
+    db_mock.exec.return_value.first.return_value = mock.Mock()
+
+    with patch("flip_api.file_services.delete_file.get_settings", return_value=settings):
+        delete_model_file(model_id, file_name, db_mock, user_id)
+
+    s3_client_mock.delete_object.assert_called_once_with(f"{bucket_name}/{model_id}/{file_name}")
 
 
 def test_delete_model_file_no_access(session: Session, monkeypatch):

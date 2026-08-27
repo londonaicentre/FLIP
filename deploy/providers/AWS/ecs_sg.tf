@@ -110,10 +110,12 @@ resource "aws_security_group" "ecs_fl_server" {
 }
 
 resource "aws_security_group_rule" "ecs_fl_server_ingress_nlb_grpc" {
-  type                     = "ingress"
-  description              = "gRPC from NLB (FL client connections)"
-  from_port                = 8002
-  to_port                  = 8002
+  type        = "ingress"
+  description = "gRPC from NLB (FL client connections)"
+  # Backend-dependent container port (Flower: SuperLink Fleet 9092) — the
+  # NLB forwards its FL_SERVER_PORT listener here.
+  from_port                = local.fl_server_container_port
+  to_port                  = local.fl_server_container_port
   protocol                 = "tcp"
   security_group_id        = aws_security_group.ecs_fl_server.id
   source_security_group_id = module.fl_server_nlb.security_group_id
@@ -129,6 +131,33 @@ resource "aws_security_group_rule" "ecs_fl_server_ingress_fl_api_admin" {
   description              = "NVFLARE admin from fl-api task (direct, not via NLB)"
   from_port                = 8002
   to_port                  = 8002
+  protocol                 = "tcp"
+  security_group_id        = aws_security_group.ecs_fl_server.id
+  source_security_group_id = aws_security_group.ecs_fl_api.id
+}
+
+# Flower control plane (fl_backend=flower only): the fl-api submits runs to
+# the SuperLink's Exec API (9093) and polls its health server (9097) over
+# Cloud Map — direct task-to-task, never via the NLB. The register-supernode-
+# keys one-shot (ecs_flower.tf) runs with the fl-api SG so these same rules
+# cover its 9093 calls.
+resource "aws_security_group_rule" "ecs_fl_server_ingress_fl_api_flower_exec" {
+  count                    = var.fl_backend == "flower" ? 1 : 0
+  type                     = "ingress"
+  description              = "Flower SuperLink Exec API from fl-api task"
+  from_port                = local.flower_superlink_exec_port
+  to_port                  = local.flower_superlink_exec_port
+  protocol                 = "tcp"
+  security_group_id        = aws_security_group.ecs_fl_server.id
+  source_security_group_id = aws_security_group.ecs_fl_api.id
+}
+
+resource "aws_security_group_rule" "ecs_fl_server_ingress_fl_api_flower_health" {
+  count                    = var.fl_backend == "flower" ? 1 : 0
+  type                     = "ingress"
+  description              = "Flower SuperLink health server from fl-api task"
+  from_port                = local.flower_superlink_health_port
+  to_port                  = local.flower_superlink_health_port
   protocol                 = "tcp"
   security_group_id        = aws_security_group.ecs_fl_server.id
   source_security_group_id = aws_security_group.ecs_fl_api.id

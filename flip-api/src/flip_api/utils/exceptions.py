@@ -16,3 +16,7 @@ class NotFoundError(Exception):
 
 class DatabaseError(Exception):
     """Raised for database interaction issues."""
+
+
+class JobAbortedError(Exception):
+    """Raised when a queued FL job was aborted (DELETED) before submission to the fl-server."""

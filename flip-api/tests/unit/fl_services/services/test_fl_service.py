@@ -25,9 +25,10 @@ from flip_api.domain.interfaces.fl import (
     IServerStatus,
     IStartTrainingBody,
 )
-from flip_api.domain.schemas.status import ClientStatus
+from flip_api.domain.schemas.status import ClientStatus, JobStatus
 from flip_api.domain.schemas.types import FLBackend
 from flip_api.fl_services.services import fl_service
+from flip_api.utils.exceptions import DatabaseError, JobAbortedError, NotFoundError
 
 
 @pytest.fixture
@@ -85,11 +86,13 @@ def mock_job_types_file():
     ``JobRequiredFiles.is_valid_job_type`` from this mapping so a name absent from it (e.g.
     "invalid") is rejected with ``UnknownJobTypeError``.
     """
+    # Mirrors the real fl-apps/nvflare/required_files.json contract (post Client-API rename:
+    # no validator.py outside diffusion_model; evaluation requires models.py + evaluator.py).
     return {
-        "standard": ["trainer.py", "validator.py", "models.py", "config.json"],
-        "diffusion_model": ["trainer.py", "validator.py", "models.py", "config.json"],
-        "fed_opt": ["trainer.py", "validator.py", "models.py", "config.json"],
-        "evaluation": ["trainer.py", "validator.py", "models.py", "config.json"],
+        "standard": ["trainer.py", "config.json", "models.py"],
+        "diffusion_model": ["trainer.py", "validator.py", "config.json", "models.py"],
+        "fed_opt": ["trainer.py", "config.json", "models.py"],
+        "evaluation": ["evaluator.py", "config.json", "models.py"],
     }
 
 
@@ -108,7 +111,7 @@ def test_upload_app_calls_http_post(mock_post, model_id):
 
 def test_get_fl_backend_job_id_by_model_id(model_id, fake_session):
     result_proxy = MagicMock()
-    result_proxy.one_or_none.return_value = "job-id"
+    result_proxy.first.return_value = "job-id"
     fake_session.exec.return_value = result_proxy
     job_id = fl_service.get_fl_backend_job_id_by_model_id(model_id, fake_session)
     assert job_id == "job-id"
@@ -153,7 +156,7 @@ def test_fetch_client_status_success(mock_check_client):
 
 def test_get_fl_backend_job_id_by_model_id_not_found(model_id, fake_session):
     result_proxy = MagicMock()
-    result_proxy.one_or_none.return_value = None
+    result_proxy.first.return_value = None
     fake_session.exec.return_value = result_proxy
     with pytest.raises(ValueError, match=f"No backend job ID found for model_id {model_id}"):
         fl_service.get_fl_backend_job_id_by_model_id(model_id, fake_session)
@@ -261,6 +264,73 @@ def test_start_training_with_config(
     mock_submit.assert_called_once()
 
 
+@patch("flip_api.fl_services.services.fl_service.submit_job")
+@patch("flip_api.fl_services.services.fl_service.upload_app")
+@patch("flip_api.fl_services.services.fl_service.encrypt")
+@patch("flip_api.fl_services.services.fl_scheduler_service.get_required_training_details")
+def test_start_training_skips_upload_when_job_already_deleted(
+    mock_get_required,
+    mock_encrypt,
+    mock_upload,
+    mock_submit,
+    model_id,
+    fl_job_id,
+    fake_session,
+):
+    # A concurrent abort DELETEd the job before the prepare thread reached the upload: the gate
+    # must fire before the (up to 900s) app transfer even starts.
+    mock_get_required.return_value = MagicMock(project_id="proj", cohort_query="query")
+    mock_encrypt.return_value = "encrypted"
+    fake_session.exec.return_value.one_or_none.return_value = JobStatus.DELETED
+
+    with pytest.raises(JobAbortedError):
+        fl_service.start_training(
+            model_id=model_id,
+            fl_job_id=fl_job_id,
+            clients=["client1"],
+            endpoint="endpoint",
+            bundle_urls=["url"],
+            session=fake_session,
+        )
+
+    mock_upload.assert_not_called()
+    mock_submit.assert_not_called()
+
+
+@patch("flip_api.fl_services.services.fl_service.submit_job")
+@patch("flip_api.fl_services.services.fl_service.upload_app")
+@patch("flip_api.fl_services.services.fl_service.encrypt")
+@patch("flip_api.fl_services.services.fl_scheduler_service.get_required_training_details")
+def test_start_training_skips_submit_when_job_deleted_during_upload(
+    mock_get_required,
+    mock_encrypt,
+    mock_upload,
+    mock_submit,
+    model_id,
+    fl_job_id,
+    fake_session,
+):
+    # The abort landed while upload_app was in flight: the second gate must stop the job from
+    # being submitted to the fl-server (submit_job is the side effect that creates the backend
+    # run and stamps fl_backend_job_id onto the DELETED row).
+    mock_get_required.return_value = MagicMock(project_id="proj", cohort_query="query")
+    mock_encrypt.return_value = "encrypted"
+    fake_session.exec.return_value.one_or_none.side_effect = [JobStatus.IN_PROGRESS, JobStatus.DELETED]
+
+    with pytest.raises(JobAbortedError):
+        fl_service.start_training(
+            model_id=model_id,
+            fl_job_id=fl_job_id,
+            clients=["client1"],
+            endpoint="endpoint",
+            bundle_urls=["url"],
+            session=fake_session,
+        )
+
+    mock_upload.assert_called_once()
+    mock_submit.assert_not_called()
+
+
 @patch("flip_api.fl_services.services.fl_service.JobRequiredFiles.is_valid_job_type", return_value=True)
 @patch("flip_api.fl_services.services.fl_service.verify_bundle_paths")
 @patch("flip_api.fl_services.services.fl_service.JobRequiredFiles.get_required_files")
@@ -310,6 +380,9 @@ def test_bundle_nvflare_application_success(
     )
 
 
+# "evaluation_client_api" is the pre-rename alias: _normalise_job_type resolves it to
+# "evaluation" BEFORE manifest validation and the base-dir lookup, so a pre-rename model bundles
+# from the plain-name template — the alias directory no longer exists.
 @pytest.mark.parametrize("job_type", ["evaluation", "evaluation_client_api"])
 @patch("flip_api.fl_services.services.fl_service.JobRequiredFiles.is_valid_job_type", return_value=True)
 @patch("flip_api.fl_services.services.fl_service.verify_bundle_paths")
@@ -318,14 +391,15 @@ def test_bundle_nvflare_application_success(
 def test_bundle_nvflare_application_diverts_eval_checkpoint(
     mock_s3, mock_required, mock_verify, mock_is_valid, job_type, model_id, mocked_settings
 ):
-    """Evaluation checkpoints (legacy and Client-API job types) are copied once to a server-only
-    ``server_checkpoints/`` prefix, NOT into any ``app*/custom/`` — so NVFLARE's deploy_map never
-    ships them to clients."""
+    """Evaluation checkpoints (plain and pre-rename-alias job types) are copied once to a
+    server-only ``server_checkpoints/`` prefix, NOT into any ``app*/custom/`` — so NVFLARE's
+    deploy_map never ships them to clients."""
     base_dir = mocked_settings.FL_APP_BASE_DIR
     model_bucket = mocked_settings.SCANNED_MODEL_FILES_BUCKET
     dest_bucket = mocked_settings.FL_APP_DESTINATION_BUCKET
 
-    write_base_tree(base_dir, "nvflare", job_type, ["app/custom/flip.py"])
+    # The tree lives under the RESOLVED name only — proving the alias path reads it from there.
+    write_base_tree(base_dir, "nvflare", "evaluation", ["app/custom/flip.py"])
 
     eval_config = {
         "job_type": job_type,
@@ -556,7 +630,7 @@ def test_bundle_nvflare_application_file_wrong_job_type_in_config(
 
     if job_type == "invalid":
         with pytest.raises(
-            fl_service.UnknownJobTypeError, match=f"Unknown job_type argument found in config.json: {job_type}"
+            fl_service.UnknownJobTypeError, match=f"Unknown job_type in config.json: {job_type}"
         ):
             _ = fl_service.bundle_nvflare_application(model_id)
     else:
@@ -756,7 +830,7 @@ def test_bundle_flower_application_file_wrong_job_type_in_config(
 
     if job_type == "invalid":
         with pytest.raises(
-            fl_service.UnknownJobTypeError, match=f"Unknown job_type argument found in config.json: {job_type}"
+            fl_service.UnknownJobTypeError, match=f"Unknown job_type in config.json: {job_type}"
         ):
             _ = fl_service.bundle_flower_application(model_id)
     else:
@@ -1022,7 +1096,9 @@ def test_extract_current_job_data_multiple_found(mock_http_get):
 @patch("flip_api.fl_services.services.fl_service.abort_job")
 @patch("flip_api.fl_services.services.fl_scheduler_service.get_net_by_model_id")
 @patch("flip_api.fl_services.services.fl_scheduler_service.remove_job_from_queue")
+@patch("flip_api.fl_services.services.fl_scheduler_service.release_scheduler_for_model")
 def test_abort_model_training_success(
+    mock_release,
     mock_remove,
     mock_get_net,
     mock_abort,
@@ -1043,6 +1119,9 @@ def test_abort_model_training_success(
 
     fl_service.abort_model_training(request, model_id, fake_session)
     mock_abort.assert_called_once_with("http://fl-api-endpoint", "job123")
+    # The dequeue DELETEs the job, so update_fl_scheduler can no longer free the net —
+    # the abort path must release it itself once the abort has been delivered.
+    mock_release.assert_called_once_with(model_id, fake_session)
 
 
 @patch("flip_api.fl_services.services.fl_service.extract_current_job_data")
@@ -1051,7 +1130,9 @@ def test_abort_model_training_success(
 @patch("flip_api.fl_services.services.fl_service.abort_job")
 @patch("flip_api.fl_services.services.fl_scheduler_service.get_net_by_model_id")
 @patch("flip_api.fl_services.services.fl_scheduler_service.remove_job_from_queue")
+@patch("flip_api.fl_services.services.fl_scheduler_service.release_scheduler_for_model")
 def test_abort_model_training_idempotent_when_no_running_job(
+    mock_release,
     mock_remove,
     mock_get_net,
     mock_abort,
@@ -1073,6 +1154,7 @@ def test_abort_model_training_idempotent_when_no_running_job(
     # No running job -> idempotent no-op: must not raise and must not call abort_job.
     fl_service.abort_model_training(request, model_id, fake_session)
     mock_abort.assert_not_called()
+    mock_release.assert_called_once_with(model_id, fake_session)
 
 
 def test_add_fl_job_creates_job(model_id, fake_session):
@@ -1220,8 +1302,14 @@ def test_bundle_nvflare_application_no_base_files(mock_s3, mocked_settings, mode
 
     mock_client = mock_s3.return_value
     # No base tree written -> the local FL_APP_BASE_DIR/nvflare/standard directory is absent
+    mock_client.get_object.return_value = {
+        "Body": MagicMock(read=MagicMock(return_value=json.dumps({}).encode("utf-8")))
+    }
     mock_client.list_objects.side_effect = [
-        [f"{model_bucket}/{model_id}/trainer.py"],  # model files (no config.json)
+        [
+            f"{model_bucket}/{model_id}/trainer.py",
+            f"{model_bucket}/{model_id}/config.json",
+        ],
     ]
 
     with pytest.raises(FileNotFoundError, match="Base application files missing in the local base directory"):
@@ -1238,8 +1326,14 @@ def test_bundle_nvflare_application_no_app_folders(mock_s3, mock_required, mocke
     write_base_tree(base_dir, "nvflare", "standard", ["notapp/file1.py"])  # no app* folder
 
     mock_client = mock_s3.return_value
+    mock_client.get_object.return_value = {
+        "Body": MagicMock(read=MagicMock(return_value=json.dumps({}).encode("utf-8")))
+    }
     mock_client.list_objects.side_effect = [
-        [f"{model_bucket}/{model_id}/trainer.py"],  # model files (no config.json)
+        [
+            f"{model_bucket}/{model_id}/trainer.py",
+            f"{model_bucket}/{model_id}/config.json",
+        ],
         [],  # destination bucket empty (clear check)
     ]
     mock_client.copy_object.return_value = None
@@ -1251,10 +1345,14 @@ def test_bundle_nvflare_application_no_app_folders(mock_s3, mock_required, mocke
 @patch("flip_api.fl_services.services.fl_service.verify_bundle_paths")
 @patch("flip_api.fl_services.services.fl_service.JobRequiredFiles.get_required_files")
 @patch("flip_api.fl_services.services.fl_service.S3Client")
-def test_bundle_nvflare_application_no_config_clears_existing_dest(
+def test_bundle_nvflare_application_clears_existing_dest(
     mock_s3, mock_required, mock_verify, mocked_settings, model_id
 ):
-    """No config.json falls back to job_type=standard, and stale destination files are cleared first."""
+    """Stale destination files from an earlier run are cleared before the new bundle is written.
+
+    The config.json here has no ``job_type`` key, which doubles as the pin on the documented live
+    fallback: key absent -> the ``standard`` job type is assumed and the bundle succeeds.
+    """
     base_dir = mocked_settings.FL_APP_BASE_DIR
     model_bucket = mocked_settings.SCANNED_MODEL_FILES_BUCKET
     dest_bucket = mocked_settings.FL_APP_DESTINATION_BUCKET
@@ -1262,11 +1360,15 @@ def test_bundle_nvflare_application_no_config_clears_existing_dest(
     write_base_tree(base_dir, "nvflare", "standard", ["app/file1.py"])
 
     mock_client = mock_s3.return_value
-    mock_required.return_value = ["trainer.py", "validator.py"]
+    mock_client.get_object.return_value = {
+        "Body": MagicMock(read=MagicMock(return_value=json.dumps({}).encode("utf-8")))
+    }
+    mock_required.return_value = ["trainer.py", "validator.py", "config.json"]
     model_files = [
         f"{model_bucket}/{model_id}/trainer.py",
         f"{model_bucket}/{model_id}/validator.py",
-    ]  # no config.json -> job_type stays "standard"
+        f"{model_bucket}/{model_id}/config.json",
+    ]
     stale_dest_files = [f"{dest_bucket}/{model_id}/stale.py"]
     mock_client.list_objects.side_effect = [model_files, stale_dest_files]
     mock_client.object_exists.return_value = False
@@ -1276,6 +1378,65 @@ def test_bundle_nvflare_application_no_config_clears_existing_dest(
 
     assert result == f"{dest_bucket}/{model_id}"
     mock_client.delete_objects.assert_called_once_with(stale_dest_files)
+
+
+@patch("flip_api.fl_services.services.fl_service.JobRequiredFiles.get_required_files")
+@patch("flip_api.fl_services.services.fl_service.S3Client")
+def test_bundle_nvflare_application_missing_config_json_is_rejected(mock_s3, mock_required, mocked_settings, model_id):
+    """config.json is a required NVFLARE file, so a submission without one never reaches a Trust.
+
+    The bundler refuses at the guard — before clearing the destination bucket — instead of logging
+    a doomed ``job_type=standard`` guess that the required-files check would reject moments later.
+    """
+    model_bucket = mocked_settings.SCANNED_MODEL_FILES_BUCKET
+
+    write_base_tree(mocked_settings.FL_APP_BASE_DIR, "nvflare", "standard", ["app/file1.py"])
+
+    mock_client = mock_s3.return_value
+    mock_required.return_value = ["trainer.py", "config.json", "models.py"]
+    mock_client.list_objects.side_effect = [
+        [
+            f"{model_bucket}/{model_id}/trainer.py",
+            f"{model_bucket}/{model_id}/models.py",
+        ],  # no config.json
+        [],  # destination bucket (clear check)
+    ]
+
+    with pytest.raises(FileNotFoundError, match="No config.json"):
+        fl_service.bundle_nvflare_application(model_id)
+
+    mock_client.delete_objects.assert_not_called()
+
+
+@patch("flip_api.fl_services.services.fl_service.verify_bundle_paths")
+@patch("flip_api.fl_services.services.fl_service.JobRequiredFiles.get_required_files")
+@patch("flip_api.fl_services.services.fl_service.S3Client")
+def test_bundle_nvflare_application_empty_manifest_is_rejected(
+    mock_s3, mock_required, mock_verify, mocked_settings, model_id
+):
+    """An empty required-files lookup means the manifest is missing or malformed, never a real job type.
+
+    ``JobRequiredFiles.get_required_files`` returns ``[]`` when the manifest under FL_APP_BASE_DIR
+    is absent, which would otherwise let the bundle through with zero required-file validation.
+    """
+    model_bucket = mocked_settings.SCANNED_MODEL_FILES_BUCKET
+
+    write_base_tree(mocked_settings.FL_APP_BASE_DIR, "nvflare", "standard", ["app/file1.py"])
+
+    mock_client = mock_s3.return_value
+    mock_client.get_object.return_value = {
+        "Body": MagicMock(read=MagicMock(return_value=json.dumps({}).encode("utf-8")))
+    }
+    mock_required.return_value = []
+    mock_client.list_objects.side_effect = [
+        [f"{model_bucket}/{model_id}/config.json"],
+        [],  # destination bucket (clear check)
+    ]
+    mock_client.object_exists.return_value = False
+    mock_verify.return_value = None
+
+    with pytest.raises(RuntimeError, match="missing or malformed"):
+        fl_service.bundle_nvflare_application(model_id)
 
 
 # --- bundle_flower_application error / edge paths -------------------------------------------------
@@ -1295,20 +1456,27 @@ def test_bundle_flower_application_no_base_files(mock_s3, mocked_settings, model
 
     mock_client = mock_s3.return_value
     # No base tree written -> the local FL_APP_BASE_DIR/flower/standard directory is absent
+    mock_client.get_object.return_value = {
+        "Body": MagicMock(read=MagicMock(return_value=json.dumps({}).encode("utf-8")))
+    }
     mock_client.list_objects.side_effect = [
-        [f"{model_bucket}/{model_id}/client_app.py"],  # model files (no config.json)
+        [
+            f"{model_bucket}/{model_id}/client_app.py",
+            f"{model_bucket}/{model_id}/config.json",
+        ],
     ]
 
     with pytest.raises(FileNotFoundError, match="Base application files missing in the local base directory"):
         fl_service.bundle_flower_application(model_id)
 
 
+@patch("flip_api.fl_services.services.fl_service.JobRequiredFiles.is_valid_job_type", return_value=True)
 @patch("flip_api.fl_services.services.fl_service.JobRequiredFiles.get_required_files")
 @patch("flip_api.fl_services.services.fl_service.S3Client")
-def test_bundle_flower_application_no_config_clears_existing_dest(
-    mock_s3, mock_required, mocked_settings, model_id
+def test_bundle_flower_application_clears_existing_dest(
+    mock_s3, mock_required, mock_is_valid, mocked_settings, model_id
 ):
-    """No config.json falls back to job_type=standard, and stale destination files are cleared first."""
+    """Stale destination files from an earlier run are cleared before the new bundle is written."""
     base_dir = mocked_settings.FL_APP_BASE_DIR
     model_bucket = mocked_settings.SCANNED_MODEL_FILES_BUCKET
     dest_bucket = mocked_settings.FL_APP_DESTINATION_BUCKET
@@ -1316,11 +1484,15 @@ def test_bundle_flower_application_no_config_clears_existing_dest(
     write_base_tree(base_dir, "flower", "standard", ["app/server_app.py", "pyproject.toml"])
 
     mock_client = mock_s3.return_value
-    mock_required.return_value = ["client_app.py", "models.py"]
+    mock_client.get_object.return_value = {
+        "Body": MagicMock(read=MagicMock(return_value=json.dumps({"job_type": "standard"}).encode("utf-8")))
+    }
+    mock_required.return_value = ["client_app.py", "config.json", "models.py"]
     model_files = [
         f"{model_bucket}/{model_id}/client_app.py",
+        f"{model_bucket}/{model_id}/config.json",
         f"{model_bucket}/{model_id}/models.py",
-    ]  # no config.json -> job_type stays "standard"
+    ]
     stale_dest_files = [f"{dest_bucket}/{model_id}/stale.py"]
     mock_client.list_objects.side_effect = [model_files, stale_dest_files]
     mock_client.object_exists.return_value = False
@@ -1329,6 +1501,67 @@ def test_bundle_flower_application_no_config_clears_existing_dest(
 
     assert result == f"{dest_bucket}/{model_id}"
     mock_client.delete_objects.assert_called_once_with(stale_dest_files)
+
+
+@patch("flip_api.fl_services.services.fl_service.JobRequiredFiles.get_required_files")
+@patch("flip_api.fl_services.services.fl_service.S3Client")
+def test_bundle_flower_application_missing_config_json_is_rejected(
+    mock_s3, mock_required, mocked_settings, model_id
+):
+    """config.json is a required Flower file, so a submission without one never reaches a Trust.
+
+    Without it the bundler cannot know the job type, and silently defaulting to ``standard`` would
+    ship an evaluation app as a training job (FLIP job-type selection reads only this file). The
+    bundler refuses at the guard — before clearing the destination bucket — instead of logging a
+    doomed ``job_type=standard`` guess that the required-files check would reject moments later.
+    """
+    base_dir = mocked_settings.FL_APP_BASE_DIR
+    model_bucket = mocked_settings.SCANNED_MODEL_FILES_BUCKET
+
+    write_base_tree(base_dir, "flower", "standard", ["app/server_app.py", "pyproject.toml"])
+
+    mock_client = mock_s3.return_value
+    mock_required.return_value = ["client_app.py", "config.json", "models.py"]
+    mock_client.list_objects.side_effect = [
+        [
+            f"{model_bucket}/{model_id}/client_app.py",
+            f"{model_bucket}/{model_id}/models.py",
+        ],  # no config.json
+        [],  # destination bucket (clear check)
+    ]
+
+    with pytest.raises(FileNotFoundError, match="No config.json"):
+        fl_service.bundle_flower_application(model_id)
+
+    mock_client.delete_objects.assert_not_called()
+
+
+@patch("flip_api.fl_services.services.fl_service.JobRequiredFiles.get_required_files")
+@patch("flip_api.fl_services.services.fl_service.S3Client")
+def test_bundle_flower_application_empty_manifest_is_rejected(mock_s3, mock_required, mocked_settings, model_id):
+    """An empty required-files lookup means the manifest is missing or malformed, never a real job type.
+
+    ``JobRequiredFiles.get_required_files`` returns ``[]`` when the manifest under FL_APP_BASE_DIR
+    is absent, which would otherwise let the bundle through with zero required-file validation.
+    """
+    base_dir = mocked_settings.FL_APP_BASE_DIR
+    model_bucket = mocked_settings.SCANNED_MODEL_FILES_BUCKET
+
+    write_base_tree(base_dir, "flower", "standard", ["app/server_app.py", "pyproject.toml"])
+
+    mock_client = mock_s3.return_value
+    mock_client.get_object.return_value = {
+        "Body": MagicMock(read=MagicMock(return_value=json.dumps({}).encode("utf-8")))
+    }
+    mock_required.return_value = []
+    mock_client.list_objects.side_effect = [
+        [f"{model_bucket}/{model_id}/config.json"],
+        [],  # destination bucket (clear check)
+    ]
+    mock_client.object_exists.return_value = False
+
+    with pytest.raises(RuntimeError, match="missing or malformed"):
+        fl_service.bundle_flower_application(model_id)
 
 
 # --- extract_current_job_data malformed response -------------------------------------------------
@@ -1352,7 +1585,114 @@ def test_extract_current_job_data_non_list_raises(mock_http_get):
 @patch("flip_api.fl_services.services.fl_service.abort_job")
 @patch("flip_api.fl_services.services.fl_scheduler_service.get_net_by_model_id")
 @patch("flip_api.fl_services.services.fl_scheduler_service.remove_job_from_queue")
+@patch("flip_api.fl_services.services.fl_scheduler_service.release_scheduler_for_model")
+def test_abort_model_training_pre_submit_frees_net(
+    mock_release,
+    mock_remove,
+    mock_get_net,
+    mock_abort,
+    mock_fetch_server_status,
+    mock_get_fl_backend_job_id_by_model_id,
+    mock_extract_current_job_data,
+    model_id,
+    fake_session,
+):
+    # Pre-running window (#787): the job was scheduled (net BUSY) but never submitted to the
+    # fl-server, so fl_backend_job_id is still NULL and the backend-job-id lookup raises.
+    mock_get_fl_backend_job_id_by_model_id.side_effect = ValueError("No FL backend job ID found")
+
+    request = MagicMock()
+    request.path_params = {}
+
+    fl_service.abort_model_training(request, model_id, fake_session)
+
+    # The job is dequeued and the BUSY net released immediately — not left for the watchdog.
+    mock_remove.assert_called_once_with(model_id, fake_session)
+    mock_release.assert_called_once_with(model_id, fake_session)
+    # There is nothing to abort on the fl-server side.
+    mock_fetch_server_status.assert_not_called()
+    mock_extract_current_job_data.assert_not_called()
+    mock_abort.assert_not_called()
+
+
+@patch("flip_api.fl_services.services.fl_service.extract_current_job_data")
+@patch("flip_api.fl_services.services.fl_service.get_fl_backend_job_id_by_model_id")
+@patch("flip_api.fl_services.services.fl_service.fetch_server_status")
+@patch("flip_api.fl_services.services.fl_service.abort_job")
+@patch("flip_api.fl_services.services.fl_scheduler_service.get_net_by_model_id")
+@patch("flip_api.fl_services.services.fl_scheduler_service.remove_job_from_queue")
+@patch("flip_api.fl_services.services.fl_scheduler_service.release_scheduler_for_model")
+def test_abort_model_training_pre_pickup_net_not_found_frees_net(
+    mock_release,
+    mock_remove,
+    mock_get_net,
+    mock_abort,
+    mock_fetch_server_status,
+    mock_get_fl_backend_job_id_by_model_id,
+    mock_extract_current_job_data,
+    model_id,
+    fake_session,
+):
+    # Queued-behind-another-job window: the job was dequeued but no scheduler picked it up yet,
+    # so the net lookup raises NotFoundError — the other expected pre-running signal.
+    mock_get_fl_backend_job_id_by_model_id.return_value = "job-1"
+    mock_get_net.side_effect = NotFoundError(f"Net not found for model ID: {model_id}")
+
+    request = MagicMock()
+    request.path_params = {}
+
+    fl_service.abort_model_training(request, model_id, fake_session)
+
+    mock_remove.assert_called_once_with(model_id, fake_session)
+    mock_release.assert_called_once_with(model_id, fake_session)
+    mock_fetch_server_status.assert_not_called()
+    mock_extract_current_job_data.assert_not_called()
+    mock_abort.assert_not_called()
+
+
+@patch("flip_api.fl_services.services.fl_service.extract_current_job_data")
+@patch("flip_api.fl_services.services.fl_service.get_fl_backend_job_id_by_model_id")
+@patch("flip_api.fl_services.services.fl_service.fetch_server_status")
+@patch("flip_api.fl_services.services.fl_service.abort_job")
+@patch("flip_api.fl_services.services.fl_scheduler_service.get_net_by_model_id")
+@patch("flip_api.fl_services.services.fl_scheduler_service.remove_job_from_queue")
+@patch("flip_api.fl_services.services.fl_scheduler_service.release_scheduler_for_model")
+def test_abort_model_training_db_error_propagates(
+    mock_release,
+    mock_remove,
+    mock_get_net,
+    mock_abort,
+    mock_fetch_server_status,
+    mock_get_fl_backend_job_id_by_model_id,
+    mock_extract_current_job_data,
+    model_id,
+    fake_session,
+):
+    # A DB failure during the dequeue means the abort did NOT happen: it must propagate, not be
+    # treated as the pre-running window (which would release the net and report success while
+    # the job is still queued).
+    mock_remove.side_effect = DatabaseError("Error removing job from queue")
+
+    request = MagicMock()
+    request.path_params = {}
+
+    with pytest.raises(DatabaseError, match="Error removing job from queue"):
+        fl_service.abort_model_training(request, model_id, fake_session)
+
+    mock_release.assert_not_called()
+    mock_fetch_server_status.assert_not_called()
+    mock_abort.assert_not_called()
+
+
+@patch("flip_api.fl_services.services.fl_service.extract_current_job_data")
+@patch("flip_api.fl_services.services.fl_service.get_fl_backend_job_id_by_model_id")
+@patch("flip_api.fl_services.services.fl_service.fetch_server_status")
+@patch("flip_api.fl_services.services.fl_service.abort_job")
+@patch("flip_api.fl_services.services.fl_scheduler_service.get_net_by_model_id")
+@patch("flip_api.fl_services.services.fl_scheduler_service.remove_job_from_queue")
+@patch("flip_api.fl_services.services.fl_scheduler_service.release_scheduler_for_model")
 def test_abort_model_training_raises_when_server_not_running(
+    mock_release,
     mock_remove,
     mock_get_net,
     mock_abort,
@@ -1375,6 +1715,8 @@ def test_abort_model_training_raises_when_server_not_running(
     # The abort must short-circuit before consulting the job list or issuing an abort.
     mock_extract_current_job_data.assert_not_called()
     mock_abort.assert_not_called()
+    # The abort was never delivered, so the net must NOT be released — the job may still be live.
+    mock_release.assert_not_called()
 
 
 @patch("flip_api.fl_services.services.fl_service.extract_current_job_data")
@@ -1513,3 +1855,87 @@ def test_bundle_nvflare_application_propagates_upload_failure(
 
     with pytest.raises(Exception, match="S3 upload boom"):
         fl_service.bundle_nvflare_application(model_id)
+
+
+class TestNormaliseJobType:
+    """The pre-rename alias contract, exercised against the REAL in-repo manifest — no mocks.
+
+    The manifest dropped every ``*_client_api`` key when the Client-API templates took over the
+    plain names, so validation alone would reject every pre-rename model at training start.
+    ``_normalise_job_type`` is what keeps the documented "aliases survive for models created
+    before the rename" contract true — these tests pin that unmocked, so a future cleanup of
+    either half (the alias map or the manifest) cannot silently break it again.
+    """
+
+    REPO_FL_APPS = Path(__file__).resolve().parents[5] / "fl-apps"
+
+    @pytest.fixture
+    def real_manifest_settings(self):
+        mock = Settings(FL_APP_BASE_DIR=str(self.REPO_FL_APPS))
+        with patch("flip_api.domain.interfaces.fl.get_settings", return_value=mock):
+            yield mock
+
+    @pytest.mark.parametrize(
+        ("alias", "resolved"),
+        [
+            ("standard_client_api", "standard"),
+            ("evaluation_client_api", "evaluation"),
+            ("diffusion_model_client_api", "diffusion_model"),
+        ],
+    )
+    def test_pre_rename_aliases_resolve_against_the_real_manifest(self, real_manifest_settings, alias, resolved):
+        assert fl_service._normalise_job_type(alias, FLBackend.NVFLARE) == resolved
+
+    @pytest.mark.parametrize("job_type", ["standard", "evaluation", "diffusion_model", "fed_opt"])
+    def test_plain_names_pass_through_against_the_real_manifest(self, real_manifest_settings, job_type):
+        assert fl_service._normalise_job_type(job_type, FLBackend.NVFLARE) == job_type
+
+    def test_retired_names_are_absent_from_the_real_manifest(self, real_manifest_settings):
+        """The breaking manifest change itself: the *_client_api keys are gone — only the alias
+        map keeps those uploads working."""
+        for alias in fl_service.JOB_TYPE_ALIASES:
+            assert not fl_service.JobRequiredFiles.is_valid_job_type(alias, FLBackend.NVFLARE)
+
+    def test_unknown_type_error_names_the_valid_set_and_the_fix(self, real_manifest_settings):
+        with pytest.raises(fl_service.UnknownJobTypeError) as excinfo:
+            fl_service._normalise_job_type("not_a_job_type", FLBackend.NVFLARE)
+        message = str(excinfo.value)
+        assert "standard" in message
+        assert "re-upload" in message
+
+
+class TestRealRequiredFilesManifests:
+    """The shipped ``fl-apps/<backend>/required_files.json`` manifests, unmocked.
+
+    Every other required-files test patches ``get_required_files``, so nothing pinned what the
+    committed manifests actually say — which is how the Flower ones drifted into omitting
+    ``config.json``. That file is the only way either backend selects a job type
+    (``bundle_*_application`` reads ``job_type`` from it and nothing else), so a job type that
+    does not require it is reachable only by the ``standard`` default.
+    """
+
+    REPO_FL_APPS = Path(__file__).resolve().parents[5] / "fl-apps"
+
+    @pytest.fixture
+    def real_manifest_settings(self):
+        mock = Settings(FL_APP_BASE_DIR=str(self.REPO_FL_APPS))
+        with patch("flip_api.domain.interfaces.fl.get_settings", return_value=mock):
+            yield mock
+
+    @pytest.mark.parametrize("fl_backend", [FLBackend.NVFLARE, FLBackend.FLOWER])
+    def test_every_job_type_requires_config_json(self, real_manifest_settings, fl_backend):
+        job_types = fl_service.JobRequiredFiles.get_all_job_types_with_files(fl_backend)
+
+        assert job_types, f"no job types found in the real {fl_backend} manifest"
+        for job_type, required_files in job_types.items():
+            assert "config.json" in required_files, (
+                f"{fl_backend}/{job_type} does not require config.json, so it can only ever be "
+                f"reached through the '{fl_service.DEFAULT_JOB_TYPE}' default."
+            )
+
+    def test_flower_standard_required_files(self, real_manifest_settings):
+        assert fl_service.JobRequiredFiles.get_required_files("standard", FLBackend.FLOWER) == [
+            "client_app.py",
+            "config.json",
+            "models.py",
+        ]

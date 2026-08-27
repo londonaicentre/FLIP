@@ -56,6 +56,50 @@ export const getShortDateFromString = (dateString: string): string => {
     return format(new Date(dateString), "dd/MM/yyyy, HH:mm:ss");
 };
 
+/**
+ * Epoch milliseconds of an API timestamp, or null when missing/unparseable.
+ *
+ * The hub serialises naive-UTC datetimes with no offset suffix
+ * ("2026-06-01T12:00:00"), which `new Date()` would otherwise read as
+ * browser-local time — skewing displayed ages by the viewer's UTC offset.
+ * Offset-less date-times are therefore pinned to UTC before parsing.
+ */
+export const apiTimestampMs = (timestamp?: string | null): number | null => {
+    if (!timestamp) return null;
+    const hasOffset = /(Z|[+-]\d{2}:?\d{2})$/.test(timestamp);
+    const ms = new Date(timestamp.includes("T") && !hasOffset ? `${timestamp}Z` : timestamp).getTime();
+
+    return Number.isFinite(ms) ? ms : null;
+};
+
+/**
+ * Bare "2h ago"-style label from an age in seconds (clamped at 0 for
+ * clock-skewed future timestamps).
+ *
+ * Shared ladder for relativeCreatedLabel and the Connection Status heartbeat
+ * column (connection-health.ts) — one home for the s/m/h/d thresholds.
+ */
+export const relativeAgeLabel = (sec: number): string => {
+    if (sec < 60) return `${Math.max(0, Math.floor(sec))}s ago`;
+    if (sec < 3_600) return `${Math.floor(sec / 60)}m ago`;
+    if (sec < 86_400) return `${Math.floor(sec / 3_600)}h ago`;
+
+    return `${Math.floor(sec / 86_400)}d ago`;
+};
+
+/**
+ * "created 2h ago"-style meta label for a list row, from an API timestamp.
+ *
+ * Shared by the Projects and Models lists (owner · created … ago). Falls back
+ * to an em-dash when the timestamp is missing or unparseable.
+ */
+export const relativeCreatedLabel = (timestamp?: string | null): string => {
+    const created = apiTimestampMs(timestamp);
+    if (created === null) return "—";
+
+    return `created ${relativeAgeLabel((Date.now() - created) / 1000)}`;
+};
+
 export const getOrderedLogs = (logs: ILog[] | undefined, reverse = false): ILog[] => {
     if (!logs) {
         return [];
@@ -89,6 +133,29 @@ export const capatilizeString = (value: string): string => {
  */
 export const getRandomId = (): string => crypto.randomUUID();
 
+
+/**
+ * Return `url` only when it resolves to an http(s) URL, otherwise `undefined`.
+ *
+ * The site banner's link is admin-supplied and rendered into an `href` that every user sees, so a
+ * `javascript:` URL would execute in the visitor's session. The scheme is allow-listed rather than
+ * denied: a prefix check is defeated by leading whitespace (`\tjavascript:`) and by case
+ * (`JaVaScRiPt:`), whereas neither parses to an allowed protocol.
+ *
+ * Parsing against `window.location.origin` means a relative path resolves and is accepted; the
+ * banner is expected to hold absolute links, but a relative one is harmless.
+ */
+export const safeExternalUrl = (url?: string | null): string | undefined => {
+    if (!url) return undefined;
+
+    try {
+        const parsed = new URL(url, window.location.origin);
+
+        return ["http:", "https:"].includes(parsed.protocol) ? url : undefined;
+    } catch {
+        return undefined;
+    }
+};
 
 export const getInitials = (name: string): string => {
     const rgx = /(\p{L}{1})\p{L}+/gu;

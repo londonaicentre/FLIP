@@ -145,12 +145,16 @@
 
                 <!-- LIST VIEW — design ref: ProjectsStatusSpine (variant A3) -->
                 <div v-else-if="viewMode === 'list'" class="px-8 pb-8" data-test="projects-list-view">
+                    <!-- font-normal on the row/card anchor: main.css bolds every non-nav <a>, so without
+                         it every descendant without its own weight class inherits semibold. Set it on the
+                         anchor itself so no leaf can be missed; the name, pills and cohort figure carry
+                         their own font-semibold. -->
                     <AiCard class="overflow-hidden p-0">
                         <router-link
                             v-for="(project, idx) in sortedProjects"
                             :key="project.id"
                             :to="`/project/${project.id}`"
-                            class="flex items-stretch bg-white dark:bg-dark-canvas hover:bg-gray-50 dark:hover:bg-dark-surface transition-colors"
+                            class="flex items-stretch font-normal bg-white dark:bg-dark-canvas hover:bg-gray-50 dark:hover:bg-dark-surface transition-colors"
                             :class="idx > 0 ? 'border-t border-gray-100 dark:border-dark-border' : ''"
                             :data-test="`project-list-item-${idx}`"
                         >
@@ -158,11 +162,16 @@
                             <div
                                 class="w-2 self-stretch shrink-0 relative"
                                 :class="spineBgClass(project.status)"
+                                data-test="project-status-spine"
                             >
                                 <div class="absolute inset-0 bg-gradient-to-r from-white/25 to-transparent" />
                             </div>
 
-                            <div class="grid grid-cols-1 md:grid-cols-[1.6fr_1.8fr_auto_auto] gap-5 px-5 py-4 items-center flex-1">
+                            <div
+                                :class="ROW_GRID_CLASS"
+                                class="grid gap-x-3 gap-y-1 md:gap-5 px-5 py-4 items-center flex-1"
+                                data-test="project-row-grid"
+                            >
                                 <div class="min-w-0">
                                     <div class="font-heading font-semibold text-base text-gray-900 dark:text-gray-100 truncate" data-test="project-name">
                                         {{ project.name }}
@@ -171,41 +180,26 @@
                                         {{ ownerLabel(project) }} · {{ relativeUpdated(project) }}
                                     </div>
                                 </div>
-                                <div class="text-sm text-gray-600 dark:text-gray-300 leading-snug line-clamp-2">
+                                <!-- Below md the row is two columns: this drops under the name and
+                                     its meta line, while the status block spans both rows to its
+                                     right. From md the normal column flow takes over. -->
+                                <div
+                                    class="col-start-1 row-start-2 md:col-start-auto md:row-start-auto
+                                    text-[12.5px] md:text-sm text-gray-600 dark:text-gray-300 leading-snug line-clamp-2"
+                                    data-test="project-row-description"
+                                >
                                     {{ project.description || "—" }}
                                 </div>
-                                <div class="hidden lg:flex flex-row items-center gap-1.5">
-                                    <span
-                                        v-for="trust in trustsToShow(project)"
-                                        :key="trust.id"
-                                        class="inline-flex items-center py-0.5 rounded text-[11px] font-medium font-mono bg-gray-100 dark:bg-dark-surface text-gray-700 dark:text-gray-300"
-                                        :class="showsTrustDot(project, trust) ? 'gap-1.5 pl-1.5 pr-2' : 'px-2'"
-                                        :title="trust.name"
-                                        data-test="trust-chip"
-                                    >
-                                        <!-- Green dot: trust approved (shown only once the project is APPROVED). -->
-                                        <span
-                                            v-if="showsTrustDot(project, trust)"
-                                            class="w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0"
-                                            data-test="trust-approved-dot"
-                                            aria-hidden="true"
-                                        />
-                                        {{ trustChipLabel(trust) }}
-                                    </span>
-                                    <span
-                                        v-if="remainingTrustCount(project) > 0"
-                                        class="text-xs text-gray-500 dark:text-gray-300"
-                                    >
-                                        +{{ remainingTrustCount(project) }}
-                                    </span>
-                                    <span
-                                        v-if="!trustsForProject(project).length"
-                                        class="text-xs text-gray-400 dark:text-gray-300 italic"
-                                    >
-                                        No trusts staged
-                                    </span>
-                                </div>
-                                <div class="flex flex-col items-end gap-1.5 min-w-[150px]">
+                                <TrustChips
+                                    :project="project"
+                                    class="col-start-2 row-start-2 self-start justify-end md:hidden
+                                    lg:col-start-auto lg:row-start-auto lg:justify-start lg:self-auto lg:flex"
+                                />
+                                <div
+                                    class="col-start-2 row-start-1 self-start md:col-start-auto
+                                    md:row-start-auto md:self-auto
+                                    flex flex-col items-end gap-1.5"
+                                >
                                     <span
                                         class="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-semibold tracking-wide uppercase"
                                         :class="pillClass(project.status)"
@@ -235,7 +229,7 @@
                         v-for="(project, idx) in sortedProjects"
                         :key="project.id"
                         :to="`/project/${project.id}`"
-                        class="relative flex flex-col gap-3 p-5 bg-white dark:bg-dark-canvas border border-gray-100 dark:border-dark-border rounded-lg shadow-sm hover:shadow-md hover:border-gray-200 dark:hover:border-dark-border transition-all overflow-hidden"
+                        class="relative flex flex-col gap-3 p-5 font-normal bg-white dark:bg-dark-canvas border border-gray-100 dark:border-dark-border rounded-lg shadow-sm hover:shadow-md hover:border-gray-200 dark:hover:border-dark-border transition-all overflow-hidden"
                         :data-test="`project-card-${idx}`"
                     >
                         <!-- Top status stripe (3px) -->
@@ -254,42 +248,15 @@
                             <h3 class="font-heading font-semibold text-lg leading-tight text-gray-900 dark:text-gray-100">
                                 {{ project.name }}
                             </h3>
-                            <p class="mt-1.5 text-sm text-gray-500 dark:text-gray-300 leading-snug line-clamp-2">
+                            <p
+                                class="mt-1.5 text-sm text-gray-500 dark:text-gray-300 leading-snug line-clamp-2"
+                                data-test="project-card-description"
+                            >
                                 {{ project.description || "No description provided" }}
                             </p>
                         </div>
 
-                        <div class="flex flex-wrap items-center gap-1.5">
-                            <span
-                                v-for="trust in trustsToShow(project)"
-                                :key="trust.id"
-                                class="inline-flex items-center py-0.5 rounded text-[11px] font-medium font-mono bg-gray-100 dark:bg-dark-surface text-gray-700 dark:text-gray-300"
-                                :class="showsTrustDot(project, trust) ? 'gap-1.5 pl-1.5 pr-2' : 'px-2'"
-                                :title="trust.name"
-                                data-test="trust-chip"
-                            >
-                                <!-- Green dot: trust approved (shown only once the project is APPROVED). -->
-                                <span
-                                    v-if="showsTrustDot(project, trust)"
-                                    class="w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0"
-                                    data-test="trust-approved-dot"
-                                    aria-hidden="true"
-                                />
-                                {{ trustChipLabel(trust) }}
-                            </span>
-                            <span
-                                v-if="remainingTrustCount(project) > 0"
-                                class="text-xs text-gray-500 dark:text-gray-300"
-                            >
-                                +{{ remainingTrustCount(project) }}
-                            </span>
-                            <span
-                                v-if="!trustsForProject(project).length"
-                                class="text-xs text-gray-400 dark:text-gray-300 italic"
-                            >
-                                No trusts staged
-                            </span>
-                        </div>
+                        <TrustChips :project="project" />
 
                         <div
                             class="flex items-center gap-2 px-3 py-2 rounded-md bg-gray-50 dark:bg-dark-surface text-xs"
@@ -307,9 +274,13 @@
                             </span>
                         </div>
 
-                        <div class="flex justify-between items-center pt-2 mt-auto border-t border-gray-100 dark:border-dark-border text-xs text-gray-500 dark:text-gray-300">
-                            <span class="truncate max-w-[60%]">{{ ownerLabel(project) }}</span>
-                            <span>{{ userCountLabel(project) }}</span>
+                        <div class="flex justify-between items-center gap-2 pt-2 mt-auto border-t border-gray-100 dark:border-dark-border text-xs text-gray-500 dark:text-gray-300">
+                            <!-- Same owner · created line the list rows carry, so a card and a row
+                                 say the same things about a project. -->
+                            <span class="truncate" data-test="project-card-meta">
+                                {{ ownerLabel(project) }} · {{ relativeUpdated(project) }}
+                            </span>
+                            <span class="shrink-0">{{ userCountLabel(project) }}</span>
                         </div>
                     </router-link>
                 </div>
@@ -340,9 +311,11 @@ import AiSearch from "@/components/AiSearch/AiSearch.vue";
 import useErrorHandler from "@/composables/useErrorHandler";
 import { usePermissions } from "@/composables/usePermissions";
 import CreateProjectModal from "@/partials/projects/CreateProjectModal.vue";
-import { getProjects, IProject, IProjectTrust, ProjectStatus } from "@/services/project-service";
+import TrustChips from "@/partials/projects/TrustChips.vue";
+import { getProjects, IProject, ProjectStatus } from "@/services/project-service";
 import { useAuthStore } from "@/store/auth";
 import { useModalsStore } from "@/store/modals";
+import { apiTimestampMs, relativeCreatedLabel } from "@/utils/helpers";
 
 const pageSize = 20;
 const authStore = useAuthStore();
@@ -356,6 +329,20 @@ const ownerQueryParam = ref("");
 // `ownerFilter=true` = "My projects" only; false = all accessible.
 const ownerFilter = ref(false);
 const userId = authStore.user?.userId;
+
+// Every list row is its own grid, so a content-sized (`auto`) track resolves to a
+// different width on each row and the description column drifts down the list.
+// Content-independent tracks resolve identically on every row, which is what lines
+// the columns up — the same approach as the Models table (`GRID_CLASS` in models.vue).
+// Each fr track is wrapped in `minmax(0,…)` deliberately: a bare `1.6fr` means
+// `minmax(auto,1.6fr)`, whose min-content floor lets a long name or description push
+// its own track past its share — don't simplify them back to bare `fr`. The trusts
+// column is `hidden lg:flex`, and a `display: none` child occupies no grid cell, so
+// the md template deliberately declares three tracks to the lg template's four.
+// Keep each class name whole within one string literal: Tailwind's extractor scans
+// source text, so a class split across a concatenation is never generated.
+const ROW_GRID_CLASS = "grid-cols-[minmax(0,1fr)_8rem] md:grid-cols-[minmax(0,1.6fr)_minmax(0,1.8fr)_10rem] "
+    + "lg:grid-cols-[minmax(0,1.6fr)_minmax(0,1.8fr)_15rem_10rem]";
 
 type ViewMode = "list" | "grid";
 const viewMode = ref<ViewMode>("list");
@@ -436,8 +423,8 @@ const sortedProjects = computed<IProject[]>(() => {
     } else {
         // "created" — newest first; rows without a timestamp sink to the bottom.
         arr.sort((a, b) => {
-            const ta = a.creationtimestamp ? new Date(a.creationtimestamp).getTime() : 0;
-            const tb = b.creationtimestamp ? new Date(b.creationtimestamp).getTime() : 0;
+            const ta = apiTimestampMs(a.creationtimestamp) ?? 0;
+            const tb = apiTimestampMs(b.creationtimestamp) ?? 0;
 
             return tb - ta;
         });
@@ -457,48 +444,6 @@ const approvedTrustCount = computed(() => {
     return ids.size;
 });
 
-// `approvedTrusts` is every trust linked to the project (the name predates
-// the staged/approved split) — each carries its own `approved` flag. We show
-// them all so a freshly-staged trust appears on the card straight away; the
-// green dot, not chip presence, marks which trusts have approved. Sorted
-// alphabetically so a trust keeps the same slot across reloads.
-const trustsForProject = (project: IProject): IProjectTrust[] => {
-    return (project.approvedTrusts ?? [])
-        .slice()
-        .sort((a, b) => a.name.localeCompare(b.name));
-};
-
-const MAX_TRUST_CHIPS = 4;
-const trustsToShow = (project: IProject): IProjectTrust[] => trustsForProject(project).slice(0, MAX_TRUST_CHIPS);
-const remainingTrustCount = (project: IProject): number => {
-    const n = trustsForProject(project).length;
-
-    return n > MAX_TRUST_CHIPS ? n - MAX_TRUST_CHIPS : 0;
-};
-
-// Prefer the trust's short code (e.g. "GSTT") when the backend supplies one.
-// Fall back to the full name with common bloat ("NHS Foundation Trust" etc.)
-// stripped and truncated to 16 chars so chips stay compact.
-const trustChipLabel = (trust: IProjectTrust): string => {
-    if (trust.code) return trust.code;
-    if (!trust.name) return "";
-    const stripped = trust.name
-        .replace(/\bNHS Foundation Trust\b/gi, "")
-        .replace(/\bNHS Trust\b/gi, "")
-        .replace(/\bTrust\b/gi, "")
-        .trim();
-    if (stripped.length <= 16) return stripped;
-
-    return stripped.slice(0, 14) + "…";
-};
-
-// A trust chip gains a green dot once that trust has approved — but only
-// after the project itself reaches APPROVED. While the project is still
-// STAGED every chip stays plain, even for trusts that have already signed
-// off; the dot is the project-wide "this trust is in" marker.
-const showsTrustDot = (project: IProject, trust: IProjectTrust): boolean =>
-    project.status === "APPROVED" && trust.approved;
-
 const STATUS_LABEL: Record<ProjectStatus, string> = {
     APPROVED: "Approved",
     STAGED: "Staged",
@@ -513,6 +458,8 @@ const PILL_CLASS: Record<ProjectStatus, string> = {
 };
 const pillClass = (s: ProjectStatus): string => PILL_CLASS[s];
 
+// TrustChips paints a pending trust's dot in this same STAGED amber — kept in step by
+// the group-6 Cypress spec, which compares the two computed colours on a staged row.
 const SPINE_BG_CLASS: Record<ProjectStatus, string> = {
     APPROVED: "bg-emerald-600",
     STAGED: "bg-amber-500",
@@ -520,9 +467,12 @@ const SPINE_BG_CLASS: Record<ProjectStatus, string> = {
 };
 const spineBgClass = (s: ProjectStatus): string => SPINE_BG_CLASS[s];
 
+// What the project is waiting on, when the status pill doesn't already say it. STAGED's
+// "awaiting approval" is exactly what the STAGED pill means, so it stays silent; a draft's
+// missing cohort query is not derivable from "Draft", so that one earns its line.
 const NEXT_ACTION: Record<ProjectStatus, string | null> = {
     APPROVED: null,
-    STAGED: "Awaiting approval",
+    STAGED: null,
     UNSTAGED: "Cohort query needed"
 };
 const nextActionFor = (project: IProject): string | null => NEXT_ACTION[project.status];
@@ -556,15 +506,6 @@ const userCountLabel = (project: IProject): string => {
 
 // IProject has no `lastUpdated` — fall back to creation timestamp as a
 // proxy for the design's "updated 2h ago". Real updated-at tracking is a
-// separate backend change.
-const relativeUpdated = (project: IProject): string => {
-    if (!project.creationtimestamp) return "—";
-    const created = new Date(project.creationtimestamp).getTime();
-    const sec = (Date.now() - created) / 1000;
-    if (sec < 60) return `created ${Math.max(0, Math.floor(sec))}s ago`;
-    if (sec < 3_600) return `created ${Math.floor(sec / 60)}m ago`;
-    if (sec < 86_400) return `created ${Math.floor(sec / 3_600)}h ago`;
-
-    return `created ${Math.floor(sec / 86_400)}d ago`;
-};
+// separate backend change. Formatting is shared with the Models list.
+const relativeUpdated = (project: IProject): string => relativeCreatedLabel(project.creationtimestamp);
 </script>

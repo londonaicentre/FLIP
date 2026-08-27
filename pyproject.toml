@@ -11,13 +11,13 @@
 #
 [project]
 name = "flip"
-version = "0.3.0"
+version = "0.5.0"
 description = ""
 readme = "README.md"
 authors = [
     { name = "R. Garcia-Dias", email = "rafaelagd@gmail.com" }
 ]
-requires-python = ">=3.12"
+requires-python = ">=3.12,<3.14"
 dependencies = []
 
 [build-system]

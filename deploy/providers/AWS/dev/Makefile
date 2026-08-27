@@ -74,11 +74,17 @@ export TF_VAR_flip_cognito_researcher_email ?= $(flip_cognito_researcher_email)
 export TF_VAR_ADMIN_USER_PASSWORD := $(ADMIN_USER_PASSWORD)
 export TF_VAR_SES_VERIFIED_EMAIL := $(SES_VERIFIED_EMAIL)
 
+# A copied-but-unedited .env leaves `<your-...>` placeholders in place. Those are non-empty, so an
+# emptiness check passes them straight through to Terraform, which fails much later with an opaque
+# AWS bucket-name error. Treat a placeholder as unset — same idea as XNAT_CREDENTIAL_PLACEHOLDER in
+# trust/xnat/Makefile.
+unset_or_placeholder = $(if $(1),$(if $(filter <%>,$(patsubst <%,<%>,$(1))),placeholder,),unset)
+
 # FLIP application S3 buckets (FLIP#24). Required, no defaults — value lives
 # in $(ENV_FILE). Fail fast with a useful message if missing.
-$(if $(FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME),,$(error 🪣 FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME must be set in $(ENV_FILE)))
-$(if $(FLIP_FL_RESULTS_BUCKET_NAME),,$(error 🪣 FLIP_FL_RESULTS_BUCKET_NAME must be set in $(ENV_FILE)))
-$(if $(FLIP_APP_BUNDLES_BUCKET_NAME),,$(error 🪣 FLIP_APP_BUNDLES_BUCKET_NAME must be set in $(ENV_FILE)))
+$(if $(call unset_or_placeholder,$(FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME)),$(error 🪣 FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME must be set to a real bucket name in $(ENV_FILE)),)
+$(if $(call unset_or_placeholder,$(FLIP_FL_RESULTS_BUCKET_NAME)),$(error 🪣 FLIP_FL_RESULTS_BUCKET_NAME must be set to a real bucket name in $(ENV_FILE)),)
+$(if $(call unset_or_placeholder,$(FLIP_APP_BUNDLES_BUCKET_NAME)),$(error 🪣 FLIP_APP_BUNDLES_BUCKET_NAME must be set to a real bucket name in $(ENV_FILE)),)
 export TF_VAR_FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME := $(FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME)
 export TF_VAR_FLIP_FL_RESULTS_BUCKET_NAME          := $(FLIP_FL_RESULTS_BUCKET_NAME)
 export TF_VAR_FLIP_APP_BUNDLES_BUCKET_NAME         := $(FLIP_APP_BUNDLES_BUCKET_NAME)

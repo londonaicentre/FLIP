@@ -1,0 +1,16 @@
+2026-07-11 09:00:00,000 - ScatterAndGather - INFO - [identity=simulator_server] - Round 0 started.
+2026-07-11 09:00:08,000 - ScatterAndGather - INFO - [identity=simulator_server] - Start aggregation.
+2026-07-11 09:00:09,000 - ScatterAndGather - INFO - [identity=simulator_server] - End aggregation.
+2026-07-11 09:00:10,000 - ScatterAndGather - INFO - [identity=simulator_server] - Round 0 finished.
+[32m2026-07-11 09:00:12,000 - ScatterAndGather - INFO - [identity=simulator_server] - Round 1 started.[0m
+2026-07-11 09:00:20,000 - ScatterAndGather - INFO - [identity=simulator_server] - Start aggregation.
+2026-07-11 09:00:21,000 - ScatterAndGather - INFO - [identity=simulator_server] - End aggregation.
+[32m2026-07-11 09:00:22,000 - ScatterAndGather - INFO - [identity=simulator_server] - Round 1 finished.[0m
+2026-07-11 09:00:24,000 - ScatterAndGather - INFO - [identity=simulator_server] - Round 2 started.
+2026-07-11 09:00:32,000 - ScatterAndGather - INFO - [identity=simulator_server] - Start aggregation.
+2026-07-11 09:00:33,000 - ScatterAndGather - INFO - [identity=simulator_server] - End aggregation.
+2026-07-11 09:00:34,500 - ScatterAndGather - ERROR - [identity=simulator_server] - Client site-2 dropped; round 2 never completed.
+2026-07-11 09:00:40,000 - ScatterAndGather - INFO - [identity=simulator_server] - Round 3 started.
+2026-07-11 09:00:48,000 - ScatterAndGather - INFO - [identity=simulator_server] - Start aggregation.
+2026-07-11 09:00:49,000 - ScatterAndGather - INFO - [identity=simulator_server] - End aggregation.
+2026-07-11 09:00:50,000 - ScatterAndGather - INFO - [identity=simulator_server] - Round 3 finished.

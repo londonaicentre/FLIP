@@ -152,8 +152,14 @@ Delete Project
    Projects can be deleted at any time, but:
 
    - Any running training sessions will be deleted and no longer accessible
-   - Images associated with the project will be deleted from XNAT
-   - The project will no longer be visible within XNAT
+   - Imaging already pulled to each Trust is **deliberately retained** in that Trust's XNAT. Deleting a project
+     is a soft delete: the platform record is kept and the deletion audited, but the imaging is not touched.
+     Images could be re-pulled from PACS, whereas the segmentations, contours and annotations added during
+     data enrichment could not — so a project deletion never destroys them
+   - The project therefore remains visible within XNAT to users with access to it there, and is no longer
+     reachable through FLIP
+   - Removing a Trust's imaging is a **separate administrator action**, carried out at the Trust, and is not
+     part of deleting a project
 
 1. Select 'Edit Project'
 2. Under 'Advanced Options', click the 'Delete Project' button
@@ -182,7 +188,9 @@ Users can apply a filters to view only projects based on, for example, the curre
 Cohort Query
 ============
 
-Cohort data is stored within a `PostgreSQL <https://www.postgresql.org/>`_ database conforming to the `standard OMOP data model <http://omop-erd.surge.sh/omop_cdm/index.html>`_, with the `R-CDM radiology tables <https://www.ncbi.nlm.nih.gov/pmc/articles/PMC8790584/>`_ included. The radiology_occurrence table has been modified to include an ``accession_id`` field which contains the reference to the associated DICOM series. As this is the field that XNAT will read from when retrieving the associated DICOM series from PACS, the 'accession_id' needs to be included in all queries if relevant images are to be made available.
+Cohort data is stored within a `PostgreSQL <https://www.postgresql.org/>`_ database conforming to the OMOP Common Data Model, extended with the :term:`MI-CDM` imaging tables — see :ref:`the schema reference <omop-schema>` for the tables a query can draw on, and :ref:`omop-sample-queries` for two worked examples.
+
+The ``image_occurrence`` table has been modified to include an ``accession_id`` field which contains the reference to the associated DICOM study. As this is the field that XNAT will read from when retrieving the associated DICOM series from PACS, the 'accession_id' needs to be included in all queries if relevant images are to be made available.
 
 .. _create-cohort-query:
 
@@ -190,17 +198,13 @@ Create Cohort Query
 -------------------
 
 .. note::
-    A number of keywords are restricted and the cohort query will not be run in the instance that any of these keywords are entered, such as:
-
-        - ``alter user``
-        - ``alter table``
-        - ``alter database``
-        - ``drop table``
-        - ``drop user``
-        - ``drop role``
-        - ``drop database``
-        - ``create table``
-        - ``substring``
+    Cohort queries must be a single ``SELECT`` statement against the ``omop`` schema. The query is
+    parsed and validated on the trust side (not by keyword matching), so only read-only ``SELECT``
+    shapes are accepted — ``INSERT``, ``UPDATE``, ``DELETE``, ``MERGE`` and DDL (``CREATE``,
+    ``ALTER``, ``DROP``) are rejected wherever they appear in the query tree, and only literal
+    integer ``LIMIT``/``OFFSET`` values are allowed. There is no keyword denylist, so ordinary
+    read-only functions such as ``SUBSTRING()`` are permitted. Trust-side execution runs as a
+    read-only database role, so anything that slips past the parser cannot mutate the database.
 
 1. Click the 'Create Cohort Query' button in the bottom left corner of the project page
 2. Enter a query in SQL format, for example:
@@ -208,7 +212,7 @@ Create Cohort Query
    .. code-block:: sql
 
        SELECT accession_id, concept_name, year_of_birth FROM omop.person p
-       JOIN omop.radiology_occurrence r ON r.Person_Id = p.Person_Id
+       JOIN omop.image_occurrence r ON r.Person_Id = p.Person_Id
        JOIN omop.concept c ON p.gender_concept_id = c.concept_id
        WHERE year_of_birth < 1980
 
@@ -277,6 +281,8 @@ To view the progress of the imaging data import at each participating Trust, use
 .. note::
 
    Importing large sets of studies from PACS systems can take a very long time and individual imports may fail if the system is under too much strain. Overtime, FLIP will automatically reimport failed studies as indicated by the reimport count.
+
+The counts shown for each Trust are the latest it has reported. If a Trust stops responding — or its XNAT no longer holds the imaging project — its card keeps the last known counts on display, marked **Last known** together with the time they were last confirmed, and shows what went wrong in the card footer: *Trust XNAT not reachable* when the Trust's XNAT did not respond at all, or *Trust XNAT reachable, but project not found* when XNAT answered but the imaging project no longer exists there (for example after the Trust's deployment was reset). The card returns to normal automatically once the Trust reports successfully again.
    Once the reimport cap is reached, failed studies will no longe be reimported. If there are still failures present, please contact an XNAT administrator. Manual intervention may be needed.
 
 .. figure:: ../assets/flip/study-reimport-max.gif
@@ -351,16 +357,34 @@ Model Files
 
    A model must be created before proceeding to upload model files and prepare the model for training.
 
-**For NVIDIA FLARE apps**, the minimum required files are:
+There is no single list of required files. What a model must contain depends on its **job type**
+— the kind of federated job it runs, such as federated averaging or evaluation — and on which FL
+backend your platform is running. An app declares its job type with the ``job_type`` key in
+``config.json``. Every app carries a ``config.json``, on either backend, because it is itself a
+required file for every job type. Where the key is absent, the ``standard`` job type is assumed.
+The file itself is not optional: a model without a ``config.json`` is shown as missing it and
+cannot start training, whichever job type it was going to declare.
 
-- ``validator.py``
-- ``trainer.py``
+**You do not need to look this up.** FLIP tells you which files your model needs, in two places on
+the model page:
 
-Additional files may be uploaded, especially if these are referenced by the validator or trainer. A config file may also be uploaded (see :ref:`training-configuration` section for more information), in which optional variables can be defined.
+- The Model Files panel shows the job type currently detected from your uploaded ``config.json``.
+- The Training panel lists the files that job type requires, and highlights any that are still
+  missing.
 
-**For Flower apps**, the required files differ (e.g. ``client_app.py``, ``pyproject.toml``). See the :ref:`FL nodes documentation <flip-fl-nodes>` for Flower-specific file requirements and job types.
+Both update as soon as you upload or replace ``config.json``, and training cannot be initiated
+until every required file has been uploaded.
 
-For more information on model training and model files, please see the `FLIP tutorials <https://github.com/londonaicentre/FLIP/tree/develop/fl-tutorials>`_.
+Files beyond the required set may be uploaded freely — anything your code imports (helper modules,
+transforms) is bundled with the app and shipped to the participating Trusts. Two things do not
+follow that rule: a file whose name matches one the platform's own app template supplies is quietly
+dropped in favour of the template's copy, and a checkpoint declared for server-side use stays on the
+FL server rather than travelling to the Trusts. Both are covered under
+:ref:`fl-required-files` on the FL nodes component page.
+
+The full per-job-type file lists, and the configuration each backend accepts, are documented on
+the :ref:`FL nodes component page <flip-fl-nodes>`. For worked examples of complete, working apps,
+see the `FLIP tutorials <https://github.com/londonaicentre/FLIP/tree/develop/fl-tutorials>`_.
 
 .. warning::
 
@@ -375,10 +399,41 @@ Upload Files
 2. Navigate to the Model Files section on the left-hand side of the model page
 3. Either browse to the files on your local file system or drag and drop them into the box on screen
 4. You will receive confirmation once your files have successfully uploaded
+5. Each file is then checked. A magnifying-glass icon marks a file as being checked; it becomes a
+   document icon once the check passes and the file is ready to use
 
 .. note::
 
-   As files are uploaded, they are scanned for vulnerabilities and viruses.
+   **Every uploaded file is held in a staging area and released only after it has been checked.**
+   Until then it cannot be used for training and is never sent to a trust.
+
+   Files that carry Python pickle data (``.pt``, ``.pth``, ``.pkl``, ``.pickle``) — including model
+   checkpoints — are **scanned for unsafe content**, because loading such a file executes whatever it
+   contains. A file that fails this scan is marked with a red virus icon and deleted from storage.
+   Delete the entry and upload a corrected file to continue.
+
+   .. warning::
+
+      **Your Python source is not blocked on the basis of what it does.** ``.py`` files are checked
+      for type and released like any other file, then executed as-is on every participating trust.
+      A non-blocking scan flags common risky patterns (``subprocess``, ``os.system``, ``eval``,
+      hardcoded credentials — and, since the scan uses Bandit's default rule set, some routine
+      patterns in ML code such as ``torch.load`` or ``assert``) as an amber indicator on the
+      model's file list, visible to you as the uploader and to anyone else who later opens the
+      model page. This is an advisory signal, not a gate — it does not stop obfuscated or
+      otherwise-undetected code from running, and an indicator does not by itself mean the file is
+      unsafe. Only upload code you have written or reviewed yourself, and treat code from third
+      parties as untrusted.
+
+   Only recognised file types may be uploaded (by default ``.py``, ``.json``, ``.toml``, ``.pt``,
+   ``.pth``, ``.pkl``, ``.txt``, ``.yaml``, ``.yml`` and ``.safetensors``). Anything else — including
+   archives such as ``.zip`` — is refused at upload time with a message listing the accepted types.
+
+   Training cannot start until every file has been released.
+
+Checking starts as soon as a file is uploaded and usually finishes within seconds, though scanning a
+large checkpoint takes longer. You can leave the page while it runs — it continues on the server and
+the status updates when you return.
 
 If model files need to be managed further after uploading, the uploader function allows files to be downloaded, removed and re-uploaded.
 
@@ -393,71 +448,28 @@ If model files need to be managed further after uploading, the uploader function
 Training Configuration
 ----------------------
 
-.. note::
+Alongside your code, an app carries a small configuration file that sets how the federated run
+behaves — how many rounds it trains for, how client updates are combined, and any settings your
+own code reads.
 
-   The following configuration applies to **NVIDIA FLARE** apps. For Flower apps, training configuration is managed via ``pyproject.toml``. See the :ref:`FL nodes documentation <flip-fl-nodes>` for details.
+Where that configuration lives, and which settings are available, depends on the FL backend:
 
-Prior to commencing training you may also upload an optional ``config.json`` file (see example below). The config file defines variables which are used during FLIP training (e.g. ``GLOBAL_ROUNDS``, ``LOCAL_ROUNDS``, ``AGGREGATION_WEIGHTS``, ``AGGREGATOR``).
+- **NVIDIA FLARE apps** are configured through ``config.json``, which is one of the required files
+  for every NVFLARE job type. As well as declaring ``job_type``, it may set platform-recognised
+  keys such as ``GLOBAL_ROUNDS`` and ``LOCAL_ROUNDS``.
+- **Flower apps** also carry a ``config.json``, but it is read only for ``job_type`` — the run
+  configuration comes from the platform's app template, which your app can override with a
+  ``config.toml`` file. Flower apps do not use the NVFLARE keys.
 
-.. code-block:: json
+For NVFLARE apps, any key the platform does not recognise is passed through untouched, for your own
+code to read at runtime — which is how the tutorials carry app-specific settings such as learning
+rate or validation split. Flower works the other way round: ``config.toml`` may only override keys
+the app template already declares, and a key it does not declare fails the run at submission rather
+than being ignored.
 
-    {
-      "GLOBAL_ROUNDS": 5,
-      "LOCAL_ROUNDS": 2,
-      "IGNORE_RESULT_ERROR": false,
-      "AGGREGATOR": "InTimeAccumulateWeightedAggregator",
-      "AGGREGATION_WEIGHTS": {
-         "KCH": 1.0,
-         "UCLH": 0.5
-      }
-    }
-
-.. note::
-
-   All config properties have default values. If a ``config.json`` file is not uploaded, or some properties are missing from the file, default values will be utilised at runtime.
-   See default values specified below.
-
-**GLOBAL_ROUNDS**
-   Number of global training iterations. How many times the server should execute the ``trainer.py``.
-   Must be greater than 0. Less than 100.
-
-   *Default=1*
-
-**LOCAL_ROUNDS**
-   Number of local training iterations at client sites.
-   Must be greater than 0. Less than 100.
-
-   *Default=1*
-
-**IGNORE_RESULT_ERROR**
-   Whether training should proceed if a client returns an error.
-
-   *Default=false*
-
-**AGGREGATOR**
-   The nvflare aggregation component used to aggregate training results from each client.
-
-   .. warning::
-      Allowed values are "InTimeAccumulateWeightedAggregator" or "AccumulateWeightedAggregator". As of v4, FLIP only supports aggregator components built into nvflare. Specifying any other value will cause
-      a config validation error and prevent training from initiating.
-
-   *Default="InTimeAccumulateWeightedAggregator"*
-
-**AGGREGATION_WEIGHTS**
-   Weight dictionary passed into the aggregator component to define its aggregation behaviour.
-
-   .. warning::
-      Client sites *must* be referenced via their common abbreviation e.g KCH=Kings College Hospital, UCLH=University College London Hospital.
-      Weights must be provided as a valid json object.
-
-   *Default=1.0 applied to each client site*
-
-.. code-block:: json
-
-    {
-        "KCH": 1.0,
-        "UCLH": 1.0
-    }
+Every platform-recognised key has a default, so an app that sets only ``job_type`` will still run.
+For the full list of keys, their accepted values and defaults per backend, see
+:ref:`fl-training-configuration` on the FL nodes component page.
 
 View Files
 ----------
@@ -499,6 +511,10 @@ When model files have been uploaded, you will then need to confirm that the data
 
    You must confirm the data enrichment step is complete (even if no enrichment of the dataset was required and/or actually performed) before training can commence.
 
+.. important::
+
+   If your model trains against labels that are **not** in :term:`OMOP` — segmentation masks and other image-derived annotations — those must be uploaded into each Trust's XNAT *before* you confirm this step, or training will start and then fail with no usable samples. Labels that *are* in OMOP, such as a lab result or a coded report finding, need no upload: project them as a column in your cohort query instead. See :ref:`data-enrichment` for both routes.
+
 1. Navigate to project page
 2. On the right-hand side, toggle the button to confirm the dataset has been enriched
 3. Click the 'Initiate Training' button to start the training cycle
@@ -522,6 +538,11 @@ Stop Training
 1. Click the 'Actions' drop-down menu
 2. Click the 'Stop Training' button
 3. When the model training has been stopped, the progress bar will show at which stage the process was stopped
+
+While the model is still queued (the status shows 'Model Queued', before training has started) the same button
+reads **'Abort job'** instead: clicking it removes the job from the queue, marks the model as Stopped, and
+immediately releases the training *net* so the next queued job can start. A stopped model expects no results —
+'Download Results' stays disabled — but it can be initiated for training again.
 
 .. figure:: ../assets/flip/stop-training.gif
    :width: 600
@@ -567,7 +588,15 @@ Hovering over the graphs at various points will display the values.
 Connection Status
 *****************
 
-The Connection Status page shows the live state of the federation. Each participating Trust is shown as online, degraded or offline based on its most recent heartbeat, and can be viewed as a list or as a radial topology.
+The Connection Status page shows the live state of the federation. Each participating Trust reports the health of its core platform services (trust-api, data-access-api, imaging-api, XNAT, OMOP and the PACS/DICOM link), and its state is derived from those reports: Offline when the Trust has stopped sending heartbeats, Degraded when any other service is down or degraded, otherwise Online. The list can also be viewed as a radial topology.
+
+The Services column shows one status dot per container. Clicking a Trust row opens a detail drawer listing each container's status, running version and probe response time — so you can see *why* a Trust is degraded without access to the Trust's own network. The page and the drawer are available to every signed-in user, not only administrators: if a project stalls, you can check whether the Trust holding your data is reporting a failing service before raising it with the platform team. A Trust that has not reported container health (or whose report has gone stale) shows grey "No data" markers and falls back to heartbeat-only state.
+
+.. figure:: ../assets/flip/connection-status-drawer.png
+   :width: 600
+   :align: center
+
+   The Trust detail drawer: this Trust is Degraded because its XNAT is unreachable.
 
 The FL nets card reports the FL client-to-server connectivity for each net — that is, whether each Trust's FL client is connected. No training requests can be sent to a Trust whose FL client is offline.
 
@@ -575,4 +604,4 @@ The FL nets card reports the FL client-to-server connectivity for each net — t
    :width: 600
    :align: center
 
-   Viewing the federation connection status.
+   Viewing the federation connection status and a Trust's container health.

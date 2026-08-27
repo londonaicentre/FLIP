@@ -40,6 +40,10 @@ import { useSiteSettings } from "@/store/siteSettingsStore";
 
 interface IAiCohortChartProps {
     data: IModelMetricData
+    /** Palette slot per series label, assigned by the parent over every plot it renders, so the
+     * same trust keeps one colour across plots even when its per-plot arrival order differs or a
+     * plot is missing it entirely. Absent (single standalone chart), slots follow sorted order. */
+    styleIndexBySeries?: Record<string, number>
 }
 
 const props = defineProps<IAiCohortChartProps>();
@@ -91,6 +95,10 @@ onMounted(() => {
             const chartOptions: ComputedRef<ECOption> = computed(() => {
                 const darkMode = siteSettings.getSettings.darkMode;
                 const chrome = chartChrome(darkMode);
+                // Series sort with the legend: the backend's per-plot arrival order must not
+                // decide palette slots, or the same trust changes colour from plot to plot.
+                const sortedMetrics = [...props.data.metrics]
+                    .sort((a, b) => a.seriesLabel.localeCompare(b.seriesLabel));
 
                 return {
                     color: [...CHART_SERIES_COLORS[darkMode ? "dark" : "light"]],
@@ -152,10 +160,7 @@ onMounted(() => {
                         }
                     },
                     legend: {
-                        data: props.data.metrics
-                            .map(d => d.seriesLabel)
-                            .slice()
-                            .sort((a, b) => a.localeCompare(b)),
+                        data: sortedMetrics.map(d => d.seriesLabel),
                         orient: "vertical",
                         // Floats inside the plot, vertically centred on the right edge; the
                         // translucent card backing keeps it legible where lines pass beneath.
@@ -172,9 +177,16 @@ onMounted(() => {
                     },
                     xAxis: {
                         type: "value",
-                        minInterval: 1,
+                        // x-values are arbitrary floats (FLIP#148), so integer ticks can't be forced
+                        // unconditionally — they'd collapse a sub-unit range (e.g. 0–1) onto a single
+                        // tick. But an all-integer axis (the common "Global Rounds" case) keeps them:
+                        // splitNumber 10 over a 3-round run would otherwise show meaningless 0.25/0.5
+                        // fractional round ticks.
+                        ...(props.data.metrics.every(s => s.data.every(p => Number.isInteger(p.xValue)))
+                            ? { minInterval: 1 }
+                            : {}),
                         splitNumber: 10, // <— try to show 10 ticks (only)
-                        name: "Global Rounds",
+                        name: props.data.xLabel,
                         nameLocation: "middle",
                         // Sits just under the tick labels rather than floating halfway
                         // down a reserved strip, which read as a wide empty card margin.
@@ -211,13 +223,14 @@ onMounted(() => {
                         splitLine: { lineStyle: { color: chrome.gridLine } },
                         minorSplitLine: { show: false }
                     },
-                    series: props.data.metrics.map((element, seriesIdx) => {
+                    series: sortedMetrics.map((element, seriesIdx) => {
                         const sortedData = [...element.data].sort((a, b) => a.xValue - b.xValue);
                         const totalPoints = sortedData.length;
                         const totalDuration = 3000; // total animation time (ms)
                         // Guard the empty-series case — 3000/0 = Infinity is an invalid echarts duration.
                         const perPointDelay = totalPoints ? totalDuration / totalPoints : 0;
-                        const { color: seriesColor, lineType } = seriesStyle(seriesIdx, darkMode);
+                        const { color: seriesColor, lineType } =
+                            seriesStyle(props.styleIndexBySeries?.[element.seriesLabel] ?? seriesIdx, darkMode);
 
                         return {
                             name: element.seriesLabel,

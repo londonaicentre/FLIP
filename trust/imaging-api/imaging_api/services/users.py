@@ -64,11 +64,10 @@ def to_create_imaging_user(user: CentralHubUser, headers: dict[str, str]) -> Cre
     Raises:
         Exception: If fetching existing XNAT users fails.
     """
-    # Extract username from email (part before @)
-    base_username = user.email.split("@")[0]
-
-    # Replace all non-alphanumeric characters as they're not supported
-    username = re.sub(r"[^a-zA-Z0-9 \-]", "", base_username)
+    # Extract the username from the email (part before @), dropping every character XNAT does not
+    # support.
+    sanitised_stem = re.sub(r"[^a-zA-Z0-9 \-]", "", user.email.split("@")[0])
+    username = sanitised_stem
 
     # Get existing users to check for uniqueness
     try:
@@ -76,12 +75,15 @@ def to_create_imaging_user(user: CentralHubUser, headers: dict[str, str]) -> Cre
     except Exception as e:
         raise Exception(f"Error: XNAT error when fetching users: {str(e)}")
 
-    # Keep adding a suffix until we find a unique username
+    # Keep adding a suffix until we find a unique username. The suffix builds on the *sanitised*
+    # stem, never on the raw local part: this value is sent to an admin-authenticated
+    # POST /xapi/users and interpolated into an XNAT URL path, so a collision must not be the one
+    # route that reintroduces the characters stripped above.
     if existing_users:
         existing_usernames = {u.username for u in existing_users}
         suffix = 1
         while username in existing_usernames:
-            username = f"{base_username}{suffix}"
+            username = f"{sanitised_stem}{suffix}"
             suffix += 1
 
     # Create and return the user profile
@@ -217,7 +219,7 @@ def add_user_to_project(user: User, project_id: str, headers: dict[str, str]) ->
         imaging_api.routers.schemas.User: The user profile.
 
     Raises:
-        HTTPException: If there is an error during the addition of the user to the project.
+        Exception: If XNAT returns a non-200 status for the project-membership PUT.
         imaging_api.utils.exceptions.NotFoundError: If the user or project is not found.
     """
     if not user_exists(user.username, headers):

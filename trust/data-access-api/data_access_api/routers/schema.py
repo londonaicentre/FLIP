@@ -36,7 +36,7 @@ class CohortQueryInput(BaseModel):
     query: str = Field(
         ...,
         description="The raw SQL query to execute",
-        json_schema_extra={"example": "SELECT * FROM omop.radiology_occurrence"},
+        json_schema_extra={"example": "SELECT * FROM omop.image_occurrence"},
     )
     trust_id: str = Field(
         ...,
@@ -56,7 +56,7 @@ class DataframeQuery(BaseModel):
     query: str = Field(
         ...,
         description="The raw SQL query to execute",
-        json_schema_extra={"example": "SELECT * FROM omop.radiology_occurrence"},
+        json_schema_extra={"example": "SELECT * FROM omop.image_occurrence"},
     )
 
 

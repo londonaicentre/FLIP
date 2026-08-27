@@ -24,6 +24,7 @@ from logging import INFO
 from pathlib import Path
 
 import torch
+from flip.flower.privacy import flip_local_dp_mod
 from flwr.app import ArrayRecord, ConfigRecord, Context, Message, MetricRecord, RecordDict
 from flwr.clientapp import ClientApp
 from flwr.common import log
@@ -31,7 +32,7 @@ from monai.data import DataLoader, Dataset
 
 from app.data_loading import FLIP_BASE, Lesion, LesionDict
 from app.models import get_model
-from app.task import train_func, validate_func
+from app.task import macro_mean, train_func, validate_func
 from app.transforms import get_xray_transforms
 
 app = ClientApp()
@@ -81,7 +82,12 @@ def _load_model_on_device(msg: Message) -> tuple[torch.nn.Module, torch.device]:
     return model, device
 
 
-@app.train()
+# The DP mod clips the update to `dp-clipping-norm` and adds Gaussian noise calibrated to
+# (dp-epsilon, dp-delta) before the reply leaves the SuperNode — see pyproject.toml's
+# [tool.flwr.app.config]. It is applied to @app.train only; @app.evaluate below is untouched.
+# DenseNet121's 121 int64 `num_batches_tracked` BatchNorm counters pass through unprivatised;
+# the mod excludes them because clipping cannot write a float scale back into an int array.
+@app.train(mods=[flip_local_dp_mod])
 def train(msg: Message, context: Context) -> Message:
     """Train chest-X-ray DenseNet for ``LOCAL_ROUNDS`` epochs against the local cohort."""
     config = _load_config()
@@ -132,12 +138,15 @@ def train(msg: Message, context: Context) -> Message:
         last_val = validate_func(model, val_loader, device, lesions)
         scheduler.step()
 
-        round_id = global_round * local_rounds + epoch + 1
-        per_epoch_metrics[f"train_loss.round_{round_id}"] = last_train["loss"]
-        per_epoch_metrics[f"val_loss.round_{round_id}"] = last_val["loss"]
+        # Per-epoch points: "@epoch" names the x-axis and ".x_<N>" is the coordinate (the cumulative
+        # epoch count) — see the "<label>[@<x_label>][.x_<V>]" key grammar in flip.flower.metrics
+        # (FLIP#148). The FL global round is recorded server-side as each point's provenance.
+        cumulative_epoch = global_round * local_rounds + epoch + 1
+        per_epoch_metrics[f"train_loss@epoch.x_{cumulative_epoch}"] = last_train["loss"]
+        per_epoch_metrics[f"val_loss@epoch.x_{cumulative_epoch}"] = last_val["loss"]
         for name in lesions.get_lesion_list():
-            per_epoch_metrics[f"train_f1-{name}.round_{round_id}"] = last_train[f"f1-score-{name}"]
-            per_epoch_metrics[f"val_f1-{name}.round_{round_id}"] = last_val[f"f1-score-{name}"]
+            per_epoch_metrics[f"train_f1-{name}@epoch.x_{cumulative_epoch}"] = last_train[f"f1-score-{name}"]
+            per_epoch_metrics[f"val_f1-{name}@epoch.x_{cumulative_epoch}"] = last_val[f"f1-score-{name}"]
 
     metrics: dict[str, float] = {
         **_flatten_per_lesion(last_train, "train"),
@@ -181,9 +190,14 @@ def evaluate(msg: Message, context: Context) -> Message:
 
     if len(test_loader.dataset) == 0:
         log(INFO, "No test data found!")
-        empty: dict[str, float] = {"test_loss": 0.0, "num-examples": 0}
+        # Carries the same metric names as the populated path, notably the macro
+        # "test_f1-score" the server may be selecting the best model on: flwr's
+        # aggregate_metricrecords derives its weight factors from every reply but only sums
+        # the ones carrying a given key, so a key missing from one reply leaves that metric
+        # under-weighted in the aggregate rather than merely unrepresented.
+        empty: dict[str, float] = {"test_loss": 0.0, "test_f1-score": 0.0, "num-examples": 0}
         for name in lesions.get_lesion_list():
-            empty[f"test_f1-{name}"] = 0.0
+            empty[f"test_f1-score-{name}"] = 0.0
         site_config = ConfigRecord({"site": client_name})
         return Message(
             content=RecordDict({"metrics": MetricRecord(empty), "config": site_config}),
@@ -192,15 +206,22 @@ def evaluate(msg: Message, context: Context) -> Message:
 
     test_metrics = validate_func(model, test_loader, device, lesions)
 
-    # Preserve the "send at round=0" convention via the .round_N suffix
+    # Test metrics are a single point, plotted at x=0 by convention via the ".x_0" suffix
     # so handle_client_metrics forwards one Hub point per metric.
     metrics: dict[str, float] = {
         **_flatten_per_lesion(test_metrics, "test"),
         "num-examples": len(test_loader.dataset),
-        "test_loss.round_0": float(test_metrics["loss"]),
+        "test_loss.x_0": float(test_metrics["loss"]),
     }
+    # Macro F1 across lesions — the one interpretable number this app is meant to be judged
+    # on, and what best-model selection scores (best-model-metric = "test_f1-score"). The
+    # per-lesion F1s below stay for the breakdown; the server weight-averages whichever key
+    # it was configured with across clients by num-examples.
+    macro_f1 = macro_mean(test_metrics, "f1-score", lesions)
+    metrics["test_f1-score"] = macro_f1
+    metrics["test_f1-score.x_0"] = macro_f1
     for name in lesions.get_lesion_list():
-        metrics[f"test_f1-{name}.round_0"] = float(test_metrics[f"f1-score-{name}"])
+        metrics[f"test_f1-{name}.x_0"] = float(test_metrics[f"f1-score-{name}"])
 
     site_config = ConfigRecord({"site": client_name})
     return Message(

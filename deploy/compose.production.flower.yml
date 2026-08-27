@@ -10,14 +10,24 @@
 # limitations under the License.
 #
 
+# ROLE (FLIP#936): Flower overlay of the local prod-image harness (see the note in
+# compose.production.yml) — not a deployment target. The canonical production equivalent is the Flower
+# branch of the ECS task definitions (deploy/providers/AWS/ecs_tasks.tf with fl_backend=flower, FLIP#566),
+# which mirrors this overlay: SuperLink 9092/9093/9097, TLS + SuperNode-auth command flags, and the
+# register-supernode-keys one-shot (ecs_flower.tf).
+
 # NOTE Important: any sections specified in base configs will be overridden if you specify the same sections in the
 # inheriting service configs below
 
+# No `container_name` here either — see the header of compose.production.yml. Container names come
+# from the compose project (`deploy-fl-server-net-1-1`); the service KEYS are load-bearing and must
+# not be renamed: `fl-server-net-<N>` is the SAN in the SuperLink's provisioned TLS certificate
+# (`DNS:fl-server-net-1`), so a SuperNode's certificate check fails outright if that name stops
+# resolving, and `fl-api-net-<N>` is what NET_ENDPOINTS and FL_API_ADDRESS below dial.
 services:
   #################### CENTRAL HUB FL ####################
 
   fl-api-net-1:
-    container_name: flip-fl-api-net-1
     image: ${DOCKER_FL_REGISTRY}${DOCKER_FL_API_NAME}:${DOCKER_FL_TAG}
     volumes:
       - /opt/flip/services/net-1/certificates:/certs:ro
@@ -47,7 +57,6 @@ services:
       start_period: 10s
 
   fl-server-net-1:
-    container_name: fl-server-net-1
     image: ${DOCKER_FL_REGISTRY}${DOCKER_FL_SERVER_NAME}:${DOCKER_FL_TAG}
     volumes:
       - /opt/flip/services/net-1/certificates:/certs:ro
@@ -89,11 +98,16 @@ services:
 
   # One-shot service to register SuperNode public keys with the SuperLink
   register-supernode-keys-net-1:
-    container_name: register-supernode-keys-net-1
     image: ${DOCKER_FL_REGISTRY}${DOCKER_FL_SERVER_NAME}:${DOCKER_FL_TAG}
     environment:
       - SUPERLINK_ADDRESS=fl-server-net-1:9093
-      - FL_API_ADDRESS=http://flip-fl-api-net-1:8000
+      # Service name (`fl-api-net-1`), which is the only name that resolves: with no
+      # container_name the container is named by the compose project, and the old
+      # `flip-fl-api-net-1` spelling is not a DNS name in any harness. Getting this wrong
+      # fails SILENTLY — register-supernode-keys.sh swallows the DNS error and still exits
+      # 0, leaving SuperNode keys unlabelled and FL metrics attributed to unknown_client
+      # (FLIP#957).
+      - FL_API_ADDRESS=http://fl-api-net-1:8000
       # The script reads ${TRUST_NAMES} as a label list, but the underlying identity it's
       # labelling is the per-slot SuperNode key. Feed FL_KIT_SLOT_NAMES through so trusts
       # admin-created later (and bound to a slot via FLKitSlot.assigned_to_trust_id) still

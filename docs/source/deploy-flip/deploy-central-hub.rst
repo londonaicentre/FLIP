@@ -37,7 +37,7 @@ Prerequisites
 
 1. **AWS CLI configured with SSO access** — see `deploy/README.md <https://github.com/londonaicentre/FLIP/blob/main/deploy/README.md>`_.
 2. **Terraform >= 1.13.1** (or OpenTofu).
-3. **Python 3.12+** with `UV <https://docs.astral.sh/uv/guides/install-python/>`_.
+3. **Python 3.12 or 3.13** with `UV <https://docs.astral.sh/uv/guides/install-python/>`_.
 4. **GitHub CLI** — needed to authenticate against GitHub Container Registry for image pulls.
 5. **SSH key pair** at ``~/.ssh/host-aws`` — uploaded to AWS and used as the
    identity file for the SSM ProxyCommand-based SSH config.
@@ -96,19 +96,21 @@ This runs, in order:
 2. ``aws-login`` — AWS SSO auth for the selected profile.
 3. ``init`` — initialise Terraform with the environment-specific S3 backend.
 4. ``import-persistent`` — import existing persistent resources (Cognito, S3, Secrets) to prevent replacement.
-5. ``plan`` and ``apply`` — apply infrastructure changes.
-6. ``update-env`` — refresh the root env file with Terraform outputs.
-7. ``ssh-config`` — write SSH config blocks with SSM ProxyCommand.
-8. ``ansible-init`` — install ``psql`` on the minimal Central Hub SSM bastion
+5. ``generate-internal-service-key`` — mint the fl-server → flip-api internal service key.
+6. ``plan`` and ``apply`` — apply infrastructure changes.
+7. ``update-env`` — refresh the root env file with Terraform outputs.
+8. ``ssh-config`` — write SSH config blocks with SSM ProxyCommand.
+9. ``ansible-init`` — install ``psql`` on the minimal Central Hub SSM bastion
    and provision Docker, CloudWatch, and FL assets on the Trust EC2.
-9. ``deploy-centralhub`` — deploy the Central Hub ECS Fargate services at the
-   tip of the env's branch via immutable ``sha-<short7>`` task-definition
-   revisions, and publish the UI to S3/CloudFront. ``make rollback-centralhub``
-   repoints the services at the previous revision; see the "Central Hub deploys
-   and rollback" section of ``deploy/providers/AWS/README.md`` for the tag
-   resolution, the ``TAG=`` override, and the production rollout timing.
-10. ``deploy-trust`` — deploy any AWS-hosted trust services (skip when only using on-prem trusts).
-11. ``status`` — comprehensive health checks.
+10. ``deploy-centralhub`` — deploy the Central Hub ECS Fargate services at the
+    tip of the env's branch via immutable ``sha-<short7>`` task-definition
+    revisions, and publish the UI to S3/CloudFront. ``make rollback-centralhub``
+    repoints the services at the previous revision; see the "Central Hub deploys
+    and rollback" section of ``deploy/providers/AWS/README.md`` for the tag
+    resolution, the ``TAG=`` override, and the production rollout timing.
+11. ``register-trusts`` — register the shipped trust roster on the hub (after ``deploy-centralhub`` seeds the FL kit-slot pool).
+12. ``deploy-trust`` — deploy any AWS-hosted trust services (skip when only using on-prem trusts).
+13. ``status`` — comprehensive health checks.
 
 The ``PROD`` variable selects the environment file (``stag`` → ``.env.stag``,
 ``true`` → ``.env.production``) and is mapped onto ``TF_VAR_environment``
@@ -202,7 +204,9 @@ CI otherwise.
 ``alembic upgrade head`` on every container start, so a fresh ``flip-api`` deploy
 applies any pending revisions in order against the existing database:
 
-- **Development**: ``make restart`` re-creates the ``flip-api`` container; revisions apply on boot.
+- **Development**: ``make restart`` re-creates the ``flip-api`` service's container
+  (``deploy-flip-api-1`` — compose names it from the project, no service sets
+  ``container_name``); revisions apply on boot.
 - **Staging / Production**: a normal ECS redeploy (``make deploy-centralhub`` from
   ``deploy/providers/AWS/``) applies the revisions before the new task serves traffic.
 
@@ -225,8 +229,7 @@ Flower) share a wire contract for training metrics and logs. The metrics and log
   training in the gap.
 
 This pairs with the ``flip-utils`` package that adds the trust-internal service-key header to the
-``flip`` client wrappers (see the **Trust-internal Service Authentication** section in the repo-root
-``CLAUDE.md``).
+``flip`` client wrappers (see :ref:`trust-internal-service-authentication`).
 
 ************
 Email setup

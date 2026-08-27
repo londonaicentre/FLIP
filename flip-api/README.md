@@ -172,6 +172,25 @@ Per-service helper fixtures bootstrap the state each test needs:
 
 Why moto and not LocalStack: `cognito-idp` and `sesv2` are Pro-only on LocalStack — the free tier rejects `CreateUserPool` / `CreateEmailIdentity` outright. moto covers all three in OSS and runs in-process, so there's no container boot per test session.
 
+### Demo tooling (live stack)
+
+Three developer utilities drive the **running dev stack** end to end (none run in CI):
+
+- `tests/demo_video.py` (`make demo-video` from the repo root, `make demo_video` here) — records the scripted
+  end-to-end demo video: runs the six Cypress segments in `flip-ui/test/cypress/demo/` one Dockerised run at a
+  time, performs the slow waits (cohort responses, imaging import, FL training) off-camera by reusing
+  `tests/e2e_smoke.py`'s wait functions, then assembles one mp4. Resumable via `--project-id` /
+  `--from-segment`; `--video-scale` controls capture resolution (default 3 → 3840x2400).
+- `tests/seed_demo_projects.py` (`make seed_demo_projects`) — seeds a curated catalogue of radiology projects in
+  honest lifecycle states through the real API; `--states` phases the pull-heavy approved entries, `--cleanup`
+  removes everything it recorded in `tests/seed_demo_projects.json`. Idempotent: a re-run skips catalogue
+  entries whose project name already exists on the hub, so it never duplicates the real imaging imports.
+- `flip_api/scripts/create_demo_users.py` (`make create_demo_users`) — provisions the demo Cognito users the
+  recorder signs in as (`DEMO_RESEARCHER_PASSWORD` / `DEMO_ADMIN_PASSWORD` from env, never committed); restart
+  flip-api afterwards so boot seeding grants their roles. Before any write it resolves the target pool's
+  name/region/AWS account and requires an interactive `yes`, so a stale `AWS_COGNITO_USER_POOL_ID` or wrong
+  SSO account can't plant a known-password admin in an unintended pool.
+
 `aws_mock` also pins `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` / `AWS_SESSION_TOKEN` / `AWS_DEFAULT_REGION` to test-only stub values in the environment for the duration of the session, and clobbers any `AWS_PROFILE` from the developer's shell. Real-AWS credentials are never reachable while the fixture is active.
 
 Run the full suite (lint + mypy + pytest, requires the dockerised dependencies):

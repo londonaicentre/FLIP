@@ -42,6 +42,7 @@ import argparse
 import os
 import subprocess
 import sys
+import tempfile
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
@@ -180,7 +181,7 @@ def fetch_public_ip(timeout: float = 5.0) -> str | None:
 
 
 def docker_swarm_state() -> str:
-    """Return the local docker swarm state (`active`, `inactive`, etc.) or `unavailable`."""
+    """Return the local docker swarm state (`active`, `inactive`, etc.), `permission-denied`, or `unavailable`."""
     try:
         result = subprocess.run(
             ["docker", "info", "--format", "{{.Swarm.LocalNodeState}}"],
@@ -189,6 +190,8 @@ def docker_swarm_state() -> str:
     except (FileNotFoundError, subprocess.SubprocessError):
         return "unavailable"
     if result.returncode != 0:
+        if "permission denied" in (result.stderr or "").lower():
+            return "permission-denied"
         return "unavailable"
     return result.stdout.strip() or "inactive"
 
@@ -226,6 +229,16 @@ def check_swarm() -> Check:
     state = docker_swarm_state()
     if state == "active":
         return Check("Docker swarm", Status.PASS, "active on this host")
+    if state == "permission-denied":
+        return Check(
+            "Docker swarm", Status.FAIL,
+            "docker daemon is up but denied this user access",
+            hints=[
+                "Expected on an on-prem host — the login user is deliberately not in the docker group"
+                " (membership is root-equivalent). Do NOT add yourself to the docker group;"
+                " re-run via: sudo -E make onboard-onprem-trust KIT=<CODE>",
+            ],
+        )
     if state == "unavailable":
         return Check(
             "Docker swarm", Status.FAIL,
@@ -450,6 +463,47 @@ def check_gpu_capacity(kit_vars: dict[str, str], kit_present: bool, kit: str) ->
     )
 
 
+def check_site_privacy_policy(
+    kit_vars: dict[str, str], kit_present: bool, kit: str, repo_root: Path,
+) -> Check:
+    """Validate site-policy variables with the same stdlib-only renderer used at runtime."""
+    label = "Site privacy policy"
+    if not kit_present:
+        return Check(label, Status.PENDING, "pending — needs kit file")
+    hints = [f"Edit trust/.env.{kit} → Host-local profile; the fl-client fails closed on an invalid policy."]
+    policy_vars = {key: value for key, value in kit_vars.items() if key.startswith("FL_SITE_PRIVACY_")}
+    if kit_vars.get("FL_BACKEND", "").strip().lower() != "nvflare":
+        if any(value.strip() for value in policy_vars.values()):
+            return Check(
+                label,
+                Status.FAIL,
+                "configured but FL_BACKEND is not nvflare; the policy would be ignored",
+                hints=hints,
+            )
+        return Check(label, Status.PASS, "not applicable for this FL backend")
+
+    renderer = repo_root / "flip-utils" / "flip" / "nvflare" / "site_policy.py"
+    # The validation target must not exist: the renderer treats any existing file as a
+    # stale render, so os.devnull would make a no-policy kit report "would remove stale
+    # /dev/null". env stays kit-only on purpose — the check validates what the kit file
+    # provides, not whatever the operator's shell happens to export.
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        result = subprocess.run(
+            [sys.executable, str(renderer), "--check", str(Path(tmp_dir) / "privacy.json")],
+            capture_output=True,
+            check=False,
+            env=policy_vars,
+            text=True,
+        )
+    if result.returncode:
+        detail = result.stderr.strip().removeprefix("[site-privacy] FATAL: ")
+        return Check(label, Status.FAIL, detail or "site privacy validation failed", hints=hints)
+    # Keep the verdict half of the renderer's report; the rest names the throwaway
+    # validation path, which means nothing in a readiness table.
+    detail = result.stdout.strip().removeprefix("[site-privacy] ").split(" — ")[0]
+    return Check(label, Status.PASS, detail)
+
+
 def check_unrotated_passwords(
     kit_vars: dict[str, str], kit_present: bool, repo_root: Path, kit: str,
 ) -> Check:
@@ -588,6 +642,7 @@ def run_checks(kit: str, repo_root: Path) -> list[Check]:
         check_fl_kit_dir_exists(fl_kit_dir, kit_present),
         check_fl_kit_contents(kit_vars, kit_present),
         check_gpu_capacity(kit_vars, kit_present, kit),
+        check_site_privacy_policy(kit_vars, kit_present, kit, repo_root),
         check_unrotated_passwords(kit_vars, kit_present, repo_root, kit),
         check_data_dir(
             "OMOP data dir", "OMOP_DATA_DIR", "update-omop-data",
@@ -653,7 +708,9 @@ def main() -> None:
         heading(f"Status: READY {Status.PASS.glyph}  ({n_pass}/{len(checks)} pass{suffix})")
         print()
         print(f"  Bring the stack up:")
-        print(f"      {BOLD}make up-onprem-trust KIT={kit}{RESET}")
+        # sudo -E: the provisioned on-prem login user is deliberately not in the
+        # docker group (root-equivalent), so the stack comes up via sudo.
+        print(f"      {BOLD}sudo -E make up-onprem-trust KIT={kit}{RESET}")
         if n_warn:
             print(f"  {YELLOW}Heads-up:{RESET} review the {YELLOW}⚠️{RESET}  warning(s) above before running in production.")
         print()

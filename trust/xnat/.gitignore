@@ -23,6 +23,7 @@ gradle.properties
 *.log
 *-data/
 xnat/plugins/*.jar
+xnat/plugins/.s3-prefix
 xnat/build-artifacts/*.war
 
 xnat/webapps

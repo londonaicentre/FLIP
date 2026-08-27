@@ -27,11 +27,20 @@ cd ../..
 make up-trusts
 ```
 
-To run only the trust-api in development mode with live-reload:
+To run only the trust-api in a container against the running trust stack, use the
+service-scoped compose wrapper (there is no separate `make dev` target — the
+containerised `make up` is the local dev flow):
 
 ```bash
-uv sync
-make dev
+uv sync   # populate the local venv for IDE type-checks / running tests
+make up
+```
+
+To iterate without Docker (host-side reload), run `uvicorn` directly against the
+already-running sibling services:
+
+```bash
+uv run uvicorn trust_api.main:app --reload --port "${TRUST_API_PORT:-8020}"
 ```
 
 ### Running tests
@@ -51,7 +60,7 @@ These can be used with the Swagger UI at `http://localhost:<TRUST_API_PORT>/docs
   "project_id": "my_project",
   "query_id": "1",
   "query_name": "my_query",
-  "query": "SELECT * FROM omop.radiology_occurrence",
+  "query": "SELECT * FROM omop.image_occurrence",
   "trust_id": "mock"
 }
 ```
@@ -63,7 +72,7 @@ These can be used with the Swagger UI at `http://localhost:<TRUST_API_PORT>/docs
   "project_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
   "trust_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
   "project_name": "my_project",
-  "query": "SELECT * FROM omop.radiology_occurrence",
+  "query": "SELECT * FROM omop.image_occurrence",
   "users": [
     {
       "id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
@@ -78,5 +87,5 @@ These can be used with the Swagger UI at `http://localhost:<TRUST_API_PORT>/docs
 
 ```
 project: test
-query: SELECT * FROM omop.radiology_occurrence
+query: SELECT * FROM omop.image_occurrence
 ```

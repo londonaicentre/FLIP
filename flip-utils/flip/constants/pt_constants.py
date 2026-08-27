@@ -22,6 +22,9 @@ class PTConstants:
     PTServerName = "server"
     PTModelName = "model.pt"
     PTFileModelName = "FL_global_model.pt"
+    # Matches the name NVFLARE's persistor gives its best checkpoint, so results
+    # bundles carry the same filenames on both FL backends.
+    PTBestFileModelName = "best_FL_global_model.pt"
     PTLocalModelName = "local_model.pt"
 
     # Directory for models (empty in dev mode for local paths)

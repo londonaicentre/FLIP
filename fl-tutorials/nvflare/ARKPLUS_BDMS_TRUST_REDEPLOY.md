@@ -63,7 +63,9 @@ bulk-import-livelock fix) — XNAT re-pulling alongside is expected and harmless
 ## Redeploy — 5 steps (run on the BDMS trust host, in your FLIP checkout)
 
 Throughout, `<HANDLE>` is the same handle you already pass to `make up-onprem-trust KIT=…` today
-(your `Trust_2` kit) — you do **not** need a new kit.
+(your `Trust_2` kit) — you do **not** need a new kit. If your login user is not in the docker
+group (the default on hosts provisioned after FLIP-PT-048 — membership is root-equivalent),
+prefix the `docker …` commands below with `sudo` as well.
 
 **0. Check the kit file is readable by the user running `make`.** If it was extracted or written by
 root, make silently loads an EMPTY kit and fails later with a misleading
@@ -94,14 +96,16 @@ tar -C "$FL_KIT_DIR" -xzf ~/flkit-Trust_2-<date>.tar.gz
 ls "$FL_KIT_DIR/net-1/services/Trust_2/startup/fed_client.json"   # must exist
 ```
 
-**2. Pull the new images and recreate the changed containers.** Run in a **real terminal** (the XNAT
-step needs `sudo`):
+**2. Pull the new images and recreate the changed containers.** Run in a **real terminal**, via
+sudo (the login user is deliberately not in the docker group; `-E` keeps `$HOME` so root's docker
+reuses your `docker login ghcr.io` credentials):
 ```bash
-env PROD=true make up-onprem-trust KIT=<HANDLE>
+sudo -E env PROD=true make up-onprem-trust KIT=<HANDLE>
 ```
 This re-pulls all images at their configured tags and recreates only `fl-client` and `imaging-api`
-(the two whose tags changed). *If you prefer a clean restart:* `env PROD=true make down-onprem-trust
-KIT=<HANDLE>` first, then the command above. Your data is in persistent volumes and is **not** removed.
+(the two whose tags changed). *If you prefer a clean restart:* `sudo -E env PROD=true make
+down-onprem-trust KIT=<HANDLE>` first, then the command above. Your data is in persistent volumes
+and is **not** removed.
 
 **3. Confirm the fl-client came up on the GPU.** During start you should see:
 ```

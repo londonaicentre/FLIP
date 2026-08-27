@@ -10,9 +10,10 @@
 # limitations under the License.
 #
 
+from datetime import datetime, timezone
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from sqlmodel import Session, select
 
 from flip_api.auth.access_manager import can_modify_model
@@ -20,54 +21,49 @@ from flip_api.auth.dependencies import verify_token
 from flip_api.config import get_settings
 from flip_api.db.database import get_session
 from flip_api.db.models.main_models import UploadedFiles
-from flip_api.domain.schemas.file import FileUploadStatus
+from flip_api.domain.schemas.file import FileUploadStatus, SafeFileName
+from flip_api.file_services.services.malware_scan_service import reconcile_uploaded_file_in_background
 from flip_api.utils.logger import logger
 from flip_api.utils.s3_client import S3Client
 
 router = APIRouter(prefix="/files", tags=["file_services"])
 
 
-# def map_bucket_status_to_file_status(bucket_status: BucketStatus) -> FileUploadStatus:
-#     """Map bucket status to file upload status."""
-#     if bucket_status == BucketStatus.CLEAN:
-#         return FileUploadStatus.COMPLETED
-#     else:
-#         logger.info(f"Bucket status is neither clean or infected. Status: {bucket_status}")
-#         return FileUploadStatus.ERROR
-
-
-# def delete_file_from_s3(s3: S3Client, bucket: str, key: str) -> None:
-#     """Delete file from S3 bucket and log result."""
-#     s3.delete_object(bucket, key)
-#     logger.info(f"Deleted {key} from {bucket}")
-
-
-# TODO [#114] This endpoint was not defined in the old repo.
 @router.post("/process-scanned-file/{model_id}/{file}", response_model=dict[str, str])
 def process_scanned_file(
     model_id: UUID,
-    file: str,
+    file: SafeFileName,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_session),
     user_id: UUID = Depends(verify_token),
 ) -> dict[str, str]:
     """
-    Process a scanned file message from SNS.
+    Register an uploaded model file and kick off its malware-scan reconcile.
 
-    This endpoint receives SNS notifications about scanned files,
-    updates the database, and manages the files in S3 buckets.
+    Called by the UI once the presigned POST to the staging prefix succeeds.
+    Upserts the file's DB row as ``SCANNING`` (re-registering a file resets
+    any earlier terminal status — that is the only path out of ``INFECTED`` /
+    ``ERROR``), then schedules ``reconcile_uploaded_file`` as a background
+    task so the response never blocks on a download-and-scan. The UI observes
+    the outcome (``COMPLETED`` / ``INFECTED`` / ``ERROR``) through its normal
+    model polling; rows orphaned by a restart are recovered by the scheduled
+    sweep.
 
     Args:
-        model_id: The ID of the model the file belongs to, extracted from the file's key
-        file: The name of the file, extracted from the file's key
+        model_id: The ID of the model the file belongs to
+        file: The name of the uploaded file
+        background_tasks: FastAPI background-task hook the reconcile runs on
         db: Database session
         user_id: ID of the user making the request, obtained from authentication
 
     Returns:
-        dict[str, str]: A message indicating the result of the file processing
+        dict[str, str]: ``message`` plus the row's current ``status``
+        (always ``SCANNING`` on success).
 
     Raises:
-        HTTPException: 403 if the caller is not allowed to modify the model, or 500 if
-            the file cannot be processed.
+        HTTPException: 403 if the caller is not allowed to modify the model,
+            404 if the file is not present in the staging prefix, or 500 on
+            an unexpected failure.
     """
     try:
         if not can_modify_model(user_id, model_id, db):
@@ -78,149 +74,56 @@ def process_scanned_file(
             )
 
         s3 = S3Client()
+        uploaded_path = f"{get_settings().UPLOADED_MODEL_FILES_BUCKET}/{model_id}/{file}"
 
-        file_status = FileUploadStatus.COMPLETED
-
-        s3_path = f"{get_settings().UPLOADED_MODEL_FILES_BUCKET}/{model_id}/{file}"
-
-        # Try to find the file in the uploaded model files bucket
-        try:
-            logger.debug(f"Checking if the file {file} exists in the uploaded model files bucket...")
-            head_object = s3.head_object(s3_path)
-            logger.info(f"File {file} exists in the uploaded model files bucket.")
-            logger.info(
-                f"Successfully retrieved the file size and type. "
-                f"Size: {head_object.get('ContentLength')}, type: {head_object.get('ContentType')}"
+        if not s3.object_exists(uploaded_path):
+            logger.error(f"File {file!r} not found in the staging prefix for model {model_id}")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"File {file} has not been uploaded for this model",
             )
-        except Exception:
-            logger.error(f"File {file} does not exist in the uploaded model files bucket.")
 
-        # Get file size and type
-        # try:
-        #     logger.debug("Attempting to retrieve file size and type from S3...")
-        #     head_object = s3.head_object(s3_path)
-        #     logger.info(
-        #         f"Successfully retrieved the file size and type. "
-        #         f"Size: {head_object.get('ContentLength')}, type: {head_object.get('ContentType')}"
-        #     )
-        # except Exception:
-        #     logger.error(f"Unable to retrieve the file's details from s3: {s3_path}")
-        #     raise HTTPException(
-        #         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        #         detail="Unable to retrieve the file's details",
-        #     )
-
-        # Extract model ID from key
-        logger.debug("Attempting to extract model ID from the file's key...")
-        # key_parts = file.split("/")
-        # model_id = key_parts[0]
-        file_name = file
-        logger.debug(f"Extracted model ID: {model_id}, file name: {file_name} from the file's key: {file}")
-
-        logger.info(f"Extracted the model ID from the file's key successfully. Model ID: {model_id}")
-
-        # Insert or update file in database
-        logger.debug("Attempting to add file to database...")
-
+        head_object = s3.head_object(uploaded_path)
         content_length = head_object.get("ContentLength", 0)
-        content_type = head_object.get("ContentType", "deleted")
+        content_type = head_object.get("ContentType", "application/octet-stream")
 
-        # Check if file exists in database
         db_file = db.exec(
-            select(UploadedFiles).where(UploadedFiles.name == file_name, UploadedFiles.model_id == model_id)
+            select(UploadedFiles).where(UploadedFiles.name == file, UploadedFiles.model_id == model_id)
         ).first()
 
+        now = datetime.now(timezone.utc)
         if db_file:
-            # Update existing file
-            db_file.status = file_status
+            db_file.status = FileUploadStatus.SCANNING
             db_file.size = content_length
             db_file.type = content_type
+            db_file.updated_at = now
         else:
-            # Create new file record
             db_file = UploadedFiles(
-                name=file_name, status=file_status.value, size=content_length, type=content_type, model_id=model_id
+                name=file,
+                status=FileUploadStatus.SCANNING,
+                size=content_length,
+                type=content_type,
+                model_id=model_id,
+                updated_at=now,
             )
             db.add(db_file)
-
         db.commit()
         logger.info(
-            f"File has been added to the database. "
-            f"Key: {file_name}, status: {file_status.value}, size: {content_length}, "
+            f"Registered file for scanning. Name: {file}, size: {content_length}, "
             f"type: {content_type}, model ID: {model_id}"
         )
 
-        # If file is not clean, delete it and return error
-        # if scanned_file_message.status != BucketStatus.CLEAN:
-        #     logger.error(
-        #         f"The file {scanned_file_message.key} does not have a status of 'clean'. {json.dumps(message)}"
-        #     )
+        background_tasks.add_task(reconcile_uploaded_file_in_background, model_id, file)
 
-        #     try:
-        #         delete_file_from_s3(s3, scanned_file_message.bucket, scanned_file_message.key)
-        #     except Exception:
-        #         logger.warning("Unable to delete scanned file in bucket. This will need clearing up manually.")
-
-        #     raise HTTPException(
-        #         status_code=status.HTTP_400_BAD_REQUEST,
-        #         detail=f"The file {scanned_file_message.key} does not have a scanned status of 'clean'",
-        #     )
-
-        # Copy file to secure bucket
-        # scanned_model_files_bucket = get_settings().SCANNED_MODEL_FILES_BUCKET
-
-        # try:
-        #     s3.copy_object(
-        #         scanned_file_message.bucket,
-        #         scanned_file_message.key,
-        #         scanned_model_files_bucket,
-        #         scanned_file_message.key,
-        #     )
-        #     logger.info(f"Successfully copied {scanned_file_message.key} to {scanned_model_files_bucket}")
-        # except Exception:
-        #     logger.error(
-        #         f"Unable to copy scanned file in secure bucket: "
-        #         f"{scanned_file_message.bucket}/{scanned_file_message.key}"
-        #     )
-        #     raise HTTPException(
-        #         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        #         detail="Unable to copy scanned file in secure bucket",
-        #     )
-
-        # Verify file is accessible in secure bucket
-        # try:
-        #     logger.debug(f"Checking whether the file is accessible in the secure bucket {scanned_model_files_bucket}")
-        #     # s3.head_object(scanned_model_files_bucket, scanned_file_message.key)
-        #     # logger.info(f"Able to access the file {scanned_file_message.key} in {scanned_model_files_bucket}")
-        # except Exception:
-        #     # logger.error(
-        #     #     f"Unable to access scanned file in secure bucket: "
-        #     #     f"{scanned_model_files_bucket}/{scanned_file_message.key}"
-        #     # )
-        #     raise HTTPException(
-        #         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        #         detail="Unable to access scanned file in secure bucket",
-        #     )
-
-        # Delete file from original bucket
-        # try:
-        #     logger.debug(
-        #         f"Attempting to remove file {scanned_file_message.key} from "
-        #         "original bucket {scanned_file_message.bucket}"
-        #     )
-        #     delete_file_from_s3(s3, scanned_file_message.bucket, scanned_file_message.key)
-        # except Exception:
-        #     logger.warning("Unable to delete scanned file in original bucket. This will need clearing up manually.")
-
-        # logger.info(f"Output: {json.dumps(message)}")
-
-        # return message
-        return {"message": "File processed successfully"}
+        return {"message": "File registered for scanning", "status": FileUploadStatus.SCANNING.value}
 
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Unhandled error: {str(e)}")
+        # Log the class name only — never echo exception text into the
+        # response, and keep URL-bearing messages out of the log line.
+        logger.error(f"Unhandled error in process_scanned_file for model {model_id}: {type(e).__name__}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Internal server error: {e}",
+            detail="Internal server error",
         )

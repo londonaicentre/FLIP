@@ -80,7 +80,16 @@
                         </button>
                     </MenuItem>
                 </div>
-                <div class="px-1 py-1">
+                <!-- Account actions are hidden in the public demo: it holds no
+                     session of its own, so neither does anything useful, and
+                     Sign Out is actively harmful. The demo is served same-origin
+                     with the real app, so its Sign Out reached the real
+                     localStorage — a signed-in FLIP user who opened the demo in
+                     the same browser and clicked it got a GlobalSignOut on every
+                     device, and the failure path clears the shared origin's
+                     storage regardless (FLIP#794 review). src/main.ts leaves
+                     Amplify unconfigured in demo builds for the same reason. -->
+                <div v-if="!IS_DEMO" class="px-1 py-1">
                     <MenuItem v-slot="{ active }">
                         <button
                             :class="[
@@ -98,7 +107,7 @@
                         </button>
                     </MenuItem>
                 </div>
-                <div class="px-1 py-1">
+                <div v-if="!IS_DEMO" class="px-1 py-1">
                     <MenuItem v-slot="{ active }">
                         <button
                             :class="[
@@ -128,6 +137,7 @@
 import { Menu, MenuButton, MenuItem, MenuItems } from "@headlessui/vue";
 import { computed } from "vue";
 
+import { IS_DEMO } from "@/demo/bootstrap";
 import { routeChange } from "@/router";
 
 interface IAiUserDropdownProps {

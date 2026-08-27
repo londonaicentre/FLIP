@@ -12,10 +12,11 @@
 
 .PHONY: build build-fl dev prod clean stop up down up-no-trust up-trusts central-fl central-hub \
 		restart restart-fl restart-no-trust ci tests debug create-networks remove-networks recreate-networks consolidate-deps \
-		check-aws-access generate-internal-service-key \
+		check-aws-access generate-internal-service-key generate-xnat-credentials \
 		register-trust register-trusts new-trust _wait-for-hub integration_test \
 		sync-trust-kit sync-trust-kits lock \
-		deploy-trust-k8s undeploy-trust-k8s
+		deploy-trust-k8s undeploy-trust-k8s \
+		demo-video demo-users seed-demo-projects
 
 ifeq ($(PROD),true)
 MAIN_ENV_FILE=.env.production
@@ -32,6 +33,10 @@ ENV=development
 endif
 
 # Print which environment files are being used
+# Exported so `make -C flip-api` / `-C trust` resolve the SAME env file rather than
+# hardcoding .env.development. That is what lets a second hub run from ONE checkout:
+#     make up MAIN_ENV_FILE=.env.b.development
+export MAIN_ENV_FILE
 $(info Using MAIN_ENV_FILE: $(MAIN_ENV_FILE))
 
 # replace environment variables by the values from the .env files
@@ -41,6 +46,7 @@ export $(shell sed 's/=.*//' $(MAIN_ENV_FILE))
 endif
 
 include deploy/fl_backend.mk
+include deploy/instance.mk
 
 # Host gid for group_add on FL containers reading host-provisioned 640 certs/keys (dev).
 export DOCKER_GID := $(shell id -g)
@@ -48,11 +54,11 @@ export DOCKER_GID := $(shell id -g)
 COMMON_COMPOSE_FILE := deploy/compose.$(__DCKR_SUFFIX).yml
 FL_BACKEND_COMPOSE_FILE := deploy/compose.$(__DCKR_SUFFIX).$(FL_BACKEND).yml
 
-# Resolve FL_PROVISIONED_DIR (from .env) to an absolute path relative to this Makefile
-# Docker requires absolute paths for volume mounts; the .env value may be relative
+# Resolve FL_PROVISIONED_DIR / FL_JOBS_DIR (from .env, or overridden at the CLI) to
+# absolute paths against the repo root — see abs_or_relative_to in deploy/fl_backend.mk.
 MAKEFILE_DIR := $(dir $(abspath $(firstword $(MAKEFILE_LIST))))
-override FL_PROVISIONED_DIR := $(abspath $(MAKEFILE_DIR)/$(FL_PROVISIONED_DIR))
-override FL_JOBS_DIR := $(abspath $(MAKEFILE_DIR)/$(FL_JOBS_DIR))
+override FL_PROVISIONED_DIR := $(call abs_or_relative_to,$(FL_PROVISIONED_DIR),$(MAKEFILE_DIR))
+override FL_JOBS_DIR := $(call abs_or_relative_to,$(FL_JOBS_DIR),$(MAKEFILE_DIR))
 
 # Service configuration
 define SERVICE_CONFIG
@@ -70,9 +76,12 @@ get_service_type = $(word 2,$(subst :, ,$(filter $1:%,$(SERVICE_CONFIG))))
 get_service_name = $(subst -api,, $(subst flip-,central hub ,$(subst fl-,central FL ,$1)))
 
 export COMPOSE_BAKE=true
-DOCKER_COMMAND=docker compose -f $(COMMON_COMPOSE_FILE) -f $(FL_BACKEND_COMPOSE_FILE)
-DEBUG_OVERRIDE_COMPOSE_COMMAND=docker compose -f $(COMMON_COMPOSE_FILE) -f $(FL_BACKEND_COMPOSE_FILE) -f deploy/compose.development.debug.override.yml
-SHOW_LOGS_CENTRAL_HUB=docker logs -f flip-api --tail 100 --timestamps --follow
+DOCKER_COMMAND=docker compose -p $(COMPOSE_PROJECT) -f $(COMMON_COMPOSE_FILE) -f $(FL_BACKEND_COMPOSE_FILE)
+DEBUG_OVERRIDE_COMPOSE_COMMAND=docker compose -p $(COMPOSE_PROJECT) -f $(COMMON_COMPOSE_FILE) -f $(FL_BACKEND_COMPOSE_FILE) -f deploy/compose.development.debug.override.yml
+# Through compose, addressing the service rather than the container: the containers are
+# named by the project (deploy-flip-api-1, or <instance>-deploy-flip-api-1), so a literal
+# `docker logs flip-api` names nothing on any stack.
+SHOW_LOGS_CENTRAL_HUB=$(DOCKER_COMMAND) logs --follow --tail 100 --timestamps flip-api
 GENERIC_LOGS=docker logs -f --tail 100 --timestamps --follow
 
 # UP_PULL_FLAGS controls the pull/build behaviour of the `up` targets.
@@ -259,7 +268,13 @@ restart: down up
 # NOTE: flip-api is recreated first so its startup seeding re-applies FL_BACKEND onto the
 #       FLNets rows — the seeded backend is canonical, so this is how a framework switch
 #       (make restart-fl FL_BACKEND=...) takes effect. --no-deps leaves flip-db untouched.
-restart-fl:
+# NOTE: _ensure-fl-jobs-dir is a prerequisite for the same reason `up` has it. The FL APIs
+#       bind-mount jobs/<net> and create a per-model dir under it at submit time; if the
+#       source path does not exist, the daemon creates it as root, and the container (uid
+#       1000) then cannot mkdir inside it. The failure surfaces four layers away as a 500 on
+#       /upload_app and an opaque model ERROR, with the PermissionError only in the FL API's
+#       own log — so a tree that has never run `make up` fails every FL job until this runs.
+restart-fl: _ensure-fl-jobs-dir
 	@echo "🔄 Restarting FL services ($(FL_BACKEND))..."
 	@echo "🔄 Step 1: Stopping and removing old FL clients..."
 	$(MAKE) -C trust down-fl-clients
@@ -312,15 +327,18 @@ debug-off-all:
 	DEBUG=false $(DEBUG_OVERRIDE_COMPOSE_COMMAND) up --remove-orphans -d
 	$(MAKE) -C trust debug-off
 
+# Hub-shared network names all follow `$(INSTANCE_PREFIX)deploy_<name>`, where `deploy_` names
+# the hub compose project that owns them — the same string compose would generate itself if it
+# still created them, rather than looked them up `external:` (FLIP#957).
 create-networks-centralhub:
-	@{ docker network inspect central-hub-network >/dev/null 2>&1 || docker network create --driver bridge central-hub-network || true; }
+	$(call ensure_bridge_network,$(INSTANCE_PREFIX)deploy_central-hub-network)
 
 create-networks: create-networks-centralhub
 	$(MAKE) -C trust create-networks
 
 remove-networks:
 	@echo "🗑️  Removing all networks..."
-	@docker network rm central-hub-network 2>/dev/null || true
+	@docker network rm $(INSTANCE_PREFIX)deploy_central-hub-network 2>/dev/null || true
 	$(MAKE) -C trust remove-networks
 	@echo "✅ All networks removed!"
 
@@ -375,6 +393,7 @@ unit_test:
 	$(MAKE) -C flip-ui unit_test
 	$(MAKE) -C trust/data-access-api unit_test
 	$(MAKE) -C trust/imaging-api unit_test
+	$(MAKE) -C trust/omop-db unit_test
 	$(MAKE) -C trust/trust-api unit_test
 	$(MAKE) -C trust/xnat unit_test
 
@@ -383,7 +402,7 @@ integration_test:
 	$(MAKE) -C trust integration_test
 
 # Python projects managed by uv; each has its own pyproject.toml + uv.lock.
-UV_PROJECTS := . flip-api docs trust/trust-api trust/imaging-api trust/data-access-api trust/xnat/tests deploy/providers/AWS
+UV_PROJECTS := . flip-api docs trust/trust-api trust/imaging-api trust/data-access-api trust/omop-db trust/xnat/tests deploy/providers/AWS flip-utils fl-services/flower/fl-api-flower fl-services/nvflare/fl-api-base
 
 # Regenerate every uv.lock so it matches its pyproject.toml. Run after changing
 # dependencies in any service, or to refresh all lockfiles in one pass.
@@ -405,7 +424,26 @@ lock:
 # Useful for sanity-checking PRs without manually clicking through the UI.
 # See flip-api/Makefile for overrides (MODEL_FILES_DIR, QUERY_FILE, EXTRA_ARGS).
 e2e_smoke:
-	$(MAKE) -C flip-api e2e_smoke $(if $(FL_BACKEND),FL_BACKEND=$(FL_BACKEND)) $(if $(MODEL_FILES_DIR),MODEL_FILES_DIR=$(MODEL_FILES_DIR)) $(if $(QUERY_FILE),QUERY_FILE=$(QUERY_FILE)) $(if $(EXTRA_ARGS),EXTRA_ARGS="$(EXTRA_ARGS)")
+	$(MAKE) -C flip-api e2e_smoke $(if $(FL_BACKEND),FL_BACKEND=$(FL_BACKEND)) $(if $(MODEL_FILES_DIR),MODEL_FILES_DIR="$(abspath $(MODEL_FILES_DIR))") $(if $(QUERY_FILE),QUERY_FILE="$(abspath $(QUERY_FILE))") $(if $(EXTRA_ARGS),EXTRA_ARGS="$(EXTRA_ARGS)")
+
+# Record the end-to-end demo video against the running dev stack: six
+# Dockerised Cypress segments over the live UI (real Cognito, trusts, S3,
+# FL training) with the slow waits handled off-camera between segments, then
+# ffmpeg-assembled into one mp4. Local dev tool — not run in CI. Options via
+# DEMO_ARGS (see flip-api/tests/demo_video.py), e.g. DEMO_ARGS="--skip-xnat".
+demo-video:
+	$(MAKE) -C flip-api demo_video $(if $(DEMO_ARGS),DEMO_ARGS="$(DEMO_ARGS)")
+
+# Provision the demo Cognito users the recorder signs in as (passwords from
+# DEMO_RESEARCHER_PASSWORD / DEMO_ADMIN_PASSWORD env vars, never committed).
+demo-users:
+	$(MAKE) -C flip-api create_demo_users
+
+# Pre-populate the platform with a curated catalogue of radiology projects in
+# honest lifecycle states (no fabricated metrics/results). Cleanup:
+# make seed-demo-projects EXTRA_ARGS="--cleanup"
+seed-demo-projects:
+	$(MAKE) -C flip-api seed_demo_projects $(if $(EXTRA_ARGS),EXTRA_ARGS="$(EXTRA_ARGS)")
 
 generate-internal-service-key:
 	$(MAKE) -C flip-api generate-internal-service-key $(if $(ENV_FILE),ENV_FILE=$(ENV_FILE)) $(if $(FORCE),FORCE=$(FORCE))
@@ -447,6 +485,7 @@ register-trust: _wait-for-hub
 	  kitjson="$$($(DOCKER_COMMAND) exec -T flip-api uv run python -m flip_api.scripts.register_trust "$$@")" \
 	    || { echo "❌ register_trust failed for KIT=$(KIT)"; exit 1; }; \
 	  printf '%s\n' "$$kitjson" | uv run --no-config scripts/distribute_trust_kits.py --target "$$kit"
+	@$(MAKE) generate-xnat-credentials KIT=$(KIT)
 
 # Register every dev trust: the shipped trust/.env.<CODE>.<env>.example kits ARE
 # the roster (each is seeded to a live kit + registered). Used by `make up`.
@@ -507,6 +546,26 @@ deploy-trust-k8s: ## Deploy trust services to Kubernetes via Helm
 
 undeploy-trust-k8s: ## Remove trust services from Kubernetes
 	$(MAKE) -C deploy/providers/kubernetes undeploy
+
+# Mint the XNAT stack passwords (XNAT_DATASOURCE_PASSWORD,
+# XNAT_DATASOURCE_ADMIN_PASSWORD, XNAT_ACTIVEMQ_PASSWORD) into kit files —
+# they are runtime-only secrets, never committed and never baked into the
+# published XNAT image (FLIP-PT-056). Runs automatically inside
+# `register-trust`; invoke directly to backfill every local kit, one kit
+# (KIT=<CODE>), an explicit file (ENV_FILE=<path>), or rotate (FORCE=1).
+# Existing non-placeholder values are preserved unless FORCE=1.
+generate-xnat-credentials:
+	@if [ -n "$(ENV_FILE)" ]; then \
+	  $(MAKE) -C flip-api generate-xnat-credentials ENV_FILE=$(ENV_FILE) $(if $(FORCE),FORCE=$(FORCE)); \
+	elif [ -n "$(KIT)" ]; then \
+	  $(MAKE) -C flip-api generate-xnat-credentials ENV_FILE=$(CURDIR)/trust/.env.$(KIT).$(ENV) $(if $(FORCE),FORCE=$(FORCE)); \
+	else \
+	  found=0; for kit in trust/.env.*.$(ENV); do \
+	    [ -e "$$kit" ] || continue; case "$$kit" in *.example) continue;; esac; \
+	    found=1; $(MAKE) -C flip-api generate-xnat-credentials ENV_FILE=$(CURDIR)/$$kit $(if $(FORCE),FORCE=$(FORCE)) || exit 1; \
+	  done; \
+	  [ "$$found" = 1 ] || echo "ℹ️  No trust/.env.<CODE>.$(ENV) kit files found — run 'make register-trusts' (or 'make register-trust KIT=<CODE>') first."; \
+	fi
 
 check-aws-access:
 	@echo "🔎 Checking AWS CLI access..."

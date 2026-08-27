@@ -105,13 +105,12 @@ sim:
 	SITE1_IMAGES_DIR="$(SITE1_IMAGES_DIR)" SITE1_DATAFRAME="$(SITE1_DATAFRAME)" \
 	SITE2_IMAGES_DIR="$(SITE2_IMAGES_DIR)" SITE2_DATAFRAME="$(SITE2_DATAFRAME)" \
 	$(UV_RUN) python job.py \
-		--n_clients 2 \
-		--workspace ../../testing/runs/workspace
+		--n_clients 2
 
 # --- Tutorial-harness entrypoint ---
 # The shared harness (fl-tutorials/nvflare/Makefile) auto-discovers any dir with a .env.app and invokes
-# `make run`. The Client API variant has no legacy testing/ harness path, so `run` prepares the checkpoint
-# and delegates to `sim` (the recipe/simulator path via job.py).
+# `make run`, which prepares the checkpoint and delegates to `sim` (the recipe/simulator path
+# via job.py).
 run: prepare-checkpoint sim
 
 clean:

@@ -19,25 +19,37 @@ from log_config import LoggingMiddleware
 
 from trust_api.config import get_settings
 from trust_api.routers.health import router as health_router
+from trust_api.services.health_collector import run_health_collector
 from trust_api.services.task_poller import run_poller
+from trust_api.utils.background import reset_dead_background_tasks, watch_background_task
 from trust_api.utils.logger import logger
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-    """Start the task poller background service.
+    """Start the task poller and health collector background services.
 
     Args:
         app (FastAPI): The FastAPI application instance being started.
     """
-    poller_task = asyncio.create_task(run_poller())
-    logger.info("Trust API started with task poller")
+    reset_dead_background_tasks()
+    background_tasks = [
+        asyncio.create_task(run_poller(), name="task_poller"),
+        asyncio.create_task(run_health_collector(), name="health_collector"),
+    ]
+    # Both loops run until shutdown, so a finished task means the service is gone:
+    # record it so /health stops claiming "ok" while nothing is polling or probing.
+    for task in background_tasks:
+        task.add_done_callback(watch_background_task)
+    logger.info("Trust API started with task poller and health collector")
     yield
-    poller_task.cancel()
-    try:
-        await poller_task
-    except asyncio.CancelledError:
-        pass
+    for task in background_tasks:
+        task.cancel()
+    for task in background_tasks:
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
     logger.info("Trust API shutting down")
 
 

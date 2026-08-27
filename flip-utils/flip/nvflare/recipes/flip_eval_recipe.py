@@ -11,16 +11,18 @@
 
 """Recipe describing a FLIP evaluation job that drives the evaluator via the NVFLARE Client API.
 
-This is the Client-API counterpart of the legacy ``evaluation`` job type. Where the legacy app pairs
-the ``RUN_EVALUATOR`` executor with a bespoke ``ModelEval`` + ``EvaluationPTModelLocator`` server flow
-(broadcasting *all* uploaded checkpoints to clients as one ``DataKind.COLLECTION`` DXO), this recipe
-evaluates a **single** uploaded model and reuses the same cross-site validation path the
+This replaced the retired legacy ``evaluation`` job type. Where the legacy app paired the
+``RUN_EVALUATOR`` executor with a bespoke ``ModelEval`` + ``EvaluationPTModelLocator`` server flow
+(broadcasting *all* uploaded checkpoints to clients as one ``DataKind.COLLECTION`` DXO — all four
+classes deleted with the Executor syntax), this recipe broadcasts each uploaded model as its own
+single-model ``validate`` task and reuses the same cross-site validation path the
 :class:`~flip.nvflare.recipes.FlipFedAvgRecipe` already drives for its ``validate`` phase:
 
 * server: NVFLARE's stock ``GlobalModelEval`` (which never requests client models)
-  loads the uploaded checkpoint via
-  :class:`~flip.nvflare.components.EvaluationModelLocator` and broadcasts it to every client as a single
-  ``FLModel``; :class:`~flip.nvflare.components.EvaluationJsonGenerator` collects the returned metrics
+  loads each checkpoint named in ``config.json['models']`` via
+  :class:`~flip.nvflare.components.EvaluationModelLocator` and broadcasts it to every client as its
+  own single-model ``FLModel`` — one ``validate`` task per (model, client);
+  :class:`~flip.nvflare.components.EvaluationJsonGenerator` collects the returned metrics
   into ``evaluation_results.json`` (unchanged output contract); ``PersistToS3AndCleanup`` zips + uploads
   the run dir to S3.
 * client: the stock ``InProcessClientAPIExecutor`` runs the evaluator script, which is the canonical
@@ -128,7 +130,7 @@ class FlipEvalRecipe(Recipe):
         # here, so its inventory stays empty and it simply zips the run dir).
         persistor_id = job.to_server(PTFileModelPersistor(model={"path": "models.get_model"}), id="persistor")
 
-        # Server: FLIP components — single-model checkpoint locator, results JSON, event handler, S3 persistor.
+        # Server: FLIP components — per-model checkpoint locator, results JSON, event handler, S3 persistor.
         job.to_server(EvaluationModelLocator(), id="model_locator")
         job.to_server(EvaluationJsonGenerator(), id="json_generator")
         job.to_server(ServerEventHandler(), id="flip_server_event_handler")

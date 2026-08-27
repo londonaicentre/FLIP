@@ -95,6 +95,28 @@ Namespace name
 {{- end }}
 
 {{/*
+OMOP database connection environment, shared by the vocab-load Job's probe and
+loader containers. Both talk to the same database with the same credentials —
+keeping one definition means a rename here cannot leave the probe reading a
+different database than the loader writes to.
+*/}}
+{{- define "flip-trust.omopVocabDbEnv" -}}
+- name: OMOP_DB_HOST
+  value: "omop-db"
+- name: OMOP_DB_PORT
+  value: "5432"
+- name: OMOP_POSTGRES_USER
+  value: {{ .Values.omopDb.credentials.user | quote }}
+- name: OMOP_POSTGRES_DB
+  value: {{ .Values.dataAccessApi.env.OMOP_POSTGRES_DB | quote }}
+- name: OMOP_POSTGRES_PASSWORD
+  valueFrom:
+    secretKeyRef:
+      name: {{ if .Values.secrets.create }}{{ include "flip-trust.fullname" . }}-secrets{{ else }}{{ .Values.secrets.existingName }}{{ end }}
+      key: omop-postgres-password
+{{- end }}
+
+{{/*
 FL client image name based on backend selection
 */}}
 {{- define "flip-trust.flClientImage" -}}
@@ -105,4 +127,19 @@ FL client image name based on backend selection
 {{- else }}
 {{- printf "%s/flower-supernode:%s" $registry $tag }}
 {{- end }}
+{{- end }}
+
+{{/*
+Whether the FL client's participant kit is fetched from S3 by the kit-init
+initContainer, for the ACTIVE backend. Returns a non-empty string when true and
+an empty string (falsy) otherwise.
+
+Both the kit-init initContainer and the fl-client-kit volume must agree on this:
+when the kit comes from S3 the volume is an emptyDir that kit-init populates,
+otherwise it is the hostPath at flClient.kitHostPath. Gating one of them on a
+single backend's flag lets the two disagree, which renders an empty volume and
+drops a staged kit silently (#999) — so both call this helper.
+*/}}
+{{- define "flip-trust.flClientKitFromS3" -}}
+{{- if (index .Values.flClient .Values.flBackend).kitFromS3.enabled }}true{{ end }}
 {{- end }}

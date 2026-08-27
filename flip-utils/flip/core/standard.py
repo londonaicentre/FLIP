@@ -35,7 +35,7 @@ from requests import HTTPError
 from flip.constants.flip_constants import FlipConstants, ModelStatus, ResourceType
 from flip.core.base import FLIPBase
 from flip.exceptions import ResultsUploadError
-from flip.schemas import FLLogEvent, TrainingLog, TrainingMetrics
+from flip.schemas import DEFAULT_X_AXIS_LABEL, FLLogEvent, TrainingLog, TrainingMetrics
 from flip.utils.utils import Utils
 
 # (connect, read) bound on every hub call (update_status, send_metrics,
@@ -322,7 +322,16 @@ class FLIPStandardProd(FLIPBase):
             self.logger.exception(e)
 
     @override
-    def send_metrics(self, client_name: str, model_id: str, label: str, value: float, round: int) -> None:
+    def send_metrics(
+        self,
+        client_name: str,
+        model_id: str,
+        label: str,
+        value: float,
+        global_round: int,
+        x_value: float | None = None,
+        x_label: str | None = None,
+    ) -> None:
         """
         Sends a metric value to the Central Hub.
 
@@ -331,13 +340,26 @@ class FLIPStandardProd(FLIPBase):
             model_id (str): The ID of the model.
             label (str): The label of the metric.
             value (float): The value of the metric.
-            round (int): The round number.
+            global_round (int): Provenance — the FL global round the metric is reported in (never the
+                plot coordinate).
+            x_value (float | None): The x-coordinate the metric is plotted at; ``None`` plots it at
+                ``global_round`` (the schema backfills it).
+            x_label (str | None): Label naming the x-axis; falls back to "Global Rounds" when not given.
         """
-        payload = TrainingMetrics(
-            fl_client_name=client_name,
-            global_round=round,
-            label=label,
-            result=value,
+        # model_validate (not kwargs) so a None x_value reaches the schema's backfill validator,
+        # which resolves it to the global round — the schema owns that default, not this call site.
+        # `or` (not an explicit None check) is deliberate for x_label: "" is not a meaningful axis
+        # name and the hub rejects it (min_length=1), so a falsy label coalesces to the default
+        # rather than shipping a guaranteed-reject payload.
+        payload = TrainingMetrics.model_validate(
+            {
+                "fl_client_name": client_name,
+                "global_round": global_round,
+                "label": label,
+                "result": value,
+                "x_value": x_value,
+                "x_label": x_label or DEFAULT_X_AXIS_LABEL,
+            }
         ).model_dump()
 
         endpoint = _join_url(FlipConstants.FLIP_API_INTERNAL_URL, f"model/{model_id}/metrics")
@@ -642,14 +664,25 @@ class FLIPStandardDev(FLIPBase):
         self.logger.info("[DEV] Status → %s", new_model_status)
 
     @override
-    def send_metrics(self, client_name: str, model_id: str, label: str, value: float, round: int) -> None:
+    def send_metrics(
+        self,
+        client_name: str,
+        model_id: str,
+        label: str,
+        value: float,
+        global_round: int,
+        x_value: float | None = None,
+        x_label: str | None = None,
+    ) -> None:
         """Log only in dev mode - no actual metrics sending."""
         self.logger.info(
-            "[DEV] Metric → %s=%0.4f (%s, round=%s)",
+            "[DEV] Metric → %s=%0.4f (%s, global_round=%s, x_value=%s, x_label=%s)",
             label,
             value,
             client_name,
-            round,
+            global_round,
+            x_value,
+            x_label,
         )
 
     @override

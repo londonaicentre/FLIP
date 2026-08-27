@@ -149,7 +149,9 @@ spec:
                 secretKeyRef:
                   name: {{ if .Values.secrets.create }}{{ include "flip-trust.fullname" . }}-secrets{{ else }}{{ .Values.secrets.existingName }}{{ end }}
                   key: orthanc-registered-users
-                  optional: true
+                  # Deliberately NOT optional (FLIP-PT-091): a missing key must
+                  # fail the pod (CreateContainerConfigError) rather than boot a
+                  # PACS with no registered users.
           volumeMounts:
             - name: data
               mountPath: /var/lib/orthanc/db

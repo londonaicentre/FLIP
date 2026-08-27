@@ -43,6 +43,15 @@ make up FL_BACKEND=flower DOCKER_FL_REGISTRY= DOCKER_FL_TAG=dev   # run the hub 
 `DOCKER_FL_REGISTRY=` empties the registry so Docker resolves the local `flower-*:dev` images
 (see [`deploy/fl_backend.mk`](../../deploy/fl_backend.mk)).
 
+### Containers run as a non-root user (GHSA-8465), with capabilities hardened
+
+`flower-supernode` and `flower-fl-base` inherit the non-root `app` user from the upstream `flwr/base`
+image. The trust-deployment `fl-client-net-*` services (`trust/deploy/compose_trust.{production,development}.flower.yml`)
+also set `security_opt: [no-new-privileges:true]` and `cap_drop: [ALL]`, matching every other trust-side
+service — the `flower-supernode` entrypoint does no chmod/chown at all, so no capability needs adding
+back in either environment. See [`deploy/README.md`](../../deploy/README.md#linux-capability-restrictions)
+for the full per-service capability table.
+
 ## Runtime dependency installation (and where flip-utils comes from)
 
 Flower ≥1.32 installs an app's declared dependencies **at run time**: when a run starts, the
@@ -74,10 +83,19 @@ so confirm the running container carries your change by inspecting the file you 
 
 > ⚠️ The pin lives in the **fl-apps templates**, so it covers hub-stack runs (flip-api bundles every
 > uploaded app with a template). The standalone stacks below submit apps straight from
-> `fl-tutorials/flower/`, whose pyprojects do **not** pin flip-utils — a tutorial submitted there
-> runtime-installs its declared `flip-utils` from PyPI (the plain Flower model). To exercise an
-> unpublished flip-utils via `make submit`, temporarily add the same `[tool.uv.sources]` pin to the
-> tutorial's pyproject — the images bake `/opt/flip-utils` in-container.
+> `fl-tutorials/flower/`, bypassing the templates — and a tutorial pyproject **cannot** carry the
+> same pin, because `/opt/flip-utils` does not exist on a workstation and `uv sync` then fails
+> outright (breaking local linting of the tutorial). The tutorials therefore **do not declare
+> flip-utils at all**: with nothing to install, the per-run environment has no `flip`, and
+> `import flip` falls through the prepended per-run path to the image's baked-in copy — the same
+> flip-utils the platform runs.
+>
+> Declaring it is the trap: `uv sync` would resolve `flip-utils` from **PyPI** (currently 0.1.8,
+> against the repo's 0.4.0) into the per-run environment, which is prepended to `sys.path` and so
+> shadows the image copy. PyPI 0.1.8 has no `flip/flower/strategy.py`, so a declared dependency
+> breaks `from flip.flower.strategy import FlipFedAvg` before training starts. Either way, a
+> flip-utils change reaches the tutorials only via an image rebuild
+> (`make build-fl FL_BACKEND=flower`).
 
 ## Step-by-step provisioning
 
@@ -125,9 +143,25 @@ a participant slot.
 ```bash
 make -C fl-services/flower up                 # INSECURE stack (1 SuperLink + 2 SuperNodes + fl-api)
 make -C fl-services/flower up-secure          # SECURE stack (TLS + SuperNode auth); needs `provision` first
-make -C fl-services/flower submit APP=numpy   # submit a job to the running stack
+make -C fl-services/flower submit APP=xray_classification   # submit a job to the running stack
 make -C fl-services/flower down
 ```
+
+**Fetch the dataset before `up`.** The default `APP=xray_classification` is not self-contained: it
+reads images and a dataframe from the SuperNodes' bind mounts, and `up` only creates *placeholder*
+mounts (`DEV_IMAGES_DIR` defaults to `/tmp/flwr-dev-images`, `DEV_DATAFRAME` to
+`/tmp/flwr-dev-dataframe.csv` — see [`compose.dev.yml`](compose.dev.yml)). Submitting against those
+trains on an empty dataset with no signal that the data is missing. So download the data first, then
+point both variables at it when bringing the net up:
+
+```bash
+make -C fl-tutorials download-xray-data FL_BACKEND=flower   # → fl-tutorials/flower/data/xrays_mini_300/
+make -C fl-services/flower up \
+  DEV_IMAGES_DIR=$(pwd)/fl-tutorials/flower/data/xrays_mini_300/accession-resources \
+  DEV_DATAFRAME=$(pwd)/fl-tutorials/flower/data/xrays_mini_300/sample_get_dataframe_response.csv
+```
+
+(Run from the repo root; `data/` is gitignored. `up-secure` takes the same two variables.)
 
 The central-hub multi-net Flower topology is the separate
 [`deploy/compose.development.flower.yml`](../../deploy/compose.development.flower.yml), driven by the

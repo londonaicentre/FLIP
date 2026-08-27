@@ -14,69 +14,9 @@
 
 
 
-import { containsForbiddenCommands, filterByQueriedTrustIds } from "@/utils/cohort/query";
+import { filterByQueriedTrustIds } from "@/utils/cohort/query";
 
 describe("Query", () => {
-    describe("containsForbiddenCommands", () => {
-        it("returns true for each forbidden command", () => {
-            const forbiddenCommands = [
-                "alter user",
-                "alter table",
-                "alter database",
-                "drop table",
-                "drop user",
-                "drop role",
-                "drop database",
-                "create table",
-                "substring"
-            ];
-
-            forbiddenCommands.forEach((command) => {
-                const result = containsForbiddenCommands(command);
-
-                expect(result).toBeTruthy();
-            });
-        });
-
-        it("returns true for each forbidden command ignoring case", () => {
-            const forbiddenCommands = [
-                "ALTER USER",
-                "ALTER table",
-                "alter DATABASE",
-                "DrOp TaBlE",
-                "DROP USER",
-                "drop ROLE",
-                "DROP database",
-                "CREATE table",
-                "SUBSTRING"
-            ];
-
-            forbiddenCommands.forEach((command) => {
-                const result = containsForbiddenCommands(command);
-
-                expect(result).toBeTruthy();
-            });
-        });
-
-        it("returns false for valid command", () => {
-            const command = "SELECT * FROM AValidTable;";
-
-            const result = containsForbiddenCommands(command);
-
-            expect(result).toBeFalsy();
-        });
-
-        it("returns the same response if the command is ran twice", () => {
-            const command = "ALTER USER serviceaccount WITH PASSWORD 'new_password';";
-
-            const result1 = containsForbiddenCommands(command);
-            const result2 = containsForbiddenCommands(command);
-
-            expect(result1).toBeTruthy();
-            expect(result2).toBeTruthy();
-        });
-    });
-
     describe("filterByQueriedTrustIds", () => {
         const trusts = [{ id: "a" }, { id: "b" }, { id: "c" }];
 

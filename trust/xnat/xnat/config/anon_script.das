@@ -1,6 +1,6 @@
 version "6.3"
 // FLIP Site-Wide DICOM Anonymization Script
-// Compatible with XNAT 1.9.3 (DicomEdit 6.7.x)
+// Compatible with XNAT 1.10.0 (DicomEdit 6.9.x)
 //
 // This script is applied to all incoming DICOM data when anonymizationEnabled
 // is set to true on the SCP receiver. It removes Protected Health Information

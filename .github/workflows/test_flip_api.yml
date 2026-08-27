@@ -40,11 +40,15 @@ jobs:
         uses: actions/checkout@v5
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
-          # get python version from ./flip-api/.python-version file
-          # if not found, use 3.11
-          python-version: ${{ github.event.inputs.python-version || '3.11' }}
+          # Stated literally because flip-api, unlike the trust services, has no
+          # .python-version file to point `python-version-file` at; keep this in
+          # step with requires-python and the Dockerfile base (both 3.12). Do not
+          # restore the previous `github.event.inputs.python-version || '3.11'`
+          # form — this workflow has no workflow_dispatch trigger, so that input
+          # was always empty and the job silently ran 3.11.
+          python-version: "3.12"
 
       - name: Install uv (if used for dependency management)
         run: pip install uv
@@ -72,7 +76,7 @@ jobs:
         run: make integration_test
 
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v7
         with:
           files: flip-api/coverage-unit.xml,flip-api/coverage-integration.xml
           flags: flip-api

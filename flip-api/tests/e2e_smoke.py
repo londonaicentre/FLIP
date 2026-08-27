@@ -70,6 +70,12 @@ DEFAULT_PROJECT_NAME_PREFIX = "Xrays E2E Smoke"
 DEFAULT_MODEL_NAME = "Xrays E2E Smoke Model"
 ABORT_MIDWAY_NAME_SUFFIX = " (abort-midway)"
 
+# How long to wait for uploaded files to clear malware scanning (#52). The
+# scan runs server-side as a background task; tutorial-sized files finish in
+# seconds, but a multi-GB checkpoint has to be downloaded and structurally
+# scanned first, hence the generous ceiling.
+FILE_SCAN_TIMEOUT_S = 600
+
 # Anything strictly past INITIATED. RESULTS_UPLOADED is included so a fast
 # finish short-circuits wait_for_training_finished cleanly on the first poll.
 TRAINING_PROGRESS_STATUSES = {
@@ -192,7 +198,7 @@ def create_project_with_query(
         name=project_name, description="E2E smoke run", users=[], dicom_to_nifti=dicom_to_nifti
     ).model_dump()
     project_id = _ensure_ok(
-        _post(client, "/projects/", project_payload, headers), "create project"
+        _post(client, "/projects", project_payload, headers), "create project"
     ).json()["id"]
     _log(f"  ✅ project_id={project_id}")
 
@@ -200,7 +206,7 @@ def create_project_with_query(
     add_resp = _ensure_ok(
         _post(
             client,
-            "/cohort/save/",
+            "/cohort/save",
             {"query": query, "name": "E2E smoke query", "project_id": project_id},
             headers,
         ),
@@ -213,7 +219,7 @@ def create_project_with_query(
     _ensure_ok(
         _post(
             client,
-            "/cohort/submit/",
+            "/cohort/submit",
             {
                 "authenticationToken": headers.get("authorization", headers.get("Authorization", "")),
                 "query": query,
@@ -324,7 +330,7 @@ def stage_and_approve(
     client: requests.Session, headers: dict[str, str], project_id: str, trusts_selection: str | None = None
 ) -> list[dict[str, Any]]:
     _log("🏥 Fetching trusts")
-    trusts = _ensure_ok(_get(client, "/trust/", headers), "list trusts").json()
+    trusts = _ensure_ok(_get(client, "/trust", headers), "list trusts").json()
     if not trusts:
         raise SmokeFailure("No trusts registered with the hub — start the trust services and seed first")
     _log(f"  ✅ found {len(trusts)} trust(s): {[t['name'] for t in trusts]}")
@@ -339,12 +345,12 @@ def stage_and_approve(
     trust_ids = [t["id"] for t in trusts]
     _log("📋 Staging project")
     _ensure_ok(
-        _post(client, f"/projects/{project_id}/stage/", {"trusts": trust_ids}, headers),
+        _post(client, f"/projects/{project_id}/stage", {"trusts": trust_ids}, headers),
         "stage project",
     )
     _log("✅ Approving project (step function)")
     _ensure_ok(
-        _post(client, f"/step/project/{project_id}/approve/", {"trusts": trust_ids}, headers),
+        _post(client, f"/step/project/{project_id}/approve", {"trusts": trust_ids}, headers),
         "approve project",
     )
     _log("  ✅ approved")
@@ -485,12 +491,19 @@ def upload_files(
         raise SmokeFailure(f"--model-files-dir does not exist: {files_dir}")
     blacklist = _blacklisted_filenames()
     all_paths = sorted(p for p in files_dir.iterdir() if p.is_file())
-    skipped = [p.name for p in all_paths if p.name in blacklist]
-    paths = [p for p in all_paths if p.name not in blacklist]
+    # Dotfiles are repo housekeeping (.gitignore in the Flower spleen-evaluation
+    # app, editor droppings), never model content. The hub refuses them anyway —
+    # they carry no whitelisted extension — so uploading them would fail the run
+    # on a file the researcher never meant to send.
+    dotfiles = [p.name for p in all_paths if p.name.startswith(".")]
+    blacklisted = [p.name for p in all_paths if p.name in blacklist]
+    paths = [p for p in all_paths if p.name not in blacklist and not p.name.startswith(".")]
     if not paths:
         raise SmokeFailure(f"No files found under {files_dir}")
-    if skipped:
-        _log(f"⏭️  Skipping {len(skipped)} blacklisted file(s): {', '.join(skipped)}")
+    if dotfiles:
+        _log(f"⏭️  Skipping {len(dotfiles)} dotfile(s): {', '.join(dotfiles)}")
+    if blacklisted:
+        _log(f"⏭️  Skipping {len(blacklisted)} blacklisted file(s): {', '.join(blacklisted)}")
     _log(f"📤 Uploading {len(paths)} file(s) from {files_dir}")
     uploaded: list[str] = []
     for path in paths:
@@ -517,19 +530,62 @@ def upload_files(
             )
         if post_resp.status_code >= 300:
             raise SmokeFailure(f"S3 upload failed for {path.name}: HTTP {post_resp.status_code}")
-        # The presigned POST only puts bytes in S3 — the DB row is written by
-        # /files/process-scanned-file, which is the SNS-driven webhook the
-        # antivirus scanner calls in prod. The UI invokes it directly after a
-        # 3s grace, so the file shows up in the model dashboard. Without this
-        # call, training initiates against a model that the UI considers
-        # empty (and `required_files` enforcement would block a real user).
+        # The presigned POST only puts bytes into the staging prefix — the DB
+        # row is written by /files/process-scanned-file, which also kicks off
+        # the malware scan that promotes the file into the bucket the FL
+        # bundler reads from (#52). Without this call, training initiates
+        # against a model whose files were never promoted.
         _ensure_ok(
             _post(client, f"/files/process-scanned-file/{model_id}/{path.name}", {}, headers),
             f"process-scanned-file for {path.name}",
         )
         _log(f"  ✅ {path.name} ({path.stat().st_size} bytes)")
         uploaded.append(path.name)
+    wait_for_files_scanned(client, headers, model_id, uploaded, FILE_SCAN_TIMEOUT_S)
     return uploaded
+
+
+def wait_for_files_scanned(
+    client: requests.Session,
+    headers: dict[str, str],
+    model_id: str,
+    file_names: list[str],
+    timeout_s: int,
+) -> None:
+    """Block until every uploaded file has been scanned and promoted (#52).
+
+    Files sit in ``SCANNING`` until the scan completes; only ``COMPLETED``
+    files exist in the bucket the FL bundler reads, so training would fail
+    confusingly if we proceeded early. ``INFECTED`` (scan rejected the file)
+    and ``ERROR`` are terminal failures worth surfacing immediately.
+    """
+    _log(f"🔬 Waiting for {len(file_names)} file(s) to pass scanning (timeout {timeout_s}s)")
+    deadline = time.monotonic() + timeout_s
+    poll_interval = 3
+    pending: dict[str, str] = {name: "UNKNOWN" for name in file_names}
+    while time.monotonic() < deadline:
+        resp = _try_request(_post, client, f"/step/model/{model_id}", {}, headers)
+        if resp is None or resp.status_code >= 300:
+            time.sleep(poll_interval)
+            continue
+        statuses = {f["name"]: f.get("status", "UNKNOWN") for f in resp.json().get("files", [])}
+        bad = {name: statuses.get(name) for name in file_names if statuses.get(name) in ("INFECTED", "ERROR")}
+        if bad:
+            raise SmokeFailure(
+                f"File(s) failed malware scanning: {bad}. "
+                "INFECTED means the scan judged the content unsafe and deleted it; "
+                "ERROR means the file could not be scanned (fail-closed)."
+            )
+        pending = {name: statuses.get(name, "UNKNOWN") for name in file_names}
+        if all(status == "COMPLETED" for status in pending.values()):
+            _log("  ✅ all files scanned and promoted")
+            return
+        time.sleep(poll_interval)
+    unfinished = {name: status for name, status in pending.items() if status != "COMPLETED"}
+    raise SmokeFailure(
+        f"File(s) did not finish scanning within {timeout_s}s: {unfinished}. "
+        "Check flip-api logs for the malware-scan reconcile."
+    )
 
 
 def initiate_training(
@@ -866,7 +922,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.project_id:
             project_id = args.project_id
             _log(f"♻️  Reusing existing project_id={project_id} (skipping cohort + approval)")
-            trusts = _ensure_ok(_get(client, "/trust/", headers), "list trusts").json()
+            trusts = _ensure_ok(_get(client, "/trust", headers), "list trusts").json()
             if not trusts:
                 raise SmokeFailure("No trusts registered with the hub")
             _log(f"  ✅ found {len(trusts)} trust(s): {[t['name'] for t in trusts]}")

@@ -421,7 +421,6 @@ def main(
         "trust-api": 1,
         "data-access-api": 1,
         "imaging-api": 1,
-        "imaging-import-worker": 1,
         "omop-db": 1,
         "orthanc": 1,
         "fl-client": 1,
@@ -437,7 +436,7 @@ def main(
         label_sel = f"app.kubernetes.io/instance={helm_release},app.kubernetes.io/component={svc}"
         svc_pods = kubectl_list(["pods", "-l", label_sel], namespace)
         if not svc_pods:
-            # Fallback: some pods (e.g. imaging-import-worker) lack the instance label
+            # Fallback: some pods lack the instance label
             label_sel = f"app.kubernetes.io/component={svc}"
             svc_pods = kubectl_list(["pods", "-l", label_sel], namespace)
         if not svc_pods:
@@ -611,7 +610,9 @@ def main(
             ("service/trust-api", 8000, "/health", "trust-api", 200),
             ("service/imaging-api", 8000, "/health", "imaging-api", 200),
             ("service/data-access-api", 8000, "/health", "data-access-api", 200),
-            ("service/orthanc", 8042, "/", "Orthanc", [200, 401]),
+            # Auth is always enforced (FLIP-PT-091): a 200 without credentials
+            # means an unauthenticated PACS — fail.
+            ("service/orthanc", 8042, "/", "Orthanc", [401]),
         ]
 
         for service_ref, container_port, path, name, expected in service_endpoints:
@@ -696,7 +697,6 @@ def main(
         "app.kubernetes.io/component=trust-api": "trust-api",
         "app.kubernetes.io/component=data-access-api": "data-access-api",
         "app.kubernetes.io/component=imaging-api": "imaging-api",
-        "app.kubernetes.io/component=imaging-import-worker": "imaging-import-worker",
         "app.kubernetes.io/component=orthanc": "orthanc",
         "app.kubernetes.io/component=fl-client": "fl-client",
         "app.kubernetes.io/component=xnat-web": "xnat-web",
@@ -709,7 +709,7 @@ def main(
             namespace,
         )
         if not pods:
-            # Fallback: some pods (e.g. imaging-import-worker) lack the instance label
+            # Fallback: some pods lack the instance label
             pods = kubectl_list(
                 ["pods", "-l", label_sel, "--field-selector=status.phase=Running"],
                 namespace,

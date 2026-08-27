@@ -135,20 +135,45 @@ register_one_kit() {
     # code path or operator runs register_trust without --out-ssm-parameter,
     # or if a logger line accidentally captures a kit field on stderr,
     # this nukes the CloudWatch copy at the earliest opportunity.
-    local kit
+    local kit failure_log
     kit="$(aws_cmd ssm get-parameter --name "$ssm_param" --with-decryption \
         --query 'Parameter.Value' --output text 2>/dev/null || true)"
     aws_cmd ssm delete-parameter --name "$ssm_param" >/dev/null 2>&1 || true
+
+    # The kit (present / empty / absent) is the failure signal — NOT the task's exit
+    # code, which Fargate misreports for one-off tasks (a container exiting 7 has been
+    # observed as exitCode 0). register_trust writes [] on any TrustRegistrationError.
+    #
+    # On failure, salvage the task's logger lines BEFORE the stream is deleted below:
+    # that is where the operator remediation lives (an exhausted pool names
+    # apply-fl-kit-slots / add-fl-kits). Safe to echo — the kit body only ever travels
+    # via --out-ssm-parameter, so the logger never carries credentials.
+    failure_log=""
+    if [ -z "$kit" ] || [ "$kit" = "None" ] || [ "$(echo "$kit" | jq 'length')" = "0" ]; then
+        raw_log="$(aws_cmd logs get-log-events --log-group-name "$LOG_GROUP" \
+            --log-stream-name "flip-api/flip-api/$task_id" --start-from-head \
+            --query 'events[].message' --output text 2>/dev/null | tr '\t' '\n')"
+        failure_log="$(printf '%s\n' "$raw_log" | grep -E "ERROR|WARNING" || true)"
+        # A raw unhandled traceback has no log-level prefix, so the grep above
+        # comes back empty; fall back to the tail of the raw log — the stream
+        # is deleted just below, so this is the only evidence that survives.
+        if [ -z "$failure_log" ] && [ -n "$raw_log" ]; then
+            failure_log="$(printf '%s\n' "$raw_log" | tail -n 40)"
+        fi
+    fi
+
     aws_cmd logs delete-log-stream --log-group-name "$LOG_GROUP" \
         --log-stream-name "flip-api/flip-api/$task_id" >/dev/null 2>&1 || true
 
     if [ -z "$kit" ] || [ "$kit" = "None" ]; then
-        log_warn "Trust '$name': no kit found in SSM parameter '$ssm_param' — registration may have failed."
-        return 0
+        log_error "Trust '$name': no kit in SSM parameter '$ssm_param' — registration FAILED."
+        [ -n "$failure_log" ] && printf '%s\n' "$failure_log" >&2
+        return 1
     fi
     if [ "$(echo "$kit" | jq 'length')" = "0" ]; then
-        log_warn "Trust '$name': empty kit array — registration error (non-zero exit should have caught this)."
-        return 0
+        log_error "Trust '$name': empty kit array — registration FAILED (see the task's error above)."
+        [ -n "$failure_log" ] && printf '%s\n' "$failure_log" >&2
+        return 1
     fi
     kit="$(echo "$kit" | jq -c '.[0]')"
     # Detect skip path: kit present but credentials absent (hub stores only hashes).
@@ -167,23 +192,31 @@ register_one_kit() {
 # Select kits: explicit KIT=<CODE> registers one; otherwise register every live
 # prod kit (trust/.env.*.<suffix>). .example templates are not matched by the
 # glob (they end in .example, not the env suffix).
+failed=0
 if [ -n "${KIT:-}" ]; then
     kit_file="$REPO_ROOT/trust/.env.${KIT}.${ENV_SUFFIX}"
     if [ ! -f "$kit_file" ]; then
         log_error "Kit $kit_file not found — scaffold it with 'make new-trust TRUST_CODE=${KIT} TRUST_NAME=... PROD=${PROD:-stag}' first."
         exit 1
     fi
-    register_one_kit "$kit_file"
+    register_one_kit "$kit_file" || failed=1
 else
     found=0
+    # `|| failed=1` so one bad kit doesn't strand the rest — every kit is attempted,
+    # then the script exits non-zero so a failure can never read as success.
     for kit_file in "$REPO_ROOT"/trust/.env.*."${ENV_SUFFIX}"; do
         [ -e "$kit_file" ] || continue
         found=1
-        register_one_kit "$kit_file"
+        register_one_kit "$kit_file" || failed=1
     done
     if [ "$found" != 1 ]; then
         log_warn "No trust/.env.*.${ENV_SUFFIX} kits found — scaffold one with 'make new-trust ... PROD=${PROD:-stag}' first."
     fi
+fi
+
+if [ "$failed" != 0 ]; then
+    log_error "register-trusts FAILED — at least one trust was not registered (see above)."
+    exit 1
 fi
 
 log_success "register-trusts complete."

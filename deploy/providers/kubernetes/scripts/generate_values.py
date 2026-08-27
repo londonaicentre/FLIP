@@ -42,14 +42,17 @@ SECRET_VAR_MAP = {
     "TRUST_INTERNAL_SERVICE_KEY_HEADER": "trust-internal-service-key-header",
     "TRUST_INTERNAL_SERVICE_KEY": "trust-internal-service-key",
     "OMOP_POSTGRES_PASSWORD": "omop-postgres-password",
+    "DATA_ACCESS_POSTGRES_PASSWORD": "data-access-postgres-password",
     "ORTHANC_REGISTERED_USERS": "orthanc-registered-users",
     "XNAT_ADMIN_PASSWORD": "xnat-admin-password",
     "XNAT_SERVICE_USER": "xnat-service-user",
     "XNAT_SERVICE_PASSWORD": "xnat-service-password",
     "XNAT_DATASOURCE_PASSWORD": "xnat-datasource-password",
+    "XNAT_DATASOURCE_ADMIN_PASSWORD": "xnat-datasource-admin-password",
     "GRAFANA_ADMIN_PASSWORD": "grafana-admin-password",
     "AWS_ACCESS_KEY_ID": "s3-access-key-id",
     "AWS_SECRET_ACCESS_KEY": "s3-secret-access-key",
+    "AWS_SESSION_TOKEN": "aws-session-token",
 }
 
 

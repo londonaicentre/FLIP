@@ -103,7 +103,7 @@ variable "INTERNAL_SERVICE_KEY" {
 }
 
 variable "FL_KIT_SLOT_NAMES" {
-  description = "JSON list (as a string) of FL kit-slot names that seed the fl_kit_slot pool register_trust claims from on the flip-api ECS task. Empty ⇒ NoFreeKitSlotError on trust registration. Mirrors compose.production.yml; set via the env file (TF_VAR_FL_KIT_SLOT_NAMES)."
+  description = "JSON list (as a string) of FL kit-slot names for the fl_kit_slot pool register_trust claims from. Rendered ONLY into the /flip/fl_kit_slot_names SSM parameter (parameter_store.tf) — flip-api's single production source, read at boot seeding and re-read when a registration finds the pool exhausted. Growing the pool is an env-file edit + `make apply-fl-kit-slots` (no restart, no task-definition change). Empty ⇒ NoFreeKitSlotError on trust registration. Set via the env file (TF_VAR_FL_KIT_SLOT_NAMES)."
   type        = string
   default     = "[]"
 }
@@ -159,6 +159,7 @@ variable "fl_backend" {
   type        = string
   default     = "nvflare"
 }
+
 
 variable "flare_kit_date" {
   description = "Date stamp for the NVFLARE provisioned kit (e.g. 20260429), used to construct the S3 path for cert syncing"
@@ -245,6 +246,19 @@ variable "AICENTRE_BUCKET_NAME" {
 variable "FLIP_UI_BUCKET_NAME" {
   description = "S3 bucket name for flip-ui static assets served by CloudFront. Must be globally unique."
   type        = string
+}
+
+variable "DEMO_ASSETS_BUCKET_NAME" {
+  description = <<-EOT
+    S3 bucket holding the public Ark+ demo download bundles (results + model
+    files zips), served through CloudFront at /ark_demo/assets/* via OAC.
+    The bucket itself is NOT Terraform-managed (objects are staged manually);
+    Terraform manages only its public-access block, its OAC bucket policy,
+    and the CloudFront origin/behavior. Leave empty (the default) to disable
+    all demo-assets resources — e.g. on stag, which hosts no public demo.
+  EOT
+  type        = string
+  default     = ""
 }
 
 variable "flip_user_pool_name" {

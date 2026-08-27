@@ -311,7 +311,7 @@ class TestS3Client:
 
             s3_client = S3Client()
             with pytest.raises(ClientError) as exc_info:
-                s3_client.get_presigned_url("test-bucket", "test-key")
+                s3_client.get_presigned_url("s3://test-bucket/test-key")
 
             assert "An error occurred (AccessDenied)" in str(exc_info.value)
 

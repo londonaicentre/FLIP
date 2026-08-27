@@ -125,6 +125,48 @@ class TestInvokeModelStatusUpdateEndpoint:
         assert response.json() == {"success": "status set"}
         mock_add_log.assert_not_called()
 
+    @patch(MOCKED_ADD_LOG_PATH)
+    @patch(MOCKED_UPDATE_STATUS_PATH)
+    def test_invoke_update_ignored_transition_writes_no_log(
+        self,
+        mock_update: MagicMock,
+        mock_add_log: MagicMock,
+        client: TestClient,
+        model_id: UUID,
+    ):
+        # A STOPPED model ignores a late RUNNING callback (#787): update_model_status
+        # returns the unchanged STOPPED, so the endpoint must not write a lying "Training has
+        # started for this model." timeline entry.
+        mock_update.return_value = ModelStatus.STOPPED
+
+        response = client.put(f"/api/model/{model_id}/status/{ModelStatus.RUNNING.value}")
+
+        assert response.status_code == status.HTTP_200_OK
+        mock_add_log.assert_not_called()
+
+    @patch("flip_api.private_services.invoke_model_status_update.logger.info")
+    @patch(MOCKED_ADD_LOG_PATH)
+    @patch(MOCKED_UPDATE_STATUS_PATH)
+    def test_invoke_update_ignored_transition_does_not_log_success(
+        self,
+        mock_update: MagicMock,
+        mock_add_log: MagicMock,
+        mock_logger_info: MagicMock,
+        client: TestClient,
+        model_id: UUID,
+    ):
+        # When the transition is ignored, the closing log line must not claim the requested
+        # status was applied — update_model_status has just logged "ignoring late transition",
+        # and a "updated successfully to RUNNING" line next to it reads as a contradiction.
+        mock_update.return_value = ModelStatus.STOPPED
+
+        response = client.put(f"/api/model/{model_id}/status/{ModelStatus.RUNNING.value}")
+
+        assert response.status_code == status.HTTP_200_OK
+        messages = [call.args[0] for call in mock_logger_info.call_args_list]
+        assert not any("updated successfully" in message for message in messages)
+        assert any("ignored" in message and str(ModelStatus.STOPPED) in message for message in messages)
+
     @patch(MOCKED_UPDATE_STATUS_PATH)
     def test_invoke_update_model_not_found(
         self,

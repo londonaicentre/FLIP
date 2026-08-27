@@ -15,7 +15,15 @@
 #    Matches the reference. Half Flower's original 1e-4 -- gentler
 #    for batch_norm with batch_size=2, where high LR + small batch statistics
 #    cause noisy updates.
+#  - best-model-metric = "test_dice":
+#    Save the best-scoring aggregated global model, not just the last one -- a
+#    30-round run has plenty of room to peak early and drift. Dice is the metric
+#    this app is judged on, and client_app.py already reports it per round.
+#    Cost: selection makes the evaluate phase run in every round instead of only
+#    the last, i.e. 30 test-split inference passes per client rather than 1.
 
 num-server-rounds = 30
 local-epochs = 5
 learning-rate = 5e-5
+best-model-metric = "test_dice"
+best-model-metric-minimize = false

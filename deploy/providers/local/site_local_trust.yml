@@ -40,11 +40,14 @@
         update_cache: yes
 
     # ── Docker ───────────────────────────────────────────────────────────────
+    # Intentionally do NOT pass `docker_users` — adding the SSH login user to
+    # the `docker` group is equivalent to giving them passwordless root (any
+    # group member can `docker run -v /:/host …` and chroot to the host fs).
+    # Operators run docker / `make -C trust up-trust` via `sudo` instead; the
+    # `ubuntu` account already has sudo per the on-prem README prerequisites.
     - name: Install Docker
       include_role:
         name: geerlingguy.docker
-      vars:
-        docker_users: [ubuntu]
 
     # ── Application directories ───────────────────────────────────────────────
     - name: Create application directories

@@ -59,7 +59,7 @@ def model_id():
 
 def test_run_jobs_success(mock_db, mock_check_for_available_net, mock_check_for_queued_jobs, caplog):
     with (
-        patch("flip_api.fl_services.run_jobs.prepare_and_start_training") as mock_prepare,
+        patch("flip_api.fl_services.run_jobs.prepare_and_start_training", return_value=True) as mock_prepare,
     ):
         response = run_jobs_core(mock_db)
 
@@ -71,6 +71,19 @@ def test_run_jobs_success(mock_db, mock_check_for_available_net, mock_check_for_
         assert str(job.id) in caplog.text
         assert str(job.model_id) in caplog.text
         mock_prepare.assert_called_once()
+
+
+def test_run_jobs_aborted_before_submission(mock_db, mock_check_for_available_net, mock_check_for_queued_jobs, caplog):
+    # prepare_and_start_training returning False means the job was aborted mid-prepare (#787):
+    # the tick must not claim training started.
+    with (
+        patch("flip_api.fl_services.run_jobs.prepare_and_start_training", return_value=False),
+    ):
+        response = run_jobs_core(mock_db)
+
+        assert response is None
+        assert "Training started successfully!" not in caplog.text
+        assert "aborted before submission" in caplog.text
 
 
 def test_run_jobs_no_available_net(mock_db, mock_check_for_available_net, caplog):

@@ -1,0 +1,205 @@
+{
+  "recordCount": 946,
+  "trustsResults": [
+    {
+      "name": "Counts",
+      "results": [
+        {
+          "trustName": "King's College London",
+          "trustId": "16f5b300-8ff4-4f1a-9a60-1989b3b54489",
+          "data": [
+            {
+              "value": "accession\nid",
+              "count": 478
+            },
+            {
+              "value": "Image date",
+              "count": 478
+            },
+            {
+              "value": "Modality",
+              "count": 478
+            },
+            {
+              "value": "Effusion",
+              "count": 478
+            },
+            {
+              "value": "Edema",
+              "count": 478
+            },
+            {
+              "value": "Consolidation",
+              "count": 478
+            },
+            {
+              "value": "Infiltration",
+              "count": 478
+            },
+            {
+              "value": "Lung Nodule or Mass",
+              "count": 478
+            },
+            {
+              "value": "Pneumothorax",
+              "count": 478
+            },
+            {
+              "value": "Lungs in normal arrangement",
+              "count": 478
+            }
+          ]
+        },
+        {
+          "trustName": "Bangkok Dusit Medical Services",
+          "trustId": "f43abcd0-be77-4dc8-89c6-4b8aa98b6183",
+          "data": [
+            {
+              "value": "accession\nid",
+              "count": 468
+            },
+            {
+              "value": "Image date",
+              "count": 468
+            },
+            {
+              "value": "Modality",
+              "count": 468
+            },
+            {
+              "value": "Effusion",
+              "count": 468
+            },
+            {
+              "value": "Edema",
+              "count": 468
+            },
+            {
+              "value": "Consolidation",
+              "count": 468
+            },
+            {
+              "value": "Infiltration",
+              "count": 468
+            },
+            {
+              "value": "Lung Nodule or Mass",
+              "count": 468
+            },
+            {
+              "value": "Pneumothorax",
+              "count": 468
+            },
+            {
+              "value": "Lungs in normal arrangement",
+              "count": 468
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Nulls",
+      "results": [
+        {
+          "trustName": "King's College London",
+          "trustId": "16f5b300-8ff4-4f1a-9a60-1989b3b54489",
+          "data": [
+            {
+              "value": "accession\nid",
+              "count": 0
+            },
+            {
+              "value": "Image date",
+              "count": 0
+            },
+            {
+              "value": "Modality",
+              "count": 0
+            },
+            {
+              "value": "Effusion",
+              "count": 0
+            },
+            {
+              "value": "Edema",
+              "count": 0
+            },
+            {
+              "value": "Consolidation",
+              "count": 0
+            },
+            {
+              "value": "Infiltration",
+              "count": 0
+            },
+            {
+              "value": "Lung Nodule or Mass",
+              "count": 0
+            },
+            {
+              "value": "Pneumothorax",
+              "count": 0
+            },
+            {
+              "value": "Lungs in normal arrangement",
+              "count": 0
+            }
+          ]
+        },
+        {
+          "trustName": "Bangkok Dusit Medical Services",
+          "trustId": "f43abcd0-be77-4dc8-89c6-4b8aa98b6183",
+          "data": [
+            {
+              "value": "accession\nid",
+              "count": 0
+            },
+            {
+              "value": "Image date",
+              "count": 0
+            },
+            {
+              "value": "Modality",
+              "count": 0
+            },
+            {
+              "value": "Effusion",
+              "count": 0
+            },
+            {
+              "value": "Edema",
+              "count": 0
+            },
+            {
+              "value": "Consolidation",
+              "count": 0
+            },
+            {
+              "value": "Infiltration",
+              "count": 0
+            },
+            {
+              "value": "Lung Nodule or Mass",
+              "count": 0
+            },
+            {
+              "value": "Pneumothorax",
+              "count": 0
+            },
+            {
+              "value": "Lungs in normal arrangement",
+              "count": 0
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "trustRecordCounts": {
+    "16f5b300-8ff4-4f1a-9a60-1989b3b54489": 478,
+    "f43abcd0-be77-4dc8-89c6-4b8aa98b6183": 468
+  },
+  "trustErrors": {},
+  "trustSuppressed": []
+}

@@ -39,6 +39,22 @@ class XnatFetchError(Exception):
     pass
 
 
+class CohortBelowThresholdError(Exception):
+    """Exception raised when data-access-api refuses a cohort as below the disclosure threshold.
+
+    A typed alternative to the generic ``RuntimeError`` that ``get_accession_ids`` raises for
+    transport failures, so callers can tell a deliberate policy refusal (HTTP 403) apart from
+    "the call broke". The distinction matters because the two want opposite handling: a broken
+    call should be retried and surfaced as an error, whereas a below-threshold cohort is a
+    settled answer — nothing to import, and retrying cannot change it.
+
+    A plain ``Exception`` subclass (no custom ``__init__``) so ``str(err)`` renders the raised
+    message verbatim, matching ``XnatFetchError`` above.
+    """
+
+    pass
+
+
 class InternalServerError(Exception):
     """Exception raised for internal server errors."""
 

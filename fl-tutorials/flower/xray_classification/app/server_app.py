@@ -22,6 +22,8 @@ import torch
 from flip import FLIP
 from flip.constants import PTConstants
 from flip.constants.flip_constants import ModelStatus
+from flip.flower.selection import parse_best_model_run_config
+from flip.flower.strategy import min_clients_from_run_config
 from flwr.app import ArrayRecord, Context
 from flwr.common import log
 from flwr.serverapp import Grid, ServerApp
@@ -34,6 +36,7 @@ from app.strategy import (
 )
 
 FinalModelFilename = PTConstants.PTFileModelName
+BestModelFilename = PTConstants.PTBestFileModelName
 CrossValResultsJsonFilename = PTConstants.CrossValResultsJsonFilename
 
 
@@ -51,18 +54,44 @@ def main(grid: Grid, context: Context, flip: FLIP = FLIP()) -> None:
 
     flip.update_status(model_id, ModelStatus.INITIATED)
 
+    # Best-model selection is opt-in: an unset or blank metric leaves behaviour unchanged
+    # (final-round-only evaluation, no best checkpoint). Parsing lives in flip.flower — a
+    # coerced metric key or a quoted TOML boolean would otherwise enable selection on a key
+    # the clients never report, or silently invert the selection direction.
+    try:
+        best_model_metric, best_model_metric_minimize = parse_best_model_run_config(run_config, num_rounds=num_rounds)
+        min_clients = min_clients_from_run_config(run_config)
+    except ValueError as err:
+        # Fail the run rather than mislabel a model. ERROR is the only channel the researcher
+        # can actually see — the ServerApp log stream is not surfaced through the platform.
+        log(INFO, f"✗ {err}")
+        flip.update_status(model_id, ModelStatus.ERROR)
+        raise
+
     model = get_model()
     flip.update_status(model_id, ModelStatus.PREPARED)
 
     arrays = ArrayRecord(model.state_dict())
 
-    # Use FedAvg strategy with per-client metrics tracking
-    strategy = FedAvgWithClientMetrics(
-        flip=flip,
-        model_id=model_id,
-        fraction_train=1.0,
-        fraction_evaluate=1.0,
-    )
+    # Use FedAvg strategy with per-client metrics tracking.
+    # FlipFedAvg rejects a quorum below 1, and that check runs in the constructor — outside the
+    # try above, which only covers reading the value. An injected flip-min-clients=0 would
+    # therefore raise here unhandled, leaving the model at PREPARED and the net BUSY, so the
+    # construction needs the same handling as the read.
+    try:
+        strategy = FedAvgWithClientMetrics(
+            flip=flip,
+            model_id=model_id,
+            min_clients=min_clients,
+            fraction_train=1.0,
+            fraction_evaluate=1.0,
+            best_model_metric=best_model_metric,
+            best_model_metric_minimize=best_model_metric_minimize,
+        )
+    except ValueError as err:
+        log(INFO, f"✗ {err}")
+        flip.update_status(model_id, ModelStatus.ERROR)
+        raise
 
     result = strategy.start(
         grid=grid,
@@ -90,6 +119,26 @@ def main(grid: Grid, context: Context, flip: FLIP = FLIP()) -> None:
         flip.update_status(model_id, ModelStatus.ERROR)
         return
 
+    # Save the best model alongside it when a selection actually happened — nothing is
+    # fabricated from the final model otherwise. Deliberately outside the try above: the
+    # best checkpoint is optional and is a second full-size write (the one likely to hit
+    # ENOSPC), so failing it must not discard an intact final model and its results.
+    best_model_saved = False
+    if strategy.best_model_arrays is not None:
+        try:
+            torch.save(strategy.best_model_arrays.to_torch_state_dict(), output_dir / BestModelFilename)
+            best_model_saved = True
+            log(
+                INFO,
+                "✓ Best model (round %s, %s=%s) saved to %s",
+                strategy.best_model_round,
+                best_model_metric,
+                strategy.best_model_metric_value,
+                output_dir / BestModelFilename,
+            )
+        except Exception as e:
+            log(INFO, "⚠ Failed to save best model — the final model is unaffected: %s", str(e))
+
     # Save cross-validation results JSON with aggregated and per-client metrics
     eval_metrics_aggregated = {}
     if result.evaluate_metrics_clientapp:
@@ -109,7 +158,9 @@ def main(grid: Grid, context: Context, flip: FLIP = FLIP()) -> None:
     # Structure evaluation metrics: aggregated + per-client at same level
     evaluation_metrics = {"aggregated": eval_metrics_aggregated}
 
-    # Add per-client metrics from the last round (since evaluation only happens once)
+    # Add per-client metrics from the last evaluated round (the final round —
+    # best-model selection also evaluates earlier rounds, but the cross-site
+    # table reports the final model)
     if per_client_eval_metrics:
         last_eval_round = max(per_client_eval_metrics.keys())
         for site_name, metrics in per_client_eval_metrics[last_eval_round].items():
@@ -121,6 +172,16 @@ def main(grid: Grid, context: Context, flip: FLIP = FLIP()) -> None:
         "train_metrics": train_metrics,
         "evaluation_metrics": evaluation_metrics,
     }
+    # Keyed on the write succeeding, not on a selection happening, so the JSON never names
+    # a checkpoint that is missing from the results bundle.
+    if best_model_saved:
+        cross_val_results["best_model"] = BestModelFilename
+        cross_val_results["best_round"] = strategy.best_model_round
+        cross_val_results["best_metric"] = {
+            "name": best_model_metric,
+            "value": strategy.best_model_metric_value,
+            "minimize": best_model_metric_minimize,
+        }
 
     json_path = output_dir / CrossValResultsJsonFilename
     with open(json_path, "w") as f:

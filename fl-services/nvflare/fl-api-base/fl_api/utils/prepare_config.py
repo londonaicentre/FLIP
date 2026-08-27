@@ -294,6 +294,35 @@ def _inject_trim_eval_broadcast_filter(config: dict, include_regex: str) -> None
     filters_blocks.append({"tasks": ["validate"], "filters": [trim_filter]})
 
 
+def _inject_intime_model_selector(config: dict, key_metric: str, minimize: bool) -> None:
+    """Append a stock ``IntimeModelSelector`` component keyed on ``key_metric`` (server-side, FLIP#673).
+
+    The production mirror of ``FlipFedAvgRecipe(best_model_metric=...)``: the selector averages the
+    client-reported validation metric each round and fires ``GLOBAL_BEST_MODEL_AVAILABLE`` on
+    improvement, which the persistor answers by saving ``best_FL_global_model.pt`` alongside the final
+    model. The FLIP ``ScatterAndGather`` controller (a thin subclass of stock) already fires the round
+    events the selector listens on, so only the component needs adding. The client trainer must report
+    ``key_metric`` on its returned ``FLModel`` (evaluated on the received global model) for selection
+    to fire; without it the selector stays dormant and no best model is saved.
+
+    Idempotent: a template that already carries an ``IntimeModelSelector`` (e.g. a recipe export built
+    with ``best_model_metric``) is left untouched — two selectors would drive best-model saves off
+    separate accumulators. Mutates ``config`` in place.
+    """
+    selector_path = "nvflare.app_common.widgets.intime_model_selector.IntimeModelSelector"
+    components = config.setdefault("components", [])
+    if any(component.get("path") == selector_path for component in components):
+        logger.info("IntimeModelSelector already present in server config; not injecting a second one")
+        return
+    components.append(
+        {
+            "id": "model_selector",
+            "path": selector_path,
+            "args": {"key_metric": key_metric, "negate_key_metric": minimize},
+        }
+    )
+
+
 def configure_client(
     job_dir: Path,
     app_name: str,
@@ -358,6 +387,8 @@ def configure_server(
     aggregator: str,
     aggregation_weights: dict,
     aggregate_only_regex: str | None = None,
+    best_model_metric: str | None = None,
+    best_model_metric_minimize: bool = False,
 ) -> Path:
     """
     Configures the server config file. Making sure the app name, global rounds, and other variables are set correctly.
@@ -375,6 +406,10 @@ def configure_server(
             TrimEvalBroadcastVars ``validate`` data filter so post-training cross-site validation also
             broadcasts only the head (frozen-backbone head-only downstream — the server-side mirror of
             the client KeepOnlyVars / ReconstructFullModelForEval; FLIP#684 / #730).
+        best_model_metric (str | None): when set, inject a stock IntimeModelSelector keyed on this
+            validation metric so the best global model is saved alongside the final one (FLIP#673).
+        best_model_metric_minimize (bool): when True, negate the selector's key metric for loss-like
+            metrics where lower is better. Defaults to False (higher is better).
 
     Returns:
         Path: path to the server config file that was updated.
@@ -427,7 +462,7 @@ def configure_server(
             workflow["args"]["participating_clients"] = trusts
         if "args" in workflow and "ignore_result_error" in workflow["args"]:
             workflow["args"]["ignore_result_error"] = ignore_result_error
-        # Recipe-generated templates (standard_client_api) carry LITERAL num_rounds/min_clients
+        # Recipe-generated templates (standard) carry LITERAL num_rounds/min_clients
         # baked in by FedJob serialisation instead of the executor templates' "{global_rounds}" /
         # "{min_clients}" placeholders, so the top-level keys set above never reach the workflow.
         # Override them directly or every deployed client_api job silently runs the template
@@ -457,6 +492,13 @@ def configure_server(
         logger.info(
             f"Injected TrimBroadcastVars (train) + TrimEvalBroadcastVars (validate) data filters "
             f"(include_vars={aggregate_only_regex!r}) for app '{app_name}'"
+        )
+
+    if best_model_metric:
+        _inject_intime_model_selector(config, best_model_metric, best_model_metric_minimize)
+        logger.info(
+            f"Injected IntimeModelSelector (key_metric={best_model_metric!r}, "
+            f"negate_key_metric={best_model_metric_minimize}) for app '{app_name}'"
         )
 
     write_config(config, config_file)
@@ -509,7 +551,7 @@ def configure_meta(job_dir: Path, app_name: str, trusts: list[str]) -> Path:
     # ``custom_props`` is NVFLARE's officially-sanctioned channel for job-scoped metadata
     # (``JobMetaKey.CUSTOM_PROPS``; surfaced to components via ``FLContextKey.JOB_META``). We
     # publish the FLIP ``model_id`` (== ``app_name``) here so recipe-built job types whose
-    # component configs carry no ``model_id`` (e.g. ``standard_client_api``, built before the UUID is
+    # component configs carry no ``model_id`` (e.g. ``standard``, built before the UUID is
     # known) can resolve it lazily at runtime via ``flip.nvflare.runtime.get_flip_model_id``.
     # Legacy job types still receive ``model_id`` through their component args and ignore this
     # key, so populating it unconditionally is safe and keeps both paths consistent.
@@ -617,5 +659,33 @@ def validate_config(config: dict) -> IOverridableConfig:
         except re.error as exc:
             raise ValueError(f"AGGREGATE_ONLY_REGEX is not a valid regex: {exc}") from exc
         validated.AGGREGATE_ONLY_REGEX = regex
+
+    best_model_metric = config.get("BEST_MODEL_METRIC")
+    if best_model_metric is not None:
+        if not isinstance(best_model_metric, str) or not best_model_metric.strip():
+            raise ValueError("BEST_MODEL_METRIC must be a non-empty string metric label")
+        # Store stripped: a stray space in the JSON would otherwise survive validation and never
+        # match the metric label the trainer reports.
+        validated.BEST_MODEL_METRIC = best_model_metric.strip()
+
+        minimize = config.get("BEST_MODEL_METRIC_MINIMIZE", False)
+        # Guard bool before int: in Python ``isinstance(True, int)`` is True, but we want to reject
+        # a stray 1/0 here so the config stays explicit.
+        if not isinstance(minimize, bool):
+            raise ValueError("BEST_MODEL_METRIC_MINIMIZE must be a boolean")
+        validated.BEST_MODEL_METRIC_MINIMIZE = minimize
+
+        # IntimeModelSelector always skips round 0, so a job whose effective GLOBAL_ROUNDS is 1 —
+        # the platform default when the key is unset or invalid (see upload.py) — can never fire
+        # the selector: the job would run fine but the results zip silently lacks the best model.
+        if (validated.GLOBAL_ROUNDS or TrainingRound.MIN) <= 1:
+            raise ValueError(
+                "BEST_MODEL_METRIC requires GLOBAL_ROUNDS >= 2: the best-model selector skips "
+                "round 0, so a single-round job can never save a best model"
+            )
+    elif "BEST_MODEL_METRIC_MINIMIZE" in config:
+        # BEST_MODEL_METRIC_MINIMIZE only has meaning alongside a selector metric — silently
+        # accepting it without BEST_MODEL_METRIC would let a user believe it took effect.
+        raise ValueError("BEST_MODEL_METRIC_MINIMIZE requires BEST_MODEL_METRIC to also be set")
 
     return validated

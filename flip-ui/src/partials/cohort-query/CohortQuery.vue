@@ -79,7 +79,6 @@ import router from "@/router";
 import { ICohortQueryCreate, sendQuery } from "@/services/cohort-query-service";
 import { IProject } from "@/services/project-service";
 import { useProjectStore } from "@/store/project";
-import { containsForbiddenCommands } from "@/utils/cohort/query";
 import { Snackbar } from "@/utils/snackbar";
 
 import CohortAggregateCard from "./CohortAggregateCard.vue";
@@ -104,20 +103,15 @@ onBeforeMount(() => {
 
 watch(projectStore, () => project.value = projectStore.project);
 
+// Required-field validation only. SQL validity is checked by the hub, which
+// answers synchronously before fanning the query out to any trust, and the
+// trust's data-access-api is the authority on what may run. A client-side
+// keyword denylist here blocked legitimate SQL (e.g. SUBSTRING()) without
+// adding security — see trust/data-access-api/README.md#cohort-query-validation.
 const schema = object().shape({
     query: string()
         .trim()
         .required("A query is required and can't be left blank")
-        .test(
-            "valid-query",
-            "Please enter a valid query",
-            function() {
-                try {
-                    return !containsForbiddenCommands(this.parent.query);
-                } catch {
-                    return false;
-                }
-            })
 });
 
 const runCohortQuery = async (v: unknown) => {

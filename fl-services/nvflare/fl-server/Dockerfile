@@ -16,8 +16,15 @@ FROM ${BASE_REF} AS base
 
 FROM base AS development
 
+# Build args for the non-root user created in fl-base (GHSA-8465).
+# The compose wires host UID/GID so the container user owns bind-mounted
+# provision directories in dev. Prod defaults: UID 1000 / GID 1000 / flip.
+ARG UID
+ARG GID
+ARG UNAME
+
 # Copy entrypoint script
-COPY fl-server/entrypoint.sh /app/entrypoint.sh
+COPY --chown=${UNAME}:${UNAME} fl-server/entrypoint.sh /app/entrypoint.sh
 
 # Make entrypoint script executable
 RUN chmod +x /app/entrypoint.sh
@@ -25,10 +32,17 @@ RUN chmod +x /app/entrypoint.sh
 # Expose necessary ports
 EXPOSE 8002
 
+# Switch to the non-root user created in fl-base (GHSA-8465)
+USER ${UNAME}
+
 # Use ENTRYPOINT instead of CMD for better signal handling
 ENTRYPOINT ["/app/entrypoint.sh"]
 
 FROM development AS production
+
+# No USER/ARG re-declaration needed here: production is FROM development, which
+# already switched to the non-root user (GHSA-8465) — re-asserting USER ${UNAME}
+# would be a no-op inherited from that stage.
 
 # Override entrypoint and command for production
 # Use CMD instead of ENTRYPOINT for production to allow better orchestration

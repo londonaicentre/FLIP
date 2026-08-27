@@ -15,7 +15,8 @@ This page walks through the code changes required to adapt a stock Flower app (f
 
 A full, runnable reference is available in-tree:
 
-- ``fl-apps/flower/standard/app/`` — a minimal training-only ``ServerApp`` / ``ClientApp`` template.
+- ``fl-apps/flower/standard/app/`` — the platform-side base bundle: a minimal ``ServerApp`` and strategy scaffold. ``client_app.py`` and ``models.py`` are user-supplied (see ``fl-apps/flower/standard/required_files.json``).
+- ``fl-tutorials/flower/xray_classification/`` — a complete training example with both ``ServerApp`` and ``ClientApp``.
 - ``fl-tutorials/flower/3d_spleen_segmentation/`` — a MONAI spleen-segmentation example that exercises every SDK call covered below.
 
 *****************
@@ -30,8 +31,12 @@ A Flower app that FLIP can run is just a standard Flower project with a ``pyproj
    ├── app/
    │   ├── __init__.py
    │   ├── client_app.py
+   │   ├── config.json
+   │   ├── models.py
    │   └── server_app.py
    └── pyproject.toml
+
+``client_app.py``, ``config.json`` and ``models.py`` are the files you upload — see :ref:`fl-required-files`. ``server_app.py`` is shown here because you need it to run the app locally; on-platform it comes from the FLIP template and an uploaded copy is ignored.
 
 The ``pyproject.toml`` wires the two entry points together:
 
@@ -41,7 +46,7 @@ The ``pyproject.toml`` wires the two entry points together:
    serverapp = "app.server_app:app"
    clientapp = "app.client_app:app"
 
-If you are starting from scratch, copy the in-tree ``fl-apps/flower/standard/`` as a template — it already contains the minimum FLIP integration described below.
+If you are starting from scratch, ``fl-apps/flower/standard/`` provides the platform-side ``ServerApp`` scaffold with the minimum FLIP integration described below; for a complete worked example including a matching ``ClientApp``, see ``fl-tutorials/flower/xray_classification/`` or ``fl-tutorials/flower/3d_spleen_segmentation/``.
 
 .. note::
 
@@ -121,7 +126,7 @@ Wrap your training entry point with four ``update_status`` calls. These drive th
 Full minimal example
 =====================
 
-Reproduced from ``fl-apps/flower/standard/app/server_app.py``:
+Schematic, based on ``fl-apps/flower/standard/app/server_app.py`` — simplified to the lifecycle calls. See the template for the full version, including the ``min_clients`` wiring described under *Strategy considerations* below, which a real app must not omit:
 
 .. code-block:: python
 
@@ -176,6 +181,26 @@ If you subclass a strategy to add custom aggregation or post-round hooks, the ``
            result = super().aggregate_train(server_round, replies)
            # push any custom server-side signals here
            return result
+
+.. warning::
+
+   Set the strategy's node thresholds from ``flip-min-clients``. Flower defaults ``min_train_nodes``, ``min_evaluate_nodes`` and ``min_available_nodes`` to **2**, so a strategy left on those defaults never starts a round on a single-trust project: ``sample_nodes`` waits for a second node in an **unbounded** ``sleep(1)`` loop, so the job hangs for good rather than timing out (``start()``'s ``timeout`` bounds only ``send_and_receive``, which is never reached). The only trace is flwr's per-second ``Waiting for nodes to connect`` INFO line in the ServerApp log, which the platform does not surface — from the UI it is indistinguishable from slow training. FLIP's FL API injects ``flip-min-clients`` with the participating-trust count, the same value the NVFLARE adapter puts in ``min_clients``.
+
+   FLIP's strategies take it as one argument, read via the helper so your app carries no parsing:
+
+   .. code-block:: python
+
+      from flip.flower.strategy import min_clients_from_run_config
+
+      strategy = FedAvgWithClientMetrics(
+          flip=flip,
+          model_id=model_id,
+          min_clients=min_clients_from_run_config(run_config),
+      )
+
+   Building on flwr's ``FedAvg`` directly? Pass the same value to ``min_train_nodes``, ``min_evaluate_nodes`` and ``min_available_nodes`` — but only when it is not ``None``, since ``FedAvg`` types those three as ``int``.
+
+   Do not substitute a constant when the key is absent. ``min_clients_from_run_config`` returns ``None`` there, which leaves flwr's own defaults alone — the right answer, because nothing injects the key on a local ``flwr run .`` or the ``submit_tutorial`` path, and a low constant would let a round start before every participating trust has connected, training on part of the federation without saying so.
 
 ****************************************
 ClientApp: fetching the FLIP DataFrame
@@ -290,10 +315,15 @@ Per-round, per-client metrics are pushed to the central hub with ``flip.send_met
        train_loss = train_func(...)
        val_dice, val_loss = validate_func(...)
 
-       round_num = global_round * local_epochs + epoch + 1
-       flip_utils.flip.send_metrics(client_name, model_id, label="TRAIN_LOSS", value=train_loss, round=round_num)
-       flip_utils.flip.send_metrics(client_name, model_id, label="VAL_LOSS",   value=val_loss,   round=round_num)
-       flip_utils.flip.send_metrics(client_name, model_id, label="VAL_DICE",   value=val_dice,   round=round_num)
+       # Per-epoch points are plotted on an "epoch" axis at the cumulative epoch count; the FL
+       # global round is always recorded alongside as provenance (never overridden).
+       cumulative_epoch = global_round * local_epochs + epoch + 1
+       flip_utils.flip.send_metrics(client_name, model_id, label="TRAIN_LOSS", value=train_loss,
+                                    global_round=global_round, x_value=cumulative_epoch, x_label="epoch")
+       flip_utils.flip.send_metrics(client_name, model_id, label="VAL_LOSS", value=val_loss,
+                                    global_round=global_round, x_value=cumulative_epoch, x_label="epoch")
+       flip_utils.flip.send_metrics(client_name, model_id, label="VAL_DICE", value=val_dice,
+                                    global_round=global_round, x_value=cumulative_epoch, x_label="epoch")
 
 .. warning::
 
@@ -302,6 +332,10 @@ Per-round, per-client metrics are pushed to the central hub with ``flip.send_met
 .. note::
 
    Use stable, upper-case ``label`` strings (``TRAIN_LOSS``, ``VAL_LOSS``, ``VAL_DICE`` are the conventions used in the MONAI tutorial) so that metrics from repeated runs line up on the same chart in the UI.
+
+.. note::
+
+   **Arbitrary x-axis.** By default a metric is plotted at its FL global round, on an x-axis titled "Global Rounds". To plot it elsewhere, pass a coordinate pair to ``flip.send_metrics``: ``x_value`` (any float, e.g. a cumulative epoch count) and ``x_label`` (the axis name, e.g. ``"epoch"``). The ``global_round`` argument is provenance — always the true FL round, never the plot coordinate. If instead you let the server-side ``handle_client_metrics`` helper forward metrics from the reply ``MetricRecord``, encode the coordinate in the metric key as ``<label>[@<x_label>][.x_<V>]`` (e.g. ``"train_loss@epoch.x_5"`` or ``"loss@wall_clock_s.x_12.5"``; the older ``.round_<N>`` suffix still parses but is deprecated). A plot is identified by the ``(label, x_label)`` pair, so the same metric logged under two different x-labels is shown as two separate plots in the UI.
 
 ************************************
 Wiring it up via ``pyproject.toml``
@@ -342,6 +376,7 @@ Abridged from ``fl-tutorials/flower/3d_spleen_segmentation/pyproject.toml``:
    flip-model-id = "uuid"
    flip-project-id = "uuid"
    flip-cohort-query = "*"
+   flip-min-clients = 2  # placeholder matching flwr's default; FLIP injects the trust count
 
 .. note::
 
@@ -366,11 +401,12 @@ Abridged from ``fl-tutorials/flower/3d_spleen_segmentation/pyproject.toml``:
 Submitting the app to FLIP
 ************************************
 
-Once your app runs locally (see the next section), upload it through the FLIP UI's model page the same way you would upload a FLARE app. FLIP validates the required files for a Flower app (which differ from those required for a FLARE app — see the "Model Files" subsection of :doc:`/user-guides/user-common` and the :ref:`flip-fl-nodes` page for the canonical list) and then lets you click **Initiate Training**.
+Once your app runs locally (see the next section), upload it through the FLIP UI's model page the same way you would upload a FLARE app. FLIP validates the required files for a Flower app (which differ from those required for a FLARE app, and depend on the job type — see :ref:`fl-required-files` for the canonical list) and then lets you click **Initiate Training**.
 
 At submit time, the FLIP FL API:
 
-- Injects ``flip-model-id``, ``flip-project-id``, and ``flip-cohort-query`` into your app's run config.
+- Injects ``flip-model-id``, ``flip-project-id``, ``flip-cohort-query`` and ``flip-min-clients``
+  (the participating-trust count) into your app's run config.
 - Sets ``SUPERNODE_NAME`` on each participating trust's SuperNode container to the trust's assigned FL kit slot (e.g. ``Trust_1``).
 - Starts the ``ServerApp`` on the Central Hub's SuperLink and the ``ClientApp`` on each approved trust's SuperNode.
 
@@ -401,5 +437,5 @@ Common pitfalls
 
 - **Missing ``RESULTS_UPLOADED``.** Forgetting the final ``flip.update_status(model_id, ModelStatus.RESULTS_UPLOADED)`` call leaves the model stuck on "training" in the UI.
 - **Wrong ``SUPERNODE_NAME``.** ``SUPERNODE_NAME`` must be the trust's **FL kit slot** (``Trust_1``, ``Trust_2``, ...), not the trust display name — metrics pushed with any other value land under ``unknown_client`` and will not appear on the per-site chart.
-- **Undeclared run-config keys.** ``flwr run`` (and therefore FLIP's FL API) can only override keys already declared in ``[tool.flwr.app.config]``. Declaring ``flip-model-id``, ``flip-project-id``, and ``flip-cohort-query`` with placeholder values is mandatory even though the real values are injected by FLIP.
+- **Undeclared run-config keys.** ``flwr run`` (and therefore FLIP's FL API) can only override keys already declared in ``[tool.flwr.app.config]``. Declaring ``flip-model-id``, ``flip-project-id``, ``flip-cohort-query`` and ``flip-min-clients`` with placeholder values is mandatory even though the real values are injected by FLIP. This matters in two places: your own ``pyproject.toml``, so a local ``flwr run .`` works; and — for the on-platform run — the base template's ``pyproject.toml`` under ``fl-apps/flower/<job_type>/``, which is the config FLIP's overrides are validated against, since an uploaded ``pyproject.toml`` does not become the app's project file.
 - **Missing ``ResourceType``.** If a trust does not have the resource type you requested for a given accession, ``get_by_accession_number`` will raise. Always wrap the call in ``try / except`` and skip the accession on failure so a single bad study does not abort the whole round.

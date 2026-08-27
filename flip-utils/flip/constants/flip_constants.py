@@ -47,6 +47,7 @@ class ProdSettings(_Common):
     """Production environment configuration.
 
     Used when LOCAL_DEV=false. Settings are grouped by which FL role uses them:
+
     - **Server-only** (fl-server on Central Hub): FLIP_API_INTERNAL_URL, INTERNAL_SERVICE_KEY*
     - **Client-only** (fl-client on trust side): DATA_ACCESS_API_URL, IMAGING_API_URL,
       TRUST_INTERNAL_SERVICE_KEY*

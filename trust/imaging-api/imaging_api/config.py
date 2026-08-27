@@ -10,10 +10,15 @@
 # limitations under the License.
 #
 
-from typing import Literal
+from typing import Literal, Self
 
-from pydantic import field_validator
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings
+from sqlalchemy.engine import make_url
+
+# The kit-template placeholder for the not-yet-minted XNAT credentials
+# (trust/.env.example, FLIP-PT-056) — never a real password.
+_XNAT_CREDENTIAL_PLACEHOLDER = "<run-make-generate-xnat-credentials>"
 
 
 class Settings(BaseSettings):
@@ -46,10 +51,41 @@ class Settings(BaseSettings):
     XNAT_URL: str = "http://xnat-web:8080"
     XNAT_SERVICE_USER: str
     XNAT_SERVICE_PASSWORD: str
-    XNAT_DATABASE_URL: str = "postgresql+asyncpg://xnat:xnat@xnat-db:5432/xnat"
+    # Passwordless by design (FLIP-PT-056): topology only, so no credential is
+    # baked into the image. The K8s chart ships the same form
+    # (values.yaml imagingApi.env.XNAT_DATABASE_URL).
+    XNAT_DATABASE_URL: str = "postgresql+asyncpg://xnat@xnat-db:5432/xnat"
+    # The minted per-trust XNAT DB password (kit-file XNAT_DATASOURCE_PASSWORD,
+    # FLIP-PT-056). When set, it replaces the password embedded in
+    # XNAT_DATABASE_URL, so the URL itself stays a non-secret topology constant.
+    # Empty or still the kit-template placeholder → the URL is used as-is, i.e.
+    # passwordless, and a pre-mint deployment fails on its first query rather
+    # than silently authenticating with a known-weak credential.
+    XNAT_DATASOURCE_PASSWORD: str = ""
+
+    @model_validator(mode="after")
+    def apply_xnat_datasource_password(self) -> Self:
+        """Splice the minted XNAT DB password into ``XNAT_DATABASE_URL``.
+
+        Returns:
+            Self: The settings with ``XNAT_DATABASE_URL`` carrying the minted
+            password when one is configured.
+        """
+        if self.XNAT_DATASOURCE_PASSWORD and self.XNAT_DATASOURCE_PASSWORD != _XNAT_CREDENTIAL_PLACEHOLDER:
+            url = make_url(self.XNAT_DATABASE_URL).set(password=self.XNAT_DATASOURCE_PASSWORD)
+            self.XNAT_DATABASE_URL = url.render_as_string(hide_password=False)
+        return self
 
     #
     DATA_ACCESS_API_URL: str = "http://data-access-api:8000"
+
+    # Container Service image for automatic DICOM→NIfTI conversion. The per-project
+    # event subscription looks the XNAT command up by this exact image string, so it
+    # must match what trust/xnat/xnat/config/dcm2niix_command.json (and the K8s
+    # init-job's inline copy) registers at deploy time. Pinned by version tag, never
+    # `latest`: Docker Hub's mutable `xnat/dcm2niix:latest` resolved to a 2021 build
+    # that silently dropped slices from valid series (FLIP#980).
+    DCM2NIIX_IMAGE: str = "ghcr.io/londonaicentre/xnat-dcm2niix:v1.0.20260724"
 
     #
     BASE_IMAGES_DOWNLOAD_DIR: str

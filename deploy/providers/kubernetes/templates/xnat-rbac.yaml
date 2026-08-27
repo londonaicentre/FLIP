@@ -12,7 +12,7 @@
 # RBAC for the XNAT Container Service plugin's Kubernetes compute backend.
 # The plugin reads in-cluster ServiceAccount credentials from the XNAT pod and
 # uses CoreV1Api + BatchV1Api to drive container workloads as Jobs.
-# Verbs cover only what KubernetesClientImpl (container-service 3.8.0) calls:
+# Verbs cover only what KubernetesClientImpl (container-service 3.8.1) calls:
 #   - pods: list (ping) + list/watch (informer)
 #   - pods/log: get (post-hoc log retrieval; logs are not streamed live)
 #   - jobs.batch: create/patch/delete + list/watch (informer)

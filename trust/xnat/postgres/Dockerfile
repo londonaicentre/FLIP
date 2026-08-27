@@ -14,6 +14,14 @@ ARG PG_VERSION
 FROM postgres:${PG_VERSION}
 
 COPY XNAT.sql /docker-entrypoint-initdb.d/
+COPY guard-xnat-db-passwords.sh /usr/local/bin/
 
-# Set the correct permissions for the initialization script
-RUN chmod 644 /docker-entrypoint-initdb.d/XNAT.sql
+# Set the correct permissions for the initialization script and entrypoint guard
+RUN chmod 644 /docker-entrypoint-initdb.d/XNAT.sql && \
+    chmod 755 /usr/local/bin/guard-xnat-db-passwords.sh
+
+# Refuse to boot with placeholder/weak XNAT DB passwords (FLIP-PT-056) — the
+# stock entrypoint applies them silently at first initdb. The guard execs the
+# stock docker-entrypoint.sh, so CMD stays the base image's default command.
+ENTRYPOINT ["guard-xnat-db-passwords.sh"]
+CMD ["postgres"]

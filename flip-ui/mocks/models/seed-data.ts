@@ -282,7 +282,13 @@ export const mockModelDashboard: IModelDashboard = {
         },
         {
             id: v4(),
-            name: "validator.py",
+            name: "config.json",
+            size: 2048,
+            status: FileUploadStatus.COMPLETED
+        },
+        {
+            id: v4(),
+            name: "models.py",
             size: 8048576,
             status: FileUploadStatus.COMPLETED
         }
@@ -481,7 +487,7 @@ export const latestModelData1: IPaginatedResponse<IModel> = {
 export const ModelMetrics: IModelMetricData[] = [
     {
         "yLabel": "LOSS_FUNCTION",
-        "xLabel": "global_round",
+        "xLabel": "Global Rounds",
         "metrics": [
             {
                 "data": [
@@ -554,7 +560,7 @@ export const ModelMetrics: IModelMetricData[] = [
     },
     {
         "yLabel": "AVERAGE_SCORE",
-        "xLabel": "global_round",
+        "xLabel": "Global Rounds",
         "metrics": [
             {
                 "data": [

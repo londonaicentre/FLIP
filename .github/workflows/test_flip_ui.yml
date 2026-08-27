@@ -62,7 +62,7 @@ jobs:
         run: npm run test:unit
 
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v7
         with:
           files: flip-ui/coverage/cobertura-coverage.xml
           flags: flip-ui
@@ -129,13 +129,15 @@ jobs:
           cache: npm
           cache-dependency-path: flip-ui/package-lock.json
 
-      - name: Stub flip-ui/.env.development for Cypress
+      - name: Stub flip-ui/.env.e2e for Cypress
         # Vite's `loadEnv` and the cypress plugin (dotenv) both read this
         # file at process start. The values mirror the job-level `env:`
         # block above — they're stubs because the suite mocks Cognito and
         # the API at the network layer, so nothing here ever hits AWS.
+        #
+        # `.env.e2e`, not `.env.development` — see flip-ui/README.md → Testing.
         run: |
-          cat > .env.development <<'EOF'
+          cat > .env.e2e <<'EOF'
           VITE_LOCAL=false
           VITE_E2E=true
           CENTRAL_HUB_API_URL=http://localhost:8080
@@ -146,7 +148,7 @@ jobs:
           EOF
 
       - name: Cypress run
-        uses: cypress-io/github-action@v6
+        uses: cypress-io/github-action@v7
         # install-command defaults to `npm ci` when package-lock.json exists,
         # which is what we want here — reproducible installs in CI.
         with:
@@ -162,7 +164,7 @@ jobs:
 
       - name: Upload Cypress screenshots
         if: failure()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: cypress-screenshots-${{ matrix.group }}
           path: flip-ui/test/cypress/screenshots

@@ -69,7 +69,7 @@ def parse_files_from_result(files: Any, model_id: UUID) -> list[UploadedFiles]:
 
     Args:
         files (Any): Iterable of mapping-like rows with ``id``, ``name``, ``status``, ``size``,
-            ``type``, and ``tag`` keys.
+            ``type``, ``tag``, and ``bandit_findings`` keys.
         model_id (UUID): The model ID that each parsed file should be attributed to.
 
     Returns:
@@ -87,6 +87,7 @@ def parse_files_from_result(files: Any, model_id: UUID) -> list[UploadedFiles]:
             type=f["type"],
             tag=f["tag"],
             model_id=model_id,
+            bandit_findings=f.get("bandit_findings"),
         )
         for f in files
     ]

@@ -27,10 +27,12 @@ trust.
 import asyncio
 import json
 import sys
+from typing import Any
 
 import httpx
 
 from trust_api.config import get_settings
+from trust_api.services.health_collector import current_snapshot
 from trust_api.services.task_handlers import TASK_HANDLERS
 from trust_api.utils.encryption import decrypt
 from trust_api.utils.logger import logger
@@ -127,10 +129,20 @@ async def _send_heartbeat(client: httpx.AsyncClient) -> None:
         client (httpx.AsyncClient): HTTP client for making requests.
     """
     try:
-        response = await client.post(
-            f"{CENTRAL_HUB_API_URL}/trust/heartbeat",
-            headers=_auth_headers(),
-        )
+        # Attach the latest service-health snapshot when the collector has one; a
+        # bodyless POST is the pre-collector wire behavior and must keep working.
+        kwargs: dict = {"headers": _auth_headers()}
+        snapshot = current_snapshot()
+        if snapshot is not None:
+            kwargs["json"] = snapshot
+        response = await client.post(f"{CENTRAL_HUB_API_URL}/trust/heartbeat", **kwargs)
+        if response.status_code == 422 and snapshot is not None:
+            # The hub rejected the snapshot, not the heartbeat. Telemetry must not
+            # cost liveness (an un-stamped last_heartbeat renders the trust Offline
+            # while it polls normally), so retry once bodyless and keep the loud log
+            # for the snapshot investigation.
+            logger.error(f"Hub rejected health snapshot (HTTP 422): {response.text[:500]} — retrying bodyless")
+            response = await client.post(f"{CENTRAL_HUB_API_URL}/trust/heartbeat", headers=_auth_headers())
         # httpx only raises on transport errors — auth/identity rejections
         # (401/403/404) come back as a successful HTTP response. Without this
         # check the trust silently never updates ``trust.last_heartbeat`` on
@@ -164,12 +176,19 @@ async def _report_task_result(client: httpx.AsyncClient, task_id: str, result: d
     Args:
         client (httpx.AsyncClient): HTTP client for making requests.
         task_id (str): The ID of the completed task.
-        result (dict): Result dict with ``success`` and optional ``result`` / ``error`` fields.
+        result (dict): Result dict with ``success`` and optional ``result`` / ``error`` /
+            ``status_code`` fields.
     """
     result_data = result.get("result")
-    # Include error details in the result field when reporting failures
+    # Include error details in the result field when reporting failures. ``status_code`` rides
+    # along when the handler knew one, so the hub can tell a missing XNAT project (404) from an
+    # unreachable one without parsing the error string (FLIP#1022). Absent codes stay absent
+    # rather than becoming null, so the hub's fallback parsing still kicks in.
     if not result.get("success", False) and result.get("error") and not result_data:
-        result_data = json.dumps({"error": result["error"]})
+        error_payload: dict[str, Any] = {"error": result["error"]}
+        if result.get("status_code") is not None:
+            error_payload["status_code"] = result["status_code"]
+        result_data = json.dumps(error_payload)
 
     payload = {
         "success": result.get("success", False),

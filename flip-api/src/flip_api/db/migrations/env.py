@@ -42,7 +42,13 @@ import flip_api.db.models.user_models  # noqa: F401
 config = context.config
 
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    # disable_existing_loggers=False is load-bearing: the default (True) disables
+    # every logger not declared in alembic.ini, including the app's own "uvicorn"
+    # logger. Harmless for the entrypoint's `alembic upgrade head`, which is its
+    # own process, but the integration tests run Alembic in-process — so the
+    # default silently muted application logging for the rest of the session and
+    # every later caplog assertion saw an empty log.
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 target_metadata = SQLModel.metadata
 

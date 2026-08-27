@@ -90,6 +90,15 @@ def test_retrieve_model_success(
                 "size": 12345,
                 "type": "csv",
                 "tag": "training",
+                "bandit_findings": [
+                    {
+                        "test_id": "B101",
+                        "issue_text": "Use of assert detected.",
+                        "severity": "LOW",
+                        "confidence": "HIGH",
+                        "line_number": 3,
+                    }
+                ],
             }
         ],
         "query": {
@@ -138,6 +147,10 @@ def test_retrieve_model_success(
     assert len(result.files) == 1
     assert result.files[0].id == file_id
     assert result.files[0].status == FileUploadStatus.COMPLETED
+    # Regression guard: `retrieve_model_query.sql`'s bandit_findings column must
+    # actually reach the response — `parse_files_from_result` reads it with
+    # `.get()`, which would silently swallow a dropped SQL column otherwise.
+    assert result.files[0].bandit_findings == mock_raw_sql_result["files"][0]["bandit_findings"]
     assert result.queue_position is None
 
 

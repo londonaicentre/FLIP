@@ -21,9 +21,9 @@ against the synthetic DeCaf MICCAI-2026 dataset).
 
 | # | Experiment | Tutorial dir (`fl-tutorials/nvflare/`) | Job type | Dataset | Cohort SQL discriminator |
 |---|---|---|---|---|---|
-| 1 | **Baseline evaluation** | `image_evaluation/arkplus_baseline_classification_evaluation` | `evaluation_client_api` | **holdout** | `procedure_source_value = 'Chest X-ray (holdout)'` |
-| 2 | **Finetuning** | `image_classification/arkplus_fine_tuning` | `standard_client_api` (training) | **finetuning** (train split) | `procedure_source_value = 'Chest X-ray'` |
-| 3 | **Multimodel evaluation** | `image_evaluation/arkplus_multimodel_classification_evaluation` | `evaluation_client_api` | **holdout** | `procedure_source_value = 'Chest X-ray (holdout)'` |
+| 1 | **Baseline evaluation** | `image_evaluation/arkplus_baseline_classification_evaluation` | `evaluation` | **holdout** | `procedure_source_value = 'Chest X-ray (holdout)'` |
+| 2 | **Finetuning** | `image_classification/arkplus_fine_tuning` | `standard` (training) | **finetuning** (train split) | `procedure_source_value = 'Chest X-ray'` |
+| 3 | **Multimodel evaluation** | `image_evaluation/arkplus_multimodel_classification_evaluation` | `evaluation` | **holdout** | `procedure_source_value = 'Chest X-ray (holdout)'` |
 
 **Dependency:** the multimodel evaluation (3) evaluates the pretrained **and** the finetuned
 checkpoint, so run finetuning (2) first and feed its output checkpoint into (3).
@@ -64,8 +64,8 @@ variant). Several defaults sized for small models **must be raised**, or jobs OO
 | `fl-server-net-1` | 1 vCPU / 2 GiB | **2 vCPU / 8 GiB** | `torch.load`s the 759 MiB checkpoint as the initial/eval model; OOM-kills at 2 GiB (surfaces as `Server disconnected without sending a response` + a model `ERROR`) |
 
 Also on the hub:
-- **`MAX_MODEL_FILE_BYTES = 5 GiB`** (stock default 100 MiB) — the presigned-POST upload cap must
-  admit the ~759 MiB / ~1.5 GiB checkpoints.
+- **`MAX_MODEL_FILE_BYTES = 5 GiB`** (the current Settings default) — the presigned-POST upload
+  cap must admit the ~759 MiB / ~1.5 GiB checkpoints.
 - **Shared checkpoint-staging EFS volume** (`fl_checkpoints` access point) mounted at
   `/app/server-checkpoints` on **both** fl-api (writer) and fl-server (reader), with
   `SERVER_CHECKPOINT_ROOT` set — large checkpoints are staged server-side, never bundled into the
@@ -288,11 +288,11 @@ Results (cross-site metrics) are on the model's page in the UI, or via
 | `xnat-reset … sudo: a terminal is required` | XNAT reset `rm -rf`s root-owned dirs | Run `up-trust` in a real terminal, or enable passwordless sudo |
 | Create project → `500 Internal server error during authentication` | Token from the wrong Cognito pool (dev vs stag) | Force the stag `AWS_COGNITO_*` on the command line (Part C) |
 | Auth returns an MFA challenge (`SOFTWARE_TOKEN_MFA`) | Cognito user has TOTP enrolled | Disable the stag admin user's MFA (stag only; prod keeps MFA) |
-| `Unknown job_type: evaluation_client_api` | Base app / manifest not present in the hub's local `FL_APP_BASE_DIR` template tree (FLIP#724 — templates ship in the flip-api image, no S3 sync) | Ensure the flip-api image carries the target `fl-apps/` revision (rebuild + redeploy for a template change); in dev the `../fl-apps` bind-mount covers it |
+| `Unknown job_type: evaluation` | Base app / manifest not present in the hub's local `FL_APP_BASE_DIR` template tree (FLIP#724 — templates ship in the flip-api image, no S3 sync) | Ensure the flip-api image carries the target `fl-apps/` revision (rebuild + redeploy for a template change); in dev the `../fl-apps` bind-mount covers it |
 | Model → `ERROR`, `Server disconnected without sending a response` | fl-api/fl-server OOM loading the 759 MiB checkpoint | Size `fl-api-net-1` ≥ 4 GiB, `fl-server-net-1` ≥ 8 GiB (`ecs_tasks.tf`) |
 | **Finetuning** model → `ERROR` right after `init_training` (never reaches a `train` task); fl-server log shows `RuntimeError: Error(s) in loading state_dict for ArkPlusNVFlareWrapper: size mismatch for ark_model.omni_heads.0.weight: copying a param with shape torch.Size([14, 1376]) … current model is torch.Size([5, 1376])` | The `SERVER_CHECKPOINT` staged for finetuning is **not backbone-only** — it still carries the foundation model's 14-class `omni_heads.*`. The server persistor loads it `strict=False`, which tolerates *missing/unexpected* keys but **not a shape mismatch on a shared key**, so the 14-class head can't seat in the fresh 5-class model. Typically caused by pointing `pretrained_weights.pt` at the **eval** checkpoint (which keeps the heads) instead of the finetuning one. | Use a **backbone-only** `pretrained_weights.pt` — produce it via the finetuning tutorial's `make prepare-checkpoint` (`process_tools/preprocess_checkpoints.py`, which strips `omni_heads.*`). Quick fix if you only have a head-carrying copy: `torch.load` it and re-save `{k:v for k,v in sd.items() if not k.startswith("omni_heads.")}`. See the finetuning-checkpoint note under **The three experiments**. |
 | Eval reports `RESULTS_UPLOADED` but **metrics are empty**; fl-client log shows `RuntimeError: No DICOM image/label pairs found`, and imaging-api logs `Trust-side storage error … [Errno 13] Permission denied: '/app/data/images/net-1/…-scans-ALL.zip'` | The eval-time per-accession DICOM download writes into the shared bind mount `trust/data/<KIT>` → `/app/data/images` (host uid 1001), but its `net-1/` subdir was created by the **root** fl-client, so imaging-api (uid 1000) can't write DICOMs into it. `get_dataframe`/`project_id` are fine — only the image write fails, so every accession is skipped and the datalist is empty. | Make the per-net dir writable by imaging-api's uid on each trust (container-root = host-root on the bind mount, so no host `sudo`): `docker exec -u 0 <trust>-imaging-api-1 chown -R 1000:1000 /app/data/images/net-1`. Durable — `CleanupImages` only clears the dir's *contents*, never re-creates it. |
-| **Finetuning** (`standard_client_api`) model OOMs during **post-training cross-site validation** — all `train`/aggregation rounds finished (metrics reach the last local epoch), then fl-server `MemoryUtilized` spikes to the 8 GiB task ceiling and the job child process exits; the model **orphans at `TRAINING_STARTED`** (crash lands before `END_RUN`, so `PersistToS3AndCleanup` never runs → empty S3 results, net stays `BUSY`). Prod-only — staging (both trusts on one fast-local desktop) doesn't hit it. | The stock `CrossSiteModelEval` runs a `submit_model` all-to-all (each client's full model collected server-side **plus** the global model broadcast), and over a **slow-link trust** (e.g. BDMS/Thailand) the full ~759 MiB copies stay resident for minutes → OOM (~97 % of 8 GiB). | Finetune eval now defaults to **`GlobalModelEval`** (broadcasts only the aggregated global model; no `submit_model` matrix) — peak memory drops to ~75 % and the run completes to `RESULTS_UPLOADED`. To clear an already-orphaned model + free the net: `POST /fl/stop/{model_id}`. Head-only eval broadcast (only the trained head crosses the wire) is a further optimisation. |
+| **Finetuning** (`standard`) model OOMs during **post-training cross-site validation** — all `train`/aggregation rounds finished (metrics reach the last local epoch), then fl-server `MemoryUtilized` spikes to the 8 GiB task ceiling and the job child process exits; the model **orphans at `TRAINING_STARTED`** (crash lands before `END_RUN`, so `PersistToS3AndCleanup` never runs → empty S3 results, net stays `BUSY`). Prod-only — staging (both trusts on one fast-local desktop) doesn't hit it. | The stock `CrossSiteModelEval` runs a `submit_model` all-to-all (each client's full model collected server-side **plus** the global model broadcast), and over a **slow-link trust** (e.g. BDMS/Thailand) the full ~759 MiB copies stay resident for minutes → OOM (~97 % of 8 GiB). | Finetune eval now defaults to **`GlobalModelEval`** (broadcasts only the aggregated global model; no `submit_model` matrix) — peak memory drops to ~75 % and the run completes to `RESULTS_UPLOADED`. To clear an already-orphaned model + free the net: `POST /fl/stop/{model_id}`. Head-only eval broadcast (only the trained head crosses the wire) is a further optimisation. |
 
 ## Results — baseline evaluation (validated on staging, 2026-07-03)
 
@@ -309,11 +309,12 @@ Pretrained Ark+ checkpoint scored against each trust's **holdout** cohort
 
 | Lesion | GSTT (Trust_1) AUROC | KCH (Trust_2) AUROC |
 |---|---|---|
-| Effusion | 0.839 | 0.953 |
-| Consolidation | 0.866 | 0.871 |
-| Infiltration | 0.846 | 0.875 |
-| Lung Nodule or Mass | 0.944 | 0.939 |
-| Pneumothorax | 0.642 | 0.832 |
+| Effusion | 0.998 | 1.000 |
+| Consolidation | 0.989 | 0.998 |
+| Infiltration | 0.863 | 0.878 |
+| Lung Nodule or Mass | 0.970 | 0.955 |
+| Pneumothorax | 0.971 | 0.997 |
+| **Mean** | **0.958** | **0.966** |
 
 `project_id`, cohort decryption and `flip.get_dataframe` all work on the platform — the
 per-site datalist is fetched from the trust APIs and the DICOMs are pulled on demand at eval
@@ -349,7 +350,7 @@ possible, exercised together for the first time here:
   backbone went out once, not five times; clients reconstructed the full model locally from it and
   trained normally.
 
-There's no cross-site metric from training itself (no held-out split is scored during `standard_client_api`
+There's no cross-site metric from training itself (no held-out split is scored during `standard`
 training) — the finetuned checkpoint is scored downstream in the multimodel evaluation below,
 which is what actually demonstrates the finetune improved the model.
 
@@ -367,32 +368,39 @@ which is what actually demonstrates the finetune improved the model.
 
 Evaluates the pretrained Ark+ checkpoint **and** the finetuned checkpoint from the run above,
 head-to-head, against the same **holdout** cohort used for the baseline evaluation above (reusing
-that project — `model_id ed2d49b5`, image `acfbd280`). The finetuned model wins on all 5 lesions
-at both trusts, every comparison significant (DeLong *p* < 1×10⁻⁶):
+that project — `model_id ed2d49b5`, image `acfbd280`). The finetune is at least as good on every
+lesion at both trusts, and the gain survives Benjamini-Hochberg correction on 6 of the 10
+lesion–trust pairings; the exceptions are the four where the pretrained model already sits at or
+above 0.997, which leaves it no headroom. Significance is a two-sided DeLong test, BH-corrected per
+trust (critical *p* = 2.7×10⁻² at GSTT, 7.2×10⁻⁷ at KCH). The figures below are the 50-round
+production finetune — the staging run above used a shorter 5-round one and is not tabulated
+separately.
 
 **GSTT (Trust_1, n=478)**
 
 | Lesion | Pretrained AUROC | Finetuned AUROC | Δ | DeLong *p* |
 |---|---|---|---|---|
-| Effusion | 0.839 | 0.995 | +0.156 | 1.7×10⁻¹⁰ |
-| Consolidation | 0.866 | 0.986 | +0.120 | 6.0×10⁻¹³ |
-| Infiltration | 0.846 | 0.996 | +0.151 | 3.5×10⁻¹⁶ |
-| Lung Nodule or Mass | 0.944 | 1.000 | +0.056 | 1.3×10⁻⁶ |
-| Pneumothorax | 0.642 | 0.999 | +0.357 | 3.4×10⁻²⁸ |
-| **Mean** | **0.827** | **0.995** | **+0.168** | |
+| Effusion | 0.998 | 1.000 | +0.002 | 0.12 (n.s.) |
+| Consolidation | 0.989 | 0.997 | +0.008 | 0.027 |
+| Infiltration | 0.863 | 0.998 | +0.135 | 1.8×10⁻¹⁴ |
+| Lung Nodule or Mass | 0.970 | 1.000 | +0.030 | 5.9×10⁻⁶ |
+| Pneumothorax | 0.971 | 1.000 | +0.029 | 0.0065 |
+| **Mean** | **0.958** | **0.999** | **+0.041** | |
 
 **KCH (Trust_2, n=468)**
 
 | Lesion | Pretrained AUROC | Finetuned AUROC | Δ | DeLong *p* |
 |---|---|---|---|---|
-| Effusion | 0.953 | 1.000 | +0.047 | 9.4×10⁻⁷ |
-| Consolidation | 0.871 | 0.999 | +0.128 | 5.0×10⁻¹⁰ |
-| Infiltration | 0.875 | 1.000 | +0.125 | 6.0×10⁻¹⁵ |
-| Lung Nodule or Mass | 0.939 | 1.000 | +0.061 | 3.9×10⁻⁷ |
-| Pneumothorax | 0.832 | 0.997 | +0.165 | 2.4×10⁻¹⁰ |
-| **Mean** | **0.894** | **0.999** | **+0.105** | |
+| Effusion | 1.000 | 1.000 | +0.000 | 1.00 (n.s.) |
+| Consolidation | 0.998 | 1.000 | +0.002 | 0.31 (n.s.) |
+| Infiltration | 0.878 | 1.000 | +0.122 | 1.2×10⁻¹⁵ |
+| Lung Nodule or Mass | 0.955 | 1.000 | +0.045 | 7.2×10⁻⁷ |
+| Pneumothorax | 0.997 | 1.000 | +0.003 | 0.19 (n.s.) |
+| **Mean** | **0.966** | **1.000** | **+0.034** | |
 
-The biggest single gain is Pneumothorax at GSTT (0.642 → 0.999) — the same lesion that was the
-weakest pretrained score in the baseline evaluation above. Results zip was ~12 KB
+The biggest single gain is Infiltration (0.863 → 0.998 at GSTT, 0.878 → 1.000 at KCH) — the weakest
+pretrained score at both trusts in the baseline evaluation above. The finetuned model saturates both
+cohorts (AUROC ≥ 0.997), so these numbers speak to the platform working end to end, not to a
+state-of-the-art result on a synthetic task. Results zip was ~12 KB
 (`evaluation_results/evaluation_results.json` only — the same results-zip prune from the baseline
 evaluation applies here too).

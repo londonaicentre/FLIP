@@ -323,6 +323,8 @@ def upload_application(model_id: str, body: UploadAppRequest, upload_dir: str) -
                 aggregator,
                 aggregation_weights,
                 aggregate_only_regex=config.AGGREGATE_ONLY_REGEX,
+                best_model_metric=config.BEST_MODEL_METRIC,
+                best_model_metric_minimize=config.BEST_MODEL_METRIC_MINIMIZE,
             )
 
             # Configure the environment.json file if it exists.

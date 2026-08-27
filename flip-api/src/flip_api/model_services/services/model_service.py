@@ -38,10 +38,11 @@ from flip_api.domain.interfaces.model import (
     IModelMetrics,
     IModelMetricsData,
     IModelMetricsValue,
+    IModelsProjectOption,
     ITrustSummary,
 )
 from flip_api.domain.schemas.actions import ModelAuditAction
-from flip_api.domain.schemas.status import JobStatus, ModelStatus
+from flip_api.domain.schemas.status import JobStatus, ModelStatus, ProjectStatus
 from flip_api.fl_services.services import fl_scheduler_service
 from flip_api.model_services.utils.audit_helper import audit_model_action, audit_model_actions
 from flip_api.utils.logger import logger
@@ -85,6 +86,18 @@ _STATUS_AUDIT_MAP: dict[ModelStatus, ModelAuditAction] = {
     ModelStatus.RESULTS_UPLOADED: ModelAuditAction.RESULTS_UPLOADED,
 }
 
+# Once a user has STOPPED a model, late fl-server callbacks (PREPARED / RUNNING from a
+# prepare the abort raced, or END_RUN results) and the prepare-failure handler (ERROR) must not
+# overwrite the stop — a stopped model expects no results (#787). The only transition kept open
+# is STOPPED → INITIATED, so a stopped model can be queued for training again.
+_IGNORED_WHEN_STOPPED: set[ModelStatus] = {
+    ModelStatus.PREPARED,
+    ModelStatus.RUNNING,
+    ModelStatus.ERROR,
+    ModelStatus.RESULTS_UPLOADED,
+    ModelStatus.RESULTS_UPLOAD_FAILED,
+}
+
 
 def update_model_status(
     model_id: UUID,
@@ -114,6 +127,10 @@ def update_model_status(
 
     if not status:
         status = model.status
+
+    if model.status == ModelStatus.STOPPED and status in _IGNORED_WHEN_STOPPED:
+        logger.info(f"Model {model_id} is STOPPED; ignoring late transition to {status}.")
+        return model.status
 
     previous_status = model.status
     model.status = status
@@ -374,6 +391,9 @@ def get_metrics(model_id: UUID, session: Session) -> list[IModelMetrics]:
     """
     logger.debug("Attempting to retrieve the metrics results for the model...")
 
+    # Deliberately unordered: the stable in-memory sort below fully determines each series' order,
+    # and an ORDER BY x_value here would return equal-x rows in unspecified order — weakening the
+    # ties-keep-insertion-order guarantee rather than helping it.
     results = session.exec(select(FLMetrics).where(FLMetrics.model_id == model_id)).all()
 
     if not results:
@@ -386,16 +406,19 @@ def get_metrics(model_id: UUID, session: Session) -> list[IModelMetrics]:
     for trust_id, code, name in session.exec(select(Trust.id, Trust.code, Trust.name)).all():
         trust_label[trust_id] = code or name
 
-    # metrics_map: label -> IModelMetrics
-    metrics_map: dict[str, IModelMetrics] = {}
+    # metrics_map: (label, x_label) -> IModelMetrics. A plot's identity is the pair, so the same
+    # metric logged against different x-axis labels renders as separate plots rather than being
+    # overlaid on one axis (FLIP#148). x_label defaults to "Global Rounds" for legacy rows.
+    metrics_map: dict[tuple[str, str], IModelMetrics] = {}
 
     for row in results:
-        # Create or get the IModelMetrics for the label
-        if row.label not in metrics_map:
-            metrics_map[row.label] = IModelMetrics(y_label=row.label, x_label="global_round", metrics=[])
+        # Create or get the IModelMetrics for this (label, x_label) plot
+        key = (row.label, row.x_label)
+        if key not in metrics_map:
+            metrics_map[key] = IModelMetrics(y_label=row.label, x_label=row.x_label, metrics=[])
 
-        # Get the list of series for this label
-        metric = metrics_map[row.label]
+        # Get the list of series for this plot
+        metric = metrics_map[key]
 
         series_label = trust_label.get(row.trust, str(row.trust))
 
@@ -405,12 +428,12 @@ def get_metrics(model_id: UUID, session: Session) -> list[IModelMetrics]:
             series = IModelMetricsData(series_label=series_label, data=[])
             metric.metrics.append(series)
 
-        # Add the data point
-        series.data.append(IModelMetricsValue(x_value=row.global_round, y_value=row.result))
+        # Add the data point at its plot coordinate (global_round is provenance, not the x)
+        series.data.append(IModelMetricsValue(x_value=row.x_value, y_value=row.result))
 
     # The query has no inherent ordering, so points arrive interleaved and a chart
-    # drawn in array order zig-zags. Sort each series by round; ties (a label
-    # reported both per-epoch and per-round) keep their insertion order.
+    # drawn in array order zig-zags. Sort each series by its x coordinate; ties
+    # keep their insertion order.
     for metric in metrics_map.values():
         for series in metric.metrics:
             series.data.sort(key=lambda point: point.x_value)
@@ -497,6 +520,7 @@ def get_all_models_service(
     user_id: UUID | None,
     query_params: dict,
     status_filter: list[ModelStatus] | None = None,
+    project_id: UUID | None = None,
 ) -> tuple[IPagedResponse[IAllModelsResponse], dict[str, int], PagingInfo]:
     """Estate-wide, access-scoped model list joined with project name, owner and run trusts (#726).
 
@@ -508,12 +532,16 @@ def get_all_models_service(
 
     Alongside the page it returns per-status counts over the same access-scoped, search-filtered set
     but **without** the status filter — so the filter tiles keep their numbers while one is selected.
+    ``project_id`` is deliberately part of that base set rather than the list filter, so scoping to a
+    project rescopes the tiles too: they describe the project in view, not the estate behind it.
 
     Args:
         session (Session): The database session.
         user_id (UUID | None): The requesting user, or ``None`` to see every model (manager bypass).
         query_params (dict): Raw query params (``pageNumber`` / ``pageSize`` / ``search``).
         status_filter (list[ModelStatus] | None): Optional set of statuses to filter the list to.
+        project_id (UUID | None): Optional project to scope the list — and the counts — to. The
+            caller is responsible for the access check; this only narrows.
 
     Returns:
         tuple[IPagedResponse[IAllModelsResponse], dict[str, int], PagingInfo]: the page of rows, the
@@ -530,6 +558,8 @@ def get_all_models_service(
         base_conditions.append(
             or_(func.lower(Model.name).like(pattern), func.lower(Projects.name).like(pattern))
         )
+    if project_id is not None:
+        base_conditions.append(Model.project_id == project_id)
 
     list_conditions = list(base_conditions)
     if status_filter:
@@ -585,6 +615,7 @@ def get_all_models_service(
             project_name=project_name,
             owner_id=model.owner_id,
             owner_name=owner_name,
+            creation_timestamp=model.creation_timestamp,
             trusts=trusts_by_model.get(model.id, []),
             queue_position=queue_positions.get(model.id),
         )  # type: ignore[call-arg]
@@ -592,3 +623,44 @@ def get_all_models_service(
     ]
 
     return IPagedResponse[IAllModelsResponse](data=data, total_rows=total_rows), status_counts, paging
+
+
+def get_models_project_options_service(session: Session, user_id: UUID | None) -> list[IModelsProjectOption]:
+    """List the projects a caller may filter the Models page by.
+
+    Same access rule as the model list — owned or granted, with ``user_id=None`` meaning a manager
+    who sees everything — but deliberately **not** joined to ``Model``: a project with no models yet
+    still belongs in the dropdown, and picking it should show an honest empty list rather than be
+    impossible to select.
+
+    Args:
+        session (Session): The database session.
+        user_id (UUID | None): The requesting user, or ``None`` to list every project.
+
+    Returns:
+        list[IModelsProjectOption]: Accessible projects as ``(id, name, status)``, ordered by name.
+    """
+    conditions: list[Any] = [col(Projects.deleted).is_(False)]
+    if user_id is not None:
+        conditions.append(or_(Projects.owner_id == user_id, ProjectUserAccess.user_id == user_id))
+
+    # Same pinned LEFT JOIN as the list query, so a granted project matches once rather than once
+    # per access row.
+    access_join = and_(
+        col(ProjectUserAccess.project_id) == Projects.id, ProjectUserAccess.user_id == user_id
+    )
+
+    query = (
+        select(Projects.id, Projects.name, Projects.status)  # type: ignore[call-overload]
+        .outerjoin(ProjectUserAccess, access_join)
+        .where(and_(*conditions))
+        .distinct()
+        .order_by(col(Projects.name))
+    )
+
+    return [
+        # The column comes back as its raw string; ProjectStatus is a StrEnum, so this both
+        # satisfies the response model and fails loudly if the DB ever holds an unknown value.
+        IModelsProjectOption(id=project_id, name=name, status=ProjectStatus(project_status))
+        for project_id, name, project_status in session.exec(query).all()
+    ]

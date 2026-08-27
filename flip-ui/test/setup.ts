@@ -11,92 +11,91 @@
  * limitations under the License.
  */
 
-import { config } from '@vue/test-utils'
-import { afterAll, afterEach, beforeAll, vi } from 'vitest'
+import { config } from "@vue/test-utils";
+import { afterAll, afterEach, beforeAll, vi } from "vitest";
 
 // Global test setup
 beforeAll(async () => {
-  console.log('Setting up test environment...')
+    console.log("Setting up test environment...");
 
-  // Configure Vue Test Utils globally
-  config.global.stubs = {
+    // Configure Vue Test Utils globally
+    config.global.stubs = {
     // Vue Router components
-    'router-link': true,
-    'router-view': true,
+        "router-link": true,
+        "router-view": true,
 
-    // Headless UI components
-    'Dialog': true,
-    'DialogOverlay': true,
-    'DialogPanel': true,
-    'DialogTitle': true,
-    'DialogDescription': true,
-    'TransitionRoot': true,
-    'TransitionChild': true,
+        // Headless UI components
+        "Dialog": true,
+        "DialogOverlay": true,
+        "DialogPanel": true,
+        "DialogTitle": true,
+        "DialogDescription": true,
+        "TransitionRoot": true,
+        "TransitionChild": true,
 
-    // Vue built-in components
-    'Teleport': true,
+        // Vue built-in components
+        "Teleport": true,
 
-    // CodeMirror component
-    'Codemirror': true,
-  }
+        // CodeMirror component
+        "Codemirror": true
+    };
 
-  // Mock window.matchMedia for responsive components
-  Object.defineProperty(window, 'matchMedia', {
-    writable: true,
-    value: vi.fn().mockImplementation(query => ({
-      matches: false,
-      media: query,
-      onchange: null,
-      addListener: vi.fn(),
-      removeListener: vi.fn(),
-      addEventListener: vi.fn(),
-      removeEventListener: vi.fn(),
-      dispatchEvent: vi.fn(),
-    })),
-  })
+    // Mock window.matchMedia for responsive components
+    Object.defineProperty(window, "matchMedia", {
+        writable: true,
+        value: vi.fn().mockImplementation(query => ({
+            matches: false,
+            media: query,
+            onchange: null,
+            addListener: vi.fn(),
+            removeListener: vi.fn(),
+            addEventListener: vi.fn(),
+            removeEventListener: vi.fn(),
+            dispatchEvent: vi.fn()
+        }))
+    });
 
-  // Mock ResizeObserver
-  global.ResizeObserver = vi.fn().mockImplementation(() => ({
-    observe: vi.fn(),
-    unobserve: vi.fn(),
-    disconnect: vi.fn(),
-  }))
-
-  // Mock IntersectionObserver
-  global.IntersectionObserver = vi.fn().mockImplementation(() => ({
-    observe: vi.fn(),
-    unobserve: vi.fn(),
-    disconnect: vi.fn(),
-  }))
-})
+    // Mock ResizeObserver / IntersectionObserver. Must be constructible (classes,
+    // not arrow-function factories): HeadlessUI's Dialog does `new ResizeObserver()`
+    // when mounted un-stubbed, and `new (vi.fn().mockImplementation(() => ...))`
+    // throws "not a constructor" — which surfaces as unhandled errors that fail the
+    // run even when every assertion passes.
+    class MockObserver {
+        observe = vi.fn();
+        unobserve = vi.fn();
+        disconnect = vi.fn();
+    }
+    global.ResizeObserver = MockObserver as unknown as typeof ResizeObserver;
+    global.IntersectionObserver = MockObserver as unknown as typeof IntersectionObserver;
+});
 
 // Cleanup after all tests
 afterAll(async () => {
-  // Belt-and-braces companion to the afterEach drain below, for imports kicked
-  // off outside a test body (e.g. in a spec's own afterAll hook) — FLIP#748.
-  await vi.dynamicImportSettled()
-  console.log('Cleaning up test environment...')
-})
+    // Belt-and-braces companion to the afterEach drain below, for imports kicked
+    // off outside a test body (e.g. in a spec's own afterAll hook) — FLIP#748.
+    await vi.dynamicImportSettled();
+    console.log("Cleaning up test environment...");
+});
 
 // Cleanup after each test
 afterEach(async () => {
-  // FLIP#748: drain dynamic imports started during the test before the file's
-  // environment can be torn down. A fire-and-forget router.push() resolves its
-  // lazy route component via an unawaited dynamic import (e.g. signOut →
-  // routeChange.gotoLogin() → import of Login.vue and its ~icons modules); if
-  // that fetch is still in flight when vitest tears the environment down, it
-  // rejects as an EnvironmentTeardownError and fails an all-green run.
-  await vi.dynamicImportSettled()
-  // Clear all mocks to ensure test isolation
-  vi.clearAllMocks()
-})
+    // FLIP#748: drain dynamic imports started during the test before the file's
+    // environment can be torn down. A fire-and-forget router.push() resolves its
+    // lazy route component via an unawaited dynamic import (e.g. signOut →
+    // routeChange.gotoLogin() → import of Login.vue and its ~icons modules); if
+    // that fetch is still in flight when vitest tears the environment down, it
+    // rejects as an EnvironmentTeardownError and fails an all-green run.
+    await vi.dynamicImportSettled();
+    // Clear all mocks to ensure test isolation
+    vi.clearAllMocks();
+});
 
 // Configure console output for tests
-if (process.env.NODE_ENV === 'test') {
-  global.console = {
-    ...console,
-    log: vi.fn(),
-    warn: vi.fn(),
-    error: console.error, // Keep errors visible
-  }
+if (process.env.NODE_ENV === "test") {
+    global.console = {
+        ...console,
+        log: vi.fn(),
+        warn: vi.fn(),
+        error: console.error // Keep errors visible
+    };
 }

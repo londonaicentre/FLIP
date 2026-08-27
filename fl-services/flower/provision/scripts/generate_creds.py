@@ -48,7 +48,14 @@ SERVER_ORGANIZATION = "Flower"
 SERVER_COMMON_NAME = "localhost"
 
 # Subject Alternative Names (SANs)
-SERVER_SAN_DNS = ["localhost", "superlink", "fl-server-net-1", "fl-server-net-2"]
+# FLOWER_EXTRA_SERVER_SANS (comma-separated DNS names) extends the baked-in
+# dev set for non-dev topologies — e.g. the hub ECS deployment needs the
+# Cloud Map name (fl-server-net-1.flip.local) for the fl-api's Exec-API
+# connection and the public FL DNS (fl.<env>.flip.aicentre.co.uk) for the
+# trust SuperNodes (FLIP#566).
+SERVER_SAN_DNS = ["localhost", "superlink", "fl-server-net-1", "fl-server-net-2"] + [
+    san.strip() for san in os.environ.get("FLOWER_EXTRA_SERVER_SANS", "").split(",") if san.strip()
+]
 SERVER_SAN_IPS = [
     "127.0.0.1",
     "::1",

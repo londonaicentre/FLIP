@@ -43,6 +43,8 @@ def save_training_metrics(model_id: UUID, trust: Trust, training_metrics: Traini
         global_round=training_metrics.global_round,
         label=training_metrics.label,
         result=training_metrics.result,
+        x_value=training_metrics.x_value,
+        x_label=training_metrics.x_label,
     )
 
     # Add the metrics to the database session

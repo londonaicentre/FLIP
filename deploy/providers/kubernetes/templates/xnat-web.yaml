@@ -103,15 +103,19 @@ spec:
             - python3
             - -c
             - |
-              import urllib.request, os
-              plugins = [
-                  ("container-service-3.8.0-fat.jar", {{ index .Values.xnat.web.plugins.urls "container-service" | quote }}),
-                  ("dicom-query-retrieve-2.3.2-xpl.jar", {{ index .Values.xnat.web.plugins.urls "dicom-query-retrieve" | quote }}),
-                  ("batch-launch-0.9.0-xpl.jar", {{ index .Values.xnat.web.plugins.urls "batch-launch" | quote }}),
-                  ("ohif-viewer-3.7.2.jar", {{ index .Values.xnat.web.plugins.urls "ohif-viewer" | quote }}),
+              import urllib.parse, urllib.request, os
+              # Each jar's filename is derived from its URL so the version lives
+              # in exactly one place (values.yaml xnat.web.plugins.urls).
+              urls = [
+              {{- range $name, $url := .Values.xnat.web.plugins.urls }}
+                  {{ $url | quote }},
+              {{- end }}
               ]
               os.makedirs("/plugins", exist_ok=True)
-              for name, url in plugins:
+              for url in urls:
+                  name = os.path.basename(urllib.parse.urlsplit(url).path)
+                  if not name.endswith(".jar"):
+                      raise SystemExit("Plugin URL does not end in a .jar filename: " + url)
                   dest = os.path.join("/plugins", name)
                   print("Downloading " + name + "...")
                   urllib.request.urlretrieve(url, dest)

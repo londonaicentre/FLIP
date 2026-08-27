@@ -16,7 +16,8 @@ APP_DIR := $(CURDIR)
 # image. A bare `uv run` would resolve to the repo-root venv, which has no torch/nvflare/monai. The
 # checkpoint-preprocessing target instead uses the tutorial-local `uv run` (this dir's pyproject.toml:
 # torch + timm, no NVFLARE), matching the legacy tutorial.
-FLIP_UTILS := $(abspath $(APP_DIR)/../../../../flip-utils)
+REPO_ROOT := $(abspath $(APP_DIR)/../../../..)
+FLIP_UTILS := $(REPO_ROOT)/flip-utils
 UV_RUN := uv run --project $(FLIP_UTILS) --extra full
 
 # --- Load app-specific env ---
@@ -34,6 +35,16 @@ endif
 # submit time and overrides whatever the recipe baked in.
 NUM_ROUNDS ?= 3
 N_CLIENTS ?= 2
+
+# Simulator workspace + metrics output. WORKSPACE matches job.py's default and is deliberately
+# per-tutorial: `make round-metrics` auto-discovers the log with the most round events under the
+# workspace tree, so a dir shared with other tutorials would risk picking up a stale log of theirs.
+WORKSPACE ?= /tmp/nvflare/arkplus_finetuning
+METRICS_OUT ?= $(APP_DIR)/round_metrics
+
+# Round count for the one-shot `make reproduce-overhead` replica — matches the deployed run's
+# GLOBAL_ROUNDS (config.json), unlike the quick-smoke NUM_ROUNDS default of 3.
+OVERHEAD_ROUNDS ?= 50
 
 # The backbone checkpoint the server loads (config.json SERVER_CHECKPOINT). Staged into app_files/ so
 # stage_app_files() bundles it into the server custom dir; clients receive the backbone at round 0.
@@ -55,7 +66,7 @@ override SITE2_IMAGES_DIR := $(call abspath_app,$(SITE2_IMAGES_DIR))
 override SITE2_DATAFRAME  := $(call abspath_app,$(SITE2_DATAFRAME))
 override DATA_ROOT        := $(call abspath_app,$(DATA_ROOT))
 
-.PHONY: run export sim download-raw-checkpoint prepare-checkpoint dataset-figure clean
+.PHONY: run export sim round-metrics reproduce-overhead package-overhead-bundle download-raw-checkpoint prepare-checkpoint dataset-figure clean
 
 # --- Raw checkpoint download ---
 download-raw-checkpoint:
@@ -67,7 +78,12 @@ download-raw-checkpoint:
 	fi
 	@echo "Downloading Ark+ foundation model checkpoint..."
 	@mkdir -p "$(dir $(RAW_CHECKPOINT))"
-	@curl -L -o "$(RAW_CHECKPOINT)" "https://www.dropbox.com/scl/fo/joycn8m93nvlrc8yjme40/ABBtPc5oaalYZ7kzmERpjhU/Ark%2B_Nature/Ark6_swinLarge768_ep50.pth.tar?rlkey=p3lphqvtgmiphw1n0u039jpjn&dl=1"
+	@# --fail makes curl exit non-zero on an HTTP error instead of saving the error page as the
+	@# checkpoint; downloading to a temp name and moving only on success means a failed/partial
+	@# download never leaves a file at RAW_CHECKPOINT for prepare-checkpoint's -f guard to treat
+	@# as valid forever.
+	@curl -fL -o "$(RAW_CHECKPOINT).tmp" "https://www.dropbox.com/scl/fo/joycn8m93nvlrc8yjme40/ABBtPc5oaalYZ7kzmERpjhU/Ark%2B_Nature/Ark6_swinLarge768_ep50.pth.tar?rlkey=p3lphqvtgmiphw1n0u039jpjn&dl=1"
+	@mv "$(RAW_CHECKPOINT).tmp" "$(RAW_CHECKPOINT)"
 	@echo "✅ Downloaded Ark+ foundation model checkpoint to $(RAW_CHECKPOINT)"
 
 # --- Checkpoint preprocessing ---
@@ -135,12 +151,85 @@ sim:
 	$(UV_RUN) python job.py \
 		--n_clients $(N_CLIENTS) \
 		--num_rounds $(NUM_ROUNDS) \
-		--workspace ../../testing/runs/workspace
+		--workspace $(WORKSPACE)
+
+# --- Extract round metrics from the simulator logs (run after `make sim`/`make run`) ---
+# Parses the FLIP ScatterAndGather controller events in the simulator server log and writes the same
+# rounds.tsv / summary.md / boxplot artefacts as scripts/fl_round_metrics/extract_platform_round_timings.sh produces for a
+# platform run, so the two are directly comparable. Optional:
+# COMPARE=/path/to/platform/rounds.tsv adds a side-by-side steady-state overhead table.
+round-metrics:
+	bash "$(REPO_ROOT)/scripts/fl_round_metrics/extract_simulator_round_timings.sh" "$(WORKSPACE)" \
+		-o "$(METRICS_OUT)" $(if $(COMPARE),--compare "$(COMPARE)") $(if $(RUN_NAME),--run-name "$(RUN_NAME)")
+
+# --- One-shot cross-site overhead reproduction (no hub / AWS access needed) ---
+# Everything a collaborating site needs to reproduce the simulator baseline and send the results
+# back: fetch the HF tutorial data (~6.3 GB) and the Ark+ checkpoint when missing, run the
+# full-length simulator replica (OVERHEAD_ROUNDS, default 50), then extract the round metrics
+# and pack metrics + simulator logs + host/provenance info into a single archive in this
+# directory. Requires Linux, uv, and an NVIDIA GPU (pick one with CUDA_VISIBLE_DEVICES).
+reproduce-overhead:
+	@# Directory existence alone doesn't mean the download finished (an interrupted `snapshot_download`
+	@# or Ctrl+C mid-copy leaves the directories present but partial) — check for the
+	@# .download-complete marker download-arkplus-finetuning-data writes only on success.
+	@if [ -f "$(dir $(SITE1_IMAGES_DIR)).download-complete" ] && [ -f "$(dir $(SITE2_IMAGES_DIR)).download-complete" ]; then \
+		echo "✅ Ark+ tutorial data present."; \
+	else \
+		$(MAKE) --no-print-directory -C "$(REPO_ROOT)/fl-tutorials" download-arkplus-finetuning-data; \
+	fi
+	@if [ ! -f "$(PROCESSED_CHECKPOINT)" ] && [ ! -f "$(RAW_CHECKPOINT)" ]; then \
+		$(MAKE) --no-print-directory download-raw-checkpoint; \
+	fi
+	@$(MAKE) --no-print-directory prepare-checkpoint
+	@$(MAKE) --no-print-directory sim NUM_ROUNDS="$(OVERHEAD_ROUNDS)"
+	@$(MAKE) --no-print-directory package-overhead-bundle
+
+# Extract metrics from the last simulator run and bundle them with the workspace logs (model
+# files excluded), config.json, .env.app, and host info (GPU, OS, git commit) into
+# arkplus_sim_experiment_<host>_<stamp>.zip (.tar.gz when zip is not installed). Split out from
+# `reproduce-overhead` so a finished run can be re-packaged without re-simulating.
+package-overhead-bundle:
+	@set -e; \
+	stamp="$$(date +%Y%m%dT%H%M%S)"; host="$$(hostname -s)"; \
+	run_name="simulator-arkplus-$${host}-$${stamp}"; \
+	$(MAKE) --no-print-directory round-metrics RUN_NAME="$$run_name"; \
+	out="$(METRICS_OUT)/$$run_name"; \
+	observed_rounds="$$(tail -n +2 "$$out/rounds.tsv" 2>/dev/null | wc -l | tr -d ' ')"; \
+	mkdir -p "$$out/logs" "$$out/provenance"; \
+	( cd "$(WORKSPACE)" && find . -type f \
+		\( -name 'log*.txt' -o -name '*.log' -o -name 'log.json' -o -name 'error_log.txt' \) \
+		-print0 | while IFS= read -r -d '' f; do \
+			sz=$$(stat -c%s "$$f" 2>/dev/null || stat -f%z "$$f" 2>/dev/null || echo 0); \
+			if [ "$$sz" -ge 67108864 ]; then \
+				echo "⚠️  Excluding $$f from bundle logs/ (size $${sz} bytes, >= 64 MiB cap) — the fl-server log is the most important file here, so check this isn't it"; \
+			else \
+				cp --parents "$$f" "$$out/logs/" || { echo "❌ Failed to copy $$f into bundle logs/" >&2; exit 1; }; \
+			fi; \
+		done ); \
+	cp "$(APP_DIR)/app_files/config.json" "$$out/provenance/config.json"; \
+	cp "$(APP_DIR)/.env.app" "$$out/provenance/env.app.txt" 2>/dev/null || true; \
+	{ echo "generated: $$(date -Is)"; \
+	  echo "host: $$(hostname)"; \
+	  echo "git_commit: $$(git -C "$(REPO_ROOT)" rev-parse HEAD 2>/dev/null || echo unknown)"; \
+	  echo "git_branch: $$(git -C "$(REPO_ROOT)" rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)"; \
+	  echo "overhead_rounds: $${observed_rounds:-$(OVERHEAD_ROUNDS)} (observed in rounds.tsv; requested OVERHEAD_ROUNDS=$(OVERHEAD_ROUNDS))"; \
+	  echo "workspace: $(WORKSPACE)"; \
+	  echo; uname -a; \
+	  echo; nvidia-smi 2>/dev/null || echo "nvidia-smi unavailable"; \
+	} > "$$out/provenance/host_info.txt"; \
+	if command -v zip >/dev/null 2>&1; then \
+		archive="$(APP_DIR)/arkplus_sim_experiment_$${host}_$${stamp}.zip"; \
+		( cd "$(METRICS_OUT)" && zip -qr "$$archive" "$$run_name" ); \
+	else \
+		archive="$(APP_DIR)/arkplus_sim_experiment_$${host}_$${stamp}.tar.gz"; \
+		tar -czf "$$archive" -C "$(METRICS_OUT)" "$$run_name"; \
+	fi; \
+	echo ""; echo "📦 Experiment bundle ready to send back: $$archive"
 
 # --- Tutorial-harness entrypoint ---
 # The shared harness (fl-tutorials/nvflare/Makefile) auto-discovers any dir with a .env.app and invokes
-# `make run`. This Client API tutorial has no legacy testing/ harness path, so `run` prepares the checkpoint
-# and delegates to `sim` (the recipe/simulator path via job.py).
+# `make run`, which prepares the checkpoint and delegates to `sim` (the recipe/simulator path
+# via job.py).
 run: prepare-checkpoint sim
 
 clean:

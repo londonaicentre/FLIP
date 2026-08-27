@@ -10,6 +10,7 @@
 # limitations under the License.
 #
 
+import os
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -84,6 +85,19 @@ def get_presigned_url_for_upload(
             )
 
         settings = get_settings()
+
+        allowed_extensions = settings.ALLOWED_MODEL_FILE_EXTENSIONS
+        if not any(body.fileName.lower().endswith(extension) for extension in allowed_extensions):
+            suffix = os.path.splitext(body.fileName)[1] or "<none>"
+            logger.warning(f"Rejected upload of disallowed file type {suffix!r} for model {model_id}")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    f"File type '{suffix}' is not allowed. "
+                    f"Allowed extensions: {', '.join(allowed_extensions)}"
+                ),
+            )
+
         s3_path = f"{settings.UPLOADED_MODEL_FILES_BUCKET}/{model_id}/{body.fileName}"
         bucket, key = parse_s3_path(s3_path)
         key_hash = hash_s3_key(key)

@@ -47,7 +47,9 @@ def test_get_site_details_with_banner():
     assert isinstance(result, ISiteDetails)
     assert result.banner is not None
     assert result.banner.message == "Welcome!"
-    assert result.banner.link == "https://example.com"
+    # HttpUrl normalises a bare authority by appending the root path, so the round-tripped value
+    # gains a trailing slash. Equivalent URL, deliberate consequence of validating the scheme.
+    assert str(result.banner.link) == "https://example.com/"
     assert result.banner.enabled is True
     assert result.deploymentMode is True
 
@@ -87,7 +89,7 @@ def test_update_site_details_success(mock_db):
     # Assert
     assert result is None
     assert existing_banner.message == "New Message"
-    assert existing_banner.link == "https://example.com"
+    assert existing_banner.link == "https://example.com/"
     assert existing_banner.enabled is True
     assert existing_config.value is False
 
@@ -106,8 +108,9 @@ def test_update_site_details_failure(mock_db):
 
     mock_db.rollback.assert_called_once()
     assert exc_info.value.status_code == 500
-    assert "Error updating site details" in exc_info.value.detail
-    assert "DB error" in exc_info.value.detail
+    # The raw exception text must not reach the client (the #888 class of leak).
+    assert exc_info.value.detail == "Internal server error"
+    assert "DB error" not in exc_info.value.detail
 
 
 def test_get_site_details_no_deployment_config():
@@ -158,6 +161,55 @@ def test_get_site_details_banner_with_whitespace_link():
     assert result.banner.link is None
 
 
+def test_get_site_details_degrades_a_poisoned_link_to_none():
+    """A stored banner whose link is not http(s) must serve with link=None, not 500.
+
+    The scheme allowlist lives on ``ISiteBanner.link`` (HttpUrl), so a row written before that
+    validator existed — or by any path that bypassed it — fails validation on read. Every page
+    load reads the banner, so the read path must degrade rather than turn one poisoned row into a
+    site-wide outage. The rest of the banner (message, enabled) is preserved.
+    """
+    db = MagicMock(spec=Session)
+
+    # A plain str column accepts this; it is exactly the value the frontend guard exists to stop.
+    poisoned_banner = SiteBanner(message="Hello", link="javascript:alert(1)", enabled=True)
+    mock_config = SiteConfig(key="DeploymentMode", value=True)
+
+    db.get.return_value = poisoned_banner
+    db.exec.return_value = MagicMock(first=MagicMock(return_value=mock_config))
+
+    result = get_site_details(db)
+
+    assert result.banner is not None
+    assert result.banner.link is None
+    assert result.banner.message == "Hello"
+    assert result.banner.enabled is True
+
+
+def test_get_site_details_serves_a_default_when_the_banner_is_unusable_without_its_link():
+    """A row invalid for a reason other than the link still must not 500 the whole site.
+
+    Dropping the link is the common degrade, but if the stored row is invalid in some other field
+    (e.g. a legacy NULL message), nulling the link is not enough and re-validating would raise. The
+    read path must fall back to a safe, disabled default rather than propagate a 500 to every page.
+    """
+    db = MagicMock(spec=Session)
+
+    # model_dump is what the read path validates; inject a row that fails on a non-link field.
+    unusable_row = MagicMock()
+    unusable_row.model_dump.return_value = {"message": None, "link": "https://example.com", "enabled": True}
+    mock_config = SiteConfig(key="DeploymentMode", value=False)
+
+    db.get.return_value = unusable_row
+    db.exec.return_value = MagicMock(first=MagicMock(return_value=mock_config))
+
+    result = get_site_details(db)
+
+    assert result.banner is not None
+    assert result.banner.link is None
+    assert result.banner.enabled is False
+
+
 def test_update_site_details_creates_new_banner(mock_db):
     """When no existing banner, should create a new SiteBanner and call db.add."""
     banner = ISiteBanner(message="Brand New", link="https://new.com", enabled=True)
@@ -174,7 +226,7 @@ def test_update_site_details_creates_new_banner(mock_db):
     added_banner = mock_db.add.call_args[0][0]
     assert isinstance(added_banner, SiteBanner)
     assert added_banner.message == "Brand New"
-    assert added_banner.link == "https://new.com"
+    assert added_banner.link == "https://new.com/"
     assert added_banner.enabled is True
 
 

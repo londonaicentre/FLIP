@@ -85,7 +85,7 @@ HELM_OK=false
 if ! command -v "$HELM_BIN" >/dev/null 2>&1; then
     fail "helm not found in PATH"
     hint "macOS:  brew install helm"
-    hint "Linux:  curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash"
+    hint "Linux:  curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-4 | bash"
     hint "Docs:   https://helm.sh/docs/intro/install/"
 else
     HELM_VER="$("$HELM_BIN" version 2>/dev/null | extract_semver)"
