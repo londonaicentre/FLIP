@@ -456,3 +456,9 @@ fl-tutorials/nvflare/image_segmentation/3d_spleen_segmentation/uv.lock
 fl-services/flower/provision/creds/
 fl-services/flower/runs/
 fl-tutorials/flower/data/
+
+# Holds real per-deployment secrets once any real environment is configured
+# (was committed with dev-only placeholders historically — see .secrets.baseline
+# entry — but a real deploy's values must never reach git; matches the existing
+# trust/.env.<CODE>.<env> kit-file treatment below).
+deploy/providers/kubernetes/values-secrets.yaml

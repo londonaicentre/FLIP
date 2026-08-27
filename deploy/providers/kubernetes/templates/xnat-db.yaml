@@ -119,12 +119,29 @@ spec:
               valueFrom:
                 secretKeyRef:
                   name: {{ if .Values.secrets.create }}{{ include "flip-trust.fullname" . }}-secrets{{ else }}{{ .Values.secrets.existingName }}{{ end }}
-                  key: xnat-datasource-password
+                  key: xnat-superuser-password
             - name: XNAT_DATASOURCE_PASSWORD
               valueFrom:
                 secretKeyRef:
                   name: {{ if .Values.secrets.create }}{{ include "flip-trust.fullname" . }}-secrets{{ else }}{{ .Values.secrets.existingName }}{{ end }}
                   key: xnat-datasource-password
+          lifecycle:
+            postStart:
+              exec:
+                command:
+                  - /bin/sh
+                  - -c
+                  - |
+                    until pg_isready -U {{ .Values.xnat.db.datasourceUsername | quote }} 2>/dev/null; do
+                      sleep 1
+                    done
+                    # ALTER ROLE runs unconditionally so an already-initialized data
+                    # directory (or a restored backup) always ends up with the
+                    # password from XNAT_DATASOURCE_PASSWORD, mirroring the
+                    # data_analyst_reader sync in omop-db.yaml.
+                    psql -U {{ .Values.xnat.db.datasourceUsername | quote }} -d postgres <<-EOSQL
+                      ALTER USER {{ .Values.xnat.db.datasourceUsername }} WITH PASSWORD '${XNAT_DATASOURCE_PASSWORD}';
+                    EOSQL
           volumeMounts:
             - name: data
               mountPath: /var/lib/postgresql/data

@@ -32,7 +32,6 @@ data:
   XNAT_URL: {{ .Values.imagingApi.env.XNAT_URL | quote }}
   XNAT_PORT: {{ .Values.imagingApi.env.XNAT_PORT | quote }}
   PACS_ID: {{ .Values.imagingApi.env.PACS_ID | quote }}
-  XNAT_DATABASE_URL: {{ .Values.imagingApi.env.XNAT_DATABASE_URL | quote }}
   DATA_ACCESS_API_URL: {{ .Values.imagingApi.env.DATA_ACCESS_API_URL | quote }}
   BASE_IMAGES_DOWNLOAD_DIR: {{ .Values.imagingApi.env.BASE_IMAGES_DOWNLOAD_DIR | quote }}
   ENV: {{ .Values.environment | quote }}
@@ -88,6 +87,11 @@ spec:
             - configMapRef:
                 name: {{ include "flip-trust.fullname" . }}-imaging-api
           env:
+            - name: XNAT_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ if .Values.secrets.create }}{{ include "flip-trust.fullname" . }}-secrets{{ else }}{{ .Values.secrets.existingName }}{{ end }}
+                  key: xnat-database-url
             - name: XNAT_SERVICE_USER
               valueFrom:
                 secretKeyRef:

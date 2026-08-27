@@ -204,7 +204,9 @@ imagingApi:
     # the xnat-web Service dicom-scp port and the Orthanc modality config).
     XNAT_PORT: "8104"
     PACS_ID: "1"
-    XNAT_DATABASE_URL: "postgresql+asyncpg://xnat:xnat@xnat-db:5432/xnat"
+    # XNAT_DATABASE_URL is no longer set here — it's derived in templates/secrets.yaml
+    # from xnat.db.datasourceUsername + secrets.data.xnat-datasource-password, so it
+    # can never drift from the actual xnat-db credential.
     DATA_ACCESS_API_URL: "http://data-access-api:8000"
     BASE_IMAGES_DOWNLOAD_DIR: "/app/data/images"
 
