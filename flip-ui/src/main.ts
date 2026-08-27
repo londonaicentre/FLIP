@@ -78,8 +78,11 @@ if (!isDemoBuild) {
  * non-demo build the whole branch folds away, leaving no `await` before the
  * mount, so production boot stays synchronous.
  *
- * Keep `assert-no-demo-artefacts` (npm postbuild:deploy) as the backstop for
- * all of the above — it inspects the built artefact, not the source.
+ * Both halves are enforced: the `flip-ui/no-static-mirage` ESLint block rejects
+ * a static import of either mock server (or miragejs/pretender) from src/, and
+ * `assert-no-demo-artefacts` (npm postbuild:deploy) backstops it at the
+ * artefact level — it inspects the built output, not the source, so it also
+ * catches a branch that stops folding.
  */
 async function bootstrap(): Promise<void> {
     if (isDemoBuild) {

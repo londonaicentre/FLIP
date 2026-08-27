@@ -169,4 +169,35 @@ export default defineConfigWithVueTs(
             }],
         },
     },
+
+    {
+        // Static-import guard for Mirage (FLIP#1041 review). `miragejs` is a
+        // legitimate `dependency` — build:demo ships it — so the scoping rule above
+        // cannot flag a static re-import from production source, which is exactly the
+        // regression that put ~230 modules (Mirage, Pretender and all of lodash) in
+        // the production entry chunk. Both mock servers must stay behind a dynamic
+        // import() inside their folded branch (see the bootstrap() comment in
+        // src/main.ts); this rule ignores dynamic imports, so those stay legal.
+        // assert-no-demo-artefacts.mjs backstops this at the artefact level, where a
+        // fold failure — the class no source lint can see — would land.
+        name: "flip-ui/no-static-mirage",
+        files: ["src/**/*.ts", "src/**/*.vue"],
+        ignores: ["**/*.spec.ts", "**/__tests__/**"],
+        rules: {
+            "no-restricted-imports": ["error", {
+                patterns: [{
+                    group: [
+                        "miragejs",
+                        "miragejs/*",
+                        "pretender",
+                        "pretender/*",
+                        "**/mocks/server",
+                        "**/mocks/demo-server",
+                    ],
+                    message: "Mirage must not be statically imported from production source — load it via a "
+                        + "dynamic import() inside a folded branch. See bootstrap() in src/main.ts.",
+                }],
+            }],
+        },
+    },
 );

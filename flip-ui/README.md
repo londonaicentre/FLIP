@@ -170,7 +170,13 @@ Two traps when auditing this by hand:
   `import()` inside their own folded branch. `mocks/server` was static until FLIP#1041 and shipped ~230
   modules — Mirage, Pretender, route-recognizer, inflected and all of lodash — in the production entry
   chunk of every build, because miragejs patches `Error.prototype` at module scope. Making it dynamic cut
-  the entry chunk from 331 KB to 182 KB. See the comment above `bootstrap()`.
+  the entry chunk from 331 KB to 182 KB. See the comment above `bootstrap()`. This is enforced twice, because
+  `miragejs` is a legitimate `dependency` (the demo bundle ships it) and so invisible to the scoping rule
+  above: the `flip-ui/no-static-mirage` block in [`eslint.config.mjs`](eslint.config.mjs) fails `npm run
+  lint` on any static import of `miragejs`/`pretender`/the mock servers from `src/` (dynamic `import()`
+  stays legal), and [`scripts/assert-no-demo-artefacts.mjs`](scripts/assert-no-demo-artefacts.mjs) carries
+  Mirage/Pretender sentinels so the built artefact is checked too — the only guard that also catches a
+  folded branch that stops folding.
 
 ## Testing
 
