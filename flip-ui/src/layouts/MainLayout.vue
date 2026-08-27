@@ -41,6 +41,7 @@
                         <component :is="Component" class="w-full" @update-project="mutate" />
                         <CreateModelModal
                             :open="modalsStore.createModelOpen"
+                            :project-id="route.params.projectId as string"
                             @close-modal="modalsStore.toggleCreateModel"
                         />
                     </div>
