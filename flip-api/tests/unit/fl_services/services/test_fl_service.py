@@ -1302,8 +1302,14 @@ def test_bundle_nvflare_application_no_base_files(mock_s3, mocked_settings, mode
 
     mock_client = mock_s3.return_value
     # No base tree written -> the local FL_APP_BASE_DIR/nvflare/standard directory is absent
+    mock_client.get_object.return_value = {
+        "Body": MagicMock(read=MagicMock(return_value=json.dumps({}).encode("utf-8")))
+    }
     mock_client.list_objects.side_effect = [
-        [f"{model_bucket}/{model_id}/trainer.py"],  # model files (no config.json)
+        [
+            f"{model_bucket}/{model_id}/trainer.py",
+            f"{model_bucket}/{model_id}/config.json",
+        ],
     ]
 
     with pytest.raises(FileNotFoundError, match="Base application files missing in the local base directory"):
@@ -1320,8 +1326,14 @@ def test_bundle_nvflare_application_no_app_folders(mock_s3, mock_required, mocke
     write_base_tree(base_dir, "nvflare", "standard", ["notapp/file1.py"])  # no app* folder
 
     mock_client = mock_s3.return_value
+    mock_client.get_object.return_value = {
+        "Body": MagicMock(read=MagicMock(return_value=json.dumps({}).encode("utf-8")))
+    }
     mock_client.list_objects.side_effect = [
-        [f"{model_bucket}/{model_id}/trainer.py"],  # model files (no config.json)
+        [
+            f"{model_bucket}/{model_id}/trainer.py",
+            f"{model_bucket}/{model_id}/config.json",
+        ],
         [],  # destination bucket empty (clear check)
     ]
     mock_client.copy_object.return_value = None
@@ -1333,10 +1345,14 @@ def test_bundle_nvflare_application_no_app_folders(mock_s3, mock_required, mocke
 @patch("flip_api.fl_services.services.fl_service.verify_bundle_paths")
 @patch("flip_api.fl_services.services.fl_service.JobRequiredFiles.get_required_files")
 @patch("flip_api.fl_services.services.fl_service.S3Client")
-def test_bundle_nvflare_application_no_config_clears_existing_dest(
+def test_bundle_nvflare_application_clears_existing_dest(
     mock_s3, mock_required, mock_verify, mocked_settings, model_id
 ):
-    """No config.json falls back to job_type=standard, and stale destination files are cleared first."""
+    """Stale destination files from an earlier run are cleared before the new bundle is written.
+
+    The config.json here has no ``job_type`` key, which doubles as the pin on the documented live
+    fallback: key absent -> the ``standard`` job type is assumed and the bundle succeeds.
+    """
     base_dir = mocked_settings.FL_APP_BASE_DIR
     model_bucket = mocked_settings.SCANNED_MODEL_FILES_BUCKET
     dest_bucket = mocked_settings.FL_APP_DESTINATION_BUCKET
@@ -1344,11 +1360,15 @@ def test_bundle_nvflare_application_no_config_clears_existing_dest(
     write_base_tree(base_dir, "nvflare", "standard", ["app/file1.py"])
 
     mock_client = mock_s3.return_value
-    mock_required.return_value = ["trainer.py", "validator.py"]
+    mock_client.get_object.return_value = {
+        "Body": MagicMock(read=MagicMock(return_value=json.dumps({}).encode("utf-8")))
+    }
+    mock_required.return_value = ["trainer.py", "validator.py", "config.json"]
     model_files = [
         f"{model_bucket}/{model_id}/trainer.py",
         f"{model_bucket}/{model_id}/validator.py",
-    ]  # no config.json -> job_type stays "standard"
+        f"{model_bucket}/{model_id}/config.json",
+    ]
     stale_dest_files = [f"{dest_bucket}/{model_id}/stale.py"]
     mock_client.list_objects.side_effect = [model_files, stale_dest_files]
     mock_client.object_exists.return_value = False
@@ -1358,6 +1378,65 @@ def test_bundle_nvflare_application_no_config_clears_existing_dest(
 
     assert result == f"{dest_bucket}/{model_id}"
     mock_client.delete_objects.assert_called_once_with(stale_dest_files)
+
+
+@patch("flip_api.fl_services.services.fl_service.JobRequiredFiles.get_required_files")
+@patch("flip_api.fl_services.services.fl_service.S3Client")
+def test_bundle_nvflare_application_missing_config_json_is_rejected(mock_s3, mock_required, mocked_settings, model_id):
+    """config.json is a required NVFLARE file, so a submission without one never reaches a Trust.
+
+    The bundler refuses at the guard — before clearing the destination bucket — instead of logging
+    a doomed ``job_type=standard`` guess that the required-files check would reject moments later.
+    """
+    model_bucket = mocked_settings.SCANNED_MODEL_FILES_BUCKET
+
+    write_base_tree(mocked_settings.FL_APP_BASE_DIR, "nvflare", "standard", ["app/file1.py"])
+
+    mock_client = mock_s3.return_value
+    mock_required.return_value = ["trainer.py", "config.json", "models.py"]
+    mock_client.list_objects.side_effect = [
+        [
+            f"{model_bucket}/{model_id}/trainer.py",
+            f"{model_bucket}/{model_id}/models.py",
+        ],  # no config.json
+        [],  # destination bucket (clear check)
+    ]
+
+    with pytest.raises(FileNotFoundError, match="No config.json"):
+        fl_service.bundle_nvflare_application(model_id)
+
+    mock_client.delete_objects.assert_not_called()
+
+
+@patch("flip_api.fl_services.services.fl_service.verify_bundle_paths")
+@patch("flip_api.fl_services.services.fl_service.JobRequiredFiles.get_required_files")
+@patch("flip_api.fl_services.services.fl_service.S3Client")
+def test_bundle_nvflare_application_empty_manifest_is_rejected(
+    mock_s3, mock_required, mock_verify, mocked_settings, model_id
+):
+    """An empty required-files lookup means the manifest is missing or malformed, never a real job type.
+
+    ``JobRequiredFiles.get_required_files`` returns ``[]`` when the manifest under FL_APP_BASE_DIR
+    is absent, which would otherwise let the bundle through with zero required-file validation.
+    """
+    model_bucket = mocked_settings.SCANNED_MODEL_FILES_BUCKET
+
+    write_base_tree(mocked_settings.FL_APP_BASE_DIR, "nvflare", "standard", ["app/file1.py"])
+
+    mock_client = mock_s3.return_value
+    mock_client.get_object.return_value = {
+        "Body": MagicMock(read=MagicMock(return_value=json.dumps({}).encode("utf-8")))
+    }
+    mock_required.return_value = []
+    mock_client.list_objects.side_effect = [
+        [f"{model_bucket}/{model_id}/config.json"],
+        [],  # destination bucket (clear check)
+    ]
+    mock_client.object_exists.return_value = False
+    mock_verify.return_value = None
+
+    with pytest.raises(RuntimeError, match="missing or malformed"):
+        fl_service.bundle_nvflare_application(model_id)
 
 
 # --- bundle_flower_application error / edge paths -------------------------------------------------
@@ -1377,8 +1456,14 @@ def test_bundle_flower_application_no_base_files(mock_s3, mocked_settings, model
 
     mock_client = mock_s3.return_value
     # No base tree written -> the local FL_APP_BASE_DIR/flower/standard directory is absent
+    mock_client.get_object.return_value = {
+        "Body": MagicMock(read=MagicMock(return_value=json.dumps({}).encode("utf-8")))
+    }
     mock_client.list_objects.side_effect = [
-        [f"{model_bucket}/{model_id}/client_app.py"],  # model files (no config.json)
+        [
+            f"{model_bucket}/{model_id}/client_app.py",
+            f"{model_bucket}/{model_id}/config.json",
+        ],
     ]
 
     with pytest.raises(FileNotFoundError, match="Base application files missing in the local base directory"):
@@ -1426,7 +1511,9 @@ def test_bundle_flower_application_missing_config_json_is_rejected(
     """config.json is a required Flower file, so a submission without one never reaches a Trust.
 
     Without it the bundler cannot know the job type, and silently defaulting to ``standard`` would
-    ship an evaluation app as a training job (FLIP job-type selection reads only this file).
+    ship an evaluation app as a training job (FLIP job-type selection reads only this file). The
+    bundler refuses at the guard — before clearing the destination bucket — instead of logging a
+    doomed ``job_type=standard`` guess that the required-files check would reject moments later.
     """
     base_dir = mocked_settings.FL_APP_BASE_DIR
     model_bucket = mocked_settings.SCANNED_MODEL_FILES_BUCKET
@@ -1443,7 +1530,37 @@ def test_bundle_flower_application_missing_config_json_is_rejected(
         [],  # destination bucket (clear check)
     ]
 
-    with pytest.raises(FileNotFoundError, match="Missing required files for job type standard: config.json"):
+    with pytest.raises(FileNotFoundError, match="No config.json"):
+        fl_service.bundle_flower_application(model_id)
+
+    mock_client.delete_objects.assert_not_called()
+
+
+@patch("flip_api.fl_services.services.fl_service.JobRequiredFiles.get_required_files")
+@patch("flip_api.fl_services.services.fl_service.S3Client")
+def test_bundle_flower_application_empty_manifest_is_rejected(mock_s3, mock_required, mocked_settings, model_id):
+    """An empty required-files lookup means the manifest is missing or malformed, never a real job type.
+
+    ``JobRequiredFiles.get_required_files`` returns ``[]`` when the manifest under FL_APP_BASE_DIR
+    is absent, which would otherwise let the bundle through with zero required-file validation.
+    """
+    base_dir = mocked_settings.FL_APP_BASE_DIR
+    model_bucket = mocked_settings.SCANNED_MODEL_FILES_BUCKET
+
+    write_base_tree(base_dir, "flower", "standard", ["app/server_app.py", "pyproject.toml"])
+
+    mock_client = mock_s3.return_value
+    mock_client.get_object.return_value = {
+        "Body": MagicMock(read=MagicMock(return_value=json.dumps({}).encode("utf-8")))
+    }
+    mock_required.return_value = []
+    mock_client.list_objects.side_effect = [
+        [f"{model_bucket}/{model_id}/config.json"],
+        [],  # destination bucket (clear check)
+    ]
+    mock_client.object_exists.return_value = False
+
+    with pytest.raises(RuntimeError, match="missing or malformed"):
         fl_service.bundle_flower_application(model_id)
 
 
