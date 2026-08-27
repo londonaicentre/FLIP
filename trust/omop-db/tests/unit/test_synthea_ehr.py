@@ -16,6 +16,7 @@ import pytest
 
 from omop_db_tools.synthea_ehr import (
     PERSON_ID_OFFSET,
+    REQUIRED_SOURCE_COLUMNS,
     _trust_person_ids,
     build_condition_rows,
     build_person_rows,
@@ -30,6 +31,7 @@ def person() -> pd.DataFrame:
             "person_id": [1, 2, 3, 4],
             "gender_concept_id": [8507, 8532, 9999, 8532],  # 9999 is non-standard → zeroed
             "year_of_birth": [1980, 1975, 2000, 1990],
+            "birth_datetime": ["1980-06-15", "1975-01-01", "2000-12-31", "1990-03-03"],
         }
     )
 
@@ -84,10 +86,21 @@ def test_build_person_rows_offsets_and_sanitises_concepts(person: pd.DataFrame):
         "person_id",
         "gender_concept_id",
         "year_of_birth",
+        "birth_datetime",
         "race_concept_id",
         "ethnicity_concept_id",
         "person_source_value",
     }
+
+
+def test_build_person_rows_carries_birth_datetime(person: pd.DataFrame):
+    # data-access-api's cohort statistics compute the age distribution from
+    # omop.person.birth_datetime — a NULL there 500s every cohort submission for the tutorial,
+    # so the loader must populate it and the schema guard must require it upstream.
+    rows = build_person_rows(person, {1, 2, 3}).reset_index(drop=True)
+    assert rows["birth_datetime"].notna().all()
+    assert list(rows["birth_datetime"]) == list(pd.to_datetime(["1980-06-15", "1975-01-01", "2000-12-31"]))
+    assert "birth_datetime" in REQUIRED_SOURCE_COLUMNS["person"]
 
 
 def test_build_condition_rows_keeps_snomed_and_offsets_ids(condition: pd.DataFrame):

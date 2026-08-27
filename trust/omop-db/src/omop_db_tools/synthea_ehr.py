@@ -57,7 +57,7 @@ SOURCE_TABLES = ("person", "condition_occurrence", "visit_occurrence")
 # Columns the derivation reads: upstream schema drift must fail loudly here, not surface as an
 # empty cohort. condition_source_value is read as a string so SNOMED codes keep their exact form.
 REQUIRED_SOURCE_COLUMNS = {
-    "person": ["person_id", "gender_concept_id", "year_of_birth"],
+    "person": ["person_id", "gender_concept_id", "year_of_birth", "birth_datetime"],
     "condition_occurrence": ["person_id", "condition_source_value", "condition_start_date"],
     "visit_occurrence": ["person_id", "visit_start_date"],
 }
@@ -130,6 +130,10 @@ def build_person_rows(person: pd.DataFrame, person_ids: set[int]) -> pd.DataFram
             "person_id": subset["person_id"].astype(int) + PERSON_ID_OFFSET,
             "gender_concept_id": gender.astype(int),
             "year_of_birth": subset["year_of_birth"].astype(int),
+            # birth_datetime is nullable in the CDM but load-bearing for the platform:
+            # data-access-api's age-distribution statistic computes from it, and a NULL
+            # 500s every cohort submission for the tutorial.
+            "birth_datetime": pd.to_datetime(subset["birth_datetime"]),
             "race_concept_id": _NO_MATCHING_CONCEPT_ID,
             "ethnicity_concept_id": _NO_MATCHING_CONCEPT_ID,
             "person_source_value": subset["person_id"].astype(int).map(lambda pid: f"synthea-{pid}"),
